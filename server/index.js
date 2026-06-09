@@ -165,6 +165,11 @@ app.use('/api', requireAuth, requirePlan('business'), changeOrderRoutes);
 // Submittals — architect/owner approval workflow for materials and
 // equipment specs before installation.
 app.use('/api', requireAuth, requirePlan('business'), require('./routes/submittals'));
+
+// Project closeout — checklist orchestrating punchlist + lien waivers
+// + invoices into a single screen. Auto-status items read live from
+// the source modules.
+app.use('/api', requireAuth, requirePlan('business'), require('./routes/closeout'));
 app.use('/api/availability', requireAuth, require('./routes/availability'));
 // Unauthenticated: browsers report errors here. The route itself extracts
 // user identity from the auth header when present.
