@@ -10,6 +10,8 @@ import TabBar from '../components/TabBar';
 import { langToLocale } from '../utils';
 import { silentError, reportClientError } from '../errorReporter';
 import RetryBanner from '../components/RetryBanner';
+import ProjectFinancialsTab from '../components/ProjectFinancialsTab';
+import ProjectCloseoutTab from '../components/ProjectCloseoutTab';
 
 function punchColor(status) {
   return { open: '#f59e0b', in_progress: '#3b82f6', resolved: '#059669', closed: '#9ca3af' }[status] || '#9ca3af';
@@ -554,7 +556,7 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
         </div>
 
         <div style={styles.detailTabs} className="project-detail-tabs">
-          {['overview', 'billing', 'entries', 'edit'].map(t => (
+          {['overview', 'financials', 'closeout', 'billing', 'entries', 'edit'].map(t => (
             <button key={t} className="project-detail-tab" style={{ ...styles.detailTab, ...(tab === t ? styles.detailTabActive : {}) }} onClick={() => setTab(t)}>
               {t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
@@ -1036,6 +1038,9 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
               </div>
             </div>
           )}
+
+          {tab === 'financials' && <ProjectFinancialsTab projectId={project.id} />}
+          {tab === 'closeout' && <ProjectCloseoutTab projectId={project.id} />}
 
           {tab === 'billing' && (
             <div>
