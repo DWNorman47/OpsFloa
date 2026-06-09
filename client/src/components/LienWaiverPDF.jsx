@@ -1,15 +1,15 @@
 // Lien waiver PDF renderer using @react-pdf/renderer — same pattern as
-// ProjectBillPDF. v1 ships ONE template (generic statutory form) that
-// covers the common case across most US jurisdictions. State-specific
-// statutory forms (CA Civ Code §8132 et seq., TX Prop Code §53.281
-// et seq., FL §713.20, NY Lien Law §34) are a real follow-up — the
-// data model has the `state` column and the registry pattern is here,
-// so adding them is a template-library exercise rather than a redesign.
+// ProjectBillPDF. Dispatches by `waiver.state` to a state-aware
+// template (CA / TX / FL / NY) or a generic statutory-style template
+// for anything else. The state-aware templates use the canonical title
+// and reference the statutory section that governs the form (e.g.
+// Civil Code §8132); the substantive body language remains conditional-
+// vs-unconditional aware since that's the legally-binding distinction.
 //
-// The header gracefully distinguishes the 4 type quadrants
-// (conditional/unconditional × progress/final), and the body language
-// reflects the conditional vs unconditional distinction since that's
-// the binding legal difference.
+// Disclaimer: these templates are statutory-FLAVORED — they reflect the
+// structure and references of the state-specific forms, but the exact
+// statutory text may differ. The PDF footer always recommends consulting
+// counsel before issuing waivers in a binding context.
 
 import React from 'react';
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
@@ -20,6 +20,69 @@ const TYPE_TITLES = {
   conditional_final:      'Conditional Waiver and Release on Final Payment',
   unconditional_final:    'Unconditional Waiver and Release on Final Payment',
 };
+
+// State-specific registry. Each entry overrides the generic title /
+// statutory reference / lead notice / additional body language / and
+// optionally appends a notary block. Add a state to this map to
+// support it; missing values fall back to the generic template.
+const STATE_CONFIGS = {
+  CA: {
+    titleOverride: {
+      conditional_progress:   'Conditional Waiver and Release on Progress Payment (Cal. Civ. Code §8132)',
+      unconditional_progress: 'Unconditional Waiver and Release on Progress Payment (Cal. Civ. Code §8134)',
+      conditional_final:      'Conditional Waiver and Release on Final Payment (Cal. Civ. Code §8136)',
+      unconditional_final:    'Unconditional Waiver and Release on Final Payment (Cal. Civ. Code §8138)',
+    },
+    statutoryRef: 'Cal. Civ. Code §§8132–8138',
+    leadingNotice: 'IDENTIFICATION OF CLAIMANT: This release is required by California Civil Code Section 8132 et seq. and is governed by California law.',
+    notary: false,
+  },
+  TX: {
+    titleOverride: {
+      conditional_progress:   'Conditional Waiver and Release on Progress Payment (Tex. Prop. Code §53.281)',
+      unconditional_progress: 'Unconditional Waiver and Release on Progress Payment (Tex. Prop. Code §53.282)',
+      conditional_final:      'Conditional Waiver and Release on Final Payment (Tex. Prop. Code §53.283)',
+      unconditional_final:    'Unconditional Waiver and Release on Final Payment (Tex. Prop. Code §53.284)',
+    },
+    statutoryRef: 'Tex. Prop. Code Ch. 53 Subchapter L',
+    leadingNotice: 'NOTICE TO CLAIMANT: This release is required by Texas Property Code Chapter 53, Subchapter L, and substantially follows the form prescribed therein. A claimant may not, by contract or otherwise, waive its right to file or enforce any lien except as provided by Subchapter L.',
+    notary: false,
+  },
+  FL: {
+    titleOverride: {
+      conditional_progress:   'Conditional Waiver and Release of Lien Upon Progress Payment (Fla. Stat. §713.20)',
+      unconditional_progress: 'Unconditional Waiver and Release of Lien Upon Progress Payment (Fla. Stat. §713.20)',
+      conditional_final:      'Conditional Waiver and Release of Lien Upon Final Payment (Fla. Stat. §713.20)',
+      unconditional_final:    'Unconditional Waiver and Release of Lien Upon Final Payment (Fla. Stat. §713.20)',
+    },
+    statutoryRef: 'Fla. Stat. §713.20',
+    leadingNotice: 'NOTICE: This release is required by Florida Statute §713.20. Conditional releases are effective only on actual receipt of the funds described.',
+    notary: false,
+  },
+  NY: {
+    titleOverride: {
+      conditional_progress:   'Conditional Partial Waiver and Release of Lien (N.Y. Lien Law §34)',
+      unconditional_progress: 'Unconditional Partial Waiver and Release of Lien (N.Y. Lien Law §34)',
+      conditional_final:      'Conditional Final Waiver and Release of Lien (N.Y. Lien Law §34)',
+      unconditional_final:    'Unconditional Final Waiver and Release of Lien (N.Y. Lien Law §34)',
+    },
+    statutoryRef: 'N.Y. Lien Law §34',
+    leadingNotice: 'NOTICE: To be effective under N.Y. Lien Law §34, this waiver must be in writing, executed by the lienor, and (for full effectiveness against subsequently-perfected liens) acknowledged before a notary public.',
+    notary: true,
+  },
+};
+
+function getStateConfig(state, waiverType) {
+  if (!state) return null;
+  const conf = STATE_CONFIGS[state];
+  if (!conf) return null;
+  return {
+    title: conf.titleOverride[waiverType] || TYPE_TITLES[waiverType],
+    statutoryRef: conf.statutoryRef,
+    leadingNotice: conf.leadingNotice,
+    notary: conf.notary,
+  };
+}
 
 const s = StyleSheet.create({
   page: {
@@ -68,14 +131,25 @@ function bodyTextFor(waiver) {
 }
 
 export default function LienWaiverPDF({ waiver }) {
-  const title = TYPE_TITLES[waiver.waiver_type] || 'Lien Waiver';
+  const stateConf = getStateConfig(waiver.state, waiver.waiver_type);
+  const title = stateConf?.title || TYPE_TITLES[waiver.waiver_type] || 'Lien Waiver';
   return (
     <Document>
       <Page size="LETTER" style={s.page}>
         <View style={s.header}>
           <Text style={s.title}>{title}</Text>
-          {waiver.state && <Text style={s.subtitle}>State: {waiver.state} (generic template — consult counsel for statutory form)</Text>}
+          {stateConf
+            ? <Text style={s.subtitle}>{stateConf.statutoryRef}</Text>
+            : waiver.state && <Text style={s.subtitle}>State: {waiver.state} (generic template — consult counsel for statutory form)</Text>}
         </View>
+
+        {stateConf?.leadingNotice && (
+          <View style={{ marginBottom: 14, padding: 10, backgroundColor: '#f9fafb', borderLeft: '2pt solid #1a56db' }}>
+            <Text style={{ fontSize: 9, color: '#374151', lineHeight: 1.4 }}>
+              {stateConf.leadingNotice}
+            </Text>
+          </View>
+        )}
 
         <View style={s.metaTable}>
           <View style={s.metaRow}>
@@ -150,10 +224,39 @@ export default function LienWaiverPDF({ waiver }) {
           </View>
         </View>
 
+        {stateConf?.notary && (
+          <View style={{ marginTop: 32, padding: 14, border: '0.5pt solid #1a1a1a' }}>
+            <Text style={{ fontSize: 10, fontFamily: 'Times-Bold', textAlign: 'center', marginBottom: 12 }}>
+              ACKNOWLEDGMENT
+            </Text>
+            <Text style={{ fontSize: 9, lineHeight: 1.5 }}>
+              State of New York{'\n'}
+              County of __________________________{'\n\n'}
+              On the ______ day of __________________________, 20____, before me, the undersigned,
+              personally appeared {waiver.signer_name || '__________________________'}, personally known to me
+              or proved to me on the basis of satisfactory evidence to be the individual whose name is subscribed
+              to the within instrument and acknowledged to me that they executed the same in their capacity, and
+              that by their signature on the instrument, the individual, or the person upon behalf of which the
+              individual acted, executed the instrument.
+            </Text>
+            <View style={{ flexDirection: 'row', marginTop: 18 }}>
+              <View style={{ flex: 2 }}>
+                <View style={{ borderBottom: '0.5pt solid #6b7280', height: 22 }} />
+                <Text style={s.sigLabel}>Notary Public Signature</Text>
+              </View>
+              <View style={{ width: 16 }} />
+              <View style={{ flex: 1 }}>
+                <View style={{ borderBottom: '0.5pt solid #6b7280', height: 22 }} />
+                <Text style={s.sigLabel}>Commission Expires</Text>
+              </View>
+            </View>
+          </View>
+        )}
+
         <Text style={s.smallNote}>
-          This is a generic statutory-style template. Some states (California, Texas, Florida, New York,
-          Mississippi, others) require specific statutory forms with exact statutory language. Consult
-          counsel to confirm enforceability in the applicable jurisdiction.
+          {stateConf
+            ? `This template reflects the structure of ${stateConf.statutoryRef}. The exact statutory text controls; consult counsel before issuing waivers in a binding context.`
+            : 'This is a generic statutory-style template. Some states (California, Texas, Florida, New York, Mississippi, others) require specific statutory forms with exact statutory language. Consult counsel to confirm enforceability in the applicable jurisdiction.'}
         </Text>
       </Page>
     </Document>
