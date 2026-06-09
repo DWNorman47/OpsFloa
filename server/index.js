@@ -170,6 +170,13 @@ app.use('/api', requireAuth, requirePlan('business'), require('./routes/submitta
 // + invoices into a single screen. Auto-status items read live from
 // the source modules.
 app.use('/api', requireAuth, requirePlan('business'), require('./routes/closeout'));
+
+// Lien waivers — compliance tracking; conditional/unconditional waivers
+// in either direction. Public token-keyed signing surface for the
+// counterparty.
+const lienWaiverRoutes = require('./routes/lienWaivers');
+app.use('/api/public/lien-waivers', lienWaiverRoutes.publicRouter);
+app.use('/api', requireAuth, requirePlan('business'), lienWaiverRoutes);
 app.use('/api/availability', requireAuth, require('./routes/availability'));
 // Unauthenticated: browsers report errors here. The route itself extracts
 // user identity from the auth header when present.
