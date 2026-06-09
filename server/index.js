@@ -144,6 +144,10 @@ app.use('/api', requireAuth, requirePlan('business'), require('./routes/projectB
 
 // Per-project spend rollup (Phase 3) + project_expenses CRUD.
 app.use('/api', requireAuth, requirePlan('business'), require('./routes/projectSpend'));
+
+// Subcontractors directory + sub POs + payments. Spend rollup picks
+// the subs bucket up automatically once these tables exist.
+app.use('/api', requireAuth, requirePlan('business'), require('./routes/subcontractors'));
 app.use('/api/availability', requireAuth, require('./routes/availability'));
 // Unauthenticated: browsers report errors here. The route itself extracts
 // user identity from the auth header when present.
