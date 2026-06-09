@@ -177,6 +177,10 @@ app.use('/api', requireAuth, requirePlan('business'), require('./routes/closeout
 const lienWaiverRoutes = require('./routes/lienWaivers');
 app.use('/api/public/lien-waivers', lienWaiverRoutes.publicRouter);
 app.use('/api', requireAuth, requirePlan('business'), lienWaiverRoutes);
+
+// Booking module — appointment scheduling. Admin-only for the v1
+// config + book endpoint; public booking surface is a follow-up.
+app.use('/api', requireAuth, requirePlan('business'), require('./routes/booking'));
 app.use('/api/availability', requireAuth, require('./routes/availability'));
 // Unauthenticated: browsers report errors here. The route itself extracts
 // user identity from the auth header when present.
