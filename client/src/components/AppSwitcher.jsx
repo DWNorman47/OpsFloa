@@ -103,6 +103,21 @@ export const APPS = [
     path: '/projects',
   },
   {
+    id: 'sales',
+    name: 'Sales',
+    bg: '#0891b2',
+    adminOnly: true,
+    icon: (
+      <svg viewBox="0 0 20 20" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+        <path d="M3 6h14l-1.5 9.5h-11L3 6z" />
+        <path d="M7 6V4a3 3 0 0 1 6 0v2" />
+        <circle cx="7" cy="10" r="0.5" />
+        <circle cx="13" cy="10" r="0.5" />
+      </svg>
+    ),
+    path: '/sales',
+  },
+  {
     id: 'administration',
     name: 'Administration',
     bg: '#475569',

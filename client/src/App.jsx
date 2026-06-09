@@ -34,6 +34,8 @@ const EULA              = lazy(() => import('./pages/EULA'));
 const Tests             = lazy(() => import('./pages/Tests'));
 const Changelog         = lazy(() => import('./pages/Changelog'));
 const HelpPage          = lazy(() => import('./pages/HelpPage'));
+const EstimatesPage     = lazy(() => import('./pages/EstimatesPage'));
+const PublicEstimatePage = lazy(() => import('./pages/PublicEstimatePage'));
 
 function PageLoader() {
   return (
@@ -48,7 +50,7 @@ const BLOCKED_STATUSES = ['trial_expired', 'canceled'];
 function WorkerSubscriptionWall() {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f4f6f9', padding: 24 }}>
-      <div style={{ background: '#fff', borderRadius: 12, padding: '40px 32px', maxWidth: 400, textAlign: 'center', boxShadow: '0 2px 16px rgba(0,0,0,0.08)' }}>
+      <div style={{ background: '#fff', borderRadius: 12, padding: '40px 32px', maxWidth: 400, textAlign: 'center', boxShadow: '0 2px 16px rgba(0,0,0,0.08)' }}>
         <h2 style={{ fontSize: 20, fontWeight: 700, color: '#111827', marginBottom: 8 }}>Subscription ended</h2>
         <p style={{ fontSize: 14, color: '#6b7280', lineHeight: 1.6 }}>
           Your company's subscription has ended. Please contact your administrator to restore access.
@@ -133,6 +135,7 @@ function AppRoutes() {
       <Route path="/accept-invite" element={<AcceptInvite />} />
       <Route path="/confirm-email" element={<ConfirmEmail />} />
       <Route path="/r/:slug" element={<ServiceRequest />} />
+      <Route path="/e/:token" element={<PublicEstimatePage />} />
       <Route path="/team" element={<PrivateRoute moduleId="team"><TeamPage /></PrivateRoute>} />
       <Route path="/home" element={<PrivateRoute><HomePage /></PrivateRoute>} />
       <Route path="/__tests__" element={<Tests />} />
@@ -149,6 +152,7 @@ function AppRoutes() {
       <Route path="/administration" element={<PrivateRoute adminOnly moduleId="administration"><AdministrationPage /></PrivateRoute>} />
       <Route path="/analytics" element={<PrivateRoute adminOnly moduleId="analytics"><AnalyticsPage /></PrivateRoute>} />
       <Route path="/inventory" element={<PrivateRoute moduleId="inventory"><InventoryPage /></PrivateRoute>} />
+      <Route path="/sales" element={<PrivateRoute adminOnly moduleId="sales"><EstimatesPage /></PrivateRoute>} />
       <Route path="/account" element={<PrivateRoute><AccountPage /></PrivateRoute>} />
       <Route path="/help" element={<PrivateRoute><HelpPage /></PrivateRoute>} />
       <Route path="/superadmin" element={<PrivateRoute superAdminOnly><SuperAdmin /></PrivateRoute>} />

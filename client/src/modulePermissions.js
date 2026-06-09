@@ -48,6 +48,12 @@ export const MODULE_PERMISSIONS = {
   analytics: [
     'view_analytics',
   ],
+  // Sales = estimates + change orders + (eventually) templates + catalog picker.
+  // Admin-tier: anyone authorised to manage projects can draft estimates;
+  // sending and converting are gated server-side (and add stricter perms later).
+  sales: [
+    'manage_projects', 'manage_settings',
+  ],
 };
 
 // Modules every authenticated user can see in the app switcher, perms or not.
@@ -75,6 +81,7 @@ const LANDING_PRIORITY = [
   { id: 'timeclock',      path: '/timeclock' },      // participating (everyone starts here)
   { id: 'workforce',      path: '/workforce' },      // admin oversight
   { id: 'projects',       path: '/projects' },
+  { id: 'sales',          path: '/sales' },
   { id: 'team',           path: '/team' },
   { id: 'field',          path: '/field' },
   { id: 'inventory',      path: '/inventory' },
