@@ -132,6 +132,12 @@ app.use('/api/team', require('./routes/team'));
 const serviceRequestsRoutes = require('./routes/serviceRequests');
 app.use('/api/public/service-requests', serviceRequestsRoutes.publicRouter);
 app.use('/api/admin/service-requests', serviceRequestsRoutes);
+
+// Estimates — admin authenticated for management, token-keyed public
+// for client view/accept/decline (same pattern as service requests).
+const estimatesRoutes = require('./routes/estimates');
+app.use('/api/public/estimates', estimatesRoutes.publicRouter);
+app.use('/api/estimates', requireAuth, requirePlan('business'), estimatesRoutes);
 app.use('/api/availability', requireAuth, require('./routes/availability'));
 // Unauthenticated: browsers report errors here. The route itself extracts
 // user identity from the auth header when present.

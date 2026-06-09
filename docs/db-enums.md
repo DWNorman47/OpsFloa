@@ -79,6 +79,10 @@ For each column we record:
 | `time_off_requests.type` | `vacation`, `sick`, `personal`, `other` | **enforced** (CHECK in `0071`) | `server/routes/timeOff.js:9` | PTO categorization for reports. |
 | `qbo_sync_errors.entity_type` | `time_entry`, `reimbursement` | **enforced** (CHECK in `0071`) | `server/services/qbo.js` (writes only) | Discriminator for the QBO error log. |
 | `project_invoices.payment_status` | `unknown`, `paid`, `partial`, `unpaid` | **enforced** (CHECK in `0071`) | (verify route) | Invoice payment tracking. |
+| `estimates.status` | `draft`, `sent`, `accepted`, `declined`, `expired`, `withdrawn` | **enforced** (CHECK in `0104`) | `server/constants/projectMoneyEnums.js`, `server/routes/estimates.js` | Pre-work quote lifecycle. Sent/accepted/declined/expired are frozen — edits must duplicate to a new estimate. |
+| `estimate_lines.category` | `labor`, `materials`, `equipment`, `subs`, `overhead`, `contingency`, `other` | **enforced** (CHECK in `0104`) | `server/constants/projectMoneyEnums.js` (`MONEY_CATEGORIES`) | The shared category vocabulary that runs through estimate → budget → spend → P&L. Same seven values reused on `project_budget_categories.category`, `change_order_lines.category`, `project_expenses.category` (forthcoming). Keep them in lockstep. |
+| `estimate_audit.action` | `created`, `sent`, `accepted`, `declined`, `expired`, `withdrawn`, `converted` | **enforced** (CHECK in `0104`) | `server/constants/projectMoneyEnums.js`, `server/routes/estimates.js` | Audit trail. Public client actions (accept/decline) write rows with `actor_kind='client'`; cron-driven (expire) write `'system'`. |
+| `estimate_audit.actor_kind` | `admin`, `client`, `system` | **enforced** (CHECK in `0104`) | `server/constants/projectMoneyEnums.js`, `server/routes/estimates.js` | Distinguishes a public token-keyed action (no `actor_user_id`) from a logged-in admin or a background job. |
 
 ## Cosmetic / UI columns
 
