@@ -118,6 +118,37 @@ export const APPS = [
     path: '/sales',
   },
   {
+    id: 'subs',
+    name: 'Subs',
+    bg: '#0f3a8a',
+    adminOnly: true,
+    icon: (
+      <svg viewBox="0 0 20 20" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+        <circle cx="6" cy="6" r="2.5" />
+        <circle cx="14" cy="6" r="2.5" />
+        <path d="M2 16c0-2.5 2-4.5 4-4.5s4 2 4 4.5" />
+        <path d="M10 16c0-2.5 2-4.5 4-4.5s4 2 4 4.5" />
+      </svg>
+    ),
+    path: '/subs',
+  },
+  {
+    id: 'financial_reports',
+    name: 'Reports',
+    bg: '#15803d',
+    adminOnly: true,
+    icon: (
+      <svg viewBox="0 0 20 20" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+        <path d="M3 16V8" />
+        <path d="M8 16V4" />
+        <path d="M13 16v-7" />
+        <path d="M18 16v-4" />
+        <path d="M2 17h17" />
+      </svg>
+    ),
+    path: '/financial-reports',
+  },
+  {
     id: 'administration',
     name: 'Administration',
     bg: '#475569',

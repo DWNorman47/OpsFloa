@@ -54,6 +54,15 @@ export const MODULE_PERMISSIONS = {
   sales: [
     'manage_projects', 'manage_settings',
   ],
+  // Subs = subcontractor directory + sub POs + payments. Procurement /
+  // project management surface.
+  subs: [
+    'manage_projects', 'manage_settings',
+  ],
+  // Financial reports: P&L portfolio + WIP. Owner/admin reporting view.
+  financial_reports: [
+    'view_analytics', 'manage_settings',
+  ],
 };
 
 // Modules every authenticated user can see in the app switcher, perms or not.
@@ -82,6 +91,8 @@ const LANDING_PRIORITY = [
   { id: 'workforce',      path: '/workforce' },      // admin oversight
   { id: 'projects',       path: '/projects' },
   { id: 'sales',          path: '/sales' },
+  { id: 'subs',           path: '/subs' },
+  { id: 'financial_reports', path: '/financial-reports' },
   { id: 'team',           path: '/team' },
   { id: 'field',          path: '/field' },
   { id: 'inventory',      path: '/inventory' },
