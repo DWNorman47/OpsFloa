@@ -40,6 +40,8 @@ const SubsPage          = lazy(() => import('./pages/SubsPage'));
 const FinancialReportsPage = lazy(() => import('./pages/FinancialReportsPage'));
 const ChangeOrdersPage  = lazy(() => import('./pages/ChangeOrdersPage'));
 const PublicChangeOrderPage = lazy(() => import('./pages/PublicChangeOrderPage'));
+const SubmittalsPage    = lazy(() => import('./pages/SubmittalsPage'));
+const CloseoutPage      = lazy(() => import('./pages/CloseoutPage'));
 
 function PageLoader() {
   return (
@@ -159,6 +161,8 @@ function AppRoutes() {
       <Route path="/inventory" element={<PrivateRoute moduleId="inventory"><InventoryPage /></PrivateRoute>} />
       <Route path="/sales" element={<PrivateRoute adminOnly moduleId="sales"><EstimatesPage /></PrivateRoute>} />
       <Route path="/change-orders" element={<PrivateRoute adminOnly moduleId="sales"><ChangeOrdersPage /></PrivateRoute>} />
+      <Route path="/submittals" element={<PrivateRoute adminOnly moduleId="field"><SubmittalsPage /></PrivateRoute>} />
+      <Route path="/closeout" element={<PrivateRoute adminOnly moduleId="workforce"><CloseoutPage /></PrivateRoute>} />
       <Route path="/subs" element={<PrivateRoute adminOnly moduleId="subs"><SubsPage /></PrivateRoute>} />
       <Route path="/financial-reports" element={<PrivateRoute adminOnly moduleId="financial_reports"><FinancialReportsPage /></PrivateRoute>} />
       <Route path="/account" element={<PrivateRoute><AccountPage /></PrivateRoute>} />
