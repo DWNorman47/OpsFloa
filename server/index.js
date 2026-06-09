@@ -148,6 +148,13 @@ app.use('/api', requireAuth, requirePlan('business'), require('./routes/projectS
 // Subcontractors directory + sub POs + payments. Spend rollup picks
 // the subs bucket up automatically once these tables exist.
 app.use('/api', requireAuth, requirePlan('business'), require('./routes/subcontractors'));
+
+// Material catalog (estimate-line picker) + reusable item search.
+app.use('/api', requireAuth, requirePlan('business'), require('./routes/catalog'));
+
+// P&L dashboard + WIP report — read-only aggregations on top of
+// estimates / budgets / spend / invoices.
+app.use('/api', requireAuth, requirePlan('business'), require('./routes/projectReports'));
 app.use('/api/availability', requireAuth, require('./routes/availability'));
 // Unauthenticated: browsers report errors here. The route itself extracts
 // user identity from the auth header when present.
