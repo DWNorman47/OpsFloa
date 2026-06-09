@@ -42,6 +42,7 @@ const ChangeOrdersPage  = lazy(() => import('./pages/ChangeOrdersPage'));
 const PublicChangeOrderPage = lazy(() => import('./pages/PublicChangeOrderPage'));
 const SubmittalsPage    = lazy(() => import('./pages/SubmittalsPage'));
 const CloseoutPage      = lazy(() => import('./pages/CloseoutPage'));
+const LienWaiversPage   = lazy(() => import('./pages/LienWaiversPage'));
 
 function PageLoader() {
   return (
@@ -163,6 +164,7 @@ function AppRoutes() {
       <Route path="/change-orders" element={<PrivateRoute adminOnly moduleId="sales"><ChangeOrdersPage /></PrivateRoute>} />
       <Route path="/submittals" element={<PrivateRoute adminOnly moduleId="field"><SubmittalsPage /></PrivateRoute>} />
       <Route path="/closeout" element={<PrivateRoute adminOnly moduleId="workforce"><CloseoutPage /></PrivateRoute>} />
+      <Route path="/lien-waivers" element={<PrivateRoute adminOnly moduleId="workforce"><LienWaiversPage /></PrivateRoute>} />
       <Route path="/subs" element={<PrivateRoute adminOnly moduleId="subs"><SubsPage /></PrivateRoute>} />
       <Route path="/financial-reports" element={<PrivateRoute adminOnly moduleId="financial_reports"><FinancialReportsPage /></PrivateRoute>} />
       <Route path="/account" element={<PrivateRoute><AccountPage /></PrivateRoute>} />
