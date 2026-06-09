@@ -65,7 +65,12 @@ function EstimatesList({ onOpen, onNew }) {
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, gap: 12, flexWrap: 'wrap' }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>Estimates</h1>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 16 }}>
+          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>Estimates</h1>
+          <a href="/change-orders" style={{ fontSize: 14, color: '#1a56db', textDecoration: 'none', fontWeight: 600 }}>
+            Change Orders →
+          </a>
+        </div>
         <button onClick={onNew} style={styles.primaryBtn}>
           + New Estimate
         </button>
