@@ -315,9 +315,19 @@ function EstimateForm({ existing, onSave, onCancel }) {
             </tbody>
           </table>
         </div>
-        <button onClick={addLine} style={{ ...styles.ghostBtn, marginTop: 12 }}>
-          + Add line
-        </button>
+        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+          <button onClick={addLine} style={styles.ghostBtn}>+ Add line</button>
+          <CatalogPicker onPick={(picked) => {
+            // Append a new line pre-filled from the catalog item.
+            setLines(arr => [...arr, {
+              category: picked.category || 'materials',
+              description: picked.description,
+              qty: 1,
+              unit: picked.unit || '',
+              unit_cost_cents: picked.unit_cost_cents,
+            }]);
+          }} />
+        </div>
       </div>
 
       <div style={styles.formCard}>
@@ -368,6 +378,91 @@ function Field({ label, required, children }) {
       {label}{required && <span style={{ color: '#ef4444' }}>*</span>}
       {children}
     </label>
+  );
+}
+
+// Modal picker that searches /catalog/items, lets the user select one,
+// resolves it via /catalog/items/:id/estimate-line, and passes the line
+// shape up. Lightweight; opens inline rather than a true modal so it
+// doesn't fight with the rest of the form.
+function CatalogPicker({ onPick }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setLoading(true);
+    const params = q ? { q } : {};
+    const t = setTimeout(() => {
+      api.get('/catalog/items', { params, limit: 30 })
+        .then(({ data }) => setItems(data.items || []))
+        .catch(() => setItems([]))
+        .finally(() => setLoading(false));
+    }, 200);
+    return () => clearTimeout(t);
+  }, [q, open]);
+
+  async function pick(item) {
+    try {
+      const { data } = await api.get(`/catalog/items/${item.id}/estimate-line`);
+      onPick(data);
+      setOpen(false);
+      setQ('');
+    } catch { /* ignore */ }
+  }
+
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} style={{ background: '#f0f4ff', color: '#1d4ed8', border: '1px solid #c7d2fe', padding: '8px 14px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>
+        + From catalog
+      </button>
+    );
+  }
+  return (
+    <div style={{
+      position: 'absolute', zIndex: 50, background: '#fff',
+      border: '1px solid #d1d5db', borderRadius: 8, padding: 12,
+      boxShadow: '0 8px 24px rgba(0,0,0,0.12)', width: 480, maxHeight: 360, overflow: 'auto',
+      marginTop: 40,
+    }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+        <input
+          autoFocus
+          placeholder="Search catalog..."
+          value={q}
+          onChange={e => setQ(e.target.value)}
+          style={{ padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, flex: 1 }}
+        />
+        <button onClick={() => { setOpen(false); setQ(''); }} style={{ background: 'transparent', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 18 }}>×</button>
+      </div>
+      {loading ? (
+        <div style={{ fontSize: 13, color: '#6b7280', padding: 12 }}>Searching...</div>
+      ) : items.length === 0 ? (
+        <div style={{ fontSize: 13, color: '#6b7280', padding: 12 }}>No matches.</div>
+      ) : (
+        <div>
+          {items.map(item => (
+            <div
+              key={item.id}
+              onClick={() => pick(item)}
+              style={{ padding: '8px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}
+              onMouseEnter={e => e.currentTarget.style.background = '#f3f4f6'}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+            >
+              <div style={{ fontWeight: 600, color: '#111827' }}>{item.name}</div>
+              <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
+                {item.sku && `${item.sku} · `}
+                {item.unit && `per ${item.unit}`}
+                {item.sell_price_cents != null && ` · ${formatCents(item.sell_price_cents)}`}
+                {!item.is_stocked && ' · catalog only'}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -43,6 +43,8 @@ const PublicChangeOrderPage = lazy(() => import('./pages/PublicChangeOrderPage')
 const SubmittalsPage    = lazy(() => import('./pages/SubmittalsPage'));
 const CloseoutPage      = lazy(() => import('./pages/CloseoutPage'));
 const LienWaiversPage   = lazy(() => import('./pages/LienWaiversPage'));
+const PublicLienWaiverSignPage = lazy(() => import('./pages/PublicLienWaiverSignPage'));
+const CatalogPage       = lazy(() => import('./pages/CatalogPage'));
 
 function PageLoader() {
   return (
@@ -144,6 +146,7 @@ function AppRoutes() {
       <Route path="/r/:slug" element={<ServiceRequest />} />
       <Route path="/e/:token" element={<PublicEstimatePage />} />
       <Route path="/co/:token" element={<PublicChangeOrderPage />} />
+      <Route path="/lien-waiver-sign/:token" element={<PublicLienWaiverSignPage />} />
       <Route path="/team" element={<PrivateRoute moduleId="team"><TeamPage /></PrivateRoute>} />
       <Route path="/home" element={<PrivateRoute><HomePage /></PrivateRoute>} />
       <Route path="/__tests__" element={<Tests />} />
@@ -165,6 +168,7 @@ function AppRoutes() {
       <Route path="/submittals" element={<PrivateRoute adminOnly moduleId="field"><SubmittalsPage /></PrivateRoute>} />
       <Route path="/closeout" element={<PrivateRoute adminOnly moduleId="workforce"><CloseoutPage /></PrivateRoute>} />
       <Route path="/lien-waivers" element={<PrivateRoute adminOnly moduleId="workforce"><LienWaiversPage /></PrivateRoute>} />
+      <Route path="/catalog" element={<PrivateRoute moduleId="inventory"><CatalogPage /></PrivateRoute>} />
       <Route path="/subs" element={<PrivateRoute adminOnly moduleId="subs"><SubsPage /></PrivateRoute>} />
       <Route path="/financial-reports" element={<PrivateRoute adminOnly moduleId="financial_reports"><FinancialReportsPage /></PrivateRoute>} />
       <Route path="/account" element={<PrivateRoute><AccountPage /></PrivateRoute>} />

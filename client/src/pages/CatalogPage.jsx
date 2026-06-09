@@ -1,0 +1,192 @@
+// Material catalog — typeahead-friendly view of inventory_items that
+// can pre-fill estimate lines. is_stocked=false rows are pure catalog
+// entries (no qty tracking, no inventory adjustments); is_stocked=true
+// are stocked items that ALSO appear in the catalog picker.
+
+import React, { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import api from '../api';
+import AppHeader from '../components/AppHeader';
+import { SkeletonList } from '../components/Skeleton';
+import EmptyState from '../components/EmptyState';
+import { silentError } from '../errorReporter';
+
+const CATEGORIES = ['labor', 'materials', 'equipment', 'subs', 'overhead', 'contingency', 'other'];
+
+function formatCents(cents) {
+  const n = (parseInt(cents, 10) || 0) / 100;
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
+}
+
+function formatDollars(dollars) {
+  const n = parseFloat(dollars) || 0;
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
+}
+
+export default function CatalogPage() {
+  const { user } = useAuth();
+  const [items, setItems] = useState([]);
+  const [tags, setTags] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [q, setQ] = useState('');
+  const [tagFilter, setTagFilter] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = {};
+      if (q) params.q = q;
+      if (tagFilter) params.tag = tagFilter;
+      const { data } = await api.get('/catalog/items', { params });
+      setItems(data.items || []);
+    } catch (err) { silentError(err); }
+    finally { setLoading(false); }
+  }, [q, tagFilter]);
+
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    api.get('/catalog/tags').then(({ data }) => setTags(data.tags || [])).catch(() => {});
+  }, []);
+
+  return (
+    <div style={{ minHeight: '100vh', background: '#f9fafb' }}>
+      <AppHeader currentApp="inventory" userRole={user?.role} />
+      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
+          <div>
+            <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>Material Catalog</h1>
+            <p style={{ fontSize: 13, color: '#6b7280', margin: '4px 0 0' }}>
+              Items here pre-fill estimate lines. Use the existing Inventory page to set is_stocked, sell_price, default category and tags.
+            </p>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+          <input
+            type="search"
+            placeholder="Search by name or SKU..."
+            value={q}
+            onChange={e => setQ(e.target.value)}
+            style={styles.searchInput}
+          />
+          <select value={tagFilter} onChange={e => setTagFilter(e.target.value)} style={styles.select}>
+            <option value="">All tags</option>
+            {tags.map(tag => <option key={tag} value={tag}>{tag}</option>)}
+          </select>
+        </div>
+
+        {loading ? <SkeletonList rows={4} /> :
+          items.length === 0 ? (
+            <EmptyState
+              title="No catalog items yet"
+              body="Mark inventory items as is_stocked=false (pure catalog) or set sell_price_cents/tags on stocked items to surface them here."
+            />
+          ) : (
+            <div style={styles.tableWrap}>
+              <table style={styles.table}>
+                <thead>
+                  <tr style={styles.tableHeader}>
+                    <th style={styles.th}>Name</th>
+                    <th style={styles.th}>SKU</th>
+                    <th style={styles.th}>Unit</th>
+                    <th style={{ ...styles.th, textAlign: 'right' }}>Cost</th>
+                    <th style={{ ...styles.th, textAlign: 'right' }}>Sell</th>
+                    <th style={styles.th}>Default category</th>
+                    <th style={styles.th}>Tags</th>
+                    <th style={styles.th}>Type</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map(item => (
+                    <CatalogRow key={item.id} item={item} onChanged={load} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        }
+      </div>
+    </div>
+  );
+}
+
+function CatalogRow({ item, onChanged }) {
+  const [showPreview, setShowPreview] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const sellCents = item.sell_price_cents != null ? parseInt(item.sell_price_cents, 10) : null;
+
+  async function loadPreview() {
+    if (preview) { setShowPreview(s => !s); return; }
+    try {
+      const { data } = await api.get(`/catalog/items/${item.id}/estimate-line`);
+      setPreview(data);
+      setShowPreview(true);
+    } catch (err) {
+      silentError(err);
+    }
+  }
+
+  return (
+    <>
+      <tr style={{ borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }} onClick={loadPreview}>
+        <td style={styles.td}><strong>{item.name}</strong></td>
+        <td style={styles.td}>{item.sku || '—'}</td>
+        <td style={styles.td}>{item.unit || '—'}</td>
+        <td style={{ ...styles.td, textAlign: 'right' }}>{item.unit_cost != null ? formatDollars(item.unit_cost) : '—'}</td>
+        <td style={{ ...styles.td, textAlign: 'right' }}>{sellCents != null ? formatCents(sellCents) : (item.default_markup_pct ? `${item.default_markup_pct}% mkup` : '—')}</td>
+        <td style={styles.td}>
+          {item.default_estimate_category ? (
+            <span style={styles.catChip}>{item.default_estimate_category}</span>
+          ) : '—'}
+        </td>
+        <td style={styles.td}>
+          {item.catalog_tags?.length ? (
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {item.catalog_tags.map(t => (
+                <span key={t} style={styles.tagChip}>{t}</span>
+              ))}
+            </div>
+          ) : '—'}
+        </td>
+        <td style={styles.td}>
+          <span style={item.is_stocked ? styles.stockChip : styles.catalogOnlyChip}>
+            {item.is_stocked ? 'Stocked' : 'Catalog only'}
+          </span>
+        </td>
+      </tr>
+      {showPreview && preview && (
+        <tr style={{ background: '#f0f4ff', borderBottom: '1px solid #c7d2fe' }}>
+          <td colSpan={8} style={{ padding: '12px 14px' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#3730a3', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+              Estimate-line preview
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16, fontSize: 14 }}>
+              <span><strong>{preview.description}</strong></span>
+              <span style={{ color: '#6b7280' }}>per {preview.unit || 'unit'}</span>
+              <span style={{ color: '#3730a3', fontWeight: 600 }}>{formatCents(preview.unit_cost_cents)}</span>
+              <span style={styles.catChip}>{preview.category}</span>
+            </div>
+            <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>
+              When picked into an estimate line, those values pre-fill (qty defaults to 1). Resolved server-side via{' '}
+              <code style={{ background: '#fff', padding: '1px 4px', borderRadius: 3 }}>GET /catalog/items/{item.id}/estimate-line</code>.
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+const styles = {
+  searchInput: { padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, flex: 1, minWidth: 240 },
+  select: { padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, background: '#fff' },
+  tableWrap: { background: '#fff', borderRadius: 8, boxShadow: '0 1px 2px rgba(0,0,0,0.04)', overflow: 'auto' },
+  table: { width: '100%', borderCollapse: 'collapse', fontSize: 14 },
+  tableHeader: { background: '#f9fafb', borderBottom: '1px solid #e5e7eb' },
+  th: { textAlign: 'left', padding: '10px 14px', fontSize: 11, color: '#6b7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' },
+  td: { padding: '12px 14px', color: '#111827' },
+  catChip: { display: 'inline-block', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 8, background: '#dbeafe', color: '#1d4ed8', textTransform: 'uppercase', letterSpacing: '0.04em' },
+  tagChip: { fontSize: 11, padding: '2px 6px', borderRadius: 8, background: '#f3f4f6', color: '#374151' },
+  stockChip: { fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 8, background: '#d1fae5', color: '#065f46', textTransform: 'uppercase', letterSpacing: '0.04em' },
+  catalogOnlyChip: { fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 8, background: '#fef3c7', color: '#92400e', textTransform: 'uppercase', letterSpacing: '0.04em' },
+};
