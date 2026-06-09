@@ -141,6 +141,9 @@ app.use('/api/estimates', requireAuth, requirePlan('business'), estimatesRoutes)
 
 // Per-project budget category CRUD — feeds the spend rollup + budget bar.
 app.use('/api', requireAuth, requirePlan('business'), require('./routes/projectBudget'));
+
+// Per-project spend rollup (Phase 3) + project_expenses CRUD.
+app.use('/api', requireAuth, requirePlan('business'), require('./routes/projectSpend'));
 app.use('/api/availability', requireAuth, require('./routes/availability'));
 // Unauthenticated: browsers report errors here. The route itself extracts
 // user identity from the auth header when present.
