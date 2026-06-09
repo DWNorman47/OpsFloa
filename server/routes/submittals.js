@@ -272,14 +272,22 @@ router.post('/submittals/:id/stamp', requireAdmin, async (req, res) => {
     if (s.status !== 'sent_to_reviewer') {
       return res.status(409).json({ error: `Cannot stamp from '${s.status}'` });
     }
+    // Only prepend the "Review notes:" prefix if we actually have notes
+    // to record; otherwise an empty stamp would write "Review notes: "
+    // (trailing-colon, no content) into the column.
+    const trimmedNotes = response_notes ? response_notes.toString().trim() : '';
     const r = await pool.query(
       `UPDATE submittals SET
          status = $1,
          reviewer_stamp = $1,
          reviewer_responded_at = NOW(),
-         notes = COALESCE(notes || E'\n\nReview notes: ', 'Review notes: ') || COALESCE($2, '')
+         notes = CASE
+           WHEN $2 IS NULL OR $2 = '' THEN notes
+           WHEN notes IS NULL OR notes = '' THEN 'Review notes: ' || $2
+           ELSE notes || E'\n\nReview notes: ' || $2
+         END
        WHERE id = $3 RETURNING *`,
-      [stamp, response_notes || null, req.params.id]
+      [stamp, trimmedNotes || null, req.params.id]
     );
     await recordAudit({
       submittalId: req.params.id,

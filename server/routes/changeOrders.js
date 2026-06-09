@@ -373,7 +373,26 @@ router.post('/change-orders/:id/withdraw', requireAdmin, async (req, res) => {
 
 // Admin-side accept (e.g. shop-internal approval; the public token-keyed
 // path also exists). Both flow through the same budget-bump logic.
+//
+// Guarded against double-bumping by the budget_applied_at column on the CO
+// row: if it's already set, this is a no-op. This matters because admins
+// could (in theory) flip status manually or roll a CO back; the public
+// accept path also has a status guard, but budget_applied_at is the
+// canonical idempotency flag and the code now actually checks it.
 async function applyAcceptedCoToBudget(client, coId, projectId) {
+  // Idempotency check — read with FOR UPDATE so a concurrent accept
+  // can't squeeze through between the read and the marker write.
+  const guardRes = await client.query(
+    `SELECT budget_applied_at, total_cents FROM change_orders WHERE id = $1 FOR UPDATE`,
+    [coId]
+  );
+  if (guardRes.rowCount === 0) return 0;
+  if (guardRes.rows[0].budget_applied_at) {
+    // Already applied — no-op so duplicate accept can't double-bump.
+    return 0;
+  }
+  const totalCents = parseInt(guardRes.rows[0].total_cents, 10) || 0;
+
   // Aggregate line totals by category.
   const sumsRes = await client.query(
     `SELECT category, SUM(total_cents)::bigint AS sum_cents
@@ -396,13 +415,16 @@ async function applyAcceptedCoToBudget(client, coId, projectId) {
       [projectId, row.category, cents]
     );
   }
-  // Reset the alert watermark — a new commitment level means alerts
-  // should re-fire at the next threshold crossing.
+  // Reset the alert watermark + bump legacy budget_dollars by total in
+  // dollars. Use a parameterised round on the JS side to avoid the
+  // integer-truncation that `(total_cents / 100)` does in SQL — odd
+  // cent totals would otherwise drop a dollar.
+  const totalDollars = Math.round(totalCents / 100);
   await client.query(
     `UPDATE projects SET budget_alert_pct = NULL,
-            budget_dollars = COALESCE(budget_dollars, 0) + (SELECT total_cents FROM change_orders WHERE id = $1) / 100
+            budget_dollars = COALESCE(budget_dollars, 0) + $1
       WHERE id = $2`,
-    [coId, projectId]
+    [totalDollars, projectId]
   );
   // Mark the CO as applied so a duplicate re-fire is a no-op.
   await client.query(

@@ -172,7 +172,10 @@ async function computeAutoStatus(companyId, projectId, item) {
             AND status IN ('signed','received')`,
         [projectId]
       );
-      return parseInt(r.rows[0].done, 10) > 0 ? 'done' : 'pending';
+      // Consistent with punchlist + lien_waivers_subs: 'in_progress'
+      // for not-yet-done so the UI shows a half-filled icon rather
+      // than reverting to 'pending' (which suggests "untouched").
+      return parseInt(r.rows[0].done, 10) > 0 ? 'done' : 'in_progress';
     } catch { return null; }
   }
   if (item.auto_source === 'invoices' && item.category === 'final_invoice') {
@@ -183,7 +186,7 @@ async function computeAutoStatus(companyId, projectId, item) {
           WHERE project_id = $1 AND payment_status = 'paid'`,
         [projectId]
       );
-      return parseInt(r.rows[0].done, 10) > 0 ? 'done' : 'pending';
+      return parseInt(r.rows[0].done, 10) > 0 ? 'done' : 'in_progress';
     } catch { return null; }
   }
   if (item.auto_source === 'invoices' && item.category === 'retainage_release') {
@@ -193,7 +196,7 @@ async function computeAutoStatus(companyId, projectId, item) {
            FROM project_invoices WHERE project_id = $1`,
         [projectId]
       );
-      return parseFloat(r.rows[0].open_balance) === 0 ? 'done' : 'pending';
+      return parseFloat(r.rows[0].open_balance) === 0 ? 'done' : 'in_progress';
     } catch { return null; }
   }
   return null;
