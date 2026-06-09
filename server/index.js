@@ -138,6 +138,9 @@ app.use('/api/admin/service-requests', serviceRequestsRoutes);
 const estimatesRoutes = require('./routes/estimates');
 app.use('/api/public/estimates', estimatesRoutes.publicRouter);
 app.use('/api/estimates', requireAuth, requirePlan('business'), estimatesRoutes);
+
+// Per-project budget category CRUD — feeds the spend rollup + budget bar.
+app.use('/api', requireAuth, requirePlan('business'), require('./routes/projectBudget'));
 app.use('/api/availability', requireAuth, require('./routes/availability'));
 // Unauthenticated: browsers report errors here. The route itself extracts
 // user identity from the auth header when present.

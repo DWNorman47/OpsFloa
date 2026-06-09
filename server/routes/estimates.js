@@ -441,9 +441,10 @@ router.post('/:id/withdraw', requireAdmin, async (req, res) => {
   }
 });
 
-// POST /estimates/:id/convert — accepted → project. Phase 2 will seed
-// budget categories from the line totals; this commit just creates a
-// minimal project row and links the estimate so the wiring is provable.
+// POST /estimates/:id/convert — accepted → project. Creates a projects
+// row AND seeds project_budget_categories with one row per category
+// summed from the estimate lines. The shared MONEY_CATEGORIES vocabulary
+// is what makes this seamless — same column values, no mapping table.
 router.post('/:id/convert', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   const client = await pool.connect();
@@ -466,14 +467,36 @@ router.post('/:id/convert', requireAdmin, async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Estimate already converted' });
     }
+    // Sum line totals by category — this is the seed for budget categories.
+    const catSumsRes = await client.query(
+      `SELECT category, SUM(total_cents)::bigint AS sum_cents
+         FROM estimate_lines
+        WHERE estimate_id = $1
+        GROUP BY category`,
+      [req.params.id]
+    );
     const projRes = await client.query(
       `INSERT INTO projects (company_id, name, address, budget_dollars, active, client_id, created_at)
        VALUES ($1, $2, $3, $4, true, $5, NOW()) RETURNING id`,
       [companyId, est.project_name, est.project_address,
-       Math.round(parseInt(est.total_cents, 10) / 100),  // legacy single-bucket; Phase 2 swaps to categories
+       // Keep budget_dollars populated for legacy reads during the
+       // transition. Total in dollars (round at the cent edge).
+       Math.round(parseInt(est.total_cents, 10) / 100),
        est.client_id]
     );
     const projectId = projRes.rows[0].id;
+    // Seed per-category budgets. Skip zero-cent rows so unused categories
+    // don't litter the budget bar.
+    for (const row of catSumsRes.rows) {
+      const cents = parseInt(row.sum_cents, 10);
+      if (!cents) continue;
+      await client.query(
+        `INSERT INTO project_budget_categories (project_id, category, budget_cents)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (project_id, category) DO UPDATE SET budget_cents = EXCLUDED.budget_cents`,
+        [projectId, row.category, cents]
+      );
+    }
     await client.query(
       `UPDATE estimates SET converted_project_id = $1 WHERE id = $2`,
       [projectId, req.params.id]
@@ -482,12 +505,13 @@ router.post('/:id/convert', requireAdmin, async (req, res) => {
     await recordAudit({
       estimateId: req.params.id, action: 'converted', actorKind: 'admin',
       actorUserId: req.user.id, actorIp: req.ip,
-      details: { project_id: projectId },
+      details: { project_id: projectId, categories_seeded: catSumsRes.rowCount },
     });
     await logAudit(companyId, req.user.id, req.user.full_name,
-      'estimate.converted', 'estimate', req.params.id, est.estimate_number, { project_id: projectId });
+      'estimate.converted', 'estimate', req.params.id, est.estimate_number,
+      { project_id: projectId, categories_seeded: catSumsRes.rowCount });
     const full = await loadEstimateFull(companyId, req.params.id);
-    res.json({ ...full, project_id: projectId });
+    res.json({ ...full, project_id: projectId, categories_seeded: catSumsRes.rowCount });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     req.log.error({ err }, 'estimate convert error');
