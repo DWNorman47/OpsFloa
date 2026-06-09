@@ -316,6 +316,31 @@ function LienWaiverDetail({ id, onBack }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [sendToken, setSendToken] = useState(null);
+  const [pdfGenerating, setPdfGenerating] = useState(false);
+
+  async function downloadPDF() {
+    if (!w) return;
+    setPdfGenerating(true);
+    try {
+      const [{ pdf }, { default: LienWaiverPDF }] = await Promise.all([
+        import('@react-pdf/renderer'),
+        import('../components/LienWaiverPDF'),
+      ]);
+      const el = React.createElement(LienWaiverPDF, { waiver: w });
+      const blob = await pdf(el).toBlob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const safeId = String(w.id).replace(/[^a-z0-9]/gi, '');
+      a.download = `lien-waiver-${safeId}-${w.waiver_type}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError('PDF generation failed');
+    } finally { setPdfGenerating(false); }
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -389,6 +414,9 @@ function LienWaiverDetail({ id, onBack }) {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <button onClick={downloadPDF} disabled={pdfGenerating} style={styles.ghostBtn}>
+            {pdfGenerating ? 'Generating...' : 'Download PDF'}
+          </button>
           {w.status === 'draft' && (
             <button onClick={send} disabled={busy} style={styles.primaryBtn}>Send (generate sign link)</button>
           )}
