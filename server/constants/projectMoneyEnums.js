@@ -39,6 +39,18 @@ const ESTIMATE_AUDIT_ACTIONS = Object.freeze([
   'created', 'sent', 'accepted', 'declined', 'expired', 'withdrawn', 'converted',
 ]);
 
+// Change-order lifecycle. Narrower than estimates — no 'expired'
+// (COs don't time out; they wait on the client) and no 'converted'
+// (a CO never creates a new project; it amends an existing one).
+const CHANGE_ORDER_STATUSES = Object.freeze([
+  'draft', 'sent', 'accepted', 'declined', 'withdrawn',
+]);
+
+// CO statuses frozen against edits (mirrors ESTIMATE_FROZEN_STATUSES).
+const CHANGE_ORDER_FROZEN_STATUSES = Object.freeze([
+  'sent', 'accepted', 'declined',
+]);
+
 // Who/what wrote an audit row. 'client' is reserved for token-keyed
 // public actions; 'system' for cron-driven (e.g. expiry).
 const ESTIMATE_AUDIT_ACTOR_KINDS = Object.freeze([
@@ -89,6 +101,8 @@ module.exports = {
   MONEY_CATEGORIES,
   ESTIMATE_AUDIT_ACTIONS,
   ESTIMATE_AUDIT_ACTOR_KINDS,
+  CHANGE_ORDER_STATUSES,
+  CHANGE_ORDER_FROZEN_STATUSES,
   computeEstimateTotals,
   computeLineTotal,
 };

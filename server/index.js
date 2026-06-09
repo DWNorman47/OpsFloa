@@ -155,6 +155,12 @@ app.use('/api', requireAuth, requirePlan('business'), require('./routes/catalog'
 // P&L dashboard + WIP report — read-only aggregations on top of
 // estimates / budgets / spend / invoices.
 app.use('/api', requireAuth, requirePlan('business'), require('./routes/projectReports'));
+
+// Change orders — mid-project scope adjustments that bump budget categories
+// on accept. Public token-keyed view/accept/decline mirrors estimates.
+const changeOrderRoutes = require('./routes/changeOrders');
+app.use('/api/public/change-orders', changeOrderRoutes.publicRouter);
+app.use('/api', requireAuth, requirePlan('business'), changeOrderRoutes);
 app.use('/api/availability', requireAuth, require('./routes/availability'));
 // Unauthenticated: browsers report errors here. The route itself extracts
 // user identity from the auth header when present.
