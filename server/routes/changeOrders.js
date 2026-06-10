@@ -21,7 +21,10 @@ function isFrozen(status) {
 function parsePct(v) {
   if (v === undefined || v === null || v === '') return 0;
   const n = typeof v === 'number' ? v : parseFloat(v);
-  if (!Number.isFinite(n) || n < 0 || n > 1000) return null;
+  // Tightened to 100% in 0115 — matches the DB CHECK constraint added
+  // there. Anything past 100 is almost certainly a unit confusion
+  // ("18% as 18 vs 0.18") rather than legitimate markup.
+  if (!Number.isFinite(n) || n < 0 || n > 100) return null;
   return n;
 }
 
@@ -333,7 +336,12 @@ router.post('/change-orders/:id/send', requireAdmin, async (req, res) => {
     await recomputeTotals(client, req.params.id);
     const rawToken = crypto.randomBytes(32).toString('hex');
     await client.query(
-      `UPDATE change_orders SET status='sent', sent_at=NOW(), response_token_hash=$1, send_email_status='pending' WHERE id=$2`,
+      // Same as estimates.js /send: no email actually sent today (raw
+      // token returned to the admin). send_email_status stays NULL
+      // until a real email path is wired; writing 'pending' would
+      // leave every CO forever-pending and erode the column's
+      // value as a failure signal.
+      `UPDATE change_orders SET status='sent', sent_at=NOW(), response_token_hash=$1 WHERE id=$2`,
       [sha256(rawToken), req.params.id]
     );
     await client.query('COMMIT');

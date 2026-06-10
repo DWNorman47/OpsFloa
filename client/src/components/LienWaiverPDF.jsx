@@ -74,7 +74,11 @@ const STATE_CONFIGS = {
 
 function getStateConfig(state, waiverType) {
   if (!state) return null;
-  const conf = STATE_CONFIGS[state];
+  // Normalise: trim whitespace + uppercase. Without this, a waiver with
+  // state='ca' or ' CA ' would silently fall through to the generic
+  // statutory template — legally meaningful for a CA lien waiver.
+  const key = String(state).trim().toUpperCase();
+  const conf = STATE_CONFIGS[key];
   if (!conf) return null;
   return {
     title: conf.titleOverride[waiverType] || TYPE_TITLES[waiverType],

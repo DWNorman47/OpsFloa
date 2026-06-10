@@ -16,6 +16,7 @@ const { logAudit } = require('../auditLog');
 const { sendEmail } = require('../email');
 const { buildIcsAttachment } = require('../utils/ics');
 const { escapeHtml } = require('../utils/htmlEscape');
+const { isValidTimezone } = require('../utils/timezoneValidator');
 const {
   APPOINTMENT_STATUSES,
   APPOINTMENT_BLOCKING_STATUSES,
@@ -344,6 +345,12 @@ router.put('/users/:id/booking', requireAdmin, async (req, res) => {
       params.push(req.body.bookable_role_label ? req.body.bookable_role_label.toString().slice(0, 60) : null);
     }
     if (req.body.timezone !== undefined) {
+      // Reject invalid IANA strings so we don't silently store garbage
+      // and have the availability algorithm fall back to UTC matching.
+      if (!isValidTimezone(req.body.timezone)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'invalid timezone (must be a valid IANA timezone like America/Phoenix)' });
+      }
       updates.push(`timezone = $${idx++}`); params.push(req.body.timezone || null);
     }
     if (updates.length > 0) {
@@ -899,6 +906,10 @@ router.put('/me/booking', requireAuth, async (req, res) => {
       params.push(req.body.bookable_role_label ? req.body.bookable_role_label.toString().slice(0, 60) : null);
     }
     if (req.body.timezone !== undefined) {
+      if (!isValidTimezone(req.body.timezone)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'invalid timezone (must be a valid IANA timezone like America/Phoenix)' });
+      }
       updates.push(`timezone = $${idx++}`); params.push(req.body.timezone || null);
     }
     if (updates.length > 0) {

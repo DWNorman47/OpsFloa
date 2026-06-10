@@ -24,7 +24,11 @@ function isNonNegFiniteNumber(n) {
 function parsePct(v) {
   if (v === undefined || v === null || v === '') return 0;
   const n = typeof v === 'number' ? v : parseFloat(v);
-  if (!Number.isFinite(n) || n < 0 || n > 1000) return null;  // accept up to 1000% as a sanity cap
+  // Tightened to 100% in 0115. The DB CHECK constraint now bounds at
+  // 100; accepting >100 here would just produce a 500 from PG. Keeping
+  // route-level rejection at 400 gives a clearer error than a constraint
+  // violation surfacing as a server error.
+  if (!Number.isFinite(n) || n < 0 || n > 100) return null;
   return n;
 }
 
@@ -389,12 +393,13 @@ router.post('/:id/send', requireAdmin, async (req, res) => {
     await recomputeAndStoreTotals(client, req.params.id);
     const rawToken = crypto.randomBytes(32).toString('hex');
     await client.query(
-      // send_email_status flips to 'pending' here; the email send is
-      // fire-and-forget but the post-send callback should patch it to
-      // 'sent' / 'failed'. Today no email is actually sent on estimate
-      // send (the raw token is returned to the admin), so 'pending'
-      // accurately reflects "no email sent yet."
-      `UPDATE estimates SET status = 'sent', sent_at = NOW(), response_token_hash = $1, send_email_status = 'pending' WHERE id = $2`,
+      // No email is actually sent on /send today — the raw token is
+      // returned in the response and the admin shares it manually. The
+      // send_email_status column stays NULL until a real email path
+      // gets wired AND patches it to 'sent' / 'failed'. Writing
+      // 'pending' here would leave every estimate forever-pending and
+      // make the column meaningless as a failure signal.
+      `UPDATE estimates SET status = 'sent', sent_at = NOW(), response_token_hash = $1 WHERE id = $2`,
       [sha256(rawToken), req.params.id]
     );
     await client.query('COMMIT');

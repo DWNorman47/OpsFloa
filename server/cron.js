@@ -268,14 +268,24 @@ async function sendBookingReminders() {
     );
     for (const row of clientCandidates.rows) {
       // Claim the row: UPDATE only succeeds if reminder_client_24h_at is
-      // still NULL. RETURNING gives us the appointment data we need.
-      const claim = await pool.query(
-        `UPDATE appointments
-            SET reminder_client_24h_at = NOW()
-          WHERE id = $1 AND reminder_client_24h_at IS NULL
-        RETURNING id`,
-        [row.id]
-      );
+      // still NULL. If the claim UPDATE itself throws (transient DB
+      // hiccup, pool exhaustion), DON'T let it propagate to the outer
+      // try — that would abort the whole batch and the surviving rows
+      // would silently miss this run's reminder window. Per-row try
+      // means one bad row at most loses its reminder.
+      let claim;
+      try {
+        claim = await pool.query(
+          `UPDATE appointments
+              SET reminder_client_24h_at = NOW()
+            WHERE id = $1 AND reminder_client_24h_at IS NULL
+          RETURNING id`,
+          [row.id]
+        );
+      } catch (claimErr) {
+        console.error('[cron] client reminder claim failed:', claimErr);
+        continue;
+      }
       if (claim.rowCount === 0) continue;  // another worker grabbed it
       try {
         const r = await pool.query(
@@ -321,13 +331,21 @@ async function sendBookingReminders() {
       [new Date(in1hr.getTime() - 15 * 60 * 1000), new Date(in1hr.getTime() + 15 * 60 * 1000)]
     );
     for (const row of assigneeCandidates.rows) {
-      const claim = await pool.query(
-        `UPDATE appointments
-            SET reminder_assignee_1h_at = NOW()
-          WHERE id = $1 AND reminder_assignee_1h_at IS NULL
-        RETURNING id`,
-        [row.id]
-      );
+      // Same per-row try-wrap as the client loop — guards against the
+      // claim UPDATE itself throwing and aborting the rest of the batch.
+      let claim;
+      try {
+        claim = await pool.query(
+          `UPDATE appointments
+              SET reminder_assignee_1h_at = NOW()
+            WHERE id = $1 AND reminder_assignee_1h_at IS NULL
+          RETURNING id`,
+          [row.id]
+        );
+      } catch (claimErr) {
+        console.error('[cron] assignee reminder claim failed:', claimErr);
+        continue;
+      }
       if (claim.rowCount === 0) continue;
       try {
         const r = await pool.query(

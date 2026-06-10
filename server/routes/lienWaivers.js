@@ -239,7 +239,11 @@ router.post('/lien-waivers/:id/send', requireAdmin, async (req, res) => {
     if (lw.status !== 'draft') return res.status(409).json({ error: `Cannot send from '${lw.status}'` });
     const rawToken = crypto.randomBytes(32).toString('hex');
     const r = await pool.query(
-      `UPDATE lien_waivers SET status='sent', sign_token_hash=$1, send_email_status='pending' WHERE id=$2 RETURNING *`,
+      // Same as estimates / change orders: today the raw token is
+      // returned to the admin, no email sent server-side. The
+      // send_email_status column stays NULL until a real send path
+      // (with post-send patch to 'sent' / 'failed') is wired.
+      `UPDATE lien_waivers SET status='sent', sign_token_hash=$1 WHERE id=$2 RETURNING *`,
       [sha256(rawToken), req.params.id]
     );
     await logAudit(companyId, req.user.id, req.user.full_name,
