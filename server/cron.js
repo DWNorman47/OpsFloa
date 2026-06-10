@@ -236,18 +236,119 @@ async function sweepStaleActiveClock() {
   }
 }
 
+// ─── Booking reminders ──────────────────────────────────────────────────────
+//
+// Run every 15 minutes. Sends one client reminder 24h before the
+// appointment and one assignee reminder 1h before. Dedup via a flag
+// column on appointments (added inline here to avoid a separate migration
+// just for this — see also reminder_sent_client / reminder_sent_assignee
+// in 0114 if/when that ships). For now, dedup by checking the audit
+// trail.
+
+const { sendEmail: cronSendEmail } = require('./email');
+
+async function sendBookingReminders() {
+  try {
+    const now = new Date();
+    const in1hr = new Date(now.getTime() + 60 * 60 * 1000);
+    const in24hr = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    // Client reminders: scheduled_at between 23h and 25h from now, no
+    // prior client-reminder audit row.
+    const clientWindow = await pool.query(
+      `SELECT a.id, a.client_email, a.client_name, a.scheduled_at, a.duration_minutes,
+              t.name AS type_name, t.location_detail, u.full_name AS assignee_name,
+              c.name AS company_name
+         FROM appointments a
+         JOIN appointment_types t ON a.appointment_type_id = t.id
+         JOIN users u ON a.assigned_user_id = u.id
+         JOIN companies c ON a.company_id = c.id
+        WHERE a.status IN ('booked','confirmed')
+          AND a.scheduled_at BETWEEN $1 AND $2
+          AND NOT EXISTS (
+            SELECT 1 FROM appointment_audit aa
+             WHERE aa.appointment_id = a.id
+               AND aa.actor_kind = 'system'
+               AND aa.details->>'reminder_kind' = 'client_24h'
+          )`,
+      [new Date(in24hr.getTime() - 60 * 60 * 1000), new Date(in24hr.getTime() + 60 * 60 * 1000)]
+    );
+    for (const a of clientWindow.rows) {
+      try {
+        await cronSendEmail(
+          a.client_email,
+          `Reminder: ${a.type_name} with ${a.company_name} tomorrow`,
+          `<p>Hi ${a.client_name},</p>
+           <p>This is a reminder that you have a <strong>${a.type_name}</strong> with ${a.assignee_name} from ${a.company_name} tomorrow at <strong>${new Date(a.scheduled_at).toLocaleString()}</strong> (${a.duration_minutes} minutes).</p>
+           ${a.location_detail ? `<p>Location: ${a.location_detail}</p>` : ''}
+           <p>If you need to cancel or reschedule, use the manage link from your booking confirmation.</p>`
+        );
+        await pool.query(
+          `INSERT INTO appointment_audit (appointment_id, action, actor_kind, details)
+           VALUES ($1, 'confirmed', 'system', $2)`,
+          [a.id, JSON.stringify({ reminder_kind: 'client_24h' })]
+        );
+      } catch (err) { console.error('[cron] client reminder error:', err); }
+    }
+    // Assignee reminders: 1h before. Same logic, different recipient.
+    const assigneeWindow = await pool.query(
+      `SELECT a.id, a.client_name, a.client_phone, a.client_notes,
+              a.scheduled_at, a.duration_minutes,
+              t.name AS type_name, t.location_detail,
+              u.email AS assignee_email, u.full_name AS assignee_name,
+              c.name AS company_name
+         FROM appointments a
+         JOIN appointment_types t ON a.appointment_type_id = t.id
+         JOIN users u ON a.assigned_user_id = u.id
+         JOIN companies c ON a.company_id = c.id
+        WHERE a.status IN ('booked','confirmed')
+          AND a.scheduled_at BETWEEN $1 AND $2
+          AND u.email IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM appointment_audit aa
+             WHERE aa.appointment_id = a.id
+               AND aa.actor_kind = 'system'
+               AND aa.details->>'reminder_kind' = 'assignee_1h'
+          )`,
+      [new Date(in1hr.getTime() - 15 * 60 * 1000), new Date(in1hr.getTime() + 15 * 60 * 1000)]
+    );
+    for (const a of assigneeWindow.rows) {
+      try {
+        await cronSendEmail(
+          a.assignee_email,
+          `In 1 hour: ${a.type_name} with ${a.client_name}`,
+          `<p>Hi ${a.assignee_name},</p>
+           <p>You have a <strong>${a.type_name}</strong> with <strong>${a.client_name}</strong> in about an hour, at ${new Date(a.scheduled_at).toLocaleString()}.</p>
+           ${a.client_phone ? `<p>Client phone: ${a.client_phone}</p>` : ''}
+           ${a.client_notes ? `<p>Client notes: ${a.client_notes}</p>` : ''}
+           ${a.location_detail ? `<p>Location: ${a.location_detail}</p>` : ''}`
+        );
+        await pool.query(
+          `INSERT INTO appointment_audit (appointment_id, action, actor_kind, details)
+           VALUES ($1, 'confirmed', 'system', $2)`,
+          [a.id, JSON.stringify({ reminder_kind: 'assignee_1h' })]
+        );
+      } catch (err) { console.error('[cron] assignee reminder error:', err); }
+    }
+  } catch (err) {
+    console.error('[cron] sendBookingReminders error:', err);
+  }
+}
+
 function startCron() {
   // Run immediately on startup (catches any missed window from restart)
   sendShiftReminders();
   sendSignoffReminders();
   expireOldTrials();
   sweepStaleActiveClock();
-  // Then run every hour
+  sendBookingReminders();
+  // Then run every hour (every 15 min for bookings — finer-grained since
+  // a 1h reminder needs catching within a 15-min slot).
   setInterval(sendShiftReminders, 60 * 60 * 1000);
   setInterval(sendSignoffReminders, 60 * 60 * 1000);
   setInterval(expireOldTrials, 60 * 60 * 1000);
   setInterval(sweepStaleActiveClock, 60 * 60 * 1000);
-  console.log('[cron] Shift reminder, sign-off, trial-expiry, and stale-clock crons started');
+  setInterval(sendBookingReminders, 15 * 60 * 1000);
+  console.log('[cron] Shift / sign-off / trial-expiry / stale-clock / booking-reminder crons started');
 }
 
 module.exports = { startCron };

@@ -178,9 +178,12 @@ const lienWaiverRoutes = require('./routes/lienWaivers');
 app.use('/api/public/lien-waivers', lienWaiverRoutes.publicRouter);
 app.use('/api', requireAuth, requirePlan('business'), lienWaiverRoutes);
 
-// Booking module — appointment scheduling. Admin-only for the v1
-// config + book endpoint; public booking surface is a follow-up.
-app.use('/api', requireAuth, requirePlan('business'), require('./routes/booking'));
+// Booking module — appointment scheduling. Admin config + admin book
+// endpoint behind auth; public booking surface (token-keyed) at
+// /api/public/book/:companySlug.
+const bookingRoutes = require('./routes/booking');
+app.use('/api/public/book', bookingRoutes.publicRouter);
+app.use('/api', requireAuth, requirePlan('business'), bookingRoutes);
 app.use('/api/availability', requireAuth, require('./routes/availability'));
 // Unauthenticated: browsers report errors here. The route itself extracts
 // user identity from the auth header when present.

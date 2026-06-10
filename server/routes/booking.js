@@ -11,6 +11,7 @@ const pool    = require('../db');
 const logger  = require('../logger');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { logAudit } = require('../auditLog');
+const { sendEmail } = require('../email');
 const {
   APPOINTMENT_STATUSES,
   APPOINTMENT_BLOCKING_STATUSES,
@@ -791,4 +792,449 @@ router.post('/appointments/:id/cancel', requireAdmin, async (req, res) => {
   }
 });
 
+// ─── Public booking surface ─────────────────────────────────────────────────
+//
+// All no-auth, slug-keyed. Mirrors the admin endpoints but resolves
+// the company + appointment_type via /companies.slug + appointment_types.slug
+// rather than relying on req.user.company_id.
+
+const publicRouter = require('express').Router();
+
+async function resolvePublicAppointmentType(companySlug, typeSlug) {
+  const r = await pool.query(
+    `SELECT at.*, c.name AS company_name, c.id AS resolved_company_id, c.slug AS company_slug
+       FROM appointment_types at
+       JOIN companies c ON at.company_id = c.id
+      WHERE c.slug = $1 AND at.slug = $2 AND at.active = true AND at.is_public = true`,
+    [companySlug, typeSlug]
+  );
+  return r.rows[0] || null;
+}
+
+// GET /book/:companySlug — list public appointment types for the company
+publicRouter.get('/:companySlug', async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT at.id, at.slug, at.name, at.description, at.duration_minutes,
+              at.location_kind, at.location_detail,
+              c.name AS company_name, c.slug AS company_slug
+         FROM appointment_types at
+         JOIN companies c ON at.company_id = c.id
+        WHERE c.slug = $1 AND at.active = true AND at.is_public = true
+        ORDER BY at.name`,
+      [req.params.companySlug]
+    );
+    if (r.rowCount === 0) {
+      return res.status(404).json({ error: 'No public appointment types found for this company' });
+    }
+    res.json({
+      company_name: r.rows[0].company_name,
+      company_slug: r.rows[0].company_slug,
+      types: r.rows.map(row => {
+        const { company_name, company_slug, ...rest } = row;
+        return rest;
+      }),
+    });
+  } catch (err) {
+    logger.error({ err }, 'public booking types list error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /book/:companySlug/:typeSlug — type detail
+publicRouter.get('/:companySlug/:typeSlug', async (req, res) => {
+  try {
+    const at = await resolvePublicAppointmentType(req.params.companySlug, req.params.typeSlug);
+    if (!at) return res.status(404).json({ error: 'Not found' });
+    res.json({
+      slug: at.slug, name: at.name, description: at.description,
+      duration_minutes: at.duration_minutes,
+      location_kind: at.location_kind, location_detail: at.location_detail,
+      advance_notice_hrs: at.advance_notice_hrs,
+      max_advance_days: at.max_advance_days,
+      slot_interval_min: at.slot_interval_min,
+      company_name: at.company_name,
+    });
+  } catch (err) {
+    logger.error({ err }, 'public type detail error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /book/:companySlug/:typeSlug/availability?days=14
+publicRouter.get('/:companySlug/:typeSlug/availability', async (req, res) => {
+  const days = Math.min(60, Math.max(1, parseInt(req.query.days, 10) || 14));
+  try {
+    const at = await resolvePublicAppointmentType(req.params.companySlug, req.params.typeSlug);
+    if (!at) return res.status(404).json({ error: 'Not found' });
+    const companyId = at.resolved_company_id;
+    // Same logic as the admin availability endpoint, just sourced via slug.
+    const allowedUsersRes = await pool.query(
+      'SELECT user_id FROM appointment_type_users WHERE appointment_type_id = $1',
+      [at.id]
+    );
+    const allowedUserIds = allowedUsersRes.rows.map(r => r.user_id);
+    const allowedShiftTypesRes = await pool.query(
+      'SELECT shift_type_id FROM appointment_type_shift_types WHERE appointment_type_id = $1',
+      [at.id]
+    );
+    const allowedShiftTypeIds = allowedShiftTypesRes.rows.map(r => r.shift_type_id);
+
+    const now = new Date();
+    const apt = { ...at, max_advance_days: Math.min(at.max_advance_days, days) };
+    const slots = buildCandidateSlots({ now, appointmentType: apt });
+    if (slots.length === 0) return res.json({ slots: [] });
+
+    const usersQuery = allowedUserIds.length > 0
+      ? `SELECT id, full_name FROM users WHERE company_id = $1 AND bookable = true AND id = ANY($2)`
+      : `SELECT id, full_name FROM users WHERE company_id = $1 AND bookable = true`;
+    const usersRes = await pool.query(
+      usersQuery,
+      allowedUserIds.length > 0 ? [companyId, allowedUserIds] : [companyId]
+    );
+    if (usersRes.rowCount === 0) return res.json({ slots: [] });
+    const userIds = usersRes.rows.map(u => u.id);
+
+    const horizonStart = slots[0];
+    const horizonEnd = slots[slots.length - 1];
+    const horizonStartBuf = new Date(horizonStart.getTime() - (at.buffer_before_min + 60) * 60_000);
+    const horizonEndBuf   = new Date(horizonEnd.getTime()   + (at.buffer_after_min  + 60) * 60_000);
+
+    const [windowsRes, shiftsRes, timeOffRes, apptsRes] = await Promise.all([
+      pool.query(
+        `SELECT user_id, weekday,
+                EXTRACT(HOUR FROM start_time)::int * 60 + EXTRACT(MINUTE FROM start_time)::int AS start_minutes,
+                EXTRACT(HOUR FROM end_time)::int   * 60 + EXTRACT(MINUTE FROM end_time)::int   AS end_minutes,
+                active
+           FROM bookable_windows WHERE user_id = ANY($1)`,
+        [userIds]
+      ),
+      pool.query(
+        `SELECT user_id, start_ts AS start, end_ts AS end, shift_type_id
+           FROM shifts WHERE user_id = ANY($1) AND end_ts > $2 AND start_ts < $3`,
+        [userIds, horizonStartBuf, horizonEndBuf]
+      ).catch(() => ({ rows: [] })),
+      pool.query(
+        `SELECT user_id,
+                (start_date::timestamp AT TIME ZONE 'UTC') AS start,
+                ((end_date::timestamp AT TIME ZONE 'UTC') + INTERVAL '1 day') AS end
+           FROM time_off_requests
+          WHERE user_id = ANY($1) AND status = 'approved'
+            AND end_date >= $2::date AND start_date <= $3::date`,
+        [userIds, horizonStart, horizonEnd]
+      ).catch(() => ({ rows: [] })),
+      pool.query(
+        `SELECT assigned_user_id AS user_id, scheduled_at AS start,
+                scheduled_at + (duration_minutes || ' minutes')::interval AS end,
+                status
+           FROM appointments
+          WHERE assigned_user_id = ANY($1) AND status = ANY($2)
+            AND scheduled_at + (duration_minutes || ' minutes')::interval > $3
+            AND scheduled_at < $4`,
+        [userIds, [...APPOINTMENT_BLOCKING_STATUSES], horizonStartBuf, horizonEndBuf]
+      ),
+    ]);
+
+    const byUser = new Map();
+    for (const u of usersRes.rows) {
+      byUser.set(u.id, { ...u, bookable: true, bookable_windows: [], shifts: [], time_off: [], appointments: [] });
+    }
+    for (const w of windowsRes.rows) byUser.get(w.user_id)?.bookable_windows.push(w);
+    for (const sh of shiftsRes.rows) byUser.get(sh.user_id)?.shifts.push({
+      start: new Date(sh.start), end: new Date(sh.end), shift_type_id: sh.shift_type_id,
+    });
+    for (const t of timeOffRes.rows) byUser.get(t.user_id)?.time_off.push({
+      start: new Date(t.start), end: new Date(t.end),
+    });
+    for (const a of apptsRes.rows) byUser.get(a.user_id)?.appointments.push({
+      start: new Date(a.start), end: new Date(a.end), status: a.status,
+    });
+
+    const users = [...byUser.values()];
+    const out = [];
+    for (const slotStart of slots) {
+      const cands = candidatesForSlot({
+        slotStart,
+        durationMinutes: at.duration_minutes,
+        users,
+        appointmentType: at,
+        allowedShiftTypeIds,
+        untypedBlocks: true,
+      });
+      if (cands.length > 0) out.push(slotStart.toISOString());
+    }
+    res.json({ slots: out });
+  } catch (err) {
+    logger.error({ err }, 'public availability error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /book/:companySlug/:typeSlug — book an appointment publicly.
+// Same atomic round-robin assignment as the admin endpoint.
+publicRouter.post('/:companySlug/:typeSlug', async (req, res) => {
+  const { scheduled_at, client_name, client_email, client_phone, client_notes } = req.body;
+  if (!scheduled_at) return res.status(400).json({ error: 'scheduled_at required' });
+  if (!client_name || !client_email) {
+    return res.status(400).json({ error: 'client_name and client_email required' });
+  }
+  const slotStart = new Date(scheduled_at);
+  if (Number.isNaN(slotStart.getTime())) {
+    return res.status(400).json({ error: 'invalid scheduled_at' });
+  }
+  const at = await resolvePublicAppointmentType(req.params.companySlug, req.params.typeSlug);
+  if (!at) return res.status(404).json({ error: 'Not found' });
+  const companyId = at.resolved_company_id;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const allowedUsersRes = await client.query(
+      'SELECT user_id FROM appointment_type_users WHERE appointment_type_id = $1',
+      [at.id]
+    );
+    const allowedShiftTypesRes = await client.query(
+      'SELECT shift_type_id FROM appointment_type_shift_types WHERE appointment_type_id = $1',
+      [at.id]
+    );
+    const allowedUserIds = allowedUsersRes.rows.map(r => r.user_id);
+    const allowedShiftTypeIds = allowedShiftTypesRes.rows.map(r => r.shift_type_id);
+
+    const usersQuery = allowedUserIds.length > 0
+      ? `SELECT id, full_name FROM users WHERE company_id = $1 AND bookable = true AND id = ANY($2) FOR UPDATE`
+      : `SELECT id, full_name FROM users WHERE company_id = $1 AND bookable = true FOR UPDATE`;
+    const usersRes = await client.query(
+      usersQuery,
+      allowedUserIds.length > 0 ? [companyId, allowedUserIds] : [companyId]
+    );
+    if (usersRes.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'No bookable users available' });
+    }
+    const userIds = usersRes.rows.map(u => u.id);
+    const slotEnd = new Date(slotStart.getTime() + at.duration_minutes * 60_000);
+
+    const [windowsRes, shiftsRes, timeOffRes, apptsRes, lastCompletedRes] = await Promise.all([
+      client.query(
+        `SELECT user_id, weekday,
+                EXTRACT(HOUR FROM start_time)::int * 60 + EXTRACT(MINUTE FROM start_time)::int AS start_minutes,
+                EXTRACT(HOUR FROM end_time)::int   * 60 + EXTRACT(MINUTE FROM end_time)::int   AS end_minutes,
+                active
+           FROM bookable_windows WHERE user_id = ANY($1)`,
+        [userIds]
+      ),
+      client.query(
+        `SELECT user_id, start_ts AS start, end_ts AS end, shift_type_id
+           FROM shifts WHERE user_id = ANY($1) AND end_ts > $2 AND start_ts < $3`,
+        [userIds, new Date(slotStart.getTime() - (at.buffer_before_min + 1) * 60_000),
+                  new Date(slotEnd.getTime()   + (at.buffer_after_min  + 1) * 60_000)]
+      ).catch(() => ({ rows: [] })),
+      client.query(
+        `SELECT user_id,
+                (start_date::timestamp AT TIME ZONE 'UTC') AS start,
+                ((end_date::timestamp AT TIME ZONE 'UTC') + INTERVAL '1 day') AS end
+           FROM time_off_requests
+          WHERE user_id = ANY($1) AND status = 'approved'
+            AND end_date >= $2::date AND start_date <= $3::date`,
+        [userIds, slotStart, slotEnd]
+      ).catch(() => ({ rows: [] })),
+      client.query(
+        `SELECT assigned_user_id AS user_id, scheduled_at AS start,
+                scheduled_at + (duration_minutes || ' minutes')::interval AS end,
+                status
+           FROM appointments
+          WHERE assigned_user_id = ANY($1) AND status = ANY($2)
+            AND scheduled_at + (duration_minutes || ' minutes')::interval > $3
+            AND scheduled_at < $4`,
+        [userIds, [...APPOINTMENT_BLOCKING_STATUSES],
+         new Date(slotStart.getTime() - (at.buffer_before_min + 1) * 60_000),
+         new Date(slotEnd.getTime()   + (at.buffer_after_min  + 1) * 60_000)]
+      ),
+      client.query(
+        `SELECT assigned_user_id AS user_id, MAX(completed_at) AS last_completed_at
+           FROM appointments WHERE assigned_user_id = ANY($1) AND status = 'completed'
+          GROUP BY assigned_user_id`,
+        [userIds]
+      ),
+    ]);
+
+    const byUser = new Map();
+    for (const u of usersRes.rows) {
+      byUser.set(u.id, {
+        ...u, bookable: true,
+        bookable_windows: [], shifts: [], time_off: [], appointments: [],
+        lastCompletedAt: null,
+      });
+    }
+    for (const w of windowsRes.rows) byUser.get(w.user_id)?.bookable_windows.push(w);
+    for (const sh of shiftsRes.rows) byUser.get(sh.user_id)?.shifts.push({
+      start: new Date(sh.start), end: new Date(sh.end), shift_type_id: sh.shift_type_id,
+    });
+    for (const t of timeOffRes.rows) byUser.get(t.user_id)?.time_off.push({
+      start: new Date(t.start), end: new Date(t.end),
+    });
+    for (const a of apptsRes.rows) byUser.get(a.user_id)?.appointments.push({
+      start: new Date(a.start), end: new Date(a.end), status: a.status,
+    });
+    for (const lc of lastCompletedRes.rows) {
+      const u = byUser.get(lc.user_id);
+      if (u) u.lastCompletedAt = lc.last_completed_at ? new Date(lc.last_completed_at) : null;
+    }
+
+    const cands = candidatesForSlot({
+      slotStart,
+      durationMinutes: at.duration_minutes,
+      users: [...byUser.values()],
+      appointmentType: at,
+      allowedShiftTypeIds,
+      untypedBlocks: true,
+    });
+    if (cands.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Slot is no longer available' });
+    }
+    const winner = pickRoundRobinWinner(cands);
+
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const insertRes = await client.query(
+      `INSERT INTO appointments
+         (company_id, appointment_type_id, assigned_user_id, client_name, client_email,
+          client_phone, client_notes, scheduled_at, duration_minutes, status, manage_token_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'booked', $10) RETURNING id`,
+      [
+        companyId, at.id, winner.id,
+        client_name.toString().trim(), client_email.toString().trim(),
+        client_phone ? client_phone.toString().trim() : null,
+        client_notes || null,
+        slotStart, at.duration_minutes,
+        sha256(rawToken),
+      ]
+    );
+    await client.query(
+      `INSERT INTO appointment_audit (appointment_id, action, actor_kind, actor_ip, details)
+       VALUES ($1, 'booked', 'client', $2, $3)`,
+      [insertRes.rows[0].id, req.ip,
+       JSON.stringify({ candidates: cands.length, winner: winner.id, user_agent: req.headers['user-agent'] || null })]
+    );
+    await client.query('COMMIT');
+
+    // Fire-and-forget confirmation emails. Errors don't fail the booking
+    // — the client already got the manage_token in the response.
+    sendBookingEmails({
+      apt: at, appointmentId: insertRes.rows[0].id,
+      slotStart, durationMinutes: at.duration_minutes,
+      clientName: client_name, clientEmail: client_email,
+      clientPhone: client_phone, clientNotes: client_notes,
+      assignee: winner, manageToken: rawToken, companyId,
+    }).catch(err => logger.error({ err }, 'booking email send failed'));
+
+    res.status(201).json({
+      appointment_id: insertRes.rows[0].id,
+      manage_token: rawToken,
+      assigned_user_name: winner.full_name,
+      scheduled_at: slotStart.toISOString(),
+      duration_minutes: at.duration_minutes,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    logger.error({ err }, 'public book error');
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// Send the client confirmation + the assignee notification immediately
+// after a successful public book.
+async function sendBookingEmails({
+  apt, appointmentId, slotStart, durationMinutes,
+  clientName, clientEmail, clientPhone, clientNotes,
+  assignee, manageToken, companyId,
+}) {
+  // Look up the company name + assignee email; the public book path
+  // doesn't have them on the in-scope objects.
+  const companyRow = await pool.query('SELECT name, slug FROM companies WHERE id = $1', [companyId]);
+  const assigneeRow = await pool.query('SELECT email FROM users WHERE id = $1', [assignee.id]);
+  const companyName = companyRow.rows[0]?.name || 'the contractor';
+  const assigneeEmail = assigneeRow.rows[0]?.email || null;
+  const when = new Date(slotStart).toLocaleString();
+  const manageUrl = `${process.env.PUBLIC_APP_URL || 'https://opsfloa.com'}/book/manage/${manageToken}`;
+
+  // Client confirmation
+  await sendEmail(
+    clientEmail,
+    `Booking confirmed: ${apt.name} with ${companyName}`,
+    `<p>Hi ${clientName},</p>
+     <p>Your <strong>${apt.name}</strong> with ${assignee.full_name} from ${companyName} is confirmed for <strong>${when}</strong> (${durationMinutes} minutes).</p>
+     ${apt.location_detail ? `<p><strong>Location:</strong> ${apt.location_detail}</p>` : ''}
+     <p><strong>Manage your booking:</strong> <a href="${manageUrl}">${manageUrl}</a></p>
+     <p>Save this link — it's how you'll view or cancel the appointment.</p>`
+  ).catch(() => {});
+
+  // Assignee notification
+  if (assigneeEmail) {
+    await sendEmail(
+      assigneeEmail,
+      `New booking: ${apt.name} with ${clientName}`,
+      `<p>Hi ${assignee.full_name},</p>
+       <p>You've been assigned a <strong>${apt.name}</strong> with <strong>${clientName}</strong> on <strong>${when}</strong> (${durationMinutes} minutes).</p>
+       <p>
+         <strong>Client email:</strong> ${clientEmail}<br/>
+         ${clientPhone ? `<strong>Client phone:</strong> ${clientPhone}<br/>` : ''}
+         ${clientNotes ? `<strong>Notes:</strong> ${clientNotes}<br/>` : ''}
+       </p>
+       ${apt.location_detail ? `<p><strong>Location:</strong> ${apt.location_detail}</p>` : ''}`
+    ).catch(() => {});
+  }
+}
+
+// GET /book/manage/:token — view appointment via the manage token
+publicRouter.get('/manage/:token', async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT a.id, a.scheduled_at, a.duration_minutes, a.status,
+              a.client_name, a.client_email,
+              t.name AS appointment_type_name, t.location_kind, t.location_detail,
+              u.full_name AS assigned_user_name,
+              c.name AS company_name
+         FROM appointments a
+         JOIN appointment_types t ON a.appointment_type_id = t.id
+         JOIN users u ON a.assigned_user_id = u.id
+         JOIN companies c ON a.company_id = c.id
+        WHERE a.manage_token_hash = $1`,
+      [sha256(req.params.token)]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Appointment not found' });
+    res.json(r.rows[0]);
+  } catch (err) {
+    logger.error({ err }, 'public manage view error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /book/manage/:token/cancel — client-initiated cancel
+publicRouter.post('/manage/:token/cancel', async (req, res) => {
+  try {
+    const tokenHash = sha256(req.params.token);
+    const r = await pool.query(
+      `UPDATE appointments SET status = 'cancelled', cancelled_at = NOW(),
+         cancelled_by = 'client', cancel_reason = $1
+       WHERE manage_token_hash = $2 AND status IN ('booked','confirmed')
+       RETURNING id`,
+      [req.body.reason || null, tokenHash]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Appointment not found or not cancellable' });
+    await pool.query(
+      `INSERT INTO appointment_audit (appointment_id, action, actor_kind, actor_ip, details)
+       VALUES ($1, 'cancelled', 'client', $2, $3)`,
+      [r.rows[0].id, req.ip, JSON.stringify({ reason: req.body.reason || null })]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    logger.error({ err }, 'public cancel error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.publicRouter = publicRouter;
 module.exports = router;
