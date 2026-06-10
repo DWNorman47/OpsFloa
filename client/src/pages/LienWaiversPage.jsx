@@ -4,7 +4,7 @@
 // status here, so receiving a sub waiver flips the closeout's
 // "lien_waivers_subs" item to done in real time.
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import api from '../api';
@@ -12,7 +12,10 @@ import AppHeader from '../components/AppHeader';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
 import MoneyInput from '../components/MoneyInput';
+import Pagination from '../components/Pagination';
+import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { formatMoney } from '../utils/format';
 import { silentError } from '../errorReporter';
 
@@ -60,26 +63,41 @@ const formatCents = (c) => formatMoney(c, { showCents: true });
 
 function LienWaiversList({ onOpen, onNew }) {
   const [items, setItems] = useState([]);
+  const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('');
   const [dirFilter, setDirFilter] = useState('');
   const [outstanding, setOutstanding] = useState([]);
   const [projects, setProjects] = useState([]);
   const [subs, setSubs] = useState([]);
+  const [page, setPage] = useState(1);
+  const [sort, setSort] = useState({ key: 'through_date', dir: 'desc' });
+  const LIMIT = 50;
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = {};
+      const params = { page, limit: LIMIT };
       if (statusFilter) params.status = statusFilter;
       if (dirFilter) params.direction = dirFilter;
       const { data } = await api.get('/lien-waivers', { params });
       setItems(data.items || []);
+      setMeta({ total: data.total || 0, page: data.page || 1, pages: data.pages || 1 });
     } catch (err) { silentError(err); }
     finally { setLoading(false); }
-  }, [statusFilter, dirFilter]);
+  }, [statusFilter, dirFilter, page]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { setPage(1); }, [statusFilter, dirFilter]);
+
+  const sortedItems = useMemo(
+    () => sortRows(items, sort, {
+      amount_cents: r => parseFloat(r.amount_cents) || 0,
+      through_date: r => r.through_date,
+      project_name: r => r.project_name,
+    }),
+    [items, sort]
+  );
   useEffect(() => {
     api.get('/lien-waivers/outstanding').then(({ data }) => setOutstanding(data.items || [])).catch(() => {});
     api.get('/admin/projects').then(({ data }) => setProjects(data || [])).catch(() => {});
@@ -128,20 +146,21 @@ function LienWaiversList({ onOpen, onNew }) {
             onAction={() => onNew({ projects, subs })}
           />
         ) : (
+          <>
           <div style={styles.tableWrap}>
             <table style={styles.table}>
               <thead>
                 <tr style={styles.tableHeader}>
-                  <th style={styles.th}>Direction</th>
-                  <th style={styles.th}>Type</th>
-                  <th style={styles.th}>Project / Sub</th>
-                  <th style={{ ...styles.th, textAlign: 'right' }}>Amount</th>
-                  <th style={styles.th}>Through</th>
-                  <th style={styles.th}>Status</th>
+                  <SortHeader sortKey="direction" sort={sort} setSort={setSort}>Direction</SortHeader>
+                  <SortHeader sortKey="waiver_type" sort={sort} setSort={setSort}>Type</SortHeader>
+                  <SortHeader sortKey="project_name" sort={sort} setSort={setSort}>Project / Sub</SortHeader>
+                  <SortHeader sortKey="amount_cents" sort={sort} setSort={setSort} align="right">Amount</SortHeader>
+                  <SortHeader sortKey="through_date" sort={sort} setSort={setSort}>Through</SortHeader>
+                  <SortHeader sortKey="status" sort={sort} setSort={setSort}>Status</SortHeader>
                 </tr>
               </thead>
               <tbody>
-                {items.map(w => (
+                {sortedItems.map(w => (
                   <tr key={w.id} style={styles.tableRow} onClick={() => onOpen(w.id)}>
                     <td style={styles.td}><DirectionBadge direction={w.direction} /></td>
                     <td style={styles.td}>{TYPE_LABELS[w.waiver_type] || w.waiver_type}</td>
@@ -157,6 +176,8 @@ function LienWaiversList({ onOpen, onNew }) {
               </tbody>
             </table>
           </div>
+          <Pagination page={meta.page} pages={meta.pages} onChange={setPage} />
+          </>
         )
       }
     </div>
@@ -181,8 +202,10 @@ function NewLienWaiverForm({ projects, subs, onSave, onCancel }) {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [dirty, setDirty] = useState(false);
+  useUnsavedChanges(dirty);
 
-  function update(k, v) { setForm(f => ({ ...f, [k]: v })); }
+  function update(k, v) { setDirty(true); setForm(f => ({ ...f, [k]: v })); }
 
   async function handleSave() {
     setError(null); setSaving(true);
@@ -202,6 +225,7 @@ function NewLienWaiverForm({ projects, subs, onSave, onCancel }) {
         subcontractor_id: form.subcontractor_id || null,
       };
       const { data } = await api.post(`/projects/${project_id}/lien-waivers`, payload);
+      setDirty(false);
       onSave(data);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to create waiver');

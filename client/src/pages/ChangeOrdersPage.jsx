@@ -4,7 +4,7 @@
 // tied to an existing project (no "create from scratch" path that
 // stands alone).
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import api from '../api';
@@ -12,7 +12,10 @@ import AppHeader from '../components/AppHeader';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
 import MoneyInput from '../components/MoneyInput';
+import Pagination from '../components/Pagination';
+import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { formatMoney, formatDate, formatDateTime } from '../utils/format';
 import { silentError } from '../errorReporter';
 
@@ -42,21 +45,36 @@ const formatCents = (c) => formatMoney(c, { showCents: true });
 
 function ChangeOrdersList({ onOpen, onNew }) {
   const [items, setItems] = useState([]);
+  const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('');
   const [projects, setProjects] = useState([]);
+  const [page, setPage] = useState(1);
+  const [sort, setSort] = useState({ key: 'created_at', dir: 'desc' });
+  const LIMIT = 50;
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = statusFilter ? { status: statusFilter } : {};
+      const params = { page, limit: LIMIT };
+      if (statusFilter) params.status = statusFilter;
       const { data } = await api.get('/change-orders', { params });
       setItems(data.items || []);
+      setMeta({ total: data.total || 0, page: data.page || 1, pages: data.pages || 1 });
     } catch (err) { silentError(err); }
     finally { setLoading(false); }
-  }, [statusFilter]);
+  }, [statusFilter, page]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { setPage(1); }, [statusFilter]);
+
+  const sortedItems = useMemo(
+    () => sortRows(items, sort, {
+      total_cents: r => parseFloat(r.total_cents) || 0,
+      created_at: r => r.created_at,
+    }),
+    [items, sort]
+  );
 
   useEffect(() => {
     api.get('/admin/projects').then(({ data }) => setProjects(data || [])).catch(() => {});
@@ -90,20 +108,21 @@ function ChangeOrdersList({ onOpen, onNew }) {
             onAction={() => onNew(projects)}
           />
         ) : (
+          <>
           <div style={styles.tableWrap}>
             <table style={styles.table}>
               <thead>
                 <tr style={styles.tableHeader}>
-                  <th style={styles.th}>Number</th>
-                  <th style={styles.th}>Project</th>
-                  <th style={styles.th}>Description</th>
-                  <th style={{ ...styles.th, textAlign: 'right' }}>Total</th>
-                  <th style={styles.th}>Status</th>
-                  <th style={styles.th}>Created</th>
+                  <SortHeader sortKey="co_number" sort={sort} setSort={setSort}>Number</SortHeader>
+                  <SortHeader sortKey="project_name" sort={sort} setSort={setSort}>Project</SortHeader>
+                  <SortHeader sortKey="description" sort={sort} setSort={setSort}>Description</SortHeader>
+                  <SortHeader sortKey="total_cents" sort={sort} setSort={setSort} align="right">Total</SortHeader>
+                  <SortHeader sortKey="status" sort={sort} setSort={setSort}>Status</SortHeader>
+                  <SortHeader sortKey="created_at" sort={sort} setSort={setSort}>Created</SortHeader>
                 </tr>
               </thead>
               <tbody>
-                {items.map(co => (
+                {sortedItems.map(co => (
                   <tr key={co.id} style={styles.tableRow} onClick={() => onOpen(co.id)}>
                     <td style={styles.td}><strong>{co.co_number}</strong></td>
                     <td style={styles.td}>{co.project_name}</td>
@@ -116,6 +135,8 @@ function ChangeOrdersList({ onOpen, onNew }) {
               </tbody>
             </table>
           </div>
+          <Pagination page={meta.page} pages={meta.pages} onChange={setPage} />
+          </>
         )
       }
     </div>
@@ -132,14 +153,20 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
   const [lines, setLines] = useState([{ category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0 }]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [dirty, setDirty] = useState(false);
+  useUnsavedChanges(dirty);
 
+  function updateHead(k, v) { setDirty(true); setHead(h => ({ ...h, [k]: v })); }
   function updateLine(i, k, v) {
+    setDirty(true);
     setLines(arr => arr.map((line, idx) => idx === i ? { ...line, [k]: v } : line));
   }
   function addLine() {
+    setDirty(true);
     setLines(arr => [...arr, { category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0 }]);
   }
   function removeLine(i) {
+    setDirty(true);
     setLines(arr => arr.filter((_, idx) => idx !== i));
   }
 
@@ -181,6 +208,7 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
           })),
       };
       const { data } = await api.post(`/projects/${projectId}/change-orders`, payload);
+      setDirty(false);
       onSave(data);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save change order');
@@ -204,13 +232,13 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
         <h3 style={styles.formH3}>Project</h3>
         <div style={styles.grid2}>
           <Field label="Project" required>
-            <select value={projectId} onChange={e => setProjectId(e.target.value)} style={styles.input}>
+            <select value={projectId} onChange={e => { setDirty(true); setProjectId(e.target.value); }} style={styles.input}>
               <option value="">— Choose —</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </Field>
           <Field label="Description" required>
-            <input value={head.description} onChange={e => setHead(h => ({ ...h, description: e.target.value }))} placeholder="e.g. Add second-floor electrical rough-in" style={styles.input} />
+            <input value={head.description} onChange={e => updateHead('description', e.target.value)} placeholder="e.g. Add second-floor electrical rough-in" style={styles.input} />
           </Field>
         </div>
       </div>
@@ -269,13 +297,13 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
         <h3 style={styles.formH3}>Markup &amp; tax</h3>
         <div style={styles.grid4}>
           <Field label="Overhead %">
-            <input type="number" step="0.1" min="0" max="100" value={head.overhead_pct} onChange={e => setHead(h => ({ ...h, overhead_pct: e.target.value }))} style={styles.input} />
+            <input type="number" step="0.1" min="0" max="100" value={head.overhead_pct} onChange={e => updateHead('overhead_pct', e.target.value)} style={styles.input} />
           </Field>
           <Field label="Margin %">
-            <input type="number" step="0.1" min="0" max="100" value={head.margin_pct} onChange={e => setHead(h => ({ ...h, margin_pct: e.target.value }))} style={styles.input} />
+            <input type="number" step="0.1" min="0" max="100" value={head.margin_pct} onChange={e => updateHead('margin_pct', e.target.value)} style={styles.input} />
           </Field>
           <Field label="Tax %">
-            <input type="number" step="0.01" min="0" max="100" value={head.tax_pct} onChange={e => setHead(h => ({ ...h, tax_pct: e.target.value }))} style={styles.input} />
+            <input type="number" step="0.01" min="0" max="100" value={head.tax_pct} onChange={e => updateHead('tax_pct', e.target.value)} style={styles.input} />
           </Field>
           <div />
         </div>
@@ -290,7 +318,7 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
 
       <div style={styles.formCard}>
         <h3 style={styles.formH3}>Internal notes</h3>
-        <textarea value={head.notes} onChange={e => setHead(h => ({ ...h, notes: e.target.value }))} style={{ ...styles.input, minHeight: 50 }} />
+        <textarea value={head.notes} onChange={e => updateHead('notes', e.target.value)} style={{ ...styles.input, minHeight: 50 }} />
       </div>
     </div>
   );

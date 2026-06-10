@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import api from '../api';
@@ -6,7 +6,10 @@ import AppHeader from '../components/AppHeader';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
 import MoneyInput from '../components/MoneyInput';
+import Pagination from '../components/Pagination';
+import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { formatMoney } from '../utils/format';
 import { silentError } from '../errorReporter';
 
@@ -38,19 +41,29 @@ const formatCents = (c) => formatMoney(c, { showCents: true });
 
 function SubsList({ onOpen, onNew }) {
   const [subs, setSubs] = useState([]);
+  const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState('');
+  const [page, setPage] = useState(1);
+  const [sort, setSort] = useState({ key: 'name', dir: 'asc' });
+  const LIMIT = 50;
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await api.get('/subcontractors', { params: q ? { q } : {} });
+      const params = { page, limit: LIMIT };
+      if (q) params.q = q;
+      const { data } = await api.get('/subcontractors', { params });
       setSubs(data.items || []);
+      setMeta({ total: data.total || 0, page: data.page || 1, pages: data.pages || 1 });
     } catch (err) { silentError(err); }
     finally { setLoading(false); }
-  }, [q]);
+  }, [q, page]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { setPage(1); }, [q]);
+
+  const sortedSubs = useMemo(() => sortRows(subs, sort), [subs, sort]);
 
   return (
     <>
@@ -73,18 +86,19 @@ function SubsList({ onOpen, onNew }) {
             onAction={onNew}
           />
         ) : (
+          <>
           <div style={styles.tableWrap}>
             <table style={styles.table}>
               <thead>
                 <tr style={styles.tableHeader}>
-                  <th style={styles.th}>Name</th>
-                  <th style={styles.th}>Scope</th>
-                  <th style={styles.th}>Contact</th>
-                  <th style={styles.th}>License</th>
+                  <SortHeader sortKey="name" sort={sort} setSort={setSort}>Name</SortHeader>
+                  <SortHeader sortKey="scope_specialty" sort={sort} setSort={setSort}>Scope</SortHeader>
+                  <SortHeader sortKey="contact_name" sort={sort} setSort={setSort}>Contact</SortHeader>
+                  <SortHeader sortKey="license_number" sort={sort} setSort={setSort}>License</SortHeader>
                 </tr>
               </thead>
               <tbody>
-                {subs.map(s => (
+                {sortedSubs.map(s => (
                   <tr key={s.id} style={styles.tableRow} onClick={() => onOpen(s.id)}>
                     <td style={styles.td}><strong>{s.name}</strong></td>
                     <td style={styles.td}>{s.scope_specialty || '—'}</td>
@@ -98,6 +112,8 @@ function SubsList({ onOpen, onNew }) {
               </tbody>
             </table>
           </div>
+          <Pagination page={meta.page} pages={meta.pages} onChange={setPage} />
+          </>
         )
       }
     </>
@@ -116,8 +132,10 @@ function SubForm({ existing, onSave, onCancel }) {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [dirty, setDirty] = useState(false);
+  useUnsavedChanges(dirty);
 
-  function update(k, v) { setForm(f => ({ ...f, [k]: v })); }
+  function update(k, v) { setDirty(true); setForm(f => ({ ...f, [k]: v })); }
 
   async function handleSave() {
     setError(null); setSaving(true);
@@ -125,6 +143,7 @@ function SubForm({ existing, onSave, onCancel }) {
       const { data } = existing
         ? await api.patch(`/subcontractors/${existing.id}`, form)
         : await api.post('/subcontractors', form);
+      setDirty(false);
       onSave(data);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save sub');
@@ -260,20 +279,35 @@ function SubDetail({ id, onBack, onEdit }) {
 
 function SubPOsList({ onOpen }) {
   const [pos, setPos] = useState([]);
+  const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('');
+  const [page, setPage] = useState(1);
+  const [sort, setSort] = useState({ key: 'created_at', dir: 'desc' });
+  const LIMIT = 50;
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = statusFilter ? { status: statusFilter } : {};
+      const params = { page, limit: LIMIT };
+      if (statusFilter) params.status = statusFilter;
       const { data } = await api.get('/subcontract-pos', { params });
       setPos(data.items || []);
+      setMeta({ total: data.total || 0, page: data.page || 1, pages: data.pages || 1 });
     } catch (err) { silentError(err); }
     finally { setLoading(false); }
-  }, [statusFilter]);
+  }, [statusFilter, page]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { setPage(1); }, [statusFilter]);
+
+  const sortedPos = useMemo(
+    () => sortRows(pos, sort, {
+      amount_cents: r => parseFloat(r.amount_cents) || 0,
+      paid_cents: r => parseFloat(r.paid_cents) || 0,
+    }),
+    [pos, sort]
+  );
 
   return (
     <>
@@ -292,20 +326,21 @@ function SubPOsList({ onOpen }) {
             body="Sub POs are created against a specific project. Open a project to add one."
           />
         ) : (
+          <>
           <div style={styles.tableWrap}>
             <table style={styles.table}>
               <thead>
                 <tr style={styles.tableHeader}>
-                  <th style={styles.th}>PO #</th>
-                  <th style={styles.th}>Sub</th>
-                  <th style={styles.th}>Project</th>
-                  <th style={styles.th}>Status</th>
-                  <th style={{ ...styles.th, textAlign: 'right' }}>Amount</th>
-                  <th style={{ ...styles.th, textAlign: 'right' }}>Paid</th>
+                  <SortHeader sortKey="po_number" sort={sort} setSort={setSort}>PO #</SortHeader>
+                  <SortHeader sortKey="sub_name" sort={sort} setSort={setSort}>Sub</SortHeader>
+                  <SortHeader sortKey="project_name" sort={sort} setSort={setSort}>Project</SortHeader>
+                  <SortHeader sortKey="status" sort={sort} setSort={setSort}>Status</SortHeader>
+                  <SortHeader sortKey="amount_cents" sort={sort} setSort={setSort} align="right">Amount</SortHeader>
+                  <SortHeader sortKey="paid_cents" sort={sort} setSort={setSort} align="right">Paid</SortHeader>
                 </tr>
               </thead>
               <tbody>
-                {pos.map(po => (
+                {sortedPos.map(po => (
                   <tr key={po.id} style={styles.tableRow} onClick={() => onOpen(po.id)}>
                     <td style={styles.td}><strong>{po.po_number}</strong></td>
                     <td style={styles.td}>{po.sub_name}</td>
@@ -318,6 +353,8 @@ function SubPOsList({ onOpen }) {
               </tbody>
             </table>
           </div>
+          <Pagination page={meta.page} pages={meta.pages} onChange={setPage} />
+          </>
         )
       }
     </>

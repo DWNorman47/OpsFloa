@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import api from '../api';
@@ -6,7 +6,10 @@ import AppHeader from '../components/AppHeader';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
 import MoneyInput from '../components/MoneyInput';
+import Pagination from '../components/Pagination';
+import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { formatMoney, formatDate, formatDateTime } from '../utils/format';
 import { silentError } from '../errorReporter';
 
@@ -45,26 +48,47 @@ const formatCents = (c) => formatMoney(c, { showCents: true });
 
 function EstimatesList({ onOpen, onNew }) {
   const [estimates, setEstimates] = useState([]);
+  const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [page, setPage] = useState(1);
+  const [sort, setSort] = useState({ key: 'created_at', dir: 'desc' });
+  const LIMIT = 50;
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = {};
+      const params = { page, limit: LIMIT };
       if (statusFilter) params.status = statusFilter;
       if (filter) params.q = filter;
       const { data } = await api.get('/estimates', { params });
       setEstimates(data.items || []);
+      setMeta({ total: data.total || 0, page: data.page || 1, pages: data.pages || 1 });
     } catch (err) {
       silentError(err);
     } finally {
       setLoading(false);
     }
-  }, [filter, statusFilter]);
+  }, [filter, statusFilter, page]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Reset to page 1 when the filters change so an empty result-set on
+  // page 7 doesn't leave the user looking at "no data" when they
+  // adjust a filter.
+  useEffect(() => { setPage(1); }, [filter, statusFilter]);
+
+  // Sort the current page client-side. For now this re-orders only the
+  // visible 50 rows; once a backend sort_by/sort_order param is added,
+  // this becomes a pass-through.
+  const sortedEstimates = useMemo(
+    () => sortRows(estimates, sort, {
+      total_cents: r => parseFloat(r.total_cents) || 0,
+      created_at: r => r.created_at,
+    }),
+    [estimates, sort]
+  );
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
@@ -103,20 +127,21 @@ function EstimatesList({ onOpen, onNew }) {
             onAction={onNew}
           />
         ) : (
+          <>
           <div style={styles.tableWrap}>
             <table style={styles.table}>
               <thead>
                 <tr style={styles.tableHeader}>
-                  <th style={styles.th}>Number</th>
-                  <th style={styles.th}>Project</th>
-                  <th style={styles.th}>Client</th>
-                  <th style={{ ...styles.th, textAlign: 'right' }}>Total</th>
-                  <th style={styles.th}>Status</th>
-                  <th style={styles.th}>Created</th>
+                  <SortHeader sortKey="estimate_number" sort={sort} setSort={setSort}>Number</SortHeader>
+                  <SortHeader sortKey="project_name" sort={sort} setSort={setSort}>Project</SortHeader>
+                  <SortHeader sortKey="client_name_snapshot" sort={sort} setSort={setSort}>Client</SortHeader>
+                  <SortHeader sortKey="total_cents" sort={sort} setSort={setSort} align="right">Total</SortHeader>
+                  <SortHeader sortKey="status" sort={sort} setSort={setSort}>Status</SortHeader>
+                  <SortHeader sortKey="created_at" sort={sort} setSort={setSort}>Created</SortHeader>
                 </tr>
               </thead>
               <tbody>
-                {estimates.map(e => (
+                {sortedEstimates.map(e => (
                   <tr key={e.id} style={styles.tableRow} onClick={() => onOpen(e.id)}>
                     <td style={styles.td}><strong>{e.estimate_number}</strong></td>
                     <td style={styles.td}>{e.project_name}</td>
@@ -129,6 +154,8 @@ function EstimatesList({ onOpen, onNew }) {
               </tbody>
             </table>
           </div>
+          <Pagination page={meta.page} pages={meta.pages} onChange={setPage} />
+          </>
         )
       }
     </div>
@@ -139,6 +166,12 @@ function EstimatesList({ onOpen, onNew }) {
 
 function EstimateForm({ existing, onSave, onCancel }) {
   const toast = useToast();
+  // Track whether the form has unsaved edits so the tab-close /
+  // refresh prompt fires only when there's something to lose.
+  // Flips true on first user change, back to false after a successful
+  // save (via setDirty(false) in handleSave's success branch).
+  const [dirty, setDirty] = useState(false);
+  useUnsavedChanges(dirty);
   const [head, setHead] = useState({
     project_name: existing?.project_name || '',
     client_name_snapshot: existing?.client_name_snapshot || '',
@@ -161,14 +194,19 @@ function EstimateForm({ existing, onSave, onCancel }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
-  function updateHead(k, v) { setHead(h => ({ ...h, [k]: v })); }
+  // Every mutator marks the form dirty so the tab-close prompt knows
+  // there's something to lose. Marked clean again on successful save.
+  function updateHead(k, v) { setDirty(true); setHead(h => ({ ...h, [k]: v })); }
   function updateLine(i, k, v) {
+    setDirty(true);
     setLines(arr => arr.map((line, idx) => idx === i ? { ...line, [k]: v } : line));
   }
   function addLine() {
+    setDirty(true);
     setLines(arr => [...arr, { category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0 }]);
   }
   function removeLine(i) {
+    setDirty(true);
     setLines(arr => arr.filter((_, idx) => idx !== i));
   }
 
@@ -218,6 +256,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
         response = await api.post('/estimates', payload);
       }
       toast(existing ? 'Estimate updated' : 'Estimate saved', 'success');
+      setDirty(false);  // mark clean so the leave-prompt doesn't fire
       onSave(response.data);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save estimate');

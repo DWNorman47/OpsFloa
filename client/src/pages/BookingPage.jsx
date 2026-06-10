@@ -2,14 +2,17 @@
 // bookable windows. Same pattern as the other admin pages in this
 // session: self-contained, tab-based, no shared component library.
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import api from '../api';
 import AppHeader from '../components/AppHeader';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
+import Pagination from '../components/Pagination';
+import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { formatDateTime } from '../utils/format';
 import { silentError } from '../errorReporter';
 
@@ -111,8 +114,10 @@ function NewAppointmentTypeForm({ onSave, onCancel }) {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [dirty, setDirty] = useState(false);
+  useUnsavedChanges(dirty);
 
-  function update(k, v) { setForm(f => ({ ...f, [k]: v })); }
+  function update(k, v) { setDirty(true); setForm(f => ({ ...f, [k]: v })); }
 
   async function save() {
     setSaving(true); setError(null);
@@ -126,6 +131,7 @@ function NewAppointmentTypeForm({ onSave, onCancel }) {
         max_advance_days:   parseInt(form.max_advance_days, 10),
         slot_interval_min:  parseInt(form.slot_interval_min, 10),
       });
+      setDirty(false);
       onSave();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to create');
@@ -607,19 +613,34 @@ function AppointmentsTab() {
   const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const [items, setItems] = useState([]);
+  const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('');
+  const [page, setPage] = useState(1);
+  const [sort, setSort] = useState({ key: 'scheduled_at', dir: 'asc' });
+  const LIMIT = 50;
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = statusFilter ? { status: statusFilter } : { from: new Date().toISOString() };
+      const params = { page, limit: LIMIT };
+      if (statusFilter) params.status = statusFilter;
+      else params.from = new Date().toISOString();
       const { data } = await api.get('/appointments', { params });
       setItems(data.items || []);
+      setMeta({ total: data.total || 0, page: data.page || 1, pages: data.pages || 1 });
     } catch (err) { silentError(err); }
     finally { setLoading(false); }
-  }, [statusFilter]);
+  }, [statusFilter, page]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { setPage(1); }, [statusFilter]);
+
+  const sortedItems = useMemo(
+    () => sortRows(items, sort, {
+      scheduled_at: r => r.scheduled_at,
+    }),
+    [items, sort]
+  );
 
   async function cancel(id) {
     if (!await confirm({
@@ -648,20 +669,21 @@ function AppointmentsTab() {
       </div>
       {loading ? <SkeletonList rows={3} /> :
         items.length === 0 ? <EmptyState title="No appointments" body="Appointments will appear here as they're booked." /> : (
+          <>
           <div style={styles.tableWrap}>
             <table style={styles.table}>
               <thead>
                 <tr style={styles.tableHeader}>
-                  <th style={styles.th}>When</th>
-                  <th style={styles.th}>Type</th>
-                  <th style={styles.th}>Client</th>
-                  <th style={styles.th}>Assigned to</th>
-                  <th style={styles.th}>Status</th>
+                  <SortHeader sortKey="scheduled_at" sort={sort} setSort={setSort}>When</SortHeader>
+                  <SortHeader sortKey="appointment_type_name" sort={sort} setSort={setSort}>Type</SortHeader>
+                  <SortHeader sortKey="client_name" sort={sort} setSort={setSort}>Client</SortHeader>
+                  <SortHeader sortKey="assigned_user_name" sort={sort} setSort={setSort}>Assigned to</SortHeader>
+                  <SortHeader sortKey="status" sort={sort} setSort={setSort}>Status</SortHeader>
                   <th style={styles.th}></th>
                 </tr>
               </thead>
               <tbody>
-                {items.map(a => {
+                {sortedItems.map(a => {
                   const c = STATUS_COLORS[a.status] || STATUS_COLORS.booked;
                   return (
                     <tr key={a.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
@@ -683,6 +705,8 @@ function AppointmentsTab() {
               </tbody>
             </table>
           </div>
+          <Pagination page={meta.page} pages={meta.pages} onChange={setPage} />
+          </>
         )
       }
     </div>

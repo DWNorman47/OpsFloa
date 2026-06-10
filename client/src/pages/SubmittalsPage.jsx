@@ -2,14 +2,17 @@
 // specs. Independent compliance module; mirrors the page patterns of
 // EstimatesPage / ChangeOrdersPage.
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import api from '../api';
 import AppHeader from '../components/AppHeader';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
+import Pagination from '../components/Pagination';
+import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { formatDate, formatDateTime } from '../utils/format';
 import { silentError } from '../errorReporter';
 
@@ -46,25 +49,39 @@ function StatusBadge({ status }) {
 
 function SubmittalsList({ onOpen, onNew }) {
   const [items, setItems] = useState([]);
+  const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('');
   const [q, setQ] = useState('');
   const [projects, setProjects] = useState([]);
   const [overdue, setOverdue] = useState([]);
+  const [page, setPage] = useState(1);
+  const [sort, setSort] = useState({ key: 'required_by', dir: 'asc' });
+  const LIMIT = 50;
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = {};
+      const params = { page, limit: LIMIT };
       if (statusFilter) params.status = statusFilter;
       if (q) params.q = q;
       const { data } = await api.get('/submittals', { params });
       setItems(data.items || []);
+      setMeta({ total: data.total || 0, page: data.page || 1, pages: data.pages || 1 });
     } catch (err) { silentError(err); }
     finally { setLoading(false); }
-  }, [statusFilter, q]);
+  }, [statusFilter, q, page]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { setPage(1); }, [statusFilter, q]);
+
+  const sortedItems = useMemo(
+    () => sortRows(items, sort, {
+      required_by: r => r.required_by,
+      revision: r => parseInt(r.revision, 10) || 0,
+    }),
+    [items, sort]
+  );
   useEffect(() => {
     api.get('/admin/projects').then(({ data }) => setProjects(data || [])).catch(() => {});
     api.get('/submittals/overdue').then(({ data }) => setOverdue(data.items || [])).catch(() => {});
@@ -113,21 +130,22 @@ function SubmittalsList({ onOpen, onNew }) {
             onAction={() => onNew(projects)}
           />
         ) : (
+          <>
           <div style={styles.tableWrap}>
             <table style={styles.table}>
               <thead>
                 <tr style={styles.tableHeader}>
-                  <th style={styles.th}>Number</th>
-                  <th style={styles.th}>Spec</th>
-                  <th style={styles.th}>Title</th>
-                  <th style={styles.th}>Project</th>
-                  <th style={styles.th}>Required by</th>
-                  <th style={styles.th}>Rev</th>
-                  <th style={styles.th}>Status</th>
+                  <SortHeader sortKey="submittal_number" sort={sort} setSort={setSort}>Number</SortHeader>
+                  <SortHeader sortKey="spec_section" sort={sort} setSort={setSort}>Spec</SortHeader>
+                  <SortHeader sortKey="title" sort={sort} setSort={setSort}>Title</SortHeader>
+                  <SortHeader sortKey="project_name" sort={sort} setSort={setSort}>Project</SortHeader>
+                  <SortHeader sortKey="required_by" sort={sort} setSort={setSort}>Required by</SortHeader>
+                  <SortHeader sortKey="revision" sort={sort} setSort={setSort}>Rev</SortHeader>
+                  <SortHeader sortKey="status" sort={sort} setSort={setSort}>Status</SortHeader>
                 </tr>
               </thead>
               <tbody>
-                {items.map(s => (
+                {sortedItems.map(s => (
                   <tr key={s.id} style={styles.tableRow} onClick={() => onOpen(s.id)}>
                     <td style={styles.td}><strong>{s.submittal_number}</strong></td>
                     <td style={styles.td}>{s.spec_section || '—'}</td>
@@ -141,6 +159,8 @@ function SubmittalsList({ onOpen, onNew }) {
               </tbody>
             </table>
           </div>
+          <Pagination page={meta.page} pages={meta.pages} onChange={setPage} />
+          </>
         )
       }
     </div>
@@ -164,8 +184,10 @@ function NewSubmittalForm({ projects, onSave, onCancel }) {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [dirty, setDirty] = useState(false);
+  useUnsavedChanges(dirty);
 
-  function update(k, v) { setForm(f => ({ ...f, [k]: v })); }
+  function update(k, v) { setDirty(true); setForm(f => ({ ...f, [k]: v })); }
 
   async function handleSave() {
     setError(null); setSaving(true);
@@ -175,6 +197,7 @@ function NewSubmittalForm({ projects, onSave, onCancel }) {
       if (!form.submittal_number.trim()) { setError('Submittal number is required'); setSaving(false); return; }
       const { project_id, ...payload } = form;
       const { data } = await api.post(`/projects/${project_id}/submittals`, payload);
+      setDirty(false);
       onSave(data);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to create submittal');
