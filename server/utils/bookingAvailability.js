@@ -29,24 +29,54 @@ function buildCandidateSlots({ now = new Date(), appointmentType }) {
 
 // ── Per-user filter ─────────────────────────────────────────────────────────
 
+// Extract weekday + minute-of-day from an instant as seen IN A SPECIFIC
+// TIMEZONE. Returns { weekday: 0..6, minutes: 0..1439 }. Falls back to
+// UTC when timezone is null/invalid so legacy callers keep working.
+function localWallClock(instant, timezone) {
+  try {
+    const tz = timezone || 'UTC';
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      weekday: 'short',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false,
+    });
+    const parts = fmt.formatToParts(instant);
+    const wdShort = parts.find(p => p.type === 'weekday')?.value;
+    const hour    = parseInt(parts.find(p => p.type === 'hour')?.value, 10);
+    const minute  = parseInt(parts.find(p => p.type === 'minute')?.value, 10);
+    const wd = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].indexOf(wdShort);
+    // 24h hour part can come back as '24' for midnight in some locales.
+    const safeHour = hour === 24 ? 0 : hour;
+    return { weekday: wd, minutes: safeHour * 60 + (Number.isFinite(minute) ? minute : 0) };
+  } catch {
+    return {
+      weekday: instant.getUTCDay(),
+      minutes: instant.getUTCHours() * 60 + instant.getUTCMinutes(),
+    };
+  }
+}
+
 // Does the slot (start, end) fit entirely inside ANY active bookable
-// window the user has for the slot's weekday? Slot weekday is computed
-// from the slot's start instant in UTC; callers wanting TZ-correct
-// matching should pass times that have already been TZ-adjusted.
-function slotInsideAnyWindow({ slotStart, slotEnd, windows }) {
-  const wd = slotStart.getUTCDay();
-  const startMinutes = slotStart.getUTCHours() * 60 + slotStart.getUTCMinutes();
-  const endMinutes   = slotEnd.getUTCHours()   * 60 + slotEnd.getUTCMinutes();
-  // Slot crossing midnight: the end_minutes < start_minutes case. We
-  // refuse to book across midnight in v1; the slot interval is 15+ min
-  // so the chance of needing this is low.
-  if (endMinutes <= startMinutes) return false;
+// window the user has for the slot's weekday? Weekday + minute-of-day
+// are evaluated in the USER'S timezone — `windows[*].weekday` and
+// `start_minutes/end_minutes` are stored as local-wall-clock values
+// (admin/user UI presents in their local TZ), so matching them against
+// UTC would silently book "Mon 9 PT" → 4 PM UTC Monday slot when it
+// shouldn't.
+function slotInsideAnyWindow({ slotStart, slotEnd, windows, timezone }) {
+  const startLocal = localWallClock(slotStart, timezone);
+  const endLocal   = localWallClock(slotEnd, timezone);
+  // Slot crossing local midnight: refuse to book across midnight in v1.
+  // Also refuse if the slot start and end land on different local
+  // weekdays (a 7 PM PT → 4 AM PT next-day case).
+  if (startLocal.weekday !== endLocal.weekday) return false;
+  if (endLocal.minutes <= startLocal.minutes) return false;
   for (const w of windows) {
     if (!w.active) continue;
-    if (w.weekday !== wd) continue;
-    const ws = w.start_minutes;
-    const we = w.end_minutes;
-    if (startMinutes >= ws && endMinutes <= we) return true;
+    if (w.weekday !== startLocal.weekday) continue;
+    if (startLocal.minutes >= w.start_minutes && endLocal.minutes <= w.end_minutes) return true;
   }
   return false;
 }
@@ -92,7 +122,9 @@ function existingAppointmentBlocks({ slotStart, slotEnd, appointments, bufferBef
 function userCanTakeSlot({ slotStart, slotEnd, user, settings }) {
   if (!user.bookable) return false;
   if (!slotInsideAnyWindow({
-    slotStart, slotEnd, windows: user.bookable_windows || [],
+    slotStart, slotEnd,
+    windows: user.bookable_windows || [],
+    timezone: user.timezone,
   })) return false;
   if (shiftBlocks({
     slotStart, slotEnd,

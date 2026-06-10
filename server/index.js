@@ -51,10 +51,45 @@ app.use(pinoHttp({
     return 'info';
   },
   serializers: {
-    req: req => ({ method: req.method, url: req.url, ip: req.ip }),
+    // Redact tokens embedded in public path segments before they hit the
+    // log stream. Any `/api/public/<scope>/<verb>/<token>` URL becomes
+    // `/api/public/<scope>/<verb>/[redacted]`. Without this, anyone with
+    // log access could take over by re-using the URL — for booking
+    // manage, estimate accept, change-order accept, lien-waiver sign.
+    req: req => ({
+      method: req.method,
+      url: redactTokenInUrl(req.url),
+      ip: req.ip,
+    }),
     res: res => ({ statusCode: res.statusCode }),
   },
 }));
+
+// Path patterns that end in a tokenized last segment. The redaction is
+// conservative — only the patterns we know carry tokens get scrubbed,
+// so e.g. `/admin/workers/42` keeps the id.
+const TOKENIZED_URL_PATTERNS = [
+  /^(\/api)?\/public\/book\/manage\/([^/?]+)/,
+  /^(\/api)?\/public\/estimates\/(view|accept|decline)\/([^/?]+)/,
+  /^(\/api)?\/public\/change-orders\/(view|accept|decline)\/([^/?]+)/,
+  /^(\/api)?\/public\/lien-waivers\/sign\/([^/?]+)/,
+  /^\/e\/([^/?]+)/,
+  /^\/co\/([^/?]+)/,
+  /^\/lien-waiver-sign\/([^/?]+)/,
+  /^\/book\/manage\/([^/?]+)/,
+];
+function redactTokenInUrl(url) {
+  if (!url) return url;
+  for (const re of TOKENIZED_URL_PATTERNS) {
+    const m = url.match(re);
+    if (m) {
+      // Replace the last capture group (the token) with [redacted].
+      const tokenIndex = m.length - 1;
+      return url.replace(m[tokenIndex], '[redacted]');
+    }
+  }
+  return url;
+}
 
 const ALLOWED_ORIGINS = [
   'https://opsfloa.com',

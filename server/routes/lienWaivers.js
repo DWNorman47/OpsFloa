@@ -121,6 +121,25 @@ router.post('/projects/:projectId/lien-waivers', requireAdmin, async (req, res) 
   if (!LIEN_WAIVER_TYPES.includes(waiver_type))    return res.status(400).json({ error: 'invalid waiver_type' });
   if (!Number.isFinite(amount_cents) || amount_cents < 0) return res.status(400).json({ error: 'invalid amount_cents' });
   if (!through_date)   return res.status(400).json({ error: 'through_date required' });
+  // Bound through_date: progress waivers can be forward-dated up to 30
+  // days (a conditional waiver "upon receipt of next month's draw" is
+  // legitimate); refusal of dates beyond that prevents accidental
+  // "release all future claims through 2099" signatures. Past dates
+  // are bounded at 5 years back as a sanity floor.
+  const throughDateObj = new Date(`${through_date}T00:00:00Z`);
+  if (Number.isNaN(throughDateObj.getTime())) {
+    return res.status(400).json({ error: 'through_date must be a valid YYYY-MM-DD date' });
+  }
+  const earliestThrough = new Date();
+  earliestThrough.setUTCFullYear(earliestThrough.getUTCFullYear() - 5);
+  const latestThrough = new Date();
+  latestThrough.setUTCDate(latestThrough.getUTCDate() + 30);
+  if (throughDateObj < earliestThrough) {
+    return res.status(400).json({ error: 'through_date is more than 5 years in the past' });
+  }
+  if (throughDateObj > latestThrough) {
+    return res.status(400).json({ error: 'through_date is more than 30 days in the future' });
+  }
   if (!signer_name || !signer_name.toString().trim())     return res.status(400).json({ error: 'signer_name required' });
   if (!signer_company || !signer_company.toString().trim()) return res.status(400).json({ error: 'signer_company required' });
   if (direction === 'from_sub' && !subcontractor_id) return res.status(400).json({ error: 'subcontractor_id required for from_sub direction' });
@@ -220,7 +239,7 @@ router.post('/lien-waivers/:id/send', requireAdmin, async (req, res) => {
     if (lw.status !== 'draft') return res.status(409).json({ error: `Cannot send from '${lw.status}'` });
     const rawToken = crypto.randomBytes(32).toString('hex');
     const r = await pool.query(
-      `UPDATE lien_waivers SET status='sent', sign_token_hash=$1 WHERE id=$2 RETURNING *`,
+      `UPDATE lien_waivers SET status='sent', sign_token_hash=$1, send_email_status='pending' WHERE id=$2 RETURNING *`,
       [sha256(rawToken), req.params.id]
     );
     await logAudit(companyId, req.user.id, req.user.full_name,

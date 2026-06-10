@@ -15,6 +15,7 @@ const { userOrIpKey } = require('../middleware/rateLimitKey');
 const { logAudit } = require('../auditLog');
 const { sendEmail } = require('../email');
 const { buildIcsAttachment } = require('../utils/ics');
+const { escapeHtml } = require('../utils/htmlEscape');
 const {
   APPOINTMENT_STATUSES,
   APPOINTMENT_BLOCKING_STATUSES,
@@ -433,8 +434,8 @@ router.get('/appointment-types/:id/availability', requireAuth, async (req, res) 
     // Load the candidate user pool: bookable=true + in allowed list (or all
     // bookable if list is empty).
     const usersQuery = allowedUserIds.length > 0
-      ? `SELECT id, full_name, bookable FROM users WHERE company_id = $1 AND bookable = true AND id = ANY($2)`
-      : `SELECT id, full_name, bookable FROM users WHERE company_id = $1 AND bookable = true`;
+      ? `SELECT id, full_name, bookable, timezone FROM users WHERE company_id = $1 AND bookable = true AND id = ANY($2) ORDER BY id`
+      : `SELECT id, full_name, bookable, timezone FROM users WHERE company_id = $1 AND bookable = true ORDER BY id`;
     const usersRes = await pool.query(
       usersQuery,
       allowedUserIds.length > 0 ? [companyId, allowedUserIds] : [companyId]
@@ -568,6 +569,16 @@ router.post('/appointment-types/:id/book', requireAuth, async (req, res) => {
       return res.status(409).json({ error: 'Appointment type inactive' });
     }
     const apt = at.rows[0];
+    // Reject past-slot or under-advance-notice bookings. Without this an
+    // admin script could create historical appointments to skew
+    // round-robin `lastCompletedAt` and pollute the audit trail.
+    const earliestAllowed = new Date(Date.now() + apt.advance_notice_hrs * 3_600_000);
+    if (slotStart < earliestAllowed) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: `scheduled_at must be at least ${apt.advance_notice_hrs}h from now`,
+      });
+    }
 
     const allowedUsersRes = await client.query(
       'SELECT user_id FROM appointment_type_users WHERE appointment_type_id = $1',
@@ -582,8 +593,10 @@ router.post('/appointment-types/:id/book', requireAuth, async (req, res) => {
 
     // Load + lock the candidate users.
     const usersQuery = allowedUserIds.length > 0
-      ? `SELECT id, full_name FROM users WHERE company_id = $1 AND bookable = true AND id = ANY($2) FOR UPDATE`
-      : `SELECT id, full_name FROM users WHERE company_id = $1 AND bookable = true FOR UPDATE`;
+      // ORDER BY id BEFORE FOR UPDATE so concurrent bookings acquire
+      // row locks in a deterministic order, preventing deadlock.
+      ? `SELECT id, full_name, timezone FROM users WHERE company_id = $1 AND bookable = true AND id = ANY($2) ORDER BY id FOR UPDATE`
+      : `SELECT id, full_name, timezone FROM users WHERE company_id = $1 AND bookable = true ORDER BY id FOR UPDATE`;
     const usersRes = await client.query(
       usersQuery,
       allowedUserIds.length > 0 ? [companyId, allowedUserIds] : [companyId]
@@ -766,6 +779,57 @@ router.get('/appointments', requireAuth, async (req, res) => {
     });
   } catch (err) {
     req.log.error({ err }, 'appointments list error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Reassign an appointment to a different bookable user. Useful when:
+//  - the assignee is leaving / unavailable
+//  - an admin needs to balance load manually
+//  - a user is being removed from the system (appointments
+//    .assigned_user_id is ON DELETE RESTRICT, so the user can't be
+//    deleted until their appointments are reassigned).
+//
+// Doesn't recompute availability — that's deliberate. The admin is
+// making an override; the new assignee may legitimately be on a shift,
+// in another appointment, or outside their window, and the admin
+// already knows that.
+router.post('/appointments/:id/reassign', requireAdmin, async (req, res) => {
+  const companyId = req.user.company_id;
+  const newUserId = parseInt(req.body.assigned_user_id, 10);
+  if (!Number.isFinite(newUserId)) {
+    return res.status(400).json({ error: 'assigned_user_id required' });
+  }
+  try {
+    // Make sure the new user is in the caller's company.
+    const userCheck = await pool.query(
+      'SELECT id, full_name FROM users WHERE id = $1 AND company_id = $2',
+      [newUserId, companyId]
+    );
+    if (userCheck.rowCount === 0) {
+      return res.status(400).json({ error: 'assigned_user_id is not in your company' });
+    }
+    const r = await pool.query(
+      `UPDATE appointments SET assigned_user_id = $1
+        WHERE id = $2 AND company_id = $3 AND status IN ('booked','confirmed')
+        RETURNING id, assigned_user_id`,
+      [newUserId, req.params.id, companyId]
+    );
+    if (r.rowCount === 0) {
+      return res.status(404).json({ error: 'Appointment not found or not reassignable' });
+    }
+    await pool.query(
+      `INSERT INTO appointment_audit (appointment_id, action, actor_kind, actor_user_id, actor_ip, details)
+       VALUES ($1, 'confirmed', 'admin', $2, $3, $4)`,
+      [req.params.id, req.user.id, req.ip,
+       JSON.stringify({ reassigned_to: newUserId, reason: req.body.reason || null })]
+    );
+    await logAudit(companyId, req.user.id, req.user.full_name,
+      'appointment.reassigned', 'appointment', req.params.id, null,
+      { to_user_id: newUserId, reason: req.body.reason || null });
+    res.json({ success: true, assigned_user_id: newUserId, assigned_user_name: userCheck.rows[0].full_name });
+  } catch (err) {
+    req.log.error({ err }, 'appointment reassign error');
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -1053,8 +1117,8 @@ publicRouter.get('/:companySlug/:typeSlug/availability', async (req, res) => {
     if (slots.length === 0) return res.json({ slots: [] });
 
     const usersQuery = allowedUserIds.length > 0
-      ? `SELECT id, full_name FROM users WHERE company_id = $1 AND bookable = true AND id = ANY($2)`
-      : `SELECT id, full_name FROM users WHERE company_id = $1 AND bookable = true`;
+      ? `SELECT id, full_name, timezone FROM users WHERE company_id = $1 AND bookable = true AND id = ANY($2) ORDER BY id`
+      : `SELECT id, full_name, timezone FROM users WHERE company_id = $1 AND bookable = true ORDER BY id`;
     const usersRes = await pool.query(
       usersQuery,
       allowedUserIds.length > 0 ? [companyId, allowedUserIds] : [companyId]
@@ -1153,6 +1217,15 @@ publicRouter.post('/:companySlug/:typeSlug', publicBookLimiter, async (req, res)
   const at = await resolvePublicAppointmentType(req.params.companySlug, req.params.typeSlug);
   if (!at) return res.status(404).json({ error: 'Not found' });
   const companyId = at.resolved_company_id;
+  // Past-slot / under-advance-notice rejection. Same rule as the admin
+  // path; defends against scripted public POSTs creating historical
+  // appointments.
+  const earliestAllowed = new Date(Date.now() + at.advance_notice_hrs * 3_600_000);
+  if (slotStart < earliestAllowed) {
+    return res.status(400).json({
+      error: `scheduled_at must be at least ${at.advance_notice_hrs}h from now`,
+    });
+  }
 
   const client = await pool.connect();
   try {
@@ -1169,8 +1242,8 @@ publicRouter.post('/:companySlug/:typeSlug', publicBookLimiter, async (req, res)
     const allowedShiftTypeIds = allowedShiftTypesRes.rows.map(r => r.shift_type_id);
 
     const usersQuery = allowedUserIds.length > 0
-      ? `SELECT id, full_name FROM users WHERE company_id = $1 AND bookable = true AND id = ANY($2) FOR UPDATE`
-      : `SELECT id, full_name FROM users WHERE company_id = $1 AND bookable = true FOR UPDATE`;
+      ? `SELECT id, full_name, timezone FROM users WHERE company_id = $1 AND bookable = true AND id = ANY($2) ORDER BY id FOR UPDATE`
+      : `SELECT id, full_name, timezone FROM users WHERE company_id = $1 AND bookable = true ORDER BY id FOR UPDATE`;
     const usersRes = await client.query(
       usersQuery,
       allowedUserIds.length > 0 ? [companyId, allowedUserIds] : [companyId]
@@ -1346,15 +1419,17 @@ async function sendBookingEmails({
     attendee: { name: clientName, email: clientEmail },
   });
 
-  // Client confirmation
+  // Client confirmation. Every interpolated value runs through
+  // escapeHtml so a `<script>` in client_name from the public POST can't
+  // ride along into the rendered email.
   await sendEmail(
     clientEmail,
     `Booking confirmed: ${apt.name} with ${companyName}`,
-    `<p>Hi ${clientName},</p>
-     <p>Your <strong>${apt.name}</strong> with ${assignee.full_name} from ${companyName} is confirmed for <strong>${when}</strong> (${durationMinutes} minutes).</p>
-     ${apt.location_detail ? `<p><strong>Location:</strong> ${apt.location_detail}</p>` : ''}
+    `<p>Hi ${escapeHtml(clientName)},</p>
+     <p>Your <strong>${escapeHtml(apt.name)}</strong> with ${escapeHtml(assignee.full_name)} from ${escapeHtml(companyName)} is confirmed for <strong>${escapeHtml(when)}</strong> (${durationMinutes} minutes).</p>
+     ${apt.location_detail ? `<p><strong>Location:</strong> ${escapeHtml(apt.location_detail)}</p>` : ''}
      <p>A calendar invite (.ics) is attached — open it to add the appointment to your calendar.</p>
-     <p><strong>Manage your booking:</strong> <a href="${manageUrl}">${manageUrl}</a></p>
+     <p><strong>Manage your booking:</strong> <a href="${escapeHtml(manageUrl)}">${escapeHtml(manageUrl)}</a></p>
      <p>Save this link — it's how you'll view or cancel the appointment.</p>`,
     [icsAttachment]
   ).catch(() => {});
@@ -1364,14 +1439,14 @@ async function sendBookingEmails({
     await sendEmail(
       assigneeEmail,
       `New booking: ${apt.name} with ${clientName}`,
-      `<p>Hi ${assignee.full_name},</p>
-       <p>You've been assigned a <strong>${apt.name}</strong> with <strong>${clientName}</strong> on <strong>${when}</strong> (${durationMinutes} minutes).</p>
+      `<p>Hi ${escapeHtml(assignee.full_name)},</p>
+       <p>You've been assigned a <strong>${escapeHtml(apt.name)}</strong> with <strong>${escapeHtml(clientName)}</strong> on <strong>${escapeHtml(when)}</strong> (${durationMinutes} minutes).</p>
        <p>
-         <strong>Client email:</strong> ${clientEmail}<br/>
-         ${clientPhone ? `<strong>Client phone:</strong> ${clientPhone}<br/>` : ''}
-         ${clientNotes ? `<strong>Notes:</strong> ${clientNotes}<br/>` : ''}
+         <strong>Client email:</strong> ${escapeHtml(clientEmail)}<br/>
+         ${clientPhone ? `<strong>Client phone:</strong> ${escapeHtml(clientPhone)}<br/>` : ''}
+         ${clientNotes ? `<strong>Notes:</strong> ${escapeHtml(clientNotes)}<br/>` : ''}
        </p>
-       ${apt.location_detail ? `<p><strong>Location:</strong> ${apt.location_detail}</p>` : ''}
+       ${apt.location_detail ? `<p><strong>Location:</strong> ${escapeHtml(apt.location_detail)}</p>` : ''}
        <p>Calendar invite (.ics) attached.</p>`,
       [icsAttachment]
     ).catch(() => {});

@@ -329,8 +329,14 @@ router.get('/wip-report/export', requireAuth, async (req, res) => {
           } catch { return 0; }
         })(),
       ]);
+      // Match the JSON path exactly: cap at 100, round to 1 decimal.
+      // Previously the CSV used an uncapped float-then-toFixed(1) so a
+      // 138% blown budget would CSV as "138.4" while the JSON capped to
+      // "100.0" — confusing for anyone reconciling the two.
       const denom = budgetSum > 0 ? budgetSum : contractValue;
-      const pctComplete = denom > 0 ? Math.min(100, (spend.spent_cents / denom) * 100) : 0;
+      const pctComplete = denom > 0
+        ? Math.min(100, Math.round((spend.spent_cents / denom) * 100 * 10) / 10)
+        : 0;
       const earnedRevenue = Math.round(contractValue * (pctComplete / 100));
       const overUnder = invoices.billed_cents - earnedRevenue;
       res.write([

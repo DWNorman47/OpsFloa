@@ -389,7 +389,12 @@ router.post('/:id/send', requireAdmin, async (req, res) => {
     await recomputeAndStoreTotals(client, req.params.id);
     const rawToken = crypto.randomBytes(32).toString('hex');
     await client.query(
-      `UPDATE estimates SET status = 'sent', sent_at = NOW(), response_token_hash = $1 WHERE id = $2`,
+      // send_email_status flips to 'pending' here; the email send is
+      // fire-and-forget but the post-send callback should patch it to
+      // 'sent' / 'failed'. Today no email is actually sent on estimate
+      // send (the raw token is returned to the admin), so 'pending'
+      // accurately reflects "no email sent yet."
+      `UPDATE estimates SET status = 'sent', sent_at = NOW(), response_token_hash = $1, send_email_status = 'pending' WHERE id = $2`,
       [sha256(rawToken), req.params.id]
     );
     await client.query('COMMIT');
@@ -466,6 +471,16 @@ router.post('/:id/convert', requireAdmin, async (req, res) => {
     if (est.converted_project_id) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Estimate already converted' });
+    }
+    // Honour valid_until on convert too. Public accept enforces this,
+    // but if the convert is fired late (admin clicked convert after
+    // the validity window closed) the price commitment is stale.
+    if (est.valid_until) {
+      const exp = new Date(`${est.valid_until}T23:59:59Z`);
+      if (Date.now() > exp.getTime()) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Estimate has expired since acceptance — duplicate to revise' });
+      }
     }
     // Sum line totals by category — this is the seed for budget categories.
     const catSumsRes = await client.query(

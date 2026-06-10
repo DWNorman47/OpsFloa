@@ -333,7 +333,7 @@ router.post('/change-orders/:id/send', requireAdmin, async (req, res) => {
     await recomputeTotals(client, req.params.id);
     const rawToken = crypto.randomBytes(32).toString('hex');
     await client.query(
-      `UPDATE change_orders SET status='sent', sent_at=NOW(), response_token_hash=$1 WHERE id=$2`,
+      `UPDATE change_orders SET status='sent', sent_at=NOW(), response_token_hash=$1, send_email_status='pending' WHERE id=$2`,
       [sha256(rawToken), req.params.id]
     );
     await client.query('COMMIT');
@@ -380,6 +380,11 @@ router.post('/change-orders/:id/withdraw', requireAdmin, async (req, res) => {
 // accept path also has a status guard, but budget_applied_at is the
 // canonical idempotency flag and the code now actually checks it.
 async function applyAcceptedCoToBudget(client, coId, projectId) {
+  // Lock the project row too. The CO FOR UPDATE prevents concurrent CO
+  // accepts; locking the project prevents a concurrent admin budget edit
+  // in routes/projectBudget.js from racing the UPSERT and producing a
+  // lost-write on budget_cents.
+  await client.query('SELECT id FROM projects WHERE id = $1 FOR UPDATE', [projectId]);
   // Idempotency check — read with FOR UPDATE so a concurrent accept
   // can't squeeze through between the read and the marker write.
   const guardRes = await client.query(

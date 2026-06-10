@@ -239,95 +239,126 @@ async function sweepStaleActiveClock() {
 // ─── Booking reminders ──────────────────────────────────────────────────────
 //
 // Run every 15 minutes. Sends one client reminder 24h before the
-// appointment and one assignee reminder 1h before. Dedup via a flag
-// column on appointments (added inline here to avoid a separate migration
-// just for this — see also reminder_sent_client / reminder_sent_assignee
-// in 0114 if/when that ships). For now, dedup by checking the audit
-// trail.
+// appointment and one assignee reminder 1h before.
+//
+// Dedup uses `appointments.reminder_client_24h_at` and
+// `reminder_assignee_1h_at` columns (added in migration 0114) via a
+// claim-then-send pattern: an UPDATE WHERE col IS NULL atomically
+// stamps "I'm sending this reminder," and only rows the UPDATE
+// actually changed get an email. If the process dies between claim
+// and send, the next 15-min run finds the claim in place and skips —
+// you lose an email, but you never spam.
 
 const { sendEmail: cronSendEmail } = require('./email');
+const { escapeHtml: cronEscape } = require('./utils/htmlEscape');
 
 async function sendBookingReminders() {
   try {
     const now = new Date();
     const in1hr = new Date(now.getTime() + 60 * 60 * 1000);
     const in24hr = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-    // Client reminders: scheduled_at between 23h and 25h from now, no
-    // prior client-reminder audit row.
-    const clientWindow = await pool.query(
-      `SELECT a.id, a.client_email, a.client_name, a.scheduled_at, a.duration_minutes,
-              t.name AS type_name, t.location_detail, u.full_name AS assignee_name,
-              c.name AS company_name
-         FROM appointments a
-         JOIN appointment_types t ON a.appointment_type_id = t.id
-         JOIN users u ON a.assigned_user_id = u.id
-         JOIN companies c ON a.company_id = c.id
+
+    // ── Client 24h reminders ────────────────────────────────────────────────
+    const clientCandidates = await pool.query(
+      `SELECT a.id FROM appointments a
         WHERE a.status IN ('booked','confirmed')
-          AND a.scheduled_at BETWEEN $1 AND $2
-          AND NOT EXISTS (
-            SELECT 1 FROM appointment_audit aa
-             WHERE aa.appointment_id = a.id
-               AND aa.actor_kind = 'system'
-               AND aa.details->>'reminder_kind' = 'client_24h'
-          )`,
+          AND a.reminder_client_24h_at IS NULL
+          AND a.scheduled_at BETWEEN $1 AND $2`,
       [new Date(in24hr.getTime() - 60 * 60 * 1000), new Date(in24hr.getTime() + 60 * 60 * 1000)]
     );
-    for (const a of clientWindow.rows) {
+    for (const row of clientCandidates.rows) {
+      // Claim the row: UPDATE only succeeds if reminder_client_24h_at is
+      // still NULL. RETURNING gives us the appointment data we need.
+      const claim = await pool.query(
+        `UPDATE appointments
+            SET reminder_client_24h_at = NOW()
+          WHERE id = $1 AND reminder_client_24h_at IS NULL
+        RETURNING id`,
+        [row.id]
+      );
+      if (claim.rowCount === 0) continue;  // another worker grabbed it
       try {
+        const r = await pool.query(
+          `SELECT a.id, a.client_email, a.client_name, a.scheduled_at, a.duration_minutes,
+                  t.name AS type_name, t.location_detail,
+                  u.full_name AS assignee_name, c.name AS company_name
+             FROM appointments a
+             JOIN appointment_types t ON a.appointment_type_id = t.id
+             JOIN users u ON a.assigned_user_id = u.id
+             JOIN companies c ON a.company_id = c.id
+            WHERE a.id = $1`,
+          [row.id]
+        );
+        const a = r.rows[0];
+        if (!a) continue;
         await cronSendEmail(
           a.client_email,
           `Reminder: ${a.type_name} with ${a.company_name} tomorrow`,
-          `<p>Hi ${a.client_name},</p>
-           <p>This is a reminder that you have a <strong>${a.type_name}</strong> with ${a.assignee_name} from ${a.company_name} tomorrow at <strong>${new Date(a.scheduled_at).toLocaleString()}</strong> (${a.duration_minutes} minutes).</p>
-           ${a.location_detail ? `<p>Location: ${a.location_detail}</p>` : ''}
+          `<p>Hi ${cronEscape(a.client_name)},</p>
+           <p>This is a reminder that you have a <strong>${cronEscape(a.type_name)}</strong> with ${cronEscape(a.assignee_name)} from ${cronEscape(a.company_name)} tomorrow at <strong>${cronEscape(new Date(a.scheduled_at).toLocaleString())}</strong> (${a.duration_minutes} minutes).</p>
+           ${a.location_detail ? `<p>Location: ${cronEscape(a.location_detail)}</p>` : ''}
            <p>If you need to cancel or reschedule, use the manage link from your booking confirmation.</p>`
         );
+      } catch (err) {
+        // Unwind the claim so a future retry can try again. Better to
+        // double-send (rare) than to permanently swallow the reminder.
         await pool.query(
-          `INSERT INTO appointment_audit (appointment_id, action, actor_kind, details)
-           VALUES ($1, 'confirmed', 'system', $2)`,
-          [a.id, JSON.stringify({ reminder_kind: 'client_24h' })]
-        );
-      } catch (err) { console.error('[cron] client reminder error:', err); }
+          `UPDATE appointments SET reminder_client_24h_at = NULL WHERE id = $1`,
+          [row.id]
+        ).catch(() => {});
+        console.error('[cron] client reminder error:', err);
+      }
     }
-    // Assignee reminders: 1h before. Same logic, different recipient.
-    const assigneeWindow = await pool.query(
-      `SELECT a.id, a.client_name, a.client_phone, a.client_notes,
-              a.scheduled_at, a.duration_minutes,
-              t.name AS type_name, t.location_detail,
-              u.email AS assignee_email, u.full_name AS assignee_name,
-              c.name AS company_name
-         FROM appointments a
-         JOIN appointment_types t ON a.appointment_type_id = t.id
+
+    // ── Assignee 1h reminders ───────────────────────────────────────────────
+    const assigneeCandidates = await pool.query(
+      `SELECT a.id FROM appointments a
          JOIN users u ON a.assigned_user_id = u.id
-         JOIN companies c ON a.company_id = c.id
         WHERE a.status IN ('booked','confirmed')
-          AND a.scheduled_at BETWEEN $1 AND $2
+          AND a.reminder_assignee_1h_at IS NULL
           AND u.email IS NOT NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM appointment_audit aa
-             WHERE aa.appointment_id = a.id
-               AND aa.actor_kind = 'system'
-               AND aa.details->>'reminder_kind' = 'assignee_1h'
-          )`,
+          AND a.scheduled_at BETWEEN $1 AND $2`,
       [new Date(in1hr.getTime() - 15 * 60 * 1000), new Date(in1hr.getTime() + 15 * 60 * 1000)]
     );
-    for (const a of assigneeWindow.rows) {
+    for (const row of assigneeCandidates.rows) {
+      const claim = await pool.query(
+        `UPDATE appointments
+            SET reminder_assignee_1h_at = NOW()
+          WHERE id = $1 AND reminder_assignee_1h_at IS NULL
+        RETURNING id`,
+        [row.id]
+      );
+      if (claim.rowCount === 0) continue;
       try {
+        const r = await pool.query(
+          `SELECT a.id, a.client_name, a.client_phone, a.client_notes,
+                  a.scheduled_at, a.duration_minutes,
+                  t.name AS type_name, t.location_detail,
+                  u.email AS assignee_email, u.full_name AS assignee_name
+             FROM appointments a
+             JOIN appointment_types t ON a.appointment_type_id = t.id
+             JOIN users u ON a.assigned_user_id = u.id
+            WHERE a.id = $1`,
+          [row.id]
+        );
+        const a = r.rows[0];
+        if (!a) continue;
         await cronSendEmail(
           a.assignee_email,
           `In 1 hour: ${a.type_name} with ${a.client_name}`,
-          `<p>Hi ${a.assignee_name},</p>
-           <p>You have a <strong>${a.type_name}</strong> with <strong>${a.client_name}</strong> in about an hour, at ${new Date(a.scheduled_at).toLocaleString()}.</p>
-           ${a.client_phone ? `<p>Client phone: ${a.client_phone}</p>` : ''}
-           ${a.client_notes ? `<p>Client notes: ${a.client_notes}</p>` : ''}
-           ${a.location_detail ? `<p>Location: ${a.location_detail}</p>` : ''}`
+          `<p>Hi ${cronEscape(a.assignee_name)},</p>
+           <p>You have a <strong>${cronEscape(a.type_name)}</strong> with <strong>${cronEscape(a.client_name)}</strong> in about an hour, at ${cronEscape(new Date(a.scheduled_at).toLocaleString())}.</p>
+           ${a.client_phone ? `<p>Client phone: ${cronEscape(a.client_phone)}</p>` : ''}
+           ${a.client_notes ? `<p>Client notes: ${cronEscape(a.client_notes)}</p>` : ''}
+           ${a.location_detail ? `<p>Location: ${cronEscape(a.location_detail)}</p>` : ''}`
         );
+      } catch (err) {
         await pool.query(
-          `INSERT INTO appointment_audit (appointment_id, action, actor_kind, details)
-           VALUES ($1, 'confirmed', 'system', $2)`,
-          [a.id, JSON.stringify({ reminder_kind: 'assignee_1h' })]
-        );
-      } catch (err) { console.error('[cron] assignee reminder error:', err); }
+          `UPDATE appointments SET reminder_assignee_1h_at = NULL WHERE id = $1`,
+          [row.id]
+        ).catch(() => {});
+        console.error('[cron] assignee reminder error:', err);
+      }
     }
   } catch (err) {
     console.error('[cron] sendBookingReminders error:', err);
