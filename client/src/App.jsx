@@ -46,6 +46,7 @@ const LienWaiversPage   = lazy(() => import('./pages/LienWaiversPage'));
 const PublicLienWaiverSignPage = lazy(() => import('./pages/PublicLienWaiverSignPage'));
 const CatalogPage       = lazy(() => import('./pages/CatalogPage'));
 const BookingPage       = lazy(() => import('./pages/BookingPage'));
+const MyBookingPage     = lazy(() => import('./pages/MyBookingPage'));
 const PublicBookingPage = lazy(() => import('./pages/PublicBookingPage'));
 const PublicBookingManagePage = lazy(() => import('./pages/PublicBookingPage').then(m => ({ default: m.PublicBookingManagePage })));
 
@@ -176,6 +177,7 @@ function AppRoutes() {
       <Route path="/lien-waivers" element={<PrivateRoute adminOnly moduleId="workforce"><LienWaiversPage /></PrivateRoute>} />
       <Route path="/catalog" element={<PrivateRoute moduleId="inventory"><CatalogPage /></PrivateRoute>} />
       <Route path="/booking" element={<PrivateRoute adminOnly moduleId="workforce"><BookingPage /></PrivateRoute>} />
+      <Route path="/me/booking" element={<PrivateRoute><MyBookingPage /></PrivateRoute>} />
       <Route path="/subs" element={<PrivateRoute adminOnly moduleId="subs"><SubsPage /></PrivateRoute>} />
       <Route path="/financial-reports" element={<PrivateRoute adminOnly moduleId="financial_reports"><FinancialReportsPage /></PrivateRoute>} />
       <Route path="/account" element={<PrivateRoute><AccountPage /></PrivateRoute>} />

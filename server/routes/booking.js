@@ -5,13 +5,16 @@
 // cron reminders) is a follow-up; this commit ships the core data
 // surface and the algorithm.
 
-const router  = require('express').Router();
-const crypto  = require('crypto');
-const pool    = require('../db');
-const logger  = require('../logger');
+const router     = require('express').Router();
+const crypto     = require('crypto');
+const rateLimit  = require('express-rate-limit');
+const pool       = require('../db');
+const logger     = require('../logger');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { userOrIpKey } = require('../middleware/rateLimitKey');
 const { logAudit } = require('../auditLog');
 const { sendEmail } = require('../email');
+const { buildIcsAttachment } = require('../utils/ics');
 const {
   APPOINTMENT_STATUSES,
   APPOINTMENT_BLOCKING_STATUSES,
@@ -792,13 +795,127 @@ router.post('/appointments/:id/cancel', requireAdmin, async (req, res) => {
   }
 });
 
+// ─── Worker self-service ──────────────────────────────────────────────────
+//
+// A bookable user manages their own windows + role label + timezone
+// without needing an admin to grant them anything special. The admin
+// /users/:id/booking path remains for admin-managed config.
+
+router.get('/me/booking', requireAuth, async (req, res) => {
+  try {
+    const u = await pool.query(
+      'SELECT id, full_name, bookable, bookable_role_label, timezone FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    if (u.rowCount === 0) return res.status(404).json({ error: 'User not found' });
+    const w = await pool.query(
+      'SELECT id, weekday, start_time, end_time, active FROM bookable_windows WHERE user_id = $1 ORDER BY weekday, start_time',
+      [req.user.id]
+    );
+    res.json({ user: u.rows[0], windows: w.rows });
+  } catch (err) {
+    req.log.error({ err }, '/me booking read error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.put('/me/booking', requireAuth, async (req, res) => {
+  // Self-service is narrower than the admin path: the user CAN'T flip
+  // their own `bookable` flag (an admin gates that — opting in to taking
+  // bookings is a workflow decision, not a personal one). They can set
+  // their role label, timezone, and weekly windows.
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const updates = [];
+    const params = [];
+    let idx = 1;
+    if (req.body.bookable_role_label !== undefined) {
+      updates.push(`bookable_role_label = $${idx++}`);
+      params.push(req.body.bookable_role_label ? req.body.bookable_role_label.toString().slice(0, 60) : null);
+    }
+    if (req.body.timezone !== undefined) {
+      updates.push(`timezone = $${idx++}`); params.push(req.body.timezone || null);
+    }
+    if (updates.length > 0) {
+      params.push(req.user.id);
+      await client.query(`UPDATE users SET ${updates.join(', ')} WHERE id = $${idx}`, params);
+    }
+    if (Array.isArray(req.body.windows)) {
+      for (let i = 0; i < req.body.windows.length; i++) {
+        const w = req.body.windows[i];
+        if (!Number.isFinite(w.weekday) || w.weekday < 0 || w.weekday > 6) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `window[${i}]: weekday must be 0-6` });
+        }
+        if (!w.start_time || !w.end_time) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `window[${i}]: start_time and end_time required` });
+        }
+        if (w.start_time >= w.end_time) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `window[${i}]: end_time must be after start_time` });
+        }
+      }
+      await client.query('DELETE FROM bookable_windows WHERE user_id = $1', [req.user.id]);
+      for (const w of req.body.windows) {
+        await client.query(
+          `INSERT INTO bookable_windows (user_id, weekday, start_time, end_time, active)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [req.user.id, w.weekday, w.start_time, w.end_time, w.active !== false]
+        );
+      }
+    }
+    await client.query('COMMIT');
+    await logAudit(req.user.company_id, req.user.id, req.user.full_name,
+      'user.booking_config.self_updated', 'user', req.user.id, null, null);
+    const fresh = await pool.query(
+      'SELECT id, full_name, bookable, bookable_role_label, timezone FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    const freshWindows = await pool.query(
+      'SELECT id, weekday, start_time, end_time, active FROM bookable_windows WHERE user_id = $1 ORDER BY weekday, start_time',
+      [req.user.id]
+    );
+    res.json({ user: fresh.rows[0], windows: freshWindows.rows });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    req.log.error({ err }, '/me booking update error');
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
 // ─── Public booking surface ─────────────────────────────────────────────────
 //
 // All no-auth, slug-keyed. Mirrors the admin endpoints but resolves
 // the company + appointment_type via /companies.slug + appointment_types.slug
 // rather than relying on req.user.company_id.
+//
+// Rate limited per IP because anyone with the slug can hit these endpoints
+// without auth. The book endpoint is tighter than the read endpoints since
+// each successful POST writes to the DB.
+
+const publicReadLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: userOrIpKey,
+  message: { error: 'Too many requests. Slow down.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+const publicBookLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,  // 1 hour
+  max: 10,                    // 10 bookings/hour/IP is generous for legit traffic
+  keyGenerator: userOrIpKey,
+  message: { error: 'Too many booking attempts. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 const publicRouter = require('express').Router();
+publicRouter.use(publicReadLimiter);
 
 async function resolvePublicAppointmentType(companySlug, typeSlug) {
   const r = await pool.query(
@@ -810,6 +927,56 @@ async function resolvePublicAppointmentType(companySlug, typeSlug) {
   );
   return r.rows[0] || null;
 }
+
+// Manage routes registered FIRST because `/manage/:token` would otherwise
+// be ambiguously matched by `/:companySlug/:typeSlug` (manage = company,
+// :token = type). Express picks the first registered route.
+
+publicRouter.get('/manage/:token', async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT a.id, a.scheduled_at, a.duration_minutes, a.status,
+              a.client_name, a.client_email,
+              t.name AS appointment_type_name, t.location_kind, t.location_detail,
+              u.full_name AS assigned_user_name,
+              c.name AS company_name
+         FROM appointments a
+         JOIN appointment_types t ON a.appointment_type_id = t.id
+         JOIN users u ON a.assigned_user_id = u.id
+         JOIN companies c ON a.company_id = c.id
+        WHERE a.manage_token_hash = $1`,
+      [sha256(req.params.token)]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Appointment not found' });
+    res.json(r.rows[0]);
+  } catch (err) {
+    logger.error({ err }, 'public manage view error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+publicRouter.post('/manage/:token/cancel', async (req, res) => {
+  try {
+    const tokenHash = sha256(req.params.token);
+    const r = await pool.query(
+      `UPDATE appointments SET status = 'cancelled', cancelled_at = NOW(),
+         cancelled_by = 'client', cancel_reason = $1
+       WHERE manage_token_hash = $2 AND status IN ('booked','confirmed')
+       RETURNING id`,
+      [req.body.reason || null, tokenHash]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Appointment not found or not cancellable' });
+    await pool.query(
+      `INSERT INTO appointment_audit (appointment_id, action, actor_kind, actor_ip, details)
+       VALUES ($1, 'cancelled', 'client', $2, $3)`,
+      [r.rows[0].id, req.ip, JSON.stringify({ reason: req.body.reason || null })]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    logger.error({ err }, 'public cancel error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
 // GET /book/:companySlug — list public appointment types for the company
 publicRouter.get('/:companySlug', async (req, res) => {
@@ -971,8 +1138,9 @@ publicRouter.get('/:companySlug/:typeSlug/availability', async (req, res) => {
 });
 
 // POST /book/:companySlug/:typeSlug — book an appointment publicly.
-// Same atomic round-robin assignment as the admin endpoint.
-publicRouter.post('/:companySlug/:typeSlug', async (req, res) => {
+// Same atomic round-robin assignment as the admin endpoint. Tighter
+// rate limit since each successful POST writes to the DB.
+publicRouter.post('/:companySlug/:typeSlug', publicBookLimiter, async (req, res) => {
   const { scheduled_at, client_name, client_email, client_phone, client_notes } = req.body;
   if (!scheduled_at) return res.status(400).json({ error: 'scheduled_at required' });
   if (!client_name || !client_email) {
@@ -1159,6 +1327,24 @@ async function sendBookingEmails({
   const assigneeEmail = assigneeRow.rows[0]?.email || null;
   const when = new Date(slotStart).toLocaleString();
   const manageUrl = `${process.env.PUBLIC_APP_URL || 'https://opsfloa.com'}/book/manage/${manageToken}`;
+  const slotEndDate = new Date(new Date(slotStart).getTime() + durationMinutes * 60_000);
+
+  // Build the .ics calendar attachment ONCE; same event goes in both
+  // emails so the client and the assignee see the same UID/start/end.
+  const icsAttachment = buildIcsAttachment({
+    uid: `appt-${appointmentId}@opsfloa.com`,
+    start: slotStart,
+    end: slotEndDate,
+    summary: `${apt.name} with ${companyName}`,
+    description: [
+      apt.description || '',
+      clientNotes ? `Client notes: ${clientNotes}` : '',
+      `Manage: ${manageUrl}`,
+    ].filter(Boolean).join('\n\n'),
+    location: apt.location_detail || apt.location_kind,
+    organizer: assigneeEmail ? { name: assignee.full_name, email: assigneeEmail } : null,
+    attendee: { name: clientName, email: clientEmail },
+  });
 
   // Client confirmation
   await sendEmail(
@@ -1167,8 +1353,10 @@ async function sendBookingEmails({
     `<p>Hi ${clientName},</p>
      <p>Your <strong>${apt.name}</strong> with ${assignee.full_name} from ${companyName} is confirmed for <strong>${when}</strong> (${durationMinutes} minutes).</p>
      ${apt.location_detail ? `<p><strong>Location:</strong> ${apt.location_detail}</p>` : ''}
+     <p>A calendar invite (.ics) is attached — open it to add the appointment to your calendar.</p>
      <p><strong>Manage your booking:</strong> <a href="${manageUrl}">${manageUrl}</a></p>
-     <p>Save this link — it's how you'll view or cancel the appointment.</p>`
+     <p>Save this link — it's how you'll view or cancel the appointment.</p>`,
+    [icsAttachment]
   ).catch(() => {});
 
   // Assignee notification
@@ -1183,58 +1371,12 @@ async function sendBookingEmails({
          ${clientPhone ? `<strong>Client phone:</strong> ${clientPhone}<br/>` : ''}
          ${clientNotes ? `<strong>Notes:</strong> ${clientNotes}<br/>` : ''}
        </p>
-       ${apt.location_detail ? `<p><strong>Location:</strong> ${apt.location_detail}</p>` : ''}`
+       ${apt.location_detail ? `<p><strong>Location:</strong> ${apt.location_detail}</p>` : ''}
+       <p>Calendar invite (.ics) attached.</p>`,
+      [icsAttachment]
     ).catch(() => {});
   }
 }
-
-// GET /book/manage/:token — view appointment via the manage token
-publicRouter.get('/manage/:token', async (req, res) => {
-  try {
-    const r = await pool.query(
-      `SELECT a.id, a.scheduled_at, a.duration_minutes, a.status,
-              a.client_name, a.client_email,
-              t.name AS appointment_type_name, t.location_kind, t.location_detail,
-              u.full_name AS assigned_user_name,
-              c.name AS company_name
-         FROM appointments a
-         JOIN appointment_types t ON a.appointment_type_id = t.id
-         JOIN users u ON a.assigned_user_id = u.id
-         JOIN companies c ON a.company_id = c.id
-        WHERE a.manage_token_hash = $1`,
-      [sha256(req.params.token)]
-    );
-    if (r.rowCount === 0) return res.status(404).json({ error: 'Appointment not found' });
-    res.json(r.rows[0]);
-  } catch (err) {
-    logger.error({ err }, 'public manage view error');
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// POST /book/manage/:token/cancel — client-initiated cancel
-publicRouter.post('/manage/:token/cancel', async (req, res) => {
-  try {
-    const tokenHash = sha256(req.params.token);
-    const r = await pool.query(
-      `UPDATE appointments SET status = 'cancelled', cancelled_at = NOW(),
-         cancelled_by = 'client', cancel_reason = $1
-       WHERE manage_token_hash = $2 AND status IN ('booked','confirmed')
-       RETURNING id`,
-      [req.body.reason || null, tokenHash]
-    );
-    if (r.rowCount === 0) return res.status(404).json({ error: 'Appointment not found or not cancellable' });
-    await pool.query(
-      `INSERT INTO appointment_audit (appointment_id, action, actor_kind, actor_ip, details)
-       VALUES ($1, 'cancelled', 'client', $2, $3)`,
-      [r.rows[0].id, req.ip, JSON.stringify({ reason: req.body.reason || null })]
-    );
-    res.json({ success: true });
-  } catch (err) {
-    logger.error({ err }, 'public cancel error');
-    res.status(500).json({ error: 'Server error' });
-  }
-});
 
 router.publicRouter = publicRouter;
 module.exports = router;
