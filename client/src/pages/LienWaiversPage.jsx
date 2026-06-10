@@ -6,10 +6,14 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import api from '../api';
 import AppHeader from '../components/AppHeader';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
+import MoneyInput from '../components/MoneyInput';
+import { useConfirm } from '../components/ConfirmDialog';
+import { formatMoney } from '../utils/format';
 import { silentError } from '../errorReporter';
 
 const STATUS_COLORS = {
@@ -50,10 +54,7 @@ function DirectionBadge({ direction }) {
   );
 }
 
-function formatCents(cents) {
-  const n = (parseInt(cents, 10) || 0) / 100;
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
-}
+const formatCents = (c) => formatMoney(c, { showCents: true });
 
 // ── List ─────────────────────────────────────────────────────────────────────
 
@@ -170,7 +171,7 @@ function NewLienWaiverForm({ projects, subs, onSave, onCancel }) {
     direction: 'from_sub',
     waiver_type: 'conditional_progress',
     subcontractor_id: '',
-    amount_cents: '',
+    amount_cents: 0,
     through_date: new Date().toISOString().slice(0, 10),
     state: '',
     signer_name: '',
@@ -256,13 +257,10 @@ function NewLienWaiverForm({ projects, subs, onSave, onCancel }) {
       <div style={styles.formCard}>
         <h3 style={styles.formH3}>Amount &amp; date</h3>
         <div style={styles.grid2}>
-          <Field label="Amount (cents)" required>
-            <input
-              type="number" min="0" step="1"
-              value={form.amount_cents}
-              onChange={e => update('amount_cents', e.target.value)}
-              style={styles.input}
-              placeholder="e.g. 250000 = $2,500.00"
+          <Field label="Amount" required>
+            <MoneyInput
+              valueCents={form.amount_cents}
+              onChange={cents => update('amount_cents', cents)}
             />
           </Field>
           <Field label="Through date" required>
@@ -311,6 +309,8 @@ function NewLienWaiverForm({ projects, subs, onSave, onCancel }) {
 // ── Detail ───────────────────────────────────────────────────────────────────
 
 function LienWaiverDetail({ id, onBack }) {
+  const toast = useToast();
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const [w, setW] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -359,32 +359,53 @@ function LienWaiverDetail({ id, onBack }) {
       const { data } = await api.post(`/lien-waivers/${id}/send`);
       setW(data);
       setSendToken(data.sign_token);
+      const url = `${window.location.origin}/lien-waiver-sign/${data.sign_token}`;
+      try { await navigator.clipboard?.writeText(url); } catch {}
+      toast('Sent — signing URL copied to clipboard', 'success');
     } catch (err) { setError(err.response?.data?.error || 'Send failed'); }
     finally { setBusy(false); }
   }
   async function signInternal() {
     setBusy(true); setError(null);
-    try { await api.post(`/lien-waivers/${id}/sign-internal`, { signature_method: 'typed', signature_data: w.signer_name }); await load(); }
+    try {
+      await api.post(`/lien-waivers/${id}/sign-internal`, { signature_method: 'typed', signature_data: w.signer_name });
+      toast('Signed', 'success');
+      await load();
+    }
     catch (err) { setError(err.response?.data?.error || 'Sign failed'); }
     finally { setBusy(false); }
   }
   async function markSigned() {
     setBusy(true); setError(null);
-    try { await api.post(`/lien-waivers/${id}/mark-signed`); await load(); }
+    try {
+      await api.post(`/lien-waivers/${id}/mark-signed`);
+      toast('Marked received', 'success');
+      await load();
+    }
     catch (err) { setError(err.response?.data?.error || 'Mark-signed failed'); }
     finally { setBusy(false); }
   }
   async function convertUnconditional() {
     setBusy(true); setError(null);
     try {
-      const { data } = await api.post(`/lien-waivers/${id}/convert-unconditional`);
+      await api.post(`/lien-waivers/${id}/convert-unconditional`);
+      toast('Unconditional waiver created', 'success');
       onBack();
     } catch (err) { setError(err.response?.data?.error || 'Convert failed'); setBusy(false); }
   }
   async function voidIt() {
-    if (!window.confirm('Void this waiver?')) return;
+    if (!await confirm({
+      title: 'Void this waiver?',
+      body: 'It will no longer be a valid legal record.',
+      confirmLabel: 'Void',
+      tone: 'danger',
+    })) return;
     setBusy(true); setError(null);
-    try { await api.post(`/lien-waivers/${id}/void`); await load(); }
+    try {
+      await api.post(`/lien-waivers/${id}/void`);
+      toast('Voided', 'success');
+      await load();
+    }
     catch (err) { setError(err.response?.data?.error || 'Void failed'); }
     finally { setBusy(false); }
   }
@@ -397,6 +418,7 @@ function LienWaiverDetail({ id, onBack }) {
 
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: '24px 20px' }}>
+      {confirmDialog}
       <div style={{ marginBottom: 16 }}>
         <button onClick={onBack} style={styles.ghostBtn}>← Back to lien waivers</button>
       </div>

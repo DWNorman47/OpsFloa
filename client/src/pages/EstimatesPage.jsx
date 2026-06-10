@@ -1,9 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import api from '../api';
 import AppHeader from '../components/AppHeader';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
+import MoneyInput from '../components/MoneyInput';
+import { useConfirm } from '../components/ConfirmDialog';
+import { formatMoney, formatDate, formatDateTime } from '../utils/format';
 import { silentError } from '../errorReporter';
 
 // The seven money categories that match server/constants/projectMoneyEnums.js.
@@ -32,10 +36,10 @@ function StatusBadge({ status }) {
   );
 }
 
-function formatCents(cents) {
-  const n = (parseInt(cents, 10) || 0) / 100;
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
-}
+// Module-local shorthand kept for the few places the previous code path
+// used `formatCents`. The shared formatMoney from utils/format is now
+// the canonical helper; alias preserved to keep the diff small.
+const formatCents = (c) => formatMoney(c, { showCents: true });
 
 // ── List view ────────────────────────────────────────────────────────────────
 
@@ -134,6 +138,7 @@ function EstimatesList({ onOpen, onNew }) {
 // ── Create / edit form ────────────────────────────────────────────────────────
 
 function EstimateForm({ existing, onSave, onCancel }) {
+  const toast = useToast();
   const [head, setHead] = useState({
     project_name: existing?.project_name || '',
     client_name_snapshot: existing?.client_name_snapshot || '',
@@ -212,6 +217,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
       } else {
         response = await api.post('/estimates', payload);
       }
+      toast(existing ? 'Estimate updated' : 'Estimate saved', 'success');
       onSave(response.data);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save estimate');
@@ -295,12 +301,10 @@ function EstimateForm({ existing, onSave, onCancel }) {
                       <input value={l.unit || ''} onChange={e => updateLine(i, 'unit', e.target.value)} style={{ ...styles.input, padding: '6px 8px' }} />
                     </td>
                     <td style={styles.lineTd}>
-                      <input
-                        type="number" step="1" min="0"
-                        value={l.unit_cost_cents}
-                        onChange={e => updateLine(i, 'unit_cost_cents', e.target.value)}
-                        style={{ ...styles.input, padding: '6px 8px', textAlign: 'right' }}
-                        title="Enter cents (e.g. 1500 for $15.00)"
+                      <MoneyInput
+                        valueCents={l.unit_cost_cents}
+                        onChange={cents => updateLine(i, 'unit_cost_cents', cents)}
+                        style={{ padding: '6px 8px 6px 22px', fontSize: 14 }}
                       />
                     </td>
                     <td style={{ ...styles.lineTd, textAlign: 'right', fontWeight: 600 }}>
@@ -483,6 +487,8 @@ function EstimateDetail({ id, onBack, onEdit }) {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState(null);
   const [sendToken, setSendToken] = useState(null);
+  const toast = useToast();
+  const { confirm, dialog: confirmDialog } = useConfirm();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -505,6 +511,12 @@ function EstimateDetail({ id, onBack, onEdit }) {
       const { data } = await api.post(`/estimates/${id}/send`);
       setEstimate(data);
       setSendToken(data.response_token);
+      // Auto-copy the acceptance URL to clipboard. Without this the
+      // admin sees the URL card, then has to click Copy as a separate
+      // step. Auto-copy lets them paste straight into an email.
+      const url = `${window.location.origin}/e/${data.response_token}`;
+      try { await navigator.clipboard?.writeText(url); } catch {}
+      toast('Sent — acceptance URL copied to clipboard', 'success');
     } catch (err) {
       setActionError(err.response?.data?.error || 'Send failed');
     } finally {
@@ -513,11 +525,17 @@ function EstimateDetail({ id, onBack, onEdit }) {
   }
 
   async function withdraw() {
-    if (!window.confirm('Withdraw this estimate? It will no longer be acceptable by the client.')) return;
+    if (!await confirm({
+      title: 'Withdraw this estimate?',
+      body: 'It will no longer be acceptable by the client.',
+      confirmLabel: 'Withdraw',
+      tone: 'danger',
+    })) return;
     setBusy(true);
     setActionError(null);
     try {
       await api.post(`/estimates/${id}/withdraw`);
+      toast('Withdrawn', 'success');
       await load();
     } catch (err) {
       setActionError(err.response?.data?.error || 'Withdraw failed');
@@ -527,12 +545,16 @@ function EstimateDetail({ id, onBack, onEdit }) {
   }
 
   async function convert() {
-    if (!window.confirm('Convert to project? This seeds the project budget from the estimate categories.')) return;
+    if (!await confirm({
+      title: 'Convert to project?',
+      body: 'This seeds the project budget from the estimate categories.',
+      confirmLabel: 'Convert',
+    })) return;
     setBusy(true);
     setActionError(null);
     try {
       const { data } = await api.post(`/estimates/${id}/convert`);
-      alert(`Project created with ${data.categories_seeded || 0} budget categories.`);
+      toast(`Project created with ${data.categories_seeded || 0} budget categories`, 'success');
       await load();
     } catch (err) {
       setActionError(err.response?.data?.error || 'Convert failed');
@@ -557,6 +579,7 @@ function EstimateDetail({ id, onBack, onEdit }) {
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
+      {confirmDialog}
       <div style={{ marginBottom: 16 }}>
         <button onClick={onBack} style={styles.ghostBtn}>← Back to list</button>
       </div>

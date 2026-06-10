@@ -1,9 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import api from '../api';
 import AppHeader from '../components/AppHeader';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
+import MoneyInput from '../components/MoneyInput';
+import { useConfirm } from '../components/ConfirmDialog';
+import { formatMoney } from '../utils/format';
 import { silentError } from '../errorReporter';
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -28,10 +32,7 @@ function StatusBadge({ status }) {
   );
 }
 
-function formatCents(cents) {
-  const n = (parseInt(cents, 10) || 0) / 100;
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
-}
+const formatCents = (c) => formatMoney(c, { showCents: true });
 
 // ── Subs directory ───────────────────────────────────────────────────────────
 
@@ -324,12 +325,14 @@ function SubPOsList({ onOpen }) {
 }
 
 function SubPODetail({ id, onBack }) {
+  const toast = useToast();
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const [po, setPo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [showPayForm, setShowPayForm] = useState(false);
-  const [payForm, setPayForm] = useState({ amount_cents: '', paid_date: new Date().toISOString().slice(0, 10), invoice_ref: '', notes: '' });
+  const [payForm, setPayForm] = useState({ amount_cents: 0, paid_date: new Date().toISOString().slice(0, 10), invoice_ref: '', notes: '' });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -344,14 +347,27 @@ function SubPODetail({ id, onBack }) {
 
   async function issue() {
     setBusy(true); setError(null);
-    try { await api.post(`/subcontract-pos/${id}/issue`); await load(); }
+    try {
+      await api.post(`/subcontract-pos/${id}/issue`);
+      toast('PO issued', 'success');
+      await load();
+    }
     catch (err) { setError(err.response?.data?.error || 'Issue failed'); }
     finally { setBusy(false); }
   }
   async function cancel() {
-    if (!window.confirm('Cancel this PO? Already-recorded payments remain in "spent".')) return;
+    if (!await confirm({
+      title: 'Cancel this PO?',
+      body: 'Already-recorded payments remain in "spent" — only the open commitment evaporates.',
+      confirmLabel: 'Cancel PO',
+      tone: 'danger',
+    })) return;
     setBusy(true); setError(null);
-    try { await api.post(`/subcontract-pos/${id}/cancel`); await load(); }
+    try {
+      await api.post(`/subcontract-pos/${id}/cancel`);
+      toast('PO cancelled', 'success');
+      await load();
+    }
     catch (err) { setError(err.response?.data?.error || 'Cancel failed'); }
     finally { setBusy(false); }
   }
@@ -360,7 +376,7 @@ function SubPODetail({ id, onBack }) {
     try {
       const amt = parseInt(payForm.amount_cents, 10);
       if (!Number.isFinite(amt) || amt < 0) {
-        setError('Amount must be a non-negative integer (in cents)');
+        setError('Amount must be a positive amount');
         setBusy(false);
         return;
       }
@@ -370,8 +386,9 @@ function SubPODetail({ id, onBack }) {
         invoice_ref: payForm.invoice_ref || null,
         notes: payForm.notes || null,
       });
+      toast('Payment recorded', 'success');
       setShowPayForm(false);
-      setPayForm({ amount_cents: '', paid_date: new Date().toISOString().slice(0, 10), invoice_ref: '', notes: '' });
+      setPayForm({ amount_cents: 0, paid_date: new Date().toISOString().slice(0, 10), invoice_ref: '', notes: '' });
       await load();
     } catch (err) { setError(err.response?.data?.error || 'Payment failed'); }
     finally { setBusy(false); }
@@ -382,6 +399,7 @@ function SubPODetail({ id, onBack }) {
 
   return (
     <>
+      {confirmDialog}
       <div style={{ marginBottom: 16 }}>
         <button onClick={onBack} style={styles.ghostBtn}>← Back to POs</button>
       </div>
@@ -436,13 +454,10 @@ function SubPODetail({ id, onBack }) {
         <div style={{ ...styles.formCard, background: '#fef3c7' }}>
           <h3 style={styles.formH3}>Record payment</h3>
           <div style={styles.grid2}>
-            <Field label="Amount (cents)" required>
-              <input
-                type="number" min="0" step="1"
-                value={payForm.amount_cents}
-                onChange={e => setPayForm(f => ({ ...f, amount_cents: e.target.value }))}
-                style={styles.input}
-                placeholder="e.g. 150000 = $1,500.00"
+            <Field label="Amount" required>
+              <MoneyInput
+                valueCents={payForm.amount_cents}
+                onChange={cents => setPayForm(f => ({ ...f, amount_cents: cents }))}
               />
             </Field>
             <Field label="Paid date" required>

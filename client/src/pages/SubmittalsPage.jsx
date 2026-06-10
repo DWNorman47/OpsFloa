@@ -4,10 +4,13 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import api from '../api';
 import AppHeader from '../components/AppHeader';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
+import { useConfirm } from '../components/ConfirmDialog';
+import { formatDate, formatDateTime } from '../utils/format';
 import { silentError } from '../errorReporter';
 
 const STATUS_COLORS = {
@@ -240,6 +243,8 @@ function NewSubmittalForm({ projects, onSave, onCancel }) {
 // ── Detail ───────────────────────────────────────────────────────────────────
 
 function SubmittalDetail({ id, onBack }) {
+  const toast = useToast();
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const [s, setS] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -276,7 +281,11 @@ function SubmittalDetail({ id, onBack }) {
     finally { setBusy(false); }
   }
   async function revise() {
-    if (!window.confirm('Create a new revision? The current submittal will be marked superseded.')) return;
+    if (!await confirm({
+      title: 'Create a new revision?',
+      body: 'The current submittal will be marked superseded.',
+      confirmLabel: 'Create revision',
+    })) return;
     setBusy(true); setError(null);
     try {
       const { data } = await api.post(`/submittals/${id}/revise`);
@@ -289,6 +298,7 @@ function SubmittalDetail({ id, onBack }) {
 
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: '24px 20px' }}>
+      {confirmDialog}
       <div style={{ marginBottom: 16 }}>
         <button onClick={onBack} style={styles.ghostBtn}>← Back to submittals</button>
       </div>

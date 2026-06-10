@@ -8,6 +8,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../api';
 import { SkeletonList } from './Skeleton';
+import MoneyInput from './MoneyInput';
+import { useConfirm } from './ConfirmDialog';
+import { useToast } from '../contexts/ToastContext';
+import { formatMoney } from '../utils/format';
 import { silentError } from '../errorReporter';
 
 const CATEGORIES = ['labor', 'materials', 'equipment', 'subs', 'overhead', 'contingency', 'other'];
@@ -22,12 +26,14 @@ const CATEGORY_COLORS = {
   other:       '#9ca3af',
 };
 
-function formatCents(cents) {
-  const n = (parseInt(cents, 10) || 0) / 100;
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
-}
+// formatCents kept as a local alias so existing call sites don't need
+// edits. The big P&L numbers want whole-dollar rounding (no $0.00 noise
+// on a $250k contract), so showCents=false.
+const formatCents = (c) => formatMoney(c);
 
 export default function ProjectFinancialsTab({ projectId }) {
+  const toast = useToast();
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const [budget, setBudget] = useState(null);
   const [spend, setSpend] = useState(null);
   const [pnl, setPnl] = useState(null);
@@ -37,7 +43,7 @@ export default function ProjectFinancialsTab({ projectId }) {
 
   const [showExpenseForm, setShowExpenseForm] = useState(false);
   const [expenseForm, setExpenseForm] = useState({
-    category: 'other', description: '', amount_cents: '', tax_pct: 0, vendor: '', paid_date: new Date().toISOString().slice(0, 10),
+    category: 'other', description: '', amount_cents: 0, tax_pct: 0, vendor: '', paid_date: new Date().toISOString().slice(0, 10),
   });
 
   const load = useCallback(async () => {
@@ -64,7 +70,7 @@ export default function ProjectFinancialsTab({ projectId }) {
     try {
       const amt = parseInt(expenseForm.amount_cents, 10);
       if (!Number.isFinite(amt) || amt < 0) {
-        setError('Amount must be a non-negative integer (in cents)'); return;
+        setError('Amount must be a positive number'); return;
       }
       if (!expenseForm.description.trim()) {
         setError('Description is required'); return;
@@ -77,16 +83,22 @@ export default function ProjectFinancialsTab({ projectId }) {
         vendor: expenseForm.vendor || null,
         paid_date: expenseForm.paid_date || null,
       });
+      toast('Expense added', 'success');
       setShowExpenseForm(false);
-      setExpenseForm({ category: 'other', description: '', amount_cents: '', tax_pct: 0, vendor: '', paid_date: new Date().toISOString().slice(0, 10) });
+      setExpenseForm({ category: 'other', description: '', amount_cents: 0, tax_pct: 0, vendor: '', paid_date: new Date().toISOString().slice(0, 10) });
       await load();
     } catch (err) { setError(err.response?.data?.error || 'Failed to add expense'); }
   }
 
   async function deleteExpense(id) {
-    if (!window.confirm('Delete this expense?')) return;
+    if (!await confirm({
+      title: 'Delete this expense?',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    })) return;
     try {
       await api.delete(`/projects/${projectId}/expenses/${id}`);
+      toast('Expense deleted', 'success');
       await load();
     } catch (err) { setError(err.response?.data?.error || 'Failed to delete expense'); }
   }
@@ -95,6 +107,7 @@ export default function ProjectFinancialsTab({ projectId }) {
 
   return (
     <div>
+      {confirmDialog}
       {error && <div style={styles.errorBox}>{error}</div>}
 
       {/* P&L summary */}
@@ -211,13 +224,10 @@ export default function ProjectFinancialsTab({ projectId }) {
                   {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </Field>
-              <Field label="Amount (cents)" required>
-                <input
-                  type="number" min="0" step="1"
-                  value={expenseForm.amount_cents}
-                  onChange={e => setExpenseForm(f => ({ ...f, amount_cents: e.target.value }))}
-                  style={styles.input}
-                  placeholder="e.g. 25000"
+              <Field label="Amount" required>
+                <MoneyInput
+                  valueCents={expenseForm.amount_cents}
+                  onChange={cents => setExpenseForm(f => ({ ...f, amount_cents: cents }))}
                 />
               </Field>
               <Field label="Tax %">

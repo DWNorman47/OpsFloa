@@ -6,10 +6,14 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import api from '../api';
 import AppHeader from '../components/AppHeader';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
+import MoneyInput from '../components/MoneyInput';
+import { useConfirm } from '../components/ConfirmDialog';
+import { formatMoney, formatDate, formatDateTime } from '../utils/format';
 import { silentError } from '../errorReporter';
 
 const CATEGORIES = ['labor', 'materials', 'equipment', 'subs', 'overhead', 'contingency', 'other'];
@@ -32,10 +36,7 @@ function StatusBadge({ status }) {
   );
 }
 
-function formatCents(cents) {
-  const n = (parseInt(cents, 10) || 0) / 100;
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
-}
+const formatCents = (c) => formatMoney(c, { showCents: true });
 
 // ── List view ────────────────────────────────────────────────────────────────
 
@@ -249,7 +250,7 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
                       <input value={l.unit || ''} onChange={e => updateLine(i, 'unit', e.target.value)} style={{ ...styles.input, padding: '6px 8px' }} />
                     </td>
                     <td style={styles.lineTd}>
-                      <input type="number" step="1" min="0" value={l.unit_cost_cents} onChange={e => updateLine(i, 'unit_cost_cents', e.target.value)} style={{ ...styles.input, padding: '6px 8px', textAlign: 'right' }} title="Cents (e.g. 1500 = $15.00)" />
+                      <MoneyInput valueCents={l.unit_cost_cents} onChange={cents => updateLine(i, 'unit_cost_cents', cents)} style={{ padding: '6px 8px 6px 22px', fontSize: 14 }} />
                     </td>
                     <td style={{ ...styles.lineTd, textAlign: 'right', fontWeight: 600 }}>{formatCents(total)}</td>
                     <td style={styles.lineTd}>
@@ -298,6 +299,8 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
 // ── Detail ───────────────────────────────────────────────────────────────────
 
 function ChangeOrderDetail({ id, onBack }) {
+  const toast = useToast();
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const [co, setCo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -321,15 +324,25 @@ function ChangeOrderDetail({ id, onBack }) {
       const { data } = await api.post(`/change-orders/${id}/send`);
       setCo(data);
       setSendToken(data.response_token);
+      const url = `${window.location.origin}/co/${data.response_token}`;
+      try { await navigator.clipboard?.writeText(url); } catch {}
+      toast('Sent — acceptance URL copied to clipboard', 'success');
     } catch (err) {
       setError(err.response?.data?.error || 'Send failed');
     } finally { setBusy(false); }
   }
   async function withdraw() {
-    if (!window.confirm('Withdraw this change order?')) return;
+    if (!await confirm({
+      title: 'Withdraw this change order?',
+      confirmLabel: 'Withdraw',
+      tone: 'danger',
+    })) return;
     setBusy(true); setError(null);
-    try { await api.post(`/change-orders/${id}/withdraw`); await load(); }
-    catch (err) { setError(err.response?.data?.error || 'Withdraw failed'); }
+    try {
+      await api.post(`/change-orders/${id}/withdraw`);
+      toast('Withdrawn', 'success');
+      await load();
+    } catch (err) { setError(err.response?.data?.error || 'Withdraw failed'); }
     finally { setBusy(false); }
   }
 
@@ -347,6 +360,7 @@ function ChangeOrderDetail({ id, onBack }) {
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
+      {confirmDialog}
       <div style={{ marginBottom: 16 }}>
         <button onClick={onBack} style={styles.ghostBtn}>← Back to change orders</button>
       </div>

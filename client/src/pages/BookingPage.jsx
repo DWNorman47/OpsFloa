@@ -4,10 +4,13 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import api from '../api';
 import AppHeader from '../components/AppHeader';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
+import { useConfirm } from '../components/ConfirmDialog';
+import { formatDateTime } from '../utils/format';
 import { silentError } from '../errorReporter';
 
 const LOCATION_KINDS = [
@@ -302,6 +305,8 @@ function AppointmentTypeEditor({ id, onBack }) {
 // ── Shift Types tab ─────────────────────────────────────────────────────────
 
 function ShiftTypesTab() {
+  const toast = useToast();
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ open: false, name: '', color: '#1a56db', description: '' });
@@ -327,13 +332,22 @@ function ShiftTypesTab() {
   }
 
   async function archive(id) {
-    if (!window.confirm('Archive this shift type?')) return;
-    try { await api.post(`/shift-types/${id}/archive`); await load(); }
+    if (!await confirm({
+      title: 'Archive this shift type?',
+      body: 'Existing shifts keep their type, but it stops appearing in pickers.',
+      confirmLabel: 'Archive',
+    })) return;
+    try {
+      await api.post(`/shift-types/${id}/archive`);
+      toast('Archived', 'success');
+      await load();
+    }
     catch (err) { setError(err.response?.data?.error || 'Archive failed'); }
   }
 
   return (
     <div>
+      {confirmDialog}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h2 style={styles.h2}>Shift types ({items.length})</h2>
         <button onClick={() => setForm(f => ({ ...f, open: !f.open }))} style={styles.primaryBtn}>
@@ -590,6 +604,8 @@ function UserBookingEditor({ userId, userName, onBack }) {
 // ── Upcoming Appointments tab ───────────────────────────────────────────────
 
 function AppointmentsTab() {
+  const toast = useToast();
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('');
@@ -606,13 +622,23 @@ function AppointmentsTab() {
   useEffect(() => { load(); }, [load]);
 
   async function cancel(id) {
-    if (!window.confirm('Cancel this appointment?')) return;
-    try { await api.post(`/appointments/${id}/cancel`, {}); await load(); }
+    if (!await confirm({
+      title: 'Cancel this appointment?',
+      body: 'The slot will be freed and the client will need to re-book.',
+      confirmLabel: 'Cancel appointment',
+      tone: 'danger',
+    })) return;
+    try {
+      await api.post(`/appointments/${id}/cancel`, {});
+      toast('Appointment cancelled', 'success');
+      await load();
+    }
     catch { /* ignore */ }
   }
 
   return (
     <div>
+      {confirmDialog}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h2 style={styles.h2}>Appointments</h2>
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={styles.input}>
@@ -639,7 +665,7 @@ function AppointmentsTab() {
                   const c = STATUS_COLORS[a.status] || STATUS_COLORS.booked;
                   return (
                     <tr key={a.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                      <td style={styles.td}>{new Date(a.scheduled_at).toLocaleString()}</td>
+                      <td style={styles.td}>{formatDateTime(a.scheduled_at)}</td>
                       <td style={styles.td}>{a.appointment_type_name}</td>
                       <td style={styles.td}>{a.client_name}<br /><span style={{ fontSize: 11, color: '#6b7280' }}>{a.client_email}</span></td>
                       <td style={styles.td}>{a.assigned_user_name}</td>
