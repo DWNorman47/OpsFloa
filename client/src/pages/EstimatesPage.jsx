@@ -334,16 +334,16 @@ function EstimateForm({ existing, onSave, onCancel }) {
         <h3 style={styles.formH3}>Markup &amp; tax</h3>
         <div style={styles.grid4}>
           <Field label="Overhead %">
-            <input type="number" step="0.1" min="0" value={head.overhead_pct} onChange={e => updateHead('overhead_pct', e.target.value)} style={styles.input} />
+            <input type="number" step="0.1" min="0" max="100" value={head.overhead_pct} onChange={e => updateHead('overhead_pct', e.target.value)} style={styles.input} />
           </Field>
           <Field label="Margin %">
-            <input type="number" step="0.1" min="0" value={head.margin_pct} onChange={e => updateHead('margin_pct', e.target.value)} style={styles.input} />
+            <input type="number" step="0.1" min="0" max="100" value={head.margin_pct} onChange={e => updateHead('margin_pct', e.target.value)} style={styles.input} />
           </Field>
           <Field label="Contingency %">
-            <input type="number" step="0.1" min="0" value={head.contingency_pct} onChange={e => updateHead('contingency_pct', e.target.value)} style={styles.input} />
+            <input type="number" step="0.1" min="0" max="100" value={head.contingency_pct} onChange={e => updateHead('contingency_pct', e.target.value)} style={styles.input} />
           </Field>
           <Field label="Tax %">
-            <input type="number" step="0.01" min="0" value={head.tax_pct} onChange={e => updateHead('tax_pct', e.target.value)} style={styles.input} />
+            <input type="number" step="0.01" min="0" max="100" value={head.tax_pct} onChange={e => updateHead('tax_pct', e.target.value)} style={styles.input} />
           </Field>
         </div>
         <div style={styles.totalsBox}>

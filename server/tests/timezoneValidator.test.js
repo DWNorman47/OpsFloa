@@ -25,4 +25,11 @@ describe('isValidTimezone', () => {
     expect(isValidTimezone('   ')).toBe(false);
     expect(isValidTimezone('123')).toBe(false);
   });
+
+  test('rejects pathologically long inputs without invoking Intl', () => {
+    // A 100KB string would slow Intl down without legitimate reason;
+    // real IANA names are under 64 chars. We cap at 100 to fail fast.
+    expect(isValidTimezone('A'.repeat(101))).toBe(false);
+    expect(isValidTimezone('A'.repeat(10000))).toBe(false);
+  });
 });

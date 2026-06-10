@@ -7,8 +7,13 @@
 // for, producing booked appointments at the wrong wall-clock time.
 function isValidTimezone(tz) {
   if (tz == null || tz === '') return true; // NULL/empty is allowed (no TZ set)
+  // Sanity cap on input length — a 100KB string would slow Intl down
+  // without any legitimate reason; real IANA names cap at ~64 chars.
+  // Without this cap a single POST could pin a CPU core during validation.
+  const s = String(tz);
+  if (s.length > 100) return false;
   try {
-    new Intl.DateTimeFormat('en-US', { timeZone: String(tz) });
+    new Intl.DateTimeFormat('en-US', { timeZone: s });
     return true;
   } catch {
     return false;

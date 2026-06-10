@@ -259,11 +259,19 @@ async function sendBookingReminders() {
     const in24hr = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
     // ── Client 24h reminders ────────────────────────────────────────────────
+    // LIMIT 500 per cron tick. Without a limit, a company with 10,000
+    // appointments in the 2-hour window would have one cron run try to
+    // process all of them — eating the 15-min budget, blowing through
+    // SendGrid rate limits, and starving every other cron job. 500/tick
+    // = 2000/hr capacity, which dwarfs realistic per-company traffic
+    // and any overflow gets caught on the next tick.
     const clientCandidates = await pool.query(
       `SELECT a.id FROM appointments a
         WHERE a.status IN ('booked','confirmed')
           AND a.reminder_client_24h_at IS NULL
-          AND a.scheduled_at BETWEEN $1 AND $2`,
+          AND a.scheduled_at BETWEEN $1 AND $2
+        ORDER BY a.scheduled_at
+        LIMIT 500`,
       [new Date(in24hr.getTime() - 60 * 60 * 1000), new Date(in24hr.getTime() + 60 * 60 * 1000)]
     );
     for (const row of clientCandidates.rows) {
@@ -321,13 +329,16 @@ async function sendBookingReminders() {
     }
 
     // ── Assignee 1h reminders ───────────────────────────────────────────────
+    // LIMIT 500 per tick — same cap as the client reminder loop.
     const assigneeCandidates = await pool.query(
       `SELECT a.id FROM appointments a
          JOIN users u ON a.assigned_user_id = u.id
         WHERE a.status IN ('booked','confirmed')
           AND a.reminder_assignee_1h_at IS NULL
           AND u.email IS NOT NULL
-          AND a.scheduled_at BETWEEN $1 AND $2`,
+          AND a.scheduled_at BETWEEN $1 AND $2
+        ORDER BY a.scheduled_at
+        LIMIT 500`,
       [new Date(in1hr.getTime() - 15 * 60 * 1000), new Date(in1hr.getTime() + 15 * 60 * 1000)]
     );
     for (const row of assigneeCandidates.rows) {
