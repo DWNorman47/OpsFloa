@@ -107,11 +107,17 @@ function EstimatesList({ onOpen, onNew }) {
         <input
           type="search"
           placeholder="Search by project / client / number..."
+          aria-label="Search estimates"
           value={filter}
           onChange={e => setFilter(e.target.value)}
           style={styles.searchInput}
         />
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={styles.select}>
+        <select
+          value={statusFilter}
+          onChange={e => setStatusFilter(e.target.value)}
+          aria-label="Filter by status"
+          style={styles.select}
+        >
           <option value="">All statuses</option>
           {Object.entries(STATUS_COLORS).map(([k, v]) => (
             <option key={k} value={k}>{v.label}</option>
@@ -418,7 +424,15 @@ function EstimateForm({ existing, onSave, onCancel }) {
 function Field({ label, required, children }) {
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: '#6b7280', fontWeight: 600 }}>
-      {label}{required && <span style={{ color: '#ef4444' }}>*</span>}
+      <span>
+        {label}
+        {required && (
+          <>
+            <span aria-hidden="true" style={{ color: '#ef4444' }}>*</span>
+            <span className="sr-only"> (required)</span>
+          </>
+        )}
+      </span>
       {children}
     </label>
   );
@@ -756,15 +770,17 @@ export default function EstimatesPage() {
   return (
     <div style={{ minHeight: '100vh', background: '#f9fafb' }}>
       <AppHeader currentApp="sales" userRole={user?.role} />
-      {view.kind === 'list' && (
-        <EstimatesList onOpen={openDetail} onNew={openNew} />
-      )}
-      {view.kind === 'detail' && (
-        <EstimateDetail id={view.id} onBack={backToList} onEdit={openEdit} />
-      )}
-      {view.kind === 'form' && (
-        <EstimateFormLoader existing={view.existing} onSave={(saved) => setView({ kind: 'detail', id: saved.id })} onCancel={() => view.existing ? setView({ kind: 'detail', id: view.existing.id }) : backToList()} />
-      )}
+      <main id="main-content">
+        {view.kind === 'list' && (
+          <EstimatesList onOpen={openDetail} onNew={openNew} />
+        )}
+        {view.kind === 'detail' && (
+          <EstimateDetail id={view.id} onBack={backToList} onEdit={openEdit} />
+        )}
+        {view.kind === 'form' && (
+          <EstimateFormLoader existing={view.existing} onSave={(saved) => setView({ kind: 'detail', id: saved.id })} onCancel={() => view.existing ? setView({ kind: 'detail', id: view.existing.id }) : backToList()} />
+        )}
+      </main>
     </div>
   );
 }

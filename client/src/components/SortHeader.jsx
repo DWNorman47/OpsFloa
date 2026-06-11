@@ -13,6 +13,13 @@
 //     <SortHeader sortKey="estimate_number" sort={sort} setSort={setSort}>Number</SortHeader>
 //     ...
 //   </tr></thead>
+//
+// Accessibility:
+//   The th carries aria-sort (none|ascending|descending) so screen-reader
+//   users hear sort state when navigating tables. The inner toggle is a
+//   real <button> so it's reachable via Tab and announces a label like
+//   "Total, currently descending — click to clear sort." The arrow glyph
+//   is aria-hidden since the state is already in aria-sort.
 
 import React from 'react';
 
@@ -32,36 +39,60 @@ export default function SortHeader({ children, sortKey, sort, setSort, align = '
     }
   }
 
+  // Verbal description of what the next click will do — gives screen-reader
+  // users the same affordance that the arrow gives sighted users.
+  const nextAction = !active
+    ? 'click to sort ascending'
+    : dir === 'asc'
+      ? 'click to sort descending'
+      : 'click to clear sort';
+  const label = typeof children === 'string' ? children : sortKey;
+  const buttonLabel = active
+    ? `${label}, sorted ${dir === 'asc' ? 'ascending' : 'descending'} — ${nextAction}`
+    : `${label} — ${nextAction}`;
+
   return (
     <th
       style={{
         textAlign: align,
-        padding: '10px 14px',
+        padding: 0,
         fontSize: 11,
         color: '#6b7280',
         fontWeight: 700,
         textTransform: 'uppercase',
         letterSpacing: '0.04em',
-        cursor: 'pointer',
-        userSelect: 'none',
         ...style,
       }}
-      onClick={toggle}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), toggle())}
       aria-sort={active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
     >
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-        {children}
-        <span style={{
-          fontSize: 10,
-          color: active ? '#1a56db' : '#d1d5db',
-          width: 8,
-        }}>
+      <button
+        type="button"
+        onClick={toggle}
+        aria-label={buttonLabel}
+        style={{
+          all: 'unset',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 4,
+          padding: '10px 14px',
+          width: '100%',
+          boxSizing: 'border-box',
+          cursor: 'pointer',
+          justifyContent: align === 'right' ? 'flex-end' : 'flex-start',
+        }}
+      >
+        <span>{children}</span>
+        <span
+          aria-hidden="true"
+          style={{
+            fontSize: 10,
+            color: active ? '#1a56db' : '#d1d5db',
+            width: 8,
+          }}
+        >
           {dir === 'asc' ? '▲' : dir === 'desc' ? '▼' : '▲'}
         </span>
-      </span>
+      </button>
     </th>
   );
 }

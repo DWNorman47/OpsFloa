@@ -124,13 +124,23 @@ function LienWaiversList({ onOpen, onNew }) {
       )}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={styles.select}>
+        <select
+          value={statusFilter}
+          onChange={e => setStatusFilter(e.target.value)}
+          aria-label="Filter by status"
+          style={styles.select}
+        >
           <option value="">All statuses</option>
           {Object.entries(STATUS_COLORS).map(([k, v]) => (
             <option key={k} value={k}>{v.label}</option>
           ))}
         </select>
-        <select value={dirFilter} onChange={e => setDirFilter(e.target.value)} style={styles.select}>
+        <select
+          value={dirFilter}
+          onChange={e => setDirFilter(e.target.value)}
+          aria-label="Filter by direction"
+          style={styles.select}
+        >
           <option value="">All directions</option>
           <option value="from_sub">From Sub</option>
           <option value="from_us">From Us</option>
@@ -564,9 +574,11 @@ export default function LienWaiversPage() {
   return (
     <div style={{ minHeight: '100vh', background: '#f9fafb' }}>
       <AppHeader currentApp="workforce" userRole={user?.role} />
-      {view.kind === 'list'   && <LienWaiversList onOpen={openDetail} onNew={openNew} />}
-      {view.kind === 'form'   && <NewLienWaiverForm projects={view.ctx?.projects || []} subs={view.ctx?.subs || []} onSave={(saved) => setView({ kind: 'detail', id: saved.id })} onCancel={backToList} />}
-      {view.kind === 'detail' && <LienWaiverDetail id={view.id} onBack={backToList} />}
+      <main id="main-content">
+        {view.kind === 'list'   && <LienWaiversList onOpen={openDetail} onNew={openNew} />}
+        {view.kind === 'form'   && <NewLienWaiverForm projects={view.ctx?.projects || []} subs={view.ctx?.subs || []} onSave={(saved) => setView({ kind: 'detail', id: saved.id })} onCancel={backToList} />}
+        {view.kind === 'detail' && <LienWaiverDetail id={view.id} onBack={backToList} />}
+      </main>
     </div>
   );
 }
@@ -574,7 +586,15 @@ export default function LienWaiversPage() {
 function Field({ label, required, children }) {
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: '#6b7280', fontWeight: 600, marginBottom: 14 }}>
-      {label}{required && <span style={{ color: '#ef4444' }}>*</span>}
+      <span>
+        {label}
+        {required && (
+          <>
+            <span aria-hidden="true" style={{ color: '#ef4444' }}>*</span>
+            <span className="sr-only"> (required)</span>
+          </>
+        )}
+      </span>
       {children}
     </label>
   );

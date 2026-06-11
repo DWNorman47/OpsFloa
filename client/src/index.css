@@ -1443,6 +1443,18 @@ button {
   gap: 18px;
 }
 
+/* Screen-reader-only text — visually hidden but still announced.
+   Use for things like "(required)" on a form field where the visual cue
+   is a non-textual asterisk, or "external link" markers, etc. Standard
+   technique; see https://webaim.org/techniques/css/invisiblecontent/. */
+.sr-only {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0);
+  white-space: nowrap; border: 0;
+}
+
 /* ── Focus visibility (keyboard navigation) ─────────────────────────────
    :focus-visible only activates when the browser infers keyboard nav, so
    mouse clicks on buttons don't flash a ring. Covers the whole interactive

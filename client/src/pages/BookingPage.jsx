@@ -662,7 +662,12 @@ function AppointmentsTab() {
       {confirmDialog}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h2 style={styles.h2}>Appointments</h2>
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={styles.input}>
+        <select
+          value={statusFilter}
+          onChange={e => setStatusFilter(e.target.value)}
+          aria-label="Filter appointments by status"
+          style={styles.input}
+        >
           <option value="">Upcoming (default)</option>
           {Object.entries(STATUS_COLORS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </select>
@@ -722,7 +727,7 @@ export default function BookingPage() {
   return (
     <div style={{ minHeight: '100vh', background: '#f9fafb' }}>
       <AppHeader currentApp="workforce" userRole={user?.role} />
-      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
+      <main id="main-content" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 16px', color: '#111827' }}>Booking</h1>
         <div style={styles.tabRow}>
           <Tab id="appointments" label="Appointments" tab={tab} setTab={setTab} />
@@ -734,7 +739,7 @@ export default function BookingPage() {
         {tab === 'types'        && <AppointmentTypesTab />}
         {tab === 'shifts'       && <ShiftTypesTab />}
         {tab === 'users'        && <BookableUsersTab />}
-      </div>
+      </main>
     </div>
   );
 }
@@ -742,7 +747,12 @@ export default function BookingPage() {
 function Tab({ id, label, tab, setTab }) {
   const active = tab === id;
   return (
-    <button onClick={() => setTab(id)} style={{ ...styles.tabBtn, ...(active ? styles.tabBtnActive : {}) }}>
+    <button
+      type="button"
+      onClick={() => setTab(id)}
+      aria-current={active ? 'page' : undefined}
+      style={{ ...styles.tabBtn, ...(active ? styles.tabBtnActive : {}) }}
+    >
       {label}
     </button>
   );
@@ -751,7 +761,15 @@ function Tab({ id, label, tab, setTab }) {
 function Field({ label, required, children }) {
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: '#6b7280', fontWeight: 600, marginBottom: 12 }}>
-      {label}{required && <span style={{ color: '#ef4444' }}>*</span>}
+      <span>
+        {label}
+        {required && (
+          <>
+            <span aria-hidden="true" style={{ color: '#ef4444' }}>*</span>
+            <span className="sr-only"> (required)</span>
+          </>
+        )}
+      </span>
       {children}
     </label>
   );

@@ -92,7 +92,12 @@ function ChangeOrdersList({ onOpen, onNew }) {
         <button onClick={() => onNew(projects)} style={styles.primaryBtn}>+ New Change Order</button>
       </div>
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={styles.select}>
+        <select
+          value={statusFilter}
+          onChange={e => setStatusFilter(e.target.value)}
+          aria-label="Filter by status"
+          style={styles.select}
+        >
           <option value="">All statuses</option>
           {Object.entries(STATUS_COLORS).map(([k, v]) => (
             <option key={k} value={k}>{v.label}</option>
@@ -486,11 +491,13 @@ export default function ChangeOrdersPage() {
   return (
     <div style={{ minHeight: '100vh', background: '#f9fafb' }}>
       <AppHeader currentApp="sales" userRole={user?.role} />
-      {view.kind === 'list' && <ChangeOrdersList onOpen={openDetail} onNew={openNew} />}
-      {view.kind === 'detail' && <ChangeOrderDetail id={view.id} onBack={backToList} />}
-      {view.kind === 'form' && (
-        <NewChangeOrderForm projects={view.projects || []} onSave={(saved) => setView({ kind: 'detail', id: saved.id })} onCancel={backToList} />
-      )}
+      <main id="main-content">
+        {view.kind === 'list' && <ChangeOrdersList onOpen={openDetail} onNew={openNew} />}
+        {view.kind === 'detail' && <ChangeOrderDetail id={view.id} onBack={backToList} />}
+        {view.kind === 'form' && (
+          <NewChangeOrderForm projects={view.projects || []} onSave={(saved) => setView({ kind: 'detail', id: saved.id })} onCancel={backToList} />
+        )}
+      </main>
     </div>
   );
 }
@@ -500,7 +507,15 @@ export default function ChangeOrdersPage() {
 function Field({ label, required, children }) {
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: '#6b7280', fontWeight: 600 }}>
-      {label}{required && <span style={{ color: '#ef4444' }}>*</span>}
+      <span>
+        {label}
+        {required && (
+          <>
+            <span aria-hidden="true" style={{ color: '#ef4444' }}>*</span>
+            <span className="sr-only"> (required)</span>
+          </>
+        )}
+      </span>
       {children}
     </label>
   );

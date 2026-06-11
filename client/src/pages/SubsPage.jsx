@@ -71,6 +71,7 @@ function SubsList({ onOpen, onNew }) {
         <input
           type="search"
           placeholder="Search subs..."
+          aria-label="Search subcontractors"
           value={q}
           onChange={e => setQ(e.target.value)}
           style={styles.searchInput}
@@ -312,7 +313,12 @@ function SubPOsList({ onOpen }) {
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={styles.select}>
+        <select
+          value={statusFilter}
+          onChange={e => setStatusFilter(e.target.value)}
+          aria-label="Filter by PO status"
+          style={styles.select}
+        >
           <option value="">All statuses</option>
           {Object.entries(PO_STATUS_COLORS).map(([k, v]) => (
             <option key={k} value={k}>{v.label}</option>
@@ -576,7 +582,7 @@ export default function SubsPage() {
   return (
     <div style={{ minHeight: '100vh', background: '#f9fafb' }}>
       <AppHeader currentApp="subs" userRole={user?.role} />
-      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
+      <main id="main-content" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 16px', color: '#111827' }}>Subcontractors</h1>
         <div style={styles.tabRow}>
           <button
@@ -599,7 +605,7 @@ export default function SubsPage() {
 
         {tab === 'pos' && view.kind === 'list'        && <SubPOsList onOpen={openPo} />}
         {tab === 'pos' && view.kind === 'po-detail'   && <SubPODetail id={view.id} onBack={backToList} />}
-      </div>
+      </main>
     </div>
   );
 }
@@ -609,7 +615,15 @@ export default function SubsPage() {
 function Field({ label, required, children }) {
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: '#6b7280', fontWeight: 600 }}>
-      {label}{required && <span style={{ color: '#ef4444' }}>*</span>}
+      <span>
+        {label}
+        {required && (
+          <>
+            <span aria-hidden="true" style={{ color: '#ef4444' }}>*</span>
+            <span className="sr-only"> (required)</span>
+          </>
+        )}
+      </span>
       {children}
     </label>
   );
