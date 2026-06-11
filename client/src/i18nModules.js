@@ -574,6 +574,10 @@ export const moduleEn = {
   cdAreYouSure: 'Are you sure?',
   cdConfirm: 'Confirm',
   cdCancel: 'Cancel',
+
+  // ── Client document language (ManageClients) ─────────────────────────────
+  clientDocLanguage: 'Document language',
+  clientDocLanguageHint: 'Language used for this client\'s estimate & change-order PDFs.',
 };
 
 export const moduleEs = {
@@ -1143,4 +1147,8 @@ export const moduleEs = {
   cdAreYouSure: '¿Está seguro?',
   cdConfirm: 'Confirmar',
   cdCancel: 'Cancelar',
+
+  // ── Client document language (ManageClients) ─────────────────────────────
+  clientDocLanguage: 'Idioma del documento',
+  clientDocLanguageHint: 'Idioma usado para los PDF de presupuestos y órdenes de cambio de este cliente.',
 };

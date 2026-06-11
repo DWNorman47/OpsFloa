@@ -14,6 +14,7 @@ import { formatMoney, formatDate, formatDateTime } from '../utils/format';
 import { computeBreakdown } from '../utils/estimateMath';
 import { silentError } from '../errorReporter';
 import { useT } from '../hooks/useT';
+import { getT } from '../i18n';
 
 // The seven money categories that match server/constants/projectMoneyEnums.js.
 // Kept here as a literal because the client doesn't import server constants;
@@ -604,8 +605,12 @@ function EstimateDetail({ id, onBack, onEdit }) {
         import('../components/EstimatePDF'),
         api.get('/company-info').catch(() => ({ data: {} })),
       ]);
-      const statusLabel = t[STATUS_COLORS[estimate.status]?.labelKey] || estimate.status;
-      const el = React.createElement(EstimatePDF, { estimate, companyInfo: companyRes.data || {}, t, statusLabel });
+      // Render the PDF in the CLIENT's language (the document recipient),
+      // not the admin's UI language. getT falls back to English when the
+      // client has no language set.
+      const pdfT = getT(estimate.client_language);
+      const statusLabel = pdfT[STATUS_COLORS[estimate.status]?.labelKey] || estimate.status;
+      const el = React.createElement(EstimatePDF, { estimate, companyInfo: companyRes.data || {}, t: pdfT, statusLabel });
       const blob = await pdf(el).toBlob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

@@ -3405,13 +3405,17 @@ router.get('/clients', requireAdmin, async (req, res) => {
 router.post('/clients', requireAdmin, async (req, res) => {
   const { name, contact_name, contact_email, contact_phone, address, notes } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'Client name is required' });
+  // Preferred document language for estimate/CO PDFs; falls back to
+  // English if absent or unrecognised. CHECK constraint is the backstop.
+  const VALID_LANGUAGES = ['English', 'Spanish'];
+  const language = VALID_LANGUAGES.includes(req.body.language) ? req.body.language : 'English';
   const companyId = req.user.company_id;
   try {
     const result = await pool.query(
-      `INSERT INTO clients (company_id, name, contact_name, contact_email, contact_phone, address, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      `INSERT INTO clients (company_id, name, contact_name, contact_email, contact_phone, address, notes, language)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
       [companyId, name.trim(), contact_name || null, contact_email || null,
-       contact_phone || null, address || null, notes || null]
+       contact_phone || null, address || null, notes || null, language]
     );
     res.status(201).json({ ...result.rows[0], project_count: 0, document_count: 0 });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
@@ -3421,6 +3425,8 @@ router.patch('/clients/:id', requireAdmin, async (req, res) => {
   const { name, contact_name, contact_email, contact_phone, address, notes } = req.body;
   const clientUpdatedAt = req.body.updated_at || null;
   if (!name?.trim()) return res.status(400).json({ error: 'Client name is required' });
+  const VALID_LANGUAGES = ['English', 'Spanish'];
+  const language = VALID_LANGUAGES.includes(req.body.language) ? req.body.language : 'English';
   const companyId = req.user.company_id;
   try {
     if (clientUpdatedAt) {
@@ -3432,9 +3438,9 @@ router.patch('/clients/:id', requireAdmin, async (req, res) => {
     }
     const result = await pool.query(
       `UPDATE clients SET name=$1, contact_name=$2, contact_email=$3, contact_phone=$4,
-       address=$5, notes=$6, updated_at=NOW() WHERE id=$7 AND company_id=$8 RETURNING *`,
+       address=$5, notes=$6, language=$7, updated_at=NOW() WHERE id=$8 AND company_id=$9 RETURNING *`,
       [name.trim(), contact_name || null, contact_email || null, contact_phone || null,
-       address || null, notes || null, req.params.id, companyId]
+       address || null, notes || null, language, req.params.id, companyId]
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Not found' });
     res.json(result.rows[0]);

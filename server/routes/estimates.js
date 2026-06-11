@@ -81,8 +81,14 @@ function normaliseLine(line, sortOrder) {
 }
 
 async function loadEstimateFull(companyId, estimateId) {
+  // client_language drives the PDF's language (the client's preference,
+  // resolved live from clients.language; NULL when the estimate has no
+  // linked client → the renderer falls back to English).
   const headRes = await pool.query(
-    'SELECT * FROM estimates WHERE id = $1 AND company_id = $2',
+    `SELECT e.*, c.language AS client_language
+       FROM estimates e
+       LEFT JOIN clients c ON c.id = e.client_id
+      WHERE e.id = $1 AND e.company_id = $2`,
     [estimateId, companyId]
   );
   if (headRes.rowCount === 0) return null;

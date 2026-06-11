@@ -61,10 +61,14 @@ async function assertProjectInCompany(companyId, projectId) {
 }
 
 async function assertCoInCompany(companyId, coId) {
+  // client_language (resolved via the project's client) drives the CO
+  // PDF's language. LEFT JOIN so a project with no linked client still
+  // returns the row — the renderer falls back to English.
   const r = await pool.query(
-    `SELECT co.*, p.name AS project_name
+    `SELECT co.*, p.name AS project_name, cl.language AS client_language
        FROM change_orders co
        JOIN projects p ON co.project_id = p.id
+       LEFT JOIN clients cl ON cl.id = p.client_id
       WHERE co.id = $1 AND co.company_id = $2`,
     [coId, companyId]
   );

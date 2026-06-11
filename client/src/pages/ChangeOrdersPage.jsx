@@ -16,6 +16,7 @@ import Pagination from '../components/Pagination';
 import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useT } from '../hooks/useT';
+import { getT } from '../i18n';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { formatMoney, formatDate, formatDateTime } from '../utils/format';
 import { computeBreakdown } from '../utils/estimateMath';
@@ -394,8 +395,11 @@ function ChangeOrderDetail({ id, onBack }) {
         import('../components/ChangeOrderPDF'),
         api.get('/company-info').catch(() => ({ data: {} })),
       ]);
-      const statusLabel = t[STATUS_COLORS[co.status]?.labelKey] || co.status;
-      const el = React.createElement(ChangeOrderPDF, { changeOrder: co, companyInfo: companyRes.data || {}, t, statusLabel });
+      // Render the PDF in the CLIENT's language (resolved from the
+      // project's client), not the admin's UI language.
+      const pdfT = getT(co.client_language);
+      const statusLabel = pdfT[STATUS_COLORS[co.status]?.labelKey] || co.status;
+      const el = React.createElement(ChangeOrderPDF, { changeOrder: co, companyInfo: companyRes.data || {}, t: pdfT, statusLabel });
       const blob = await pdf(el).toBlob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

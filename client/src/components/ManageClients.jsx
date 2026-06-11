@@ -36,7 +36,8 @@ function expiryStatus(expiresAt, t) {
 
 // ── Client Form ───────────────────────────────────────────────────────────────
 
-const BLANK_CLIENT = { name: '', contact_name: '', contact_email: '', contact_phone: '', address: '', notes: '' };
+const BLANK_CLIENT = { name: '', contact_name: '', contact_email: '', contact_phone: '', address: '', notes: '', language: 'English' };
+const CLIENT_LANGUAGES = ['English', 'Spanish'];
 
 function ClientForm({ initial = BLANK_CLIENT, onSaved, onCancel }) {
   const t = useT();
@@ -89,9 +90,18 @@ function ClientForm({ initial = BLANK_CLIENT, onSaved, onCancel }) {
         </div>
       </div>
 
-      <div style={s.field}>
-        <label htmlFor="mc-address" style={s.label}>{t.address}</label>
-        <input id="mc-address" style={s.input} maxLength={255} value={form.address} onChange={e => set('address', e.target.value)} placeholder={t.clientAddressPlaceholder} disabled={saving} />
+      <div style={s.row}>
+        <div style={s.field}>
+          <label htmlFor="mc-address" style={s.label}>{t.address}</label>
+          <input id="mc-address" style={s.input} maxLength={255} value={form.address} onChange={e => set('address', e.target.value)} placeholder={t.clientAddressPlaceholder} disabled={saving} />
+        </div>
+        <div style={s.field}>
+          <label htmlFor="mc-language" style={s.label}>{t.clientDocLanguage}</label>
+          <select id="mc-language" style={s.input} value={form.language || 'English'} onChange={e => set('language', e.target.value)} disabled={saving} aria-describedby="mc-language-hint">
+            {CLIENT_LANGUAGES.map(lng => <option key={lng} value={lng}>{lng}</option>)}
+          </select>
+          <span id="mc-language-hint" style={s.opt}>{t.clientDocLanguageHint}</span>
+        </div>
       </div>
 
       <div style={s.field}>
