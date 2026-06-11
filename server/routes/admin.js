@@ -1,6 +1,8 @@
 const router = require('express').Router();
 const bcrypt = require('bcryptjs');
 const logger = require('../logger');
+const { csvCell } = require('../utils/csv');
+const { escapeHtml } = require('../utils/htmlEscape');
 const crypto = require('crypto');
 const sgMail = require('@sendgrid/mail');
 const rateLimit = require('express-rate-limit');
@@ -2661,7 +2663,7 @@ router.patch('/entries/:id/approve', requireAdmin, requirePerm('approve_entries'
     if (worker.rows[0]?.email) {
       const { work_date, start_time, end_time } = result.rows[0];
       sendEmail(worker.rows[0].email, 'Time entry approved ✓',
-        `<p>Hi ${worker.rows[0].full_name},</p><p>Your time entry for <b>${work_date?.toString().substring(0,10)}</b> (${start_time}–${end_time}) has been <b style="color:#059669">approved</b>.</p><p>— OpsFloa</p>`);
+        `<p>Hi ${escapeHtml(worker.rows[0].full_name)},</p><p>Your time entry for <b>${work_date?.toString().substring(0,10)}</b> (${start_time}–${end_time}) has been <b style="color:#059669">approved</b>.</p><p>— OpsFloa</p>`);
     }
     const entry = result.rows[0];
     sendPushToUser(entry.user_id, { title: 'Time entry approved', body: 'An admin approved your time entry.', url: '/timeclock' });
@@ -2794,7 +2796,7 @@ router.patch('/entries/:id/reject', requireAdmin, requirePerm('approve_entries')
     if (rejWorker.rows[0]?.email) {
       const { work_date, start_time, end_time } = result.rows[0];
       sendEmail(rejWorker.rows[0].email, 'Time entry rejected',
-        `<p>Hi ${rejWorker.rows[0].full_name},</p><p>Your time entry for <b>${work_date?.toString().substring(0,10)}</b> (${start_time}–${end_time}) was <b style="color:#ef4444">rejected</b>${note ? ` with the note: <i>${note}</i>` : ''}.</p><p>Please log in to review and resubmit.</p><p>— OpsFloa</p>`);
+        `<p>Hi ${escapeHtml(rejWorker.rows[0].full_name)},</p><p>Your time entry for <b>${work_date?.toString().substring(0,10)}</b> (${start_time}–${end_time}) was <b style="color:#ef4444">rejected</b>${note ? ` with the note: <i>${escapeHtml(note)}</i>` : ''}.</p><p>Please log in to review and resubmit.</p><p>— OpsFloa</p>`);
     }
     const rejEntry = result.rows[0];
     sendPushToUser(rejEntry.user_id, {
@@ -2944,7 +2946,7 @@ router.get('/export', requireAdmin, requirePerm('view_reports'), requirePlan('st
        ORDER BY te.work_date, COALESCE(u.invoice_name, u.full_name), te.start_time`,
       values
     );
-    const esc = v => v == null ? '' : `"${String(v).replace(/"/g, '""')}"`;
+    const esc = csvCell; // RFC-4180 quoting + spreadsheet formula-injection guard
     const fmtTime = t => { const [h, m] = t.split(':'); const hr = parseInt(h); return `${hr % 12 || 12}:${m} ${hr < 12 ? 'AM' : 'PM'}`; };
     const netHours = (s, e, brk) => (hoursWorked(s, e) - (brk || 0) / 60).toFixed(2);
     const headers = ['Worker', 'Project', 'Date', 'Start', 'End', 'Break (min)', 'Net Hours', 'Wage Type', 'Mileage (mi)', 'Status', 'Notes'];
@@ -3078,7 +3080,7 @@ router.get('/payroll-export', requireAdmin, requirePerm('view_reports'), require
       byWorker[e.user_id].push(e);
     });
 
-    const esc = v => v == null ? '' : `"${String(v).replace(/"/g, '""')}"`;
+    const esc = csvCell; // RFC-4180 quoting + spreadsheet formula-injection guard
     const headers = ['Worker', 'Rate Type', 'Overtime', 'Rate', 'Regular Hrs', 'OT Hrs', 'Prevailing Hrs', 'Total Hrs', 'Mileage (mi)', 'Regular Pay', 'OT Pay', 'Prevailing Pay', 'Total Pay'];
     const lines = [headers.join(',')];
 
@@ -3355,10 +3357,10 @@ router.post('/support', requireAdmin, async (req, res) => {
   const userName = req.user.full_name || req.user.username || 'Unknown user';
   const userEmail = req.user.email || '';
   const subjectLine = subject?.trim() ? subject.trim() : 'Support Request';
-  const body = '<p><strong>From:</strong> ' + userName + ' (' + userEmail + ')</p>' +
-    '<p><strong>Company:</strong> ' + companyName + '</p>' +
-    '<p><strong>Subject:</strong> ' + subjectLine + '</p><hr/>' +
-    '<p>' + message.trim().replace(/\n/g, '<br/>') + '</p>';
+  const body = '<p><strong>From:</strong> ' + escapeHtml(userName) + ' (' + escapeHtml(userEmail) + ')</p>' +
+    '<p><strong>Company:</strong> ' + escapeHtml(companyName) + '</p>' +
+    '<p><strong>Subject:</strong> ' + escapeHtml(subjectLine) + '</p><hr/>' +
+    '<p>' + escapeHtml(message.trim()).replace(/\n/g, '<br/>') + '</p>';
   await sendEmail('support@opsfloa.com', '[OpsFloa Support] ' + subjectLine + ' — ' + companyName, body);
   res.json({ ok: true });
 });

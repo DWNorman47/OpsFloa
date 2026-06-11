@@ -232,10 +232,14 @@ router.get('/subcontractors/:id/documents/upload-url', requireAdmin, async (req,
   try {
     const sub = await assertSubInCompany(companyId, req.params.id);
     if (!sub) return res.status(404).json({ error: 'Subcontractor not found' });
-    const { uploadUrl, publicUrl } = await getPresignedUploadUrl({
-      key: `subs/${companyId}/${req.params.id}/${Date.now()}-${filename}`,
-      contentType,
-    });
+    // getPresignedUploadUrl(folder, ext, contentType) generates a UUID key
+    // under `folder`. Only a sanitized extension is taken from the
+    // user-supplied filename — the name itself never reaches the key, so a
+    // `../` traversal / cross-company-overwrite attempt is impossible.
+    const ext = (String(filename).split('.').pop() || 'bin').replace(/[^a-z0-9]/gi, '').slice(0, 8).toLowerCase() || 'bin';
+    const { uploadUrl, publicUrl } = await getPresignedUploadUrl(
+      `subs/${companyId}/${req.params.id}`, ext, contentType
+    );
     res.json({ uploadUrl, publicUrl });
   } catch (err) {
     req.log.error({ err }, 'sub doc presign error');

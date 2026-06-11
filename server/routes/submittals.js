@@ -365,10 +365,12 @@ router.get('/submittals/:id/documents/upload-url', requireAdmin, async (req, res
   try {
     const s = await assertSubmittalInCompany(companyId, req.params.id);
     if (!s) return res.status(404).json({ error: 'Submittal not found' });
-    const { uploadUrl, publicUrl } = await getPresignedUploadUrl({
-      key: `submittals/${companyId}/${req.params.id}/${Date.now()}-${filename}`,
-      contentType,
-    });
+    // Only a sanitized extension comes from the user filename; the key is a
+    // UUID under the company-scoped folder, so no path traversal is possible.
+    const ext = (String(filename).split('.').pop() || 'bin').replace(/[^a-z0-9]/gi, '').slice(0, 8).toLowerCase() || 'bin';
+    const { uploadUrl, publicUrl } = await getPresignedUploadUrl(
+      `submittals/${companyId}/${req.params.id}`, ext, contentType
+    );
     res.json({ uploadUrl, publicUrl });
   } catch (err) {
     req.log.error({ err }, 'submittal upload-url error');

@@ -585,39 +585,50 @@ publicRouter.post('/accept/:token', async (req, res) => {
   const authorized = req.body.authorized === true;
   if (!authorized) return res.status(400).json({ error: 'authorization confirmation required' });
   const tokenHash = sha256(req.params.token);
+  const client = await pool.connect();
   try {
-    const r = await pool.query(
-      `SELECT id, company_id, status, estimate_number, valid_until FROM estimates WHERE response_token_hash = $1`,
+    // Lock the row so two simultaneous accepts (double-click / replay) can't
+    // both pass the status guard — matches the CO + lien-waiver flows.
+    await client.query('BEGIN');
+    const r = await client.query(
+      `SELECT id, company_id, status, estimate_number, valid_until
+         FROM estimates WHERE response_token_hash = $1 FOR UPDATE`,
       [tokenHash]
     );
-    if (r.rowCount === 0) return res.status(404).json({ error: 'Not found' });
+    if (r.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Not found' }); }
     const est = r.rows[0];
     if (est.status !== 'sent') {
+      await client.query('ROLLBACK');
       return res.status(409).json({ error: `Cannot accept from status '${est.status}'` });
     }
     if (est.valid_until) {
       const exp = new Date(`${est.valid_until}T23:59:59Z`);
       if (Date.now() > exp.getTime()) {
-        // Self-mark expired so the next attempt is clearer.
-        await pool.query(`UPDATE estimates SET status='expired' WHERE id=$1 AND status='sent'`, [est.id]);
+        await client.query(`UPDATE estimates SET status='expired' WHERE id=$1 AND status='sent'`, [est.id]);
+        await client.query('COMMIT');
         return res.status(409).json({ error: 'Estimate has expired' });
       }
     }
-    await pool.query(
+    const upd = await client.query(
       `UPDATE estimates SET
          status='accepted', responded_at=NOW(),
          accepted_signer_name=$1, accepted_signer_ip=$2
        WHERE id=$3 AND status='sent'`,
       [signerName, req.ip, est.id]
     );
+    await client.query('COMMIT');
+    if (upd.rowCount === 0) return res.status(409).json({ error: 'Estimate is no longer acceptable' });
     await recordAudit({
       estimateId: est.id, action: 'accepted', actorKind: 'client',
       actorIp: req.ip, details: { typed_name: signerName, user_agent: req.headers['user-agent'] || null },
     });
     res.json({ success: true });
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     logger.error({ err }, 'public estimate accept error');
     res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
   }
 });
 

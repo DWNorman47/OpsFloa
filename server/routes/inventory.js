@@ -2,6 +2,7 @@ const router = require('express').Router();
 const pool = require('../db');
 const logger = require('../logger');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { escapeHtml } = require('../utils/htmlEscape');
 const { uploadBase64 } = require('../r2');
 const { checkStorageLimit, incrementStorage } = require('../storage');
 const { sendPushToCompanyAdmins } = require('../push');
@@ -2605,15 +2606,18 @@ router.post('/purchase-orders/:id/email', requireAdmin, async (req, res) => {
     const lineTotal = lines.reduce((s, l) => s + (l.unit_cost != null ? parseFloat(l.unit_cost) * parseFloat(l.qty_ordered) : 0), 0);
     const hasAnyPricing = lines.some(l => l.unit_cost != null);
 
+    // This email goes to an EXTERNAL supplier, so every DB-sourced string
+    // (item names, SKUs, notes, company/supplier fields below) is escaped to
+    // prevent stored-XSS / markup injection into the supplier's inbox.
     const tableRows = lines.map(l => {
       const qty = parseFloat(l.qty_ordered);
       return `<tr>
-        <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;font-weight:600">${l.item_name}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;font-family:monospace;font-size:12px;color:#6b7280">${l.sku || '—'}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;text-align:right">${qty % 1 === 0 ? qty.toFixed(0) : qty.toFixed(2)} ${l.unit}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;font-weight:600">${escapeHtml(l.item_name)}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;font-family:monospace;font-size:12px;color:#6b7280">${escapeHtml(l.sku) || '—'}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;text-align:right">${qty % 1 === 0 ? qty.toFixed(0) : qty.toFixed(2)} ${escapeHtml(l.unit)}</td>
         ${hasAnyPricing ? `<td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;text-align:right">${l.unit_cost != null ? fmt(l.unit_cost) : '—'}</td>` : ''}
         ${hasAnyPricing ? `<td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;text-align:right;font-weight:700">${l.unit_cost != null ? fmt(parseFloat(l.unit_cost) * qty) : '—'}</td>` : ''}
-        ${l.notes ? `<td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;font-size:12px;color:#6b7280">${l.notes}</td>` : '<td style="padding:8px 10px;border-bottom:1px solid #f3f4f6"></td>'}
+        ${l.notes ? `<td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;font-size:12px;color:#6b7280">${escapeHtml(l.notes)}</td>` : '<td style="padding:8px 10px;border-bottom:1px solid #f3f4f6"></td>'}
       </tr>`;
     }).join('');
 
@@ -2625,22 +2629,22 @@ router.post('/purchase-orders/:id/email', requireAdmin, async (req, res) => {
         <div style="border-bottom:3px solid #92400e;padding-bottom:12px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:8px">
           <div>
             <h2 style="color:#92400e;margin:0;font-size:22px">Purchase Order</h2>
-            <p style="color:#6b7280;margin:4px 0 0;font-size:13px">${po.po_number}</p>
+            <p style="color:#6b7280;margin:4px 0 0;font-size:13px">${escapeHtml(po.po_number)}</p>
           </div>
           <div style="text-align:right;font-size:13px;color:#374151">
-            <strong>${po.company_name}</strong><br>
-            ${po.company_address ? po.company_address + '<br>' : ''}
-            ${po.company_phone ? po.company_phone + '<br>' : ''}
-            ${po.company_email ? `<a href="mailto:${po.company_email}" style="color:#92400e">${po.company_email}</a>` : ''}
+            <strong>${escapeHtml(po.company_name)}</strong><br>
+            ${po.company_address ? escapeHtml(po.company_address) + '<br>' : ''}
+            ${po.company_phone ? escapeHtml(po.company_phone) + '<br>' : ''}
+            ${po.company_email ? `<a href="mailto:${escapeHtml(po.company_email)}" style="color:#92400e">${escapeHtml(po.company_email)}</a>` : ''}
           </div>
         </div>
 
         <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:20px;font-size:13px">
-          <div><span style="color:#6b7280;font-size:11px;font-weight:700;text-transform:uppercase;display:block">To</span><strong>${po.supplier_name}</strong>${po.supplier_contact ? '<br>' + po.supplier_contact : ''}</div>
+          <div><span style="color:#6b7280;font-size:11px;font-weight:700;text-transform:uppercase;display:block">To</span><strong>${escapeHtml(po.supplier_name)}</strong>${po.supplier_contact ? '<br>' + escapeHtml(po.supplier_contact) : ''}</div>
           <div><span style="color:#6b7280;font-size:11px;font-weight:700;text-transform:uppercase;display:block">Order Date</span>${fmtDate(po.order_date)}</div>
           ${po.expected_date ? `<div><span style="color:#6b7280;font-size:11px;font-weight:700;text-transform:uppercase;display:block">Expected By</span>${fmtDate(po.expected_date)}</div>` : ''}
-          ${po.to_location_name ? `<div><span style="color:#6b7280;font-size:11px;font-weight:700;text-transform:uppercase;display:block">Ship To</span>${po.to_location_name}</div>` : ''}
-          ${po.reference_no ? `<div><span style="color:#6b7280;font-size:11px;font-weight:700;text-transform:uppercase;display:block">Your Ref #</span>${po.reference_no}</div>` : ''}
+          ${po.to_location_name ? `<div><span style="color:#6b7280;font-size:11px;font-weight:700;text-transform:uppercase;display:block">Ship To</span>${escapeHtml(po.to_location_name)}</div>` : ''}
+          ${po.reference_no ? `<div><span style="color:#6b7280;font-size:11px;font-weight:700;text-transform:uppercase;display:block">Your Ref #</span>${escapeHtml(po.reference_no)}</div>` : ''}
         </div>
 
         <table style="width:100%;border-collapse:collapse;margin:12px 0;font-size:14px">
@@ -2662,7 +2666,7 @@ router.post('/purchase-orders/:id/email', requireAdmin, async (req, res) => {
           </tr></tfoot>` : ''}
         </table>
 
-        ${po.notes ? `<div style="margin-top:16px;background:#f9fafb;border-radius:8px;padding:12px 16px;font-size:13px"><strong style="font-size:11px;text-transform:uppercase;color:#6b7280">Notes</strong><p style="margin:6px 0 0">${po.notes}</p></div>` : ''}
+        ${po.notes ? `<div style="margin-top:16px;background:#f9fafb;border-radius:8px;padding:12px 16px;font-size:13px"><strong style="font-size:11px;text-transform:uppercase;color:#6b7280">Notes</strong><p style="margin:6px 0 0">${escapeHtml(po.notes)}</p></div>` : ''}
 
         <p style="margin-top:24px;font-size:12px;color:#9ca3af;border-top:1px solid #f3f4f6;padding-top:16px">
           Please confirm receipt of this purchase order by replying to this email.

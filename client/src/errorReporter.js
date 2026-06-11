@@ -17,6 +17,27 @@ const APP_VERSION = (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 
 const RECENT_WINDOW_MS = 5000;
 const recent = new Map(); // key -> last-seen timestamp
 
+// Strip secret tokens out of the reported URL. Public token pages
+// (/e/<token>, /co/<token>, /lien-waiver-sign/<token>, /book/manage/<token>)
+// and token query params would otherwise land in the client_errors table
+// in plaintext — anyone with DB/log access could replay them.
+function redactUrl(href) {
+  if (!href) return null;
+  try {
+    const u = new URL(href);
+    u.pathname = u.pathname
+      .replace(/\/(e|co)\/[^/]+/, '/$1/[redacted]')
+      .replace(/\/(lien-waiver-sign|confirm-email|reset-password|accept-invite)\/[^/]+/, '/$1/[redacted]')
+      .replace(/\/book\/manage\/[^/]+/, '/book/manage/[redacted]');
+    for (const k of ['token', 'reset', 'invite']) {
+      if (u.searchParams.has(k)) u.searchParams.set(k, '[redacted]');
+    }
+    return u.toString();
+  } catch {
+    return String(href).split('?')[0]; // fallback: at least drop the query string
+  }
+}
+
 function fingerprint(kind, message, stack) {
   // Collapse line/column numbers inside stacks so "same error, different line offset" still dedupes.
   const s = (stack || '').replace(/:\d+:\d+/g, ':L:C').slice(0, 500);
@@ -52,7 +73,7 @@ export function reportClientError({ kind, message, stack }) {
       kind,
       message: String(message || 'unknown'),
       stack: stack ? String(stack) : null,
-      url: typeof window !== 'undefined' ? window.location.href : null,
+      url: typeof window !== 'undefined' ? redactUrl(window.location.href) : null,
       app_version: APP_VERSION,
     };
     // Prefer fetch via the api client so the Authorization header is included

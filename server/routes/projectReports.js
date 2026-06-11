@@ -5,6 +5,7 @@
 const router = require('express').Router();
 const pool   = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { csvCell } = require('../utils/csv');
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -312,7 +313,7 @@ router.get('/wip-report/export', requireAuth, async (req, res) => {
       '% Complete', 'Earned Revenue', 'Billed to Date', 'Over/Under Billed',
     ];
     const dollars = c => (c / 100).toFixed(2);
-    const escape = s => `"${String(s).replace(/"/g, '""')}"`;
+    const escape = csvCell; // RFC-4180 quoting + spreadsheet formula-injection guard
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="wip-report-${new Date().toISOString().slice(0,10)}.csv"`);
     res.write(headers.join(',') + '\n');

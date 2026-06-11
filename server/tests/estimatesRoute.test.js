@@ -222,7 +222,10 @@ describe('POST /api/public/estimates/accept/:token', () => {
   });
 
   test('rejects with 404 when no estimate matches the token hash', async () => {
-    pool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    pool.query
+      .mockResolvedValueOnce({})                        // BEGIN
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // SELECT ... FOR UPDATE
+      .mockResolvedValueOnce({});                       // ROLLBACK
     const res = await request(makeApp())
       .post('/api/public/estimates/accept/bogus-token')
       .send({ typed_name: 'Jane Doe', authorized: true });
@@ -230,10 +233,13 @@ describe('POST /api/public/estimates/accept/:token', () => {
   });
 
   test('rejects with 409 when the estimate is no longer in sent status', async () => {
-    pool.query.mockResolvedValueOnce({
-      rowCount: 1,
-      rows: [{ id: 42, company_id: 'co-1', status: 'accepted', estimate_number: 'EST-2026-0001', valid_until: null }],
-    });
+    pool.query
+      .mockResolvedValueOnce({})                        // BEGIN
+      .mockResolvedValueOnce({                          // SELECT ... FOR UPDATE
+        rowCount: 1,
+        rows: [{ id: 42, company_id: 'co-1', status: 'accepted', estimate_number: 'EST-2026-0001', valid_until: null }],
+      })
+      .mockResolvedValueOnce({});                       // ROLLBACK
     const res = await request(makeApp())
       .post('/api/public/estimates/accept/sometoken')
       .send({ typed_name: 'Jane Doe', authorized: true });
@@ -242,11 +248,13 @@ describe('POST /api/public/estimates/accept/:token', () => {
 
   test('accept records signer name + IP and audits as client actor', async () => {
     pool.query
-      .mockResolvedValueOnce({
+      .mockResolvedValueOnce({})                        // BEGIN
+      .mockResolvedValueOnce({                          // SELECT ... FOR UPDATE
         rowCount: 1,
         rows: [{ id: 42, company_id: 'co-1', status: 'sent', estimate_number: 'EST-2026-0001', valid_until: null }],
       })
-      .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // UPDATE
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // UPDATE accepted
+      .mockResolvedValueOnce({})                        // COMMIT
       .mockResolvedValueOnce({ rowCount: 1, rows: [] }); // estimate_audit INSERT
 
     const res = await request(makeApp())

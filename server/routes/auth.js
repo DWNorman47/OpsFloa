@@ -299,10 +299,10 @@ router.post('/register', authLimiter, async (req, res) => {
           <h2 style="color:#dc2626;margin-bottom:8px">Multiple trial registrations</h2>
           <p style="color:#444">A new company is being registered from an IP address that has already signed up for a trial in the last 30 days.</p>
           <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px">
-            <tr><td style="padding:6px 0;color:#6b7280;width:140px">IP Address</td><td style="padding:6px 0;font-weight:600">${registrationIp}</td></tr>
-            <tr><td style="padding:6px 0;color:#6b7280">New company</td><td style="padding:6px 0;font-weight:600">${company_name}</td></tr>
-            <tr><td style="padding:6px 0;color:#6b7280">New email</td><td style="padding:6px 0">${email}</td></tr>
-            <tr><td style="padding:6px 0;color:#6b7280">Prior registrations</td><td style="padding:6px 0">${priorNames.join(', ')}</td></tr>
+            <tr><td style="padding:6px 0;color:#6b7280;width:140px">IP Address</td><td style="padding:6px 0;font-weight:600">${escapeHtml(registrationIp)}</td></tr>
+            <tr><td style="padding:6px 0;color:#6b7280">New company</td><td style="padding:6px 0;font-weight:600">${escapeHtml(company_name)}</td></tr>
+            <tr><td style="padding:6px 0;color:#6b7280">New email</td><td style="padding:6px 0">${escapeHtml(email)}</td></tr>
+            <tr><td style="padding:6px 0;color:#6b7280">Prior registrations</td><td style="padding:6px 0">${escapeHtml(priorNames.join(', '))}</td></tr>
             <tr><td style="padding:6px 0;color:#6b7280">Total from this IP</td><td style="padding:6px 0">${priorCount + 1} in last 30 days</td></tr>
           </table>
           <p style="color:#9ca3af;font-size:12px">Registration was allowed (limit is ${TRIAL_LIMIT}). You'll receive another alert if they register again.</p>

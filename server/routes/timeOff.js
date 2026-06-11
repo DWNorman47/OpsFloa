@@ -3,6 +3,7 @@ const pool = require('../db');
 const logger = require('../logger');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { sendEmail } = require('../email');
+const { escapeHtml } = require('../utils/htmlEscape');
 const { sendPushToUser, sendPushToCompanyAdmins } = require('../push');
 const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const { logAudit } = require('../auditLog');
@@ -40,9 +41,9 @@ router.post('/', requireAuth, async (req, res) => {
           [companyId]
         );
         const subject = `Time off request: ${req.user.full_name}`;
-        const emailBody = `<p><b>${req.user.full_name}</b> submitted a time off request.</p>
-          <p><b>Type:</b> ${typeLabel}<br/>
-          <b>Dates:</b> ${start_date} – ${end_date}${note ? `<br/><b>Note:</b> ${note}` : ''}</p>
+        const emailBody = `<p><b>${escapeHtml(req.user.full_name)}</b> submitted a time off request.</p>
+          <p><b>Type:</b> ${escapeHtml(typeLabel)}<br/>
+          <b>Dates:</b> ${start_date} – ${end_date}${note ? `<br/><b>Note:</b> ${escapeHtml(note)}` : ''}</p>
           <p>Log in to OpsFloa to approve or deny.</p>`;
         for (const admin of admins.rows) if (admin.email) sendEmail(admin.email, subject, emailBody);
         createInboxItemBatch(admins.rows.map(a => a.id), companyId, 'timeoff_request',

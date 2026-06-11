@@ -1,9 +1,22 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const rateLimit = require('express-rate-limit');
 const pool = require('../db');
 const logger = require('../logger');
 
 const router = express.Router();
+
+// This sink is unauthenticated, so without a limiter anyone could insert
+// unbounded rows to bloat the table / inflate DB cost. Cap per-IP; a real
+// client that's crash-looping still gets a handful through per minute.
+const reportLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  // A flood shouldn't error the user's recovery flow — silently 204.
+  handler: (req, res) => res.status(204).end(),
+});
 
 // Sanity caps so a buggy client or a malicious caller can't flood the DB.
 const MAX_MESSAGE = 2000;
@@ -20,7 +33,7 @@ function truncate(s, max) {
 // POST /api/client-errors — accepts error reports from the browser.
 // Unauthenticated on purpose (errors can fire before login), but we try to
 // extract user identity from the Authorization header when present.
-router.post('/', async (req, res) => {
+router.post('/', reportLimiter, async (req, res) => {
   try {
     const { kind, message, stack, url, app_version } = req.body || {};
     if (!VALID_KINDS.has(kind)) return res.status(400).json({ error: 'invalid kind' });
