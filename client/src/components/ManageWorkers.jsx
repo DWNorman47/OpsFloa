@@ -8,6 +8,7 @@ import ModalShell from './ModalShell';
 import WorkerFringes from './WorkerFringes';
 import WorkerSsn from './WorkerSsn';
 import EmptyState from './EmptyState';
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 
 import { silentError } from '../errorReporter';
 function WorkerDocuments({ workerId }) {
@@ -176,6 +177,9 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
   const [addMode, setAddMode] = useState('manual');
   const [form, setForm] = useState({ first_name: '', last_name: '', username: '', password: defaultTempPassword, email: '', role: 'worker', worker_type: 'employee', classification: '', language: 'English', hourly_rate: String(defaultRate), rate_type: 'hourly', overtime_rule: 'daily' });
   const [inviteForm, setInviteForm] = useState({ first_name: '', last_name: '', email: '', role: 'worker', language: 'English', hourly_rate: String(defaultRate) });
+  // True once the user edits the open add/invite panel, so the tab-close
+  // prompt only fires when there's actually entered data to lose.
+  const [formTouched, setFormTouched] = useState(false);
   const [error, setError] = useState('');
   const [inviteError, setInviteError] = useState('');
   const [inviteSent, setInviteSent] = useState('');
@@ -246,8 +250,12 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
   }, []);
 
   // ── Add form helpers ────────────────────────────────────────────────────────
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const setInvite = (k, v) => setInviteForm(f => ({ ...f, [k]: v }));
+  // Warn on tab-close only while the add/invite panel is open and touched.
+  // beforeunload only catches full-document unloads; in-app cancel just
+  // resets the flag below.
+  useUnsavedChanges(showForm && formTouched);
+  const set = (k, v) => { setFormTouched(true); setForm(f => ({ ...f, [k]: v })); };
+  const setInvite = (k, v) => { setFormTouched(true); setInviteForm(f => ({ ...f, [k]: v })); };
 
   const updateAutoUsername = (first, last) => {
     if (usernameEdited) return;
@@ -257,10 +265,12 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
   };
 
   const handleFirstNameChange = v => {
+    setFormTouched(true);
     setForm(f => ({ ...f, first_name: v }));
     updateAutoUsername(v, form.last_name);
   };
   const handleLastNameChange = v => {
+    setFormTouched(true);
     setForm(f => ({ ...f, last_name: v }));
     updateAutoUsername(form.first_name, v);
   };
@@ -285,7 +295,7 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
       toast(t.workerCreated, 'success');
       const workerType = form.worker_type;
       setForm({ first_name: '', last_name: '', username: '', password: defaultTempPassword, email: '', role: 'worker', worker_type: 'employee', language: 'English', hourly_rate: String(defaultRate), rate_type: 'hourly', overtime_rule: 'daily' });
-      setUsernameEdited(false); setUsernameTaken(false); setShowForm(false);
+      setUsernameEdited(false); setUsernameTaken(false); setShowForm(false); setFormTouched(false);
       // Offer to create as QBO Vendor if connected and worker is contractor/subcontractor
       if (qboConnected && (workerType === 'contractor' || workerType === 'subcontractor')) {
         setQboVendorPrompt({ user_id: r.data.id, display_name: r.data.full_name });
@@ -305,6 +315,7 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
       const inv_full_name = [inviteForm.first_name, inviteForm.last_name].filter(Boolean).join(' ');
       const r = await api.post('/admin/workers/invite', { ...inviteForm, full_name: inv_full_name });
       onWorkerAdded(r.data);
+      setFormTouched(false);
       if (r.data.email_sent === false) {
         setInviteError(t.workerInviteEmailFailed);
         setInviteForm({ first_name: '', last_name: '', email: '', role: 'worker', language: 'English', hourly_rate: String(defaultRate) });
@@ -525,7 +536,7 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
     <div style={s.card} className="manage-workers-card">
       <div style={s.cardHeader} className="manage-workers-card-header">
         <h3 style={s.cardTitle}>{t.users}</h3>
-        <button style={s.addBtn} onClick={() => { setShowForm(v => !v); setError(''); setArchivedConflict(null); setInviteError(''); setInviteSent(''); setForm({ first_name: '', last_name: '', username: '', password: defaultTempPassword, email: '', role: 'worker', worker_type: 'employee', language: 'English', hourly_rate: String(defaultRate), rate_type: 'hourly', overtime_rule: 'daily' }); setInviteForm({ first_name: '', last_name: '', email: '', role: 'worker', language: 'English', hourly_rate: String(defaultRate) }); setUsernameEdited(false); setAddMode('manual'); }}>
+        <button style={s.addBtn} onClick={() => { setShowForm(v => !v); setFormTouched(false); setError(''); setArchivedConflict(null); setInviteError(''); setInviteSent(''); setForm({ first_name: '', last_name: '', username: '', password: defaultTempPassword, email: '', role: 'worker', worker_type: 'employee', language: 'English', hourly_rate: String(defaultRate), rate_type: 'hourly', overtime_rule: 'daily' }); setInviteForm({ first_name: '', last_name: '', email: '', role: 'worker', language: 'English', hourly_rate: String(defaultRate) }); setUsernameEdited(false); setAddMode('manual'); }}>
           {showForm ? t.cancel : t.addUser}
         </button>
       </div>
@@ -588,6 +599,7 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
                     onChange={e => {
                       const id = e.target.value ? parseInt(e.target.value) : '';
                       const picked = availableRoles.find(r => r.id === id);
+                      setFormTouched(true);
                       // Keep legacy `form.role` in sync with the chosen role's parent
                       // so the existing POST handler still routes it correctly during
                       // Phase B's coexistence window.

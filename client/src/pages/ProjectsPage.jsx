@@ -4,6 +4,7 @@ import api from '../api';
 import AppHeader from '../components/AppHeader';
 import ManageClients from '../components/ManageClients';
 import { useT } from '../hooks/useT';
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
 import TabBar from '../components/TabBar';
@@ -1605,7 +1606,11 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
   const [geocoding, setGeocoding] = useState(false);
   const [geoLocating, setGeoLocating] = useState(false);
   const [geoError, setGeoError] = useState('');
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  // Warn on tab-close while a half-filled new-project form is open;
+  // cleared on a successful save just before the parent unmounts us.
+  const [dirty, setDirty] = useState(false);
+  useUnsavedChanges(dirty);
+  const set = (k, v) => { setDirty(true); setForm(f => ({ ...f, [k]: v })); };
   const showPrevailing = (settings?.prevailing_wage_rate ?? 0) > 0;
   const workLabel = settings?.label_work || 'Project';
   const workLabelLower = workLabel.toLowerCase();
@@ -1641,6 +1646,7 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
     setGeoLocating(true); setGeoError('');
     navigator.geolocation.getCurrentPosition(
       pos => {
+        setDirty(true);
         setForm(f => ({
           ...f,
           geo_lat: pos.coords.latitude.toFixed(6),
@@ -1700,6 +1706,7 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
         geo_lng:        geoCount === 3 ? parseFloat(lng) : null,
         geo_radius_ft:  geoCount === 3 ? parseInt(radius, 10) : null,
       });
+      setDirty(false);
       onSaved(r.data);
     } catch (err) {
       setError(err.response?.data?.error || t.failedCreateProject);
@@ -1842,7 +1849,7 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
                   background: 'none', border: 'none', color: '#6b7280',
                   fontSize: 13, cursor: 'pointer', padding: '8px 4px', whiteSpace: 'nowrap',
                 }}
-                onClick={() => setForm(f => ({ ...f, geo_lat: '', geo_lng: '', geo_radius_ft: '' }))}
+                onClick={() => { setDirty(true); setForm(f => ({ ...f, geo_lat: '', geo_lng: '', geo_radius_ft: '' })); }}
               >
                 ✕ Clear
               </button>
