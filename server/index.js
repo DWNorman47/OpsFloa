@@ -129,6 +129,17 @@ app.use('/api', (req, res, next) => {
 
 // Stripe webhook needs raw body before express.json parses it
 app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
+
+// Unauthenticated endpoints never need large bodies — cap them tightly so
+// they can't be abused for memory amplification. The first json parser to
+// run wins (express.json no-ops once req.body is set), so these tight
+// parsers on the public path prefixes take precedence over the 20 MB
+// app-wide limit applied to authenticated routes below. Public gets 1 MB to
+// allow a base64 drawn signature on the lien-waiver sign flow.
+app.use('/api/auth', express.json({ limit: '256kb' }));
+app.use('/api/client-errors', express.json({ limit: '256kb' }));
+app.use('/api/sendgrid-events', express.json({ limit: '1mb' }));
+app.use('/api/public', express.json({ limit: '1mb' }));
 app.use(express.json({ limit: '20mb' }));
 
 // Establish the request-scoped demo context (suppresses email + surfaces
