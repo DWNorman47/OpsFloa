@@ -10,6 +10,12 @@ import { describe, test, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import SortHeader, { sortRows } from '../SortHeader';
 
+// SortHeader now uses useT() (for translated aria-labels) → useAuth();
+// stub a user so the hook resolves without an AuthContext provider.
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: () => ({ user: { id: 1, language: 'English' } }),
+}));
+
 // Render a SortHeader inside a valid table structure so jsdom doesn't
 // complain about a stray <th>. Defaults the visible label to "Name" so
 // the accessible-name lookups below are stable.

@@ -13,9 +13,11 @@ import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import { computeBreakdown } from '../utils/estimateMath';
 
 const CATEGORIES = ['labor', 'materials', 'equipment', 'subs', 'overhead', 'contingency', 'other'];
-const CATEGORY_LABELS = {
-  labor: 'Labor', materials: 'Materials', equipment: 'Equipment', subs: 'Subcontractors',
-  overhead: 'Overhead', contingency: 'Contingency', other: 'Other',
+// Category VALUE → i18n key; resolved against the passed-in `t` so the
+// PDF prints in the current user's language. The values stay English.
+const CATEGORY_LABEL_KEYS = {
+  labor: 'pdfCatLabor', materials: 'pdfCatMaterials', equipment: 'pdfCatEquipment',
+  subs: 'pdfCatSubs', overhead: 'pdfCatOverhead', contingency: 'pdfCatContingency', other: 'pdfCatOther',
 };
 
 const s = StyleSheet.create({
@@ -68,7 +70,12 @@ function fmtDate(d) {
     .toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-export default function EstimatePDF({ estimate, companyInfo = {} }) {
+// `t` is the resolved translation dictionary passed from the detail page
+// (the PDF renders outside the React tree, so it can't call useT itself).
+// `statusLabel` is the already-translated status string. Both fall back
+// to English so the component still renders if called without them.
+export default function EstimatePDF({ estimate, companyInfo = {}, t = {}, statusLabel }) {
+  const tr = (k, fallback) => t[k] || fallback;
   const lines = estimate.lines || [];
   const linesByCat = {};
   for (const c of CATEGORIES) linesByCat[c] = [];
@@ -99,32 +106,32 @@ export default function EstimatePDF({ estimate, companyInfo = {} }) {
             {companyInfo.contact_email && <Text style={s.companyMeta}>{companyInfo.contact_email}</Text>}
           </View>
           <View style={s.docBlock}>
-            <Text style={s.docTitle}>Estimate</Text>
+            <Text style={s.docTitle}>{tr('pdfEstimate', 'Estimate')}</Text>
             <Text style={s.docNumber}>{estimate.estimate_number}</Text>
-            <Text style={s.docMeta}>Issued: {today}</Text>
-            {estimate.valid_until && <Text style={s.docMeta}>Valid until: {fmtDate(estimate.valid_until)}</Text>}
+            <Text style={s.docMeta}>{tr('pdfIssued', 'Issued:')} {today}</Text>
+            {estimate.valid_until && <Text style={s.docMeta}>{tr('pdfValidUntil', 'Valid until:')} {fmtDate(estimate.valid_until)}</Text>}
           </View>
         </View>
 
         {/* Bill-to / project */}
         <View style={s.infoRow}>
           <View style={s.infoBlock}>
-            <Text style={s.infoLabel}>Prepared For</Text>
+            <Text style={s.infoLabel}>{tr('pdfPreparedFor', 'Prepared For')}</Text>
             <Text style={s.infoValue}>{estimate.client_name_snapshot || '—'}</Text>
             {estimate.client_email && <Text style={[s.infoValue, { color: '#6b7280' }]}>{estimate.client_email}</Text>}
           </View>
           <View style={s.infoBlock}>
-            <Text style={s.infoLabel}>Project</Text>
+            <Text style={s.infoLabel}>{tr('pdfProject', 'Project')}</Text>
             <Text style={s.infoValue}>{estimate.project_name || '—'}</Text>
             {estimate.project_address && <Text style={[s.infoValue, { color: '#6b7280' }]}>{estimate.project_address}</Text>}
-            <Text style={s.statusPill}>{(estimate.status || '').replace(/_/g, ' ')}</Text>
+            <Text style={s.statusPill}>{statusLabel || (estimate.status || '').replace(/_/g, ' ')}</Text>
           </View>
         </View>
 
         {/* Scope summary */}
         {estimate.scope_summary ? (
           <View style={s.section}>
-            <Text style={s.proseTitle}>Scope of Work</Text>
+            <Text style={s.proseTitle}>{tr('pdfScopeOfWork', 'Scope of Work')}</Text>
             <Text style={s.prose}>{estimate.scope_summary}</Text>
           </View>
         ) : null}
@@ -133,7 +140,7 @@ export default function EstimatePDF({ estimate, companyInfo = {} }) {
         <View style={s.section}>
           {CATEGORIES.filter(c => linesByCat[c] && linesByCat[c].length > 0).map(category => (
             <View key={category} wrap={false}>
-              <Text style={s.catTitle}>{CATEGORY_LABELS[category] || category}</Text>
+              <Text style={s.catTitle}>{tr(CATEGORY_LABEL_KEYS[category], category)}</Text>
               {linesByCat[category].map((l, i) => (
                 <View key={l.id || i} style={s.lineRow}>
                   <Text style={s.lineDesc}>{l.description}</Text>
@@ -147,35 +154,35 @@ export default function EstimatePDF({ estimate, companyInfo = {} }) {
           {/* Totals cascade — only show markup rows that actually apply */}
           <View style={s.totalsBox}>
             <View style={s.totalRow}>
-              <Text style={s.totalLabel}>Subtotal</Text>
+              <Text style={s.totalLabel}>{tr('pdfSubtotal', 'Subtotal')}</Text>
               <Text style={s.totalValue}>{fmtCents(b.subtotal)}</Text>
             </View>
             {estimate.overhead_pct > 0 && (
               <View style={s.totalRow}>
-                <Text style={s.totalLabel}>Overhead ({estimate.overhead_pct}%)</Text>
+                <Text style={s.totalLabel}>{tr('pdfOverhead', 'Overhead')} ({estimate.overhead_pct}%)</Text>
                 <Text style={s.totalValue}>{fmtCents(b.overhead)}</Text>
               </View>
             )}
             {estimate.margin_pct > 0 && (
               <View style={s.totalRow}>
-                <Text style={s.totalLabel}>Margin ({estimate.margin_pct}%)</Text>
+                <Text style={s.totalLabel}>{tr('pdfMargin', 'Margin')} ({estimate.margin_pct}%)</Text>
                 <Text style={s.totalValue}>{fmtCents(b.margin)}</Text>
               </View>
             )}
             {estimate.contingency_pct > 0 && (
               <View style={s.totalRow}>
-                <Text style={s.totalLabel}>Contingency ({estimate.contingency_pct}%)</Text>
+                <Text style={s.totalLabel}>{tr('pdfContingency', 'Contingency')} ({estimate.contingency_pct}%)</Text>
                 <Text style={s.totalValue}>{fmtCents(b.contingency)}</Text>
               </View>
             )}
             {estimate.tax_pct > 0 && (
               <View style={s.totalRow}>
-                <Text style={s.totalLabel}>Tax ({estimate.tax_pct}%)</Text>
+                <Text style={s.totalLabel}>{tr('pdfTax', 'Tax')} ({estimate.tax_pct}%)</Text>
                 <Text style={s.totalValue}>{fmtCents(b.tax)}</Text>
               </View>
             )}
             <View style={s.grandRow}>
-              <Text style={s.grandLabel}>Total</Text>
+              <Text style={s.grandLabel}>{tr('pdfTotal', 'Total')}</Text>
               <Text style={s.grandValue}>{fmtCents(b.total)}</Text>
             </View>
           </View>
@@ -184,13 +191,13 @@ export default function EstimatePDF({ estimate, companyInfo = {} }) {
         {/* Exclusions / terms */}
         {estimate.exclusions ? (
           <View wrap={false}>
-            <Text style={s.proseTitle}>Exclusions</Text>
+            <Text style={s.proseTitle}>{tr('pdfExclusions', 'Exclusions')}</Text>
             <Text style={s.prose}>{estimate.exclusions}</Text>
           </View>
         ) : null}
         {estimate.terms ? (
           <View wrap={false}>
-            <Text style={s.proseTitle}>Terms &amp; Conditions</Text>
+            <Text style={s.proseTitle}>{tr('pdfTerms', 'Terms & Conditions')}</Text>
             <Text style={s.prose}>{estimate.terms}</Text>
           </View>
         ) : null}
@@ -199,30 +206,30 @@ export default function EstimatePDF({ estimate, companyInfo = {} }) {
         {estimate.accepted_signer_name ? (
           <View style={s.acceptedBox}>
             <Text style={{ fontSize: 9, fontFamily: 'Helvetica-Bold', color: '#065f46' }}>
-              Accepted by {estimate.accepted_signer_name}
-              {estimate.responded_at ? ` on ${fmtDate(estimate.responded_at)}` : ''}
+              {tr('pdfAcceptedBy', 'Accepted by')} {estimate.accepted_signer_name}
+              {estimate.responded_at ? ` ${tr('pdfOn', 'on')} ${fmtDate(estimate.responded_at)}` : ''}
             </Text>
           </View>
         ) : (
           <View style={s.signBlock} wrap={false}>
-            <Text style={s.infoLabel}>Acceptance</Text>
+            <Text style={s.infoLabel}>{tr('pdfAcceptance', 'Acceptance')}</Text>
             <Text style={[s.prose, { marginBottom: 4 }]}>
-              Signing below authorizes the work described above at the total price shown.
+              {tr('pdfEstimateAcceptText', 'Signing below authorizes the work described above at the total price shown.')}
             </Text>
             <View style={s.sigRow}>
               <View style={s.sigField} />
               <View style={s.sigDate} />
             </View>
             <View style={s.sigRow}>
-              <Text style={[s.sigLabel, { flex: 2, marginRight: 16 }]}>Signature</Text>
-              <Text style={[s.sigLabel, { flex: 1 }]}>Date</Text>
+              <Text style={[s.sigLabel, { flex: 2, marginRight: 16 }]}>{tr('pdfSignature', 'Signature')}</Text>
+              <Text style={[s.sigLabel, { flex: 1 }]}>{tr('pdfDate', 'Date')}</Text>
             </View>
           </View>
         )}
 
         <View style={s.footer} fixed>
           <Text style={s.footerText}>{companyInfo.name || 'OpsFloa'} — {estimate.estimate_number}</Text>
-          <Text style={s.footerText} render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
+          <Text style={s.footerText} render={({ pageNumber, totalPages }) => `${tr('pdfPage', 'Page')} ${pageNumber} ${tr('pdfOf', 'of')} ${totalPages}`} />
         </View>
       </Page>
     </Document>

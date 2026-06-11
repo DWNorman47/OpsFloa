@@ -1,5 +1,11 @@
+import { moduleEn, moduleEs } from './i18nModules';
+
 const translations = {
   English: {
+    // Construction-lifecycle module keys (estimates, COs, subs, lien
+    // waivers, submittals, booking). Spread first so any same-named key
+    // defined explicitly below wins — keeps existing app strings authoritative.
+    ...moduleEn,
     // ── Header / Dashboard (worker) ──────────────────────────────────────────
     changePassword: 'Change Password',
     logout: 'Logout',
@@ -2782,6 +2788,7 @@ const translations = {
   },
 
   Spanish: {
+    ...moduleEs,
     // ── Header / Dashboard (worker) ──────────────────────────────────────────
     changePassword: 'Cambiar Contraseña',
     logout: 'Cerrar Sesión',

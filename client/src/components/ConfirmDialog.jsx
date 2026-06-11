@@ -14,11 +14,13 @@
 
 import React, { useState, useRef, useCallback, useId } from 'react';
 import ModalShell from './ModalShell';
+import { useT } from '../hooks/useT';
 
 // Hook for imperative confirm() calls. Returns the dialog JSX (which
 // the consumer renders unconditionally at the bottom of their tree)
 // and an async confirm() that resolves to true/false.
 export function useConfirm() {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [config, setConfig] = useState({});
   const resolveRef = useRef(null);
@@ -30,16 +32,16 @@ export function useConfirm() {
   const confirm = useCallback((cfg = {}) => {
     return new Promise(resolve => {
       setConfig({
-        title: cfg.title || 'Are you sure?',
+        title: cfg.title || t.cdAreYouSure || 'Are you sure?',
         body:  cfg.body || '',
-        confirmLabel: cfg.confirmLabel || 'Confirm',
-        cancelLabel:  cfg.cancelLabel || 'Cancel',
+        confirmLabel: cfg.confirmLabel || t.cdConfirm || 'Confirm',
+        cancelLabel:  cfg.cancelLabel || t.cdCancel || 'Cancel',
         tone:  cfg.tone || 'primary',  // 'primary' | 'danger'
       });
       resolveRef.current = resolve;
       setOpen(true);
     });
-  }, []);
+  }, [t]);
 
   function done(value) {
     setOpen(false);

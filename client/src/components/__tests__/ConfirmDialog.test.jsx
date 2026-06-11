@@ -10,6 +10,12 @@ import { describe, test, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { useConfirm } from '../ConfirmDialog';
 
+// useConfirm now uses useT() (for default labels) → useAuth(); stub a
+// user so the hook resolves without an AuthContext provider.
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: () => ({ user: { id: 1, language: 'English' } }),
+}));
+
 // Minimal harness: a trigger button that opens the confirm and reports
 // the resolved value, plus the dialog rendered unconditionally.
 function Harness({ onResult, confirmArgs }) {

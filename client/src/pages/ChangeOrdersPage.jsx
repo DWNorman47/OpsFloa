@@ -15,6 +15,7 @@ import MoneyInput from '../components/MoneyInput';
 import Pagination from '../components/Pagination';
 import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
+import { useT } from '../hooks/useT';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { formatMoney, formatDate, formatDateTime } from '../utils/format';
 import { computeBreakdown } from '../utils/estimateMath';
@@ -23,20 +24,32 @@ import { silentError } from '../errorReporter';
 const CATEGORIES = ['labor', 'materials', 'equipment', 'subs', 'overhead', 'contingency', 'other'];
 
 const STATUS_COLORS = {
-  draft:     { bg: '#f3f4f6', fg: '#374151', label: 'Draft' },
-  sent:      { bg: '#dbeafe', fg: '#1d4ed8', label: 'Sent' },
-  accepted:  { bg: '#d1fae5', fg: '#065f46', label: 'Accepted' },
-  declined:  { bg: '#fee2e2', fg: '#991b1b', label: 'Declined' },
-  withdrawn: { bg: '#e5e7eb', fg: '#6b7280', label: 'Withdrawn' },
+  draft:     { bg: '#f3f4f6', fg: '#374151', labelKey: 'coStatusDraft' },
+  sent:      { bg: '#dbeafe', fg: '#1d4ed8', labelKey: 'coStatusSent' },
+  accepted:  { bg: '#d1fae5', fg: '#065f46', labelKey: 'coStatusAccepted' },
+  declined:  { bg: '#fee2e2', fg: '#991b1b', labelKey: 'coStatusDeclined' },
+  withdrawn: { bg: '#e5e7eb', fg: '#6b7280', labelKey: 'coStatusWithdrawn' },
+};
+
+// Displayed category labels, resolved per-render via t[CATEGORY_LABEL_KEYS[c]].
+const CATEGORY_LABEL_KEYS = {
+  labor:       'coCatLabor',
+  materials:   'coCatMaterials',
+  equipment:   'coCatEquipment',
+  subs:        'coCatSubs',
+  overhead:    'coCatOverhead',
+  contingency: 'coCatContingency',
+  other:       'coCatOther',
 };
 
 function StatusBadge({ status }) {
+  const t = useT();
   const c = STATUS_COLORS[status] || STATUS_COLORS.draft;
   return (
     <span style={{
       fontSize: 11, fontWeight: 700, background: c.bg, color: c.fg,
       padding: '3px 8px', borderRadius: 10, textTransform: 'uppercase', letterSpacing: '0.04em',
-    }}>{c.label}</span>
+    }}>{t[c.labelKey]}</span>
   );
 }
 
@@ -45,6 +58,7 @@ const formatCents = (c) => formatMoney(c, { showCents: true });
 // ── List view ────────────────────────────────────────────────────────────────
 
 function ChangeOrdersList({ onOpen, onNew }) {
+  const t = useT();
   const [items, setItems] = useState([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
   const [loading, setLoading] = useState(true);
@@ -85,32 +99,32 @@ function ChangeOrdersList({ onOpen, onNew }) {
     <div className="admin-page-shell" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
       <div className="admin-page-header">
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, flexWrap: 'wrap' }}>
-          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>Change Orders</h1>
+          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>{t.coList}</h1>
           <a href="/sales" style={{ fontSize: 14, color: '#1a56db', textDecoration: 'none', fontWeight: 600 }}>
-            ← Estimates
+            ← {t.coEstimates}
           </a>
         </div>
-        <button onClick={() => onNew(projects)} style={styles.primaryBtn}>+ New Change Order</button>
+        <button onClick={() => onNew(projects)} style={styles.primaryBtn}>+ {t.coNew}</button>
       </div>
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
         <select
           value={statusFilter}
           onChange={e => setStatusFilter(e.target.value)}
-          aria-label="Filter by status"
+          aria-label={t.coFilterStatusAria}
           style={styles.select}
         >
-          <option value="">All statuses</option>
+          <option value="">{t.coAllStatuses}</option>
           {Object.entries(STATUS_COLORS).map(([k, v]) => (
-            <option key={k} value={k}>{v.label}</option>
+            <option key={k} value={k}>{t[v.labelKey]}</option>
           ))}
         </select>
       </div>
       {loading ? <SkeletonList rows={4} /> :
         items.length === 0 ? (
           <EmptyState
-            title="No change orders yet"
-            body="Create a CO to amend an existing project's scope and budget."
-            actionLabel="+ New Change Order"
+            title={t.coEmptyTitle}
+            body={t.coEmptyBody}
+            actionLabel={`+ ${t.coNew}`}
             onAction={() => onNew(projects)}
           />
         ) : (
@@ -119,12 +133,12 @@ function ChangeOrdersList({ onOpen, onNew }) {
             <table style={styles.table}>
               <thead>
                 <tr style={styles.tableHeader}>
-                  <SortHeader sortKey="co_number" sort={sort} setSort={setSort}>Number</SortHeader>
-                  <SortHeader sortKey="project_name" sort={sort} setSort={setSort}>Project</SortHeader>
-                  <SortHeader sortKey="description" sort={sort} setSort={setSort}>Description</SortHeader>
-                  <SortHeader sortKey="total_cents" sort={sort} setSort={setSort} align="right">Total</SortHeader>
-                  <SortHeader sortKey="status" sort={sort} setSort={setSort}>Status</SortHeader>
-                  <SortHeader sortKey="created_at" sort={sort} setSort={setSort}>Created</SortHeader>
+                  <SortHeader sortKey="co_number" sort={sort} setSort={setSort}>{t.coNumber}</SortHeader>
+                  <SortHeader sortKey="project_name" sort={sort} setSort={setSort}>{t.coProject}</SortHeader>
+                  <SortHeader sortKey="description" sort={sort} setSort={setSort}>{t.coDescription}</SortHeader>
+                  <SortHeader sortKey="total_cents" sort={sort} setSort={setSort} align="right">{t.coTotal}</SortHeader>
+                  <SortHeader sortKey="status" sort={sort} setSort={setSort}>{t.coStatus}</SortHeader>
+                  <SortHeader sortKey="created_at" sort={sort} setSort={setSort}>{t.coCreated}</SortHeader>
                 </tr>
               </thead>
               <tbody>
@@ -175,6 +189,7 @@ function ChangeOrdersList({ onOpen, onNew }) {
 // ── Create form ──────────────────────────────────────────────────────────────
 
 function NewChangeOrderForm({ projects, onSave, onCancel }) {
+  const t = useT();
   const [projectId, setProjectId] = useState(projects[0]?.id || '');
   const [head, setHead] = useState({
     description: '', overhead_pct: 0, margin_pct: 0, tax_pct: 0, notes: '',
@@ -218,8 +233,8 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
   async function handleSave() {
     setError(null); setSaving(true);
     try {
-      if (!projectId) { setError('Choose a project'); setSaving(false); return; }
-      if (!head.description.trim()) { setError('Description is required'); setSaving(false); return; }
+      if (!projectId) { setError(t.coErrChooseProject); setSaving(false); return; }
+      if (!head.description.trim()) { setError(t.coErrDescRequired); setSaving(false); return; }
       const payload = {
         description: head.description,
         overhead_pct: parseFloat(head.overhead_pct) || 0,
@@ -240,50 +255,50 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
       setDirty(false);
       onSave(data);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to save change order');
+      setError(err.response?.data?.error || t.coErrSave);
     } finally { setSaving(false); }
   }
 
   return (
     <div className="admin-page-shell" style={{ maxWidth: 980, margin: '0 auto', padding: '24px 20px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: '#111827' }}>New Change Order</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: '#111827' }}>{t.coFormNewTitle}</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={onCancel} style={styles.ghostBtn}>Cancel</button>
+          <button onClick={onCancel} style={styles.ghostBtn}>{t.coCancel}</button>
           <button onClick={handleSave} disabled={saving} style={styles.primaryBtn}>
-            {saving ? 'Saving...' : 'Save'}
+            {saving ? t.coSaving : t.coSave}
           </button>
         </div>
       </div>
       {error && <div style={styles.errorBox}>{error}</div>}
 
       <div style={styles.formCard}>
-        <h3 style={styles.formH3}>Project</h3>
+        <h3 style={styles.formH3}>{t.coProject}</h3>
         <div className="admin-form-grid-2">
-          <Field label="Project" required>
+          <Field label={t.coProject} required>
             <select value={projectId} onChange={e => { setDirty(true); setProjectId(e.target.value); }} style={styles.input}>
-              <option value="">— Choose —</option>
+              <option value="">{t.coChoose}</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </Field>
-          <Field label="Description" required>
-            <input value={head.description} onChange={e => updateHead('description', e.target.value)} placeholder="e.g. Add second-floor electrical rough-in" style={styles.input} />
+          <Field label={t.coDescription} required>
+            <input value={head.description} onChange={e => updateHead('description', e.target.value)} placeholder={t.coDescPlaceholder} style={styles.input} />
           </Field>
         </div>
       </div>
 
       <div style={styles.formCard}>
-        <h3 style={styles.formH3}>Line items</h3>
+        <h3 style={styles.formH3}>{t.coLineItems}</h3>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                <th style={styles.lineTh}>Category</th>
-                <th style={styles.lineTh}>Description</th>
-                <th style={{ ...styles.lineTh, width: 80 }}>Qty</th>
-                <th style={{ ...styles.lineTh, width: 80 }}>Unit</th>
-                <th style={{ ...styles.lineTh, width: 120, textAlign: 'right' }}>Unit cost</th>
-                <th style={{ ...styles.lineTh, width: 100, textAlign: 'right' }}>Total</th>
+                <th style={styles.lineTh}>{t.coCategory}</th>
+                <th style={styles.lineTh}>{t.coDescription}</th>
+                <th style={{ ...styles.lineTh, width: 80 }}>{t.coQty}</th>
+                <th style={{ ...styles.lineTh, width: 80 }}>{t.coUnit}</th>
+                <th style={{ ...styles.lineTh, width: 120, textAlign: 'right' }}>{t.coUnitCost}</th>
+                <th style={{ ...styles.lineTh, width: 100, textAlign: 'right' }}>{t.coTotal}</th>
                 <th style={{ ...styles.lineTh, width: 32 }}></th>
               </tr>
             </thead>
@@ -294,7 +309,7 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
                   <tr key={i}>
                     <td style={styles.lineTd}>
                       <select value={l.category} onChange={e => updateLine(i, 'category', e.target.value)} style={{ ...styles.input, padding: '6px 8px' }}>
-                        {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                        {CATEGORIES.map(c => <option key={c} value={c}>{t[CATEGORY_LABEL_KEYS[c]]}</option>)}
                       </select>
                     </td>
                     <td style={styles.lineTd}>
@@ -311,7 +326,7 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
                     </td>
                     <td style={{ ...styles.lineTd, textAlign: 'right', fontWeight: 600 }}>{formatCents(total)}</td>
                     <td style={styles.lineTd}>
-                      <button onClick={() => removeLine(i)} style={styles.iconBtn} title="Remove">×</button>
+                      <button onClick={() => removeLine(i)} style={styles.iconBtn} title={t.coRemove}>×</button>
                     </td>
                   </tr>
                 );
@@ -319,34 +334,34 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
             </tbody>
           </table>
         </div>
-        <button onClick={addLine} style={{ ...styles.ghostBtn, marginTop: 12 }}>+ Add line</button>
+        <button onClick={addLine} style={{ ...styles.ghostBtn, marginTop: 12 }}>+ {t.coAddLine}</button>
       </div>
 
       <div style={styles.formCard}>
-        <h3 style={styles.formH3}>Markup &amp; tax</h3>
+        <h3 style={styles.formH3}>{t.coMarkupTax}</h3>
         <div className="admin-form-grid-4">
-          <Field label="Overhead %">
+          <Field label={t.coOverheadPct}>
             <input type="number" step="0.1" min="0" max="100" value={head.overhead_pct} onChange={e => updateHead('overhead_pct', e.target.value)} style={styles.input} />
           </Field>
-          <Field label="Margin %">
+          <Field label={t.coMarginPct}>
             <input type="number" step="0.1" min="0" max="100" value={head.margin_pct} onChange={e => updateHead('margin_pct', e.target.value)} style={styles.input} />
           </Field>
-          <Field label="Tax %">
+          <Field label={t.coTaxPct}>
             <input type="number" step="0.01" min="0" max="100" value={head.tax_pct} onChange={e => updateHead('tax_pct', e.target.value)} style={styles.input} />
           </Field>
           <div />
         </div>
         <div style={styles.totalsBox}>
-          <TotalsRow label="Subtotal" value={totals.subtotal} />
-          <TotalsRow label={`Overhead (${head.overhead_pct || 0}%)`} value={totals.overhead} />
-          <TotalsRow label={`Margin (${head.margin_pct || 0}%)`} value={totals.margin} />
-          <TotalsRow label={`Tax (${head.tax_pct || 0}%)`} value={totals.tax} />
-          <TotalsRow label="Total (will bump project budget)" value={totals.total} bold />
+          <TotalsRow label={t.coSubtotal} value={totals.subtotal} />
+          <TotalsRow label={`${t.coOverhead} (${head.overhead_pct || 0}%)`} value={totals.overhead} />
+          <TotalsRow label={`${t.coMargin} (${head.margin_pct || 0}%)`} value={totals.margin} />
+          <TotalsRow label={`${t.coTax} (${head.tax_pct || 0}%)`} value={totals.tax} />
+          <TotalsRow label={t.coTotalBumpBudget} value={totals.total} bold />
         </div>
       </div>
 
       <div style={styles.formCard}>
-        <h3 style={styles.formH3}>Internal notes</h3>
+        <h3 style={styles.formH3}>{t.coInternalNotes}</h3>
         <textarea value={head.notes} onChange={e => updateHead('notes', e.target.value)} style={{ ...styles.input, minHeight: 50 }} />
       </div>
     </div>
@@ -356,6 +371,7 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
 // ── Detail ───────────────────────────────────────────────────────────────────
 
 function ChangeOrderDetail({ id, onBack }) {
+  const t = useT();
   const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const [co, setCo] = useState(null);
@@ -378,7 +394,8 @@ function ChangeOrderDetail({ id, onBack }) {
         import('../components/ChangeOrderPDF'),
         api.get('/company-info').catch(() => ({ data: {} })),
       ]);
-      const el = React.createElement(ChangeOrderPDF, { changeOrder: co, companyInfo: companyRes.data || {} });
+      const statusLabel = t[STATUS_COLORS[co.status]?.labelKey] || co.status;
+      const el = React.createElement(ChangeOrderPDF, { changeOrder: co, companyInfo: companyRes.data || {}, t, statusLabel });
       const blob = await pdf(el).toBlob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -390,7 +407,7 @@ function ChangeOrderDetail({ id, onBack }) {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err) {
-      setError('PDF generation failed');
+      setError(t.coErrPdf);
     } finally {
       setPdfGenerating(false);
     }
@@ -415,23 +432,23 @@ function ChangeOrderDetail({ id, onBack }) {
       setSendToken(data.response_token);
       const url = `${window.location.origin}/co/${data.response_token}`;
       try { await navigator.clipboard?.writeText(url); } catch {}
-      toast('Sent — acceptance URL copied to clipboard', 'success');
+      toast(t.coToastSent, 'success');
     } catch (err) {
-      setError(err.response?.data?.error || 'Send failed');
+      setError(err.response?.data?.error || t.coErrSend);
     } finally { setBusy(false); }
   }
   async function withdraw() {
     if (!await confirm({
-      title: 'Withdraw this change order?',
-      confirmLabel: 'Withdraw',
+      title: t.coWithdrawConfirmTitle,
+      confirmLabel: t.coWithdraw,
       tone: 'danger',
     })) return;
     setBusy(true); setError(null);
     try {
       await api.post(`/change-orders/${id}/withdraw`);
-      toast('Withdrawn', 'success');
+      toast(t.coToastWithdrawn, 'success');
       await load();
-    } catch (err) { setError(err.response?.data?.error || 'Withdraw failed'); }
+    } catch (err) { setError(err.response?.data?.error || t.coErrWithdraw); }
     finally { setBusy(false); }
   }
 
@@ -461,7 +478,7 @@ function ChangeOrderDetail({ id, onBack }) {
     <div className="admin-page-shell" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
       {confirmDialog}
       <div style={{ marginBottom: 16 }}>
-        <button onClick={onBack} style={styles.ghostBtn}>← Back to change orders</button>
+        <button onClick={onBack} style={styles.ghostBtn}>← {t.coBackToList}</button>
       </div>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
         <div>
@@ -473,19 +490,19 @@ function ChangeOrderDetail({ id, onBack }) {
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button onClick={downloadPDF} disabled={pdfGenerating} style={styles.ghostBtn}>
-            {pdfGenerating ? 'Generating…' : 'Download PDF'}
+            {pdfGenerating ? t.coGenerating : t.coDownloadPdf}
           </button>
           {isDraft && (
             <button onClick={send} disabled={busy} style={styles.primaryBtn}>
-              {busy ? 'Sending...' : 'Send to client'}
+              {busy ? t.coSending : t.coSendToClient}
             </button>
           )}
           {isSent && (
-            <button onClick={withdraw} disabled={busy} style={styles.ghostBtn}>Withdraw</button>
+            <button onClick={withdraw} disabled={busy} style={styles.ghostBtn}>{t.coWithdraw}</button>
           )}
           {co.budget_applied_at && (
             <span style={{ fontSize: 13, color: '#059669', fontWeight: 600 }}>
-              ✓ Budget bumped {new Date(co.budget_applied_at).toLocaleDateString()}
+              ✓ {t.coBudgetBumped} {new Date(co.budget_applied_at).toLocaleDateString()}
             </span>
           )}
         </div>
@@ -495,9 +512,9 @@ function ChangeOrderDetail({ id, onBack }) {
 
       {sendToken && (
         <div style={{ ...styles.formCard, background: '#fef3c7', border: '1px solid #fbbf24' }}>
-          <h3 style={styles.formH3}>Acceptance link generated</h3>
+          <h3 style={styles.formH3}>{t.coAcceptanceLink}</h3>
           <p style={{ fontSize: 13, color: '#6b7280', margin: '4px 0 12px' }}>
-            Share this URL with the client. On accept, the project budget is bumped by the CO's category totals in the same transaction.
+            {t.coAcceptanceLinkBody}
           </p>
           <div style={{ display: 'flex', gap: 8 }}>
             <input
@@ -506,16 +523,16 @@ function ChangeOrderDetail({ id, onBack }) {
               onClick={e => e.target.select()}
               style={{ ...styles.input, fontFamily: 'monospace', fontSize: 12, flex: 1 }}
             />
-            <button onClick={() => navigator.clipboard?.writeText(`${window.location.origin}/co/${sendToken}`)} style={styles.primaryBtn}>Copy</button>
+            <button onClick={() => navigator.clipboard?.writeText(`${window.location.origin}/co/${sendToken}`)} style={styles.primaryBtn}>{t.coCopy}</button>
           </div>
         </div>
       )}
 
       <div style={styles.formCard}>
-        <h3 style={styles.formH3}>Line items</h3>
+        <h3 style={styles.formH3}>{t.coLineItems}</h3>
         {CATEGORIES.filter(c => linesByCat[c].length > 0).map(category => (
           <div key={category} style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>{category}</div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>{t[CATEGORY_LABEL_KEYS[category]]}</div>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
               <tbody>
                 {linesByCat[category].map(l => (
@@ -530,17 +547,17 @@ function ChangeOrderDetail({ id, onBack }) {
           </div>
         ))}
         <div style={{ ...styles.totalsBox, marginTop: 16 }}>
-          <TotalsRow label="Subtotal" value={breakdown.subtotal} />
-          {co.overhead_pct > 0 && <TotalsRow label={`Overhead (${co.overhead_pct}%)`} value={breakdown.overhead} />}
-          {co.margin_pct > 0 && <TotalsRow label={`Margin (${co.margin_pct}%)`} value={breakdown.margin} />}
-          {co.tax_pct > 0 && <TotalsRow label={`Tax (${co.tax_pct}%)`} value={breakdown.tax} />}
-          <TotalsRow label="Total" value={breakdown.total} bold />
+          <TotalsRow label={t.coSubtotal} value={breakdown.subtotal} />
+          {co.overhead_pct > 0 && <TotalsRow label={`${t.coOverhead} (${co.overhead_pct}%)`} value={breakdown.overhead} />}
+          {co.margin_pct > 0 && <TotalsRow label={`${t.coMargin} (${co.margin_pct}%)`} value={breakdown.margin} />}
+          {co.tax_pct > 0 && <TotalsRow label={`${t.coTax} (${co.tax_pct}%)`} value={breakdown.tax} />}
+          <TotalsRow label={t.coTotal} value={breakdown.total} bold />
         </div>
       </div>
 
       {co.accepted_signer_name && (
         <div style={styles.formCard}>
-          <h3 style={styles.formH3}>Accepted by</h3>
+          <h3 style={styles.formH3}>{t.coAcceptedBy}</h3>
           <div style={{ fontSize: 14 }}>
             <strong>{co.accepted_signer_name}</strong> on {new Date(co.responded_at).toLocaleString()}
           </div>
@@ -577,6 +594,7 @@ export default function ChangeOrdersPage() {
 // ── Small parts ──────────────────────────────────────────────────────────────
 
 function Field({ label, required, children }) {
+  const t = useT();
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: '#6b7280', fontWeight: 600 }}>
       <span>
@@ -584,7 +602,7 @@ function Field({ label, required, children }) {
         {required && (
           <>
             <span aria-hidden="true" style={{ color: '#ef4444' }}>*</span>
-            <span className="sr-only"> (required)</span>
+            <span className="sr-only"> ({t.coRequired})</span>
           </>
         )}
       </span>

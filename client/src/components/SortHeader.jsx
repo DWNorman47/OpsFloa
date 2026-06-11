@@ -22,8 +22,10 @@
 //   is aria-hidden since the state is already in aria-sort.
 
 import React from 'react';
+import { useT } from '../hooks/useT';
 
 export default function SortHeader({ children, sortKey, sort, setSort, align = 'left', style }) {
+  const t = useT();
   const active = sort.key === sortKey;
   const dir = active ? sort.dir : null;
 
@@ -42,13 +44,16 @@ export default function SortHeader({ children, sortKey, sort, setSort, align = '
   // Verbal description of what the next click will do — gives screen-reader
   // users the same affordance that the arrow gives sighted users.
   const nextAction = !active
-    ? 'click to sort ascending'
+    ? (t.shClickAscending || 'click to sort ascending')
     : dir === 'asc'
-      ? 'click to sort descending'
-      : 'click to clear sort';
+      ? (t.shClickDescending || 'click to sort descending')
+      : (t.shClickClear || 'click to clear sort');
   const label = typeof children === 'string' ? children : sortKey;
+  const sortedWord = dir === 'asc'
+    ? (t.shSortedAscending || 'sorted ascending')
+    : (t.shSortedDescending || 'sorted descending');
   const buttonLabel = active
-    ? `${label}, sorted ${dir === 'asc' ? 'ascending' : 'descending'} — ${nextAction}`
+    ? `${label}, ${sortedWord} — ${nextAction}`
     : `${label} — ${nextAction}`;
 
   return (

@@ -11,9 +11,9 @@ import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import { computeBreakdown } from '../utils/estimateMath';
 
 const CATEGORIES = ['labor', 'materials', 'equipment', 'subs', 'overhead', 'contingency', 'other'];
-const CATEGORY_LABELS = {
-  labor: 'Labor', materials: 'Materials', equipment: 'Equipment', subs: 'Subcontractors',
-  overhead: 'Overhead', contingency: 'Contingency', other: 'Other',
+const CATEGORY_LABEL_KEYS = {
+  labor: 'pdfCatLabor', materials: 'pdfCatMaterials', equipment: 'pdfCatEquipment',
+  subs: 'pdfCatSubs', overhead: 'pdfCatOverhead', contingency: 'pdfCatContingency', other: 'pdfCatOther',
 };
 
 const s = StyleSheet.create({
@@ -68,7 +68,11 @@ function fmtDate(d) {
     .toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-export default function ChangeOrderPDF({ changeOrder, companyInfo = {} }) {
+// `t` is the resolved translation dictionary passed from the detail page
+// (the PDF renders outside the React tree). `statusLabel` is the already-
+// translated status string. Both fall back to English.
+export default function ChangeOrderPDF({ changeOrder, companyInfo = {}, t = {}, statusLabel }) {
+  const tr = (k, fallback) => t[k] || fallback;
   const co = changeOrder;
   const lines = co.lines || [];
   const linesByCat = {};
@@ -99,23 +103,23 @@ export default function ChangeOrderPDF({ changeOrder, companyInfo = {} }) {
             {companyInfo.contact_email && <Text style={s.companyMeta}>{companyInfo.contact_email}</Text>}
           </View>
           <View style={s.docBlock}>
-            <Text style={s.docTitle}>Change Order</Text>
+            <Text style={s.docTitle}>{tr('pdfChangeOrder', 'Change Order')}</Text>
             <Text style={s.docNumber}>{co.co_number}</Text>
-            <Text style={s.docMeta}>Issued: {today}</Text>
+            <Text style={s.docMeta}>{tr('pdfIssued', 'Issued:')} {today}</Text>
           </View>
         </View>
 
         <View style={s.infoRow}>
           <View style={s.infoBlock}>
-            <Text style={s.infoLabel}>Project</Text>
+            <Text style={s.infoLabel}>{tr('pdfProject', 'Project')}</Text>
             <Text style={s.infoValue}>{co.project_name || '—'}</Text>
-            <Text style={s.statusPill}>{(co.status || '').replace(/_/g, ' ')}</Text>
+            <Text style={s.statusPill}>{statusLabel || (co.status || '').replace(/_/g, ' ')}</Text>
           </View>
         </View>
 
         {co.description ? (
           <View style={s.descBox}>
-            <Text style={s.descLabel}>Change Description</Text>
+            <Text style={s.descLabel}>{tr('pdfChangeDescription', 'Change Description')}</Text>
             <Text style={s.descText}>{co.description}</Text>
           </View>
         ) : null}
@@ -123,7 +127,7 @@ export default function ChangeOrderPDF({ changeOrder, companyInfo = {} }) {
         <View style={s.section}>
           {CATEGORIES.filter(c => linesByCat[c] && linesByCat[c].length > 0).map(category => (
             <View key={category} wrap={false}>
-              <Text style={s.catTitle}>{CATEGORY_LABELS[category] || category}</Text>
+              <Text style={s.catTitle}>{tr(CATEGORY_LABEL_KEYS[category], category)}</Text>
               {linesByCat[category].map((l, i) => (
                 <View key={l.id || i} style={s.lineRow}>
                   <Text style={s.lineDesc}>{l.description}</Text>
@@ -136,29 +140,29 @@ export default function ChangeOrderPDF({ changeOrder, companyInfo = {} }) {
 
           <View style={s.totalsBox}>
             <View style={s.totalRow}>
-              <Text style={s.totalLabel}>Subtotal</Text>
+              <Text style={s.totalLabel}>{tr('pdfSubtotal', 'Subtotal')}</Text>
               <Text style={s.totalValue}>{fmtCents(b.subtotal)}</Text>
             </View>
             {co.overhead_pct > 0 && (
               <View style={s.totalRow}>
-                <Text style={s.totalLabel}>Overhead ({co.overhead_pct}%)</Text>
+                <Text style={s.totalLabel}>{tr('pdfOverhead', 'Overhead')} ({co.overhead_pct}%)</Text>
                 <Text style={s.totalValue}>{fmtCents(b.overhead)}</Text>
               </View>
             )}
             {co.margin_pct > 0 && (
               <View style={s.totalRow}>
-                <Text style={s.totalLabel}>Margin ({co.margin_pct}%)</Text>
+                <Text style={s.totalLabel}>{tr('pdfMargin', 'Margin')} ({co.margin_pct}%)</Text>
                 <Text style={s.totalValue}>{fmtCents(b.margin)}</Text>
               </View>
             )}
             {co.tax_pct > 0 && (
               <View style={s.totalRow}>
-                <Text style={s.totalLabel}>Tax ({co.tax_pct}%)</Text>
+                <Text style={s.totalLabel}>{tr('pdfTax', 'Tax')} ({co.tax_pct}%)</Text>
                 <Text style={s.totalValue}>{fmtCents(b.tax)}</Text>
               </View>
             )}
             <View style={s.grandRow}>
-              <Text style={s.grandLabel}>Change Total</Text>
+              <Text style={s.grandLabel}>{tr('pdfChangeTotal', 'Change Total')}</Text>
               <Text style={s.grandValue}>{fmtCents(b.total)}</Text>
             </View>
           </View>
@@ -166,7 +170,7 @@ export default function ChangeOrderPDF({ changeOrder, companyInfo = {} }) {
 
         {co.notes ? (
           <View wrap={false}>
-            <Text style={s.descLabel}>Notes</Text>
+            <Text style={s.descLabel}>{tr('pdfNotes', 'Notes')}</Text>
             <Text style={s.prose}>{co.notes}</Text>
           </View>
         ) : null}
@@ -174,30 +178,30 @@ export default function ChangeOrderPDF({ changeOrder, companyInfo = {} }) {
         {co.accepted_signer_name ? (
           <View style={s.acceptedBox}>
             <Text style={{ fontSize: 9, fontFamily: 'Helvetica-Bold', color: '#065f46' }}>
-              Accepted by {co.accepted_signer_name}
-              {co.responded_at ? ` on ${fmtDate(co.responded_at)}` : ''}
+              {tr('pdfAcceptedBy', 'Accepted by')} {co.accepted_signer_name}
+              {co.responded_at ? ` ${tr('pdfOn', 'on')} ${fmtDate(co.responded_at)}` : ''}
             </Text>
           </View>
         ) : (
           <View style={s.signBlock} wrap={false}>
-            <Text style={s.infoLabel}>Acceptance</Text>
+            <Text style={s.infoLabel}>{tr('pdfAcceptance', 'Acceptance')}</Text>
             <Text style={[s.prose, { marginBottom: 4 }]}>
-              Signing below authorizes this change to the contract scope and adjusts the contract price accordingly.
+              {tr('pdfCoAcceptText', 'Signing below authorizes this change to the contract scope and adjusts the contract price accordingly.')}
             </Text>
             <View style={s.sigRow}>
               <View style={s.sigField} />
               <View style={s.sigDate} />
             </View>
             <View style={s.sigRow}>
-              <Text style={[s.sigLabel, { flex: 2, marginRight: 16 }]}>Signature</Text>
-              <Text style={[s.sigLabel, { flex: 1 }]}>Date</Text>
+              <Text style={[s.sigLabel, { flex: 2, marginRight: 16 }]}>{tr('pdfSignature', 'Signature')}</Text>
+              <Text style={[s.sigLabel, { flex: 1 }]}>{tr('pdfDate', 'Date')}</Text>
             </View>
           </View>
         )}
 
         <View style={s.footer} fixed>
           <Text style={s.footerText}>{companyInfo.name || 'OpsFloa'} — {co.co_number}</Text>
-          <Text style={s.footerText} render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
+          <Text style={s.footerText} render={({ pageNumber, totalPages }) => `${tr('pdfPage', 'Page')} ${pageNumber} ${tr('pdfOf', 'of')} ${totalPages}`} />
         </View>
       </Page>
     </Document>

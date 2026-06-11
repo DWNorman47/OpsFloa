@@ -15,29 +15,33 @@ import { useConfirm } from '../components/ConfirmDialog';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { formatDateTime } from '../utils/format';
 import { silentError } from '../errorReporter';
+import { useT } from '../hooks/useT';
 
 const LOCATION_KINDS = [
-  { value: 'phone',  label: 'Phone call' },
-  { value: 'video',  label: 'Video meeting' },
-  { value: 'onsite', label: 'On-site visit' },
-  { value: 'office', label: 'In our office' },
-  { value: 'other',  label: 'Other' },
+  { value: 'phone',  labelKey: 'bkLocPhone' },
+  { value: 'video',  labelKey: 'bkLocVideo' },
+  { value: 'onsite', labelKey: 'bkLocOnsite' },
+  { value: 'office', labelKey: 'bkLocOffice' },
+  { value: 'other',  labelKey: 'bkLocOther' },
 ];
 
 const STATUS_COLORS = {
-  booked:       { bg: '#dbeafe', fg: '#1d4ed8', label: 'Booked' },
-  confirmed:    { bg: '#d1fae5', fg: '#065f46', label: 'Confirmed' },
-  completed:    { bg: '#a7f3d0', fg: '#065f46', label: 'Completed' },
-  cancelled:    { bg: '#fee2e2', fg: '#991b1b', label: 'Cancelled' },
-  no_show:      { bg: '#fef3c7', fg: '#92400e', label: 'No-show' },
-  rescheduled:  { bg: '#e5e7eb', fg: '#6b7280', label: 'Rescheduled' },
+  booked:       { bg: '#dbeafe', fg: '#1d4ed8', labelKey: 'bkStatusBooked' },
+  confirmed:    { bg: '#d1fae5', fg: '#065f46', labelKey: 'bkStatusConfirmed' },
+  completed:    { bg: '#a7f3d0', fg: '#065f46', labelKey: 'bkStatusCompleted' },
+  cancelled:    { bg: '#fee2e2', fg: '#991b1b', labelKey: 'bkStatusCancelled' },
+  no_show:      { bg: '#fef3c7', fg: '#92400e', labelKey: 'bkStatusNoShow' },
+  rescheduled:  { bg: '#e5e7eb', fg: '#6b7280', labelKey: 'bkStatusRescheduled' },
 };
 
-const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+// Weekday label keys, indexed Sun..Sat. Resolved to localized strings
+// in-render via t[...]; values sent to the API stay numeric (0..6).
+const WEEKDAY_LABEL_KEYS = ['bkDaySun', 'bkDayMon', 'bkDayTue', 'bkDayWed', 'bkDayThu', 'bkDayFri', 'bkDaySat'];
 
 // ── Appointment Types tab ────────────────────────────────────────────────────
 
 function AppointmentTypesTab() {
+  const t = useT();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -60,9 +64,9 @@ function AppointmentTypesTab() {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <h2 style={styles.h2}>Appointment types ({items.length})</h2>
+        <h2 style={styles.h2}>{t.bkApptTypesCount} ({items.length})</h2>
         <button onClick={() => setShowForm(s => !s)} style={styles.primaryBtn}>
-          {showForm ? 'Cancel' : '+ New type'}
+          {showForm ? t.bkCancel : t.bkNewType}
         </button>
       </div>
 
@@ -72,17 +76,17 @@ function AppointmentTypesTab() {
 
       {loading ? <SkeletonList rows={3} /> :
         items.length === 0 ? (
-          <EmptyState title="No appointment types" body="Create your first type to start accepting bookings." />
+          <EmptyState title={t.bkNoApptTypesTitle} body={t.bkNoApptTypesBody} />
         ) : (
           <div style={styles.tableWrap}>
             <table style={styles.table}>
               <thead>
                 <tr style={styles.tableHeader}>
-                  <th style={styles.th}>Name</th>
-                  <th style={styles.th}>Slug</th>
-                  <th style={styles.th}>Duration</th>
-                  <th style={styles.th}>Location</th>
-                  <th style={styles.th}>Public</th>
+                  <th style={styles.th}>{t.bkName}</th>
+                  <th style={styles.th}>{t.bkSlug}</th>
+                  <th style={styles.th}>{t.bkDuration}</th>
+                  <th style={styles.th}>{t.bkLocation}</th>
+                  <th style={styles.th}>{t.bkPublic}</th>
                 </tr>
               </thead>
               <tbody>
@@ -90,7 +94,7 @@ function AppointmentTypesTab() {
                   <tr key={at.id} style={styles.tableRow} onClick={() => setEditing(at.id)}>
                     <td style={styles.td}><strong>{at.name}</strong></td>
                     <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: 12, color: '#6b7280' }}>{at.slug}</td>
-                    <td style={styles.td}>{at.duration_minutes} min</td>
+                    <td style={styles.td}>{at.duration_minutes} {t.bkMinAbbr}</td>
                     <td style={styles.td}>{at.location_kind}</td>
                     <td style={styles.td}>{at.is_public ? '✓' : '—'}</td>
                   </tr>
@@ -105,6 +109,7 @@ function AppointmentTypesTab() {
 }
 
 function NewAppointmentTypeForm({ onSave, onCancel }) {
+  const t = useT();
   const [form, setForm] = useState({
     name: '', description: '',
     duration_minutes: 30, buffer_before_min: 0, buffer_after_min: 0,
@@ -134,7 +139,7 @@ function NewAppointmentTypeForm({ onSave, onCancel }) {
       setDirty(false);
       onSave();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to create');
+      setError(err.response?.data?.error || t.bkFailedToCreate);
     } finally { setSaving(false); }
   }
 
@@ -142,54 +147,54 @@ function NewAppointmentTypeForm({ onSave, onCancel }) {
     <div style={styles.formCard}>
       {error && <div style={styles.errorBox}>{error}</div>}
       <div className="admin-form-grid-2">
-        <Field label="Name" required>
-          <input value={form.name} onChange={e => update('name', e.target.value)} placeholder="e.g. Site Visit (1 hour)" style={styles.input} />
+        <Field label={t.bkName} required>
+          <input value={form.name} onChange={e => update('name', e.target.value)} placeholder={t.bkNamePlaceholder} style={styles.input} />
         </Field>
-        <Field label="Duration (minutes)" required>
+        <Field label={t.bkDurationMinutes} required>
           <input type="number" min="15" step="15" value={form.duration_minutes} onChange={e => update('duration_minutes', e.target.value)} style={styles.input} />
         </Field>
-        <Field label="Location kind">
+        <Field label={t.bkLocationKind}>
           <select value={form.location_kind} onChange={e => update('location_kind', e.target.value)} style={styles.input}>
-            {LOCATION_KINDS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+            {LOCATION_KINDS.map(l => <option key={l.value} value={l.value}>{t[l.labelKey]}</option>)}
           </select>
         </Field>
-        <Field label="Public bookable">
+        <Field label={t.bkPublicBookable}>
           <select value={form.is_public ? 'yes' : 'no'} onChange={e => update('is_public', e.target.value === 'yes')} style={styles.input}>
-            <option value="yes">Yes (anyone with the link can book)</option>
-            <option value="no">No (admin-only)</option>
+            <option value="yes">{t.bkPublicYes}</option>
+            <option value="no">{t.bkPublicNo}</option>
           </select>
         </Field>
       </div>
-      <Field label="Description">
+      <Field label={t.bkDescription}>
         <textarea value={form.description} onChange={e => update('description', e.target.value)} style={{ ...styles.input, minHeight: 60 }} />
       </Field>
-      <Field label="Location detail (Zoom URL, address, etc.)">
+      <Field label={t.bkLocationDetail}>
         <input value={form.location_detail} onChange={e => update('location_detail', e.target.value)} style={styles.input} />
       </Field>
 
-      <h3 style={{ ...styles.h3, marginTop: 16 }}>Scheduling rules</h3>
+      <h3 style={{ ...styles.h3, marginTop: 16 }}>{t.bkSchedulingRules}</h3>
       <div className="admin-form-grid-4">
-        <Field label="Buffer before (min)">
+        <Field label={t.bkBufferBefore}>
           <input type="number" min="0" value={form.buffer_before_min} onChange={e => update('buffer_before_min', e.target.value)} style={styles.input} />
         </Field>
-        <Field label="Buffer after (min)">
+        <Field label={t.bkBufferAfter}>
           <input type="number" min="0" value={form.buffer_after_min} onChange={e => update('buffer_after_min', e.target.value)} style={styles.input} />
         </Field>
-        <Field label="Advance notice (hours)">
+        <Field label={t.bkAdvanceNotice}>
           <input type="number" min="0" value={form.advance_notice_hrs} onChange={e => update('advance_notice_hrs', e.target.value)} style={styles.input} />
         </Field>
-        <Field label="Max advance (days)">
+        <Field label={t.bkMaxAdvance}>
           <input type="number" min="1" value={form.max_advance_days} onChange={e => update('max_advance_days', e.target.value)} style={styles.input} />
         </Field>
-        <Field label="Slot interval (min)">
+        <Field label={t.bkSlotInterval}>
           <input type="number" min="15" step="15" value={form.slot_interval_min} onChange={e => update('slot_interval_min', e.target.value)} style={styles.input} />
         </Field>
       </div>
 
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
-        <button onClick={onCancel} style={styles.ghostBtn}>Cancel</button>
+        <button onClick={onCancel} style={styles.ghostBtn}>{t.bkCancel}</button>
         <button onClick={save} disabled={saving} style={styles.primaryBtn}>
-          {saving ? 'Saving...' : 'Create'}
+          {saving ? t.bkSaving : t.bkCreate}
         </button>
       </div>
     </div>
@@ -197,6 +202,7 @@ function NewAppointmentTypeForm({ onSave, onCancel }) {
 }
 
 function AppointmentTypeEditor({ id, onBack }) {
+  const t = useT();
   const [type, setType] = useState(null);
   const [shiftTypes, setShiftTypes] = useState([]);
   const [bookableUsers, setBookableUsers] = useState([]);
@@ -245,7 +251,7 @@ function AppointmentTypeEditor({ id, onBack }) {
       ]);
       setDirty(false);
       onBack();
-    } catch (err) { setError(err.response?.data?.error || 'Save failed'); }
+    } catch (err) { setError(err.response?.data?.error || t.bkSaveFailed); }
     finally { setSaving(false); }
   }
 
@@ -254,23 +260,23 @@ function AppointmentTypeEditor({ id, onBack }) {
 
   return (
     <div>
-      <button onClick={onBack} style={styles.ghostBtn}>← Back</button>
+      <button onClick={onBack} style={styles.ghostBtn}>{t.bkBack}</button>
       <h2 style={{ ...styles.h2, marginTop: 12 }}>{type.name}</h2>
 
       {error && <div style={styles.errorBox}>{error}</div>}
 
       <div style={styles.formCard}>
-        <h3 style={styles.h3}>Eligible users (bookable=true)</h3>
+        <h3 style={styles.h3}>{t.bkEligibleUsers}</h3>
         {bookableUsers.length === 0 ? (
           <p style={{ fontSize: 13, color: '#6b7280' }}>
-            No users have <code>bookable=true</code> yet. Use the "Bookable Users" tab to enable users.
+            {t.bkNoBookableUsersYet}
           </p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <label style={{ fontSize: 13, color: '#6b7280' }}>
               {allowedUserIds.length === 0
-                ? 'Empty = anyone on the company who is bookable=true is eligible.'
-                : `${allowedUserIds.length} selected · only these users will be assigned`}
+                ? t.bkEligibleEmptyHint
+                : `${allowedUserIds.length} ${t.bkSelectedOnlyAssigned}`}
             </label>
             {bookableUsers.map(u => (
               <label key={u.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0' }}>
@@ -284,13 +290,12 @@ function AppointmentTypeEditor({ id, onBack }) {
       </div>
 
       <div style={styles.formCard}>
-        <h3 style={styles.h3}>Allowed shift types</h3>
+        <h3 style={styles.h3}>{t.bkAllowedShiftTypes}</h3>
         <p style={{ fontSize: 13, color: '#6b7280', margin: '0 0 10px' }}>
-          When an assignee is on a shift, the shift's type must be in this list for them to be bookable.
-          Empty = no shift compatibility configured (any typed shift blocks).
+          {t.bkAllowedShiftTypesHint}
         </p>
         {shiftTypes.length === 0 ? (
-          <p style={{ fontSize: 13, color: '#6b7280' }}>No shift types defined yet (Shift Types tab).</p>
+          <p style={{ fontSize: 13, color: '#6b7280' }}>{t.bkNoShiftTypesDefined}</p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {shiftTypes.map(st => (
@@ -305,9 +310,9 @@ function AppointmentTypeEditor({ id, onBack }) {
       </div>
 
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-        <button onClick={onBack} style={styles.ghostBtn}>Cancel</button>
+        <button onClick={onBack} style={styles.ghostBtn}>{t.bkCancel}</button>
         <button onClick={save} disabled={saving} style={styles.primaryBtn}>
-          {saving ? 'Saving...' : 'Save'}
+          {saving ? t.bkSaving : t.bkSave}
         </button>
       </div>
     </div>
@@ -317,6 +322,7 @@ function AppointmentTypeEditor({ id, onBack }) {
 // ── Shift Types tab ─────────────────────────────────────────────────────────
 
 function ShiftTypesTab() {
+  const t = useT();
   const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const [items, setItems] = useState([]);
@@ -347,28 +353,28 @@ function ShiftTypesTab() {
       setForm({ open: false, name: '', color: '#1a56db', description: '' });
       setDirty(false);
       await load();
-    } catch (err) { setError(err.response?.data?.error || 'Failed'); }
+    } catch (err) { setError(err.response?.data?.error || t.bkFailed); }
   }
 
   async function archive(id) {
     if (!await confirm({
-      title: 'Archive this shift type?',
-      body: 'Existing shifts keep their type, but it stops appearing in pickers.',
-      confirmLabel: 'Archive',
+      title: t.bkArchiveShiftTypeTitle,
+      body: t.bkArchiveShiftTypeBody,
+      confirmLabel: t.bkArchive,
     })) return;
     try {
       await api.post(`/shift-types/${id}/archive`);
-      toast('Archived', 'success');
+      toast(t.bkArchived, 'success');
       await load();
     }
-    catch (err) { setError(err.response?.data?.error || 'Archive failed'); }
+    catch (err) { setError(err.response?.data?.error || t.bkArchiveFailed); }
   }
 
   return (
     <div>
       {confirmDialog}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <h2 style={styles.h2}>Shift types ({items.length})</h2>
+        <h2 style={styles.h2}>{t.bkShiftTypesCount} ({items.length})</h2>
         <button
           onClick={() => {
             // Closing the create panel clears whatever was being typed;
@@ -379,7 +385,7 @@ function ShiftTypesTab() {
           }}
           style={styles.primaryBtn}
         >
-          {form.open ? 'Cancel' : '+ New shift type'}
+          {form.open ? t.bkCancel : t.bkNewShiftType}
         </button>
       </div>
 
@@ -387,33 +393,33 @@ function ShiftTypesTab() {
         <div style={styles.formCard}>
           {error && <div style={styles.errorBox}>{error}</div>}
           <div style={styles.grid3}>
-            <Field label="Name" required>
-              <input value={form.name} onChange={e => updateField('name', e.target.value)} placeholder="e.g. Office hours" style={styles.input} />
+            <Field label={t.bkName} required>
+              <input value={form.name} onChange={e => updateField('name', e.target.value)} placeholder={t.bkShiftNamePlaceholder} style={styles.input} />
             </Field>
-            <Field label="Color">
+            <Field label={t.bkColor}>
               <input type="color" value={form.color} onChange={e => updateField('color', e.target.value)} style={{ ...styles.input, height: 36, padding: 2 }} />
             </Field>
-            <Field label="Description">
+            <Field label={t.bkDescription}>
               <input value={form.description} onChange={e => updateField('description', e.target.value)} style={styles.input} />
             </Field>
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <button onClick={create} style={styles.primaryBtn}>Create</button>
+            <button onClick={create} style={styles.primaryBtn}>{t.bkCreate}</button>
           </div>
         </div>
       )}
 
       {loading ? <SkeletonList rows={3} /> :
         items.length === 0 ? (
-          <EmptyState title="No shift types" body='e.g. "Office hours", "Field work", "Travel", "On-call". Use these to control which appointments can be booked while a user is on shift.' />
+          <EmptyState title={t.bkNoShiftTypesTitle} body={t.bkNoShiftTypesBody} />
         ) : (
           <div style={styles.tableWrap}>
             <table style={styles.table}>
               <thead>
                 <tr style={styles.tableHeader}>
                   <th style={styles.th}></th>
-                  <th style={styles.th}>Name</th>
-                  <th style={styles.th}>Description</th>
+                  <th style={styles.th}>{t.bkName}</th>
+                  <th style={styles.th}>{t.bkDescription}</th>
                   <th style={styles.th}></th>
                 </tr>
               </thead>
@@ -426,7 +432,7 @@ function ShiftTypesTab() {
                     <td style={styles.td}><strong>{st.name}</strong></td>
                     <td style={styles.td}>{st.description || '—'}</td>
                     <td style={{ ...styles.td, textAlign: 'right' }}>
-                      <button onClick={() => archive(st.id)} style={styles.iconBtn}>Archive</button>
+                      <button onClick={() => archive(st.id)} style={styles.iconBtn}>{t.bkArchive}</button>
                     </td>
                   </tr>
                 ))}
@@ -442,6 +448,7 @@ function ShiftTypesTab() {
 // ── Bookable Users tab ──────────────────────────────────────────────────────
 
 function BookableUsersTab() {
+  const t = useT();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
@@ -462,19 +469,19 @@ function BookableUsersTab() {
 
   return (
     <div>
-      <h2 style={styles.h2}>Bookable users</h2>
+      <h2 style={styles.h2}>{t.bkBookableUsers}</h2>
       <p style={{ fontSize: 13, color: '#6b7280', marginTop: -8, marginBottom: 12 }}>
-        Click any user to set their <code>bookable</code> flag, weekly windows, and role label. Bookable = false users are never assigned an appointment.
+        {t.bkBookableUsersHint}
       </p>
       {loading ? <SkeletonList rows={4} /> : (
         <div style={styles.tableWrap}>
           <table style={styles.table}>
             <thead>
               <tr style={styles.tableHeader}>
-                <th style={styles.th}>Name</th>
-                <th style={styles.th}>Role label</th>
-                <th style={styles.th}>Timezone</th>
-                <th style={styles.th}>Bookable</th>
+                <th style={styles.th}>{t.bkName}</th>
+                <th style={styles.th}>{t.bkRoleLabel}</th>
+                <th style={styles.th}>{t.bkTimezone}</th>
+                <th style={styles.th}>{t.bkBookable}</th>
               </tr>
             </thead>
             <tbody>
@@ -485,8 +492,8 @@ function BookableUsersTab() {
                   <td style={styles.td}>{u.timezone || '—'}</td>
                   <td style={styles.td}>
                     {u.bookable
-                      ? <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: '#d1fae5', color: '#065f46' }}>Yes</span>
-                      : <span style={{ fontSize: 11, color: '#6b7280' }}>No</span>}
+                      ? <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: '#d1fae5', color: '#065f46' }}>{t.bkYes}</span>
+                      : <span style={{ fontSize: 11, color: '#6b7280' }}>{t.bkNo}</span>}
                   </td>
                 </tr>
               ))}
@@ -499,6 +506,7 @@ function BookableUsersTab() {
 }
 
 function UserBookingEditor({ userId, userName, onBack }) {
+  const t = useT();
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -556,54 +564,56 @@ function UserBookingEditor({ userId, userName, onBack }) {
       });
       setDirty(false);
       onBack();
-    } catch (err) { setError(err.response?.data?.error || 'Save failed'); }
+    } catch (err) { setError(err.response?.data?.error || t.bkSaveFailed); }
     finally { setSaving(false); }
   }
 
   if (loading) return <SkeletonList rows={4} />;
 
+  const weekdayLabels = WEEKDAY_LABEL_KEYS.map(k => t[k]);
+
   return (
     <div>
-      <button onClick={onBack} style={styles.ghostBtn}>← Back</button>
-      <h2 style={{ ...styles.h2, marginTop: 12 }}>Booking config — {userName}</h2>
+      <button onClick={onBack} style={styles.ghostBtn}>{t.bkBack}</button>
+      <h2 style={{ ...styles.h2, marginTop: 12 }}>{t.bkBookingConfig} — {userName}</h2>
 
       {error && <div style={styles.errorBox}>{error}</div>}
 
       <div style={styles.formCard}>
         <div style={styles.grid3}>
-          <Field label="Bookable">
+          <Field label={t.bkBookable}>
             <select value={bookable ? 'yes' : 'no'} onChange={e => { setDirty(true); setBookable(e.target.value === 'yes'); }} style={styles.input}>
-              <option value="no">No (won't be assigned appointments)</option>
-              <option value="yes">Yes</option>
+              <option value="no">{t.bkBookableNo}</option>
+              <option value="yes">{t.bkYes}</option>
             </select>
           </Field>
-          <Field label="Role label">
-            <input value={roleLabel} onChange={e => { setDirty(true); setRoleLabel(e.target.value); }} placeholder="e.g. Estimator" style={styles.input} />
+          <Field label={t.bkRoleLabel}>
+            <input value={roleLabel} onChange={e => { setDirty(true); setRoleLabel(e.target.value); }} placeholder={t.bkRoleLabelPlaceholder} style={styles.input} />
           </Field>
-          <Field label="Timezone">
-            <input value={timezone} onChange={e => { setDirty(true); setTimezone(e.target.value); }} placeholder="e.g. America/Phoenix" style={styles.input} />
+          <Field label={t.bkTimezone}>
+            <input value={timezone} onChange={e => { setDirty(true); setTimezone(e.target.value); }} placeholder={t.bkTimezonePlaceholder} style={styles.input} />
           </Field>
         </div>
       </div>
 
       <div style={styles.formCard}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <h3 style={styles.h3}>Weekly windows ({windows.length})</h3>
-          <button onClick={addWindow} style={styles.ghostBtn}>+ Add window</button>
+          <h3 style={styles.h3}>{t.bkWeeklyWindows} ({windows.length})</h3>
+          <button onClick={addWindow} style={styles.ghostBtn}>{t.bkAddWindow}</button>
         </div>
         {windows.length === 0 ? (
-          <p style={{ fontSize: 13, color: '#6b7280' }}>No windows set. Add at least one for this user to be reachable.</p>
+          <p style={{ fontSize: 13, color: '#6b7280' }}>{t.bkNoWindowsSet}</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
             <thead>
-              <tr><th style={styles.th}>Day</th><th style={styles.th}>Start</th><th style={styles.th}>End</th><th style={styles.th}>Active</th><th style={styles.th}></th></tr>
+              <tr><th style={styles.th}>{t.bkWeekday}</th><th style={styles.th}>{t.bkStart}</th><th style={styles.th}>{t.bkEnd}</th><th style={styles.th}>{t.bkActive}</th><th style={styles.th}></th></tr>
             </thead>
             <tbody>
               {windows.map((w, i) => (
                 <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
                   <td style={styles.td}>
                     <select value={w.weekday} onChange={e => updateWindow(i, 'weekday', parseInt(e.target.value, 10))} style={{ ...styles.input, padding: '4px 8px' }}>
-                      {WEEKDAY_LABELS.map((d, idx) => <option key={idx} value={idx}>{d}</option>)}
+                      {weekdayLabels.map((d, idx) => <option key={idx} value={idx}>{d}</option>)}
                     </select>
                   </td>
                   <td style={styles.td}>
@@ -626,9 +636,9 @@ function UserBookingEditor({ userId, userName, onBack }) {
       </div>
 
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-        <button onClick={onBack} style={styles.ghostBtn}>Cancel</button>
+        <button onClick={onBack} style={styles.ghostBtn}>{t.bkCancel}</button>
         <button onClick={save} disabled={saving} style={styles.primaryBtn}>
-          {saving ? 'Saving...' : 'Save'}
+          {saving ? t.bkSaving : t.bkSave}
         </button>
       </div>
     </div>
@@ -638,6 +648,7 @@ function UserBookingEditor({ userId, userName, onBack }) {
 // ── Upcoming Appointments tab ───────────────────────────────────────────────
 
 function AppointmentsTab() {
+  const t = useT();
   const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const [items, setItems] = useState([]);
@@ -672,14 +683,14 @@ function AppointmentsTab() {
 
   async function cancel(id) {
     if (!await confirm({
-      title: 'Cancel this appointment?',
-      body: 'The slot will be freed and the client will need to re-book.',
-      confirmLabel: 'Cancel appointment',
+      title: t.bkCancelApptTitle,
+      body: t.bkCancelApptBody,
+      confirmLabel: t.bkCancelAppointment,
       tone: 'danger',
     })) return;
     try {
       await api.post(`/appointments/${id}/cancel`, {});
-      toast('Appointment cancelled', 'success');
+      toast(t.bkAppointmentCancelled, 'success');
       await load();
     }
     catch { /* ignore */ }
@@ -689,29 +700,29 @@ function AppointmentsTab() {
     <div>
       {confirmDialog}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <h2 style={styles.h2}>Appointments</h2>
+        <h2 style={styles.h2}>{t.bkAppointments}</h2>
         <select
           value={statusFilter}
           onChange={e => setStatusFilter(e.target.value)}
-          aria-label="Filter appointments by status"
+          aria-label={t.bkFilterByStatus}
           style={styles.input}
         >
-          <option value="">Upcoming (default)</option>
-          {Object.entries(STATUS_COLORS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          <option value="">{t.bkUpcomingDefault}</option>
+          {Object.entries(STATUS_COLORS).map(([k, v]) => <option key={k} value={k}>{t[v.labelKey]}</option>)}
         </select>
       </div>
       {loading ? <SkeletonList rows={3} /> :
-        items.length === 0 ? <EmptyState title="No appointments" body="Appointments will appear here as they're booked." /> : (
+        items.length === 0 ? <EmptyState title={t.bkNoAppointments} body={t.bkNoAppointmentsBody} /> : (
           <>
           <div className="admin-table-desktop" style={styles.tableWrap}>
             <table style={styles.table}>
               <thead>
                 <tr style={styles.tableHeader}>
-                  <SortHeader sortKey="scheduled_at" sort={sort} setSort={setSort}>When</SortHeader>
-                  <SortHeader sortKey="appointment_type_name" sort={sort} setSort={setSort}>Type</SortHeader>
-                  <SortHeader sortKey="client_name" sort={sort} setSort={setSort}>Client</SortHeader>
-                  <SortHeader sortKey="assigned_user_name" sort={sort} setSort={setSort}>Assigned to</SortHeader>
-                  <SortHeader sortKey="status" sort={sort} setSort={setSort}>Status</SortHeader>
+                  <SortHeader sortKey="scheduled_at" sort={sort} setSort={setSort}>{t.bkWhen}</SortHeader>
+                  <SortHeader sortKey="appointment_type_name" sort={sort} setSort={setSort}>{t.bkType}</SortHeader>
+                  <SortHeader sortKey="client_name" sort={sort} setSort={setSort}>{t.bkClient}</SortHeader>
+                  <SortHeader sortKey="assigned_user_name" sort={sort} setSort={setSort}>{t.bkAssignedTo}</SortHeader>
+                  <SortHeader sortKey="status" sort={sort} setSort={setSort}>{t.bkStatus}</SortHeader>
                   <th style={styles.th}></th>
                 </tr>
               </thead>
@@ -725,11 +736,11 @@ function AppointmentsTab() {
                       <td style={styles.td}>{a.client_name}<br /><span style={{ fontSize: 11, color: '#6b7280' }}>{a.client_email}</span></td>
                       <td style={styles.td}>{a.assigned_user_name}</td>
                       <td style={styles.td}>
-                        <span style={{ fontSize: 11, fontWeight: 700, background: c.bg, color: c.fg, padding: '3px 8px', borderRadius: 10, textTransform: 'uppercase' }}>{c.label}</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, background: c.bg, color: c.fg, padding: '3px 8px', borderRadius: 10, textTransform: 'uppercase' }}>{t[c.labelKey]}</span>
                       </td>
                       <td style={{ ...styles.td, textAlign: 'right' }}>
                         {(a.status === 'booked' || a.status === 'confirmed') && (
-                          <button onClick={() => cancel(a.id)} style={styles.iconBtn}>Cancel</button>
+                          <button onClick={() => cancel(a.id)} style={styles.iconBtn}>{t.bkCancel}</button>
                         )}
                       </td>
                     </tr>
@@ -745,13 +756,13 @@ function AppointmentsTab() {
                 <div key={a.id} className="admin-card" style={{ cursor: 'default' }}>
                   <div className="admin-card-row">
                     <span className="admin-card-title">{formatDateTime(a.scheduled_at)}</span>
-                    <span style={{ fontSize: 11, fontWeight: 700, background: c.bg, color: c.fg, padding: '3px 8px', borderRadius: 10, textTransform: 'uppercase' }}>{c.label}</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, background: c.bg, color: c.fg, padding: '3px 8px', borderRadius: 10, textTransform: 'uppercase' }}>{t[c.labelKey]}</span>
                   </div>
                   <div className="admin-card-sub" style={{ color: '#374151', fontWeight: 600 }}>{a.appointment_type_name}</div>
                   <div className="admin-card-sub">{a.client_name} · {a.client_email}</div>
-                  <div className="admin-card-sub">Assigned to {a.assigned_user_name}</div>
+                  <div className="admin-card-sub">{t.bkAssignedTo} {a.assigned_user_name}</div>
                   {(a.status === 'booked' || a.status === 'confirmed') && (
-                    <button onClick={() => cancel(a.id)} style={{ ...styles.iconBtn, alignSelf: 'flex-end' }}>Cancel</button>
+                    <button onClick={() => cancel(a.id)} style={{ ...styles.iconBtn, alignSelf: 'flex-end' }}>{t.bkCancel}</button>
                   )}
                 </div>
               );
@@ -768,6 +779,7 @@ function AppointmentsTab() {
 // ── Page shell ──────────────────────────────────────────────────────────────
 
 export default function BookingPage() {
+  const t = useT();
   const { user } = useAuth();
   const [tab, setTab] = useState('appointments');
 
@@ -775,12 +787,12 @@ export default function BookingPage() {
     <div style={{ minHeight: '100vh', background: '#f9fafb' }}>
       <AppHeader currentApp="workforce" userRole={user?.role} />
       <main id="main-content" className="admin-page-shell" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 16px', color: '#111827' }}>Booking</h1>
+        <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 16px', color: '#111827' }}>{t.bkTitle}</h1>
         <div style={styles.tabRow}>
-          <Tab id="appointments" label="Appointments" tab={tab} setTab={setTab} />
-          <Tab id="types"        label="Appointment Types" tab={tab} setTab={setTab} />
-          <Tab id="shifts"       label="Shift Types" tab={tab} setTab={setTab} />
-          <Tab id="users"        label="Bookable Users" tab={tab} setTab={setTab} />
+          <Tab id="appointments" label={t.bkAppointments} tab={tab} setTab={setTab} />
+          <Tab id="types"        label={t.bkAppointmentTypes} tab={tab} setTab={setTab} />
+          <Tab id="shifts"       label={t.bkShiftTypes} tab={tab} setTab={setTab} />
+          <Tab id="users"        label={t.bkBookableUsers} tab={tab} setTab={setTab} />
         </div>
         {tab === 'appointments' && <AppointmentsTab />}
         {tab === 'types'        && <AppointmentTypesTab />}
@@ -806,6 +818,7 @@ function Tab({ id, label, tab, setTab }) {
 }
 
 function Field({ label, required, children }) {
+  const t = useT();
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: '#6b7280', fontWeight: 600, marginBottom: 12 }}>
       <span>
@@ -813,7 +826,7 @@ function Field({ label, required, children }) {
         {required && (
           <>
             <span aria-hidden="true" style={{ color: '#ef4444' }}>*</span>
-            <span className="sr-only"> (required)</span>
+            <span className="sr-only"> {t.bkRequiredSr}</span>
           </>
         )}
       </span>

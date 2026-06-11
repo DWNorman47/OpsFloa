@@ -15,39 +15,42 @@ import { useConfirm } from '../components/ConfirmDialog';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { formatDate, formatDateTime } from '../utils/format';
 import { silentError } from '../errorReporter';
+import { useT } from '../hooks/useT';
 
 const STATUS_COLORS = {
-  draft:             { bg: '#f3f4f6', fg: '#374151', label: 'Draft' },
-  pending_internal:  { bg: '#fef3c7', fg: '#92400e', label: 'Pending Internal' },
-  sent_to_reviewer:  { bg: '#dbeafe', fg: '#1d4ed8', label: 'Sent to Reviewer' },
-  approved:          { bg: '#d1fae5', fg: '#065f46', label: 'Approved' },
-  approved_as_noted: { bg: '#a7f3d0', fg: '#065f46', label: 'Approved As Noted' },
-  revise_resubmit:   { bg: '#fed7aa', fg: '#9a3412', label: 'Revise & Resubmit' },
-  rejected:          { bg: '#fee2e2', fg: '#991b1b', label: 'Rejected' },
-  closed:            { bg: '#e0e7ff', fg: '#3730a3', label: 'Closed' },
-  void:              { bg: '#e5e7eb', fg: '#6b7280', label: 'Void' },
+  draft:             { bg: '#f3f4f6', fg: '#374151', labelKey: 'submStatusDraft' },
+  pending_internal:  { bg: '#fef3c7', fg: '#92400e', labelKey: 'submStatusPendingInternal' },
+  sent_to_reviewer:  { bg: '#dbeafe', fg: '#1d4ed8', labelKey: 'submStatusSentToReviewer' },
+  approved:          { bg: '#d1fae5', fg: '#065f46', labelKey: 'submStatusApproved' },
+  approved_as_noted: { bg: '#a7f3d0', fg: '#065f46', labelKey: 'submStatusApprovedAsNoted' },
+  revise_resubmit:   { bg: '#fed7aa', fg: '#9a3412', labelKey: 'submStatusReviseResubmit' },
+  rejected:          { bg: '#fee2e2', fg: '#991b1b', labelKey: 'submStatusRejected' },
+  closed:            { bg: '#e0e7ff', fg: '#3730a3', labelKey: 'submStatusClosed' },
+  void:              { bg: '#e5e7eb', fg: '#6b7280', labelKey: 'submStatusVoid' },
 };
 
 const STAMPS = [
-  { value: 'approved',          label: 'Approved' },
-  { value: 'approved_as_noted', label: 'Approved As Noted' },
-  { value: 'revise_resubmit',   label: 'Revise & Resubmit' },
-  { value: 'rejected',          label: 'Rejected' },
+  { value: 'approved',          labelKey: 'submStampApproved' },
+  { value: 'approved_as_noted', labelKey: 'submStampApprovedAsNoted' },
+  { value: 'revise_resubmit',   labelKey: 'submStampReviseResubmit' },
+  { value: 'rejected',          labelKey: 'submStampRejected' },
 ];
 
 function StatusBadge({ status }) {
+  const t = useT();
   const c = STATUS_COLORS[status] || STATUS_COLORS.draft;
   return (
     <span style={{
       fontSize: 11, fontWeight: 700, background: c.bg, color: c.fg,
       padding: '3px 8px', borderRadius: 10, textTransform: 'uppercase', letterSpacing: '0.04em',
-    }}>{c.label}</span>
+    }}>{t[c.labelKey]}</span>
   );
 }
 
 // ── List ─────────────────────────────────────────────────────────────────────
 
 function SubmittalsList({ onOpen, onNew }) {
+  const t = useT();
   const [items, setItems] = useState([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
   const [loading, setLoading] = useState(true);
@@ -90,18 +93,18 @@ function SubmittalsList({ onOpen, onNew }) {
   return (
     <div className="admin-page-shell" style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 20px' }}>
       <div className="admin-page-header">
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>Submittals</h1>
-        <button onClick={() => onNew(projects)} style={styles.primaryBtn}>+ New Submittal</button>
+        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>{t.submTitle}</h1>
+        <button onClick={() => onNew(projects)} style={styles.primaryBtn}>+ {t.submNewSubmittal}</button>
       </div>
 
       {overdue.length > 0 && (
         <div style={{ background: '#fee2e2', border: '1px solid #fecaca', borderRadius: 8, padding: 14, marginBottom: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: '#991b1b', marginBottom: 4 }}>
-            {overdue.length} submittal{overdue.length === 1 ? '' : 's'} approaching required-by date
+            {overdue.length} {overdue.length === 1 ? t.submOverdueBannerSingular : t.submOverdueBannerPlural}
           </div>
           <div style={{ fontSize: 12, color: '#7f1d1d' }}>
             {overdue.slice(0, 3).map(o => o.submittal_number).join(', ')}
-            {overdue.length > 3 && `, +${overdue.length - 3} more`}
+            {overdue.length > 3 && `, +${overdue.length - 3} ${t.submMore}`}
           </div>
         </div>
       )}
@@ -109,8 +112,8 @@ function SubmittalsList({ onOpen, onNew }) {
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
         <input
           type="search"
-          placeholder="Search by title / number / description..."
-          aria-label="Search submittals"
+          placeholder={t.submSearchPlaceholder}
+          aria-label={t.submSearchAria}
           value={q}
           onChange={e => setQ(e.target.value)}
           style={styles.searchInput}
@@ -118,21 +121,21 @@ function SubmittalsList({ onOpen, onNew }) {
         <select
           value={statusFilter}
           onChange={e => setStatusFilter(e.target.value)}
-          aria-label="Filter by status"
+          aria-label={t.submFilterStatusAria}
           style={styles.select}
         >
-          <option value="">All statuses</option>
+          <option value="">{t.submAllStatuses}</option>
           {Object.entries(STATUS_COLORS).map(([k, v]) => (
-            <option key={k} value={k}>{v.label}</option>
+            <option key={k} value={k}>{t[v.labelKey]}</option>
           ))}
         </select>
       </div>
       {loading ? <SkeletonList rows={4} /> :
         items.length === 0 ? (
           <EmptyState
-            title="No submittals yet"
-            body="Track material and equipment specs for architect/owner approval before installation."
-            actionLabel="+ New Submittal"
+            title={t.submEmptyTitle}
+            body={t.submEmptyBody}
+            actionLabel={`+ ${t.submNewSubmittal}`}
             onAction={() => onNew(projects)}
           />
         ) : (
@@ -141,13 +144,13 @@ function SubmittalsList({ onOpen, onNew }) {
             <table style={styles.table}>
               <thead>
                 <tr style={styles.tableHeader}>
-                  <SortHeader sortKey="submittal_number" sort={sort} setSort={setSort}>Number</SortHeader>
-                  <SortHeader sortKey="spec_section" sort={sort} setSort={setSort}>Spec</SortHeader>
-                  <SortHeader sortKey="title" sort={sort} setSort={setSort}>Title</SortHeader>
-                  <SortHeader sortKey="project_name" sort={sort} setSort={setSort}>Project</SortHeader>
-                  <SortHeader sortKey="required_by" sort={sort} setSort={setSort}>Required by</SortHeader>
-                  <SortHeader sortKey="revision" sort={sort} setSort={setSort}>Rev</SortHeader>
-                  <SortHeader sortKey="status" sort={sort} setSort={setSort}>Status</SortHeader>
+                  <SortHeader sortKey="submittal_number" sort={sort} setSort={setSort}>{t.submColNumber}</SortHeader>
+                  <SortHeader sortKey="spec_section" sort={sort} setSort={setSort}>{t.submColSpec}</SortHeader>
+                  <SortHeader sortKey="title" sort={sort} setSort={setSort}>{t.submColTitle}</SortHeader>
+                  <SortHeader sortKey="project_name" sort={sort} setSort={setSort}>{t.submColProject}</SortHeader>
+                  <SortHeader sortKey="required_by" sort={sort} setSort={setSort}>{t.submColRequiredBy}</SortHeader>
+                  <SortHeader sortKey="revision" sort={sort} setSort={setSort}>{t.submColRev}</SortHeader>
+                  <SortHeader sortKey="status" sort={sort} setSort={setSort}>{t.submColStatus}</SortHeader>
                 </tr>
               </thead>
               <tbody>
@@ -181,7 +184,7 @@ function SubmittalsList({ onOpen, onNew }) {
                 </div>
                 <div className="admin-card-sub" style={{ color: '#374151', fontWeight: 600 }}>{s.title}</div>
                 <div className="admin-card-sub">{s.project_name}{s.spec_section ? ` · ${s.spec_section}` : ''}</div>
-                {s.required_by && <div className="admin-card-sub">Required by {new Date(s.required_by).toLocaleDateString()}</div>}
+                {s.required_by && <div className="admin-card-sub">{t.submColRequiredBy} {new Date(s.required_by).toLocaleDateString()}</div>}
               </div>
             ))}
           </div>
@@ -196,6 +199,7 @@ function SubmittalsList({ onOpen, onNew }) {
 // ── New form ─────────────────────────────────────────────────────────────────
 
 function NewSubmittalForm({ projects, onSave, onCancel }) {
+  const t = useT();
   const [form, setForm] = useState({
     project_id: projects[0]?.id || '',
     submittal_number: '',
@@ -218,71 +222,71 @@ function NewSubmittalForm({ projects, onSave, onCancel }) {
   async function handleSave() {
     setError(null); setSaving(true);
     try {
-      if (!form.project_id) { setError('Choose a project'); setSaving(false); return; }
-      if (!form.title.trim()) { setError('Title is required'); setSaving(false); return; }
-      if (!form.submittal_number.trim()) { setError('Submittal number is required'); setSaving(false); return; }
+      if (!form.project_id) { setError(t.submErrChooseProject); setSaving(false); return; }
+      if (!form.title.trim()) { setError(t.submErrTitleRequired); setSaving(false); return; }
+      if (!form.submittal_number.trim()) { setError(t.submErrNumberRequired); setSaving(false); return; }
       const { project_id, ...payload } = form;
       const { data } = await api.post(`/projects/${project_id}/submittals`, payload);
       setDirty(false);
       onSave(data);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to create submittal');
+      setError(err.response?.data?.error || t.submErrCreateFailed);
     } finally { setSaving(false); }
   }
 
   return (
     <div className="admin-page-shell" style={{ maxWidth: 800, margin: '0 auto', padding: '24px 20px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: '#111827' }}>New Submittal</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: '#111827' }}>{t.submNewSubmittal}</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={onCancel} style={styles.ghostBtn}>Cancel</button>
-          <button onClick={handleSave} disabled={saving} style={styles.primaryBtn}>{saving ? 'Saving...' : 'Save'}</button>
+          <button onClick={onCancel} style={styles.ghostBtn}>{t.submCancel}</button>
+          <button onClick={handleSave} disabled={saving} style={styles.primaryBtn}>{saving ? t.submSaving : t.submSave}</button>
         </div>
       </div>
       {error && <div style={styles.errorBox}>{error}</div>}
       <div style={styles.formCard}>
         <div className="admin-form-grid-2">
-          <Field label="Project" required>
+          <Field label={t.submFieldProject} required>
             <select value={form.project_id} onChange={e => update('project_id', e.target.value)} style={styles.input}>
-              <option value="">— Choose —</option>
+              <option value="">{t.submChoosePlaceholder}</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </Field>
-          <Field label="Submittal number" required>
-            <input value={form.submittal_number} onChange={e => update('submittal_number', e.target.value)} placeholder="e.g. SUB-A-001" style={styles.input} />
+          <Field label={t.submFieldNumber} required>
+            <input value={form.submittal_number} onChange={e => update('submittal_number', e.target.value)} placeholder={t.submNumberPlaceholder} style={styles.input} />
           </Field>
-          <Field label="Spec section">
-            <input value={form.spec_section} onChange={e => update('spec_section', e.target.value)} placeholder="e.g. 06 10 00" style={styles.input} />
+          <Field label={t.submFieldSpecSection}>
+            <input value={form.spec_section} onChange={e => update('spec_section', e.target.value)} placeholder={t.submSpecPlaceholder} style={styles.input} />
           </Field>
-          <Field label="Required by">
+          <Field label={t.submFieldRequiredBy}>
             <input type="date" value={form.required_by} onChange={e => update('required_by', e.target.value)} style={styles.input} />
           </Field>
         </div>
-        <Field label="Title" required>
+        <Field label={t.submFieldTitle} required>
           <input value={form.title} onChange={e => update('title', e.target.value)} style={styles.input} />
         </Field>
-        <Field label="Description">
+        <Field label={t.submFieldDescription}>
           <textarea value={form.description} onChange={e => update('description', e.target.value)} style={{ ...styles.input, minHeight: 60 }} />
         </Field>
       </div>
 
       <div style={styles.formCard}>
-        <h3 style={styles.formH3}>Reviewer (architect / owner)</h3>
+        <h3 style={styles.formH3}>{t.submReviewerSection}</h3>
         <div className="admin-form-grid-2">
-          <Field label="Name">
+          <Field label={t.submFieldName}>
             <input value={form.reviewer_name} onChange={e => update('reviewer_name', e.target.value)} style={styles.input} />
           </Field>
-          <Field label="Email">
+          <Field label={t.submFieldEmail}>
             <input type="email" value={form.reviewer_email} onChange={e => update('reviewer_email', e.target.value)} style={styles.input} />
           </Field>
-          <Field label="Organization">
+          <Field label={t.submFieldOrganization}>
             <input value={form.reviewer_org} onChange={e => update('reviewer_org', e.target.value)} style={styles.input} />
           </Field>
         </div>
       </div>
 
       <div style={styles.formCard}>
-        <h3 style={styles.formH3}>Notes (internal)</h3>
+        <h3 style={styles.formH3}>{t.submNotesSection}</h3>
         <textarea value={form.notes} onChange={e => update('notes', e.target.value)} style={{ ...styles.input, minHeight: 50 }} />
       </div>
     </div>
@@ -292,6 +296,7 @@ function NewSubmittalForm({ projects, onSave, onCancel }) {
 // ── Detail ───────────────────────────────────────────────────────────────────
 
 function SubmittalDetail({ id, onBack }) {
+  const t = useT();
   const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const [s, setS] = useState(null);
@@ -314,7 +319,7 @@ function SubmittalDetail({ id, onBack }) {
   async function action(path, label) {
     setBusy(true); setError(null);
     try { await api.post(`/submittals/${id}/${path}`); await load(); }
-    catch (err) { setError(err.response?.data?.error || `${label} failed`); }
+    catch (err) { setError(err.response?.data?.error || `${label} ${t.submActionFailedSuffix}`); }
     finally { setBusy(false); }
   }
   async function submitStamp() {
@@ -326,20 +331,20 @@ function SubmittalDetail({ id, onBack }) {
       });
       setStampForm({ open: false, stamp: 'approved', response_notes: '' });
       await load();
-    } catch (err) { setError(err.response?.data?.error || 'Stamp failed'); }
+    } catch (err) { setError(err.response?.data?.error || t.submStampFailed); }
     finally { setBusy(false); }
   }
   async function revise() {
     if (!await confirm({
-      title: 'Create a new revision?',
-      body: 'The current submittal will be marked superseded.',
-      confirmLabel: 'Create revision',
+      title: t.submReviseConfirmTitle,
+      body: t.submReviseConfirmBody,
+      confirmLabel: t.submReviseConfirmLabel,
     })) return;
     setBusy(true); setError(null);
     try {
       const { data } = await api.post(`/submittals/${id}/revise`);
       onBack(); // navigate back; the new revision is a separate id in the list
-    } catch (err) { setError(err.response?.data?.error || 'Revise failed'); setBusy(false); }
+    } catch (err) { setError(err.response?.data?.error || t.submReviseFailed); setBusy(false); }
   }
 
   if (loading) return <SkeletonList rows={4} />;
@@ -349,38 +354,38 @@ function SubmittalDetail({ id, onBack }) {
     <div style={{ maxWidth: 900, margin: '0 auto', padding: '24px 20px' }}>
       {confirmDialog}
       <div style={{ marginBottom: 16 }}>
-        <button onClick={onBack} style={styles.ghostBtn}>← Back to submittals</button>
+        <button onClick={onBack} style={styles.ghostBtn}>← {t.submBackToSubmittals}</button>
       </div>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: '#111827' }}>
-            {s.submittal_number}{s.revision > 0 && <span style={{ fontSize: 14, color: '#6b7280' }}> · Rev {s.revision}</span>}
+            {s.submittal_number}{s.revision > 0 && <span style={{ fontSize: 14, color: '#6b7280' }}> · {t.submRev} {s.revision}</span>}
             {' '}<StatusBadge status={s.status} />
           </h1>
           <div style={{ fontSize: 16, color: '#374151', marginTop: 4 }}>{s.title}</div>
           <div style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>
-            {s.project_name}{s.spec_section && ` · Spec ${s.spec_section}`}
-            {s.required_by && ` · Required by ${new Date(s.required_by).toLocaleDateString()}`}
+            {s.project_name}{s.spec_section && ` · ${t.submSpec} ${s.spec_section}`}
+            {s.required_by && ` · ${t.submColRequiredBy} ${new Date(s.required_by).toLocaleDateString()}`}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {s.status === 'draft' && (
-            <button onClick={() => action('send-internal', 'Send')} disabled={busy} style={styles.primaryBtn}>Send Internal</button>
+            <button onClick={() => action('send-internal', t.submActionSend)} disabled={busy} style={styles.primaryBtn}>{t.submBtnSendInternal}</button>
           )}
           {s.status === 'pending_internal' && (
-            <button onClick={() => action('send-reviewer', 'Send')} disabled={busy} style={styles.primaryBtn}>Send to Reviewer</button>
+            <button onClick={() => action('send-reviewer', t.submActionSend)} disabled={busy} style={styles.primaryBtn}>{t.submBtnSendToReviewer}</button>
           )}
           {s.status === 'sent_to_reviewer' && (
-            <button onClick={() => setStampForm(f => ({ ...f, open: true }))} disabled={busy} style={styles.primaryBtn}>Record Stamp</button>
+            <button onClick={() => setStampForm(f => ({ ...f, open: true }))} disabled={busy} style={styles.primaryBtn}>{t.submBtnRecordStamp}</button>
           )}
           {['approved', 'approved_as_noted'].includes(s.status) && (
-            <button onClick={() => action('close', 'Close')} disabled={busy} style={styles.ghostBtn}>Close</button>
+            <button onClick={() => action('close', t.submActionClose)} disabled={busy} style={styles.ghostBtn}>{t.submBtnClose}</button>
           )}
           {['revise_resubmit', 'rejected'].includes(s.status) && (
-            <button onClick={revise} disabled={busy} style={styles.primaryBtn}>Create Revision</button>
+            <button onClick={revise} disabled={busy} style={styles.primaryBtn}>{t.submBtnCreateRevision}</button>
           )}
           {s.status !== 'void' && (
-            <button onClick={() => action('void', 'Void')} disabled={busy} style={{ ...styles.ghostBtn, color: '#991b1b', borderColor: '#fecaca' }}>Void</button>
+            <button onClick={() => action('void', t.submActionVoid)} disabled={busy} style={{ ...styles.ghostBtn, color: '#991b1b', borderColor: '#fecaca' }}>{t.submBtnVoid}</button>
           )}
         </div>
       </div>
@@ -389,42 +394,42 @@ function SubmittalDetail({ id, onBack }) {
 
       {stampForm.open && (
         <div style={{ ...styles.formCard, background: '#fef3c7', border: '1px solid #fbbf24' }}>
-          <h3 style={styles.formH3}>Record reviewer stamp</h3>
-          <Field label="Stamp" required>
+          <h3 style={styles.formH3}>{t.submRecordStampTitle}</h3>
+          <Field label={t.submFieldStamp} required>
             <select value={stampForm.stamp} onChange={e => setStampForm(f => ({ ...f, stamp: e.target.value }))} style={styles.input}>
-              {STAMPS.map(st => <option key={st.value} value={st.value}>{st.label}</option>)}
+              {STAMPS.map(st => <option key={st.value} value={st.value}>{t[st.labelKey]}</option>)}
             </select>
           </Field>
-          <Field label="Response notes (appended to submittal notes)">
+          <Field label={t.submFieldResponseNotes}>
             <textarea value={stampForm.response_notes} onChange={e => setStampForm(f => ({ ...f, response_notes: e.target.value }))} style={{ ...styles.input, minHeight: 60 }} />
           </Field>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
-            <button onClick={() => setStampForm({ open: false, stamp: 'approved', response_notes: '' })} style={styles.ghostBtn}>Cancel</button>
-            <button onClick={submitStamp} disabled={busy} style={styles.primaryBtn}>Record</button>
+            <button onClick={() => setStampForm({ open: false, stamp: 'approved', response_notes: '' })} style={styles.ghostBtn}>{t.submCancel}</button>
+            <button onClick={submitStamp} disabled={busy} style={styles.primaryBtn}>{t.submBtnRecord}</button>
           </div>
         </div>
       )}
 
       {s.description && (
         <div style={styles.formCard}>
-          <h3 style={styles.formH3}>Description</h3>
+          <h3 style={styles.formH3}>{t.submFieldDescription}</h3>
           <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: 14, color: '#374151', margin: 0 }}>{s.description}</pre>
         </div>
       )}
 
       <div style={styles.formCard}>
-        <h3 style={styles.formH3}>Reviewer</h3>
+        <h3 style={styles.formH3}>{t.submReviewer}</h3>
         <div className="admin-form-grid-2">
-          <Info label="Name" value={s.reviewer_name} />
-          <Info label="Organization" value={s.reviewer_org} />
-          <Info label="Email" value={s.reviewer_email} />
-          <Info label="Sent to reviewer" value={s.sent_to_reviewer_at ? new Date(s.sent_to_reviewer_at).toLocaleDateString() : null} />
+          <Info label={t.submFieldName} value={s.reviewer_name} />
+          <Info label={t.submFieldOrganization} value={s.reviewer_org} />
+          <Info label={t.submFieldEmail} value={s.reviewer_email} />
+          <Info label={t.submSentToReviewer} value={s.sent_to_reviewer_at ? new Date(s.sent_to_reviewer_at).toLocaleDateString() : null} />
         </div>
         {s.reviewer_stamp && (
           <div style={{ marginTop: 12, padding: 12, background: '#f9fafb', borderRadius: 6 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase' }}>Stamp received</div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase' }}>{t.submStampReceived}</div>
             <div style={{ fontSize: 14, fontWeight: 600, marginTop: 4 }}>
-              {STAMPS.find(st => st.value === s.reviewer_stamp)?.label || s.reviewer_stamp}
+              {(() => { const st = STAMPS.find(x => x.value === s.reviewer_stamp); return st ? t[st.labelKey] : s.reviewer_stamp; })()}
             </div>
             {s.reviewer_responded_at && (
               <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
@@ -436,9 +441,9 @@ function SubmittalDetail({ id, onBack }) {
       </div>
 
       <div style={styles.formCard}>
-        <h3 style={styles.formH3}>Documents ({s.documents?.length || 0})</h3>
+        <h3 style={styles.formH3}>{t.submDocuments} ({s.documents?.length || 0})</h3>
         {!s.documents?.length ? (
-          <div style={{ fontSize: 14, color: '#6b7280' }}>No documents attached.</div>
+          <div style={{ fontSize: 14, color: '#6b7280' }}>{t.submNoDocuments}</div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
             <tbody>
@@ -449,7 +454,7 @@ function SubmittalDetail({ id, onBack }) {
                     <span style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase', fontWeight: 700 }}>{d.kind}</span>
                   </td>
                   <td style={{ padding: '8px 0', textAlign: 'right' }}>
-                    <a href={d.url} target="_blank" rel="noopener noreferrer" style={{ color: '#1a56db', fontSize: 13, fontWeight: 600 }}>Open</a>
+                    <a href={d.url} target="_blank" rel="noopener noreferrer" style={{ color: '#1a56db', fontSize: 13, fontWeight: 600 }}>{t.submOpen}</a>
                   </td>
                 </tr>
               ))}
@@ -460,7 +465,7 @@ function SubmittalDetail({ id, onBack }) {
 
       {s.audit?.length > 0 && (
         <div style={styles.formCard}>
-          <h3 style={styles.formH3}>Audit trail</h3>
+          <h3 style={styles.formH3}>{t.submAuditTrail}</h3>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <tbody>
               {s.audit.map(a => (
@@ -502,6 +507,7 @@ export default function SubmittalsPage() {
 // ── Small parts ──────────────────────────────────────────────────────────────
 
 function Field({ label, required, children }) {
+  const t = useT();
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: '#6b7280', fontWeight: 600, marginBottom: 14 }}>
       <span>
@@ -509,7 +515,7 @@ function Field({ label, required, children }) {
         {required && (
           <>
             <span aria-hidden="true" style={{ color: '#ef4444' }}>*</span>
-            <span className="sr-only"> (required)</span>
+            <span className="sr-only"> ({t.submRequired})</span>
           </>
         )}
       </span>

@@ -12,25 +12,27 @@ import { useConfirm } from '../components/ConfirmDialog';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { formatMoney } from '../utils/format';
 import { silentError } from '../errorReporter';
+import { useT } from '../hooks/useT';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const PO_STATUS_COLORS = {
-  draft:     { bg: '#f3f4f6', fg: '#374151', label: 'Draft' },
-  issued:    { bg: '#dbeafe', fg: '#1d4ed8', label: 'Issued' },
-  partial:   { bg: '#fef3c7', fg: '#92400e', label: 'Partial' },
-  complete:  { bg: '#d1fae5', fg: '#065f46', label: 'Complete' },
-  cancelled: { bg: '#e5e7eb', fg: '#6b7280', label: 'Cancelled' },
+  draft:     { bg: '#f3f4f6', fg: '#374151', labelKey: 'subStatusDraft' },
+  issued:    { bg: '#dbeafe', fg: '#1d4ed8', labelKey: 'subStatusIssued' },
+  partial:   { bg: '#fef3c7', fg: '#92400e', labelKey: 'subStatusPartial' },
+  complete:  { bg: '#d1fae5', fg: '#065f46', labelKey: 'subStatusComplete' },
+  cancelled: { bg: '#e5e7eb', fg: '#6b7280', labelKey: 'subStatusCancelled' },
 };
 
 function StatusBadge({ status }) {
+  const t = useT();
   const c = PO_STATUS_COLORS[status] || PO_STATUS_COLORS.draft;
   return (
     <span style={{
       fontSize: 11, fontWeight: 700, background: c.bg, color: c.fg,
       padding: '3px 8px', borderRadius: 10, textTransform: 'uppercase', letterSpacing: '0.04em',
     }}>
-      {c.label}
+      {t[c.labelKey]}
     </span>
   );
 }
@@ -40,6 +42,7 @@ const formatCents = (c) => formatMoney(c, { showCents: true });
 // ── Subs directory ───────────────────────────────────────────────────────────
 
 function SubsList({ onOpen, onNew }) {
+  const t = useT();
   const [subs, setSubs] = useState([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
   const [loading, setLoading] = useState(true);
@@ -70,20 +73,20 @@ function SubsList({ onOpen, onNew }) {
       <div className="admin-page-header">
         <input
           type="search"
-          placeholder="Search subs..."
-          aria-label="Search subcontractors"
+          placeholder={t.subSearchPlaceholder}
+          aria-label={t.subSearchAria}
           value={q}
           onChange={e => setQ(e.target.value)}
           style={styles.searchInput}
         />
-        <button onClick={onNew} style={styles.primaryBtn}>+ New Sub</button>
+        <button onClick={onNew} style={styles.primaryBtn}>{t.subNewSub}</button>
       </div>
       {loading ? <SkeletonList rows={3} /> :
         subs.length === 0 ? (
           <EmptyState
-            title="No subcontractors yet"
-            body="Add the first sub to your directory. POs you issue to them roll up against the project's subs budget."
-            actionLabel="+ New Sub"
+            title={t.subEmptyTitle}
+            body={t.subEmptyBody}
+            actionLabel={t.subNewSub}
             onAction={onNew}
           />
         ) : (
@@ -92,10 +95,10 @@ function SubsList({ onOpen, onNew }) {
             <table style={styles.table}>
               <thead>
                 <tr style={styles.tableHeader}>
-                  <SortHeader sortKey="name" sort={sort} setSort={setSort}>Name</SortHeader>
-                  <SortHeader sortKey="scope_specialty" sort={sort} setSort={setSort}>Scope</SortHeader>
-                  <SortHeader sortKey="contact_name" sort={sort} setSort={setSort}>Contact</SortHeader>
-                  <SortHeader sortKey="license_number" sort={sort} setSort={setSort}>License</SortHeader>
+                  <SortHeader sortKey="name" sort={sort} setSort={setSort}>{t.subName}</SortHeader>
+                  <SortHeader sortKey="scope_specialty" sort={sort} setSort={setSort}>{t.subScope}</SortHeader>
+                  <SortHeader sortKey="contact_name" sort={sort} setSort={setSort}>{t.subContact}</SortHeader>
+                  <SortHeader sortKey="license_number" sort={sort} setSort={setSort}>{t.subLicense}</SortHeader>
                 </tr>
               </thead>
               <tbody>
@@ -129,7 +132,7 @@ function SubsList({ onOpen, onNew }) {
                 </div>
                 {s.contact_name && <div className="admin-card-sub">{s.contact_name}</div>}
                 {s.contact_email && <div className="admin-card-sub">{s.contact_email}</div>}
-                {s.license_number && <div className="admin-card-sub">License: {s.license_number}</div>}
+                {s.license_number && <div className="admin-card-sub">{t.subLicense}: {s.license_number}</div>}
               </div>
             ))}
           </div>
@@ -142,6 +145,7 @@ function SubsList({ onOpen, onNew }) {
 }
 
 function SubForm({ existing, onSave, onCancel }) {
+  const t = useT();
   const [form, setForm] = useState({
     name: existing?.name || '',
     contact_name: existing?.contact_name || '',
@@ -167,41 +171,41 @@ function SubForm({ existing, onSave, onCancel }) {
       setDirty(false);
       onSave(data);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to save sub');
+      setError(err.response?.data?.error || t.subSaveFailed);
     } finally { setSaving(false); }
   }
 
   return (
     <div style={styles.formCard}>
-      <h3 style={styles.formH3}>{existing ? 'Edit subcontractor' : 'New subcontractor'}</h3>
+      <h3 style={styles.formH3}>{existing ? t.subEditSub : t.subNewSubTitle}</h3>
       {error && <div style={styles.errorBox}>{error}</div>}
       <div className="admin-form-grid-2">
-        <Field label="Name" required>
+        <Field label={t.subName} required>
           <input value={form.name} onChange={e => update('name', e.target.value)} style={styles.input} />
         </Field>
-        <Field label="Scope specialty">
-          <input value={form.scope_specialty} onChange={e => update('scope_specialty', e.target.value)} placeholder="e.g. Drywall, Electrical, HVAC" style={styles.input} />
+        <Field label={t.subScopeSpecialty}>
+          <input value={form.scope_specialty} onChange={e => update('scope_specialty', e.target.value)} placeholder={t.subScopeSpecialtyPlaceholder} style={styles.input} />
         </Field>
-        <Field label="Contact name">
+        <Field label={t.subContactName}>
           <input value={form.contact_name} onChange={e => update('contact_name', e.target.value)} style={styles.input} />
         </Field>
-        <Field label="Contact email">
+        <Field label={t.subContactEmail}>
           <input type="email" value={form.contact_email} onChange={e => update('contact_email', e.target.value)} style={styles.input} />
         </Field>
-        <Field label="Contact phone">
+        <Field label={t.subContactPhone}>
           <input value={form.contact_phone} onChange={e => update('contact_phone', e.target.value)} style={styles.input} />
         </Field>
-        <Field label="License number">
+        <Field label={t.subLicenseNumber}>
           <input value={form.license_number} onChange={e => update('license_number', e.target.value)} style={styles.input} />
         </Field>
       </div>
-      <Field label="Notes">
+      <Field label={t.subNotes}>
         <textarea value={form.notes} onChange={e => update('notes', e.target.value)} style={{ ...styles.input, minHeight: 60 }} />
       </Field>
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
-        <button onClick={onCancel} style={styles.ghostBtn}>Cancel</button>
+        <button onClick={onCancel} style={styles.ghostBtn}>{t.subCancel}</button>
         <button onClick={handleSave} disabled={saving} style={styles.primaryBtn}>
-          {saving ? 'Saving...' : 'Save'}
+          {saving ? t.subSaving : t.subSave}
         </button>
       </div>
     </div>
@@ -209,6 +213,7 @@ function SubForm({ existing, onSave, onCancel }) {
 }
 
 function SubDetail({ id, onBack, onEdit }) {
+  const t = useT();
   const [sub, setSub] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -229,30 +234,30 @@ function SubDetail({ id, onBack, onEdit }) {
   return (
     <>
       <div style={{ marginBottom: 16 }}>
-        <button onClick={onBack} style={styles.ghostBtn}>← Back to subs</button>
+        <button onClick={onBack} style={styles.ghostBtn}>← {t.subBackToSubs}</button>
       </div>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16, gap: 12 }}>
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: '#111827' }}>{sub.name}</h2>
           {sub.scope_specialty && <div style={{ fontSize: 14, color: '#6b7280', marginTop: 4 }}>{sub.scope_specialty}</div>}
         </div>
-        <button onClick={onEdit} style={styles.ghostBtn}>Edit</button>
+        <button onClick={onEdit} style={styles.ghostBtn}>{t.subEdit}</button>
       </div>
 
       <div style={styles.formCard}>
-        <h3 style={styles.formH3}>Contact</h3>
+        <h3 style={styles.formH3}>{t.subContact}</h3>
         <div className="admin-form-grid-2">
-          <Info label="Contact name" value={sub.contact_name} />
-          <Info label="Email" value={sub.contact_email} />
-          <Info label="Phone" value={sub.contact_phone} />
-          <Info label="License" value={sub.license_number} />
+          <Info label={t.subContactName} value={sub.contact_name} />
+          <Info label={t.subEmail} value={sub.contact_email} />
+          <Info label={t.subPhone} value={sub.contact_phone} />
+          <Info label={t.subLicense} value={sub.license_number} />
         </div>
       </div>
 
       <div style={styles.formCard}>
-        <h3 style={styles.formH3}>Open POs ({sub.open_pos?.length || 0})</h3>
+        <h3 style={styles.formH3}>{t.subOpenPos} ({sub.open_pos?.length || 0})</h3>
         {sub.open_pos?.length === 0 ? (
-          <div style={{ fontSize: 14, color: '#6b7280' }}>No open POs.</div>
+          <div style={{ fontSize: 14, color: '#6b7280' }}>{t.subNoOpenPos}</div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
             <tbody>
@@ -270,14 +275,14 @@ function SubDetail({ id, onBack, onEdit }) {
 
       {sub.documents?.length > 0 && (
         <div style={styles.formCard}>
-          <h3 style={styles.formH3}>Documents ({sub.documents.length})</h3>
+          <h3 style={styles.formH3}>{t.subDocuments} ({sub.documents.length})</h3>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
             <tbody>
               {sub.documents.map(d => (
                 <tr key={d.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                   <td style={{ padding: '8px 0' }}><strong>{d.name}</strong> <span style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase' }}>{d.doc_type}</span></td>
                   <td style={{ padding: '8px 0', textAlign: 'right' }}>
-                    {d.expires_on && <span style={{ fontSize: 12, color: '#6b7280' }}>Expires {new Date(d.expires_on).toLocaleDateString()}</span>}
+                    {d.expires_on && <span style={{ fontSize: 12, color: '#6b7280' }}>{t.subExpires} {new Date(d.expires_on).toLocaleDateString()}</span>}
                   </td>
                 </tr>
               ))}
@@ -288,7 +293,7 @@ function SubDetail({ id, onBack, onEdit }) {
 
       {sub.notes && (
         <div style={styles.formCard}>
-          <h3 style={styles.formH3}>Notes</h3>
+          <h3 style={styles.formH3}>{t.subNotes}</h3>
           <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: 13, color: '#374151', margin: 0 }}>{sub.notes}</pre>
         </div>
       )}
@@ -299,6 +304,7 @@ function SubDetail({ id, onBack, onEdit }) {
 // ── Sub POs portfolio ────────────────────────────────────────────────────────
 
 function SubPOsList({ onOpen }) {
+  const t = useT();
   const [pos, setPos] = useState([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
   const [loading, setLoading] = useState(true);
@@ -336,20 +342,20 @@ function SubPOsList({ onOpen }) {
         <select
           value={statusFilter}
           onChange={e => setStatusFilter(e.target.value)}
-          aria-label="Filter by PO status"
+          aria-label={t.subFilterByStatusAria}
           style={styles.select}
         >
-          <option value="">All statuses</option>
+          <option value="">{t.subAllStatuses}</option>
           {Object.entries(PO_STATUS_COLORS).map(([k, v]) => (
-            <option key={k} value={k}>{v.label}</option>
+            <option key={k} value={k}>{t[v.labelKey]}</option>
           ))}
         </select>
       </div>
       {loading ? <SkeletonList rows={3} /> :
         pos.length === 0 ? (
           <EmptyState
-            title="No purchase orders yet"
-            body="Sub POs are created against a specific project. Open a project to add one."
+            title={t.subPoEmptyTitle}
+            body={t.subPoEmptyBody}
           />
         ) : (
           <>
@@ -357,12 +363,12 @@ function SubPOsList({ onOpen }) {
             <table style={styles.table}>
               <thead>
                 <tr style={styles.tableHeader}>
-                  <SortHeader sortKey="po_number" sort={sort} setSort={setSort}>PO #</SortHeader>
-                  <SortHeader sortKey="sub_name" sort={sort} setSort={setSort}>Sub</SortHeader>
-                  <SortHeader sortKey="project_name" sort={sort} setSort={setSort}>Project</SortHeader>
-                  <SortHeader sortKey="status" sort={sort} setSort={setSort}>Status</SortHeader>
-                  <SortHeader sortKey="amount_cents" sort={sort} setSort={setSort} align="right">Amount</SortHeader>
-                  <SortHeader sortKey="paid_cents" sort={sort} setSort={setSort} align="right">Paid</SortHeader>
+                  <SortHeader sortKey="po_number" sort={sort} setSort={setSort}>{t.subPoNumber}</SortHeader>
+                  <SortHeader sortKey="sub_name" sort={sort} setSort={setSort}>{t.subSub}</SortHeader>
+                  <SortHeader sortKey="project_name" sort={sort} setSort={setSort}>{t.subProject}</SortHeader>
+                  <SortHeader sortKey="status" sort={sort} setSort={setSort}>{t.subStatus}</SortHeader>
+                  <SortHeader sortKey="amount_cents" sort={sort} setSort={setSort} align="right">{t.subAmount}</SortHeader>
+                  <SortHeader sortKey="paid_cents" sort={sort} setSort={setSort} align="right">{t.subPaid}</SortHeader>
                 </tr>
               </thead>
               <tbody>
@@ -396,7 +402,7 @@ function SubPOsList({ onOpen }) {
                 <div className="admin-card-sub">{po.sub_name}</div>
                 <div className="admin-card-sub">{po.project_name}</div>
                 <div className="admin-card-row">
-                  <span className="admin-card-sub">Paid {formatCents(po.paid_cents)}</span>
+                  <span className="admin-card-sub">{t.subPaid} {formatCents(po.paid_cents)}</span>
                   <strong style={{ fontSize: 14 }}>{formatCents(po.amount_cents)}</strong>
                 </div>
               </div>
@@ -411,6 +417,7 @@ function SubPOsList({ onOpen }) {
 }
 
 function SubPODetail({ id, onBack }) {
+  const t = useT();
   const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const [po, setPo] = useState(null);
@@ -435,26 +442,26 @@ function SubPODetail({ id, onBack }) {
     setBusy(true); setError(null);
     try {
       await api.post(`/subcontract-pos/${id}/issue`);
-      toast('PO issued', 'success');
+      toast(t.subToastPoIssued, 'success');
       await load();
     }
-    catch (err) { setError(err.response?.data?.error || 'Issue failed'); }
+    catch (err) { setError(err.response?.data?.error || t.subIssueFailed); }
     finally { setBusy(false); }
   }
   async function cancel() {
     if (!await confirm({
-      title: 'Cancel this PO?',
-      body: 'Already-recorded payments remain in "spent" — only the open commitment evaporates.',
-      confirmLabel: 'Cancel PO',
+      title: t.subCancelPoConfirmTitle,
+      body: t.subCancelPoConfirmBody,
+      confirmLabel: t.subCancelPo,
       tone: 'danger',
     })) return;
     setBusy(true); setError(null);
     try {
       await api.post(`/subcontract-pos/${id}/cancel`);
-      toast('PO cancelled', 'success');
+      toast(t.subToastPoCancelled, 'success');
       await load();
     }
-    catch (err) { setError(err.response?.data?.error || 'Cancel failed'); }
+    catch (err) { setError(err.response?.data?.error || t.subCancelFailed); }
     finally { setBusy(false); }
   }
   async function recordPayment() {
@@ -462,7 +469,7 @@ function SubPODetail({ id, onBack }) {
     try {
       const amt = parseInt(payForm.amount_cents, 10);
       if (!Number.isFinite(amt) || amt < 0) {
-        setError('Amount must be a positive amount');
+        setError(t.subAmountInvalid);
         setBusy(false);
         return;
       }
@@ -472,11 +479,11 @@ function SubPODetail({ id, onBack }) {
         invoice_ref: payForm.invoice_ref || null,
         notes: payForm.notes || null,
       });
-      toast('Payment recorded', 'success');
+      toast(t.subToastPaymentRecorded, 'success');
       setShowPayForm(false);
       setPayForm({ amount_cents: 0, paid_date: new Date().toISOString().slice(0, 10), invoice_ref: '', notes: '' });
       await load();
-    } catch (err) { setError(err.response?.data?.error || 'Payment failed'); }
+    } catch (err) { setError(err.response?.data?.error || t.subPaymentFailed); }
     finally { setBusy(false); }
   }
 
@@ -487,7 +494,7 @@ function SubPODetail({ id, onBack }) {
     <>
       {confirmDialog}
       <div style={{ marginBottom: 16 }}>
-        <button onClick={onBack} style={styles.ghostBtn}>← Back to POs</button>
+        <button onClick={onBack} style={styles.ghostBtn}>← {t.subBackToPos}</button>
       </div>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
         <div>
@@ -501,17 +508,17 @@ function SubPODetail({ id, onBack }) {
         <div style={{ display: 'flex', gap: 8 }}>
           {po.status === 'draft' && (
             <button onClick={issue} disabled={busy} style={styles.primaryBtn}>
-              {busy ? '...' : 'Issue PO'}
+              {busy ? '...' : t.subIssuePo}
             </button>
           )}
           {['draft', 'issued', 'partial'].includes(po.status) && (
             <button onClick={cancel} disabled={busy} style={{ ...styles.ghostBtn, color: '#991b1b', borderColor: '#fecaca' }}>
-              Cancel PO
+              {t.subCancelPo}
             </button>
           )}
           {['issued', 'partial'].includes(po.status) && (
             <button onClick={() => setShowPayForm(true)} style={styles.primaryBtn}>
-              Record payment
+              {t.subRecordPayment}
             </button>
           )}
         </div>
@@ -520,17 +527,17 @@ function SubPODetail({ id, onBack }) {
       {error && <div style={styles.errorBox}>{error}</div>}
 
       <div style={styles.formCard}>
-        <h3 style={styles.formH3}>Summary</h3>
+        <h3 style={styles.formH3}>{t.subSummary}</h3>
         <div className="admin-form-grid-4">
-          <Info label="Amount" value={formatCents(po.amount_cents)} />
-          <Info label="Paid" value={formatCents(po.paid_cents)} />
-          <Info label="Remaining" value={formatCents(po.remaining_cents)} />
-          <Info label="Retainage" value={`${po.retainage_pct}%`} />
+          <Info label={t.subAmount} value={formatCents(po.amount_cents)} />
+          <Info label={t.subPaid} value={formatCents(po.paid_cents)} />
+          <Info label={t.subRemaining} value={formatCents(po.remaining_cents)} />
+          <Info label={t.subRetainage} value={`${po.retainage_pct}%`} />
         </div>
       </div>
 
       <div style={styles.formCard}>
-        <h3 style={styles.formH3}>Scope of work</h3>
+        <h3 style={styles.formH3}>{t.subScopeOfWork}</h3>
         <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: 14, color: '#374151', margin: 0 }}>
           {po.scope_of_work}
         </pre>
@@ -538,15 +545,15 @@ function SubPODetail({ id, onBack }) {
 
       {showPayForm && (
         <div style={{ ...styles.formCard, background: '#fef3c7' }}>
-          <h3 style={styles.formH3}>Record payment</h3>
+          <h3 style={styles.formH3}>{t.subRecordPayment}</h3>
           <div className="admin-form-grid-2">
-            <Field label="Amount" required>
+            <Field label={t.subAmount} required>
               <MoneyInput
                 valueCents={payForm.amount_cents}
                 onChange={cents => setPayForm(f => ({ ...f, amount_cents: cents }))}
               />
             </Field>
-            <Field label="Paid date" required>
+            <Field label={t.subPaidDate} required>
               <input
                 type="date"
                 value={payForm.paid_date}
@@ -554,14 +561,14 @@ function SubPODetail({ id, onBack }) {
                 style={styles.input}
               />
             </Field>
-            <Field label="Invoice ref">
+            <Field label={t.subInvoiceRef}>
               <input
                 value={payForm.invoice_ref}
                 onChange={e => setPayForm(f => ({ ...f, invoice_ref: e.target.value }))}
                 style={styles.input}
               />
             </Field>
-            <Field label="Notes">
+            <Field label={t.subNotes}>
               <input
                 value={payForm.notes}
                 onChange={e => setPayForm(f => ({ ...f, notes: e.target.value }))}
@@ -570,26 +577,26 @@ function SubPODetail({ id, onBack }) {
             </Field>
           </div>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
-            <button onClick={() => setShowPayForm(false)} style={styles.ghostBtn}>Cancel</button>
+            <button onClick={() => setShowPayForm(false)} style={styles.ghostBtn}>{t.subCancel}</button>
             <button onClick={recordPayment} disabled={busy} style={styles.primaryBtn}>
-              {busy ? '...' : 'Record'}
+              {busy ? '...' : t.subRecord}
             </button>
           </div>
         </div>
       )}
 
       <div style={styles.formCard}>
-        <h3 style={styles.formH3}>Payments ({po.payments?.length || 0})</h3>
+        <h3 style={styles.formH3}>{t.subPayments} ({po.payments?.length || 0})</h3>
         {!po.payments?.length ? (
-          <div style={{ fontSize: 14, color: '#6b7280' }}>No payments recorded.</div>
+          <div style={{ fontSize: 14, color: '#6b7280' }}>{t.subNoPayments}</div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
             <thead>
               <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
-                <th style={{ ...styles.th, padding: '8px 0' }}>Date</th>
-                <th style={{ ...styles.th, padding: '8px 0' }}>Amount</th>
-                <th style={{ ...styles.th, padding: '8px 0' }}>Invoice ref</th>
-                <th style={{ ...styles.th, padding: '8px 0' }}>Notes</th>
+                <th style={{ ...styles.th, padding: '8px 0' }}>{t.subDate}</th>
+                <th style={{ ...styles.th, padding: '8px 0' }}>{t.subAmount}</th>
+                <th style={{ ...styles.th, padding: '8px 0' }}>{t.subInvoiceRef}</th>
+                <th style={{ ...styles.th, padding: '8px 0' }}>{t.subNotes}</th>
               </tr>
             </thead>
             <tbody>
@@ -612,6 +619,7 @@ function SubPODetail({ id, onBack }) {
 // ── Page shell ───────────────────────────────────────────────────────────────
 
 export default function SubsPage() {
+  const t = useT();
   const { user } = useAuth();
   const [tab, setTab] = useState('subs');
   const [view, setView] = useState({ kind: 'list' });
@@ -626,19 +634,19 @@ export default function SubsPage() {
     <div style={{ minHeight: '100vh', background: '#f9fafb' }}>
       <AppHeader currentApp="subs" userRole={user?.role} />
       <main id="main-content" className="admin-page-shell" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 16px', color: '#111827' }}>Subcontractors</h1>
+        <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 16px', color: '#111827' }}>{t.subSubcontractors}</h1>
         <div style={styles.tabRow}>
           <button
             onClick={() => { setTab('subs'); setView({ kind: 'list' }); }}
             style={{ ...styles.tabBtn, ...(tab === 'subs' ? styles.tabBtnActive : {}) }}
           >
-            Directory
+            {t.subDirectory}
           </button>
           <button
             onClick={() => { setTab('pos'); setView({ kind: 'list' }); }}
             style={{ ...styles.tabBtn, ...(tab === 'pos' ? styles.tabBtnActive : {}) }}
           >
-            Purchase Orders
+            {t.subPurchaseOrders}
           </button>
         </div>
 
@@ -656,6 +664,7 @@ export default function SubsPage() {
 // ── Small parts ──────────────────────────────────────────────────────────────
 
 function Field({ label, required, children }) {
+  const t = useT();
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: '#6b7280', fontWeight: 600 }}>
       <span>
@@ -663,7 +672,7 @@ function Field({ label, required, children }) {
         {required && (
           <>
             <span aria-hidden="true" style={{ color: '#ef4444' }}>*</span>
-            <span className="sr-only"> (required)</span>
+            <span className="sr-only"> ({t.subRequired})</span>
           </>
         )}
       </span>

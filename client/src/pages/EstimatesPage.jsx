@@ -13,29 +13,43 @@ import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { formatMoney, formatDate, formatDateTime } from '../utils/format';
 import { computeBreakdown } from '../utils/estimateMath';
 import { silentError } from '../errorReporter';
+import { useT } from '../hooks/useT';
 
 // The seven money categories that match server/constants/projectMoneyEnums.js.
 // Kept here as a literal because the client doesn't import server constants;
 // the route's CHECK constraint is the unbypassable source of truth.
 const CATEGORIES = ['labor', 'materials', 'equipment', 'subs', 'overhead', 'contingency', 'other'];
 
+// Maps a category VALUE (used in logic/API) to its i18n key for display only.
+// The values themselves are never translated.
+const CATEGORY_LABEL_KEYS = {
+  labor: 'estCatLabor',
+  materials: 'estCatMaterials',
+  equipment: 'estCatEquipment',
+  subs: 'estCatSubs',
+  overhead: 'estCatOverhead',
+  contingency: 'estCatContingency',
+  other: 'estCatOther',
+};
+
 const STATUS_COLORS = {
-  draft:     { bg: '#f3f4f6', fg: '#374151', label: 'Draft' },
-  sent:      { bg: '#dbeafe', fg: '#1d4ed8', label: 'Sent' },
-  accepted:  { bg: '#d1fae5', fg: '#065f46', label: 'Accepted' },
-  declined:  { bg: '#fee2e2', fg: '#991b1b', label: 'Declined' },
-  expired:   { bg: '#fef3c7', fg: '#92400e', label: 'Expired' },
-  withdrawn: { bg: '#e5e7eb', fg: '#6b7280', label: 'Withdrawn' },
+  draft:     { bg: '#f3f4f6', fg: '#374151', labelKey: 'estStatusDraft' },
+  sent:      { bg: '#dbeafe', fg: '#1d4ed8', labelKey: 'estStatusSent' },
+  accepted:  { bg: '#d1fae5', fg: '#065f46', labelKey: 'estStatusAccepted' },
+  declined:  { bg: '#fee2e2', fg: '#991b1b', labelKey: 'estStatusDeclined' },
+  expired:   { bg: '#fef3c7', fg: '#92400e', labelKey: 'estStatusExpired' },
+  withdrawn: { bg: '#e5e7eb', fg: '#6b7280', labelKey: 'estStatusWithdrawn' },
 };
 
 function StatusBadge({ status }) {
+  const t = useT();
   const c = STATUS_COLORS[status] || STATUS_COLORS.draft;
   return (
     <span style={{
       fontSize: 11, fontWeight: 700, background: c.bg, color: c.fg,
       padding: '3px 8px', borderRadius: 10, textTransform: 'uppercase', letterSpacing: '0.04em',
     }}>
-      {c.label}
+      {t[c.labelKey]}
     </span>
   );
 }
@@ -48,6 +62,7 @@ const formatCents = (c) => formatMoney(c, { showCents: true });
 // ── List view ────────────────────────────────────────────────────────────────
 
 function EstimatesList({ onOpen, onNew }) {
+  const t = useT();
   const [estimates, setEstimates] = useState([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
   const [loading, setLoading] = useState(true);
@@ -95,20 +110,20 @@ function EstimatesList({ onOpen, onNew }) {
     <div className="admin-page-shell" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
       <div className="admin-page-header">
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, flexWrap: 'wrap' }}>
-          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>Estimates</h1>
+          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>{t.estList}</h1>
           <a href="/change-orders" style={{ fontSize: 14, color: '#1a56db', textDecoration: 'none', fontWeight: 600 }}>
-            Change Orders →
+            {t.estChangeOrders} →
           </a>
         </div>
         <button onClick={onNew} style={styles.primaryBtn}>
-          + New Estimate
+          {t.estNew}
         </button>
       </div>
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
         <input
           type="search"
-          placeholder="Search by project / client / number..."
-          aria-label="Search estimates"
+          placeholder={t.estSearchPlaceholder}
+          aria-label={t.estSearchAria}
           value={filter}
           onChange={e => setFilter(e.target.value)}
           style={styles.searchInput}
@@ -116,21 +131,21 @@ function EstimatesList({ onOpen, onNew }) {
         <select
           value={statusFilter}
           onChange={e => setStatusFilter(e.target.value)}
-          aria-label="Filter by status"
+          aria-label={t.estFilterStatusAria}
           style={styles.select}
         >
-          <option value="">All statuses</option>
+          <option value="">{t.estAllStatuses}</option>
           {Object.entries(STATUS_COLORS).map(([k, v]) => (
-            <option key={k} value={k}>{v.label}</option>
+            <option key={k} value={k}>{t[v.labelKey]}</option>
           ))}
         </select>
       </div>
       {loading ? <SkeletonList rows={4} /> :
         estimates.length === 0 ? (
           <EmptyState
-            title="No estimates yet"
-            body="Draft your first estimate to start the project money flow."
-            actionLabel="+ New Estimate"
+            title={t.estEmptyTitle}
+            body={t.estEmptyBody}
+            actionLabel={t.estNew}
             onAction={onNew}
           />
         ) : (
@@ -139,12 +154,12 @@ function EstimatesList({ onOpen, onNew }) {
             <table style={styles.table}>
               <thead>
                 <tr style={styles.tableHeader}>
-                  <SortHeader sortKey="estimate_number" sort={sort} setSort={setSort}>Number</SortHeader>
-                  <SortHeader sortKey="project_name" sort={sort} setSort={setSort}>Project</SortHeader>
-                  <SortHeader sortKey="client_name_snapshot" sort={sort} setSort={setSort}>Client</SortHeader>
-                  <SortHeader sortKey="total_cents" sort={sort} setSort={setSort} align="right">Total</SortHeader>
-                  <SortHeader sortKey="status" sort={sort} setSort={setSort}>Status</SortHeader>
-                  <SortHeader sortKey="created_at" sort={sort} setSort={setSort}>Created</SortHeader>
+                  <SortHeader sortKey="estimate_number" sort={sort} setSort={setSort}>{t.estNumber}</SortHeader>
+                  <SortHeader sortKey="project_name" sort={sort} setSort={setSort}>{t.estProject}</SortHeader>
+                  <SortHeader sortKey="client_name_snapshot" sort={sort} setSort={setSort}>{t.estClient}</SortHeader>
+                  <SortHeader sortKey="total_cents" sort={sort} setSort={setSort} align="right">{t.estTotal}</SortHeader>
+                  <SortHeader sortKey="status" sort={sort} setSort={setSort}>{t.estStatus}</SortHeader>
+                  <SortHeader sortKey="created_at" sort={sort} setSort={setSort}>{t.estCreated}</SortHeader>
                 </tr>
               </thead>
               <tbody>
@@ -195,6 +210,7 @@ function EstimatesList({ onOpen, onNew }) {
 // ── Create / edit form ────────────────────────────────────────────────────────
 
 function EstimateForm({ existing, onSave, onCancel }) {
+  const t = useT();
   const toast = useToast();
   // Track whether the form has unsaved edits so the tab-close /
   // refresh prompt fires only when there's something to lose.
@@ -285,11 +301,11 @@ function EstimateForm({ existing, onSave, onCancel }) {
       } else {
         response = await api.post('/estimates', payload);
       }
-      toast(existing ? 'Estimate updated' : 'Estimate saved', 'success');
+      toast(existing ? t.estToastUpdated : t.estToastSaved, 'success');
       setDirty(false);  // mark clean so the leave-prompt doesn't fire
       onSave(response.data);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to save estimate');
+      setError(err.response?.data?.error || t.estErrSave);
     } finally {
       setSaving(false);
     }
@@ -299,12 +315,12 @@ function EstimateForm({ existing, onSave, onCancel }) {
     <div className="admin-page-shell" style={{ maxWidth: 980, margin: '0 auto', padding: '24px 20px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: '#111827' }}>
-          {existing ? `Edit ${existing.estimate_number}` : 'New Estimate'}
+          {existing ? `${t.estEdit} ${existing.estimate_number}` : t.estFormNewTitle}
         </h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={onCancel} style={styles.ghostBtn}>Cancel</button>
+          <button onClick={onCancel} style={styles.ghostBtn}>{t.estCancel}</button>
           <button onClick={handleSave} disabled={saving} style={styles.primaryBtn}>
-            {saving ? 'Saving...' : 'Save'}
+            {saving ? t.estSaving : t.estSave}
           </button>
         </div>
       </div>
@@ -312,41 +328,41 @@ function EstimateForm({ existing, onSave, onCancel }) {
       {error && <div style={styles.errorBox}>{error}</div>}
 
       <div style={styles.formCard}>
-        <h3 style={styles.formH3}>Project</h3>
+        <h3 style={styles.formH3}>{t.estProject}</h3>
         <div className="admin-form-grid-2">
-          <Field label="Project name" required>
+          <Field label={t.estProjectName} required>
             <input value={head.project_name} onChange={e => updateHead('project_name', e.target.value)} style={styles.input} />
           </Field>
-          <Field label="Client name" required>
+          <Field label={t.estClientName} required>
             <input value={head.client_name_snapshot} onChange={e => updateHead('client_name_snapshot', e.target.value)} style={styles.input} />
           </Field>
-          <Field label="Client email">
+          <Field label={t.estClientEmail}>
             <input type="email" value={head.client_email} onChange={e => updateHead('client_email', e.target.value)} style={styles.input} />
           </Field>
-          <Field label="Project address">
+          <Field label={t.estProjectAddress}>
             <input value={head.project_address} onChange={e => updateHead('project_address', e.target.value)} style={styles.input} />
           </Field>
-          <Field label="Valid until">
+          <Field label={t.estValidUntil}>
             <input type="date" value={head.valid_until} onChange={e => updateHead('valid_until', e.target.value)} style={styles.input} />
           </Field>
         </div>
-        <Field label="Scope summary">
+        <Field label={t.estScopeSummary}>
           <textarea value={head.scope_summary} onChange={e => updateHead('scope_summary', e.target.value)} style={{ ...styles.input, minHeight: 60 }} />
         </Field>
       </div>
 
       <div style={styles.formCard}>
-        <h3 style={styles.formH3}>Line items</h3>
+        <h3 style={styles.formH3}>{t.estLineItems}</h3>
         <div style={styles.linesTableWrap}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                <th style={styles.lineTh}>Category</th>
-                <th style={styles.lineTh}>Description</th>
-                <th style={{ ...styles.lineTh, width: 80 }}>Qty</th>
-                <th style={{ ...styles.lineTh, width: 80 }}>Unit</th>
-                <th style={{ ...styles.lineTh, width: 120, textAlign: 'right' }}>Unit cost</th>
-                <th style={{ ...styles.lineTh, width: 100, textAlign: 'right' }}>Total</th>
+                <th style={styles.lineTh}>{t.estCategory}</th>
+                <th style={styles.lineTh}>{t.estDescription}</th>
+                <th style={{ ...styles.lineTh, width: 80 }}>{t.estQty}</th>
+                <th style={{ ...styles.lineTh, width: 80 }}>{t.estUnit}</th>
+                <th style={{ ...styles.lineTh, width: 120, textAlign: 'right' }}>{t.estUnitCost}</th>
+                <th style={{ ...styles.lineTh, width: 100, textAlign: 'right' }}>{t.estTotal}</th>
                 <th style={{ ...styles.lineTh, width: 32 }}></th>
               </tr>
             </thead>
@@ -357,7 +373,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
                   <tr key={i}>
                     <td style={styles.lineTd}>
                       <select value={l.category} onChange={e => updateLine(i, 'category', e.target.value)} style={{ ...styles.input, padding: '6px 8px' }}>
-                        {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                        {CATEGORIES.map(c => <option key={c} value={c}>{t[CATEGORY_LABEL_KEYS[c]]}</option>)}
                       </select>
                     </td>
                     <td style={styles.lineTd}>
@@ -380,7 +396,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
                       {formatCents(total)}
                     </td>
                     <td style={styles.lineTd}>
-                      <button onClick={() => removeLine(i)} style={styles.iconBtn} title="Remove">×</button>
+                      <button onClick={() => removeLine(i)} style={styles.iconBtn} title={t.estRemove}>×</button>
                     </td>
                   </tr>
                 );
@@ -389,7 +405,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
           </table>
         </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-          <button onClick={addLine} style={styles.ghostBtn}>+ Add line</button>
+          <button onClick={addLine} style={styles.ghostBtn}>{t.estAddLine}</button>
           <CatalogPicker onPick={(picked) => {
             // Append a new line pre-filled from the catalog item. Flip
             // dirty so the tab-close prompt fires after a catalog pick
@@ -407,40 +423,40 @@ function EstimateForm({ existing, onSave, onCancel }) {
       </div>
 
       <div style={styles.formCard}>
-        <h3 style={styles.formH3}>Markup &amp; tax</h3>
+        <h3 style={styles.formH3}>{t.estMarkupTax}</h3>
         <div className="admin-form-grid-4">
-          <Field label="Overhead %">
+          <Field label={t.estOverheadPct}>
             <input type="number" step="0.1" min="0" max="100" value={head.overhead_pct} onChange={e => updateHead('overhead_pct', e.target.value)} style={styles.input} />
           </Field>
-          <Field label="Margin %">
+          <Field label={t.estMarginPct}>
             <input type="number" step="0.1" min="0" max="100" value={head.margin_pct} onChange={e => updateHead('margin_pct', e.target.value)} style={styles.input} />
           </Field>
-          <Field label="Contingency %">
+          <Field label={t.estContingencyPct}>
             <input type="number" step="0.1" min="0" max="100" value={head.contingency_pct} onChange={e => updateHead('contingency_pct', e.target.value)} style={styles.input} />
           </Field>
-          <Field label="Tax %">
+          <Field label={t.estTaxPct}>
             <input type="number" step="0.01" min="0" max="100" value={head.tax_pct} onChange={e => updateHead('tax_pct', e.target.value)} style={styles.input} />
           </Field>
         </div>
         <div style={styles.totalsBox}>
-          <TotalsRow label="Subtotal" value={totals.subtotal} />
-          <TotalsRow label={`Overhead (${head.overhead_pct || 0}%)`} value={totals.overhead} />
-          <TotalsRow label={`Margin (${head.margin_pct || 0}%)`} value={totals.margin} />
-          <TotalsRow label={`Contingency (${head.contingency_pct || 0}%)`} value={totals.contingency} />
-          <TotalsRow label={`Tax (${head.tax_pct || 0}%)`} value={totals.tax} />
-          <TotalsRow label="Total" value={totals.total} bold />
+          <TotalsRow label={t.estSubtotal} value={totals.subtotal} />
+          <TotalsRow label={`${t.estOverhead} (${head.overhead_pct || 0}%)`} value={totals.overhead} />
+          <TotalsRow label={`${t.estMargin} (${head.margin_pct || 0}%)`} value={totals.margin} />
+          <TotalsRow label={`${t.estContingency} (${head.contingency_pct || 0}%)`} value={totals.contingency} />
+          <TotalsRow label={`${t.estTax} (${head.tax_pct || 0}%)`} value={totals.tax} />
+          <TotalsRow label={t.estTotal} value={totals.total} bold />
         </div>
       </div>
 
       <div style={styles.formCard}>
-        <h3 style={styles.formH3}>Notes &amp; terms</h3>
-        <Field label="Exclusions">
+        <h3 style={styles.formH3}>{t.estNotesTerms}</h3>
+        <Field label={t.estExclusions}>
           <textarea value={head.exclusions} onChange={e => updateHead('exclusions', e.target.value)} style={{ ...styles.input, minHeight: 50 }} />
         </Field>
-        <Field label="Terms">
+        <Field label={t.estTerms}>
           <textarea value={head.terms} onChange={e => updateHead('terms', e.target.value)} style={{ ...styles.input, minHeight: 50 }} />
         </Field>
-        <Field label="Notes (internal)">
+        <Field label={t.estNotesInternal}>
           <textarea value={head.notes} onChange={e => updateHead('notes', e.target.value)} style={{ ...styles.input, minHeight: 50 }} />
         </Field>
       </div>
@@ -449,6 +465,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
 }
 
 function Field({ label, required, children }) {
+  const t = useT();
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: '#6b7280', fontWeight: 600 }}>
       <span>
@@ -456,7 +473,7 @@ function Field({ label, required, children }) {
         {required && (
           <>
             <span aria-hidden="true" style={{ color: '#ef4444' }}>*</span>
-            <span className="sr-only"> (required)</span>
+            <span className="sr-only"> ({t.estRequired})</span>
           </>
         )}
       </span>
@@ -470,6 +487,7 @@ function Field({ label, required, children }) {
 // shape up. Lightweight; opens inline rather than a true modal so it
 // doesn't fight with the rest of the form.
 function CatalogPicker({ onPick }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [items, setItems] = useState([]);
@@ -479,13 +497,13 @@ function CatalogPicker({ onPick }) {
     if (!open) return;
     setLoading(true);
     const params = q ? { q } : {};
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       api.get('/catalog/items', { params, limit: 30 })
         .then(({ data }) => setItems(data.items || []))
         .catch(() => setItems([]))
         .finally(() => setLoading(false));
     }, 200);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [q, open]);
 
   async function pick(item) {
@@ -500,7 +518,7 @@ function CatalogPicker({ onPick }) {
   if (!open) {
     return (
       <button onClick={() => setOpen(true)} style={{ background: '#f0f4ff', color: '#1d4ed8', border: '1px solid #c7d2fe', padding: '8px 14px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>
-        + From catalog
+        {t.estFromCatalog}
       </button>
     );
   }
@@ -514,7 +532,7 @@ function CatalogPicker({ onPick }) {
       <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
         <input
           autoFocus
-          placeholder="Search catalog..."
+          placeholder={t.estSearchCatalog}
           value={q}
           onChange={e => setQ(e.target.value)}
           style={{ padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, flex: 1 }}
@@ -522,9 +540,9 @@ function CatalogPicker({ onPick }) {
         <button onClick={() => { setOpen(false); setQ(''); }} style={{ background: 'transparent', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 18 }}>×</button>
       </div>
       {loading ? (
-        <div style={{ fontSize: 13, color: '#6b7280', padding: 12 }}>Searching...</div>
+        <div style={{ fontSize: 13, color: '#6b7280', padding: 12 }}>{t.estSearching}</div>
       ) : items.length === 0 ? (
-        <div style={{ fontSize: 13, color: '#6b7280', padding: 12 }}>No matches.</div>
+        <div style={{ fontSize: 13, color: '#6b7280', padding: 12 }}>{t.estNoMatches}</div>
       ) : (
         <div>
           {items.map(item => (
@@ -538,9 +556,9 @@ function CatalogPicker({ onPick }) {
               <div style={{ fontWeight: 600, color: '#111827' }}>{item.name}</div>
               <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
                 {item.sku && `${item.sku} · `}
-                {item.unit && `per ${item.unit}`}
+                {item.unit && `${t.estPer} ${item.unit}`}
                 {item.sell_price_cents != null && ` · ${formatCents(item.sell_price_cents)}`}
-                {!item.is_stocked && ' · catalog only'}
+                {!item.is_stocked && ` · ${t.estCatalogOnly}`}
               </div>
             </div>
           ))}
@@ -562,6 +580,7 @@ function TotalsRow({ label, value, bold }) {
 // ── Detail view ──────────────────────────────────────────────────────────────
 
 function EstimateDetail({ id, onBack, onEdit }) {
+  const t = useT();
   const [estimate, setEstimate] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -585,7 +604,8 @@ function EstimateDetail({ id, onBack, onEdit }) {
         import('../components/EstimatePDF'),
         api.get('/company-info').catch(() => ({ data: {} })),
       ]);
-      const el = React.createElement(EstimatePDF, { estimate, companyInfo: companyRes.data || {} });
+      const statusLabel = t[STATUS_COLORS[estimate.status]?.labelKey] || estimate.status;
+      const el = React.createElement(EstimatePDF, { estimate, companyInfo: companyRes.data || {}, t, statusLabel });
       const blob = await pdf(el).toBlob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -597,7 +617,7 @@ function EstimateDetail({ id, onBack, onEdit }) {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err) {
-      setActionError('PDF generation failed');
+      setActionError(t.estErrPdf);
     } finally {
       setPdfGenerating(false);
     }
@@ -629,9 +649,9 @@ function EstimateDetail({ id, onBack, onEdit }) {
       // step. Auto-copy lets them paste straight into an email.
       const url = `${window.location.origin}/e/${data.response_token}`;
       try { await navigator.clipboard?.writeText(url); } catch {}
-      toast('Sent — acceptance URL copied to clipboard', 'success');
+      toast(t.estToastSent, 'success');
     } catch (err) {
-      setActionError(err.response?.data?.error || 'Send failed');
+      setActionError(err.response?.data?.error || t.estErrSend);
     } finally {
       setBusy(false);
     }
@@ -639,19 +659,19 @@ function EstimateDetail({ id, onBack, onEdit }) {
 
   async function withdraw() {
     if (!await confirm({
-      title: 'Withdraw this estimate?',
-      body: 'It will no longer be acceptable by the client.',
-      confirmLabel: 'Withdraw',
+      title: t.estWithdrawConfirmTitle,
+      body: t.estWithdrawConfirmBody,
+      confirmLabel: t.estWithdraw,
       tone: 'danger',
     })) return;
     setBusy(true);
     setActionError(null);
     try {
       await api.post(`/estimates/${id}/withdraw`);
-      toast('Withdrawn', 'success');
+      toast(t.estToastWithdrawn, 'success');
       await load();
     } catch (err) {
-      setActionError(err.response?.data?.error || 'Withdraw failed');
+      setActionError(err.response?.data?.error || t.estErrWithdraw);
     } finally {
       setBusy(false);
     }
@@ -659,18 +679,18 @@ function EstimateDetail({ id, onBack, onEdit }) {
 
   async function convert() {
     if (!await confirm({
-      title: 'Convert to project?',
-      body: 'This seeds the project budget from the estimate categories.',
-      confirmLabel: 'Convert',
+      title: t.estConvertConfirmTitle,
+      body: t.estConvertConfirmBody,
+      confirmLabel: t.estConvert,
     })) return;
     setBusy(true);
     setActionError(null);
     try {
       const { data } = await api.post(`/estimates/${id}/convert`);
-      toast(`Project created with ${data.categories_seeded || 0} budget categories`, 'success');
+      toast(`${t.estToastConvertedPrefix} ${data.categories_seeded || 0} ${t.estToastConvertedSuffix}`, 'success');
       await load();
     } catch (err) {
-      setActionError(err.response?.data?.error || 'Convert failed');
+      setActionError(err.response?.data?.error || t.estErrConvert);
     } finally {
       setBusy(false);
     }
@@ -704,7 +724,7 @@ function EstimateDetail({ id, onBack, onEdit }) {
     <div className="admin-page-shell" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
       {confirmDialog}
       <div style={{ marginBottom: 16 }}>
-        <button onClick={onBack} style={styles.ghostBtn}>← Back to list</button>
+        <button onClick={onBack} style={styles.ghostBtn}>← {t.estBackToList}</button>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
         <div>
@@ -717,27 +737,27 @@ function EstimateDetail({ id, onBack, onEdit }) {
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button onClick={downloadPDF} disabled={pdfGenerating} style={styles.ghostBtn}>
-            {pdfGenerating ? 'Generating…' : 'Download PDF'}
+            {pdfGenerating ? t.estGenerating : t.estDownloadPdf}
           </button>
           {isDraft && (
             <>
-              <button onClick={onEdit} style={styles.ghostBtn}>Edit</button>
+              <button onClick={onEdit} style={styles.ghostBtn}>{t.estEdit}</button>
               <button onClick={send} disabled={busy} style={styles.primaryBtn}>
-                {busy ? 'Sending...' : 'Send to client'}
+                {busy ? t.estSending : t.estSendToClient}
               </button>
             </>
           )}
           {isSent && (
-            <button onClick={withdraw} disabled={busy} style={styles.ghostBtn}>Withdraw</button>
+            <button onClick={withdraw} disabled={busy} style={styles.ghostBtn}>{t.estWithdraw}</button>
           )}
           {isAccepted && !estimate.converted_project_id && (
             <button onClick={convert} disabled={busy} style={styles.primaryBtn}>
-              Convert to project
+              {t.estConvertToProject}
             </button>
           )}
           {estimate.converted_project_id && (
             <span style={{ fontSize: 13, color: '#059669', fontWeight: 600 }}>
-              ✓ Converted to project #{estimate.converted_project_id}
+              ✓ {t.estConvertedToProject} #{estimate.converted_project_id}
             </span>
           )}
         </div>
@@ -747,9 +767,9 @@ function EstimateDetail({ id, onBack, onEdit }) {
 
       {sendToken && (
         <div style={{ ...styles.formCard, background: '#fef3c7', border: '1px solid #fbbf24' }}>
-          <h3 style={styles.formH3}>Acceptance link generated</h3>
+          <h3 style={styles.formH3}>{t.estAcceptanceLink}</h3>
           <p style={{ fontSize: 13, color: '#6b7280', margin: '4px 0 12px' }}>
-            Share this URL with the client. They'll see the full estimate and can accept or decline.
+            {t.estAcceptanceLinkBody}
           </p>
           <div style={{ display: 'flex', gap: 8 }}>
             <input
@@ -759,18 +779,18 @@ function EstimateDetail({ id, onBack, onEdit }) {
               style={{ ...styles.input, fontFamily: 'monospace', fontSize: 12, flex: 1 }}
             />
             <button onClick={() => navigator.clipboard?.writeText(`${window.location.origin}/e/${sendToken}`)} style={styles.primaryBtn}>
-              Copy
+              {t.estCopy}
             </button>
           </div>
         </div>
       )}
 
       <div style={styles.formCard}>
-        <h3 style={styles.formH3}>Line items</h3>
+        <h3 style={styles.formH3}>{t.estLineItems}</h3>
         {CATEGORIES.filter(c => linesByCat[c].length > 0).map(category => (
           <div key={category} style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
-              {category}
+              {t[CATEGORY_LABEL_KEYS[category]]}
             </div>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
               <tbody>
@@ -791,23 +811,23 @@ function EstimateDetail({ id, onBack, onEdit }) {
         ))}
 
         <div style={{ ...styles.totalsBox, marginTop: 16 }}>
-          <TotalsRow label="Subtotal" value={breakdown.subtotal} />
-          {estimate.overhead_pct > 0 && <TotalsRow label={`Overhead (${estimate.overhead_pct}%)`} value={breakdown.overhead} />}
-          {estimate.margin_pct > 0 && <TotalsRow label={`Margin (${estimate.margin_pct}%)`} value={breakdown.margin} />}
-          {estimate.contingency_pct > 0 && <TotalsRow label={`Contingency (${estimate.contingency_pct}%)`} value={breakdown.contingency} />}
-          {estimate.tax_pct > 0 && <TotalsRow label={`Tax (${estimate.tax_pct}%)`} value={breakdown.tax} />}
-          <TotalsRow label="Total" value={breakdown.total} bold />
+          <TotalsRow label={t.estSubtotal} value={breakdown.subtotal} />
+          {estimate.overhead_pct > 0 && <TotalsRow label={`${t.estOverhead} (${estimate.overhead_pct}%)`} value={breakdown.overhead} />}
+          {estimate.margin_pct > 0 && <TotalsRow label={`${t.estMargin} (${estimate.margin_pct}%)`} value={breakdown.margin} />}
+          {estimate.contingency_pct > 0 && <TotalsRow label={`${t.estContingency} (${estimate.contingency_pct}%)`} value={breakdown.contingency} />}
+          {estimate.tax_pct > 0 && <TotalsRow label={`${t.estTax} (${estimate.tax_pct}%)`} value={breakdown.tax} />}
+          <TotalsRow label={t.estTotal} value={breakdown.total} bold />
         </div>
       </div>
 
       {(estimate.exclusions || estimate.terms) && (
         <div style={styles.formCard}>
           {estimate.exclusions && <>
-            <h3 style={styles.formH3}>Exclusions</h3>
+            <h3 style={styles.formH3}>{t.estExclusions}</h3>
             <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: 13, color: '#374151', margin: 0 }}>{estimate.exclusions}</pre>
           </>}
           {estimate.terms && <>
-            <h3 style={styles.formH3}>Terms</h3>
+            <h3 style={styles.formH3}>{t.estTerms}</h3>
             <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: 13, color: '#374151', margin: 0 }}>{estimate.terms}</pre>
           </>}
         </div>
@@ -815,9 +835,9 @@ function EstimateDetail({ id, onBack, onEdit }) {
 
       {estimate.accepted_signer_name && (
         <div style={styles.formCard}>
-          <h3 style={styles.formH3}>Accepted by</h3>
+          <h3 style={styles.formH3}>{t.estAcceptedBy}</h3>
           <div style={{ fontSize: 14 }}>
-            <strong>{estimate.accepted_signer_name}</strong> on {new Date(estimate.responded_at).toLocaleString()}
+            <strong>{estimate.accepted_signer_name}</strong> {t.estOn} {new Date(estimate.responded_at).toLocaleString()}
           </div>
         </div>
       )}
