@@ -23,10 +23,16 @@ async function requireAuth(req, res, next) {
   if (payload.tv != null) {
     try {
       const { rows } = await pool.query(
-        'SELECT token_version FROM users WHERE id = $1',
+        'SELECT token_version, active FROM users WHERE id = $1',
         [payload.id]
       );
       if (rows.length === 0) return res.status(401).json({ error: 'Invalid token' });
+      // Deactivated (fired / offboarded) users must lose access immediately,
+      // not at token expiry. Their JWT is otherwise still valid for up to a
+      // day, so without this check a removed employee keeps full access.
+      if (rows[0].active === false) {
+        return res.status(401).json({ error: 'Account deactivated' });
+      }
       if (rows[0].token_version !== payload.tv) {
         return res.status(401).json({ error: 'Session invalidated, please log in again' });
       }

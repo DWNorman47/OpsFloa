@@ -12,12 +12,21 @@ const pool = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { seedBuiltinRoles, getUserPermissions } = require('../permissions');
 const { effectiveSubscriptionStatus } = require('../utils/subscription');
+const { escapeHtml } = require('../utils/htmlEscape');
+const { encrypt: encryptSecret, decrypt: decryptSecret } = require('../utils/secretBox');
 
 // Hash a token for safe storage — raw token goes in the email, hash goes in the DB
 const sha256 = str => crypto.createHash('sha256').update(str).digest('hex');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const isValidEmail = email => EMAIL_RE.test(String(email).trim());
+
+// A throwaway (but structurally valid) cost-10 bcrypt hash used to equalize
+// login timing: when the company or username doesn't exist we still spend a
+// comparable amount of CPU on a bcrypt.compare so response time can't be
+// used to enumerate valid accounts. Hardcoded (not hashSync at load) so the
+// cost stays fixed and module load has no side effects.
+const DUMMY_PASSWORD_HASH = '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy';
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -131,7 +140,10 @@ router.post('/login', loginLimiter, async (req, res) => {
   if (!username || !password || !company_name) {
     return res.status(400).json({ error: 'Company name, username, and password required' });
   }
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress;
+  // Use req.ip (Express resolves it from the trusted proxy chain — see
+  // `trust proxy` in index.js) rather than the raw X-Forwarded-For header,
+  // which a client can spoof to poison the failure log / abuse tracking.
+  const ip = req.ip;
   const logFailure = (reason) => pool.query(
     'INSERT INTO login_failures (attempted_company, attempted_username, failure_reason, ip) VALUES ($1, $2, $3, $4)',
     [company_name, username, reason, ip]
@@ -142,6 +154,7 @@ router.post('/login', loginLimiter, async (req, res) => {
       'SELECT id FROM companies WHERE LOWER(name) = LOWER($1)', [company_name]
     );
     if (!companyRes.rows[0]) {
+      await bcrypt.compare(password, DUMMY_PASSWORD_HASH); // equalize timing
       await logFailure('company_not_found');
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -166,6 +179,7 @@ router.post('/login', loginLimiter, async (req, res) => {
     }
 
     if (!user) {
+      await bcrypt.compare(password, DUMMY_PASSWORD_HASH); // equalize timing
       await logFailure('user_not_found');
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -176,8 +190,12 @@ router.post('/login', loginLimiter, async (req, res) => {
       // Increment failed attempts and lock if threshold reached
       const newCount = (user.failed_login_attempts || 0) + 1;
       if (newCount >= 10) {
+        // 15-minute lockout (was 24h). Combined with the per-IP login
+        // limiter this still stops online brute-force, but bounds the
+        // denial-of-service window if an attacker deliberately locks a
+        // known account by guessing wrong passwords.
         await pool.query(
-          'UPDATE users SET failed_login_attempts = $1, locked_until = NOW() + INTERVAL \'24 hours\' WHERE id = $2',
+          'UPDATE users SET failed_login_attempts = $1, locked_until = NOW() + INTERVAL \'15 minutes\' WHERE id = $2',
           [newCount, user.id]
         );
       } else {
@@ -507,22 +525,25 @@ router.post('/forgot-password', authLimiter, async (req, res) => {
 
     const resetUrl = `${process.env.APP_URL}/reset-password?token=${token}`;
 
-    await sgMail.send({
+    // Respond BEFORE sending so response time is uniform whether or not the
+    // address exists — an awaited SendGrid call (hundreds of ms) for real
+    // users vs an instant return for misses is a user-enumeration oracle.
+    res.json({ success: true });
+
+    sgMail.send({
       from: { name: 'OpsFloa', email: process.env.SENDGRID_FROM_EMAIL },
       to: email,
       subject: 'Reset your OpsFloa password',
       html: `
         <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
           <h2 style="color:#1a56db;margin-bottom:8px">Reset your password</h2>
-          <p style="color:#444;margin-bottom:24px">Hi ${user.full_name}, click the button below to reset your password. This link expires in 1 hour.</p>
+          <p style="color:#444;margin-bottom:24px">Hi ${escapeHtml(user.full_name)}, click the button below to reset your password. This link expires in 1 hour.</p>
           <a href="${resetUrl}" style="display:inline-block;background:#1a56db;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700">Reset password</a>
           <p style="color:#999;font-size:13px;margin-top:24px">If you didn't request this, you can ignore this email.</p>
           <p style="color:#ccc;font-size:12px;margin-top:4px">${resetUrl}</p>
         </div>
       `,
-    });
-
-    res.json({ success: true });
+    }).catch(err => logger.error({ err }, 'reset password email send failed'));
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });
@@ -638,7 +659,7 @@ router.post('/mfa/confirm', loginLimiter, async (req, res) => {
     const user = result.rows[0];
     if (!user || !user.mfa_secret) return res.status(400).json({ error: 'MFA not configured' });
 
-    const valid = speakeasy.totp.verify({ secret: user.mfa_secret, encoding: 'base32', token: code, window: 1 });
+    const valid = speakeasy.totp.verify({ secret: decryptSecret(user.mfa_secret), encoding: 'base32', token: code, window: 1 });
     if (!valid) return res.status(401).json({ error: 'Invalid code. Try again.' });
 
     const token = signToken(user);
@@ -653,7 +674,7 @@ router.post('/mfa/confirm', loginLimiter, async (req, res) => {
 router.get('/mfa/setup', requireAuth, async (req, res) => {
   try {
     const secret = speakeasy.generateSecret({ name: `OpsFloa (${req.user.username})`, length: 20 });
-    await pool.query('UPDATE users SET mfa_secret_pending = $1 WHERE id = $2', [secret.base32, req.user.id]);
+    await pool.query('UPDATE users SET mfa_secret_pending = $1 WHERE id = $2', [encryptSecret(secret.base32), req.user.id]);
     const qr = await qrcode.toDataURL(secret.otpauth_url);
     res.json({ qr, secret: secret.base32 });
   } catch (err) {
@@ -668,15 +689,16 @@ router.post('/mfa/enable', requireAuth, async (req, res) => {
   if (!code) return res.status(400).json({ error: 'code required' });
   try {
     const result = await pool.query('SELECT mfa_secret_pending FROM users WHERE id = $1', [req.user.id]);
-    const secret = result.rows[0]?.mfa_secret_pending;
-    if (!secret) return res.status(400).json({ error: 'No pending MFA setup. Start setup again.' });
+    const stored = result.rows[0]?.mfa_secret_pending;
+    if (!stored) return res.status(400).json({ error: 'No pending MFA setup. Start setup again.' });
+    const secret = decryptSecret(stored); // plaintext base32 for verification
 
     const valid = speakeasy.totp.verify({ secret, encoding: 'base32', token: code, window: 1 });
     if (!valid) return res.status(401).json({ error: 'Invalid code. Try again.' });
 
     await pool.query(
       'UPDATE users SET mfa_secret = $1, mfa_secret_pending = NULL, mfa_enabled = true WHERE id = $2',
-      [secret, req.user.id]
+      [encryptSecret(secret), req.user.id]
     );
     res.json({ enabled: true });
   } catch (err) {

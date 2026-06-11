@@ -1365,7 +1365,12 @@ router.patch('/workers/:id', requireAdmin, requirePerm('manage_workers'),
     if (middle_name !== undefined) { fields.push(`middle_name = $${idx++}`); values.push(middle_name || null); }
     if (last_name !== undefined) { fields.push(`last_name = $${idx++}`); values.push(last_name || null); }
     if (username) { fields.push(`username = $${idx++}`); values.push(username.toLowerCase().trim()); }
-    if (assignedRole !== undefined) { fields.push(`role = $${idx++}`); values.push(assignedRole); }
+    if (assignedRole !== undefined) {
+      fields.push(`role = $${idx++}`); values.push(assignedRole);
+      // A role change alters the authorization claims baked into the user's
+      // JWT — bump token_version so the stale token is rejected next request.
+      fields.push(`token_version = COALESCE(token_version, 0) + 1`);
+    }
     if (language) { fields.push(`language = $${idx++}`); values.push(language); }
     if (hourly_rate !== undefined) {
       const rv = parseFloat(hourly_rate);
@@ -1439,7 +1444,7 @@ router.patch('/workers/:id/permissions', requireAdmin, requirePerm('manage_roles
   }
   try {
     const result = await pool.query(
-      `UPDATE users SET admin_permissions = $1
+      `UPDATE users SET admin_permissions = $1, token_version = COALESCE(token_version, 0) + 1
        WHERE id = $2 AND company_id = $3 AND role = 'admin' RETURNING id, full_name, admin_permissions`,
       [perms ? JSON.stringify(perms) : null, req.params.id, req.user.company_id]
     );
@@ -1466,7 +1471,7 @@ router.patch('/workers/:id/worker-access', requireAdmin, requirePerm('manage_rol
   }
   try {
     const result = await pool.query(
-      `UPDATE users SET worker_access_ids = $1 WHERE id = $2 AND company_id = $3 AND role = 'admin' RETURNING id, full_name, worker_access_ids`,
+      `UPDATE users SET worker_access_ids = $1, token_version = COALESCE(token_version, 0) + 1 WHERE id = $2 AND company_id = $3 AND role = 'admin' RETURNING id, full_name, worker_access_ids`,
       [ids, req.params.id, req.user.company_id]
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Admin not found' });
@@ -1482,8 +1487,11 @@ router.delete('/workers/:id', requireAdmin, requirePerm('manage_workers'), async
   const companyId = req.user.company_id;
   try {
     const worker = await pool.query('SELECT full_name FROM users WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
+    // Bump token_version so any live JWT for this user is invalidated on the
+    // next request (belt-and-suspenders alongside the requireAuth active check).
     const result = await pool.query(
-      'UPDATE users SET active = false WHERE id = $1 AND active = true AND company_id = $2 RETURNING id',
+      `UPDATE users SET active = false, token_version = COALESCE(token_version, 0) + 1
+        WHERE id = $1 AND active = true AND company_id = $2 RETURNING id`,
       [req.params.id, companyId]
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Worker not found' });
