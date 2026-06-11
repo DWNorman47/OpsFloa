@@ -55,5 +55,8 @@ jobs:
           DATABASE_SSL: 'true'
           DEMO_COMPANY_NAME: Demo Operations
           DEMO_ADMIN_USERNAME: Admin
-          DEMO_ADMIN_PASSWORD: Admin123
+          # Set the DEMO_ADMIN_PASSWORD repo secret to the (publishable) demo
+          # login password. If unset, the seeder falls back to its built-in
+          # default — so no real credential is hardcoded in this workflow.
+          DEMO_ADMIN_PASSWORD: ${{ secrets.DEMO_ADMIN_PASSWORD }}
           DEMO_SEED_DATE: ${{ github.event.inputs.demo_seed_date || '' }}
