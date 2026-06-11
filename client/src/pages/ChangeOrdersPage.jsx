@@ -362,6 +362,38 @@ function ChangeOrderDetail({ id, onBack }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [sendToken, setSendToken] = useState(null);
+  const [pdfGenerating, setPdfGenerating] = useState(false);
+
+  // Browser-side CO PDF — lazy-imports react-pdf only on download and
+  // pulls company letterhead from /company-info. Mirrors the estimate
+  // and lien-waiver PDF flow.
+  async function downloadPDF() {
+    if (!co) return;
+    setPdfGenerating(true);
+    setError(null);
+    try {
+      const [{ pdf }, { default: ChangeOrderPDF }, companyRes] = await Promise.all([
+        import('@react-pdf/renderer'),
+        import('../components/ChangeOrderPDF'),
+        api.get('/company-info').catch(() => ({ data: {} })),
+      ]);
+      const el = React.createElement(ChangeOrderPDF, { changeOrder: co, companyInfo: companyRes.data || {} });
+      const blob = await pdf(el).toBlob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const safe = String(co.co_number || co.id).replace(/[^a-z0-9]/gi, '');
+      a.download = `change-order-${safe}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError('PDF generation failed');
+    } finally {
+      setPdfGenerating(false);
+    }
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -428,7 +460,10 @@ function ChangeOrderDetail({ id, onBack }) {
           <div style={{ fontSize: 14, color: '#6b7280', marginTop: 4 }}>{co.project_name}</div>
           <div style={{ fontSize: 14, color: '#111827', marginTop: 4 }}>{co.description}</div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button onClick={downloadPDF} disabled={pdfGenerating} style={styles.ghostBtn}>
+            {pdfGenerating ? 'Generating…' : 'Download PDF'}
+          </button>
           {isDraft && (
             <button onClick={send} disabled={busy} style={styles.primaryBtn}>
               {busy ? 'Sending...' : 'Send to client'}

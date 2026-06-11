@@ -566,8 +566,41 @@ function EstimateDetail({ id, onBack, onEdit }) {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState(null);
   const [sendToken, setSendToken] = useState(null);
+  const [pdfGenerating, setPdfGenerating] = useState(false);
   const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
+
+  // Build the client-facing estimate PDF in the browser. Lazy-imports
+  // @react-pdf/renderer (heavy) only when the admin actually downloads,
+  // and pulls company letterhead from /company-info — same pattern as
+  // the lien-waiver PDF.
+  async function downloadPDF() {
+    if (!estimate) return;
+    setPdfGenerating(true);
+    setActionError(null);
+    try {
+      const [{ pdf }, { default: EstimatePDF }, companyRes] = await Promise.all([
+        import('@react-pdf/renderer'),
+        import('../components/EstimatePDF'),
+        api.get('/company-info').catch(() => ({ data: {} })),
+      ]);
+      const el = React.createElement(EstimatePDF, { estimate, companyInfo: companyRes.data || {} });
+      const blob = await pdf(el).toBlob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const safe = String(estimate.estimate_number || estimate.id).replace(/[^a-z0-9]/gi, '');
+      a.download = `estimate-${safe}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setActionError('PDF generation failed');
+    } finally {
+      setPdfGenerating(false);
+    }
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -672,6 +705,9 @@ function EstimateDetail({ id, onBack, onEdit }) {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button onClick={downloadPDF} disabled={pdfGenerating} style={styles.ghostBtn}>
+            {pdfGenerating ? 'Generating…' : 'Download PDF'}
+          </button>
           {isDraft && (
             <>
               <button onClick={onEdit} style={styles.ghostBtn}>Edit</button>
