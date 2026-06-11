@@ -12,7 +12,7 @@
 //   }
 //   return (<>...{dialog}</>);
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useId } from 'react';
 import ModalShell from './ModalShell';
 
 // Hook for imperative confirm() calls. Returns the dialog JSX (which
@@ -22,6 +22,10 @@ export function useConfirm() {
   const [open, setOpen] = useState(false);
   const [config, setConfig] = useState({});
   const resolveRef = useRef(null);
+  // Per-instance title id so two simultaneous confirms (rare, but
+  // possible if a page mounts multiple useConfirm callers) don't share
+  // an id and break aria-labelledby on whichever rendered second.
+  const titleId = useId();
 
   const confirm = useCallback((cfg = {}) => {
     return new Promise(resolve => {
@@ -45,8 +49,8 @@ export function useConfirm() {
 
   const dialog = open && (
     <div style={styles.overlay} onClick={(e) => e.target === e.currentTarget && done(false)}>
-      <ModalShell onClose={() => done(false)} titleId="confirm-title" style={styles.modal}>
-        <h3 id="confirm-title" style={styles.title}>{config.title}</h3>
+      <ModalShell onClose={() => done(false)} titleId={titleId} style={styles.modal}>
+        <h3 id={titleId} style={styles.title}>{config.title}</h3>
         {config.body && <p style={styles.body}>{config.body}</p>}
         <div style={styles.btnRow}>
           <button onClick={() => done(false)} style={styles.btnCancel}>

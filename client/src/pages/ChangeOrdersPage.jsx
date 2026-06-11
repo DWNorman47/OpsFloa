@@ -81,7 +81,7 @@ function ChangeOrdersList({ onOpen, onNew }) {
   }, []);
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
+    <div className="admin-page-shell" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
       <div className="admin-page-header">
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, flexWrap: 'wrap' }}>
           <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>Change Orders</h1>
@@ -244,7 +244,7 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
   }
 
   return (
-    <div style={{ maxWidth: 980, margin: '0 auto', padding: '24px 20px' }}>
+    <div className="admin-page-shell" style={{ maxWidth: 980, margin: '0 auto', padding: '24px 20px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: '#111827' }}>New Change Order</h1>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -415,7 +415,7 @@ function ChangeOrderDetail({ id, onBack }) {
   }
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
+    <div className="admin-page-shell" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
       {confirmDialog}
       <div style={{ marginBottom: 16 }}>
         <button onClick={onBack} style={styles.ghostBtn}>← Back to change orders</button>

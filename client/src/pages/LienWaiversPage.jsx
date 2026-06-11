@@ -105,7 +105,7 @@ function LienWaiversList({ onOpen, onNew }) {
   }, []);
 
   return (
-    <div style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 20px' }}>
+    <div className="admin-page-shell" style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 20px' }}>
       <div className="admin-page-header">
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>Lien Waivers</h1>
         <button onClick={() => onNew({ projects, subs })} style={styles.primaryBtn}>+ New Waiver</button>
@@ -272,7 +272,7 @@ function NewLienWaiverForm({ projects, subs, onSave, onCancel }) {
   const isFromSub = form.direction === 'from_sub';
 
   return (
-    <div style={{ maxWidth: 800, margin: '0 auto', padding: '24px 20px' }}>
+    <div className="admin-page-shell" style={{ maxWidth: 800, margin: '0 auto', padding: '24px 20px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: '#111827' }}>New Lien Waiver</h1>
         <div style={{ display: 'flex', gap: 8 }}>

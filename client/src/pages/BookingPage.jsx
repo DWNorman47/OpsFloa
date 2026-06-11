@@ -205,6 +205,8 @@ function AppointmentTypeEditor({ id, onBack }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [dirty, setDirty] = useState(false);
+  useUnsavedChanges(dirty);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -219,15 +221,18 @@ function AppointmentTypeEditor({ id, onBack }) {
       setBookableUsers(users || []);
       setAllowedUserIds(td.allowed_user_ids || []);
       setAllowedShiftTypeIds(td.allowed_shift_type_ids || []);
+      // Reloading is not a user edit — keep the dirty flag where it was.
     } catch (err) { silentError(err); }
     finally { setLoading(false); }
   }, [id]);
   useEffect(() => { load(); }, [load]);
 
   function toggleUser(uid) {
+    setDirty(true);
     setAllowedUserIds(arr => arr.includes(uid) ? arr.filter(x => x !== uid) : [...arr, uid]);
   }
   function toggleShiftType(stid) {
+    setDirty(true);
     setAllowedShiftTypeIds(arr => arr.includes(stid) ? arr.filter(x => x !== stid) : [...arr, stid]);
   }
 
@@ -238,6 +243,7 @@ function AppointmentTypeEditor({ id, onBack }) {
         api.put(`/appointment-types/${id}/users`, { user_ids: allowedUserIds }),
         api.put(`/appointment-types/${id}/shift-types`, { shift_type_ids: allowedShiftTypeIds }),
       ]);
+      setDirty(false);
       onBack();
     } catch (err) { setError(err.response?.data?.error || 'Save failed'); }
     finally { setSaving(false); }
@@ -317,6 +323,12 @@ function ShiftTypesTab() {
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ open: false, name: '', color: '#1a56db', description: '' });
   const [error, setError] = useState(null);
+  // Dirty only when the create panel is open AND a field has been
+  // touched — toggling the panel open by itself is not data loss.
+  const [dirty, setDirty] = useState(false);
+  useUnsavedChanges(dirty);
+
+  function updateField(k, v) { setDirty(true); setForm(f => ({ ...f, [k]: v })); }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -333,6 +345,7 @@ function ShiftTypesTab() {
     try {
       await api.post('/shift-types', form);
       setForm({ open: false, name: '', color: '#1a56db', description: '' });
+      setDirty(false);
       await load();
     } catch (err) { setError(err.response?.data?.error || 'Failed'); }
   }
@@ -356,7 +369,16 @@ function ShiftTypesTab() {
       {confirmDialog}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h2 style={styles.h2}>Shift types ({items.length})</h2>
-        <button onClick={() => setForm(f => ({ ...f, open: !f.open }))} style={styles.primaryBtn}>
+        <button
+          onClick={() => {
+            // Closing the create panel clears whatever was being typed;
+            // mark clean so the unsaved-changes prompt doesn't fire after
+            // the user explicitly chose Cancel.
+            if (form.open) setDirty(false);
+            setForm(f => ({ ...f, open: !f.open }));
+          }}
+          style={styles.primaryBtn}
+        >
           {form.open ? 'Cancel' : '+ New shift type'}
         </button>
       </div>
@@ -366,13 +388,13 @@ function ShiftTypesTab() {
           {error && <div style={styles.errorBox}>{error}</div>}
           <div style={styles.grid3}>
             <Field label="Name" required>
-              <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Office hours" style={styles.input} />
+              <input value={form.name} onChange={e => updateField('name', e.target.value)} placeholder="e.g. Office hours" style={styles.input} />
             </Field>
             <Field label="Color">
-              <input type="color" value={form.color} onChange={e => setForm(f => ({ ...f, color: e.target.value }))} style={{ ...styles.input, height: 36, padding: 2 }} />
+              <input type="color" value={form.color} onChange={e => updateField('color', e.target.value)} style={{ ...styles.input, height: 36, padding: 2 }} />
             </Field>
             <Field label="Description">
-              <input value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} style={styles.input} />
+              <input value={form.description} onChange={e => updateField('description', e.target.value)} style={styles.input} />
             </Field>
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -485,6 +507,8 @@ function UserBookingEditor({ userId, userName, onBack }) {
   const [roleLabel, setRoleLabel] = useState('');
   const [timezone, setTimezone] = useState('');
   const [windows, setWindows] = useState([]);
+  const [dirty, setDirty] = useState(false);
+  useUnsavedChanges(dirty);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -506,12 +530,15 @@ function UserBookingEditor({ userId, userName, onBack }) {
   useEffect(() => { load(); }, [load]);
 
   function addWindow() {
+    setDirty(true);
     setWindows(arr => [...arr, { weekday: 1, start_time: '09:00', end_time: '17:00', active: true }]);
   }
   function updateWindow(i, k, v) {
+    setDirty(true);
     setWindows(arr => arr.map((w, idx) => idx === i ? { ...w, [k]: v } : w));
   }
   function removeWindow(i) {
+    setDirty(true);
     setWindows(arr => arr.filter((_, idx) => idx !== i));
   }
 
@@ -527,6 +554,7 @@ function UserBookingEditor({ userId, userName, onBack }) {
           active: w.active,
         })),
       });
+      setDirty(false);
       onBack();
     } catch (err) { setError(err.response?.data?.error || 'Save failed'); }
     finally { setSaving(false); }
@@ -544,16 +572,16 @@ function UserBookingEditor({ userId, userName, onBack }) {
       <div style={styles.formCard}>
         <div style={styles.grid3}>
           <Field label="Bookable">
-            <select value={bookable ? 'yes' : 'no'} onChange={e => setBookable(e.target.value === 'yes')} style={styles.input}>
+            <select value={bookable ? 'yes' : 'no'} onChange={e => { setDirty(true); setBookable(e.target.value === 'yes'); }} style={styles.input}>
               <option value="no">No (won't be assigned appointments)</option>
               <option value="yes">Yes</option>
             </select>
           </Field>
           <Field label="Role label">
-            <input value={roleLabel} onChange={e => setRoleLabel(e.target.value)} placeholder="e.g. Estimator" style={styles.input} />
+            <input value={roleLabel} onChange={e => { setDirty(true); setRoleLabel(e.target.value); }} placeholder="e.g. Estimator" style={styles.input} />
           </Field>
           <Field label="Timezone">
-            <input value={timezone} onChange={e => setTimezone(e.target.value)} placeholder="e.g. America/Phoenix" style={styles.input} />
+            <input value={timezone} onChange={e => { setDirty(true); setTimezone(e.target.value); }} placeholder="e.g. America/Phoenix" style={styles.input} />
           </Field>
         </div>
       </div>
@@ -746,7 +774,7 @@ export default function BookingPage() {
   return (
     <div style={{ minHeight: '100vh', background: '#f9fafb' }}>
       <AppHeader currentApp="workforce" userRole={user?.role} />
-      <main id="main-content" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
+      <main id="main-content" className="admin-page-shell" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 16px', color: '#111827' }}>Booking</h1>
         <div style={styles.tabRow}>
           <Tab id="appointments" label="Appointments" tab={tab} setTab={setTab} />

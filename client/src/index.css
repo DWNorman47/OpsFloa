@@ -1488,10 +1488,10 @@ button {
   .admin-form-grid-2 { grid-template-columns: 1fr; }
   .admin-form-grid-4 { grid-template-columns: 1fr 1fr; }
   .admin-page-header h1 { font-size: 20px !important; }
-  /* Page wrappers were using inline padding: 24px 20px — tighten on
-     mobile so 16px gutters give content more room. The page still keeps
-     its inline width cap; this is purely a phone tweak. */
-  main#main-content > div { padding-left: 14px !important; padding-right: 14px !important; }
+  /* Each new admin page sets .admin-page-shell on its content wrapper so
+     mobile padding shrinks without leaking into other pages that happen
+     to use <main id="main-content"> (PageShell, Dashboard, etc.). */
+  .admin-page-shell { padding-left: 14px !important; padding-right: 14px !important; }
 }
 @media (max-width: 420px) {
   .admin-form-grid-4 { grid-template-columns: 1fr; }

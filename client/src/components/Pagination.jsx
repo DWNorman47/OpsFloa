@@ -10,7 +10,7 @@ export default function Pagination({ page, pages, onChange }) {
   const nextLabel = t.paginationNext;
   return (
     <nav
-      aria-label={t.paginationNavLabel || 'Pagination'}
+      aria-label={t.paginationNavLabel}
       style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, padding: '16px 0' }}
     >
       <button

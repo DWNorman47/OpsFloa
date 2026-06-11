@@ -1,19 +1,20 @@
-// Block the user from losing form work when they close the tab,
-// refresh, or hit the back button on a form with unsaved changes.
+// Block the user from losing form work when they close the tab or
+// refresh a page that has unsaved changes.
 //
 // `isDirty` is a boolean the form component owns (true when the user
 // has typed anything that differs from the last-loaded state). When
-// true:
-//   - Tab close / refresh → browser's native "Are you sure you want
-//     to leave?" dialog fires
-//   - Browser back/forward → SPA's `popstate` listener catches it and
-//     window.confirm()s before allowing the nav. (The new
-//     ConfirmDialog can't be reached from a popstate handler since
-//     popstate is synchronous — we'd lose the navigation race. Falls
-//     back to the native confirm here.)
+// true, tab-close / hard-refresh triggers the browser's native
+// "leave this page?" dialog via the `beforeunload` event.
 //
-// The form component should also call `markSaved()` after a successful
-// save so subsequent saves don't keep tripping the prompt.
+// Scope intentionally narrow:
+//   - This hook does NOT intercept in-app navigation (clicking Cancel,
+//     clicking a sidebar link, popstate from browser back/forward).
+//     beforeunload only fires for full document unloads; SPA route
+//     changes never trigger it. Forms that want to guard an in-app
+//     Cancel should check dirty themselves before invoking onCancel.
+//
+// After a successful save, flip the dirty flag back to false so the
+// prompt doesn't fire on subsequent navigations.
 
 import { useEffect } from 'react';
 

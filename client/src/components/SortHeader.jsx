@@ -69,8 +69,13 @@ export default function SortHeader({ children, sortKey, sort, setSort, align = '
         type="button"
         onClick={toggle}
         aria-label={buttonLabel}
+        // Explicit reset instead of `all: unset` — the unset shorthand
+        // applies as an inline style, which (because inline beats author
+        // stylesheets without !important) was also stripping the global
+        // `:focus-visible { outline: 2px solid #1a56db }` rule. Listing
+        // properties explicitly lets focus-visible reapply outline on
+        // keyboard nav.
         style={{
-          all: 'unset',
           display: 'inline-flex',
           alignItems: 'center',
           gap: 4,
@@ -79,6 +84,13 @@ export default function SortHeader({ children, sortKey, sort, setSort, align = '
           boxSizing: 'border-box',
           cursor: 'pointer',
           justifyContent: align === 'right' ? 'flex-end' : 'flex-start',
+          background: 'transparent',
+          border: 'none',
+          color: 'inherit',
+          font: 'inherit',
+          textTransform: 'inherit',
+          letterSpacing: 'inherit',
+          textAlign: align,
         }}
       >
         <span>{children}</span>

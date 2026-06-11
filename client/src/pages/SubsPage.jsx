@@ -625,7 +625,7 @@ export default function SubsPage() {
   return (
     <div style={{ minHeight: '100vh', background: '#f9fafb' }}>
       <AppHeader currentApp="subs" userRole={user?.role} />
-      <main id="main-content" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
+      <main id="main-content" className="admin-page-shell" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 16px', color: '#111827' }}>Subcontractors</h1>
         <div style={styles.tabRow}>
           <button

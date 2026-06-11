@@ -91,7 +91,7 @@ function EstimatesList({ onOpen, onNew }) {
   );
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
+    <div className="admin-page-shell" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
       <div className="admin-page-header">
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, flexWrap: 'wrap' }}>
           <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>Estimates</h1>
@@ -295,7 +295,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
   }
 
   return (
-    <div style={{ maxWidth: 980, margin: '0 auto', padding: '24px 20px' }}>
+    <div className="admin-page-shell" style={{ maxWidth: 980, margin: '0 auto', padding: '24px 20px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: '#111827' }}>
           {existing ? `Edit ${existing.estimate_number}` : 'New Estimate'}
@@ -390,7 +390,10 @@ function EstimateForm({ existing, onSave, onCancel }) {
         <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
           <button onClick={addLine} style={styles.ghostBtn}>+ Add line</button>
           <CatalogPicker onPick={(picked) => {
-            // Append a new line pre-filled from the catalog item.
+            // Append a new line pre-filled from the catalog item. Flip
+            // dirty so the tab-close prompt fires after a catalog pick
+            // just like it does after any other line edit.
+            setDirty(true);
             setLines(arr => [...arr, {
               category: picked.category || 'materials',
               description: picked.description,
@@ -654,7 +657,7 @@ function EstimateDetail({ id, onBack, onEdit }) {
   }
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
+    <div className="admin-page-shell" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
       {confirmDialog}
       <div style={{ marginBottom: 16 }}>
         <button onClick={onBack} style={styles.ghostBtn}>← Back to list</button>
