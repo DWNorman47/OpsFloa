@@ -11,6 +11,7 @@ import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { formatMoney, formatDate, formatDateTime } from '../utils/format';
+import { computeBreakdown } from '../utils/estimateMath';
 import { silentError } from '../errorReporter';
 
 // The seven money categories that match server/constants/projectMoneyEnums.js.
@@ -689,6 +690,16 @@ function EstimateDetail({ id, onBack, onEdit }) {
     if (linesByCat[l.category]) linesByCat[l.category].push(l);
   }
 
+  // Full markup→tax cascade, same helper the PDF uses, so the on-screen
+  // totals match the downloaded document to the cent.
+  const breakdown = computeBreakdown({
+    subtotalCents: estimate.subtotal_cents,
+    overheadPct: estimate.overhead_pct,
+    marginPct: estimate.margin_pct,
+    contingencyPct: estimate.contingency_pct,
+    taxPct: estimate.tax_pct,
+  });
+
   return (
     <div className="admin-page-shell" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
       {confirmDialog}
@@ -780,10 +791,12 @@ function EstimateDetail({ id, onBack, onEdit }) {
         ))}
 
         <div style={{ ...styles.totalsBox, marginTop: 16 }}>
-          <TotalsRow label="Subtotal" value={estimate.subtotal_cents} />
-          {estimate.overhead_pct > 0 && <TotalsRow label={`Overhead (${estimate.overhead_pct}%)`} value={Math.round(estimate.subtotal_cents * estimate.overhead_pct / 100)} />}
-          {estimate.margin_pct > 0 && <TotalsRow label={`Margin (${estimate.margin_pct}%)`} value="—" />}
-          <TotalsRow label="Total" value={estimate.total_cents} bold />
+          <TotalsRow label="Subtotal" value={breakdown.subtotal} />
+          {estimate.overhead_pct > 0 && <TotalsRow label={`Overhead (${estimate.overhead_pct}%)`} value={breakdown.overhead} />}
+          {estimate.margin_pct > 0 && <TotalsRow label={`Margin (${estimate.margin_pct}%)`} value={breakdown.margin} />}
+          {estimate.contingency_pct > 0 && <TotalsRow label={`Contingency (${estimate.contingency_pct}%)`} value={breakdown.contingency} />}
+          {estimate.tax_pct > 0 && <TotalsRow label={`Tax (${estimate.tax_pct}%)`} value={breakdown.tax} />}
+          <TotalsRow label="Total" value={breakdown.total} bold />
         </div>
       </div>
 

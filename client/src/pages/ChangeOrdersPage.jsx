@@ -17,6 +17,7 @@ import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { formatMoney, formatDate, formatDateTime } from '../utils/format';
+import { computeBreakdown } from '../utils/estimateMath';
 import { silentError } from '../errorReporter';
 
 const CATEGORIES = ['labor', 'materials', 'equipment', 'subs', 'overhead', 'contingency', 'other'];
@@ -446,6 +447,16 @@ function ChangeOrderDetail({ id, onBack }) {
     if (linesByCat[l.category]) linesByCat[l.category].push(l);
   }
 
+  // Full markup→tax cascade (COs carry no separate contingency), same
+  // helper the PDF uses, so screen and document agree to the cent.
+  const breakdown = computeBreakdown({
+    subtotalCents: co.subtotal_cents,
+    overheadPct: co.overhead_pct,
+    marginPct: co.margin_pct,
+    contingencyPct: 0,
+    taxPct: co.tax_pct,
+  });
+
   return (
     <div className="admin-page-shell" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
       {confirmDialog}
@@ -519,8 +530,11 @@ function ChangeOrderDetail({ id, onBack }) {
           </div>
         ))}
         <div style={{ ...styles.totalsBox, marginTop: 16 }}>
-          <TotalsRow label="Subtotal" value={co.subtotal_cents} />
-          <TotalsRow label="Total" value={co.total_cents} bold />
+          <TotalsRow label="Subtotal" value={breakdown.subtotal} />
+          {co.overhead_pct > 0 && <TotalsRow label={`Overhead (${co.overhead_pct}%)`} value={breakdown.overhead} />}
+          {co.margin_pct > 0 && <TotalsRow label={`Margin (${co.margin_pct}%)`} value={breakdown.margin} />}
+          {co.tax_pct > 0 && <TotalsRow label={`Tax (${co.tax_pct}%)`} value={breakdown.tax} />}
+          <TotalsRow label="Total" value={breakdown.total} bold />
         </div>
       </div>
 
