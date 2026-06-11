@@ -141,7 +141,7 @@ function NewAppointmentTypeForm({ onSave, onCancel }) {
   return (
     <div style={styles.formCard}>
       {error && <div style={styles.errorBox}>{error}</div>}
-      <div style={styles.grid2}>
+      <div className="admin-form-grid-2">
         <Field label="Name" required>
           <input value={form.name} onChange={e => update('name', e.target.value)} placeholder="e.g. Site Visit (1 hour)" style={styles.input} />
         </Field>
@@ -168,7 +168,7 @@ function NewAppointmentTypeForm({ onSave, onCancel }) {
       </Field>
 
       <h3 style={{ ...styles.h3, marginTop: 16 }}>Scheduling rules</h3>
-      <div style={styles.grid4}>
+      <div className="admin-form-grid-4">
         <Field label="Buffer before (min)">
           <input type="number" min="0" value={form.buffer_before_min} onChange={e => update('buffer_before_min', e.target.value)} style={styles.input} />
         </Field>
@@ -675,7 +675,7 @@ function AppointmentsTab() {
       {loading ? <SkeletonList rows={3} /> :
         items.length === 0 ? <EmptyState title="No appointments" body="Appointments will appear here as they're booked." /> : (
           <>
-          <div style={styles.tableWrap}>
+          <div className="admin-table-desktop" style={styles.tableWrap}>
             <table style={styles.table}>
               <thead>
                 <tr style={styles.tableHeader}>
@@ -709,6 +709,25 @@ function AppointmentsTab() {
                 })}
               </tbody>
             </table>
+          </div>
+          <div className="admin-cards-mobile">
+            {sortedItems.map(a => {
+              const c = STATUS_COLORS[a.status] || STATUS_COLORS.booked;
+              return (
+                <div key={a.id} className="admin-card" style={{ cursor: 'default' }}>
+                  <div className="admin-card-row">
+                    <span className="admin-card-title">{formatDateTime(a.scheduled_at)}</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, background: c.bg, color: c.fg, padding: '3px 8px', borderRadius: 10, textTransform: 'uppercase' }}>{c.label}</span>
+                  </div>
+                  <div className="admin-card-sub" style={{ color: '#374151', fontWeight: 600 }}>{a.appointment_type_name}</div>
+                  <div className="admin-card-sub">{a.client_name} · {a.client_email}</div>
+                  <div className="admin-card-sub">Assigned to {a.assigned_user_name}</div>
+                  {(a.status === 'booked' || a.status === 'confirmed') && (
+                    <button onClick={() => cancel(a.id)} style={{ ...styles.iconBtn, alignSelf: 'flex-end' }}>Cancel</button>
+                  )}
+                </div>
+              );
+            })}
           </div>
           <Pagination page={meta.page} pages={meta.pages} onChange={setPage} />
           </>

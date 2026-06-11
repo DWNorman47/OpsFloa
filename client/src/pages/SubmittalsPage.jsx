@@ -89,7 +89,7 @@ function SubmittalsList({ onOpen, onNew }) {
 
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 20px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
+      <div className="admin-page-header">
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>Submittals</h1>
         <button onClick={() => onNew(projects)} style={styles.primaryBtn}>+ New Submittal</button>
       </div>
@@ -137,7 +137,7 @@ function SubmittalsList({ onOpen, onNew }) {
           />
         ) : (
           <>
-          <div style={styles.tableWrap}>
+          <div className="admin-table-desktop" style={styles.tableWrap}>
             <table style={styles.table}>
               <thead>
                 <tr style={styles.tableHeader}>
@@ -164,6 +164,26 @@ function SubmittalsList({ onOpen, onNew }) {
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="admin-cards-mobile">
+            {sortedItems.map(s => (
+              <div
+                key={s.id}
+                className="admin-card"
+                role="button"
+                tabIndex={0}
+                onClick={() => onOpen(s.id)}
+                onKeyDown={ev => (ev.key === 'Enter' || ev.key === ' ') && (ev.preventDefault(), onOpen(s.id))}
+              >
+                <div className="admin-card-row">
+                  <span className="admin-card-title">{s.submittal_number}{s.revision > 0 ? ` R${s.revision}` : ''}</span>
+                  <StatusBadge status={s.status} />
+                </div>
+                <div className="admin-card-sub" style={{ color: '#374151', fontWeight: 600 }}>{s.title}</div>
+                <div className="admin-card-sub">{s.project_name}{s.spec_section ? ` · ${s.spec_section}` : ''}</div>
+                {s.required_by && <div className="admin-card-sub">Required by {new Date(s.required_by).toLocaleDateString()}</div>}
+              </div>
+            ))}
           </div>
           <Pagination page={meta.page} pages={meta.pages} onChange={setPage} />
           </>
@@ -221,7 +241,7 @@ function NewSubmittalForm({ projects, onSave, onCancel }) {
       </div>
       {error && <div style={styles.errorBox}>{error}</div>}
       <div style={styles.formCard}>
-        <div style={styles.grid2}>
+        <div className="admin-form-grid-2">
           <Field label="Project" required>
             <select value={form.project_id} onChange={e => update('project_id', e.target.value)} style={styles.input}>
               <option value="">— Choose —</option>
@@ -248,7 +268,7 @@ function NewSubmittalForm({ projects, onSave, onCancel }) {
 
       <div style={styles.formCard}>
         <h3 style={styles.formH3}>Reviewer (architect / owner)</h3>
-        <div style={styles.grid2}>
+        <div className="admin-form-grid-2">
           <Field label="Name">
             <input value={form.reviewer_name} onChange={e => update('reviewer_name', e.target.value)} style={styles.input} />
           </Field>
@@ -394,7 +414,7 @@ function SubmittalDetail({ id, onBack }) {
 
       <div style={styles.formCard}>
         <h3 style={styles.formH3}>Reviewer</h3>
-        <div style={styles.grid2}>
+        <div className="admin-form-grid-2">
           <Info label="Name" value={s.reviewer_name} />
           <Info label="Organization" value={s.reviewer_org} />
           <Info label="Email" value={s.reviewer_email} />

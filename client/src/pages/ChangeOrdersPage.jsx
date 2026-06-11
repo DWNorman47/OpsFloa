@@ -82,8 +82,8 @@ function ChangeOrdersList({ onOpen, onNew }) {
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 16 }}>
+      <div className="admin-page-header">
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, flexWrap: 'wrap' }}>
           <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>Change Orders</h1>
           <a href="/sales" style={{ fontSize: 14, color: '#1a56db', textDecoration: 'none', fontWeight: 600 }}>
             ← Estimates
@@ -114,7 +114,7 @@ function ChangeOrdersList({ onOpen, onNew }) {
           />
         ) : (
           <>
-          <div style={styles.tableWrap}>
+          <div className="admin-table-desktop" style={styles.tableWrap}>
             <table style={styles.table}>
               <thead>
                 <tr style={styles.tableHeader}>
@@ -139,6 +139,29 @@ function ChangeOrdersList({ onOpen, onNew }) {
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="admin-cards-mobile">
+            {sortedItems.map(co => (
+              <div
+                key={co.id}
+                className="admin-card"
+                role="button"
+                tabIndex={0}
+                onClick={() => onOpen(co.id)}
+                onKeyDown={ev => (ev.key === 'Enter' || ev.key === ' ') && (ev.preventDefault(), onOpen(co.id))}
+              >
+                <div className="admin-card-row">
+                  <span className="admin-card-title">{co.co_number}</span>
+                  <StatusBadge status={co.status} />
+                </div>
+                <div className="admin-card-sub">{co.project_name}</div>
+                <div className="admin-card-sub" style={{ color: '#374151' }}>{co.description}</div>
+                <div className="admin-card-row">
+                  <span className="admin-card-sub">{new Date(co.created_at).toLocaleDateString()}</span>
+                  <strong style={{ fontSize: 14 }}>{formatCents(co.total_cents)}</strong>
+                </div>
+              </div>
+            ))}
           </div>
           <Pagination page={meta.page} pages={meta.pages} onChange={setPage} />
           </>
@@ -235,7 +258,7 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
 
       <div style={styles.formCard}>
         <h3 style={styles.formH3}>Project</h3>
-        <div style={styles.grid2}>
+        <div className="admin-form-grid-2">
           <Field label="Project" required>
             <select value={projectId} onChange={e => { setDirty(true); setProjectId(e.target.value); }} style={styles.input}>
               <option value="">— Choose —</option>
@@ -300,7 +323,7 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
 
       <div style={styles.formCard}>
         <h3 style={styles.formH3}>Markup &amp; tax</h3>
-        <div style={styles.grid4}>
+        <div className="admin-form-grid-4">
           <Field label="Overhead %">
             <input type="number" step="0.1" min="0" max="100" value={head.overhead_pct} onChange={e => updateHead('overhead_pct', e.target.value)} style={styles.input} />
           </Field>

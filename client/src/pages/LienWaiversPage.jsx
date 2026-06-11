@@ -106,7 +106,7 @@ function LienWaiversList({ onOpen, onNew }) {
 
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 20px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
+      <div className="admin-page-header">
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>Lien Waivers</h1>
         <button onClick={() => onNew({ projects, subs })} style={styles.primaryBtn}>+ New Waiver</button>
       </div>
@@ -157,7 +157,7 @@ function LienWaiversList({ onOpen, onNew }) {
           />
         ) : (
           <>
-          <div style={styles.tableWrap}>
+          <div className="admin-table-desktop" style={styles.tableWrap}>
             <table style={styles.table}>
               <thead>
                 <tr style={styles.tableHeader}>
@@ -185,6 +185,33 @@ function LienWaiversList({ onOpen, onNew }) {
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="admin-cards-mobile">
+            {sortedItems.map(w => (
+              <div
+                key={w.id}
+                className="admin-card"
+                role="button"
+                tabIndex={0}
+                onClick={() => onOpen(w.id)}
+                onKeyDown={ev => (ev.key === 'Enter' || ev.key === ' ') && (ev.preventDefault(), onOpen(w.id))}
+              >
+                <div className="admin-card-row">
+                  <span className="admin-card-title">{TYPE_LABELS[w.waiver_type] || w.waiver_type}</span>
+                  <DirectionBadge direction={w.direction} />
+                </div>
+                <div className="admin-card-sub">{w.project_name}</div>
+                {w.subcontractor_name && <div className="admin-card-sub">{w.subcontractor_name}</div>}
+                <div className="admin-card-row">
+                  <span className="admin-card-sub">Through {new Date(w.through_date).toLocaleDateString()}</span>
+                  <StatusBadge status={w.status} />
+                </div>
+                <div className="admin-card-row">
+                  <span />
+                  <strong style={{ fontSize: 14 }}>{formatCents(w.amount_cents)}</strong>
+                </div>
+              </div>
+            ))}
           </div>
           <Pagination page={meta.page} pages={meta.pages} onChange={setPage} />
           </>
@@ -257,7 +284,7 @@ function NewLienWaiverForm({ projects, subs, onSave, onCancel }) {
 
       <div style={styles.formCard}>
         <h3 style={styles.formH3}>Direction &amp; type</h3>
-        <div style={styles.grid2}>
+        <div className="admin-form-grid-2">
           <Field label="Direction" required>
             <select value={form.direction} onChange={e => update('direction', e.target.value)} style={styles.input}>
               <option value="from_sub">From Sub (sub waives against us)</option>
@@ -290,7 +317,7 @@ function NewLienWaiverForm({ projects, subs, onSave, onCancel }) {
 
       <div style={styles.formCard}>
         <h3 style={styles.formH3}>Amount &amp; date</h3>
-        <div style={styles.grid2}>
+        <div className="admin-form-grid-2">
           <Field label="Amount" required>
             <MoneyInput
               valueCents={form.amount_cents}
@@ -319,7 +346,7 @@ function NewLienWaiverForm({ projects, subs, onSave, onCancel }) {
 
       <div style={styles.formCard}>
         <h3 style={styles.formH3}>Signer</h3>
-        <div style={styles.grid2}>
+        <div className="admin-form-grid-2">
           <Field label="Name" required>
             <input value={form.signer_name} onChange={e => update('signer_name', e.target.value)} style={styles.input} />
           </Field>
@@ -515,7 +542,7 @@ function LienWaiverDetail({ id, onBack }) {
 
       <div style={styles.formCard}>
         <h3 style={styles.formH3}>Summary</h3>
-        <div style={styles.grid4}>
+        <div className="admin-form-grid-4">
           <Info label="Amount" value={formatCents(w.amount_cents)} />
           <Info label="Through date" value={new Date(w.through_date).toLocaleDateString()} />
           <Info label="State" value={w.state} />
@@ -525,7 +552,7 @@ function LienWaiverDetail({ id, onBack }) {
 
       <div style={styles.formCard}>
         <h3 style={styles.formH3}>Signer</h3>
-        <div style={styles.grid2}>
+        <div className="admin-form-grid-2">
           <Info label="Name" value={w.signer_name} />
           <Info label="Company" value={w.signer_company} />
           <Info label="Title" value={w.signer_title} />

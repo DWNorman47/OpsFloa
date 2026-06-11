@@ -67,7 +67,7 @@ function SubsList({ onOpen, onNew }) {
 
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
+      <div className="admin-page-header">
         <input
           type="search"
           placeholder="Search subs..."
@@ -88,7 +88,7 @@ function SubsList({ onOpen, onNew }) {
           />
         ) : (
           <>
-          <div style={styles.tableWrap}>
+          <div className="admin-table-desktop" style={styles.tableWrap}>
             <table style={styles.table}>
               <thead>
                 <tr style={styles.tableHeader}>
@@ -112,6 +112,26 @@ function SubsList({ onOpen, onNew }) {
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="admin-cards-mobile">
+            {sortedSubs.map(s => (
+              <div
+                key={s.id}
+                className="admin-card"
+                role="button"
+                tabIndex={0}
+                onClick={() => onOpen(s.id)}
+                onKeyDown={ev => (ev.key === 'Enter' || ev.key === ' ') && (ev.preventDefault(), onOpen(s.id))}
+              >
+                <div className="admin-card-row">
+                  <span className="admin-card-title">{s.name}</span>
+                  {s.scope_specialty && <span className="admin-card-sub">{s.scope_specialty}</span>}
+                </div>
+                {s.contact_name && <div className="admin-card-sub">{s.contact_name}</div>}
+                {s.contact_email && <div className="admin-card-sub">{s.contact_email}</div>}
+                {s.license_number && <div className="admin-card-sub">License: {s.license_number}</div>}
+              </div>
+            ))}
           </div>
           <Pagination page={meta.page} pages={meta.pages} onChange={setPage} />
           </>
@@ -155,7 +175,7 @@ function SubForm({ existing, onSave, onCancel }) {
     <div style={styles.formCard}>
       <h3 style={styles.formH3}>{existing ? 'Edit subcontractor' : 'New subcontractor'}</h3>
       {error && <div style={styles.errorBox}>{error}</div>}
-      <div style={styles.grid2}>
+      <div className="admin-form-grid-2">
         <Field label="Name" required>
           <input value={form.name} onChange={e => update('name', e.target.value)} style={styles.input} />
         </Field>
@@ -221,7 +241,7 @@ function SubDetail({ id, onBack, onEdit }) {
 
       <div style={styles.formCard}>
         <h3 style={styles.formH3}>Contact</h3>
-        <div style={styles.grid2}>
+        <div className="admin-form-grid-2">
           <Info label="Contact name" value={sub.contact_name} />
           <Info label="Email" value={sub.contact_email} />
           <Info label="Phone" value={sub.contact_phone} />
@@ -333,7 +353,7 @@ function SubPOsList({ onOpen }) {
           />
         ) : (
           <>
-          <div style={styles.tableWrap}>
+          <div className="admin-table-desktop" style={styles.tableWrap}>
             <table style={styles.table}>
               <thead>
                 <tr style={styles.tableHeader}>
@@ -358,6 +378,29 @@ function SubPOsList({ onOpen }) {
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="admin-cards-mobile">
+            {sortedPos.map(po => (
+              <div
+                key={po.id}
+                className="admin-card"
+                role="button"
+                tabIndex={0}
+                onClick={() => onOpen(po.id)}
+                onKeyDown={ev => (ev.key === 'Enter' || ev.key === ' ') && (ev.preventDefault(), onOpen(po.id))}
+              >
+                <div className="admin-card-row">
+                  <span className="admin-card-title">{po.po_number}</span>
+                  <StatusBadge status={po.status} />
+                </div>
+                <div className="admin-card-sub">{po.sub_name}</div>
+                <div className="admin-card-sub">{po.project_name}</div>
+                <div className="admin-card-row">
+                  <span className="admin-card-sub">Paid {formatCents(po.paid_cents)}</span>
+                  <strong style={{ fontSize: 14 }}>{formatCents(po.amount_cents)}</strong>
+                </div>
+              </div>
+            ))}
           </div>
           <Pagination page={meta.page} pages={meta.pages} onChange={setPage} />
           </>
@@ -478,7 +521,7 @@ function SubPODetail({ id, onBack }) {
 
       <div style={styles.formCard}>
         <h3 style={styles.formH3}>Summary</h3>
-        <div style={styles.grid4}>
+        <div className="admin-form-grid-4">
           <Info label="Amount" value={formatCents(po.amount_cents)} />
           <Info label="Paid" value={formatCents(po.paid_cents)} />
           <Info label="Remaining" value={formatCents(po.remaining_cents)} />
@@ -496,7 +539,7 @@ function SubPODetail({ id, onBack }) {
       {showPayForm && (
         <div style={{ ...styles.formCard, background: '#fef3c7' }}>
           <h3 style={styles.formH3}>Record payment</h3>
-          <div style={styles.grid2}>
+          <div className="admin-form-grid-2">
             <Field label="Amount" required>
               <MoneyInput
                 valueCents={payForm.amount_cents}

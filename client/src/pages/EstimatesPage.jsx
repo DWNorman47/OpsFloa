@@ -92,8 +92,8 @@ function EstimatesList({ onOpen, onNew }) {
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 16 }}>
+      <div className="admin-page-header">
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, flexWrap: 'wrap' }}>
           <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>Estimates</h1>
           <a href="/change-orders" style={{ fontSize: 14, color: '#1a56db', textDecoration: 'none', fontWeight: 600 }}>
             Change Orders →
@@ -134,7 +134,7 @@ function EstimatesList({ onOpen, onNew }) {
           />
         ) : (
           <>
-          <div style={styles.tableWrap}>
+          <div className="admin-table-desktop" style={styles.tableWrap}>
             <table style={styles.table}>
               <thead>
                 <tr style={styles.tableHeader}>
@@ -159,6 +159,29 @@ function EstimatesList({ onOpen, onNew }) {
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="admin-cards-mobile">
+            {sortedEstimates.map(e => (
+              <div
+                key={e.id}
+                className="admin-card"
+                role="button"
+                tabIndex={0}
+                onClick={() => onOpen(e.id)}
+                onKeyDown={ev => (ev.key === 'Enter' || ev.key === ' ') && (ev.preventDefault(), onOpen(e.id))}
+              >
+                <div className="admin-card-row">
+                  <span className="admin-card-title">{e.estimate_number}</span>
+                  <StatusBadge status={e.status} />
+                </div>
+                <div className="admin-card-sub">{e.project_name}</div>
+                <div className="admin-card-sub">{e.client_name_snapshot}</div>
+                <div className="admin-card-row">
+                  <span className="admin-card-sub">{new Date(e.created_at).toLocaleDateString()}</span>
+                  <strong style={{ fontSize: 14 }}>{formatCents(e.total_cents)}</strong>
+                </div>
+              </div>
+            ))}
           </div>
           <Pagination page={meta.page} pages={meta.pages} onChange={setPage} />
           </>
@@ -289,7 +312,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
 
       <div style={styles.formCard}>
         <h3 style={styles.formH3}>Project</h3>
-        <div style={styles.grid2}>
+        <div className="admin-form-grid-2">
           <Field label="Project name" required>
             <input value={head.project_name} onChange={e => updateHead('project_name', e.target.value)} style={styles.input} />
           </Field>
@@ -381,7 +404,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
 
       <div style={styles.formCard}>
         <h3 style={styles.formH3}>Markup &amp; tax</h3>
-        <div style={styles.grid4}>
+        <div className="admin-form-grid-4">
           <Field label="Overhead %">
             <input type="number" step="0.1" min="0" max="100" value={head.overhead_pct} onChange={e => updateHead('overhead_pct', e.target.value)} style={styles.input} />
           </Field>
