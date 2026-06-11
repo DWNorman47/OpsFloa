@@ -47,6 +47,11 @@ api.interceptors.response.use(
         keysInvalidatedByUrl(url).forEach(invalidateCache);
       }).catch(() => { /* ignore */ });
     }
+    // Demo/test tenant: the server suppressed an email that would normally
+    // have been sent for this action. Let the user know it didn't go out.
+    if (r.data && r.data.demoEmailSuppressed) {
+      throttledToast('demo-email', 'This is a demo account — the email was not sent. (It would have been delivered on a live account.)', 'warning');
+    }
     return r;
   },
   err => {

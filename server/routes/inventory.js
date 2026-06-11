@@ -2420,7 +2420,15 @@ router.patch('/purchase-orders/:id/lines/:lineId', requireAdmin, async (req, res
     if (uom_id      !== undefined) { sets.push(`uom_id=$${idx++}`);      vals.push(uom_id ? parseInt(uom_id) : null); }
     if (notes       !== undefined) { sets.push(`notes=$${idx++}`);       vals.push(notes?.trim() || null); }
     if (sets.length === 0) return res.status(400).json({ error: 'No fields to update' });
-    await pool.query(`UPDATE purchase_order_lines SET ${sets.join(',')} WHERE id=$1`, vals);
+    // Scope by po_id too: the parent PO is verified in-company above, but
+    // without `AND po_id` an attacker could pass their own draft PO as :id
+    // and a victim company's line as :lineId, mutating another tenant's line.
+    vals.push(req.params.id);
+    const upd = await pool.query(
+      `UPDATE purchase_order_lines SET ${sets.join(',')} WHERE id=$1 AND po_id=$${idx}`,
+      vals
+    );
+    if (upd.rowCount === 0) return res.status(404).json({ error: 'PO line not found' });
     const lines = await pool.query(
       `SELECT pol.*, i.name AS item_name, i.sku, i.unit
        FROM purchase_order_lines pol JOIN inventory_items i ON pol.item_id = i.id

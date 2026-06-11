@@ -164,7 +164,12 @@ async function ensureDemoCompany(client) {
     "SELECT id, name FROM companies WHERE name = $1 AND subscription_status = 'exempt'",
     [TARGET_COMPANY]
   );
-  if (existing) return existing;
+  if (existing) {
+    // Ensure the demo flag is set (email-suppression + 200 MB storage cap
+    // + nightly R2 wipe all key off it).
+    await client.query('UPDATE companies SET is_demo = true WHERE id = $1 AND is_demo = false', [existing.id]);
+    return existing;
+  }
 
   // Refuse to create the demo company if a non-exempt company by the same
   // name already exists. Forces an admin to either rename theirs or pick a
@@ -191,8 +196,8 @@ async function ensureDemoCompany(client) {
     `INSERT INTO companies
        (name, slug, subscription_status, plan, trial_ends_at, pro_addon, addon_qbo,
         addon_certified_payroll, accepts_service_requests, client_portal_pro_interest,
-        registration_ip)
-     VALUES ($1,$2,'exempt','business',NOW() + INTERVAL '90 days',true,true,true,true,true,'127.0.0.1')
+        registration_ip, is_demo)
+     VALUES ($1,$2,'exempt','business',NOW() + INTERVAL '90 days',true,true,true,true,true,'127.0.0.1',true)
      RETURNING id, name`,
     [TARGET_COMPANY, slug]
   );

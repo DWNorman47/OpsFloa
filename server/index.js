@@ -131,6 +131,13 @@ app.use('/api', (req, res, next) => {
 app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '20mb' }));
 
+// Establish the request-scoped demo context (suppresses email + surfaces
+// the popup flag for demo tenants). Mounted before routers so it wraps
+// every API request; requireAuth fills in the acting company.
+const { demoContextMiddleware, refreshDemoCompanies } = require('./demoMode');
+app.use('/api', demoContextMiddleware);
+refreshDemoCompanies(); // prime the demo-company cache at startup
+
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/time-entries', require('./routes/timeEntries'));
@@ -233,10 +240,10 @@ app.get('/api/settings', requireAuth, async (req, res) => {
   try {
     const [settingsResult, coResult] = await Promise.all([
       pool.query('SELECT key, value FROM settings WHERE company_id = $1', [req.user.company_id]),
-      pool.query('SELECT plan, subscription_status, storage_bytes_used FROM companies WHERE id = $1', [req.user.company_id]),
+      pool.query('SELECT plan, subscription_status, storage_bytes_used, is_demo FROM companies WHERE id = $1', [req.user.company_id]),
     ]);
     const settings = applySettingsRows(settingsResult.rows, SETTINGS_DEFAULTS);
-    const { plan, subscription_status, storage_bytes_used } = coResult.rows[0] || {};
+    const { plan, subscription_status, storage_bytes_used, is_demo } = coResult.rows[0] || {};
     const resolvedPlan = plan || 'free';
     const resolvedStatus = subscription_status || 'trial';
 
@@ -259,7 +266,7 @@ app.get('/api/settings', requireAuth, async (req, res) => {
       plan: resolvedPlan,
       subscription_status: resolvedStatus,
       storage_bytes_used: parseInt(storage_bytes_used ?? 0),
-      storage_limit_bytes: limitForPlan(resolvedPlan),
+      storage_limit_bytes: is_demo ? 200 * 1024 * 1024 : limitForPlan(resolvedPlan),
     });
   } catch (err) {
     req.log.error({ err }, 'GET /api/settings failed');

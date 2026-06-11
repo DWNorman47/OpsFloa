@@ -6,6 +6,10 @@ const PLAN_LIMITS = {
   business: 25   * 1024 * 1024 * 1024,  // 25 GB
 };
 
+// Demo/test tenants are capped well below any plan so the public demo
+// login can't be used to dump large amounts into R2. Wiped nightly.
+const DEMO_STORAGE_LIMIT = 200 * 1024 * 1024; // 200 MB
+
 function limitForPlan(plan) {
   return PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
 }
@@ -18,11 +22,11 @@ function formatBytes(bytes) {
 
 async function getStorageInfo(companyId) {
   const { rows } = await pool.query(
-    'SELECT storage_bytes_used, plan FROM companies WHERE id = $1',
+    'SELECT storage_bytes_used, plan, is_demo FROM companies WHERE id = $1',
     [companyId]
   );
   const used = parseInt(rows[0]?.storage_bytes_used ?? 0);
-  const limit = limitForPlan(rows[0]?.plan ?? 'free');
+  const limit = rows[0]?.is_demo ? DEMO_STORAGE_LIMIT : limitForPlan(rows[0]?.plan ?? 'free');
   return { used, limit, allowed: used <= limit };
 }
 

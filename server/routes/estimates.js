@@ -553,17 +553,23 @@ const publicRouter = require('express').Router();
 
 publicRouter.get('/view/:token', async (req, res) => {
   try {
+    // PUBLIC (client-facing) view: deliberately omits the internal cost
+    // structure. overhead_pct / margin_pct / contingency_pct expose the
+    // contractor's profit markup; per-line unit_cost_cents is the cost
+    // basis; the estimate-level `notes` field is internal. The client sees
+    // subtotal / tax / total, scope, exclusions, terms, and line totals —
+    // the same numbers the PDF shows them — but not the buildup.
     const r = await pool.query(
       `SELECT id, company_id, estimate_number, project_name, client_name_snapshot, scope_summary,
-              subtotal_cents, overhead_pct, margin_pct, contingency_pct, tax_pct, total_cents,
+              subtotal_cents, tax_pct, total_cents,
               valid_until, status, sent_at, responded_at, accepted_signer_name,
-              notes, exclusions, terms
+              exclusions, terms
          FROM estimates WHERE response_token_hash = $1`,
       [sha256(req.params.token)]
     );
     if (r.rowCount === 0) return res.status(404).json({ error: 'Not found' });
     const linesRes = await pool.query(
-      'SELECT category, sort_order, description, qty, unit, unit_cost_cents, total_cents, notes FROM estimate_lines WHERE estimate_id = $1 ORDER BY sort_order, id',
+      'SELECT category, sort_order, description, qty, unit, total_cents FROM estimate_lines WHERE estimate_id = $1 ORDER BY sort_order, id',
       [r.rows[0].id]
     );
     res.json({ ...r.rows[0], lines: linesRes.rows });

@@ -3877,6 +3877,25 @@ router.patch('/workers/:id/role', requireAdmin, requirePerm('assign_roles'), asy
     );
     if (targetRole.rowCount === 0) return res.status(404).json({ error: 'Role not found' });
 
+    // Privilege-escalation guard: a user may only grant a role whose
+    // permission set is a SUBSET of their own. Without this, anyone with
+    // `assign_roles` could grant themselves (or a confederate) the built-in
+    // Owner role — or a hand-crafted custom role carrying manage_billing /
+    // manage_roles / delete_company — and escalate past their own tier.
+    const [granterPerms, targetRolePermsRes] = await Promise.all([
+      getUserPermissions(req.user),
+      pool.query('SELECT permission FROM role_permissions WHERE role_id = $1', [role_id]),
+    ]);
+    const exceeded = targetRolePermsRes.rows
+      .map(r => r.permission)
+      .filter(p => !granterPerms.has(p));
+    if (exceeded.length > 0) {
+      return res.status(403).json({
+        error: 'You cannot grant a role with more permissions than you hold.',
+        code: 'role_exceeds_granter',
+      });
+    }
+
     const targetUser = await pool.query(
       `SELECT u.id, u.full_name, u.role_id AS current_role_id, r.name AS current_role_name
          FROM users u LEFT JOIN roles r ON r.id = u.role_id

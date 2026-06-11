@@ -457,16 +457,20 @@ const publicRouter = require('express').Router();
 
 publicRouter.get('/view/:token', async (req, res) => {
   try {
+    // PUBLIC (client-facing) view: omit the internal cost structure
+    // (overhead_pct / margin_pct = profit markup, per-line unit_cost_cents =
+    // cost basis, `notes` = internal). Client sees subtotal / tax / total
+    // and line totals only.
     const r = await pool.query(
       `SELECT id, company_id, project_id, co_number, description, status,
-              subtotal_cents, overhead_pct, margin_pct, tax_pct, total_cents,
-              sent_at, responded_at, accepted_signer_name, notes
+              subtotal_cents, tax_pct, total_cents,
+              sent_at, responded_at, accepted_signer_name
          FROM change_orders WHERE response_token_hash = $1`,
       [sha256(req.params.token)]
     );
     if (r.rowCount === 0) return res.status(404).json({ error: 'Not found' });
     const linesRes = await pool.query(
-      'SELECT category, sort_order, description, qty, unit, unit_cost_cents, total_cents, notes FROM change_order_lines WHERE change_order_id = $1 ORDER BY sort_order, id',
+      'SELECT category, sort_order, description, qty, unit, total_cents FROM change_order_lines WHERE change_order_id = $1 ORDER BY sort_order, id',
       [r.rows[0].id]
     );
     res.json({ ...r.rows[0], lines: linesRes.rows });

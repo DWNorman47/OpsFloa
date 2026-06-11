@@ -174,7 +174,9 @@ Listed for completeness so they're not flagged as gaps:
 
 `users.active`, `users.day_mark_mode`, `users.mfa_enabled`,
 `projects.active`, `time_entries.locked`, `shifts.cant_make_it`,
-`companies.is_exempt`, etc.
+`companies.is_exempt`, `companies.is_demo` (CHECK-free BOOLEAN, `0117`;
+marks demo/test tenants — suppresses real email, caps R2 at 200 MB,
+wiped nightly), etc.
 
 ---
 

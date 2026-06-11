@@ -32,6 +32,22 @@ jobs:
 
       - run: npm install
 
+      # Wipe whatever the public demo login uploaded to R2 in the last 24h
+      # and reset the storage counter, so the 200 MB cap starts each day
+      # fresh. R2_* secrets enable actual object deletion; without them the
+      # script still clears DB references + the counter. Runs before the
+      # re-seed so the baseline is clean.
+      - name: Wipe demo storage
+        run: npm run wipe:demo-storage
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+          DATABASE_SSL: 'true'
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
+
       - name: Refresh demo data
         run: npm run seed:demo
         env:

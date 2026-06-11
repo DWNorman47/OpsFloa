@@ -146,6 +146,34 @@ router.post('/projects/:projectId/lien-waivers', requireAdmin, async (req, res) 
   try {
     const project = await assertProjectInCompany(companyId, req.params.projectId);
     if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    // Every optional FK is attacker-supplied in the body. Without these
+    // ownership checks a waiver could reference another tenant's PO /
+    // payment / sub / invoice — and the mark-signed + public sign flows
+    // later flip waiver_received on the linked payment by id, which would
+    // be a cross-tenant write. Verify each belongs to this company first.
+    const ownsInCompany = async (table, id) => {
+      if (!id) return true;
+      const chk = await pool.query(`SELECT 1 FROM ${table} WHERE id = $1 AND company_id = $2`, [id, companyId]);
+      return chk.rowCount > 0;
+    };
+    if (!(await ownsInCompany('subcontract_pos', subcontract_po_id)))
+      return res.status(400).json({ error: 'invalid subcontract_po_id' });
+    if (!(await ownsInCompany('subcontractors', subcontractor_id)))
+      return res.status(400).json({ error: 'invalid subcontractor_id' });
+    if (!(await ownsInCompany('project_invoices', invoice_id)))
+      return res.status(400).json({ error: 'invalid invoice_id' });
+    // sub_payment_id has no company_id of its own — verify via its parent PO.
+    if (sub_payment_id) {
+      const payChk = await pool.query(
+        `SELECT 1 FROM subcontract_po_payments pp
+           JOIN subcontract_pos po ON po.id = pp.po_id
+          WHERE pp.id = $1 AND po.company_id = $2`,
+        [sub_payment_id, companyId]
+      );
+      if (payChk.rowCount === 0) return res.status(400).json({ error: 'invalid sub_payment_id' });
+    }
+
     const r = await pool.query(
       `INSERT INTO lien_waivers
          (company_id, project_id, direction, subcontract_po_id, sub_payment_id, subcontractor_id,
@@ -304,11 +332,15 @@ router.post('/lien-waivers/:id/mark-signed', requireAdmin, async (req, res) => {
       [req.params.id]
     );
     // Flip the matching sub_payment's waiver_received flag so the
-    // closeout auto-status query sees the change.
+    // closeout auto-status query sees the change. Scoped through the PO's
+    // company as defense-in-depth (create-time validation already
+    // guarantees the FK is in-company).
     if (lw.sub_payment_id) {
       await client.query(
-        `UPDATE subcontract_po_payments SET waiver_received = true WHERE id = $1`,
-        [lw.sub_payment_id]
+        `UPDATE subcontract_po_payments pp SET waiver_received = true
+           FROM subcontract_pos po
+          WHERE pp.id = $1 AND po.id = pp.po_id AND po.company_id = $2`,
+        [lw.sub_payment_id, companyId]
       );
     }
     await client.query('COMMIT');
@@ -426,11 +458,14 @@ publicRouter.post('/sign/:token', async (req, res) => {
        WHERE id=$5`,
       [req.ip, signerName, signatureMethod, req.body.signature_data || null, lw.id]
     );
-    // For from_sub waivers, also flip the matching payment's flag.
+    // For from_sub waivers, also flip the matching payment's flag,
+    // scoped through the PO's company (the waiver's own company).
     if (lw.direction === 'from_sub' && lw.sub_payment_id) {
       await client.query(
-        `UPDATE subcontract_po_payments SET waiver_received = true WHERE id = $1`,
-        [lw.sub_payment_id]
+        `UPDATE subcontract_po_payments pp SET waiver_received = true
+           FROM subcontract_pos po
+          WHERE pp.id = $1 AND po.id = pp.po_id AND po.company_id = $2`,
+        [lw.sub_payment_id, lw.company_id]
       );
     }
     await client.query('COMMIT');

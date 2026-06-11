@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const pool = require('../db');
+const { markRequestCompany } = require('../demoMode');
 
 async function requireAuth(req, res, next) {
   const header = req.headers.authorization;
@@ -36,6 +37,9 @@ async function requireAuth(req, res, next) {
   }
 
   req.user = payload;
+  // Mark the acting company on the request-scoped demo context so email
+  // sends during this request are suppressed for demo tenants.
+  markRequestCompany(payload.company_id);
   next();
 }
 

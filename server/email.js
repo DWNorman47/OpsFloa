@@ -1,6 +1,7 @@
 const sgMail = require('@sendgrid/mail');
 const pool = require('./db');
 const logger = require('./logger');
+const { getStore } = require('./demoMode');
 
 if (process.env.SENDGRID_API_KEY) {
   sgMail.setApiKey(process.env.SENDGRID_API_KEY);
@@ -42,6 +43,16 @@ const emailMode = isProd ? 'real' : (process.env.EMAIL_MODE || 'redirect');
 // own calendar.
 async function sendEmail(to, subject, html, attachments) {
   if (!to) return;
+
+  // Demo/test tenant: never send real email. Suppress and flag the request
+  // so the client can show a "would have sent" popup. Keyed on the acting
+  // company via the request-scoped demo context (see demoMode.js).
+  const store = getStore();
+  if (store && store.isDemo) {
+    store.emailSuppressed = true;
+    logger.info({ to, subject }, 'email suppressed — demo company (no real send)');
+    return { suppressed: 'demo' };
+  }
 
   // Short-circuit if this recipient is already known-bad from SendGrid's
   // event webhook. Prevents re-sending to invalid addresses.
