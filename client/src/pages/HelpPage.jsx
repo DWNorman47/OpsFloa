@@ -165,7 +165,7 @@ export default function HelpPage() {
 }
 
 const styles = {
-  page: { minHeight: '100vh', background: '#f4f6f9' },
+  page: { minHeight: '100vh', background: '#f4f6f9', '--ops-page-accent': '#475569' },
   main: { maxWidth: 760, margin: '24px auto', padding: '0 16px', display: 'flex', flexDirection: 'column', gap: 16 },
   headerCard: { background: '#fff', borderRadius: 12, padding: '20px 24px', boxShadow: '0 1px 6px rgba(0,0,0,0.06)' },
   h1: { fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' },

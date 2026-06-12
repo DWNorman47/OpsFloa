@@ -2126,7 +2126,7 @@ const styles = {
   closeBtn: { background: '#f3f4f6', border: 'none', borderRadius: 20, width: 32, height: 32, cursor: 'pointer', fontSize: 14, color: '#6b7280', display: 'flex', alignItems: 'center', justifyContent: 'center' },
   detailTabs: { display: 'flex', gap: 4, margin: '0 20px 12px', padding: 4, border: '1px solid #e2e8f0', borderRadius: 10, background: '#eef2f7', overflowX: 'auto' },
   detailTab: { flex: '1 0 auto', minHeight: 36, padding: '0 14px', border: 'none', borderRadius: 8, background: 'transparent', fontSize: 13, fontWeight: 800, color: '#64748b', cursor: 'pointer', whiteSpace: 'nowrap' },
-  detailTabActive: { color: '#7c3aed', background: '#fff', boxShadow: '0 1px 5px rgba(15,23,42,0.08)' },
+  detailTabActive: { color: 'var(--ops-page-accent)', background: '#fff', boxShadow: '0 1px 5px rgba(15,23,42,0.08)' },
   detailBody: { flex: 1, overflowY: 'auto', padding: 20 },
   metricsGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 },
   metricCard: { background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: '12px 14px' },

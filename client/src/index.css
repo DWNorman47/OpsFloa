@@ -1700,6 +1700,14 @@ input, select, textarea, button {
 .btn-circle {
   min-height: unset !important;
 }
+/* Icon-only round buttons opt out of the 40px min above so they can sit in
+   tight desktop rows — but on touch screens give them a real ≥40px target. */
+@media (max-width: 768px) {
+  .btn-circle {
+    min-width: 40px !important;
+    min-height: 40px !important;
+  }
+}
 
 /* Prevent iOS Safari from auto-zooming on input focus (requires font-size >= 16px) */
 input, select, textarea {
