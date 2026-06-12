@@ -12,6 +12,11 @@
   --ops-accent: #0f766e;
   --ops-accent-strong: #115e59;
   --ops-page-accent: #0f766e;
+  /* Stable brand color for page-agnostic surfaces (login, error boundary,
+     generated PDFs) that shouldn't pick up a per-page accent. */
+  --ops-primary: #1a56db;
+  --ops-danger: #dc2626;
+  --ops-danger-strong: #b91c1c;
   --ops-success-bg: #ecfdf5;
   --ops-success-text: #047857;
   --ops-warning-bg: #fff7ed;
@@ -1520,6 +1525,106 @@ button {
 }
 .admin-card-title { font-weight: 700; font-size: 15px; color: #111827; }
 .admin-card-sub   { font-size: 12px; color: #6b7280; }
+
+/* ── Shared, accent-driven UI primitives ─────────────────────────────────
+   Buttons / inputs / badges that read var(--ops-page-accent) so every page
+   themes itself from the PageShell accent instead of hardcoding a blue.
+   Replaces the per-file inline styles.primaryBtn / ghostBtn objects. */
+.ops-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
+  white-space: nowrap;
+}
+.ops-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.ops-btn-primary {
+  background: var(--ops-page-accent);
+  color: #fff;
+}
+.ops-btn-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ops-page-accent) 88%, #000);
+}
+.ops-btn-ghost {
+  background: #fff;
+  color: var(--ops-text-soft);
+  border-color: var(--ops-border-strong);
+}
+.ops-btn-ghost:hover:not(:disabled) {
+  background: var(--ops-surface-muted);
+  border-color: var(--ops-page-accent);
+  color: var(--ops-page-accent);
+}
+.ops-btn-danger {
+  background: var(--ops-danger);
+  color: #fff;
+}
+.ops-btn-danger:hover:not(:disabled) { background: var(--ops-danger-strong); }
+.ops-btn-sm { padding: 6px 12px; font-size: 13px; }
+
+.ops-input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--ops-border-strong);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--ops-text);
+  background: #fff;
+  box-sizing: border-box;
+}
+.ops-input:focus-visible {
+  outline: 2px solid var(--ops-page-accent);
+  outline-offset: 1px;
+  border-color: var(--ops-page-accent);
+}
+.ops-input.ops-input-invalid { border-color: var(--ops-danger); }
+
+.ops-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 8px;
+  border-radius: 10px;
+  background: #f3f4f6;
+  color: #374151;
+}
+.ops-badge-info    { background: #dbeafe; color: #1d4ed8; }
+.ops-badge-success { background: #d1fae5; color: #065f46; }
+.ops-badge-warning { background: #fef3c7; color: #92400e; }
+.ops-badge-danger  { background: #fee2e2; color: #991b1b; }
+.ops-badge-neutral { background: #e5e7eb; color: #6b7280; }
+
+/* Sticky action bar for long forms — keeps Save / Cancel reachable. */
+.ops-form-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 0;
+  margin-top: 8px;
+  background: linear-gradient(to top, var(--ops-bg) 70%, transparent);
+}
+
+/* Per-field validation helper text. */
+.ops-field-error { color: var(--ops-danger); font-size: 12px; margin-top: 4px; }
+
+/* Horizontal-scroll affordance for tables that must stay tabular on small
+   screens (used where a record-card layout doesn't fit the data). */
+.ops-table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
 /* ── Focus visibility (keyboard navigation) ─────────────────────────────
    :focus-visible only activates when the browser infers keyboard nav, so

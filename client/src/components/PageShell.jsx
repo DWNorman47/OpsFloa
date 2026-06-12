@@ -13,6 +13,10 @@ const APP_ACCENTS = {
   administration: '#475569',
   analytics: '#0e7490',
   account: '#475569',
+  // Construction money / compliance modules.
+  sales: '#1d4ed8',      // Estimates + Change Orders
+  subs: '#0369a1',       // Subcontractors + POs
+  booking: '#0d9488',    // Booking / appointments
 };
 
 export function PageShell({
