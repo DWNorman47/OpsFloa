@@ -240,10 +240,14 @@ function EstimateForm({ existing, onSave, onCancel }) {
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [fieldErrors, setFieldErrors] = useState({});
 
+  function clearFieldError(k) {
+    setFieldErrors(prev => (prev[k] ? { ...prev, [k]: undefined } : prev));
+  }
   // Every mutator marks the form dirty so the tab-close prompt knows
   // there's something to lose. Marked clean again on successful save.
-  function updateHead(k, v) { setDirty(true); setHead(h => ({ ...h, [k]: v })); }
+  function updateHead(k, v) { setDirty(true); clearFieldError(k); setHead(h => ({ ...h, [k]: v })); }
   function updateLine(i, k, v) {
     setDirty(true);
     setLines(arr => arr.map((line, idx) => idx === i ? { ...line, [k]: v } : line));
@@ -280,6 +284,11 @@ function EstimateForm({ existing, onSave, onCancel }) {
 
   async function handleSave() {
     setError(null);
+    const fe = {};
+    if (!head.project_name.trim()) fe.project_name = t.estErrProjectNameRequired;
+    if (!head.client_name_snapshot.trim()) fe.client_name_snapshot = t.estErrClientNameRequired;
+    if (Object.keys(fe).length) { setFieldErrors(fe); return; }
+    setFieldErrors({});
     setSaving(true);
     try {
       const payload = {
@@ -331,11 +340,11 @@ function EstimateForm({ existing, onSave, onCancel }) {
       <div style={styles.formCard}>
         <h3 style={styles.formH3}>{t.estProject}</h3>
         <div className="admin-form-grid-2">
-          <Field label={t.estProjectName} required>
-            <input value={head.project_name} onChange={e => updateHead('project_name', e.target.value)} style={styles.input} />
+          <Field label={t.estProjectName} required error={fieldErrors.project_name}>
+            <input value={head.project_name} onChange={e => updateHead('project_name', e.target.value)} style={{ ...styles.input, ...(fieldErrors.project_name ? styles.inputInvalid : {}) }} />
           </Field>
-          <Field label={t.estClientName} required>
-            <input value={head.client_name_snapshot} onChange={e => updateHead('client_name_snapshot', e.target.value)} style={styles.input} />
+          <Field label={t.estClientName} required error={fieldErrors.client_name_snapshot}>
+            <input value={head.client_name_snapshot} onChange={e => updateHead('client_name_snapshot', e.target.value)} style={{ ...styles.input, ...(fieldErrors.client_name_snapshot ? styles.inputInvalid : {}) }} />
           </Field>
           <Field label={t.estClientEmail}>
             <input type="email" value={head.client_email} onChange={e => updateHead('client_email', e.target.value)} style={styles.input} />
@@ -472,7 +481,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
   );
 }
 
-function Field({ label, required, children }) {
+function Field({ label, required, error, children }) {
   const t = useT();
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: '#6b7280', fontWeight: 600 }}>
@@ -486,6 +495,7 @@ function Field({ label, required, children }) {
         )}
       </span>
       {children}
+      {error && <span className="ops-field-error" role="alert">{error}</span>}
     </label>
   );
 }
@@ -915,6 +925,7 @@ const styles = {
   searchInput: { padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, flex: 1, minWidth: 240 },
   select: { padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, background: '#fff' },
   input: { padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' },
+  inputInvalid: { borderColor: 'var(--ops-danger, #dc2626)', boxShadow: '0 0 0 1px var(--ops-danger, #dc2626)' },
   tableWrap: { background: '#fff', borderRadius: 8, boxShadow: '0 1px 2px rgba(0,0,0,0.04)', overflow: 'hidden' },
   table: { width: '100%', borderCollapse: 'collapse', fontSize: 14 },
   tableHeader: { background: '#f9fafb', borderBottom: '1px solid #e5e7eb' },

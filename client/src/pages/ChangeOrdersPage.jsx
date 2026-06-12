@@ -198,10 +198,14 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
   const [lines, setLines] = useState([{ category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0 }]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [fieldErrors, setFieldErrors] = useState({});
   const [dirty, setDirty] = useState(false);
   useUnsavedChanges(dirty);
 
-  function updateHead(k, v) { setDirty(true); setHead(h => ({ ...h, [k]: v })); }
+  function clearFieldError(k) {
+    setFieldErrors(prev => (prev[k] ? { ...prev, [k]: undefined } : prev));
+  }
+  function updateHead(k, v) { setDirty(true); clearFieldError(k); setHead(h => ({ ...h, [k]: v })); }
   function updateLine(i, k, v) {
     setDirty(true);
     setLines(arr => arr.map((line, idx) => idx === i ? { ...line, [k]: v } : line));
@@ -232,10 +236,13 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
   })();
 
   async function handleSave() {
-    setError(null); setSaving(true);
+    setError(null);
+    const fe = {};
+    if (!projectId) fe.projectId = t.coErrChooseProject;
+    if (!head.description.trim()) fe.description = t.coErrDescRequired;
+    if (Object.keys(fe).length) { setFieldErrors(fe); return; }
+    setFieldErrors({}); setSaving(true);
     try {
-      if (!projectId) { setError(t.coErrChooseProject); setSaving(false); return; }
-      if (!head.description.trim()) { setError(t.coErrDescRequired); setSaving(false); return; }
       const payload = {
         description: head.description,
         overhead_pct: parseFloat(head.overhead_pct) || 0,
@@ -276,14 +283,14 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
       <div style={styles.formCard}>
         <h3 style={styles.formH3}>{t.coProject}</h3>
         <div className="admin-form-grid-2">
-          <Field label={t.coProject} required>
-            <select value={projectId} onChange={e => { setDirty(true); setProjectId(e.target.value); }} style={styles.input}>
+          <Field label={t.coProject} required error={fieldErrors.projectId}>
+            <select value={projectId} onChange={e => { setDirty(true); clearFieldError('projectId'); setProjectId(e.target.value); }} style={{ ...styles.input, ...(fieldErrors.projectId ? styles.inputInvalid : {}) }}>
               <option value="">{t.coChoose}</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </Field>
-          <Field label={t.coDescription} required>
-            <input value={head.description} onChange={e => updateHead('description', e.target.value)} placeholder={t.coDescPlaceholder} style={styles.input} />
+          <Field label={t.coDescription} required error={fieldErrors.description}>
+            <input value={head.description} onChange={e => updateHead('description', e.target.value)} placeholder={t.coDescPlaceholder} style={{ ...styles.input, ...(fieldErrors.description ? styles.inputInvalid : {}) }} />
           </Field>
         </div>
       </div>
@@ -601,7 +608,7 @@ export default function ChangeOrdersPage() {
 
 // ── Small parts ──────────────────────────────────────────────────────────────
 
-function Field({ label, required, children }) {
+function Field({ label, required, error, children }) {
   const t = useT();
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: '#6b7280', fontWeight: 600 }}>
@@ -615,6 +622,7 @@ function Field({ label, required, children }) {
         )}
       </span>
       {children}
+      {error && <span className="ops-field-error" role="alert">{error}</span>}
     </label>
   );
 }
@@ -633,6 +641,7 @@ const styles = {
   iconBtn:    { background: 'transparent', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: '0 4px' },
   select: { padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, background: '#fff' },
   input: { padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' },
+  inputInvalid: { borderColor: 'var(--ops-danger, #dc2626)', boxShadow: '0 0 0 1px var(--ops-danger, #dc2626)' },
   tableWrap: { background: '#fff', borderRadius: 8, boxShadow: '0 1px 2px rgba(0,0,0,0.04)', overflow: 'hidden' },
   table: { width: '100%', borderCollapse: 'collapse', fontSize: 14 },
   tableHeader: { background: '#f9fafb', borderBottom: '1px solid #e5e7eb' },
