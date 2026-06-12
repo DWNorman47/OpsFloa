@@ -189,7 +189,7 @@ const styles = {
   },
   tocLink: {
     fontSize: 13,
-    color: '#1a56db',
+    color: 'var(--ops-page-accent)',
     textDecoration: 'none',
     padding: '4px 10px',
     borderRadius: 6,
@@ -239,7 +239,7 @@ const styles = {
   actionTitle: { fontSize: 14, fontWeight: 600, color: '#111827' },
   actionSub: { fontSize: 13, color: '#6b7280', marginTop: 4, lineHeight: 1.5 },
   actionBtn: {
-    background: '#1a56db',
+    background: 'var(--ops-page-accent)',
     color: '#fff',
     padding: '8px 16px',
     borderRadius: 7,

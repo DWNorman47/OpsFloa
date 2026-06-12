@@ -267,10 +267,10 @@ const styles = {
   bubbleTheirs: { background: '#fff', border: '1px solid #e5e7eb', color: '#374151', borderBottomLeftRadius: 3 },
   meta: { display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 3 },
   sender: { fontSize: 11, fontWeight: 700, color: '#6b7280' },
-  adminBadge: { background: '#1a56db', color: '#fff', borderRadius: 4, padding: '1px 5px', fontSize: 9, fontWeight: 700, marginLeft: 4 },
+  adminBadge: { background: 'var(--ops-page-accent)', color: '#fff', borderRadius: 4, padding: '1px 5px', fontSize: 9, fontWeight: 700, marginLeft: 4 },
   time: { fontSize: 10, color: '#6b7280' },
   msgBody: { lineHeight: 1.5 },
   form: { display: 'flex', borderTop: '1px solid #e5e7eb' },
   input: { flex: 1, padding: '10px 14px', border: 'none', fontSize: 13, outline: 'none', background: '#fff' },
-  sendBtn: { padding: '10px 18px', background: '#1a56db', color: '#fff', border: 'none', fontSize: 13, fontWeight: 700, cursor: 'pointer', flexShrink: 0 },
+  sendBtn: { padding: '10px 18px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', fontSize: 13, fontWeight: 700, cursor: 'pointer', flexShrink: 0 },
 };

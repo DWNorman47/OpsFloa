@@ -14,8 +14,8 @@ const STATUS_COLORS = {
 
 const pdf = StyleSheet.create({
   page: { fontFamily: 'Helvetica', fontSize: 9, color: '#1a1a1a', padding: '40 48 48 48' },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, paddingBottom: 14, borderBottom: '2 solid #1a56db' },
-  companyName: { fontSize: 20, fontFamily: 'Helvetica-Bold', color: '#1a56db', marginBottom: 2 },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, paddingBottom: 14, borderBottom: '2 solid var(--ops-page-accent)' },
+  companyName: { fontSize: 20, fontFamily: 'Helvetica-Bold', color: 'var(--ops-page-accent)', marginBottom: 2 },
   reportTitle: { fontSize: 11, color: '#6b7280', letterSpacing: 1, textTransform: 'uppercase' },
   headerRight: { alignItems: 'flex-end' },
   headerMeta: { fontSize: 9, color: '#374151', marginBottom: 2 },
@@ -24,7 +24,7 @@ const pdf = StyleSheet.create({
   statusText: { fontSize: 8, fontFamily: 'Helvetica-Bold', letterSpacing: 0.5 },
   section: { marginBottom: 16 },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  sectionTitle: { fontSize: 10, fontFamily: 'Helvetica-Bold', color: '#1a56db', textTransform: 'uppercase', letterSpacing: 0.8 },
+  sectionTitle: { fontSize: 10, fontFamily: 'Helvetica-Bold', color: 'var(--ops-page-accent)', textTransform: 'uppercase', letterSpacing: 0.8 },
   sectionLine: { flex: 1, height: 1, backgroundColor: '#dbeafe', marginLeft: 8 },
   metaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16, backgroundColor: '#f9fafb', borderRadius: 6, padding: '10 12' },
   metaItem: { width: '47%' },
@@ -35,7 +35,7 @@ const pdf = StyleSheet.create({
   responseBlock: { fontSize: 9, color: '#374151', lineHeight: 1.6, padding: '8 10', backgroundColor: '#f0fdf4', borderRadius: 4, borderLeft: '3 solid #86efac' },
   footer: { position: 'absolute', bottom: 24, left: 48, right: 48, flexDirection: 'row', justifyContent: 'space-between', borderTop: '1 solid #e5e7eb', paddingTop: 6 },
   footerText: { fontSize: 7, color: '#6b7280' },
-  rfiNumber: { fontSize: 28, fontFamily: 'Helvetica-Bold', color: '#1a56db' },
+  rfiNumber: { fontSize: 28, fontFamily: 'Helvetica-Bold', color: 'var(--ops-page-accent)' },
 });
 
 function SectionHeader({ title }) {
@@ -130,7 +130,7 @@ export function RFIDocument({ rfi, companyName, t = {}, language, settings = nul
 const linkStyle = {
   display: 'inline-block',
   background: '#eff6ff',
-  color: '#1a56db',
+  color: 'var(--ops-page-accent)',
   border: '1px solid #bfdbfe',
   padding: '6px 14px',
   borderRadius: 6,

@@ -133,7 +133,7 @@ const styles = {
   field: { display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 120 },
   label: { fontSize: 12, fontWeight: 600, color: '#555' },
   input: { padding: '8px 10px', border: '1px solid #ddd', borderRadius: 7, fontSize: 14 },
-  lockBtn: { padding: '8px 16px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 14, cursor: 'pointer', whiteSpace: 'nowrap' },
+  lockBtn: { padding: '8px 16px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 14, cursor: 'pointer', whiteSpace: 'nowrap' },
   error: { color: '#e53e3e', fontSize: 13, marginTop: 6 },
   empty: { color: '#6b7280', fontSize: 13 },
   list: { display: 'flex', flexDirection: 'column', gap: 8 },

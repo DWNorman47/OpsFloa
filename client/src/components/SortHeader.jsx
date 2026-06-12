@@ -77,7 +77,7 @@ export default function SortHeader({ children, sortKey, sort, setSort, align = '
         // Explicit reset instead of `all: unset` — the unset shorthand
         // applies as an inline style, which (because inline beats author
         // stylesheets without !important) was also stripping the global
-        // `:focus-visible { outline: 2px solid #1a56db }` rule. Listing
+        // `:focus-visible { outline: 2px solid var(--ops-page-accent) }` rule. Listing
         // properties explicitly lets focus-visible reapply outline on
         // keyboard nav.
         style={{
@@ -103,7 +103,7 @@ export default function SortHeader({ children, sortKey, sort, setSort, align = '
           aria-hidden="true"
           style={{
             fontSize: 10,
-            color: active ? '#1a56db' : '#d1d5db',
+            color: active ? 'var(--ops-page-accent)' : '#d1d5db',
             width: 8,
           }}
         >

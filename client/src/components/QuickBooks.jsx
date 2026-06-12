@@ -1456,7 +1456,7 @@ const styles = {
   importGroup: { marginBottom: 20, borderBottom: '1px solid #f3f4f6', paddingBottom: 16 },
   importGroupLabel: { fontSize: 13, fontWeight: 700, color: '#374151', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 },
   groupBadge: { fontSize: 11, fontWeight: 700, background: '#dbeafe', color: '#1d4ed8', padding: '2px 7px', borderRadius: 10 },
-  selectAllBtn: { background: 'none', border: 'none', color: '#1a56db', fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 0, marginLeft: 'auto' },
+  selectAllBtn: { background: 'none', border: 'none', color: 'var(--ops-page-accent)', fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 0, marginLeft: 'auto' },
   importRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderBottom: '1px solid #f9fafb', cursor: 'pointer', fontSize: 14 },
   importName: { flex: 1, fontWeight: 500, color: '#111827' },
   importEmail: { fontSize: 12, color: '#6b7280' },
@@ -1474,5 +1474,5 @@ const styles = {
   errorMsg: { flex: 1, color: '#374151', minWidth: 120 },
   errorTime: { color: '#6b7280', fontSize: 11, flexShrink: 0 },
   errorDismiss: { background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: '0 2px', flexShrink: 0 },
-  errorRetry: { padding: '2px 10px', background: '#eff6ff', color: '#1a56db', border: '1px solid #bfdbfe', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', flexShrink: 0 },
+  errorRetry: { padding: '2px 10px', background: '#eff6ff', color: 'var(--ops-page-accent)', border: '1px solid #bfdbfe', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', flexShrink: 0 },
 };

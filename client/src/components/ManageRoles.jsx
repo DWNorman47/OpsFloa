@@ -316,7 +316,7 @@ const styles = {
   title: { fontSize: 20, fontWeight: 700, color: '#111827', margin: 0 },
   subtitle: { fontSize: 13, color: '#6b7280', margin: '4px 0 0' },
   newBtnGroup: { display: 'flex', gap: 8 },
-  newBtn: { padding: '7px 14px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 13, cursor: 'pointer' },
+  newBtn: { padding: '7px 14px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 13, cursor: 'pointer' },
   empty: { padding: 32, textAlign: 'center', color: '#6b7280', fontSize: 14 },
   error: { color: '#991b1b', background: '#fef2f2', border: '1px solid #fecaca', padding: '10px 12px', borderRadius: 8, fontSize: 13, margin: 0 },
   list: { display: 'flex', flexDirection: 'column', gap: 8 },

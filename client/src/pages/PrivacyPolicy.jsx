@@ -69,11 +69,11 @@ export default function PrivacyPolicy() {
 const styles = {
   page: { minHeight: '100vh', background: '#f9fafb', padding: '40px 16px' },
   container: { maxWidth: 720, margin: '0 auto', background: '#fff', borderRadius: 12, padding: '40px 48px', boxShadow: '0 1px 8px rgba(0,0,0,0.07)' },
-  back: { color: '#1a56db', textDecoration: 'none', fontSize: 14, display: 'inline-block', marginBottom: 24 },
+  back: { color: 'var(--ops-page-accent)', textDecoration: 'none', fontSize: 14, display: 'inline-block', marginBottom: 24 },
   h1: { fontSize: 28, fontWeight: 700, color: '#111827', marginBottom: 4 },
   h2: { fontSize: 18, fontWeight: 700, color: '#111827', marginTop: 28, marginBottom: 8 },
   updated: { fontSize: 13, color: '#6b7280', marginBottom: 24 },
   p: { fontSize: 15, color: '#374151', lineHeight: 1.7, marginBottom: 12 },
   ul: { fontSize: 15, color: '#374151', lineHeight: 1.7, marginBottom: 12, paddingLeft: 24 },
-  link: { color: '#1a56db' },
+  link: { color: 'var(--ops-page-accent)' },
 };

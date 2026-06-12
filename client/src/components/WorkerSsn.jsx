@@ -113,7 +113,7 @@ const styles = {
   input:     { padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 7, fontSize: 14, width: 80, letterSpacing: 3, textAlign: 'center', fontFamily: 'ui-monospace, monospace' },
   editBtn:   { padding: '5px 12px', background: 'none', border: '1px solid #d1d5db', borderRadius: 7, fontSize: 12, fontWeight: 600, color: '#374151', cursor: 'pointer' },
   clearBtn:  { padding: '5px 12px', background: 'none', border: '1px solid #fca5a5', borderRadius: 7, fontSize: 12, fontWeight: 600, color: '#b91c1c', cursor: 'pointer' },
-  saveBtn:   { padding: '6px 14px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  saveBtn:   { padding: '6px 14px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   cancelBtn: { padding: '6px 12px', background: '#f3f4f6', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 500, color: '#6b7280', cursor: 'pointer' },
   saved:     { fontSize: 12, color: '#059669', fontWeight: 600 },
   note:      { fontSize: 11, color: '#6b7280', margin: '6px 0 0' },

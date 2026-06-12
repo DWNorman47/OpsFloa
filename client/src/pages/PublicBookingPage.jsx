@@ -389,7 +389,7 @@ const styles = {
   card: { maxWidth: 560, margin: '0 auto', background: '#fff', borderRadius: 12, padding: 32, boxShadow: '0 4px 20px rgba(0,0,0,0.06)' },
   typeBtn: { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: 14, cursor: 'pointer', textAlign: 'left', transition: 'border-color 0.15s' },
   slotBtn: { background: '#f0f4ff', color: '#1d4ed8', border: '1px solid #c7d2fe', padding: '8px 12px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  primaryBtn: { background: '#1a56db', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer' },
+  primaryBtn: { background: 'var(--ops-primary)', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer' },
   ghostBtn: { background: '#fff', color: '#374151', border: '1px solid #d1d5db', padding: '6px 12px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   select: { padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, background: '#fff' },
   input: { padding: '10px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' },

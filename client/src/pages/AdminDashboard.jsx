@@ -41,7 +41,7 @@ function UpgradePrompt({ requiredPlan, feature }) {
       <div style={{ fontSize: 28, marginBottom: 8 }}>🔒</div>
       <div style={{ fontWeight: 700, fontSize: 15, color: '#111827', marginBottom: 6 }}>{feature} requires the {planName} plan</div>
       <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 16 }}>{t.upgradePlanPrompt}</div>
-      <button style={{ background: '#1a56db', color: '#fff', border: 'none', padding: '9px 20px', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: 'pointer' }}
+      <button style={{ background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '9px 20px', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: 'pointer' }}
         onClick={() => window.location.href = '/administration#billing'}>
         {t.viewPlans}
       </button>
@@ -306,7 +306,7 @@ export default function AdminDashboard() {
 
 const styles = {
   page: { minHeight: '100vh', background: '#f4f6f9', '--ops-page-accent': '#1d4ed8' },
-  header: { background: '#1a56db', color: '#fff', padding: '0 24px', paddingTop: 'env(safe-area-inset-top)', paddingBottom: 0, minHeight: 'calc(56px + env(safe-area-inset-top))', display: 'flex', flexDirection: 'column', justifyContent: 'center', position: 'sticky', top: 0, zIndex: 100 },
+  header: { background: 'var(--ops-page-accent)', color: '#fff', padding: '0 24px', paddingTop: 'env(safe-area-inset-top)', paddingBottom: 0, minHeight: 'calc(56px + env(safe-area-inset-top))', display: 'flex', flexDirection: 'column', justifyContent: 'center', position: 'sticky', top: 0, zIndex: 100 },
   headerTopRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', height: 56 },
   logoGroup: { display: 'flex', alignItems: 'center', gap: 10 },
   companyName: { fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.85)' },
@@ -315,7 +315,7 @@ const styles = {
   main: { maxWidth: 900, margin: '18px auto 32px', padding: '0 16px' },
   tabs: { display: 'flex', gap: 4, marginBottom: 24, background: '#e8edf5', borderRadius: 10, padding: 4, width: '100%', overflowX: 'auto', flexWrap: 'nowrap', scrollbarWidth: 'none' },
   tab: { flex: 1, padding: '9px 0', background: 'none', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 14, color: '#666', cursor: 'pointer', whiteSpace: 'nowrap', textAlign: 'center' },
-  tabActive: { flex: 1, padding: '9px 0', background: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 14, color: '#1a56db', cursor: 'pointer', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', whiteSpace: 'nowrap', textAlign: 'center' },
+  tabActive: { flex: 1, padding: '9px 0', background: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 14, color: 'var(--ops-page-accent)', cursor: 'pointer', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', whiteSpace: 'nowrap', textAlign: 'center' },
   heading: { marginBottom: 20, fontSize: 22 },
   subheading: { fontSize: 18, fontWeight: 600, margin: '32px 0 16px' },
   sectionToggle: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: '12px 16px', fontSize: 16, fontWeight: 600, color: '#111827', cursor: 'pointer', marginTop: 24, marginBottom: 4, textAlign: 'left' },

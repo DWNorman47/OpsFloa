@@ -155,14 +155,14 @@ const styles = {
   steps: { display: 'flex', flexDirection: 'column', gap: 7 },
   step: { display: 'flex', alignItems: 'flex-start', gap: 10 },
   stepNum: {
-    background: '#1a56db', color: '#fff', borderRadius: '50%',
+    background: 'var(--ops-page-accent)', color: '#fff', borderRadius: '50%',
     width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center',
     fontSize: 11, fontWeight: 700, flexShrink: 0, marginTop: 1,
   },
   stepText: { fontSize: 13, color: '#374151', lineHeight: 1.5 },
   note: { fontSize: 11, color: '#6b7280', fontStyle: 'italic' },
   installBtn: {
-    alignSelf: 'flex-start', background: '#1a56db', color: '#fff', border: 'none',
+    alignSelf: 'flex-start', background: 'var(--ops-page-accent)', color: '#fff', border: 'none',
     padding: '9px 20px', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer',
   },
 };

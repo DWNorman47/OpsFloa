@@ -58,7 +58,7 @@ const styles = {
   sub: { fontSize: 12, color: '#6b7280', margin: '0 0 12px 0' },
   row: { display: 'flex', gap: 8, minWidth: 0 },
   input: { flex: 1, minWidth: 0, padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: 8, fontSize: 14 },
-  btn: { padding: '9px 18px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 14, cursor: 'pointer', whiteSpace: 'nowrap' },
+  btn: { padding: '9px 18px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 14, cursor: 'pointer', whiteSpace: 'nowrap' },
   btnSent: { padding: '9px 18px', background: '#059669', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 14, cursor: 'default', whiteSpace: 'nowrap' },
   error: { color: '#dc2626', fontSize: 12, margin: '6px 0 0 0' },
   charCount: { fontSize: 11, color: '#6b7280', marginTop: 4, textAlign: 'right' },

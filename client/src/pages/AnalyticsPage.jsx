@@ -17,7 +17,7 @@ function UpgradePrompt() {
       <div style={{ fontWeight: 700, fontSize: 15, color: '#111827', marginBottom: 6 }}>{t.analyticsUpgradeTitle}</div>
       <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 16 }}>{t.analyticsUpgradeDesc}</div>
       <button
-        style={{ background: '#1a56db', color: '#fff', border: 'none', padding: '9px 20px', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: 'pointer' }}
+        style={{ background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '9px 20px', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: 'pointer' }}
         onClick={() => window.location.href = '/administration#billing'}
       >
         {t.viewPlans}

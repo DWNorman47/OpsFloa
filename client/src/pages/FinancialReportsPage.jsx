@@ -235,7 +235,7 @@ export default function FinancialReportsPage() {
 const styles = {
   tabRow: { display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid #e5e7eb' },
   tabBtn: { background: 'transparent', border: 'none', borderBottom: '2px solid transparent', padding: '10px 16px', fontSize: 14, fontWeight: 600, color: '#6b7280', cursor: 'pointer' },
-  tabBtnActive: { borderBottomColor: '#1a56db', color: '#1a56db' },
+  tabBtnActive: { borderBottomColor: 'var(--ops-page-accent)', color: 'var(--ops-page-accent)' },
   ghostBtn: { background: '#fff', color: '#374151', border: '1px solid #d1d5db', padding: '8px 14px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer' },
   tableWrap: { background: '#fff', borderRadius: 8, boxShadow: '0 1px 2px rgba(0,0,0,0.04)', overflow: 'auto' },
   table: { width: '100%', borderCollapse: 'collapse', fontSize: 14 },

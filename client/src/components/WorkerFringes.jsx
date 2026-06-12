@@ -120,7 +120,7 @@ const styles = {
   input:       { flex: 1, padding: '7px 8px', border: 'none', fontSize: 13, outline: 'none', minWidth: 0 },
   suffix:      { padding: '0 8px', fontSize: 12, color: '#6b7280', borderLeft: '1px solid #e5e7eb' },
   actions:     { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, marginTop: 12 },
-  saveBtn:     { padding: '7px 16px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 13, cursor: 'pointer' },
+  saveBtn:     { padding: '7px 16px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 13, cursor: 'pointer' },
   savedMsg:    { fontSize: 13, color: '#059669', fontWeight: 600 },
   loading:     { padding: 12, fontSize: 13, color: '#6b7280' },
   error:       { color: '#991b1b', fontSize: 13, marginTop: 8 },

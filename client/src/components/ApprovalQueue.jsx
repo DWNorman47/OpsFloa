@@ -487,7 +487,7 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
           {hasMore && (
             <div style={{ textAlign: 'center', padding: '12px 0 4px' }}>
               <button
-                style={{ fontSize: 13, fontWeight: 600, color: '#1a56db', background: 'none', border: '1px solid #bfdbfe', borderRadius: 7, padding: '7px 20px', cursor: loadingMore ? 'not-allowed' : 'pointer', opacity: loadingMore ? 0.6 : 1 }}
+                style={{ fontSize: 13, fontWeight: 600, color: 'var(--ops-page-accent)', background: 'none', border: '1px solid #bfdbfe', borderRadius: 7, padding: '7px 20px', cursor: loadingMore ? 'not-allowed' : 'pointer', opacity: loadingMore ? 0.6 : 1 }}
                 onClick={loadMore}
                 disabled={loadingMore}
               >
@@ -777,7 +777,7 @@ const styles = {
   header: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 },
   dateFilterRow: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14 },
   dateInput: { padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, color: '#374151', minHeight: 'unset' },
-  applyDateBtn: { background: '#1a56db', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, padding: '4px 10px', cursor: 'pointer' },
+  applyDateBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, padding: '4px 10px', cursor: 'pointer' },
   clearDateBtn: { background: 'none', border: 'none', color: '#6b7280', fontSize: 13, cursor: 'pointer', padding: '0 4px', lineHeight: 1, minHeight: 'unset' },
   title: { fontSize: 17, fontWeight: 700, margin: 0 },
   badge: { background: '#fef3c7', color: '#b45309', border: '1px solid #fcd34d', borderRadius: 20, padding: '2px 10px', fontSize: 12, fontWeight: 700 },
@@ -788,7 +788,7 @@ const styles = {
   emptyTitle: { fontSize: 16, fontWeight: 700, color: '#059669', margin: '0 0 4px' },
   emptySubtitle: { fontSize: 13, color: '#6b7280', margin: 0 },
   fetchError: { color: '#991b1b', fontSize: 14 },
-  retryBtn: { background: 'none', border: 'none', color: '#1a56db', fontWeight: 700, textDecoration: 'underline', cursor: 'pointer', padding: 0, fontSize: 14 },
+  retryBtn: { background: 'none', border: 'none', color: 'var(--ops-page-accent)', fontWeight: 700, textDecoration: 'underline', cursor: 'pointer', padding: 0, fontSize: 14 },
   list:      { display: 'flex', flexDirection: 'column', gap: 16 },
   dayHeader: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', padding: '2px 0 6px', borderBottom: '1px solid #e5e7eb', marginBottom: 8 },
   dayCount:  { background: '#f3f4f6', color: '#6b7280', borderRadius: 10, padding: '1px 7px', fontSize: 11, fontWeight: 700, textTransform: 'none', letterSpacing: 0 },
@@ -822,7 +822,7 @@ const styles = {
   editTimesLabel: { fontSize: 11, fontWeight: 600, color: '#6b7280', marginBottom: 3 },
   editTimeInput: { padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: 7, fontSize: 13 },
   editTimesActions: { display: 'flex', gap: 8 },
-  saveTimesBtn: { padding: '6px 14px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 13, cursor: 'pointer' },
+  saveTimesBtn: { padding: '6px 14px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 13, cursor: 'pointer' },
   approveBtn: { background: '#059669', color: '#fff', border: 'none', padding: '6px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   rejectBtn: { background: 'none', border: '1px solid #fca5a5', color: '#ef4444', padding: '6px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   rejectForm: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
@@ -847,7 +847,7 @@ const styles = {
   signedTag: { display: 'inline-block', marginTop: 4, background: '#ede9fe', color: '#5b21b6', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10 },
   waitingTag: { display: 'inline-block', marginTop: 4, background: '#fef3c7', color: '#92400e', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10 },
   locationRow: { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 },
-  locationBtn: { background: 'none', border: '1px solid #bfdbfe', color: '#1a56db', padding: '3px 10px', borderRadius: 5, fontSize: 11, fontWeight: 600, cursor: 'pointer', alignSelf: 'flex-start' },
+  locationBtn: { background: 'none', border: '1px solid #bfdbfe', color: 'var(--ops-page-accent)', padding: '3px 10px', borderRadius: 5, fontSize: 11, fontWeight: 600, cursor: 'pointer', alignSelf: 'flex-start' },
   mapWrap: { borderRadius: 8, overflow: 'hidden', border: '1px solid #e5e7eb' },
   mapLegend: { display: 'flex', gap: 12, padding: '6px 10px', background: '#f9fafb', flexWrap: 'wrap' },
   mapLegendItem: { fontSize: 11, color: '#374151', display: 'flex', alignItems: 'center', gap: 4 },

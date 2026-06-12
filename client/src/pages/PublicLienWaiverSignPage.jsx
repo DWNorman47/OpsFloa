@@ -69,8 +69,8 @@ export default function PublicLienWaiverSignPage() {
   return (
     <div style={{ minHeight: '100vh', background: '#f9fafb', padding: '40px 16px' }}>
       <div style={styles.card}>
-        <div style={{ borderBottom: '2px solid #1a56db', paddingBottom: 16, marginBottom: 20 }}>
-          <div style={{ fontSize: 22, fontWeight: 700, color: '#1a56db', letterSpacing: 0.5, textTransform: 'uppercase' }}>
+        <div style={{ borderBottom: '2px solid var(--ops-page-accent)', paddingBottom: 16, marginBottom: 20 }}>
+          <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--ops-page-accent)', letterSpacing: 0.5, textTransform: 'uppercase' }}>
             Lien Waiver
           </div>
           <div style={{ fontSize: 14, fontWeight: 600, color: '#374151', marginTop: 4 }}>
@@ -190,7 +190,7 @@ function CenterMsg({ title, msg, tone = 'neutral' }) {
 const styles = {
   card: { maxWidth: 760, margin: '0 auto', background: '#fff', borderRadius: 12, padding: 40, boxShadow: '0 4px 20px rgba(0,0,0,0.06)' },
   h3: { fontSize: 13, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 12px' },
-  primaryBtn: { background: '#1a56db', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer' },
+  primaryBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer' },
   input: { padding: '10px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' },
   errorBox: { background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', padding: '10px 14px', borderRadius: 6, marginTop: 16, fontSize: 14 },
 };

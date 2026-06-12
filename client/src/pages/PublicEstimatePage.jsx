@@ -99,8 +99,8 @@ export default function PublicEstimatePage() {
   return (
     <div style={{ minHeight: '100vh', background: '#f9fafb', padding: '40px 16px' }}>
       <div style={styles.card}>
-        <div style={{ borderBottom: '2px solid #1a56db', paddingBottom: 16, marginBottom: 20 }}>
-          <div style={{ fontSize: 28, fontWeight: 700, color: '#1a56db', letterSpacing: 1, textTransform: 'uppercase' }}>Estimate</div>
+        <div style={{ borderBottom: '2px solid var(--ops-page-accent)', paddingBottom: 16, marginBottom: 20 }}>
+          <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--ops-page-accent)', letterSpacing: 1, textTransform: 'uppercase' }}>Estimate</div>
           <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
             {estimate.estimate_number} · {new Date(estimate.sent_at).toLocaleDateString()}
             {estimate.valid_until && <> · Valid until {new Date(estimate.valid_until).toLocaleDateString()}</>}
@@ -274,7 +274,7 @@ const styles = {
   h3: { fontSize: 13, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 12px' },
   catLabel: { fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6, paddingBottom: 4, borderBottom: '1px solid #e5e7eb' },
   totalsBox: { background: '#f9fafb', padding: '16px 20px', borderRadius: 8 },
-  primaryBtn: { background: '#1a56db', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer' },
+  primaryBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer' },
   ghostBtn: { background: '#fff', color: '#374151', border: '1px solid #d1d5db', padding: '10px 16px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer' },
   input: { padding: '10px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' },
   errorBox: { background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', padding: '10px 14px', borderRadius: 6, marginTop: 16, fontSize: 14 },

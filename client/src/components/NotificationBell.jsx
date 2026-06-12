@@ -142,7 +142,7 @@ const styles = {
   },
   dropTitle: { fontSize: 14, fontWeight: 700, color: '#111827' },
   markAllBtn: {
-    background: 'none', border: 'none', color: '#1a56db', fontSize: 12,
+    background: 'none', border: 'none', color: 'var(--ops-page-accent)', fontSize: 12,
     fontWeight: 600, cursor: 'pointer', padding: 0,
   },
   list: { maxHeight: 380, overflowY: 'auto' },
@@ -153,7 +153,7 @@ const styles = {
   },
   itemUnread: { background: '#f0f7ff' },
   itemDot: { width: 10, flexShrink: 0, paddingTop: 4, display: 'flex', justifyContent: 'center' },
-  dot: { width: 8, height: 8, borderRadius: '50%', background: '#1a56db', display: 'block' },
+  dot: { width: 8, height: 8, borderRadius: '50%', background: 'var(--ops-page-accent)', display: 'block' },
   itemBody: { flex: 1, minWidth: 0 },
   itemTitle: { fontSize: 13, fontWeight: 600, color: '#111827', marginBottom: 2 },
   itemText: { fontSize: 12, color: '#6b7280', marginBottom: 3, whiteSpace: 'pre-line' },

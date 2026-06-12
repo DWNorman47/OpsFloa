@@ -215,8 +215,8 @@ const styles = {
   title: { fontSize: 20, fontWeight: 700, color: '#111827', marginBottom: 8 },
   msg: { fontSize: 14, color: '#6b7280', marginBottom: 24 },
   btnRow: { display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', marginBottom: 20 },
-  btn: { background: '#1a56db', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 24px', fontSize: 14, fontWeight: 600, cursor: 'pointer' },
-  btnSecondary: { background: '#fff', color: '#1a56db', border: '1px solid #1a56db', borderRadius: 8, padding: '10px 20px', fontSize: 14, fontWeight: 600, cursor: 'pointer' },
+  btn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 24px', fontSize: 14, fontWeight: 600, cursor: 'pointer' },
+  btnSecondary: { background: '#fff', color: 'var(--ops-page-accent)', border: '1px solid var(--ops-page-accent)', borderRadius: 8, padding: '10px 20px', fontSize: 14, fontWeight: 600, cursor: 'pointer' },
   btnGhost: { background: 'transparent', color: '#6b7280', border: '1px solid #e5e7eb', borderRadius: 8, padding: '10px 18px', fontSize: 14, fontWeight: 600, cursor: 'pointer' },
   errBox: {
     textAlign: 'left',

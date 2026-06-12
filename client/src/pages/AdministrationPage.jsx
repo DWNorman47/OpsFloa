@@ -949,7 +949,7 @@ const styles = {
   // scopes to the whole card.
   companyCard: { background: '#fff', borderRadius: 12, boxShadow: '0 1px 6px rgba(0,0,0,0.07)' },
   companyCardEditBtn: {
-    background: 'none', border: '1px solid #d1d5db', color: '#1a56db',
+    background: 'none', border: '1px solid #d1d5db', color: 'var(--ops-page-accent)',
     padding: '5px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer',
     flexShrink: 0,
   },
@@ -973,7 +973,7 @@ const styles = {
   cardValue: { fontSize: 14, color: '#111827', fontWeight: 500 },
   planBadge: { fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 10 },
   planName: { fontSize: 13, color: '#374151', fontWeight: 500 },
-  editLink: { fontSize: 12, color: '#1a56db', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, padding: 0 },
+  editLink: { fontSize: 12, color: 'var(--ops-page-accent)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, padding: 0 },
   feedback: { fontSize: 13, margin: '4px 0 0', padding: '6px 0' },
   // Account
   accordionTrigger: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '16px 20px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' },

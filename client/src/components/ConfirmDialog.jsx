@@ -91,7 +91,7 @@ const styles = {
     padding: '8px 16px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer',
   },
   btnConfirm: {
-    background: '#1a56db', color: '#fff', border: 'none',
+    background: 'var(--ops-page-accent)', color: '#fff', border: 'none',
     padding: '8px 18px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer',
   },
   btnDanger: { background: '#dc2626' },

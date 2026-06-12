@@ -285,7 +285,7 @@ const s = {
 
   // Invoice header
   invHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 },
-  brand: { fontSize: 20, fontWeight: 800, color: '#1a56db' },
+  brand: { fontSize: 20, fontWeight: 800, color: 'var(--ops-page-accent)' },
   brandSub: { fontSize: 11, color: '#6b7280', marginTop: 2 },
   invRight: { textAlign: 'right' },
   invTitle: { fontSize: 26, fontWeight: 800, color: '#111827' },
@@ -312,5 +312,5 @@ const s = {
   thankYou: { fontSize: 12, color: '#6b7280', lineHeight: 1.8, flex: 1, minWidth: 180 },
   sumTable: { border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', minWidth: 280 },
   sumRow: { display: 'flex', justifyContent: 'space-between', padding: '8px 14px', fontSize: 13, color: '#374151', borderBottom: '1px solid #f3f4f6' },
-  sumTotal: { display: 'flex', justifyContent: 'space-between', padding: '10px 14px', fontSize: 14, fontWeight: 700, background: '#1a56db', color: '#fff' },
+  sumTotal: { display: 'flex', justifyContent: 'space-between', padding: '10px 14px', fontSize: 14, fontWeight: 700, background: 'var(--ops-page-accent)', color: '#fff' },
 };

@@ -321,7 +321,7 @@ const s = {
   body: { display: 'flex', flexDirection: 'column', gap: 16, padding: '4px 4px 0' },
   progress: { display: 'flex', alignItems: 'center', gap: 12 },
   progressTrack: { flex: 1, height: 4, background: '#e5e7eb', borderRadius: 2, overflow: 'hidden' },
-  progressFill: { height: '100%', background: '#1a56db', transition: 'width 0.25s ease' },
+  progressFill: { height: '100%', background: 'var(--ops-page-accent)', transition: 'width 0.25s ease' },
   progressLabel: { fontSize: 12, color: '#6b7280', whiteSpace: 'nowrap' },
   q: { fontSize: 18, fontWeight: 700, color: '#111827', margin: '4px 0 0' },
   explain: { fontSize: 14, color: '#4b5563', lineHeight: 1.55, margin: 0 },
@@ -339,7 +339,7 @@ const s = {
     transition: 'border-color 0.1s, background 0.1s',
   },
   optionBtnActive: {
-    borderColor: '#1a56db',
+    borderColor: 'var(--ops-page-accent)',
     background: '#eef2ff',
   },
   summaryBlock: { display: 'flex', flexDirection: 'column', gap: 6 },
@@ -351,7 +351,7 @@ const s = {
   backBtn: { background: 'none', border: 'none', color: '#6b7280', fontSize: 13, cursor: 'pointer', padding: '6px 0' },
   skipLink: { background: 'none', border: 'none', color: '#6b7280', fontSize: 13, cursor: 'pointer', padding: '6px 8px' },
   primaryBtn: {
-    background: '#1a56db',
+    background: 'var(--ops-page-accent)',
     color: '#fff',
     border: 'none',
     borderRadius: 7,

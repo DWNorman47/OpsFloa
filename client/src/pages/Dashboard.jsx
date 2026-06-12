@@ -297,7 +297,7 @@ export default function Dashboard() {
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:system-ui,-apple-system,sans-serif;color:#111;font-size:13px;padding:40px;background:#fff}
 .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:36px}
-.brand{font-size:22px;font-weight:800;color:#1a56db}
+.brand{font-size:22px;font-weight:800;color:var(--ops-page-accent)}
 .brand-sub{font-size:12px;color:#6b7280;margin-top:2px}
 .inv-title{font-size:32px;font-weight:800;color:#111;text-align:right}
 .inv-meta{text-align:right;margin-top:6px;line-height:1.8;font-size:13px;color:#6b7280}
@@ -318,7 +318,7 @@ tr:last-child td{border-bottom:none}
 .sum-table{border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;font-size:13px}
 .sum-table tr td{padding:9px 14px;border-bottom:1px solid #f3f4f6}
 .sum-table tr:last-child td{border-bottom:none}
-.total-row{background:#1a56db;color:#fff!important;font-weight:700;font-size:14px}
+.total-row{background:var(--ops-page-accent);color:#fff!important;font-weight:700;font-size:14px}
 .total-row td{color:#fff!important;padding:11px 14px}
 .footer{border-top:1px solid #e5e7eb;padding-top:14px;display:flex;justify-content:space-between;font-size:11px;color:#9ca3af}
 @media print{body{padding:20px}}
@@ -521,7 +521,7 @@ ${signatureDataUrl ? `
 
 const styles = {
   page: { minHeight: '100vh', background: '#f4f6f9', '--ops-page-accent': '#2563eb' },
-  header: { background: '#1a56db', color: '#fff', padding: '0 24px', paddingTop: 'env(safe-area-inset-top)', paddingBottom: 0, minHeight: 'calc(56px + env(safe-area-inset-top))', display: 'flex', flexDirection: 'column', justifyContent: 'center', position: 'sticky', top: 0, zIndex: 100 },
+  header: { background: 'var(--ops-page-accent)', color: '#fff', padding: '0 24px', paddingTop: 'env(safe-area-inset-top)', paddingBottom: 0, minHeight: 'calc(56px + env(safe-area-inset-top))', display: 'flex', flexDirection: 'column', justifyContent: 'center', position: 'sticky', top: 0, zIndex: 100 },
   headerTopRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', height: 56 },
   logoGroup: { display: 'flex', alignItems: 'center', gap: 10 },
   logo: { fontWeight: 700, fontSize: 20 },

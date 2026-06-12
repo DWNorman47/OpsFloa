@@ -778,7 +778,7 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
                     const cost = parseFloat(health.approx_cost || 0);
                     const budget = parseFloat(project.budget_dollars);
                     const pct = Math.min(100, (cost / budget) * 100);
-                    const color = pct >= 100 ? '#ef4444' : pct >= 85 ? '#f59e0b' : '#1a56db';
+                    const color = pct >= 100 ? '#ef4444' : pct >= 85 ? '#f59e0b' : 'var(--ops-page-accent)';
                     return (
                       <div style={{ marginBottom: 8 }}>
                         <div style={styles.budgetRow}>
@@ -1072,7 +1072,7 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
                       <div style={styles.metricLabel}>{t.ppTotalHours}</div>
                     </div>
                     <div style={styles.metricCard}>
-                      <div style={{ ...styles.metricValue, color: '#1a56db' }}>
+                      <div style={{ ...styles.metricValue, color: 'var(--ops-page-accent)' }}>
                         {fmtMoney(billData.summary.total_cost)}
                       </div>
                       <div style={styles.metricLabel}>{t.ppTotalCost}</div>
@@ -1084,7 +1084,7 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
                     {billData.summary.regular_hours > 0 && (
                       <div style={styles.budgetRow}>
                         <span style={styles.budgetLabel}>Regular ({parseFloat(billData.summary.regular_hours).toFixed(1)}h)</span>
-                        <span style={{ ...styles.budgetValue, color: '#1a56db' }}>{fmtMoney(billData.summary.regular_cost)}</span>
+                        <span style={{ ...styles.budgetValue, color: 'var(--ops-page-accent)' }}>{fmtMoney(billData.summary.regular_cost)}</span>
                       </div>
                     )}
                     {billData.summary.overtime_hours > 0 && (
@@ -1514,7 +1514,7 @@ function ProjectVisibility({ project, onProjectUpdated, toggleStyle, countStyle,
                   type="button"
                   onClick={save}
                   disabled={saving}
-                  style={{ padding: '7px 16px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.55 : 1 }}
+                  style={{ padding: '7px 16px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.55 : 1 }}
                 >
                   {saving ? 'Saving…' : 'Save'}
                 </button>
@@ -2021,7 +2021,7 @@ export default function ProjectsPage() {
             ) : loadError ? (
               <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '16px 20px', color: '#991b1b', fontSize: 14 }}>
                 Failed to load {workLabelPlural.toLowerCase()}.{' '}
-                <button style={{ background: 'none', border: 'none', color: '#1a56db', fontWeight: 700, cursor: 'pointer', textDecoration: 'underline', padding: 0 }} onClick={() => { setLoadError(false); loadProjects(showArchived); }}>{t.ppTryAgainLink}</button>
+                <button style={{ background: 'none', border: 'none', color: 'var(--ops-page-accent)', fontWeight: 700, cursor: 'pointer', textDecoration: 'underline', padding: 0 }} onClick={() => { setLoadError(false); loadProjects(showArchived); }}>{t.ppTryAgainLink}</button>
               </div>
             ) : projects.length === 0 ? (
               <EmptyState
@@ -2145,7 +2145,7 @@ const styles = {
   filterLabel: { fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.04em' },
   filterInput: { padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 7, fontSize: 13, background: '#fff' },
   generateBtn: { background: '#8b5cf6', color: '#fff', border: 'none', padding: '9px 18px', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: 'pointer', alignSelf: 'flex-end' },
-  pdfLink: { display: 'inline-block', marginTop: 16, background: '#eff6ff', color: '#1a56db', border: '1px solid #bfdbfe', padding: '10px 18px', borderRadius: 8, fontSize: 13, fontWeight: 700, textDecoration: 'none', cursor: 'pointer' },
+  pdfLink: { display: 'inline-block', marginTop: 16, background: '#eff6ff', color: 'var(--ops-page-accent)', border: '1px solid #bfdbfe', padding: '10px 18px', borderRadius: 8, fontSize: 13, fontWeight: 700, textDecoration: 'none', cursor: 'pointer' },
   qboBtn: { display: 'inline-block', marginTop: 16, background: '#2CA01C', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer' },
   qboPicker: { marginTop: 12, background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: '12px 14px' },
   qboPickerLabel: { fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 8 },
@@ -2187,7 +2187,7 @@ const styles = {
   activityText: { fontSize: 13, color: '#111827', lineHeight: 1.4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' },
   activityMeta: { display: 'flex', gap: 4, alignItems: 'center', fontSize: 11, color: '#6b7280', flexWrap: 'wrap' },
   docRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 10px', borderRadius: 7, background: '#fafafa', border: '1px solid #f3f4f6', marginBottom: 4 },
-  docName: { fontSize: 13, color: '#1a56db', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0, textDecoration: 'none' },
+  docName: { fontSize: 13, color: 'var(--ops-page-accent)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0, textDecoration: 'none' },
   docSize: { fontSize: 11, color: '#6b7280' },
   docDelete: { background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 14, padding: '2px 4px', lineHeight: 1 },
   docDeleteConfirm: { background: '#dc2626', color: '#fff', border: 'none', borderRadius: 5, padding: '2px 8px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
@@ -2195,7 +2195,7 @@ const styles = {
   uploadBtn: { display: 'inline-block', marginTop: 6, background: '#f3f4f6', border: '1px dashed #d1d5db', borderRadius: 7, padding: '7px 14px', fontSize: 12, fontWeight: 600, color: '#6b7280' },
   rfiForm: { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8, padding: '12px', background: '#f9fafb', borderRadius: 8, border: '1px solid #e5e7eb' },
   rfiInput: { padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 6, fontSize: 13, background: '#fff', width: '100%', boxSizing: 'border-box' },
-  rfiSubmitBtn: { background: '#1a56db', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
+  rfiSubmitBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
   rfiCancelBtn: { background: 'none', border: '1px solid #e5e7eb', borderRadius: 6, padding: '8px 12px', fontSize: 13, color: '#6b7280', cursor: 'pointer' },
   photoGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(80px, 1fr))', gap: 4, marginTop: 6 },
   photoThumb: { width: '100%', aspectRatio: '1', padding: 0, border: 'none', background: '#f3f4f6', borderRadius: 6, cursor: 'pointer', overflow: 'hidden' },
