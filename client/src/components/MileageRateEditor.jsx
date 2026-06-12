@@ -46,7 +46,7 @@ export default function MileageRateEditor() {
   };
 
   if (!cfg && !error) {
-    return <div style={styles.loading}>{t.advSettingsLoading || 'Loading…'}</div>;
+    return <div className="ops-loading-state">{t.advSettingsLoading || 'Loading…'}</div>;
   }
 
   return (

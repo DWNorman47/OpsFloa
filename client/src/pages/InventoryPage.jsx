@@ -84,12 +84,16 @@ export default function InventoryPage() {
   const refreshLowStock    = () => isAdmin && api.get('/inventory/stock/low').then(r => setLowStockCount(r.data.length)).catch(silentError('inventorypage'));
   const refreshConversions = () => isAdmin && api.get('/inventory/uom-conversions').then(r => setPendingConversions(r.data.filter(u => parseFloat(u.factor) === 1).length)).catch(silentError('inventorypage'));
 
-  if (loading) return <div style={styles.loading}>Loading...</div>;
+  if (loading) return (
+    <PageShell currentApp="inventory" features={features} maxWidth={1040}>
+      <div className="ops-loading-state">{t.loading || 'Loading…'}</div>
+    </PageShell>
+  );
 
   if (!features.module_inventory) {
     return (
       <PageShell currentApp="inventory" features={features} maxWidth={760}>
-        <div style={styles.disabled}>
+        <div style={styles.disabled}>
           <h2 style={styles.disabledTitle}>{t.invNotEnabled}</h2>
           <p style={styles.disabledBody}>{t.invNotEnabledBody}</p>
         </div>

@@ -19,6 +19,7 @@ import api from '../api';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
 import ModalShell from './ModalShell';
+import { SkeletonList } from './Skeleton';
 import { silentError } from '../errorReporter';
 
 export default function ManageRoles() {
@@ -150,7 +151,7 @@ export default function ManageRoles() {
     }
   };
 
-  if (loading) return <div style={styles.empty}>{t.loading || 'Loading…'}</div>;
+  if (loading) return <div style={styles.wrap}><SkeletonList count={3} /></div>;
 
   return (
     <div style={styles.wrap}>

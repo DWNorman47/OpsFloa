@@ -10,6 +10,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
 import { silentError } from '../errorReporter';
 import EmptyState from './EmptyState';
+import { SkeletonList } from './Skeleton';
 
 const STATUS_FILTERS = [
   { key: 'new',       label: 'New' },
@@ -200,7 +201,7 @@ export default function ServiceRequestsAdmin({ settings = null }) {
       {error && <div role="alert" style={s.error}>{error}</div>}
 
       {loading ? (
-        <div style={s.loading}>Loading...</div>
+        <SkeletonList count={3} />
       ) : requests.length === 0 ? (
         <EmptyState
           mark="R"
