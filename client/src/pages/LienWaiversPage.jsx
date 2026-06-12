@@ -8,7 +8,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import api from '../api';
-import AppHeader from '../components/AppHeader';
+import { PageShell } from '../components/PageShell';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
 import MoneyInput from '../components/MoneyInput';
@@ -575,7 +575,7 @@ function LienWaiverDetail({ id, onBack }) {
                 <tr key={d.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                   <td style={{ padding: '8px 0' }}><strong>{d.name}</strong></td>
                   <td style={{ padding: '8px 0', textAlign: 'right' }}>
-                    <a href={d.url} target="_blank" rel="noopener noreferrer" style={{ color: '#1a56db', fontSize: 13, fontWeight: 600 }}>{t.lwOpen}</a>
+                    <a href={d.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--ops-page-accent)', fontSize: 13, fontWeight: 600 }}>{t.lwOpen}</a>
                   </td>
                 </tr>
               ))}
@@ -605,14 +605,11 @@ export default function LienWaiversPage() {
   function backToList()   { setView({ kind: 'list' }); }
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f9fafb' }}>
-      <AppHeader currentApp="workforce" userRole={user?.role} />
-      <main id="main-content">
-        {view.kind === 'list'   && <LienWaiversList onOpen={openDetail} onNew={openNew} />}
-        {view.kind === 'form'   && <NewLienWaiverForm projects={view.ctx?.projects || []} subs={view.ctx?.subs || []} onSave={(saved) => setView({ kind: 'detail', id: saved.id })} onCancel={backToList} />}
-        {view.kind === 'detail' && <LienWaiverDetail id={view.id} onBack={backToList} />}
-      </main>
-    </div>
+    <PageShell currentApp="workforce" maxWidth={1200} headerProps={{ userRole: user?.role }}>
+      {view.kind === 'list'   && <LienWaiversList onOpen={openDetail} onNew={openNew} />}
+      {view.kind === 'form'   && <NewLienWaiverForm projects={view.ctx?.projects || []} subs={view.ctx?.subs || []} onSave={(saved) => setView({ kind: 'detail', id: saved.id })} onCancel={backToList} />}
+      {view.kind === 'detail' && <LienWaiverDetail id={view.id} onBack={backToList} />}
+    </PageShell>
   );
 }
 
@@ -643,8 +640,8 @@ function Info({ label, value }) {
 }
 
 const styles = {
-  primaryBtn: { background: '#1a56db', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer' },
-  ghostBtn: { background: '#fff', color: '#374151', border: '1px solid #d1d5db', padding: '8px 14px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer' },
+  primaryBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '9px 16px', borderRadius: 8, fontSize: 14, fontWeight: 650, cursor: 'pointer' },
+  ghostBtn: { background: '#fff', color: '#374151', border: '1px solid #cbd5e1', padding: '9px 14px', borderRadius: 8, fontSize: 14, fontWeight: 650, cursor: 'pointer' },
   select: { padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, background: '#fff' },
   input: { padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' },
   tableWrap: { background: '#fff', borderRadius: 8, boxShadow: '0 1px 2px rgba(0,0,0,0.04)', overflow: 'hidden' },
@@ -653,7 +650,7 @@ const styles = {
   th: { textAlign: 'left', padding: '10px 14px', fontSize: 11, color: '#6b7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' },
   tableRow: { borderBottom: '1px solid #f3f4f6', cursor: 'pointer' },
   td: { padding: '12px 14px', color: '#111827' },
-  formCard: { background: '#fff', borderRadius: 8, padding: 20, marginBottom: 16, boxShadow: '0 1px 2px rgba(0,0,0,0.04)' },
+  formCard: { background: '#fff', borderRadius: 8, padding: 18, marginBottom: 16, border: '1px solid var(--ops-border, #e2e8f0)', boxShadow: 'var(--ops-shadow-sm, 0 1px 4px rgba(15,23,42,0.04))' },
   formH3: { fontSize: 13, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 14px' },
   grid2: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 },
   grid4: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 14 },
