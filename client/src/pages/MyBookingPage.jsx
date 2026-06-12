@@ -5,7 +5,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api';
-import AppHeader from '../components/AppHeader';
+import { PageShell } from '../components/PageShell';
 import { SkeletonList } from '../components/Skeleton';
 import { silentError } from '../errorReporter';
 
@@ -71,9 +71,8 @@ export default function MyBookingPage() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f9fafb' }}>
-      <AppHeader currentApp="timeclock" userRole={user?.role} />
-      <div style={{ maxWidth: 800, margin: '0 auto', padding: '24px 20px' }}>
+    <PageShell currentApp="timeclock" maxWidth={800} headerProps={{ userRole: user?.role }}>
+      <div className="admin-page-shell">
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 16px', color: '#111827' }}>My Booking Settings</h1>
         <p style={{ fontSize: 14, color: '#6b7280', marginBottom: 20 }}>
           Set your role label, timezone, and weekly windows. Once an admin marks you as bookable,
@@ -194,7 +193,7 @@ export default function MyBookingPage() {
           </>
         )}
       </div>
-    </div>
+    </PageShell>
   );
 }
 

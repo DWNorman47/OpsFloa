@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api';
-import AppHeader from '../components/AppHeader';
+import { PageShell } from '../components/PageShell';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
 import { silentError } from '../errorReporter';
@@ -208,9 +208,8 @@ export default function FinancialReportsPage() {
   const [tab, setTab] = useState('pnl');
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f9fafb' }}>
-      <AppHeader currentApp="analytics" userRole={user?.role} />
-      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 20px' }}>
+    <PageShell currentApp="analytics" maxWidth={1200} headerProps={{ userRole: user?.role }}>
+      <div className="admin-page-shell">
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 16px', color: '#111827' }}>Financial Reports</h1>
         <div style={styles.tabRow}>
           <button
@@ -229,7 +228,7 @@ export default function FinancialReportsPage() {
         {tab === 'pnl' && <PnLTab />}
         {tab === 'wip' && <WipTab />}
       </div>
-    </div>
+    </PageShell>
   );
 }
 

@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api';
-import AppHeader from '../components/AppHeader';
+import { PageShell } from '../components/PageShell';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
 import { silentError } from '../errorReporter';
@@ -49,9 +49,8 @@ export default function CatalogPage() {
   }, []);
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f9fafb' }}>
-      <AppHeader currentApp="inventory" userRole={user?.role} />
-      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 20px' }}>
+    <PageShell currentApp="inventory" maxWidth={1200} headerProps={{ userRole: user?.role }}>
+      <div className="admin-page-shell">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
           <div>
             <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>Material Catalog</h1>
@@ -106,7 +105,7 @@ export default function CatalogPage() {
           )
         }
       </div>
-    </div>
+    </PageShell>
   );
 }
 

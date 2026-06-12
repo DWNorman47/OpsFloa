@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api';
-import AppHeader from '../components/AppHeader';
+import { PageShell } from '../components/PageShell';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
 import { silentError } from '../errorReporter';
@@ -296,12 +296,11 @@ export default function CloseoutPage() {
   const [projectId, setProjectId] = useState(null);
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f9fafb' }}>
-      <AppHeader currentApp="workforce" userRole={user?.role} />
+    <PageShell currentApp="workforce" maxWidth={1200} headerProps={{ userRole: user?.role }}>
       {projectId == null
         ? <CloseoutLanding onSelect={setProjectId} />
         : <ProjectCloseoutView projectId={projectId} onBack={() => setProjectId(null)} />}
-    </div>
+    </PageShell>
   );
 }
 
