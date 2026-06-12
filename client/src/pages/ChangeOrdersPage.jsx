@@ -365,6 +365,13 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
         <h3 style={styles.formH3}>{t.coInternalNotes}</h3>
         <textarea value={head.notes} onChange={e => updateHead('notes', e.target.value)} style={{ ...styles.input, minHeight: 50 }} />
       </div>
+
+      <div className="ops-form-actions">
+        <button onClick={onCancel} style={styles.ghostBtn}>{t.coCancel}</button>
+        <button onClick={handleSave} disabled={saving} style={styles.primaryBtn}>
+          {saving ? t.coSaving : t.coSave}
+        </button>
+      </div>
     </div>
   );
 }

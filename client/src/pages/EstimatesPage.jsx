@@ -461,6 +461,13 @@ function EstimateForm({ existing, onSave, onCancel }) {
           <textarea value={head.notes} onChange={e => updateHead('notes', e.target.value)} style={{ ...styles.input, minHeight: 50 }} />
         </Field>
       </div>
+
+      <div className="ops-form-actions">
+        <button onClick={onCancel} style={styles.ghostBtn}>{t.estCancel}</button>
+        <button onClick={handleSave} disabled={saving} style={styles.primaryBtn}>
+          {saving ? t.estSaving : t.estSave}
+        </button>
+      </div>
     </div>
   );
 }
