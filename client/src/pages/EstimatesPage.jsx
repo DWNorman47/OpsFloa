@@ -109,7 +109,7 @@ function EstimatesList({ onOpen, onNew }) {
   );
 
   return (
-    <div className="admin-page-shell" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
+    <div className="admin-page-shell">
       <TabBar
         active="estimates"
         onChange={(id) => { if (id !== 'estimates') window.location.href = '/change-orders'; }}
@@ -325,7 +325,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
   }
 
   return (
-    <div className="admin-page-shell" style={{ maxWidth: 980, margin: '0 auto', padding: '24px 20px' }}>
+    <div className="admin-page-shell">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: '#111827' }}>
           {existing ? `${t.estEdit} ${existing.estimate_number}` : t.estFormNewTitle}
@@ -746,7 +746,7 @@ function EstimateDetail({ id, onBack, onEdit }) {
   });
 
   return (
-    <div className="admin-page-shell" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
+    <div className="admin-page-shell">
       {confirmDialog}
       <div style={{ marginBottom: 16 }}>
         <button onClick={onBack} style={styles.ghostBtn}>← {t.estBackToList}</button>

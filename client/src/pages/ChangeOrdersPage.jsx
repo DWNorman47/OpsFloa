@@ -98,7 +98,7 @@ function ChangeOrdersList({ onOpen, onNew }) {
   }, []);
 
   return (
-    <div className="admin-page-shell" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
+    <div className="admin-page-shell">
       <TabBar
         active="change_orders"
         onChange={(id) => { if (id !== 'change_orders') window.location.href = '/sales'; }}
@@ -271,7 +271,7 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
   }
 
   return (
-    <div className="admin-page-shell" style={{ maxWidth: 980, margin: '0 auto', padding: '24px 20px' }}>
+    <div className="admin-page-shell">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: '#111827' }}>{t.coFormNewTitle}</h1>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -496,7 +496,7 @@ function ChangeOrderDetail({ id, onBack }) {
   });
 
   return (
-    <div className="admin-page-shell" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
+    <div className="admin-page-shell">
       {confirmDialog}
       <div style={{ marginBottom: 16 }}>
         <button onClick={onBack} style={styles.ghostBtn}>← {t.coBackToList}</button>

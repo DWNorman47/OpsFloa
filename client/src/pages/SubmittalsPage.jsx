@@ -91,7 +91,7 @@ function SubmittalsList({ onOpen, onNew }) {
   }, []);
 
   return (
-    <div className="admin-page-shell" style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 20px' }}>
+    <div className="admin-page-shell">
       <div className="admin-page-header">
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>{t.submTitle}</h1>
         <button onClick={() => onNew(projects)} style={styles.primaryBtn}>+ {t.submNewSubmittal}</button>
@@ -235,7 +235,7 @@ function NewSubmittalForm({ projects, onSave, onCancel }) {
   }
 
   return (
-    <div className="admin-page-shell" style={{ maxWidth: 800, margin: '0 auto', padding: '24px 20px' }}>
+    <div className="admin-page-shell">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: '#111827' }}>{t.submNewSubmittal}</h1>
         <div style={{ display: 'flex', gap: 8 }}>
