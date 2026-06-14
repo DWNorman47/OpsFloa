@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
+import { useSettings } from '../contexts/SettingsContext';
 import { userCanSeeModule } from '../modulePermissions';
 
 // Workers see: Time Clock, Field, Inventory, Account
@@ -178,12 +179,17 @@ export const APPS = [
 export default function AppSwitcher({ currentApp = 'timeclock', userRole, features = {} }) {
   const t = useT();
   const { user } = useAuth();
+  const { settings } = useSettings();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const isAdmin = userRole === 'admin' || userRole === 'super_admin';
+  // A page may pass its own freshly-loaded settings as `features`; fall back to
+  // the global SettingsContext so the switcher gates correctly even on pages
+  // that don't load settings themselves. Explicit props win over the context.
+  const feat = { ...(settings || {}), ...(features || {}) };
   const labelFor = app => {
-    if (app.id === 'field') return features?.label_field || app.name;
-    if (app.id === 'projects') return features?.label_work || app.name;
+    if (app.id === 'field') return feat.label_field || app.name;
+    if (app.id === 'projects') return feat.label_work || app.name;
     return app.name;
   };
   const visibleApps = APPS.filter(a => {
@@ -191,23 +197,19 @@ export default function AppSwitcher({ currentApp = 'timeclock', userRole, featur
     if (a.workerOnly && isAdmin) return false;
     // Company-level feature toggles (admin choice). These hide modules
     // entirely regardless of user perms — the company doesn't use the feature.
-    if (a.id === 'field' && features?.module_field === false) return false;
-    if (a.id === 'projects' && features?.module_projects === false) return false;
-    if (a.id === 'inventory' && features?.module_inventory === false) return false;
-    if (a.id === 'analytics' && features?.module_analytics === false) return false;
-    if (a.id === 'team' && features?.module_team === false) return false;
-    // Sales (estimates + change orders) and Subs (subcontractor directory +
-    // POs) are surfaces of the Projects module — they have no toggle of their
-    // own, so they follow Projects. Without this they kept showing after an
-    // admin deselected Projects (e.g. via a workspace profile).
-    if (a.id === 'sales' && features?.module_projects === false) return false;
-    if (a.id === 'subs' && features?.module_projects === false) return false;
-    // Financial reports (P&L portfolio + WIP) live under Analytics.
-    if (a.id === 'financial_reports' && features?.module_analytics === false) return false;
+    if (a.id === 'field' && feat.module_field === false) return false;
+    if (a.id === 'projects' && feat.module_projects === false) return false;
+    if (a.id === 'inventory' && feat.module_inventory === false) return false;
+    if (a.id === 'analytics' && feat.module_analytics === false) return false;
+    if (a.id === 'team' && feat.module_team === false) return false;
+    // Construction-lifecycle modules, each with its own admin toggle.
+    if (a.id === 'sales' && feat.module_sales === false) return false;
+    if (a.id === 'subs' && feat.module_subs === false) return false;
+    if (a.id === 'financial_reports' && feat.module_financial_reports === false) return false;
     // module_timeclock now gates the admin oversight page (Workforce). Time
     // Clock itself stays visible to everyone — workers always need it, and
     // admins use it for their own time-tracking even if oversight is off.
-    if (a.id === 'workforce' && features?.module_timeclock === false) return false;
+    if (a.id === 'workforce' && feat.module_timeclock === false) return false;
     // Phase D: per-user permission gate. A user with zero perms inside a
     // module shouldn't see it at all. Account is always shown.
     if (!userCanSeeModule(user, a.id)) return false;

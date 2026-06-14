@@ -167,6 +167,17 @@ that had the previous default.
 - `setup_questionnaire_completed_at` (ISO timestamp string) — set when
   an admin finishes (or dismisses) the first-run setup questionnaire.
 
+### Module visibility flags (`module_*`, boolean, in `FEATURE_KEYS`)
+
+Admin-controlled app-switcher visibility toggles: `module_timeclock`,
+`module_team`, `module_projects`, `module_field`, `module_inventory`,
+`module_analytics`, and the construction-lifecycle modules `module_sales`
+(estimates + change orders), `module_subs` (subcontractors + POs), and
+`module_financial_reports` (P&L portfolio + WIP). The three construction
+modules default OFF for new companies; migration 0118 backfilled `'1'` for
+existing companies. The app switcher (`client/src/components/AppSwitcher.jsx`)
+hides an app when its `module_*` flag is `false`.
+
 ## Boolean-flag columns
 
 These are fixed-value but Postgres enforces them via the `BOOLEAN` type.

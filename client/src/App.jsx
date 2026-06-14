@@ -7,6 +7,7 @@ import WelcomeModal from './components/WelcomeModal';
 import SkipLink from './components/SkipLink';
 import { ToastProvider } from './contexts/ToastContext';
 import { OfflineProvider } from './contexts/OfflineContext';
+import { SettingsProvider } from './contexts/SettingsContext';
 import { clearCache } from './offlineDb';
 import { userCanSeeModule, pickLandingPath } from './modulePermissions';
 
@@ -251,11 +252,13 @@ export default function App() {
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <ToastProvider>
           <OfflineProvider>
-            <SkipLink />
-            <WelcomeModal />
-            <AppRoutes />
-            <InstallPrompt />
-            <UpdatePrompt />
+            <SettingsProvider>
+              <SkipLink />
+              <WelcomeModal />
+              <AppRoutes />
+              <InstallPrompt />
+              <UpdatePrompt />
+            </SettingsProvider>
           </OfflineProvider>
         </ToastProvider>
       </BrowserRouter>
