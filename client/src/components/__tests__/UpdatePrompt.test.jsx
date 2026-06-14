@@ -1,11 +1,12 @@
 /**
  * UpdatePrompt smoke — guards two failure modes:
  *  1. Banner never shows when an update truly is available (stale forever).
- *  2. Banner shows after a manual refresh, when the bundle and the new SW
- *     are already the same version (annoying false positive).
+ *  2. Banner shows when no new worker has been downloaded — e.g. on the
+ *     current version after a plain reload (the annoying false positive that
+ *     showed on the latest build and never cleared).
  *
- * jsdom has no real service-worker stack, so we drive the listeners directly
- * and post fake SW_VERSION replies.
+ * jsdom has no real service-worker stack, so we drive the registration /
+ * worker listeners directly.
  */
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
@@ -19,71 +20,77 @@ vi.mock('../../contexts/AuthContext', () => ({
   useAuth: () => ({ user: { language: 'English' } }),
 }));
 
-// __APP_VERSION__ is normally injected by Vite's `define`. Vitest doesn't
-// run that step, so the prompt code falls back to `null` and skips its
-// version comparison entirely. Define it here so the gate exercises the
-// real comparison path the prompt uses in production.
-globalThis.__APP_VERSION__ = '1.0.0+test';
-
-function setupSW({ initialController, postedVersion }) {
+// A fake service-worker "worker" whose state we can advance to fire statechange.
+function makeWorker(initialState = 'installing') {
   const listeners = {};
-  const controller = initialController
-    ? {
-        ...initialController,
-        postMessage: vi.fn(() => {
-          // Simulate the SW replying with its version. Default to a
-          // different version (i.e. there really IS an update). Tests
-          // that want the "same version" case override `postedVersion`.
-          const version = postedVersion ?? '2.0.0+newer';
-          queueMicrotask(() => listeners.message?.({ data: { type: 'SW_VERSION', version } }));
-        }),
-      }
-    : null;
-
-  const sw = {
-    get controller() { return controller; },
+  return {
+    state: initialState,
     addEventListener: (evt, cb) => { listeners[evt] = cb; },
+    setState(s) { this.state = s; listeners.statechange?.(); },
+  };
+}
+
+// A fake registration. `installing` / `waiting` model the two worker slots;
+// `fireUpdateFound()` simulates the browser finding a new sw.js.
+function makeReg({ installing = null, waiting = null } = {}) {
+  const listeners = {};
+  return {
+    installing,
+    waiting,
+    addEventListener: (evt, cb) => { listeners[evt] = cb; },
+    fireUpdateFound() { listeners.updatefound?.(); },
+  };
+}
+
+function setupSW({ hasController = true, registration = makeReg() } = {}) {
+  const sw = {
+    controller: hasController ? { state: 'activated' } : null,
+    addEventListener: () => {},
     removeEventListener: () => {},
-    getRegistration: () => Promise.resolve({
-      installing: null,
-      addEventListener: () => {},
-    }),
+    getRegistration: () => Promise.resolve(registration),
   };
   Object.defineProperty(navigator, 'serviceWorker', {
     value: sw,
     configurable: true,
     writable: true,
   });
-  return listeners;
 }
 
 describe('<UpdatePrompt />', () => {
   beforeEach(() => {
-    // Ensure a clean slate; jsdom doesn't have real SW support.
     // eslint-disable-next-line no-proto
     delete navigator.__proto__.serviceWorker;
   });
 
-  test('renders nothing when no update has been detected', () => {
-    setupSW({ initialController: { state: 'activated' } });
-    const { container } = render(<UpdatePrompt />);
-    // Component mounts and listens — the banner should not render yet.
+  test('renders nothing when no update has been detected', async () => {
+    setupSW({ registration: makeReg() });
+    let container;
+    await act(async () => { ({ container } = render(<UpdatePrompt />)); });
     expect(container.firstChild).toBeNull();
   });
 
-  test('first-ever load (no controller) does not show the banner', async () => {
-    const listeners = setupSW({ initialController: null });
-    render(<UpdatePrompt />);
-    await act(async () => { listeners.controllerchange?.(); });
+  test('first-ever install (no controller) does not show the banner', async () => {
+    const reg = makeReg();
+    setupSW({ hasController: false, registration: reg });
+    await act(async () => { render(<UpdatePrompt />); });
+    const worker = makeWorker('installing');
+    await act(async () => {
+      reg.installing = worker;
+      reg.fireUpdateFound();
+      worker.setState('installed'); // installs, but nothing controls the page yet
+    });
     expect(screen.queryByText(/new version/i)).not.toBeInTheDocument();
   });
 
-  test('controllerchange with a NEWER SW version shows the prompt', async () => {
-    const listeners = setupSW({ initialController: { state: 'activated' } });
-    render(<UpdatePrompt />);
+  test('a new worker installing while controlled shows the prompt', async () => {
+    const reg = makeReg();
+    setupSW({ hasController: true, registration: reg });
+    await act(async () => { render(<UpdatePrompt />); });
+    const worker = makeWorker('installing');
     await act(async () => {
-      listeners.controllerchange();
-      await Promise.resolve(); // flush the queued microtask reply
+      reg.installing = worker;
+      reg.fireUpdateFound();
+      worker.setState('installed'); // controller exists → real update
     });
     expect(screen.getByText(/new version of OpsFloa is ready/i)).toBeInTheDocument();
     const link = screen.getByText(/what's new/i).closest('a');
@@ -92,25 +99,30 @@ describe('<UpdatePrompt />', () => {
     expect(screen.getByRole('button', { name: /reload/i })).toBeInTheDocument();
   });
 
-  test('controllerchange after a refresh (same version) does NOT show the prompt', async () => {
-    const listeners = setupSW({
-      initialController: { state: 'activated' },
-      postedVersion: '1.0.0+test', // matches the bundle version above
-    });
-    render(<UpdatePrompt />);
-    await act(async () => {
-      listeners.controllerchange();
-      await Promise.resolve();
-    });
-    expect(screen.queryByText(/new version of OpsFloa is ready/i)).not.toBeInTheDocument();
+  test('a worker already waiting at mount shows the prompt', async () => {
+    setupSW({ hasController: true, registration: makeReg({ waiting: makeWorker('installed') }) });
+    await act(async () => { render(<UpdatePrompt />); });
+    expect(screen.getByText(/new version of OpsFloa is ready/i)).toBeInTheDocument();
+  });
+
+  test('plain reload on the current version (no new worker) does NOT show the prompt', async () => {
+    // No installing/waiting worker and no updatefound — exactly the state after
+    // reloading onto the latest build.
+    setupSW({ hasController: true, registration: makeReg() });
+    let container;
+    await act(async () => { ({ container } = render(<UpdatePrompt />)); });
+    expect(container.firstChild).toBeNull();
   });
 
   test('dismiss button hides the banner', async () => {
-    const listeners = setupSW({ initialController: { state: 'activated' } });
-    render(<UpdatePrompt />);
+    const reg = makeReg();
+    setupSW({ hasController: true, registration: reg });
+    await act(async () => { render(<UpdatePrompt />); });
+    const worker = makeWorker('installing');
     await act(async () => {
-      listeners.controllerchange();
-      await Promise.resolve();
+      reg.installing = worker;
+      reg.fireUpdateFound();
+      worker.setState('installed');
     });
     fireEvent.click(screen.getByLabelText(/dismiss/i));
     expect(screen.queryByText(/new version of OpsFloa is ready/i)).not.toBeInTheDocument();

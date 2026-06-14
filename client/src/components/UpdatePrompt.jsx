@@ -19,56 +19,46 @@ export default function UpdatePrompt() {
     if (!('serviceWorker' in navigator)) return;
 
     let cancelled = false;
-    let reg = null;
 
-    // Compare the controlling SW's version against the version baked into
-    // the running JS bundle. They only differ when a NEW SW has activated
-    // while the tab is still running OLD bundle code — which is the only
-    // moment a "reload to upgrade" prompt is actually useful. After a
-    // refresh the bundle is already current, so the versions match and we
-    // stay silent (which is what users were complaining about).
-    const checkVersion = () => {
-      if (cancelled) return;
-      const ctrl = navigator.serviceWorker.controller;
-      if (!ctrl) return;
-      ctrl.postMessage({ type: 'GET_VERSION' });
+    // Show the banner only when a genuinely NEW service worker has finished
+    // downloading while an older one is still controlling this tab — that's
+    // the only moment the JS running here is actually behind and a reload
+    // helps. We intentionally do NOT compare version strings or react to
+    // `controllerchange`: both fire on ordinary reloads too, and the version
+    // comparison stuck "on" whenever the controlling sw.js and the loaded
+    // bundle didn't line up (e.g. a CDN-cached sw.js), which is why the
+    // banner showed on the current version and never cleared. A plain reload
+    // downloads no new worker, so `updatefound` stays quiet and the banner
+    // can't reappear once you're on the latest build.
+    const watch = worker => {
+      if (!worker) return;
+      const check = () => {
+        if (cancelled) return;
+        // `installed` + an existing controller means this is an update to an
+        // already-running app, not the first-ever install. sw.js calls
+        // skipWaiting() so it activates immediately, but the tab keeps the
+        // old bundle until the user reloads.
+        if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+          setUpdateReady(true);
+        }
+      };
+      check(); // it may already be 'installed' by the time we attach
+      worker.addEventListener('statechange', check);
     };
 
-    const onMessage = evt => {
-      if (cancelled) return;
-      if (evt.data?.type !== 'SW_VERSION') return;
-      // eslint-disable-next-line no-undef
-      const bundleVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : null;
-      if (bundleVersion && evt.data.version && evt.data.version !== bundleVersion) {
-        setUpdateReady(true);
-      }
-    };
-    navigator.serviceWorker.addEventListener('message', onMessage);
-
-    const onControllerChange = () => checkVersion();
-    navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
-
-    // Hook the registration path too — catches the case where the new SW
-    // finishes installing but hasn't taken control yet (if skipWaiting were
-    // ever disabled in the future).
     navigator.serviceWorker.getRegistration().then(r => {
       if (cancelled || !r) return;
-      reg = r;
-      const onUpdateFound = () => {
-        const installing = reg.installing;
-        if (!installing) return;
-        installing.addEventListener('statechange', () => {
-          if (installing.state === 'activated') checkVersion();
-        });
-      };
-      reg.addEventListener('updatefound', onUpdateFound);
+      // An update that finished installing before this component mounted.
+      if (r.waiting && navigator.serviceWorker.controller) setUpdateReady(true);
+      // One that's mid-install right now…
+      watch(r.installing);
+      // …or one that starts installing while the tab stays open. The
+      // registration is shared across tabs, so this also fires when another
+      // tab triggers the update.
+      r.addEventListener('updatefound', () => watch(r.installing));
     });
 
-    return () => {
-      cancelled = true;
-      navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
-      navigator.serviceWorker.removeEventListener('message', onMessage);
-    };
+    return () => { cancelled = true; };
   }, []);
 
   if (!updateReady || !user) return null;
