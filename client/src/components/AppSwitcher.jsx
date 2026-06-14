@@ -196,6 +196,14 @@ export default function AppSwitcher({ currentApp = 'timeclock', userRole, featur
     if (a.id === 'inventory' && features?.module_inventory === false) return false;
     if (a.id === 'analytics' && features?.module_analytics === false) return false;
     if (a.id === 'team' && features?.module_team === false) return false;
+    // Sales (estimates + change orders) and Subs (subcontractor directory +
+    // POs) are surfaces of the Projects module — they have no toggle of their
+    // own, so they follow Projects. Without this they kept showing after an
+    // admin deselected Projects (e.g. via a workspace profile).
+    if (a.id === 'sales' && features?.module_projects === false) return false;
+    if (a.id === 'subs' && features?.module_projects === false) return false;
+    // Financial reports (P&L portfolio + WIP) live under Analytics.
+    if (a.id === 'financial_reports' && features?.module_analytics === false) return false;
     // module_timeclock now gates the admin oversight page (Workforce). Time
     // Clock itself stays visible to everyone — workers always need it, and
     // admins use it for their own time-tracking even if oversight is off.
@@ -273,6 +281,10 @@ const styles = {
     position: 'absolute', top: 'calc(100% + 8px)', left: 0,
     background: '#fff', borderRadius: 10, boxShadow: '0 16px 42px rgba(15,23,42,0.14)',
     border: '1px solid #e2e8f0', padding: 6, minWidth: 220, zIndex: 1000,
+    // Cap the height so a long module list (admins can have 11+) stays inside
+    // the viewport and scrolls instead of pushing entries off-screen where
+    // they can't be clicked.
+    maxHeight: 'calc(100vh - 90px)', overflowY: 'auto',
   },
   item: {
     display: 'flex', alignItems: 'center', gap: 12,
