@@ -11,6 +11,7 @@ import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
 import Pagination from '../components/Pagination';
 import SortHeader, { sortRows } from '../components/SortHeader';
+import TabBar from '../components/TabBar';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { formatDateTime } from '../utils/format';
@@ -786,33 +787,22 @@ export default function BookingPage() {
   return (
     <PageShell currentApp="workforce" maxWidth={1100} headerProps={{ userRole: user?.role }}>
       <div className="admin-page-shell">
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 16px', color: '#111827' }}>{t.bkTitle}</h1>
-        <div style={styles.tabRow}>
-          <Tab id="appointments" label={t.bkAppointments} tab={tab} setTab={setTab} />
-          <Tab id="types"        label={t.bkAppointmentTypes} tab={tab} setTab={setTab} />
-          <Tab id="shifts"       label={t.bkShiftTypes} tab={tab} setTab={setTab} />
-          <Tab id="users"        label={t.bkBookableUsers} tab={tab} setTab={setTab} />
-        </div>
+        <TabBar
+          active={tab}
+          onChange={setTab}
+          tabs={[
+            { id: 'appointments', label: t.bkAppointments },
+            { id: 'types',        label: t.bkAppointmentTypes },
+            { id: 'shifts',       label: t.bkShiftTypes },
+            { id: 'users',        label: t.bkBookableUsers },
+          ]}
+        />
         {tab === 'appointments' && <AppointmentsTab />}
         {tab === 'types'        && <AppointmentTypesTab />}
         {tab === 'shifts'       && <ShiftTypesTab />}
         {tab === 'users'        && <BookableUsersTab />}
       </div>
     </PageShell>
-  );
-}
-
-function Tab({ id, label, tab, setTab }) {
-  const active = tab === id;
-  return (
-    <button
-      type="button"
-      onClick={() => setTab(id)}
-      aria-current={active ? 'page' : undefined}
-      style={{ ...styles.tabBtn, ...(active ? styles.tabBtnActive : {}) }}
-    >
-      {label}
-    </button>
   );
 }
 
@@ -837,9 +827,6 @@ function Field({ label, required, children }) {
 const styles = {
   h2: { fontSize: 18, fontWeight: 700, margin: 0, color: '#111827' },
   h3: { fontSize: 13, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 14px' },
-  tabRow: { display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid #e5e7eb' },
-  tabBtn: { background: 'transparent', border: 'none', borderBottom: '2px solid transparent', padding: '10px 16px', fontSize: 14, fontWeight: 600, color: '#6b7280', cursor: 'pointer' },
-  tabBtnActive: { borderBottomColor: 'var(--ops-page-accent)', color: 'var(--ops-page-accent)' },
   primaryBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '9px 16px', borderRadius: 8, fontSize: 14, fontWeight: 650, cursor: 'pointer' },
   ghostBtn: { background: '#fff', color: '#374151', border: '1px solid #cbd5e1', padding: '9px 14px', borderRadius: 8, fontSize: 14, fontWeight: 650, cursor: 'pointer' },
   iconBtn: { background: 'transparent', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 13, fontWeight: 600 },

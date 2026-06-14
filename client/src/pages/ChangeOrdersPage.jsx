@@ -99,10 +99,6 @@ function ChangeOrdersList({ onOpen, onNew }) {
 
   return (
     <div className="admin-page-shell" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
-      <div className="admin-page-header">
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>{t.salesModule}</h1>
-        <button onClick={() => onNew(projects)} style={styles.primaryBtn}>+ {t.coNew}</button>
-      </div>
       <TabBar
         active="change_orders"
         onChange={(id) => { if (id !== 'change_orders') window.location.href = '/sales'; }}
@@ -111,18 +107,21 @@ function ChangeOrdersList({ onOpen, onNew }) {
           { id: 'change_orders', label: t.coList },
         ]}
       />
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        <select
-          value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value)}
-          aria-label={t.coFilterStatusAria}
-          style={styles.select}
-        >
-          <option value="">{t.coAllStatuses}</option>
-          {Object.entries(STATUS_COLORS).map(([k, v]) => (
-            <option key={k} value={k}>{t[v.labelKey]}</option>
-          ))}
-        </select>
+      <div className="admin-page-header">
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', flex: 1 }}>
+          <select
+            value={statusFilter}
+            onChange={e => setStatusFilter(e.target.value)}
+            aria-label={t.coFilterStatusAria}
+            style={styles.select}
+          >
+            <option value="">{t.coAllStatuses}</option>
+            {Object.entries(STATUS_COLORS).map(([k, v]) => (
+              <option key={k} value={k}>{t[v.labelKey]}</option>
+            ))}
+          </select>
+        </div>
+        <button onClick={() => onNew(projects)} style={styles.primaryBtn}>+ {t.coNew}</button>
       </div>
       {loading ? <SkeletonList rows={4} /> :
         items.length === 0 ? (

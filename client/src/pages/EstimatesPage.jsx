@@ -110,12 +110,6 @@ function EstimatesList({ onOpen, onNew }) {
 
   return (
     <div className="admin-page-shell" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
-      <div className="admin-page-header">
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>{t.salesModule}</h1>
-        <button onClick={onNew} style={styles.primaryBtn}>
-          {t.estNew}
-        </button>
-      </div>
       <TabBar
         active="estimates"
         onChange={(id) => { if (id !== 'estimates') window.location.href = '/change-orders'; }}
@@ -124,26 +118,31 @@ function EstimatesList({ onOpen, onNew }) {
           { id: 'change_orders', label: t.estChangeOrders },
         ]}
       />
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-        <input
-          type="search"
-          placeholder={t.estSearchPlaceholder}
-          aria-label={t.estSearchAria}
-          value={filter}
-          onChange={e => setFilter(e.target.value)}
-          style={styles.searchInput}
-        />
-        <select
-          value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value)}
-          aria-label={t.estFilterStatusAria}
-          style={styles.select}
-        >
-          <option value="">{t.estAllStatuses}</option>
-          {Object.entries(STATUS_COLORS).map(([k, v]) => (
-            <option key={k} value={k}>{t[v.labelKey]}</option>
-          ))}
-        </select>
+      <div className="admin-page-header">
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', flex: 1 }}>
+          <input
+            type="search"
+            placeholder={t.estSearchPlaceholder}
+            aria-label={t.estSearchAria}
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+            style={styles.searchInput}
+          />
+          <select
+            value={statusFilter}
+            onChange={e => setStatusFilter(e.target.value)}
+            aria-label={t.estFilterStatusAria}
+            style={styles.select}
+          >
+            <option value="">{t.estAllStatuses}</option>
+            {Object.entries(STATUS_COLORS).map(([k, v]) => (
+              <option key={k} value={k}>{t[v.labelKey]}</option>
+            ))}
+          </select>
+        </div>
+        <button onClick={onNew} style={styles.primaryBtn}>
+          {t.estNew}
+        </button>
       </div>
       {loading ? <SkeletonList rows={4} /> :
         estimates.length === 0 ? (

@@ -211,7 +211,6 @@ export default function FinancialReportsPage() {
   return (
     <PageShell currentApp="financial_reports" maxWidth={1200} headerProps={{ userRole: user?.role }}>
       <div className="admin-page-shell">
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 16px', color: '#111827' }}>Financial Reports</h1>
         <TabBar
           active={tab}
           onChange={setTab}

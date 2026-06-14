@@ -634,7 +634,6 @@ export default function SubsPage() {
   return (
     <PageShell currentApp="subs" maxWidth={1100} headerProps={{ userRole: user?.role }}>
       <div className="admin-page-shell">
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 16px', color: '#111827' }}>{t.subSubcontractors}</h1>
         <TabBar
           active={tab}
           onChange={(id) => { setTab(id); setView({ kind: 'list' }); }}
