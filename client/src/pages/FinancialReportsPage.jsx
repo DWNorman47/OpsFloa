@@ -208,7 +208,7 @@ export default function FinancialReportsPage() {
   const [tab, setTab] = useState('pnl');
 
   return (
-    <PageShell currentApp="analytics" maxWidth={1200} headerProps={{ userRole: user?.role }}>
+    <PageShell currentApp="financial_reports" maxWidth={1200} headerProps={{ userRole: user?.role }}>
       <div className="admin-page-shell">
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 16px', color: '#111827' }}>Financial Reports</h1>
         <div style={styles.tabRow}>
