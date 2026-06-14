@@ -8,6 +8,7 @@ import EmptyState from '../components/EmptyState';
 import MoneyInput from '../components/MoneyInput';
 import Pagination from '../components/Pagination';
 import SortHeader, { sortRows } from '../components/SortHeader';
+import TabBar from '../components/TabBar';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { formatMoney } from '../utils/format';
@@ -634,20 +635,14 @@ export default function SubsPage() {
     <PageShell currentApp="subs" maxWidth={1100} headerProps={{ userRole: user?.role }}>
       <div className="admin-page-shell">
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 16px', color: '#111827' }}>{t.subSubcontractors}</h1>
-        <div style={styles.tabRow}>
-          <button
-            onClick={() => { setTab('subs'); setView({ kind: 'list' }); }}
-            style={{ ...styles.tabBtn, ...(tab === 'subs' ? styles.tabBtnActive : {}) }}
-          >
-            {t.subDirectory}
-          </button>
-          <button
-            onClick={() => { setTab('pos'); setView({ kind: 'list' }); }}
-            style={{ ...styles.tabBtn, ...(tab === 'pos' ? styles.tabBtnActive : {}) }}
-          >
-            {t.subPurchaseOrders}
-          </button>
-        </div>
+        <TabBar
+          active={tab}
+          onChange={(id) => { setTab(id); setView({ kind: 'list' }); }}
+          tabs={[
+            { id: 'subs', label: t.subDirectory },
+            { id: 'pos', label: t.subPurchaseOrders },
+          ]}
+        />
 
         {tab === 'subs' && view.kind === 'list'        && <SubsList onOpen={openSub} onNew={openSubNew} />}
         {tab === 'subs' && view.kind === 'sub-form'    && <SubForm existing={view.existing} onSave={(s) => openSub(s.id)} onCancel={() => view.existing ? openSub(view.existing.id) : backToList()} />}
@@ -689,9 +684,6 @@ function Info({ label, value }) {
 }
 
 const styles = {
-  tabRow: { display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid #e5e7eb' },
-  tabBtn: { background: 'transparent', border: 'none', borderBottom: '2px solid transparent', padding: '10px 16px', fontSize: 14, fontWeight: 600, color: '#6b7280', cursor: 'pointer' },
-  tabBtnActive: { borderBottomColor: 'var(--ops-page-accent)', color: 'var(--ops-page-accent)' },
   primaryBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '9px 16px', borderRadius: 8, fontSize: 14, fontWeight: 650, cursor: 'pointer' },
   ghostBtn: { background: '#fff', color: '#374151', border: '1px solid #cbd5e1', padding: '9px 14px', borderRadius: 8, fontSize: 14, fontWeight: 650, cursor: 'pointer' },
   searchInput: { padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, flex: 1, minWidth: 240 },

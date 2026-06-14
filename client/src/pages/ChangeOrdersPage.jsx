@@ -14,6 +14,7 @@ import EmptyState from '../components/EmptyState';
 import MoneyInput from '../components/MoneyInput';
 import Pagination from '../components/Pagination';
 import SortHeader, { sortRows } from '../components/SortHeader';
+import TabBar from '../components/TabBar';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useT } from '../hooks/useT';
 import { getT } from '../i18n';
@@ -99,14 +100,17 @@ function ChangeOrdersList({ onOpen, onNew }) {
   return (
     <div className="admin-page-shell" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
       <div className="admin-page-header">
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, flexWrap: 'wrap' }}>
-          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>{t.coList}</h1>
-          <a href="/sales" style={{ fontSize: 14, color: 'var(--ops-page-accent)', textDecoration: 'none', fontWeight: 600 }}>
-            ← {t.coEstimates}
-          </a>
-        </div>
+        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>{t.salesModule}</h1>
         <button onClick={() => onNew(projects)} style={styles.primaryBtn}>+ {t.coNew}</button>
       </div>
+      <TabBar
+        active="change_orders"
+        onChange={(id) => { if (id !== 'change_orders') window.location.href = '/sales'; }}
+        tabs={[
+          { id: 'estimates', label: t.coEstimates },
+          { id: 'change_orders', label: t.coList },
+        ]}
+      />
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
         <select
           value={statusFilter}

@@ -9,6 +9,7 @@ import api from '../api';
 import { PageShell } from '../components/PageShell';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
+import TabBar from '../components/TabBar';
 import { silentError } from '../errorReporter';
 
 function formatCents(cents) {
@@ -211,20 +212,14 @@ export default function FinancialReportsPage() {
     <PageShell currentApp="financial_reports" maxWidth={1200} headerProps={{ userRole: user?.role }}>
       <div className="admin-page-shell">
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 16px', color: '#111827' }}>Financial Reports</h1>
-        <div style={styles.tabRow}>
-          <button
-            onClick={() => setTab('pnl')}
-            style={{ ...styles.tabBtn, ...(tab === 'pnl' ? styles.tabBtnActive : {}) }}
-          >
-            P&L by project
-          </button>
-          <button
-            onClick={() => setTab('wip')}
-            style={{ ...styles.tabBtn, ...(tab === 'wip' ? styles.tabBtnActive : {}) }}
-          >
-            WIP report
-          </button>
-        </div>
+        <TabBar
+          active={tab}
+          onChange={setTab}
+          tabs={[
+            { id: 'pnl', label: 'P&L by project' },
+            { id: 'wip', label: 'WIP report' },
+          ]}
+        />
         {tab === 'pnl' && <PnLTab />}
         {tab === 'wip' && <WipTab />}
       </div>
@@ -233,9 +228,6 @@ export default function FinancialReportsPage() {
 }
 
 const styles = {
-  tabRow: { display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid #e5e7eb' },
-  tabBtn: { background: 'transparent', border: 'none', borderBottom: '2px solid transparent', padding: '10px 16px', fontSize: 14, fontWeight: 600, color: '#6b7280', cursor: 'pointer' },
-  tabBtnActive: { borderBottomColor: 'var(--ops-page-accent)', color: 'var(--ops-page-accent)' },
   ghostBtn: { background: '#fff', color: '#374151', border: '1px solid #d1d5db', padding: '8px 14px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer' },
   tableWrap: { background: '#fff', borderRadius: 8, boxShadow: '0 1px 2px rgba(0,0,0,0.04)', overflow: 'auto' },
   table: { width: '100%', borderCollapse: 'collapse', fontSize: 14 },

@@ -8,6 +8,7 @@ import EmptyState from '../components/EmptyState';
 import MoneyInput from '../components/MoneyInput';
 import Pagination from '../components/Pagination';
 import SortHeader, { sortRows } from '../components/SortHeader';
+import TabBar from '../components/TabBar';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { formatMoney, formatDate, formatDateTime } from '../utils/format';
@@ -110,16 +111,19 @@ function EstimatesList({ onOpen, onNew }) {
   return (
     <div className="admin-page-shell" style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
       <div className="admin-page-header">
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, flexWrap: 'wrap' }}>
-          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>{t.estList}</h1>
-          <a href="/change-orders" style={{ fontSize: 14, color: 'var(--ops-page-accent)', textDecoration: 'none', fontWeight: 600 }}>
-            {t.estChangeOrders} →
-          </a>
-        </div>
+        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>{t.salesModule}</h1>
         <button onClick={onNew} style={styles.primaryBtn}>
           {t.estNew}
         </button>
       </div>
+      <TabBar
+        active="estimates"
+        onChange={(id) => { if (id !== 'estimates') window.location.href = '/change-orders'; }}
+        tabs={[
+          { id: 'estimates', label: t.estList },
+          { id: 'change_orders', label: t.estChangeOrders },
+        ]}
+      />
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
         <input
           type="search"

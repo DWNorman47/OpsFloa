@@ -9,6 +9,7 @@
 
 export const moduleEn = {
   // ── Estimates (est) ──────────────────────────────────────────────────────
+  salesModule: 'Sales',
   estList: 'Estimates',
   estChangeOrders: 'Change Orders',
   estNew: '+ New Estimate',
@@ -584,6 +585,7 @@ export const moduleEn = {
 
 export const moduleEs = {
   // ── Estimates (est) ──────────────────────────────────────────────────────
+  salesModule: 'Ventas',
   estList: 'Presupuestos',
   estChangeOrders: 'Órdenes de Cambio',
   estNew: '+ Nuevo Presupuesto',
