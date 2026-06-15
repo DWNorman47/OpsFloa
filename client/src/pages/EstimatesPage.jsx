@@ -1,14 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import api from '../api';
-import { PageShell } from '../components/PageShell';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
 import MoneyInput from '../components/MoneyInput';
 import Pagination from '../components/Pagination';
 import SortHeader, { sortRows } from '../components/SortHeader';
-import TabBar from '../components/TabBar';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { formatMoney, formatDate, formatDateTime } from '../utils/format';
@@ -110,14 +107,6 @@ function EstimatesList({ onOpen, onNew }) {
 
   return (
     <div className="admin-page-shell">
-      <TabBar
-        active="estimates"
-        onChange={(id) => { if (id !== 'estimates') window.location.href = '/change-orders'; }}
-        tabs={[
-          { id: 'estimates', label: t.estList },
-          { id: 'change_orders', label: t.estChangeOrders },
-        ]}
-      />
       <div className="admin-page-header">
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', flex: 1 }}>
           <input
@@ -870,10 +859,12 @@ function EstimateDetail({ id, onBack, onEdit }) {
   );
 }
 
-// ── Page shell ────────────────────────────────────────────────────────────────
+// ── Panel ─────────────────────────────────────────────────────────────────────
+// Estimates is a tab of the Projects module (see ProjectsPage), so this renders
+// just the list/detail/form content — the surrounding shell, header, and module
+// TabBar are provided by the Projects page.
 
-export default function EstimatesPage() {
-  const { user } = useAuth();
+export function EstimatesPanel() {
   const [view, setView] = useState({ kind: 'list' });
 
   function openDetail(id) { setView({ kind: 'detail', id }); }
@@ -888,7 +879,7 @@ export default function EstimatesPage() {
   function backToList() { setView({ kind: 'list' }); }
 
   return (
-    <PageShell currentApp="sales" maxWidth={1100} headerProps={{ userRole: user?.role }}>
+    <>
       {view.kind === 'list' && (
         <EstimatesList onOpen={openDetail} onNew={openNew} />
       )}
@@ -898,7 +889,7 @@ export default function EstimatesPage() {
       {view.kind === 'form' && (
         <EstimateFormLoader existing={view.existing} onSave={(saved) => setView({ kind: 'detail', id: saved.id })} onCancel={() => view.existing ? setView({ kind: 'detail', id: view.existing.id }) : backToList()} />
       )}
-    </PageShell>
+    </>
   );
 }
 

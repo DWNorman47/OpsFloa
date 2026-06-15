@@ -13,6 +13,9 @@ import { silentError, reportClientError } from '../errorReporter';
 import RetryBanner from '../components/RetryBanner';
 import ProjectFinancialsTab from '../components/ProjectFinancialsTab';
 import ProjectCloseoutTab from '../components/ProjectCloseoutTab';
+import { EstimatesPanel } from './EstimatesPage';
+import { ChangeOrdersPanel } from './ChangeOrdersPage';
+import { useHasAnyPerm } from '../hooks/usePerm';
 
 function punchColor(status) {
   return { open: '#f59e0b', in_progress: '#3b82f6', resolved: '#059669', closed: '#9ca3af' }[status] || '#9ca3af';
@@ -1894,10 +1897,26 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
   );
 }
 
+// Sales (Estimates + Change Orders) lives as tabs inside the Projects module.
+// Reuse the perms the standalone Sales module used so these tabs only show for
+// users who could see Sales before the consolidation.
+const SALES_TAB_PERMS = ['manage_projects', 'manage_settings'];
+const PROJECT_TAB_IDS = ['projects', 'clients', 'estimates', 'change_orders'];
+
 export default function ProjectsPage() {
   const { user } = useAuth();
   const t = useT();
-  const [mainTab, setMainTab] = useState('projects');
+  const hasSalesPerm = useHasAnyPerm(SALES_TAB_PERMS);
+  // Tab can be deep-linked via the URL hash (e.g. /projects#estimates), which
+  // is how the retired /sales and /change-orders routes land here.
+  const [mainTab, setMainTab] = useState(() => {
+    const h = (window.location.hash || '').replace('#', '');
+    return PROJECT_TAB_IDS.includes(h) ? h : 'projects';
+  });
+  const changeTab = (id) => {
+    setMainTab(id);
+    try { window.history.replaceState(null, '', id === 'projects' ? window.location.pathname : `#${id}`); } catch { /* ignore */ }
+  };
   const [projects, setProjects] = useState([]);
   const [metrics, setMetrics] = useState({});
   const [settings, setSettings] = useState({});
@@ -1944,22 +1963,49 @@ export default function ProjectsPage() {
   const workLabelPlural = plural(workLabel);
   const clientLabelPlural = plural(settings?.label_client || 'Customer');
 
+  // Sales tabs show only with the perms AND while the company keeps the Sales
+  // module enabled (the Admin Settings → Modules toggle still applies).
+  const canSeeSales = hasSalesPerm && settings?.module_sales !== false;
+  // Fall back to Projects if a sales tab is deep-linked by someone without
+  // access (the sales tabs aren't rendered for them).
+  const activeTab = (!canSeeSales && (mainTab === 'estimates' || mainTab === 'change_orders'))
+    ? 'projects'
+    : mainTab;
+
+  const tabs = [
+    { id: 'projects', label: workLabelPlural },
+    { id: 'clients', label: clientLabelPlural },
+    ...(canSeeSales ? [
+      { id: 'estimates', label: t.estList },
+      { id: 'change_orders', label: t.coList },
+    ] : []),
+  ];
+
   return (
     <div style={styles.page}>
       <AppHeader currentApp="projects" features={features} />
 
       <main id="main-content" style={styles.main}>
         <TabBar
-          active={mainTab}
-          onChange={setMainTab}
-          tabs={[
-            { id: 'projects', label: workLabelPlural },
-            { id: 'clients', label: clientLabelPlural },
-          ]}
+          active={activeTab}
+          onChange={changeTab}
+          tabs={tabs}
           breakpoint={520}
         />
 
-        {mainTab === 'projects' && (
+        {activeTab === 'estimates' && (
+          <div style={{ marginTop: 24 }}>
+            <EstimatesPanel />
+          </div>
+        )}
+
+        {activeTab === 'change_orders' && (
+          <div style={{ marginTop: 24 }}>
+            <ChangeOrdersPanel />
+          </div>
+        )}
+
+        {activeTab === 'projects' && (
           <>
             <div style={styles.pageHeader} className="projects-page-header">
               <div style={styles.pageHeaderRow} className="projects-page-header-row">
@@ -2073,7 +2119,7 @@ export default function ProjectsPage() {
           </>
         )}
 
-        {mainTab === 'clients' && (
+        {activeTab === 'clients' && (
           <div style={{ marginTop: 24 }}>
             <ManageClients settings={settings} />
           </div>

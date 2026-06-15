@@ -5,16 +5,13 @@
 // stands alone).
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import api from '../api';
-import { PageShell } from '../components/PageShell';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
 import MoneyInput from '../components/MoneyInput';
 import Pagination from '../components/Pagination';
 import SortHeader, { sortRows } from '../components/SortHeader';
-import TabBar from '../components/TabBar';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useT } from '../hooks/useT';
 import { getT } from '../i18n';
@@ -99,14 +96,6 @@ function ChangeOrdersList({ onOpen, onNew }) {
 
   return (
     <div className="admin-page-shell">
-      <TabBar
-        active="change_orders"
-        onChange={(id) => { if (id !== 'change_orders') window.location.href = '/sales'; }}
-        tabs={[
-          { id: 'estimates', label: t.coEstimates },
-          { id: 'change_orders', label: t.coList },
-        ]}
-      />
       <div className="admin-page-header">
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', flex: 1 }}>
           <select
@@ -588,10 +577,12 @@ function ChangeOrderDetail({ id, onBack }) {
   );
 }
 
-// ── Page shell ───────────────────────────────────────────────────────────────
+// ── Panel ────────────────────────────────────────────────────────────────────
+// Change Orders is a tab of the Projects module (see ProjectsPage); this renders
+// just the list/detail/form content. The shell, header, and module TabBar come
+// from the Projects page.
 
-export default function ChangeOrdersPage() {
-  const { user } = useAuth();
+export function ChangeOrdersPanel() {
   const [view, setView] = useState({ kind: 'list' });
 
   function openNew(projects) { setView({ kind: 'form', projects }); }
@@ -599,13 +590,13 @@ export default function ChangeOrdersPage() {
   function backToList()      { setView({ kind: 'list' }); }
 
   return (
-    <PageShell currentApp="sales" maxWidth={1100} headerProps={{ userRole: user?.role }}>
+    <>
       {view.kind === 'list' && <ChangeOrdersList onOpen={openDetail} onNew={openNew} />}
       {view.kind === 'detail' && <ChangeOrderDetail id={view.id} onBack={backToList} />}
       {view.kind === 'form' && (
         <NewChangeOrderForm projects={view.projects || []} onSave={(saved) => setView({ kind: 'detail', id: saved.id })} onCancel={backToList} />
       )}
-    </PageShell>
+    </>
   );
 }
 

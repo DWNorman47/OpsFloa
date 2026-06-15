@@ -35,11 +35,9 @@ const EULA              = lazy(() => import('./pages/EULA'));
 const Tests             = lazy(() => import('./pages/Tests'));
 const Changelog         = lazy(() => import('./pages/Changelog'));
 const HelpPage          = lazy(() => import('./pages/HelpPage'));
-const EstimatesPage     = lazy(() => import('./pages/EstimatesPage'));
 const PublicEstimatePage = lazy(() => import('./pages/PublicEstimatePage'));
 const SubsPage          = lazy(() => import('./pages/SubsPage'));
 const FinancialReportsPage = lazy(() => import('./pages/FinancialReportsPage'));
-const ChangeOrdersPage  = lazy(() => import('./pages/ChangeOrdersPage'));
 const PublicChangeOrderPage = lazy(() => import('./pages/PublicChangeOrderPage'));
 const SubmittalsPage    = lazy(() => import('./pages/SubmittalsPage'));
 const CloseoutPage      = lazy(() => import('./pages/CloseoutPage'));
@@ -171,8 +169,10 @@ function AppRoutes() {
       <Route path="/administration" element={<PrivateRoute adminOnly moduleId="administration"><AdministrationPage /></PrivateRoute>} />
       <Route path="/analytics" element={<PrivateRoute adminOnly moduleId="analytics"><AnalyticsPage /></PrivateRoute>} />
       <Route path="/inventory" element={<PrivateRoute moduleId="inventory"><InventoryPage /></PrivateRoute>} />
-      <Route path="/sales" element={<PrivateRoute adminOnly moduleId="sales"><EstimatesPage /></PrivateRoute>} />
-      <Route path="/change-orders" element={<PrivateRoute adminOnly moduleId="sales"><ChangeOrdersPage /></PrivateRoute>} />
+      {/* Sales is now a tab set inside the Projects module. Keep the old paths
+          working by deep-linking to the matching Projects tab. */}
+      <Route path="/sales" element={<Navigate to="/projects#estimates" replace />} />
+      <Route path="/change-orders" element={<Navigate to="/projects#change_orders" replace />} />
       <Route path="/submittals" element={<PrivateRoute adminOnly moduleId="field"><SubmittalsPage /></PrivateRoute>} />
       <Route path="/closeout" element={<PrivateRoute adminOnly moduleId="workforce"><CloseoutPage /></PrivateRoute>} />
       <Route path="/lien-waivers" element={<PrivateRoute adminOnly moduleId="workforce"><LienWaiversPage /></PrivateRoute>} />
