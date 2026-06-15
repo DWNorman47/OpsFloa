@@ -179,7 +179,7 @@ export const APPS = [
 export default function AppSwitcher({ currentApp = 'timeclock', userRole, features = {} }) {
   const t = useT();
   const { user } = useAuth();
-  const { settings } = useSettings();
+  const { settings, loading } = useSettings();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const isAdmin = userRole === 'admin' || userRole === 'super_admin';
@@ -187,12 +187,18 @@ export default function AppSwitcher({ currentApp = 'timeclock', userRole, featur
   // the global SettingsContext so the switcher gates correctly even on pages
   // that don't load settings themselves. Explicit props win over the context.
   const feat = { ...(settings || {}), ...(features || {}) };
+  const current = APPS.find(a => a.id === currentApp) || APPS[0];
+  // Until we actually have settings, we can't tell which modules are turned
+  // off. Rather than flash the full list and then hide some (the old
+  // "fail open" flicker), show just the current module while loading and
+  // reveal the rest once the flags resolve.
+  const settingsPending = loading && Object.keys(feat).length === 0;
   const labelFor = app => {
     if (app.id === 'field') return feat.label_field || app.name;
     if (app.id === 'projects') return feat.label_work || app.name;
     return app.name;
   };
-  const visibleApps = APPS.filter(a => {
+  const visibleApps = settingsPending ? [current] : APPS.filter(a => {
     if (a.adminOnly && !isAdmin) return false;
     if (a.workerOnly && isAdmin) return false;
     // Company-level feature toggles (admin choice). These hide modules
@@ -215,7 +221,6 @@ export default function AppSwitcher({ currentApp = 'timeclock', userRole, featur
     if (!userCanSeeModule(user, a.id)) return false;
     return true;
   });
-  const current = APPS.find(a => a.id === currentApp) || APPS[0];
 
   useEffect(() => {
     const handler = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
