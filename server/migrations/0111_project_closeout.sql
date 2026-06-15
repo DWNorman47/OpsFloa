@@ -22,8 +22,14 @@ CREATE TABLE IF NOT EXISTS project_closeouts (
 );
 CREATE INDEX IF NOT EXISTS idx_closeout_company        ON project_closeouts (company_id);
 CREATE INDEX IF NOT EXISTS idx_closeout_status         ON project_closeouts (company_id, status);
+-- Supports the "warranties expiring" query, which filters by company_id over
+-- closeouts that have a completion date + warranty term and computes the
+-- warranty-end date at query time. The end date can't be indexed directly:
+-- `date + interval` isn't IMMUTABLE, so an expression index on it is rejected
+-- ("functions in index expression must be marked IMMUTABLE"). Index the raw
+-- columns instead and let the planner compute the end date over the partial set.
 CREATE INDEX IF NOT EXISTS idx_closeout_warranty_end   ON project_closeouts
-  (project_id, (substantial_completion_date + (warranty_months || ' months')::interval))
+  (company_id, substantial_completion_date, warranty_months)
   WHERE substantial_completion_date IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS project_closeout_items (
