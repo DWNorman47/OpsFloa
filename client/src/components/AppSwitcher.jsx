@@ -76,7 +76,7 @@ export const APPS = [
   },
   {
     id: 'team',
-    name: 'Team',
+    name: 'Directory',
     bg: '#0284c7',
     icon: (
       <svg viewBox="0 0 20 20" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
@@ -102,21 +102,6 @@ export const APPS = [
       </svg>
     ),
     path: '/projects',
-  },
-  {
-    id: 'subs',
-    name: 'Subs',
-    bg: '#0f3a8a',
-    adminOnly: true,
-    icon: (
-      <svg viewBox="0 0 20 20" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
-        <circle cx="6" cy="6" r="2.5" />
-        <circle cx="14" cy="6" r="2.5" />
-        <path d="M2 16c0-2.5 2-4.5 4-4.5s4 2 4 4.5" />
-        <path d="M10 16c0-2.5 2-4.5 4-4.5s4 2 4 4.5" />
-      </svg>
-    ),
-    path: '/subs',
   },
   {
     id: 'financial_reports',
@@ -194,7 +179,6 @@ export default function AppSwitcher({ currentApp = 'timeclock', userRole, featur
     if (a.id === 'analytics' && feat.module_analytics === false) return false;
     if (a.id === 'team' && feat.module_team === false) return false;
     // Construction-lifecycle modules, each with its own admin toggle.
-    if (a.id === 'subs' && feat.module_subs === false) return false;
     if (a.id === 'financial_reports' && feat.module_financial_reports === false) return false;
     // module_timeclock now gates the admin oversight page (Workforce). Time
     // Clock itself stays visible to everyone — workers always need it, and

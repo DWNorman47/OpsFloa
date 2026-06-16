@@ -1,14 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import api from '../api';
-import { PageShell } from '../components/PageShell';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
 import MoneyInput from '../components/MoneyInput';
 import Pagination from '../components/Pagination';
 import SortHeader, { sortRows } from '../components/SortHeader';
-import TabBar from '../components/TabBar';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { formatMoney } from '../utils/format';
@@ -617,40 +614,38 @@ function SubPODetail({ id, onBack }) {
   );
 }
 
-// ── Page shell ───────────────────────────────────────────────────────────────
+// ── Panels ───────────────────────────────────────────────────────────────────
+// Subcontractors split across two homes: the firm DIRECTORY is a tab of the
+// Directory module (people & orgs), while purchase ORDERS are a tab of the
+// Projects module (per-project procurement). Each renders just its own
+// list/detail/form content; the host page supplies the shell + module TabBar.
 
-export default function SubsPage() {
-  const t = useT();
-  const { user } = useAuth();
-  const [tab, setTab] = useState('subs');
+export function SubsDirectoryPanel() {
   const [view, setView] = useState({ kind: 'list' });
-
   function openSub(id)    { setView({ kind: 'sub-detail', id }); }
   function openSubNew()   { setView({ kind: 'sub-form', existing: null }); }
   function openSubEdit(s) { setView({ kind: 'sub-form', existing: s }); }
-  function openPo(id)     { setView({ kind: 'po-detail', id }); }
   function backToList()   { setView({ kind: 'list' }); }
 
   return (
-    <PageShell currentApp="subs" maxWidth={1100} headerProps={{ userRole: user?.role }}>
-      <div className="admin-page-shell">
-        <TabBar
-          active={tab}
-          onChange={(id) => { setTab(id); setView({ kind: 'list' }); }}
-          tabs={[
-            { id: 'subs', label: t.subDirectory },
-            { id: 'pos', label: t.subPurchaseOrders },
-          ]}
-        />
+    <>
+      {view.kind === 'list'        && <SubsList onOpen={openSub} onNew={openSubNew} />}
+      {view.kind === 'sub-form'    && <SubForm existing={view.existing} onSave={(s) => openSub(s.id)} onCancel={() => view.existing ? openSub(view.existing.id) : backToList()} />}
+      {view.kind === 'sub-detail'  && <SubDetail id={view.id} onBack={backToList} onEdit={() => openSubEdit({ id: view.id })} />}
+    </>
+  );
+}
 
-        {tab === 'subs' && view.kind === 'list'        && <SubsList onOpen={openSub} onNew={openSubNew} />}
-        {tab === 'subs' && view.kind === 'sub-form'    && <SubForm existing={view.existing} onSave={(s) => openSub(s.id)} onCancel={() => view.existing ? openSub(view.existing.id) : backToList()} />}
-        {tab === 'subs' && view.kind === 'sub-detail'  && <SubDetail id={view.id} onBack={backToList} onEdit={() => openSubEdit({ id: view.id })} />}
+export function SubPOsPanel() {
+  const [view, setView] = useState({ kind: 'list' });
+  function openPo(id)   { setView({ kind: 'po-detail', id }); }
+  function backToList() { setView({ kind: 'list' }); }
 
-        {tab === 'pos' && view.kind === 'list'        && <SubPOsList onOpen={openPo} />}
-        {tab === 'pos' && view.kind === 'po-detail'   && <SubPODetail id={view.id} onBack={backToList} />}
-      </div>
-    </PageShell>
+  return (
+    <>
+      {view.kind === 'list'      && <SubPOsList onOpen={openPo} />}
+      {view.kind === 'po-detail' && <SubPODetail id={view.id} onBack={backToList} />}
+    </>
   );
 }
 

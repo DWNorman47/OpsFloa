@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api';
 import AppHeader from '../components/AppHeader';
-import ManageClients from '../components/ManageClients';
 import { useT } from '../hooks/useT';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { SkeletonList } from '../components/Skeleton';
@@ -15,6 +14,7 @@ import ProjectFinancialsTab from '../components/ProjectFinancialsTab';
 import ProjectCloseoutTab from '../components/ProjectCloseoutTab';
 import { EstimatesPanel } from './EstimatesPage';
 import { ChangeOrdersPanel } from './ChangeOrdersPage';
+import { SubPOsPanel } from './SubsPage';
 import { useHasAnyPerm } from '../hooks/usePerm';
 
 function punchColor(status) {
@@ -1901,7 +1901,7 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
 // Reuse the perms the standalone Sales module used so these tabs only show for
 // users who could see Sales before the consolidation.
 const SALES_TAB_PERMS = ['manage_projects', 'manage_settings'];
-const PROJECT_TAB_IDS = ['projects', 'clients', 'estimates', 'change_orders'];
+const PROJECT_TAB_IDS = ['projects', 'estimates', 'change_orders', 'pos'];
 
 export default function ProjectsPage() {
   const { user } = useAuth();
@@ -1951,34 +1951,40 @@ export default function ProjectsPage() {
   useEffect(() => { loadProjects(showArchived); }, [showArchived]);
 
   useEffect(() => {
-    if (mainTab === 'clients' || showCreateForm) {
+    // Customers are managed in the Directory module now, but the project create
+    // form still needs the list to assign one.
+    if (showCreateForm) {
       api.get('/admin/clients').then(r => setClients(r.data)).catch(silentError('clients list'));
     }
-  }, [mainTab, showCreateForm]);
+  }, [showCreateForm]);
 
   const activeProjects = projects.filter(p => p.active).length;
   const totalHours = Object.values(metrics).reduce((s, m) => s + parseFloat(m.total_hours || 0), 0);
   const workLabel = settings?.label_work || 'Project';
   const workLabelLower = workLabel.toLowerCase();
   const workLabelPlural = plural(workLabel);
-  const clientLabelPlural = plural(settings?.label_client || 'Customer');
 
   // Sales tabs show only with the perms AND while the company keeps the Sales
   // module enabled (the Admin Settings → Modules toggle still applies).
   const canSeeSales = hasSalesPerm && settings?.module_sales !== false;
-  // Fall back to Projects if a sales tab is deep-linked by someone without
-  // access (the sales tabs aren't rendered for them).
-  const activeTab = (!canSeeSales && (mainTab === 'estimates' || mainTab === 'change_orders'))
-    ? 'projects'
-    : mainTab;
+  // Sub purchase orders are project procurement; they follow the Subs module
+  // toggle (the sub firm directory itself now lives in the Directory module).
+  const canSeePOs = settings?.module_subs !== false;
+  // Fall back to Projects if a gated tab is deep-linked by someone without access.
+  const tabAllowed = (id) => {
+    if (id === 'estimates' || id === 'change_orders') return canSeeSales;
+    if (id === 'pos') return canSeePOs;
+    return true;
+  };
+  const activeTab = tabAllowed(mainTab) ? mainTab : 'projects';
 
   const tabs = [
     { id: 'projects', label: workLabelPlural },
-    { id: 'clients', label: clientLabelPlural },
     ...(canSeeSales ? [
       { id: 'estimates', label: t.estList },
       { id: 'change_orders', label: t.coList },
     ] : []),
+    ...(canSeePOs ? [{ id: 'pos', label: t.subPurchaseOrders }] : []),
   ];
 
   return (
@@ -2002,6 +2008,12 @@ export default function ProjectsPage() {
         {activeTab === 'change_orders' && (
           <div style={{ marginTop: 24 }}>
             <ChangeOrdersPanel />
+          </div>
+        )}
+
+        {activeTab === 'pos' && (
+          <div style={{ marginTop: 24 }}>
+            <SubPOsPanel />
           </div>
         )}
 
@@ -2119,11 +2131,6 @@ export default function ProjectsPage() {
           </>
         )}
 
-        {activeTab === 'clients' && (
-          <div style={{ marginTop: 24 }}>
-            <ManageClients settings={settings} />
-          </div>
-        )}
       </main>
     </div>
   );

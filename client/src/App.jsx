@@ -36,7 +36,6 @@ const Tests             = lazy(() => import('./pages/Tests'));
 const Changelog         = lazy(() => import('./pages/Changelog'));
 const HelpPage          = lazy(() => import('./pages/HelpPage'));
 const PublicEstimatePage = lazy(() => import('./pages/PublicEstimatePage'));
-const SubsPage          = lazy(() => import('./pages/SubsPage'));
 const FinancialReportsPage = lazy(() => import('./pages/FinancialReportsPage'));
 const PublicChangeOrderPage = lazy(() => import('./pages/PublicChangeOrderPage'));
 const SubmittalsPage    = lazy(() => import('./pages/SubmittalsPage'));
@@ -179,7 +178,9 @@ function AppRoutes() {
       <Route path="/catalog" element={<PrivateRoute moduleId="inventory"><CatalogPage /></PrivateRoute>} />
       <Route path="/booking" element={<PrivateRoute adminOnly moduleId="workforce"><BookingPage /></PrivateRoute>} />
       <Route path="/me/booking" element={<PrivateRoute><MyBookingPage /></PrivateRoute>} />
-      <Route path="/subs" element={<PrivateRoute adminOnly moduleId="subs"><SubsPage /></PrivateRoute>} />
+      {/* Subcontractors split: the firm directory is now a tab of the Directory
+          module; purchase orders moved to Projects. Keep the old path working. */}
+      <Route path="/subs" element={<Navigate to="/team#subs" replace />} />
       <Route path="/financial-reports" element={<PrivateRoute adminOnly moduleId="financial_reports"><FinancialReportsPage /></PrivateRoute>} />
       <Route path="/account" element={<PrivateRoute><AccountPage /></PrivateRoute>} />
       <Route path="/help" element={<PrivateRoute><HelpPage /></PrivateRoute>} />

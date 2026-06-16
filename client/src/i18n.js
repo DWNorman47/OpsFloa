@@ -202,6 +202,11 @@ const translations = {
     workerTypeSubcontractor: 'Subcontractor',
     workerTypeOwner: 'Owner',
     teamDirectoryTab: 'Directory',
+    dirDirectoryTab: 'Directory',
+    dirSearchPlaceholder: 'Search by name…',
+    dirFilterAll: 'All',
+    dirEmptyTitle: 'Nobody here yet',
+    dirEmptyBody: 'Team members, subcontractors, and customers you add will show up here.',
     teamManageTab: 'Manage',
     teamRolesTab: 'Roles',
     // ManageRoles (Phase B)
@@ -316,7 +321,7 @@ const translations = {
     mrModuleSales: 'Sales',
     mrModuleSalesDesc: 'Show the Estimates & Change Orders tabs in the Projects module',
     mrModuleSubs: 'Subcontractors',
-    mrModuleSubsDesc: 'Show Subs (subcontractor directory & purchase orders) in the app switcher',
+    mrModuleSubsDesc: 'Show the Subs tab in Directory and Purchase Orders in Projects',
     mrModuleFinancialReports: 'Financial Reports',
     mrModuleFinancialReportsDesc: 'Show Financial Reports (P&L portfolio & WIP) in the app switcher',
     // ManageRates — Features
@@ -2991,6 +2996,11 @@ const translations = {
     workerTypeSubcontractor: 'Subcontratista',
     workerTypeOwner: 'Propietario',
     teamDirectoryTab: 'Directorio',
+    dirDirectoryTab: 'Directorio',
+    dirSearchPlaceholder: 'Buscar por nombre…',
+    dirFilterAll: 'Todos',
+    dirEmptyTitle: 'Aún no hay nadie',
+    dirEmptyBody: 'Los miembros del equipo, subcontratistas y clientes que agregues aparecerán aquí.',
     teamManageTab: 'Administrar',
     teamRolesTab: 'Roles',
     // ManageRoles (Phase B)
@@ -3105,7 +3115,7 @@ const translations = {
     mrModuleSales: 'Ventas',
     mrModuleSalesDesc: 'Mostrar las pestañas Presupuestos y Órdenes de Cambio en el módulo Proyectos',
     mrModuleSubs: 'Subcontratistas',
-    mrModuleSubsDesc: 'Mostrar Subs (directorio de subcontratistas y órdenes de compra) en el selector de apps',
+    mrModuleSubsDesc: 'Mostrar la pestaña Subs en Directorio y las Órdenes de Compra en Proyectos',
     mrModuleFinancialReports: 'Informes Financieros',
     mrModuleFinancialReportsDesc: 'Mostrar Informes Financieros (cartera de P&L y WIP) en el selector de apps',
     // ManageRates — Features

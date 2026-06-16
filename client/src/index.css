@@ -1292,6 +1292,44 @@ button {
   margin-bottom: 14px;
   flex-wrap: wrap;
 }
+/* Type filter for the unified Directory (All / Team / Subs / Customers). */
+.ops-dir-filter {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.ops-dir-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--ops-border, #e2e8f0);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ops-text-muted, #6b7280);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.ops-dir-filter-btn:hover { color: var(--ops-text, #111827); }
+.ops-dir-filter-btn.is-active {
+  background: var(--ops-page-accent);
+  border-color: var(--ops-page-accent);
+  color: #fff;
+}
+.ops-dir-filter-count {
+  font-size: 11px;
+  font-weight: 800;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+  color: inherit;
+}
+.ops-dir-filter-btn.is-active .ops-dir-filter-count {
+  background: rgba(255, 255, 255, 0.25);
+}
 .ops-directory-search {
   flex: 1;
   min-width: 220px;

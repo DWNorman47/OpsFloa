@@ -90,11 +90,9 @@ const LANDING_PRIORITY = [
   { id: 'timeclock',      path: '/timeclock' },      // participating (everyone starts here)
   { id: 'workforce',      path: '/workforce' },      // admin oversight
   { id: 'projects',       path: '/projects' },
-  // 'sales' is intentionally not a landing target: it now lives as tabs inside
-  // the Projects module (/sales redirects to /projects#estimates), and landing
-  // there requires project perms — so routing a sales-only user to it would
-  // bounce back here and loop.
-  { id: 'subs',           path: '/subs' },
+  // 'sales' and 'subs' are intentionally not landing targets: they now live as
+  // tabs inside other modules (Projects / Directory) and their old routes
+  // redirect there, so landing on them directly could bounce and loop.
   { id: 'financial_reports', path: '/financial-reports' },
   { id: 'team',           path: '/team' },
   { id: 'field',          path: '/field' },
