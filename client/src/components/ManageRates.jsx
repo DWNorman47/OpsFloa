@@ -368,6 +368,16 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
           </div>
           <div style={styles.row}>
             <div>
+              <div style={styles.label}>{t.mrModuleSales}</div>
+              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrModuleSalesDesc}</div>
+            </div>
+            <label style={{ ...styles.toggle, background: form.module_sales ? 'var(--ops-page-accent)' : '#d1d5db' }}>
+              <input type="checkbox" checked={form.module_sales} onChange={e => set('module_sales', e.target.checked)} style={{ display: 'none' }} />
+              <span style={{ ...styles.toggleKnob, transform: form.module_sales ? 'translateX(46px)' : 'translateX(0)' }} />
+            </label>
+          </div>
+          <div style={styles.row}>
+            <div>
               <div style={styles.label}>{t.mrModuleInventory}</div>
               <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrModuleInventoryDesc}</div>
             </div>
@@ -380,19 +390,6 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
               a separate section rendered after Reimbursements — see below. */}
           <div style={styles.row}>
             <div>
-              <div style={styles.label}>{t.mrModuleAnalytics}</div>
-              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrModuleAnalyticsDesc}</div>
-            </div>
-            <label style={{ ...styles.toggle, background: form.module_analytics ? 'var(--ops-page-accent)' : '#d1d5db' }}>
-              <input type="checkbox" checked={form.module_analytics} onChange={e => {
-                set('module_analytics', e.target.checked);
-                if (!e.target.checked) set('feature_analytics', false);
-              }} style={{ display: 'none' }} />
-              <span style={{ ...styles.toggleKnob, transform: form.module_analytics ? 'translateX(46px)' : 'translateX(0)' }} />
-            </label>
-          </div>
-          <div style={styles.row}>
-            <div>
               <div style={styles.label}>{t.mrModuleTeam}</div>
               <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrModuleTeamDesc}</div>
             </div>
@@ -403,22 +400,25 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
           </div>
           <div style={styles.row}>
             <div>
-              <div style={styles.label}>{t.mrModuleSales}</div>
-              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrModuleSalesDesc}</div>
-            </div>
-            <label style={{ ...styles.toggle, background: form.module_sales ? 'var(--ops-page-accent)' : '#d1d5db' }}>
-              <input type="checkbox" checked={form.module_sales} onChange={e => set('module_sales', e.target.checked)} style={{ display: 'none' }} />
-              <span style={{ ...styles.toggleKnob, transform: form.module_sales ? 'translateX(46px)' : 'translateX(0)' }} />
-            </label>
-          </div>
-          <div style={styles.row}>
-            <div>
               <div style={styles.label}>{t.mrModuleSubs}</div>
               <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrModuleSubsDesc}</div>
             </div>
             <label style={{ ...styles.toggle, background: form.module_subs ? 'var(--ops-page-accent)' : '#d1d5db' }}>
               <input type="checkbox" checked={form.module_subs} onChange={e => set('module_subs', e.target.checked)} style={{ display: 'none' }} />
               <span style={{ ...styles.toggleKnob, transform: form.module_subs ? 'translateX(46px)' : 'translateX(0)' }} />
+            </label>
+          </div>
+          <div style={styles.row}>
+            <div>
+              <div style={styles.label}>{t.mrModuleAnalytics}</div>
+              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrModuleAnalyticsDesc}</div>
+            </div>
+            <label style={{ ...styles.toggle, background: form.module_analytics ? 'var(--ops-page-accent)' : '#d1d5db' }}>
+              <input type="checkbox" checked={form.module_analytics} onChange={e => {
+                set('module_analytics', e.target.checked);
+                if (!e.target.checked) set('feature_analytics', false);
+              }} style={{ display: 'none' }} />
+              <span style={{ ...styles.toggleKnob, transform: form.module_analytics ? 'translateX(46px)' : 'translateX(0)' }} />
             </label>
           </div>
           <div style={styles.row}>
