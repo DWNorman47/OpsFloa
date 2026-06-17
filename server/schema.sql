@@ -60,6 +60,8 @@ CREATE TABLE IF NOT EXISTS projects (
   geo_lat       DECIMAL(10,7),
   geo_lng       DECIMAL(10,7),
   geo_radius_ft INTEGER,
+  budget_hours   NUMERIC(10,2),
+  budget_dollars NUMERIC(10,2),
   active        BOOLEAN      NOT NULL DEFAULT true,
   created_at    TIMESTAMP    NOT NULL DEFAULT NOW()
 );
