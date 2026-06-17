@@ -8,7 +8,9 @@ import { execSync } from 'child_process';
 const pkg = JSON.parse(readFileSync('./package.json', 'utf8'));
 let gitSha = 'dev';
 try {
-  gitSha = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
+  // Fixed length so the version string is identical across environments
+  // (a bare --short can vary in width between machines/clones).
+  gitSha = execSync('git rev-parse --short=7 HEAD', { encoding: 'utf8' }).trim();
 } catch { /* not a git checkout or git missing — keep 'dev' */ }
 const APP_VERSION = `${pkg.version || '0.0.0'}+${gitSha}`;
 
