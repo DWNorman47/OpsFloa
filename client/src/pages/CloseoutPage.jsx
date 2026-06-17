@@ -296,7 +296,7 @@ export default function CloseoutPage() {
   const [projectId, setProjectId] = useState(null);
 
   return (
-    <PageShell currentApp="workforce" maxWidth={1200} headerProps={{ userRole: user?.role }}>
+    <PageShell currentApp="timeclock" maxWidth={1200} headerProps={{ userRole: user?.role }}>
       {projectId == null
         ? <CloseoutLanding onSelect={setProjectId} />
         : <ProjectCloseoutView projectId={projectId} onBack={() => setProjectId(null)} />}

@@ -42,7 +42,7 @@ export default function Register() {
       if (r.data.pending_confirmation) { setConfirming(r.data.email); return; }
       await loginWithToken(r.data.token);
       try { const saved = JSON.parse(localStorage.getItem('tc_companies') || '[]'); localStorage.setItem('tc_companies', JSON.stringify([form.company_name.trim(), ...saved.filter(c => c.toLowerCase() !== form.company_name.trim().toLowerCase())])); } catch {}
-      navigate('/workforce');
+      navigate('/timeclock#wf-live');
     } catch (err) {
       setError(err.response?.data?.error || t.registerFailed);
     } finally {

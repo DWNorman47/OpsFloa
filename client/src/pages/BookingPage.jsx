@@ -785,7 +785,7 @@ export default function BookingPage() {
   const [tab, setTab] = useState('appointments');
 
   return (
-    <PageShell currentApp="workforce" maxWidth={1100} headerProps={{ userRole: user?.role }}>
+    <PageShell currentApp="timeclock" maxWidth={1100} headerProps={{ userRole: user?.role }}>
       <div className="admin-page-shell">
         <TabBar
           active={tab}

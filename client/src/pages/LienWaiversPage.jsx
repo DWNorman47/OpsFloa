@@ -605,7 +605,7 @@ export default function LienWaiversPage() {
   function backToList()   { setView({ kind: 'list' }); }
 
   return (
-    <PageShell currentApp="workforce" maxWidth={1200} headerProps={{ userRole: user?.role }}>
+    <PageShell currentApp="timeclock" maxWidth={1200} headerProps={{ userRole: user?.role }}>
       {view.kind === 'list'   && <LienWaiversList onOpen={openDetail} onNew={openNew} />}
       {view.kind === 'form'   && <NewLienWaiverForm projects={view.ctx?.projects || []} subs={view.ctx?.subs || []} onSave={(saved) => setView({ kind: 'detail', id: saved.id })} onCancel={backToList} />}
       {view.kind === 'detail' && <LienWaiverDetail id={view.id} onBack={backToList} />}
