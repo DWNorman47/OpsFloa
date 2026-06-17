@@ -1158,54 +1158,105 @@ button {
   color: var(--ops-page-accent);
   box-shadow: 0 1px 5px rgba(15,23,42,0.08);
 }
-.ops-tab-dot,
-.ops-tab-select-dot {
+.ops-tab-dot {
   display: inline-block;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--tab-dot);
-}
-.ops-tab-dot {
   margin-right: 6px;
 }
-.ops-tab-select-wrap {
+
+/* Mobile tab dropdown — a custom control (not a native <select>) so the option
+   rows are big and tappable on touch screens. */
+.ops-tab-dd {
   position: relative;
   margin-bottom: 20px;
 }
-.ops-tab-select {
+.ops-tab-dd-trigger {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
-  min-height: 50px;
-  appearance: none;
+  min-height: 52px;
   border: 1px solid var(--ops-border);
   border-radius: var(--ops-radius-lg);
   background: var(--ops-surface);
   color: var(--ops-text);
-  padding: 0 46px 0 16px;
-  /* 16px keeps iOS from zooming on focus and enlarges the native option list. */
+  padding: 0 16px;
   font-size: 16px;
   font-weight: 800;
+  text-align: left;
+  cursor: pointer;
   box-shadow: var(--ops-shadow-sm);
 }
-.ops-tab-select-wrap.has-dot .ops-tab-select {
-  padding-left: 34px;
+.ops-tab-dd-current {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.ops-tab-select-dot {
-  position: absolute;
-  left: 16px;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 1;
-}
-.ops-tab-select-chevron {
-  position: absolute;
-  right: 16px;
-  top: 50%;
-  transform: translateY(-50%);
+.ops-tab-dd-caret {
   color: var(--ops-text-muted);
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 900;
-  pointer-events: none;
+  transition: transform 0.15s ease;
+}
+.ops-tab-dd-caret.is-open {
+  transform: rotate(180deg);
+}
+.ops-tab-dd-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  background: var(--ops-surface);
+  border: 1px solid var(--ops-border);
+  border-radius: var(--ops-radius-lg);
+  box-shadow: 0 16px 42px rgba(15, 23, 42, 0.16);
+  z-index: 1000;
+  max-height: 60vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.ops-tab-dd-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ops-text);
+  text-align: left;
+  cursor: pointer;
+}
+.ops-tab-dd-option:hover {
+  background: rgba(15, 23, 42, 0.05);
+}
+.ops-tab-dd-option.is-active {
+  background: var(--ops-page-accent);
+  color: #fff;
+}
+.ops-tab-dd-option-label {
+  flex: 1;
+  min-width: 0;
+}
+.ops-tab-dd-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tab-dot);
+  flex-shrink: 0;
 }
 .ops-workflow-tabs {
   display: flex;
@@ -1843,7 +1894,7 @@ input, select, textarea {
     font-size: 13px;
   }
   .ops-tabbar,
-  .ops-tab-select-wrap {
+  .ops-tab-dd {
     margin-bottom: 14px;
   }
   .workspace-hero {
