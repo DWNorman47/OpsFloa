@@ -14,11 +14,25 @@ export default function UpdatePrompt() {
   const t = useT();
   const { user } = useAuth();
   const [updateReady, setUpdateReady] = useState(false);
+  // TEMPORARY: surface which build the reload will bring. `newVersion` is the
+  // incoming worker's version (asked via GET_VERSION); currentVersion is what's
+  // running now. Remove the version tag when deploy debugging wraps up.
+  const [newVersion, setNewVersion] = useState(null);
+  // eslint-disable-next-line no-undef
+  const currentVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : null;
 
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
 
     let cancelled = false;
+
+    // The incoming SW replies to GET_VERSION via event.source → this listener.
+    const onMessage = evt => {
+      if (cancelled) return;
+      if (evt.data?.type === 'SW_VERSION' && evt.data.version) setNewVersion(evt.data.version);
+    };
+    navigator.serviceWorker.addEventListener('message', onMessage);
+    const askVersion = worker => { try { worker.postMessage({ type: 'GET_VERSION' }); } catch { /* ignore */ } };
 
     // Show the banner only when a genuinely NEW service worker has finished
     // downloading while an older one is still controlling this tab — that's
@@ -40,6 +54,7 @@ export default function UpdatePrompt() {
         // old bundle until the user reloads.
         if (worker.state === 'installed' && navigator.serviceWorker.controller) {
           setUpdateReady(true);
+          askVersion(worker);
         }
       };
       check(); // it may already be 'installed' by the time we attach
@@ -49,7 +64,7 @@ export default function UpdatePrompt() {
     navigator.serviceWorker.getRegistration().then(r => {
       if (cancelled || !r) return;
       // An update that finished installing before this component mounted.
-      if (r.waiting && navigator.serviceWorker.controller) setUpdateReady(true);
+      if (r.waiting && navigator.serviceWorker.controller) { setUpdateReady(true); askVersion(r.waiting); }
       // One that's mid-install right now…
       watch(r.installing);
       // …or one that starts installing while the tab stays open. The
@@ -58,7 +73,7 @@ export default function UpdatePrompt() {
       r.addEventListener('updatefound', () => watch(r.installing));
     });
 
-    return () => { cancelled = true; };
+    return () => { cancelled = true; navigator.serviceWorker.removeEventListener('message', onMessage); };
   }, []);
 
   if (!updateReady || !user) return null;
@@ -74,6 +89,12 @@ export default function UpdatePrompt() {
         <span style={styles.dot} aria-hidden="true" />
         {t.updateReady}
       </span>
+      {/* TEMPORARY version tag — remove with the rest of the deploy-debug markers. */}
+      {(currentVersion || newVersion) && (
+        <span style={styles.versionTag} aria-hidden="true">
+          {currentVersion ? `v${currentVersion}` : ''}{newVersion ? ` → v${newVersion}` : ''}
+        </span>
+      )}
       <a href="/changelog" target="_blank" rel="noopener noreferrer" style={styles.whatsNew}>
         {t.updateWhatsNew}
       </a>
@@ -109,6 +130,10 @@ const styles = {
   dot: {
     width: 8, height: 8, borderRadius: '50%',
     background: '#22c55e', display: 'inline-block',
+  },
+  versionTag: {
+    fontSize: 11, color: '#9ca3af', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    whiteSpace: 'nowrap',
   },
   whatsNew: {
     color: '#93c5fd', textDecoration: 'underline', fontSize: 13, marginRight: 2,
