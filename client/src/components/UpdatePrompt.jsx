@@ -14,12 +14,6 @@ export default function UpdatePrompt() {
   const t = useT();
   const { user } = useAuth();
   const [updateReady, setUpdateReady] = useState(false);
-  // TEMPORARY: surface which build the reload will bring. `newVersion` is the
-  // incoming worker's version (asked via GET_VERSION); currentVersion is what's
-  // running now. Remove the version tag when deploy debugging wraps up.
-  const [newVersion, setNewVersion] = useState(null);
-  // eslint-disable-next-line no-undef
-  const currentVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : null;
 
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
@@ -37,7 +31,6 @@ export default function UpdatePrompt() {
     const onMessage = evt => {
       if (cancelled) return;
       if (evt.data?.type === 'SW_VERSION' && evt.data.version) {
-        setNewVersion(evt.data.version);
         if (!bundleVersion || evt.data.version !== bundleVersion) setUpdateReady(true);
       }
     };
@@ -94,12 +87,6 @@ export default function UpdatePrompt() {
         <span style={styles.dot} aria-hidden="true" />
         {t.updateReady}
       </span>
-      {/* TEMPORARY version tag — remove with the rest of the deploy-debug markers. */}
-      {(currentVersion || newVersion) && (
-        <span style={styles.versionTag} aria-hidden="true">
-          {currentVersion ? `v${currentVersion}` : ''}{newVersion ? ` → v${newVersion}` : ''}
-        </span>
-      )}
       <a href="/changelog" target="_blank" rel="noopener noreferrer" style={styles.whatsNew}>
         {t.updateWhatsNew}
       </a>
@@ -135,10 +122,6 @@ const styles = {
   dot: {
     width: 8, height: 8, borderRadius: '50%',
     background: '#22c55e', display: 'inline-block',
-  },
-  versionTag: {
-    fontSize: 11, color: '#9ca3af', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-    whiteSpace: 'nowrap',
   },
   whatsNew: {
     color: '#93c5fd', textDecoration: 'underline', fontSize: 13, marginRight: 2,
