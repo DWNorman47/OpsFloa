@@ -2,6 +2,7 @@ import React, { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import InstallPrompt from './components/InstallPrompt';
+import UpdatePrompt from './components/UpdatePrompt';
 import WelcomeModal from './components/WelcomeModal';
 import SkipLink from './components/SkipLink';
 import { ToastProvider } from './contexts/ToastContext';
@@ -257,6 +258,7 @@ export default function App() {
               <WelcomeModal />
               <AppRoutes />
               <InstallPrompt />
+              <UpdatePrompt />
             </SettingsProvider>
           </OfflineProvider>
         </ToastProvider>
