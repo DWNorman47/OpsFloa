@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const pool = require('../db');
 const logger = require('../logger');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { requireAuth, requirePerm } = require('../middleware/auth');
 const { escapeHtml } = require('../utils/htmlEscape');
 const { uploadBase64 } = require('../r2');
 const { checkStorageLimit, incrementStorage } = require('../storage');
@@ -226,7 +226,7 @@ router.get('/items', requireAuth, async (req, res) => {
 });
 
 // POST /api/inventory/items
-router.post('/items', requireAdmin, async (req, res) => {
+router.post('/items', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const { name, sku, description, category, unit = 'each', unit_cost, reorder_point = 0, reorder_qty = 0 } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'name required' });
   if (name.trim().length > 255) return res.status(400).json({ error: 'name too long (max 255 characters)' });
@@ -256,7 +256,7 @@ router.post('/items', requireAdmin, async (req, res) => {
 // Each row is processed independently; per-row failures don't abort the batch.
 // When update_existing is true, rows with a matching SKU overwrite the
 // existing item's editable fields. Otherwise duplicates are reported as skipped.
-router.post('/items/bulk', requireAdmin, async (req, res) => {
+router.post('/items/bulk', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const { items, update_existing = false } = req.body;
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'items array required' });
@@ -332,7 +332,7 @@ router.post('/items/bulk', requireAdmin, async (req, res) => {
 });
 
 // PATCH /api/inventory/items/:id
-router.patch('/items/:id', requireAdmin, async (req, res) => {
+router.patch('/items/:id', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   const { name, sku, description, category, unit, unit_cost, reorder_point, reorder_qty, active } = req.body;
   if (name !== undefined && name.trim().length > 255) return res.status(400).json({ error: 'name too long (max 255 characters)' });
@@ -370,7 +370,7 @@ router.patch('/items/:id', requireAdmin, async (req, res) => {
 });
 
 // DELETE /api/inventory/items/:id  (soft delete)
-router.delete('/items/:id', requireAdmin, async (req, res) => {
+router.delete('/items/:id', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const stock = await pool.query(
@@ -403,7 +403,7 @@ router.get('/items/categories', requireAuth, async (req, res) => {
 // ── Item UOMs ─────────────────────────────────────────────────────────────────
 
 // GET /api/inventory/uom-conversions — all non-base UOMs for this company (admin)
-router.get('/uom-conversions', requireAdmin, async (req, res) => {
+router.get('/uom-conversions', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const result = await pool.query(`
@@ -438,7 +438,7 @@ router.get('/items/:id/uoms', requireAuth, async (req, res) => {
 });
 
 // POST /api/inventory/items/:id/uoms
-router.post('/items/:id/uoms', requireAdmin, async (req, res) => {
+router.post('/items/:id/uoms', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   const { unit, unit_spec, factor = 1, is_base = false } = req.body;
   if (!unit?.trim()) return res.status(400).json({ error: 'unit required' });
@@ -471,7 +471,7 @@ router.post('/items/:id/uoms', requireAdmin, async (req, res) => {
 });
 
 // PATCH /api/inventory/items/:id/uoms/:uomId
-router.patch('/items/:id/uoms/:uomId', requireAdmin, async (req, res) => {
+router.patch('/items/:id/uoms/:uomId', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   const { unit, unit_spec, factor, is_base, active } = req.body;
   try {
@@ -506,7 +506,7 @@ router.patch('/items/:id/uoms/:uomId', requireAdmin, async (req, res) => {
 });
 
 // DELETE /api/inventory/items/:id/uoms/:uomId  (soft delete if in use; hard delete otherwise)
-router.delete('/items/:id/uoms/:uomId', requireAdmin, async (req, res) => {
+router.delete('/items/:id/uoms/:uomId', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const existing = await pool.query(
@@ -553,7 +553,7 @@ router.get('/locations', requireAuth, async (req, res) => {
 const VALID_LOCATION_TYPES = ['warehouse', 'job_site', 'truck', 'other'];
 
 // POST /api/inventory/locations
-router.post('/locations', requireAdmin, async (req, res) => {
+router.post('/locations', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const { name, type = 'warehouse', project_id, notes, address } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'name required' });
   if (name.trim().length > 255) return res.status(400).json({ error: 'name too long (max 255 characters)' });
@@ -572,7 +572,7 @@ router.post('/locations', requireAdmin, async (req, res) => {
 });
 
 // PATCH /api/inventory/locations/:id
-router.patch('/locations/:id', requireAdmin, async (req, res) => {
+router.patch('/locations/:id', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   const { name, type, project_id, notes, address, active, photo_urls } = req.body;
   try {
@@ -605,7 +605,7 @@ router.patch('/locations/:id', requireAdmin, async (req, res) => {
 });
 
 // DELETE /api/inventory/locations/:id  (soft delete)
-router.delete('/locations/:id', requireAdmin, async (req, res) => {
+router.delete('/locations/:id', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const stock = await pool.query(
@@ -734,7 +734,7 @@ router.get('/stock', requireAuth, async (req, res) => {
 });
 
 // GET /api/inventory/stock/low
-router.get('/stock/low', requireAdmin, async (req, res) => {
+router.get('/stock/low', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const result = await pool.query(
@@ -1009,7 +1009,7 @@ router.get('/transactions', requireAuth, async (req, res) => {
 // ── Cycle Counts ──────────────────────────────────────────────────────────────
 
 // GET /api/inventory/cycle-counts
-router.get('/cycle-counts', requireAdmin, async (req, res) => {
+router.get('/cycle-counts', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const { location_id, status, count_type, q, limit = 100, offset = 0 } = req.query;
   const companyId = req.user.company_id;
   try {
@@ -1065,7 +1065,7 @@ router.get('/cycle-counts', requireAdmin, async (req, res) => {
 });
 
 // POST /api/inventory/cycle-counts
-router.post('/cycle-counts', requireAdmin, async (req, res) => {
+router.post('/cycle-counts', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const { location_id, notes, count_type = 'cycle' } = req.body;
   const companyId = req.user.company_id;
   if (!INVENTORY_COUNT_TYPES.includes(count_type)) return res.status(400).json({ error: 'Invalid count_type' });
@@ -1196,7 +1196,7 @@ router.get('/cycle-counts/my-assignments', requireAuth, async (req, res) => {
 });
 
 // GET /api/inventory/cycle-counts/:id
-router.get('/cycle-counts/:id', requireAdmin, async (req, res) => {
+router.get('/cycle-counts/:id', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const cc = await pool.query(
@@ -1243,7 +1243,7 @@ router.get('/cycle-counts/:id', requireAdmin, async (req, res) => {
 });
 
 // PATCH /api/inventory/cycle-counts/:id  (header fields + draft→in_progress)
-router.patch('/cycle-counts/:id', requireAdmin, async (req, res) => {
+router.patch('/cycle-counts/:id', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   const { notes, status } = req.body;
   try {
@@ -1265,7 +1265,7 @@ router.patch('/cycle-counts/:id', requireAdmin, async (req, res) => {
 });
 
 // PATCH /api/inventory/cycle-counts/:id/lines/:lineId
-router.patch('/cycle-counts/:id/lines/:lineId', requireAdmin, async (req, res) => {
+router.patch('/cycle-counts/:id/lines/:lineId', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   const { counted_qty, counted_uom_id, notes } = req.body;
   try {
@@ -1335,7 +1335,7 @@ router.patch('/cycle-counts/:id/lines/:lineId', requireAdmin, async (req, res) =
 });
 
 // POST /api/inventory/cycle-counts/:id/complete
-router.post('/cycle-counts/:id/complete', requireAdmin, async (req, res) => {
+router.post('/cycle-counts/:id/complete', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const cc = await pool.query(
@@ -1474,7 +1474,7 @@ async function checkAutoComplete(companyId, countId, completedById) {
 }
 
 // GET /api/inventory/cycle-counts/:id/workers
-router.get('/cycle-counts/:id/workers', requireAdmin, async (req, res) => {
+router.get('/cycle-counts/:id/workers', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const cc = await pool.query(
@@ -1496,7 +1496,7 @@ router.get('/cycle-counts/:id/workers', requireAdmin, async (req, res) => {
 
 // POST /api/inventory/cycle-counts/:id/workers — upsert worker roles
 // Body: { users: [{ user_id, roles: ['counter','auditor','reconciler'] }] }
-router.post('/cycle-counts/:id/workers', requireAdmin, async (req, res) => {
+router.post('/cycle-counts/:id/workers', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   const { users } = req.body;
   const VALID_ROLES = ['counter', 'auditor', 'reconciler'];
@@ -1536,7 +1536,7 @@ router.post('/cycle-counts/:id/workers', requireAdmin, async (req, res) => {
 });
 
 // DELETE /api/inventory/cycle-counts/:id/workers/:userId
-router.delete('/cycle-counts/:id/workers/:userId', requireAdmin, async (req, res) => {
+router.delete('/cycle-counts/:id/workers/:userId', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const cc = await pool.query(
@@ -1560,7 +1560,7 @@ router.delete('/cycle-counts/:id/workers/:userId', requireAdmin, async (req, res
 });
 
 // POST /api/inventory/cycle-counts/:id/distribute — round-robin assign lines to counters by location group
-router.post('/cycle-counts/:id/distribute', requireAdmin, async (req, res) => {
+router.post('/cycle-counts/:id/distribute', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const cc = await pool.query(
@@ -1632,7 +1632,7 @@ router.post('/cycle-counts/:id/distribute', requireAdmin, async (req, res) => {
 
 // PATCH /api/inventory/cycle-counts/:id/workers/:userId/lines — reassign specific lines to a different counter
 // Body: { line_ids: [id, ...], user_id: newUserId }
-router.patch('/cycle-counts/:id/workers/:userId/lines', requireAdmin, async (req, res) => {
+router.patch('/cycle-counts/:id/workers/:userId/lines', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   const { line_ids, user_id: newUserId } = req.body;
   if (!Array.isArray(line_ids) || line_ids.length === 0) return res.status(400).json({ error: 'line_ids array required' });
@@ -1859,7 +1859,7 @@ router.post('/cycle-counts/:id/submit', requireAuth, async (req, res) => {
 });
 
 // POST /api/inventory/cycle-counts/:id/lines/:lineId/override — admin override a line's final value
-router.post('/cycle-counts/:id/lines/:lineId/override', requireAdmin, async (req, res) => {
+router.post('/cycle-counts/:id/lines/:lineId/override', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   const { counted_qty, counted_uom_id, notes } = req.body;
   const qty = parseFloat(counted_qty);
@@ -1912,7 +1912,7 @@ router.post('/cycle-counts/:id/lines/:lineId/override', requireAdmin, async (req
 });
 
 // POST /api/inventory/cycle-counts/:id/reopen — admin reopens a completed count
-router.post('/cycle-counts/:id/reopen', requireAdmin, async (req, res) => {
+router.post('/cycle-counts/:id/reopen', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const result = await pool.query(
@@ -1954,7 +1954,7 @@ router.post('/cycle-counts/:id/reopen', requireAdmin, async (req, res) => {
 
 function buildSetupRoutes(prefix, table, parentKey, parentTable) {
   // LIST
-  router.get(`/setup/${prefix}`, requireAdmin, async (req, res) => {
+  router.get(`/setup/${prefix}`, requireAuth, requirePerm('manage_inventory'), async (req, res) => {
     const companyId = req.user.company_id;
     const { active = 'true' } = req.query;
     const parentId = req.query[parentKey];
@@ -1975,7 +1975,7 @@ function buildSetupRoutes(prefix, table, parentKey, parentTable) {
   });
 
   // CREATE
-  router.post(`/setup/${prefix}`, requireAdmin, async (req, res) => {
+  router.post(`/setup/${prefix}`, requireAuth, requirePerm('manage_inventory'), async (req, res) => {
     const companyId = req.user.company_id;
     const { name, notes, photo_urls } = req.body;
     const parentId = req.body[parentKey];
@@ -2001,7 +2001,7 @@ function buildSetupRoutes(prefix, table, parentKey, parentTable) {
   });
 
   // UPDATE
-  router.patch(`/setup/${prefix}/:id`, requireAdmin, async (req, res) => {
+  router.patch(`/setup/${prefix}/:id`, requireAuth, requirePerm('manage_inventory'), async (req, res) => {
     const companyId = req.user.company_id;
     const { name, notes, active, photo_urls } = req.body;
     try {
@@ -2031,7 +2031,7 @@ function buildSetupRoutes(prefix, table, parentKey, parentTable) {
   });
 
   // SOFT DELETE
-  router.delete(`/setup/${prefix}/:id`, requireAdmin, async (req, res) => {
+  router.delete(`/setup/${prefix}/:id`, requireAuth, requirePerm('manage_inventory'), async (req, res) => {
     const companyId = req.user.company_id;
     try {
       const result = await pool.query(
@@ -2052,7 +2052,7 @@ buildSetupRoutes('compartments', 'inventory_compartments', 'bay_id',      'inven
 // ── Suppliers ─────────────────────────────────────────────────────────────────
 
 // GET /api/inventory/suppliers
-router.get('/suppliers', requireAdmin, async (req, res) => {
+router.get('/suppliers', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const { active = 'true' } = req.query;
   const companyId = req.user.company_id;
   try {
@@ -2079,7 +2079,7 @@ function validateSupplierWebsite(website) {
   return null;
 }
 
-router.post('/suppliers', requireAdmin, async (req, res) => {
+router.post('/suppliers', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const { name, contact_name, phone, email, website, notes } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'name required' });
   if (name.trim().length > 255) return res.status(400).json({ error: 'name too long (max 255 characters)' });
@@ -2102,7 +2102,7 @@ router.post('/suppliers', requireAdmin, async (req, res) => {
 });
 
 // PATCH /api/inventory/suppliers/:id
-router.patch('/suppliers/:id', requireAdmin, async (req, res) => {
+router.patch('/suppliers/:id', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   const { name, contact_name, phone, email, website, notes, active } = req.body;
   try {
@@ -2135,7 +2135,7 @@ router.patch('/suppliers/:id', requireAdmin, async (req, res) => {
 });
 
 // DELETE /api/inventory/suppliers/:id  (soft delete)
-router.delete('/suppliers/:id', requireAdmin, async (req, res) => {
+router.delete('/suppliers/:id', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const result = await pool.query(
@@ -2161,7 +2161,7 @@ async function nextPONumber(client, companyId) {
 }
 
 // GET /api/inventory/purchase-orders
-router.get('/purchase-orders', requireAdmin, async (req, res) => {
+router.get('/purchase-orders', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const { status, supplier_id, q, limit = 100, offset = 0 } = req.query;
   const companyId = req.user.company_id;
   try {
@@ -2222,7 +2222,7 @@ router.get('/purchase-orders', requireAdmin, async (req, res) => {
 });
 
 // POST /api/inventory/purchase-orders
-router.post('/purchase-orders', requireAdmin, async (req, res) => {
+router.post('/purchase-orders', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const { supplier_id, order_date, expected_date, to_location_id, notes, reference_no, lines = [] } = req.body;
   if (notes && notes.trim().length > 1000) return res.status(400).json({ error: 'notes too long (max 1000 characters)' });
   if (reference_no && reference_no.trim().length > 100) return res.status(400).json({ error: 'reference_no too long (max 100 characters)' });
@@ -2269,7 +2269,7 @@ router.post('/purchase-orders', requireAdmin, async (req, res) => {
 });
 
 // GET /api/inventory/purchase-orders/:id  (with lines)
-router.get('/purchase-orders/:id', requireAdmin, async (req, res) => {
+router.get('/purchase-orders/:id', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const poResult = await pool.query(
@@ -2299,7 +2299,7 @@ router.get('/purchase-orders/:id', requireAdmin, async (req, res) => {
 });
 
 // PATCH /api/inventory/purchase-orders/:id
-router.patch('/purchase-orders/:id', requireAdmin, async (req, res) => {
+router.patch('/purchase-orders/:id', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   const { supplier_id, order_date, expected_date, to_location_id, notes, reference_no, status } = req.body;
   if (notes !== undefined && notes && notes.trim().length > 1000) return res.status(400).json({ error: 'notes too long (max 1000 characters)' });
@@ -2338,7 +2338,7 @@ router.patch('/purchase-orders/:id', requireAdmin, async (req, res) => {
 });
 
 // DELETE /api/inventory/purchase-orders/:id  (hard-delete drafts; cancel others)
-router.delete('/purchase-orders/:id', requireAdmin, async (req, res) => {
+router.delete('/purchase-orders/:id', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const existing = await pool.query(
@@ -2361,7 +2361,7 @@ router.delete('/purchase-orders/:id', requireAdmin, async (req, res) => {
 });
 
 // POST /api/inventory/purchase-orders/:id/lines
-router.post('/purchase-orders/:id/lines', requireAdmin, async (req, res) => {
+router.post('/purchase-orders/:id/lines', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   const { item_id, qty_ordered, unit_cost, uom_id, notes } = req.body;
   const qtyOrdered = parseFloat(qty_ordered);
@@ -2398,7 +2398,7 @@ router.post('/purchase-orders/:id/lines', requireAdmin, async (req, res) => {
 });
 
 // PATCH /api/inventory/purchase-orders/:id/lines/:lineId
-router.patch('/purchase-orders/:id/lines/:lineId', requireAdmin, async (req, res) => {
+router.patch('/purchase-orders/:id/lines/:lineId', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   const { qty_ordered, unit_cost, uom_id, notes } = req.body;
   try {
@@ -2441,7 +2441,7 @@ router.patch('/purchase-orders/:id/lines/:lineId', requireAdmin, async (req, res
 });
 
 // DELETE /api/inventory/purchase-orders/:id/lines/:lineId
-router.delete('/purchase-orders/:id/lines/:lineId', requireAdmin, async (req, res) => {
+router.delete('/purchase-orders/:id/lines/:lineId', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const po = await pool.query(
@@ -2462,7 +2462,7 @@ router.delete('/purchase-orders/:id/lines/:lineId', requireAdmin, async (req, re
 });
 
 // POST /api/inventory/purchase-orders/:id/receive
-router.post('/purchase-orders/:id/receive', requireAdmin, async (req, res) => {
+router.post('/purchase-orders/:id/receive', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   const { location_id, lines } = req.body; // lines: [{ line_id, qty_to_receive }]
   if (!location_id) return res.status(400).json({ error: 'location_id required' });
@@ -2563,7 +2563,7 @@ router.post('/purchase-orders/:id/receive', requireAdmin, async (req, res) => {
 // ── Purchase Order Email ───────────────────────────────────────────────────────
 
 // POST /api/inventory/purchase-orders/:id/email
-router.post('/purchase-orders/:id/email', requireAdmin, async (req, res) => {
+router.post('/purchase-orders/:id/email', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   try {
     // Load PO + lines + supplier + company
@@ -2685,7 +2685,7 @@ router.post('/purchase-orders/:id/email', requireAdmin, async (req, res) => {
 // ── Valuation ─────────────────────────────────────────────────────────────────
 
 // GET /api/inventory/valuation
-router.get('/valuation', requireAdmin, async (req, res) => {
+router.get('/valuation', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
   const { location_id, search, name_search, sku_search, category_search, sort = 'name', dir = 'asc', limit = 200, offset = 0 } = req.query;
   try {
