@@ -1964,12 +1964,11 @@ export default function ProjectsPage() {
   const workLabelLower = workLabel.toLowerCase();
   const workLabelPlural = plural(workLabel);
 
-  // Sales tabs show only with the perms AND while the company keeps the Sales
-  // module enabled (the Admin Settings → Modules toggle still applies).
-  const canSeeSales = hasSalesPerm && settings?.module_sales !== false;
-  // Sub purchase orders are project procurement; they follow the Subs module
-  // toggle (the sub firm directory itself now lives in the Directory module).
-  const canSeePOs = settings?.module_subs !== false;
+  // Estimates/Change Orders and sub Purchase Orders are part of the Projects
+  // module — not separately toggleable. They show to admins who can manage
+  // project work; the Projects module itself is gated upstream (route + switcher).
+  const canSeeSales = hasSalesPerm;
+  const canSeePOs = hasSalesPerm;
   // Fall back to Projects if a gated tab is deep-linked by someone without access.
   const tabAllowed = (id) => {
     if (id === 'estimates' || id === 'change_orders') return canSeeSales;

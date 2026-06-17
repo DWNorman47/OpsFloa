@@ -169,14 +169,16 @@ that had the previous default.
 
 ### Module visibility flags (`module_*`, boolean, in `FEATURE_KEYS`)
 
-Admin-controlled app-switcher visibility toggles: `module_timeclock`,
-`module_team`, `module_projects`, `module_field`, `module_inventory`,
-`module_analytics`, and the construction-lifecycle modules `module_sales`
-(estimates + change orders), `module_subs` (subcontractors + POs), and
-`module_financial_reports` (P&L portfolio + WIP). The three construction
-modules default OFF for new companies; migration 0118 backfilled `'1'` for
-existing companies. The app switcher (`client/src/components/AppSwitcher.jsx`)
-hides an app when its `module_*` flag is `false`.
+Admin-controlled module toggles: `module_timeclock`, `module_team` (Directory),
+`module_projects`, `module_field`, `module_inventory`, `module_analytics`
+(Reports → Performance tab), and `module_financial_reports` (Reports → P&L +
+WIP tabs). The app switcher (`client/src/components/AppSwitcher.jsx`) hides an
+app when its `module_*` flag is `false`.
+
+Note: Sales (Estimates/Change Orders) and Subcontractors are NOT their own
+module flags — they're tabs of Projects / Directory and follow those modules.
+Migration 0118 once backfilled `module_sales`/`module_subs` rows; those are now
+orphaned and unread (kept only as historical data).
 
 ## Boolean-flag columns
 

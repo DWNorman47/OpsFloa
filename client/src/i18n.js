@@ -318,10 +318,6 @@ const translations = {
     mrModuleAnalyticsDesc: 'Show the Performance tab in the Reports module',
     mrModuleTeam: 'Directory',
     mrModuleTeamDesc: 'Show the Directory module (team, subcontractors, customers)',
-    mrModuleSales: 'Sales',
-    mrModuleSalesDesc: 'Show the Estimates & Change Orders tabs in the Projects module',
-    mrModuleSubs: 'Subcontractors',
-    mrModuleSubsDesc: 'Show the Subs tab in Directory and Purchase Orders in Projects',
     mrModuleFinancialReports: 'Reports',
     mrModuleFinancialReportsDesc: 'Show the P&L by project & WIP report tabs',
     // ManageRates — Features
@@ -3112,10 +3108,6 @@ const translations = {
     mrModuleAnalyticsDesc: 'Mostrar la pestaña Rendimiento en el módulo Informes',
     mrModuleTeam: 'Directorio',
     mrModuleTeamDesc: 'Mostrar el módulo Directorio (equipo, subcontratistas, clientes)',
-    mrModuleSales: 'Ventas',
-    mrModuleSalesDesc: 'Mostrar las pestañas Presupuestos y Órdenes de Cambio en el módulo Proyectos',
-    mrModuleSubs: 'Subcontratistas',
-    mrModuleSubsDesc: 'Mostrar la pestaña Subs en Directorio y las Órdenes de Compra en Proyectos',
     mrModuleFinancialReports: 'Informes',
     mrModuleFinancialReportsDesc: 'Mostrar las pestañas P&L por proyecto y WIP',
     // ManageRates — Features

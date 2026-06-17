@@ -95,8 +95,6 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
     module_inventory: settings?.module_inventory ?? false,
     module_analytics: settings?.module_analytics ?? false,
     module_team: settings?.module_team ?? true,
-    module_sales: settings?.module_sales ?? false,
-    module_subs: settings?.module_subs ?? false,
     module_financial_reports: settings?.module_financial_reports ?? false,
     feature_project_integration: settings?.feature_project_integration ?? true,
     feature_inactive_alerts: settings?.feature_inactive_alerts ?? false,
@@ -183,8 +181,6 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
       module_inventory: settings.module_inventory ?? false,
       module_analytics: settings.module_analytics ?? false,
       module_team: settings.module_team ?? true,
-      module_sales: settings.module_sales ?? false,
-      module_subs: settings.module_subs ?? false,
       module_financial_reports: settings.module_financial_reports ?? false,
       feature_project_integration: settings.feature_project_integration ?? true,
       feature_inactive_alerts: settings.feature_inactive_alerts ?? false,
@@ -250,8 +246,6 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
         module_inventory: form.module_inventory,
         module_analytics: form.module_analytics,
         module_team: form.module_team,
-        module_sales: form.module_sales,
-        module_subs: form.module_subs,
         module_financial_reports: form.module_financial_reports,
         feature_project_integration: form.feature_project_integration,
         feature_inactive_alerts: form.feature_inactive_alerts,
@@ -366,20 +360,6 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
               <span style={{ ...styles.toggleKnob, transform: form.module_projects ? 'translateX(46px)' : 'translateX(0)' }} />
             </label>
           </div>
-          {/* Sales toggle hidden for now — the module_sales flag still gates the
-              Estimates/Change Orders tabs; flip this guard to re-expose it. */}
-          {false && (
-          <div style={styles.row}>
-            <div>
-              <div style={styles.label}>{t.mrModuleSales}</div>
-              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrModuleSalesDesc}</div>
-            </div>
-            <label style={{ ...styles.toggle, background: form.module_sales ? 'var(--ops-page-accent)' : '#d1d5db' }}>
-              <input type="checkbox" checked={form.module_sales} onChange={e => set('module_sales', e.target.checked)} style={{ display: 'none' }} />
-              <span style={{ ...styles.toggleKnob, transform: form.module_sales ? 'translateX(46px)' : 'translateX(0)' }} />
-            </label>
-          </div>
-          )}
           <div style={styles.row}>
             <div>
               <div style={styles.label}>{t.mrModuleInventory}</div>
@@ -402,20 +382,6 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
               <span style={{ ...styles.toggleKnob, transform: form.module_team ? 'translateX(46px)' : 'translateX(0)' }} />
             </label>
           </div>
-          {/* Subcontractors toggle hidden for now — the module_subs flag still
-              gates the Directory Subs tab + Projects POs; flip to re-expose. */}
-          {false && (
-          <div style={styles.row}>
-            <div>
-              <div style={styles.label}>{t.mrModuleSubs}</div>
-              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrModuleSubsDesc}</div>
-            </div>
-            <label style={{ ...styles.toggle, background: form.module_subs ? 'var(--ops-page-accent)' : '#d1d5db' }}>
-              <input type="checkbox" checked={form.module_subs} onChange={e => set('module_subs', e.target.checked)} style={{ display: 'none' }} />
-              <span style={{ ...styles.toggleKnob, transform: form.module_subs ? 'translateX(46px)' : 'translateX(0)' }} />
-            </label>
-          </div>
-          )}
           <div style={styles.row}>
             <div>
               <div style={styles.label}>{t.mrModuleAnalytics}</div>

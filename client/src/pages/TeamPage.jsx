@@ -236,7 +236,9 @@ export default function TeamPage() {
 
   const workerLabel = features?.label_worker || adminSettings?.label_worker || 'Team Member';
   const clientLabel = features?.label_client || adminSettings?.label_client || 'Customer';
-  const subsEnabled = isAdmin && features?.module_subs !== false;
+  // Subcontractors is a tab of the Directory module (not separately toggleable);
+  // it shows to admins whenever Directory is available.
+  const subsEnabled = isAdmin;
 
   // Tabs depend on capability + which modules are on. Directory is always
   // present; the management tabs appear only for users who can use them.

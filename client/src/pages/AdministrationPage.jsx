@@ -652,19 +652,19 @@ export default function AdministrationPage() {
       simple: {
         module_timeclock: true, module_team: true, module_projects: false, module_field: false,
         module_inventory: false, module_analytics: false, feature_scheduling: false,
-        module_sales: false, module_subs: false, module_financial_reports: false,
+        module_financial_reports: false,
         feature_reimbursements: false, feature_pto: false, feature_chat: false, feature_broadcast: false,
       },
       team: {
         module_timeclock: true, module_team: true, module_projects: true, module_field: false,
         module_inventory: false, module_analytics: false, feature_scheduling: true,
-        module_sales: true, module_subs: true, module_financial_reports: false,
+        module_financial_reports: false,
         feature_reimbursements: true, feature_pto: true, feature_chat: false, feature_broadcast: false,
       },
       full: {
         module_timeclock: true, module_team: true, module_projects: true, module_field: true,
         module_inventory: true, module_analytics: true, feature_scheduling: true,
-        module_sales: true, module_subs: true, module_financial_reports: true,
+        module_financial_reports: true,
         feature_reimbursements: true, feature_pto: true, feature_chat: false, feature_broadcast: false,
       },
     };
@@ -682,7 +682,7 @@ export default function AdministrationPage() {
     }
   };
   const workspaceSummary = [
-    ['Core modules', ['module_timeclock', 'module_team', 'module_projects', 'module_field', 'module_inventory', 'module_analytics', 'module_sales', 'module_subs', 'module_financial_reports']],
+    ['Core modules', ['module_timeclock', 'module_team', 'module_projects', 'module_field', 'module_inventory', 'module_analytics', 'module_financial_reports']],
     ['Daily tools', ['feature_scheduling', 'feature_pto', 'feature_reimbursements', 'feature_chat', 'feature_broadcast']],
     ['Specialized', ['addon_certified_payroll', 'feature_quickbooks', 'feature_media_gallery', 'feature_geolocation']],
   ].map(([label, keys]) => {
