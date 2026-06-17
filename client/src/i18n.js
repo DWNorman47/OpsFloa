@@ -322,8 +322,8 @@ const translations = {
     mrModuleSalesDesc: 'Show the Estimates & Change Orders tabs in the Projects module',
     mrModuleSubs: 'Subcontractors',
     mrModuleSubsDesc: 'Show the Subs tab in Directory and Purchase Orders in Projects',
-    mrModuleFinancialReports: 'Financial Reports',
-    mrModuleFinancialReportsDesc: 'Show the P&L & WIP tabs in the Reports module',
+    mrModuleFinancialReports: 'Reports',
+    mrModuleFinancialReportsDesc: 'Show the P&L by project & WIP report tabs',
     // ManageRates — Features
     mrFeatProjectIntegration: 'Work/Project Clock-In',
     mrFeatProjectIntegrationDesc: 'Require a work/project selection when clocking in and logging time',
@@ -3116,8 +3116,8 @@ const translations = {
     mrModuleSalesDesc: 'Mostrar las pestañas Presupuestos y Órdenes de Cambio en el módulo Proyectos',
     mrModuleSubs: 'Subcontratistas',
     mrModuleSubsDesc: 'Mostrar la pestaña Subs en Directorio y las Órdenes de Compra en Proyectos',
-    mrModuleFinancialReports: 'Informes Financieros',
-    mrModuleFinancialReportsDesc: 'Mostrar las pestañas P&L y WIP en el módulo Informes',
+    mrModuleFinancialReports: 'Informes',
+    mrModuleFinancialReportsDesc: 'Mostrar las pestañas P&L por proyecto y WIP',
     // ManageRates — Features
     mrFeatProjectIntegration: 'Marcaje por trabajo/proyecto',
     mrFeatProjectIntegrationDesc: 'Requerir selección de trabajo/proyecto al marcar entrada y registrar tiempo',

@@ -366,6 +366,9 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
               <span style={{ ...styles.toggleKnob, transform: form.module_projects ? 'translateX(46px)' : 'translateX(0)' }} />
             </label>
           </div>
+          {/* Sales toggle hidden for now — the module_sales flag still gates the
+              Estimates/Change Orders tabs; flip this guard to re-expose it. */}
+          {false && (
           <div style={styles.row}>
             <div>
               <div style={styles.label}>{t.mrModuleSales}</div>
@@ -376,6 +379,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
               <span style={{ ...styles.toggleKnob, transform: form.module_sales ? 'translateX(46px)' : 'translateX(0)' }} />
             </label>
           </div>
+          )}
           <div style={styles.row}>
             <div>
               <div style={styles.label}>{t.mrModuleInventory}</div>
@@ -398,6 +402,9 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
               <span style={{ ...styles.toggleKnob, transform: form.module_team ? 'translateX(46px)' : 'translateX(0)' }} />
             </label>
           </div>
+          {/* Subcontractors toggle hidden for now — the module_subs flag still
+              gates the Directory Subs tab + Projects POs; flip to re-expose. */}
+          {false && (
           <div style={styles.row}>
             <div>
               <div style={styles.label}>{t.mrModuleSubs}</div>
@@ -408,6 +415,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
               <span style={{ ...styles.toggleKnob, transform: form.module_subs ? 'translateX(46px)' : 'translateX(0)' }} />
             </label>
           </div>
+          )}
           <div style={styles.row}>
             <div>
               <div style={styles.label}>{t.mrModuleAnalytics}</div>
