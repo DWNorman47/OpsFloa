@@ -190,7 +190,7 @@ const styles = {
   heading: { fontSize: 18, fontWeight: 700 },
   rangeTabs: { display: 'flex', gap: 4, flexWrap: 'nowrap' },
   rangeBtn: { padding: '5px 10px', background: '#f3f4f6', border: 'none', borderRadius: 6, fontSize: 12, color: '#6b7280', cursor: 'pointer', fontWeight: 500 },
-  rangeActive: { padding: '5px 10px', background: '#1a56db', border: 'none', borderRadius: 6, fontSize: 12, color: '#fff', cursor: 'pointer', fontWeight: 700 },
+  rangeActive: { padding: '5px 10px', background: 'var(--ops-page-accent)', border: 'none', borderRadius: 6, fontSize: 12, color: '#fff', cursor: 'pointer', fontWeight: 700 },
   statsGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 16, marginBottom: 20 },
   // Flat labeled numbers — no border/background/radius. The previous
   // bordered tiles read as buttons and admins/workers were tapping them.
@@ -203,6 +203,6 @@ const styles = {
   projectRow: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 },
   projectName: { fontSize: 13, fontWeight: 600, minWidth: 100, flex: 1 },
   barWrap: { flex: 2, height: 8, background: '#e5e7eb', borderRadius: 4, overflow: 'hidden' },
-  bar: { height: '100%', background: '#1a56db', borderRadius: 4, transition: 'width 0.3s ease' },
+  bar: { height: '100%', background: 'var(--ops-page-accent)', borderRadius: 4, transition: 'width 0.3s ease' },
   projectHours: { fontSize: 13, color: '#555', minWidth: 36, textAlign: 'right' },
 };

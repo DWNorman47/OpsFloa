@@ -147,7 +147,7 @@ const s = {
   row: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 },
   label: { fontSize: 14, fontWeight: 600, color: '#111827', marginBottom: 2 },
   sub: { fontSize: 12, color: '#6b7280' },
-  enableBtn: { background: '#1a56db', color: '#fff', border: 'none', padding: '7px 16px', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', flexShrink: 0 },
+  enableBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '7px 16px', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', flexShrink: 0 },
   disableBtn: { background: 'none', border: '1px solid #d1d5db', color: '#374151', padding: '7px 16px', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', flexShrink: 0 },
   setupBox: { marginTop: 16, borderTop: '1px solid #f0f0f0', paddingTop: 16 },
   hint: { fontSize: 13, color: '#6b7280', marginBottom: 14 },

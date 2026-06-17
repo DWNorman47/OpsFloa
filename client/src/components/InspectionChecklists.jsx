@@ -742,7 +742,7 @@ const styles = {
   submitBtn: { background: '#059669', color: '#fff', border: 'none', padding: '11px 22px', borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: 'pointer' },
   cancelBtn: { background: '#f3f4f6', color: '#374151', border: 'none', padding: '11px 18px', borderRadius: 8, fontWeight: 600, fontSize: 14, cursor: 'pointer' },
   // Template builder
-  presetBtn: { background: '#eff6ff', color: '#1a56db', border: '1px solid #bfdbfe', padding: '7px 14px', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  presetBtn: { background: '#eff6ff', color: 'var(--ops-page-accent)', border: '1px solid #bfdbfe', padding: '7px 14px', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   presetGrid: { display: 'flex', gap: 8, flexWrap: 'wrap', background: '#f9fafb', borderRadius: 8, padding: 12 },
   presetCard: { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '10px 14px', cursor: 'pointer', textAlign: 'left', minWidth: 140 },
   presetName: { fontSize: 13, fontWeight: 700, color: '#111827' },

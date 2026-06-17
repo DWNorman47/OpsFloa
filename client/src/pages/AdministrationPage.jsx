@@ -652,16 +652,19 @@ export default function AdministrationPage() {
       simple: {
         module_timeclock: true, module_team: true, module_projects: false, module_field: false,
         module_inventory: false, module_analytics: false, feature_scheduling: false,
+        module_financial_reports: false,
         feature_reimbursements: false, feature_pto: false, feature_chat: false, feature_broadcast: false,
       },
       team: {
         module_timeclock: true, module_team: true, module_projects: true, module_field: false,
         module_inventory: false, module_analytics: false, feature_scheduling: true,
+        module_financial_reports: false,
         feature_reimbursements: true, feature_pto: true, feature_chat: false, feature_broadcast: false,
       },
       full: {
         module_timeclock: true, module_team: true, module_projects: true, module_field: true,
         module_inventory: true, module_analytics: true, feature_scheduling: true,
+        module_financial_reports: true,
         feature_reimbursements: true, feature_pto: true, feature_chat: false, feature_broadcast: false,
       },
     };
@@ -679,7 +682,7 @@ export default function AdministrationPage() {
     }
   };
   const workspaceSummary = [
-    ['Core modules', ['module_timeclock', 'module_team', 'module_projects', 'module_field', 'module_inventory', 'module_analytics']],
+    ['Core modules', ['module_timeclock', 'module_team', 'module_projects', 'module_field', 'module_inventory', 'module_analytics', 'module_financial_reports']],
     ['Daily tools', ['feature_scheduling', 'feature_pto', 'feature_reimbursements', 'feature_chat', 'feature_broadcast']],
     ['Specialized', ['addon_certified_payroll', 'feature_quickbooks', 'feature_media_gallery', 'feature_geolocation']],
   ].map(([label, keys]) => {
@@ -949,7 +952,7 @@ const styles = {
   // scopes to the whole card.
   companyCard: { background: '#fff', borderRadius: 12, boxShadow: '0 1px 6px rgba(0,0,0,0.07)' },
   companyCardEditBtn: {
-    background: 'none', border: '1px solid #d1d5db', color: '#1a56db',
+    background: 'none', border: '1px solid #d1d5db', color: 'var(--ops-page-accent)',
     padding: '5px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer',
     flexShrink: 0,
   },
@@ -973,7 +976,7 @@ const styles = {
   cardValue: { fontSize: 14, color: '#111827', fontWeight: 500 },
   planBadge: { fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 10 },
   planName: { fontSize: 13, color: '#374151', fontWeight: 500 },
-  editLink: { fontSize: 12, color: '#1a56db', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, padding: 0 },
+  editLink: { fontSize: 12, color: 'var(--ops-page-accent)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, padding: 0 },
   feedback: { fontSize: 13, margin: '4px 0 0', padding: '6px 0' },
   // Account
   accordionTrigger: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '16px 20px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' },

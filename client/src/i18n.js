@@ -1,5 +1,11 @@
+import { moduleEn, moduleEs } from './i18nModules';
+
 const translations = {
   English: {
+    // Construction-lifecycle module keys (estimates, COs, subs, lien
+    // waivers, submittals, booking). Spread first so any same-named key
+    // defined explicitly below wins — keeps existing app strings authoritative.
+    ...moduleEn,
     // ── Header / Dashboard (worker) ──────────────────────────────────────────
     changePassword: 'Change Password',
     logout: 'Logout',
@@ -110,6 +116,8 @@ const translations = {
 
     // ── Admin Dashboard tabs ─────────────────────────────────────────────────
     tabLive: 'Live',
+    timeGroupPersonal: 'Personal',
+    timeGroupWorkforce: 'Workforce',
     tabAnalytics: 'Analytics',
     tabApprovals: 'Approvals',
     tabReports: 'Reports',
@@ -196,6 +204,11 @@ const translations = {
     workerTypeSubcontractor: 'Subcontractor',
     workerTypeOwner: 'Owner',
     teamDirectoryTab: 'Directory',
+    dirDirectoryTab: 'Directory',
+    dirSearchPlaceholder: 'Search by name…',
+    dirFilterAll: 'All',
+    dirEmptyTitle: 'Nobody here yet',
+    dirEmptyBody: 'Team members, subcontractors, and customers you add will show up here.',
     teamManageTab: 'Manage',
     teamRolesTab: 'Roles',
     // ManageRoles (Phase B)
@@ -296,7 +309,7 @@ const translations = {
     dayThursday: 'Thursday', dayFriday: 'Friday', daySaturday: 'Saturday',
     // ManageRates — Modules
     mrModulesTitle: 'Modules',
-    mrModulesSub: 'Enable or disable entire app modules for all users',
+    mrModulesSub: 'Turn modules and their features on or off for everyone',
     mrModuleTimeClock: 'Time Clock',
     mrModuleTimeClockDesc: 'Show the Time Clock app in the app switcher',
     mrModuleProjects: 'Projects',
@@ -304,9 +317,11 @@ const translations = {
     mrModuleInventory: 'Inventory',
     mrModuleInventoryDesc: 'Show the Inventory module in the app switcher',
     mrModuleAnalytics: 'Analytics',
-    mrModuleAnalyticsDesc: 'Show the Analytics module in the app switcher',
-    mrModuleTeam: 'Team',
-    mrModuleTeamDesc: 'Show the Team directory in the app switcher',
+    mrModuleAnalyticsDesc: 'Show the Performance tab in the Reports module',
+    mrModuleTeam: 'Directory',
+    mrModuleTeamDesc: 'Show the Directory module (team, subcontractors, customers)',
+    mrModuleFinancialReports: 'Reports',
+    mrModuleFinancialReportsDesc: 'Show the P&L by project & WIP report tabs',
     // ManageRates — Features
     mrFeatProjectIntegration: 'Work/Project Clock-In',
     mrFeatProjectIntegrationDesc: 'Require a work/project selection when clocking in and logging time',
@@ -1469,6 +1484,7 @@ const translations = {
     paginationPrev: 'Prev',
     paginationNext: 'Next',
     paginationPage: 'Page',
+    paginationNavLabel: 'Pagination',
     ofLabel: 'of',
     auditEvents: 'events',
     auditNoActivity: 'No matching activity.',
@@ -2781,6 +2797,7 @@ const translations = {
   },
 
   Spanish: {
+    ...moduleEs,
     // ── Header / Dashboard (worker) ──────────────────────────────────────────
     changePassword: 'Cambiar Contraseña',
     logout: 'Cerrar Sesión',
@@ -2891,6 +2908,8 @@ const translations = {
 
     // ── Admin Dashboard tabs ─────────────────────────────────────────────────
     tabLive: 'En Vivo',
+    timeGroupPersonal: 'Personal',
+    timeGroupWorkforce: 'Personal del equipo',
     tabAnalytics: 'Análisis',
     tabApprovals: 'Aprobaciones',
     tabReports: 'Reportes',
@@ -2977,6 +2996,11 @@ const translations = {
     workerTypeSubcontractor: 'Subcontratista',
     workerTypeOwner: 'Propietario',
     teamDirectoryTab: 'Directorio',
+    dirDirectoryTab: 'Directorio',
+    dirSearchPlaceholder: 'Buscar por nombre…',
+    dirFilterAll: 'Todos',
+    dirEmptyTitle: 'Aún no hay nadie',
+    dirEmptyBody: 'Los miembros del equipo, subcontratistas y clientes que agregues aparecerán aquí.',
     teamManageTab: 'Administrar',
     teamRolesTab: 'Roles',
     // ManageRoles (Phase B)
@@ -3077,7 +3101,7 @@ const translations = {
     dayThursday: 'Jueves', dayFriday: 'Viernes', daySaturday: 'Sábado',
     // ManageRates — Modules
     mrModulesTitle: 'Módulos',
-    mrModulesSub: 'Habilita o deshabilita módulos completos para todos los usuarios',
+    mrModulesSub: 'Activa o desactiva módulos y sus funciones para todos',
     mrModuleTimeClock: 'Reloj',
     mrModuleTimeClockDesc: 'Mostrar la app Reloj en el selector de apps',
     mrModuleProjects: 'Trabajo',
@@ -3085,9 +3109,11 @@ const translations = {
     mrModuleInventory: 'Inventario',
     mrModuleInventoryDesc: 'Mostrar el módulo Inventario en el selector de apps',
     mrModuleAnalytics: 'Analíticas',
-    mrModuleAnalyticsDesc: 'Mostrar el módulo Analíticas en el selector de apps',
-    mrModuleTeam: 'Equipo',
-    mrModuleTeamDesc: 'Mostrar el directorio del equipo en el selector',
+    mrModuleAnalyticsDesc: 'Mostrar la pestaña Rendimiento en el módulo Informes',
+    mrModuleTeam: 'Directorio',
+    mrModuleTeamDesc: 'Mostrar el módulo Directorio (equipo, subcontratistas, clientes)',
+    mrModuleFinancialReports: 'Informes',
+    mrModuleFinancialReportsDesc: 'Mostrar las pestañas P&L por proyecto y WIP',
     // ManageRates — Features
     mrFeatProjectIntegration: 'Marcaje por trabajo/proyecto',
     mrFeatProjectIntegrationDesc: 'Requerir selección de trabajo/proyecto al marcar entrada y registrar tiempo',
@@ -4240,6 +4266,7 @@ const translations = {
     paginationPrev: 'Anterior',
     paginationNext: 'Siguiente',
     paginationPage: 'Página',
+    paginationNavLabel: 'Paginación',
     ofLabel: 'de',
     auditEvents: 'eventos',
     auditNoActivity: 'Sin actividad coincidente.',

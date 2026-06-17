@@ -97,7 +97,7 @@ export default function WorkerSchedule() {
         {Object.entries(byDate).map(([date, dayShifts]) => (
           <div key={date} style={styles.dayGroup}>
             <div style={styles.dateLabel}>
-              <span style={{ ...styles.dateName, color: isToday(date) ? '#1a56db' : '#374151' }}>
+              <span style={{ ...styles.dateName, color: isToday(date) ? 'var(--ops-page-accent)' : '#374151' }}>
                 {fmtDate(date, t, locale)}
               </span>
               {isToday(date) && <span style={styles.todayBadge}>{t.wsToday}</span>}
@@ -105,7 +105,7 @@ export default function WorkerSchedule() {
             {dayShifts.map(s => (
               <div key={s.id} style={{
                 ...styles.shiftCard,
-                borderLeftColor: s.cant_make_it ? '#ef4444' : isToday(date) ? '#1a56db' : '#e5e7eb',
+                borderLeftColor: s.cant_make_it ? '#ef4444' : isToday(date) ? 'var(--ops-page-accent)' : '#e5e7eb',
                 opacity: s.cant_make_it ? 0.75 : 1,
               }}>
                 <div style={styles.shiftTime}>
@@ -175,10 +175,10 @@ const styles = {
   dayGroup: {},
   dateLabel: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 },
   dateName: { fontSize: 14, fontWeight: 700 },
-  todayBadge: { fontSize: 11, fontWeight: 700, background: '#dbeafe', color: '#1a56db', padding: '2px 8px', borderRadius: 10 },
+  todayBadge: { fontSize: 11, fontWeight: 700, background: '#dbeafe', color: 'var(--ops-page-accent)', padding: '2px 8px', borderRadius: 10 },
   shiftCard: { background: '#fff', borderRadius: 10, padding: '14px 16px', boxShadow: '0 1px 4px rgba(0,0,0,0.07)', borderLeft: '4px solid #e5e7eb' },
   shiftTime: { fontSize: 18, fontWeight: 800, color: '#111827', marginBottom: 4 },
-  shiftProject: { fontSize: 13, fontWeight: 600, color: '#1a56db', marginBottom: 2 },
+  shiftProject: { fontSize: 13, fontWeight: 600, color: 'var(--ops-page-accent)', marginBottom: 2 },
   shiftNotes: { fontSize: 12, color: '#6b7280', marginTop: 4, lineHeight: 1.4 },
   shiftFooter: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, gap: 8 },
   cantBadge: { fontSize: 11, fontWeight: 700, color: '#dc2626', background: '#fee2e2', padding: '2px 8px', borderRadius: 10 },

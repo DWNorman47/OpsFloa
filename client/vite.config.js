@@ -8,9 +8,24 @@ import { execSync } from 'child_process';
 const pkg = JSON.parse(readFileSync('./package.json', 'utf8'));
 let gitSha = 'dev';
 try {
-  gitSha = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
+  // Fixed length so the version string is identical across environments
+  // (a bare --short can vary in width between machines/clones).
+  gitSha = execSync('git rev-parse --short=7 HEAD', { encoding: 'utf8' }).trim();
 } catch { /* not a git checkout or git missing — keep 'dev' */ }
 const APP_VERSION = `${pkg.version || '0.0.0'}+${gitSha}`;
+
+// Emit a tiny, never-precached version.json the running app can poll to detect
+// a newer deploy (compared against the baked-in __APP_VERSION__). Kept out of
+// the service worker precache (see globIgnores) and fetched with no-store so it
+// always reflects the live build.
+function emitVersionJson() {
+  return {
+    name: 'emit-version-json',
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'version.json', source: `${JSON.stringify({ version: APP_VERSION })}\n` });
+    },
+  };
+}
 
 // Source maps to Sentry only when all three env vars are present (prod CI).
 // Local dev builds skip the upload and the plugin is a no-op.
@@ -30,6 +45,7 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    emitVersionJson(),
     ...sentryPlugins,
     VitePWA({
       strategies: 'injectManifest',
@@ -42,13 +58,14 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MiB
         globIgnores: [
           '**/*.map',
+          'version.json', // polled live; must never be precached/served stale
+          '**/version.json',
           '**/react-pdf.browser-*.js',
           '**/ImportItemsModal-*.js',
           '**/vendor-charts-*.js',
           '**/vendor-leaflet-*.js',
           '**/InventoryPage-*.js',
           '**/AdministrationPage-*.js',
-          '**/AnalyticsPage-*.js',
           '**/SuperAdmin-*.js',
           '**/ProjectsPage-*.js',
           '**/ManageSchedule-*.js',

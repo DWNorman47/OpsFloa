@@ -36,7 +36,8 @@ function expiryStatus(expiresAt, t) {
 
 // ── Client Form ───────────────────────────────────────────────────────────────
 
-const BLANK_CLIENT = { name: '', contact_name: '', contact_email: '', contact_phone: '', address: '', notes: '' };
+const BLANK_CLIENT = { name: '', contact_name: '', contact_email: '', contact_phone: '', address: '', notes: '', language: 'English' };
+const CLIENT_LANGUAGES = ['English', 'Spanish'];
 
 function ClientForm({ initial = BLANK_CLIENT, onSaved, onCancel }) {
   const t = useT();
@@ -89,9 +90,18 @@ function ClientForm({ initial = BLANK_CLIENT, onSaved, onCancel }) {
         </div>
       </div>
 
-      <div style={s.field}>
-        <label htmlFor="mc-address" style={s.label}>{t.address}</label>
-        <input id="mc-address" style={s.input} maxLength={255} value={form.address} onChange={e => set('address', e.target.value)} placeholder={t.clientAddressPlaceholder} disabled={saving} />
+      <div style={s.row}>
+        <div style={s.field}>
+          <label htmlFor="mc-address" style={s.label}>{t.address}</label>
+          <input id="mc-address" style={s.input} maxLength={255} value={form.address} onChange={e => set('address', e.target.value)} placeholder={t.clientAddressPlaceholder} disabled={saving} />
+        </div>
+        <div style={s.field}>
+          <label htmlFor="mc-language" style={s.label}>{t.clientDocLanguage}</label>
+          <select id="mc-language" style={s.input} value={form.language || 'English'} onChange={e => set('language', e.target.value)} disabled={saving} aria-describedby="mc-language-hint">
+            {CLIENT_LANGUAGES.map(lng => <option key={lng} value={lng}>{lng}</option>)}
+          </select>
+          <span id="mc-language-hint" style={s.opt}>{t.clientDocLanguageHint}</span>
+        </div>
       </div>
 
       <div style={s.field}>
@@ -497,11 +507,11 @@ const s = {
   expiryField: { display: 'flex', flexDirection: 'column', gap: 3 },
   uploadLabel: { fontSize: 11, fontWeight: 600, color: '#6b7280' },
   uploadInput: { padding: '7px 10px', border: '1px solid #e5e7eb', borderRadius: 7, fontSize: 13 },
-  uploadFileBtn: { background: '#1a56db', color: '#fff', border: 'none', padding: '7px 14px', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' },
+  uploadFileBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '7px 14px', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' },
   uploadError: { color: '#ef4444', fontSize: 12, marginTop: 4 },
   directionToggle: { display: 'flex', border: '1px solid #e5e7eb', borderRadius: 7, overflow: 'hidden', flexShrink: 0 },
   dirBtn: { background: '#fff', border: 'none', padding: '6px 10px', fontSize: 12, fontWeight: 600, color: '#6b7280', cursor: 'pointer', whiteSpace: 'nowrap' },
-  dirBtnActive: { background: '#1a56db', color: '#fff' },
+  dirBtnActive: { background: 'var(--ops-page-accent)', color: '#fff' },
   dirBadge: { fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 6, flexShrink: 0, textTransform: 'uppercase', letterSpacing: '0.04em' },
   dirBadgeTheirs: { background: '#ede9fe', color: '#6d28d9' },
   dirBadgeOurs: { background: '#dbeafe', color: '#1d4ed8' },

@@ -12,12 +12,21 @@ const pool = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { seedBuiltinRoles, getUserPermissions } = require('../permissions');
 const { effectiveSubscriptionStatus } = require('../utils/subscription');
+const { escapeHtml } = require('../utils/htmlEscape');
+const { encrypt: encryptSecret, decrypt: decryptSecret } = require('../utils/secretBox');
 
 // Hash a token for safe storage — raw token goes in the email, hash goes in the DB
 const sha256 = str => crypto.createHash('sha256').update(str).digest('hex');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const isValidEmail = email => EMAIL_RE.test(String(email).trim());
+
+// A throwaway (but structurally valid) cost-10 bcrypt hash used to equalize
+// login timing: when the company or username doesn't exist we still spend a
+// comparable amount of CPU on a bcrypt.compare so response time can't be
+// used to enumerate valid accounts. Hardcoded (not hashSync at load) so the
+// cost stays fixed and module load has no side effects.
+const DUMMY_PASSWORD_HASH = '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy';
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -131,17 +140,21 @@ router.post('/login', loginLimiter, async (req, res) => {
   if (!username || !password || !company_name) {
     return res.status(400).json({ error: 'Company name, username, and password required' });
   }
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress;
+  // Use req.ip (Express resolves it from the trusted proxy chain — see
+  // `trust proxy` in index.js) rather than the raw X-Forwarded-For header,
+  // which a client can spoof to poison the failure log / abuse tracking.
+  const ip = req.ip;
   const logFailure = (reason) => pool.query(
     'INSERT INTO login_failures (attempted_company, attempted_username, failure_reason, ip) VALUES ($1, $2, $3, $4)',
     [company_name, username, reason, ip]
-  ).catch(err => console.error('Failed to log login failure:', err));
+  ).catch(err => logger.error({ err }, 'Failed to log login failure'));
   try {
     // Step 1: check company name
     const companyRes = await pool.query(
       'SELECT id FROM companies WHERE LOWER(name) = LOWER($1)', [company_name]
     );
     if (!companyRes.rows[0]) {
+      await bcrypt.compare(password, DUMMY_PASSWORD_HASH); // equalize timing
       await logFailure('company_not_found');
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -166,6 +179,7 @@ router.post('/login', loginLimiter, async (req, res) => {
     }
 
     if (!user) {
+      await bcrypt.compare(password, DUMMY_PASSWORD_HASH); // equalize timing
       await logFailure('user_not_found');
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -176,8 +190,12 @@ router.post('/login', loginLimiter, async (req, res) => {
       // Increment failed attempts and lock if threshold reached
       const newCount = (user.failed_login_attempts || 0) + 1;
       if (newCount >= 10) {
+        // 15-minute lockout (was 24h). Combined with the per-IP login
+        // limiter this still stops online brute-force, but bounds the
+        // denial-of-service window if an attacker deliberately locks a
+        // known account by guessing wrong passwords.
         await pool.query(
-          'UPDATE users SET failed_login_attempts = $1, locked_until = NOW() + INTERVAL \'24 hours\' WHERE id = $2',
+          'UPDATE users SET failed_login_attempts = $1, locked_until = NOW() + INTERVAL \'15 minutes\' WHERE id = $2',
           [newCount, user.id]
         );
       } else {
@@ -225,49 +243,6 @@ router.post('/login', loginLimiter, async (req, res) => {
 router.get('/me', requireAuth, async (req, res) => {
   try {
     return res.json({ user: await buildSessionUser(req.user) });
-    const { getUserPermissions } = require('../permissions');
-    const [companyRes, userRes] = await Promise.all([
-      pool.query('SELECT plan, subscription_status, addon_qbo, addon_certified_payroll, trial_ends_at, slug, accepts_service_requests, client_portal_pro_interest FROM companies WHERE id = $1', [req.user.company_id]),
-      pool.query('SELECT mfa_enabled, language, admin_permissions, role_id, hourly_rate, rate_type, day_mark_mode, guaranteed_weekly_hours FROM users WHERE id = $1', [req.user.id]),
-    ]);
-    const company = companyRes.rows[0] || {};
-    const userRow = userRes.rows[0] || {};
-    // Compute permissions from the FRESH DB role_id, not the JWT. The JWT
-    // can be stale: a user reassigned to a new role (or whose old role was
-    // deleted, FK SET NULL'd) is still walking around with the old role_id
-    // until their token expires. Using userRow.role_id always reflects truth.
-    const permissions = await getUserPermissions({
-      ...req.user,
-      role_id: userRow.role_id ?? null,
-      admin_permissions: userRow.admin_permissions ?? null,
-    });
-    const { effectiveSubscriptionStatus } = require('../utils/subscription');
-    res.json({
-      user: {
-        ...req.user,
-        language: userRow.language || req.user.language,
-        plan: company.plan || 'free',
-        subscription_status: effectiveSubscriptionStatus(company),
-        addon_qbo: company.addon_qbo || false,
-        addon_certified_payroll: company.addon_certified_payroll || false,
-        company_slug: company.slug || null,
-        accepts_service_requests: !!company.accepts_service_requests,
-        client_portal_pro_interest: !!company.client_portal_pro_interest,
-        trial_ends_at: company.trial_ends_at,
-        mfa_enabled: userRow.mfa_enabled || false,
-        admin_permissions: userRow.admin_permissions || null,
-        worker_access_ids: userRow.worker_access_ids || null,
-        role_id: userRow.role_id ?? null,
-        // Phase D: full permission set so the client can gate modules,
-        // tabs, and buttons. Server is still authoritative on every gated
-        // route — this is just for UI hide/show.
-        permissions: [...permissions],
-        hourly_rate: userRow.hourly_rate != null ? parseFloat(userRow.hourly_rate) : null,
-        rate_type: userRow.rate_type || 'hourly',
-        day_mark_mode: !!userRow.day_mark_mode,
-        guaranteed_weekly_hours: userRow.guaranteed_weekly_hours != null ? parseFloat(userRow.guaranteed_weekly_hours) : null,
-      },
-    });
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });
@@ -324,16 +299,16 @@ router.post('/register', authLimiter, async (req, res) => {
           <h2 style="color:#dc2626;margin-bottom:8px">Multiple trial registrations</h2>
           <p style="color:#444">A new company is being registered from an IP address that has already signed up for a trial in the last 30 days.</p>
           <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px">
-            <tr><td style="padding:6px 0;color:#6b7280;width:140px">IP Address</td><td style="padding:6px 0;font-weight:600">${registrationIp}</td></tr>
-            <tr><td style="padding:6px 0;color:#6b7280">New company</td><td style="padding:6px 0;font-weight:600">${company_name}</td></tr>
-            <tr><td style="padding:6px 0;color:#6b7280">New email</td><td style="padding:6px 0">${email}</td></tr>
-            <tr><td style="padding:6px 0;color:#6b7280">Prior registrations</td><td style="padding:6px 0">${priorNames.join(', ')}</td></tr>
+            <tr><td style="padding:6px 0;color:#6b7280;width:140px">IP Address</td><td style="padding:6px 0;font-weight:600">${escapeHtml(registrationIp)}</td></tr>
+            <tr><td style="padding:6px 0;color:#6b7280">New company</td><td style="padding:6px 0;font-weight:600">${escapeHtml(company_name)}</td></tr>
+            <tr><td style="padding:6px 0;color:#6b7280">New email</td><td style="padding:6px 0">${escapeHtml(email)}</td></tr>
+            <tr><td style="padding:6px 0;color:#6b7280">Prior registrations</td><td style="padding:6px 0">${escapeHtml(priorNames.join(', '))}</td></tr>
             <tr><td style="padding:6px 0;color:#6b7280">Total from this IP</td><td style="padding:6px 0">${priorCount + 1} in last 30 days</td></tr>
           </table>
           <p style="color:#9ca3af;font-size:12px">Registration was allowed (limit is ${TRIAL_LIMIT}). You'll receive another alert if they register again.</p>
         </div>
       `,
-    }).catch(err => console.error('Trial abuse alert email failed:', err));
+    }).catch(err => logger.error({ err }, 'Trial abuse alert email failed'));
   }
   } // end if (!ipIsWhitelisted)
 
@@ -401,7 +376,7 @@ router.post('/register', authLimiter, async (req, res) => {
     await client.query('ROLLBACK');
     if (err.code === '23505') return res.status(409).json({ error: 'Username already taken at this company' });
     if (err.response) {
-      console.error('Confirmation email failed — account not created:', err.response.body);
+      logger.error({ err: err.response.body }, 'Confirmation email failed — account not created');
       return res.status(500).json({ error: 'Failed to send confirmation email. Please check your email address and try again.' });
     }
     logger.error({ err }, 'catch block error');
@@ -444,8 +419,6 @@ router.post('/complete-setup', async (req, res) => {
     return res.status(400).json({ error: 'Setup session expired. Please sign in again.' });
   }
   if (!payload.setup_pending) return res.status(400).json({ error: 'Invalid setup token' });
-  const pwErr = validatePassword(new_password);
-  if (pwErr) return res.status(400).json({ error: pwErr });
   try {
     const userRes = await pool.query(
       `SELECT u.*, c.name as company_name FROM users u
@@ -455,6 +428,10 @@ router.post('/complete-setup', async (req, res) => {
     );
     const user = userRes.rows[0];
     if (!user) return res.status(400).json({ error: 'User not found' });
+    // Validate after fetch so we can enforce the "password can't contain
+    // your username" rule that validatePassword applies when given a username.
+    const pwErr = validatePassword(new_password, user.username);
+    if (pwErr) return res.status(400).json({ error: pwErr });
     const hash = await bcrypt.hash(new_password, 10);
     // Bump token_version so any previously-issued tokens for this user
     // (e.g. from before a password was forced to be changed) are rejected.
@@ -504,7 +481,7 @@ router.post('/resend-confirmation', async (req, res) => {
         `,
       });
     } catch (emailErr) {
-      console.error('Resend confirmation email failed:', emailErr?.response?.body || emailErr.message);
+      logger.error({ err: emailErr?.response?.body || emailErr }, 'Resend confirmation email failed');
     }
     res.json({ success: true });
   } catch (err) {
@@ -548,22 +525,25 @@ router.post('/forgot-password', authLimiter, async (req, res) => {
 
     const resetUrl = `${process.env.APP_URL}/reset-password?token=${token}`;
 
-    await sgMail.send({
+    // Respond BEFORE sending so response time is uniform whether or not the
+    // address exists — an awaited SendGrid call (hundreds of ms) for real
+    // users vs an instant return for misses is a user-enumeration oracle.
+    res.json({ success: true });
+
+    sgMail.send({
       from: { name: 'OpsFloa', email: process.env.SENDGRID_FROM_EMAIL },
       to: email,
       subject: 'Reset your OpsFloa password',
       html: `
         <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
           <h2 style="color:#1a56db;margin-bottom:8px">Reset your password</h2>
-          <p style="color:#444;margin-bottom:24px">Hi ${user.full_name}, click the button below to reset your password. This link expires in 1 hour.</p>
+          <p style="color:#444;margin-bottom:24px">Hi ${escapeHtml(user.full_name)}, click the button below to reset your password. This link expires in 1 hour.</p>
           <a href="${resetUrl}" style="display:inline-block;background:#1a56db;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700">Reset password</a>
           <p style="color:#999;font-size:13px;margin-top:24px">If you didn't request this, you can ignore this email.</p>
           <p style="color:#ccc;font-size:12px;margin-top:4px">${resetUrl}</p>
         </div>
       `,
-    });
-
-    res.json({ success: true });
+    }).catch(err => logger.error({ err }, 'reset password email send failed'));
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });
@@ -574,14 +554,15 @@ router.post('/forgot-password', authLimiter, async (req, res) => {
 router.post('/reset-password', authLimiter, async (req, res) => {
   const { token, password } = req.body;
   if (!token || !password) return res.status(400).json({ error: 'token and password required' });
-  const pwErr = validatePassword(password);
-  if (pwErr) return res.status(400).json({ error: pwErr });
   try {
     const result = await pool.query(
-      'SELECT id FROM users WHERE reset_token = $1 AND reset_token_expires > NOW()',
+      'SELECT id, username FROM users WHERE reset_token = $1 AND reset_token_expires > NOW()',
       [sha256(token)]
     );
     if (result.rowCount === 0) return res.status(400).json({ error: 'Reset link is invalid or has expired' });
+    // Validate after fetch so the "no username in password" rule applies.
+    const pwErr = validatePassword(password, result.rows[0].username);
+    if (pwErr) return res.status(400).json({ error: pwErr });
 
     const hash = await bcrypt.hash(password, 10);
     // Bump token_version — if an attacker had stolen a token before the
@@ -601,8 +582,6 @@ router.post('/reset-password', authLimiter, async (req, res) => {
 router.post('/accept-invite', authLimiter, async (req, res) => {
   const { token, password } = req.body;
   if (!token || !password) return res.status(400).json({ error: 'token and password required' });
-  const pwErr = validatePassword(password);
-  if (pwErr) return res.status(400).json({ error: pwErr });
   try {
     const result = await pool.query(
       `SELECT u.id, u.username, u.company_id, c.name as company_name FROM users u
@@ -612,6 +591,9 @@ router.post('/accept-invite', authLimiter, async (req, res) => {
     );
     if (result.rowCount === 0) return res.status(400).json({ error: 'Invite link is invalid or has expired' });
     const user = result.rows[0];
+    // Validate after fetch so the "no username in password" rule applies.
+    const pwErr = validatePassword(password, user.username);
+    if (pwErr) return res.status(400).json({ error: pwErr });
     const hash = await bcrypt.hash(password, 10);
     await pool.query(
       'UPDATE users SET password_hash = $1, invite_token = NULL, invite_token_expires = NULL, invite_pending = false, email_confirmed = true, must_change_password = false, token_version = token_version + 1 WHERE id = $2',
@@ -677,7 +659,7 @@ router.post('/mfa/confirm', loginLimiter, async (req, res) => {
     const user = result.rows[0];
     if (!user || !user.mfa_secret) return res.status(400).json({ error: 'MFA not configured' });
 
-    const valid = speakeasy.totp.verify({ secret: user.mfa_secret, encoding: 'base32', token: code, window: 1 });
+    const valid = speakeasy.totp.verify({ secret: decryptSecret(user.mfa_secret), encoding: 'base32', token: code, window: 1 });
     if (!valid) return res.status(401).json({ error: 'Invalid code. Try again.' });
 
     const token = signToken(user);
@@ -692,7 +674,7 @@ router.post('/mfa/confirm', loginLimiter, async (req, res) => {
 router.get('/mfa/setup', requireAuth, async (req, res) => {
   try {
     const secret = speakeasy.generateSecret({ name: `OpsFloa (${req.user.username})`, length: 20 });
-    await pool.query('UPDATE users SET mfa_secret_pending = $1 WHERE id = $2', [secret.base32, req.user.id]);
+    await pool.query('UPDATE users SET mfa_secret_pending = $1 WHERE id = $2', [encryptSecret(secret.base32), req.user.id]);
     const qr = await qrcode.toDataURL(secret.otpauth_url);
     res.json({ qr, secret: secret.base32 });
   } catch (err) {
@@ -707,15 +689,16 @@ router.post('/mfa/enable', requireAuth, async (req, res) => {
   if (!code) return res.status(400).json({ error: 'code required' });
   try {
     const result = await pool.query('SELECT mfa_secret_pending FROM users WHERE id = $1', [req.user.id]);
-    const secret = result.rows[0]?.mfa_secret_pending;
-    if (!secret) return res.status(400).json({ error: 'No pending MFA setup. Start setup again.' });
+    const stored = result.rows[0]?.mfa_secret_pending;
+    if (!stored) return res.status(400).json({ error: 'No pending MFA setup. Start setup again.' });
+    const secret = decryptSecret(stored); // plaintext base32 for verification
 
     const valid = speakeasy.totp.verify({ secret, encoding: 'base32', token: code, window: 1 });
     if (!valid) return res.status(401).json({ error: 'Invalid code. Try again.' });
 
     await pool.query(
       'UPDATE users SET mfa_secret = $1, mfa_secret_pending = NULL, mfa_enabled = true WHERE id = $2',
-      [secret, req.user.id]
+      [encryptSecret(secret), req.user.id]
     );
     res.json({ enabled: true });
   } catch (err) {

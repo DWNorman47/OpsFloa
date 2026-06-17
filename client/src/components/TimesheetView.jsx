@@ -107,7 +107,7 @@ export default function TimesheetView({ entries, language, projects = [], onRefr
           <span style={styles.weekTotal}>{fmtHours(weekTotalHours)}</span>
           {weekTotalMiles > 0 && <span style={styles.weekMiles}>🚗 {weekTotalMiles.toFixed(1)} mi</span>}
           <button style={styles.todayBtn} onClick={goToday}>{t.todayBtn}</button>
-          <button style={{ ...styles.todayBtn, borderColor: '#1a56db', color: '#1a56db', ...(copying ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={copyLastWeek} disabled={copying}>
+          <button style={{ ...styles.todayBtn, borderColor: 'var(--ops-page-accent)', color: 'var(--ops-page-accent)', ...(copying ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={copyLastWeek} disabled={copying}>
             {copying ? t.saving : t.copyLastWeekBtn}
           </button>
           {copyMsg && <span style={{ fontSize: 12, color: '#6b7280' }}>{copyMsg}</span>}
@@ -129,14 +129,14 @@ export default function TimesheetView({ entries, language, projects = [], onRefr
               style={{
                 ...styles.dayCol,
                 background: isToday ? '#eff6ff' : isWeekend ? '#fafafa' : '#fff',
-                borderTop: isToday ? '3px solid #1a56db' : '3px solid transparent',
+                borderTop: isToday ? '3px solid var(--ops-page-accent)' : '3px solid transparent',
               }}
             >
               <div style={styles.dayHeader}>
-                <span style={{ ...styles.dayName, color: isToday ? '#1a56db' : '#6b7280' }}>
+                <span style={{ ...styles.dayName, color: isToday ? 'var(--ops-page-accent)' : '#6b7280' }}>
                   {formatWeekDay(day, locale)}
                 </span>
-                <span style={{ ...styles.dayNum, fontWeight: isToday ? 700 : 400, color: isToday ? '#1a56db' : '#374151' }}>
+                <span style={{ ...styles.dayNum, fontWeight: isToday ? 700 : 400, color: isToday ? 'var(--ops-page-accent)' : '#374151' }}>
                   {day.getDate()}
                 </span>
               </div>
@@ -150,9 +150,9 @@ export default function TimesheetView({ entries, language, projects = [], onRefr
                       key={e.id}
                       style={{
                         ...styles.entryPill,
-                        borderLeft: `3px solid ${e.wage_type === 'prevailing' ? '#d97706' : '#1a56db'}`,
+                        borderLeft: `3px solid ${e.wage_type === 'prevailing' ? '#d97706' : 'var(--ops-page-accent)'}`,
                         cursor: 'pointer',
-                        outline: selectedEntry?.id === e.id ? '2px solid #1a56db' : 'none',
+                        outline: selectedEntry?.id === e.id ? '2px solid var(--ops-page-accent)' : 'none',
                       }}
                       onClick={() => setSelectedEntry(selectedEntry?.id === e.id ? null : e)}
                     >
@@ -203,7 +203,7 @@ const styles = {
   navBtn: { background: 'none', border: '1px solid #e5e7eb', borderRadius: 6, padding: '4px 10px', fontSize: 18, cursor: 'pointer', color: '#374151', lineHeight: 1 },
   weekLabel: { fontWeight: 700, fontSize: 15, color: '#111827' },
   headerRight: { display: 'flex', alignItems: 'center', gap: 10 },
-  weekTotal: { fontWeight: 700, fontSize: 16, color: '#1a56db' },
+  weekTotal: { fontWeight: 700, fontSize: 16, color: 'var(--ops-page-accent)' },
   weekMiles: { fontSize: 13, color: '#6b7280' },
   todayBtn: { background: 'none', border: '1px solid #e5e7eb', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer', color: '#374151' },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(7, minmax(80px, 1fr))', gap: 4, overflowX: 'auto', WebkitOverflowScrolling: 'touch' },
@@ -216,11 +216,11 @@ const styles = {
   entryPill: { background: '#f8faff', borderRadius: 5, padding: '5px 6px', fontSize: 11 },
   pillProject: { fontWeight: 700, color: '#1e3a5f', marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   pillTimes: { color: '#6b7280', fontSize: 10 },
-  pillHours: { fontWeight: 700, color: '#1a56db', marginTop: 2 },
+  pillHours: { fontWeight: 700, color: 'var(--ops-page-accent)', marginTop: 2 },
   pillBreak: { color: '#6b7280', fontSize: 10 },
   pillMileage: { color: '#6b7280', fontSize: 10 },
   dayFooter: { borderTop: '1px solid #e5e7eb', paddingTop: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  dayTotal: { fontWeight: 700, fontSize: 12, color: '#1a56db' },
+  dayTotal: { fontWeight: 700, fontSize: 12, color: 'var(--ops-page-accent)' },
   dayMiles: { fontSize: 10, color: '#6b7280' },
   selectedPanel: { marginTop: 16, padding: 16, background: '#f8faff', borderRadius: 10, border: '1px solid #93c5fd' },
   selectedHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },

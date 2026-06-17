@@ -42,11 +42,11 @@ export default function AuditLog({ timezone = '', settings = null }) {
   const ACTION_META = {
     'worker.created':      { label: t.auditWorkerAdded,       color: '#059669', bg: '#d1fae5' },
     'worker.invited':      { label: t.auditWorkerInvited,      color: '#8b5cf6', bg: '#ede9fe' },
-    'worker.updated':      { label: t.auditWorkerUpdated,      color: '#1a56db', bg: '#dbeafe' },
+    'worker.updated':      { label: t.auditWorkerUpdated,      color: 'var(--ops-page-accent)', bg: '#dbeafe' },
     'worker.deleted':      { label: t.auditWorkerRemoved,      color: '#ef4444', bg: '#fee2e2' },
     'worker.restored':     { label: t.auditWorkerRestored,     color: '#059669', bg: '#d1fae5' },
     'project.created':     { label: t.auditProjectCreated,     color: '#059669', bg: '#d1fae5' },
-    'project.updated':     { label: t.auditProjectUpdated,     color: '#1a56db', bg: '#dbeafe' },
+    'project.updated':     { label: t.auditProjectUpdated,     color: 'var(--ops-page-accent)', bg: '#dbeafe' },
     'project.deleted':     { label: t.auditProjectRemoved,     color: '#ef4444', bg: '#fee2e2' },
     'project.restored':    { label: t.auditProjectRestored,    color: '#059669', bg: '#d1fae5' },
     'entry.approved':      { label: t.auditEntryApproved,      color: '#059669', bg: '#d1fae5' },

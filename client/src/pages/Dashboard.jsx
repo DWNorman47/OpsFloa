@@ -16,6 +16,8 @@ import { getOrFetch, setCached } from '../offlineDb';
 import { useOffline } from '../contexts/OfflineContext';
 import OfflineBanner from '../components/OfflineBanner';
 import SignatureModal from '../components/SignatureModal';
+import { WorkforcePanel } from './AdminDashboard';
+import { userCanSeeModule } from '../modulePermissions';
 
 import { silentError } from '../errorReporter';
 // Secondary tabs — lazy-loaded on first visit
@@ -54,6 +56,15 @@ export default function Dashboard() {
   const initialTab = hashTab === 'availability' ? 'schedule' : (TABS.includes(hashTab) ? hashTab : 'clock');
   const [tab, setTab] = useState(initialTab);
   const [scheduleSubtab, setScheduleSubtab] = useState(hashTab === 'availability' ? 'availability' : 'schedule');
+  // Personal (own time clock) vs Workforce (admin oversight) groups. The group
+  // row only appears for admins who can see both; everyone else just gets their
+  // one group. Workforce tabs carry a '#wf-' hash. An oversight-only admin (can
+  // see Workforce but not the personal clock) defaults to the Workforce group.
+  const [group, setGroup] = useState(() => {
+    if (window.location.hash.startsWith('#wf-')) return 'workforce';
+    if (userCanSeeModule(user, 'timeclock')) return 'personal';
+    return userCanSeeModule(user, 'workforce') ? 'workforce' : 'personal';
+  });
   const [entryView, setEntryView] = useState('list');
   const [shiftPrefill, setShiftPrefill] = useState(null);
   const [chatUnread, setChatUnread] = useState(false);
@@ -297,7 +308,7 @@ export default function Dashboard() {
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:system-ui,-apple-system,sans-serif;color:#111;font-size:13px;padding:40px;background:#fff}
 .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:36px}
-.brand{font-size:22px;font-weight:800;color:#1a56db}
+.brand{font-size:22px;font-weight:800;color:var(--ops-page-accent)}
 .brand-sub{font-size:12px;color:#6b7280;margin-top:2px}
 .inv-title{font-size:32px;font-weight:800;color:#111;text-align:right}
 .inv-meta{text-align:right;margin-top:6px;line-height:1.8;font-size:13px;color:#6b7280}
@@ -318,7 +329,7 @@ tr:last-child td{border-bottom:none}
 .sum-table{border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;font-size:13px}
 .sum-table tr td{padding:9px 14px;border-bottom:1px solid #f3f4f6}
 .sum-table tr:last-child td{border-bottom:none}
-.total-row{background:#1a56db;color:#fff!important;font-weight:700;font-size:14px}
+.total-row{background:var(--ops-page-accent);color:#fff!important;font-weight:700;font-size:14px}
 .total-row td{color:#fff!important;padding:11px 14px}
 .footer{border-top:1px solid #e5e7eb;padding-top:14px;display:flex;justify-content:space-between;font-size:11px;color:#9ca3af}
 @media print{body{padding:20px}}
@@ -420,6 +431,17 @@ ${signatureDataUrl ? `
     ...(settings?.feature_reimbursements !== false ? [{ id: 'reimbursements', label: t.tabExpenses }] : []),
   ];
 
+  // Workforce (admin oversight) is a second group within this module. The group
+  // row only shows when the user can actually see both halves.
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+  const canSeeWorkforce = isAdmin && settings?.module_timeclock !== false && userCanSeeModule(user, 'workforce');
+  const effectiveGroup = canSeeWorkforce ? group : 'personal';
+  const switchGroup = g => {
+    setGroup(g);
+    if (g === 'personal') history.replaceState(null, '', `#${tab}`);
+    else history.replaceState(null, '', '#wf-live');
+  };
+
   return (
     <div style={styles.page}>
       <OfflineBanner />
@@ -438,7 +460,21 @@ ${signatureDataUrl ? `
         />
       )}
 
-      <main id="main-content" style={styles.main} className="mobile-main">
+      <main id="main-content" style={{ ...styles.main, ...(effectiveGroup === 'workforce' ? { maxWidth: 900 } : {}) }} className="mobile-main">
+        {canSeeWorkforce && (
+          <div className="ops-workflow-tabs" role="tablist" aria-label="Time Clock sections">
+            <button type="button" role="tab" aria-selected={effectiveGroup === 'personal'}
+              className={`ops-workflow-tab ${effectiveGroup === 'personal' ? 'is-active' : ''}`.trim()}
+              onClick={() => switchGroup('personal')}>{t.timeGroupPersonal}</button>
+            <button type="button" role="tab" aria-selected={effectiveGroup === 'workforce'}
+              className={`ops-workflow-tab ${effectiveGroup === 'workforce' ? 'is-active' : ''}`.trim()}
+              onClick={() => switchGroup('workforce')}>{t.timeGroupWorkforce}</button>
+          </div>
+        )}
+        {effectiveGroup === 'workforce' ? (
+          <WorkforcePanel />
+        ) : (
+        <>
         <PageIntro
           introId="timeclock"
           kicker="Today"
@@ -513,7 +549,8 @@ ${signatureDataUrl ? `
         )}
 
         {tab === 'reimbursements' && settings?.feature_reimbursements !== false && <Suspense fallback={<TabLoader />}><ReimbursementsView settings={settings} /></Suspense>}
-
+        </>
+        )}
       </main>
     </div>
   );
@@ -521,7 +558,7 @@ ${signatureDataUrl ? `
 
 const styles = {
   page: { minHeight: '100vh', background: '#f4f6f9', '--ops-page-accent': '#2563eb' },
-  header: { background: '#1a56db', color: '#fff', padding: '0 24px', paddingTop: 'env(safe-area-inset-top)', paddingBottom: 0, minHeight: 'calc(56px + env(safe-area-inset-top))', display: 'flex', flexDirection: 'column', justifyContent: 'center', position: 'sticky', top: 0, zIndex: 100 },
+  header: { background: 'var(--ops-page-accent)', color: '#fff', padding: '0 24px', paddingTop: 'env(safe-area-inset-top)', paddingBottom: 0, minHeight: 'calc(56px + env(safe-area-inset-top))', display: 'flex', flexDirection: 'column', justifyContent: 'center', position: 'sticky', top: 0, zIndex: 100 },
   headerTopRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', height: 56 },
   logoGroup: { display: 'flex', alignItems: 'center', gap: 10 },
   logo: { fontWeight: 700, fontSize: 20 },

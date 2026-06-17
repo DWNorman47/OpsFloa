@@ -109,7 +109,7 @@ const styles = {
   canvas: { display: 'block', width: '100%', height: 160, cursor: 'crosshair', touchAction: 'none' },
   clearBtn: { position: 'absolute', top: 8, right: 8, background: 'none', border: '1px solid #d1d5db', color: '#6b7280', padding: '3px 10px', borderRadius: 6, fontSize: 12, cursor: 'pointer' },
   actions: { display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap', alignItems: 'center' },
-  confirmBtn: { background: '#1a56db', color: '#fff', border: 'none', padding: '9px 18px', borderRadius: 8, fontWeight: 600, fontSize: 14, cursor: 'pointer' },
+  confirmBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '9px 18px', borderRadius: 8, fontWeight: 600, fontSize: 14, cursor: 'pointer' },
   skipBtn: { background: 'none', border: '1px solid #d1d5db', color: '#374151', padding: '9px 14px', borderRadius: 8, fontSize: 13, cursor: 'pointer' },
   cancelBtn: { background: 'none', border: 'none', color: '#6b7280', padding: '9px 8px', fontSize: 13, cursor: 'pointer', marginLeft: 'auto' },
 };

@@ -202,7 +202,7 @@ const s = {
   title: { fontSize: 20, fontWeight: 700, color: '#111827', margin: 0 },
   filterGroup: { display: 'flex', gap: 4 },
   filterBtn: { padding: '6px 14px', border: '1px solid #e5e7eb', borderRadius: 7, background: '#f9fafb', color: '#6b7280', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  filterBtnActive: { background: '#1a56db', color: '#fff', border: '1px solid #1a56db' },
+  filterBtnActive: { background: 'var(--ops-page-accent)', color: '#fff', border: '1px solid var(--ops-page-accent)' },
   list: { display: 'flex', flexDirection: 'column', gap: 10 },
   card: { background: '#fff', borderRadius: 12, padding: '16px 18px', boxShadow: '0 1px 6px rgba(0,0,0,0.07)' },
   cardTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 8 },

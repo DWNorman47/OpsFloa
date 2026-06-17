@@ -65,7 +65,7 @@ export default function Changelog() {
 const styles = {
   page:      { minHeight: '100vh', background: '#f4f6f9', padding: '32px 16px' },
   container: { maxWidth: 720, margin: '0 auto' },
-  back:      { display: 'inline-block', marginBottom: 16, color: '#1a56db', fontSize: 14, textDecoration: 'none' },
+  back:      { display: 'inline-block', marginBottom: 16, color: 'var(--ops-page-accent)', fontSize: 14, textDecoration: 'none' },
   title:     { fontSize: 28, fontWeight: 800, color: '#111827', marginBottom: 24, letterSpacing: '-0.01em' },
   entry:     { background: '#fff', borderRadius: 12, padding: '20px 24px', marginBottom: 16, border: '1px solid #e5e7eb' },
   entryHeader: { display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 10, flexWrap: 'wrap' },
@@ -74,5 +74,5 @@ const styles = {
   list:      { margin: 0, paddingLeft: 20 },
   item:      { fontSize: 14, color: '#374151', lineHeight: 1.6, marginBottom: 4 },
   footer:    { fontSize: 13, color: '#6b7280', textAlign: 'center', marginTop: 32 },
-  link:      { color: '#1a56db', textDecoration: 'none' },
+  link:      { color: 'var(--ops-page-accent)', textDecoration: 'none' },
 };

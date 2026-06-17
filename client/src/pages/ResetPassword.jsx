@@ -79,13 +79,13 @@ export default function ResetPassword() {
 const styles = {
   page: { minHeight: '100vh', background: '#f4f6f9', display: 'flex', alignItems: 'center', justifyContent: 'center' },
   card: { background: '#fff', borderRadius: 14, padding: '40px 36px', boxShadow: '0 4px 24px rgba(0,0,0,0.09)', width: '100%', maxWidth: 380 },
-  logo: { fontSize: 22, fontWeight: 800, color: '#1a56db', marginBottom: 4, textAlign: 'center' },
+  logo: { fontSize: 22, fontWeight: 800, color: 'var(--ops-page-accent)', marginBottom: 4, textAlign: 'center' },
   title: { fontSize: 18, fontWeight: 700, color: '#1a202c', marginBottom: 20, textAlign: 'center' },
   body: { fontSize: 14, color: '#6b7280', textAlign: 'center', lineHeight: 1.6 },
   form: { display: 'flex', flexDirection: 'column', gap: 8 },
   label: { fontSize: 13, fontWeight: 600, color: '#374151' },
   input: { padding: '10px 12px', border: '1px solid #ddd', borderRadius: 8, fontSize: 14 },
   error: { color: '#e53e3e', fontSize: 13 },
-  btn: { marginTop: 8, padding: '11px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: 15, cursor: 'pointer' },
-  link: { color: '#1a56db', fontWeight: 600, textDecoration: 'none' },
+  btn: { marginTop: 8, padding: '11px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: 15, cursor: 'pointer' },
+  link: { color: 'var(--ops-page-accent)', fontWeight: 600, textDecoration: 'none' },
 };

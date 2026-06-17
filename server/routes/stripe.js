@@ -2,6 +2,7 @@ const router = require('express').Router();
 const Stripe = require('stripe');
 const pool = require('../db');
 const { requireAdmin, requirePerm } = require('../middleware/auth');
+const { mapStripeStatus } = require('../constants/companyEnums');
 
 function getStripe() {
   if (!process.env.STRIPE_SECRET_KEY) throw new Error('STRIPE_SECRET_KEY not configured');
@@ -175,9 +176,13 @@ router.post('/webhook', async (req, res) => {
         const proIds = [process.env.STRIPE_PRICE_QBO, process.env.STRIPE_PRICE_QBO_ANNUAL].filter(Boolean);
         const hasProAddon = items.some(i => proIds.includes(i.price.id));
         const mrrCents = calcMrrCents(items);
+        // Map Stripe's subscription status (`trialing`, `incomplete`,
+        // `unpaid`, etc.) onto our internal set before writing — the
+        // companies.subscription_status column is CHECK-constrained and
+        // a raw Stripe value would fail the constraint.
         await pool.query(
           'UPDATE companies SET subscription_status = $1, plan = $2, addon_qbo = $3, mrr_cents = $4 WHERE id = $5',
-          [obj.status, plan, hasProAddon, mrrCents, companyId]
+          [mapStripeStatus(obj.status), plan, hasProAddon, mrrCents, companyId]
         );
       }
     } else if (event.type === 'customer.subscription.deleted') {

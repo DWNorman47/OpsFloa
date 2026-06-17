@@ -17,6 +17,27 @@ const APP_VERSION = (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 
 const RECENT_WINDOW_MS = 5000;
 const recent = new Map(); // key -> last-seen timestamp
 
+// Strip secret tokens out of the reported URL. Public token pages
+// (/e/<token>, /co/<token>, /lien-waiver-sign/<token>, /book/manage/<token>)
+// and token query params would otherwise land in the client_errors table
+// in plaintext — anyone with DB/log access could replay them.
+function redactUrl(href) {
+  if (!href) return null;
+  try {
+    const u = new URL(href);
+    u.pathname = u.pathname
+      .replace(/\/(e|co)\/[^/]+/, '/$1/[redacted]')
+      .replace(/\/(lien-waiver-sign|confirm-email|reset-password|accept-invite)\/[^/]+/, '/$1/[redacted]')
+      .replace(/\/book\/manage\/[^/]+/, '/book/manage/[redacted]');
+    for (const k of ['token', 'reset', 'invite']) {
+      if (u.searchParams.has(k)) u.searchParams.set(k, '[redacted]');
+    }
+    return u.toString();
+  } catch {
+    return String(href).split('?')[0]; // fallback: at least drop the query string
+  }
+}
+
 function fingerprint(kind, message, stack) {
   // Collapse line/column numbers inside stacks so "same error, different line offset" still dedupes.
   const s = (stack || '').replace(/:\d+:\d+/g, ':L:C').slice(0, 500);
@@ -52,7 +73,7 @@ export function reportClientError({ kind, message, stack }) {
       kind,
       message: String(message || 'unknown'),
       stack: stack ? String(stack) : null,
-      url: typeof window !== 'undefined' ? window.location.href : null,
+      url: typeof window !== 'undefined' ? redactUrl(window.location.href) : null,
       app_version: APP_VERSION,
     };
     // Prefer fetch via the api client so the Authorization header is included
@@ -76,10 +97,27 @@ export function reportClientError({ kind, message, stack }) {
  * decision is "don't bother the user" but the engineering decision must
  * still be "don't hide bugs from ourselves."
  *
- * Usage:
+ * Usage (preferred — labels the report):
  *   api.get('/foo').then(r => setFoo(r.data)).catch(silentError('fetch foo'));
+ *
+ * Two other call styles are common across the codebase and must also report,
+ * not silently no-op:
+ *   .catch(silentError)              // invoked with the error as the argument
+ *   catch (err) { silentError(err) } // invoked with the error directly
+ * We detect those (the argument isn't a string label) and report immediately.
  */
 export function silentError(context) {
+  // Called as the rejection handler itself, or with an error object — report now.
+  if (context && typeof context !== 'string') {
+    const err = context;
+    reportClientError({
+      kind: 'unhandled',
+      message: err?.message || String(err),
+      stack: err?.stack || null,
+    });
+    return undefined;
+  }
+  // Called as a factory with a string label — return the handler.
   return err => {
     reportClientError({
       kind: 'unhandled',

@@ -207,7 +207,7 @@ export default function BillingPanel() {
         <>
           <div style={s.toggleRow}>
             <span style={{ fontSize: 14, color: annual ? '#9ca3af' : '#111827', fontWeight: annual ? 400 : 600 }}>{t.planMonthly}</span>
-            <button style={{ ...s.toggle, background: annual ? '#1a56db' : '#d1d5db' }} onClick={() => setAnnual(a => !a)}>
+            <button style={{ ...s.toggle, background: annual ? 'var(--ops-page-accent)' : '#d1d5db' }} onClick={() => setAnnual(a => !a)}>
               <span style={{ ...s.toggleKnob, transform: annual ? 'translateX(46px)' : 'translateX(0)' }} />
             </button>
             <span style={{ fontSize: 14, color: annual ? '#111827' : '#9ca3af', fontWeight: annual ? 600 : 400 }}>
@@ -512,11 +512,11 @@ const s = {
   title: { fontSize: 17, fontWeight: 700, margin: 0, marginBottom: 2 },
   sub: { fontSize: 13, color: '#6b7280', margin: 0 },
   alert: { background: '#fffbeb', border: '1px solid #fcd34d', color: '#92400e', borderRadius: 8, padding: '12px 16px', marginBottom: 16, fontSize: 14, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' },
-  alertBtn: { background: '#1a56db', color: '#fff', border: 'none', padding: '6px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', flexShrink: 0 },
+  alertBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '6px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', flexShrink: 0 },
   trialBanner: { background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '12px 16px', marginBottom: 16, fontSize: 13, color: '#1e40af', lineHeight: 1.5 },
   activeSection: { background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '16px 20px', marginBottom: 16 },
   activeText: { fontSize: 14, color: '#374151', marginBottom: 12 },
-  portalBtn: { background: '#1a56db', color: '#fff', border: 'none', padding: '9px 20px', borderRadius: 7, fontSize: 14, fontWeight: 600, cursor: 'pointer' },
+  portalBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '9px 20px', borderRadius: 7, fontSize: 14, fontWeight: 600, cursor: 'pointer' },
   toggleRow: { display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'center', marginBottom: 20 },
   toggle: { display: 'flex', alignItems: 'center', width: 70, height: 40, borderRadius: 7, border: 'none', cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0, padding: 4 },
   toggleKnob: { display: 'block', width: 16, height: 32, borderRadius: 5, background: '#fff', boxShadow: '0 1px 3px rgba(0,0,0,0.2)', transition: 'transform 0.2s', flexShrink: 0 },
@@ -532,7 +532,7 @@ const s = {
   planBtn: { width: '100%', color: '#fff', border: 'none', padding: '10px', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer', marginTop: 4, transition: 'opacity 0.15s' },
   sliderWrap: { background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: '14px 16px', marginBottom: 14 },
   sliderLabel: { fontSize: 13, color: '#374151', display: 'block', marginBottom: 8 },
-  inputModeBtn: { background: '#f3f4f6', border: '1px solid #e5e7eb', color: '#6b7280', fontSize: 15, minWidth: 30, width: 30, height: 30, borderRadius: '50%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, flexGrow: 0, padding: 0, lineHeight: 1, boxSizing: 'content-box' },
+  inputModeBtn: { background: '#f3f4f6', border: '1px solid #e5e7eb', color: '#6b7280', fontSize: 16, minWidth: 40, width: 40, height: 40, borderRadius: '50%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, flexGrow: 0, padding: 0, lineHeight: 1, boxSizing: 'border-box' },
   workerNumInput: { width: 90, padding: '7px 10px', border: '1px solid #c7d2fe', borderRadius: 7, fontSize: 15, fontWeight: 700, color: '#8b5cf6', textAlign: 'center' },
   workerUpdateBtn: { padding: '7px 14px', background: '#8b5cf6', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: 'pointer', flexShrink: 0 },
   addonCard: { border: '2px solid #fde68a', borderRadius: 10, padding: '14px 16px', background: '#fffbeb', marginBottom: 16 },

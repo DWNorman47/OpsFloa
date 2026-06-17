@@ -318,7 +318,7 @@ const s = {
   close:   { background: 'none', border: 'none', fontSize: 18, color: '#6b7280', cursor: 'pointer', padding: 4 },
   body:    { padding: 20, overflow: 'auto' },
   intro:   { fontSize: 14, color: '#4b5563', lineHeight: 1.5, marginTop: 0 },
-  linkBtn: { background: 'none', border: 'none', color: '#1a56db', fontSize: 14, fontWeight: 600, cursor: 'pointer', padding: 0, marginBottom: 16 },
+  linkBtn: { background: 'none', border: 'none', color: 'var(--ops-page-accent)', fontSize: 14, fontWeight: 600, cursor: 'pointer', padding: 0, marginBottom: 16 },
   dropzone: { border: '2px dashed #d1d5db', borderRadius: 10, padding: 40, textAlign: 'center', cursor: 'pointer', background: '#f9fafb' },
   dropIcon: { display: 'none' },
   dropText: { fontSize: 15, fontWeight: 600, color: '#111827', marginBottom: 4 },
@@ -344,7 +344,7 @@ const s = {
 
   actions: { display: 'flex', justifyContent: 'flex-end', gap: 8, paddingTop: 16, marginTop: 8, borderTop: '1px solid #e5e7eb' },
   cancel:  { background: '#fff', color: '#374151', border: '1px solid #d1d5db', padding: '8px 16px', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer' },
-  primary: { background: '#1a56db', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' },
+  primary: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' },
 
   successIcon: { display: 'none' },
   resultTitle: { fontSize: 16, fontWeight: 700, textAlign: 'center', color: '#111827', marginBottom: 16 },

@@ -223,7 +223,7 @@ router.post('/invoices', requireAdmin, async (req, res) => {
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'unpaid')`,
         [req.user.company_id, project_id, invoice.Id, invoice.DocNumber || null, parsed,
          txn_date || new Date().toLocaleDateString('en-CA'), parsed]
-      ).catch(e => console.error('[QBO invoice save]', e.message));
+      ).catch(err => logger.error({ err }, '[QBO invoice save]'));
     }
     logAudit(req.user.company_id, req.user.id, req.user.full_name, 'qbo.invoice_created', 'qbo_invoice', invoice?.Id || null, invoice?.DocNumber || null,
       { amount: parsed, customer_id, project_id: project_id || null });
@@ -437,7 +437,7 @@ router.post('/import/workers', requireAdmin, async (req, res) => {
       );
       imported.push({ ...result.rows[0], temp_password: tempPassword });
     } catch (err) {
-      console.error('QBO worker import error:', err);
+      logger.error({ err }, 'QBO worker import error');
       skipped.push({ display_name: displayName, reason: 'Failed to import worker' });
     }
   }
@@ -466,7 +466,7 @@ router.post('/import/projects', requireAdmin, async (req, res) => {
       );
       imported.push(result.rows[0]);
     } catch (err) {
-      console.error('QBO project import error:', err);
+      logger.error({ err }, 'QBO project import error');
       if (err.code === '23505') skipped.push({ name, reason: 'Project with this name already exists' });
       else skipped.push({ name, reason: 'Failed to import project' });
     }
@@ -1036,7 +1036,7 @@ router.post('/retry-error/:id', requireAdmin, async (req, res) => {
     await pool.query('DELETE FROM qbo_sync_errors WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
     res.json({ retried: true });
   } catch (err) {
-    console.error('[QBO retry-error]', err.message);
+    logger.error({ err }, '[QBO retry-error]');
     const status = err.code === 'qbo_auth_expired' ? 401 : 500;
     res.status(status).json({ error: err.code === 'qbo_auth_expired' ? err.message : err.message || 'Retry failed', code: err.code });
   }
@@ -1063,7 +1063,7 @@ router.post('/workers/create-vendor', requireAdmin, async (req, res) => {
     );
     res.json({ qbo_vendor_id: vendor.Id, display_name: vendor.DisplayName });
   } catch (err) {
-    console.error('[QBO create-vendor]', err.message);
+    logger.error({ err }, '[QBO create-vendor]');
     const status = err.code === 'qbo_auth_expired' ? 401 : 500;
     res.status(status).json({ error: err.code === 'qbo_auth_expired' ? err.message : 'Failed to create vendor in QuickBooks', code: err.code });
   }

@@ -26,7 +26,7 @@ async function checkInactiveWorkers() {
                '0'
              ) as feature_inactive_alerts
       FROM companies c
-      WHERE c.subscription_status IN ('trial', 'active')
+      WHERE c.subscription_status IN ('trial', 'active') AND c.is_demo = false
     `);
 
     for (const company of companies.rows) {

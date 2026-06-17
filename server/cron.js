@@ -236,18 +236,179 @@ async function sweepStaleActiveClock() {
   }
 }
 
+// ─── Booking reminders ──────────────────────────────────────────────────────
+//
+// Run every 15 minutes. Sends one client reminder 24h before the
+// appointment and one assignee reminder 1h before.
+//
+// Dedup uses `appointments.reminder_client_24h_at` and
+// `reminder_assignee_1h_at` columns (added in migration 0114) via a
+// claim-then-send pattern: an UPDATE WHERE col IS NULL atomically
+// stamps "I'm sending this reminder," and only rows the UPDATE
+// actually changed get an email. If the process dies between claim
+// and send, the next 15-min run finds the claim in place and skips —
+// you lose an email, but you never spam.
+
+const { sendEmail: cronSendEmail } = require('./email');
+const { escapeHtml: cronEscape } = require('./utils/htmlEscape');
+
+async function sendBookingReminders() {
+  try {
+    const now = new Date();
+    const in1hr = new Date(now.getTime() + 60 * 60 * 1000);
+    const in24hr = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+    // ── Client 24h reminders ────────────────────────────────────────────────
+    // LIMIT 500 per cron tick. Without a limit, a company with 10,000
+    // appointments in the 2-hour window would have one cron run try to
+    // process all of them — eating the 15-min budget, blowing through
+    // SendGrid rate limits, and starving every other cron job. 500/tick
+    // = 2000/hr capacity, which dwarfs realistic per-company traffic
+    // and any overflow gets caught on the next tick.
+    const clientCandidates = await pool.query(
+      `SELECT a.id FROM appointments a
+        WHERE a.status IN ('booked','confirmed')
+          AND a.reminder_client_24h_at IS NULL
+          AND a.scheduled_at BETWEEN $1 AND $2
+        ORDER BY a.scheduled_at
+        LIMIT 500`,
+      [new Date(in24hr.getTime() - 60 * 60 * 1000), new Date(in24hr.getTime() + 60 * 60 * 1000)]
+    );
+    for (const row of clientCandidates.rows) {
+      // Claim the row: UPDATE only succeeds if reminder_client_24h_at is
+      // still NULL. If the claim UPDATE itself throws (transient DB
+      // hiccup, pool exhaustion), DON'T let it propagate to the outer
+      // try — that would abort the whole batch and the surviving rows
+      // would silently miss this run's reminder window. Per-row try
+      // means one bad row at most loses its reminder.
+      let claim;
+      try {
+        claim = await pool.query(
+          `UPDATE appointments
+              SET reminder_client_24h_at = NOW()
+            WHERE id = $1 AND reminder_client_24h_at IS NULL
+          RETURNING id`,
+          [row.id]
+        );
+      } catch (claimErr) {
+        console.error('[cron] client reminder claim failed:', claimErr);
+        continue;
+      }
+      if (claim.rowCount === 0) continue;  // another worker grabbed it
+      try {
+        const r = await pool.query(
+          `SELECT a.id, a.client_email, a.client_name, a.scheduled_at, a.duration_minutes,
+                  t.name AS type_name, t.location_detail,
+                  u.full_name AS assignee_name, c.name AS company_name
+             FROM appointments a
+             JOIN appointment_types t ON a.appointment_type_id = t.id
+             JOIN users u ON a.assigned_user_id = u.id
+             JOIN companies c ON a.company_id = c.id
+            WHERE a.id = $1`,
+          [row.id]
+        );
+        const a = r.rows[0];
+        if (!a) continue;
+        await cronSendEmail(
+          a.client_email,
+          `Reminder: ${a.type_name} with ${a.company_name} tomorrow`,
+          `<p>Hi ${cronEscape(a.client_name)},</p>
+           <p>This is a reminder that you have a <strong>${cronEscape(a.type_name)}</strong> with ${cronEscape(a.assignee_name)} from ${cronEscape(a.company_name)} tomorrow at <strong>${cronEscape(new Date(a.scheduled_at).toLocaleString())}</strong> (${a.duration_minutes} minutes).</p>
+           ${a.location_detail ? `<p>Location: ${cronEscape(a.location_detail)}</p>` : ''}
+           <p>If you need to cancel or reschedule, use the manage link from your booking confirmation.</p>`
+        );
+      } catch (err) {
+        // Unwind the claim so a future retry can try again. Better to
+        // double-send (rare) than to permanently swallow the reminder.
+        await pool.query(
+          `UPDATE appointments SET reminder_client_24h_at = NULL WHERE id = $1`,
+          [row.id]
+        ).catch(() => {});
+        console.error('[cron] client reminder error:', err);
+      }
+    }
+
+    // ── Assignee 1h reminders ───────────────────────────────────────────────
+    // LIMIT 500 per tick — same cap as the client reminder loop.
+    const assigneeCandidates = await pool.query(
+      `SELECT a.id FROM appointments a
+         JOIN users u ON a.assigned_user_id = u.id
+        WHERE a.status IN ('booked','confirmed')
+          AND a.reminder_assignee_1h_at IS NULL
+          AND u.email IS NOT NULL
+          AND a.scheduled_at BETWEEN $1 AND $2
+        ORDER BY a.scheduled_at
+        LIMIT 500`,
+      [new Date(in1hr.getTime() - 15 * 60 * 1000), new Date(in1hr.getTime() + 15 * 60 * 1000)]
+    );
+    for (const row of assigneeCandidates.rows) {
+      // Same per-row try-wrap as the client loop — guards against the
+      // claim UPDATE itself throwing and aborting the rest of the batch.
+      let claim;
+      try {
+        claim = await pool.query(
+          `UPDATE appointments
+              SET reminder_assignee_1h_at = NOW()
+            WHERE id = $1 AND reminder_assignee_1h_at IS NULL
+          RETURNING id`,
+          [row.id]
+        );
+      } catch (claimErr) {
+        console.error('[cron] assignee reminder claim failed:', claimErr);
+        continue;
+      }
+      if (claim.rowCount === 0) continue;
+      try {
+        const r = await pool.query(
+          `SELECT a.id, a.client_name, a.client_phone, a.client_notes,
+                  a.scheduled_at, a.duration_minutes,
+                  t.name AS type_name, t.location_detail,
+                  u.email AS assignee_email, u.full_name AS assignee_name
+             FROM appointments a
+             JOIN appointment_types t ON a.appointment_type_id = t.id
+             JOIN users u ON a.assigned_user_id = u.id
+            WHERE a.id = $1`,
+          [row.id]
+        );
+        const a = r.rows[0];
+        if (!a) continue;
+        await cronSendEmail(
+          a.assignee_email,
+          `In 1 hour: ${a.type_name} with ${a.client_name}`,
+          `<p>Hi ${cronEscape(a.assignee_name)},</p>
+           <p>You have a <strong>${cronEscape(a.type_name)}</strong> with <strong>${cronEscape(a.client_name)}</strong> in about an hour, at ${cronEscape(new Date(a.scheduled_at).toLocaleString())}.</p>
+           ${a.client_phone ? `<p>Client phone: ${cronEscape(a.client_phone)}</p>` : ''}
+           ${a.client_notes ? `<p>Client notes: ${cronEscape(a.client_notes)}</p>` : ''}
+           ${a.location_detail ? `<p>Location: ${cronEscape(a.location_detail)}</p>` : ''}`
+        );
+      } catch (err) {
+        await pool.query(
+          `UPDATE appointments SET reminder_assignee_1h_at = NULL WHERE id = $1`,
+          [row.id]
+        ).catch(() => {});
+        console.error('[cron] assignee reminder error:', err);
+      }
+    }
+  } catch (err) {
+    console.error('[cron] sendBookingReminders error:', err);
+  }
+}
+
 function startCron() {
   // Run immediately on startup (catches any missed window from restart)
   sendShiftReminders();
   sendSignoffReminders();
   expireOldTrials();
   sweepStaleActiveClock();
-  // Then run every hour
+  sendBookingReminders();
+  // Then run every hour (every 15 min for bookings — finer-grained since
+  // a 1h reminder needs catching within a 15-min slot).
   setInterval(sendShiftReminders, 60 * 60 * 1000);
   setInterval(sendSignoffReminders, 60 * 60 * 1000);
   setInterval(expireOldTrials, 60 * 60 * 1000);
   setInterval(sweepStaleActiveClock, 60 * 60 * 1000);
-  console.log('[cron] Shift reminder, sign-off, trial-expiry, and stale-clock crons started');
+  setInterval(sendBookingReminders, 15 * 60 * 1000);
+  console.log('[cron] Shift / sign-off / trial-expiry / stale-clock / booking-reminder crons started');
 }
 
 module.exports = { startCron };

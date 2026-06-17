@@ -71,10 +71,12 @@ async function settingEnabled(companyId, key) {
   return r.rows[0].value === '1';
 }
 
-// Get all active, billable companies
+// Get all active, billable companies. Demo/test tenants are excluded so the
+// nightly report jobs don't email out from a tenant that has email disabled.
 async function activeCompanies() {
   const r = await pool.query(
-    `SELECT id, name FROM companies WHERE subscription_status IN ('trial','active','exempt')`
+    `SELECT id, name FROM companies
+      WHERE subscription_status IN ('trial','active','exempt') AND is_demo = false`
   );
   return r.rows;
 }

@@ -92,5 +92,5 @@ const styles = {
   bubbleBody: { lineHeight: 1.5 },
   form: { display: 'flex', borderTop: '1px solid #e5e7eb' },
   input: { flex: 1, padding: '8px 12px', border: 'none', fontSize: 13, outline: 'none', background: '#fff' },
-  sendBtn: { padding: '8px 14px', background: '#1a56db', color: '#fff', border: 'none', fontSize: 13, fontWeight: 600, cursor: 'pointer', flexShrink: 0 },
+  sendBtn: { padding: '8px 14px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', fontSize: 13, fontWeight: 600, cursor: 'pointer', flexShrink: 0 },
 };

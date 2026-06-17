@@ -10,6 +10,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
 import { silentError } from '../errorReporter';
 import EmptyState from './EmptyState';
+import { SkeletonList } from './Skeleton';
 
 const STATUS_FILTERS = [
   { key: 'new',       label: 'New' },
@@ -200,7 +201,7 @@ export default function ServiceRequestsAdmin({ settings = null }) {
       {error && <div role="alert" style={s.error}>{error}</div>}
 
       {loading ? (
-        <div style={s.loading}>Loading...</div>
+        <SkeletonList count={3} />
       ) : requests.length === 0 ? (
         <EmptyState
           mark="R"
@@ -285,7 +286,7 @@ const s = {
   settingsLabel: { fontSize: 14, fontWeight: 700, color: '#111827', marginBottom: 4 },
   urlRow:        { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 4 },
   url:           { background: '#f3f4f6', padding: '6px 10px', borderRadius: 6, fontSize: 12, color: '#111827', fontFamily: 'ui-monospace, monospace' },
-  copyBtn:       { padding: '6px 10px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer' },
+  copyBtn:       { padding: '6px 10px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer' },
   viewBtn:       { padding: '6px 10px', background: '#f3f4f6', color: '#374151', borderRadius: 6, fontSize: 12, fontWeight: 600, textDecoration: 'none' },
   hint:          { fontSize: 12, color: '#6b7280', marginTop: 4 },
   statusGroup:   { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 },
@@ -307,7 +308,7 @@ const s = {
   recipientsFooter: { fontSize: 11, color: '#9ca3af', marginTop: 10, paddingTop: 10, borderTop: '1px solid #f3f4f6' },
   filterBar:     { display: 'flex', gap: 6, flexWrap: 'wrap' },
   filter:        { padding: '6px 14px', background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: 7, fontSize: 13, fontWeight: 600, color: '#6b7280', cursor: 'pointer' },
-  filterActive:  { padding: '6px 14px', background: '#1a56db', border: '1px solid #1a56db', borderRadius: 7, fontSize: 13, fontWeight: 600, color: '#fff', cursor: 'pointer' },
+  filterActive:  { padding: '6px 14px', background: 'var(--ops-page-accent)', border: '1px solid var(--ops-page-accent)', borderRadius: 7, fontSize: 13, fontWeight: 600, color: '#fff', cursor: 'pointer' },
   error:         { color: '#991b1b', background: '#fee2e2', padding: 10, borderRadius: 7, fontSize: 13 },
   loading:       { color: '#6b7280', fontSize: 14, padding: 20, textAlign: 'center' },
   list:          { display: 'flex', flexDirection: 'column', gap: 8 },
@@ -329,7 +330,7 @@ const s = {
   chevron:       { fontSize: 13, color: '#6b7280' },
   detail:        { padding: '0 14px 14px', borderTop: '1px solid #f3f4f6', display: 'flex', flexDirection: 'column', gap: 10 },
   contact:       { display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 13, color: '#374151', paddingTop: 10 },
-  contactLink:   { color: '#1a56db', textDecoration: 'none', fontWeight: 600 },
+  contactLink:   { color: 'var(--ops-page-accent)', textDecoration: 'none', fontWeight: 600 },
   contactText:   { color: '#4b5563' },
   descBlock:     { background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 7, padding: 12, fontSize: 13, color: '#111827', whiteSpace: 'pre-wrap' },
   convertedLabel:{ fontSize: 13, color: '#065f46', background: '#d1fae5', padding: '6px 10px', borderRadius: 6 },

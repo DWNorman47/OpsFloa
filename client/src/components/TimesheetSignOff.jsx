@@ -149,7 +149,7 @@ const styles = {
   signedBadge: { background: '#d1fae5', color: '#065f46', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10 },
   pendingBadge: { background: '#fef3c7', color: '#92400e', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10 },
   signArea: { display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' },
-  signBtn: { background: '#1a56db', color: '#fff', border: 'none', padding: '10px 22px', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' },
+  signBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '10px 22px', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' },
   cancelSignBtn: { background: '#f3f4f6', color: '#374151', border: '1px solid #d1d5db', padding: '10px 16px', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer' },
   signHint: { fontSize: 12, color: '#6b7280' },
   allSignedMsg: { background: '#f0fdf4', color: '#065f46', border: '1px solid #bbf7d0', borderRadius: 8, padding: '10px 14px', fontSize: 14, fontWeight: 600 },

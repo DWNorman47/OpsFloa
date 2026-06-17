@@ -1,6 +1,7 @@
 const sgMail = require('@sendgrid/mail');
 const pool = require('./db');
 const logger = require('./logger');
+const { getStore } = require('./demoMode');
 
 if (process.env.SENDGRID_API_KEY) {
   sgMail.setApiKey(process.env.SENDGRID_API_KEY);
@@ -35,8 +36,23 @@ async function isBounced(email) {
 const isProd = process.env.NODE_ENV === 'production';
 const emailMode = isProd ? 'real' : (process.env.EMAIL_MODE || 'redirect');
 
-async function sendEmail(to, subject, html) {
+// `attachments` (optional): SendGrid-shaped attachment array — each entry
+// { content: base64String, filename, type, disposition: 'attachment' }.
+// Used today by the booking flow to attach an .ics calendar invite to
+// confirmation emails so clients can drop the appointment into their
+// own calendar.
+async function sendEmail(to, subject, html, attachments) {
   if (!to) return;
+
+  // Demo/test tenant: never send real email. Suppress and flag the request
+  // so the client can show a "would have sent" popup. Keyed on the acting
+  // company via the request-scoped demo context (see demoMode.js).
+  const store = getStore();
+  if (store && store.isDemo) {
+    store.emailSuppressed = true;
+    logger.info({ to, subject }, 'email suppressed — demo company (no real send)');
+    return { suppressed: 'demo' };
+  }
 
   // Short-circuit if this recipient is already known-bad from SendGrid's
   // event webhook. Prevents re-sending to invalid addresses.
@@ -55,7 +71,7 @@ async function sendEmail(to, subject, html) {
     logger.debug({ to, subject, env }, 'email redirect (dev)');
     if (!process.env.SENDGRID_API_KEY) return;
     try {
-      await sgMail.send({
+      const msg = {
         to: REDIRECT_TO,
         from: FROM,
         subject: `[${env.toUpperCase()} → ${to}] ${subject}`,
@@ -69,7 +85,9 @@ async function sendEmail(to, subject, html) {
             </span>
           </div>
           ${html}`,
-      });
+      };
+      if (Array.isArray(attachments) && attachments.length > 0) msg.attachments = attachments;
+      await sgMail.send(msg);
     } catch (err) {
       logger.error({ err: { message: err.message, body: err?.response?.body } }, 'email redirect failed');
     }
@@ -79,7 +97,9 @@ async function sendEmail(to, subject, html) {
   // emailMode === 'real'
   if (!process.env.SENDGRID_API_KEY) return;
   try {
-    await sgMail.send({ to, from: FROM, subject, html });
+    const msg = { to, from: FROM, subject, html };
+    if (Array.isArray(attachments) && attachments.length > 0) msg.attachments = attachments;
+    await sgMail.send(msg);
   } catch (err) {
     logger.error({ err: { message: err.message, body: err?.response?.body }, to, subject }, 'email send failed');
   }

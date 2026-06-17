@@ -12,6 +12,11 @@
   --ops-accent: #0f766e;
   --ops-accent-strong: #115e59;
   --ops-page-accent: #0f766e;
+  /* Stable brand color for page-agnostic surfaces (login, error boundary,
+     generated PDFs) that shouldn't pick up a per-page accent. */
+  --ops-primary: #1a56db;
+  --ops-danger: #dc2626;
+  --ops-danger-strong: #b91c1c;
   --ops-success-bg: #ecfdf5;
   --ops-success-text: #047857;
   --ops-warning-bg: #fff7ed;
@@ -1153,53 +1158,105 @@ button {
   color: var(--ops-page-accent);
   box-shadow: 0 1px 5px rgba(15,23,42,0.08);
 }
-.ops-tab-dot,
-.ops-tab-select-dot {
+.ops-tab-dot {
   display: inline-block;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--tab-dot);
-}
-.ops-tab-dot {
   margin-right: 6px;
 }
-.ops-tab-select-wrap {
+
+/* Mobile tab dropdown — a custom control (not a native <select>) so the option
+   rows are big and tappable on touch screens. */
+.ops-tab-dd {
   position: relative;
   margin-bottom: 20px;
 }
-.ops-tab-select {
+.ops-tab-dd-trigger {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
-  min-height: 44px;
-  appearance: none;
+  min-height: 52px;
   border: 1px solid var(--ops-border);
   border-radius: var(--ops-radius-lg);
   background: var(--ops-surface);
   color: var(--ops-text);
-  padding: 0 42px 0 14px;
-  font-size: 14px;
+  padding: 0 16px;
+  font-size: 16px;
   font-weight: 800;
+  text-align: left;
+  cursor: pointer;
   box-shadow: var(--ops-shadow-sm);
 }
-.ops-tab-select-wrap.has-dot .ops-tab-select {
-  padding-left: 30px;
+.ops-tab-dd-current {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.ops-tab-select-dot {
-  position: absolute;
-  left: 14px;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 1;
-}
-.ops-tab-select-chevron {
-  position: absolute;
-  right: 15px;
-  top: 50%;
-  transform: translateY(-50%);
+.ops-tab-dd-caret {
   color: var(--ops-text-muted);
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 900;
-  pointer-events: none;
+  transition: transform 0.15s ease;
+}
+.ops-tab-dd-caret.is-open {
+  transform: rotate(180deg);
+}
+.ops-tab-dd-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  background: var(--ops-surface);
+  border: 1px solid var(--ops-border);
+  border-radius: var(--ops-radius-lg);
+  box-shadow: 0 16px 42px rgba(15, 23, 42, 0.16);
+  z-index: 1000;
+  max-height: 60vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.ops-tab-dd-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ops-text);
+  text-align: left;
+  cursor: pointer;
+}
+.ops-tab-dd-option:hover {
+  background: rgba(15, 23, 42, 0.05);
+}
+.ops-tab-dd-option.is-active {
+  background: var(--ops-page-accent);
+  color: #fff;
+}
+.ops-tab-dd-option-label {
+  flex: 1;
+  min-width: 0;
+}
+.ops-tab-dd-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tab-dot);
+  flex-shrink: 0;
 }
 .ops-workflow-tabs {
   display: flex;
@@ -1286,6 +1343,44 @@ button {
   gap: 10px;
   margin-bottom: 14px;
   flex-wrap: wrap;
+}
+/* Type filter for the unified Directory (All / Team / Subs / Customers). */
+.ops-dir-filter {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.ops-dir-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--ops-border, #e2e8f0);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ops-text-muted, #6b7280);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.ops-dir-filter-btn:hover { color: var(--ops-text, #111827); }
+.ops-dir-filter-btn.is-active {
+  background: var(--ops-page-accent);
+  border-color: var(--ops-page-accent);
+  color: #fff;
+}
+.ops-dir-filter-count {
+  font-size: 11px;
+  font-weight: 800;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+  color: inherit;
+}
+.ops-dir-filter-btn.is-active .ops-dir-filter-count {
+  background: rgba(255, 255, 255, 0.25);
 }
 .ops-directory-search {
   flex: 1;
@@ -1443,6 +1538,184 @@ button {
   gap: 18px;
 }
 
+/* Screen-reader-only text — visually hidden but still announced.
+   Use for things like "(required)" on a form field where the visual cue
+   is a non-textual asterisk, or "external link" markers, etc. Standard
+   technique; see https://webaim.org/techniques/css/invisiblecontent/. */
+.sr-only {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0);
+  white-space: nowrap; border: 0;
+}
+
+/* ── Admin page responsive primitives ────────────────────────────────────
+   Used by every session-built admin page (Estimates, Change Orders,
+   Subs, Lien Waivers, Submittals, Booking). Tables don't fit on phones,
+   so each page renders BOTH a desktop table (.admin-table-desktop) and
+   a stack of mobile cards (.admin-cards-mobile); CSS swaps which is
+   visible. The form grids collapse from 2/4 columns to 1 below 640px so
+   labels and inputs don't truncate. Padding shrinks slightly. */
+.admin-table-desktop { display: block; }
+.admin-cards-mobile  { display: none; }
+.admin-form-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.admin-form-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+.admin-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+@media (max-width: 640px) {
+  .admin-table-desktop { display: none !important; }
+  .admin-cards-mobile  { display: block !important; }
+  .admin-form-grid-2 { grid-template-columns: 1fr; }
+  .admin-form-grid-4 { grid-template-columns: 1fr 1fr; }
+  .admin-page-header h1 { font-size: 20px !important; }
+  /* Each new admin page sets .admin-page-shell on its content wrapper so
+     mobile padding shrinks without leaking into other pages that happen
+     to use <main id="main-content"> (PageShell, Dashboard, etc.). */
+  .admin-page-shell { padding-left: 14px !important; padding-right: 14px !important; }
+}
+@media (max-width: 420px) {
+  .admin-form-grid-4 { grid-template-columns: 1fr; }
+}
+/* Card row for the mobile list — generic enough that every page can
+   build its own content inside. Tap-target sized, with the same hover
+   feel as the desktop table rows. */
+.admin-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.admin-card:hover { border-color: #1a56db; }
+.admin-card-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.admin-card-title { font-weight: 700; font-size: 15px; color: #111827; }
+.admin-card-sub   { font-size: 12px; color: #6b7280; }
+
+/* ── Shared, accent-driven UI primitives ─────────────────────────────────
+   Buttons / inputs / badges that read var(--ops-page-accent) so every page
+   themes itself from the PageShell accent instead of hardcoding a blue.
+   Replaces the per-file inline styles.primaryBtn / ghostBtn objects. */
+.ops-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
+  white-space: nowrap;
+}
+.ops-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.ops-btn-primary {
+  background: var(--ops-page-accent);
+  color: #fff;
+}
+.ops-btn-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ops-page-accent) 88%, #000);
+}
+.ops-btn-ghost {
+  background: #fff;
+  color: var(--ops-text-soft);
+  border-color: var(--ops-border-strong);
+}
+.ops-btn-ghost:hover:not(:disabled) {
+  background: var(--ops-surface-muted);
+  border-color: var(--ops-page-accent);
+  color: var(--ops-page-accent);
+}
+.ops-btn-danger {
+  background: var(--ops-danger);
+  color: #fff;
+}
+.ops-btn-danger:hover:not(:disabled) { background: var(--ops-danger-strong); }
+.ops-btn-sm { padding: 6px 12px; font-size: 13px; }
+
+.ops-input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--ops-border-strong);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--ops-text);
+  background: #fff;
+  box-sizing: border-box;
+}
+.ops-input:focus-visible {
+  outline: 2px solid var(--ops-page-accent);
+  outline-offset: 1px;
+  border-color: var(--ops-page-accent);
+}
+.ops-input.ops-input-invalid { border-color: var(--ops-danger); }
+
+.ops-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 8px;
+  border-radius: 10px;
+  background: #f3f4f6;
+  color: #374151;
+}
+.ops-badge-info    { background: #dbeafe; color: #1d4ed8; }
+.ops-badge-success { background: #d1fae5; color: #065f46; }
+.ops-badge-warning { background: #fef3c7; color: #92400e; }
+.ops-badge-danger  { background: #fee2e2; color: #991b1b; }
+.ops-badge-neutral { background: #e5e7eb; color: #6b7280; }
+
+/* Sticky action bar for long forms — keeps Save / Cancel reachable. */
+.ops-form-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 0;
+  margin-top: 8px;
+  background: linear-gradient(to top, var(--ops-bg) 70%, transparent);
+}
+
+/* Per-field validation helper text. */
+.ops-field-error { color: var(--ops-danger); font-size: 12px; margin-top: 4px; }
+
+/* Horizontal-scroll affordance for tables that must stay tabular on small
+   screens (used where a record-card layout doesn't fit the data). */
+.ops-table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
 /* ── Focus visibility (keyboard navigation) ─────────────────────────────
    :focus-visible only activates when the browser infers keyboard nav, so
    mouse clicks on buttons don't flash a ring. Covers the whole interactive
@@ -1516,6 +1789,14 @@ input, select, textarea, button {
 }
 .btn-circle {
   min-height: unset !important;
+}
+/* Icon-only round buttons opt out of the 40px min above so they can sit in
+   tight desktop rows — but on touch screens give them a real ≥40px target. */
+@media (max-width: 768px) {
+  .btn-circle {
+    min-width: 40px !important;
+    min-height: 40px !important;
+  }
 }
 
 /* Prevent iOS Safari from auto-zooming on input focus (requires font-size >= 16px) */
@@ -1613,7 +1894,7 @@ input, select, textarea {
     font-size: 13px;
   }
   .ops-tabbar,
-  .ops-tab-select-wrap {
+  .ops-tab-dd {
     margin-bottom: 14px;
   }
   .workspace-hero {

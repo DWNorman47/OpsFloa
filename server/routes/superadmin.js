@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { requireSuperAdmin } = require('../middleware/auth');
 const { seedBuiltinRoles } = require('../permissions');
+const { COMPANY_SUBSCRIPTION_STATUSES, COMPANY_PLANS } = require('../constants/companyEnums');
 
 const DEMO_COMPANY_NAME = 'OpsFloa Demo Workspace';
 const DEMO_COMPANY_SLUG = 'opsfloa-demo-workspace';
@@ -74,6 +75,7 @@ async function createDemoWorkspace(client) {
     prevailing_wage_rate: '45', default_hourly_rate: '34', overtime_multiplier: '1.5',
     overtime_rule: 'daily', overtime_threshold: '8',
     module_timeclock: '1', module_field: '1', module_projects: '1', module_inventory: '1', module_analytics: '1', module_team: '1',
+    module_financial_reports: '1',
     feature_scheduling: '1', feature_analytics: '1', feature_chat: '1', feature_prevailing_wage: '1',
     feature_reimbursements: '1', feature_pto: '1', feature_project_integration: '1', feature_overtime: '1',
     feature_geolocation: '1', feature_overtime_alerts: '1', feature_media_gallery: '1',
@@ -311,8 +313,8 @@ router.patch('/companies/:id', requireSuperAdmin, async (req, res) => {
     addon_qbo === undefined && addon_certified_payroll === undefined
   ) return res.status(400).json({ error: 'No fields to update' });
 
-  const VALID_STATUSES = ['trial', 'active', 'past_due', 'canceled', 'trial_expired', 'exempt'];
-  const VALID_PLANS = ['free', 'starter', 'business'];
+  const VALID_STATUSES = COMPANY_SUBSCRIPTION_STATUSES;
+  const VALID_PLANS = COMPANY_PLANS;
   if (subscription_status !== undefined && !VALID_STATUSES.includes(subscription_status))
     return res.status(400).json({ error: 'Invalid subscription_status' });
   if (plan !== undefined && !VALID_PLANS.includes(plan))
@@ -643,43 +645,62 @@ router.get('/companies/:id/export', requireSuperAdmin, async (req, res) => {
     'audit_log', 'inbox', 'push_subscriptions', 'company_chat',
   ];
 
-  const output = {
-    exported_at: new Date().toISOString(),
-    company: companyRes.rows[0],
-    tables: {},
+  // Stream the JSON one table at a time. The previous implementation
+  // buffered every row from every company-rooted table into a single
+  // object before calling res.send() — for a customer with months of
+  // time_entries / inbox / audit_log, that could be hundreds of MB
+  // resident at once and risked OOM-ing the export. Now we hold at
+  // most one table's rows in memory, write them as a fragment of the
+  // larger JSON document, and let Node back-pressure the rest into
+  // the response stream.
+  const filename = `opsfloa-company-${id}-${Date.now()}.json`;
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+  // Strip secrets out of user rows before they leave the server.
+  const scrubUser = u => {
+    const { password_hash, reset_token, reset_token_expires,
+            invite_token, invite_token_expires,
+            email_confirm_token, email_confirm_token_expires,
+            mfa_secret, ...safe } = u;
+    return safe;
   };
 
   try {
-    for (const table of tables) {
+    res.write('{\n');
+    res.write(`  "exported_at": ${JSON.stringify(new Date().toISOString())},\n`);
+    res.write(`  "company": ${JSON.stringify(companyRes.rows[0], null, 2).replace(/\n/g, '\n  ')},\n`);
+    res.write('  "tables": {\n');
+
+    for (let i = 0; i < tables.length; i++) {
+      const table = tables[i];
+      let value;
       try {
-        // Most tables have company_id directly. A handful don't — skip them
-        // gracefully so a refactor elsewhere doesn't break export.
+        // Most tables have company_id directly. A handful don't — skip
+        // them gracefully so a refactor elsewhere doesn't break export.
         const r = await pool.query(`SELECT * FROM ${table} WHERE company_id = $1 ORDER BY id`, [id]);
-        output.tables[table] = r.rows;
+        const rows = table === 'users' ? r.rows.map(scrubUser) : r.rows;
+        value = JSON.stringify(rows, null, 2);
       } catch (err) {
-        // Table might not exist in this environment, or might not have a
-        // company_id column. Either way, record an empty result + the error
-        // message so the output is still consistent.
-        output.tables[table] = { error: err.message };
+        value = JSON.stringify({ error: err.message }, null, 2);
       }
+      const indented = value.replace(/\n/g, '\n    ');
+      const trailing = i < tables.length - 1 ? ',' : '';
+      res.write(`    ${JSON.stringify(table)}: ${indented}${trailing}\n`);
     }
 
-    // Strip sensitive columns that should never leave the server
-    output.tables.users = (output.tables.users || []).map(u => {
-      const { password_hash, reset_token, reset_token_expires,
-              invite_token, invite_token_expires,
-              email_confirm_token, email_confirm_token_expires,
-              mfa_secret, ...safe } = u;
-      return safe;
-    });
-
-    const filename = `opsfloa-company-${id}-${Date.now()}.json`;
-    res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(JSON.stringify(output, null, 2));
+    res.write('  }\n}\n');
+    res.end();
   } catch (err) {
     logger.error({ err }, 'company export failed');
-    res.status(500).json({ error: 'Export failed' });
+    // If headers / body have already started flowing we can't change to
+    // 500; just terminate the response so the client sees truncated JSON
+    // and can retry.
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Export failed' });
+    } else {
+      res.end();
+    }
   }
 });
 
