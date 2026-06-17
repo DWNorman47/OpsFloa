@@ -103,7 +103,7 @@ const LANDING_PRIORITY = [
   { id: 'team',           path: '/team' },
   { id: 'field',          path: '/field' },
   { id: 'inventory',      path: '/inventory' },
-  { id: 'analytics',      path: '/analytics' },
+  // 'analytics' folded into Reports (Performance tab); /analytics redirects there.
   { id: 'administration', path: '/administration' },
   { id: 'account',        path: '/account' },        // always-fallback
 ];

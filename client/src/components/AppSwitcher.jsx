@@ -131,19 +131,6 @@ export const APPS = [
     ),
     path: '/administration',
   },
-  {
-    id: 'analytics',
-    name: 'Analytics',
-    bg: '#0e7490',
-    adminOnly: true,
-    icon: (
-      <svg viewBox="0 0 20 20" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
-        <polyline points="2,15 7,9 11,12 18,5" />
-        <polyline points="14,5 18,5 18,9" />
-      </svg>
-    ),
-    path: '/analytics',
-  },
 ];
 
 export default function AppSwitcher({ currentApp = 'timeclock', userRole, features = {} }) {
@@ -176,10 +163,11 @@ export default function AppSwitcher({ currentApp = 'timeclock', userRole, featur
     if (a.id === 'field' && feat.module_field === false) return false;
     if (a.id === 'projects' && feat.module_projects === false) return false;
     if (a.id === 'inventory' && feat.module_inventory === false) return false;
-    if (a.id === 'analytics' && feat.module_analytics === false) return false;
     if (a.id === 'team' && feat.module_team === false) return false;
     // Construction-lifecycle modules, each with its own admin toggle.
-    if (a.id === 'financial_reports' && feat.module_financial_reports === false) return false;
+    // Reports hosts both Performance (Analytics) and the financial reports, so
+    // it's hidden only when BOTH are off.
+    if (a.id === 'financial_reports' && feat.module_financial_reports === false && feat.module_analytics === false) return false;
     // module_timeclock now gates the admin oversight page (Workforce). Time
     // Clock itself stays visible to everyone — workers always need it, and
     // admins use it for their own time-tracking even if oversight is off.

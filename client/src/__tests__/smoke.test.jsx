@@ -195,7 +195,7 @@ describe.each([['English'], ['Spanish']])('smoke: admin pages (%s)', (language) 
     await smokeRender(<AdministrationPage />, { user: admin });
   });
 
-  test('AnalyticsPage', async () => {
+  test('Reports — Performance tab (Analytics)', async () => {
     const api = (await import('../api')).default;
     // Analytics dashboard destructures { summary, daily_hours, ... } from the
     // response — a bare [] would crash it. Return a minimal valid shape.
@@ -215,8 +215,10 @@ describe.each([['English'], ['Spanish']])('smoke: admin pages (%s)', (language) 
       }
       return Promise.resolve({ data: [] });
     });
-    const { default: AnalyticsPage } = await import('../pages/AnalyticsPage');
-    await smokeRender(<AnalyticsPage />, { user: admin });
+    // Analytics lives as the Performance tab of the Reports module now.
+    // Business plan so the dashboard (not the upgrade prompt) renders.
+    const { default: FinancialReportsPage } = await import('../pages/FinancialReportsPage');
+    await smokeRender(<FinancialReportsPage />, { user: makeUser('admin', { plan: 'business' }) });
   });
 
   test('ProjectsPage', async () => {
@@ -475,9 +477,9 @@ describe('smoke: API error states', () => {
     await smokeRender(<TeamPage />, { user: makeUser('admin') });
   });
 
-  test('AnalyticsPage (admin, all requests reject)', async () => {
-    const { default: AnalyticsPage } = await import('../pages/AnalyticsPage');
-    await smokeRender(<AnalyticsPage />, { user: makeUser('admin') });
+  test('Reports (admin, all requests reject)', async () => {
+    const { default: FinancialReportsPage } = await import('../pages/FinancialReportsPage');
+    await smokeRender(<FinancialReportsPage />, { user: makeUser('admin') });
   });
 });
 

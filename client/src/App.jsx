@@ -26,7 +26,6 @@ const AdminDashboard    = lazy(() => import('./pages/AdminDashboard'));
 const FieldPage         = lazy(() => import('./pages/FieldPage'));
 const ProjectsPage      = lazy(() => import('./pages/ProjectsPage'));
 const AdministrationPage = lazy(() => import('./pages/AdministrationPage'));
-const AnalyticsPage     = lazy(() => import('./pages/AnalyticsPage'));
 const SuperAdmin        = lazy(() => import('./pages/SuperAdmin'));
 const InventoryPage     = lazy(() => import('./pages/InventoryPage'));
 const AccountPage       = lazy(() => import('./pages/AccountPage'));
@@ -166,7 +165,8 @@ function AppRoutes() {
       <Route path="/field" element={<PrivateRoute moduleId="field"><FieldPage /></PrivateRoute>} />
       <Route path="/projects" element={<PrivateRoute adminOnly moduleId="projects"><ProjectsPage /></PrivateRoute>} />
       <Route path="/administration" element={<PrivateRoute adminOnly moduleId="administration"><AdministrationPage /></PrivateRoute>} />
-      <Route path="/analytics" element={<PrivateRoute adminOnly moduleId="analytics"><AnalyticsPage /></PrivateRoute>} />
+      {/* Analytics is now the Performance tab of the Reports module. */}
+      <Route path="/analytics" element={<Navigate to="/financial-reports#performance" replace />} />
       <Route path="/inventory" element={<PrivateRoute moduleId="inventory"><InventoryPage /></PrivateRoute>} />
       {/* Sales is now a tab set inside the Projects module. Keep the old paths
           working by deep-linking to the matching Projects tab. */}

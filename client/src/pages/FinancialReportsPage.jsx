@@ -6,10 +6,12 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api';
+import { getOrFetch } from '../offlineDb';
 import { PageShell } from '../components/PageShell';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
 import TabBar from '../components/TabBar';
+import { AnalyticsPanel } from './AnalyticsPage';
 import { silentError } from '../errorReporter';
 
 function formatCents(cents) {
@@ -206,21 +208,40 @@ function WipTab() {
 
 export default function FinancialReportsPage() {
   const { user } = useAuth();
-  const [tab, setTab] = useState('pnl');
+  const [settings, setSettings] = useState(null);
+  const [settingsLoading, setSettingsLoading] = useState(true);
+
+  useEffect(() => {
+    getOrFetch('settings', () => api.get('/settings').then(r => r.data))
+      .then(setSettings)
+      .catch(silentError('reports-settings'))
+      .finally(() => setSettingsLoading(false));
+  }, []);
+
+  // Performance (Analytics) follows module_analytics; P&L/WIP follow
+  // module_financial_reports. Before settings load, undefined !== false keeps
+  // everything visible so deep links resolve.
+  const showPerformance = settings?.module_analytics !== false;
+  const showFinancial = settings?.module_financial_reports !== false;
+
+  const tabs = [
+    ...(showPerformance ? [{ id: 'performance', label: 'Performance' }] : []),
+    ...(showFinancial ? [{ id: 'pnl', label: 'P&L by project' }] : []),
+    ...(showFinancial ? [{ id: 'wip', label: 'WIP report' }] : []),
+  ];
+  const tabIds = tabs.map(tb => tb.id);
+  const hashTab = window.location.hash.replace('#', '');
+  const [tab, setTab] = useState(['performance', 'pnl', 'wip'].includes(hashTab) ? hashTab : 'performance');
+  const switchTab = id => { setTab(id); history.replaceState(null, '', '#' + id); };
+  const activeTab = tabIds.includes(tab) ? tab : (tabIds[0] || 'performance');
 
   return (
-    <PageShell currentApp="financial_reports" maxWidth={1200} headerProps={{ userRole: user?.role }}>
+    <PageShell currentApp="financial_reports" features={settings || {}} maxWidth={1200} headerProps={{ userRole: user?.role }}>
       <div className="admin-page-shell">
-        <TabBar
-          active={tab}
-          onChange={setTab}
-          tabs={[
-            { id: 'pnl', label: 'P&L by project' },
-            { id: 'wip', label: 'WIP report' },
-          ]}
-        />
-        {tab === 'pnl' && <PnLTab />}
-        {tab === 'wip' && <WipTab />}
+        {tabs.length > 1 && <TabBar active={activeTab} onChange={switchTab} tabs={tabs} />}
+        {activeTab === 'performance' && <AnalyticsPanel settings={settings} loading={settingsLoading} />}
+        {activeTab === 'pnl' && <PnLTab />}
+        {activeTab === 'wip' && <WipTab />}
       </div>
     </PageShell>
   );
