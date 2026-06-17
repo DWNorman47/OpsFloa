@@ -22,7 +22,6 @@ const ServiceRequest    = lazy(() => import('./pages/ServiceRequest'));
 const TeamPage          = lazy(() => import('./pages/TeamPage'));
 const HomePage          = lazy(() => import('./pages/HomePage'));
 const Dashboard         = lazy(() => import('./pages/Dashboard'));
-const AdminDashboard    = lazy(() => import('./pages/AdminDashboard'));
 const FieldPage         = lazy(() => import('./pages/FieldPage'));
 const ProjectsPage      = lazy(() => import('./pages/ProjectsPage'));
 const AdministrationPage = lazy(() => import('./pages/AdministrationPage'));
@@ -115,6 +114,15 @@ function HashRedirect({ to }) {
   return <Navigate to={`${to}${search}${hash}`} replace />;
 }
 
+// Workforce folded into Time Clock as the "Workforce" group. Map old
+// /workforce#<tab> and /admin#<tab> links to /timeclock#wf-<tab> so stored
+// push/inbox deep links keep landing on the right oversight tab.
+function WorkforceRedirect() {
+  const { search, hash } = useLocation();
+  const sub = (hash || '').replace('#', '') || 'live';
+  return <Navigate to={`/timeclock${search}#wf-${sub}`} replace />;
+}
+
 // Phase D: choose where a logged-in user lands when they hit / or *.
 // super_admin keeps the /superadmin tools page (cross-tenant). Everyone else
 // starts on Time Clock, while /home remains available as a direct URL.
@@ -154,14 +162,16 @@ function AppRoutes() {
       <Route path="/team" element={<PrivateRoute moduleId="team"><TeamPage /></PrivateRoute>} />
       <Route path="/home" element={<PrivateRoute><HomePage /></PrivateRoute>} />
       <Route path="/__tests__" element={<Tests />} />
-      {/* New canonical routes: /timeclock = the participating page (worker
-          and admin self-time), /workforce = the admin oversight page. */}
+      {/* Time Clock holds both the personal participating view and the admin
+          Workforce oversight group (a tab within it). */}
       <Route path="/timeclock" element={<PrivateRoute moduleId="timeclock"><Dashboard /></PrivateRoute>} />
-      <Route path="/workforce" element={<PrivateRoute adminOnly moduleId="workforce"><AdminDashboard /></PrivateRoute>} />
+      {/* Workforce is now the Workforce group of Time Clock. Map old links
+          (incl. push/inbox #tab deep links) to /timeclock#wf-<tab>. */}
+      <Route path="/workforce" element={<WorkforceRedirect />} />
+      <Route path="/admin" element={<WorkforceRedirect />} />
       {/* Legacy redirects — keep indefinitely so stored push/inbox URLs and
           old PWA bookmarks still work. HashRedirect preserves the #tab. */}
       <Route path="/dashboard" element={<HashRedirect to="/timeclock" />} />
-      <Route path="/admin" element={<HashRedirect to="/workforce" />} />
       <Route path="/field" element={<PrivateRoute moduleId="field"><FieldPage /></PrivateRoute>} />
       <Route path="/projects" element={<PrivateRoute adminOnly moduleId="projects"><ProjectsPage /></PrivateRoute>} />
       <Route path="/administration" element={<PrivateRoute adminOnly moduleId="administration"><AdministrationPage /></PrivateRoute>} />

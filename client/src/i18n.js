@@ -116,6 +116,8 @@ const translations = {
 
     // ── Admin Dashboard tabs ─────────────────────────────────────────────────
     tabLive: 'Live',
+    timeGroupPersonal: 'Personal',
+    timeGroupWorkforce: 'Workforce',
     tabAnalytics: 'Analytics',
     tabApprovals: 'Approvals',
     tabReports: 'Reports',
@@ -2906,6 +2908,8 @@ const translations = {
 
     // ── Admin Dashboard tabs ─────────────────────────────────────────────────
     tabLive: 'En Vivo',
+    timeGroupPersonal: 'Personal',
+    timeGroupWorkforce: 'Personal del equipo',
     tabAnalytics: 'Análisis',
     tabApprovals: 'Aprobaciones',
     tabReports: 'Reportes',

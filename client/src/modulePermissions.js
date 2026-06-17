@@ -93,8 +93,9 @@ export const ADMINISTRATION_TAB_PERMS = {
  * user with any real access doesn't get dumped on Account by default.
  */
 const LANDING_PRIORITY = [
-  { id: 'timeclock',      path: '/timeclock' },      // participating (everyone starts here)
-  { id: 'workforce',      path: '/workforce' },      // admin oversight
+  { id: 'timeclock',      path: '/timeclock' },      // participating + Workforce group (everyone starts here)
+  // 'workforce' is the Workforce group of Time Clock now (/workforce redirects),
+  // so it's not a separate landing target. Its perm set still gates that group.
   { id: 'projects',       path: '/projects' },
   // 'sales' and 'subs' are intentionally not landing targets: they now live as
   // tabs inside other modules (Projects / Directory) and their old routes

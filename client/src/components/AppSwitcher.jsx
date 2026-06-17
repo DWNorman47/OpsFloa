@@ -22,21 +22,6 @@ export const APPS = [
     path: '/timeclock',
   },
   {
-    id: 'workforce',
-    name: 'Workforce',
-    bg: '#1d4ed8',
-    adminOnly: true,
-    icon: (
-      <svg viewBox="0 0 20 20" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
-        <circle cx="6.5" cy="7" r="2.4" />
-        <circle cx="13.5" cy="7" r="2.4" />
-        <path d="M2 16c0-2.2 2-4 4.5-4S11 13.8 11 16" />
-        <path d="M9 16c0-2.2 2-4 4.5-4S18 13.8 18 16" />
-      </svg>
-    ),
-    path: '/workforce',
-  },
-  {
     id: 'field',
     name: 'Field',
     bg: '#059669',
@@ -168,10 +153,8 @@ export default function AppSwitcher({ currentApp = 'timeclock', userRole, featur
     // Reports hosts both Performance (Analytics) and the financial reports, so
     // it's hidden only when BOTH are off.
     if (a.id === 'financial_reports' && feat.module_financial_reports === false && feat.module_analytics === false) return false;
-    // module_timeclock now gates the admin oversight page (Workforce). Time
-    // Clock itself stays visible to everyone — workers always need it, and
-    // admins use it for their own time-tracking even if oversight is off.
-    if (a.id === 'workforce' && feat.module_timeclock === false) return false;
+    // Workforce is no longer a switcher app — it's the admin "Workforce" group
+    // inside Time Clock (gated there by module_timeclock + oversight perms).
     // Phase D: per-user permission gate. A user with zero perms inside a
     // module shouldn't see it at all. Account is always shown.
     if (!userCanSeeModule(user, a.id)) return false;

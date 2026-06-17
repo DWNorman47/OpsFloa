@@ -7,7 +7,6 @@ import CompanyChat from '../components/CompanyChat';
 import LiveKPIs from '../components/LiveKPIs';
 import { SkeletonStatRow, SkeletonList } from '../components/Skeleton';
 import BroadcastMessage from '../components/BroadcastMessage';
-import AppHeader from '../components/AppHeader';
 import { PageIntro } from '../components/PageShell';
 import TabBar from '../components/TabBar';
 import OnboardingChecklist from '../components/OnboardingChecklist';
@@ -51,7 +50,10 @@ function UpgradePrompt({ requiredPlan, feature }) {
 
 const isPwa = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 
-export default function AdminDashboard() {
+// Workforce is the admin "oversight" group of the Time Clock module (see
+// Dashboard). This renders just its content (PageIntro + tabs); the host page
+// supplies the shell, header, and the Personal/Workforce group switcher.
+export function WorkforcePanel() {
   const { user } = useAuth();
   const plan = usePlan();
   const t = useT();
@@ -71,8 +73,10 @@ export default function AdminDashboard() {
 
   // tab must be declared before any useEffect that references it (avoids TDZ in minified output)
   const ALL_TABS = ['live', 'approvals', 'reports', 'timeoff', 'expenses', 'manage'];
-  const hashTab = window.location.hash.replace('#', '');
-  const [tab, setTab] = useState(ALL_TABS.includes(hashTab) ? hashTab : 'live');
+  // Workforce tabs use a 'wf-' hash prefix so they don't collide with the
+  // Personal group's tabs in the shared Time Clock module.
+  const hashSub = window.location.hash.replace('#wf-', '');
+  const [tab, setTab] = useState(window.location.hash.startsWith('#wf-') && ALL_TABS.includes(hashSub) ? hashSub : 'live');
 
   const toggleSection = key => setCollapsedSections(s => {
     const next = { ...s, [key]: !s[key] };
@@ -134,7 +138,7 @@ export default function AdminDashboard() {
 
   const switchTab = t => {
     setTab(t);
-    history.replaceState(null, '', '#' + t);
+    history.replaceState(null, '', '#wf-' + t);
   };
 
   useEffect(() => {
@@ -159,9 +163,7 @@ export default function AdminDashboard() {
   const workLabelPlural = workLabel.endsWith('s') ? workLabel : `${workLabel}s`;
 
   return (
-    <div style={styles.page}>
-      <AppHeader currentApp="workforce" features={settings} />
-
+    <>
       {billing?.subscription_status === 'trial_expired' && (
         <div style={{ ...styles.trialBanner, background: '#fef2f2', borderColor: '#fecaca', color: '#991b1b' }}>
           ⚠ {t.trialEnded}
@@ -179,7 +181,6 @@ export default function AdminDashboard() {
         );
       })()}
 
-      <main id="main-content" style={styles.main} className="admin-main">
         <PageIntro
           introId="workforce"
           kicker="Workforce"
@@ -299,8 +300,7 @@ export default function AdminDashboard() {
         ) : null}
           </ErrorBoundary>
         )}
-      </main>
-    </div>
+    </>
   );
 }
 

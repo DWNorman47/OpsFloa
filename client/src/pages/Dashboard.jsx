@@ -16,6 +16,8 @@ import { getOrFetch, setCached } from '../offlineDb';
 import { useOffline } from '../contexts/OfflineContext';
 import OfflineBanner from '../components/OfflineBanner';
 import SignatureModal from '../components/SignatureModal';
+import { WorkforcePanel } from './AdminDashboard';
+import { userCanSeeModule } from '../modulePermissions';
 
 import { silentError } from '../errorReporter';
 // Secondary tabs — lazy-loaded on first visit
@@ -54,6 +56,10 @@ export default function Dashboard() {
   const initialTab = hashTab === 'availability' ? 'schedule' : (TABS.includes(hashTab) ? hashTab : 'clock');
   const [tab, setTab] = useState(initialTab);
   const [scheduleSubtab, setScheduleSubtab] = useState(hashTab === 'availability' ? 'availability' : 'schedule');
+  // Personal (own time clock) vs Workforce (admin oversight) groups. The group
+  // row only appears for admins who can see both; everyone else just gets the
+  // Personal tabs, exactly as before. Workforce tabs carry a '#wf-' hash.
+  const [group, setGroup] = useState(window.location.hash.startsWith('#wf-') ? 'workforce' : 'personal');
   const [entryView, setEntryView] = useState('list');
   const [shiftPrefill, setShiftPrefill] = useState(null);
   const [chatUnread, setChatUnread] = useState(false);
@@ -420,6 +426,17 @@ ${signatureDataUrl ? `
     ...(settings?.feature_reimbursements !== false ? [{ id: 'reimbursements', label: t.tabExpenses }] : []),
   ];
 
+  // Workforce (admin oversight) is a second group within this module. The group
+  // row only shows when the user can actually see both halves.
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+  const canSeeWorkforce = isAdmin && settings?.module_timeclock !== false && userCanSeeModule(user, 'workforce');
+  const effectiveGroup = canSeeWorkforce ? group : 'personal';
+  const switchGroup = g => {
+    setGroup(g);
+    if (g === 'personal') history.replaceState(null, '', `#${tab}`);
+    else history.replaceState(null, '', '#wf-live');
+  };
+
   return (
     <div style={styles.page}>
       <OfflineBanner />
@@ -438,7 +455,21 @@ ${signatureDataUrl ? `
         />
       )}
 
-      <main id="main-content" style={styles.main} className="mobile-main">
+      <main id="main-content" style={{ ...styles.main, ...(effectiveGroup === 'workforce' ? { maxWidth: 900 } : {}) }} className="mobile-main">
+        {canSeeWorkforce && (
+          <div className="ops-workflow-tabs" role="tablist" aria-label="Time Clock sections">
+            <button type="button" role="tab" aria-selected={effectiveGroup === 'personal'}
+              className={`ops-workflow-tab ${effectiveGroup === 'personal' ? 'is-active' : ''}`.trim()}
+              onClick={() => switchGroup('personal')}>{t.timeGroupPersonal}</button>
+            <button type="button" role="tab" aria-selected={effectiveGroup === 'workforce'}
+              className={`ops-workflow-tab ${effectiveGroup === 'workforce' ? 'is-active' : ''}`.trim()}
+              onClick={() => switchGroup('workforce')}>{t.timeGroupWorkforce}</button>
+          </div>
+        )}
+        {effectiveGroup === 'workforce' ? (
+          <WorkforcePanel />
+        ) : (
+        <>
         <PageIntro
           introId="timeclock"
           kicker="Today"
@@ -513,7 +544,8 @@ ${signatureDataUrl ? `
         )}
 
         {tab === 'reimbursements' && settings?.feature_reimbursements !== false && <Suspense fallback={<TabLoader />}><ReimbursementsView settings={settings} /></Suspense>}
-
+        </>
+        )}
       </main>
     </div>
   );
