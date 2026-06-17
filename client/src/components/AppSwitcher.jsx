@@ -5,9 +5,10 @@ import { useSettings } from '../contexts/SettingsContext';
 import { userCanSeeModule } from '../modulePermissions';
 
 // Workers see: Time Clock, Field, Inventory, Account
-// Admins see:  Time Clock, Workforce, Field, Inventory, Projects, Administration, Analytics
-//   (Time Clock = the participating page — admins use it to clock themselves
-//    in. Workforce = the oversight page — Live, Approvals, Reports, etc.)
+// Admins see:  Time Clock, Field, Inventory, Directory, Projects, Reports, Administration
+//   Time Clock now holds both the participating view and the admin Workforce
+//   group (a tab inside it). Analytics is the Performance tab of Reports.
+//   Directory holds Team/Subs/Customers; Projects holds Estimates/COs/POs.
 export const APPS = [
   {
     id: 'timeclock',

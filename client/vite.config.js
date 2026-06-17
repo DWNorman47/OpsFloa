@@ -66,7 +66,6 @@ export default defineConfig({
           '**/vendor-leaflet-*.js',
           '**/InventoryPage-*.js',
           '**/AdministrationPage-*.js',
-          '**/AnalyticsPage-*.js',
           '**/SuperAdmin-*.js',
           '**/ProjectsPage-*.js',
           '**/ManageSchedule-*.js',

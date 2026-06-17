@@ -97,10 +97,27 @@ export function reportClientError({ kind, message, stack }) {
  * decision is "don't bother the user" but the engineering decision must
  * still be "don't hide bugs from ourselves."
  *
- * Usage:
+ * Usage (preferred — labels the report):
  *   api.get('/foo').then(r => setFoo(r.data)).catch(silentError('fetch foo'));
+ *
+ * Two other call styles are common across the codebase and must also report,
+ * not silently no-op:
+ *   .catch(silentError)              // invoked with the error as the argument
+ *   catch (err) { silentError(err) } // invoked with the error directly
+ * We detect those (the argument isn't a string label) and report immediately.
  */
 export function silentError(context) {
+  // Called as the rejection handler itself, or with an error object — report now.
+  if (context && typeof context !== 'string') {
+    const err = context;
+    reportClientError({
+      kind: 'unhandled',
+      message: err?.message || String(err),
+      stack: err?.stack || null,
+    });
+    return undefined;
+  }
+  // Called as a factory with a string label — return the handler.
   return err => {
     reportClientError({
       kind: 'unhandled',

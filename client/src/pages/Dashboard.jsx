@@ -57,9 +57,14 @@ export default function Dashboard() {
   const [tab, setTab] = useState(initialTab);
   const [scheduleSubtab, setScheduleSubtab] = useState(hashTab === 'availability' ? 'availability' : 'schedule');
   // Personal (own time clock) vs Workforce (admin oversight) groups. The group
-  // row only appears for admins who can see both; everyone else just gets the
-  // Personal tabs, exactly as before. Workforce tabs carry a '#wf-' hash.
-  const [group, setGroup] = useState(window.location.hash.startsWith('#wf-') ? 'workforce' : 'personal');
+  // row only appears for admins who can see both; everyone else just gets their
+  // one group. Workforce tabs carry a '#wf-' hash. An oversight-only admin (can
+  // see Workforce but not the personal clock) defaults to the Workforce group.
+  const [group, setGroup] = useState(() => {
+    if (window.location.hash.startsWith('#wf-')) return 'workforce';
+    if (userCanSeeModule(user, 'timeclock')) return 'personal';
+    return userCanSeeModule(user, 'workforce') ? 'workforce' : 'personal';
+  });
   const [entryView, setEntryView] = useState('list');
   const [shiftPrefill, setShiftPrefill] = useState(null);
   const [chatUnread, setChatUnread] = useState(false);

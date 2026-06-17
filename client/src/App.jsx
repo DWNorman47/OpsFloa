@@ -74,7 +74,9 @@ function PrivateRoute({ children, adminOnly = false, superAdminOnly = false, mod
   if (loading) return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f4f6f9', color: '#6b7280', fontSize: 15 }}>Loading…</div>;
   if (!user) return <Navigate to="/login" replace />;
   if (superAdminOnly && user.role !== 'super_admin') return <Navigate to="/" replace />;
-  if (adminOnly && user.role !== 'admin' && user.role !== 'super_admin') return <Navigate to="/timeclock" replace />;
+  // Send a bounced non-admin to a page they can actually load (never a fixed
+  // admin-only path, which could ping-pong with the module guard below).
+  if (adminOnly && user.role !== 'admin' && user.role !== 'super_admin') return <Navigate to={pickLandingPath(user)} replace />;
 
   // Subscription gate — block access when trial expired or canceled
   if (BLOCKED_STATUSES.includes(user.subscription_status)) {
@@ -93,7 +95,11 @@ function PrivateRoute({ children, adminOnly = false, superAdminOnly = false, mod
   // no permissions for bounces you to your landing page (the first module
   // you DO have access to, or /account if none).
   if (moduleId) {
-    if (!userCanSeeModule(user, moduleId)) {
+    // moduleId may be an array — the user passes if they can see ANY of them
+    // (e.g. /timeclock admits both the personal Time Clock and the Workforce
+    // oversight group, which have disjoint permission sets).
+    const ids = Array.isArray(moduleId) ? moduleId : [moduleId];
+    if (!ids.some(id => userCanSeeModule(user, id))) {
       const landing = pickLandingPath(user);
       // Avoid redirect loops if the landing itself fails the check.
       if (landing !== window.location.pathname) {
@@ -164,7 +170,7 @@ function AppRoutes() {
       <Route path="/__tests__" element={<Tests />} />
       {/* Time Clock holds both the personal participating view and the admin
           Workforce oversight group (a tab within it). */}
-      <Route path="/timeclock" element={<PrivateRoute moduleId="timeclock"><Dashboard /></PrivateRoute>} />
+      <Route path="/timeclock" element={<PrivateRoute moduleId={['timeclock', 'workforce']}><Dashboard /></PrivateRoute>} />
       {/* Workforce is now the Workforce group of Time Clock. Map old links
           (incl. push/inbox #tab deep links) to /timeclock#wf-<tab>. */}
       <Route path="/workforce" element={<WorkforceRedirect />} />
