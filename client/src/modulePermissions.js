@@ -35,8 +35,14 @@ export const MODULE_PERMISSIONS = {
   inventory: [
     'view_inventory', 'manage_inventory',
   ],
+  // Directory (module id stays 'team') now hosts Team, Subs, Customers, and
+  // Roles. Unlock it for anyone who can manage ANY of those, so a customer/sub
+  // manager isn't locked out just because they lack worker perms. (Sub and
+  // customer writes are admin-gated server-side; manage_projects/manage_settings
+  // are the closest proxies a non-default admin role would carry.)
   team: [
     'view_workers_list', 'manage_workers', 'manage_roles', 'assign_roles',
+    'manage_projects', 'manage_settings',
   ],
   projects: [
     'view_projects', 'manage_projects', 'manage_project_visibility',

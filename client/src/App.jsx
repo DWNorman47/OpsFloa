@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import InstallPrompt from './components/InstallPrompt';
 import UpdatePrompt from './components/UpdatePrompt';
+import VersionFooter from './components/VersionFooter';
 import WelcomeModal from './components/WelcomeModal';
 import SkipLink from './components/SkipLink';
 import { ToastProvider } from './contexts/ToastContext';
@@ -259,6 +260,7 @@ export default function App() {
               <AppRoutes />
               <InstallPrompt />
               <UpdatePrompt />
+              <VersionFooter />
             </SettingsProvider>
           </OfflineProvider>
         </ToastProvider>

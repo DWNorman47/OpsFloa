@@ -9,6 +9,7 @@
 import React, { lazy, Suspense, useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
+import { useHasAnyPerm } from '../hooks/usePerm';
 import api from '../api';
 import { getOrFetch } from '../offlineDb';
 import { PageIntro, PageShell } from '../components/PageShell';
@@ -16,6 +17,7 @@ import TabBar from '../components/TabBar';
 import ErrorBoundary from '../components/ErrorBoundary';
 import RetryBanner from '../components/RetryBanner';
 import EmptyState from '../components/EmptyState';
+import Pagination from '../components/Pagination';
 import ManageClients from '../components/ManageClients';
 import { SubsDirectoryPanel } from './SubsPage';
 import { silentError } from '../errorReporter';
@@ -109,12 +111,22 @@ function toEntries({ team, subs, clients, t, workerLabel, clientLabel }) {
   return out.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 }
 
+const DIR_PAGE_SIZE = 30;
+
 function DirectoryView({ entries, loading, search, onSearchChange, typeFilter, onTypeFilterChange, availableTypes, counts, t }) {
+  const [page, setPage] = useState(1);
   const lower = search.trim().toLowerCase();
   const filtered = entries.filter(e =>
     (typeFilter === 'all' || e.type === typeFilter) &&
     (!lower || e.searchText.includes(lower))
   );
+
+  // Reset to the first page whenever the result set changes.
+  useEffect(() => { setPage(1); }, [search, typeFilter, entries.length]);
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / DIR_PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const pageItems = filtered.slice((safePage - 1) * DIR_PAGE_SIZE, safePage * DIR_PAGE_SIZE);
 
   if (loading) return <TabLoader />;
 
@@ -162,7 +174,7 @@ function DirectoryView({ entries, loading, search, onSearchChange, typeFilter, o
         />
       ) : (
         <div className="ops-directory-grid">
-          {filtered.map(e => {
+          {pageItems.map(e => {
             const meta = DIR_TYPES[e.type];
             return (
               <div key={e.key} className="ops-person-card">
@@ -192,6 +204,7 @@ function DirectoryView({ entries, loading, search, onSearchChange, typeFilter, o
           })}
         </div>
       )}
+      <Pagination page={safePage} pages={pageCount} onChange={setPage} />
     </div>
   );
 }
@@ -200,6 +213,10 @@ export default function TeamPage() {
   const { user } = useAuth();
   const t = useT();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+  // Per-tab capability. Team/Roles use granular perms; Subs/Customers writes
+  // are admin-gated server-side, so they follow role.
+  const canManageTeam  = useHasAnyPerm(['manage_workers', 'view_workers_list']);
+  const canManageRoles = useHasAnyPerm(['manage_roles', 'assign_roles']);
 
   const [features, setFeatures] = useState({});
   const [team, setTeam] = useState([]);
@@ -221,13 +238,19 @@ export default function TeamPage() {
   const clientLabel = features?.label_client || adminSettings?.label_client || 'Customer';
   const subsEnabled = isAdmin && features?.module_subs !== false;
 
-  // Tabs depend on role + which modules are on.
-  const TEAM_TABS = isAdmin
-    ? ['directory', 'team', ...(subsEnabled ? ['subs'] : []), 'customers', 'roles']
-    : ['directory'];
+  // Tabs depend on capability + which modules are on. Directory is always
+  // present; the management tabs appear only for users who can use them.
+  const TEAM_TABS = [
+    'directory',
+    ...(canManageTeam ? ['team'] : []),
+    ...(subsEnabled ? ['subs'] : []),
+    ...(isAdmin ? ['customers'] : []),
+    ...(canManageRoles ? ['roles'] : []),
+  ];
   const hashTab = window.location.hash.replace('#', '');
   const [teamTab, setTeamTab] = useState(TEAM_TABS.includes(hashTab) ? hashTab : 'directory');
   const switchTab = id => { setTeamTab(id); history.replaceState(null, '', '#' + id); };
+  const activeTab = TEAM_TABS.includes(teamTab) ? teamTab : 'directory';
 
   const loadTeam = useCallback(() => {
     setTeamLoading(true);
@@ -278,8 +301,8 @@ export default function TeamPage() {
   }, [subsEnabled]);
 
   useEffect(() => {
-    if (isAdmin && teamTab === 'team' && !adminLoaded) loadAdmin();
-  }, [teamTab, isAdmin, adminLoaded, loadAdmin]);
+    if (canManageTeam && activeTab === 'team' && !adminLoaded) loadAdmin();
+  }, [activeTab, canManageTeam, adminLoaded, loadAdmin]);
 
   const handleWorkerAdded    = w  => { setAdminWorkers(prev => [...prev, { ...w, total_entries: 0, total_hours: 0, regular_hours: 0, overtime_hours: 0, prevailing_hours: 0 }]); loadTeam(); };
   const handleWorkerDeleted  = id => { setAdminWorkers(prev => prev.filter(w => w.id !== id)); loadTeam(); };
@@ -302,10 +325,10 @@ export default function TeamPage() {
 
   const tabs = [
     { id: 'directory', label: t.dirDirectoryTab },
-    { id: 'team',      label: plural(workerLabel) },
+    ...(canManageTeam ? [{ id: 'team', label: plural(workerLabel) }] : []),
     ...(subsEnabled ? [{ id: 'subs', label: t.subSubcontractors }] : []),
-    { id: 'customers', label: plural(clientLabel) },
-    { id: 'roles',     label: t.teamRolesTab || 'Roles' },
+    ...(isAdmin ? [{ id: 'customers', label: plural(clientLabel) }] : []),
+    ...(canManageRoles ? [{ id: 'roles', label: t.teamRolesTab || 'Roles' }] : []),
   ];
 
   return (
@@ -319,12 +342,12 @@ export default function TeamPage() {
             : 'The directory keeps names, roles, and classifications easy to scan.'}
           meta={<span className="ops-pill">{counts.all} {counts.all === 1 ? 'record' : 'records'}</span>}
         />
-        {isAdmin && (
-          <TabBar active={teamTab} onChange={switchTab} tabs={tabs} />
+        {tabs.length > 1 && (
+          <TabBar active={activeTab} onChange={switchTab} tabs={tabs} />
         )}
 
-        <ErrorBoundary key={teamTab} mode="inline" label={t.dirDirectoryTab}>
-          {teamTab === 'directory' && (
+        <ErrorBoundary key={activeTab} mode="inline" label={t.dirDirectoryTab}>
+          {activeTab === 'directory' && (
             <DirectoryView
               entries={entries}
               loading={teamLoading}
@@ -337,7 +360,7 @@ export default function TeamPage() {
               t={t}
             />
           )}
-          {teamTab === 'team' && isAdmin && (
+          {activeTab === 'team' && canManageTeam && (
             <>
               <RetryBanner message={adminLoadError} onRetry={loadAdmin} />
               {!adminLoaded && !adminLoadError ? <TabLoader /> : (
@@ -363,13 +386,13 @@ export default function TeamPage() {
               )}
             </>
           )}
-          {teamTab === 'subs' && subsEnabled && (
+          {activeTab === 'subs' && subsEnabled && (
             <SubsDirectoryPanel />
           )}
-          {teamTab === 'customers' && isAdmin && (
+          {activeTab === 'customers' && isAdmin && (
             <ManageClients settings={adminSettings || features} />
           )}
-          {teamTab === 'roles' && isAdmin && (
+          {activeTab === 'roles' && canManageRoles && (
             <Suspense fallback={<TabLoader />}>
               <ManageRoles />
             </Suspense>
