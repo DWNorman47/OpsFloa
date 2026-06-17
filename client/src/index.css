@@ -1175,34 +1175,35 @@ button {
 }
 .ops-tab-select {
   width: 100%;
-  min-height: 44px;
+  min-height: 50px;
   appearance: none;
   border: 1px solid var(--ops-border);
   border-radius: var(--ops-radius-lg);
   background: var(--ops-surface);
   color: var(--ops-text);
-  padding: 0 42px 0 14px;
-  font-size: 14px;
+  padding: 0 46px 0 16px;
+  /* 16px keeps iOS from zooming on focus and enlarges the native option list. */
+  font-size: 16px;
   font-weight: 800;
   box-shadow: var(--ops-shadow-sm);
 }
 .ops-tab-select-wrap.has-dot .ops-tab-select {
-  padding-left: 30px;
+  padding-left: 34px;
 }
 .ops-tab-select-dot {
   position: absolute;
-  left: 14px;
+  left: 16px;
   top: 50%;
   transform: translateY(-50%);
   z-index: 1;
 }
 .ops-tab-select-chevron {
   position: absolute;
-  right: 15px;
+  right: 16px;
   top: 50%;
   transform: translateY(-50%);
   color: var(--ops-text-muted);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 900;
   pointer-events: none;
 }
