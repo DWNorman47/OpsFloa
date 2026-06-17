@@ -27,6 +27,7 @@ function makeWorker(initialState = 'installing') {
     state: initialState,
     addEventListener: (evt, cb) => { listeners[evt] = cb; },
     setState(s) { this.state = s; listeners.statechange?.(); },
+    postMessage: () => {}, // askVersion() posts here; reply is simulated via emit()
   };
 }
 
@@ -43,9 +44,10 @@ function makeReg({ installing = null, waiting = null } = {}) {
 }
 
 function setupSW({ hasController = true, registration = makeReg() } = {}) {
+  const swListeners = {};
   const sw = {
     controller: hasController ? { state: 'activated' } : null,
-    addEventListener: () => {},
+    addEventListener: (evt, cb) => { swListeners[evt] = cb; },
     removeEventListener: () => {},
     getRegistration: () => Promise.resolve(registration),
   };
@@ -54,12 +56,16 @@ function setupSW({ hasController = true, registration = makeReg() } = {}) {
     configurable: true,
     writable: true,
   });
+  // Simulate the incoming worker replying to GET_VERSION.
+  const emit = version => swListeners.message?.({ data: { type: 'SW_VERSION', version } });
+  return { registration, emit };
 }
 
 describe('<UpdatePrompt />', () => {
   beforeEach(() => {
     // eslint-disable-next-line no-proto
     delete navigator.__proto__.serviceWorker;
+    delete globalThis.__APP_VERSION__;
   });
 
   test('renders nothing when no update has been detected', async () => {
@@ -126,5 +132,37 @@ describe('<UpdatePrompt />', () => {
     });
     fireEvent.click(screen.getByLabelText(/dismiss/i));
     expect(screen.queryByText(/new version of OpsFloa is ready/i)).not.toBeInTheDocument();
+  });
+
+  // When the bundle version is known, a new worker reporting the SAME version is
+  // a same-commit rebuild — not a real update — and must not show the banner.
+  test('same-version rebuild does NOT show the prompt', async () => {
+    globalThis.__APP_VERSION__ = '1.0.0+abc';
+    const reg = makeReg();
+    const { emit } = setupSW({ hasController: true, registration: reg });
+    await act(async () => { render(<UpdatePrompt />); });
+    const worker = makeWorker('installing');
+    await act(async () => {
+      reg.installing = worker;
+      reg.fireUpdateFound();
+      worker.setState('installed');
+      emit('1.0.0+abc'); // incoming worker reports the same version
+    });
+    expect(screen.queryByText(/new version of OpsFloa is ready/i)).not.toBeInTheDocument();
+  });
+
+  test('a genuinely newer version shows the prompt', async () => {
+    globalThis.__APP_VERSION__ = '1.0.0+abc';
+    const reg = makeReg();
+    const { emit } = setupSW({ hasController: true, registration: reg });
+    await act(async () => { render(<UpdatePrompt />); });
+    const worker = makeWorker('installing');
+    await act(async () => {
+      reg.installing = worker;
+      reg.fireUpdateFound();
+      worker.setState('installed');
+      emit('1.0.0+def'); // incoming worker reports a different version
+    });
+    expect(screen.getByText(/new version of OpsFloa is ready/i)).toBeInTheDocument();
   });
 });

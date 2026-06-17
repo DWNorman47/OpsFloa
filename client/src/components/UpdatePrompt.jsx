@@ -25,38 +25,43 @@ export default function UpdatePrompt() {
     if (!('serviceWorker' in navigator)) return;
 
     let cancelled = false;
+    // eslint-disable-next-line no-undef
+    const bundleVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : null;
 
-    // The incoming SW replies to GET_VERSION via event.source → this listener.
+    // A new worker installing isn't proof of a new *version*: a same-commit
+    // rebuild can produce a byte-different sw.js (so `updatefound` fires) while
+    // the version string is unchanged. So we ask the freshly-installed worker
+    // its version and only surface the banner when it actually differs from the
+    // build running here. (We query the NEW worker directly — not the current
+    // controller — so a stale cached controller can't skew the comparison.)
     const onMessage = evt => {
       if (cancelled) return;
-      if (evt.data?.type === 'SW_VERSION' && evt.data.version) setNewVersion(evt.data.version);
+      if (evt.data?.type === 'SW_VERSION' && evt.data.version) {
+        setNewVersion(evt.data.version);
+        if (!bundleVersion || evt.data.version !== bundleVersion) setUpdateReady(true);
+      }
     };
     navigator.serviceWorker.addEventListener('message', onMessage);
     const askVersion = worker => { try { worker.postMessage({ type: 'GET_VERSION' }); } catch { /* ignore */ } };
 
-    // Show the banner only when a genuinely NEW service worker has finished
-    // downloading while an older one is still controlling this tab — that's
-    // the only moment the JS running here is actually behind and a reload
-    // helps. We intentionally do NOT compare version strings or react to
-    // `controllerchange`: both fire on ordinary reloads too, and the version
-    // comparison stuck "on" whenever the controlling sw.js and the loaded
-    // bundle didn't line up (e.g. a CDN-cached sw.js), which is why the
-    // banner showed on the current version and never cleared. A plain reload
-    // downloads no new worker, so `updatefound` stays quiet and the banner
-    // can't reappear once you're on the latest build.
+    // Detection uses `updatefound` (not `controllerchange`, which fires on
+    // ordinary reloads): a plain reload downloads no new worker, so nothing
+    // fires. The version check above then filters out same-version rebuilds.
+    // A worker reaching `installed` while one already controls the tab is an
+    // update to an already-running app (not the first-ever install). sw.js calls
+    // skipWaiting() so it activates immediately, but the tab keeps the old
+    // bundle until reload. Ask its version; onMessage decides whether to show.
+    // If we can't version-check at all (no bundle version), assume it's real.
+    const consider = worker => {
+      if (cancelled || !worker) return;
+      if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+        askVersion(worker);
+        if (!bundleVersion) setUpdateReady(true);
+      }
+    };
     const watch = worker => {
       if (!worker) return;
-      const check = () => {
-        if (cancelled) return;
-        // `installed` + an existing controller means this is an update to an
-        // already-running app, not the first-ever install. sw.js calls
-        // skipWaiting() so it activates immediately, but the tab keeps the
-        // old bundle until the user reloads.
-        if (worker.state === 'installed' && navigator.serviceWorker.controller) {
-          setUpdateReady(true);
-          askVersion(worker);
-        }
-      };
+      const check = () => consider(worker);
       check(); // it may already be 'installed' by the time we attach
       worker.addEventListener('statechange', check);
     };
@@ -64,7 +69,7 @@ export default function UpdatePrompt() {
     navigator.serviceWorker.getRegistration().then(r => {
       if (cancelled || !r) return;
       // An update that finished installing before this component mounted.
-      if (r.waiting && navigator.serviceWorker.controller) { setUpdateReady(true); askVersion(r.waiting); }
+      if (r.waiting) consider(r.waiting);
       // One that's mid-install right now…
       watch(r.installing);
       // …or one that starts installing while the tab stays open. The
