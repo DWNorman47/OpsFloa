@@ -17,6 +17,8 @@
 ALTER TABLE project_expenses
   DROP CONSTRAINT IF EXISTS project_expenses_tax_pct_check;
 ALTER TABLE project_expenses
+  DROP CONSTRAINT IF EXISTS chk_pe_tax_pct_bounded;
+ALTER TABLE project_expenses
   ADD CONSTRAINT chk_pe_tax_pct_bounded
   CHECK (tax_pct >= 0 AND tax_pct <= 100);
 

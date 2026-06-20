@@ -1,363 +1,585 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../api';
 import { useToast } from '../contexts/ToastContext';
+import { useSettings } from '../contexts/SettingsContext';
 import ModalShell from './ModalShell';
+import './SetupQuestionnaire.css';
 
-/**
- * First-run setup questionnaire. Walks a brand-new admin through 9
- * pointed questions about how their team works, then applies the
- * matching module / feature toggles in one PATCH. The point isn't to
- * reach a "perfect" config — it's to hide the modules they don't need
- * so the app doesn't look overwhelming on day one. Everything we toggle
- * here is reachable from Company Settings → Modules later.
- *
- * The questionnaire is dismissible ("Maybe later"). On dismiss we still
- * record `setup_questionnaire_completed_at` so it doesn't pop up every
- * time the admin opens the page — they get the option once and can
- * always re-run from Settings if we expose a "Run setup again" link
- * later.
- *
- * Mounted by AdministrationPage when settings.setup_questionnaire_completed_at
- * is empty AND the current user is an admin.
- */
-
-// One question per screen. `options` are the user's choices; the `settings`
-// object on each option is merged into the eventual PATCH. An option with
-// an empty `settings` ({}) means "don't change anything" — useful for
-// "Not sure" answers where the default is fine.
-const QUESTIONS = [
+const WORK_OPTIONS = [
   {
-    id: 'work_type',
-    question: 'What does your team mostly do?',
-    explanation: 'This helps us pick which modules to show. Field, mobile, or service work brings in checklists, reports, punchlists, and other closeout tools. Office-only teams usually do better with a simpler workspace.',
-    options: [
-      { value: 'office',  label: 'Office work',                          settings: { module_field: false } },
-      { value: 'field',   label: 'Field, mobile, or service work',       settings: { module_field: true } },
-      { value: 'both',    label: 'Both',                                 settings: { module_field: true } },
-    ],
+    id: 'projects',
+    title: 'Projects, jobs, or work orders',
+    description: 'Organize customers, budgets, documents, and progress around defined work.',
+    icon: 'projects',
   },
   {
-    id: 'pay_type',
-    question: 'How are team members paid?',
-    explanation: 'Hourly is standard - team members clock in and out and get paid for elapsed time. Daily flat-rate is common for piece-work, routes, or per-diem teams. If you have both, hourly is the default; you can mark individual team members as daily on their profile.',
-    options: [
-      { value: 'hourly',  label: 'Hourly',           settings: {} },
-      { value: 'daily',   label: 'Daily flat rate',  settings: {} },
-      { value: 'both',    label: 'Both',             settings: {} },
-    ],
-  },
-  {
-    id: 'prevailing_wage',
-    question: 'Do you do prevailing-wage or certified-payroll work?',
-    explanation: "If you work under public contracts or payroll reporting rules, you may need certified payroll (form WH-347). If you're not sure, leave it off for now; turning it on adds compliance fields that get noisy if you don't actually need them.",
-    options: [
-      { value: 'yes',      label: 'Yes',         settings: { feature_prevailing_wage: true } },
-      { value: 'no',       label: 'No',          settings: { feature_prevailing_wage: false } },
-      { value: 'unsure',   label: 'Not sure',    settings: {} },
-    ],
-  },
-  {
-    id: 'scheduling',
-    question: 'Do you need to schedule shifts ahead of time?',
-    explanation: 'Turn this on if you assign team members to specific shifts in advance. Leave it off if people just clock in when they start.',
-    options: [
-      { value: 'yes',  label: 'Yes',                              settings: { feature_scheduling: true } },
-      { value: 'no',   label: 'No, the team just clocks in',      settings: { feature_scheduling: false } },
-    ],
-  },
-  {
-    id: 'reimbursements',
-    question: 'Do you reimburse team members for expenses (gas, materials, tools)?',
-    explanation: 'If yes, team members can submit expense claims with photos and you can approve or deny them. If you handle expenses outside the app, leave this off.',
-    options: [
-      { value: 'yes',  label: 'Yes',  settings: { feature_reimbursements: true } },
-      { value: 'no',   label: 'No',   settings: { feature_reimbursements: false } },
-    ],
-  },
-  {
-    id: 'pto',
-    question: 'Do you need to track time off / PTO?',
-    explanation: 'Turn this on if you formally track vacation and sick days and approve them in the app. Leave it off if time off is handled informally (text, email, etc).',
-    options: [
-      { value: 'yes',  label: 'Yes',  settings: { feature_pto: true } },
-      { value: 'no',   label: 'No',   settings: { feature_pto: false } },
-    ],
-  },
-  {
-    id: 'geolocation',
-    question: 'Do you want to record where team members clock in from?',
-    explanation: "Tracking captures each team member's GPS coordinates at clock-in and clock-out so admins can see them on the Live tab and on time entries. This is separate from requiring someone to be at a specific spot - that's a per-project geofence you set up later under Projects.",
-    options: [
-      { value: 'yes',  label: 'Yes, record their location',  settings: { feature_geolocation: true } },
-      { value: 'no',   label: "No, don't track location",    settings: { feature_geolocation: false } },
-    ],
-  },
-  {
-    id: 'chat',
-    question: 'Do you want a chat channel for team members and admins?',
-    explanation: "In-app messaging plus the option to broadcast announcements to everyone. Useful for teams that don't already use Slack or Teams. You can always turn it on later.",
-    options: [
-      { value: 'yes',  label: 'Yes',       settings: { feature_chat: true,  feature_broadcast: true } },
-      { value: 'no',   label: 'Not now',   settings: { feature_chat: false, feature_broadcast: false } },
-    ],
+    id: 'field',
+    title: 'Mobile, field, or service work',
+    description: 'Give teams a place for daily notes, photos, checklists, issues, and safety.',
+    icon: 'field',
   },
   {
     id: 'inventory',
-    question: 'Do you track tools, materials, or inventory?',
-    explanation: "If yes, you get an Inventory module for stock counts, tool checkout, and materials tracking. Leave it off if you do not need shared items, supplies, or location-based counts.",
-    options: [
-      { value: 'yes',  label: 'Yes',  settings: { module_inventory: true } },
-      { value: 'no',   label: 'No',   settings: { module_inventory: false } },
-    ],
+    title: 'Stock, tools, or materials',
+    description: 'Track items, locations, movement, counts, and value.',
+    icon: 'inventory',
+  },
+  {
+    id: 'people',
+    title: 'People and time',
+    description: 'Manage team records, availability, attendance, and time-related work.',
+    icon: 'people',
   },
 ];
 
-// Pretty-print the keys we touch on the summary screen.
-const SETTING_LABELS = {
-  module_field:           'Field/service module',
-  module_inventory:       'Inventory module',
-  feature_prevailing_wage:'Prevailing wage',
-  feature_scheduling:     'Scheduling',
-  feature_reimbursements: 'Expenses',
-  feature_pto:            'Time off',
-  feature_geolocation:    'Location tracking on clock-in',
-  feature_chat:           'Company chat',
-  feature_broadcast:      'Announce to all team members',
+const TEAM_OPTIONS = [
+  {
+    id: 'time',
+    title: 'Clock in and out',
+    description: 'Record worked time, breaks, mileage, and timesheets.',
+    icon: 'clock',
+  },
+  {
+    id: 'scheduling',
+    title: 'See scheduled shifts',
+    description: 'Plan work ahead and keep upcoming shifts visible.',
+    icon: 'calendar',
+  },
+  {
+    id: 'pto',
+    title: 'Request time off',
+    description: 'Handle vacation and leave requests in the app.',
+    icon: 'timeoff',
+  },
+  {
+    id: 'expenses',
+    title: 'Submit expenses',
+    description: 'Collect reimbursement requests, receipts, and mileage.',
+    icon: 'receipt',
+  },
+  {
+    id: 'chat',
+    title: 'Receive messages',
+    description: 'Use company chat and broadcast announcements.',
+    icon: 'message',
+  },
+  {
+    id: 'location',
+    title: 'Record clock-in location',
+    description: 'Capture location when people start and end work.',
+    icon: 'location',
+  },
+  {
+    id: 'admin_only',
+    title: 'No employee tools yet',
+    description: 'Start with manager-facing records and add employee tools later.',
+    icon: 'shield',
+    exclusive: true,
+  },
+];
+
+const MANAGER_OPTIONS = [
+  {
+    id: 'performance',
+    title: 'Performance and labor reports',
+    description: 'See trends, hours, attendance, and operational performance.',
+    icon: 'chart',
+  },
+  {
+    id: 'financial',
+    title: 'Project financial reports',
+    description: 'Use portfolio profit-and-loss and work-in-progress views.',
+    icon: 'money',
+  },
+  {
+    id: 'overtime',
+    title: 'Overtime rules and alerts',
+    description: 'Calculate overtime and surface approaching thresholds.',
+    icon: 'alert',
+  },
+  {
+    id: 'media',
+    title: 'Photos and shared media',
+    description: 'Keep visual records connected to daily work.',
+    icon: 'camera',
+  },
+  {
+    id: 'compliance',
+    title: 'Prevailing-wage tracking',
+    description: 'Show wage classification and certified-payroll controls when available.',
+    icon: 'document',
+  },
+  {
+    id: 'essentials',
+    title: 'Keep management simple',
+    description: 'Start with the essential team and approval tools only.',
+    icon: 'spark',
+    exclusive: true,
+  },
+];
+
+const LABEL_CHOICES = {
+  work: ['Project', 'Job', 'Work Order', 'Route'],
+  client: ['Customer', 'Client', 'Account', 'Member'],
+  worker: ['Team Member', 'Employee', 'Staff Member', 'Technician'],
+  field: ['Field Work', 'Daily Work', 'Operations', 'Service'],
 };
 
-export default function SetupQuestionnaire({ onComplete, onDismiss }) {
+const STEPS = ['welcome', 'work', 'team', 'manager', 'language', 'review'];
+
+const SUMMARY_LABELS = {
+  module_timeclock: 'Time clock and timesheets',
+  module_team: 'Team directory',
+  module_projects: 'Projects and work records',
+  module_field: 'Field work',
+  module_inventory: 'Inventory',
+  module_analytics: 'Performance reports',
+  module_financial_reports: 'Financial reports',
+  feature_scheduling: 'Scheduling',
+  feature_pto: 'Time off',
+  feature_reimbursements: 'Expenses and reimbursements',
+  feature_chat: 'Company chat',
+  feature_geolocation: 'Clock-in location',
+  feature_media_gallery: 'Photos and media',
+  feature_overtime: 'Overtime rules',
+  feature_prevailing_wage: 'Prevailing-wage tools',
+};
+
+function selectedFromSettings(settings = {}) {
+  const labels = {
+    work: settings.label_work || 'Project',
+    client: settings.label_client || 'Customer',
+    worker: settings.label_worker || 'Team Member',
+    field: settings.label_field || 'Field Work',
+  };
+
+  if (!settings.setup_questionnaire_completed_at) {
+    return {
+      work: ['projects', 'people'],
+      team: ['time'],
+      manager: ['essentials'],
+      labels,
+    };
+  }
+
+  const work = [];
+  if (settings.module_projects !== false) work.push('projects');
+  if (settings.module_field === true) work.push('field');
+  if (settings.module_inventory === true) work.push('inventory');
+  if (settings.module_team !== false) work.push('people');
+
+  const team = [];
+  if (settings.module_timeclock !== false) team.push('time');
+  if (settings.feature_scheduling === true) team.push('scheduling');
+  if (settings.feature_pto === true) team.push('pto');
+  if (settings.feature_reimbursements === true) team.push('expenses');
+  if (settings.feature_chat === true) team.push('chat');
+  if (settings.feature_geolocation === true) team.push('location');
+  if (!team.length) team.push('admin_only');
+
+  const manager = [];
+  if (settings.module_analytics === true) manager.push('performance');
+  if (settings.module_financial_reports === true) manager.push('financial');
+  if (settings.feature_overtime === true) manager.push('overtime');
+  if (settings.feature_media_gallery === true) manager.push('media');
+  if (settings.feature_prevailing_wage === true) manager.push('compliance');
+  if (!manager.length) manager.push('essentials');
+
+  return {
+    work,
+    team,
+    manager,
+    labels,
+  };
+}
+
+export function buildSetupSettings(answers) {
+  const work = new Set(answers.work);
+  const team = new Set(answers.team);
+  const manager = new Set(answers.manager);
+  const projectsEnabled = work.has('projects') || work.has('field') || manager.has('financial');
+
+  return {
+    module_timeclock: team.has('time'),
+    module_team: work.has('people'),
+    module_projects: projectsEnabled,
+    module_field: work.has('field'),
+    module_inventory: work.has('inventory'),
+    module_analytics: manager.has('performance'),
+    module_financial_reports: manager.has('financial'),
+    feature_analytics: manager.has('performance'),
+    feature_project_integration: projectsEnabled && team.has('time'),
+    feature_scheduling: team.has('scheduling'),
+    feature_pto: team.has('pto'),
+    feature_reimbursements: team.has('expenses'),
+    feature_chat: team.has('chat'),
+    feature_broadcast: team.has('chat'),
+    feature_geolocation: team.has('location'),
+    feature_media_gallery: work.has('field') && manager.has('media'),
+    feature_overtime: manager.has('overtime'),
+    feature_overtime_alerts: manager.has('overtime'),
+    feature_prevailing_wage: manager.has('compliance'),
+    label_work: answers.labels.work.trim() || 'Project',
+    label_client: answers.labels.client.trim() || 'Customer',
+    label_worker: answers.labels.worker.trim() || 'Team Member',
+    label_field: answers.labels.field.trim() || 'Field Work',
+  };
+}
+
+function WizardIcon({ name }) {
+  const paths = {
+    projects: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M8 4V2h8v2M7 9h10M7 14h7" /></>,
+    field: <><path d="M4 19V8l8-5 8 5v11" /><path d="M8 19v-6h8v6M9 9h6" /></>,
+    inventory: <><path d="m4 7 8-4 8 4-8 4-8-4Z" /><path d="m4 7v10l8 4 8-4V7M12 11v10" /></>,
+    people: <><circle cx="9" cy="8" r="3" /><path d="M3 20c0-4 2.7-7 6-7s6 3 6 7M16 5.5a3 3 0 0 1 0 5.8M17 14c2.4.7 4 3 4 6" /></>,
+    clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
+    calendar: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M8 3v4M16 3v4M3 10h18M8 14h3M14 14h2M8 18h2" /></>,
+    timeoff: <><path d="M5 4h14v16H5zM8 2v4M16 2v4M5 9h14" /><path d="m9 15 2 2 4-5" /></>,
+    receipt: <><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Z" /><path d="M9 8h6M9 12h6M9 16h3" /></>,
+    message: <><path d="M4 4h16v12H9l-5 4V4Z" /><path d="M8 9h8M8 12h5" /></>,
+    location: <><path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z" /><circle cx="12" cy="10" r="2.5" /></>,
+    shield: <><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3Z" /><path d="m9 12 2 2 4-5" /></>,
+    chart: <><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" /></>,
+    money: <><rect x="3" y="5" width="18" height="14" rx="2" /><circle cx="12" cy="12" r="3" /><path d="M7 8H6v1M17 16h1v-1" /></>,
+    alert: <><path d="M12 3 2.5 20h19L12 3Z" /><path d="M12 9v5M12 17h.01" /></>,
+    camera: <><path d="M4 7h4l2-3h4l2 3h4v13H4V7Z" /><circle cx="12" cy="13" r="4" /></>,
+    document: <><path d="M6 2h9l4 4v16H6V2Z" /><path d="M14 2v5h5M9 12h6M9 16h6" /></>,
+    spark: <><path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3Z" /><path d="m19 15 .7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7L19 15Z" /></>,
+  };
+  return (
+    <svg className="setup-wizard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {paths[name] || paths.spark}
+    </svg>
+  );
+}
+
+function ChoiceGrid({ options, selected, onToggle }) {
+  return (
+    <div className="setup-wizard-choice-grid">
+      {options.map(option => {
+        const active = selected.includes(option.id);
+        return (
+          <button
+            key={option.id}
+            type="button"
+            className={`setup-wizard-choice${active ? ' is-selected' : ''}`}
+            aria-pressed={active}
+            onClick={() => onToggle(option)}
+          >
+            <span className="setup-wizard-choice-icon"><WizardIcon name={option.icon} /></span>
+            <span className="setup-wizard-choice-copy">
+              <strong>{option.title}</strong>
+              <span>{option.description}</span>
+            </span>
+            <span className="setup-wizard-check" aria-hidden="true">
+              {active && (
+                <svg viewBox="0 0 16 16">
+                  <path d="m3 8 3 3 7-7" />
+                </svg>
+              )}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function SummaryList({ title, items, muted = false }) {
+  if (!items.length) return null;
+  return (
+    <div className={`setup-wizard-summary-block${muted ? ' is-muted' : ''}`}>
+      <h4>{title}</h4>
+      <div className="setup-wizard-summary-list">
+        {items.map(item => (
+          <span key={item} className="setup-wizard-summary-item">{item}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export default function SetupQuestionnaire({ currentSettings, onComplete, onDismiss }) {
   const toast = useToast();
-  const [step, setStep] = useState(0);          // 0..QUESTIONS.length = summary
-  const [answers, setAnswers] = useState({});   // { [questionId]: optionValue }
+  const { setSettings: setGlobalSettings } = useSettings();
+  const mainRef = useRef(null);
+  const [step, setStep] = useState(0);
+  const [answers, setAnswers] = useState(() => selectedFromSettings(currentSettings));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const total = QUESTIONS.length;
-  const isSummary = step === total;
-  const current = QUESTIONS[step];
+  const stepId = STEPS[step];
+  const isWelcome = stepId === 'welcome';
+  const isReview = stepId === 'review';
+  const decisionStep = Math.max(0, step - 1);
+  const decisionTotal = STEPS.length - 2;
+  const settings = useMemo(() => buildSetupSettings(answers), [answers]);
+  const managerOptions = answers.work.includes('field')
+    ? MANAGER_OPTIONS
+    : MANAGER_OPTIONS.filter(option => option.id !== 'media');
 
-  // Resolve the settings PATCH from current answers. Later questions
-  // override earlier ones if they touch the same key (none currently do).
-  const resolvedSettings = () => {
-    const merged = {};
-    for (const q of QUESTIONS) {
-      const val = answers[q.id];
-      if (!val) continue;
-      const opt = q.options.find(o => o.value === val);
-      if (opt) Object.assign(merged, opt.settings);
-    }
-    return merged;
+  useEffect(() => {
+    if (mainRef.current) mainRef.current.scrollTop = 0;
+  }, [step]);
+
+  const visibleSummary = Object.entries(SUMMARY_LABELS)
+    .filter(([key]) => settings[key] === true)
+    .map(([, label]) => label);
+  const hiddenSummary = Object.entries(SUMMARY_LABELS)
+    .filter(([key]) => settings[key] === false && key !== 'module_team')
+    .map(([, label]) => label);
+
+  const toggleChoice = (group, option) => {
+    setAnswers(prev => {
+      const current = prev[group];
+      let next;
+      if (option.exclusive) {
+        next = current.includes(option.id) ? [] : [option.id];
+      } else {
+        const exclusiveIds = (
+          group === 'work' ? WORK_OPTIONS :
+          group === 'team' ? TEAM_OPTIONS :
+          MANAGER_OPTIONS
+        ).filter(item => item.exclusive).map(item => item.id);
+        const withoutExclusive = current.filter(id => !exclusiveIds.includes(id));
+        next = withoutExclusive.includes(option.id)
+          ? withoutExclusive.filter(id => id !== option.id)
+          : [...withoutExclusive, option.id];
+      }
+      return { ...prev, [group]: next };
+    });
   };
 
-  const choose = (value) => {
-    setAnswers(a => ({ ...a, [current.id]: value }));
-    setStep(s => s + 1);
+  const setLabel = (key, value) => {
+    setAnswers(prev => ({ ...prev, labels: { ...prev.labels, [key]: value } }));
   };
 
-  const back = () => setStep(s => Math.max(0, s - 1));
+  const canContinue = (
+    isWelcome ||
+    isReview ||
+    (stepId === 'work' && answers.work.length > 0) ||
+    (stepId === 'team' && answers.team.length > 0) ||
+    (stepId === 'manager' && answers.manager.length > 0) ||
+    (stepId === 'language' && Object.values(answers.labels).every(value => value.trim()))
+  );
 
-  const finish = async (markAnswered) => {
-    setSaving(true); setError('');
+  const dismiss = async () => {
+    if (saving) return;
+    setSaving(true);
     try {
-      const payload = markAnswered ? resolvedSettings() : {};
-      payload.setup_questionnaire_completed_at = new Date().toISOString();
-      await api.patch('/admin/settings', payload);
-      toast(markAnswered ? 'Setup complete!' : 'You can re-run setup later from the help menu.', 'success');
-      onComplete?.(payload);
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to save. Try again.');
+      const { data } = await api.patch('/admin/settings', {
+        setup_questionnaire_completed_at: new Date().toISOString(),
+      });
+      setGlobalSettings(data);
+      onDismiss?.();
+    } catch {
+      onDismiss?.();
     } finally {
       setSaving(false);
     }
   };
 
-  // X / Maybe later → record dismissal and close.
-  const dismiss = async () => {
-    await finish(false);
-    onDismiss?.();
+  const finish = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const { data } = await api.patch('/admin/settings', {
+        ...settings,
+        setup_questionnaire_completed_at: new Date().toISOString(),
+      });
+      setGlobalSettings(data);
+      toast('Your workspace is ready.', 'success');
+      onComplete?.(data);
+    } catch (err) {
+      setError(err.response?.data?.error || 'We could not save your setup. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const summary = isSummary ? (() => {
-    const settings = resolvedSettings();
-    const enabled = [];
-    const disabled = [];
-    for (const [k, v] of Object.entries(settings)) {
-      const label = SETTING_LABELS[k] || k;
-      if (v === true) enabled.push(label);
-      else if (v === false) disabled.push(label);
-    }
-    return { enabled, disabled };
-  })() : null;
+  const next = () => {
+    if (!canContinue || saving) return;
+    if (isReview) finish();
+    else setStep(current => Math.min(STEPS.length - 1, current + 1));
+  };
+
+  const back = () => setStep(current => Math.max(0, current - 1));
 
   return (
-    <div style={s.overlay} onClick={e => { if (e.target === e.currentTarget) dismiss(); }}>
-      <ModalShell onClose={dismiss} titleId="setup-q-title" style={s.modal}>
-        <div style={s.headerRow}>
-          <h2 id="setup-q-title" style={s.title}>Quick setup</h2>
-          <button type="button" style={s.closeBtn} onClick={dismiss} aria-label="Close">✕</button>
-        </div>
-        <div style={s.body}>
-        <div style={s.progress}>
-          <div style={s.progressTrack}>
-            <div style={{ ...s.progressFill, width: `${(step / total) * 100}%` }} />
+    <div className="setup-wizard-overlay">
+      <ModalShell
+        onClose={dismiss}
+        titleId="setup-wizard-title"
+        className="setup-wizard-modal"
+      >
+        <header className="setup-wizard-header">
+          <div className="setup-wizard-brand">
+            <img className="setup-wizard-brand-mark" src="/icon-96x96.png" alt="" />
+            <span>
+              <strong>OpsFloA</strong>
+              <small>Company setup</small>
+            </span>
           </div>
-          <div style={s.progressLabel}>
-            {isSummary ? 'Review' : `Question ${step + 1} of ${total}`}
-          </div>
-        </div>
-
-        {!isSummary && current && (
-          <>
-            <h3 style={s.q}>{current.question}</h3>
-            <p style={s.explain}>{current.explanation}</p>
-            <div style={s.options}>
-              {current.options.map(opt => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  style={{
-                    ...s.optionBtn,
-                    ...(answers[current.id] === opt.value ? s.optionBtnActive : null),
-                  }}
-                  onClick={() => choose(opt.value)}
-                >
-                  {opt.label}
-                </button>
-              ))}
+          {!isWelcome && (
+            <div className="setup-wizard-progress" aria-label={`Setup step ${Math.min(decisionStep + 1, decisionTotal)} of ${decisionTotal}`}>
+              <span>{isReview ? 'Review' : `Step ${decisionStep + 1} of ${decisionTotal}`}</span>
+              <div className="setup-wizard-progress-track">
+                <div style={{ width: `${Math.min(100, ((decisionStep + 1) / decisionTotal) * 100)}%` }} />
+              </div>
             </div>
-          </>
-        )}
+          )}
+          <button type="button" className="setup-wizard-close" onClick={dismiss} aria-label="Finish setup later">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" /></svg>
+          </button>
+        </header>
 
-        {isSummary && summary && (
-          <>
-            <h3 style={s.q}>Here&apos;s what we&apos;ll set up.</h3>
-            <p style={s.explain}>
-              You can change any of this later in Company Settings → Modules
-              (or in the Features section right below it).
-            </p>
-            {summary.enabled.length > 0 && (
-              <div style={s.summaryBlock}>
-                <div style={s.summaryHeading}>Enabled</div>
-                <ul style={s.summaryList}>
-                  {summary.enabled.map(name => <li key={name} style={s.summaryItem}>✓ {name}</li>)}
-                </ul>
+        <main ref={mainRef} className={`setup-wizard-main is-${stepId}`}>
+          {isWelcome && (
+            <div className="setup-wizard-welcome">
+              <div className="setup-wizard-welcome-copy">
+                <span className="setup-wizard-kicker">A calmer way to run the day</span>
+                <h2 id="setup-wizard-title">Set up OpsFloA around how your business actually works.</h2>
+                <p className="setup-wizard-lead">
+                  OpsFloA brings time, people, work, field updates, inventory, and reporting into one operating system. You choose what matters; the rest stays out of the way.
+                </p>
+                <div className="setup-wizard-promise-grid">
+                  <div><strong>Keep daily work simple</strong><span>People see the tools they need most.</span></div>
+                  <div><strong>Turn on depth when useful</strong><span>Specialized controls remain available later.</span></div>
+                  <div><strong>Use your language</strong><span>Use familiar names for work, clients, and team members.</span></div>
+                </div>
+                <button type="button" className="setup-wizard-primary is-large" onClick={next}>
+                  Start my setup
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12M11 5l5 5-5 5" /></svg>
+                </button>
+                <button type="button" className="setup-wizard-later" onClick={dismiss} disabled={saving}>
+                  I will set this up later
+                </button>
               </div>
-            )}
-            {summary.disabled.length > 0 && (
-              <div style={s.summaryBlock}>
-                <div style={s.summaryHeading}>Hidden</div>
-                <ul style={s.summaryList}>
-                  {summary.disabled.map(name => <li key={name} style={s.summaryItem}>— {name}</li>)}
-                </ul>
+              <div className="setup-wizard-welcome-image" role="img" aria-label="A team coordinating work together" />
+            </div>
+          )}
+
+          {stepId === 'work' && (
+            <section className="setup-wizard-step">
+              <div className="setup-wizard-step-heading">
+                <span className="setup-wizard-kicker">Shape the workspace</span>
+                <h2 id="setup-wizard-title">How is work organized?</h2>
+                <p>Choose every pattern that fits. This decides which major work areas appear in the app.</p>
               </div>
-            )}
-            {summary.enabled.length === 0 && summary.disabled.length === 0 && (
-              <p style={s.explain}>
-                Your answers don&apos;t require any setting changes right now.
-                We&apos;ll just mark setup as complete.
-              </p>
-            )}
-          </>
+              <ChoiceGrid options={WORK_OPTIONS} selected={answers.work} onToggle={option => toggleChoice('work', option)} />
+            </section>
+          )}
+
+          {stepId === 'team' && (
+            <section className="setup-wizard-step">
+              <div className="setup-wizard-step-heading">
+                <span className="setup-wizard-kicker">The employee experience</span>
+                <h2 id="setup-wizard-title">What should team members do in OpsFloA?</h2>
+                <p>Select the everyday actions your team should have close at hand.</p>
+              </div>
+              <ChoiceGrid options={TEAM_OPTIONS} selected={answers.team} onToggle={option => toggleChoice('team', option)} />
+            </section>
+          )}
+
+          {stepId === 'manager' && (
+            <section className="setup-wizard-step">
+              <div className="setup-wizard-step-heading">
+                <span className="setup-wizard-kicker">Manager visibility</span>
+                <h2 id="setup-wizard-title">What needs closer oversight?</h2>
+                <p>These tools add reporting or specialist controls without crowding the team&apos;s daily view.</p>
+              </div>
+              <ChoiceGrid options={managerOptions} selected={answers.manager} onToggle={option => toggleChoice('manager', option)} />
+              {answers.manager.includes('compliance') && (
+                <p className="setup-wizard-note">Certified payroll itself may depend on your company plan or add-on. This prepares the related workspace controls.</p>
+              )}
+            </section>
+          )}
+
+          {stepId === 'language' && (
+            <section className="setup-wizard-step">
+              <div className="setup-wizard-step-heading">
+                <span className="setup-wizard-kicker">Make it familiar</span>
+                <h2 id="setup-wizard-title">What does your company call these things?</h2>
+                <p>These labels appear throughout the app. Pick a suggestion or type your own.</p>
+              </div>
+              <div className="setup-wizard-labels">
+                {[
+                  ['work', 'A piece of work'],
+                  ['client', 'The person or company you serve'],
+                  ['worker', 'A person on your team'],
+                  ['field', 'Work updates away from the office'],
+                ].map(([key, prompt]) => (
+                  <div key={key} className="setup-wizard-label-row">
+                    <div className="setup-wizard-label-prompt">{prompt}</div>
+                    <div className="setup-wizard-label-controls">
+                      <div className="setup-wizard-label-choices">
+                        {LABEL_CHOICES[key].map(label => (
+                          <button
+                            key={label}
+                            type="button"
+                            className={answers.labels[key] === label ? 'is-selected' : ''}
+                            onClick={() => setLabel(key, label)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <label>
+                        <span>Custom label</span>
+                        <input
+                          value={answers.labels[key]}
+                          maxLength={32}
+                          onChange={event => setLabel(key, event.target.value)}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {isReview && (
+            <section className="setup-wizard-review">
+              <div className="setup-wizard-review-copy">
+                <span className="setup-wizard-kicker">Ready to begin</span>
+                <h2 id="setup-wizard-title">Your starting workspace is focused, not limited.</h2>
+                <p>
+                  These choices set the starting view for your company. Nothing is permanent; every module and feature can be adjusted later in Administration.
+                </p>
+                <SummaryList title="Ready for your team" items={visibleSummary} />
+                <SummaryList title="Hidden for now" items={hiddenSummary} muted />
+                <div className="setup-wizard-language-summary">
+                  <span>{settings.label_work}</span>
+                  <span>{settings.label_client}</span>
+                  <span>{settings.label_worker}</span>
+                  <span>{settings.label_field}</span>
+                </div>
+                {error && <p className="setup-wizard-error" role="alert">{error}</p>}
+              </div>
+              <div className="setup-wizard-review-image" role="img" aria-label="An operations lead beginning an organized workday">
+                <div><strong>Built for today.</strong><span>Flexible enough for what comes next.</span></div>
+              </div>
+            </section>
+          )}
+        </main>
+
+        {!isWelcome && (
+          <footer className="setup-wizard-footer">
+            <button type="button" className="setup-wizard-secondary" onClick={back} disabled={saving}>
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16 10H4M9 5l-5 5 5 5" /></svg>
+              Back
+            </button>
+            <span className="setup-wizard-footer-note">
+              {isReview ? 'You can change these choices later.' : 'Only the tools you choose will be emphasized.'}
+            </span>
+            <button type="button" className="setup-wizard-primary" onClick={next} disabled={!canContinue || saving}>
+              {isReview ? (saving ? 'Saving setup...' : 'Use this workspace') : 'Continue'}
+              {!isReview && <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12M11 5l5 5-5 5" /></svg>}
+            </button>
+          </footer>
         )}
-
-        {error && <p style={s.error}>{error}</p>}
-
-        <div style={s.footer}>
-          {step > 0 && !saving && (
-            <button type="button" style={s.backBtn} onClick={back}>
-              ← Back
-            </button>
-          )}
-          <div style={{ flex: 1 }} />
-          {!isSummary && (
-            <button type="button" style={s.skipLink} onClick={dismiss} disabled={saving}>
-              Maybe later
-            </button>
-          )}
-          {isSummary && (
-            <button
-              type="button"
-              style={s.primaryBtn}
-              onClick={() => finish(true)}
-              disabled={saving}
-            >
-              {saving ? 'Saving…' : 'Finish setup'}
-            </button>
-          )}
-        </div>
-        </div>
       </ModalShell>
     </div>
   );
 }
-
-const s = {
-  overlay: {
-    position: 'fixed', inset: 0,
-    background: 'rgba(15, 23, 42, 0.55)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    padding: 16,
-    zIndex: 1000,
-  },
-  modal: {
-    background: '#fff',
-    borderRadius: 14,
-    padding: '20px 24px 24px',
-    width: '100%',
-    maxWidth: 520,
-    maxHeight: 'calc(100vh - 32px)',
-    overflowY: 'auto',
-    boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 12,
-  },
-  headerRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
-  title: { fontSize: 18, fontWeight: 700, color: '#111827', margin: 0 },
-  closeBtn: {
-    background: 'none', border: 'none', color: '#6b7280',
-    fontSize: 16, cursor: 'pointer', padding: '4px 6px', lineHeight: 1,
-  },
-  body: { display: 'flex', flexDirection: 'column', gap: 16, padding: '4px 4px 0' },
-  progress: { display: 'flex', alignItems: 'center', gap: 12 },
-  progressTrack: { flex: 1, height: 4, background: '#e5e7eb', borderRadius: 2, overflow: 'hidden' },
-  progressFill: { height: '100%', background: 'var(--ops-page-accent)', transition: 'width 0.25s ease' },
-  progressLabel: { fontSize: 12, color: '#6b7280', whiteSpace: 'nowrap' },
-  q: { fontSize: 18, fontWeight: 700, color: '#111827', margin: '4px 0 0' },
-  explain: { fontSize: 14, color: '#4b5563', lineHeight: 1.55, margin: 0 },
-  options: { display: 'flex', flexDirection: 'column', gap: 8 },
-  optionBtn: {
-    background: '#fff',
-    border: '1px solid #d1d5db',
-    borderRadius: 8,
-    padding: '12px 16px',
-    fontSize: 14,
-    fontWeight: 500,
-    color: '#111827',
-    cursor: 'pointer',
-    textAlign: 'left',
-    transition: 'border-color 0.1s, background 0.1s',
-  },
-  optionBtnActive: {
-    borderColor: 'var(--ops-page-accent)',
-    background: '#eef2ff',
-  },
-  summaryBlock: { display: 'flex', flexDirection: 'column', gap: 6 },
-  summaryHeading: { fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.04em' },
-  summaryList: { margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 4 },
-  summaryItem: { fontSize: 14, color: '#374151' },
-  error: { fontSize: 13, color: '#dc2626', margin: 0 },
-  footer: { display: 'flex', alignItems: 'center', gap: 12, marginTop: 4 },
-  backBtn: { background: 'none', border: 'none', color: '#6b7280', fontSize: 13, cursor: 'pointer', padding: '6px 0' },
-  skipLink: { background: 'none', border: 'none', color: '#6b7280', fontSize: 13, cursor: 'pointer', padding: '6px 8px' },
-  primaryBtn: {
-    background: 'var(--ops-page-accent)',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 7,
-    padding: '9px 18px',
-    fontSize: 14,
-    fontWeight: 700,
-    cursor: 'pointer',
-  },
-};

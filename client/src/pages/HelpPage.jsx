@@ -111,13 +111,13 @@ export default function HelpPage() {
         {(user?.role === 'admin' || user?.role === 'super_admin') && !q && (
           <div style={styles.actionCard}>
             <div>
-              <div style={styles.actionTitle}>Run setup again</div>
+              <div style={styles.actionTitle}>Run guided setup again</div>
               <div style={styles.actionSub}>
-                Walk through the setup questions again to revise which modules and
-                features your company uses. Your existing data won&apos;t be touched.
+                Revisit how your company works, which tools the team needs, and
+                the labels used throughout the workspace. Your existing data won&apos;t be touched.
               </div>
             </div>
-            <a href="/administration?setup=1" style={styles.actionBtn}>Run setup</a>
+            <a href="/administration?setup=1" style={styles.actionBtn}>Open setup</a>
           </div>
         )}
 
