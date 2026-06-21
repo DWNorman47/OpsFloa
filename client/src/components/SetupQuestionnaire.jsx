@@ -2,122 +2,39 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../api';
 import { useToast } from '../contexts/ToastContext';
 import { useSettings } from '../contexts/SettingsContext';
+import { useT } from '../hooks/useT';
 import ModalShell from './ModalShell';
 import './SetupQuestionnaire.css';
 
 const WORK_OPTIONS = [
-  {
-    id: 'projects',
-    title: 'Projects, jobs, or work orders',
-    description: 'Organize customers, budgets, documents, and progress around defined work.',
-    icon: 'projects',
-  },
-  {
-    id: 'field',
-    title: 'Mobile, field, or service work',
-    description: 'Give teams a place for daily notes, photos, checklists, issues, and safety.',
-    icon: 'field',
-  },
-  {
-    id: 'inventory',
-    title: 'Stock, tools, or materials',
-    description: 'Track items, locations, movement, counts, and value.',
-    icon: 'inventory',
-  },
-  {
-    id: 'people',
-    title: 'People and time',
-    description: 'Manage team records, availability, attendance, and time-related work.',
-    icon: 'people',
-  },
+  { id: 'projects',  titleKey: 'sqWorkProjectsTitle',  descKey: 'sqWorkProjectsDesc',  icon: 'projects' },
+  { id: 'field',     titleKey: 'sqWorkFieldTitle',     descKey: 'sqWorkFieldDesc',     icon: 'field' },
+  { id: 'inventory', titleKey: 'sqWorkInventoryTitle', descKey: 'sqWorkInventoryDesc', icon: 'inventory' },
+  { id: 'people',    titleKey: 'sqWorkPeopleTitle',    descKey: 'sqWorkPeopleDesc',    icon: 'people' },
 ];
 
 const TEAM_OPTIONS = [
-  {
-    id: 'time',
-    title: 'Clock in and out',
-    description: 'Record worked time, breaks, mileage, and timesheets.',
-    icon: 'clock',
-  },
-  {
-    id: 'scheduling',
-    title: 'See scheduled shifts',
-    description: 'Plan work ahead and keep upcoming shifts visible.',
-    icon: 'calendar',
-  },
-  {
-    id: 'pto',
-    title: 'Request time off',
-    description: 'Handle vacation and leave requests in the app.',
-    icon: 'timeoff',
-  },
-  {
-    id: 'expenses',
-    title: 'Submit expenses',
-    description: 'Collect reimbursement requests, receipts, and mileage.',
-    icon: 'receipt',
-  },
-  {
-    id: 'chat',
-    title: 'Receive messages',
-    description: 'Use company chat and broadcast announcements.',
-    icon: 'message',
-  },
-  {
-    id: 'location',
-    title: 'Record clock-in location',
-    description: 'Capture location when people start and end work.',
-    icon: 'location',
-  },
-  {
-    id: 'admin_only',
-    title: 'No employee tools yet',
-    description: 'Start with manager-facing records and add employee tools later.',
-    icon: 'shield',
-    exclusive: true,
-  },
+  { id: 'time',       titleKey: 'sqTeamTimeTitle',       descKey: 'sqTeamTimeDesc',       icon: 'clock' },
+  { id: 'scheduling', titleKey: 'sqTeamSchedulingTitle', descKey: 'sqTeamSchedulingDesc', icon: 'calendar' },
+  { id: 'pto',        titleKey: 'sqTeamPtoTitle',        descKey: 'sqTeamPtoDesc',        icon: 'timeoff' },
+  { id: 'expenses',   titleKey: 'sqTeamExpensesTitle',   descKey: 'sqTeamExpensesDesc',   icon: 'receipt' },
+  { id: 'chat',       titleKey: 'sqTeamChatTitle',       descKey: 'sqTeamChatDesc',       icon: 'message' },
+  { id: 'location',   titleKey: 'sqTeamLocationTitle',   descKey: 'sqTeamLocationDesc',   icon: 'location' },
+  { id: 'admin_only', titleKey: 'sqTeamAdminOnlyTitle',  descKey: 'sqTeamAdminOnlyDesc',  icon: 'shield', exclusive: true },
 ];
 
 const MANAGER_OPTIONS = [
-  {
-    id: 'performance',
-    title: 'Performance and labor reports',
-    description: 'See trends, hours, attendance, and operational performance.',
-    icon: 'chart',
-  },
-  {
-    id: 'financial',
-    title: 'Project financial reports',
-    description: 'Use portfolio profit-and-loss and work-in-progress views.',
-    icon: 'money',
-  },
-  {
-    id: 'overtime',
-    title: 'Overtime rules and alerts',
-    description: 'Calculate overtime and surface approaching thresholds.',
-    icon: 'alert',
-  },
-  {
-    id: 'media',
-    title: 'Photos and shared media',
-    description: 'Keep visual records connected to daily work.',
-    icon: 'camera',
-  },
-  {
-    id: 'compliance',
-    title: 'Prevailing-wage tracking',
-    description: 'Show wage classification and certified-payroll controls when available.',
-    icon: 'document',
-  },
-  {
-    id: 'essentials',
-    title: 'Keep management simple',
-    description: 'Start with the essential team and approval tools only.',
-    icon: 'spark',
-    exclusive: true,
-  },
+  { id: 'performance', titleKey: 'sqMgrPerformanceTitle', descKey: 'sqMgrPerformanceDesc', icon: 'chart' },
+  { id: 'financial',   titleKey: 'sqMgrFinancialTitle',   descKey: 'sqMgrFinancialDesc',   icon: 'money' },
+  { id: 'overtime',    titleKey: 'sqMgrOvertimeTitle',    descKey: 'sqMgrOvertimeDesc',    icon: 'alert' },
+  { id: 'media',       titleKey: 'sqMgrMediaTitle',       descKey: 'sqMgrMediaDesc',       icon: 'camera' },
+  { id: 'compliance',  titleKey: 'sqMgrComplianceTitle',  descKey: 'sqMgrComplianceDesc',  icon: 'document' },
+  { id: 'essentials',  titleKey: 'sqMgrEssentialsTitle',  descKey: 'sqMgrEssentialsDesc',  icon: 'spark', exclusive: true },
 ];
 
+// Suggestion chips become the company-wide stored label value, and English
+// business nuances (Customer vs Client) don't map 1:1 to Spanish, so the chip
+// values stay as-is; admins can type any term in the Custom field.
 const LABEL_CHOICES = {
   work: ['Project', 'Job', 'Work Order', 'Route'],
   client: ['Customer', 'Client', 'Account', 'Member'],
@@ -127,22 +44,23 @@ const LABEL_CHOICES = {
 
 const STEPS = ['welcome', 'work', 'team', 'manager', 'language', 'review'];
 
-const SUMMARY_LABELS = {
-  module_timeclock: 'Time clock and timesheets',
-  module_team: 'Team directory',
-  module_projects: 'Projects and work records',
-  module_field: 'Field work',
-  module_inventory: 'Inventory',
-  module_analytics: 'Performance reports',
-  module_financial_reports: 'Financial reports',
-  feature_scheduling: 'Scheduling',
-  feature_pto: 'Time off',
-  feature_reimbursements: 'Expenses and reimbursements',
-  feature_chat: 'Company chat',
-  feature_geolocation: 'Clock-in location',
-  feature_media_gallery: 'Photos and media',
-  feature_overtime: 'Overtime rules',
-  feature_prevailing_wage: 'Prevailing-wage tools',
+// Maps a setting flag to its translation key for the review summary.
+const SUMMARY_LABEL_KEYS = {
+  module_timeclock: 'sqSumTimeclock',
+  module_team: 'sqSumTeam',
+  module_projects: 'sqSumProjects',
+  module_field: 'sqSumField',
+  module_inventory: 'sqSumInventory',
+  module_analytics: 'sqSumAnalytics',
+  module_financial_reports: 'sqSumFinancial',
+  feature_scheduling: 'sqSumScheduling',
+  feature_pto: 'sqSumPto',
+  feature_reimbursements: 'sqSumReimbursements',
+  feature_chat: 'sqSumChat',
+  feature_geolocation: 'sqSumGeolocation',
+  feature_media_gallery: 'sqSumMedia',
+  feature_overtime: 'sqSumOvertime',
+  feature_prevailing_wage: 'sqSumPrevailing',
 };
 
 function selectedFromSettings(settings = {}) {
@@ -254,6 +172,7 @@ function WizardIcon({ name }) {
 }
 
 function ChoiceGrid({ options, selected, onToggle }) {
+  const t = useT();
   return (
     <div className="setup-wizard-choice-grid">
       {options.map(option => {
@@ -268,8 +187,8 @@ function ChoiceGrid({ options, selected, onToggle }) {
           >
             <span className="setup-wizard-choice-icon"><WizardIcon name={option.icon} /></span>
             <span className="setup-wizard-choice-copy">
-              <strong>{option.title}</strong>
-              <span>{option.description}</span>
+              <strong>{t[option.titleKey]}</strong>
+              <span>{t[option.descKey]}</span>
             </span>
             <span className="setup-wizard-check" aria-hidden="true">
               {active && (
@@ -300,6 +219,7 @@ function SummaryList({ title, items, muted = false }) {
 }
 
 export default function SetupQuestionnaire({ currentSettings, onComplete, onDismiss }) {
+  const t = useT();
   const toast = useToast();
   const { setSettings: setGlobalSettings } = useSettings();
   const mainRef = useRef(null);
@@ -322,12 +242,12 @@ export default function SetupQuestionnaire({ currentSettings, onComplete, onDism
     if (mainRef.current) mainRef.current.scrollTop = 0;
   }, [step]);
 
-  const visibleSummary = Object.entries(SUMMARY_LABELS)
+  const visibleSummary = Object.entries(SUMMARY_LABEL_KEYS)
     .filter(([key]) => settings[key] === true)
-    .map(([, label]) => label);
-  const hiddenSummary = Object.entries(SUMMARY_LABELS)
+    .map(([, labelKey]) => t[labelKey]);
+  const hiddenSummary = Object.entries(SUMMARY_LABEL_KEYS)
     .filter(([key]) => settings[key] === false && key !== 'module_team')
-    .map(([, label]) => label);
+    .map(([, labelKey]) => t[labelKey]);
 
   const toggleChoice = (group, option) => {
     setAnswers(prev => {
@@ -388,10 +308,10 @@ export default function SetupQuestionnaire({ currentSettings, onComplete, onDism
         setup_questionnaire_completed_at: new Date().toISOString(),
       });
       setGlobalSettings(data);
-      toast('Your workspace is ready.', 'success');
+      toast(t.sqToastReady, 'success');
       onComplete?.(data);
     } catch (err) {
-      setError(err.response?.data?.error || 'We could not save your setup. Please try again.');
+      setError(err.response?.data?.error || t.sqErrorSave);
     } finally {
       setSaving(false);
     }
@@ -417,18 +337,18 @@ export default function SetupQuestionnaire({ currentSettings, onComplete, onDism
             <img className="setup-wizard-brand-mark" src="/icon-96x96.png" alt="" />
             <span>
               <strong>OpsFloA</strong>
-              <small>Company setup</small>
+              <small>{t.sqHeaderSubtitle}</small>
             </span>
           </div>
           {!isWelcome && (
-            <div className="setup-wizard-progress" aria-label={`Setup step ${Math.min(decisionStep + 1, decisionTotal)} of ${decisionTotal}`}>
-              <span>{isReview ? 'Review' : `Step ${decisionStep + 1} of ${decisionTotal}`}</span>
+            <div className="setup-wizard-progress" aria-label={`${t.sqStep} ${Math.min(decisionStep + 1, decisionTotal)} ${t.sqOf} ${decisionTotal}`}>
+              <span>{isReview ? t.sqReview : `${t.sqStep} ${decisionStep + 1} ${t.sqOf} ${decisionTotal}`}</span>
               <div className="setup-wizard-progress-track">
                 <div style={{ width: `${Math.min(100, ((decisionStep + 1) / decisionTotal) * 100)}%` }} />
               </div>
             </div>
           )}
-          <button type="button" className="setup-wizard-close" onClick={dismiss} aria-label="Finish setup later">
+          <button type="button" className="setup-wizard-close" onClick={dismiss} aria-label={t.sqFinishLater}>
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" /></svg>
           </button>
         </header>
@@ -437,34 +357,34 @@ export default function SetupQuestionnaire({ currentSettings, onComplete, onDism
           {isWelcome && (
             <div className="setup-wizard-welcome">
               <div className="setup-wizard-welcome-copy">
-                <span className="setup-wizard-kicker">A calmer way to run the day</span>
-                <h2 id="setup-wizard-title">Set up OpsFloA around how your business actually works.</h2>
+                <span className="setup-wizard-kicker">{t.sqWelcomeKicker}</span>
+                <h2 id="setup-wizard-title">{t.sqWelcomeTitle}</h2>
                 <p className="setup-wizard-lead">
-                  OpsFloA brings time, people, work, field updates, inventory, and reporting into one operating system. You choose what matters; the rest stays out of the way.
+                  {t.sqWelcomeLead}
                 </p>
                 <div className="setup-wizard-promise-grid">
-                  <div><strong>Keep daily work simple</strong><span>People see the tools they need most.</span></div>
-                  <div><strong>Turn on depth when useful</strong><span>Specialized controls remain available later.</span></div>
-                  <div><strong>Use your language</strong><span>Use familiar names for work, clients, and team members.</span></div>
+                  <div><strong>{t.sqPromise1Title}</strong><span>{t.sqPromise1Desc}</span></div>
+                  <div><strong>{t.sqPromise2Title}</strong><span>{t.sqPromise2Desc}</span></div>
+                  <div><strong>{t.sqPromise3Title}</strong><span>{t.sqPromise3Desc}</span></div>
                 </div>
                 <button type="button" className="setup-wizard-primary is-large" onClick={next}>
-                  Start my setup
+                  {t.sqStartButton}
                   <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12M11 5l5 5-5 5" /></svg>
                 </button>
                 <button type="button" className="setup-wizard-later" onClick={dismiss} disabled={saving}>
-                  I will set this up later
+                  {t.sqLaterButton}
                 </button>
               </div>
-              <div className="setup-wizard-welcome-image" role="img" aria-label="A team coordinating work together" />
+              <div className="setup-wizard-welcome-image" role="img" aria-label={t.sqWelcomeImageAlt} />
             </div>
           )}
 
           {stepId === 'work' && (
             <section className="setup-wizard-step">
               <div className="setup-wizard-step-heading">
-                <span className="setup-wizard-kicker">Shape the workspace</span>
-                <h2 id="setup-wizard-title">How is work organized?</h2>
-                <p>Choose every pattern that fits. This decides which major work areas appear in the app.</p>
+                <span className="setup-wizard-kicker">{t.sqWorkKicker}</span>
+                <h2 id="setup-wizard-title">{t.sqWorkTitle}</h2>
+                <p>{t.sqWorkLead}</p>
               </div>
               <ChoiceGrid options={WORK_OPTIONS} selected={answers.work} onToggle={option => toggleChoice('work', option)} />
             </section>
@@ -473,9 +393,9 @@ export default function SetupQuestionnaire({ currentSettings, onComplete, onDism
           {stepId === 'team' && (
             <section className="setup-wizard-step">
               <div className="setup-wizard-step-heading">
-                <span className="setup-wizard-kicker">The employee experience</span>
-                <h2 id="setup-wizard-title">What should team members do in OpsFloA?</h2>
-                <p>Select the everyday actions your team should have close at hand.</p>
+                <span className="setup-wizard-kicker">{t.sqTeamKicker}</span>
+                <h2 id="setup-wizard-title">{t.sqTeamTitle}</h2>
+                <p>{t.sqTeamLead}</p>
               </div>
               <ChoiceGrid options={TEAM_OPTIONS} selected={answers.team} onToggle={option => toggleChoice('team', option)} />
             </section>
@@ -484,13 +404,13 @@ export default function SetupQuestionnaire({ currentSettings, onComplete, onDism
           {stepId === 'manager' && (
             <section className="setup-wizard-step">
               <div className="setup-wizard-step-heading">
-                <span className="setup-wizard-kicker">Manager visibility</span>
-                <h2 id="setup-wizard-title">What needs closer oversight?</h2>
-                <p>These tools add reporting or specialist controls without crowding the team&apos;s daily view.</p>
+                <span className="setup-wizard-kicker">{t.sqMgrKicker}</span>
+                <h2 id="setup-wizard-title">{t.sqMgrTitle}</h2>
+                <p>{t.sqMgrLead}</p>
               </div>
               <ChoiceGrid options={managerOptions} selected={answers.manager} onToggle={option => toggleChoice('manager', option)} />
               {answers.manager.includes('compliance') && (
-                <p className="setup-wizard-note">Certified payroll itself may depend on your company plan or add-on. This prepares the related workspace controls.</p>
+                <p className="setup-wizard-note">{t.sqMgrComplianceNote}</p>
               )}
             </section>
           )}
@@ -498,16 +418,16 @@ export default function SetupQuestionnaire({ currentSettings, onComplete, onDism
           {stepId === 'language' && (
             <section className="setup-wizard-step">
               <div className="setup-wizard-step-heading">
-                <span className="setup-wizard-kicker">Make it familiar</span>
-                <h2 id="setup-wizard-title">What does your company call these things?</h2>
-                <p>These labels appear throughout the app. Pick a suggestion or type your own.</p>
+                <span className="setup-wizard-kicker">{t.sqLangKicker}</span>
+                <h2 id="setup-wizard-title">{t.sqLangTitle}</h2>
+                <p>{t.sqLangLead}</p>
               </div>
               <div className="setup-wizard-labels">
                 {[
-                  ['work', 'A piece of work'],
-                  ['client', 'The person or company you serve'],
-                  ['worker', 'A person on your team'],
-                  ['field', 'Work updates away from the office'],
+                  ['work', t.sqLabelPromptWork],
+                  ['client', t.sqLabelPromptClient],
+                  ['worker', t.sqLabelPromptWorker],
+                  ['field', t.sqLabelPromptField],
                 ].map(([key, prompt]) => (
                   <div key={key} className="setup-wizard-label-row">
                     <div className="setup-wizard-label-prompt">{prompt}</div>
@@ -525,7 +445,7 @@ export default function SetupQuestionnaire({ currentSettings, onComplete, onDism
                         ))}
                       </div>
                       <label>
-                        <span>Custom label</span>
+                        <span>{t.sqCustomLabel}</span>
                         <input
                           value={answers.labels[key]}
                           maxLength={32}
@@ -542,13 +462,13 @@ export default function SetupQuestionnaire({ currentSettings, onComplete, onDism
           {isReview && (
             <section className="setup-wizard-review">
               <div className="setup-wizard-review-copy">
-                <span className="setup-wizard-kicker">Ready to begin</span>
-                <h2 id="setup-wizard-title">Your starting workspace is focused, not limited.</h2>
+                <span className="setup-wizard-kicker">{t.sqReviewKicker}</span>
+                <h2 id="setup-wizard-title">{t.sqReviewTitle}</h2>
                 <p>
-                  These choices set the starting view for your company. Nothing is permanent; every module and feature can be adjusted later in Administration.
+                  {t.sqReviewLead}
                 </p>
-                <SummaryList title="Ready for your team" items={visibleSummary} />
-                <SummaryList title="Hidden for now" items={hiddenSummary} muted />
+                <SummaryList title={t.sqReadyForTeam} items={visibleSummary} />
+                <SummaryList title={t.sqHiddenForNow} items={hiddenSummary} muted />
                 <div className="setup-wizard-language-summary">
                   <span>{settings.label_work}</span>
                   <span>{settings.label_client}</span>
@@ -557,8 +477,8 @@ export default function SetupQuestionnaire({ currentSettings, onComplete, onDism
                 </div>
                 {error && <p className="setup-wizard-error" role="alert">{error}</p>}
               </div>
-              <div className="setup-wizard-review-image" role="img" aria-label="An operations lead beginning an organized workday">
-                <div><strong>Built for today.</strong><span>Flexible enough for what comes next.</span></div>
+              <div className="setup-wizard-review-image" role="img" aria-label={t.sqReviewImageAlt}>
+                <div><strong>{t.sqReviewImageTitle}</strong><span>{t.sqReviewImageDesc}</span></div>
               </div>
             </section>
           )}
@@ -568,13 +488,13 @@ export default function SetupQuestionnaire({ currentSettings, onComplete, onDism
           <footer className="setup-wizard-footer">
             <button type="button" className="setup-wizard-secondary" onClick={back} disabled={saving}>
               <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16 10H4M9 5l-5 5 5 5" /></svg>
-              Back
+              {t.back}
             </button>
             <span className="setup-wizard-footer-note">
-              {isReview ? 'You can change these choices later.' : 'Only the tools you choose will be emphasized.'}
+              {isReview ? t.sqFooterNoteReview : t.sqFooterNoteDefault}
             </span>
             <button type="button" className="setup-wizard-primary" onClick={next} disabled={!canContinue || saving}>
-              {isReview ? (saving ? 'Saving setup...' : 'Use this workspace') : 'Continue'}
+              {isReview ? (saving ? t.sqSavingSetup : t.sqUseWorkspace) : t.sqContinue}
               {!isReview && <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12M11 5l5 5-5 5" /></svg>}
             </button>
           </footer>
