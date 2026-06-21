@@ -462,10 +462,16 @@ publicRouter.get('/view/:token', async (req, res) => {
     // cost basis, `notes` = internal). Client sees subtotal / tax / total
     // and line totals only.
     const r = await pool.query(
-      `SELECT id, company_id, project_id, co_number, description, status,
-              subtotal_cents, tax_pct, total_cents,
-              sent_at, responded_at, accepted_signer_name
-         FROM change_orders WHERE response_token_hash = $1`,
+      // client_language (via the linked project's client) lets the public page
+      // render in the recipient's preferred language; NULL → browser fallback.
+      `SELECT co.id, co.company_id, co.project_id, co.co_number, co.description, co.status,
+              co.subtotal_cents, co.tax_pct, co.total_cents,
+              co.sent_at, co.responded_at, co.accepted_signer_name,
+              c.language AS client_language
+         FROM change_orders co
+         LEFT JOIN projects p ON p.id = co.project_id
+         LEFT JOIN clients c ON c.id = p.client_id
+        WHERE co.response_token_hash = $1`,
       [sha256(req.params.token)]
     );
     if (r.rowCount === 0) return res.status(404).json({ error: 'Not found' });

@@ -560,11 +560,16 @@ publicRouter.get('/view/:token', async (req, res) => {
     // subtotal / tax / total, scope, exclusions, terms, and line totals —
     // the same numbers the PDF shows them — but not the buildup.
     const r = await pool.query(
-      `SELECT id, company_id, estimate_number, project_name, client_name_snapshot, scope_summary,
-              subtotal_cents, tax_pct, total_cents,
-              valid_until, status, sent_at, responded_at, accepted_signer_name,
-              exclusions, terms
-         FROM estimates WHERE response_token_hash = $1`,
+      // client_language lets the public page render in the recipient's
+      // preferred language (resolved live from clients.language; NULL when
+      // there's no linked client → the page falls back to browser language).
+      `SELECT e.id, e.company_id, e.estimate_number, e.project_name, e.client_name_snapshot, e.scope_summary,
+              e.subtotal_cents, e.tax_pct, e.total_cents,
+              e.valid_until, e.status, e.sent_at, e.responded_at, e.accepted_signer_name,
+              e.exclusions, e.terms, c.language AS client_language
+         FROM estimates e
+         LEFT JOIN clients c ON c.id = e.client_id
+        WHERE e.response_token_hash = $1`,
       [sha256(req.params.token)]
     );
     if (r.rowCount === 0) return res.status(404).json({ error: 'Not found' });
