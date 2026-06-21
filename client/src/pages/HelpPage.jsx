@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useT } from '../hooks/useT';
 import AppHeader from '../components/AppHeader';
 import OfflineBanner from '../components/OfflineBanner';
 import { HELP_SECTIONS } from '../helpContent';
@@ -15,6 +16,7 @@ import { silentError } from '../errorReporter';
  */
 export default function HelpPage() {
   const { user } = useAuth();
+  const t = useT();
   const [settings, setSettings] = useState(null);
   // First section is open by default, plus whatever the URL hash points at.
   const [open, setOpen] = useState(() => {
@@ -67,15 +69,13 @@ export default function HelpPage() {
 
       <main id="main-content" style={styles.main} className="mobile-main">
         <div style={styles.headerCard}>
-          <h1 style={styles.h1}>Help &amp; FAQ</h1>
+          <h1 style={styles.h1}>{t.helpTitle}</h1>
           <p style={styles.lead}>
-            Common questions about using OpsFloa. Search below, or jump to a
-            section. Can't find your answer? Open Administration → Account
-            and send a support message.
+            {t.helpLead}
           </p>
           <input
             type="search"
-            placeholder="Search help…"
+            placeholder={t.helpSearchPlaceholder}
             style={styles.search}
             value={query}
             onChange={e => setQuery(e.target.value)}
@@ -83,7 +83,7 @@ export default function HelpPage() {
         </div>
 
         {!q && (
-          <nav style={styles.toc} aria-label="Help sections">
+          <nav style={styles.toc} aria-label={t.helpSectionsAria}>
             {HELP_SECTIONS.map(s => (
               <a
                 key={s.id}
@@ -101,8 +101,7 @@ export default function HelpPage() {
 
         {filtered.length === 0 && (
           <div style={styles.empty}>
-            No matches for "{query}". Try fewer or different words, or browse
-            the sections by clearing the search.
+            {t.helpNoMatchesPre} "{query}". {t.helpNoMatchesPost}
           </div>
         )}
 
@@ -111,13 +110,12 @@ export default function HelpPage() {
         {(user?.role === 'admin' || user?.role === 'super_admin') && !q && (
           <div style={styles.actionCard}>
             <div>
-              <div style={styles.actionTitle}>Run guided setup again</div>
+              <div style={styles.actionTitle}>{t.helpSetupTitle}</div>
               <div style={styles.actionSub}>
-                Revisit how your company works, which tools the team needs, and
-                the labels used throughout the workspace. Your existing data won&apos;t be touched.
+                {t.helpSetupSub}
               </div>
             </div>
-            <a href="/administration?setup=1" style={styles.actionBtn}>Open setup</a>
+            <a href="/administration?setup=1" style={styles.actionBtn}>{t.helpOpenSetup}</a>
           </div>
         )}
 
