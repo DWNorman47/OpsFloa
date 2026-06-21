@@ -689,7 +689,7 @@ export default function InventoryTransactions({ isAdmin, locations, projects, se
                         <ColumnHeaderMenu label={t.invTxColType} sortKey="type" activeSort={sortBy} sortDir={sortDir} onSort={setColumnSort} filterType={isAdmin ? 'select' : null} filterValue={filters.type} onFilter={v => setFilter('type', v)} options={[{ value: '', label: t.invTxAllTypes }, ...Object.entries(TYPE_LABELS).map(([value, label]) => ({ value, label }))]} />
                       </th>
                       <th style={s.th}>
-                        <ColumnHeaderMenu label={t.invTxColItem} sortKey="item" activeSort={sortBy} sortDir={sortDir} onSort={setColumnSort} filterType="text" filterValue={filters.item_search} onFilter={v => setFilter('item_search', v)} suggestions={txSuggestions.items} placeholder="Item or SKU" />
+                        <ColumnHeaderMenu label={t.invTxColItem} sortKey="item" activeSort={sortBy} sortDir={sortDir} onSort={setColumnSort} filterType="text" filterValue={filters.item_search} onFilter={v => setFilter('item_search', v)} suggestions={txSuggestions.items} placeholder={t.invItemOrSku} />
                       </th>
                       <th style={{ ...s.th, textAlign: 'right' }}>
                         <ColumnHeaderMenu label={t.invTxColQty} align="right" sortKey="quantity" activeSort={sortBy} sortDir={sortDir} onSort={setColumnSort} />
@@ -710,10 +710,10 @@ export default function InventoryTransactions({ isAdmin, locations, projects, se
                         <ColumnHeaderMenu label={t.invTxColLot} sortKey="lot" activeSort={sortBy} sortDir={sortDir} onSort={setColumnSort} filterType="text" filterValue={filters.lot_number} onFilter={v => setFilter('lot_number', v)} suggestions={txSuggestions.lots} placeholder={t.invTxLotFilter} />
                       </th>}
                       {isAdmin && <th style={s.th}>
-                        <ColumnHeaderMenu label={t.invTxColBy} sortKey="by" activeSort={sortBy} sortDir={sortDir} onSort={setColumnSort} filterType="text" filterValue={filters.by_search} onFilter={v => setFilter('by_search', v)} suggestions={txSuggestions.by} placeholder="Person" />
+                        <ColumnHeaderMenu label={t.invTxColBy} sortKey="by" activeSort={sortBy} sortDir={sortDir} onSort={setColumnSort} filterType="text" filterValue={filters.by_search} onFilter={v => setFilter('by_search', v)} suggestions={txSuggestions.by} placeholder={t.invPerson} />
                       </th>}
                       <th style={s.th}>
-                        <ColumnHeaderMenu label={t.notes} sortKey={null} activeSort={sortBy} sortDir={sortDir} onSort={setColumnSort} filterType="text" filterValue={filters.notes_search} onFilter={v => setFilter('notes_search', v)} suggestions={txSuggestions.notes} placeholder="Notes or ref" />
+                        <ColumnHeaderMenu label={t.notes} sortKey={null} activeSort={sortBy} sortDir={sortDir} onSort={setColumnSort} filterType="text" filterValue={filters.notes_search} onFilter={v => setFilter('notes_search', v)} suggestions={txSuggestions.notes} placeholder={t.invNotesOrRef} />
                       </th>
                     </tr>
                   </thead>

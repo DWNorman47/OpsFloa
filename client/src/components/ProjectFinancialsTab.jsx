@@ -11,6 +11,7 @@ import { SkeletonList } from './Skeleton';
 import MoneyInput from './MoneyInput';
 import { useConfirm } from './ConfirmDialog';
 import { useToast } from '../contexts/ToastContext';
+import { useT } from '../hooks/useT';
 import { formatMoney } from '../utils/format';
 import { silentError } from '../errorReporter';
 
@@ -33,6 +34,7 @@ const formatCents = (c) => formatMoney(c);
 
 export default function ProjectFinancialsTab({ projectId }) {
   const toast = useToast();
+  const t = useT();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const [budget, setBudget] = useState(null);
   const [spend, setSpend] = useState(null);
@@ -253,7 +255,7 @@ export default function ProjectFinancialsTab({ projectId }) {
               </Field>
             </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
-              <button onClick={addExpense} style={styles.btnPrimary}>Add</button>
+              <button onClick={addExpense} style={styles.btnPrimary}>{t.add}</button>
             </div>
           </div>
         )}

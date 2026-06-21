@@ -340,7 +340,7 @@ export default function ReimbursementsAdmin({ settings = null }) {
           <option value="worker_asc">{`${workerLabel} A-Z`}</option>
         </select>
         {anyFilterActive && (
-          <button type="button" onClick={resetFilters} style={s.resetBtn}>Reset</button>
+          <button type="button" onClick={resetFilters} style={s.resetBtn}>{t.reset}</button>
         )}
       </div>
 

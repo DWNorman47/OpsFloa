@@ -126,8 +126,8 @@ export default function ServiceRequestsAdmin({ settings = null }) {
           {publicUrl ? (
             <div style={s.urlRow}>
               <code style={s.url}>{publicUrl}</code>
-              <button onClick={copyUrl} style={s.copyBtn}>Copy</button>
-              <a href={publicUrl} target="_blank" rel="noopener noreferrer" style={s.viewBtn}>Open</a>
+              <button onClick={copyUrl} style={s.copyBtn}>{t.copy}</button>
+              <a href={publicUrl} target="_blank" rel="noopener noreferrer" style={s.viewBtn}>{t.open}</a>
             </div>
           ) : (
             <div style={s.hint}>Your company needs a slug. Contact support to have one assigned.</div>

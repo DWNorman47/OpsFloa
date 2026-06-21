@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useT } from '../../hooks/useT';
 
 export default function ColumnHeaderMenu({
   label,
@@ -14,6 +15,7 @@ export default function ColumnHeaderMenu({
   suggestions = [],
   placeholder = 'Filter',
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(filterValue || '');
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0, right: 'auto' });
@@ -87,21 +89,21 @@ export default function ColumnHeaderMenu({
       </button>
       {open && (
         <>
-          {sheetMode && <button type="button" aria-label="Close column options" style={styles.backdrop} onClick={() => setOpen(false)} />}
+          {sheetMode && <button type="button" aria-label={t.chmCloseAria} style={styles.backdrop} onClick={() => setOpen(false)} />}
           <div style={sheetMode ? styles.sheet : { ...styles.menu, top: menuPos.top, left: menuPos.left }}>
             {sheetMode && (
               <div style={styles.sheetHead}>
                 <strong style={styles.sheetTitle}>{label}</strong>
-                <button type="button" style={styles.closeBtn} onClick={() => setOpen(false)}>Close</button>
+                <button type="button" style={styles.closeBtn} onClick={() => setOpen(false)}>{t.close}</button>
               </div>
             )}
             {sortKey && (
               <>
                 <button type="button" style={styles.menuBtn} onClick={() => { onSort?.(sortKey, 'asc'); setOpen(false); }}>
-                  Sort A-Z / low-high
+                  {t.chmSortAsc}
                 </button>
                 <button type="button" style={styles.menuBtn} onClick={() => { onSort?.(sortKey, 'desc'); setOpen(false); }}>
-                  Sort Z-A / high-low
+                  {t.chmSortDesc}
                 </button>
               </>
             )}
@@ -135,8 +137,8 @@ export default function ColumnHeaderMenu({
                   </div>
                 )}
                 <div style={styles.actions}>
-                  <button type="button" style={styles.secondaryBtn} onClick={clearFilter}>Clear</button>
-                  <button type="button" style={styles.primaryBtn} onClick={applyFilter}>Apply</button>
+                  <button type="button" style={styles.secondaryBtn} onClick={clearFilter}>{t.clear}</button>
+                  <button type="button" style={styles.primaryBtn} onClick={applyFilter}>{t.chmApply}</button>
                 </div>
               </div>
             )}
@@ -148,8 +150,8 @@ export default function ColumnHeaderMenu({
                   ))}
                 </select>
                 <div style={styles.actions}>
-                  <button type="button" style={styles.secondaryBtn} onClick={clearFilter}>Clear</button>
-                  <button type="button" style={styles.primaryBtn} onClick={applyFilter}>Apply</button>
+                  <button type="button" style={styles.secondaryBtn} onClick={clearFilter}>{t.clear}</button>
+                  <button type="button" style={styles.primaryBtn} onClick={applyFilter}>{t.chmApply}</button>
                 </div>
               </div>
             )}

@@ -727,7 +727,7 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
               {error && (
                 <div role="alert" style={s.errorBox}>
                   <span style={s.errorText}>{error}</span>
-                  {archivedConflict && <button type="button" style={s.restoreInlineBtn} onClick={handleRestoreConflict}>Restore {archivedConflict.name}</button>}
+                  {archivedConflict && <button type="button" style={s.restoreInlineBtn} onClick={handleRestoreConflict}>{t.restore} {archivedConflict.name}</button>}
                 </div>
               )}
               <button style={{ ...s.saveBtn, ...((saving || usernameTaken) ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} type="submit" disabled={saving || usernameTaken}>{saving ? t.creating : t.createUser}</button>
