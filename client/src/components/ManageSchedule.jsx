@@ -94,7 +94,7 @@ function exportCSV(shifts, days, workerLabel = 'Worker', workLabel = 'Project') 
   a.click();
 }
 
-function SummaryView({ shifts, days, workerLabel = 'Worker' }) {
+function SummaryView({ shifts, days, workerLabel = 'Worker', locale = 'en-US' }) {
   const t = useT();
   const [cantOnly, setCantOnly] = useState(false);
 
@@ -564,7 +564,7 @@ export default function ManageSchedule({ workers, projects, weekStart: companyWe
       </div>
 
       {loading ? <SkeletonList count={4} rows={2} /> : viewMode === 'summary' ? (
-        <SummaryView shifts={shifts} days={days} workerLabel={workerLabel} />
+        <SummaryView shifts={shifts} days={days} workerLabel={workerLabel} locale={locale} />
       ) : (
         <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
           <div style={styles.grid}>
