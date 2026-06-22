@@ -186,7 +186,7 @@ describe('PATCH /admin/roles/:id', () => {
   test('cannot rename a built-in role', async () => {
     pool.query.mockResolvedValueOnce({
       rowCount: 1,
-      rows: [{ id: 50, is_builtin: true }],
+      rows: [{ id: 50, is_builtin: true, name: 'Owner' }],
     });
     const res = await request(makeApp())
       .patch('/api/admin/roles/50')
@@ -197,7 +197,7 @@ describe('PATCH /admin/roles/:id', () => {
 
   test('can edit permissions on a built-in role', async () => {
     pool.query
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 50, is_builtin: true }] }) // existing lookup
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 50, is_builtin: true, name: 'Admin' }] }) // existing lookup
       .mockResolvedValueOnce({})                                                    // BEGIN
       .mockResolvedValueOnce({})                                                    // DELETE old perms
       .mockResolvedValueOnce({})                                                    // INSERT perm #1
@@ -206,6 +206,20 @@ describe('PATCH /admin/roles/:id', () => {
     const res = await request(makeApp())
       .patch('/api/admin/roles/50')
       .send({ permissions: ['view_reports'] });
+    expect(res.status).toBe(200);
+  });
+
+  test('editing permissions while sending the unchanged name is not a rename', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 50, is_builtin: true, name: 'Admin' }] }) // existing lookup
+      .mockResolvedValueOnce({})                                                    // BEGIN
+      .mockResolvedValueOnce({})                                                    // DELETE old perms
+      .mockResolvedValueOnce({})                                                    // INSERT perm #1
+      .mockResolvedValueOnce({})                                                    // updated_at bump
+      .mockResolvedValueOnce({});                                                   // COMMIT
+    const res = await request(makeApp())
+      .patch('/api/admin/roles/50')
+      .send({ name: 'Admin', permissions: ['view_reports'] });
     expect(res.status).toBe(200);
   });
 
