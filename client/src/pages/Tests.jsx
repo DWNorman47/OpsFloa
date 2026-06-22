@@ -999,7 +999,7 @@ const s = {
   header:    { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 },
   title:     { fontSize: 24, fontWeight: 700, color: '#111827', margin: 0 },
   subtitle:  { fontSize: 13, color: '#6b7280', margin: '4px 0 0' },
-  runBtn:    { background: '#1a56db', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 22px', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
+  runBtn:    { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 22px', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
   outlineBtn:{ background: '#fff', color: '#374151', border: '1px solid #d1d5db', borderRadius: 8, padding: '10px 16px', fontSize: 14, fontWeight: 600, cursor: 'pointer' },
   summary:   { display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: '1px solid', borderRadius: 10, padding: '14px 18px', marginBottom: 24 },
   suites:    { display: 'flex', flexDirection: 'column', gap: 16 },

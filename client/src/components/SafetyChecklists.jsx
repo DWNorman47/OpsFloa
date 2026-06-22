@@ -624,7 +624,7 @@ const styles = {
   form: { display: 'flex', flexDirection: 'column', gap: 14 },
   formTitleRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   formTitle: { fontSize: 17, fontWeight: 700, margin: 0 },
-  presetBtn: { fontSize: 13, fontWeight: 600, color: '#1a56db', background: '#eff6ff', border: '1px solid #bfdbfe', padding: '6px 14px', borderRadius: 7, cursor: 'pointer' },
+  presetBtn: { fontSize: 13, fontWeight: 600, color: 'var(--ops-page-accent)', background: '#eff6ff', border: '1px solid #bfdbfe', padding: '6px 14px', borderRadius: 7, cursor: 'pointer' },
   presetGrid: { display: 'flex', flexDirection: 'column', gap: 8, padding: '4px 0 8px', borderBottom: '1px solid #f3f4f6' },
   presetCard: { background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: '10px 14px', cursor: 'pointer', textAlign: 'left' },
   presetCardName: { fontSize: 13, fontWeight: 700, color: '#111827', marginBottom: 2 },
@@ -653,6 +653,6 @@ const styles = {
   empty: { textAlign: 'center', padding: '60px 20px' },
   emptyIcon: { fontSize: 40, marginBottom: 12 },
   emptyText: { color: '#6b7280', fontSize: 15 },
-  emptyCtaBtn: { marginTop: 14, background: '#1a56db', color: '#fff', border: 'none', borderRadius: 8, padding: '9px 20px', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
+  emptyCtaBtn: { marginTop: 14, background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '9px 20px', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
   hint: { color: '#6b7280', fontSize: 14 },
 };

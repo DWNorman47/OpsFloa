@@ -154,8 +154,34 @@ async function ensureChildRows(client, table, keyName, keyValue, rows) {
 }
 
 async function ensureDemoCompany(client) {
-  const existing = await one(client, 'SELECT id, name FROM companies WHERE name = $1', [TARGET_COMPANY]);
-  if (existing) return existing;
+  // Hard-pin to a company whose subscription_status is 'exempt' — that's
+  // a sentinel only the superadmin tools set on intentional demo/internal
+  // tenants. Without this filter, a real customer happening to name their
+  // company "Demo Operations" would have every subsequent seed write land
+  // in their tenant. We'd rather fail loudly than touch real customer data.
+  const existing = await one(
+    client,
+    "SELECT id, name FROM companies WHERE name = $1 AND subscription_status = 'exempt'",
+    [TARGET_COMPANY]
+  );
+  if (existing) {
+    // Ensure the demo flag is set (email-suppression + 200 MB storage cap
+    // + nightly R2 wipe all key off it).
+    await client.query('UPDATE companies SET is_demo = true WHERE id = $1 AND is_demo = false', [existing.id]);
+    return existing;
+  }
+
+  // Refuse to create the demo company if a non-exempt company by the same
+  // name already exists. Forces an admin to either rename theirs or pick a
+  // different DEMO_COMPANY_NAME for this environment.
+  const clash = await one(client, 'SELECT id FROM companies WHERE name = $1 LIMIT 1', [TARGET_COMPANY]);
+  if (clash) {
+    throw new Error(
+      `A non-demo company already exists with name "${TARGET_COMPANY}". ` +
+      'Set DEMO_COMPANY_NAME to a unique value for this environment, or mark ' +
+      'the existing company subscription_status = exempt if it really is the demo.'
+    );
+  }
 
   const baseSlug = slugify(TARGET_COMPANY);
   let slug = baseSlug;
@@ -170,8 +196,8 @@ async function ensureDemoCompany(client) {
     `INSERT INTO companies
        (name, slug, subscription_status, plan, trial_ends_at, pro_addon, addon_qbo,
         addon_certified_payroll, accepts_service_requests, client_portal_pro_interest,
-        registration_ip)
-     VALUES ($1,$2,'exempt','business',NOW() + INTERVAL '90 days',true,true,true,true,true,'127.0.0.1')
+        registration_ip, is_demo)
+     VALUES ($1,$2,'exempt','business',NOW() + INTERVAL '90 days',true,true,true,true,true,'127.0.0.1',true)
      RETURNING id, name`,
     [TARGET_COMPANY, slug]
   );
@@ -234,6 +260,7 @@ async function ensureDemoSettings(client, companyId) {
     module_inventory: '1',
     module_analytics: '1',
     module_team: '1',
+    module_financial_reports: '1',
     feature_scheduling: '1',
     feature_analytics: '1',
     feature_chat: '1',
@@ -285,18 +312,33 @@ async function main() {
     ];
 
     const users = [];
+    const skippedUsers = [];
     for (const [username, fullName, role, email, rate] of peopleSeed) {
+      // Two-step lookup to handle username collisions with real customers
+      // gracefully. The (company_id, username) ensureBy below is correct
+      // for the common case, but if `username` already exists in ANOTHER
+      // company the global UNIQUE constraint on users.username would
+      // make our INSERT throw and abort the whole cron-driven seed run.
+      // Pre-check globally so we can skip + warn instead of dying.
+      const collision = await one(
+        client,
+        'SELECT company_id FROM users WHERE username = $1 LIMIT 1',
+        [username]
+      );
+      if (collision && collision.company_id !== companyId) {
+        skippedUsers.push(username);
+        continue;
+      }
       const row = await ensureBy(
         client,
         'users',
-        { username },
+        { company_id: companyId, username },
         {
           password_hash: 'demo-disabled-password',
           role,
           full_name: fullName,
           email,
           hourly_rate: rate,
-          company_id: companyId,
           active: true,
           first_name: fullName.split(' ')[0],
           last_name: fullName.split(' ').slice(1).join(' '),
@@ -305,6 +347,12 @@ async function main() {
         'id, full_name, role'
       );
       users.push(row);
+    }
+    if (skippedUsers.length > 0) {
+      console.warn(
+        `[demo-seed] skipped ${skippedUsers.length} demo user(s) due to username collision with another company: ${skippedUsers.join(', ')}. ` +
+        'Demo will be missing these workers. Rename the demo usernames or move the colliding real account to clear.'
+      );
     }
     const existingUsers = await client.query(
       `SELECT id, full_name, role FROM users WHERE company_id = $1 AND active = true ORDER BY id`,
@@ -1270,6 +1318,173 @@ async function main() {
       );
     }
 
+    // ── Construction lifecycle ────────────────────────────────────────────────
+    // Powers the Sales (estimates / change orders), Subs (POs), and
+    // field-compliance (submittals / lien waivers) modules. Seeded with a
+    // spread of statuses so the demo shows realistic pipelines. Totals are
+    // computed here directly because the seeder bypasses the route layer
+    // that normally recomputes them — the cascade mirrors
+    // server/constants/projectMoneyEnums.js computeEstimateTotals.
+    function lineTotalCents(qty, unitCostCents) {
+      const q = Number.isFinite(qty) ? qty : 0;
+      const u = Number.isFinite(unitCostCents) ? unitCostCents : 0;
+      return Math.max(0, Math.round(q * u));
+    }
+    function moneyTotals(lines, { overhead = 0, margin = 0, contingency = 0, tax = 0 }) {
+      const subtotal = lines.reduce((sum, l) => sum + lineTotalCents(l.qty, l.unit_cost_cents), 0);
+      const oh = Math.round(subtotal * (overhead / 100));
+      const marginBase = subtotal + oh;
+      const mg = Math.round(marginBase * (margin / 100));
+      const preCont = marginBase + mg;
+      const ct = Math.round(preCont * (contingency / 100));
+      const preTax = preCont + ct;
+      const tx = Math.round(preTax * (tax / 100));
+      return { subtotal, total: preTax + tx };
+    }
+
+    // Subcontractors
+    const subSeed = [
+      ['Copper State Electric', 'Dana Ruiz', 'dana.ruiz@example.test', '(555) 010-2210', 'ROC-118822', 'Electrical'],
+      ['Granite Mechanical', 'Hal Briggs', 'hal.briggs@example.test', '(555) 010-3340', 'ROC-220199', 'HVAC & Mechanical'],
+      ['Sonoran Drywall Co.', 'Pia Nava', 'pia.nava@example.test', '(555) 010-4451', 'ROC-330577', 'Drywall & Finishes'],
+    ];
+    const subs = [];
+    for (const [name, contact, email, phone, license, scope] of subSeed) {
+      subs.push(await ensureBy(client, 'subcontractors',
+        { company_id: companyId, name },
+        {
+          contact_name: contact, contact_email: email, contact_phone: phone,
+          license_number: license, scope_specialty: scope, created_by: admin.id, archived: false,
+        },
+        '*'));
+    }
+
+    // Sub purchase orders against in-progress projects, plus a payment on the partial one
+    const poSeed = [
+      // [subIndex, projectIndex, po_number, amount_cents, status, scope, retainage_pct]
+      [0, 0, 'SP-2026-0001', 1850000, 'issued',  'Power distribution and lighting rough-in for the classroom wing.', 10],
+      [1, 1, 'SP-2026-0002', 1240000, 'partial', 'RTU replacement and ductwork for exam rooms.', 5],
+      [2, 2, 'SP-2026-0003', 680000,  'draft',   'Hang and finish drywall in the backroom reorganization area.', 0],
+    ];
+    const pos = [];
+    for (const [si, pi, poNum, amount, status, scope, retainage] of poSeed) {
+      pos.push(await ensureBy(client, 'subcontract_pos',
+        { company_id: companyId, po_number: poNum },
+        {
+          project_id: projectByIndex(pi).id, subcontractor_id: subs[si].id,
+          status, amount_cents: amount, scope_of_work: scope, retainage_pct: retainage,
+          created_by: admin.id,
+        },
+        '*'));
+    }
+    // A recorded progress payment on the 'partial' PO (flagged as needing a waiver).
+    await ensureChildRows(client, 'subcontract_po_payments', 'po_id', pos[1].id, [
+      {
+        amount_cents: 600000, paid_date: isoDate(-10), invoice_ref: 'INV-GM-0461',
+        notes: 'Progress payment 1', created_by: admin.id, waiver_required: true, waiver_received: true,
+      },
+    ]);
+
+    // Estimates — an accepted, a sent, and a draft, each with line items.
+    const estSeed = [
+      // [number, clientIndex, projectName, status, overhead, margin, contingency, tax, [[cat, desc, qty, unit, unitCostCents]]]
+      ['EST-2026-0001', 0, 'Cedar Learning Center Rollout', 'accepted', 10, 12, 5, 8.6, [
+        ['labor', 'Install tablet charging carts and secure mounts', 120, 'hr', 6500],
+        ['materials', 'Cart hardware, cable management, and signage', 1, 'lot', 480000],
+        ['equipment', 'Lift rental for high signage installation', 3, 'day', 38000],
+      ]],
+      ['EST-2026-0002', 1, 'Harbor Clinic Room Turnover', 'sent', 8, 15, 0, 8.6, [
+        ['labor', 'Exam room refresh and stock staging', 90, 'hr', 6200],
+        ['materials', 'Casework, fixtures, and safety signage', 1, 'lot', 265000],
+        ['subs', 'HVAC balancing (Granite Mechanical)', 1, 'lot', 124000],
+      ]],
+      ['EST-2026-0003', 2, 'Sunset Retail Refresh', 'draft', 12, 10, 5, 8.1, [
+        ['labor', 'Fixture reset and backroom organization', 64, 'hr', 5800],
+        ['materials', 'Shelving, bins, and label system', 1, 'lot', 92000],
+      ]],
+    ];
+    for (const [num, ci, projName, status, oh, mg, ct, tx, rawLines] of estSeed) {
+      const clientRow = allClients.rows[ci % allClients.rows.length];
+      const projRow = allProjects.rows.find(p => p.name === projName);
+      const lines = rawLines.map((l, idx) => ({
+        category: l[0], sort_order: idx, description: l[1],
+        qty: l[2], unit: l[3], unit_cost_cents: l[4], total_cents: lineTotalCents(l[2], l[4]),
+      }));
+      const t = moneyTotals(lines, { overhead: oh, margin: mg, contingency: ct, tax: tx });
+      const est = await ensureBy(client, 'estimates',
+        { company_id: companyId, estimate_number: num },
+        {
+          client_id: clientRow?.id || null,
+          client_name_snapshot: clientRow?.name || 'Demo Client',
+          client_email: clientRow?.contact_email || null,
+          project_name: projName,
+          project_address: projRow?.address || null,
+          scope_summary: 'Scope and pricing for the demo engagement.',
+          overhead_pct: oh, margin_pct: mg, contingency_pct: ct, tax_pct: tx,
+          subtotal_cents: t.subtotal, total_cents: t.total,
+          status, valid_until: isoDate(30),
+          exclusions: 'Permits, after-hours premium, and owner-furnished items are excluded.',
+          terms: 'Net 30. 50% mobilization deposit due on acceptance.',
+          accepted_signer_name: status === 'accepted' ? (clientRow?.contact_name || 'Authorized Signer') : null,
+          responded_at: status === 'accepted' ? isoTimestamp(-5, 11) : null,
+          created_by: admin.id,
+        },
+        '*');
+      await ensureChildRows(client, 'estimate_lines', 'estimate_id', est.id, lines);
+    }
+
+    // Change order against the first in-progress project.
+    const coLines = [
+      { category: 'labor', sort_order: 0, description: 'Add second-floor data drops', qty: 24, unit: 'ea', unit_cost_cents: 8500 },
+      { category: 'materials', sort_order: 1, description: 'Cabling, jacks, and faceplates', qty: 1, unit: 'lot', unit_cost_cents: 96000 },
+    ].map(l => ({ ...l, total_cents: lineTotalCents(l.qty, l.unit_cost_cents) }));
+    const coT = moneyTotals(coLines, { overhead: 10, margin: 12, tax: 8.6 });
+    const co = await ensureBy(client, 'change_orders',
+      { company_id: companyId, project_id: projectByIndex(0).id, co_number: 'CO-001' },
+      {
+        description: 'Owner-requested second-floor data drops added mid-project.',
+        overhead_pct: 10, margin_pct: 12, tax_pct: 8.6,
+        subtotal_cents: coT.subtotal, total_cents: coT.total,
+        status: 'sent', created_by: admin.id,
+      },
+      '*');
+    await ensureChildRows(client, 'change_order_lines', 'change_order_id', co.id, coLines);
+
+    // Submittals across a few projects + statuses.
+    const submittalSeed = [
+      // [number, projectIndex, spec_section, title, status, required_by]
+      ['SUB-A-001', 0, '26 05 00', 'Lighting fixtures — classroom wing', 'sent_to_reviewer', isoDate(14)],
+      ['SUB-M-002', 1, '23 74 00', 'RTU equipment cut sheets', 'approved_as_noted', isoDate(7)],
+      ['SUB-F-003', 2, '09 29 00', 'Gypsum board assembly submittal', 'draft', isoDate(21)],
+    ];
+    for (const [num, pi, spec, title, status, requiredBy] of submittalSeed) {
+      await ensureBy(client, 'submittals',
+        { company_id: companyId, project_id: projectByIndex(pi).id, submittal_number: num },
+        {
+          spec_section: spec, title, description: 'Demo submittal for owner / architect review.',
+          status, reviewer_name: 'A/E Reviewer', reviewer_email: 'reviewer@example.test',
+          reviewer_org: 'Demo Architects', required_by: requiredBy, revision: 0, created_by: admin.id,
+        },
+        '*');
+    }
+
+    // Lien waiver from a sub, tied to the partial PO and its payment.
+    const lwPayment = await one(client,
+      'SELECT id FROM subcontract_po_payments WHERE po_id = $1 ORDER BY id LIMIT 1', [pos[1].id]);
+    await ensureBy(client, 'lien_waivers',
+      {
+        company_id: companyId, project_id: projectByIndex(1).id,
+        direction: 'from_sub', subcontractor_id: subs[1].id, through_date: isoDate(-10),
+      },
+      {
+        waiver_type: 'conditional_progress', amount_cents: 600000, state: 'AZ',
+        signer_name: 'Hal Briggs', signer_title: 'President', signer_company: 'Granite Mechanical',
+        subcontract_po_id: pos[1].id, sub_payment_id: lwPayment?.id || null,
+        status: 'received', signature_method: 'typed', created_by: admin.id,
+        notes: 'Conditional progress waiver covering payment 1.',
+      },
+      '*');
+
     await client.query('COMMIT');
 
     const countTables = [
@@ -1278,6 +1493,7 @@ async function main() {
       'safety_checklist_submissions', 'inspection_templates', 'inspections', 'equipment_items',
       'inventory_items', 'inventory_stock', 'inventory_transactions', 'purchase_orders', 'inventory_cycle_counts',
       'time_entries', 'active_clock', 'shifts', 'time_off_requests', 'reimbursements', 'service_requests',
+      'subcontractors', 'subcontract_pos', 'estimates', 'change_orders', 'submittals', 'lien_waivers',
     ];
     for (const table of countTables) {
       const result = await pool.query(`SELECT COUNT(*)::int AS count FROM ${table} WHERE company_id = $1`, [companyId]);

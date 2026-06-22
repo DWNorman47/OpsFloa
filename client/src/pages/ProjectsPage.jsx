@@ -2,14 +2,20 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api';
 import AppHeader from '../components/AppHeader';
-import ManageClients from '../components/ManageClients';
 import { useT } from '../hooks/useT';
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
 import TabBar from '../components/TabBar';
 import { langToLocale } from '../utils';
 import { silentError, reportClientError } from '../errorReporter';
 import RetryBanner from '../components/RetryBanner';
+import ProjectFinancialsTab from '../components/ProjectFinancialsTab';
+import ProjectCloseoutTab from '../components/ProjectCloseoutTab';
+import { EstimatesPanel } from './EstimatesPage';
+import { ChangeOrdersPanel } from './ChangeOrdersPage';
+import { SubPOsPanel } from './SubsPage';
+import { useHasAnyPerm } from '../hooks/usePerm';
 
 function punchColor(status) {
   return { open: '#f59e0b', in_progress: '#3b82f6', resolved: '#059669', closed: '#9ca3af' }[status] || '#9ca3af';
@@ -554,7 +560,7 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
         </div>
 
         <div style={styles.detailTabs} className="project-detail-tabs">
-          {['overview', 'billing', 'entries', 'edit'].map(t => (
+          {['overview', 'financials', 'closeout', 'billing', 'entries', 'edit'].map(t => (
             <button key={t} className="project-detail-tab" style={{ ...styles.detailTab, ...(tab === t ? styles.detailTabActive : {}) }} onClick={() => setTab(t)}>
               {t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
@@ -775,7 +781,7 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
                     const cost = parseFloat(health.approx_cost || 0);
                     const budget = parseFloat(project.budget_dollars);
                     const pct = Math.min(100, (cost / budget) * 100);
-                    const color = pct >= 100 ? '#ef4444' : pct >= 85 ? '#f59e0b' : '#1a56db';
+                    const color = pct >= 100 ? '#ef4444' : pct >= 85 ? '#f59e0b' : 'var(--ops-page-accent)';
                     return (
                       <div style={{ marginBottom: 8 }}>
                         <div style={styles.budgetRow}>
@@ -1037,6 +1043,9 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
             </div>
           )}
 
+          {tab === 'financials' && <ProjectFinancialsTab projectId={project.id} />}
+          {tab === 'closeout' && <ProjectCloseoutTab projectId={project.id} />}
+
           {tab === 'billing' && (
             <div>
               <div style={styles.billFilterRow} className="project-bill-filter-row">
@@ -1066,7 +1075,7 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
                       <div style={styles.metricLabel}>{t.ppTotalHours}</div>
                     </div>
                     <div style={styles.metricCard}>
-                      <div style={{ ...styles.metricValue, color: '#1a56db' }}>
+                      <div style={{ ...styles.metricValue, color: 'var(--ops-page-accent)' }}>
                         {fmtMoney(billData.summary.total_cost)}
                       </div>
                       <div style={styles.metricLabel}>{t.ppTotalCost}</div>
@@ -1078,7 +1087,7 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
                     {billData.summary.regular_hours > 0 && (
                       <div style={styles.budgetRow}>
                         <span style={styles.budgetLabel}>Regular ({parseFloat(billData.summary.regular_hours).toFixed(1)}h)</span>
-                        <span style={{ ...styles.budgetValue, color: '#1a56db' }}>{fmtMoney(billData.summary.regular_cost)}</span>
+                        <span style={{ ...styles.budgetValue, color: 'var(--ops-page-accent)' }}>{fmtMoney(billData.summary.regular_cost)}</span>
                       </div>
                     )}
                     {billData.summary.overtime_hours > 0 && (
@@ -1508,7 +1517,7 @@ function ProjectVisibility({ project, onProjectUpdated, toggleStyle, countStyle,
                   type="button"
                   onClick={save}
                   disabled={saving}
-                  style={{ padding: '7px 16px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.55 : 1 }}
+                  style={{ padding: '7px 16px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.55 : 1 }}
                 >
                   {saving ? 'Saving…' : 'Save'}
                 </button>
@@ -1600,7 +1609,11 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
   const [geocoding, setGeocoding] = useState(false);
   const [geoLocating, setGeoLocating] = useState(false);
   const [geoError, setGeoError] = useState('');
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  // Warn on tab-close while a half-filled new-project form is open;
+  // cleared on a successful save just before the parent unmounts us.
+  const [dirty, setDirty] = useState(false);
+  useUnsavedChanges(dirty);
+  const set = (k, v) => { setDirty(true); setForm(f => ({ ...f, [k]: v })); };
   const showPrevailing = (settings?.prevailing_wage_rate ?? 0) > 0;
   const workLabel = settings?.label_work || 'Project';
   const workLabelLower = workLabel.toLowerCase();
@@ -1636,6 +1649,7 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
     setGeoLocating(true); setGeoError('');
     navigator.geolocation.getCurrentPosition(
       pos => {
+        setDirty(true);
         setForm(f => ({
           ...f,
           geo_lat: pos.coords.latitude.toFixed(6),
@@ -1695,6 +1709,7 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
         geo_lng:        geoCount === 3 ? parseFloat(lng) : null,
         geo_radius_ft:  geoCount === 3 ? parseInt(radius, 10) : null,
       });
+      setDirty(false);
       onSaved(r.data);
     } catch (err) {
       setError(err.response?.data?.error || t.failedCreateProject);
@@ -1837,7 +1852,7 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
                   background: 'none', border: 'none', color: '#6b7280',
                   fontSize: 13, cursor: 'pointer', padding: '8px 4px', whiteSpace: 'nowrap',
                 }}
-                onClick={() => setForm(f => ({ ...f, geo_lat: '', geo_lng: '', geo_radius_ft: '' }))}
+                onClick={() => { setDirty(true); setForm(f => ({ ...f, geo_lat: '', geo_lng: '', geo_radius_ft: '' })); }}
               >
                 ✕ Clear
               </button>
@@ -1882,10 +1897,26 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
   );
 }
 
+// Sales (Estimates + Change Orders) lives as tabs inside the Projects module.
+// Reuse the perms the standalone Sales module used so these tabs only show for
+// users who could see Sales before the consolidation.
+const SALES_TAB_PERMS = ['manage_projects', 'manage_settings'];
+const PROJECT_TAB_IDS = ['projects', 'estimates', 'change_orders', 'pos'];
+
 export default function ProjectsPage() {
   const { user } = useAuth();
   const t = useT();
-  const [mainTab, setMainTab] = useState('projects');
+  const hasSalesPerm = useHasAnyPerm(SALES_TAB_PERMS);
+  // Tab can be deep-linked via the URL hash (e.g. /projects#estimates), which
+  // is how the retired /sales and /change-orders routes land here.
+  const [mainTab, setMainTab] = useState(() => {
+    const h = (window.location.hash || '').replace('#', '');
+    return PROJECT_TAB_IDS.includes(h) ? h : 'projects';
+  });
+  const changeTab = (id) => {
+    setMainTab(id);
+    try { window.history.replaceState(null, '', id === 'projects' ? window.location.pathname : `#${id}`); } catch { /* ignore */ }
+  };
   const [projects, setProjects] = useState([]);
   const [metrics, setMetrics] = useState({});
   const [settings, setSettings] = useState({});
@@ -1920,17 +1951,40 @@ export default function ProjectsPage() {
   useEffect(() => { loadProjects(showArchived); }, [showArchived]);
 
   useEffect(() => {
-    if (mainTab === 'clients' || showCreateForm) {
+    // Customers are managed in the Directory module now, but the project create
+    // form still needs the list to assign one.
+    if (showCreateForm) {
       api.get('/admin/clients').then(r => setClients(r.data)).catch(silentError('clients list'));
     }
-  }, [mainTab, showCreateForm]);
+  }, [showCreateForm]);
 
   const activeProjects = projects.filter(p => p.active).length;
   const totalHours = Object.values(metrics).reduce((s, m) => s + parseFloat(m.total_hours || 0), 0);
   const workLabel = settings?.label_work || 'Project';
   const workLabelLower = workLabel.toLowerCase();
   const workLabelPlural = plural(workLabel);
-  const clientLabelPlural = plural(settings?.label_client || 'Customer');
+
+  // Estimates/Change Orders and sub Purchase Orders are part of the Projects
+  // module — not separately toggleable. They show to admins who can manage
+  // project work; the Projects module itself is gated upstream (route + switcher).
+  const canSeeSales = hasSalesPerm;
+  const canSeePOs = hasSalesPerm;
+  // Fall back to Projects if a gated tab is deep-linked by someone without access.
+  const tabAllowed = (id) => {
+    if (id === 'estimates' || id === 'change_orders') return canSeeSales;
+    if (id === 'pos') return canSeePOs;
+    return true;
+  };
+  const activeTab = tabAllowed(mainTab) ? mainTab : 'projects';
+
+  const tabs = [
+    { id: 'projects', label: workLabelPlural },
+    ...(canSeeSales ? [
+      { id: 'estimates', label: t.estList },
+      { id: 'change_orders', label: t.coList },
+    ] : []),
+    ...(canSeePOs ? [{ id: 'pos', label: t.subPurchaseOrders }] : []),
+  ];
 
   return (
     <div style={styles.page}>
@@ -1938,16 +1992,31 @@ export default function ProjectsPage() {
 
       <main id="main-content" style={styles.main}>
         <TabBar
-          active={mainTab}
-          onChange={setMainTab}
-          tabs={[
-            { id: 'projects', label: workLabelPlural },
-            { id: 'clients', label: clientLabelPlural },
-          ]}
+          active={activeTab}
+          onChange={changeTab}
+          tabs={tabs}
           breakpoint={520}
         />
 
-        {mainTab === 'projects' && (
+        {activeTab === 'estimates' && (
+          <div style={{ marginTop: 24 }}>
+            <EstimatesPanel />
+          </div>
+        )}
+
+        {activeTab === 'change_orders' && (
+          <div style={{ marginTop: 24 }}>
+            <ChangeOrdersPanel />
+          </div>
+        )}
+
+        {activeTab === 'pos' && (
+          <div style={{ marginTop: 24 }}>
+            <SubPOsPanel />
+          </div>
+        )}
+
+        {activeTab === 'projects' && (
           <>
             <div style={styles.pageHeader} className="projects-page-header">
               <div style={styles.pageHeaderRow} className="projects-page-header-row">
@@ -2009,7 +2078,7 @@ export default function ProjectsPage() {
             ) : loadError ? (
               <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '16px 20px', color: '#991b1b', fontSize: 14 }}>
                 Failed to load {workLabelPlural.toLowerCase()}.{' '}
-                <button style={{ background: 'none', border: 'none', color: '#1a56db', fontWeight: 700, cursor: 'pointer', textDecoration: 'underline', padding: 0 }} onClick={() => { setLoadError(false); loadProjects(showArchived); }}>{t.ppTryAgainLink}</button>
+                <button style={{ background: 'none', border: 'none', color: 'var(--ops-page-accent)', fontWeight: 700, cursor: 'pointer', textDecoration: 'underline', padding: 0 }} onClick={() => { setLoadError(false); loadProjects(showArchived); }}>{t.ppTryAgainLink}</button>
               </div>
             ) : projects.length === 0 ? (
               <EmptyState
@@ -2061,11 +2130,6 @@ export default function ProjectsPage() {
           </>
         )}
 
-        {mainTab === 'clients' && (
-          <div style={{ marginTop: 24 }}>
-            <ManageClients settings={settings} />
-          </div>
-        )}
       </main>
     </div>
   );
@@ -2114,7 +2178,7 @@ const styles = {
   closeBtn: { background: '#f3f4f6', border: 'none', borderRadius: 20, width: 32, height: 32, cursor: 'pointer', fontSize: 14, color: '#6b7280', display: 'flex', alignItems: 'center', justifyContent: 'center' },
   detailTabs: { display: 'flex', gap: 4, margin: '0 20px 12px', padding: 4, border: '1px solid #e2e8f0', borderRadius: 10, background: '#eef2f7', overflowX: 'auto' },
   detailTab: { flex: '1 0 auto', minHeight: 36, padding: '0 14px', border: 'none', borderRadius: 8, background: 'transparent', fontSize: 13, fontWeight: 800, color: '#64748b', cursor: 'pointer', whiteSpace: 'nowrap' },
-  detailTabActive: { color: '#7c3aed', background: '#fff', boxShadow: '0 1px 5px rgba(15,23,42,0.08)' },
+  detailTabActive: { color: 'var(--ops-page-accent)', background: '#fff', boxShadow: '0 1px 5px rgba(15,23,42,0.08)' },
   detailBody: { flex: 1, overflowY: 'auto', padding: 20 },
   metricsGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 },
   metricCard: { background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: '12px 14px' },
@@ -2133,7 +2197,7 @@ const styles = {
   filterLabel: { fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.04em' },
   filterInput: { padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 7, fontSize: 13, background: '#fff' },
   generateBtn: { background: '#8b5cf6', color: '#fff', border: 'none', padding: '9px 18px', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: 'pointer', alignSelf: 'flex-end' },
-  pdfLink: { display: 'inline-block', marginTop: 16, background: '#eff6ff', color: '#1a56db', border: '1px solid #bfdbfe', padding: '10px 18px', borderRadius: 8, fontSize: 13, fontWeight: 700, textDecoration: 'none', cursor: 'pointer' },
+  pdfLink: { display: 'inline-block', marginTop: 16, background: '#eff6ff', color: 'var(--ops-page-accent)', border: '1px solid #bfdbfe', padding: '10px 18px', borderRadius: 8, fontSize: 13, fontWeight: 700, textDecoration: 'none', cursor: 'pointer' },
   qboBtn: { display: 'inline-block', marginTop: 16, background: '#2CA01C', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer' },
   qboPicker: { marginTop: 12, background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: '12px 14px' },
   qboPickerLabel: { fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 8 },
@@ -2175,7 +2239,7 @@ const styles = {
   activityText: { fontSize: 13, color: '#111827', lineHeight: 1.4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' },
   activityMeta: { display: 'flex', gap: 4, alignItems: 'center', fontSize: 11, color: '#6b7280', flexWrap: 'wrap' },
   docRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 10px', borderRadius: 7, background: '#fafafa', border: '1px solid #f3f4f6', marginBottom: 4 },
-  docName: { fontSize: 13, color: '#1a56db', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0, textDecoration: 'none' },
+  docName: { fontSize: 13, color: 'var(--ops-page-accent)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0, textDecoration: 'none' },
   docSize: { fontSize: 11, color: '#6b7280' },
   docDelete: { background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 14, padding: '2px 4px', lineHeight: 1 },
   docDeleteConfirm: { background: '#dc2626', color: '#fff', border: 'none', borderRadius: 5, padding: '2px 8px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
@@ -2183,7 +2247,7 @@ const styles = {
   uploadBtn: { display: 'inline-block', marginTop: 6, background: '#f3f4f6', border: '1px dashed #d1d5db', borderRadius: 7, padding: '7px 14px', fontSize: 12, fontWeight: 600, color: '#6b7280' },
   rfiForm: { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8, padding: '12px', background: '#f9fafb', borderRadius: 8, border: '1px solid #e5e7eb' },
   rfiInput: { padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 6, fontSize: 13, background: '#fff', width: '100%', boxSizing: 'border-box' },
-  rfiSubmitBtn: { background: '#1a56db', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
+  rfiSubmitBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
   rfiCancelBtn: { background: 'none', border: '1px solid #e5e7eb', borderRadius: 6, padding: '8px 12px', fontSize: 13, color: '#6b7280', cursor: 'pointer' },
   photoGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(80px, 1fr))', gap: 4, marginTop: 6 },
   photoThumb: { width: '100%', aspectRatio: '1', padding: 0, border: 'none', background: '#f3f4f6', borderRadius: 6, cursor: 'pointer', overflow: 'hidden' },

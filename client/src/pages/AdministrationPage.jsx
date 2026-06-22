@@ -567,8 +567,6 @@ export default function AdministrationPage() {
   // this page anyway. Tracked separately from settings so a dismiss in
   // this session takes effect immediately.
   const [showSetup, setShowSetup] = useState(false);
-  const [profileSaving, setProfileSaving] = useState('');
-  const [profileMsg, setProfileMsg] = useState('');
 
   // Integrations sub-view: 'list' or 'quickbooks' — persists for the session
   const [integrationView, setIntegrationView] = useState(() => sessionStorage.getItem('admin_integration_view') || 'list');
@@ -647,39 +645,8 @@ export default function AdministrationPage() {
   const handleWorkerDeleted  = id => setWorkers(prev => prev.filter(w => w.id !== id));
   const handleWorkerUpdated  = w  => setWorkers(prev => prev.map(x => x.id === w.id ? { ...x, ...w } : x));
   const handleWorkerRestored = w  => setWorkers(prev => [...prev, w]);
-  const applyWorkspaceProfile = async (profile) => {
-    const profiles = {
-      simple: {
-        module_timeclock: true, module_team: true, module_projects: false, module_field: false,
-        module_inventory: false, module_analytics: false, feature_scheduling: false,
-        feature_reimbursements: false, feature_pto: false, feature_chat: false, feature_broadcast: false,
-      },
-      team: {
-        module_timeclock: true, module_team: true, module_projects: true, module_field: false,
-        module_inventory: false, module_analytics: false, feature_scheduling: true,
-        feature_reimbursements: true, feature_pto: true, feature_chat: false, feature_broadcast: false,
-      },
-      full: {
-        module_timeclock: true, module_team: true, module_projects: true, module_field: true,
-        module_inventory: true, module_analytics: true, feature_scheduling: true,
-        feature_reimbursements: true, feature_pto: true, feature_chat: false, feature_broadcast: false,
-      },
-    };
-    const names = { simple: 'Focused time', team: 'Team operations', full: 'Full operations' };
-    setProfileSaving(profile);
-    setProfileMsg('');
-    try {
-      const r = await api.patch('/admin/settings', profiles[profile]);
-      setSettings(r.data);
-      setProfileMsg(`${names[profile]} profile applied.`);
-    } catch (err) {
-      setProfileMsg(err.response?.data?.error || 'Could not apply profile.');
-    } finally {
-      setProfileSaving('');
-    }
-  };
   const workspaceSummary = [
-    ['Core modules', ['module_timeclock', 'module_team', 'module_projects', 'module_field', 'module_inventory', 'module_analytics']],
+    ['Core modules', ['module_timeclock', 'module_team', 'module_projects', 'module_field', 'module_inventory', 'module_analytics', 'module_financial_reports']],
     ['Daily tools', ['feature_scheduling', 'feature_pto', 'feature_reimbursements', 'feature_chat', 'feature_broadcast']],
     ['Specialized', ['addon_certified_payroll', 'feature_quickbooks', 'feature_media_gallery', 'feature_geolocation']],
   ].map(([label, keys]) => {
@@ -691,10 +658,11 @@ export default function AdministrationPage() {
     <PageShell currentApp="administration" features={settings} maxWidth={980} mainClassName="admin-main">
       {showSetup && (
         <SetupQuestionnaire
+          currentSettings={settings}
           onComplete={(applied) => {
             // Reflect the just-saved settings locally so the rest of the
             // page (and other tabs) sees the new toggles without a reload.
-            setSettings(prev => ({ ...(prev || {}), ...applied }));
+            setSettings(applied);
             setShowSetup(false);
           }}
           onDismiss={() => {
@@ -731,7 +699,7 @@ export default function AdministrationPage() {
               </div>
               <div style={styles.workspaceSide} className="workspace-side">
                 <button type="button" style={styles.workspaceAction} onClick={() => setShowSetup(true)}>
-                  Run quick setup
+                  Run guided setup
                 </button>
                 <div style={styles.workspaceSummaryGrid} className="workspace-summary-grid">
                   {workspaceSummary.map(item => (
@@ -743,35 +711,10 @@ export default function AdministrationPage() {
                 </div>
               </div>
             </section>
-            <section style={styles.profileCard} className="workspace-profile-card">
-              <div>
-                <h3 style={styles.profileTitle}>Choose a starting shape</h3>
-                <p style={styles.profileText}>Profiles change the visible modules. The detailed settings below remain available for fine-tuning.</p>
-              </div>
-              <div style={styles.profileGrid} className="workspace-profile-grid">
-                {[
-                  ['simple', 'Focused time', 'Time clock, team basics, and a quieter app.'],
-                  ['team', 'Team operations', 'Adds work setup, scheduling, PTO, and reimbursements.'],
-                  ['full', 'Full operations', 'Turns on field work, inventory, analytics, and the core team tools.'],
-                ].map(([id, title, body]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    style={styles.profileBtn}
-                    onClick={() => applyWorkspaceProfile(id)}
-                    disabled={!!profileSaving}
-                  >
-                    <strong>{profileSaving === id ? 'Applying...' : title}</strong>
-                    <span>{body}</span>
-                  </button>
-                ))}
-              </div>
-              {profileMsg && <p style={profileMsg.includes('Could not') ? styles.profileError : styles.profileSuccess}>{profileMsg}</p>}
-            </section>
             <WorkspaceLabels settings={settings} onUpdated={setSettings} />
             <WorkspaceSettingGroup
-              title="Pay and billing rules"
-              body="Rates, overtime, mileage, payroll periods, and other money-related defaults."
+              title="Company Settings"
+              body="Choose which modules and tools are available, then set the rules and defaults used across the company."
               defaultOpen
             >
               <ManageRates settings={settings} onSettingsUpdated={setSettings} />
@@ -887,7 +830,6 @@ const styles = {
   workspaceSummaryItem: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, minWidth: 0, textAlign: 'right' },
   workspaceSummaryValue: { color: '#0f172a', fontSize: 16, lineHeight: 1.1, fontWeight: 900, whiteSpace: 'nowrap' },
   workspaceSummaryLabel: { color: '#64748b', fontSize: 11, lineHeight: 1.2, fontWeight: 800, whiteSpace: 'normal' },
-  profileCard: { background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10, padding: 16, boxShadow: '0 1px 4px rgba(15,23,42,0.04)' },
   languageCard: { background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10, padding: 0, boxShadow: '0 1px 4px rgba(15,23,42,0.04)', overflow: 'hidden' },
   settingGroupCard: { background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10, padding: 0, boxShadow: '0 1px 4px rgba(15,23,42,0.04)', overflow: 'hidden' },
   settingGroupBody: { padding: '0 16px 16px' },
@@ -896,16 +838,6 @@ const styles = {
   languageTitle: { fontSize: 17, fontWeight: 800, color: '#111827' },
   languageText: { fontSize: 13, color: '#64748b', lineHeight: 1.45 },
   languageSavedBtn: { margin: '0 18px 18px', border: '1px solid #a7f3d0', background: '#ecfdf5', color: '#047857', borderRadius: 8, padding: '8px 10px', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
-  profileTitle: { margin: '0 0 4px', fontSize: 17, fontWeight: 800, color: '#111827' },
-  profileText: { margin: '0 0 14px', fontSize: 13, color: '#64748b', lineHeight: 1.55 },
-  profileGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 10 },
-  profileBtn: {
-    minHeight: 104, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', alignItems: 'flex-start',
-    gap: 10, textAlign: 'left', border: '1px solid #dbe2ea', borderRadius: 8, background: '#f8fafc',
-    padding: 14, color: '#0f172a', cursor: 'pointer',
-  },
-  profileSuccess: { margin: '12px 0 0', color: '#047857', background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 8, padding: '8px 10px', fontSize: 13, fontWeight: 700 },
-  profileError: { margin: '12px 0 0', color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 10px', fontSize: 13, fontWeight: 700 },
   profileSuccessInline: { color: '#047857', fontSize: 13, fontWeight: 700 },
   profileErrorInline: { color: '#b91c1c', fontSize: 13, fontWeight: 700 },
   labelEditor: { display: 'flex', flexDirection: 'column', gap: 0, padding: '0 18px' },
@@ -949,7 +881,7 @@ const styles = {
   // scopes to the whole card.
   companyCard: { background: '#fff', borderRadius: 12, boxShadow: '0 1px 6px rgba(0,0,0,0.07)' },
   companyCardEditBtn: {
-    background: 'none', border: '1px solid #d1d5db', color: '#1a56db',
+    background: 'none', border: '1px solid #d1d5db', color: 'var(--ops-page-accent)',
     padding: '5px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer',
     flexShrink: 0,
   },
@@ -973,7 +905,7 @@ const styles = {
   cardValue: { fontSize: 14, color: '#111827', fontWeight: 500 },
   planBadge: { fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 10 },
   planName: { fontSize: 13, color: '#374151', fontWeight: 500 },
-  editLink: { fontSize: 12, color: '#1a56db', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, padding: 0 },
+  editLink: { fontSize: 12, color: 'var(--ops-page-accent)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, padding: 0 },
   feedback: { fontSize: 13, margin: '4px 0 0', padding: '6px 0' },
   // Account
   accordionTrigger: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '16px 20px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' },

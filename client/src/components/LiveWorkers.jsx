@@ -25,7 +25,7 @@ function makePinIcon(color) {
   });
 }
 
-const workerIcon = makePinIcon('#1a56db');
+const workerIcon = makePinIcon('var(--ops-page-accent)');
 
 function formatElapsed(clockInTime) {
   const seconds = Math.floor((Date.now() - new Date(clockInTime)) / 1000);
@@ -549,11 +549,11 @@ const styles = {
   filterSelect: { padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: 8, fontSize: 14, color: '#374151', background: '#fff', cursor: 'pointer', minWidth: 200 },
   empty: { background: '#fff', borderRadius: 12, padding: 32, textAlign: 'center', color: '#6b7280', boxShadow: '0 1px 4px rgba(0,0,0,0.07)' },
   workerList: { display: 'flex', flexDirection: 'column', gap: 12 },
-  workerCard: { background: '#fff', borderRadius: 12, padding: '16px 20px', boxShadow: '0 1px 4px rgba(0,0,0,0.07)', borderLeft: '4px solid #1a56db' },
+  workerCard: { background: '#fff', borderRadius: 12, padding: '16px 20px', boxShadow: '0 1px 4px rgba(0,0,0,0.07)', borderLeft: '4px solid var(--ops-page-accent)' },
   workerTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
   workerName: { fontWeight: 700, fontSize: 16 },
   workerProject: { fontSize: 13, color: '#6b7280', marginTop: 2 },
-  elapsed: { fontSize: 22, fontWeight: 800, color: '#1a56db', fontVariantNumeric: 'tabular-nums' },
+  elapsed: { fontSize: 22, fontWeight: 800, color: 'var(--ops-page-accent)', fontVariantNumeric: 'tabular-nums' },
   workerNotes: { fontSize: 13, color: '#555', fontStyle: 'italic', marginBottom: 6 },
   workerMeta: { display: 'flex', gap: 16, fontSize: 12, color: '#6b7280', flexWrap: 'wrap' },
   locationTag: { color: '#16a34a' },
@@ -574,7 +574,7 @@ const styles = {
   inactiveSep: { color: '#b45309' },
   inactiveDays: { color: '#b45309', fontWeight: 700 },
   dismissBtn: { background: 'none', border: 'none', color: '#6b7280', fontSize: 16, cursor: 'pointer', padding: '0 4px', lineHeight: 1 },
-  clockInWorkerBtn: { background: '#1a56db', color: '#fff', border: 'none', borderRadius: 6, padding: '5px 12px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  clockInWorkerBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 6, padding: '5px 12px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   expectedSection: { background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 10, padding: '12px 16px' },
   expectedTitle: { fontSize: 13, fontWeight: 700, color: '#92400e', marginBottom: 8 },
   expectedList: { display: 'flex', flexWrap: 'wrap', gap: 6 },
@@ -586,7 +586,7 @@ const styles = {
   clockOutBtn: { padding: '5px 14px', background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5', borderRadius: 7, fontWeight: 600, fontSize: 12, cursor: 'pointer' },
   editTimeBtn: { padding: '5px 14px', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: 7, fontWeight: 600, fontSize: 12, cursor: 'pointer' },
   editTimeInput: { padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 7, fontSize: 13 },
-  saveTimeBtn: { padding: '5px 12px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 12, cursor: 'pointer' },
+  saveTimeBtn: { padding: '5px 12px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 12, cursor: 'pointer' },
   cancelTimeBtn: { padding: '5px 12px', background: 'none', border: '1px solid #e5e7eb', color: '#6b7280', borderRadius: 7, fontSize: 12, cursor: 'pointer' },
   modalOverlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' },
   modal: { background: '#fff', borderRadius: 12, padding: 28, minWidth: 340, maxWidth: 440, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', gap: 16 },
@@ -596,6 +596,6 @@ const styles = {
   modalSelect: { padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 7, fontSize: 14, color: '#374151', background: '#fff' },
   modalTextarea: { padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 7, fontSize: 14, color: '#374151', resize: 'vertical' },
   modalActions: { display: 'flex', gap: 10, justifyContent: 'flex-end' },
-  modalClockInBtn: { background: '#1a56db', color: '#fff', border: 'none', borderRadius: 7, padding: '8px 18px', fontSize: 14, fontWeight: 600, cursor: 'pointer' },
+  modalClockInBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '8px 18px', fontSize: 14, fontWeight: 600, cursor: 'pointer' },
   modalCancelBtn: { background: 'none', border: '1px solid #d1d5db', color: '#6b7280', borderRadius: 7, padding: '8px 18px', fontSize: 14, cursor: 'pointer' },
 };

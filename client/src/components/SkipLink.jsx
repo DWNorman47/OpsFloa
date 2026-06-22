@@ -26,7 +26,7 @@ const styles = {
     position: 'absolute',
     top: -40,
     left: 0,
-    background: '#1a56db',
+    background: 'var(--ops-page-accent)',
     color: '#fff',
     padding: '8px 16px',
     borderRadius: '0 0 6px 0',

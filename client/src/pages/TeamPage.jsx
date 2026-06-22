@@ -9,6 +9,7 @@
 import React, { lazy, Suspense, useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
+import { useHasAnyPerm } from '../hooks/usePerm';
 import api from '../api';
 import { getOrFetch } from '../offlineDb';
 import { PageIntro, PageShell } from '../components/PageShell';
@@ -16,13 +17,31 @@ import TabBar from '../components/TabBar';
 import ErrorBoundary from '../components/ErrorBoundary';
 import RetryBanner from '../components/RetryBanner';
 import EmptyState from '../components/EmptyState';
+import Pagination from '../components/Pagination';
+import ManageClients from '../components/ManageClients';
+import { SubsDirectoryPanel } from './SubsPage';
 import { silentError } from '../errorReporter';
 
 const ManageWorkers = lazy(() => import('../components/ManageWorkers'));
 const ManageRoles   = lazy(() => import('../components/ManageRoles'));
 
+// The three record types the Directory unifies. Each gets a distinct colored
+// chip so a row reads as a person / a sub firm / a customer at a glance.
+const DIR_TYPES = {
+  team:     { label: 'Team',     chip: { background: '#e0e7ff', color: '#3730a3' }, avatar: { background: '#e0e7ff', color: '#3730a3' } },
+  sub:      { label: 'Sub',      chip: { background: '#ffedd5', color: '#9a3412' }, avatar: { background: '#ffedd5', color: '#9a3412' } },
+  customer: { label: 'Customer', chip: { background: '#cffafe', color: '#155e75' }, avatar: { background: '#cffafe', color: '#155e75' } },
+};
+
 function TabLoader() {
   return <div className="ops-loading-state">Loading...</div>;
+}
+
+function plural(label) {
+  if (!label) return '';
+  if (/s$/i.test(label)) return label;
+  if (/y$/i.test(label)) return `${label.slice(0, -1)}ies`;
+  return `${label}s`;
 }
 
 const ROLE_META = {
@@ -51,66 +70,141 @@ function initials(name) {
   return (first + last).toUpperCase();
 }
 
-function DirectoryView({ team, loading, search, onSearchChange, t, workerLabel }) {
+// Normalize the three record types into one shape the roster can render.
+// `searchText` is everything we let the search box match against.
+function toEntries({ team, subs, clients, t, workerLabel, clientLabel }) {
+  const out = [];
+  for (const m of team) {
+    out.push({
+      key: `team-${m.id}`, type: 'team', name: m.full_name || m.username,
+      line2: `@${m.username}`,
+      pills: [
+        { text: roleLabel(m.role, t, workerLabel), ...(ROLE_META[m.role] || ROLE_META.worker), strong: true },
+        ...(m.worker_type && m.role === 'worker' ? [{ text: workerTypeLabel(m.worker_type, t) }] : []),
+        ...(m.classification ? [{ text: m.classification, bg: '#d1fae5', fg: '#065f46' }] : []),
+      ],
+      pending: m.must_change_password,
+      searchText: `${m.full_name || ''} ${m.username || ''} ${m.classification || ''}`.toLowerCase(),
+    });
+  }
+  for (const sub of subs) {
+    out.push({
+      key: `sub-${sub.id}`, type: 'sub', name: sub.name,
+      line2: sub.contact_name || sub.contact_email || '',
+      pills: [
+        ...(sub.scope_specialty ? [{ text: sub.scope_specialty, bg: '#ffedd5', fg: '#9a3412' }] : []),
+        ...(sub.license_number ? [{ text: `Lic ${sub.license_number}` }] : []),
+      ],
+      searchText: `${sub.name || ''} ${sub.contact_name || ''} ${sub.scope_specialty || ''}`.toLowerCase(),
+    });
+  }
+  for (const c of clients) {
+    out.push({
+      key: `customer-${c.id}`, type: 'customer', name: c.name,
+      line2: c.contact_name || c.email || '',
+      pills: [
+        ...(c.contact_phone ? [{ text: c.contact_phone }] : []),
+      ],
+      searchText: `${c.name || ''} ${c.contact_name || ''} ${c.email || ''}`.toLowerCase(),
+    });
+  }
+  return out.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+}
+
+const DIR_PAGE_SIZE = 30;
+
+function DirectoryView({ entries, loading, search, onSearchChange, typeFilter, onTypeFilterChange, availableTypes, counts, t }) {
+  const [page, setPage] = useState(1);
   const lower = search.trim().toLowerCase();
-  const filtered = lower
-    ? team.filter(m =>
-        (m.full_name || '').toLowerCase().includes(lower) ||
-        (m.username || '').toLowerCase().includes(lower) ||
-        (m.classification || '').toLowerCase().includes(lower)
-      )
-    : team;
+  const filtered = entries.filter(e =>
+    (typeFilter === 'all' || e.type === typeFilter) &&
+    (!lower || e.searchText.includes(lower))
+  );
+
+  // Reset to the first page whenever the result set changes.
+  useEffect(() => { setPage(1); }, [search, typeFilter, entries.length]);
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / DIR_PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const pageItems = filtered.slice((safePage - 1) * DIR_PAGE_SIZE, safePage * DIR_PAGE_SIZE);
 
   if (loading) return <TabLoader />;
 
+  // Only offer the type filter when more than one type is present.
+  const showFilter = availableTypes.length > 1;
+  const filterButtons = ['all', ...availableTypes];
+
   return (
     <div>
+      {showFilter && (
+        <div className="ops-dir-filter" role="tablist" aria-label="Filter by type">
+          {filterButtons.map(id => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={typeFilter === id}
+              className={`ops-dir-filter-btn ${typeFilter === id ? 'is-active' : ''}`.trim()}
+              onClick={() => onTypeFilterChange(id)}
+            >
+              {id === 'all' ? t.dirFilterAll : DIR_TYPES[id].label}
+              <span className="ops-dir-filter-count">{id === 'all' ? counts.all : counts[id]}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <div className="ops-directory-toolbar">
         <input
           type="search"
-          placeholder={t.teamSearchPlaceholder}
+          placeholder={t.dirSearchPlaceholder}
           value={search}
           onChange={e => onSearchChange(e.target.value)}
           className="ops-directory-search"
-          aria-label={t.teamSearchAria}
+          aria-label={t.dirSearchPlaceholder}
         />
         <span className="ops-directory-count">
           {filtered.length} {filtered.length === 1 ? t.teamPersonSingular : t.teamPersonPlural}
-          {lower && filtered.length !== team.length && ` ${t.teamOfWord} ${team.length}`}
         </span>
       </div>
       {filtered.length === 0 ? (
         <EmptyState
-          mark="T"
-          title={lower ? t.teamNoMatches : `No ${workerLabel.toLowerCase()} records yet`}
-          body={lower ? 'Try a different name, username, or classification.' : `People added to this company will appear here.`}
+          mark="D"
+          title={lower || typeFilter !== 'all' ? t.teamNoMatches : t.dirEmptyTitle}
+          body={lower || typeFilter !== 'all' ? 'Try a different name or filter.' : t.dirEmptyBody}
         />
       ) : (
         <div className="ops-directory-grid">
-          {filtered.map(m => {
-            const role = ROLE_META[m.role] || ROLE_META.worker;
+          {pageItems.map(e => {
+            const meta = DIR_TYPES[e.type];
             return (
-              <div key={m.id} className="ops-person-card">
-                <div className="ops-avatar">{initials(m.full_name)}</div>
+              <div key={e.key} className="ops-person-card">
+                <div className="ops-avatar" style={meta.avatar}>{initials(e.name)}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="ops-person-name">
-                    {m.full_name}
-                    {m.must_change_password && <span style={s.pendingPill} title={t.teamNotSignedInYet}>{t.teamPendingBadge}</span>}
+                    {e.name}
+                    {e.pending && <span style={s.pendingPill} title={t.teamNotSignedInYet}>{t.teamPendingBadge}</span>}
                   </div>
                   <div className="ops-person-meta">
-                    <span style={{ ...s.rolePill, background: role.bg, color: role.fg }}>{roleLabel(m.role, t, workerLabel)}</span>
-                    {m.worker_type && m.role === 'worker' && (
-                      <span style={s.typePill}>{workerTypeLabel(m.worker_type, t)}</span>
-                    )}
-                    {m.classification && <span style={s.classPill}>{m.classification}</span>}
+                    {showFilter && <span style={{ ...s.typeChip, ...meta.chip }}>{meta.label}</span>}
+                    {e.pills.map((p, i) => (
+                      <span
+                        key={i}
+                        style={p.strong
+                          ? { ...s.rolePill, background: p.bg, color: p.fg }
+                          : { ...s.typePill, ...(p.bg ? { background: p.bg, color: p.fg } : {}) }}
+                      >
+                        {p.text}
+                      </span>
+                    ))}
                   </div>
-                  <div className="ops-person-username">@{m.username}</div>
+                  {e.line2 && <div className="ops-person-username">{e.line2}</div>}
                 </div>
               </div>
             );
           })}
         </div>
       )}
+      <Pagination page={safePage} pages={pageCount} onChange={setPage} />
     </div>
   );
 }
@@ -119,24 +213,46 @@ export default function TeamPage() {
   const { user } = useAuth();
   const t = useT();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
-
-  const TEAM_TABS = isAdmin ? ['directory', 'manage', 'roles'] : ['directory'];
-  const hashTab = window.location.hash.replace('#', '');
-  const [teamTab, setTeamTab] = useState(TEAM_TABS.includes(hashTab) ? hashTab : 'directory');
-  const switchTab = t => { setTeamTab(t); history.replaceState(null, '', '#' + t); };
+  // Per-tab capability. Team/Roles use granular perms; Subs/Customers writes
+  // are admin-gated server-side, so they follow role.
+  const canManageTeam  = useHasAnyPerm(['manage_workers', 'view_workers_list']);
+  const canManageRoles = useHasAnyPerm(['manage_roles', 'assign_roles']);
 
   const [features, setFeatures] = useState({});
   const [team, setTeam] = useState([]);
   const [teamLoading, setTeamLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState('all');
 
-  // Admin-only state (workers, settings, QBO) — only fetched when the admin
-  // actually opens the Manage sub-tab. Keeps worker page loads lean.
+  // Admin-only state (workers, settings) — fetched when the admin opens the
+  // Team manage tab. Keeps worker page loads lean.
   const [adminWorkers, setAdminWorkers] = useState([]);
   const [adminSettings, setAdminSettings] = useState(null);
   const [adminLoaded, setAdminLoaded] = useState(false);
   const [adminLoadError, setAdminLoadError] = useState(null);
+  // Extra records the unified Directory roster needs (admins only).
+  const [dirSubs, setDirSubs] = useState([]);
+  const [dirClients, setDirClients] = useState([]);
+
   const workerLabel = features?.label_worker || adminSettings?.label_worker || 'Team Member';
+  const clientLabel = features?.label_client || adminSettings?.label_client || 'Customer';
+  // Subcontractors is a tab of the Directory module (not separately toggleable);
+  // it shows to admins whenever Directory is available.
+  const subsEnabled = isAdmin;
+
+  // Tabs depend on capability + which modules are on. Directory is always
+  // present; the management tabs appear only for users who can use them.
+  const TEAM_TABS = [
+    'directory',
+    ...(canManageTeam ? ['team'] : []),
+    ...(subsEnabled ? ['subs'] : []),
+    ...(isAdmin ? ['customers'] : []),
+    ...(canManageRoles ? ['roles'] : []),
+  ];
+  const hashTab = window.location.hash.replace('#', '');
+  const [teamTab, setTeamTab] = useState(TEAM_TABS.includes(hashTab) ? hashTab : 'directory');
+  const switchTab = id => { setTeamTab(id); history.replaceState(null, '', '#' + id); };
+  const activeTab = TEAM_TABS.includes(teamTab) ? teamTab : 'directory';
 
   const loadTeam = useCallback(() => {
     setTeamLoading(true);
@@ -166,51 +282,87 @@ export default function TeamPage() {
   useEffect(() => { loadTeam(); }, [loadTeam]);
 
   useEffect(() => {
-    // Always fetch settings (workers + admins) so the AppSwitcher's
-    // module_* filters know what the company has turned off. Without this,
-    // a disabled module like Field still showed in the switcher when
-    // viewed from /team because features stayed `{}`.
+    // Always fetch settings so the AppSwitcher's module_* filters know what the
+    // company has turned off.
     getOrFetch('settings', () => api.get('/settings').then(r => r.data))
       .then(setFeatures).catch(silentError('teampage-settings'));
   }, []);
 
+  // Sub firms + customers feed the unified Directory roster (admin only). The
+  // Subs/Customers management tabs load their own data, so this is just for the
+  // combined view.
   useEffect(() => {
-    if (isAdmin && teamTab === 'manage' && !adminLoaded) loadAdmin();
-  }, [teamTab, isAdmin, adminLoaded, loadAdmin]);
+    if (!isAdmin) return;
+    api.get('/admin/clients').then(r => setDirClients(r.data || [])).catch(silentError('dir-clients'));
+  }, [isAdmin]);
+  useEffect(() => {
+    if (!subsEnabled) { setDirSubs([]); return; }
+    api.get('/subcontractors', { params: { limit: 500 } })
+      .then(r => setDirSubs(r.data.items || []))
+      .catch(silentError('dir-subs'));
+  }, [subsEnabled]);
+
+  useEffect(() => {
+    if (canManageTeam && activeTab === 'team' && !adminLoaded) loadAdmin();
+  }, [activeTab, canManageTeam, adminLoaded, loadAdmin]);
 
   const handleWorkerAdded    = w  => { setAdminWorkers(prev => [...prev, { ...w, total_entries: 0, total_hours: 0, regular_hours: 0, overtime_hours: 0, prevailing_hours: 0 }]); loadTeam(); };
   const handleWorkerDeleted  = id => { setAdminWorkers(prev => prev.filter(w => w.id !== id)); loadTeam(); };
   const handleWorkerUpdated  = w  => { setAdminWorkers(prev => prev.map(x => x.id === w.id ? { ...x, ...w } : x)); loadTeam(); };
   const handleWorkerRestored = w  => { setAdminWorkers(prev => [...prev, w]); loadTeam(); };
 
+  const entries = toEntries({
+    team,
+    subs: subsEnabled ? dirSubs : [],
+    clients: isAdmin ? dirClients : [],
+    t, workerLabel, clientLabel,
+  });
+  const availableTypes = ['team', ...(subsEnabled ? ['sub'] : []), ...(isAdmin ? ['customer'] : [])];
+  const counts = {
+    all: entries.length,
+    team: entries.filter(e => e.type === 'team').length,
+    sub: entries.filter(e => e.type === 'sub').length,
+    customer: entries.filter(e => e.type === 'customer').length,
+  };
+
+  const tabs = [
+    { id: 'directory', label: t.dirDirectoryTab },
+    ...(canManageTeam ? [{ id: 'team', label: plural(workerLabel) }] : []),
+    ...(subsEnabled ? [{ id: 'subs', label: t.subSubcontractors }] : []),
+    ...(isAdmin ? [{ id: 'customers', label: plural(clientLabel) }] : []),
+    ...(canManageRoles ? [{ id: 'roles', label: t.teamRolesTab || 'Roles' }] : []),
+  ];
+
   return (
     <PageShell currentApp="team" features={features} maxWidth={940}>
         <PageIntro
-          introId="team"
-          kicker="Team"
-          title={isAdmin ? `Manage ${workerLabel.toLowerCase()} access without clutter.` : 'Find the people you work with.'}
+          introId="directory"
+          kicker="Directory"
+          title={isAdmin ? 'Everyone you work with, in one place.' : 'Find the people you work with.'}
           description={isAdmin
-            ? 'Directory, access, roles, and permissions are separated so daily lookup stays simple and admin setup stays available.'
+            ? 'The Directory shows your team, subcontractors, and customers together. Each tab manages one of them; Roles defines permissions.'
             : 'The directory keeps names, roles, and classifications easy to scan.'}
-          meta={<span className="ops-pill">{team.length} {team.length === 1 ? 'person' : 'people'}</span>}
+          meta={<span className="ops-pill">{counts.all} {counts.all === 1 ? 'record' : 'records'}</span>}
         />
-        {isAdmin && (
-          <TabBar
-            active={teamTab}
-            onChange={switchTab}
-            tabs={[
-              { id: 'directory', label: t.teamDirectoryTab },
-              { id: 'manage',    label: `Manage ${workerLabel}` },
-              { id: 'roles',     label: t.teamRolesTab || 'Roles' },
-            ]}
-          />
+        {tabs.length > 1 && (
+          <TabBar active={activeTab} onChange={switchTab} tabs={tabs} />
         )}
 
-        <ErrorBoundary key={teamTab} mode="inline" label={teamTab === 'manage' ? `${t.teamManageTab}` : `${t.teamDirectoryTab}`}>
-          {teamTab === 'directory' && (
-            <DirectoryView team={team} loading={teamLoading} search={search} onSearchChange={setSearch} t={t} workerLabel={workerLabel} />
+        <ErrorBoundary key={activeTab} mode="inline" label={t.dirDirectoryTab}>
+          {activeTab === 'directory' && (
+            <DirectoryView
+              entries={entries}
+              loading={teamLoading}
+              search={search}
+              onSearchChange={setSearch}
+              typeFilter={typeFilter}
+              onTypeFilterChange={setTypeFilter}
+              availableTypes={availableTypes}
+              counts={counts}
+              t={t}
+            />
           )}
-          {teamTab === 'manage' && isAdmin && (
+          {activeTab === 'team' && canManageTeam && (
             <>
               <RetryBanner message={adminLoadError} onRetry={loadAdmin} />
               {!adminLoaded && !adminLoadError ? <TabLoader /> : (
@@ -236,7 +388,13 @@ export default function TeamPage() {
               )}
             </>
           )}
-          {teamTab === 'roles' && isAdmin && (
+          {activeTab === 'subs' && subsEnabled && (
+            <SubsDirectoryPanel />
+          )}
+          {activeTab === 'customers' && isAdmin && (
+            <ManageClients settings={adminSettings || features} />
+          )}
+          {activeTab === 'roles' && canManageRoles && (
             <Suspense fallback={<TabLoader />}>
               <ManageRoles />
             </Suspense>
@@ -255,6 +413,7 @@ const s = {
   avatar:    { width: 44, height: 44, borderRadius: '50%', background: '#e0e7ff', color: '#3730a3', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 16, flexShrink: 0 },
   name:      { fontSize: 15, fontWeight: 700, color: '#111827', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' },
   meta:      { display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' },
+  typeChip:  { fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 10, textTransform: 'uppercase', letterSpacing: 0.5 },
   rolePill:  { fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, textTransform: 'uppercase', letterSpacing: 0.5 },
   typePill:  { fontSize: 11, fontWeight: 600, background: '#f3f4f6', color: '#4b5563', padding: '2px 8px', borderRadius: 10 },
   classPill: { fontSize: 11, fontWeight: 600, background: '#d1fae5', color: '#065f46', padding: '2px 8px', borderRadius: 10 },

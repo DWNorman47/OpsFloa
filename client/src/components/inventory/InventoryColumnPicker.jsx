@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useT } from '../../hooks/useT';
 
 export default function InventoryColumnPicker({ columns, selectedColumns, onToggle, onReset, buttonStyle }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [sheetMode, setSheetMode] = useState(false);
   const ref = useRef(null);
@@ -30,21 +32,21 @@ export default function InventoryColumnPicker({ columns, selectedColumns, onTogg
     <div style={sheetMode ? styles.sheet : styles.menu}>
       {sheetMode && (
         <div style={styles.sheetHead}>
-          <strong style={styles.sheetTitle}>Columns</strong>
-          <button type="button" style={styles.closeBtn} onClick={() => setOpen(false)}>Close</button>
+          <strong style={styles.sheetTitle}>{t.icpColumns}</strong>
+          <button type="button" style={styles.closeBtn} onClick={() => setOpen(false)}>{t.close}</button>
         </div>
       )}
       <div style={styles.titleRow}>
         <div>
-          <div style={styles.title}>Show columns</div>
+          <div style={styles.title}>{t.icpShowColumns}</div>
           {emptyHiddenCount > 0 && (
             <div style={styles.hint}>
-              {emptyHiddenCount} selected column{emptyHiddenCount === 1 ? '' : 's'} hidden because there is no data.
+              {emptyHiddenCount} {t.icpHiddenSuffix}
             </div>
           )}
         </div>
         {onReset && (
-          <button type="button" style={styles.resetBtn} onClick={onReset}>Reset</button>
+          <button type="button" style={styles.resetBtn} onClick={onReset}>{t.reset}</button>
         )}
       </div>
       <div style={styles.optionGrid}>

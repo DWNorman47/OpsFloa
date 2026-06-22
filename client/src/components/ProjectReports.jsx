@@ -47,13 +47,14 @@ export default function ProjectReports({ currency = 'USD', settings = null }) {
 
   return (
     <div style={styles.list}>
-      {projects.map(p => <ProjectCard key={p.id} project={p} currency={currency} workerLabel={workerLabel} workerLabelLower={workerLabelLower} />)}
+      {projects.map(p => <ProjectCard key={p.id} project={p} currency={currency} workerLabel={workerLabel} workerLabelLower={workerLabelLower} settings={settings} />)}
     </div>
   );
 }
 
-function ProjectCard({ project: p, currency = 'USD', workerLabel = 'Worker', workerLabelLower = 'worker' }) {
+function ProjectCard({ project: p, currency = 'USD', workerLabel = 'Worker', workerLabelLower = 'worker', settings = null }) {
   const t = useT();
+  const { user } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [from, setFrom] = useState(defaultDates().from);
   const [to, setTo] = useState(defaultDates().to);
@@ -259,7 +260,7 @@ const styles = {
   dateField: { display: 'flex', flexDirection: 'column', gap: 4 },
   label: { fontSize: 12, fontWeight: 600, color: '#666' },
   input: { padding: '8px 10px', border: '1px solid #ddd', borderRadius: 7, fontSize: 14 },
-  fetchBtn: { padding: '8px 18px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 14, cursor: 'pointer' },
+  fetchBtn: { padding: '8px 18px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 14, cursor: 'pointer' },
   billSummary: { display: 'flex', gap: 20, fontSize: 14, flexWrap: 'wrap', marginBottom: 12 },
   btnRow: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' },
   previewBtn: { padding: '10px 20px', background: '#6366f1', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 14, cursor: 'pointer' },

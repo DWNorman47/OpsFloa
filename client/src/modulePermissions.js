@@ -35,8 +35,14 @@ export const MODULE_PERMISSIONS = {
   inventory: [
     'view_inventory', 'manage_inventory',
   ],
+  // Directory (module id stays 'team') now hosts Team, Subs, Customers, and
+  // Roles. Unlock it for anyone who can manage ANY of those, so a customer/sub
+  // manager isn't locked out just because they lack worker perms. (Sub and
+  // customer writes are admin-gated server-side; manage_projects/manage_settings
+  // are the closest proxies a non-default admin role would carry.)
   team: [
     'view_workers_list', 'manage_workers', 'manage_roles', 'assign_roles',
+    'manage_projects', 'manage_settings',
   ],
   projects: [
     'view_projects', 'manage_projects', 'manage_project_visibility',
@@ -47,6 +53,21 @@ export const MODULE_PERMISSIONS = {
   ],
   analytics: [
     'view_analytics',
+  ],
+  // Sales = estimates + change orders + (eventually) templates + catalog picker.
+  // Admin-tier: anyone authorised to manage projects can draft estimates;
+  // sending and converting are gated server-side (and add stricter perms later).
+  sales: [
+    'manage_projects', 'manage_settings',
+  ],
+  // Subs = subcontractor directory + sub POs + payments. Procurement /
+  // project management surface.
+  subs: [
+    'manage_projects', 'manage_settings',
+  ],
+  // Financial reports: P&L portfolio + WIP. Owner/admin reporting view.
+  financial_reports: [
+    'view_analytics', 'manage_settings',
   ],
 };
 
@@ -71,15 +92,23 @@ export const ADMINISTRATION_TAB_PERMS = {
  * order that they have access to. Always-available modules are last so a
  * user with any real access doesn't get dumped on Account by default.
  */
+// `adminOnly` marks a candidate whose ROUTE is admin-gated (App.jsx). Landing a
+// non-admin there would bounce off the route guard — and could loop — so
+// pickLandingPath skips those for non-admins even if they hold a matching perm.
 const LANDING_PRIORITY = [
-  { id: 'timeclock',      path: '/timeclock' },      // participating (everyone starts here)
-  { id: 'workforce',      path: '/workforce' },      // admin oversight
-  { id: 'projects',       path: '/projects' },
+  { id: 'timeclock',      path: '/timeclock' },      // participating + Workforce group (everyone starts here)
+  // 'workforce' is the Workforce group of Time Clock now (/workforce redirects),
+  // so it's not a separate landing target. Its perm set still gates that group.
+  { id: 'projects',       path: '/projects', adminOnly: true },
+  // 'sales' and 'subs' are intentionally not landing targets: they now live as
+  // tabs inside other modules (Projects / Directory) and their old routes
+  // redirect there, so landing on them directly could bounce and loop.
+  { id: 'financial_reports', path: '/financial-reports', adminOnly: true },
   { id: 'team',           path: '/team' },
   { id: 'field',          path: '/field' },
   { id: 'inventory',      path: '/inventory' },
-  { id: 'analytics',      path: '/analytics' },
-  { id: 'administration', path: '/administration' },
+  // 'analytics' folded into Reports (Performance tab); /analytics redirects there.
+  { id: 'administration', path: '/administration', adminOnly: true },
   { id: 'account',        path: '/account' },        // always-fallback
 ];
 
@@ -87,8 +116,12 @@ import { userHasAnyPerm } from './hooks/usePerm';
 
 export function pickLandingPath(user) {
   if (!user) return '/login';
+  const isAdmin = user.role === 'admin' || user.role === 'super_admin';
   for (const cand of LANDING_PRIORITY) {
     if (cand.id === 'account') return cand.path; // always-fallback
+    // Never route a non-admin to an admin-only page — its guard would bounce
+    // them straight back here, and with a cross-path bounce that loops forever.
+    if (cand.adminOnly && !isAdmin) continue;
     const required = MODULE_PERMISSIONS[cand.id] || [];
     if (required.length === 0) continue;
     if (userHasAnyPerm(user, required)) return cand.path;

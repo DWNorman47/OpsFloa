@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
+import { useSettings } from '../contexts/SettingsContext';
 import { userCanSeeModule } from '../modulePermissions';
 
 // Workers see: Time Clock, Field, Inventory, Account
-// Admins see:  Time Clock, Workforce, Field, Inventory, Projects, Administration, Analytics
-//   (Time Clock = the participating page — admins use it to clock themselves
-//    in. Workforce = the oversight page — Live, Approvals, Reports, etc.)
+// Admins see:  Time Clock, Field, Inventory, Directory, Projects, Reports, Administration
+//   Time Clock now holds both the participating view and the admin Workforce
+//   group (a tab inside it). Analytics is the Performance tab of Reports.
+//   Directory holds Team/Subs/Customers; Projects holds Estimates/COs/POs.
 export const APPS = [
   {
     id: 'timeclock',
@@ -19,21 +21,6 @@ export const APPS = [
       </svg>
     ),
     path: '/timeclock',
-  },
-  {
-    id: 'workforce',
-    name: 'Workforce',
-    bg: '#1d4ed8',
-    adminOnly: true,
-    icon: (
-      <svg viewBox="0 0 20 20" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
-        <circle cx="6.5" cy="7" r="2.4" />
-        <circle cx="13.5" cy="7" r="2.4" />
-        <path d="M2 16c0-2.2 2-4 4.5-4S11 13.8 11 16" />
-        <path d="M9 16c0-2.2 2-4 4.5-4S18 13.8 18 16" />
-      </svg>
-    ),
-    path: '/workforce',
   },
   {
     id: 'field',
@@ -75,7 +62,7 @@ export const APPS = [
   },
   {
     id: 'team',
-    name: 'Team',
+    name: 'Directory',
     bg: '#0284c7',
     icon: (
       <svg viewBox="0 0 20 20" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
@@ -103,6 +90,22 @@ export const APPS = [
     path: '/projects',
   },
   {
+    id: 'financial_reports',
+    name: 'Reports',
+    bg: '#15803d',
+    adminOnly: true,
+    icon: (
+      <svg viewBox="0 0 20 20" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+        <path d="M3 16V8" />
+        <path d="M8 16V4" />
+        <path d="M13 16v-7" />
+        <path d="M18 16v-4" />
+        <path d="M2 17h17" />
+      </svg>
+    ),
+    path: '/financial-reports',
+  },
+  {
     id: 'administration',
     name: 'Administration',
     bg: '#475569',
@@ -114,52 +117,50 @@ export const APPS = [
     ),
     path: '/administration',
   },
-  {
-    id: 'analytics',
-    name: 'Analytics',
-    bg: '#0e7490',
-    adminOnly: true,
-    icon: (
-      <svg viewBox="0 0 20 20" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
-        <polyline points="2,15 7,9 11,12 18,5" />
-        <polyline points="14,5 18,5 18,9" />
-      </svg>
-    ),
-    path: '/analytics',
-  },
 ];
 
 export default function AppSwitcher({ currentApp = 'timeclock', userRole, features = {} }) {
   const t = useT();
   const { user } = useAuth();
+  const { settings, loading } = useSettings();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const isAdmin = userRole === 'admin' || userRole === 'super_admin';
+  // A page may pass its own freshly-loaded settings as `features`; fall back to
+  // the global SettingsContext so the switcher gates correctly even on pages
+  // that don't load settings themselves. Explicit props win over the context.
+  const feat = { ...(settings || {}), ...(features || {}) };
+  const current = APPS.find(a => a.id === currentApp) || APPS[0];
+  // Until we actually have settings, we can't tell which modules are turned
+  // off. Rather than flash the full list and then hide some (the old
+  // "fail open" flicker), show just the current module while loading and
+  // reveal the rest once the flags resolve.
+  const settingsPending = loading && Object.keys(feat).length === 0;
   const labelFor = app => {
-    if (app.id === 'field') return features?.label_field || app.name;
-    if (app.id === 'projects') return features?.label_work || app.name;
+    if (app.id === 'field') return feat.label_field || app.name;
+    if (app.id === 'projects') return feat.label_work || app.name;
     return app.name;
   };
-  const visibleApps = APPS.filter(a => {
+  const visibleApps = settingsPending ? [current] : APPS.filter(a => {
     if (a.adminOnly && !isAdmin) return false;
     if (a.workerOnly && isAdmin) return false;
     // Company-level feature toggles (admin choice). These hide modules
     // entirely regardless of user perms — the company doesn't use the feature.
-    if (a.id === 'field' && features?.module_field === false) return false;
-    if (a.id === 'projects' && features?.module_projects === false) return false;
-    if (a.id === 'inventory' && features?.module_inventory === false) return false;
-    if (a.id === 'analytics' && features?.module_analytics === false) return false;
-    if (a.id === 'team' && features?.module_team === false) return false;
-    // module_timeclock now gates the admin oversight page (Workforce). Time
-    // Clock itself stays visible to everyone — workers always need it, and
-    // admins use it for their own time-tracking even if oversight is off.
-    if (a.id === 'workforce' && features?.module_timeclock === false) return false;
+    if (a.id === 'field' && feat.module_field === false) return false;
+    if (a.id === 'projects' && feat.module_projects === false) return false;
+    if (a.id === 'inventory' && feat.module_inventory === false) return false;
+    if (a.id === 'team' && feat.module_team === false) return false;
+    // Construction-lifecycle modules, each with its own admin toggle.
+    // Reports hosts both Performance (Analytics) and the financial reports, so
+    // it's hidden only when BOTH are off.
+    if (a.id === 'financial_reports' && feat.module_financial_reports === false && feat.module_analytics === false) return false;
+    // Workforce is no longer a switcher app — it's the admin "Workforce" group
+    // inside Time Clock (gated there by module_timeclock + oversight perms).
     // Phase D: per-user permission gate. A user with zero perms inside a
     // module shouldn't see it at all. Account is always shown.
     if (!userCanSeeModule(user, a.id)) return false;
     return true;
   });
-  const current = APPS.find(a => a.id === currentApp) || APPS[0];
 
   useEffect(() => {
     const handler = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
@@ -227,6 +228,10 @@ const styles = {
     position: 'absolute', top: 'calc(100% + 8px)', left: 0,
     background: '#fff', borderRadius: 10, boxShadow: '0 16px 42px rgba(15,23,42,0.14)',
     border: '1px solid #e2e8f0', padding: 6, minWidth: 220, zIndex: 1000,
+    // Cap the height so a long module list (admins can have 11+) stays inside
+    // the viewport and scrolls instead of pushing entries off-screen where
+    // they can't be clicked.
+    maxHeight: 'calc(100vh - 90px)', overflowY: 'auto',
   },
   item: {
     display: 'flex', alignItems: 'center', gap: 12,

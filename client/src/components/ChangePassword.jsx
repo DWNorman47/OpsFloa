@@ -74,5 +74,5 @@ const styles = {
   success: { color: '#38a169', fontSize: 13 },
   buttons: { display: 'flex', gap: 10, marginTop: 8 },
   cancelBtn: { flex: 1, padding: '10px', background: '#f0f0f0', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 14 },
-  saveBtn: { flex: 1, padding: '10px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 14 },
+  saveBtn: { flex: 1, padding: '10px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 14 },
 };

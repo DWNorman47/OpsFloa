@@ -275,7 +275,7 @@ const ef = {
 
 // ── Supplier Panel ────────────────────────────────────────────────────────────
 
-function SupplierPanel() {
+export function SupplierPanel() {
   const t = useT();
   const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading]     = useState(true);
@@ -625,7 +625,6 @@ export default function InventorySetup({ projects, settings }) {
 
   // Load items for current level
   const load = async () => {
-    if (levelKey === 'suppliers') return; // SupplierPanel manages its own data
     setLoading(true);
     setError('');
     try {
@@ -729,17 +728,7 @@ export default function InventorySetup({ projects, settings }) {
             {LEVEL_LABELS[l.key] || l.label}
           </button>
         ))}
-        <button
-          style={{ ...s.levelTab, ...(levelKey === 'suppliers' ? s.levelTabActive : {}) }}
-          onClick={() => setLevelKey('suppliers')}
-        >
-          {t.invSetupSuppliers}
-        </button>
       </div>
-
-      {levelKey === 'suppliers' && <SupplierPanel />}
-
-      {levelKey !== 'suppliers' && <>
 
       {/* Parent cascade filters */}
       {parentFilters().length > 0 && (
@@ -883,8 +872,6 @@ export default function InventorySetup({ projects, settings }) {
           onClose={() => setPrintItem(null)}
         />
       )}
-
-      </>} {/* end levelKey !== 'suppliers' */}
     </div>
   );
 }

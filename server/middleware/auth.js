@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const pool = require('../db');
+const { markRequestCompany } = require('../demoMode');
 
 async function requireAuth(req, res, next) {
   const header = req.headers.authorization;
@@ -22,10 +23,16 @@ async function requireAuth(req, res, next) {
   if (payload.tv != null) {
     try {
       const { rows } = await pool.query(
-        'SELECT token_version FROM users WHERE id = $1',
+        'SELECT token_version, active FROM users WHERE id = $1',
         [payload.id]
       );
       if (rows.length === 0) return res.status(401).json({ error: 'Invalid token' });
+      // Deactivated (fired / offboarded) users must lose access immediately,
+      // not at token expiry. Their JWT is otherwise still valid for up to a
+      // day, so without this check a removed employee keeps full access.
+      if (rows[0].active === false) {
+        return res.status(401).json({ error: 'Account deactivated' });
+      }
       if (rows[0].token_version !== payload.tv) {
         return res.status(401).json({ error: 'Session invalidated, please log in again' });
       }
@@ -36,6 +43,9 @@ async function requireAuth(req, res, next) {
   }
 
   req.user = payload;
+  // Mark the acting company on the request-scoped demo context so email
+  // sends during this request are suppressed for demo tenants.
+  markRequestCompany(payload.company_id);
   next();
 }
 

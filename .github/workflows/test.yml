@@ -61,6 +61,24 @@ jobs:
           DATABASE_URL: postgres://test:test@localhost:5432/test
           DATABASE_SSL: 'false'
 
+  client-lint:
+    name: Client lint (ESLint)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: client/package-lock.json
+      - run: npm install
+      # Narrow rule set (no-undef, rules-of-hooks, etc.) — catches runtime
+      # ReferenceErrors the Vite build misses. Style is intentionally not linted.
+      - run: npm run lint
+
   client-tests:
     name: Client (Vitest)
     runs-on: ubuntu-latest

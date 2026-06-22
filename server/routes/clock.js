@@ -302,9 +302,8 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
       return parsed && !isNaN(parsed) ? parsed : new Date();
     })();
     const clockOutTime = new Date();
-    const pad = n => String(n).padStart(2, '0');
-    const end_time = local_clock_out || `${pad(clockOutTime.getUTCHours())}:${pad(clockOutTime.getUTCMinutes())}:${pad(clockOutTime.getUTCSeconds())}`;
-    const newStartTime = `${pad(switchInTs.getUTCHours())}:${pad(switchInTs.getUTCMinutes())}:${pad(switchInTs.getUTCSeconds())}`;
+    // Wall-clock strings are computed after oldClock is loaded inside the
+    // transaction below so we can use its timezone for the fallback.
 
     const txClient = await pool.connect();
     let oldClock;
@@ -343,7 +342,11 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
       }
 
       const clockInTime = new Date(oldClock.clock_in_time);
-      const start_time = local_clock_in || `${pad(clockInTime.getUTCHours())}:${pad(clockInTime.getUTCMinutes())}:${pad(clockInTime.getUTCSeconds())}`;
+      // Wall-clock fallback uses the worker's stored timezone instead of
+      // server UTC. start_ts/end_ts are real instants written below, so
+      // the legacy time columns just need to display correctly.
+      const start_time = validLocalTime(local_clock_in)  || wallClockInTZ(clockInTime,  oldClock.timezone);
+      const end_time   = validLocalTime(local_clock_out) || wallClockInTZ(clockOutTime, oldClock.timezone);
 
       entryResult = await txClient.query(
         `INSERT INTO time_entries
@@ -501,13 +504,18 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
       }
     }
 
-    // Use client-supplied local times if available (avoids UTC offset issues on server)
-    // Fallback to UTC extraction for backwards compatibility
+    // Use client-supplied local times if available — the modern client
+    // always sends them, but old PWA caches may not. The fallback used
+    // to be `getUTCHours()` etc., which stamped wall-clock times in UTC
+    // and silently mis-recorded shifts for any worker not in UTC. Now
+    // we use wallClockInTZ() against the worker's stored timezone (set
+    // on clock-in into active_clock.timezone). Phase-2 start_ts / end_ts
+    // are computed below from clockInTime/clockOutTime directly, so they
+    // remain correct regardless of the wall-clock fallback path.
     const clockInTime = new Date(clock.clock_in_time);
     const clockOutTime = new Date();
-    const pad = n => String(n).padStart(2, '0');
-    const start_time = local_clock_in || `${pad(clockInTime.getUTCHours())}:${pad(clockInTime.getUTCMinutes())}:${pad(clockInTime.getUTCSeconds())}`;
-    const end_time = local_clock_out || `${pad(clockOutTime.getUTCHours())}:${pad(clockOutTime.getUTCMinutes())}:${pad(clockOutTime.getUTCSeconds())}`;
+    const start_time = validLocalTime(local_clock_in) || wallClockInTZ(clockInTime, clock.timezone);
+    const end_time   = validLocalTime(local_clock_out) || wallClockInTZ(clockOutTime, clock.timezone);
 
     // Create the time entry and remove active clock atomically
     const txClient = await pool.connect();
@@ -561,25 +569,27 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
           let totalHours = 0;
 
           if (rule === 'weekly') {
-            // Sum this ISO week (Mon–Sun)
+            // Sum this ISO week (Mon–Sun). Include break_minutes so
+            // entries with logged breaks don't inflate the weekly total
+            // and trigger spurious OT alerts for workers who haven't
+            // actually crossed the 40h paid-hours line.
             const allWeekRows = await pool.query(
-              `SELECT start_time, end_time FROM time_entries
+              `SELECT start_time, end_time, break_minutes FROM time_entries
                WHERE user_id = $1 AND wage_type = 'regular'
                  AND DATE_TRUNC('week', work_date::date) = DATE_TRUNC('week', $2::date)`,
               [req.user.id, workDate]
             );
             const allEntries = allWeekRows.rows;
-            // Subtract the new entry when computing "before"
             const newEntry = entryResult.rows[0];
-            const calcH = (s, e) => {
+            const calcH = (s, e, brk) => {
               const start = new Date(`1970-01-01T${s}`);
               const end = new Date(`1970-01-01T${e}`);
               let h = (end - start) / 3600000;
               if (h < 0) h += 24;
-              return h;
+              return Math.max(0, h - (brk || 0) / 60);
             };
-            const newEntryHours = calcH(newEntry.start_time, newEntry.end_time) - (newEntry.break_minutes || 0) / 60;
-            totalHours = allEntries.reduce((sum, r) => sum + calcH(r.start_time, r.end_time), 0);
+            const newEntryHours = calcH(newEntry.start_time, newEntry.end_time, newEntry.break_minutes);
+            totalHours = allEntries.reduce((sum, r) => sum + calcH(r.start_time, r.end_time, r.break_minutes), 0);
             prevHours = totalHours - newEntryHours;
             // Weekly threshold is typically 40
             const weeklyThreshold = threshold <= 10 ? 40 : threshold;
@@ -635,11 +645,13 @@ async function _sendOvertimeAlert(worker, companyId, projectName, totalHours, th
 }
 
 // DELETE /api/clock/cancel — discard an active clock-in without creating a time entry
-router.delete('/cancel', requireAuth, async (req, res) => {
+router.delete('/cancel', requireAuth, requirePerm('clock_self'), clockLimiter, async (req, res) => {
   try {
+    // Scope to the caller's company too — defensive against future
+    // user-id reuse / merge scenarios. user_id alone is unique today.
     const result = await pool.query(
-      'DELETE FROM active_clock WHERE user_id = $1 RETURNING id',
-      [req.user.id]
+      'DELETE FROM active_clock WHERE user_id = $1 AND company_id = $2 RETURNING id',
+      [req.user.id, req.user.company_id]
     );
     if (result.rowCount === 0) return res.status(400).json({ error: 'Not clocked in' });
     res.json({ cancelled: true });

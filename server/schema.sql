@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS companies (
   subscription_status  VARCHAR(20)  NOT NULL DEFAULT 'trial',  -- trial | active | past_due | canceled
   trial_ends_at        TIMESTAMP,
   plan                 VARCHAR(20),                             -- e.g. 'starter', 'pro'
+  active               BOOLEAN   NOT NULL DEFAULT true,
   created_at           TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
@@ -60,6 +61,8 @@ CREATE TABLE IF NOT EXISTS projects (
   geo_lat       DECIMAL(10,7),
   geo_lng       DECIMAL(10,7),
   geo_radius_ft INTEGER,
+  budget_hours   NUMERIC(10,2),
+  budget_dollars NUMERIC(10,2),
   active        BOOLEAN      NOT NULL DEFAULT true,
   created_at    TIMESTAMP    NOT NULL DEFAULT NOW()
 );
@@ -210,10 +213,11 @@ CREATE TABLE IF NOT EXISTS field_reports (
 );
 
 CREATE TABLE IF NOT EXISTS field_report_photos (
-  id        SERIAL PRIMARY KEY,
-  report_id INTEGER NOT NULL REFERENCES field_reports(id) ON DELETE CASCADE,
-  url       TEXT    NOT NULL,
-  caption   VARCHAR(500)
+  id         SERIAL PRIMARY KEY,
+  report_id  INTEGER NOT NULL REFERENCES field_reports(id) ON DELETE CASCADE,
+  url        TEXT    NOT NULL,
+  caption    VARCHAR(500),
+  created_at TIMESTAMP DEFAULT NOW()
 );
 
 -- ---------------------------------------------------------------------------

@@ -119,7 +119,7 @@ export default function CertifiedPayrollSignature({
       {error && <p role="alert" style={styles.error}>{error}</p>}
 
       <div style={styles.actions}>
-        <button type="button" onClick={onClose} style={styles.cancelBtn}>Cancel</button>
+        <button type="button" onClick={onClose} style={styles.cancelBtn}>{t.cancel}</button>
         <button
           type="button"
           onClick={submit}
@@ -147,5 +147,5 @@ const styles = {
   error:       { color: '#991b1b', fontSize: 13, marginTop: 10 },
   actions:     { display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 },
   cancelBtn:   { padding: '9px 18px', background: '#f3f4f6', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 14, color: '#374151', cursor: 'pointer' },
-  signBtn:     { padding: '9px 22px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: 'pointer' },
+  signBtn:     { padding: '9px 22px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: 'pointer' },
 };

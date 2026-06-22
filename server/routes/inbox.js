@@ -58,7 +58,7 @@ async function createInboxItem(userId, companyId, type, title, body, link) {
       [userId, companyId, type, title, body || null, link || null]
     );
   } catch (err) {
-    console.error('createInboxItem error:', err);
+    logger.error({ err }, 'createInboxItem error');
   }
 }
 
@@ -70,7 +70,7 @@ async function createInboxItemBatch(userIds, companyId, type, title, body, link)
     const params = userIds.flatMap(uid => [uid, companyId, type, title, body || null, link || null]);
     await pool.query(`INSERT INTO inbox (user_id, company_id, type, title, body, link) VALUES ${values}`, params);
   } catch (err) {
-    console.error('createInboxItemBatch error:', err);
+    logger.error({ err }, 'createInboxItemBatch error');
   }
 }
 

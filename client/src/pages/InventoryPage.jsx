@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
+import { usePerm } from '../hooks/usePerm';
 import api from '../api';
 import { getOrFetch } from '../offlineDb';
 import { PageIntro, PageShell } from '../components/PageShell';
@@ -9,7 +9,7 @@ import InventoryStock from '../components/inventory/InventoryStock';
 import InventoryItems from '../components/inventory/InventoryItems';
 import InventoryTransactions from '../components/inventory/InventoryTransactions';
 import InventoryCycleCounts from '../components/inventory/InventoryCycleCounts';
-import InventorySetup from '../components/inventory/InventorySetup';
+import InventorySetup, { SupplierPanel } from '../components/inventory/InventorySetup';
 import InventoryValuation from '../components/inventory/InventoryValuation';
 import InventoryPurchaseOrders from '../components/inventory/InventoryPurchaseOrders';
 import InventoryConversions from '../components/inventory/InventoryConversions';
@@ -17,9 +17,12 @@ import MyCount from '../components/MyCount';
 
 import { silentError } from '../errorReporter';
 export default function InventoryPage() {
-  const { user } = useAuth();
   const t = useT();
-  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+  // Visibility is permission-driven, not role-driven: anyone with view_inventory
+  // (or the broader manage_inventory) sees the read/operational views; the
+  // management + setup tabs require manage_inventory. The server enforces the
+  // same split (reads via requireAuth, writes via requireAdmin).
+  const canManage = usePerm('manage_inventory');
 
   const [features, setFeatures] = useState({});
   const [projects, setProjects] = useState([]);
@@ -27,34 +30,63 @@ export default function InventoryPage() {
   const [lowStockCount, setLowStockCount] = useState(0);
   const [pendingConversions, setPendingConversions] = useState(0);
   const [loading, setLoading] = useState(true);
-
-  const INV_TABS = isAdmin
-    ? ['stock', 'items', 'transactions', 'orders', 'cycle', 'valuation', 'conversions', 'setup']
-    : ['stock', 'transactions', 'mycount'];
-  const normalizeInventoryTab = value => ({ counts: 'cycle' }[value] || value);
   const [poLowStockTrigger, setPoLowStockTrigger] = useState(false);
+
+  // Two tab groups (Field-style): Operations is the daily work, Setup is the
+  // master data. The Setup group only exists for managers, so view-only users
+  // see a single flat row and no group switcher.
+  const opsTabs = [
+    { id: 'stock',        label: t.invTabStock, dot: lowStockCount > 0 ? '#f59e0b' : null },
+    { id: 'transactions', label: t.invTabTransactions },
+    ...(!canManage ? [{ id: 'mycount', label: t.myCountTitle }] : []),
+    ...(canManage ? [
+      { id: 'orders',    label: t.invTabOrders },
+      { id: 'cycle',     label: t.invTabCounts },
+      { id: 'valuation', label: t.invTabValuation },
+    ] : []),
+  ];
+  const setupTabs = canManage ? [
+    { id: 'items',       label: t.invTabItems },
+    { id: 'locations',   label: t.invSetupLocations },
+    { id: 'suppliers',   label: t.invSetupSuppliers },
+    { id: 'conversions', label: t.invTabConversions, dot: pendingConversions > 0 ? '#d97706' : null },
+  ] : [];
+  const setupTabIds = setupTabs.map(d => d.id);
+  const allTabIds = [...opsTabs, ...setupTabs].map(d => d.id);
+
+  // Legacy hashes: counts→cycle (rename), setup→locations (Setup was split into
+  // Locations + Suppliers tabs under the Setup group).
+  const normalizeInventoryTab = value => ({ counts: 'cycle', setup: 'locations' }[value] || value);
+  const hashTab = normalizeInventoryTab(window.location.hash.replace('#', ''));
+  const [tab, setTab] = useState(allTabIds.includes(hashTab) ? hashTab : 'stock');
+  const group = setupTabIds.includes(tab) ? 'setup' : 'operations';
+  const visibleTabs = group === 'setup' ? setupTabs : opsTabs;
+  const showGroupRow = canManage && setupTabs.length > 0;
+
+  const switchTab = next => {
+    const nextTab = normalizeInventoryTab(next);
+    setTab(nextTab);
+    history.replaceState(null, '', '#' + nextTab);
+  };
+  const switchGroup = g => {
+    const first = (g === 'setup' ? setupTabs : opsTabs)[0];
+    if (first) switchTab(first.id);
+  };
 
   const handleReorderClick = () => {
     setPoLowStockTrigger(true);
     switchTab('orders');
   };
-  const hashTab = normalizeInventoryTab(window.location.hash.replace('#', ''));
-  const [tab, setTab] = useState(INV_TABS.includes(hashTab) ? hashTab : 'stock');
-  const switchTab = t => {
-    const nextTab = normalizeInventoryTab(t);
-    setTab(nextTab);
-    history.replaceState(null, '', '#' + nextTab);
-  };
 
   useEffect(() => {
     const syncFromHash = () => {
       const nextHashTab = normalizeInventoryTab(window.location.hash.replace('#', ''));
-      if (INV_TABS.includes(nextHashTab)) setTab(nextHashTab);
+      if (allTabIds.includes(nextHashTab)) setTab(nextHashTab);
     };
     syncFromHash();
     window.addEventListener('hashchange', syncFromHash);
     return () => window.removeEventListener('hashchange', syncFromHash);
-  }, [INV_TABS.join('|')]);
+  }, [allTabIds.join('|')]);
 
   useEffect(() => {
     const init = async () => {
@@ -67,7 +99,7 @@ export default function InventoryPage() {
         setFeatures(s);
         setProjects(p);
         setLocations(l.data);
-        if (isAdmin) {
+        if (canManage) {
           api.get('/inventory/stock/low').then(r => setLowStockCount(r.data.length)).catch(silentError('inventorypage'));
           api.get('/inventory/uom-conversions').then(r => setPendingConversions(r.data.filter(u => parseFloat(u.factor) === 1).length)).catch(silentError('inventorypage'));
         }
@@ -78,18 +110,21 @@ export default function InventoryPage() {
       }
     };
     init();
-  }, [isAdmin]);
+  }, [canManage]);
 
-  const refreshLocations   = () => api.get('/inventory/locations').then(r => setLocations(r.data)).catch(silentError('inventorypage'));
-  const refreshLowStock    = () => isAdmin && api.get('/inventory/stock/low').then(r => setLowStockCount(r.data.length)).catch(silentError('inventorypage'));
-  const refreshConversions = () => isAdmin && api.get('/inventory/uom-conversions').then(r => setPendingConversions(r.data.filter(u => parseFloat(u.factor) === 1).length)).catch(silentError('inventorypage'));
+  const refreshLowStock    = () => canManage && api.get('/inventory/stock/low').then(r => setLowStockCount(r.data.length)).catch(silentError('inventorypage'));
+  const refreshConversions = () => canManage && api.get('/inventory/uom-conversions').then(r => setPendingConversions(r.data.filter(u => parseFloat(u.factor) === 1).length)).catch(silentError('inventorypage'));
 
-  if (loading) return <div style={styles.loading}>Loading...</div>;
+  if (loading) return (
+    <PageShell currentApp="inventory" features={features} maxWidth={1040}>
+      <div className="ops-loading-state">{t.loading || 'Loading…'}</div>
+    </PageShell>
+  );
 
   if (!features.module_inventory) {
     return (
       <PageShell currentApp="inventory" features={features} maxWidth={760}>
-        <div style={styles.disabled}>
+        <div style={styles.disabled}>
           <h2 style={styles.disabledTitle}>{t.invNotEnabled}</h2>
           <p style={styles.disabledBody}>{t.invNotEnabledBody}</p>
         </div>
@@ -101,54 +136,44 @@ export default function InventoryPage() {
     <PageShell currentApp="inventory" features={features} maxWidth={1040}>
         <PageIntro
           introId="inventory"
-          kicker="Inventory"
-          title={isAdmin ? 'Keep stock, counts, and orders in one place.' : 'Inventory work for today.'}
-          description={isAdmin
-            ? 'Start with stock and transactions. Setup, valuation, conversions, and purchase orders stay nearby when you need deeper tools.'
-            : 'See stock, record movement, and complete count assignments without digging through admin tools.'}
-          meta={isAdmin && (
+          kicker={t.invKicker}
+          title={canManage ? t.invIntroTitleManage : t.invIntroTitleWorker}
+          description={canManage ? t.invIntroDescManage : t.invIntroDescWorker}
+          meta={canManage && (
             <>
-              <span className={`ops-pill ${lowStockCount > 0 ? 'attention' : 'good'}`}>{lowStockCount} low stock</span>
-              <span className={`ops-pill ${pendingConversions > 0 ? 'attention' : ''}`}>{pendingConversions} conversions to review</span>
+              <span className={`ops-pill ${lowStockCount > 0 ? 'attention' : 'good'}`}>{lowStockCount} {t.invPillLowStock}</span>
+              <span className={`ops-pill ${pendingConversions > 0 ? 'attention' : ''}`}>{pendingConversions} {t.invPillConversions}</span>
             </>
           )}
         />
-        <TabBar
-          active={tab}
-          onChange={switchTab}
-          tabs={[
-            { id: 'stock',        label: 'Stock', dot: lowStockCount > 0 ? '#f59e0b' : null },
-            { id: 'transactions', label: 'Transactions' },
-            ...(!isAdmin ? [
-              { id: 'mycount',    label: 'My Count' },
-            ] : []),
-            ...(isAdmin ? [
-              { id: 'items',      label: 'Items' },
-              { id: 'orders',     label: 'Orders' },
-              { id: 'cycle',        label: 'Counts' },
-              { id: 'valuation',    label: 'Valuation' },
-              { id: 'conversions',  label: 'Conversions', dot: pendingConversions > 0 ? '#d97706' : null },
-              { id: 'setup',        label: 'Setup' },
-            ] : []),
-          ]}
-        />
+        {showGroupRow && (
+          <div className="ops-workflow-tabs" role="tablist" aria-label={t.invSectionsAria}>
+            <button type="button" role="tab" aria-selected={group === 'operations'}
+              className={`ops-workflow-tab ${group === 'operations' ? 'is-active' : ''}`.trim()}
+              onClick={() => switchGroup('operations')}>{t.invGroupOperations}</button>
+            <button type="button" role="tab" aria-selected={group === 'setup'}
+              className={`ops-workflow-tab ${group === 'setup' ? 'is-active' : ''}`.trim()}
+              onClick={() => switchGroup('setup')}>{t.invGroupSetup}</button>
+          </div>
+        )}
+        <TabBar active={tab} onChange={switchTab} tabs={visibleTabs} />
 
         {tab === 'stock' && (
           <InventoryStock
-            isAdmin={isAdmin}
+            isAdmin={canManage}
             locations={locations}
             projects={projects}
             settings={features}
             onStockChange={refreshLowStock}
-            onReorderClick={isAdmin ? handleReorderClick : null}
+            onReorderClick={canManage ? handleReorderClick : null}
           />
         )}
-        {tab === 'items' && isAdmin && (
+        {tab === 'items' && canManage && (
           <InventoryItems onItemChange={refreshLowStock} />
         )}
         {tab === 'transactions' && (
           <InventoryTransactions
-            isAdmin={isAdmin}
+            isAdmin={canManage}
             locations={locations}
             projects={projects}
             settings={features}
@@ -156,30 +181,33 @@ export default function InventoryPage() {
             onConversionSaved={refreshConversions}
           />
         )}
-        {tab === 'cycle' && isAdmin && (
+        {tab === 'cycle' && canManage && (
           <InventoryCycleCounts
             locations={locations}
             settings={features}
             onComplete={refreshLowStock}
           />
         )}
-        {tab === 'orders' && isAdmin && (
+        {tab === 'orders' && canManage && (
           <InventoryPurchaseOrders
             locations={locations}
             prefillLowStock={poLowStockTrigger}
             onPrefillHandled={() => setPoLowStockTrigger(false)}
           />
         )}
-        {tab === 'valuation' && isAdmin && (
+        {tab === 'valuation' && canManage && (
           <InventoryValuation locations={locations} />
         )}
-        {tab === 'conversions' && isAdmin && (
+        {tab === 'conversions' && canManage && (
           <InventoryConversions onConversionChange={refreshConversions} />
         )}
-        {tab === 'setup' && isAdmin && (
+        {tab === 'locations' && canManage && (
           <InventorySetup projects={projects} settings={features} />
         )}
-        {tab === 'mycount' && !isAdmin && (
+        {tab === 'suppliers' && canManage && (
+          <SupplierPanel />
+        )}
+        {tab === 'mycount' && !canManage && (
           <MyCount />
         )}
     </PageShell>

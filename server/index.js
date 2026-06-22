@@ -51,10 +51,45 @@ app.use(pinoHttp({
     return 'info';
   },
   serializers: {
-    req: req => ({ method: req.method, url: req.url, ip: req.ip }),
+    // Redact tokens embedded in public path segments before they hit the
+    // log stream. Any `/api/public/<scope>/<verb>/<token>` URL becomes
+    // `/api/public/<scope>/<verb>/[redacted]`. Without this, anyone with
+    // log access could take over by re-using the URL — for booking
+    // manage, estimate accept, change-order accept, lien-waiver sign.
+    req: req => ({
+      method: req.method,
+      url: redactTokenInUrl(req.url),
+      ip: req.ip,
+    }),
     res: res => ({ statusCode: res.statusCode }),
   },
 }));
+
+// Path patterns that end in a tokenized last segment. The redaction is
+// conservative — only the patterns we know carry tokens get scrubbed,
+// so e.g. `/admin/workers/42` keeps the id.
+const TOKENIZED_URL_PATTERNS = [
+  /^(\/api)?\/public\/book\/manage\/([^/?]+)/,
+  /^(\/api)?\/public\/estimates\/(view|accept|decline)\/([^/?]+)/,
+  /^(\/api)?\/public\/change-orders\/(view|accept|decline)\/([^/?]+)/,
+  /^(\/api)?\/public\/lien-waivers\/sign\/([^/?]+)/,
+  /^\/e\/([^/?]+)/,
+  /^\/co\/([^/?]+)/,
+  /^\/lien-waiver-sign\/([^/?]+)/,
+  /^\/book\/manage\/([^/?]+)/,
+];
+function redactTokenInUrl(url) {
+  if (!url) return url;
+  for (const re of TOKENIZED_URL_PATTERNS) {
+    const m = url.match(re);
+    if (m) {
+      // Replace the last capture group (the token) with [redacted].
+      const tokenIndex = m.length - 1;
+      return url.replace(m[tokenIndex], '[redacted]');
+    }
+  }
+  return url;
+}
 
 const ALLOWED_ORIGINS = [
   'https://opsfloa.com',
@@ -94,7 +129,67 @@ app.use('/api', (req, res, next) => {
 
 // Stripe webhook needs raw body before express.json parses it
 app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
+
+// Unauthenticated endpoints never need large bodies — cap them tightly so
+// they can't be abused for memory amplification. The first json parser to
+// run wins (express.json no-ops once req.body is set), so these tight
+// parsers on the public path prefixes take precedence over the 20 MB
+// app-wide limit applied to authenticated routes below. Public gets 1 MB to
+// allow a base64 drawn signature on the lien-waiver sign flow.
+app.use('/api/auth', express.json({ limit: '256kb' }));
+app.use('/api/client-errors', express.json({ limit: '256kb' }));
+app.use('/api/sendgrid-events', express.json({ limit: '1mb' }));
+app.use('/api/public', express.json({ limit: '1mb' }));
 app.use(express.json({ limit: '20mb' }));
+
+// Health probes must be registered before any catch-all authenticated /api
+// routers, otherwise hosting readiness checks receive a 401 before reaching
+// these handlers.
+app.get('/api/health/live', (req, res) => {
+  res.json({ ok: true, uptime: process.uptime() });
+});
+
+app.get('/api/health', async (req, res) => {
+  const checks = {};
+  let healthy = true;
+
+  try {
+    const start = Date.now();
+    await Promise.race([
+      pool.query('SELECT 1'),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('db timeout')), 3000)),
+    ]);
+    checks.db = { ok: true, latency_ms: Date.now() - start };
+  } catch (err) {
+    checks.db = { ok: false, error: err.message };
+    healthy = false;
+  }
+
+  const mem = process.memoryUsage();
+  const heapLimit = v8.getHeapStatistics().heap_size_limit;
+  const heapPct = mem.heapUsed / heapLimit;
+  checks.memory = {
+    ok: heapPct < 0.9,
+    heap_used_mb: Math.round(mem.heapUsed / 1024 / 1024),
+    heap_total_mb: Math.round(mem.heapTotal / 1024 / 1024),
+    heap_limit_mb: Math.round(heapLimit / 1024 / 1024),
+    rss_mb: Math.round(mem.rss / 1024 / 1024),
+  };
+  if (!checks.memory.ok) healthy = false;
+
+  res.status(healthy ? 200 : 503).json({
+    ok: healthy,
+    uptime_s: Math.round(process.uptime()),
+    checks,
+  });
+});
+
+// Establish the request-scoped demo context (suppresses email + surfaces
+// the popup flag for demo tenants). Mounted before routers so it wraps
+// every API request; requireAuth fills in the acting company.
+const { demoContextMiddleware, refreshDemoCompanies } = require('./demoMode');
+app.use('/api', demoContextMiddleware);
+refreshDemoCompanies(); // prime the demo-company cache at startup
 
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/projects', require('./routes/projects'));
@@ -132,6 +227,58 @@ app.use('/api/team', require('./routes/team'));
 const serviceRequestsRoutes = require('./routes/serviceRequests');
 app.use('/api/public/service-requests', serviceRequestsRoutes.publicRouter);
 app.use('/api/admin/service-requests', serviceRequestsRoutes);
+
+// Estimates — admin authenticated for management, token-keyed public
+// for client view/accept/decline (same pattern as service requests).
+const estimatesRoutes = require('./routes/estimates');
+app.use('/api/public/estimates', estimatesRoutes.publicRouter);
+app.use('/api/estimates', requireAuth, requirePlan('business'), estimatesRoutes);
+
+// Per-project budget category CRUD — feeds the spend rollup + budget bar.
+app.use('/api', requireAuth, requirePlan('business'), require('./routes/projectBudget'));
+
+// Per-project spend rollup (Phase 3) + project_expenses CRUD.
+app.use('/api', requireAuth, requirePlan('business'), require('./routes/projectSpend'));
+
+// Subcontractors directory + sub POs + payments. Spend rollup picks
+// the subs bucket up automatically once these tables exist.
+app.use('/api', requireAuth, requirePlan('business'), require('./routes/subcontractors'));
+
+// Material catalog (estimate-line picker) + reusable item search.
+app.use('/api', requireAuth, requirePlan('business'), require('./routes/catalog'));
+
+// P&L dashboard + WIP report — read-only aggregations on top of
+// estimates / budgets / spend / invoices.
+app.use('/api', requireAuth, requirePlan('business'), require('./routes/projectReports'));
+
+// Change orders — mid-project scope adjustments that bump budget categories
+// on accept. Public token-keyed view/accept/decline mirrors estimates.
+const changeOrderRoutes = require('./routes/changeOrders');
+app.use('/api/public/change-orders', changeOrderRoutes.publicRouter);
+app.use('/api', requireAuth, requirePlan('business'), changeOrderRoutes);
+
+// Submittals — architect/owner approval workflow for materials and
+// equipment specs before installation.
+app.use('/api', requireAuth, requirePlan('business'), require('./routes/submittals'));
+
+// Project closeout — checklist orchestrating punchlist + lien waivers
+// + invoices into a single screen. Auto-status items read live from
+// the source modules.
+app.use('/api', requireAuth, requirePlan('business'), require('./routes/closeout'));
+
+// Lien waivers — compliance tracking; conditional/unconditional waivers
+// in either direction. Public token-keyed signing surface for the
+// counterparty.
+const lienWaiverRoutes = require('./routes/lienWaivers');
+app.use('/api/public/lien-waivers', lienWaiverRoutes.publicRouter);
+app.use('/api', requireAuth, requirePlan('business'), lienWaiverRoutes);
+
+// Booking module — appointment scheduling. Admin config + admin book
+// endpoint behind auth; public booking surface (token-keyed) at
+// /api/public/book/:companySlug.
+const bookingRoutes = require('./routes/booking');
+app.use('/api/public/book', bookingRoutes.publicRouter);
+app.use('/api', requireAuth, requirePlan('business'), bookingRoutes);
 app.use('/api/availability', requireAuth, require('./routes/availability'));
 // Unauthenticated: browsers report errors here. The route itself extracts
 // user identity from the auth header when present.
@@ -146,10 +293,10 @@ app.get('/api/settings', requireAuth, async (req, res) => {
   try {
     const [settingsResult, coResult] = await Promise.all([
       pool.query('SELECT key, value FROM settings WHERE company_id = $1', [req.user.company_id]),
-      pool.query('SELECT plan, subscription_status, storage_bytes_used FROM companies WHERE id = $1', [req.user.company_id]),
+      pool.query('SELECT plan, subscription_status, storage_bytes_used, is_demo FROM companies WHERE id = $1', [req.user.company_id]),
     ]);
     const settings = applySettingsRows(settingsResult.rows, SETTINGS_DEFAULTS);
-    const { plan, subscription_status, storage_bytes_used } = coResult.rows[0] || {};
+    const { plan, subscription_status, storage_bytes_used, is_demo } = coResult.rows[0] || {};
     const resolvedPlan = plan || 'free';
     const resolvedStatus = subscription_status || 'trial';
 
@@ -172,7 +319,7 @@ app.get('/api/settings', requireAuth, async (req, res) => {
       plan: resolvedPlan,
       subscription_status: resolvedStatus,
       storage_bytes_used: parseInt(storage_bytes_used ?? 0),
-      storage_limit_bytes: limitForPlan(resolvedPlan),
+      storage_limit_bytes: is_demo ? 200 * 1024 * 1024 : limitForPlan(resolvedPlan),
     });
   } catch (err) {
     req.log.error({ err }, 'GET /api/settings failed');
@@ -192,50 +339,6 @@ app.get('/api/company-info', requireAuth, async (req, res) => {
     req.log.error({ err }, 'GET /api/company-info failed');
     res.status(500).json({ error: 'Server error' });
   }
-});
-
-// Liveness: is the process running? Fast, no dependencies.
-app.get('/api/health/live', (req, res) => {
-  res.json({ ok: true, uptime: process.uptime() });
-});
-
-// Readiness: can we actually serve traffic? Checks DB connectivity.
-// Render uses this to decide whether to route traffic and whether to auto-restart.
-app.get('/api/health', async (req, res) => {
-  const checks = {};
-  let healthy = true;
-
-  // DB ping with a short timeout so a hung DB doesn't hang the health check
-  try {
-    const start = Date.now();
-    await Promise.race([
-      pool.query('SELECT 1'),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('db timeout')), 3000)),
-    ]);
-    checks.db = { ok: true, latency_ms: Date.now() - start };
-  } catch (err) {
-    checks.db = { ok: false, error: err.message };
-    healthy = false;
-  }
-
-  // Memory headroom — flag if we're above 90% of Node's heap limit
-  const mem = process.memoryUsage();
-  const heapLimit = v8.getHeapStatistics().heap_size_limit;
-  const heapPct = mem.heapUsed / heapLimit;
-  checks.memory = {
-    ok: heapPct < 0.9,
-    heap_used_mb: Math.round(mem.heapUsed / 1024 / 1024),
-    heap_total_mb: Math.round(mem.heapTotal / 1024 / 1024),
-    heap_limit_mb: Math.round(heapLimit / 1024 / 1024),
-    rss_mb: Math.round(mem.rss / 1024 / 1024),
-  };
-  if (!checks.memory.ok) healthy = false;
-
-  res.status(healthy ? 200 : 503).json({
-    ok: healthy,
-    uptime_s: Math.round(process.uptime()),
-    checks,
-  });
 });
 
 // Express error handler — bubble unhandled errors to Sentry and log them.

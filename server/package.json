@@ -7,7 +7,8 @@
     "dev": "nodemon index.js",
     "test": "jest",
     "lint:migrations": "node scripts/lintMigrations.js",
-    "seed:demo": "node scripts/seed-demo-data.js"
+    "seed:demo": "node scripts/seed-demo-data.js",
+    "wipe:demo-storage": "node scripts/wipe-demo-storage.js"
   },
   "jest": {
     "testEnvironment": "node"

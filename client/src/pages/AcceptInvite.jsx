@@ -77,5 +77,5 @@ const styles = {
   form: { display: 'flex', flexDirection: 'column', gap: 14 },
   input: { padding: '11px 14px', border: '1px solid #ddd', borderRadius: 8, fontSize: 15 },
   error: { color: '#e53e3e', fontSize: 13 },
-  btn: { padding: '12px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 15, cursor: 'pointer' },
+  btn: { padding: '12px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 15, cursor: 'pointer' },
 };

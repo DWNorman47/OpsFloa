@@ -140,7 +140,7 @@ const styles = {
   progressFill: {
     display: 'block',
     height: '100%',
-    background: '#1a56db',
+    background: 'var(--ops-page-accent)',
     borderRadius: 3,
     transition: 'width 0.3s',
   },
@@ -182,7 +182,7 @@ const styles = {
   stepBtn: {
     fontSize: 12,
     fontWeight: 700,
-    background: '#1a56db',
+    background: 'var(--ops-page-accent)',
     color: '#fff',
     padding: '6px 14px',
     borderRadius: 6,

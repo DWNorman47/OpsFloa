@@ -32,9 +32,13 @@ function runDemoSeed() {
 }
 
 function shouldRunOneTimeProductionDemoSeed() {
-  if (process.env.DEMO_SEED_PRODUCTION_ONCE === 'true') return true;
-  if (process.env.DEMO_SEED_PRODUCTION_ONCE === 'false') return false;
-  return process.env.VERCEL_ENV === 'production' || process.env.VERCEL_GIT_COMMIT_REF === 'main';
+  // Explicit opt-in only. The previous `VERCEL_ENV === 'production' ||
+  // VERCEL_GIT_COMMIT_REF === 'main'` fallback was a foot-gun: the
+  // backend deploys to Render so those env vars are normally absent,
+  // but any future Vercel preview build that inherited PROD_DATABASE_URL
+  // would have silently seeded the demo company into prod. Forcing the
+  // env flag makes the intent explicit and reviewable.
+  return process.env.DEMO_SEED_PRODUCTION_ONCE === 'true';
 }
 
 async function migrate() {

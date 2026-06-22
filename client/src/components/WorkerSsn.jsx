@@ -104,18 +104,18 @@ export default function WorkerSsn({ userId }) {
 }
 
 const styles = {
-  wrap:      { background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 10, padding: '10px 14px', marginTop: 10 },
+  wrap:      { borderTop: '1px solid #eeeeee', padding: '12px 0' },
   row:       { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
-  label:     { fontSize: 13, fontWeight: 700, color: '#111827', flex: '0 0 auto' },
+  label:     { fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, flex: '0 0 auto' },
   value:     { fontSize: 14, color: '#111827', fontFamily: 'ui-monospace, monospace', letterSpacing: 2 },
   viewGroup: { display: 'flex', alignItems: 'center', gap: 10, marginLeft: 'auto', flexWrap: 'wrap' },
   editGroup: { display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto', flexWrap: 'wrap' },
   input:     { padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 7, fontSize: 14, width: 80, letterSpacing: 3, textAlign: 'center', fontFamily: 'ui-monospace, monospace' },
   editBtn:   { padding: '5px 12px', background: 'none', border: '1px solid #d1d5db', borderRadius: 7, fontSize: 12, fontWeight: 600, color: '#374151', cursor: 'pointer' },
   clearBtn:  { padding: '5px 12px', background: 'none', border: '1px solid #fca5a5', borderRadius: 7, fontSize: 12, fontWeight: 600, color: '#b91c1c', cursor: 'pointer' },
-  saveBtn:   { padding: '6px 14px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  saveBtn:   { padding: '6px 14px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   cancelBtn: { padding: '6px 12px', background: '#f3f4f6', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 500, color: '#6b7280', cursor: 'pointer' },
   saved:     { fontSize: 12, color: '#059669', fontWeight: 600 },
-  note:      { fontSize: 11, color: '#6b7280', margin: '6px 0 0' },
+  note:      { fontSize: 11, color: '#6b7280', margin: '7px 0 0', lineHeight: 1.45 },
   error:     { color: '#991b1b', fontSize: 12, marginTop: 6 },
 };

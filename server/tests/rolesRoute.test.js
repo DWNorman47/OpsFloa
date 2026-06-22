@@ -266,6 +266,7 @@ describe('PATCH /admin/workers/:id/role', () => {
         rowCount: 1,
         rows: [{ id: 100, name: 'Admin', parent_role: 'admin', is_builtin: true }],
       })
+      .mockResolvedValueOnce({ rows: [] })        // target role permissions (escalation check)
       .mockResolvedValueOnce({                    // target user lookup
         rowCount: 1,
         rows: [{ id: 99, full_name: 'Bob', current_role_id: 75, current_role_name: 'Worker' }],
@@ -283,6 +284,7 @@ describe('PATCH /admin/workers/:id/role', () => {
         rowCount: 1,
         rows: [{ id: 100, name: 'Admin', parent_role: 'admin', is_builtin: true }],
       })
+      .mockResolvedValueOnce({ rows: [] })        // target role permissions (escalation check)
       .mockResolvedValueOnce({                    // target user lookup (currently Owner)
         rowCount: 1,
         rows: [{ id: 99, full_name: 'Last Owner', current_role_id: 200, current_role_name: 'Owner' }],
@@ -304,6 +306,7 @@ describe('PATCH /admin/workers/:id/role', () => {
         rowCount: 1,
         rows: [{ id: 100, name: 'Admin', parent_role: 'admin', is_builtin: true }],
       })
+      .mockResolvedValueOnce({ rows: [] })        // target role permissions (escalation check)
       .mockResolvedValueOnce({
         rowCount: 1,
         rows: [{ id: 99, full_name: 'Demoted Owner', current_role_id: 200, current_role_name: 'Owner' }],
@@ -323,5 +326,21 @@ describe('PATCH /admin/workers/:id/role', () => {
       .patch('/api/admin/workers/99/role')
       .send({});
     expect(res.status).toBe(400);
+  });
+
+  test('ESCALATION blocked: cannot grant a role with a permission the granter lacks', async () => {
+    // Granter (an Admin) lacks manage_billing; the target role has it.
+    mockUserPermissions = new Set(['approve_entries']);
+    pool.query
+      .mockResolvedValueOnce({                    // target role lookup
+        rowCount: 1,
+        rows: [{ id: 200, name: 'Bookkeeper', parent_role: 'admin', is_builtin: false }],
+      })
+      .mockResolvedValueOnce({ rows: [{ permission: 'manage_billing' }] }); // target role perms
+    const res = await request(makeApp())
+      .patch('/api/admin/workers/99/role')
+      .send({ role_id: 200 });
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('role_exceeds_granter');
   });
 });

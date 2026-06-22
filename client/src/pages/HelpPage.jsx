@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useT } from '../hooks/useT';
 import AppHeader from '../components/AppHeader';
 import OfflineBanner from '../components/OfflineBanner';
 import { HELP_SECTIONS } from '../helpContent';
@@ -15,6 +16,7 @@ import { silentError } from '../errorReporter';
  */
 export default function HelpPage() {
   const { user } = useAuth();
+  const t = useT();
   const [settings, setSettings] = useState(null);
   // First section is open by default, plus whatever the URL hash points at.
   const [open, setOpen] = useState(() => {
@@ -67,15 +69,13 @@ export default function HelpPage() {
 
       <main id="main-content" style={styles.main} className="mobile-main">
         <div style={styles.headerCard}>
-          <h1 style={styles.h1}>Help &amp; FAQ</h1>
+          <h1 style={styles.h1}>{t.helpTitle}</h1>
           <p style={styles.lead}>
-            Common questions about using OpsFloa. Search below, or jump to a
-            section. Can't find your answer? Open Administration → Account
-            and send a support message.
+            {t.helpLead}
           </p>
           <input
             type="search"
-            placeholder="Search help…"
+            placeholder={t.helpSearchPlaceholder}
             style={styles.search}
             value={query}
             onChange={e => setQuery(e.target.value)}
@@ -83,7 +83,7 @@ export default function HelpPage() {
         </div>
 
         {!q && (
-          <nav style={styles.toc} aria-label="Help sections">
+          <nav style={styles.toc} aria-label={t.helpSectionsAria}>
             {HELP_SECTIONS.map(s => (
               <a
                 key={s.id}
@@ -101,8 +101,7 @@ export default function HelpPage() {
 
         {filtered.length === 0 && (
           <div style={styles.empty}>
-            No matches for "{query}". Try fewer or different words, or browse
-            the sections by clearing the search.
+            {t.helpNoMatchesPre} "{query}". {t.helpNoMatchesPost}
           </div>
         )}
 
@@ -111,13 +110,12 @@ export default function HelpPage() {
         {(user?.role === 'admin' || user?.role === 'super_admin') && !q && (
           <div style={styles.actionCard}>
             <div>
-              <div style={styles.actionTitle}>Run setup again</div>
+              <div style={styles.actionTitle}>{t.helpSetupTitle}</div>
               <div style={styles.actionSub}>
-                Walk through the setup questions again to revise which modules and
-                features your company uses. Your existing data won&apos;t be touched.
+                {t.helpSetupSub}
               </div>
             </div>
-            <a href="/administration?setup=1" style={styles.actionBtn}>Run setup</a>
+            <a href="/administration?setup=1" style={styles.actionBtn}>{t.helpOpenSetup}</a>
           </div>
         )}
 
@@ -165,7 +163,7 @@ export default function HelpPage() {
 }
 
 const styles = {
-  page: { minHeight: '100vh', background: '#f4f6f9' },
+  page: { minHeight: '100vh', background: '#f4f6f9', '--ops-page-accent': '#475569' },
   main: { maxWidth: 760, margin: '24px auto', padding: '0 16px', display: 'flex', flexDirection: 'column', gap: 16 },
   headerCard: { background: '#fff', borderRadius: 12, padding: '20px 24px', boxShadow: '0 1px 6px rgba(0,0,0,0.06)' },
   h1: { fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' },
@@ -189,7 +187,7 @@ const styles = {
   },
   tocLink: {
     fontSize: 13,
-    color: '#1a56db',
+    color: 'var(--ops-page-accent)',
     textDecoration: 'none',
     padding: '4px 10px',
     borderRadius: 6,
@@ -239,7 +237,7 @@ const styles = {
   actionTitle: { fontSize: 14, fontWeight: 600, color: '#111827' },
   actionSub: { fontSize: 13, color: '#6b7280', marginTop: 4, lineHeight: 1.5 },
   actionBtn: {
-    background: '#1a56db',
+    background: 'var(--ops-page-accent)',
     color: '#fff',
     padding: '8px 16px',
     borderRadius: 7,

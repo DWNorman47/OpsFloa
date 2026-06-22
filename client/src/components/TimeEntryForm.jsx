@@ -182,6 +182,6 @@ const styles = {
   wageIndicator: { fontSize: 13, color: '#555', padding: '6px 2px' },
   error: { color: '#e53e3e', fontSize: 13 },
   success: { color: '#38a169', fontSize: 13 },
-  button: { padding: '11px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 8, fontSize: 15, fontWeight: 600 },
+  button: { padding: '11px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 15, fontWeight: 600 },
   charCount: { fontSize: 11, color: '#6b7280' },
 };

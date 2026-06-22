@@ -186,8 +186,8 @@ describe.each([['English'], ['Spanish']])('smoke: admin pages (%s)', (language) 
   const admin = makeUser('admin', { language });
 
   test('AdminDashboard', async () => {
-    const { default: AdminDashboard } = await import('../pages/AdminDashboard');
-    await smokeRender(<AdminDashboard />, { user: admin });
+    const { WorkforcePanel } = await import('../pages/AdminDashboard');
+    await smokeRender(<WorkforcePanel />, { user: admin });
   });
 
   test('AdministrationPage', async () => {
@@ -195,7 +195,7 @@ describe.each([['English'], ['Spanish']])('smoke: admin pages (%s)', (language) 
     await smokeRender(<AdministrationPage />, { user: admin });
   });
 
-  test('AnalyticsPage', async () => {
+  test('Reports — Performance tab (Analytics)', async () => {
     const api = (await import('../api')).default;
     // Analytics dashboard destructures { summary, daily_hours, ... } from the
     // response — a bare [] would crash it. Return a minimal valid shape.
@@ -215,8 +215,10 @@ describe.each([['English'], ['Spanish']])('smoke: admin pages (%s)', (language) 
       }
       return Promise.resolve({ data: [] });
     });
-    const { default: AnalyticsPage } = await import('../pages/AnalyticsPage');
-    await smokeRender(<AnalyticsPage />, { user: admin });
+    // Analytics lives as the Performance tab of the Reports module now.
+    // Business plan so the dashboard (not the upgrade prompt) renders.
+    const { default: FinancialReportsPage } = await import('../pages/FinancialReportsPage');
+    await smokeRender(<FinancialReportsPage />, { user: makeUser('admin', { plan: 'business' }) });
   });
 
   test('ProjectsPage', async () => {
@@ -377,8 +379,8 @@ describe('smoke: populated list views (catches sub-component bugs)', () => {
       if (url.startsWith('/settings')) return Promise.resolve({ data: DEFAULT_SETTINGS });
       return Promise.resolve({ data: [] });
     });
-    const { default: AdminDashboard } = await import('../pages/AdminDashboard');
-    await smokeRender(<AdminDashboard />, { user: makeUser('admin') });
+    const { WorkforcePanel } = await import('../pages/AdminDashboard');
+    await smokeRender(<WorkforcePanel />, { user: makeUser('admin') });
   });
 
   test('ProjectsPage renders at least one ProjectCard (admin)', async () => {
@@ -425,8 +427,8 @@ describe('smoke: offline mode', () => {
   });
 
   test('AdminDashboard (admin, offline)', async () => {
-    const { default: AdminDashboard } = await import('../pages/AdminDashboard');
-    await smokeRender(<AdminDashboard />, { user: makeUser('admin'), offlineValue: OFFLINE_VALUE });
+    const { WorkforcePanel } = await import('../pages/AdminDashboard');
+    await smokeRender(<WorkforcePanel />, { user: makeUser('admin'), offlineValue: OFFLINE_VALUE });
   });
 
   test('FieldPage (worker, offline)', async () => {
@@ -461,8 +463,8 @@ describe('smoke: API error states', () => {
   });
 
   test('AdminDashboard (admin, all requests reject)', async () => {
-    const { default: AdminDashboard } = await import('../pages/AdminDashboard');
-    await smokeRender(<AdminDashboard />, { user: makeUser('admin') });
+    const { WorkforcePanel } = await import('../pages/AdminDashboard');
+    await smokeRender(<WorkforcePanel />, { user: makeUser('admin') });
   });
 
   test('ProjectsPage (admin, all requests reject)', async () => {
@@ -475,9 +477,9 @@ describe('smoke: API error states', () => {
     await smokeRender(<TeamPage />, { user: makeUser('admin') });
   });
 
-  test('AnalyticsPage (admin, all requests reject)', async () => {
-    const { default: AnalyticsPage } = await import('../pages/AnalyticsPage');
-    await smokeRender(<AnalyticsPage />, { user: makeUser('admin') });
+  test('Reports (admin, all requests reject)', async () => {
+    const { default: FinancialReportsPage } = await import('../pages/FinancialReportsPage');
+    await smokeRender(<FinancialReportsPage />, { user: makeUser('admin') });
   });
 });
 
@@ -529,8 +531,8 @@ describe.each([
         return Promise.resolve({ data: { ...DEFAULT_SETTINGS, subscription_status, plan } });
       return Promise.resolve({ data: [] });
     });
-    const { default: AdminDashboard } = await import('../pages/AdminDashboard');
-    await smokeRender(<AdminDashboard />, {
+    const { WorkforcePanel } = await import('../pages/AdminDashboard');
+    await smokeRender(<WorkforcePanel />, {
       user: makeUser('admin', { subscription_status, plan }),
     });
   });

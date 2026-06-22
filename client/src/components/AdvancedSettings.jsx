@@ -230,7 +230,7 @@ const s = {
   removeBtn:     { fontSize: 12, fontWeight: 600, background: '#fee2e2', color: '#991b1b', border: 'none', borderRadius: 6, padding: '6px 12px', cursor: 'pointer', minHeight: 28 },
   addRow:        { display: 'flex', gap: 8, marginTop: 8 },
   addInput:      { flex: 1, padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: 7, fontSize: 14 },
-  addBtn:        { padding: '7px 16px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 13, cursor: 'pointer' },
+  addBtn:        { padding: '7px 16px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 13, cursor: 'pointer' },
   saveBtn:       { marginTop: 10, padding: '8px 20px', background: '#059669', color: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 13, cursor: 'pointer', alignSelf: 'flex-start' },
   errorMsg:      { color: '#dc2626', fontSize: 13 },
   successMsg:    { color: '#059669', fontSize: 13, fontWeight: 600 },

@@ -1,11 +1,13 @@
 const router = require('express').Router();
 const bcrypt = require('bcryptjs');
 const logger = require('../logger');
+const { csvCell } = require('../utils/csv');
+const { escapeHtml } = require('../utils/htmlEscape');
 const crypto = require('crypto');
 const sgMail = require('@sendgrid/mail');
 const rateLimit = require('express-rate-limit');
 const { userOrIpKey } = require('../middleware/rateLimitKey');
-const { entryInstants, validLocalDate } = require('../utils/timeFormat');
+const { entryInstants, validLocalDate, wallClockInTZ } = require('../utils/timeFormat');
 const { PROJECT_STATUSES } = require('../constants/projectEnums');
 const pool = require('../db');
 
@@ -157,7 +159,11 @@ router.get('/settings', requireAdmin, async (req, res) => {
 router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (req, res) => {
   const rateKeys = ['prevailing_wage_rate', 'default_hourly_rate', 'overtime_multiplier'];
   const notifKeys = ['notification_inactive_days', 'notification_start_hour', 'notification_end_hour', 'chat_retention_days'];
-  const numericKeys = [...rateKeys, ...notifKeys, 'overtime_threshold', 'media_retention_days', 'qbo_bill_terms_days', 'week_start'];
+  // shift_reminder_hour / pto_annual_days / cycle_count_* sat in
+  // ADMIN_SETTINGS_DEFAULTS without being in this allowlist, so the UI
+  // couldn't update them. Added during 2026-04-30 audit pass.
+  const adminNumericKeys = ['shift_reminder_hour', 'pto_annual_days', 'cycle_count_audit_pct', 'cycle_count_reconcile_threshold'];
+  const numericKeys = [...rateKeys, ...notifKeys, ...adminNumericKeys, 'overtime_threshold', 'media_retention_days', 'qbo_bill_terms_days', 'week_start'];
   const stringKeys = ['overtime_rule', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_work', 'label_client', 'label_worker', 'label_field'];
   const allowed = [...numericKeys, ...stringKeys, ...FEATURE_KEYS];
   const companyId = req.user.company_id;
@@ -469,9 +475,12 @@ router.post('/clock-out/:user_id', requireAdmin, requirePerm('manage_workers'), 
 
     const clockInTime = new Date(clock.clock_in_time);
     const clockOutTime = new Date();
-    const pad = n => String(n).padStart(2, '0');
-    const start_time = `${pad(clockInTime.getUTCHours())}:${pad(clockInTime.getUTCMinutes())}:${pad(clockInTime.getUTCSeconds())}`;
-    const end_time = `${pad(clockOutTime.getUTCHours())}:${pad(clockOutTime.getUTCMinutes())}:${pad(clockOutTime.getUTCSeconds())}`;
+    // Use the worker's stored timezone for the wall-clock fallback — the
+    // server runs in UTC so a raw getUTCHours() would stamp the wrong
+    // wall-clock for any worker outside that zone. start_ts / end_ts
+    // below are real UTC instants and remain correct.
+    const start_time = wallClockInTZ(clockInTime,  clock.timezone);
+    const end_time   = wallClockInTZ(clockOutTime, clock.timezone);
 
     const client = await pool.connect();
     let entryResult;
@@ -1040,15 +1049,28 @@ const inviteLimiter = rateLimit({
 });
 router.post('/workers/invite', requireAdmin, requirePerm('manage_workers'), inviteLimiter, async (req, res) => {
   const full_name = req.body.full_name?.trim();
+  const firstName = req.body.first_name?.trim() || null;
+  const lastName = req.body.last_name?.trim() || null;
   const email = req.body.email?.trim();
   const { role, language, hourly_rate } = req.body;
   if (!full_name || !email) return res.status(400).json({ error: 'full_name and email required' });
   if (!isValidEmail(email)) return res.status(400).json({ error: 'Invalid email address' });
   if (full_name.length > 100) return res.status(400).json({ error: 'Full name must be 100 characters or fewer' });
+  if (firstName && firstName.length > 100) return res.status(400).json({ error: 'First name must be 100 characters or fewer' });
+  if (lastName && lastName.length > 100) return res.status(400).json({ error: 'Last name must be 100 characters or fewer' });
   const companyId = req.user.company_id;
   const VALID_LANGUAGES = ['English', 'Spanish'];
+  const VALID_OT_RULES = ['daily', 'weekly', 'none'];
+  const VALID_WORKER_TYPES = ['employee', 'contractor', 'subcontractor', 'owner'];
   const assignedRole = role === 'admin' ? 'admin' : 'worker';
   const assignedLanguage = VALID_LANGUAGES.includes(language) ? language : 'English';
+  const assignedRateType = ['hourly', 'daily'].includes(req.body.rate_type) ? req.body.rate_type : 'hourly';
+  const assignedOTRule = VALID_OT_RULES.includes(req.body.overtime_rule) ? req.body.overtime_rule : 'daily';
+  const assignedWorkerType = VALID_WORKER_TYPES.includes(req.body.worker_type) ? req.body.worker_type : 'employee';
+  const assignedClassification = req.body.classification?.trim() || null;
+  if (assignedClassification && assignedClassification.length > 100) {
+    return res.status(400).json({ error: 'classification must be 100 characters or fewer' });
+  }
   const rateVal = parseFloat(hourly_rate);
   if (hourly_rate !== undefined && (isNaN(rateVal) || rateVal < 0)) {
     return res.status(400).json({ error: 'hourly_rate must be a non-negative number' });
@@ -1109,12 +1131,28 @@ router.post('/workers/invite', requireAdmin, requirePerm('manage_workers'), invi
   const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
   try {
     const result = await pool.query(
-      `INSERT INTO users (company_id, username, password_hash, full_name, role, role_id, language, hourly_rate, email, invite_token, invite_token_expires, invite_pending)
-       VALUES ($1, $2, '', $3, $4, $5, $6, $7, $8, $9, $10, true)
-       RETURNING id, username, full_name, role, role_id, language, hourly_rate, email`,
-      [companyId, username, full_name, resolvedLegacyRole, resolvedRoleId, assignedLanguage, assignedRate, email, tokenHash, expires]
+      `INSERT INTO users (
+         company_id, username, password_hash, full_name, first_name, last_name,
+         role, role_id, language, hourly_rate, rate_type, overtime_rule,
+         worker_type, classification, email, invite_token, invite_token_expires, invite_pending
+       )
+       VALUES ($1, $2, '', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, true)
+       RETURNING id, username, full_name, first_name, last_name, role, role_id,
+                 language, hourly_rate, rate_type, overtime_rule, worker_type,
+                 classification, email`,
+      [
+        companyId, username, full_name, firstName, lastName,
+        resolvedLegacyRole, resolvedRoleId, assignedLanguage, assignedRate,
+        assignedRateType, assignedOTRule, assignedWorkerType,
+        assignedClassification, email, tokenHash, expires,
+      ]
     );
-    await logAudit(companyId, req.user.id, req.user.full_name, 'worker.invited', 'worker', result.rows[0].id, full_name, { email });
+    await logAudit(companyId, req.user.id, req.user.full_name, 'worker.invited', 'worker', result.rows[0].id, full_name, {
+      email,
+      role_id: resolvedRoleId,
+      worker_type: assignedWorkerType,
+      classification: assignedClassification,
+    });
     const inviteUrl = `${process.env.APP_URL}/accept-invite?token=${token}`;
     let emailSent = true;
     try {
@@ -1133,7 +1171,7 @@ router.post('/workers/invite', requireAdmin, requirePerm('manage_workers'), invi
         `,
       });
     } catch (emailErr) {
-      console.error('Invite email failed:', emailErr?.response?.body || emailErr.message);
+      logger.error({ err: emailErr?.response?.body || emailErr }, 'Invite email failed');
       emailSent = false;
     }
     res.status(201).json({ ...result.rows[0], email_sent: emailSent });
@@ -1180,7 +1218,7 @@ router.post('/workers/:id/send-invite', requireAdmin, requirePerm('manage_worker
         `,
       });
     } catch (emailErr) {
-      console.error('Send invite email failed:', emailErr?.response?.body || emailErr.message);
+      logger.error({ err: emailErr?.response?.body || emailErr }, 'Send invite email failed');
       emailSent = false;
     }
     res.json({ email_sent: emailSent });
@@ -1358,7 +1396,12 @@ router.patch('/workers/:id', requireAdmin, requirePerm('manage_workers'),
     if (middle_name !== undefined) { fields.push(`middle_name = $${idx++}`); values.push(middle_name || null); }
     if (last_name !== undefined) { fields.push(`last_name = $${idx++}`); values.push(last_name || null); }
     if (username) { fields.push(`username = $${idx++}`); values.push(username.toLowerCase().trim()); }
-    if (assignedRole !== undefined) { fields.push(`role = $${idx++}`); values.push(assignedRole); }
+    if (assignedRole !== undefined) {
+      fields.push(`role = $${idx++}`); values.push(assignedRole);
+      // A role change alters the authorization claims baked into the user's
+      // JWT — bump token_version so the stale token is rejected next request.
+      fields.push(`token_version = COALESCE(token_version, 0) + 1`);
+    }
     if (language) { fields.push(`language = $${idx++}`); values.push(language); }
     if (hourly_rate !== undefined) {
       const rv = parseFloat(hourly_rate);
@@ -1432,7 +1475,7 @@ router.patch('/workers/:id/permissions', requireAdmin, requirePerm('manage_roles
   }
   try {
     const result = await pool.query(
-      `UPDATE users SET admin_permissions = $1
+      `UPDATE users SET admin_permissions = $1, token_version = COALESCE(token_version, 0) + 1
        WHERE id = $2 AND company_id = $3 AND role = 'admin' RETURNING id, full_name, admin_permissions`,
       [perms ? JSON.stringify(perms) : null, req.params.id, req.user.company_id]
     );
@@ -1459,7 +1502,7 @@ router.patch('/workers/:id/worker-access', requireAdmin, requirePerm('manage_rol
   }
   try {
     const result = await pool.query(
-      `UPDATE users SET worker_access_ids = $1 WHERE id = $2 AND company_id = $3 AND role = 'admin' RETURNING id, full_name, worker_access_ids`,
+      `UPDATE users SET worker_access_ids = $1, token_version = COALESCE(token_version, 0) + 1 WHERE id = $2 AND company_id = $3 AND role = 'admin' RETURNING id, full_name, worker_access_ids`,
       [ids, req.params.id, req.user.company_id]
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Admin not found' });
@@ -1475,8 +1518,11 @@ router.delete('/workers/:id', requireAdmin, requirePerm('manage_workers'), async
   const companyId = req.user.company_id;
   try {
     const worker = await pool.query('SELECT full_name FROM users WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
+    // Bump token_version so any live JWT for this user is invalidated on the
+    // next request (belt-and-suspenders alongside the requireAuth active check).
     const result = await pool.query(
-      'UPDATE users SET active = false WHERE id = $1 AND active = true AND company_id = $2 RETURNING id',
+      `UPDATE users SET active = false, token_version = COALESCE(token_version, 0) + 1
+        WHERE id = $1 AND active = true AND company_id = $2 RETURNING id`,
       [req.params.id, companyId]
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Worker not found' });
@@ -1912,7 +1958,7 @@ router.post('/projects', requireAdmin, requirePerm('manage_projects'),
         if (customer?.Id) {
           await pool.query('UPDATE projects SET qbo_customer_id = $1 WHERE id = $2', [customer.Id, newProject.id]);
         }
-      } catch (err) { console.error('[QBO auto-create customer]', err.message); }
+      } catch (err) { logger.error({ err }, '[QBO auto-create customer]'); }
     });
   } catch (err) {
     if (err.code === '23505') {
@@ -1955,6 +2001,23 @@ router.get('/projects/:id/photos', requireAdmin, async (req, res) => {
 });
 
 // Project documents
+//
+// Both endpoints below verify project ownership before touching anything.
+// Without this check, an admin could mint upload URLs or attach document
+// rows against a project_id belonging to another tenant — project IDs are
+// sequential ints, so they're guessable. The read endpoints already
+// filter `WHERE project_id = $1 AND company_id = $2`, so cross-tenant rows
+// wouldn't be visible to the victim, but they would sit in the DB tied
+// to the wrong project and could leak through any future join that
+// forgets the company scope.
+async function assertProjectInCompany(projectId, companyId) {
+  const r = await pool.query(
+    'SELECT 1 FROM projects WHERE id = $1 AND company_id = $2 LIMIT 1',
+    [projectId, companyId]
+  );
+  return r.rowCount > 0;
+}
+
 router.get('/projects/:id/documents/upload-url', requireAdmin, async (req, res) => {
   const { filename, contentType } = req.query;
   if (!filename || !contentType) return res.status(400).json({ error: 'filename and contentType required' });
@@ -1965,6 +2028,9 @@ router.get('/projects/:id/documents/upload-url', requireAdmin, async (req, res) 
     'image/jpeg', 'image/png', 'image/webp', 'text/plain', 'text/csv'];
   if (!ALLOWED.includes(contentType)) return res.status(400).json({ error: 'File type not allowed' });
   try {
+    if (!(await assertProjectInCompany(req.params.id, req.user.company_id))) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
     const ext = filename.split('.').pop().toLowerCase();
     const { getPresignedUploadUrl } = require('../r2');
     const { uploadUrl, publicUrl } = await getPresignedUploadUrl('documents', ext, contentType);
@@ -1977,6 +2043,9 @@ router.post('/projects/:id/documents', requireAdmin, async (req, res) => {
   if (!name || !url) return res.status(400).json({ error: 'name and url required' });
   const companyId = req.user.company_id;
   try {
+    if (!(await assertProjectInCompany(req.params.id, companyId))) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
     const result = await pool.query(
       `INSERT INTO project_documents (company_id, project_id, name, url, size_bytes, uploaded_by)
        VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
@@ -2199,30 +2268,50 @@ router.get('/projects/:id/media-zip', requireAdmin, async (req, res) => {
        WHERE t.company_id = $1 AND t.project_id = $2 AND a.url IS NOT NULL`,
       [companyId, req.params.id]
     );
-    const urls = [
+    // Bound the URLs we'll fetch to known R2 / CDN hosts. The URL column
+    // is populated from R2 upload responses today, but a bad row from a
+    // future import, raw SQL, or compromised endpoint could otherwise
+    // point this fetch at an internal address (169.254.169.254, RFC1918,
+    // metadata services) — classic SSRF. Reject anything that doesn't
+    // match the allow-list before we touch the network.
+    const r2Public = (process.env.R2_PUBLIC_URL || '').replace(/\/+$/, '');
+    const allowedHostnames = new Set();
+    try { if (r2Public) allowedHostnames.add(new URL(r2Public).hostname); } catch { /* env unset / malformed */ }
+    const isAllowedUrl = u => {
+      try {
+        const p = new URL(u);
+        if (p.protocol !== 'https:' && p.protocol !== 'http:') return false;
+        return allowedHostnames.size === 0 ? false : allowedHostnames.has(p.hostname);
+      } catch { return false; }
+    };
+    const allUrls = [
       ...photos.rows.map(r => r.url),
       ...attachments.rows.map(r => r.url),
     ];
+    const urls = allUrls.filter(isAllowedUrl);
+    const skipped = allUrls.length - urls.length;
+    if (skipped > 0) {
+      logger.warn({ project_id: req.params.id, skipped }, 'media-zip: dropped URLs not on allow-list');
+    }
 
     if (urls.length === 0) return res.status(404).json({ error: 'No media found for this project' });
 
     const archiver = require('archiver');
     const https = require('https');
-    const http = require('http');
 
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${projectName}_media.zip"`);
 
     const archive = archiver('zip', { zlib: { level: 6 } });
     archive.pipe(res);
-    archive.on('error', err => { console.error('[media-zip]', err); });
+    archive.on('error', err => { logger.error({ err }, 'media-zip archive error'); });
 
-    // Fetch and append each file; resolve once the http response stream begins
+    // Only https. The allow-list above rejected anything else, so we
+    // don't need the http module at all anymore.
     await Promise.all(urls.map((url, i) => new Promise(resolve => {
       const ext = url.split('?')[0].split('.').pop().toLowerCase() || 'bin';
       const filename = `${String(i + 1).padStart(4, '0')}.${ext}`;
-      const mod = url.startsWith('https') ? https : http;
-      mod.get(url, stream => {
+      https.get(url, stream => {
         archive.append(stream, { name: filename });
         resolve();
       }).on('error', resolve);
@@ -2603,7 +2692,7 @@ router.patch('/entries/:id/approve', requireAdmin, requirePerm('approve_entries'
     if (worker.rows[0]?.email) {
       const { work_date, start_time, end_time } = result.rows[0];
       sendEmail(worker.rows[0].email, 'Time entry approved ✓',
-        `<p>Hi ${worker.rows[0].full_name},</p><p>Your time entry for <b>${work_date?.toString().substring(0,10)}</b> (${start_time}–${end_time}) has been <b style="color:#059669">approved</b>.</p><p>— OpsFloa</p>`);
+        `<p>Hi ${escapeHtml(worker.rows[0].full_name)},</p><p>Your time entry for <b>${work_date?.toString().substring(0,10)}</b> (${start_time}–${end_time}) has been <b style="color:#059669">approved</b>.</p><p>— OpsFloa</p>`);
     }
     const entry = result.rows[0];
     sendPushToUser(entry.user_id, { title: 'Time entry approved', body: 'An admin approved your time entry.', url: '/timeclock' });
@@ -2645,7 +2734,7 @@ router.patch('/entries/:id/approve', requireAdmin, requirePerm('approve_entries'
           [activity?.Id || 'synced', entry.id]
         );
       } catch (err) {
-        console.error('[QBO auto-sync]', err.message);
+        logger.error({ err }, '[QBO auto-sync]');
         pool.query(
           'INSERT INTO qbo_sync_errors (company_id, entity_type, entity_id, error_message) VALUES ($1, $2, $3, $4)',
           [companyId, 'time_entry', entry.id, err.message]
@@ -2704,7 +2793,7 @@ router.patch('/entries/:id/approve', requireAdmin, requirePerm('approve_entries'
             sendEmail(admin.email, subject, body);
           }
         } catch (alertErr) {
-          console.error('Budget alert error:', alertErr);
+          logger.error({ err: alertErr }, 'Budget alert error');
         }
       });
     }
@@ -2736,7 +2825,7 @@ router.patch('/entries/:id/reject', requireAdmin, requirePerm('approve_entries')
     if (rejWorker.rows[0]?.email) {
       const { work_date, start_time, end_time } = result.rows[0];
       sendEmail(rejWorker.rows[0].email, 'Time entry rejected',
-        `<p>Hi ${rejWorker.rows[0].full_name},</p><p>Your time entry for <b>${work_date?.toString().substring(0,10)}</b> (${start_time}–${end_time}) was <b style="color:#ef4444">rejected</b>${note ? ` with the note: <i>${note}</i>` : ''}.</p><p>Please log in to review and resubmit.</p><p>— OpsFloa</p>`);
+        `<p>Hi ${escapeHtml(rejWorker.rows[0].full_name)},</p><p>Your time entry for <b>${work_date?.toString().substring(0,10)}</b> (${start_time}–${end_time}) was <b style="color:#ef4444">rejected</b>${note ? ` with the note: <i>${escapeHtml(note)}</i>` : ''}.</p><p>Please log in to review and resubmit.</p><p>— OpsFloa</p>`);
     }
     const rejEntry = result.rows[0];
     sendPushToUser(rejEntry.user_id, {
@@ -2754,7 +2843,7 @@ router.patch('/entries/:id/reject', requireAdmin, requirePerm('approve_entries')
         try {
           await qbo.deleteTimeActivity(companyId, rejEntry.qbo_activity_id);
           await pool.query('UPDATE time_entries SET qbo_activity_id = NULL, qbo_synced_at = NULL WHERE id = $1 AND company_id = $2', [rejEntry.id, companyId]);
-        } catch (err) { console.error('[QBO delete on reject]', err.message); }
+        } catch (err) { logger.error({ err }, '[QBO delete on reject]'); }
       });
     }
   } catch (err) {
@@ -2790,7 +2879,7 @@ router.patch('/entries/:id/unapprove', requireAdmin, requirePerm('approve_entrie
     if (existingActivityId && existingActivityId !== 'synced') {
       setImmediate(async () => {
         try { await qbo.deleteTimeActivity(companyId, existingActivityId); }
-        catch (err) { console.error('[QBO delete on unapprove]', err.message); }
+        catch (err) { logger.error({ err }, '[QBO delete on unapprove]'); }
       });
     }
   } catch (err) {
@@ -2886,7 +2975,7 @@ router.get('/export', requireAdmin, requirePerm('view_reports'), requirePlan('st
        ORDER BY te.work_date, COALESCE(u.invoice_name, u.full_name), te.start_time`,
       values
     );
-    const esc = v => v == null ? '' : `"${String(v).replace(/"/g, '""')}"`;
+    const esc = csvCell; // RFC-4180 quoting + spreadsheet formula-injection guard
     const fmtTime = t => { const [h, m] = t.split(':'); const hr = parseInt(h); return `${hr % 12 || 12}:${m} ${hr < 12 ? 'AM' : 'PM'}`; };
     const netHours = (s, e, brk) => (hoursWorked(s, e) - (brk || 0) / 60).toFixed(2);
     const headers = ['Worker', 'Project', 'Date', 'Start', 'End', 'Break (min)', 'Net Hours', 'Wage Type', 'Mileage (mi)', 'Status', 'Notes'];
@@ -3020,7 +3109,7 @@ router.get('/payroll-export', requireAdmin, requirePerm('view_reports'), require
       byWorker[e.user_id].push(e);
     });
 
-    const esc = v => v == null ? '' : `"${String(v).replace(/"/g, '""')}"`;
+    const esc = csvCell; // RFC-4180 quoting + spreadsheet formula-injection guard
     const headers = ['Worker', 'Rate Type', 'Overtime', 'Rate', 'Regular Hrs', 'OT Hrs', 'Prevailing Hrs', 'Total Hrs', 'Mileage (mi)', 'Regular Pay', 'OT Pay', 'Prevailing Pay', 'Total Pay'];
     const lines = [headers.join(',')];
 
@@ -3297,10 +3386,10 @@ router.post('/support', requireAdmin, async (req, res) => {
   const userName = req.user.full_name || req.user.username || 'Unknown user';
   const userEmail = req.user.email || '';
   const subjectLine = subject?.trim() ? subject.trim() : 'Support Request';
-  const body = '<p><strong>From:</strong> ' + userName + ' (' + userEmail + ')</p>' +
-    '<p><strong>Company:</strong> ' + companyName + '</p>' +
-    '<p><strong>Subject:</strong> ' + subjectLine + '</p><hr/>' +
-    '<p>' + message.trim().replace(/\n/g, '<br/>') + '</p>';
+  const body = '<p><strong>From:</strong> ' + escapeHtml(userName) + ' (' + escapeHtml(userEmail) + ')</p>' +
+    '<p><strong>Company:</strong> ' + escapeHtml(companyName) + '</p>' +
+    '<p><strong>Subject:</strong> ' + escapeHtml(subjectLine) + '</p><hr/>' +
+    '<p>' + escapeHtml(message.trim()).replace(/\n/g, '<br/>') + '</p>';
   await sendEmail('support@opsfloa.com', '[OpsFloa Support] ' + subjectLine + ' — ' + companyName, body);
   res.json({ ok: true });
 });
@@ -3355,13 +3444,17 @@ router.get('/clients', requireAdmin, async (req, res) => {
 router.post('/clients', requireAdmin, async (req, res) => {
   const { name, contact_name, contact_email, contact_phone, address, notes } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'Client name is required' });
+  // Preferred document language for estimate/CO PDFs; falls back to
+  // English if absent or unrecognised. CHECK constraint is the backstop.
+  const VALID_LANGUAGES = ['English', 'Spanish'];
+  const language = VALID_LANGUAGES.includes(req.body.language) ? req.body.language : 'English';
   const companyId = req.user.company_id;
   try {
     const result = await pool.query(
-      `INSERT INTO clients (company_id, name, contact_name, contact_email, contact_phone, address, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      `INSERT INTO clients (company_id, name, contact_name, contact_email, contact_phone, address, notes, language)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
       [companyId, name.trim(), contact_name || null, contact_email || null,
-       contact_phone || null, address || null, notes || null]
+       contact_phone || null, address || null, notes || null, language]
     );
     res.status(201).json({ ...result.rows[0], project_count: 0, document_count: 0 });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
@@ -3371,6 +3464,8 @@ router.patch('/clients/:id', requireAdmin, async (req, res) => {
   const { name, contact_name, contact_email, contact_phone, address, notes } = req.body;
   const clientUpdatedAt = req.body.updated_at || null;
   if (!name?.trim()) return res.status(400).json({ error: 'Client name is required' });
+  const VALID_LANGUAGES = ['English', 'Spanish'];
+  const language = VALID_LANGUAGES.includes(req.body.language) ? req.body.language : 'English';
   const companyId = req.user.company_id;
   try {
     if (clientUpdatedAt) {
@@ -3382,9 +3477,9 @@ router.patch('/clients/:id', requireAdmin, async (req, res) => {
     }
     const result = await pool.query(
       `UPDATE clients SET name=$1, contact_name=$2, contact_email=$3, contact_phone=$4,
-       address=$5, notes=$6, updated_at=NOW() WHERE id=$7 AND company_id=$8 RETURNING *`,
+       address=$5, notes=$6, language=$7, updated_at=NOW() WHERE id=$8 AND company_id=$9 RETURNING *`,
       [name.trim(), contact_name || null, contact_email || null, contact_phone || null,
-       address || null, notes || null, req.params.id, companyId]
+       address || null, notes || null, language, req.params.id, companyId]
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Not found' });
     res.json(result.rows[0]);
@@ -3820,6 +3915,25 @@ router.patch('/workers/:id/role', requireAdmin, requirePerm('assign_roles'), asy
       [role_id, req.user.company_id]
     );
     if (targetRole.rowCount === 0) return res.status(404).json({ error: 'Role not found' });
+
+    // Privilege-escalation guard: a user may only grant a role whose
+    // permission set is a SUBSET of their own. Without this, anyone with
+    // `assign_roles` could grant themselves (or a confederate) the built-in
+    // Owner role — or a hand-crafted custom role carrying manage_billing /
+    // manage_roles / delete_company — and escalate past their own tier.
+    const [granterPerms, targetRolePermsRes] = await Promise.all([
+      getUserPermissions(req.user),
+      pool.query('SELECT permission FROM role_permissions WHERE role_id = $1', [role_id]),
+    ]);
+    const exceeded = targetRolePermsRes.rows
+      .map(r => r.permission)
+      .filter(p => !granterPerms.has(p));
+    if (exceeded.length > 0) {
+      return res.status(403).json({
+        error: 'You cannot grant a role with more permissions than you hold.',
+        code: 'role_exceeds_granter',
+      });
+    }
 
     const targetUser = await pool.query(
       `SELECT u.id, u.full_name, u.role_id AS current_role_id, r.name AS current_role_name

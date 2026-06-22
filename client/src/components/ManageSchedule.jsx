@@ -64,7 +64,7 @@ function DroppableDay({ date, isToday, children }) {
       ref={setNodeRef}
       style={{
         ...styles.dayCol,
-        borderTop: `3px solid ${isToday ? '#1a56db' : '#e5e7eb'}`,
+        borderTop: `3px solid ${isToday ? 'var(--ops-page-accent)' : '#e5e7eb'}`,
         background: isOver ? '#eff6ff' : undefined,
         transition: 'background 0.15s',
       }}
@@ -94,7 +94,7 @@ function exportCSV(shifts, days, workerLabel = 'Worker', workLabel = 'Project') 
   a.click();
 }
 
-function SummaryView({ shifts, days, workerLabel = 'Worker' }) {
+function SummaryView({ shifts, days, workerLabel = 'Worker', locale = 'en-US' }) {
   const t = useT();
   const [cantOnly, setCantOnly] = useState(false);
 
@@ -136,7 +136,7 @@ function SummaryView({ shifts, days, workerLabel = 'Worker' }) {
             {days.map(day => {
               const isToday = toISO(day) === toISO(new Date());
               return (
-                <th key={toISO(day)} style={{ ...styles.summaryTh, color: isToday ? '#1a56db' : '#374151' }}>
+                <th key={toISO(day)} style={{ ...styles.summaryTh, color: isToday ? 'var(--ops-page-accent)' : '#374151' }}>
                   <div>{day.toLocaleDateString(locale, { weekday: 'short' })}</div>
                   <div style={{ fontWeight: 400, fontSize: 10 }}>{day.getDate()}</div>
                 </th>
@@ -564,7 +564,7 @@ export default function ManageSchedule({ workers, projects, weekStart: companyWe
       </div>
 
       {loading ? <SkeletonList count={4} rows={2} /> : viewMode === 'summary' ? (
-        <SummaryView shifts={shifts} days={days} workerLabel={workerLabel} />
+        <SummaryView shifts={shifts} days={days} workerLabel={workerLabel} locale={locale} />
       ) : (
         <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
           <div style={styles.grid}>
@@ -574,7 +574,7 @@ export default function ManageSchedule({ workers, projects, weekStart: companyWe
               const isToday = key === toISO(new Date());
               return (
                 <DroppableDay key={key} date={key} isToday={isToday}>
-                  <div style={{ ...styles.dayHead, color: isToday ? '#1a56db' : '#374151' }}>
+                  <div style={{ ...styles.dayHead, color: isToday ? 'var(--ops-page-accent)' : '#374151' }}>
                     {day.toLocaleDateString(locale, { weekday: 'short' })} {day.getDate()}
                   </div>
                   {dayShifts.length === 0
@@ -657,7 +657,7 @@ const styles = {
   field: { display: 'flex', flexDirection: 'column', gap: 3, flex: 1, minWidth: 100 },
   label: { fontSize: 11, fontWeight: 600, color: '#555', textTransform: 'uppercase' },
   input: { padding: '7px 9px', border: '1px solid #ddd', borderRadius: 6, fontSize: 13 },
-  addBtn: { padding: '7px 14px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 600, fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap' },
+  addBtn: { padding: '7px 14px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 600, fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap' },
   error: { color: '#e53e3e', fontSize: 13, marginTop: 4 },
   overlapWarning: { color: '#d97706', fontSize: 13, marginTop: 4, background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 6, padding: '5px 10px' },
   copyWeekBtn: { background: 'none', border: '1px solid #e5e7eb', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer', color: '#6b7280', whiteSpace: 'nowrap' },
@@ -674,12 +674,12 @@ const styles = {
   dayCol: { padding: '8px 6px', minHeight: 80, display: 'flex', flexDirection: 'column', gap: 4, minWidth: 90 },
   dayHead: { fontSize: 11, fontWeight: 700, textTransform: 'uppercase', marginBottom: 4 },
   emptyDay: { flex: 1, background: '#f9fafb', borderRadius: 4, minHeight: 40 },
-  shiftPill: { background: '#eff6ff', borderLeft: '3px solid #1a56db', borderRadius: 5, padding: '5px 7px', fontSize: 11 },
+  shiftPill: { background: '#eff6ff', borderLeft: '3px solid var(--ops-page-accent)', borderRadius: 5, padding: '5px 7px', fontSize: 11 },
   pillWorker: { fontWeight: 700, color: '#1e3a5f', marginBottom: 1, display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' },
   pillCantBadge: { fontSize: 9, fontWeight: 700, color: '#dc2626', background: '#fee2e2', padding: '1px 5px', borderRadius: 4, whiteSpace: 'nowrap' },
   pillCantNote: { fontSize: 9, color: '#dc2626', fontStyle: 'italic', marginTop: 1 },
   pillProject: { color: '#6b7280', fontSize: 10 },
-  pillTime: { fontWeight: 600, color: '#1a56db', marginTop: 2 },
+  pillTime: { fontWeight: 600, color: 'var(--ops-page-accent)', marginTop: 2 },
   pillNotes: { color: '#6b7280', fontSize: 10, fontStyle: 'italic' },
   shiftPillActive: { background: '#dbeafe', borderLeftColor: '#1d4ed8' },
   shiftPillCant: { background: '#fff5f5', borderLeftColor: '#ef4444' },
@@ -703,7 +703,7 @@ const styles = {
   deleteBtn: { background: '#fee2e2', border: 'none', color: '#b91c1c', fontSize: 13, fontWeight: 600, cursor: 'pointer', padding: '7px 16px', borderRadius: 6 },
   viewToggle: { display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1px solid #d1d5db' },
   viewBtn: { background: '#fff', border: 'none', padding: '4px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', color: '#374151' },
-  viewBtnActive: { background: '#1a56db', color: '#fff' },
+  viewBtnActive: { background: 'var(--ops-page-accent)', color: '#fff' },
   summaryWrap: { overflowX: 'auto', WebkitOverflowScrolling: 'touch' },
   summaryTable: { borderCollapse: 'collapse', fontSize: 12, minWidth: 520 },
   summaryThWorker: { textAlign: 'left', padding: '6px 10px', fontWeight: 700, color: '#374151', borderBottom: '2px solid #e5e7eb', minWidth: 100, maxWidth: 140 },

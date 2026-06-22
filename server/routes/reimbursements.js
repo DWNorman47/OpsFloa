@@ -117,7 +117,7 @@ router.post('/', reimbLimiter, coerceBody({ int: ['project_id'], float: ['miles'
     logger.error({ err }, 'catch block error');
     // If the DB insert failed after a successful R2 upload, clean up the orphaned file
     if (receiptUrl) {
-      deleteByUrl(receiptUrl).catch(e => console.error('R2 cleanup failed:', e));
+      deleteByUrl(receiptUrl).catch(err => logger.error({ err }, 'R2 cleanup failed'));
       decrementStorage(req.user.company_id, receiptSizeBytes).catch(() => {});
     }
     res.status(500).json({ error: 'Failed to submit reimbursement' });
@@ -201,7 +201,7 @@ router.post('/admin', requireAdmin, async (req, res) => {
     logger.error({ err }, 'catch block error');
     // If the DB insert failed after a successful R2 upload, clean up the orphaned file
     if (receiptUrl) {
-      deleteByUrl(receiptUrl).catch(e => console.error('R2 cleanup failed:', e));
+      deleteByUrl(receiptUrl).catch(err => logger.error({ err }, 'R2 cleanup failed'));
       decrementStorage(req.user.company_id, receiptSizeBytes).catch(() => {});
     }
     res.status(500).json({ error: 'Failed to submit reimbursement' });
@@ -311,7 +311,7 @@ router.patch('/admin/:id', requireAdmin, async (req, res) => {
             await pool.query('UPDATE reimbursements SET qbo_purchase_id = $1, qbo_synced_at = NOW() WHERE id = $2', [purchase.Id, reimb.id]);
           }
         } catch (err) {
-          console.error('[QBO expense auto-sync]', err.message);
+          logger.error({ err }, '[QBO expense auto-sync]');
           pool.query(
             'INSERT INTO qbo_sync_errors (company_id, entity_type, entity_id, error_message) VALUES ($1, $2, $3, $4)',
             [req.user.company_id, 'reimbursement', reimb.id, err.message]

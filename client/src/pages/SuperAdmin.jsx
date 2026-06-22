@@ -928,7 +928,7 @@ export default function SuperAdmin() {
                             </div>
                             <div style={styles.afStat}>
                               <div style={styles.afStatLabel}>Commission (30%)</div>
-                              <div style={{ ...styles.afStatVal, color: '#1a56db', fontWeight: 800 }}>{formatMrr(commissionCents, locale)}<span style={{ fontSize: 11, fontWeight: 400, color: '#6b7280' }}>/mo</span></div>
+                              <div style={{ ...styles.afStatVal, color: 'var(--ops-page-accent)', fontWeight: 800 }}>{formatMrr(commissionCents, locale)}<span style={{ fontSize: 11, fontWeight: 400, color: '#6b7280' }}>/mo</span></div>
                             </div>
                           </div>
                         </div>
@@ -979,7 +979,7 @@ export default function SuperAdmin() {
                                         </span>
                                       </td>
                                       <td style={styles.td}>{formatMrr(cMrr, locale)}</td>
-                                      <td style={{ ...styles.td, color: '#1a56db', fontWeight: 600 }}>
+                                      <td style={{ ...styles.td, color: 'var(--ops-page-accent)', fontWeight: 600 }}>
                                         {formatMrr(Math.round(cMrr * COMMISSION_RATE), locale)}
                                       </td>
                                       <td style={styles.td}>{formatDate(c.created_at, locale)}</td>
@@ -1158,11 +1158,11 @@ const styles = {
   main: { maxWidth: 960, margin: '32px auto', padding: '0 16px' },
   tabs: { display: 'flex', gap: 4, marginBottom: 24, borderBottom: '2px solid #e5e7eb', paddingBottom: 0 },
   tabBtn: { padding: '10px 20px', background: 'none', border: 'none', fontSize: 14, fontWeight: 600, color: '#6b7280', cursor: 'pointer', borderBottom: '2px solid transparent', marginBottom: -2, display: 'flex', alignItems: 'center', gap: 6 },
-  tabActive: { color: '#1a56db', borderBottomColor: '#1a56db' },
+  tabActive: { color: 'var(--ops-page-accent)', borderBottomColor: 'var(--ops-page-accent)' },
   tabCount: { background: '#e5e7eb', color: '#374151', fontSize: 11, fontWeight: 700, padding: '1px 7px', borderRadius: 10 },
   titleRow: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 },
   title: { fontSize: 22, fontWeight: 700, margin: 0 },
-  newBtn: { marginLeft: 'auto', padding: '8px 16px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 13, cursor: 'pointer' },
+  newBtn: { marginLeft: 'auto', padding: '8px 16px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 13, cursor: 'pointer' },
   list: { display: 'flex', flexDirection: 'column', gap: 12 },
   card: { background: '#fff', borderRadius: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.07)', overflow: 'hidden' },
   cardHeaderBtn: {
@@ -1202,7 +1202,7 @@ const styles = {
   activateBtn: { background: '#059669', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', textAlign: 'center' },
   deleteBtn: { background: 'none', border: '1px solid #fca5a5', color: '#dc2626', padding: '6px 12px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', textAlign: 'center' },
   renameInput: { flex: 1, padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 15, fontWeight: 700 },
-  renameSaveBtn: { padding: '4px 12px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  renameSaveBtn: { padding: '4px 12px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   renameCancelBtn: { padding: '4px 10px', background: 'none', border: '1px solid #d1d5db', color: '#6b7280', borderRadius: 6, fontSize: 13, cursor: 'pointer' },
   userTable: { paddingBottom: 12 },
   table: { width: '100%', borderCollapse: 'collapse', fontSize: 13 },
@@ -1253,7 +1253,7 @@ const styles = {
   afFormGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 },
   afLabel: { fontSize: 12, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 4 },
   afInput: { width: '100%', padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 7, fontSize: 13 },
-  afSaveBtn: { padding: '8px 20px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 13, cursor: 'pointer' },
+  afSaveBtn: { padding: '8px 20px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 13, cursor: 'pointer' },
   afCancelBtn: { padding: '8px 16px', background: 'none', border: '1px solid #d1d5db', color: '#374151', borderRadius: 7, fontSize: 13, cursor: 'pointer' },
   afSummary: { display: 'flex', gap: 24, marginTop: 10, flexWrap: 'wrap' },
   afStat: { display: 'flex', flexDirection: 'column', gap: 2 },

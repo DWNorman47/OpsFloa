@@ -1,82 +1,64 @@
 /**
- * UpdatePrompt — non-blocking banner that appears when a new service-worker
- * version has activated. The SW updates itself automatically (sw.js calls
- * self.skipWaiting + self.clients.claim), but the currently-loaded JS bundle
- * in the tab is still the previous version until the page reloads. This
- * banner lets the user reload at a moment that won't nuke their work.
+ * UpdatePrompt — non-blocking "a new version is ready" banner.
+ *
+ * Detection is deliberately simple and server-driven: poll a tiny version.json
+ * (emitted at build time, never precached) and compare its version to the build
+ * running in this tab (__APP_VERSION__). If they differ, a newer deploy is live
+ * and a reload will pick it up. This avoids the service-worker lifecycle
+ * (updatefound / controllerchange / precache), which is entangled with caching
+ * and non-deterministic builds and produced false positives.
+ *
+ * Polls on an interval and whenever the tab regains focus/visibility. Can't get
+ * stuck: once you reload onto the new build the versions match and it clears.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
+
+const CHECK_INTERVAL_MS = 10 * 60 * 1000; // every 10 minutes
 
 export default function UpdatePrompt() {
   const t = useT();
   const { user } = useAuth();
-  const [updateReady, setUpdateReady] = useState(false);
+  // eslint-disable-next-line no-undef
+  const currentVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : null;
+  const [newVersion, setNewVersion] = useState(null);
+  const [dismissed, setDismissed] = useState(null); // version the user dismissed this session
+
+  const check = useCallback(async () => {
+    if (!currentVersion) return; // nothing to compare against
+    try {
+      const res = await fetch(`/version.json?t=${Date.now()}`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data?.version && data.version !== currentVersion) {
+        setNewVersion(data.version);
+      }
+    } catch {
+      // Offline or transient — ignore; we'll try again on the next tick/focus.
+    }
+  }, [currentVersion]);
 
   useEffect(() => {
-    if (!('serviceWorker' in navigator)) return;
-
-    let cancelled = false;
-    let reg = null;
-
-    // Compare the controlling SW's version against the version baked into
-    // the running JS bundle. They only differ when a NEW SW has activated
-    // while the tab is still running OLD bundle code — which is the only
-    // moment a "reload to upgrade" prompt is actually useful. After a
-    // refresh the bundle is already current, so the versions match and we
-    // stay silent (which is what users were complaining about).
-    const checkVersion = () => {
-      if (cancelled) return;
-      const ctrl = navigator.serviceWorker.controller;
-      if (!ctrl) return;
-      ctrl.postMessage({ type: 'GET_VERSION' });
-    };
-
-    const onMessage = evt => {
-      if (cancelled) return;
-      if (evt.data?.type !== 'SW_VERSION') return;
-      // eslint-disable-next-line no-undef
-      const bundleVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : null;
-      if (bundleVersion && evt.data.version && evt.data.version !== bundleVersion) {
-        setUpdateReady(true);
-      }
-    };
-    navigator.serviceWorker.addEventListener('message', onMessage);
-
-    const onControllerChange = () => checkVersion();
-    navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
-
-    // Hook the registration path too — catches the case where the new SW
-    // finishes installing but hasn't taken control yet (if skipWaiting were
-    // ever disabled in the future).
-    navigator.serviceWorker.getRegistration().then(r => {
-      if (cancelled || !r) return;
-      reg = r;
-      const onUpdateFound = () => {
-        const installing = reg.installing;
-        if (!installing) return;
-        installing.addEventListener('statechange', () => {
-          if (installing.state === 'activated') checkVersion();
-        });
-      };
-      reg.addEventListener('updatefound', onUpdateFound);
-    });
-
+    if (!currentVersion) return undefined;
+    // Don't race first paint; check shortly after load, then poll + on focus.
+    const initial = setTimeout(check, 8000);
+    const interval = setInterval(check, CHECK_INTERVAL_MS);
+    const onVisible = () => { if (document.visibilityState === 'visible') check(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', check);
     return () => {
-      cancelled = true;
-      navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
-      navigator.serviceWorker.removeEventListener('message', onMessage);
+      clearTimeout(initial);
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', check);
     };
-  }, []);
+  }, [check, currentVersion]);
 
-  if (!updateReady || !user) return null;
-
-  const reload = () => {
-    try { window.location.reload(); }
-    catch { /* ignore */ }
-  };
+  // Show only when there's a newer version the user hasn't dismissed. If an even
+  // newer one ships later, newVersion changes and it surfaces again.
+  if (!user || !newVersion || newVersion === dismissed) return null;
 
   return (
     <div style={styles.banner} role="status" aria-live="polite">
@@ -87,10 +69,10 @@ export default function UpdatePrompt() {
       <a href="/changelog" target="_blank" rel="noopener noreferrer" style={styles.whatsNew}>
         {t.updateWhatsNew}
       </a>
-      <button type="button" style={styles.reloadBtn} onClick={reload}>
+      <button type="button" style={styles.reloadBtn} onClick={() => { try { window.location.reload(); } catch { /* ignore */ } }}>
         {t.updateReload}
       </button>
-      <button type="button" style={styles.dismissBtn} onClick={() => setUpdateReady(false)} aria-label={t.updateDismissAria}>
+      <button type="button" style={styles.dismissBtn} onClick={() => setDismissed(newVersion)} aria-label={t.updateDismissAria}>
         ✕
       </button>
     </div>

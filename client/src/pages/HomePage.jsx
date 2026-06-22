@@ -84,10 +84,10 @@ export default function HomePage() {
 
     if (isAdmin) {
       if (can('workforce') && hasAny(['approve_entries'])) {
-        list.push({ title: 'Review approvals', detail: 'Clear pending time before payroll', to: '/workforce#approvals', icon: 'A', primary: true });
+        list.push({ title: 'Review approvals', detail: 'Clear pending time before payroll', to: '/timeclock#wf-approvals', icon: 'A', primary: true });
       }
       if (can('workforce')) {
-        list.push({ title: "Who's working", detail: 'See live clock-ins and exceptions', to: '/workforce#live', icon: 'L', primary: !list.length });
+        list.push({ title: "Who's working", detail: 'See live clock-ins and exceptions', to: '/timeclock#wf-live', icon: 'L', primary: !list.length });
       }
       if (enabled(settings, 'module_projects') && can('projects')) {
         list.push({ title: `Add ${terms.work.toLowerCase()}`, detail: `Create ${terms.work.toLowerCase()} or manage ${terms.client.toLowerCase()} records`, to: '/projects', icon: 'W' });
@@ -123,25 +123,23 @@ export default function HomePage() {
   const places = useMemo(() => {
     if (!user) return [];
     const all = [
-      ['timeclock', 'Time Clock', '/timeclock', 'Clock in, submit time, messages'],
-      ['workforce', 'Workforce', '/workforce', 'Approvals, live workers, pay periods'],
+      ['timeclock', 'Time Clock', '/timeclock', 'Clock in, submit time, oversight'],
       ['field', terms.field, '/field', 'Reports, photos, checklists, issues'],
-      ['projects', terms.work, '/projects', `${terms.work}, ${plural(terms.client).toLowerCase()}, billing`],
-      ['team', 'Team', '/team', `${plural(terms.worker)}, schedule, availability`],
+      ['projects', terms.work, '/projects', `${terms.work}, estimates, change orders, billing`],
+      ['team', 'Directory', '/team', `${plural(terms.worker)}, subcontractors, customers`],
       ['inventory', 'Inventory', '/inventory', 'Items, locations, counts'],
-      ['analytics', 'Analytics', '/analytics', 'Reports and performance views'],
+      ['financial_reports', 'Reports', '/financial-reports', 'P&L, WIP, and performance'],
       ['administration', 'Admin', '/administration', 'Company setup and integrations'],
       ['account', 'Account', '/account', 'Profile and password'],
     ];
     return all.filter(([id]) => {
-      if (id === 'workforce' && !isAdmin) return false;
-      if (['projects', 'analytics', 'administration'].includes(id) && !isAdmin) return false;
+      if (['projects', 'financial_reports', 'administration'].includes(id) && !isAdmin) return false;
       if (id === 'field' && !enabled(settings, 'module_field', false)) return false;
       if (id === 'projects' && !enabled(settings, 'module_projects')) return false;
       if (id === 'inventory' && !enabled(settings, 'module_inventory', false)) return false;
-      if (id === 'analytics' && !enabled(settings, 'module_analytics', false)) return false;
+      // Reports is hidden only when BOTH its halves are off (matches AppSwitcher).
+      if (id === 'financial_reports' && !enabled(settings, 'module_financial_reports') && !enabled(settings, 'module_analytics')) return false;
       if (id === 'team' && !enabled(settings, 'module_team')) return false;
-      if (id === 'workforce' && !enabled(settings, 'module_timeclock')) return false;
       return userCanSeeModule(user, id);
     });
   }, [user, settings, isAdmin, terms]);

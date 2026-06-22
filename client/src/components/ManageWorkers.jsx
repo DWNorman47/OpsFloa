@@ -8,6 +8,7 @@ import ModalShell from './ModalShell';
 import WorkerFringes from './WorkerFringes';
 import WorkerSsn from './WorkerSsn';
 import EmptyState from './EmptyState';
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 
 import { silentError } from '../errorReporter';
 function WorkerDocuments({ workerId }) {
@@ -90,13 +91,13 @@ function WorkerDocuments({ workerId }) {
 }
 
 const ds = {
-  section: { marginTop: 12, paddingTop: 12, borderTop: '1px solid #f3f4f6' },
+  section: { marginTop: 0, paddingTop: 10, borderTop: '1px solid #f3f4f6' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   title: { fontSize: 13, fontWeight: 700, color: '#374151' },
-  uploadBtn: { background: '#eff6ff', color: '#1a56db', border: '1px solid #bfdbfe', borderRadius: 6, padding: '4px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' },
+  uploadBtn: { background: '#eff6ff', color: 'var(--ops-page-accent)', border: '1px solid #bfdbfe', borderRadius: 6, padding: '4px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' },
   list: { display: 'flex', flexDirection: 'column', gap: 6 },
   docRow: { display: 'flex', alignItems: 'center', gap: 10, background: '#f9fafb', borderRadius: 6, padding: '6px 10px' },
-  docName: { flex: 1, fontSize: 13, color: '#1a56db', textDecoration: 'none', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  docName: { flex: 1, fontSize: 13, color: 'var(--ops-page-accent)', textDecoration: 'none', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   docMeta: { fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap' },
   deleteBtn: { background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 12, padding: '0 2px', lineHeight: 1 },
   confirmDeleteBtn: { background: '#ef4444', color: '#fff', border: 'none', borderRadius: 5, padding: '3px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
@@ -106,6 +107,47 @@ const ds = {
 };
 
 const LANGUAGES = ['English', 'Spanish'];
+
+const findBuiltinRole = (roles, legacyRole = 'worker') => {
+  const roleName = legacyRole === 'admin' ? 'Admin' : 'Worker';
+  return roles.find(role => role.is_builtin && role.name === roleName) || null;
+};
+
+const createAddForm = (defaultRate, defaultTempPassword, roles = []) => {
+  const defaultRole = findBuiltinRole(roles, 'worker');
+  return {
+    first_name: '',
+    last_name: '',
+    username: '',
+    password: defaultTempPassword,
+    email: '',
+    role: 'worker',
+    role_id: defaultRole?.id ?? null,
+    worker_type: 'employee',
+    classification: '',
+    language: 'English',
+    hourly_rate: String(defaultRate),
+    rate_type: 'hourly',
+    overtime_rule: 'daily',
+  };
+};
+
+const createInviteForm = (defaultRate, roles = []) => {
+  const defaultRole = findBuiltinRole(roles, 'worker');
+  return {
+    first_name: '',
+    last_name: '',
+    email: '',
+    role: 'worker',
+    role_id: defaultRole?.id ?? null,
+    worker_type: 'employee',
+    classification: '',
+    language: 'English',
+    hourly_rate: String(defaultRate),
+    rate_type: 'hourly',
+    overtime_rule: 'daily',
+  };
+};
 
 const workerTypeLabel = (type, t) => ({
   employee:      t.mwTypeEmployee,
@@ -174,8 +216,11 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
   // Add form state
   const [showForm, setShowForm] = useState(false);
   const [addMode, setAddMode] = useState('manual');
-  const [form, setForm] = useState({ first_name: '', last_name: '', username: '', password: defaultTempPassword, email: '', role: 'worker', worker_type: 'employee', classification: '', language: 'English', hourly_rate: String(defaultRate), rate_type: 'hourly', overtime_rule: 'daily' });
-  const [inviteForm, setInviteForm] = useState({ first_name: '', last_name: '', email: '', role: 'worker', language: 'English', hourly_rate: String(defaultRate) });
+  const [form, setForm] = useState(() => createAddForm(defaultRate, defaultTempPassword));
+  const [inviteForm, setInviteForm] = useState(() => createInviteForm(defaultRate));
+  // True once the user edits the open add/invite panel, so the tab-close
+  // prompt only fires when there's actually entered data to lose.
+  const [formTouched, setFormTouched] = useState(false);
   const [error, setError] = useState('');
   const [inviteError, setInviteError] = useState('');
   const [inviteSent, setInviteSent] = useState('');
@@ -241,13 +286,34 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
   const [availableRoles, setAvailableRoles] = useState([]);
   useEffect(() => {
     api.get('/admin/roles')
-      .then(r => setAvailableRoles(r.data || []))
+      .then(r => {
+        const roles = r.data || [];
+        setAvailableRoles(roles);
+        setForm(current => {
+          if (current.role_id != null) return current;
+          const matchedRole = findBuiltinRole(roles, current.role);
+          return matchedRole
+            ? { ...current, role_id: matchedRole.id, role: matchedRole.parent_role }
+            : current;
+        });
+        setInviteForm(current => {
+          if (current.role_id != null) return current;
+          const matchedRole = findBuiltinRole(roles, current.role);
+          return matchedRole
+            ? { ...current, role_id: matchedRole.id, role: matchedRole.parent_role }
+            : current;
+        });
+      })
       .catch(silentError('manageworkers-roles'));
   }, []);
 
   // ── Add form helpers ────────────────────────────────────────────────────────
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const setInvite = (k, v) => setInviteForm(f => ({ ...f, [k]: v }));
+  // Warn on tab-close only while the add/invite panel is open and touched.
+  // beforeunload only catches full-document unloads; in-app cancel just
+  // resets the flag below.
+  useUnsavedChanges(showForm && formTouched);
+  const set = (k, v) => { setFormTouched(true); setForm(f => ({ ...f, [k]: v })); };
+  const setInvite = (k, v) => { setFormTouched(true); setInviteForm(f => ({ ...f, [k]: v })); };
 
   const updateAutoUsername = (first, last) => {
     if (usernameEdited) return;
@@ -257,10 +323,12 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
   };
 
   const handleFirstNameChange = v => {
+    setFormTouched(true);
     setForm(f => ({ ...f, first_name: v }));
     updateAutoUsername(v, form.last_name);
   };
   const handleLastNameChange = v => {
+    setFormTouched(true);
     setForm(f => ({ ...f, last_name: v }));
     updateAutoUsername(form.first_name, v);
   };
@@ -284,8 +352,8 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
       onWorkerAdded(r.data);
       toast(t.workerCreated, 'success');
       const workerType = form.worker_type;
-      setForm({ first_name: '', last_name: '', username: '', password: defaultTempPassword, email: '', role: 'worker', worker_type: 'employee', language: 'English', hourly_rate: String(defaultRate), rate_type: 'hourly', overtime_rule: 'daily' });
-      setUsernameEdited(false); setUsernameTaken(false); setShowForm(false);
+      setForm(createAddForm(defaultRate, defaultTempPassword, availableRoles));
+      setUsernameEdited(false); setUsernameTaken(false); setShowForm(false); setFormTouched(false);
       // Offer to create as QBO Vendor if connected and worker is contractor/subcontractor
       if (qboConnected && (workerType === 'contractor' || workerType === 'subcontractor')) {
         setQboVendorPrompt({ user_id: r.data.id, display_name: r.data.full_name });
@@ -303,15 +371,21 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
     setInviteError(''); setInviteSaving(true);
     try {
       const inv_full_name = [inviteForm.first_name, inviteForm.last_name].filter(Boolean).join(' ');
-      const r = await api.post('/admin/workers/invite', { ...inviteForm, full_name: inv_full_name });
+      const { role_id, ...inviteFields } = inviteForm;
+      const r = await api.post('/admin/workers/invite', {
+        ...inviteFields,
+        ...(role_id != null ? { role_id } : {}),
+        full_name: inv_full_name,
+      });
       onWorkerAdded(r.data);
+      setFormTouched(false);
       if (r.data.email_sent === false) {
         setInviteError(t.workerInviteEmailFailed);
-        setInviteForm({ first_name: '', last_name: '', email: '', role: 'worker', language: 'English', hourly_rate: String(defaultRate) });
+        setInviteForm(createInviteForm(defaultRate, availableRoles));
       } else {
         setInviteSent(inviteForm.email);
         setTimeout(() => setInviteSent(''), 6000);
-        setInviteForm({ first_name: '', last_name: '', email: '', role: 'worker', language: 'English', hourly_rate: String(defaultRate) });
+        setInviteForm(createInviteForm(defaultRate, availableRoles));
       }
     } catch (err) {
       setInviteError(err.response?.data?.error || 'Failed to send invite');
@@ -525,7 +599,7 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
     <div style={s.card} className="manage-workers-card">
       <div style={s.cardHeader} className="manage-workers-card-header">
         <h3 style={s.cardTitle}>{t.users}</h3>
-        <button style={s.addBtn} onClick={() => { setShowForm(v => !v); setError(''); setArchivedConflict(null); setInviteError(''); setInviteSent(''); setForm({ first_name: '', last_name: '', username: '', password: defaultTempPassword, email: '', role: 'worker', worker_type: 'employee', language: 'English', hourly_rate: String(defaultRate), rate_type: 'hourly', overtime_rule: 'daily' }); setInviteForm({ first_name: '', last_name: '', email: '', role: 'worker', language: 'English', hourly_rate: String(defaultRate) }); setUsernameEdited(false); setAddMode('manual'); }}>
+        <button style={s.addBtn} onClick={() => { setShowForm(v => !v); setFormTouched(false); setError(''); setArchivedConflict(null); setInviteError(''); setInviteSent(''); setForm(createAddForm(defaultRate, defaultTempPassword, availableRoles)); setInviteForm(createInviteForm(defaultRate, availableRoles)); setUsernameEdited(false); setAddMode('manual'); }}>
           {showForm ? t.cancel : t.addUser}
         </button>
       </div>
@@ -588,6 +662,7 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
                     onChange={e => {
                       const id = e.target.value ? parseInt(e.target.value) : '';
                       const picked = availableRoles.find(r => r.id === id);
+                      setFormTouched(true);
                       // Keep legacy `form.role` in sync with the chosen role's parent
                       // so the existing POST handler still routes it correctly during
                       // Phase B's coexistence window.
@@ -652,7 +727,7 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
               {error && (
                 <div role="alert" style={s.errorBox}>
                   <span style={s.errorText}>{error}</span>
-                  {archivedConflict && <button type="button" style={s.restoreInlineBtn} onClick={handleRestoreConflict}>Restore {archivedConflict.name}</button>}
+                  {archivedConflict && <button type="button" style={s.restoreInlineBtn} onClick={handleRestoreConflict}>{t.restore} {archivedConflict.name}</button>}
                 </div>
               )}
               <button style={{ ...s.saveBtn, ...((saving || usernameTaken) ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} type="submit" disabled={saving || usernameTaken}>{saving ? t.creating : t.createUser}</button>
@@ -681,11 +756,56 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
                     </div>
                     <div style={s.fieldGroup}>
                       <label htmlFor="mw-inv-role" style={s.label}>{t.role}</label>
-                      <select id="mw-inv-role" style={s.input} value={inviteForm.role} onChange={e => setInvite('role', e.target.value)}>
-                        <option value="worker">{workerLabel}</option>
-                        <option value="admin">{t.adminRole}</option>
+                      <select
+                        id="mw-inv-role"
+                        style={s.input}
+                        value={availableRoles.length > 0 ? (inviteForm.role_id ?? '') : inviteForm.role}
+                        onChange={e => {
+                          setFormTouched(true);
+                          if (availableRoles.length === 0) {
+                            setInviteForm(current => ({ ...current, role: e.target.value, role_id: null }));
+                            return;
+                          }
+                          const roleId = Number(e.target.value);
+                          const selectedRole = availableRoles.find(role => Number(role.id) === roleId);
+                          setInviteForm(current => ({
+                            ...current,
+                            role_id: selectedRole?.id ?? null,
+                            role: selectedRole?.parent_role || 'worker',
+                          }));
+                        }}
+                      >
+                        {availableRoles.length === 0 && (
+                          <>
+                            <option value="worker">{workerLabel}</option>
+                            <option value="admin">{t.adminRole}</option>
+                          </>
+                        )}
+                        {availableRoles.map(role => (
+                          <option key={role.id} value={role.id}>
+                            {role.name}{role.is_builtin ? '' : ` (${role.parent_role})`}
+                          </option>
+                        ))}
                       </select>
                     </div>
+                    <div style={s.fieldGroup}>
+                      <label htmlFor="mw-inv-worker-type" style={s.label}>{t.mwWorkerType}</label>
+                      <select id="mw-inv-worker-type" style={s.input} value={inviteForm.worker_type} onChange={e => setInvite('worker_type', e.target.value)}>
+                        <option value="employee">{t.mwTypeEmployee}</option>
+                        <option value="contractor">{t.mwTypeContractor}</option>
+                        <option value="subcontractor">{t.mwTypeSubcontractor}</option>
+                        <option value="owner">{t.mwTypeOwner}</option>
+                      </select>
+                    </div>
+                    {trackClassifications && (
+                      <div style={s.fieldGroup}>
+                        <label htmlFor="mw-inv-classification" style={s.label}>{t.mwJobClassification} <span style={{ color: '#6b7280', fontSize: 12, fontWeight: 400 }}>{t.mwOptional}</span></label>
+                        <select id="mw-inv-classification" style={s.input} value={inviteForm.classification} onChange={e => setInvite('classification', e.target.value)}>
+                          <option value="">{t.mwNoneOption}</option>
+                          {classifications.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </div>
+                    )}
                     <div style={s.fieldGroup}>
                       <label htmlFor="mw-inv-language" style={s.label}>{t.language}</label>
                       <select id="mw-inv-language" style={s.input} value={inviteForm.language} onChange={e => setInvite('language', e.target.value)}>
@@ -693,10 +813,24 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
                       </select>
                     </div>
                     {showRate && (
-                      <div style={s.fieldGroup}>
-                        <label htmlFor="mw-inv-rate" style={s.label}>{t.payRate}</label>
-                        <input id="mw-inv-rate" style={s.input} type="number" min="0" step="0.01" value={inviteForm.hourly_rate} onChange={e => setInvite('hourly_rate', e.target.value)} />
-                      </div>
+                      <>
+                        <div style={s.fieldGroup}>
+                          <label htmlFor="mw-inv-rate" style={s.label}>{t.payRate}</label>
+                          <input id="mw-inv-rate" style={s.input} type="number" min="0" step="0.01" value={inviteForm.hourly_rate} onChange={e => setInvite('hourly_rate', e.target.value)} />
+                        </div>
+                        <div style={s.fieldGroup}>
+                          <label htmlFor="mw-inv-rate-type" style={s.label}>{t.rateType}</label>
+                          <select id="mw-inv-rate-type" style={s.input} value={inviteForm.rate_type} onChange={e => setInvite('rate_type', e.target.value)}>
+                            {rateTypes.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                          </select>
+                        </div>
+                        <div style={s.fieldGroup}>
+                          <label htmlFor="mw-inv-overtime-rule" style={s.label}>{t.overtimeRule}</label>
+                          <select id="mw-inv-overtime-rule" style={s.input} value={inviteForm.overtime_rule} onChange={e => setInvite('overtime_rule', e.target.value)}>
+                            {overtimeRules.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                          </select>
+                        </div>
+                      </>
                     )}
                   </div>
                   {inviteError && <p style={s.errorText}>{inviteError}</p>}
@@ -1092,22 +1226,22 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
                       </div>
                     )}
 
-                    {/* ── Documents ── */}
-                    {!isEditing && <WorkerDocuments workerId={w.id} />}
+                    {/* ── Certified Payroll SSN last-4 ── */}
+                    {!isEditing && collectSsn && w.role === 'worker' && (
+                      <WorkerSsn userId={w.id} />
+                    )}
 
                     {/* ── Certified Payroll fringe benefits ── */}
                     {!isEditing && trackFringes && w.role === 'worker' && (
                       <WorkerFringes userId={w.id} currency={currency} />
                     )}
 
-                    {/* ── Certified Payroll SSN last-4 ── */}
-                    {!isEditing && collectSsn && w.role === 'worker' && (
-                      <WorkerSsn userId={w.id} />
-                    )}
+                    {/* ── Documents ── */}
+                    {!isEditing && <WorkerDocuments workerId={w.id} />}
 
                     {/* ── Remove ── */}
                     {identityEditable && !isEditing && (
-                      <div style={{ paddingTop: 4, display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <div style={s.removeActions}>
                         {pendingRemoveId === w.id ? (
                           <>
                             <button style={s.confirmRemoveBtn} onClick={() => handleRemove(w.id)}>{t.confirm}</button>
@@ -1194,11 +1328,11 @@ const s = {
   card: { background: '#fff', borderRadius: 12, padding: 24, boxShadow: '0 2px 12px rgba(0,0,0,0.07)', marginBottom: 24 },
   cardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   cardTitle: { fontSize: 17, fontWeight: 700, margin: 0 },
-  addBtn: { padding: '7px 16px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 13, cursor: 'pointer' },
+  addBtn: { padding: '7px 16px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 13, cursor: 'pointer' },
   addPanel: { background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 10, padding: 16, marginBottom: 16 },
   modeTabs: { display: 'flex', gap: 4, marginBottom: 14, background: '#f0f4ff', borderRadius: 8, padding: 3, width: 'fit-content' },
   modeTab: { padding: '5px 14px', background: 'none', border: 'none', borderRadius: 6, fontSize: 13, color: '#666', cursor: 'pointer', fontWeight: 500 },
-  modeTabActive: { padding: '5px 14px', background: '#fff', border: 'none', borderRadius: 6, fontSize: 13, color: '#1a56db', cursor: 'pointer', fontWeight: 700, boxShadow: '0 1px 3px rgba(0,0,0,0.1)' },
+  modeTabActive: { padding: '5px 14px', background: '#fff', border: 'none', borderRadius: 6, fontSize: 13, color: 'var(--ops-page-accent)', cursor: 'pointer', fontWeight: 700, boxShadow: '0 1px 3px rgba(0,0,0,0.1)' },
   addForm: { display: 'flex', flexDirection: 'column', gap: 12 },
   formGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10 },
   fieldGroup: { display: 'flex', flexDirection: 'column', gap: 4 },
@@ -1225,6 +1359,7 @@ const s = {
   itemUsername: { fontSize: 13, color: '#6b7280' },
   chevron: { fontSize: 14, color: '#6b7280', transition: 'transform 0.2s', flexShrink: 0, display: 'inline-block' },
   panel: { padding: '4px 16px 16px', borderTop: '1px solid #f3f4f6', background: '#f9fafb', display: 'flex', flexDirection: 'column', gap: 0 },
+  removeActions: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, paddingTop: 8 },
   section: { borderBottom: '1px solid #eeeeee', paddingBottom: 12, paddingTop: 12 },
   sectionHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
   sectionTitle: { fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5 },
@@ -1240,7 +1375,7 @@ const s = {
   cancelRemoveBtn: { padding: '6px 14px', background: 'none', border: '1px solid #e5e7eb', color: '#6b7280', borderRadius: 6, fontSize: 13, cursor: 'pointer' },
   inviteBanner: { display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, padding: '8px 10px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 7 },
   inviteBannerText: { fontSize: 12, color: '#92400e', flex: 1 },
-  inviteBtn: { padding: '4px 12px', background: '#1a56db', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', flexShrink: 0 },
+  inviteBtn: { padding: '4px 12px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', flexShrink: 0 },
   inviteSentLabel: { fontSize: 12, color: '#059669', fontWeight: 600, flexShrink: 0 },
   historyFooter: { marginTop: 16, borderTop: '1px solid #f0f0f0', paddingTop: 12 },
   historyToggle: { background: 'none', border: 'none', color: '#6b7280', fontSize: 13, fontWeight: 600, cursor: 'pointer', padding: '2px 0' },

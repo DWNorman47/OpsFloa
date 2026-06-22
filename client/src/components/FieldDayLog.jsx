@@ -605,7 +605,7 @@ const s = {
   noteWorker: { fontSize: 11, fontWeight: 700, color: '#059669', textTransform: 'uppercase', letterSpacing: '0.04em' },
   noteTime: { fontSize: 12, color: '#6b7280' },
   pendingBadge: { fontSize: 10, fontWeight: 600, color: '#92400e', background: '#fef3c7', padding: '1px 6px', borderRadius: 6 },
-  mapLink: { fontSize: 11, fontWeight: 800, color: '#1a56db', textDecoration: 'none', background: '#eff6ff', borderRadius: 999, padding: '2px 7px' },
+  mapLink: { fontSize: 11, fontWeight: 800, color: 'var(--ops-page-accent)', textDecoration: 'none', background: '#eff6ff', borderRadius: 999, padding: '2px 7px' },
   reviewBtn: { marginLeft: 'auto', background: '#059669', color: '#fff', border: 'none', padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer' },
   reviewedBadge: { marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: '#065f46', background: '#d1fae5', padding: '2px 8px', borderRadius: 10 },
   noteText: { fontSize: 14, color: '#374151', lineHeight: 1.6, margin: 0, whiteSpace: 'pre-wrap' },

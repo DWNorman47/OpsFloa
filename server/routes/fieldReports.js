@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const pool = require('../db');
+const logger = require('../logger');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { sendPushToCompanyAdmins } = require('../push');
 const { uploadBase64, getPresignedUploadUrl, deleteByUrl } = require('../r2');
@@ -110,7 +111,7 @@ router.post('/', requireAuth, async (req, res) => {
         );
       } catch (uploadErr) {
         await pool.query('DELETE FROM field_reports WHERE id = $1', [report.id]).catch(() => {});
-        console.error('R2 upload failed:', uploadErr);
+        logger.error({ err: uploadErr }, 'R2 upload failed');
         return res.status(500).json({ error: 'Photo upload failed. Please try again.' });
       }
       const photoValues = uploaded.map((p, i) => `($1, $${i * 4 + 2}, $${i * 4 + 3}, $${i * 4 + 4}, $${i * 4 + 5})`).join(', ');
