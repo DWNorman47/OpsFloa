@@ -4,6 +4,8 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import { getT } from '../i18n';
+import { detectLanguage } from '../languageDetect';
 
 const baseURL = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api';
 const publicApi = axios.create({ baseURL });
@@ -14,6 +16,10 @@ function formatCents(cents) {
 }
 
 const CATEGORIES = ['labor', 'materials', 'equipment', 'subs', 'overhead', 'contingency', 'other'];
+const PCAT_KEY = {
+  labor: 'pcatLabor', materials: 'pcatMaterials', equipment: 'pcatEquipment', subs: 'pcatSubs',
+  overhead: 'pcatOverhead', contingency: 'pcatContingency', other: 'pcatOther',
+};
 
 export default function PublicEstimatePage() {
   const { token } = useParams();
@@ -21,6 +27,9 @@ export default function PublicEstimatePage() {
   const [estimate, setEstimate] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // No logged-in user here — render in the client's stored language when known,
+  // otherwise the visitor's browser language.
+  const t = getT(detectLanguage(estimate?.client_language));
 
   // Accept flow state
   const [typedName, setTypedName] = useState('');
@@ -36,7 +45,7 @@ export default function PublicEstimatePage() {
   useEffect(() => {
     publicApi.get(`/public/estimates/view/${token}`)
       .then(r => setEstimate(r.data))
-      .catch(err => setError(err.response?.data?.error || 'Estimate not found'))
+      .catch(err => setError(err.response?.data?.error || t.peErrNotFound))
       .finally(() => setLoading(false));
   }, [token]);
 
@@ -50,7 +59,7 @@ export default function PublicEstimatePage() {
       });
       setAccepted(true);
     } catch (err) {
-      setError(err.response?.data?.error || 'Accept failed');
+      setError(err.response?.data?.error || t.peErrAccept);
     } finally {
       setSubmitting(false);
     }
@@ -65,25 +74,25 @@ export default function PublicEstimatePage() {
       });
       setDeclined(true);
     } catch (err) {
-      setError(err.response?.data?.error || 'Decline failed');
+      setError(err.response?.data?.error || t.peErrDecline);
     } finally {
       setSubmitting(false);
     }
   }
 
   if (loading) {
-    return <CenterMsg msg="Loading..." />;
+    return <CenterMsg msg={t.loading} />;
   }
 
   if (error && !estimate) {
-    return <CenterMsg title="Not found" msg={error} tone="error" />;
+    return <CenterMsg title={t.pubNotFoundTitle} msg={error} tone="error" />;
   }
 
   if (accepted) {
-    return <CenterMsg title="Accepted" msg={`Thank you, ${typedName}. The contractor has been notified.`} tone="success" />;
+    return <CenterMsg title={t.pubAcceptedTitle} msg={`${t.pubThankYou} ${typedName}. ${t.pubNotified}`} tone="success" />;
   }
   if (declined) {
-    return <CenterMsg title="Declined" msg="The contractor has been notified." tone="neutral" />;
+    return <CenterMsg title={t.pubDeclinedTitle} msg={t.pubNotified} tone="neutral" />;
   }
 
   if (!estimate) return null;
@@ -100,35 +109,35 @@ export default function PublicEstimatePage() {
     <div style={{ minHeight: '100vh', background: '#f9fafb', padding: '40px 16px' }}>
       <div style={styles.card}>
         <div style={{ borderBottom: '2px solid var(--ops-page-accent)', paddingBottom: 16, marginBottom: 20 }}>
-          <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--ops-page-accent)', letterSpacing: 1, textTransform: 'uppercase' }}>Estimate</div>
+          <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--ops-page-accent)', letterSpacing: 1, textTransform: 'uppercase' }}>{t.peEstimate}</div>
           <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
             {estimate.estimate_number} · {new Date(estimate.sent_at).toLocaleDateString()}
-            {estimate.valid_until && <> · Valid until {new Date(estimate.valid_until).toLocaleDateString()}</>}
+            {estimate.valid_until && <> · {t.peValidUntil} {new Date(estimate.valid_until).toLocaleDateString()}</>}
           </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 24 }}>
-          <Block label="Project">
+          <Block label={t.pubProject}>
             <div style={{ fontWeight: 600 }}>{estimate.project_name}</div>
           </Block>
-          <Block label="Prepared for">
+          <Block label={t.pubPreparedFor}>
             <div style={{ fontWeight: 600 }}>{estimate.client_name_snapshot}</div>
           </Block>
         </div>
 
         {estimate.scope_summary && (
           <div style={{ marginBottom: 20 }}>
-            <Block label="Scope">
+            <Block label={t.pubScope}>
               <div style={{ whiteSpace: 'pre-wrap', fontSize: 14 }}>{estimate.scope_summary}</div>
             </Block>
           </div>
         )}
 
         <div style={{ marginBottom: 24 }}>
-          <h3 style={styles.h3}>Line items</h3>
+          <h3 style={styles.h3}>{t.pubLineItems}</h3>
           {CATEGORIES.filter(c => linesByCat[c].length > 0).map(category => (
             <div key={category} style={{ marginBottom: 14 }}>
-              <div style={styles.catLabel}>{category}</div>
+              <div style={styles.catLabel}>{t[PCAT_KEY[category]] || category}</div>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
                 <tbody>
                   {linesByCat[category].map((l, i) => (
@@ -149,23 +158,23 @@ export default function PublicEstimatePage() {
         </div>
 
         <div style={styles.totalsBox}>
-          <Row label="Subtotal" value={estimate.subtotal_cents} />
+          <Row label={t.pubSubtotal} value={estimate.subtotal_cents} />
           {parseFloat(estimate.overhead_pct) > 0 && (
-            <Row label={`Overhead (${estimate.overhead_pct}%)`} value={Math.round(estimate.subtotal_cents * estimate.overhead_pct / 100)} />
+            <Row label={`${t.pubOverhead} (${estimate.overhead_pct}%)`} value={Math.round(estimate.subtotal_cents * estimate.overhead_pct / 100)} />
           )}
-          <Row label="Total" value={estimate.total_cents} bold />
+          <Row label={t.pubTotal} value={estimate.total_cents} bold />
         </div>
 
         {estimate.exclusions && (
           <div style={{ marginTop: 24 }}>
-            <Block label="Exclusions">
+            <Block label={t.pubExclusions}>
               <div style={{ whiteSpace: 'pre-wrap', fontSize: 13 }}>{estimate.exclusions}</div>
             </Block>
           </div>
         )}
         {estimate.terms && (
           <div style={{ marginTop: 16 }}>
-            <Block label="Terms">
+            <Block label={t.pubTerms}>
               <div style={{ whiteSpace: 'pre-wrap', fontSize: 13 }}>{estimate.terms}</div>
             </Block>
           </div>
@@ -178,29 +187,29 @@ export default function PublicEstimatePage() {
           <div style={{ marginTop: 32, padding: 24, background: '#f0f4ff', borderRadius: 8 }}>
             {showDecline ? (
               <>
-                <h3 style={{ ...styles.h3, marginTop: 0 }}>Decline this estimate</h3>
+                <h3 style={{ ...styles.h3, marginTop: 0 }}>{t.peDeclineThis}</h3>
                 <textarea
                   value={declineReason}
                   onChange={e => setDeclineReason(e.target.value)}
-                  placeholder="Reason (optional)"
+                  placeholder={t.pubReasonOptional}
                   style={{ ...styles.input, minHeight: 80, marginBottom: 12 }}
                 />
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button onClick={() => setShowDecline(false)} style={styles.ghostBtn}>Back</button>
+                  <button onClick={() => setShowDecline(false)} style={styles.ghostBtn}>{t.back}</button>
                   <button onClick={decline} disabled={submitting} style={{ ...styles.primaryBtn, background: '#dc2626' }}>
-                    {submitting ? 'Submitting...' : 'Confirm decline'}
+                    {submitting ? t.pubSubmitting : t.pubConfirmDecline}
                   </button>
                 </div>
               </>
             ) : (
               <>
-                <h3 style={{ ...styles.h3, marginTop: 0 }}>Accept this estimate</h3>
+                <h3 style={{ ...styles.h3, marginTop: 0 }}>{t.peAcceptThis}</h3>
                 <label style={{ display: 'block', marginBottom: 12 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 4 }}>Type your full name to accept</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 4 }}>{t.pubTypeFullName}</div>
                   <input
                     value={typedName}
                     onChange={e => setTypedName(e.target.value)}
-                    placeholder="e.g. Jane Smith"
+                    placeholder={t.pubNamePlaceholder}
                     style={styles.input}
                   />
                 </label>
@@ -210,16 +219,16 @@ export default function PublicEstimatePage() {
                     checked={authorized}
                     onChange={e => setAuthorized(e.target.checked)}
                   />
-                  I am authorized to accept this estimate on behalf of {estimate.client_name_snapshot}.
+                  {t.peAuthPre} {estimate.client_name_snapshot}.
                 </label>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button onClick={() => setShowDecline(true)} style={styles.ghostBtn}>Decline</button>
+                  <button onClick={() => setShowDecline(true)} style={styles.ghostBtn}>{t.pubDecline}</button>
                   <button
                     onClick={accept}
                     disabled={submitting || !typedName.trim() || !authorized}
                     style={styles.primaryBtn}
                   >
-                    {submitting ? 'Accepting...' : 'Accept estimate'}
+                    {submitting ? t.peAccepting : t.peAcceptBtn}
                   </button>
                 </div>
               </>
@@ -227,7 +236,7 @@ export default function PublicEstimatePage() {
           </div>
         ) : (
           <div style={{ marginTop: 32, padding: 16, background: '#f3f4f6', borderRadius: 8, fontSize: 14, color: '#6b7280' }}>
-            This estimate is no longer available for response (status: <strong>{estimate.status}</strong>).
+            {t.peNoLonger} ({t.pubStatus}: <strong>{estimate.status}</strong>).
           </div>
         )}
       </div>
