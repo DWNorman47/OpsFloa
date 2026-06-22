@@ -459,6 +459,7 @@ export default function BillingPanel() {
  * gets replaced with the real billing widget.
  */
 function ClientPortalProPlaceholder() {
+  const t = useT();
   const [registered, setRegistered] = useState(false);
   const [saving, setSaving] = useState(false);
   const { user, updateUser } = useAuth();
