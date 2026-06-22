@@ -967,7 +967,6 @@ button {
   font-weight: 750;
   box-shadow: var(--ops-shadow-sm);
 }
-.workspace-profile-card strong,
 .workspace-setting-card strong {
   letter-spacing: 0;
 }
@@ -1914,12 +1913,6 @@ input, select, textarea {
   .workspace-summary-grid > div {
     align-items: center !important;
     text-align: center !important;
-  }
-  .workspace-profile-card {
-    padding: 14px !important;
-  }
-  .workspace-profile-grid {
-    grid-template-columns: 1fr !important;
   }
   .workspace-setting-body {
     padding: 0 14px 14px !important;

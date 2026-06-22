@@ -10,15 +10,19 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
+import { getT } from '../i18n';
+import { detectLanguage } from '../languageDetect';
 
 const baseURL = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api';
 const publicApi = axios.create({ baseURL });
 
-const TYPE_LABELS = {
-  conditional_progress:   'Conditional Waiver and Release on Progress Payment',
-  unconditional_progress: 'Unconditional Waiver and Release on Progress Payment',
-  conditional_final:      'Conditional Waiver and Release on Final Payment',
-  unconditional_final:    'Unconditional Waiver and Release on Final Payment',
+// Subcontractors carry no stored language, so this page renders in the signer's
+// browser language.
+const TYPE_KEY = {
+  conditional_progress:   'lwTypeCondProgress',
+  unconditional_progress: 'lwTypeUncondProgress',
+  conditional_final:      'lwTypeCondFinal',
+  unconditional_final:    'lwTypeUncondFinal',
 };
 
 function formatCents(cents) {
@@ -31,6 +35,7 @@ export default function PublicLienWaiverSignPage() {
   const [waiver, setWaiver] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const t = getT(detectLanguage());
 
   const [typedName, setTypedName] = useState('');
   const [acknowledge, setAcknowledge] = useState(false);
@@ -40,7 +45,7 @@ export default function PublicLienWaiverSignPage() {
   useEffect(() => {
     publicApi.get(`/public/lien-waivers/sign/${token}`)
       .then(r => setWaiver(r.data))
-      .catch(err => setError(err.response?.data?.error || 'Waiver not found'))
+      .catch(err => setError(err.response?.data?.error || t.lwErrNotFound))
       .finally(() => setLoading(false));
   }, [token]);
 
@@ -54,13 +59,13 @@ export default function PublicLienWaiverSignPage() {
       });
       setSigned(true);
     } catch (err) {
-      setError(err.response?.data?.error || 'Sign failed');
+      setError(err.response?.data?.error || t.lwErrSign);
     } finally { setSubmitting(false); }
   }
 
-  if (loading) return <CenterMsg msg="Loading..." />;
-  if (error && !waiver) return <CenterMsg title="Not found" msg={error} tone="error" />;
-  if (signed) return <CenterMsg title="Signed" msg={`Thank you, ${typedName}. The waiver has been recorded.`} tone="success" />;
+  if (loading) return <CenterMsg msg={t.loading} />;
+  if (error && !waiver) return <CenterMsg title={t.pubNotFoundTitle} msg={error} tone="error" />;
+  if (signed) return <CenterMsg title={t.lwSignedTitle} msg={`${t.pubThankYou} ${typedName}. ${t.lwRecorded}`} tone="success" />;
   if (!waiver) return null;
 
   const canSign = waiver.status === 'sent';
@@ -71,31 +76,31 @@ export default function PublicLienWaiverSignPage() {
       <div style={styles.card}>
         <div style={{ borderBottom: '2px solid var(--ops-page-accent)', paddingBottom: 16, marginBottom: 20 }}>
           <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--ops-page-accent)', letterSpacing: 0.5, textTransform: 'uppercase' }}>
-            Lien Waiver
+            {t.lwLienWaiver}
           </div>
           <div style={{ fontSize: 14, fontWeight: 600, color: '#374151', marginTop: 4 }}>
-            {TYPE_LABELS[waiver.waiver_type] || waiver.waiver_type}
+            {t[TYPE_KEY[waiver.waiver_type]] || waiver.waiver_type}
           </div>
           <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
-            Project: <strong>{waiver.project_name}</strong>
-            {waiver.state && <> · State: <strong>{waiver.state}</strong></>}
+            {t.pubProject}: <strong>{waiver.project_name}</strong>
+            {waiver.state && <> · {t.lwState}: <strong>{waiver.state}</strong></>}
           </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 24 }}>
-          <Block label="Amount">
+          <Block label={t.lwAmount}>
             <div style={{ fontSize: 20, fontWeight: 700 }}>{formatCents(waiver.amount_cents)}</div>
           </Block>
-          <Block label="Through date">
+          <Block label={t.lwThroughDate}>
             <div style={{ fontSize: 16, fontWeight: 600 }}>
               {new Date(waiver.through_date).toLocaleDateString()}
             </div>
           </Block>
-          <Block label="Signer of record">
+          <Block label={t.lwSignerOfRecord}>
             <div>{waiver.signer_name}</div>
             {waiver.signer_title && <div style={{ fontSize: 13, color: '#6b7280' }}>{waiver.signer_title}</div>}
           </Block>
-          <Block label="Signer's company">
+          <Block label={t.lwSignerCompany}>
             <div>{waiver.signer_company}</div>
           </Block>
         </div>
@@ -103,29 +108,23 @@ export default function PublicLienWaiverSignPage() {
         <div style={{ background: '#f9fafb', padding: 20, borderRadius: 8, fontSize: 13, color: '#374151', lineHeight: 1.6, marginBottom: 20 }}>
           {isConditional ? (
             <>
-              <p style={{ margin: '0 0 8px', fontWeight: 600 }}>Conditional waiver — effective only upon payment.</p>
+              <p style={{ margin: '0 0 8px', fontWeight: 600 }}>{t.lwCondHeading}</p>
               <p style={{ margin: 0 }}>
-                Upon receipt by the undersigned of payment in the amount of {formatCents(waiver.amount_cents)}{' '}
-                for labor, services, and materials furnished through {new Date(waiver.through_date).toLocaleDateString()},
-                the undersigned waives and releases any mechanic's lien, stop-payment-notice, or bond right that the
-                undersigned has on the above-referenced project to the extent of the payment.
+                {t.lwCondPre} {formatCents(waiver.amount_cents)}{' '}
+                {t.lwCondMid} {new Date(waiver.through_date).toLocaleDateString()}{t.lwCondPost}
               </p>
             </>
           ) : (
             <>
-              <p style={{ margin: '0 0 8px', fontWeight: 600 }}>Unconditional waiver — payment confirmed received.</p>
+              <p style={{ margin: '0 0 8px', fontWeight: 600 }}>{t.lwUncondHeading}</p>
               <p style={{ margin: 0 }}>
-                The undersigned has been paid in the amount of {formatCents(waiver.amount_cents)} for all labor,
-                services, and materials furnished on the above-referenced project through{' '}
-                {new Date(waiver.through_date).toLocaleDateString()}, and does hereby waive and release any
-                mechanic's lien, stop-payment-notice, or bond right that the undersigned has on the project to
-                the extent of the payment.
+                {t.lwUncondPre} {formatCents(waiver.amount_cents)}{' '}
+                {t.lwUncondMid} {new Date(waiver.through_date).toLocaleDateString()}{t.lwUncondPost}
               </p>
             </>
           )}
           <p style={{ fontSize: 11, color: '#6b7280', margin: '12px 0 0', fontStyle: 'italic' }}>
-            This is a generic template. State-specific statutory forms may apply (CA Civ Code §8132 et seq.,
-            TX Prop Code §53.281 et seq., etc.). Consult counsel for compliance requirements.
+            {t.lwDisclaimer}
           </p>
         </div>
 
@@ -133,33 +132,33 @@ export default function PublicLienWaiverSignPage() {
 
         {canSign ? (
           <div style={{ marginTop: 8, padding: 24, background: '#f0f4ff', borderRadius: 8 }}>
-            <h3 style={{ ...styles.h3, marginTop: 0 }}>Sign this waiver</h3>
+            <h3 style={{ ...styles.h3, marginTop: 0 }}>{t.lwSignThis}</h3>
             <label style={{ display: 'block', marginBottom: 12 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 4 }}>
-                Type your full legal name as your signature
+                {t.lwTypeLegalName}
               </div>
               <input
                 value={typedName}
                 onChange={e => setTypedName(e.target.value)}
-                placeholder="e.g. Jane Smith"
+                placeholder={t.pubNamePlaceholder}
                 style={{ ...styles.input, fontFamily: 'Caveat, cursive', fontSize: 22 }}
               />
             </label>
             <label style={{ display: 'flex', gap: 8, fontSize: 13, color: '#374151', marginBottom: 16 }}>
               <input type="checkbox" checked={acknowledge} onChange={e => setAcknowledge(e.target.checked)} />
-              I acknowledge that this typed signature is intended to be my legal signature on this waiver.
+              {t.lwAcknowledge}
             </label>
             <button
               onClick={sign}
               disabled={submitting || !typedName.trim() || !acknowledge}
               style={styles.primaryBtn}
             >
-              {submitting ? 'Signing...' : 'Sign waiver'}
+              {submitting ? t.lwSigning : t.lwSignBtn}
             </button>
           </div>
         ) : (
           <div style={{ marginTop: 16, padding: 16, background: '#f3f4f6', borderRadius: 8, fontSize: 14, color: '#6b7280' }}>
-            This waiver is no longer available for signature (status: <strong>{waiver.status}</strong>).
+            {t.lwNoLonger} ({t.pubStatus}: <strong>{waiver.status}</strong>).
           </div>
         )}
       </div>

@@ -944,13 +944,13 @@ export default function InventoryStock({ isAdmin, locations, projects, settings,
                   style={s.mobileInput}
                   value={itemFilter}
                   onChange={e => setStockFilter(setItemFilter)(e.target.value)}
-                  placeholder="Find item"
+                  placeholder={t.invFindItem}
                 />
                 <input
                   style={s.mobileInput}
                   value={skuFilter}
                   onChange={e => setStockFilter(setSkuFilter)(e.target.value)}
-                  placeholder="SKU"
+                  placeholder={t.invSkuPlaceholder}
                 />
                 <select style={s.mobileInput} value={locationFilter} onChange={e => setStockFilter(setLocationFilter)(e.target.value)}>
                   <option value="">{t.invCycAllLocations}</option>
@@ -960,7 +960,7 @@ export default function InventoryStock({ isAdmin, locations, projects, settings,
                   style={s.mobileInput}
                   value={binFilter}
                   onChange={e => setStockFilter(setBinFilter)(e.target.value)}
-                  placeholder="Area, rack, bay, bin"
+                  placeholder={t.invAreaRackBayBin}
                 />
                 <select style={s.mobileInput} value={statusFilter} onChange={e => setStockFilter(setStatusFilter)(e.target.value)}>
                   <option value="">{t.allStatuses || 'All statuses'}</option>

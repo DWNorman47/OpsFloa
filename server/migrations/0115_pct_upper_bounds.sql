@@ -15,7 +15,11 @@ ALTER TABLE estimates
   DROP CONSTRAINT IF EXISTS estimates_overhead_pct_check,
   DROP CONSTRAINT IF EXISTS estimates_margin_pct_check,
   DROP CONSTRAINT IF EXISTS estimates_contingency_pct_check,
-  DROP CONSTRAINT IF EXISTS estimates_tax_pct_check;
+  DROP CONSTRAINT IF EXISTS estimates_tax_pct_check,
+  DROP CONSTRAINT IF EXISTS chk_estimates_overhead_pct,
+  DROP CONSTRAINT IF EXISTS chk_estimates_margin_pct,
+  DROP CONSTRAINT IF EXISTS chk_estimates_contingency_pct,
+  DROP CONSTRAINT IF EXISTS chk_estimates_tax_pct;
 
 UPDATE estimates SET
   overhead_pct    = LEAST(overhead_pct,    100),
@@ -41,7 +45,10 @@ ALTER TABLE estimates
 ALTER TABLE change_orders
   DROP CONSTRAINT IF EXISTS change_orders_overhead_pct_check,
   DROP CONSTRAINT IF EXISTS change_orders_margin_pct_check,
-  DROP CONSTRAINT IF EXISTS change_orders_tax_pct_check;
+  DROP CONSTRAINT IF EXISTS change_orders_tax_pct_check,
+  DROP CONSTRAINT IF EXISTS chk_change_orders_overhead_pct,
+  DROP CONSTRAINT IF EXISTS chk_change_orders_margin_pct,
+  DROP CONSTRAINT IF EXISTS chk_change_orders_tax_pct;
 
 UPDATE change_orders SET
   overhead_pct = LEAST(overhead_pct, 100),

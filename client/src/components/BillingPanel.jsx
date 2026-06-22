@@ -481,7 +481,7 @@ function ClientPortalProPlaceholder() {
         <span style={{ fontSize: 20 }}>🏗️</span>
         <span style={{ ...s.addonTitle, color: '#3730a3' }}>
           Customer Portal Pro &nbsp;
-          <span style={{ fontSize: 12, fontWeight: 700, background: '#c7d2fe', color: '#3730a3', padding: '2px 8px', borderRadius: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>Coming soon</span>
+          <span style={{ fontSize: 12, fontWeight: 700, background: '#c7d2fe', color: '#3730a3', padding: '2px 8px', borderRadius: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>{t.comingSoon}</span>
         </span>
       </div>
       <div style={{ paddingLeft: 30, fontSize: 12, color: '#4338ca', lineHeight: 1.55, marginTop: 6 }}>

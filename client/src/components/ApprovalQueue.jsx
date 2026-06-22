@@ -544,7 +544,7 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                       <span style={styles.signedTag}>{`${workerLabel} signed`}</span>
                     )}
                     {!canApprove && (
-                      <span style={styles.waitingTag}>Cannot approve until the entry ends</span>
+                      <span style={styles.waitingTag}>{t.apqCannotApprove}</span>
                     )}
                     {e.notes && <div style={styles.notes}>{e.notes}</div>}
                     {e.clock_source && e.clock_source !== 'worker' && (

@@ -142,6 +142,48 @@ app.use('/api/sendgrid-events', express.json({ limit: '1mb' }));
 app.use('/api/public', express.json({ limit: '1mb' }));
 app.use(express.json({ limit: '20mb' }));
 
+// Health probes must be registered before any catch-all authenticated /api
+// routers, otherwise hosting readiness checks receive a 401 before reaching
+// these handlers.
+app.get('/api/health/live', (req, res) => {
+  res.json({ ok: true, uptime: process.uptime() });
+});
+
+app.get('/api/health', async (req, res) => {
+  const checks = {};
+  let healthy = true;
+
+  try {
+    const start = Date.now();
+    await Promise.race([
+      pool.query('SELECT 1'),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('db timeout')), 3000)),
+    ]);
+    checks.db = { ok: true, latency_ms: Date.now() - start };
+  } catch (err) {
+    checks.db = { ok: false, error: err.message };
+    healthy = false;
+  }
+
+  const mem = process.memoryUsage();
+  const heapLimit = v8.getHeapStatistics().heap_size_limit;
+  const heapPct = mem.heapUsed / heapLimit;
+  checks.memory = {
+    ok: heapPct < 0.9,
+    heap_used_mb: Math.round(mem.heapUsed / 1024 / 1024),
+    heap_total_mb: Math.round(mem.heapTotal / 1024 / 1024),
+    heap_limit_mb: Math.round(heapLimit / 1024 / 1024),
+    rss_mb: Math.round(mem.rss / 1024 / 1024),
+  };
+  if (!checks.memory.ok) healthy = false;
+
+  res.status(healthy ? 200 : 503).json({
+    ok: healthy,
+    uptime_s: Math.round(process.uptime()),
+    checks,
+  });
+});
+
 // Establish the request-scoped demo context (suppresses email + surfaces
 // the popup flag for demo tenants). Mounted before routers so it wraps
 // every API request; requireAuth fills in the acting company.
@@ -297,50 +339,6 @@ app.get('/api/company-info', requireAuth, async (req, res) => {
     req.log.error({ err }, 'GET /api/company-info failed');
     res.status(500).json({ error: 'Server error' });
   }
-});
-
-// Liveness: is the process running? Fast, no dependencies.
-app.get('/api/health/live', (req, res) => {
-  res.json({ ok: true, uptime: process.uptime() });
-});
-
-// Readiness: can we actually serve traffic? Checks DB connectivity.
-// Render uses this to decide whether to route traffic and whether to auto-restart.
-app.get('/api/health', async (req, res) => {
-  const checks = {};
-  let healthy = true;
-
-  // DB ping with a short timeout so a hung DB doesn't hang the health check
-  try {
-    const start = Date.now();
-    await Promise.race([
-      pool.query('SELECT 1'),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('db timeout')), 3000)),
-    ]);
-    checks.db = { ok: true, latency_ms: Date.now() - start };
-  } catch (err) {
-    checks.db = { ok: false, error: err.message };
-    healthy = false;
-  }
-
-  // Memory headroom — flag if we're above 90% of Node's heap limit
-  const mem = process.memoryUsage();
-  const heapLimit = v8.getHeapStatistics().heap_size_limit;
-  const heapPct = mem.heapUsed / heapLimit;
-  checks.memory = {
-    ok: heapPct < 0.9,
-    heap_used_mb: Math.round(mem.heapUsed / 1024 / 1024),
-    heap_total_mb: Math.round(mem.heapTotal / 1024 / 1024),
-    heap_limit_mb: Math.round(heapLimit / 1024 / 1024),
-    rss_mb: Math.round(mem.rss / 1024 / 1024),
-  };
-  if (!checks.memory.ok) healthy = false;
-
-  res.status(healthy ? 200 : 503).json({
-    ok: healthy,
-    uptime_s: Math.round(process.uptime()),
-    checks,
-  });
 });
 
 // Express error handler — bubble unhandled errors to Sentry and log them.

@@ -119,7 +119,7 @@ export default function CertifiedPayrollSignature({
       {error && <p role="alert" style={styles.error}>{error}</p>}
 
       <div style={styles.actions}>
-        <button type="button" onClick={onClose} style={styles.cancelBtn}>Cancel</button>
+        <button type="button" onClick={onClose} style={styles.cancelBtn}>{t.cancel}</button>
         <button
           type="button"
           onClick={submit}

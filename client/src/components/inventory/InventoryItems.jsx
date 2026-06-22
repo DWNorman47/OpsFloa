@@ -720,7 +720,7 @@ export default function InventoryItems({ onItemChange }) {
             <button style={s.importBtn} onClick={() => setImporting(true)}>{t.invImportBtn || 'Import'}</button>
             {total > 0 && (
               <button style={{ ...s.importBtn, ...(exportingCsv ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={downloadCSV} disabled={exportingCsv}>
-                {exportingCsv ? 'Exporting...' : 'Download CSV'}
+                {exportingCsv ? t.invExporting : t.downloadCsv}
               </button>
             )}
             {items.length > 0 && (

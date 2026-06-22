@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useT } from '../hooks/useT';
 import api from '../api';
 import { PageShell } from '../components/PageShell';
 import { SkeletonList } from '../components/Skeleton';
@@ -12,35 +13,37 @@ import EmptyState from '../components/EmptyState';
 import { silentError } from '../errorReporter';
 
 const STATUS_COLORS = {
-  open:                  { bg: '#f3f4f6', fg: '#374151', label: 'Open' },
-  in_progress:           { bg: '#dbeafe', fg: '#1d4ed8', label: 'In Progress' },
-  substantially_complete:{ bg: '#fef3c7', fg: '#92400e', label: 'Substantially Complete' },
-  final_complete:        { bg: '#d1fae5', fg: '#065f46', label: 'Final Complete' },
-  closed:                { bg: '#a7f3d0', fg: '#065f46', label: 'Closed' },
-  reopened:              { bg: '#fee2e2', fg: '#991b1b', label: 'Reopened' },
+  open:                  { bg: '#f3f4f6', fg: '#374151', labelKey: 'coStatusOpen' },
+  in_progress:           { bg: '#dbeafe', fg: '#1d4ed8', labelKey: 'coStatusInProgress' },
+  substantially_complete:{ bg: '#fef3c7', fg: '#92400e', labelKey: 'coStatusSubstantial' },
+  final_complete:        { bg: '#d1fae5', fg: '#065f46', labelKey: 'coStatusFinal' },
+  closed:                { bg: '#a7f3d0', fg: '#065f46', labelKey: 'coStatusClosed' },
+  reopened:              { bg: '#fee2e2', fg: '#991b1b', labelKey: 'coStatusReopened' },
 };
 
 const ITEM_STATUS_COLORS = {
-  pending:     { fg: '#6b7280', icon: '○' },
-  in_progress: { fg: '#1d4ed8', icon: '◐' },
-  done:        { fg: '#065f46', icon: '●' },
-  waived:      { fg: '#7c3aed', icon: '◆' },
-  n_a:         { fg: '#9ca3af', icon: '⊘' },
+  pending:     { fg: '#6b7280', icon: '○', key: 'coItemPending' },
+  in_progress: { fg: '#1d4ed8', icon: '◐', key: 'coItemInProgress' },
+  done:        { fg: '#065f46', icon: '●', key: 'coItemDone' },
+  waived:      { fg: '#7c3aed', icon: '◆', key: 'coItemWaived' },
+  n_a:         { fg: '#9ca3af', icon: '⊘', key: 'coItemNA' },
 };
 
 function StatusBadge({ status }) {
+  const t = useT();
   const c = STATUS_COLORS[status] || STATUS_COLORS.open;
   return (
     <span style={{
       fontSize: 12, fontWeight: 700, background: c.bg, color: c.fg,
       padding: '4px 10px', borderRadius: 12, textTransform: 'uppercase', letterSpacing: '0.04em',
-    }}>{c.label}</span>
+    }}>{t[c.labelKey]}</span>
   );
 }
 
 // ── Project picker ───────────────────────────────────────────────────────────
 
 function CloseoutLanding({ onSelect }) {
+  const t = useT();
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [warranties, setWarranties] = useState([]);
@@ -54,16 +57,16 @@ function CloseoutLanding({ onSelect }) {
 
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: '24px 20px' }}>
-      <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 16px', color: '#111827' }}>Project Closeout</h1>
+      <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 16px', color: '#111827' }}>{t.coTitle}</h1>
 
       {warranties.length > 0 && (
         <div style={{ background: '#fef3c7', border: '1px solid #fbbf24', borderRadius: 8, padding: 14, marginBottom: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: '#92400e', marginBottom: 8 }}>
-            {warranties.length} warrant{warranties.length === 1 ? 'y' : 'ies'} expiring in the next 60 days
+            {warranties.length} {t.coWarrantiesExpiring}
           </div>
           {warranties.slice(0, 5).map(w => (
             <div key={w.id} style={{ fontSize: 13, color: '#7c3a00', marginBottom: 2 }}>
-              <strong>{w.project_name}</strong> · expires {new Date(w.warranty_end_date).toLocaleDateString()}
+              <strong>{w.project_name}</strong> · {t.coExpires} {new Date(w.warranty_end_date).toLocaleDateString()}
             </div>
           ))}
         </div>
@@ -71,17 +74,17 @@ function CloseoutLanding({ onSelect }) {
 
       {loading ? <SkeletonList rows={3} /> :
         projects.length === 0 ? (
-          <EmptyState title="No projects" body="Open a project to begin closeout." />
+          <EmptyState title={t.coNoProjects} body={t.coNoProjectsBody} />
         ) : (
           <>
-            <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 12 }}>Choose a project to view or open its closeout:</div>
+            <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 12 }}>{t.coChoosePrompt}</div>
             <div style={styles.tableWrap}>
               <table style={styles.table}>
                 <thead>
                   <tr style={styles.tableHeader}>
-                    <th style={styles.th}>Project</th>
-                    <th style={styles.th}>Client</th>
-                    <th style={styles.th}>Status</th>
+                    <th style={styles.th}>{t.coColProject}</th>
+                    <th style={styles.th}>{t.coColClient}</th>
+                    <th style={styles.th}>{t.status}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -105,6 +108,7 @@ function CloseoutLanding({ onSelect }) {
 // ── Project closeout view ────────────────────────────────────────────────────
 
 function ProjectCloseoutView({ projectId, onBack }) {
+  const t = useT();
   const [closeout, setCloseout] = useState(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -129,7 +133,7 @@ function ProjectCloseoutView({ projectId, onBack }) {
       const { data } = await api.post(`/projects/${projectId}/closeout`);
       setCloseout(data.closeout);
       setItems(data.items || []);
-    } catch (err) { setError(err.response?.data?.error || 'Failed to open closeout'); }
+    } catch (err) { setError(err.response?.data?.error || t.coErrOpen); }
     finally { setBusy(false); }
   }
 
@@ -138,7 +142,7 @@ function ProjectCloseoutView({ projectId, onBack }) {
     try {
       await api.post(`/projects/${projectId}/closeout/transition`, { to_status });
       await load();
-    } catch (err) { setError(err.response?.data?.error || 'Transition failed'); }
+    } catch (err) { setError(err.response?.data?.error || t.coErrTransition); }
     finally { setBusy(false); }
   }
 
@@ -147,7 +151,7 @@ function ProjectCloseoutView({ projectId, onBack }) {
     try {
       await api.patch(`/closeout-items/${item.id}`, { status: newStatus });
       await load();
-    } catch (err) { setError(err.response?.data?.error || 'Update failed'); }
+    } catch (err) { setError(err.response?.data?.error || t.coErrUpdate); }
     finally { setBusy(false); }
   }
 
@@ -156,24 +160,24 @@ function ProjectCloseoutView({ projectId, onBack }) {
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: '24px 20px' }}>
       <div style={{ marginBottom: 16 }}>
-        <button onClick={onBack} style={styles.ghostBtn}>← Back to projects</button>
+        <button onClick={onBack} style={styles.ghostBtn}>{t.coBackToProjects}</button>
       </div>
 
       {!closeout ? (
         <div style={styles.formCard}>
-          <h2 style={{ fontSize: 20, fontWeight: 700, margin: '0 0 8px' }}>No closeout opened yet</h2>
+          <h2 style={{ fontSize: 20, fontWeight: 700, margin: '0 0 8px' }}>{t.coNoCloseout}</h2>
           <p style={{ fontSize: 14, color: '#6b7280', marginBottom: 16 }}>
-            Opening a closeout seeds the company's default checklist for this project. Auto-status items (punchlist, lien waivers, final invoice, retainage) start computing immediately.
+            {t.coOpenIntro}
           </p>
           <button onClick={openCloseout} disabled={busy} style={styles.primaryBtn}>
-            {busy ? 'Opening...' : 'Open closeout'}
+            {busy ? t.coOpening : t.coOpenCloseout}
           </button>
           {error && <div style={styles.errorBox}>{error}</div>}
         </div>
       ) : (
         <>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
-            <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: '#111827' }}>Closeout</h1>
+            <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: '#111827' }}>{t.coCloseout}</h1>
             <StatusBadge status={closeout.status} />
           </div>
 
@@ -181,37 +185,37 @@ function ProjectCloseoutView({ projectId, onBack }) {
 
           {/* Lifecycle */}
           <div style={styles.formCard}>
-            <h3 style={styles.formH3}>Lifecycle</h3>
+            <h3 style={styles.formH3}>{t.coLifecycle}</h3>
             <div style={styles.grid4}>
-              <Info label="Substantial Completion" value={closeout.substantial_completion_date ? new Date(closeout.substantial_completion_date).toLocaleDateString() : null} />
-              <Info label="Final Completion" value={closeout.final_completion_date ? new Date(closeout.final_completion_date).toLocaleDateString() : null} />
-              <Info label="Warranty Start" value={closeout.warranty_start_date ? new Date(closeout.warranty_start_date).toLocaleDateString() : null} />
-              <Info label="Warranty Months" value={closeout.warranty_months} />
+              <Info label={t.coSubstantialCompletion} value={closeout.substantial_completion_date ? new Date(closeout.substantial_completion_date).toLocaleDateString() : null} />
+              <Info label={t.coFinalCompletion} value={closeout.final_completion_date ? new Date(closeout.final_completion_date).toLocaleDateString() : null} />
+              <Info label={t.coWarrantyStart} value={closeout.warranty_start_date ? new Date(closeout.warranty_start_date).toLocaleDateString() : null} />
+              <Info label={t.coWarrantyMonths} value={closeout.warranty_months} />
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
               {closeout.status === 'in_progress' && (
                 <button onClick={() => transition('substantially_complete')} disabled={busy} style={styles.primaryBtn}>
-                  Mark Substantially Complete
+                  {t.coMarkSubstantial}
                 </button>
               )}
               {closeout.status === 'open' && (
                 <button onClick={() => transition('in_progress')} disabled={busy} style={styles.primaryBtn}>
-                  Begin closeout
+                  {t.coBeginCloseout}
                 </button>
               )}
               {closeout.status === 'substantially_complete' && (
                 <button onClick={() => transition('final_complete')} disabled={busy} style={styles.primaryBtn}>
-                  Mark Final Complete
+                  {t.coMarkFinal}
                 </button>
               )}
               {closeout.status === 'final_complete' && (
                 <button onClick={() => transition('closed')} disabled={busy} style={styles.primaryBtn}>
-                  Close
+                  {t.coClose}
                 </button>
               )}
               {closeout.status === 'closed' && (
                 <button onClick={() => transition('reopened')} disabled={busy} style={{ ...styles.ghostBtn, color: '#991b1b' }}>
-                  Reopen
+                  {t.coReopen}
                 </button>
               )}
             </div>
@@ -219,7 +223,7 @@ function ProjectCloseoutView({ projectId, onBack }) {
 
           {/* Checklist */}
           <div style={styles.formCard}>
-            <h3 style={styles.formH3}>Checklist ({items.filter(i => ['done', 'waived', 'n_a'].includes(i.status)).length} / {items.length} complete)</h3>
+            <h3 style={styles.formH3}>{t.coChecklist} ({items.filter(i => ['done', 'waived', 'n_a'].includes(i.status)).length} / {items.length} {t.coComplete})</h3>
             <div>
               {items.map(item => (
                 <ChecklistRow key={item.id} item={item} onChange={toggleItem} busy={busy} />
@@ -229,7 +233,7 @@ function ProjectCloseoutView({ projectId, onBack }) {
 
           {closeout.notes && (
             <div style={styles.formCard}>
-              <h3 style={styles.formH3}>Notes</h3>
+              <h3 style={styles.formH3}>{t.notes}</h3>
               <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: 13, color: '#374151', margin: 0 }}>{closeout.notes}</pre>
             </div>
           )}
@@ -240,6 +244,7 @@ function ProjectCloseoutView({ projectId, onBack }) {
 }
 
 function ChecklistRow({ item, onChange, busy }) {
+  const t = useT();
   const c = ITEM_STATUS_COLORS[item.status] || ITEM_STATUS_COLORS.pending;
   const isAuto = !!item.auto_source;
   return (
@@ -251,9 +256,9 @@ function ChecklistRow({ item, onChange, busy }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 14, fontWeight: 600, color: '#111827' }}>
           {item.title}
-          {!item.required && <span style={{ fontSize: 11, color: '#9ca3af', marginLeft: 8, fontWeight: 500 }}>(optional)</span>}
+          {!item.required && <span style={{ fontSize: 11, color: '#9ca3af', marginLeft: 8, fontWeight: 500 }}>{t.coOptional}</span>}
           {isAuto && (
-            <span style={{ fontSize: 10, color: '#1d4ed8', marginLeft: 8, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>auto</span>
+            <span style={{ fontSize: 10, color: '#1d4ed8', marginLeft: 8, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{t.coAuto}</span>
           )}
         </div>
         {item.description && (
@@ -261,14 +266,14 @@ function ChecklistRow({ item, onChange, busy }) {
         )}
         {item.completed_at && (
           <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
-            Completed {new Date(item.completed_at).toLocaleDateString()}
+            {t.coCompleted} {new Date(item.completed_at).toLocaleDateString()}
           </div>
         )}
       </div>
       <div style={{ flexShrink: 0 }}>
         {isAuto ? (
           <span style={{ fontSize: 12, color: c.fg, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            {item.status}
+            {t[c.key]}
           </span>
         ) : (
           <select
@@ -277,11 +282,11 @@ function ChecklistRow({ item, onChange, busy }) {
             disabled={busy}
             style={{ ...styles.input, padding: '4px 8px', fontSize: 13 }}
           >
-            <option value="pending">Pending</option>
-            <option value="in_progress">In Progress</option>
-            <option value="done">Done</option>
-            <option value="waived">Waived</option>
-            <option value="n_a">N/A</option>
+            <option value="pending">{t.coItemPending}</option>
+            <option value="in_progress">{t.coItemInProgress}</option>
+            <option value="done">{t.coItemDone}</option>
+            <option value="waived">{t.coItemWaived}</option>
+            <option value="n_a">{t.coItemNA}</option>
           </select>
         )}
       </div>

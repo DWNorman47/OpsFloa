@@ -36,20 +36,20 @@ export default function InventoryPage() {
   // master data. The Setup group only exists for managers, so view-only users
   // see a single flat row and no group switcher.
   const opsTabs = [
-    { id: 'stock',        label: 'Stock', dot: lowStockCount > 0 ? '#f59e0b' : null },
-    { id: 'transactions', label: 'Transactions' },
-    ...(!canManage ? [{ id: 'mycount', label: 'My Count' }] : []),
+    { id: 'stock',        label: t.invTabStock, dot: lowStockCount > 0 ? '#f59e0b' : null },
+    { id: 'transactions', label: t.invTabTransactions },
+    ...(!canManage ? [{ id: 'mycount', label: t.myCountTitle }] : []),
     ...(canManage ? [
-      { id: 'orders',    label: 'Orders' },
-      { id: 'cycle',     label: 'Counts' },
-      { id: 'valuation', label: 'Valuation' },
+      { id: 'orders',    label: t.invTabOrders },
+      { id: 'cycle',     label: t.invTabCounts },
+      { id: 'valuation', label: t.invTabValuation },
     ] : []),
   ];
   const setupTabs = canManage ? [
-    { id: 'items',       label: 'Items' },
-    { id: 'locations',   label: 'Locations' },
-    { id: 'suppliers',   label: 'Suppliers' },
-    { id: 'conversions', label: 'Conversions', dot: pendingConversions > 0 ? '#d97706' : null },
+    { id: 'items',       label: t.invTabItems },
+    { id: 'locations',   label: t.invSetupLocations },
+    { id: 'suppliers',   label: t.invSetupSuppliers },
+    { id: 'conversions', label: t.invTabConversions, dot: pendingConversions > 0 ? '#d97706' : null },
   ] : [];
   const setupTabIds = setupTabs.map(d => d.id);
   const allTabIds = [...opsTabs, ...setupTabs].map(d => d.id);
@@ -136,26 +136,24 @@ export default function InventoryPage() {
     <PageShell currentApp="inventory" features={features} maxWidth={1040}>
         <PageIntro
           introId="inventory"
-          kicker="Inventory"
-          title={canManage ? 'Keep stock, counts, and orders in one place.' : 'Inventory work for today.'}
-          description={canManage
-            ? 'Operations holds the daily work — stock, transactions, orders, counts, and valuation. Setup keeps your items, locations, suppliers, and conversions.'
-            : 'See stock, record movement, and complete count assignments without digging through admin tools.'}
+          kicker={t.invKicker}
+          title={canManage ? t.invIntroTitleManage : t.invIntroTitleWorker}
+          description={canManage ? t.invIntroDescManage : t.invIntroDescWorker}
           meta={canManage && (
             <>
-              <span className={`ops-pill ${lowStockCount > 0 ? 'attention' : 'good'}`}>{lowStockCount} low stock</span>
-              <span className={`ops-pill ${pendingConversions > 0 ? 'attention' : ''}`}>{pendingConversions} conversions to review</span>
+              <span className={`ops-pill ${lowStockCount > 0 ? 'attention' : 'good'}`}>{lowStockCount} {t.invPillLowStock}</span>
+              <span className={`ops-pill ${pendingConversions > 0 ? 'attention' : ''}`}>{pendingConversions} {t.invPillConversions}</span>
             </>
           )}
         />
         {showGroupRow && (
-          <div className="ops-workflow-tabs" role="tablist" aria-label="Inventory sections">
+          <div className="ops-workflow-tabs" role="tablist" aria-label={t.invSectionsAria}>
             <button type="button" role="tab" aria-selected={group === 'operations'}
               className={`ops-workflow-tab ${group === 'operations' ? 'is-active' : ''}`.trim()}
-              onClick={() => switchGroup('operations')}>Operations</button>
+              onClick={() => switchGroup('operations')}>{t.invGroupOperations}</button>
             <button type="button" role="tab" aria-selected={group === 'setup'}
               className={`ops-workflow-tab ${group === 'setup' ? 'is-active' : ''}`.trim()}
-              onClick={() => switchGroup('setup')}>Setup</button>
+              onClick={() => switchGroup('setup')}>{t.invGroupSetup}</button>
           </div>
         )}
         <TabBar active={tab} onChange={switchTab} tabs={visibleTabs} />

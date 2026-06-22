@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useT } from '../hooks/useT';
 import api from '../api';
 import { PageShell } from '../components/PageShell';
 import { SkeletonList } from '../components/Skeleton';
@@ -25,6 +26,7 @@ function formatDollars(dollars) {
 
 export default function CatalogPage() {
   const { user } = useAuth();
+  const t = useT();
   const [items, setItems] = useState([]);
   const [tags, setTags] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -53,9 +55,9 @@ export default function CatalogPage() {
       <div className="admin-page-shell">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
           <div>
-            <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>Material Catalog</h1>
+            <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>{t.catTitle}</h1>
             <p style={{ fontSize: 13, color: '#6b7280', margin: '4px 0 0' }}>
-              Items here pre-fill estimate lines. Use the existing Inventory page to set is_stocked, sell_price, default category and tags.
+              {t.catIntro}
             </p>
           </div>
         </div>
@@ -63,13 +65,13 @@ export default function CatalogPage() {
         <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
           <input
             type="search"
-            placeholder="Search by name or SKU..."
+            placeholder={t.catSearchPlaceholder}
             value={q}
             onChange={e => setQ(e.target.value)}
             style={styles.searchInput}
           />
           <select value={tagFilter} onChange={e => setTagFilter(e.target.value)} style={styles.select}>
-            <option value="">All tags</option>
+            <option value="">{t.catAllTags}</option>
             {tags.map(tag => <option key={tag} value={tag}>{tag}</option>)}
           </select>
         </div>
@@ -77,22 +79,22 @@ export default function CatalogPage() {
         {loading ? <SkeletonList rows={4} /> :
           items.length === 0 ? (
             <EmptyState
-              title="No catalog items yet"
-              body="Mark inventory items as is_stocked=false (pure catalog) or set sell_price_cents/tags on stocked items to surface them here."
+              title={t.catEmptyTitle}
+              body={t.catEmptyBody}
             />
           ) : (
             <div style={styles.tableWrap}>
               <table style={styles.table}>
                 <thead>
                   <tr style={styles.tableHeader}>
-                    <th style={styles.th}>Name</th>
-                    <th style={styles.th}>SKU</th>
-                    <th style={styles.th}>Unit</th>
-                    <th style={{ ...styles.th, textAlign: 'right' }}>Cost</th>
-                    <th style={{ ...styles.th, textAlign: 'right' }}>Sell</th>
-                    <th style={styles.th}>Default category</th>
-                    <th style={styles.th}>Tags</th>
-                    <th style={styles.th}>Type</th>
+                    <th style={styles.th}>{t.catColName}</th>
+                    <th style={styles.th}>{t.catColSku}</th>
+                    <th style={styles.th}>{t.catColUnit}</th>
+                    <th style={{ ...styles.th, textAlign: 'right' }}>{t.catColCost}</th>
+                    <th style={{ ...styles.th, textAlign: 'right' }}>{t.catColSell}</th>
+                    <th style={styles.th}>{t.catColDefaultCategory}</th>
+                    <th style={styles.th}>{t.catColTags}</th>
+                    <th style={styles.th}>{t.catColType}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -110,6 +112,7 @@ export default function CatalogPage() {
 }
 
 function CatalogRow({ item, onChanged }) {
+  const t = useT();
   const [showPreview, setShowPreview] = useState(false);
   const [preview, setPreview] = useState(null);
   const sellCents = item.sell_price_cents != null ? parseInt(item.sell_price_cents, 10) : null;
@@ -132,7 +135,7 @@ function CatalogRow({ item, onChanged }) {
         <td style={styles.td}>{item.sku || '—'}</td>
         <td style={styles.td}>{item.unit || '—'}</td>
         <td style={{ ...styles.td, textAlign: 'right' }}>{item.unit_cost != null ? formatDollars(item.unit_cost) : '—'}</td>
-        <td style={{ ...styles.td, textAlign: 'right' }}>{sellCents != null ? formatCents(sellCents) : (item.default_markup_pct ? `${item.default_markup_pct}% mkup` : '—')}</td>
+        <td style={{ ...styles.td, textAlign: 'right' }}>{sellCents != null ? formatCents(sellCents) : (item.default_markup_pct ? `${item.default_markup_pct}% ${t.catMkupSuffix}` : '—')}</td>
         <td style={styles.td}>
           {item.default_estimate_category ? (
             <span style={styles.catChip}>{item.default_estimate_category}</span>
@@ -141,15 +144,15 @@ function CatalogRow({ item, onChanged }) {
         <td style={styles.td}>
           {item.catalog_tags?.length ? (
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-              {item.catalog_tags.map(t => (
-                <span key={t} style={styles.tagChip}>{t}</span>
+              {item.catalog_tags.map(tag => (
+                <span key={tag} style={styles.tagChip}>{tag}</span>
               ))}
             </div>
           ) : '—'}
         </td>
         <td style={styles.td}>
           <span style={item.is_stocked ? styles.stockChip : styles.catalogOnlyChip}>
-            {item.is_stocked ? 'Stocked' : 'Catalog only'}
+            {item.is_stocked ? t.catStocked : t.catCatalogOnly}
           </span>
         </td>
       </tr>
@@ -157,16 +160,16 @@ function CatalogRow({ item, onChanged }) {
         <tr style={{ background: '#f0f4ff', borderBottom: '1px solid #c7d2fe' }}>
           <td colSpan={8} style={{ padding: '12px 14px' }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: '#3730a3', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
-              Estimate-line preview
+              {t.catEstimatePreview}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 16, fontSize: 14 }}>
               <span><strong>{preview.description}</strong></span>
-              <span style={{ color: '#6b7280' }}>per {preview.unit || 'unit'}</span>
+              <span style={{ color: '#6b7280' }}>{t.catPer} {preview.unit || 'unit'}</span>
               <span style={{ color: '#3730a3', fontWeight: 600 }}>{formatCents(preview.unit_cost_cents)}</span>
               <span style={styles.catChip}>{preview.category}</span>
             </div>
             <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>
-              When picked into an estimate line, those values pre-fill (qty defaults to 1). Resolved server-side via{' '}
+              {t.catPreviewNote}{' '}
               <code style={{ background: '#fff', padding: '1px 4px', borderRadius: 3 }}>GET /catalog/items/{item.id}/estimate-line</code>.
             </div>
           </td>

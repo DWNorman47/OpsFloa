@@ -1049,15 +1049,28 @@ const inviteLimiter = rateLimit({
 });
 router.post('/workers/invite', requireAdmin, requirePerm('manage_workers'), inviteLimiter, async (req, res) => {
   const full_name = req.body.full_name?.trim();
+  const firstName = req.body.first_name?.trim() || null;
+  const lastName = req.body.last_name?.trim() || null;
   const email = req.body.email?.trim();
   const { role, language, hourly_rate } = req.body;
   if (!full_name || !email) return res.status(400).json({ error: 'full_name and email required' });
   if (!isValidEmail(email)) return res.status(400).json({ error: 'Invalid email address' });
   if (full_name.length > 100) return res.status(400).json({ error: 'Full name must be 100 characters or fewer' });
+  if (firstName && firstName.length > 100) return res.status(400).json({ error: 'First name must be 100 characters or fewer' });
+  if (lastName && lastName.length > 100) return res.status(400).json({ error: 'Last name must be 100 characters or fewer' });
   const companyId = req.user.company_id;
   const VALID_LANGUAGES = ['English', 'Spanish'];
+  const VALID_OT_RULES = ['daily', 'weekly', 'none'];
+  const VALID_WORKER_TYPES = ['employee', 'contractor', 'subcontractor', 'owner'];
   const assignedRole = role === 'admin' ? 'admin' : 'worker';
   const assignedLanguage = VALID_LANGUAGES.includes(language) ? language : 'English';
+  const assignedRateType = ['hourly', 'daily'].includes(req.body.rate_type) ? req.body.rate_type : 'hourly';
+  const assignedOTRule = VALID_OT_RULES.includes(req.body.overtime_rule) ? req.body.overtime_rule : 'daily';
+  const assignedWorkerType = VALID_WORKER_TYPES.includes(req.body.worker_type) ? req.body.worker_type : 'employee';
+  const assignedClassification = req.body.classification?.trim() || null;
+  if (assignedClassification && assignedClassification.length > 100) {
+    return res.status(400).json({ error: 'classification must be 100 characters or fewer' });
+  }
   const rateVal = parseFloat(hourly_rate);
   if (hourly_rate !== undefined && (isNaN(rateVal) || rateVal < 0)) {
     return res.status(400).json({ error: 'hourly_rate must be a non-negative number' });
@@ -1118,12 +1131,28 @@ router.post('/workers/invite', requireAdmin, requirePerm('manage_workers'), invi
   const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
   try {
     const result = await pool.query(
-      `INSERT INTO users (company_id, username, password_hash, full_name, role, role_id, language, hourly_rate, email, invite_token, invite_token_expires, invite_pending)
-       VALUES ($1, $2, '', $3, $4, $5, $6, $7, $8, $9, $10, true)
-       RETURNING id, username, full_name, role, role_id, language, hourly_rate, email`,
-      [companyId, username, full_name, resolvedLegacyRole, resolvedRoleId, assignedLanguage, assignedRate, email, tokenHash, expires]
+      `INSERT INTO users (
+         company_id, username, password_hash, full_name, first_name, last_name,
+         role, role_id, language, hourly_rate, rate_type, overtime_rule,
+         worker_type, classification, email, invite_token, invite_token_expires, invite_pending
+       )
+       VALUES ($1, $2, '', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, true)
+       RETURNING id, username, full_name, first_name, last_name, role, role_id,
+                 language, hourly_rate, rate_type, overtime_rule, worker_type,
+                 classification, email`,
+      [
+        companyId, username, full_name, firstName, lastName,
+        resolvedLegacyRole, resolvedRoleId, assignedLanguage, assignedRate,
+        assignedRateType, assignedOTRule, assignedWorkerType,
+        assignedClassification, email, tokenHash, expires,
+      ]
     );
-    await logAudit(companyId, req.user.id, req.user.full_name, 'worker.invited', 'worker', result.rows[0].id, full_name, { email });
+    await logAudit(companyId, req.user.id, req.user.full_name, 'worker.invited', 'worker', result.rows[0].id, full_name, {
+      email,
+      role_id: resolvedRoleId,
+      worker_type: assignedWorkerType,
+      classification: assignedClassification,
+    });
     const inviteUrl = `${process.env.APP_URL}/accept-invite?token=${token}`;
     let emailSent = true;
     try {
