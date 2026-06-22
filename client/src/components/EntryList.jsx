@@ -1,9 +1,12 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import api from '../api';
 import MessageThread from './MessageThread';
 import EntryPanel from './EntryPanel';
 import EmptyState from './EmptyState';
+import Pagination from './Pagination';
 import { fmtHours, langToLocale } from '../utils';
+
+const ENTRIES_PER_PAGE = 25;
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 function isEditable(dateStr) {
@@ -34,6 +37,7 @@ export default function EntryList({ entries, onDeleted, onUpdated, t, language, 
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [confirmingBulkDelete, setConfirmingBulkDelete] = useState(false);
   const [bulkDeleteError, setBulkDeleteError] = useState('');
+  const [page, setPage] = useState(1);
 
   const toggleSelect = id => {
     setSelectedIds(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
@@ -52,21 +56,31 @@ export default function EntryList({ entries, onDeleted, onUpdated, t, language, 
     finally { setBulkDeleting(false); }
   };
 
-  // Group entries by date, dates descending, entries within day ascending by start_time
-  const grouped = useMemo(() => {
-    const sorted = [...entries].sort((a, b) => {
+  // Flat list, dates descending, entries within a day ascending by start_time.
+  const sortedEntries = useMemo(() => (
+    [...entries].sort((a, b) => {
       const dc = b.work_date.substring(0, 10).localeCompare(a.work_date.substring(0, 10));
       return dc !== 0 ? dc : a.start_time.localeCompare(b.start_time);
-    });
+    })
+  ), [entries]);
+
+  const pages = Math.max(1, Math.ceil(sortedEntries.length / ENTRIES_PER_PAGE));
+  // Keep the page in range as entries are deleted/filtered.
+  useEffect(() => { if (page > pages) setPage(pages); }, [page, pages]);
+  const safePage = Math.min(page, pages);
+
+  // Group only the current page's slice by date for display.
+  const grouped = useMemo(() => {
+    const slice = sortedEntries.slice((safePage - 1) * ENTRIES_PER_PAGE, safePage * ENTRIES_PER_PAGE);
     const groups = [];
     let cur = null;
-    for (const e of sorted) {
+    for (const e of slice) {
       const d = e.work_date.substring(0, 10);
       if (d !== cur) { cur = d; groups.push({ date: d, entries: [] }); }
       groups[groups.length - 1].entries.push(e);
     }
     return groups;
-  }, [entries]);
+  }, [sortedEntries, safePage]);
 
   if (entries.length === 0) return (
     <EmptyState
@@ -181,6 +195,8 @@ export default function EntryList({ entries, onDeleted, onUpdated, t, language, 
           </div>
         </div>
       ))}
+
+      <Pagination page={safePage} pages={pages} onChange={setPage} />
     </div>
   );
 }
