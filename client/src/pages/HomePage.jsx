@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../api';
 import AppHeader from '../components/AppHeader';
 import { useAuth } from '../contexts/AuthContext';
-import { userCanSeeModule } from '../modulePermissions';
+import { userCanSeeModule, canSeeTimeclockApp } from '../modulePermissions';
 import { userHasAnyPerm } from '../hooks/usePerm';
 
 function enabled(settings, key, fallback = true) {
@@ -140,6 +140,8 @@ export default function HomePage() {
       // Reports is hidden only when BOTH its halves are off (matches AppSwitcher).
       if (id === 'financial_reports' && !enabled(settings, 'module_financial_reports') && !enabled(settings, 'module_analytics')) return false;
       if (id === 'team' && !enabled(settings, 'module_team')) return false;
+      // Time Clock hosts the Workforce group — visible to oversight-only users too.
+      if (id === 'timeclock') return canSeeTimeclockApp(user);
       return userCanSeeModule(user, id);
     });
   }, [user, settings, isAdmin, terms]);

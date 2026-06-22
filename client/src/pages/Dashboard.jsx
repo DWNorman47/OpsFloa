@@ -431,11 +431,16 @@ ${signatureDataUrl ? `
     ...(settings?.feature_reimbursements !== false ? [{ id: 'reimbursements', label: t.tabExpenses }] : []),
   ];
 
-  // Workforce (admin oversight) is a second group within this module. The group
-  // row only shows when the user can actually see both halves.
-  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
-  const canSeeWorkforce = isAdmin && settings?.module_timeclock !== false && userCanSeeModule(user, 'workforce');
-  const effectiveGroup = canSeeWorkforce ? group : 'personal';
+  // Workforce (oversight) is a second group within this module. Visibility is
+  // permission-based, not role-based: anyone holding workforce perms can see it
+  // (including a custom non-admin role granted approve_entries, etc.). The
+  // Personal/Workforce switcher only appears when the user has BOTH halves; an
+  // oversight-only user (no personal clock perms) goes straight to Workforce, so
+  // removing the personal time perms never strands them without Workforce.
+  const hasPersonal = userCanSeeModule(user, 'timeclock');
+  const hasWorkforce = settings?.module_timeclock !== false && userCanSeeModule(user, 'workforce');
+  const showGroupRow = hasPersonal && hasWorkforce;
+  const effectiveGroup = showGroupRow ? group : (hasWorkforce && !hasPersonal ? 'workforce' : 'personal');
   const switchGroup = g => {
     setGroup(g);
     if (g === 'personal') history.replaceState(null, '', `#${tab}`);
@@ -461,7 +466,7 @@ ${signatureDataUrl ? `
       )}
 
       <main id="main-content" style={{ ...styles.main, ...(effectiveGroup === 'workforce' ? { maxWidth: 900 } : {}) }} className="mobile-main">
-        {canSeeWorkforce && (
+        {showGroupRow && (
           <div className="ops-workflow-tabs" role="tablist" aria-label="Time Clock sections">
             <button type="button" role="tab" aria-selected={effectiveGroup === 'personal'}
               className={`ops-workflow-tab ${effectiveGroup === 'personal' ? 'is-active' : ''}`.trim()}
