@@ -47,13 +47,14 @@ export default function ProjectReports({ currency = 'USD', settings = null }) {
 
   return (
     <div style={styles.list}>
-      {projects.map(p => <ProjectCard key={p.id} project={p} currency={currency} workerLabel={workerLabel} workerLabelLower={workerLabelLower} />)}
+      {projects.map(p => <ProjectCard key={p.id} project={p} currency={currency} workerLabel={workerLabel} workerLabelLower={workerLabelLower} settings={settings} />)}
     </div>
   );
 }
 
-function ProjectCard({ project: p, currency = 'USD', workerLabel = 'Worker', workerLabelLower = 'worker' }) {
+function ProjectCard({ project: p, currency = 'USD', workerLabel = 'Worker', workerLabelLower = 'worker', settings = null }) {
   const t = useT();
+  const { user } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [from, setFrom] = useState(defaultDates().from);
   const [to, setTo] = useState(defaultDates().to);
