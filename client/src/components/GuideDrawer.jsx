@@ -176,6 +176,7 @@ export default function GuideDrawer({ open, onClose, currentApp, features = {} }
 
   const tasks = useMemo(() => filterGuideTasks(query, currentApp, GUIDE_TASKS), [query, currentApp]);
   const selectedTask = selectedId ? findGuideTask(selectedId) : null;
+  const hasSearch = query.trim().length > 0;
   const currentAppTasks = tasks.filter(task => task.app === currentApp);
   const otherTasks = tasks.filter(task => task.app !== currentApp);
 
@@ -243,7 +244,23 @@ export default function GuideDrawer({ open, onClose, currentApp, features = {} }
                 </div>
               )}
 
-              {currentAppTasks.length > 0 && (
+              {hasSearch && tasks.length > 0 && (
+                <section className="guide-list-section">
+                  <h2>Best matches</h2>
+                  <div className="guide-task-list">
+                    {tasks.map(task => (
+                      <GuideTaskCard
+                        key={task.id}
+                        task={task}
+                        availability={getGuideTaskAvailability(task, user, features)}
+                        onSelect={setSelectedId}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {!hasSearch && currentAppTasks.length > 0 && (
                 <section className="guide-list-section">
                   <h2>Useful here</h2>
                   <div className="guide-task-list">
@@ -259,7 +276,7 @@ export default function GuideDrawer({ open, onClose, currentApp, features = {} }
                 </section>
               )}
 
-              {otherTasks.length > 0 && (
+              {!hasSearch && otherTasks.length > 0 && (
                 <section className="guide-list-section">
                   <h2>{currentAppTasks.length > 0 ? 'More guides' : 'Guides'}</h2>
                   <div className="guide-task-list">

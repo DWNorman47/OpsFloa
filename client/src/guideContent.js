@@ -362,6 +362,7 @@ export const MODULE_LABELS = {
 };
 
 export function isGuideModuleEnabled(features = {}, moduleId) {
+  features = features || {};
   if (!moduleId) return true;
   if (moduleId === 'financial_reports') {
     return !(features.module_financial_reports === false && features.module_analytics === false);
@@ -370,6 +371,7 @@ export function isGuideModuleEnabled(features = {}, moduleId) {
 }
 
 export function getGuideTaskAvailability(task, user, features = {}) {
+  features = features || {};
   const missingModules = (task.requiredModules || [])
     .filter(moduleId => !isGuideModuleEnabled(features, moduleId))
     .map(moduleId => MODULE_LABELS[moduleId] || moduleId);
@@ -396,25 +398,85 @@ export function sortGuideTasks(tasks, currentApp) {
   });
 }
 
+const GUIDE_STOP_WORDS = new Set(['a', 'an', 'and', 'can', 'do', 'for', 'how', 'i', 'make', 'the', 'to']);
+
+function normalizeGuideTokens(value) {
+  const tokens = String(value || '').toLowerCase().match(/[a-z0-9]+/g) || [];
+  return tokens.flatMap(token => {
+    if (token.length > 2 && token.endsWith('s')) {
+      return [token, token.slice(0, -1)];
+    }
+    return [token];
+  });
+}
+
+function guideFieldText(task, field) {
+  if (Array.isArray(task[field])) return task[field].join(' ');
+  return task[field] || '';
+}
+
+function guideTokenSet(task, fields) {
+  return new Set(fields.flatMap(field => normalizeGuideTokens(guideFieldText(task, field))));
+}
+
+function guideTaskScore(task, terms, phrase, currentApp) {
+  const titleTokens = guideTokenSet(task, ['title']);
+  const routeTokens = guideTokenSet(task, ['routeLabel']);
+  const keywordTokens = guideTokenSet(task, ['keywords']);
+  const categoryTokens = guideTokenSet(task, ['category']);
+  const bodyTokens = guideTokenSet(task, ['summary', 'before', 'steps']);
+  const haystack = [
+    task.title,
+    task.category,
+    task.summary,
+    task.routeLabel,
+    ...(task.keywords || []),
+    ...(task.before || []),
+    ...(task.steps || []),
+  ].join(' ').toLowerCase();
+
+  let score = task.app === currentApp ? 4 : 0;
+  const phraseIsUseful = phrase.length > 2 || phrase.includes(' ');
+  if (phraseIsUseful) {
+    if (String(task.title || '').toLowerCase().includes(phrase)) score += 85;
+    if (String(task.routeLabel || '').toLowerCase().includes(phrase)) score += 65;
+    if ((task.keywords || []).join(' ').toLowerCase().includes(phrase)) score += 70;
+    if (haystack.includes(phrase)) score += 15;
+  }
+
+  for (const term of terms) {
+    let termScore = 0;
+    if (titleTokens.has(term)) termScore += 70;
+    if (keywordTokens.has(term)) termScore += 65;
+    if (routeTokens.has(term)) termScore += 55;
+    if (categoryTokens.has(term)) termScore += 20;
+    if (bodyTokens.has(term)) termScore += 12;
+    if (term.length >= 3 && haystack.includes(term)) termScore += 6;
+    if (termScore === 0) return 0;
+    score += termScore;
+  }
+
+  return score;
+}
+
 export function filterGuideTasks(query, currentApp, tasks = GUIDE_TASKS) {
   const q = String(query || '').trim().toLowerCase();
   const sorted = sortGuideTasks(tasks, currentApp);
   if (!q) return sorted;
-  const stopWords = new Set(['a', 'an', 'and', 'can', 'do', 'for', 'how', 'i', 'make', 'the', 'to']);
-  const terms = q.split(/\s+/).map(term => term.replace(/[^a-z0-9]/g, '')).filter(term => term && !stopWords.has(term));
+  const terms = normalizeGuideTokens(q).filter(term => term && !GUIDE_STOP_WORDS.has(term));
+  if (terms.length === 0) return sorted;
 
-  return sorted.filter(task => {
-    const haystack = [
-      task.title,
-      task.category,
-      task.summary,
-      task.routeLabel,
-      ...(task.keywords || []),
-      ...(task.before || []),
-      ...(task.steps || []),
-    ].join(' ').toLowerCase();
-    return haystack.includes(q) || terms.every(term => haystack.includes(term));
-  });
+  return tasks
+    .map(task => ({ task, score: guideTaskScore(task, terms, q, currentApp) }))
+    .filter(result => result.score > 0)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const aCurrent = a.task.app === currentApp ? 0 : 1;
+      const bCurrent = b.task.app === currentApp ? 0 : 1;
+      if (aCurrent !== bCurrent) return aCurrent - bCurrent;
+      return a.task.title.localeCompare(b.task.title);
+    })
+    .map(result => result.task);
 }
 
 export function findGuideTask(id) {
