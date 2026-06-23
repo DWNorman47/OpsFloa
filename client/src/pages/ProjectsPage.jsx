@@ -1913,6 +1913,14 @@ export default function ProjectsPage() {
     const h = (window.location.hash || '').replace('#', '');
     return PROJECT_TAB_IDS.includes(h) ? h : 'projects';
   });
+  useEffect(() => {
+    const syncTabFromHash = () => {
+      const h = (window.location.hash || '').replace('#', '');
+      setMainTab(PROJECT_TAB_IDS.includes(h) ? h : 'projects');
+    };
+    window.addEventListener('hashchange', syncTabFromHash);
+    return () => window.removeEventListener('hashchange', syncTabFromHash);
+  }, []);
   const changeTab = (id) => {
     setMainTab(id);
     try { window.history.replaceState(null, '', id === 'projects' ? window.location.pathname : `#${id}`); } catch { /* ignore */ }

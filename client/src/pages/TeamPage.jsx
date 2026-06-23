@@ -251,6 +251,14 @@ export default function TeamPage() {
   ];
   const hashTab = window.location.hash.replace('#', '');
   const [teamTab, setTeamTab] = useState(TEAM_TABS.includes(hashTab) ? hashTab : 'directory');
+  useEffect(() => {
+    const syncTabFromHash = () => {
+      const nextHashTab = window.location.hash.replace('#', '');
+      setTeamTab(TEAM_TABS.includes(nextHashTab) ? nextHashTab : 'directory');
+    };
+    window.addEventListener('hashchange', syncTabFromHash);
+    return () => window.removeEventListener('hashchange', syncTabFromHash);
+  }, [TEAM_TABS.join('|')]);
   const switchTab = id => { setTeamTab(id); history.replaceState(null, '', '#' + id); };
   const activeTab = TEAM_TABS.includes(teamTab) ? teamTab : 'directory';
 
