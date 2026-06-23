@@ -4,6 +4,7 @@ import { fmtHours, formatCurrency } from '../utils';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
 import { SkeletonList } from './Skeleton';
+import { handlePdfError } from '../pdfError';
 
 function downloadCSV(rows, filename) {
   const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
@@ -95,6 +96,8 @@ function ProjectCard({ project: p, currency = 'USD', workerLabel = 'Worker', wor
       const a = document.createElement('a');
       a.href = url; a.download = `bill-${p.name.replace(/\s+/g, '-')}-${from || 'all'}-to-${to || 'all'}.pdf`; a.click();
       URL.revokeObjectURL(url);
+    } catch (err) {
+      handlePdfError(err, t.pdfFailed);
     } finally { setPdfGenerating(false); }
   };
 
@@ -110,6 +113,8 @@ function ProjectCard({ project: p, currency = 'USD', workerLabel = 'Worker', wor
       if (previewUrl) URL.revokeObjectURL(previewUrl);
       setPreviewUrl(URL.createObjectURL(blob));
       setShowPreview(true);
+    } catch (err) {
+      handlePdfError(err, t.pdfFailed);
     } finally { setPdfGenerating(false); }
   };
 
