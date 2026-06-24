@@ -138,7 +138,11 @@ export default function AppSwitcher({ currentApp = 'timeclock', userRole, featur
   const settingsPending = loading && Object.keys(feat).length === 0;
   const labelFor = app => {
     if (app.id === 'field') return feat.label_field || app.name;
-    if (app.id === 'projects') return feat.label_work || app.name;
+    // Projects module = the collection, so show the plural of the (singular) work label.
+    if (app.id === 'projects') {
+      const w = feat.label_work || 'Project';
+      return w.endsWith('s') ? w : `${w}s`;
+    }
     return app.name;
   };
   const visibleApps = settingsPending ? [current] : APPS.filter(a => {
