@@ -11,11 +11,11 @@ function enabled(settings, key, fallback = true) {
   return settings[key] !== false;
 }
 
+// Labels are stored singular; pluralize by appending "s" (unless already plural),
+// matching the convention used across the rest of the app.
 function plural(label) {
   if (!label) return '';
-  if (/staff|people|team/i.test(label)) return label;
-  if (/s$/i.test(label)) return label;
-  return `${label}s`;
+  return /s$/i.test(label) ? label : `${label}s`;
 }
 
 function ActionCard({ action }) {

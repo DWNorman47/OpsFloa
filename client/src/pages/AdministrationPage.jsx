@@ -244,26 +244,26 @@ function WorkspaceLabels({ settings, onUpdated }) {
     {
       key: 'label_work',
       label: 'Project',
-      note: 'The general word for billable or trackable work.',
-      examples: 'Jobs, routes, cases',
+      note: 'The general word for billable or trackable work. Enter the singular form — the app adds "s" for plurals.',
+      examples: 'Job, route, case',
     },
     {
       key: 'label_client',
       label: 'Customer',
-      note: 'The people or organizations the team serves.',
-      examples: 'Clients, accounts, residents',
+      note: 'The person or organization the team serves.',
+      examples: 'Client, account, resident',
     },
     {
       key: 'label_worker',
       label: 'Team Member',
-      note: 'The people using the app day to day.',
-      examples: 'Staff, workers, techs',
+      note: 'A person using the app day to day.',
+      examples: 'Staff, worker, tech',
     },
     {
       key: 'label_field',
       label: 'Field Work',
       note: 'The mobile or on-site work area.',
-      examples: 'Service, visits, operations',
+      examples: 'Service, visit, operation',
     },
   ];
   const [form, setForm] = useState({
