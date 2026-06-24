@@ -18,13 +18,12 @@
  * a trial-ending warning banner).
  */
 
-import React, { useState } from 'react';
+import React from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
 import AppSwitcher, { APPS } from './AppSwitcher';
 import NotificationBell from './NotificationBell';
 import { RefreshButton, LanguageSwitcher } from './HeaderActions';
-import GuideDrawer from './GuideDrawer';
 
 export default function AppHeader({
   currentApp,
@@ -36,7 +35,6 @@ export default function AppHeader({
 }) {
   const { user, logout } = useAuth();
   const t = useT();
-  const [guideOpen, setGuideOpen] = useState(false);
   const app = APPS.find(a => a.id === currentApp);
   const accent = app?.bg || '#2563eb';
 
@@ -60,28 +58,17 @@ export default function AppHeader({
           <button style={s.headerBtn} className="header-btn" onClick={logout}>
             {t.logout}
           </button>
-          <button
-            type="button"
-            style={s.guideBtn}
-            className="header-guide-button"
-            onClick={() => setGuideOpen(true)}
-            title="Guide"
-            aria-label="Open task guide"
+          <a
+            href="/help"
+            style={s.helpLink}
+            className="header-help-link"
+            title={t.helpAndFaq || 'Help & FAQ'}
+            aria-label={t.helpAndFaq || 'Help & FAQ'}
           >
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="16" height="16" aria-hidden="true">
-              <path d="M10 2.5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15z" />
-              <path d="m12.9 7.1-1.4 4.4-4.4 1.4 1.4-4.4 4.4-1.4z" />
-            </svg>
-            <span className="header-guide-label">Guide</span>
-          </button>
+            <span aria-hidden="true">?</span>
+          </a>
         </div>
       </div>
-      <GuideDrawer
-        open={guideOpen}
-        onClose={() => setGuideOpen(false)}
-        currentApp={currentApp}
-        features={features}
-      />
       {below}
       {user?.company_name && (
         <div className="company-name-row">
@@ -132,19 +119,20 @@ const s = {
     fontWeight: 600,
     cursor: 'pointer',
   },
-  guideBtn: {
-    background: '#f8fafc',
-    color: '#334155',
-    border: '1px solid #cbd5e1',
-    padding: '6px 10px',
+  helpLink: {
+    width: 24,
+    height: 24,
     borderRadius: 999,
+    background: 'transparent',
+    border: '1px solid transparent',
+    color: '#64748b',
     fontSize: 13,
-    fontWeight: 800,
-    cursor: 'pointer',
+    fontWeight: 700,
     display: 'inline-flex',
     alignItems: 'center',
-    gap: 6,
-    minHeight: 30,
+    justifyContent: 'center',
+    textDecoration: 'none',
     flexShrink: 0,
+    opacity: 0.72,
   },
 };
