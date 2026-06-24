@@ -3775,7 +3775,7 @@ router.patch('/roles/:id', requireAdmin, requirePerm('manage_roles'), async (req
   const { name, description, permissions } = req.body || {};
   try {
     const existing = await pool.query(
-      'SELECT id, is_builtin FROM roles WHERE id = $1 AND company_id = $2',
+      'SELECT id, is_builtin, name FROM roles WHERE id = $1 AND company_id = $2',
       [req.params.id, req.user.company_id]
     );
     if (existing.rowCount === 0) return res.status(404).json({ error: 'Role not found' });
@@ -3821,15 +3821,19 @@ router.patch('/roles/:id', requireAdmin, requirePerm('manage_roles'), async (req
           );
         }
       } else if ((name !== undefined && name !== null) || description !== undefined) {
-        // Allow description edit on built-ins, name change rejected
-        if (name !== undefined) {
+        // Built-in: description is editable, name is locked. Only reject an
+        // ACTUAL rename — the UI sends the (unchanged) current name alongside a
+        // permissions edit, which must not be treated as a rename attempt.
+        if (name !== undefined && name !== null && name.trim() !== role.name) {
           await client.query('ROLLBACK');
           return res.status(400).json({ error: 'Cannot rename a built-in role' });
         }
-        await client.query(
-          'UPDATE roles SET description = $1, updated_at = NOW() WHERE id = $2',
-          [description?.trim() || null, role.id]
-        );
+        if (description !== undefined) {
+          await client.query(
+            'UPDATE roles SET description = $1, updated_at = NOW() WHERE id = $2',
+            [description?.trim() || null, role.id]
+          );
+        }
       }
 
       if (Array.isArray(permissions)) {

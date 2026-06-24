@@ -38,11 +38,398 @@
   background: var(--app-accent, var(--ops-accent));
   pointer-events: none;
 }
-.header-help-link:hover,
-.header-help-link:focus-visible {
-  opacity: 1 !important;
+.header-guide-button:hover,
+.header-guide-button:focus-visible {
   color: var(--app-accent, var(--ops-accent)) !important;
-  background: color-mix(in srgb, var(--app-accent, var(--ops-accent)) 7%, transparent) !important;
+  border-color: color-mix(in srgb, var(--app-accent, var(--ops-accent)) 35%, #cbd5e1) !important;
+  background: color-mix(in srgb, var(--app-accent, var(--ops-accent)) 7%, #fff) !important;
+}
+
+.guide-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(15, 23, 42, 0.34);
+}
+
+.guide-drawer {
+  width: min(470px, 100vw);
+  height: 100dvh;
+  padding-top: env(safe-area-inset-top);
+  background: #f8fafc;
+  color: var(--ops-text);
+  box-shadow: -22px 0 54px rgba(15, 23, 42, 0.22);
+  display: flex;
+  flex-direction: column;
+}
+
+.guide-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 22px 22px 16px;
+  background: #fff;
+  border-bottom: 1px solid var(--ops-border);
+}
+
+.guide-eyebrow {
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--app-accent, var(--ops-accent));
+  margin-bottom: 5px;
+}
+
+.guide-header h1 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.12;
+  color: var(--ops-text);
+}
+
+.guide-close {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid var(--ops-border-strong);
+  background: #f8fafc;
+  color: var(--ops-text-soft);
+  font-size: 18px;
+  font-weight: 800;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.guide-search-wrap {
+  padding: 16px 22px;
+  background: #fff;
+  border-bottom: 1px solid var(--ops-border);
+}
+
+.guide-search-wrap label {
+  display: block;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--ops-text-soft);
+  margin-bottom: 7px;
+}
+
+.guide-search-wrap input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--ops-border-strong);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ops-text);
+  font-size: 14px;
+  padding: 10px 12px;
+  outline: none;
+}
+
+.guide-search-wrap input:focus {
+  border-color: var(--app-accent, var(--ops-accent));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-accent, var(--ops-accent)) 14%, transparent);
+}
+
+.guide-help-cta {
+  padding: 12px 22px;
+  background: #fff;
+  border-bottom: 1px solid var(--ops-border);
+}
+
+.guide-help-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 40px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--app-accent, var(--ops-accent)) 32%, var(--ops-border-strong));
+  background: color-mix(in srgb, var(--app-accent, var(--ops-accent)) 8%, #fff);
+  color: var(--app-accent, var(--ops-accent));
+  font-size: 13px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.guide-help-button:hover,
+.guide-help-button:focus-visible {
+  background: color-mix(in srgb, var(--app-accent, var(--ops-accent)) 13%, #fff);
+  outline: none;
+}
+
+.guide-body {
+  flex: 1;
+  overflow: auto;
+  padding: 18px 22px 24px;
+}
+
+.guide-list-section + .guide-list-section {
+  margin-top: 22px;
+}
+
+.guide-list-section h2,
+.guide-related h3,
+.guide-section h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 900;
+  color: var(--ops-text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.guide-task-list {
+  display: grid;
+  gap: 10px;
+}
+
+.guide-task-card {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--ops-border);
+  border-radius: 10px;
+  background: #fff;
+  padding: 14px 15px;
+  cursor: pointer;
+  box-shadow: var(--ops-shadow-sm);
+  transition: border-color 0.12s, box-shadow 0.12s, transform 0.12s;
+}
+
+.guide-task-card:hover,
+.guide-task-card:focus-visible {
+  border-color: color-mix(in srgb, var(--app-accent, var(--ops-accent)) 35%, var(--ops-border));
+  box-shadow: var(--ops-shadow-md);
+  transform: translateY(-1px);
+}
+
+.guide-task-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  font-weight: 900;
+  color: var(--ops-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 9px;
+}
+
+.guide-task-title {
+  display: block;
+  font-size: 16px;
+  font-weight: 900;
+  color: var(--ops-text);
+  line-height: 1.22;
+  margin-bottom: 6px;
+}
+
+.guide-task-summary {
+  display: block;
+  font-size: 13px;
+  color: var(--ops-text-soft);
+  line-height: 1.45;
+}
+
+.guide-status {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.guide-status.is-ready {
+  color: #047857;
+  background: #d1fae5;
+}
+
+.guide-status.needs-setup {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.guide-detail {
+  background: #fff;
+  border: 1px solid var(--ops-border);
+  border-radius: 12px;
+  padding: 18px;
+  box-shadow: var(--ops-shadow-sm);
+}
+
+.guide-back-btn {
+  border: none;
+  background: transparent;
+  color: var(--app-accent, var(--ops-accent));
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+  padding: 0;
+  margin-bottom: 16px;
+}
+
+.guide-detail-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.guide-kicker {
+  color: var(--ops-text-muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.guide-detail h2 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.15;
+  color: var(--ops-text);
+}
+
+.guide-detail-summary {
+  margin: 12px 0 16px;
+  color: var(--ops-text-soft);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.guide-issue-panel {
+  border: 1px solid #fed7aa;
+  background: #fff7ed;
+  color: #7c2d12;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 14px 0 18px;
+}
+
+.guide-issue-title {
+  color: #9a3412;
+  font-size: 13px;
+  font-weight: 900;
+  margin-bottom: 6px;
+}
+
+.guide-issue-panel p {
+  margin: 5px 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.guide-issue-footnote {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #9a3412;
+  opacity: 0.78;
+}
+
+.guide-section {
+  margin-top: 18px;
+}
+
+.guide-before-list,
+.guide-steps {
+  margin: 0;
+  padding-left: 21px;
+}
+
+.guide-before-list li,
+.guide-steps li {
+  color: #334155;
+  font-size: 14px;
+  line-height: 1.55;
+  margin: 8px 0;
+}
+
+.guide-steps li::marker {
+  color: var(--app-accent, var(--ops-accent));
+  font-weight: 900;
+}
+
+.guide-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--ops-border);
+}
+
+.guide-primary-link,
+.guide-secondary-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  border-radius: 8px;
+  padding: 9px 14px;
+  font-size: 13px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.guide-primary-link {
+  background: var(--app-accent, var(--ops-accent));
+  color: #fff;
+}
+
+.guide-primary-link.is-disabled {
+  background: #cbd5e1;
+  color: #64748b;
+  cursor: not-allowed;
+}
+
+.guide-secondary-link {
+  border: 1px solid var(--ops-border-strong);
+  background: #fff;
+  color: var(--ops-text-soft);
+}
+
+.guide-related {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--ops-border);
+}
+
+.guide-related-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.guide-related-list button {
+  border: 1px solid var(--ops-border);
+  background: #f8fafc;
+  color: var(--ops-text-soft);
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.guide-empty {
+  display: grid;
+  gap: 6px;
+  border: 1px dashed var(--ops-border-strong);
+  border-radius: 10px;
+  background: #fff;
+  padding: 22px;
+  color: var(--ops-text-soft);
+  font-size: 14px;
 }
 
 .project-wheel-picker {
@@ -2149,9 +2536,15 @@ input, select, textarea {
     padding: 5px 9px !important;
     font-size: 12px !important;
   }
-  .header-help-link {
-    width: 20px !important;
-    min-height: 24px !important;
+  .header-guide-button {
+    width: 30px !important;
+    min-height: 30px !important;
+    padding: 0 !important;
+    justify-content: center !important;
+    border-radius: 8px !important;
+  }
+  .header-guide-label {
+    display: none !important;
   }
   /* AppSwitcher: hide the app name label on narrow screens — the icon chip
      is enough to identify the current app, and "Administration" was pushing
@@ -2196,6 +2589,42 @@ input, select, textarea {
   }
   .notification-dropdown > div:last-child {
     max-height: calc(100dvh - env(safe-area-inset-top) - 166px) !important;
+  }
+
+  .guide-backdrop {
+    justify-content: stretch;
+    background: rgba(15, 23, 42, 0.28);
+  }
+  .guide-drawer {
+    width: 100vw;
+    max-width: none;
+    box-shadow: none;
+  }
+  .guide-header {
+    padding: 16px 16px 14px;
+  }
+  .guide-header h1,
+  .guide-detail h2 {
+    font-size: 20px;
+  }
+  .guide-search-wrap {
+    padding: 14px 16px;
+  }
+  .guide-help-cta {
+    padding: 10px 16px;
+  }
+  .guide-body {
+    padding: 14px 16px 24px;
+  }
+  .guide-detail {
+    padding: 15px;
+  }
+  .guide-actions {
+    flex-direction: column;
+  }
+  .guide-primary-link,
+  .guide-secondary-link {
+    width: 100%;
   }
 
   .project-wheel-menu {

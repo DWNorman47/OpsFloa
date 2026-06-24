@@ -131,7 +131,7 @@ export default function ProjectBillPDF({ data, currency = 'USD', companyInfo = {
         </View>
 
         {/* Summary row */}
-        <View style={s.summaryBox}>
+        <View style={s.summaryBox} wrap={false}>
           <View style={s.summaryRow}>
             <View style={s.summaryItem}>
               <Text style={s.summaryVal}>{(summary.total_hours || 0).toFixed(2)}h</Text>
@@ -162,8 +162,8 @@ export default function ProjectBillPDF({ data, currency = 'USD', companyInfo = {
           </View>
         </View>
 
-        {/* Cost breakdown */}
-        <View style={s.section}>
+        {/* Cost breakdown — keep the breakdown + Total Due together */}
+        <View style={s.section} wrap={false}>
           <Text style={s.sectionTitle}>{t.pdfCostBreakdown || 'Cost Breakdown'}</Text>
           {summary.regular_hours > 0 && (
             <View style={s.costRow}>
@@ -202,7 +202,7 @@ export default function ProjectBillPDF({ data, currency = 'USD', companyInfo = {
               <Text style={[s.colType, s.headerText]}>{t.pdfTypeCol || 'Type'}</Text>
             </View>
             {entries.map(e => (
-              <View key={e.id} style={s.tableRow}>
+              <View key={e.id} style={s.tableRow} wrap={false}>
                 <Text style={s.colWorker}>{e.invoice_name || e.worker_name}</Text>
                 <Text style={s.colDate}>{fmtDate(e.work_date, locale)}</Text>
                 <Text style={s.colTime}>{fmtTime(e.start_time)}</Text>
@@ -215,7 +215,7 @@ export default function ProjectBillPDF({ data, currency = 'USD', companyInfo = {
         )}
 
         {/* Footer */}
-        <View style={s.footer}>
+        <View style={s.footer} wrap={false}>
           <Text style={s.footerText}>{invNum}</Text>
           <Text style={s.footerText}>{t.pdfThankYouBusiness || 'Thank you for your business.'}</Text>
         </View>

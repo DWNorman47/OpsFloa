@@ -122,7 +122,11 @@ export function pickLandingPath(user) {
     // Never route a non-admin to an admin-only page — its guard would bounce
     // them straight back here, and with a cross-path bounce that loops forever.
     if (cand.adminOnly && !isAdmin) continue;
-    const required = MODULE_PERMISSIONS[cand.id] || [];
+    // Time Clock also lands an oversight-only user (workforce perms, no personal
+    // clock perms) — the page hosts the Workforce group.
+    const required = cand.id === 'timeclock'
+      ? [...MODULE_PERMISSIONS.timeclock, ...MODULE_PERMISSIONS.workforce]
+      : (MODULE_PERMISSIONS[cand.id] || []);
     if (required.length === 0) continue;
     if (userHasAnyPerm(user, required)) return cand.path;
   }
@@ -141,4 +145,16 @@ export function userCanSeeModule(user, moduleId) {
   const required = MODULE_PERMISSIONS[moduleId];
   if (!required || required.length === 0) return false;
   return userHasAnyPerm(user, required);
+}
+
+/**
+ * Whether the Time Clock APP (switcher entry / landing target) is reachable.
+ * Time Clock now hosts the Workforce oversight group, so it must stay visible
+ * for anyone with participating time perms OR workforce perms — otherwise an
+ * oversight-only role (no personal clock perms) loses access to Workforce.
+ * (userCanSeeModule stays scoped to a single module's own perms because the
+ * Dashboard relies on that to tell the Personal vs Workforce groups apart.)
+ */
+export function canSeeTimeclockApp(user) {
+  return userCanSeeModule(user, 'timeclock') || userCanSeeModule(user, 'workforce');
 }

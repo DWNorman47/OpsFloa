@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
 import { useSettings } from '../contexts/SettingsContext';
-import { userCanSeeModule } from '../modulePermissions';
+import { userCanSeeModule, canSeeTimeclockApp } from '../modulePermissions';
 
 // Workers see: Time Clock, Field, Inventory, Account
 // Admins see:  Time Clock, Field, Inventory, Directory, Projects, Reports, Administration
@@ -158,6 +158,9 @@ export default function AppSwitcher({ currentApp = 'timeclock', userRole, featur
     // inside Time Clock (gated there by module_timeclock + oversight perms).
     // Phase D: per-user permission gate. A user with zero perms inside a
     // module shouldn't see it at all. Account is always shown.
+    // Time Clock hosts the Workforce group, so it's visible to oversight-only
+    // users (workforce perms) even without personal clock perms.
+    if (a.id === 'timeclock') return canSeeTimeclockApp(user);
     if (!userCanSeeModule(user, a.id)) return false;
     return true;
   });
