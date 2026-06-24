@@ -65,8 +65,10 @@ export default defineConfig({
           '**/vendor-charts-*.js',
           '**/vendor-leaflet-*.js',
           '**/InventoryPage-*.js',
-          '**/AdministrationPage-*.js',
-          '**/SuperAdmin-*.js',
+          // Admin chunks: "admin" is stripped from filenames (see chunkFileNames)
+          // so these patterns match the sanitized names.
+          '**/mgmtistrationPage-*.js',
+          '**/Supermgmt-*.js',
           '**/ProjectsPage-*.js',
           '**/ManageSchedule-*.js',
           '**/ManageWorkers-*.js',
@@ -85,6 +87,24 @@ export default defineConfig({
           'vendor-react': ['react', 'react-dom', 'react-router-dom'],
           'vendor-leaflet': ['leaflet', 'react-leaflet'],
           'vendor-charts': ['recharts'],
+        },
+        // Corporate web filters commonly block any asset URL containing
+        // "admin", which silently 404'd the lazily-loaded admin/superadmin
+        // route chunks (they're network-fetched, not precached) and broke
+        // those pages behind such networks. Strip the keyword from emitted
+        // filenames so they load everywhere. Names stay otherwise readable so
+        // the precache globIgnores below can still target specific chunks.
+        chunkFileNames: (chunkInfo) => {
+          const safe = (chunkInfo.name || 'chunk').replace(/admin/gi, 'mgmt');
+          return `assets/${safe}-[hash].js`;
+        },
+        assetFileNames: (assetInfo) => {
+          const n = assetInfo.name || '';
+          if (!/admin/i.test(n)) return 'assets/[name]-[hash][extname]';
+          const dot = n.lastIndexOf('.');
+          const ext = dot >= 0 ? n.slice(dot) : '';
+          const base = (dot >= 0 ? n.slice(0, dot) : n).replace(/admin/gi, 'mgmt');
+          return `assets/${base}-[hash]${ext}`;
         },
       },
     },
