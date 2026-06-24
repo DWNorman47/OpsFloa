@@ -3,6 +3,7 @@ import api from '../api';
 import { fmtHours, formatCurrency } from '../utils';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
+import { handlePdfError } from '../pdfError';
 
 function downloadCSV(rows, filename) {
   const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
@@ -100,6 +101,8 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
       const a = document.createElement('a');
       a.href = url; a.download = `bill-${worker.username}-${from || 'all'}-to-${to || 'all'}.pdf`; a.click();
       URL.revokeObjectURL(url);
+    } catch (err) {
+      handlePdfError(err, t.pdfFailed);
     } finally { setPdfGenerating(false); }
   };
 
@@ -115,6 +118,8 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
       if (previewUrl) URL.revokeObjectURL(previewUrl);
       setPreviewUrl(URL.createObjectURL(blob));
       setShowPreview(true);
+    } catch (err) {
+      handlePdfError(err, t.pdfFailed);
     } finally { setPdfGenerating(false); }
   };
 
