@@ -151,7 +151,7 @@ export default function BillPDF({ data, companyInfo = {}, overtimeEnabled = true
           const h = netHours(e.start_time, e.end_time, e.break_minutes);
           const isPrev = e.wage_type === 'prevailing';
           return (
-            <View key={e.id} style={s.tableRow}>
+            <View key={e.id} style={s.tableRow} wrap={false}>
               <Text style={[s.td, { width: colDate }]}>{fmtDate(e.work_date_str || e.work_date, locale)}</Text>
               {showProject && <Text style={[s.td, { width: colProject }]}>{e.project_name || '—'}</Text>}
               <Text style={[s.td, { width: colDesc, color: '#6b7280' }]}>{e.notes || ''}</Text>
@@ -178,7 +178,7 @@ export default function BillPDF({ data, companyInfo = {}, overtimeEnabled = true
               <Text style={[s.th, { width: '16%', textAlign: 'right' }]}>{t.pdfAmount || 'Amount'}</Text>
             </View>
             {reimbursements.map(r => (
-              <View key={r.id} style={s.reimbRow}>
+              <View key={r.id} style={s.reimbRow} wrap={false}>
                 <Text style={[s.td, { width: '18%' }]}>{fmtDateShort(r.expense_date, locale)}</Text>
                 <Text style={[s.td, { width: '22%' }]}>{r.category || '—'}</Text>
                 <Text style={[s.td, { flex: 1, color: '#6b7280' }]}>{r.description || ''}</Text>
@@ -189,8 +189,8 @@ export default function BillPDF({ data, companyInfo = {}, overtimeEnabled = true
           </View>
         )}
 
-        {/* Summary */}
-        <View style={s.summaryWrap}>
+        {/* Summary — keep the whole totals block together across page breaks */}
+        <View style={s.summaryWrap} wrap={false}>
           <Text style={s.thankYou}>
             {t.pdfThankYouInvoice || 'Thank you for reviewing this invoice.\nPlease process payment at your earliest convenience.'}
           </Text>
