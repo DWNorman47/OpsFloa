@@ -495,10 +495,15 @@ export default function InventoryStock({ isAdmin, locations, projects, settings,
         isAdmin ? api.get('/inventory/stock/low') : Promise.resolve({ data: [] }),
         api.get('/inventory/items/categories'),
       ]);
-      setStock(s.data.stock);
-      setStockTotal(s.data.total);
-      setLowItems(l.data);
-      setCategories(cats.data);
+      const stockRows = Array.isArray(s.data?.stock)
+        ? s.data.stock
+        : Array.isArray(s.data)
+          ? s.data
+          : [];
+      setStock(stockRows);
+      setStockTotal(s.data?.total ?? stockRows.length);
+      setLowItems(Array.isArray(l.data) ? l.data : []);
+      setCategories(Array.isArray(cats.data) ? cats.data : []);
     } catch (e) {
       setError(t.invStockFailedLoad);
     } finally {
