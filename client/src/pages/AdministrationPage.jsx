@@ -11,6 +11,7 @@ import ManageRates from '../components/ManageRates';
 import AdvancedSettings from '../components/AdvancedSettings';
 import AuditLog from '../components/AuditLog';
 import ServiceRequestsAdmin from '../components/ServiceRequestsAdmin';
+import PublicCompanyProfileAdmin from '../components/PublicCompanyProfileAdmin';
 import QuickBooks from '../components/QuickBooks';
 import MFASetup from '../components/MFASetup';
 import SetupQuestionnaire from '../components/SetupQuestionnaire';
@@ -531,7 +532,7 @@ export default function AdministrationPage() {
   const canManageBilling      = usePerm('manage_billing');
   // Service requests + audit log share manage_settings for now (no narrower
   // perm yet defined). Owner can grant manage_settings to delegate.
-  const canSeeRequests        = useHasAnyPerm(['manage_settings', 'manage_advanced_settings']);
+  const canSeePublicPerm      = useHasAnyPerm(['manage_settings', 'manage_advanced_settings']);
   const canSeeLog             = useHasAnyPerm(['manage_settings', 'view_reports']);
 
   // First-time admin welcome: landingFor() routes admins here on first
@@ -561,6 +562,7 @@ export default function AdministrationPage() {
   const [workers, setWorkers] = useState([]);
   const [projects, setProjects] = useState([]);
   const [settings, setSettings] = useState(null);
+  const canSeeRequests = canSeePublicPerm && settings?.feature_public !== false;
   const [qboConnected, setQboConnected] = useState(false);
   // First-run setup questionnaire shows when settings load with an empty
   // setup_questionnaire_completed_at. Admins only — workers don't reach
@@ -579,7 +581,7 @@ export default function AdministrationPage() {
   const tabs = [
     { id: 'company',      label: t.adminTabCompany      },
     ...(canManageSettings ? [{ id: 'workspace', label: 'Workspace' }] : []),
-    ...(canSeeRequests ? [{ id: 'requests', label: 'Requests' }] : []),
+    ...(canSeeRequests ? [{ id: 'requests', label: 'Public' }] : []),
     ...((plan.hasQbo && canManageIntegrations) ? [{ id: 'integrations', label: t.adminTabIntegrations }] : []),
     ...(canManageBilling ? [{ id: 'billing', label: t.adminTabBilling }] : []),
     ...(canSeeLog ? [{ id: 'log', label: t.adminTabLog }] : []),
@@ -646,8 +648,8 @@ export default function AdministrationPage() {
   const handleWorkerUpdated  = w  => setWorkers(prev => prev.map(x => x.id === w.id ? { ...x, ...w } : x));
   const handleWorkerRestored = w  => setWorkers(prev => [...prev, w]);
   const workspaceSummary = [
-    ['Core modules', ['module_timeclock', 'module_team', 'module_projects', 'module_field', 'module_inventory', 'module_analytics', 'module_financial_reports']],
-    ['Daily tools', ['feature_scheduling', 'feature_pto', 'feature_reimbursements', 'feature_chat', 'feature_broadcast']],
+    ['Core modules', ['module_timeclock', 'module_team', 'module_projects', 'module_field', 'module_inventory', 'module_financial_reports']],
+    ['Features', ['feature_scheduling', 'feature_pto', 'feature_reimbursements', 'feature_chat', 'feature_broadcast', 'module_analytics', 'feature_public']],
     ['Specialized', ['addon_certified_payroll', 'feature_quickbooks', 'feature_media_gallery', 'feature_geolocation']],
   ].map(([label, keys]) => {
     const active = keys.filter(key => settings?.[key] !== false && settings?.[key] != null).length;
@@ -729,7 +731,9 @@ export default function AdministrationPage() {
         )}
         {safeTab === 'requests' && (
           <div style={styles.tabContent}>
-            <h2 style={styles.tabTitle}>Requests</h2>
+            <h2 style={styles.tabTitle}>Presence</h2>
+            <PublicCompanyProfileAdmin />
+            <h2 style={{ ...styles.tabTitle, marginTop: 6 }}>Requests</h2>
             <ServiceRequestsAdmin settings={settings} />
           </div>
         )}

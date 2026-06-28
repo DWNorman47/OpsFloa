@@ -52,7 +52,15 @@ const publicSubmitLimiter = rateLimit({
 publicRouter.get('/:slug', async (req, res) => {
   try {
     const { rows } = await pool.query(
-      'SELECT id, name, accepts_service_requests FROM companies WHERE slug = $1 AND active = true',
+      `SELECT c.id, c.name, c.accepts_service_requests,
+              EXISTS (
+                SELECT 1
+                  FROM company_public_profiles p
+                 WHERE p.company_id = c.id
+                   AND p.is_public = true
+              ) AS has_public_profile
+         FROM companies c
+        WHERE c.slug = $1 AND c.active = true`,
       [req.params.slug]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Company not found' });
@@ -60,6 +68,7 @@ publicRouter.get('/:slug', async (req, res) => {
     res.json({
       company_name: rows[0].name,
       accepting: !!rows[0].accepts_service_requests,
+      has_public_profile: !!rows[0].has_public_profile,
       categories,
     });
   } catch (err) {
