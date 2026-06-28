@@ -420,6 +420,19 @@ ${signatureDataUrl ? `
     }
   };
 
+  useEffect(() => {
+    const syncGroupFromHash = () => {
+      if (window.location.hash.startsWith('#wf-')) {
+        setGroup('workforce');
+      } else if (userCanSeeModule(user, 'timeclock')) {
+        setGroup('personal');
+      }
+    };
+    syncGroupFromHash();
+    window.addEventListener('hashchange', syncGroupFromHash);
+    return () => window.removeEventListener('hashchange', syncGroupFromHash);
+  }, [user]);
+
   const timeTabs = [
     ...(settings?.module_timeclock !== false ? [
       { id: 'clock', label: t.tabClock },
@@ -492,10 +505,12 @@ ${signatureDataUrl ? `
         {tab === 'messages' && <CompanyChat settings={settings} onRead={() => { setChatUnread(false); localStorage.setItem('chatLastRead', new Date().toISOString()); }} />}
 
         {tab === 'clock' && (
-          <>
-            <ClockInOut projects={projects} onEntryAdded={handleEntryAdded} onClockedIn={handleClockedIn} t={t} geolocationEnabled={settings?.feature_geolocation ?? false} projectsEnabled={settings ? settings.feature_project_integration !== false : false} workLabel={workLabel} />
-            <TimeEntryForm projects={projects} onEntryAdded={handleEntryAdded} t={t} prefill={shiftPrefill} projectsEnabled={settings ? settings.feature_project_integration !== false : false} workLabel={workLabel} />
-          </>
+          loading ? <TabLoader /> : (
+            <>
+              <ClockInOut projects={projects} onEntryAdded={handleEntryAdded} onClockedIn={handleClockedIn} t={t} geolocationEnabled={settings?.feature_geolocation ?? false} projectsEnabled={settings?.feature_project_integration !== false} workLabel={workLabel} />
+              <TimeEntryForm projects={projects} onEntryAdded={handleEntryAdded} t={t} prefill={shiftPrefill} projectsEnabled={settings?.feature_project_integration !== false} workLabel={workLabel} />
+            </>
+          )
         )}
 
         {tab === 'timesheet' && (

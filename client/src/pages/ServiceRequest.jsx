@@ -119,9 +119,9 @@ export default function ServiceRequest() {
           </p>
         ) : (
           <form onSubmit={submit} style={styles.form}>
-            {/* Honeypot, visually hidden and labeled for accessibility tools. */}
-            <div aria-hidden="true" style={{ position: 'absolute', left: '-9999px', height: 0, width: 0, overflow: 'hidden' }}>
-              <label>Website <input type="text" tabIndex={-1} autoComplete="off" value={form.website} onChange={e => set('website', e.target.value)} /></label>
+            {/* Honeypot: present for bots, hidden from humans and assistive tech. */}
+            <div aria-hidden="true" style={styles.honeypot}>
+              <input type="text" tabIndex={-1} autoComplete="off" aria-label="Website" value={form.website} onChange={e => set('website', e.target.value)} />
             </div>
 
             <div style={styles.row}>
@@ -195,6 +195,7 @@ const styles = {
   bodyText:{ fontSize: 14, color: '#374151', lineHeight: 1.55 },
   notAccepting: { background: '#fef3c7', color: '#92400e', padding: '14px 16px', borderRadius: 8, fontSize: 14 },
   form:    { display: 'flex', flexDirection: 'column', gap: 14 },
+  honeypot:{ position: 'fixed', top: -1000, left: -1000, width: 1, height: 1, opacity: 0, overflow: 'hidden', pointerEvents: 'none' },
   row:     { display: 'flex', gap: 12, flexWrap: 'wrap' },
   field:   { display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 200px' },
   label:   { fontSize: 12, fontWeight: 700, color: '#374151' },

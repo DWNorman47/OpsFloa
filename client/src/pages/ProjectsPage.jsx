@@ -2031,8 +2031,9 @@ export default function ProjectsPage() {
                 <div style={styles.pageHeaderCopy}>
                   <h1 style={styles.pageTitle}>{workLabelPlural}</h1>
                   <p style={styles.pageSub}>
-                    {activeProjects} active {activeProjects === 1 ? workLabelLower : workLabelPlural.toLowerCase()}
-                    {totalHours > 0 && ` · ${totalHours.toFixed(0)} total hours`}
+                    {loading
+                      ? `Loading ${workLabelPlural.toLowerCase()}...`
+                      : `${activeProjects} active ${activeProjects === 1 ? workLabelLower : workLabelPlural.toLowerCase()}${totalHours > 0 ? ` - ${totalHours.toFixed(0)} total hours` : ''}`}
                   </p>
                 </div>
                 <div style={styles.pageHeaderControls} className="projects-page-header-controls">

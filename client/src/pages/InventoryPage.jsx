@@ -24,7 +24,7 @@ export default function InventoryPage() {
   // same split (reads via requireAuth, writes via requireAdmin).
   const canManage = usePerm('manage_inventory');
 
-  const [features, setFeatures] = useState({});
+  const [features, setFeatures] = useState(null);
   const [projects, setProjects] = useState([]);
   const [locations, setLocations] = useState([]);
   const [lowStockCount, setLowStockCount] = useState(0);
@@ -91,18 +91,39 @@ export default function InventoryPage() {
   useEffect(() => {
     const init = async () => {
       try {
-        const [s, p, l] = await Promise.all([
+        const [s, p] = await Promise.all([
           getOrFetch('settings', () => api.get('/settings').then(r => r.data)),
           getOrFetch('projects', () => api.get('/projects').then(r => r.data)),
-          api.get('/inventory/locations'),
         ]);
         setFeatures(s);
         setProjects(p);
-        setLocations(l.data);
-        if (canManage) {
-          api.get('/inventory/stock/low').then(r => setLowStockCount(r.data.length)).catch(silentError('inventorypage'));
-          api.get('/inventory/uom-conversions').then(r => setPendingConversions(r.data.filter(u => parseFloat(u.factor) === 1).length)).catch(silentError('inventorypage'));
+        if (s?.module_inventory === false) {
+          setLocations([]);
+          setLowStockCount(0);
+          setPendingConversions(0);
+          return;
         }
+        const [l, low, conversions] = await Promise.all([
+          api.get('/inventory/locations').then(r => r.data).catch(err => {
+            silentError('inventorypage')(err);
+            return [];
+          }),
+          canManage
+            ? api.get('/inventory/stock/low').then(r => r.data).catch(err => {
+                silentError('inventorypage')(err);
+                return [];
+              })
+            : Promise.resolve([]),
+          canManage
+            ? api.get('/inventory/uom-conversions').then(r => r.data).catch(err => {
+                silentError('inventorypage')(err);
+                return [];
+              })
+            : Promise.resolve([]),
+        ]);
+        setLocations(l);
+        setLowStockCount(low.length);
+        setPendingConversions(conversions.filter(u => parseFloat(u.factor) === 1).length);
       } catch (e) {
         console.error(e);
       } finally {
@@ -116,14 +137,14 @@ export default function InventoryPage() {
   const refreshConversions = () => canManage && api.get('/inventory/uom-conversions').then(r => setPendingConversions(r.data.filter(u => parseFloat(u.factor) === 1).length)).catch(silentError('inventorypage'));
 
   if (loading) return (
-    <PageShell currentApp="inventory" features={features} maxWidth={1040}>
+    <PageShell currentApp="inventory" features={features || {}} maxWidth={1040}>
       <div className="ops-loading-state">{t.loading || 'Loading…'}</div>
     </PageShell>
   );
 
-  if (!features.module_inventory) {
+  if (features?.module_inventory === false) {
     return (
-      <PageShell currentApp="inventory" features={features} maxWidth={760}>
+      <PageShell currentApp="inventory" features={features || {}} maxWidth={760}>
         <div style={styles.disabled}>
           <h2 style={styles.disabledTitle}>{t.invNotEnabled}</h2>
           <p style={styles.disabledBody}>{t.invNotEnabledBody}</p>
@@ -133,7 +154,7 @@ export default function InventoryPage() {
   }
 
   return (
-    <PageShell currentApp="inventory" features={features} maxWidth={1040}>
+    <PageShell currentApp="inventory" features={features || {}} maxWidth={1040}>
         <PageIntro
           introId="inventory"
           kicker={t.invKicker}

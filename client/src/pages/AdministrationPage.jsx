@@ -652,7 +652,7 @@ export default function AdministrationPage() {
     ['Features', ['feature_scheduling', 'feature_pto', 'feature_reimbursements', 'feature_chat', 'feature_broadcast', 'module_analytics', 'feature_public']],
     ['Specialized', ['addon_certified_payroll', 'feature_quickbooks', 'feature_media_gallery', 'feature_geolocation']],
   ].map(([label, keys]) => {
-    const active = keys.filter(key => settings?.[key] !== false && settings?.[key] != null).length;
+    const active = settings ? keys.filter(key => settings?.[key] !== false && settings?.[key] != null).length : null;
     return { label, active, total: keys.length };
   });
 
@@ -706,7 +706,7 @@ export default function AdministrationPage() {
                 <div style={styles.workspaceSummaryGrid} className="workspace-summary-grid">
                   {workspaceSummary.map(item => (
                     <div key={item.label} style={styles.workspaceSummaryItem}>
-                      <strong style={styles.workspaceSummaryValue}>{item.active} of {item.total}</strong>
+                      <strong style={styles.workspaceSummaryValue}>{item.active == null ? '-' : `${item.active} of ${item.total}`}</strong>
                       <span style={styles.workspaceSummaryLabel}>{item.label}</span>
                     </div>
                   ))}
