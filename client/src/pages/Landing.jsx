@@ -58,10 +58,10 @@ const plans = [
 
 function MiniDashboard() {
   return (
-    <div className="landing-product-panel" aria-label="OpsFloa workflow preview">
+    <div className="landing-product-panel" aria-label="OpsFloA workflow preview">
       <div className="landing-panel-top">
         <div>
-          <span className="landing-panel-eyebrow">Today in OpsFloa</span>
+          <span className="landing-panel-eyebrow">Today in OpsFloA</span>
           <h2>Daily Command Center</h2>
         </div>
         <span className="landing-status-pill">Live</span>
@@ -105,17 +105,17 @@ export default function Landing() {
   const [openFaq, setOpenFaq] = useState(null);
 
   useDocumentMeta({
-    title: 'OpsFloa - Simple Operations Software for Time, Work, Inventory, and Payroll Prep',
-    description: 'OpsFloa helps teams manage time, daily work, inventory, approvals, reports, and payroll prep from one customizable browser-based operations hub.',
+    title: 'OpsFloA - Simple Operations Software for Time, Work, Inventory, and Payroll Prep',
+    description: 'OpsFloA helps teams manage time, daily work, inventory, approvals, reports, and payroll prep from one customizable browser-based operations hub.',
   });
 
   return (
     <div className="landing-page" id="top">
       <header className="landing-header landing-shell">
-        <a href="#top" className="landing-brand" aria-label="OpsFloa home">
+        <a href="#top" className="landing-brand" aria-label="OpsFloA home">
           <img className="landing-brand-mark" src="/icon-96x96.png" alt="" />
           <span>
-            <strong>OpsFloa</strong>
+            <strong>OpsFloA</strong>
             <small>Operations Flow Assistant</small>
           </span>
         </a>
@@ -140,11 +140,11 @@ export default function Landing() {
           <div className="landing-shell landing-hero-grid">
             <div className="landing-hero-copy">
               <p className="landing-kicker">The daily operations hub for teams in motion</p>
-              <h1>OpsFloa</h1>
+              <h1>OpsFloA</h1>
               <p className="landing-lede">
                 A simple place to run time, work, inventory, approvals, and payroll prep. Keep the everyday screen clean for the team, while admins get the controls and records they need when the work gets complicated.
               </p>
-              <div className="landing-hero-proof" aria-label="OpsFloa highlights">
+              <div className="landing-hero-proof" aria-label="OpsFloA highlights">
                 <span>No app-store rollout</span>
                 <span>Offline queue</span>
                 <span>Custom roles and labels</span>
@@ -173,7 +173,7 @@ export default function Landing() {
           <div className="landing-section-head">
             <p className="landing-kicker">One calm operating system</p>
             <h2>Everything the office needs from the workday, without making the team dig for it.</h2>
-            <p>OpsFloa is designed around the daily loop: people start work, activity is captured, exceptions rise to the surface, and the back office closes the day with fewer loose ends.</p>
+            <p>OpsFloA is designed around the daily loop: people start work, activity is captured, exceptions rise to the surface, and the back office closes the day with fewer loose ends.</p>
           </div>
           <div className="landing-workflow-grid">
             {workflows.map(workflow => (
@@ -203,7 +203,7 @@ export default function Landing() {
 
         <section className="landing-section landing-shell">
           <div className="landing-section-head">
-            <p className="landing-kicker">Why OpsFloa</p>
+            <p className="landing-kicker">Why OpsFloA</p>
             <h2>Use one flexible system instead of forcing the team through five disconnected tools.</h2>
             <p>Most teams do not need more software noise. They need the important actions up front, the deeper controls nearby, and a reliable record of the day when payroll, customers, managers, or inventory questions come up.</p>
           </div>
@@ -247,9 +247,9 @@ export default function Landing() {
           </div>
           <div className="landing-faq-list">
             {[
-              ['Does the team need an app store download?', 'No. OpsFloa runs in the mobile browser and can be installed to the home screen as a PWA.'],
+              ['Does the team need an app store download?', 'No. OpsFloA runs in the mobile browser and can be installed to the home screen as a PWA.'],
               ['Does it work in bad signal?', 'Yes. Clock and work submissions can queue locally and sync when the connection returns.'],
-              ['Can different teams see different tools?', 'Yes. OpsFloa is built around roles, modules, and company labels so the app can stay simple day to day.'],
+              ['Can different teams see different tools?', 'Yes. OpsFloA is built around roles, modules, and company labels so the app can stay simple day to day.'],
               ['Can it handle payroll details?', 'Yes. It supports approvals, overtime, prevailing wage workflows, pay-period locks, reports, and QuickBooks sync as an add-on.'],
             ].map(([q, a], index) => (
               <div key={q} className="landing-faq-item">
@@ -265,7 +265,7 @@ export default function Landing() {
 
         <section className="landing-final">
           <div className="landing-shell landing-final-content">
-            <p className="landing-kicker">OpsFloa</p>
+            <p className="landing-kicker">OpsFloA</p>
             <h2>Give the team a simple way to report work. Give the office a clean way to close the day.</h2>
             <Link to="/register" className="landing-btn">Start free</Link>
           </div>
@@ -273,7 +273,7 @@ export default function Landing() {
       </main>
 
       <footer className="landing-footer landing-shell">
-        <span>OpsFloa</span>
+        <span>OpsFloA</span>
         <div>
           <Link to="/privacy">Privacy</Link>
           <Link to="/eula">Terms</Link>
