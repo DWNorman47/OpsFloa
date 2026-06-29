@@ -194,7 +194,7 @@ function AppRoutes() {
       <Route path="/closeout" element={<PrivateRoute adminOnly moduleId="workforce"><CloseoutPage /></PrivateRoute>} />
       <Route path="/lien-waivers" element={<PrivateRoute adminOnly moduleId="workforce"><LienWaiversPage /></PrivateRoute>} />
       <Route path="/catalog" element={<PrivateRoute moduleId="inventory"><CatalogPage /></PrivateRoute>} />
-      <Route path="/booking" element={<PrivateRoute adminOnly moduleId="workforce"><BookingPage /></PrivateRoute>} />
+      <Route path="/booking" element={<PrivateRoute adminOnly moduleId="booking"><BookingPage /></PrivateRoute>} />
       <Route path="/me/booking" element={<PrivateRoute><MyBookingPage /></PrivateRoute>} />
       {/* Subcontractors split: the firm directory is now a tab of the Directory
           module; purchase orders moved to Projects. Keep the old path working. */}

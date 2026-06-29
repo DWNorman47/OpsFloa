@@ -23,6 +23,23 @@ export const APPS = [
     path: '/timeclock',
   },
   {
+    id: 'booking',
+    name: 'Booking',
+    bg: '#0d9488',
+    adminOnly: true,
+    icon: (
+      <svg viewBox="0 0 20 20" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+        <rect x="3" y="4" width="14" height="13" rx="2" />
+        <path d="M7 2.5v3" />
+        <path d="M13 2.5v3" />
+        <path d="M3 8h14" />
+        <path d="M7 12h2" />
+        <path d="M11 12h2" />
+      </svg>
+    ),
+    path: '/booking',
+  },
+  {
     id: 'field',
     name: 'Field',
     bg: '#059669',
@@ -117,6 +134,20 @@ export const APPS = [
     ),
     path: '/administration',
   },
+  {
+    id: 'help',
+    name: 'Help',
+    bg: '#475569',
+    hidden: true,
+    icon: (
+      <svg viewBox="0 0 20 20" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+        <circle cx="10" cy="10" r="7.5" />
+        <path d="M8 8a2.2 2.2 0 1 1 3.2 2c-.8.5-1.2 1-1.2 2" />
+        <path d="M10 15h.01" />
+      </svg>
+    ),
+    path: '/help',
+  },
 ];
 
 export default function AppSwitcher({ currentApp = 'timeclock', userRole, features = {} }) {
@@ -146,6 +177,7 @@ export default function AppSwitcher({ currentApp = 'timeclock', userRole, featur
     return app.name;
   };
   const visibleApps = settingsPending ? [current] : APPS.filter(a => {
+    if (a.hidden && a.id !== currentApp) return false;
     if (a.adminOnly && !isAdmin) return false;
     if (a.workerOnly && isAdmin) return false;
     // Company-level feature toggles (admin choice). These hide modules

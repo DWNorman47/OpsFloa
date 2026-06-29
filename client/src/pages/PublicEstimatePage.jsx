@@ -6,6 +6,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { getT } from '../i18n';
 import { detectLanguage } from '../languageDetect';
+import { publicLinkError } from '../utils/publicErrors';
 
 const baseURL = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api';
 const publicApi = axios.create({ baseURL });
@@ -45,7 +46,7 @@ export default function PublicEstimatePage() {
   useEffect(() => {
     publicApi.get(`/public/estimates/view/${token}`)
       .then(r => setEstimate(r.data))
-      .catch(err => setError(err.response?.data?.error || t.peErrNotFound))
+      .catch(err => setError(publicLinkError(err, t.peErrNotFound)))
       .finally(() => setLoading(false));
   }, [token]);
 
@@ -59,7 +60,7 @@ export default function PublicEstimatePage() {
       });
       setAccepted(true);
     } catch (err) {
-      setError(err.response?.data?.error || t.peErrAccept);
+      setError(publicLinkError(err, t.peErrAccept));
     } finally {
       setSubmitting(false);
     }
@@ -74,7 +75,7 @@ export default function PublicEstimatePage() {
       });
       setDeclined(true);
     } catch (err) {
-      setError(err.response?.data?.error || t.peErrDecline);
+      setError(publicLinkError(err, t.peErrDecline));
     } finally {
       setSubmitting(false);
     }

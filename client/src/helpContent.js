@@ -63,6 +63,11 @@ export const HELP_SECTIONS = [
         q: 'What does "Mark Day" do for daily-rate people?',
         a: 'For daily-rate team members with Mark Day mode enabled, clock-in and clock-out collapse into one button. Useful for piece-rate, per-diem, or presence-based work where exact hours do not affect pay.',
       },
+      {
+        q: 'How does someone request time off or PTO?',
+        keywords: ['time off', 'PTO', 'vacation', 'leave', 'sick day', 'request leave', 'absence'],
+        a: 'Open Time Clock > Time Off. Pick the dates, choose the request type, add a note if needed, and submit. Admins review requests from the workforce time-off tools.',
+      },
     ],
   },
   {
@@ -124,6 +129,22 @@ export const HELP_SECTIONS = [
       {
         q: 'Can I see labor cost by project?',
         a: 'Workforce > Reports > Project Reports. Filter by date range and project to see total hours and pay, if Show Wages is enabled.',
+      },
+    ],
+  },
+  {
+    id: 'inventory',
+    title: 'Inventory',
+    items: [
+      {
+        q: 'How do I run an inventory count or cycle count?',
+        keywords: ['inventory count', 'cycle count', 'stock count', 'physical count', 'reconcile stock', 'audit inventory'],
+        a: 'Open Inventory > Counts. Create a full count or cycle count, choose what should be counted, enter the counted quantities, review variances, and reconcile only when the numbers are ready.',
+      },
+      {
+        q: 'How do I receive items from a purchase order?',
+        keywords: ['receive inventory', 'receive PO', 'supplier order', 'stock delivery'],
+        a: 'Open Inventory > Orders, open the submitted PO, choose Receive Items, pick the receiving location, and enter only the quantities that arrived.',
       },
     ],
   },

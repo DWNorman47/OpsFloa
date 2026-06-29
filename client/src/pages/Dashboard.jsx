@@ -36,6 +36,9 @@ function TabLoader() {
 const TIME_TAB_ALIASES = {
   availability: 'schedule',
   expenses: 'reimbursements',
+  pto: 'timeoff',
+  requests: 'timeoff',
+  time_off: 'timeoff',
 };
 
 function normalizeTimeHash(rawHash) {

@@ -17,6 +17,7 @@ const APP_ACCENTS = {
   sales: '#1d4ed8',      // Estimates + Change Orders
   subs: '#0369a1',       // Subcontractors + POs
   booking: '#0d9488',    // Booking / appointments
+  help: '#475569',
   financial_reports: '#15803d', // P&L + WIP (matches the switcher icon)
 };
 
