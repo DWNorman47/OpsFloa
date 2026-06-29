@@ -967,6 +967,15 @@ async function main() {
         '*'
       ));
     }
+    await client.query(
+      `DELETE FROM equipment_hours h
+       USING equipment_items e
+       WHERE h.equipment_id = e.id
+         AND h.company_id = $1
+         AND e.company_id = $1
+         AND e.name = ANY($2::text[])`,
+      [companyId, equipmentSeed.map(([name]) => name)]
+    );
     for (let i = 0; i < 60; i++) {
       const eq = equipment[i % equipment.length];
       await ensureBy(
