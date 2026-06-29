@@ -487,11 +487,13 @@ async function main() {
       ['End of day closeout', 'Cleaned work zones, secured loose materials, and uploaded photos for the gallery.', 'draft'],
       ['Quality check', 'Verified installed labels, room layouts, and inventory kit placement. Two labels need replacement.', 'reviewed'],
     ];
+    // The demo gallery should roll forward, not accumulate old dated media.
+    // Seeded field notes always use this prefix.
     await client.query(
       `DELETE FROM field_reports
        WHERE company_id = $1
-         AND title LIKE ANY($2::text[])`,
-      [companyId, fieldNotes.map(([title]) => `${title} - %`)]
+         AND title LIKE 'Demo note %'`,
+      [companyId]
     );
     for (let i = 0; i < 14; i++) {
       const [title, notes, status] = fieldNotes[i % fieldNotes.length];
@@ -529,6 +531,15 @@ async function main() {
         );
       }
     }
+
+    // Daily reports are also a rolling demo surface. These are recreated for
+    // today and the prior days each seed run.
+    await client.query(
+      `DELETE FROM daily_reports
+       WHERE company_id = $1
+         AND created_by = $2`,
+      [companyId, admin.id]
+    );
 
     for (let i = 0; i < 18; i++) {
       const project = projectByIndex(i);
