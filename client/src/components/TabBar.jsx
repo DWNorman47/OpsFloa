@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-export default function TabBar({ tabs, active, onChange, breakpoint = 600 }) {
+export default function TabBar({ tabs, active, onChange, breakpoint = 600, ariaLabel = 'Sections' }) {
   const [narrow, setNarrow] = useState(() => window.innerWidth < breakpoint);
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -37,14 +37,15 @@ export default function TabBar({ tabs, active, onChange, breakpoint = 600 }) {
           className="ops-tab-dd-trigger"
           aria-haspopup="listbox"
           aria-expanded={open}
+          aria-label={ariaLabel}
           onClick={() => setOpen(o => !o)}
         >
           {current?.dot && <span className="ops-tab-dd-dot" style={{ '--tab-dot': current.dot }} aria-hidden="true" />}
           <span className="ops-tab-dd-current">{current?.label}</span>
-          <span className={`ops-tab-dd-caret ${open ? 'is-open' : ''}`.trim()} aria-hidden="true">▾</span>
+          <span className={`ops-tab-dd-caret ${open ? 'is-open' : ''}`.trim()} aria-hidden="true">▼</span>
         </button>
         {open && (
-          <ul className="ops-tab-dd-menu" role="listbox" aria-label="Choose section">
+          <ul className="ops-tab-dd-menu" role="listbox" aria-label={ariaLabel}>
             {tabs.map(t => {
               const isActive = t.id === active;
               return (
@@ -67,7 +68,7 @@ export default function TabBar({ tabs, active, onChange, breakpoint = 600 }) {
   }
 
   return (
-    <div role="tablist" className="ops-tabbar">
+    <div role="tablist" aria-label={ariaLabel} className="ops-tabbar">
       {tabs.map(t => {
         const isActive = t.id === active;
         return (

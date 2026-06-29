@@ -529,7 +529,7 @@ ${signatureDataUrl ? `
           description="The daily actions are first. Timesheets, schedule, time off, and expenses stay close without crowding the clock-in flow."
           meta={headerClock ? <span className="ops-pill good">Clocked in</span> : <span className="ops-pill">Ready</span>}
         />
-        <TabBar active={tab} onChange={switchTab} tabs={timeTabs} breakpoint={720} />
+        <TabBar active={tab} onChange={switchTab} tabs={timeTabs} breakpoint={720} ariaLabel="Time Clock tabs" />
 
         {tab === 'messages' && <CompanyChat settings={settings} onRead={() => { setChatUnread(false); localStorage.setItem('chatLastRead', new Date().toISOString()); }} />}
 
@@ -585,6 +585,7 @@ ${signatureDataUrl ? `
                 { id: 'availability', label: t.tabAvailability },
               ]}
               breakpoint={420}
+              ariaLabel="Schedule tabs"
             />
             {scheduleSubtab === 'schedule' && (
               <Suspense fallback={<TabLoader />}><WorkerSchedule /></Suspense>
