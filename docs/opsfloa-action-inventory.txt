@@ -1,0 +1,1733 @@
+OpsFloA action inventory
+Generated: 2026-06-29
+
+Purpose
+This file lists the user-facing and admin-facing actions someone could reasonably take in OpsFloA. It is meant to support QA, onboarding design, permission review, help content, and regression testing.
+
+Scope notes
+- Some actions are only visible when a module, feature, plan, add-on, or permission is enabled.
+- Some actions are public, some require a signed-in user, some require an admin, and some require super admin access.
+- This is an application action inventory, not a database schema or formal permission matrix.
+- "Company language" settings may rename labels such as project, client, worker, work, or team member in the UI.
+
+Impact tags
+- READ: view, search, inspect, preview, download, print, or export data.
+- WRITE: create, update, import, upload, submit, approve, reject, archive, restore, or delete data.
+- SEND: send email, invite, request, notification, reminder, public link, or external message.
+- PUBLIC: visible to signed-out visitors or external users.
+- EXTERNAL: touches a third-party service such as QuickBooks, SendGrid, R2, Stripe, Sentry, or a public browser.
+- FINANCIAL: touches money, billing, pay, purchase orders, invoices, estimates, or payroll.
+- DESTRUCTIVE: deletes, voids, archives, deactivates, cancels, or otherwise removes active use.
+
+
+1. Public and signed-out actions
+
+1.1 Marketing and informational pages
+- READ: View the public OpsFloA landing page.
+- READ: View product positioning, benefits, feature summaries, pricing, and calls to action.
+- READ: View search-engine and AI-readable page metadata.
+- READ: View privacy policy.
+- READ: View EULA.
+- READ: View changelog.
+- READ: Follow sign-in and start-free/create-account calls to action.
+
+1.2 Account entry
+- WRITE: Register a new company/account.
+- WRITE: Create the initial admin during registration.
+- WRITE: Confirm an email address.
+- WRITE: Resend email confirmation.
+- WRITE: Accept a company invite.
+- WRITE: Complete setup after accepting an invite.
+- WRITE: Sign in with company name, username/email, and password.
+- WRITE: Autofill Demo Operations credentials when the Demo Operations company is selected.
+- WRITE: Complete MFA challenge when required.
+- WRITE: Request a password reset.
+- WRITE: Reset a password from a reset link.
+- READ: See login failure messages.
+- READ: See session-expired messages.
+
+1.3 Public company profile
+- PUBLIC, READ: View a company's public profile by slug.
+- PUBLIC, READ: View public company name, description, services, service areas, capabilities, project types, license/certification details, FAQ, photos, contact instructions, and last-updated date.
+- PUBLIC, READ: Follow visible contact links such as phone, email, website, or request page.
+- PUBLIC, READ: Let search engines and AI agents read structured profile data.
+- PUBLIC, READ: View the public profile without exposing employees, private customers, time, payroll, invoices, internal notes, or private job photos.
+
+1.4 Public request page
+- PUBLIC, READ: View the public request page by company slug.
+- PUBLIC, READ: View company request instructions.
+- PUBLIC, WRITE: Enter requester name.
+- PUBLIC, WRITE: Enter email.
+- PUBLIC, WRITE: Enter phone.
+- PUBLIC, WRITE: Enter address or service location.
+- PUBLIC, WRITE: Select request category.
+- PUBLIC, WRITE: Enter request description.
+- PUBLIC, WRITE: Submit a public request.
+- PUBLIC, READ: See validation errors.
+- PUBLIC, READ: See request submitted confirmation.
+
+1.5 Public booking
+- PUBLIC, READ: View public booking page for a company.
+- PUBLIC, READ: View available appointment or shift types.
+- PUBLIC, READ: View availability.
+- PUBLIC, WRITE: Select a date/time.
+- PUBLIC, WRITE: Enter booking contact information.
+- PUBLIC, WRITE: Submit a booking request or appointment.
+- PUBLIC, READ: View booking confirmation.
+- PUBLIC, READ: Open a booking management link.
+- PUBLIC, WRITE: Cancel or manage a public booking when a valid token allows it.
+
+1.6 Public estimates, change orders, and lien waivers
+- PUBLIC, READ, FINANCIAL: Open a public estimate link.
+- PUBLIC, READ, FINANCIAL: View estimate details, customer/project info, line items, totals, and terms.
+- PUBLIC, WRITE, FINANCIAL: Accept or approve an estimate when allowed.
+- PUBLIC, WRITE, FINANCIAL: Decline an estimate when allowed.
+- PUBLIC, READ, FINANCIAL: Open a public change order link.
+- PUBLIC, WRITE, FINANCIAL: Approve or decline a public change order when allowed.
+- PUBLIC, READ, FINANCIAL: Open a public lien waiver signing link.
+- PUBLIC, WRITE, FINANCIAL: Sign a lien waiver.
+- PUBLIC, READ, FINANCIAL: Print or download public documents when offered.
+
+
+2. Global signed-in shell actions
+
+2.1 Navigation
+- READ: Open the app switcher.
+- READ: Navigate to Time Clock.
+- READ: Navigate to Home when accessible by URL.
+- READ: Navigate to Field Work.
+- READ: Navigate to Projects.
+- READ: Navigate to Team/Directory.
+- READ: Navigate to Inventory.
+- READ: Navigate to Financial Reports.
+- READ: Navigate to Booking.
+- READ: Navigate to Account.
+- READ: Navigate to Help.
+- READ: Navigate to Administration.
+- READ: Navigate to Super Admin when authorized.
+- READ: Follow legacy redirects such as Dashboard to Time Clock, Sales to Projects estimates, Change Orders to Projects change orders, and Subs to Team subcontractors.
+
+2.2 Header and session controls
+- READ: View current company name.
+- READ: View current app/module name.
+- READ: View notification count.
+- READ: Open notification window.
+- WRITE: Mark notifications read.
+- WRITE: Mark all notifications read.
+- WRITE: Refresh/reload app data.
+- WRITE: Change interface language.
+- WRITE: Log out.
+- READ: Open guide drawer.
+- READ: Search task guides.
+- READ: Open the full Help page.
+- READ: Use skip links and keyboard navigation.
+- READ: View offline status.
+- WRITE: Retry a failed request from retry banners.
+- WRITE: Install the PWA when prompted.
+- WRITE: Accept a PWA update/relaunch prompt.
+
+2.3 Cross-app table and form actions
+- READ: Search within lists.
+- READ: Filter list results.
+- READ: Sort table columns.
+- READ: Open column header filter/sort menus.
+- WRITE: Type into column filters.
+- READ: Select filter dropdown options.
+- READ: Clear filters.
+- READ: Change visible table columns when a column picker is present.
+- READ: Reset visible columns.
+- READ: Use table pagination.
+- READ: Change page size.
+- READ: Scroll wide tables horizontally.
+- READ: Switch mobile table view between card/list where offered.
+- READ: Open modals and drawers.
+- READ: Close modals and drawers.
+- WRITE: Save forms.
+- WRITE: Cancel forms.
+- WRITE: Upload files.
+- WRITE: Delete uploaded files when allowed.
+- READ: Preview files, images, PDFs, and generated documents.
+- READ: Download CSV/PDF/ZIP exports when offered.
+- READ: Print labels, PDFs, or reports when offered.
+- WRITE: Copy links or values to clipboard when offered.
+
+2.4 Guide and help system
+- READ: Open the guide drawer from the header.
+- READ: Search guides by task or question.
+- READ: View guides useful for the current module.
+- READ: View more guides outside the current module.
+- READ: Open the full Help page.
+- READ: Open a guide's target page or tab.
+- READ: Follow related guide chips.
+- READ: Close the guide drawer.
+
+
+3. Home and welcome dashboard
+
+3.1 Home
+- READ: View the Home page by direct URL when signed in.
+- READ: View high-level company cards and recommended actions.
+- READ: View quick links to core workflows.
+- READ: Follow quick links to approvals, live workforce, projects, team invites, workspace setup, or related sections.
+- READ: Dismiss one-time intro cards where configured.
+
+
+4. Time Clock
+
+4.1 Personal clock
+- READ: View current clock status.
+- READ: View current project/work assignment.
+- WRITE: Choose a project/work item before clocking in.
+- WRITE: Clock in.
+- WRITE: Clock out.
+- WRITE: Mark the day for daily-rate/day-mark workers when enabled.
+- READ: Check whether today's day-mark entry has already been recorded.
+- DESTRUCTIVE, WRITE: Cancel/discard an active clock-in without creating a time entry when offered.
+- WRITE: Add optional clock-in notes.
+- WRITE: Add clock-out notes.
+- WRITE: Add current location when geolocation is enabled and allowed.
+- WRITE: Handle geolocation denied/unavailable states.
+- WRITE: Switch active project/work while clocked in.
+- WRITE: Confirm a project/work switch.
+- READ: See required safety checklist warning before clock-in or project/work switch.
+- READ: Open the required safety checklist flow when clock-in or switching is blocked by checklist rules.
+- WRITE: Add a break.
+- WRITE: End or record a break.
+- WRITE: Add mileage.
+- READ: View elapsed time while clocked in.
+- READ: View project/work choices sorted by recent/frequent browser history where enabled.
+
+4.2 Personal time entry management
+- READ: View today's time entries.
+- READ: View weekly timesheet.
+- READ: Change week/date range.
+- WRITE: Add manual time.
+- WRITE: Select project/work for manual time.
+- WRITE: Enter start and end times.
+- WRITE: Enter break/mileage/notes for manual time.
+- WRITE: Edit an existing personal time entry when allowed.
+- WRITE: Delete an existing personal time entry when allowed.
+- WRITE: Split an entry when allowed.
+- WRITE: Insert a project/work switch when allowed.
+- WRITE: Sign off on a timesheet or day when required.
+- WRITE: Copy eligible entries from last week into the current week.
+- READ: Preview/print a worker bill or timesheet PDF where offered.
+- READ: View approved, rejected, pending, locked, or signed-off status.
+- READ: View messages tied to a time entry.
+- WRITE: Send a message on a time entry.
+
+4.3 Personal schedule and availability
+- READ: View personal schedule.
+- READ: View assigned shifts.
+- WRITE: Respond that a shift cannot be worked when offered.
+- WRITE: Add or update a note explaining why a shift cannot be worked.
+- WRITE: Clear the cannot-work response when allowed.
+- READ: View personal booking/availability settings.
+- WRITE: Update personal availability when booking features allow it.
+
+4.4 Personal requests and reimbursements
+- READ: View time off balances and requests.
+- WRITE: Submit time off request.
+- READ: View request approval status.
+- DESTRUCTIVE, WRITE: Cancel/delete an eligible time off request.
+- WRITE: Submit reimbursement or mileage request.
+- WRITE: Attach receipt or notes where supported.
+- WRITE: Mark a reimbursement as having no receipt when allowed.
+- DESTRUCTIVE, WRITE: Delete/cancel an eligible reimbursement request.
+- READ: View reimbursement status.
+
+4.5 Personal pay information
+- READ: View pay stub/pay summary when enabled.
+- READ: View hours, pay period information, and deductions/earnings shown to the user.
+- READ: Download or print pay stub when offered.
+
+4.6 Workforce live view
+- READ: View live team members.
+- READ: View active clocks.
+- READ: View inactive team member alerts.
+- WRITE: Refresh live workforce data.
+- WRITE: Clock in a team member.
+- WRITE: Clock out a team member.
+- WRITE: Mark a day for a daily-rate/day-mark team member when enabled.
+- WRITE: Change an active team member's project/work.
+- WRITE: Edit active clock notes, breaks, mileage, or related values when allowed.
+- READ: View last update time.
+
+4.7 Workforce approvals
+- READ: View pending approvals.
+- READ: Filter pending entries.
+- WRITE: Approve a time entry.
+- WRITE: Reject a time entry.
+- WRITE: Bulk approve selected entries.
+- WRITE: Approve all eligible entries.
+- WRITE: Edit an entry before approving it.
+- WRITE: Split an entry before approving it.
+- WRITE: Unlock an entry.
+- WRITE: Unapprove a previously approved entry.
+- READ: View recently approved entries.
+- READ: View warnings when a time entry is still active or has no end time.
+
+4.8 Workforce reporting and payroll
+- READ, FINANCIAL: View export panel.
+- READ, FINANCIAL: Export time entries.
+- READ, FINANCIAL: Export payroll file/report.
+- READ, FINANCIAL: View overtime report.
+- READ, FINANCIAL: View project reports tied to time.
+- WRITE, FINANCIAL: Create pay periods.
+- WRITE, FINANCIAL: Lock pay periods.
+- WRITE, FINANCIAL: Delete/unlock pay periods when allowed.
+- READ, FINANCIAL: View certified payroll reports when add-on is enabled.
+- WRITE, FINANCIAL: Generate certified payroll.
+- WRITE, FINANCIAL: Add certified payroll signature.
+- READ, FINANCIAL: Download/print certified payroll PDF or WH-347 when enabled.
+
+4.9 Workforce communication
+- READ: View company chat.
+- WRITE: Send company chat messages.
+- READ: View unread count.
+- WRITE: Mark chat messages read.
+- WRITE, SEND: Send broadcast message when allowed.
+
+4.10 Workforce schedule management
+- READ: View team schedule by date range.
+- WRITE: Create a worker shift.
+- WRITE: Assign a shift to a worker.
+- WRITE: Assign a shift to a project/work item.
+- WRITE: Add shift date, start time, end time, notes, and recurrence grouping where offered.
+- WRITE: Edit a shift.
+- DESTRUCTIVE, WRITE: Delete/cancel a shift.
+- DESTRUCTIVE, WRITE: Cancel all upcoming shifts in a recurring shift series.
+- READ: See worker cannot-make-it responses.
+- SEND: Notify workers when shifts are assigned, updated, or cancelled.
+- SEND: Notify admins when a worker marks a shift as cannot make it.
+
+
+5. Field Work
+
+5.1 Field Work navigation
+- READ: Open Field Work.
+- READ: Switch main sections: Daily, Issues, Safety, Resources, Gallery, and other enabled sections.
+- READ: Switch second-level tabs such as Notes, Punchlist, Incidents, Talks, Checklists, Inspections, Equipment, Sub reports, and Gallery.
+- READ: Use field filters.
+- READ: Filter by project/work, date, status, type, assignee, or search term where offered.
+
+5.2 Daily reports and daily work notes
+- READ: Select a report date.
+- READ: Select project/work.
+- READ: See read-only state for dates before today where applicable.
+- READ: View existing daily report.
+- READ: Load suggested daily report content when available.
+- WRITE: Create a daily report.
+- WRITE: Edit today's daily report.
+- WRITE: Add weather details.
+- WRITE: Add work notes.
+- WRITE: Add manpower/labor notes.
+- WRITE: Add equipment notes.
+- WRITE: Add material notes.
+- WRITE: Add delays/issues/safety notes where offered.
+- WRITE: Upload or capture photos for a daily report.
+- WRITE: Remove photos from a daily report when allowed.
+- WRITE: Submit or save a daily report.
+- WRITE: Review daily report when allowed.
+- READ: Export daily report PDF where offered.
+- DESTRUCTIVE, WRITE: Delete a daily report when allowed.
+
+5.3 Field day log and notes/media
+- READ: View field notes.
+- WRITE: Create a field note or field report.
+- WRITE: Edit a field note.
+- WRITE: Add project/work to a field note.
+- WRITE: Add description/details.
+- WRITE: Attach photos or media.
+- WRITE: Capture photos from device camera when available.
+- WRITE: Add location metadata where supported.
+- READ: Open attached photo/media.
+- READ: Move through photo/media viewer.
+- READ: Exit image viewer.
+- WRITE: Review field note/report when allowed.
+- DESTRUCTIVE, WRITE: Delete a photo/media item when allowed.
+- DESTRUCTIVE, WRITE: Delete a field note/report when allowed.
+
+5.4 Punchlist
+- READ: View punchlist items.
+- READ: Filter punchlist items by project/work, status, assignee, priority, or search.
+- WRITE: Create punchlist item.
+- WRITE: Edit punchlist title, description, project/work, assignee, due date, and status.
+- WRITE: Attach photos to punchlist items.
+- READ: View punchlist item checklist/subtasks.
+- WRITE: Add punchlist checklist/subtask item.
+- WRITE: Edit punchlist checklist/subtask item.
+- DESTRUCTIVE, WRITE: Delete punchlist checklist/subtask item.
+- WRITE: Mark item open, in progress, complete, or closed where supported.
+- DESTRUCTIVE, WRITE: Delete punchlist item when allowed.
+- READ: Export punchlist PDF where offered.
+
+5.5 Incidents
+- READ: View incident reports.
+- READ: Filter incident reports.
+- WRITE: Create incident report.
+- WRITE: Edit incident details, date, project/work, severity, injured person, witnesses, corrective action, and notes.
+- WRITE: Attach photos or documents.
+- WRITE: Close incident.
+- DESTRUCTIVE, WRITE: Delete incident report when allowed.
+- READ: Export incident PDF where offered.
+
+5.6 Safety talks
+- READ: View toolbox talks.
+- READ: Filter toolbox talks by project/work or status.
+- WRITE: Create safety talk.
+- WRITE: Edit title, topic, date, project/work, presenter, notes, and attachments.
+- WRITE: Add quiz questions to a safety talk when enabled.
+- WRITE: Submit quiz answers/sign-off when a safety talk requires it.
+- WRITE: Record worker sign-offs.
+- WRITE: Remove sign-offs when allowed.
+- READ: View sign-off count.
+- READ: Export safety talk PDF.
+- DESTRUCTIVE, WRITE: Delete safety talk when allowed.
+
+5.7 Safety checklists
+- READ: View safety checklists.
+- READ: Filter checklists.
+- READ: View safety checklist templates.
+- WRITE: Create checklist.
+- WRITE: Create safety checklist template.
+- WRITE: Edit safety checklist template.
+- DESTRUCTIVE, WRITE: Delete safety checklist template.
+- WRITE: Start checklist from template.
+- WRITE: Fill checklist item results.
+- WRITE: Add notes and photos to checklist items.
+- WRITE: Submit checklist.
+- WRITE: Review checklist.
+- DESTRUCTIVE, WRITE: Delete checklist when allowed.
+
+5.8 Inspections
+- READ: View inspections.
+- READ: Filter inspections.
+- WRITE: Create inspection.
+- WRITE: Select or create inspection template.
+- WRITE: Complete pass/fail/NA items.
+- WRITE: Add item notes.
+- WRITE: Add photos.
+- WRITE: Submit inspection.
+- WRITE: Close or review inspection.
+- READ: Export inspection PDF where offered.
+- DESTRUCTIVE, WRITE: Delete inspection when allowed.
+
+5.9 Field resources and equipment
+- READ: View equipment log.
+- WRITE: Add equipment record/log.
+- WRITE: Edit equipment name, project/work, status, hours, notes, and service info.
+- WRITE: Archive or restore equipment record where offered.
+- WRITE: Log equipment hours.
+- DESTRUCTIVE, WRITE: Delete equipment hour entry.
+- READ: View equipment maintenance warnings.
+- READ: View subcontractor/sub report resources when enabled.
+- WRITE: Create or update subcontractor/sub reports when enabled.
+- DESTRUCTIVE, WRITE: Delete subcontractor/sub report when allowed.
+
+5.10 Gallery
+- READ: View field/project media gallery.
+- READ: Filter gallery by project/work, source, date, or search.
+- READ: Open an image/media lightbox.
+- READ: Move to next/previous image.
+- READ: Exit image viewer.
+- DESTRUCTIVE, WRITE: Delete image/media when allowed.
+
+
+6. Projects
+
+6.1 Project list and navigation
+- READ: Open Projects.
+- READ: Switch Projects, Clients, Estimates, Change Orders, and Purchase Orders tabs.
+- READ: View active projects.
+- READ: Show archived projects.
+- READ: Switch list/grid or compact views where offered.
+- READ: Filter or search projects.
+- READ: Sort projects.
+- WRITE: Create new project.
+- WRITE: Quick-add customer/client while creating a project.
+- WRITE: Edit project.
+- WRITE: Archive project.
+- WRITE: Restore archived project.
+- WRITE: Merge duplicate project into another project when allowed.
+- DESTRUCTIVE, WRITE: Delete project when allowed.
+
+6.2 Project details
+- READ: Open project details.
+- READ: View project overview.
+- READ: View client/customer details.
+- READ: View status, budget, hours, cost, revenue, margin, and progress.
+- WRITE: Update project name, code, status, client, address, budget, rate, notes, and visibility settings.
+- WRITE: Mark project complete or inactive where supported.
+- WRITE: Set project team visibility.
+- WRITE: Select all workers for a project.
+- WRITE: Clear selected workers for a project.
+- WRITE: Save project worker access.
+- WRITE: Configure project geofence/address.
+- WRITE: Geocode a project address.
+- WRITE: Clear geofence data.
+- READ: View project health.
+- READ: View project activity.
+- READ: View project worker list.
+- READ: View project photos.
+- READ: View project documents.
+- WRITE: Upload project document.
+- DESTRUCTIVE, WRITE: Delete project document.
+- READ: Download project media ZIP.
+
+6.3 Project budget, spend, and reporting
+- READ, FINANCIAL: View project budget.
+- WRITE, FINANCIAL: Update project budget.
+- READ, FINANCIAL: View project spend.
+- READ, FINANCIAL: View project expenses.
+- WRITE, FINANCIAL: Add project expense.
+- DESTRUCTIVE, WRITE, FINANCIAL: Delete project expense.
+- READ, FINANCIAL: View project P&L.
+- READ, FINANCIAL: View WIP report.
+- READ, FINANCIAL: Export WIP report.
+- READ, FINANCIAL: View project bill/report PDF.
+- READ, FINANCIAL: Generate/download/print project billing PDF.
+
+6.4 RFIs
+- READ: View RFIs.
+- WRITE: Create RFI.
+- WRITE: Edit RFI.
+- WRITE: Update RFI status.
+- DESTRUCTIVE, WRITE: Delete RFI.
+- READ: Export/download RFI PDF where offered.
+
+6.5 Estimates
+- READ, FINANCIAL: View estimates.
+- READ, FINANCIAL: Search/filter estimates.
+- WRITE, FINANCIAL: Create estimate.
+- WRITE, FINANCIAL: Edit estimate header, customer, project, terms, notes, dates, and status.
+- WRITE, FINANCIAL: Add estimate line items.
+- WRITE, FINANCIAL: Edit estimate line items.
+- WRITE, FINANCIAL: Delete estimate line items.
+- WRITE, SEND, FINANCIAL: Send estimate.
+- WRITE, FINANCIAL: Withdraw estimate.
+- WRITE, FINANCIAL: Convert estimate to project/work or downstream record when offered.
+- READ, FINANCIAL: Preview estimate PDF.
+- READ, FINANCIAL: Download/print estimate PDF.
+- PUBLIC, READ, FINANCIAL: Share public estimate link.
+
+6.6 Change orders
+- READ, FINANCIAL: View change orders.
+- READ, FINANCIAL: Search/filter change orders.
+- WRITE, FINANCIAL: Create change order.
+- WRITE, FINANCIAL: Edit change order header, project, client, scope, lines, totals, and terms.
+- WRITE, SEND, FINANCIAL: Send change order.
+- WRITE, FINANCIAL: Withdraw change order.
+- READ, FINANCIAL: Preview/download/print change order PDF.
+- PUBLIC, READ, FINANCIAL: Share public change order link.
+
+6.7 Subcontractor purchase orders
+- READ, FINANCIAL: View subcontractor POs.
+- READ, FINANCIAL: Search/filter subcontractor POs.
+- WRITE, FINANCIAL: Create subcontractor PO.
+- WRITE, FINANCIAL: Select project.
+- WRITE, FINANCIAL: Select subcontractor.
+- WRITE, FINANCIAL: Enter scope, amount, retainage, dates, and notes.
+- WRITE, FINANCIAL: Save PO as draft.
+- WRITE, SEND, FINANCIAL: Issue/send PO.
+- WRITE, FINANCIAL: Edit PO.
+- WRITE, FINANCIAL: Cancel/void PO when allowed.
+- WRITE, FINANCIAL: Record subcontractor PO payment.
+- DESTRUCTIVE, WRITE, FINANCIAL: Delete subcontractor PO payment when allowed.
+- READ, FINANCIAL: View PO payment history.
+
+
+7. Inventory
+
+7.1 Inventory navigation and shared controls
+- READ: Open Inventory.
+- READ: Switch Items, Stock, Transactions, Counts, Orders, Locations/Setup, Conversions, and Valuation tabs.
+- READ: Refresh inventory data.
+- READ: Use mobile Card/List view on supported tabs.
+- READ: Use column header menus for sort/filter.
+- READ: Use column picker.
+- READ: Hide/show optional columns.
+- READ: Automatically hide columns with no values where enabled.
+- READ: Persist table preferences in the browser.
+- READ: Use table pagination.
+- READ: Change row/page size.
+- READ: Export/download CSV where offered.
+
+7.2 Items
+- READ: View item list.
+- READ: Search items.
+- READ: Filter items by name, SKU, category, location-related fields, status, unit, reorder settings, or other columns.
+- READ: Sort item columns.
+- WRITE: Add item.
+- WRITE: Edit item name, SKU, category, unit, unit cost, status, reorder point, reorder quantity, description, and related fields.
+- WRITE: Archive item.
+- WRITE: Restore item if supported.
+- WRITE: Import items from CSV/XLSX/XLS.
+- WRITE: Map import columns.
+- WRITE: Validate import rows.
+- WRITE: Submit imported items.
+- READ: Download item CSV.
+- READ: Open item label modal.
+- READ: Print item label.
+- WRITE: Manage item-specific units of measure.
+- WRITE: Add item UOM.
+- WRITE: Edit item UOM.
+- DESTRUCTIVE, WRITE: Delete item UOM.
+
+7.3 Stock
+- READ: View stock by item/location/bin.
+- READ: Search stock.
+- READ: Filter stock by item, SKU, category, location, area, rack, bay, compartment, bin, quantity, status, and value.
+- READ: Sort stock columns.
+- READ: View quantity on hand.
+- READ: View total value.
+- READ: View low/in-stock/out-of-stock status.
+- WRITE: Adjust stock.
+- WRITE: Transfer stock.
+- WRITE: Receive stock.
+- WRITE: Issue stock.
+- WRITE: Count stock.
+- READ: Open bin label modal.
+- READ: Print bin label.
+- WRITE, FINANCIAL: Start reorder/purchase flow from low stock.
+
+7.4 Inventory transactions
+- READ: View transaction history.
+- READ: Search transactions.
+- READ: Filter by date, item, location, transaction type, project/work, user, supplier, or status where available.
+- READ: Sort transaction columns.
+- WRITE: Create adjustment transaction.
+- WRITE: Create transfer transaction.
+- WRITE: Create receive transaction.
+- WRITE: Create issue transaction.
+- WRITE: Create count transaction.
+- WRITE: Select item and quantity.
+- WRITE: Select from/to locations, areas, racks, bays, compartments, or bins.
+- WRITE: Link transaction to project/work.
+- WRITE: Link transaction to supplier.
+- WRITE: Add transaction notes.
+- READ: Export/download transactions.
+
+7.5 Cycle counts
+- READ: View cycle counts.
+- READ: View My Count assignments.
+- WRITE: Create cycle count.
+- WRITE: Select count scope.
+- WRITE: Add count lines.
+- WRITE: Assign workers to a count.
+- WRITE: Distribute count lines.
+- WRITE: Change worker line assignments.
+- WRITE: Enter counted quantity.
+- WRITE: Submit worker count.
+- READ: Review variance.
+- WRITE: Override variance.
+- WRITE: Complete count.
+- WRITE: Reopen count.
+- READ: View count progress.
+- READ: Filter/sort count lines.
+
+7.6 Inventory purchase orders
+- READ, FINANCIAL: View inventory purchase orders.
+- READ, FINANCIAL: Search/filter purchase orders.
+- WRITE, FINANCIAL: Create purchase order.
+- WRITE, FINANCIAL: Select supplier.
+- WRITE, FINANCIAL: Select ship-to location.
+- WRITE, FINANCIAL: Add purchase order lines.
+- WRITE, FINANCIAL: Edit purchase order lines.
+- DESTRUCTIVE, WRITE, FINANCIAL: Delete purchase order lines.
+- WRITE, FINANCIAL: Update purchase order status.
+- WRITE, FINANCIAL: Receive purchase order.
+- WRITE, SEND, FINANCIAL: Email purchase order.
+- READ, FINANCIAL: Download/print purchase order.
+- DESTRUCTIVE, WRITE, FINANCIAL: Delete purchase order.
+
+7.7 Inventory setup
+- READ: View locations.
+- WRITE: Add location.
+- WRITE: Edit location.
+- DESTRUCTIVE, WRITE: Archive/delete location.
+- READ: View suppliers.
+- WRITE: Add supplier.
+- WRITE: Edit supplier.
+- DESTRUCTIVE, WRITE: Archive/delete supplier.
+- READ: View areas.
+- WRITE: Add/edit/archive areas.
+- READ: View racks.
+- WRITE: Add/edit/archive racks.
+- READ: View bays.
+- WRITE: Add/edit/archive bays.
+- READ: View compartments.
+- WRITE: Add/edit/archive compartments.
+
+7.8 Unit conversions
+- READ: View unit conversion list.
+- WRITE: Add conversion.
+- WRITE: Edit conversion.
+- DESTRUCTIVE, WRITE: Delete conversion.
+- READ: View item UOM conversion options.
+
+7.9 Inventory valuation
+- READ, FINANCIAL: View inventory valuation.
+- READ, FINANCIAL: Filter valuation by location or date/scope where offered.
+- READ, FINANCIAL: View total value, item value, and quantity.
+- READ, FINANCIAL: Export valuation.
+
+7.10 Catalog
+- READ: Browse catalog items.
+- READ: Search catalog.
+- READ: Filter by tags.
+- READ: View catalog item details.
+- READ, FINANCIAL: Get catalog item estimate-line data.
+
+
+8. Team and Directory
+
+8.1 Team list
+- READ: View team members/workers.
+- READ: Search/filter team members.
+- READ: Page through team list.
+- READ: View active and archived/deactivated workers.
+- WRITE: Add worker manually.
+- WRITE, SEND: Invite worker by email.
+- WRITE, SEND: Resend invite.
+- WRITE: Edit worker profile.
+- WRITE: Edit name, username/email, phone, role, pay/rate, language, status, and access.
+- WRITE: Set worker project/work access.
+- WRITE: Assign role.
+- WRITE: Update permissions.
+- DESTRUCTIVE, WRITE: Deactivate worker.
+- WRITE: Restore worker.
+
+8.2 Worker payroll/certified payroll fields
+- READ, FINANCIAL: View SSN-last-4 presence/status when enabled.
+- WRITE, FINANCIAL: Add/update SSN-last-4 when enabled.
+- READ, FINANCIAL: View fringe benefits section when enabled.
+- WRITE, FINANCIAL: Add/update fringe benefit rates when enabled.
+- READ: Collapse/expand fringe benefits section.
+
+8.3 Worker documents
+- READ: View worker documents.
+- WRITE: Upload worker document.
+- DESTRUCTIVE, WRITE: Delete worker document.
+- READ: Download/open worker document.
+
+8.4 Invite by email
+- WRITE, SEND: Enter invite email.
+- WRITE, SEND: Select role.
+- WRITE, SEND: Set worker/admin access.
+- WRITE, SEND: Copy fields that overlap manual add, such as phone, title, rate, projects/work access, classification, language, and required options when present.
+- WRITE, SEND: Send invite.
+
+8.5 Clients/customers
+- READ: View client/customer directory.
+- READ: Search/filter clients.
+- WRITE: Add client/customer.
+- WRITE: Edit client/customer.
+- DESTRUCTIVE, WRITE: Archive/delete client/customer.
+- READ: View client/customer documents.
+- WRITE: Upload client/customer document.
+- DESTRUCTIVE, WRITE: Delete client/customer document.
+
+8.6 Subcontractors
+- READ: View subcontractor directory.
+- READ: Search/filter subcontractors.
+- WRITE: Add subcontractor.
+- WRITE: Edit subcontractor.
+- DESTRUCTIVE, WRITE: Archive/delete subcontractor.
+- READ: View subcontractor documents.
+- WRITE: Request subcontractor document upload URL.
+- WRITE: Upload subcontractor document.
+- DESTRUCTIVE, WRITE: Delete subcontractor document.
+
+8.7 Roles and permissions
+- READ: View roles.
+- READ: View permission catalog.
+- WRITE: Create role.
+- WRITE: Edit role.
+- DESTRUCTIVE, WRITE: Delete role.
+- WRITE: Assign role to worker.
+- WRITE: Edit legacy/admin permissions where available.
+- WRITE: Edit worker access permissions.
+
+
+9. Administration
+
+9.1 Administration navigation
+- READ: Open Administration.
+- READ: Switch Company, Workspace, Public, Integrations, Billing, Log, and Account sections.
+- READ: See sections only when enabled by modules/features/permissions.
+
+9.2 Company settings and guided setup
+- READ: Open guided company setup.
+- READ: View setup intro image and product explanation.
+- WRITE: Start setup wizard.
+- WRITE: Skip setup for later.
+- WRITE: Select core modules such as People/Time, Projects/Work, Inventory, Field Work, and others as offered.
+- WRITE: Select daily tools/features.
+- WRITE: Select specialized controls/add-ons.
+- WRITE: Answer business-shape questions.
+- WRITE: Save recommended module/feature configuration.
+- READ: Preview setup changes.
+
+9.3 Workspace modules and features
+- READ: View modules.
+- WRITE: Enable/disable Time Clock.
+- WRITE: Enable/disable Workforce.
+- WRITE: Enable/disable Projects/Work.
+- WRITE: Enable/disable Field Work.
+- WRITE: Enable/disable Inventory.
+- WRITE: Enable/disable Financial Reports.
+- WRITE: Enable/disable Booking.
+- WRITE: Enable/disable Public.
+- WRITE: Enable/disable Analytics as a feature.
+- WRITE: Enable/disable other specialized features exposed in settings.
+- WRITE: Save workspace settings.
+
+9.4 Company labels
+- READ: View company label settings.
+- READ: Expand/collapse Company Labels.
+- WRITE: Rename app terms such as work/project, client/customer, worker/team member, and related labels.
+- WRITE: Save label changes.
+
+9.5 Advanced and company-wide rules
+- READ: View advanced settings.
+- WRITE: Enable/disable project/work clock-in requirements.
+- WRITE: Configure default work/project terminology.
+- WRITE: Configure overtime rules.
+- WRITE: Configure mileage rate.
+- WRITE: Configure pay/billing-related company rules.
+- WRITE: Configure geolocation rules.
+- WRITE: Configure photo/media settings.
+- WRITE: Configure time approval/sign-off rules.
+- WRITE: Configure notification/reminder settings.
+- WRITE: Configure timezone, currency, week start, and localization settings where offered.
+- WRITE: Configure service request categories.
+- WRITE: Configure custom rates/classifications.
+
+9.6 Public presence and request management
+- READ: View Public section.
+- READ: View public profile editor.
+- WRITE: Edit public profile company name.
+- WRITE: Edit short description.
+- WRITE: Edit services offered.
+- WRITE: Edit service areas.
+- WRITE: Edit license/certification information.
+- WRITE: Edit equipment/capabilities.
+- WRITE: Edit project types.
+- WRITE: Edit quote/request instructions.
+- WRITE: Edit contact information.
+- WRITE: Edit FAQ items.
+- WRITE: Add/remove public photos/examples.
+- READ: Preview public profile.
+- WRITE: Publish public profile.
+- WRITE: Unpublish public profile.
+- READ: Copy/open public profile URL.
+- WRITE: Enable/disable public request intake.
+- READ: Copy/open public request URL.
+- READ: View public requests.
+- READ: Filter public requests by status/category/search.
+- WRITE: Mark public request new, in review, converted, closed, or another available status.
+- WRITE: Update public request status.
+- WRITE: Add internal handling notes where supported.
+- WRITE: Convert a public request into customer/project/work record where supported.
+- WRITE: Configure request recipients/notifications where offered.
+- WRITE: Turn individual public request recipients on/off.
+- WRITE: Register client portal interest where offered.
+
+9.7 Integrations
+- READ, EXTERNAL: View QuickBooks connection status.
+- WRITE, EXTERNAL: Connect QuickBooks.
+- WRITE, EXTERNAL: Disconnect QuickBooks.
+- WRITE, EXTERNAL: Import QuickBooks workers/vendors/customers/projects/items where supported.
+- WRITE, EXTERNAL: Map/unmap QuickBooks entities.
+- WRITE, EXTERNAL, FINANCIAL: Push invoices/bills/payroll-related records where supported.
+- READ, EXTERNAL, FINANCIAL: Preview QuickBooks bill push before sending.
+- WRITE, EXTERNAL, FINANCIAL: Push expenses to QuickBooks.
+- WRITE, EXTERNAL, FINANCIAL: Push bills to QuickBooks.
+- WRITE, EXTERNAL, FINANCIAL: Push payroll to QuickBooks.
+- WRITE, EXTERNAL, FINANCIAL: Check QuickBooks invoice payment status.
+- WRITE, EXTERNAL: Create a QuickBooks vendor from a worker when offered.
+- READ, EXTERNAL: View QuickBooks sync/import errors.
+- WRITE, EXTERNAL: Retry failed QuickBooks sync.
+- DESTRUCTIVE, WRITE, EXTERNAL: Clear all QuickBooks errors.
+- DESTRUCTIVE, WRITE, EXTERNAL: Clear one QuickBooks error.
+- READ, EXTERNAL: View integration errors/status.
+
+9.8 Billing
+- READ, FINANCIAL: View plan, trial, subscription, and billing status.
+- WRITE, EXTERNAL, FINANCIAL: Start checkout.
+- WRITE, EXTERNAL, FINANCIAL: Change plan or billing cadence where offered.
+- WRITE, EXTERNAL, FINANCIAL: Open billing portal.
+- READ, FINANCIAL: View invoice/payment status when available.
+- WRITE: Express client portal interest where available.
+
+9.9 Log and audit
+- READ: View audit log.
+- READ: Filter audit log.
+- READ: Page through audit log.
+- READ: View actor, action, target, date, and metadata.
+- READ: View client error logs if surfaced.
+
+9.10 Account and support
+- READ: View company/account info.
+- WRITE: Update company info.
+- WRITE: Submit support request/message.
+- WRITE: Change password.
+- WRITE: Set up MFA.
+- WRITE: Enable MFA.
+- WRITE: Disable MFA.
+- WRITE: Set up browser push notifications.
+- WRITE: Subscribe/unsubscribe push notifications.
+
+
+10. Financial Reports
+
+10.1 Reports
+- READ, FINANCIAL: Open Financial Reports.
+- READ, FINANCIAL: View performance analytics.
+- READ, FINANCIAL: Filter reports by date/project/work.
+- READ, FINANCIAL: View KPIs, charts, totals, trends, and summaries.
+- READ, FINANCIAL: View project P&L summary.
+- READ, FINANCIAL: View WIP report.
+- READ, FINANCIAL: Export reports.
+- READ, FINANCIAL: Download CSV/PDF where offered.
+
+
+11. Booking
+
+11.1 Admin booking setup
+- READ: View booking dashboard.
+- READ: View appointment types.
+- WRITE: Create appointment type.
+- WRITE: Edit appointment type.
+- DESTRUCTIVE, WRITE: Archive appointment type.
+- WRITE: Assign users to appointment type.
+- WRITE: Assign shift types to appointment type.
+- WRITE: Configure appointment type duration, buffers, location kind, public visibility, advance notice, max advance days, and slot interval.
+- READ: View shift types.
+- WRITE: Create shift type.
+- WRITE: Edit shift type.
+- DESTRUCTIVE, WRITE: Archive shift type.
+- READ: View availability.
+- WRITE: Update user booking settings.
+- READ: View appointments.
+- WRITE: Reassign appointment.
+- WRITE: Cancel appointment.
+
+11.2 My booking
+- READ: View personal booking settings.
+- WRITE: Update availability.
+- WRITE: Update booking preferences.
+
+
+12. Submittals
+
+12.1 Submittal management
+- READ: View submittals.
+- READ: Search/filter submittals.
+- WRITE: Create submittal.
+- WRITE: Edit submittal.
+- WRITE: Add project, responsible party, due date, spec section, title, package, reviewer, and notes.
+- WRITE: Upload submittal documents.
+- WRITE, SEND: Send submittal for review.
+- WRITE: Stamp/review submittal when allowed.
+- WRITE: Request revision.
+- WRITE: Close submittal.
+- WRITE: Void submittal.
+- DESTRUCTIVE, WRITE: Delete submittal when allowed.
+- READ: Download/open submittal documents.
+
+
+13. Closeout
+
+13.1 Project closeout
+- READ: Open Closeout.
+- READ: View closeout projects/items.
+- READ: View closeout templates.
+- WRITE: Edit closeout checklist template.
+- WRITE: Open/start closeout for a project.
+- WRITE: Seed closeout checklist items from the active template.
+- WRITE: Update closeout header/status fields.
+- WRITE: Transition closeout status, such as substantial completion or final completion, when requirements are met.
+- WRITE: Create closeout item.
+- WRITE: Edit closeout item.
+- WRITE: Assign closeout item.
+- WRITE: Upload warranty/manual/document.
+- WRITE: Mark closeout item complete.
+- WRITE: Reopen closeout item.
+- READ: View expiring warranties.
+- READ: Export closeout information where offered.
+
+
+14. Lien waivers
+
+14.1 Lien waiver management
+- READ, FINANCIAL: View lien waivers.
+- READ, FINANCIAL: View outstanding lien waivers.
+- WRITE, FINANCIAL: Create lien waiver for a project.
+- WRITE, FINANCIAL: Edit lien waiver.
+- WRITE, SEND, FINANCIAL: Send lien waiver.
+- WRITE, FINANCIAL: Sign internally.
+- WRITE, FINANCIAL: Mark signed.
+- WRITE, FINANCIAL: Convert conditional waiver to unconditional when allowed.
+- WRITE, FINANCIAL: Void lien waiver.
+- READ, FINANCIAL: Preview/download/print lien waiver PDF.
+
+
+15. Public requests and public profile from admin perspective
+
+15.1 Public intake operations
+- READ: See whether profile is public or private.
+- WRITE: Publish/unpublish profile independently of request intake.
+- WRITE: Enable request intake independently of public profile.
+- READ: Avoid linking to inactive profile/request pages from active public pages.
+- READ: Preview the visitor experience before publishing.
+- READ: Confirm no private tenant data is exposed.
+
+
+16. Super Admin
+
+16.1 Platform administration
+- READ: Open Super Admin.
+- READ: View companies.
+- READ: View users.
+- READ: Search/filter companies and users.
+- WRITE: Create or reset demo workspace/company where supported.
+- WRITE: Edit company platform-level details where supported.
+- WRITE: Impersonate a company/user when allowed.
+- WRITE: Stop impersonation.
+- WRITE: Revoke sessions.
+- READ: View impersonation log.
+- READ: View platform/client errors.
+- READ: View company usage/status.
+- READ: Export company data where offered.
+- DESTRUCTIVE, WRITE: Delete company or company media where offered.
+- WRITE: Manage affiliates where available.
+
+
+17. Notifications and messaging
+
+17.1 Notifications
+- READ: Receive notification.
+- READ: Open notification.
+- WRITE: Mark notification read.
+- WRITE: Mark all notifications read.
+- READ: Navigate from notification to related record.
+- WRITE: Subscribe to browser push notifications.
+- WRITE: Unsubscribe from browser push notifications.
+
+17.2 Chat and record messages
+- READ: View company chat.
+- WRITE: Send company chat message.
+- READ: View time-entry message thread.
+- WRITE: Send time-entry message.
+- READ: View unread counts.
+
+
+18. Files, media, and generated documents
+
+18.1 Uploads and storage
+- WRITE: Request upload URL for supported documents/media.
+- WRITE: Upload to object storage.
+- WRITE: Save upload metadata in the app.
+- READ: Open uploaded file.
+- READ: Download uploaded file.
+- DESTRUCTIVE, WRITE: Delete uploaded file.
+
+18.2 Generated PDFs and exports
+- READ: Generate/download project bill PDF.
+- READ: Generate/download estimate PDF.
+- READ: Generate/download change order PDF.
+- READ: Generate/download certified payroll PDF.
+- READ: Generate/download lien waiver PDF.
+- READ: Generate/download daily report PDF.
+- READ: Generate/download incident/safety/inspection PDFs where offered.
+- READ: Export CSV for payroll, time, inventory, reports, or table data where offered.
+- READ: Download project media ZIP.
+
+
+19. Background and automated actions
+
+19.1 Scheduled/server actions
+- WRITE: Run database migrations during deploy/start.
+- WRITE: Refresh rolling Demo Operations data when workflow runs.
+- WRITE: Expire trials.
+- WRITE: Sweep stale active clocks and alert.
+- SEND: Send sign-off reminders.
+- SEND: Send shift assignment, update, cancellation, and cannot-make-it notifications.
+- WRITE: Check equipment maintenance conditions.
+- WRITE: Send or queue push notifications.
+- READ: Serve push notification public key.
+- WRITE: Process Stripe webhooks.
+- WRITE: Process SendGrid webhooks.
+- WRITE: Record/report client-side app errors.
+- WRITE: Process QuickBooks sync callbacks/webhooks where configured.
+
+19.2 PWA/service worker actions
+- READ: Cache application assets.
+- READ: Serve cached app shell.
+- WRITE: Queue eligible offline requests.
+- WRITE: Replay queued requests when online and authenticated.
+- WRITE: Clear offline queue on logout/session change.
+- READ: Detect app update.
+- WRITE: Prompt user to relaunch/update.
+
+
+20. Error, validation, and edge-state actions
+
+20.1 Error states
+- READ: See field validation errors.
+- READ: See login failure.
+- READ: See session expired.
+- READ: See unauthorized/permission denied states.
+- READ: See module disabled or unavailable states.
+- READ: See plan/add-on required states.
+- READ: See network/offline errors.
+- READ: See retry banners.
+- WRITE: Retry failed data load.
+- READ: Error boundary catches failed page render.
+
+20.2 Empty and loading states
+- READ: See loading states for each page/tab/table.
+- READ: See empty state for no workers, no projects, no inventory, no requests, no field records, no media, no messages, no reports, or no results.
+- READ: See filtered-empty state after search/filter.
+
+
+21. QA traversal checklist by page
+
+21.1 Public pages
+- Landing
+- Privacy
+- EULA
+- Changelog
+- Login
+- Register
+- Forgot password
+- Reset password
+- Accept invite
+- Confirm email
+- Public company profile
+- Public request page
+- Public estimate page
+- Public change order page
+- Public lien waiver signing page
+- Public booking page
+- Public booking management page
+
+21.2 Signed-in pages
+- Time Clock personal clock
+- Time Clock messages
+- Time Clock timesheet
+- Time Clock workforce/live workers
+- Time Clock approvals
+- Time Clock schedule
+- Time Clock time off
+- Time Clock reimbursements
+- Home
+- Field Work Daily
+- Field Work Notes/Gallery
+- Field Work Punchlist
+- Field Work Incidents
+- Field Work Safety Talks
+- Field Work Safety Checklists
+- Field Work Inspections
+- Field Work Resources/Equipment/Sub reports
+- Projects list
+- Project detail
+- Project estimates
+- Project change orders
+- Project subcontractor POs
+- Team members
+- Invite by email
+- Add manually
+- Clients/customers
+- Subcontractors
+- Roles/permissions
+- Inventory Items
+- Inventory Stock
+- Inventory Transactions
+- Inventory Counts
+- Inventory Orders
+- Inventory Setup
+- Inventory Conversions
+- Inventory Valuation
+- Catalog
+- Submittals
+- Closeout
+- Lien Waivers
+- Booking admin
+- My Booking
+- Financial Reports
+- Account
+- Help
+- Administration Company
+- Administration Workspace
+- Administration Public
+- Administration Integrations
+- Administration Billing
+- Administration Log
+- Administration Account
+- Super Admin
+
+
+22. High-risk flows to test especially carefully
+
+- Clock in, switch project/work, and clock out on mobile PWA.
+- Resume mobile PWA after backgrounding without requiring unnecessary login.
+- Clock out when projects/work are disabled for a company.
+- Admin approval should not allow approving active/unended time entries.
+- Public profile and public request can be enabled independently.
+- Active public pages should not link to inactive public pages.
+- Inventory stock/items table horizontal scrolling should not visually bleed behind frozen columns.
+- Inventory column picker should scroll without closing.
+- Inventory pagination should not create page-level horizontal scroll.
+- Demo Operations seed/refresh should keep dates current without endlessly accumulating notes/photos.
+- QuickBooks integration actions should fail clearly when disconnected or not configured.
+- Billing checkout/portal should only open for authorized admins.
+- Certified payroll routes should require the certified payroll add-on except public classifications where intended.
+- Role/permission edits should require role-aware permissions.
+- Offline queued writes should not replay under the wrong user/session.
+
+
+23. Micro-interactions and small UI actions
+
+23.1 Browser and route-level actions
+- READ: Load a page from a typed URL.
+- READ: Reload the current page.
+- READ: Use browser back/forward.
+- READ: Land on a hash-based tab such as /timeclock#timesheet or /inventory#stock.
+- READ: Preserve search/hash when redirected from legacy routes.
+- READ: Change URL hash by selecting a tab.
+- READ: Share or bookmark a route/hash.
+- READ: Open a link in the same tab.
+- READ: Open a link in a new tab where browser behavior allows it.
+- READ: Open an external link.
+- READ: Return from an external provider callback such as QuickBooks or Stripe.
+- READ: See noindex/metadata behavior on protected or tokenized pages.
+
+23.2 App switcher and header micro-actions
+- READ: Open app switcher menu.
+- READ: Close app switcher menu.
+- READ: Select an app from the switcher.
+- READ: Scroll the app switcher menu when it is taller than the viewport.
+- READ: See current app highlighted.
+- READ: See hidden apps omitted when modules/features are disabled.
+- READ: Use the compact mobile app switcher.
+- READ: Open language menu.
+- WRITE: Select language.
+- READ: Open notification popover.
+- READ: Close notification popover.
+- READ: Open guide drawer.
+- READ: Close guide drawer with the close button.
+- READ: Close guide drawer by navigating elsewhere when supported.
+- READ: Use refresh/reload symbol button.
+- READ: See help/guide access from the drawer instead of a large header help button.
+
+23.3 Tabs, pills, chips, and segmented controls
+- READ: Select a top-level tab.
+- READ: Select a second-level tab.
+- READ: Select a segmented control option.
+- READ: See active tab state.
+- READ: Scroll a horizontal tab row on mobile.
+- READ: Use chip filters.
+- READ: Remove a chip filter.
+- READ: Select All/Active/Archived/Pending/Approved/Denied/Closed-style status chips.
+- READ: Return from a detail/edit panel to a list tab.
+- READ: Keep a tab selected through refresh when hash state supports it.
+
+23.4 Accordions, collapsible sections, and disclosure controls
+- READ: Expand a collapsible section.
+- READ: Collapse a collapsible section.
+- READ: Use filled chevron indicators for open/closed state.
+- READ: Expand worker groups in grouped lists.
+- READ: Collapse worker groups.
+- READ: Expand advanced settings.
+- READ: Collapse advanced settings.
+- READ: Expand company labels.
+- READ: Collapse company labels.
+- READ: Expand form sections such as SSN, Fringe Benefits, Documents, or Deactivate where present.
+- READ: Collapse form sections.
+- READ: See persisted or default open/collapsed state where implemented.
+
+23.5 Drawers, side panels, and slide-over panels
+- READ: Open side drawer.
+- READ: Close side drawer.
+- READ: Scroll inside side drawer independently from the page.
+- READ: Use drawer search.
+- READ: Click a drawer result.
+- READ: Open a guide target from drawer.
+- READ: Open Help page from drawer.
+- READ: Keep background page visible/disabled behind drawer when appropriate.
+- READ: Close drawer on mobile without losing page context.
+
+23.6 Modals and dialogs
+- READ: Open modal.
+- READ: Close modal with X/close button.
+- READ: Close modal with Cancel.
+- READ: Close modal after Save/Submit success.
+- READ: See modal title and context.
+- READ: Scroll modal body.
+- READ: Keep modal actions visible or reachable on small screens.
+- READ: Confirm destructive action.
+- READ: Cancel destructive confirmation.
+- READ: See disabled state while saving.
+- READ: See loading state inside modal.
+- READ: See validation errors inside modal.
+- READ: Reopen modal with previous unsaved state where supported.
+- READ: Clear modal state after cancel where supported.
+- READ: Close lightbox/image viewer.
+- READ: Navigate next/previous in lightbox.
+
+23.7 Forms and field-level actions
+- WRITE: Focus an input field.
+- WRITE: Type text into an input.
+- WRITE: Paste text into an input.
+- WRITE: Clear an input.
+- WRITE: Select all text in an input.
+- WRITE: Edit textarea content.
+- WRITE: Use numeric input steppers where available.
+- WRITE: Enter currency values.
+- WRITE: Enter percentages.
+- WRITE: Enter dates.
+- WRITE: Enter times.
+- WRITE: Toggle checkbox.
+- WRITE: Toggle switch.
+- WRITE: Select radio option.
+- WRITE: Select dropdown option.
+- WRITE: Select multi-select options where present.
+- WRITE: Remove selected multi-select option where present.
+- WRITE: Add a custom category/option where present.
+- WRITE: Press Enter to add a custom option where supported.
+- WRITE: Submit form.
+- WRITE: Save form.
+- WRITE: Save changes.
+- WRITE: Cancel edits.
+- WRITE: Reset/discard edits where offered.
+- READ: See required-field red stars.
+- READ: See inline validation message.
+- READ: See character count or max length warning where present.
+- READ: See dirty/unsaved state.
+- READ: See unsaved changes prompt on tab close/navigation where implemented.
+- READ: See disabled submit state until required fields are valid.
+- READ: See server-side validation errors after submit.
+- READ: See optimistic UI update after save where implemented.
+- READ: See form reload after save where implemented.
+
+23.8 Dropdowns, menus, selectors, and pickers
+- READ: Open dropdown.
+- READ: Close dropdown.
+- READ: Scroll dropdown options.
+- READ: Select dropdown item.
+- READ: Search within dropdown where offered.
+- READ: Type to filter dropdown options where offered.
+- READ: See available options update under a typed filter.
+- READ: Clear dropdown selection.
+- READ: Use project/work selector.
+- READ: Use worker selector.
+- READ: Use client/customer selector.
+- READ: Use supplier/subcontractor selector.
+- READ: Use location/bin selector.
+- READ: Use date picker.
+- READ: Use time picker.
+- READ: Use mobile project selector/wheel-style selector where available.
+- READ: Page through compact project selector options where available.
+- READ: See most recent/frequent project choices sorted from browser history where implemented.
+
+23.9 Search, filters, sorting, and column menus
+- READ: Focus search box.
+- READ: Type search query.
+- READ: Clear search query.
+- READ: Search by partial word.
+- READ: Search by acronym/short phrase such as PO.
+- READ: See no-results state.
+- READ: Open filter panel.
+- READ: Close filter panel.
+- READ: Set text filter.
+- READ: Set select/status filter.
+- READ: Set date range filter.
+- READ: Set from/to filters.
+- READ: Clear one filter.
+- READ: Clear all filters.
+- READ: See active filter count.
+- READ: Open column header menu.
+- READ: Sort ascending.
+- READ: Sort descending.
+- READ: Clear sort.
+- READ: Apply column-specific filter.
+- READ: Clear column-specific filter.
+- READ: See A-Z/Z-A or equivalent sort indicator.
+- READ: See filtered/sorted state survive table refresh where implemented.
+
+23.10 Tables, lists, cards, and repeated row actions
+- READ: Scroll table vertically.
+- READ: Scroll table horizontally.
+- READ: Use frozen left column where present.
+- READ: Confirm frozen column does not show scrolled content behind it.
+- READ: Select row.
+- READ: Open row detail.
+- READ: Expand row details.
+- READ: Collapse row details.
+- READ: Use row action buttons.
+- READ: Use icon-only row action buttons with accessible labels/tooltips where present.
+- READ: Use bulk select checkbox.
+- READ: Select all visible rows.
+- READ: Deselect all visible rows.
+- READ: Select individual row.
+- READ: Deselect individual row.
+- READ: See selected row count.
+- READ: Use card view on mobile.
+- READ: Use list/table view on mobile.
+- READ: Switch between card and list/table view.
+- READ: Keep pagination controls outside scroll areas where intended.
+- READ: Confirm page does not create unwanted horizontal body scroll.
+
+23.11 Pagination, limits, and infinite/large-data behaviors
+- READ: View current range such as Showing X-Y of Z.
+- READ: View current page such as Page 1 of N.
+- READ: Go to next page.
+- READ: Go to previous page.
+- READ: Go to first page where offered.
+- READ: Go to last page where offered.
+- READ: Change rows per page.
+- READ: Load more results where offered.
+- READ: See disabled previous/next states.
+- READ: See page controls below table in mobile layouts.
+- READ: Keep large data sets paginated rather than rendering every row at once.
+
+23.12 File, photo, video, and attachment controls
+- WRITE: Open file picker.
+- WRITE: Select a file.
+- WRITE: Select multiple files where allowed.
+- WRITE: Attach receipt.
+- WRITE: Clear selected receipt.
+- WRITE: Attach photo.
+- WRITE: Capture photo with device camera where supported.
+- WRITE: Attach video where supported.
+- WRITE: Clear selected video before upload.
+- WRITE: Add caption/notes to media.
+- READ: Preview selected image before submit.
+- READ: Preview uploaded image.
+- READ: Preview PDF/document where supported.
+- READ: See upload progress.
+- READ: See upload failure.
+- WRITE: Retry upload where supported.
+- WRITE: Delete uploaded file.
+- WRITE: Delete uploaded photo.
+- WRITE: Delete uploaded video/media.
+- READ: Open uploaded file in a new tab/window where browser allows it.
+- READ: Download uploaded file.
+
+23.13 Generated documents, exports, and print flows
+- READ: Generate PDF on demand.
+- READ: Preview generated PDF where supported.
+- READ: Hide generated PDF preview where supported.
+- READ: Download generated PDF.
+- READ: Print generated PDF or browser print view.
+- READ: Generate CSV.
+- READ: Download CSV.
+- READ: Generate ZIP/media archive.
+- READ: Download ZIP/media archive.
+- READ: Copy generated public URL to clipboard.
+- READ: Auto-copy public URL after send where implemented.
+- READ: See export disabled when plan/permission/date range prevents it.
+- READ: See export failure state.
+
+23.14 Toasts, banners, alerts, and inline messages
+- READ: See success toast.
+- READ: See error toast.
+- READ: See warning/info toast.
+- READ: Dismiss toast.
+- READ: Let toast auto-dismiss.
+- READ: See retry banner.
+- WRITE: Click Retry in a banner.
+- READ: See offline banner.
+- READ: See install prompt.
+- READ: See update/relaunch prompt.
+- READ: Accept update/relaunch.
+- READ: Dismiss install/update prompt where supported.
+- READ: See validation alert.
+- READ: See permission denied message.
+- READ: See plan/add-on required message.
+- READ: See 429/rate limit message.
+- READ: See 503/service unavailable message.
+- READ: See global auth/session-expired redirect.
+
+23.15 Loading, skeleton, empty, and partial states
+- READ: See full-page loading state.
+- READ: See inline loading state.
+- READ: See skeleton list.
+- READ: See skeleton statistic row.
+- READ: See empty state.
+- READ: See filtered empty state.
+- READ: See partial data state when one panel fails and another succeeds.
+- READ: See retry option after failed load.
+- READ: See disabled controls while data is loading.
+- READ: See stale cached data while fresh data loads where offline cache is used.
+
+23.16 Authentication, session, and impersonation mechanics
+- WRITE: Store normal login session in local browser storage.
+- WRITE: Store impersonation session in tab-scoped session storage.
+- WRITE: Clear local and session storage tokens on logout.
+- WRITE: Clear offline queue/session-sensitive state on logout where implemented.
+- READ: Revalidate current user through auth/me.
+- READ: Redirect signed-out users to landing/login.
+- READ: Redirect signed-in users away from login/register.
+- READ: Preserve impersonation tab isolation.
+- READ: Remove impersonation query parameter after token handoff.
+- READ: Handle expired/invalid token.
+- READ: Handle MFA-required login response.
+
+23.17 Offline, cache, and PWA mechanics
+- READ: Detect online/offline state.
+- READ: Cache app shell/assets.
+- READ: Serve cached app shell.
+- WRITE: Queue eligible offline writes.
+- WRITE: Replay queued writes when connection returns.
+- READ: Refresh views after offline sync.
+- READ: Show queued count where surfaced.
+- READ: Detect service worker update.
+- WRITE: Register push subscription.
+- WRITE: Remove push subscription.
+- READ: Request notification permission through browser.
+- READ: Open installed PWA.
+- READ: Resume PWA after backgrounding.
+- READ: Respect mobile safe-area insets.
+- READ: Avoid phone status bar overlap.
+
+23.18 Local browser preferences and remembered state
+- WRITE: Remember dismissed page intros.
+- WRITE: Remember inventory mobile view preference.
+- WRITE: Remember inventory column visibility.
+- WRITE: Remember inventory page size.
+- WRITE: Remember recent/frequent project/work choices.
+- WRITE: Remember draft/manual entry values where implemented.
+- WRITE: Remember auth language preference.
+- WRITE: Remember setup/welcome completion state where implemented.
+- READ: Clear remembered state by logging out or clearing browser data where applicable.
+
+23.19 Mobile and responsive actions
+- READ: Use app at narrow mobile width.
+- READ: Use app at tablet width.
+- READ: Use app at desktop width.
+- READ: Scroll page vertically.
+- READ: Scroll internal panels vertically.
+- READ: Swipe/drag horizontal overflow areas.
+- READ: Use mobile-friendly table/card controls.
+- READ: Use mobile notification popover without off-screen clipping.
+- READ: Use mobile guide drawer.
+- READ: Use mobile modal without clipped actions.
+- READ: Use mobile app switcher without hidden options.
+- READ: Use mobile public landing page hero/sections.
+- READ: Use mobile public profile/request/booking forms.
+
+23.20 Keyboard and accessibility actions
+- READ: Tab through focusable controls.
+- READ: Shift+Tab backward through focusable controls.
+- READ: Activate buttons with Enter/Space where supported.
+- READ: Use labels on form fields.
+- READ: Use aria-expanded on collapsible controls.
+- READ: Use aria-label on icon-only controls where present.
+- READ: Use accessible modal/dialog title where present.
+- READ: Use focus visible outlines.
+- READ: Avoid focus loss after save/delete where possible.
+- READ: Screen reader can identify buttons, tabs, fields, and statuses where markup supports it.
+
+23.21 Confirmation and destructive-action mechanics
+- READ: Open delete confirmation.
+- WRITE: Confirm delete.
+- READ: Cancel delete.
+- READ: Open archive confirmation where present.
+- WRITE: Confirm archive.
+- READ: Cancel archive.
+- READ: Open void/cancel confirmation where present.
+- WRITE: Confirm void/cancel.
+- READ: Cancel void/cancel.
+- READ: Confirm approve-all.
+- READ: Cancel approve-all.
+- READ: Confirm rejection with note.
+- READ: Cancel rejection.
+- READ: Confirm clock-out or clock cancellation where present.
+- READ: Cancel clock-out or clock cancellation.
+- READ: Confirm clear/remove sensitive data such as SSN last-4 where present.
+
+23.22 Row-level and repeated-object action patterns
+- READ: Open item.
+- WRITE: Add item.
+- WRITE: Edit item.
+- DESTRUCTIVE, WRITE: Delete item.
+- DESTRUCTIVE, WRITE: Archive item.
+- WRITE: Restore item.
+- WRITE: Duplicate/copy item where offered.
+- WRITE: Send item where offered.
+- WRITE: Approve item where offered.
+- WRITE: Reject/deny item where offered.
+- WRITE: Reopen item where offered.
+- WRITE: Mark item complete where offered.
+- WRITE: Mark item reviewed where offered.
+- WRITE: Assign item where offered.
+- WRITE: Unassign item where offered.
+- READ: View related activity/history where offered.
+- READ: View related documents/media where offered.
+- READ: View related messages/comments where offered.
+
+23.23 Help, guide, and documentation micro-actions
+- READ: Open Help page.
+- READ: Search Help page.
+- READ: Clear Help search.
+- READ: Expand help section.
+- READ: Collapse help section.
+- READ: Follow help hash/deep link.
+- READ: Open guide from Help page.
+- READ: Open guide drawer from page header.
+- READ: Search guide drawer.
+- READ: Select guide result.
+- READ: Use related guide chips.
+- READ: Open guide target route/tab.
+- READ: Open guide target that changes hash.
+
+23.24 Public visitor micro-actions
+- READ: Scroll public landing page.
+- READ: Click public CTA.
+- READ: Click public pricing/feature links where present.
+- READ: Open public profile from request page where linked.
+- READ: Open request page from public profile where linked.
+- READ: Use mailto/tel/website links.
+- WRITE: Fill public request form.
+- WRITE: Submit public request form.
+- READ: See public request validation errors.
+- READ: See public request success state.
+- WRITE: Fill public booking form.
+- WRITE: Submit public booking form.
+- READ: See public booking validation errors.
+- READ: See public booking success state.
+- WRITE: Use public document approval/signature controls.
+
+23.25 Admin setup wizard micro-actions
+- READ: Open setup wizard.
+- READ: Close setup wizard.
+- READ: Scroll setup intro.
+- READ: View setup images.
+- READ: Advance to next setup step.
+- READ: Go back to previous setup step.
+- WRITE: Select setup option.
+- WRITE: Deselect setup option.
+- WRITE: Answer setup question.
+- READ: Review setup summary.
+- WRITE: Apply setup recommendations.
+- WRITE: Skip setup.
+- READ: See disabled/ineligible setup options where present.
+
+23.26 Things that are actions even when they are automatic
+- READ: App redirects based on role/module.
+- READ: App hides disabled modules.
+- READ: App hides unauthorized tabs/actions.
+- READ: App computes enabled/disabled button states.
+- READ: App formats dates/times/currency.
+- READ: App localizes labels after language change.
+- READ: App invalidates stale caches after writes.
+- READ: App refreshes auth/user data after login or token login.
+- READ: App reports client errors to the server.
+- READ: App logs audit events for server-side mutations.
+- READ: App sends inbox items for events such as shifts, requests, or reminders.
+- READ: App sends push notifications for supported events.
+- READ: App sends email notifications for supported events.
+
+23.27 Manual QA meta-actions
+- READ: Test action as signed-out visitor.
+- READ: Test action as worker/team member.
+- READ: Test action as admin.
+- READ: Test action as role-limited admin.
+- READ: Test action as super admin.
+- READ: Test action with module enabled.
+- READ: Test action with module disabled.
+- READ: Test action with feature enabled.
+- READ: Test action with feature disabled.
+- READ: Test action on free/trial/starter/business/pro style plan states.
+- READ: Test action with add-on enabled.
+- READ: Test action with add-on disabled.
+- READ: Test action with no data.
+- READ: Test action with light data.
+- READ: Test action with heavy data.
+- READ: Test action with slow network.
+- READ: Test action offline.
+- READ: Test action after session expiry.
+- READ: Test action after PWA resume.
+- READ: Test action on mobile.
+- READ: Test action on desktop.
+- READ: Test action with browser zoom.
+- READ: Test action with long names, long descriptions, and missing optional fields.
+
+
+24. API and route surface coverage appendix
+
+24.1 Public/client routes considered
+- Landing route: /
+- Login route: /login
+- Register route: /register
+- Privacy route: /privacy
+- EULA route: /eula
+- Changelog route: /changelog
+- Forgot password route: /forgot-password
+- Reset password route: /reset-password
+- Accept invite route: /accept-invite
+- Confirm email route: /confirm-email
+- Public service request route: /r/:slug
+- Public company profile route: /companies/:slug
+- Public estimate route: /e/:token
+- Public change order route: /co/:token
+- Public lien waiver signing route: /lien-waiver-sign/:token
+- Public booking routes: /book/:companySlug, /book/:companySlug/:typeSlug, /book/manage/:token
+- Signed-in routes: /timeclock, /workforce, /dashboard, /home, /field, /projects, /team, /inventory, /catalog, /booking, /me/booking, /financial-reports, /submittals, /closeout, /lien-waivers, /account, /help, /administration, /superadmin
+- Legacy redirects considered: /admin, /sales, /change-orders, /subs, /analytics
+
+24.2 Server route files considered
+- admin.js: workforce admin, settings, workers, projects, approvals, pay periods, analytics, company info, audit log, broadcasts, clients, roles, documents, certified payroll.
+- auth.js: login, registration, confirmation, invite acceptance, setup, password reset/change, MFA, language.
+- availability.js: personal and admin availability.
+- booking.js: appointment types, shift types, booking availability, appointments, reassignment, cancellation, personal booking settings.
+- catalog.js: catalog browsing, tags, estimate-line preview.
+- certifiedPayroll.js: classifications, fringes, SSN last-4, signatures.
+- changeOrders.js: change orders, lines, send, withdraw.
+- chat.js: company chat.
+- clientErrors.js: client-side error reporting.
+- clock.js: clock status, clock in, project/work switch, clock out, cancel active clock, location, mark day.
+- closeout.js: templates, project closeout, transitions, closeout items, expiring warranties.
+- companyPublicProfiles.js: public profile edit, publish, unpublish.
+- dailyReports.js: daily reports, suggestions, review, delete.
+- equipment.js: equipment records and equipment hour logs.
+- estimates.js: estimates, lines, send, withdraw, convert.
+- fieldReports.js: field reports, review, photos, media upload URL.
+- inbox.js: inbox notifications, mark read, mark all read.
+- incidents.js: incidents, close, delete.
+- inspections.js: inspection templates and inspections.
+- inventory.js: units, items, stock, transactions, cycle counts, setup records, suppliers, purchase orders, valuation.
+- lienWaivers.js: lien waivers, send, internal sign, mark signed, convert unconditional, void.
+- projectBudget.js: project budget.
+- projectReports.js: project P&L, WIP report, WIP export.
+- projects.js: project list for signed-in users.
+- projectSpend.js: project spend and expenses.
+- punchlist.js: punchlist items and punchlist checklists.
+- push.js: VAPID key, push subscribe, push unsubscribe.
+- qbo.js: QuickBooks status, connect/callback/disconnect, imports, mappings, invoices, accounts, expenses, push, errors, bills, payroll, retry, create vendor.
+- reimbursements.js: reimbursement categories, personal reimbursements, admin reimbursements.
+- rfis.js: RFIs.
+- safetyChecklists.js: safety checklist templates and submissions.
+- safetyTalks.js: safety talks, sign-offs, attachment upload, attachments.
+- sendgridEvents.js: SendGrid webhook/event processing.
+- serviceRequests.js: public request settings, recipients, client portal interest, request review/status/convert.
+- shifts.js: admin shifts, worker shifts, cannot-make-it, recurring series cancellation.
+- stripe.js: plans, status, checkout, portal, webhooks.
+- subcontractors.js: subcontractors, subcontractor documents, subcontractor POs, PO payments.
+- submittals.js: submittals, overdue list, send internal/reviewer, close, void, stamp, revise, documents.
+- subReports.js: subcontractor/sub reports.
+- superadmin.js: client errors, companies, demo workspace, impersonation, exports, revoke sessions, company users, affiliates.
+- team.js: team list.
+- timeEntries.js: time entries, messages, pay stubs, sign-off, copy last week.
+- timeOff.js: time off requests, balances, approve, deny, delete.
+
+24.3 What is intentionally grouped instead of repeated line by line
+- Repeated CRUD patterns are listed once per feature area instead of naming every identical Edit, Save, Cancel, and Delete button on every repeated card.
+- Repeated table mechanics are listed once under micro-interactions instead of repeating for every table.
+- Repeated validation, loading, empty, disabled, toast, and retry states are listed once under micro-interactions.
+- Repeated upload/preview/download/delete media mechanics are listed once globally and then called out in feature areas where they matter.
+- Third-party callbacks and webhooks are listed as app/system actions because they are not usually clicked directly by a normal user.
