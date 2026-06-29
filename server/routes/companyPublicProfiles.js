@@ -367,7 +367,11 @@ publicRouter.get('/:slug', async (req, res) => {
          JOIN company_public_profiles p ON p.company_id = c.id
         WHERE c.slug = $1
           AND c.active = true
-          AND p.is_public = true`,
+          AND p.is_public = true
+          AND NOT EXISTS (
+            SELECT 1 FROM settings se
+             WHERE se.company_id = c.id AND se.key = 'feature_public' AND se.value = '0'
+          )`,
       [req.params.slug]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Company profile not found' });
