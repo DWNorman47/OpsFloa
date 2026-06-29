@@ -37,22 +37,44 @@ jobs:
       # fresh. R2_* secrets enable actual object deletion; without them the
       # script still clears DB references + the counter. Runs before the
       # re-seed so the baseline is clean.
-      - name: Wipe demo storage
-        run: npm run wipe:demo-storage
+      - name: Refresh configured demo databases
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          refresh_one() {
+            local label="$1"
+            local database_url="$2"
+            if [ -z "$database_url" ]; then
+              echo "Skipping ${label}; no database URL secret configured."
+              return
+            fi
+
+            echo "::group::Wipe demo storage (${label})"
+            DATABASE_URL="$database_url" npm run wipe:demo-storage
+            echo "::endgroup::"
+
+            echo "::group::Refresh demo data (${label})"
+            DATABASE_URL="$database_url" npm run seed:demo
+            echo "::endgroup::"
+          }
+
+          if [ -z "${DEV_DATABASE_URL:-}" ] && [ -z "${PROD_DATABASE_URL:-}" ]; then
+            echo "No DEV_DATABASE_URL or PROD_DATABASE_URL secret is configured."
+            exit 1
+          fi
+
+          refresh_one "dev" "${DEV_DATABASE_URL:-}"
+          refresh_one "prod" "${PROD_DATABASE_URL:-}"
         env:
-          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+          DEV_DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
+          PROD_DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
           DATABASE_SSL: 'true'
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
           R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
-
-      - name: Refresh demo data
-        run: npm run seed:demo
-        env:
-          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
-          DATABASE_SSL: 'true'
           DEMO_COMPANY_NAME: Demo Operations
           DEMO_ADMIN_USERNAME: Admin
           # Set the DEMO_ADMIN_PASSWORD repo secret to the (publishable) demo

@@ -261,6 +261,7 @@ async function ensureDemoSettings(client, companyId) {
     module_analytics: '1',
     module_team: '1',
     module_financial_reports: '1',
+    feature_public: '1',
     feature_scheduling: '1',
     feature_analytics: '1',
     feature_chat: '1',
@@ -288,6 +289,62 @@ async function ensureDemoSettings(client, companyId) {
   }
 }
 
+async function ensureDemoPublicProfile(client, companyId) {
+  await client.query(
+    `INSERT INTO company_public_profiles
+       (company_id, display_name, short_description, services_offered, service_areas,
+        license_info, equipment_capabilities, project_types, quote_instructions,
+        contact_info, faq_items, photos, is_public, published_at, updated_at)
+     VALUES
+       ($1, 'Demo Operations - OpsFloA Demo',
+        'Demo Operations is a fictional public company profile built to show how OpsFloA helps teams run time, people, projects, field updates, inventory, public requests, and reporting from one simple operating system.',
+        $2::jsonb, $3::jsonb, $4, $5::jsonb, $6::jsonb, $7, $8::jsonb, $9::jsonb, $10::jsonb, true, NOW(), NOW())
+     ON CONFLICT (company_id) DO UPDATE SET
+        display_name = EXCLUDED.display_name,
+        short_description = EXCLUDED.short_description,
+        services_offered = EXCLUDED.services_offered,
+        service_areas = EXCLUDED.service_areas,
+        license_info = EXCLUDED.license_info,
+        equipment_capabilities = EXCLUDED.equipment_capabilities,
+        project_types = EXCLUDED.project_types,
+        quote_instructions = EXCLUDED.quote_instructions,
+        contact_info = EXCLUDED.contact_info,
+        faq_items = EXCLUDED.faq_items,
+        photos = EXCLUDED.photos,
+        is_public = true,
+        published_at = COALESCE(company_public_profiles.published_at, NOW()),
+        updated_at = NOW()`,
+    [
+      companyId,
+      JSON.stringify(['Time clock and approvals', 'People and role management', 'Project and customer tracking', 'Field notes, photos, punchlists, and safety', 'Inventory items, stock, counts, and purchase orders', 'Public request intake and company profile']),
+      JSON.stringify(['Fictional Phoenix metro workspace', 'Office operations', 'Mobile field teams', 'Inventory rooms and service routes']),
+      'Demo Operations is not a real service provider. Licenses, contacts, projects, POs, field records, and inventory records are sample data for showing OpsFloA capabilities.',
+      JSON.stringify(['Daily demo data refresh', 'Mobile PWA workflows', 'Role-based admin controls', 'Public profile and request intake', 'Agent-readable business information', 'Reporting and operational dashboards']),
+      JSON.stringify(['Facility service route demo', 'Retail refresh demo', 'Clinic room turnover demo', 'Inventory staging demo', 'Subcontractor PO demo', 'Public request demo']),
+      'Use Request work to submit a sample request and see how OpsFloA can collect outside requests. This demo does not provide real services or dispatch a real crew.',
+      JSON.stringify({
+        name: 'OpsFloA Demo',
+        email: 'info@opsfloa.com',
+        phone: '(555) 010-0100',
+        website: 'https://opsfloa.com',
+        address: 'Demo data only',
+      }),
+      JSON.stringify([
+        { question: 'What am I looking at?', answer: 'This is a fictional public profile for Demo Operations. It exists to show how OpsFloA can publish a clean company profile and request page without exposing internal app data.' },
+        { question: 'What OpsFloA capabilities does the demo show?', answer: 'The demo workspace includes time clock, approvals, team management, projects, field work, photos, safety, inventory, public requests, subcontractor POs, and reporting examples.' },
+        { question: 'Can I submit a request here?', answer: 'Yes, as a demonstration. The request form shows how an outside customer could ask for work, but Demo Operations is not a real service provider.' },
+        { question: 'What should search engines and AI agents know?', answer: 'Demo Operations is a sample company profile for OpsFloA. It should be described as a product demonstration, not as an actual local business offering services.' },
+        { question: 'What information is public?', answer: 'Only the profile fields intentionally published here are public. Internal workers, time entries, payroll, invoices, notes, private photos, and customer records are not exposed.' },
+      ]),
+      JSON.stringify([
+        { url: '/opsfloa-operator-band.png', caption: 'OpsFloA brings office and field work into one operating system.', alt: 'A professional reviewing operations work in a field-ready setting' },
+        { url: '/opsfloa-setup-ready-alt.png', caption: 'Admins choose which tools are visible so the day-to-day app stays simple.', alt: 'A business operator preparing setup decisions' },
+        { url: '/opsfloa-field-hero.png', caption: 'Field notes, photos, safety, punchlists, and inventory can all appear in the demo workspace.', alt: 'A mobile field operations scene' },
+      ]),
+    ]
+  );
+}
+
 async function main() {
   const client = await pool.connect();
   const summary = {};
@@ -297,6 +354,7 @@ async function main() {
     const company = await ensureDemoCompany(client);
     const companyId = company.id;
     await ensureDemoSettings(client, companyId);
+    await ensureDemoPublicProfile(client, companyId);
 
     const admin = await ensureDemoAdmin(client, companyId);
 
@@ -429,11 +487,13 @@ async function main() {
       ['End of day closeout', 'Cleaned work zones, secured loose materials, and uploaded photos for the gallery.', 'draft'],
       ['Quality check', 'Verified installed labels, room layouts, and inventory kit placement. Two labels need replacement.', 'reviewed'],
     ];
+    // The demo gallery should roll forward, not accumulate old dated media.
+    // Seeded field notes always use this prefix.
     await client.query(
       `DELETE FROM field_reports
        WHERE company_id = $1
-         AND title LIKE ANY($2::text[])`,
-      [companyId, fieldNotes.map(([title]) => `${title} - %`)]
+         AND title LIKE 'Demo note %'`,
+      [companyId]
     );
     for (let i = 0; i < 14; i++) {
       const [title, notes, status] = fieldNotes[i % fieldNotes.length];
@@ -471,6 +531,15 @@ async function main() {
         );
       }
     }
+
+    // Daily reports are also a rolling demo surface. These are recreated for
+    // today and the prior days each seed run.
+    await client.query(
+      `DELETE FROM daily_reports
+       WHERE company_id = $1
+         AND created_by = $2`,
+      [companyId, admin.id]
+    );
 
     for (let i = 0; i < 18; i++) {
       const project = projectByIndex(i);

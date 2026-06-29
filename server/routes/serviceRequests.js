@@ -52,14 +52,30 @@ const publicSubmitLimiter = rateLimit({
 publicRouter.get('/:slug', async (req, res) => {
   try {
     const { rows } = await pool.query(
-      'SELECT id, name, accepts_service_requests FROM companies WHERE slug = $1 AND active = true',
+      `SELECT c.id, c.name, c.accepts_service_requests,
+              NOT EXISTS (
+                SELECT 1 FROM settings se
+                 WHERE se.company_id = c.id AND se.key = 'feature_public' AND se.value = '0'
+              ) AS feature_public_enabled,
+              EXISTS (
+                SELECT 1
+                  FROM company_public_profiles p
+                 WHERE p.company_id = c.id
+                   AND p.is_public = true
+              ) AS has_public_profile
+         FROM companies c
+        WHERE c.slug = $1 AND c.active = true`,
       [req.params.slug]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Company not found' });
     const categories = await loadActiveCategories(rows[0].id);
+    // feature_public is the master switch for the public-facing surfaces; when
+    // it's off, neither request intake nor the public profile is exposed.
+    const featurePublic = !!rows[0].feature_public_enabled;
     res.json({
       company_name: rows[0].name,
-      accepting: !!rows[0].accepts_service_requests,
+      accepting: featurePublic && !!rows[0].accepts_service_requests,
+      has_public_profile: featurePublic && !!rows[0].has_public_profile,
       categories,
     });
   } catch (err) {
@@ -89,12 +105,20 @@ publicRouter.post('/:slug', publicSubmitLimiter, async (req, res) => {
     if (!desc || desc.length > 5000) return res.status(400).json({ error: 'Description is required (max 5000 chars)' });
 
     const companyRes = await pool.query(
-      'SELECT id, name, accepts_service_requests FROM companies WHERE slug = $1 AND active = true',
+      `SELECT c.id, c.name, c.accepts_service_requests,
+              NOT EXISTS (
+                SELECT 1 FROM settings se
+                 WHERE se.company_id = c.id AND se.key = 'feature_public' AND se.value = '0'
+              ) AS feature_public_enabled
+         FROM companies c
+        WHERE c.slug = $1 AND c.active = true`,
       [req.params.slug]
     );
     if (companyRes.rows.length === 0) return res.status(404).json({ error: 'Company not found' });
     const company = companyRes.rows[0];
-    if (!company.accepts_service_requests) return res.status(403).json({ error: 'This company is not accepting requests right now.' });
+    if (!company.feature_public_enabled || !company.accepts_service_requests) {
+      return res.status(403).json({ error: 'This company is not accepting requests right now.' });
+    }
 
     // Validate category against the company's active list.
     const activeCats = await loadActiveCategories(company.id);

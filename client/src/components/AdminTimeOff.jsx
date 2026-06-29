@@ -33,6 +33,13 @@ export default function AdminTimeOff({ settings }) {
   const [reviewNote, setReviewNote] = useState({});
   const [acting, setActing] = useState(null);
   const [actError, setActError] = useState('');
+  // Per-employee sections default collapsed; track which are expanded.
+  const [expanded, setExpanded] = useState(() => new Set());
+  const toggleWorker = name => setExpanded(prev => {
+    const n = new Set(prev);
+    n.has(name) ? n.delete(name) : n.add(name);
+    return n;
+  });
 
   const annualDays = settings?.pto_annual_days || 0;
 
@@ -90,8 +97,25 @@ export default function AdminTimeOff({ settings }) {
   };
 
   const visible = filter === 'all' ? requests : requests.filter(r => r.status === filter);
-  const pending = visible.filter(r => r.status === 'pending');
-  const rest = visible.filter(r => r.status !== 'pending');
+  // Group per employee. Within a worker, pending first then newest; employees
+  // with pending requests sort to the top so they're easy to find while collapsed.
+  const groups = (() => {
+    const byWorker = new Map();
+    for (const r of visible) {
+      if (!byWorker.has(r.worker_name)) byWorker.set(r.worker_name, []);
+      byWorker.get(r.worker_name).push(r);
+    }
+    return [...byWorker.entries()]
+      .map(([worker, reqs]) => {
+        const sorted = [...reqs].sort((a, b) => {
+          const ap = a.status === 'pending', bp = b.status === 'pending';
+          if (ap !== bp) return ap ? -1 : 1;
+          return b.start_date.toString().localeCompare(a.start_date.toString());
+        });
+        return { worker, reqs: sorted, pendingCount: sorted.filter(x => x.status === 'pending').length };
+      })
+      .sort((a, b) => (b.pendingCount - a.pendingCount) || a.worker.localeCompare(b.worker));
+  })();
 
   return (
     <div>
@@ -117,77 +141,89 @@ export default function AdminTimeOff({ settings }) {
         <EmptyState mark="T" title={t.noTimeOffRequests} body={t.timeOffEmptySub} tone={filter === 'pending' ? 'good' : 'neutral'} />
       ) : (
         <div style={s.list}>
-          {[...pending, ...rest].map(r => {
-            const d = days(r.start_date.toString(), r.end_date.toString());
-            const workerUsed = usedByWorker[r.worker_name] || 0;
+          {groups.map(g => {
+            const open = expanded.has(g.worker);
+            const workerUsed = usedByWorker[g.worker] || 0;
             return (
-            <div key={r.id} style={s.card}>
-              <div style={s.cardTop}>
-                <div>
-                  <div style={s.workerName}>{r.worker_name}</div>
-                  {annualDays > 0 && (
-                    <div style={s.ptoBadge}>
-                      {workerUsed} / {annualDays} {t.days} {t.ptoUsed} · {Math.max(0, annualDays - workerUsed)} {t.ptoRemaining}
+            <div key={g.worker} style={s.group}>
+              <button type="button" style={s.groupHeader} onClick={() => toggleWorker(g.worker)} aria-expanded={open}>
+                <span style={s.groupChevron}>{open ? '▾' : '▸'}</span>
+                <span style={s.groupName}>{g.worker}</span>
+                {g.pendingCount > 0 && (
+                  <span style={s.groupPending}>{g.pendingCount} {t.filterPending}</span>
+                )}
+                <span style={s.groupCount}>{g.reqs.length}</span>
+                {annualDays > 0 && (
+                  <span style={s.groupPto}>{workerUsed} / {annualDays} {t.days} {t.ptoUsed}</span>
+                )}
+              </button>
+
+              {open && (
+              <div style={s.groupBody}>
+                {g.reqs.map(r => {
+                  const d = days(r.start_date.toString(), r.end_date.toString());
+                  return (
+                  <div key={r.id} style={s.card}>
+                    <div style={s.cardTop}>
+                      <div style={s.dates}>
+                        {fmt(r.start_date, locale)} – {fmt(r.end_date, locale)}
+                        <span style={s.dayCount}>{d} {d !== 1 ? t.daysLabel : t.dayLabel}</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <span style={{ ...s.typeBadge, background: TYPE_COLORS[r.type] + '22', color: TYPE_COLORS[r.type] }}>
+                          {TYPE_LABELS[r.type] || r.type}
+                        </span>
+                        <span style={{ ...s.statusBadge, color: STATUS_COLORS[r.status] }}>
+                          {STATUS_LABELS[r.status] || r.status}
+                        </span>
+                      </div>
                     </div>
-                  )}
-                </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <span style={{ ...s.typeBadge, background: TYPE_COLORS[r.type] + '22', color: TYPE_COLORS[r.type] }}>
-                    {TYPE_LABELS[r.type] || r.type}
-                  </span>
-                  <span style={{ ...s.statusBadge, color: STATUS_COLORS[r.status] }}>
-                    {STATUS_LABELS[r.status] || r.status}
-                  </span>
-                </div>
-              </div>
 
-              <div style={s.dates}>
-                {fmt(r.start_date, locale)} – {fmt(r.end_date, locale)}
-                <span style={s.dayCount}>
-                  {d} {d !== 1 ? t.daysLabel : t.dayLabel}
-                </span>
-              </div>
+                    {r.note && <p style={s.note}>{r.note}</p>}
 
-              {r.note && <p style={s.note}>{r.note}</p>}
+                    {r.status === 'pending' && (
+                      <div style={s.actionRow}>
+                        <div style={{ flex: 1, minWidth: 160, display: 'flex', flexDirection: 'column' }}>
+                          <input
+                            style={{ ...s.noteInput, flex: 'unset' }}
+                            placeholder={t.reviewNotePlaceholder}
+                            maxLength={500}
+                            value={reviewNote[r.id] || ''}
+                            onChange={e => setReviewNote(prev => ({ ...prev, [r.id]: e.target.value }))}
+                          />
+                          <div style={{ fontSize: 11, color: '#6b7280', textAlign: 'right', marginTop: 2 }}>{(reviewNote[r.id] || '').length}/500</div>
+                        </div>
+                        <button
+                          style={{ ...s.approveBtn, ...(acting === r.id + 'approve' ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
+                          disabled={acting === r.id + 'approve'}
+                          onClick={() => { setActError(''); act(r.id, 'approve'); }}
+                        >
+                          {acting === r.id + 'approve' ? t.saving : `✓ ${t.filterApproved}`}
+                        </button>
+                        <button
+                          style={{ ...s.denyBtn, ...(acting === r.id + 'deny' ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
+                          disabled={acting === r.id + 'deny'}
+                          onClick={() => { setActError(''); act(r.id, 'deny'); }}
+                        >
+                          {acting === r.id + 'deny' ? t.saving : t.denyAction}
+                        </button>
+                        {actError && <span style={s.actError}>{actError}</span>}
+                      </div>
+                    )}
 
-              {r.status === 'pending' && (
-                <div style={s.actionRow}>
-                  <div style={{ flex: 1, minWidth: 160, display: 'flex', flexDirection: 'column' }}>
-                    <input
-                      style={{ ...s.noteInput, flex: 'unset' }}
-                      placeholder={t.reviewNotePlaceholder}
-                      maxLength={500}
-                      value={reviewNote[r.id] || ''}
-                      onChange={e => setReviewNote(prev => ({ ...prev, [r.id]: e.target.value }))}
-                    />
-                    <div style={{ fontSize: 11, color: '#6b7280', textAlign: 'right', marginTop: 2 }}>{(reviewNote[r.id] || '').length}/500</div>
+                    {r.review_note && (
+                      <p style={{ ...s.note, color: STATUS_COLORS[r.status] }}>{r.review_note}</p>
+                    )}
+
+                    <div style={s.meta}>
+                      {t.submittedOn} {fmt(r.created_at, locale)}
+                      {r.reviewer_name && ` · ${STATUS_LABELS[r.status] || r.status} by ${r.reviewer_name}`}
+                    </div>
                   </div>
-                  <button
-                    style={{ ...s.approveBtn, ...(acting === r.id + 'approve' ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
-                    disabled={acting === r.id + 'approve'}
-                    onClick={() => { setActError(''); act(r.id, 'approve'); }}
-                  >
-                    {acting === r.id + 'approve' ? t.saving : `✓ ${t.filterApproved}`}
-                  </button>
-                  <button
-                    style={{ ...s.denyBtn, ...(acting === r.id + 'deny' ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
-                    disabled={acting === r.id + 'deny'}
-                    onClick={() => { setActError(''); act(r.id, 'deny'); }}
-                  >
-                    {acting === r.id + 'deny' ? t.saving : t.denyAction}
-                  </button>
-                  {actError && <span style={s.actError}>{actError}</span>}
-                </div>
-              )}
-
-              {r.review_note && (
-                <p style={{ ...s.note, color: STATUS_COLORS[r.status] }}>{r.review_note}</p>
-              )}
-
-              <div style={s.meta}>
-                {t.submittedOn} {fmt(r.created_at, locale)}
-                {r.reviewer_name && ` · ${STATUS_LABELS[r.status] || r.status} by ${r.reviewer_name}`}
+                  );
+                })}
               </div>
+              )}
             </div>
             );
           })}
@@ -204,6 +240,14 @@ const s = {
   filterBtn: { padding: '6px 14px', border: '1px solid #e5e7eb', borderRadius: 7, background: '#f9fafb', color: '#6b7280', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   filterBtnActive: { background: 'var(--ops-page-accent)', color: '#fff', border: '1px solid var(--ops-page-accent)' },
   list: { display: 'flex', flexDirection: 'column', gap: 10 },
+  group: { background: '#fff', borderRadius: 12, boxShadow: '0 1px 6px rgba(0,0,0,0.07)', overflow: 'hidden' },
+  groupHeader: { display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '14px 18px', border: 'none', background: '#fff', cursor: 'pointer', textAlign: 'left' },
+  groupChevron: { fontSize: 12, color: '#6b7280', width: 12, flexShrink: 0 },
+  groupName: { fontSize: 15, fontWeight: 700, color: '#111827', flex: 1, minWidth: 0 },
+  groupPending: { fontSize: 11, fontWeight: 700, color: '#d97706', background: '#fef3c7', padding: '2px 9px', borderRadius: 10, whiteSpace: 'nowrap' },
+  groupCount: { fontSize: 12, color: '#6b7280', fontWeight: 600, minWidth: 18, textAlign: 'center' },
+  groupPto: { fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap' },
+  groupBody: { display: 'flex', flexDirection: 'column', gap: 10, padding: '0 12px 12px', background: '#f9fafb' },
   card: { background: '#fff', borderRadius: 12, padding: '16px 18px', boxShadow: '0 1px 6px rgba(0,0,0,0.07)' },
   cardTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 8 },
   workerName: { fontSize: 15, fontWeight: 700, color: '#111827' },

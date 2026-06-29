@@ -19,6 +19,7 @@ const ResetPassword     = lazy(() => import('./pages/ResetPassword'));
 const AcceptInvite      = lazy(() => import('./pages/AcceptInvite'));
 const ConfirmEmail      = lazy(() => import('./pages/ConfirmEmail'));
 const ServiceRequest    = lazy(() => import('./pages/ServiceRequest'));
+const PublicCompanyProfilePage = lazy(() => import('./pages/PublicCompanyProfilePage'));
 const TeamPage          = lazy(() => import('./pages/TeamPage'));
 const HomePage          = lazy(() => import('./pages/HomePage'));
 const Dashboard         = lazy(() => import('./pages/Dashboard'));
@@ -159,6 +160,7 @@ function AppRoutes() {
       <Route path="/accept-invite" element={<AcceptInvite />} />
       <Route path="/confirm-email" element={<ConfirmEmail />} />
       <Route path="/r/:slug" element={<ServiceRequest />} />
+      <Route path="/companies/:slug" element={<PublicCompanyProfilePage />} />
       <Route path="/e/:token" element={<PublicEstimatePage />} />
       <Route path="/co/:token" element={<PublicChangeOrderPage />} />
       <Route path="/lien-waiver-sign/:token" element={<PublicLienWaiverSignPage />} />

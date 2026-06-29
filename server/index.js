@@ -227,6 +227,9 @@ app.use('/api/team', require('./routes/team'));
 const serviceRequestsRoutes = require('./routes/serviceRequests');
 app.use('/api/public/service-requests', serviceRequestsRoutes.publicRouter);
 app.use('/api/admin/service-requests', serviceRequestsRoutes);
+const companyPublicProfileRoutes = require('./routes/companyPublicProfiles');
+app.use('/api/public/company-profiles', companyPublicProfileRoutes.publicRouter);
+app.use('/api/admin/company-profile', companyPublicProfileRoutes);
 
 // Estimates — admin authenticated for management, token-keyed public
 // for client view/accept/decline (same pattern as service requests).
