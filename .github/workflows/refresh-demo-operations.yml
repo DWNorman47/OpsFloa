@@ -1,8 +1,8 @@
 name: Refresh Demo Operations
 
 # Keeps the public demo company centered around the current date.
-# This job only seeds the named fictional company and uses PROD_DATABASE_URL
-# from repository secrets; it does not run migrations or touch other companies.
+# This job only seeds the named fictional company. It does not run migrations
+# or touch other companies.
 on:
   schedule:
     - cron: '0 9 * * *'
@@ -59,12 +59,18 @@ jobs:
             echo "::endgroup::"
           }
 
-          if [ -z "${DEV_DATABASE_URL:-}" ] && [ -z "${PROD_DATABASE_URL:-}" ]; then
-            echo "No DEV_DATABASE_URL or PROD_DATABASE_URL secret is configured."
+          if [ -z "${DEV_DATABASE_URL:-}" ] && [ -z "${STAGING_DATABASE_URL:-}" ] && [ -z "${PROD_DATABASE_URL:-}" ]; then
+            echo "No DEV_DATABASE_URL, STAGING_DATABASE_URL, or PROD_DATABASE_URL secret is configured."
             exit 1
           fi
 
           refresh_one "dev" "${DEV_DATABASE_URL:-}"
+
+          if [ "${GITHUB_REF_NAME:-}" = "stage" ] || [ "${GITHUB_REF_NAME:-}" = "main" ]; then
+            refresh_one "stage" "${STAGING_DATABASE_URL:-}"
+          else
+            echo "Skipping stage; this refresh is running from ${GITHUB_REF_NAME:-unknown}, not stage/main."
+          fi
 
           if [ "${GITHUB_REF_NAME:-}" = "main" ]; then
             refresh_one "prod" "${PROD_DATABASE_URL:-}"
@@ -73,6 +79,7 @@ jobs:
           fi
         env:
           DEV_DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
+          STAGING_DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
           PROD_DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
           DATABASE_SSL: 'true'
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}

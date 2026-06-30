@@ -8,6 +8,26 @@ Scope:
 - Super admin and company creation flows are intentionally out of scope.
 - Items already fixed on `dev` but not yet promoted to stage are tracked separately and should not be double-counted here.
 
+## Latest Stage Pass - 2026-06-30
+
+Verified:
+- Stage frontend is serving build `1.0.0+96680ed`.
+- Stage API origin is `https://opsfloa-stage.onrender.com/api`.
+- Demo Operations login works with `Admin` / `Admin123`.
+- Public profile `/companies/demo-operations` renders with photos, services, FAQ-style content, and `Last updated 6/30/2026`.
+- Public request form `/r/demo-operations` renders and links back to the company profile.
+- Public booking `/book/demo-operations` renders a clean empty state instead of an auth or server error.
+- Invalid public change-order and lien-waiver token endpoints return `404`, not `401`.
+- Main authenticated pages loaded without browser console errors during this pass: Time Clock, Projects, Project Purchase Orders, Field Daily, Field Safety, Inventory Stock, Inventory Orders, Inventory Counts, Booking, Team, Administration Public, and Administration Workspace.
+
+Current issues still observed:
+- Demo Operations on Stage has no public booking types, shift types, appointments, or bookable users, so Booking cannot demonstrate the public scheduling flow yet.
+- Field Work > Media is empty on Stage even though the public profile shows demo photos.
+- Some pages take several seconds to resolve their initial loading state, especially Time Clock, Projects, Inventory Items, and Team.
+
+Local follow-up:
+- Updated `.github/workflows/refresh-demo-operations.yml` so the demo refresh can seed the staging database when the workflow runs from `stage` or `main`.
+
 ## Fixed Locally This Pass
 
 - Help/guide search now covers `time off`, `PTO`, vacation/leave wording, and inventory/cycle-count wording.
