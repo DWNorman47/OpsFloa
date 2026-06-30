@@ -243,6 +243,15 @@ const estimatesRoutes = require('./routes/estimates');
 app.use('/api/public/estimates', estimatesRoutes.publicRouter);
 app.use('/api/estimates', requireAuth, requirePlan('business'), estimatesRoutes);
 
+// Public token-keyed routes and unauthenticated webhooks must mount before
+// any broad authenticated /api routers.
+const changeOrderRoutes = require('./routes/changeOrders');
+app.use('/api/public/change-orders', changeOrderRoutes.publicRouter);
+const lienWaiverRoutes = require('./routes/lienWaivers');
+app.use('/api/public/lien-waivers', lienWaiverRoutes.publicRouter);
+app.use('/api/client-errors', require('./routes/clientErrors'));
+app.use('/api/sendgrid-events', require('./routes/sendgridEvents'));
+
 // Per-project budget category CRUD — feeds the spend rollup + budget bar.
 app.use('/api', requireAuth, requirePlan('business'), require('./routes/projectBudget'));
 
@@ -262,8 +271,6 @@ app.use('/api', requireAuth, requirePlan('business'), require('./routes/projectR
 
 // Change orders — mid-project scope adjustments that bump budget categories
 // on accept. Public token-keyed view/accept/decline mirrors estimates.
-const changeOrderRoutes = require('./routes/changeOrders');
-app.use('/api/public/change-orders', changeOrderRoutes.publicRouter);
 app.use('/api', requireAuth, requirePlan('business'), changeOrderRoutes);
 
 // Submittals — architect/owner approval workflow for materials and
@@ -278,8 +285,6 @@ app.use('/api', requireAuth, requirePlan('business'), require('./routes/closeout
 // Lien waivers — compliance tracking; conditional/unconditional waivers
 // in either direction. Public token-keyed signing surface for the
 // counterparty.
-const lienWaiverRoutes = require('./routes/lienWaivers');
-app.use('/api/public/lien-waivers', lienWaiverRoutes.publicRouter);
 app.use('/api', requireAuth, requirePlan('business'), lienWaiverRoutes);
 
 // Booking module — appointment scheduling. Admin config + admin book
@@ -287,11 +292,6 @@ app.use('/api', requireAuth, requirePlan('business'), lienWaiverRoutes);
 // /api/public/book/:companySlug.
 app.use('/api', requireAuth, requirePlan('business'), bookingRoutes);
 app.use('/api/availability', requireAuth, require('./routes/availability'));
-// Unauthenticated: browsers report errors here. The route itself extracts
-// user identity from the auth header when present.
-app.use('/api/client-errors', require('./routes/clientErrors'));
-// Unauthenticated SendGrid event webhook — uses shared-secret header auth.
-app.use('/api/sendgrid-events', require('./routes/sendgridEvents'));
 
 // Read-only company settings — available to all authenticated users
 const { SETTINGS_DEFAULTS, applySettingsRows } = require('./settingsDefaults');
