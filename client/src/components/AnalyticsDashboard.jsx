@@ -29,6 +29,14 @@ function today() {
   return toLocalDate(new Date());
 }
 
+function startOfWeek(dateStr, weekStart) {
+  const d = new Date(`${dateStr}T00:00:00`);
+  const ws = ((Number(weekStart) % 7) + 7) % 7;
+  const daysSinceStart = (d.getDay() - ws + 7) % 7;
+  d.setDate(d.getDate() - daysSinceStart);
+  return d;
+}
+
 function StatCard({ label, value, sub, color }) {
   return (
     <div style={styles.statCard}>
@@ -142,18 +150,16 @@ export default function AnalyticsDashboard({ weekStart = 1, settings = null }) {
       // Use server data as-is for custom range
       (weekly_hours || []).forEach(w => result.push({ week_start: w.week_start, hours: parseFloat(w.hours) }));
     } else {
-      const weekCount = Math.ceil(preset / 7);
-      const ws = ((Number(weekStart) % 7) + 7) % 7;
-      for (let i = weekCount - 1; i >= 0; i--) {
-        const d = new Date();
-        const daysSinceStart = (d.getDay() - ws + 7) % 7;
-        d.setDate(d.getDate() - daysSinceStart - i * 7);
+      const start = startOfWeek(from, weekStart);
+      const end = startOfWeek(to, weekStart);
+      const maxWeeks = 14;
+      for (let d = new Date(start), weeks = 0; d <= end && weeks < maxWeeks; d.setDate(d.getDate() + 7), weeks++) {
         const key = toLocalDate(d);
         result.push({ week_start: key, hours: weeklyMap[key] || 0 });
       }
     }
     return result;
-  }, [data, showCustom, customFrom, customTo, preset]);
+  }, [data, showCustom, customFrom, customTo, from, to, weekStart]);
 
   if (loading) return <><SkeletonStatRow count={4} style={{ marginBottom: 16 }} /><SkeletonList count={4} /></>;
   if (!data) return <p style={{ color: '#e53e3e' }}>{t.failedLoadAnalytics}</p>;

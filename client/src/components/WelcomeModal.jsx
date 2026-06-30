@@ -16,10 +16,10 @@ function WelcomeModalInner({ isAdmin, firstName, handleStart, t }) {
       <div ref={modalRef} role="dialog" aria-modal="true" aria-labelledby="welcome-modal-title" style={styles.modal}>
         <div style={styles.markRow}>
           <img src="/icon-96x96.png" alt="" style={styles.mark} />
-          <span style={styles.brand}>OpsFloA</span>
+          <span style={styles.brand}>OpsFloa</span>
         </div>
         <h2 id="welcome-modal-title" style={styles.title}>
-          {isAdmin ? `Welcome, ${firstName}. Let's shape OpsFloA around your company.` : `Welcome, ${firstName}. You're ready for the day.`}
+          {isAdmin ? `Welcome, ${firstName}. Let's shape OpsFloa around your company.` : `Welcome, ${firstName}. You're ready for the day.`}
         </h2>
         <p style={styles.body}>
           {isAdmin
