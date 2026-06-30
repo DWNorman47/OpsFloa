@@ -915,7 +915,7 @@ async function main() {
       ));
     }
     await client.query(
-      'DELETE FROM inspections WHERE company_id = $1 AND template_id = ANY($2::int[])',
+      'DELETE FROM inspections WHERE company_id = $1 AND template_id = ANY($2::uuid[])',
       [companyId, inspectionTemplateRows.map(template => template.id)]
     );
     const templateItems = template => Array.isArray(template.items) ? template.items : JSON.parse(template.items || '[]');
