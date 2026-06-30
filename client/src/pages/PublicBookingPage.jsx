@@ -7,6 +7,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import { publicLinkError } from '../utils/publicErrors';
 
 const baseURL = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api';
 const pub = axios.create({ baseURL });
@@ -27,25 +28,58 @@ export default function PublicBookingPage() {
   const [companyName, setCompanyName] = useState(null);
   const [types, setTypes] = useState([]);
   const [type, setType] = useState(null);
+  const [typesLoading, setTypesLoading] = useState(!typeSlug);
+  const [typeLoading, setTypeLoading] = useState(!!typeSlug);
+  const [pageError, setPageError] = useState(null);
+  const [typeError, setTypeError] = useState(null);
   const [selectedSlot, setSelectedSlot] = useState(null);
 
   // Step 1: load types if no slug
   useEffect(() => {
-    if (typeSlug) return;
+    if (typeSlug) return undefined;
+    let alive = true;
+    setStep('type');
+    setType(null);
+    setTypeError(null);
+    setSelectedSlot(null);
+    setTypesLoading(true);
+    setPageError(null);
     pub.get(`/public/book/${companySlug}`)
       .then(r => {
+        if (!alive) return;
         setCompanyName(r.data.company_name);
         setTypes(r.data.types || []);
       })
-      .catch(() => setTypes([]));
+      .catch(err => {
+        if (!alive) return;
+        setTypes([]);
+        setPageError(publicLinkError(err, 'This booking page is not available.'));
+      })
+      .finally(() => { if (alive) setTypesLoading(false); });
+    return () => { alive = false; };
   }, [companySlug, typeSlug]);
 
   // Step 1b/2: load type detail if typeSlug given (or after picking)
   useEffect(() => {
-    if (!typeSlug) return;
+    if (!typeSlug) return undefined;
+    let alive = true;
+    setStep('date');
+    setSelectedSlot(null);
+    setTypeLoading(true);
+    setTypeError(null);
     pub.get(`/public/book/${companySlug}/${typeSlug}`)
-      .then(r => { setType(r.data); setCompanyName(r.data.company_name); })
-      .catch(() => setType(null));
+      .then(r => {
+        if (!alive) return;
+        setType(r.data);
+        setCompanyName(r.data.company_name);
+      })
+      .catch(err => {
+        if (!alive) return;
+        setType(null);
+        setTypeError(publicLinkError(err, 'This appointment type is not available.'));
+      })
+      .finally(() => { if (alive) setTypeLoading(false); });
+    return () => { alive = false; };
   }, [companySlug, typeSlug]);
 
   function pickType(t) {
@@ -57,7 +91,15 @@ export default function PublicBookingPage() {
   if (!typeSlug && !type) {
     return (
       <Shell title={companyName ? `Book with ${companyName}` : 'Book an appointment'}>
-        {types.length === 0 ? (
+        {typesLoading ? (
+          <div style={{ padding: 40, textAlign: 'center', color: '#6b7280' }}>
+            Loading booking options...
+          </div>
+        ) : pageError ? (
+          <div style={{ padding: 40, textAlign: 'center', color: '#6b7280' }}>
+            {pageError}
+          </div>
+        ) : types.length === 0 ? (
           <div style={{ padding: 40, textAlign: 'center', color: '#6b7280' }}>
             No public appointment types are configured for this company.
           </div>
@@ -85,7 +127,21 @@ export default function PublicBookingPage() {
     );
   }
 
-  if (!type) return <Shell title="Loading..."><div /></Shell>;
+  if (typeLoading) {
+    return (
+      <Shell title="Loading...">
+        <div style={{ padding: 40, textAlign: 'center', color: '#6b7280' }}>
+          Loading booking details...
+        </div>
+      </Shell>
+    );
+  }
+
+  if (typeError && !type) {
+    return <Shell title="Booking unavailable"><div style={{ color: '#6b7280', textAlign: 'center' }}>{typeError}</div></Shell>;
+  }
+
+  if (!type) return <Shell title="Booking unavailable"><div /></Shell>;
 
   // ── Date + slot step ────────────────────────────────────────────────────
   if (step === 'date') {
@@ -140,7 +196,7 @@ function SlotPicker({ companySlug, typeSlug, duration, onPick, onBack }) {
       });
       setSlots(data.slots || []);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load availability');
+      setError(publicLinkError(err, 'Failed to load availability'));
     } finally { setLoading(false); }
   }, [companySlug, typeSlug, days]);
 
@@ -222,7 +278,7 @@ function ClientForm({ companySlug, typeSlug, slot, onBack }) {
       });
       setSuccess(data);
     } catch (err) {
-      setError(err.response?.data?.error || 'Booking failed — the slot may have just been taken. Try another time.');
+      setError(publicLinkError(err, 'Booking failed - the slot may have just been taken. Try another time.'));
     } finally { setSubmitting(false); }
   }
 
@@ -300,7 +356,7 @@ export function PublicBookingManagePage() {
   useEffect(() => {
     pub.get(`/public/book/manage/${token}`)
       .then(r => setAppt(r.data))
-      .catch(err => setError(err.response?.data?.error || 'Appointment not found'))
+      .catch(err => setError(publicLinkError(err, 'Appointment not found')))
       .finally(() => setLoading(false));
   }, [token]);
 
@@ -310,7 +366,7 @@ export function PublicBookingManagePage() {
       await pub.post(`/public/book/manage/${token}/cancel`, { reason: reason || null });
       setCancelled(true);
     } catch (err) {
-      setError(err.response?.data?.error || 'Cancel failed');
+      setError(publicLinkError(err, 'Cancel failed'));
     } finally { setCancelling(false); }
   }
 

@@ -65,7 +65,12 @@ jobs:
           fi
 
           refresh_one "dev" "${DEV_DATABASE_URL:-}"
-          refresh_one "prod" "${PROD_DATABASE_URL:-}"
+
+          if [ "${GITHUB_REF_NAME:-}" = "main" ]; then
+            refresh_one "prod" "${PROD_DATABASE_URL:-}"
+          else
+            echo "Skipping prod; this refresh is running from ${GITHUB_REF_NAME:-unknown}, not main."
+          fi
         env:
           DEV_DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
           PROD_DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}

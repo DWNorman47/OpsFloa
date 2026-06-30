@@ -56,7 +56,13 @@ export default function InventoryPage() {
 
   // Legacy hashes: counts→cycle (rename), setup→locations (Setup was split into
   // Locations + Suppliers tabs under the Setup group).
-  const normalizeInventoryTab = value => ({ counts: 'cycle', setup: 'locations' }[value] || value);
+  const normalizeInventoryTab = value => ({
+    counts: 'cycle',
+    setup: 'locations',
+    pos: 'orders',
+    purchase_orders: 'orders',
+    purchaseorders: 'orders',
+  }[value] || value);
   const hashTab = normalizeInventoryTab(window.location.hash.replace('#', ''));
   const [tab, setTab] = useState(allTabIds.includes(hashTab) ? hashTab : 'stock');
   const group = setupTabIds.includes(tab) ? 'setup' : 'operations';

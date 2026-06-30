@@ -6,6 +6,7 @@ import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import { getT } from '../i18n';
 import { detectLanguage } from '../languageDetect';
+import { publicLinkError } from '../utils/publicErrors';
 
 const baseURL = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api';
 const publicApi = axios.create({ baseURL });
@@ -39,7 +40,7 @@ export default function PublicChangeOrderPage() {
   useEffect(() => {
     publicApi.get(`/public/change-orders/view/${token}`)
       .then(r => setCo(r.data))
-      .catch(err => setError(err.response?.data?.error || t.pcoErrNotFound))
+      .catch(err => setError(publicLinkError(err, t.pcoErrNotFound)))
       .finally(() => setLoading(false));
   }, [token]);
 
@@ -52,7 +53,7 @@ export default function PublicChangeOrderPage() {
       });
       setAccepted(true);
     } catch (err) {
-      setError(err.response?.data?.error || t.peErrAccept);
+      setError(publicLinkError(err, t.peErrAccept));
     } finally { setSubmitting(false); }
   }
   async function decline() {
@@ -61,7 +62,7 @@ export default function PublicChangeOrderPage() {
       await publicApi.post(`/public/change-orders/decline/${token}`);
       setDeclined(true);
     } catch (err) {
-      setError(err.response?.data?.error || t.peErrDecline);
+      setError(publicLinkError(err, t.peErrDecline));
     } finally { setSubmitting(false); }
   }
 

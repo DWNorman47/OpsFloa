@@ -125,7 +125,7 @@ function ProjectCard({ project, metrics, settings, onClick }) {
 
 // ── Project Detail Panel ──────────────────────────────────────────────────────
 
-function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, onProjectUpdated }) {
+function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, onProjectUpdated, onProjectArchived }) {
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
@@ -152,6 +152,7 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
   });
   const [editSaving, setEditSaving] = useState(false);
   const [editMsg, setEditMsg] = useState('');
+  const [confirmArchive, setConfirmArchive] = useState(false);
   const [geoLocating, setGeoLocating] = useState(false);
   const [geoError, setGeoError] = useState('');
   const [geocoding, setGeocoding] = useState(false);
@@ -513,6 +514,18 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
       setTimeout(() => setEditMsg(''), 2500);
     } catch {
       setEditMsg('Failed to update');
+    } finally { setEditSaving(false); }
+  };
+
+  const handleArchiveProject = async () => {
+    setEditSaving(true); setEditMsg('');
+    try {
+      await api.delete(`/admin/projects/${project.id}`);
+      onProjectArchived?.(project.id);
+      onClose?.();
+    } catch (err) {
+      setEditMsg(err.response?.data?.error || `Failed to archive ${workLabelLower}`);
+      setConfirmArchive(false);
     } finally { setEditSaving(false); }
   };
 
@@ -1228,6 +1241,38 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
               {editForm.status === 'completed' && (
                 <div style={{ fontSize: 13, fontWeight: 600, color: '#059669', background: '#d1fae5', borderRadius: 8, padding: '10px 14px' }}>
                   {t.projectIsComplete}
+                </div>
+              )}
+
+              {project.active !== false && (
+                <div style={styles.archiveBox}>
+                  <div>
+                    <div style={styles.archiveTitle}>Archive {workLabel}</div>
+                    <div style={styles.archiveHint}>
+                      {settings?.media_delete_on_project_archive
+                        ? `Hide this ${workLabelLower} from active lists and permanently delete its media.`
+                        : `Hide this ${workLabelLower} from active lists without deleting its history.`}
+                    </div>
+                  </div>
+                  {confirmArchive ? (
+                    <div style={styles.archiveActions}>
+                      <button
+                        type="button"
+                        style={{ ...styles.archiveConfirmBtn, ...(editSaving ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
+                        onClick={handleArchiveProject}
+                        disabled={editSaving}
+                      >
+                        {editSaving ? 'Archiving...' : 'Confirm archive'}
+                      </button>
+                      <button type="button" style={styles.archiveCancelBtn} onClick={() => setConfirmArchive(false)} disabled={editSaving}>
+                        {t.cancel}
+                      </button>
+                    </div>
+                  ) : (
+                    <button type="button" style={styles.archiveProjectBtn} onClick={() => setConfirmArchive(true)}>
+                      Archive
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -2134,6 +2179,12 @@ export default function ProjectsPage() {
                   setProjects(prev => prev.map(p => p.id === updated.id ? { ...p, ...updated } : p));
                   setSelected(updated);
                 }}
+                onProjectArchived={archivedId => {
+                  setProjects(prev => showArchived
+                    ? prev.map(p => p.id === archivedId ? { ...p, active: false } : p)
+                    : prev.filter(p => p.id !== archivedId));
+                  setSelected(null);
+                }}
               />
             )}
           </>
@@ -2281,6 +2332,13 @@ const styles = {
   rowClient: { fontSize: 12, color: '#6b7280', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   rowRight: { display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 },
   finishBtn: { background: '#059669', color: '#fff', border: 'none', padding: '11px 20px', borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: 'pointer', width: '100%' },
+  archiveBox: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, border: '1px solid #fecaca', background: '#fff7f7', borderRadius: 10, padding: '12px 14px', flexWrap: 'wrap' },
+  archiveTitle: { fontSize: 13, fontWeight: 800, color: '#991b1b' },
+  archiveHint: { fontSize: 12, color: '#7f1d1d', marginTop: 2 },
+  archiveActions: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' },
+  archiveProjectBtn: { background: '#fff', color: '#991b1b', border: '1px solid #fecaca', padding: '8px 12px', borderRadius: 8, fontSize: 13, fontWeight: 800, cursor: 'pointer' },
+  archiveConfirmBtn: { background: '#dc2626', color: '#fff', border: 'none', padding: '8px 12px', borderRadius: 8, fontSize: 13, fontWeight: 800, cursor: 'pointer' },
+  archiveCancelBtn: { background: '#fff', color: '#374151', border: '1px solid #cbd5e1', padding: '8px 12px', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer' },
 };
 
 // ── Project Create Form Styles ─────────────────────────────────────────────────

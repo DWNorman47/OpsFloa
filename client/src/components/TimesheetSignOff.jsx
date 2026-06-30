@@ -12,7 +12,7 @@ function weekBounds() {
   return { from: fmt(mon), to: fmt(sun) };
 }
 
-export default function TimesheetSignOff({ t }) {
+export default function TimesheetSignOff({ t, refreshKey = 0 }) {
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
   const [from, setFrom] = useState(weekBounds().from);
@@ -36,7 +36,7 @@ export default function TimesheetSignOff({ t }) {
     } finally { setLoading(false); }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [refreshKey]);
 
   const signOff = async () => {
     setSigning(true);

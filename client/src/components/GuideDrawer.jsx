@@ -197,7 +197,7 @@ export default function GuideDrawer({ open, onClose, currentApp, features = {} }
             <h1 id="guide-drawer-title">What are you trying to do?</h1>
           </div>
           <button type="button" className="guide-close" aria-label="Close guide" onClick={onClose}>
-            x
+            X
           </button>
         </header>
 

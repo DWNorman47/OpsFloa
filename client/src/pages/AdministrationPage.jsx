@@ -519,7 +519,13 @@ function AccountTab() {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-const ADMIN_TABS = ['company', 'workspace', 'requests', 'integrations', 'billing', 'log', 'account'];
+const ADMIN_TABS = ['company', 'workspace', 'public', 'integrations', 'billing', 'log', 'account'];
+const ADMIN_TAB_ALIASES = { requests: 'public' };
+
+function normalizeAdminTab(rawHash) {
+  const hash = String(rawHash || '').replace('#', '').trim().toLowerCase();
+  return ADMIN_TAB_ALIASES[hash] || hash;
+}
 
 export default function AdministrationPage() {
   const { user } = useAuth();
@@ -548,12 +554,13 @@ export default function AdministrationPage() {
 
   // #team used to be the Team admin tab; it's now the /team module. Any
   // bookmark or link still using #team lands in the right place.
-  const hashTab = window.location.hash.replace('#', '');
+  const rawHashTab = window.location.hash.replace('#', '');
+  const hashTab = normalizeAdminTab(rawHashTab);
   useEffect(() => {
-    if (hashTab === 'team') {
+    if (rawHashTab === 'team') {
       window.location.replace('/team');
     }
-  }, [hashTab]);
+  }, [rawHashTab]);
 
   const [tab, setTab] = useState(ADMIN_TABS.includes(hashTab) ? hashTab : 'company');
   const switchTab = t => { setTab(t); history.replaceState(null, '', '#' + t); };
@@ -581,7 +588,7 @@ export default function AdministrationPage() {
   const tabs = [
     { id: 'company',      label: t.adminTabCompany      },
     ...(canManageSettings ? [{ id: 'workspace', label: 'Workspace' }] : []),
-    ...(canSeeRequests ? [{ id: 'requests', label: 'Public' }] : []),
+    ...(canSeeRequests ? [{ id: 'public', label: 'Public' }] : []),
     ...((plan.hasQbo && canManageIntegrations) ? [{ id: 'integrations', label: t.adminTabIntegrations }] : []),
     ...(canManageBilling ? [{ id: 'billing', label: t.adminTabBilling }] : []),
     ...(canSeeLog ? [{ id: 'log', label: t.adminTabLog }] : []),
@@ -596,10 +603,14 @@ export default function AdministrationPage() {
 
   useEffect(() => {
     const syncFromHash = () => {
-      const nextHashTab = window.location.hash.replace('#', '');
-      if (nextHashTab === 'team') {
+      const nextRawHashTab = window.location.hash.replace('#', '');
+      const nextHashTab = normalizeAdminTab(nextRawHashTab);
+      if (nextRawHashTab === 'team') {
         window.location.replace('/team');
         return;
+      }
+      if (nextRawHashTab && nextRawHashTab !== nextHashTab && ADMIN_TABS.includes(nextHashTab)) {
+        history.replaceState(null, '', '#' + nextHashTab);
       }
       if (tabs.some(x => x.id === nextHashTab)) setTab(nextHashTab);
     };
@@ -729,7 +740,7 @@ export default function AdministrationPage() {
             </WorkspaceSettingGroup>
           </div>
         )}
-        {safeTab === 'requests' && (
+        {safeTab === 'public' && (
           <div style={styles.tabContent}>
             <h2 style={styles.tabTitle}>Presence</h2>
             <PublicCompanyProfileAdmin />

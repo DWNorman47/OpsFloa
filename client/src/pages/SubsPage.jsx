@@ -301,7 +301,7 @@ function SubDetail({ id, onBack, onEdit }) {
 
 // ── Sub POs portfolio ────────────────────────────────────────────────────────
 
-function SubPOsList({ onOpen }) {
+function SubPOsList({ onOpen, onNew }) {
   const t = useT();
   const [pos, setPos] = useState([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
@@ -348,12 +348,15 @@ function SubPOsList({ onOpen }) {
             <option key={k} value={k}>{t[v.labelKey]}</option>
           ))}
         </select>
+        <button type="button" onClick={onNew} style={styles.primaryBtn}>+ New PO</button>
       </div>
       {loading ? <SkeletonList rows={3} /> :
         pos.length === 0 ? (
           <EmptyState
             title={t.subPoEmptyTitle}
             body={t.subPoEmptyBody}
+            actionLabel="+ New PO"
+            onAction={onNew}
           />
         ) : (
           <>
@@ -411,6 +414,140 @@ function SubPOsList({ onOpen }) {
         )
       }
     </>
+  );
+}
+
+function SubPOForm({ onSave, onCancel }) {
+  const t = useT();
+  const [projects, setProjects] = useState([]);
+  const [subs, setSubs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [dirty, setDirty] = useState(false);
+  const [form, setForm] = useState({
+    project_id: '',
+    subcontractor_id: '',
+    amount_cents: 0,
+    retainage_pct: '',
+    scope_of_work: '',
+    notes: '',
+  });
+  useUnsavedChanges(dirty);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    Promise.all([
+      api.get('/projects').then(r => r.data),
+      api.get('/subcontractors', { params: { limit: 500 } }).then(r => r.data.items || []),
+    ]).then(([projectRows, subRows]) => {
+      if (!alive) return;
+      setProjects(projectRows || []);
+      setSubs(subRows || []);
+      setForm(f => ({
+        ...f,
+        project_id: f.project_id || projectRows?.[0]?.id || '',
+        subcontractor_id: f.subcontractor_id || subRows?.[0]?.id || '',
+      }));
+    }).catch(() => {
+      if (alive) setError('Failed to load projects or subcontractors.');
+    }).finally(() => {
+      if (alive) setLoading(false);
+    });
+    return () => { alive = false; };
+  }, []);
+
+  const set = (key, value) => {
+    setDirty(true);
+    setForm(f => ({ ...f, [key]: value }));
+  };
+
+  const submit = async e => {
+    e.preventDefault();
+    setError('');
+    if (!form.project_id) { setError('Choose a project.'); return; }
+    if (!form.subcontractor_id) { setError('Choose a subcontractor.'); return; }
+    if (!form.scope_of_work.trim()) { setError('Scope of work is required.'); return; }
+    const amount = parseInt(form.amount_cents, 10);
+    if (!Number.isFinite(amount) || amount <= 0) { setError(t.subAmountInvalid || 'Amount must be positive.'); return; }
+    const retainage = form.retainage_pct === '' ? null : parseFloat(form.retainage_pct);
+    if (retainage != null && (Number.isNaN(retainage) || retainage < 0 || retainage > 100)) {
+      setError('Retainage must be between 0 and 100.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const { data } = await api.post(`/projects/${form.project_id}/subcontract-pos`, {
+        subcontractor_id: form.subcontractor_id,
+        amount_cents: amount,
+        retainage_pct: retainage,
+        scope_of_work: form.scope_of_work.trim(),
+        notes: form.notes.trim() || null,
+      });
+      setDirty(false);
+      onSave(data);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to create PO.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <SkeletonList rows={3} />;
+
+  return (
+    <form onSubmit={submit} style={styles.formCard}>
+      <h3 style={styles.formH3}>New subcontractor PO</h3>
+      {error && <div style={styles.errorBox}>{error}</div>}
+      <div className="admin-form-grid-2">
+        <Field label={t.subProject} required>
+          <select value={form.project_id} onChange={e => set('project_id', e.target.value)} style={styles.input}>
+            {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </Field>
+        <Field label={t.subSub} required>
+          <select value={form.subcontractor_id} onChange={e => set('subcontractor_id', e.target.value)} style={styles.input}>
+            {subs.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </Field>
+        <Field label={t.subAmount} required>
+          <MoneyInput valueCents={form.amount_cents} onChange={cents => set('amount_cents', cents)} />
+        </Field>
+        <Field label={t.subRetainage}>
+          <input
+            type="number"
+            min="0"
+            max="100"
+            step="0.01"
+            value={form.retainage_pct}
+            onChange={e => set('retainage_pct', e.target.value)}
+            style={styles.input}
+            placeholder="0"
+          />
+        </Field>
+      </div>
+      <Field label={t.subScopeOfWork} required>
+        <textarea
+          value={form.scope_of_work}
+          onChange={e => set('scope_of_work', e.target.value)}
+          style={{ ...styles.input, minHeight: 92 }}
+        />
+      </Field>
+      <Field label={t.subNotes}>
+        <textarea
+          value={form.notes}
+          onChange={e => set('notes', e.target.value)}
+          style={{ ...styles.input, minHeight: 70 }}
+        />
+      </Field>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+        <button type="button" onClick={onCancel} style={styles.ghostBtn}>{t.subCancel}</button>
+        <button type="submit" disabled={saving} style={styles.primaryBtn}>
+          {saving ? t.subSaving : 'Create draft PO'}
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -639,11 +776,13 @@ export function SubsDirectoryPanel() {
 export function SubPOsPanel() {
   const [view, setView] = useState({ kind: 'list' });
   function openPo(id)   { setView({ kind: 'po-detail', id }); }
+  function openPoNew()  { setView({ kind: 'po-form' }); }
   function backToList() { setView({ kind: 'list' }); }
 
   return (
     <>
-      {view.kind === 'list'      && <SubPOsList onOpen={openPo} />}
+      {view.kind === 'list'      && <SubPOsList onOpen={openPo} onNew={openPoNew} />}
+      {view.kind === 'po-form'   && <SubPOForm onSave={(po) => openPo(po.id)} onCancel={backToList} />}
       {view.kind === 'po-detail' && <SubPODetail id={view.id} onBack={backToList} />}
     </>
   );

@@ -27,6 +27,13 @@ export const MODULE_PERMISSIONS = {
     'clock_in_others', 'edit_any_entry', 'approve_entries',
     'manage_pay_periods', 'view_workers_list',
   ],
+  // Booking is admin scheduling/configuration. It reuses workforce-style
+  // oversight permissions plus settings access for companies where office
+  // staff manage availability without approving time.
+  booking: [
+    'clock_in_others', 'edit_any_entry', 'approve_entries',
+    'manage_pay_periods', 'view_workers_list', 'manage_settings',
+  ],
   field: [
     'submit_field_reports', 'manage_punchlist', 'manage_rfis',
     'manage_safety_checklists', 'manage_equipment',
@@ -74,7 +81,7 @@ export const MODULE_PERMISSIONS = {
 // Modules every authenticated user can see in the app switcher, perms or not.
 // /home remains routable, but is intentionally hidden until the home surface
 // earns its place in the daily navigation again.
-export const ALWAYS_VISIBLE_MODULES = new Set(['account']);
+export const ALWAYS_VISIBLE_MODULES = new Set(['account', 'help']);
 
 // Per-tab permission gates inside Administration (used by AdministrationPage).
 // A tab is hidden if the user has none of its perms. Empty array = always visible.
