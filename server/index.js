@@ -231,6 +231,12 @@ const companyPublicProfileRoutes = require('./routes/companyPublicProfiles');
 app.use('/api/public/company-profiles', companyPublicProfileRoutes.publicRouter);
 app.use('/api/admin/company-profile', companyPublicProfileRoutes);
 
+// Public booking must mount before any broad authenticated /api routers.
+// Otherwise /api/public/book/:companySlug can be challenged by auth before
+// the public router gets a chance to handle it.
+const bookingRoutes = require('./routes/booking');
+app.use('/api/public/book', bookingRoutes.publicRouter);
+
 // Estimates — admin authenticated for management, token-keyed public
 // for client view/accept/decline (same pattern as service requests).
 const estimatesRoutes = require('./routes/estimates');
@@ -279,8 +285,6 @@ app.use('/api', requireAuth, requirePlan('business'), lienWaiverRoutes);
 // Booking module — appointment scheduling. Admin config + admin book
 // endpoint behind auth; public booking surface (token-keyed) at
 // /api/public/book/:companySlug.
-const bookingRoutes = require('./routes/booking');
-app.use('/api/public/book', bookingRoutes.publicRouter);
 app.use('/api', requireAuth, requirePlan('business'), bookingRoutes);
 app.use('/api/availability', requireAuth, require('./routes/availability'));
 // Unauthenticated: browsers report errors here. The route itself extracts
