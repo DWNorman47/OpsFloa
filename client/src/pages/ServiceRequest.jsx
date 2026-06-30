@@ -32,7 +32,7 @@ export default function ServiceRequest() {
 
   useDocumentMeta({
     title: companyName ? `Request work from ${companyName}` : 'Request work',
-    description: `Submit a service, support, or work request to ${companyName || 'this business'} via OpsFloa.`,
+    description: `Submit a service, support, or work request to ${companyName || 'this business'} via OpsFloA.`,
     robots: 'noindex',
   });
 
@@ -94,7 +94,7 @@ export default function ServiceRequest() {
             email address, they may reply that way; if not, expect a phone call.
           </p>
           <p style={{ ...styles.bodyText, fontSize: 13, color: '#6b7280', marginTop: 20 }}>
-            Powered by OpsFloa
+            Powered by OpsFloA
           </p>
         </div>
       </div>
@@ -105,7 +105,7 @@ export default function ServiceRequest() {
     <div style={styles.page}>
       <div style={styles.card}>
         <div style={styles.header}>
-          <div style={styles.logo}>OpsFloa</div>
+          <div style={styles.logo}>OpsFloA</div>
           <h1 style={styles.title}>{companyName}</h1>
           <p style={styles.subtitle}>Request service, support, or an estimate</p>
           {hasPublicProfile && (
@@ -174,7 +174,7 @@ export default function ServiceRequest() {
               {submitting ? 'Sending...' : 'Send request'}
             </button>
             <p style={styles.note}>
-              By submitting you agree that OpsFloa may share the above with {companyName}.
+              By submitting you agree that OpsFloA may share the above with {companyName}.
               Your information is not shared with anyone else.
             </p>
           </form>
