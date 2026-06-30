@@ -37,8 +37,14 @@ const STATUS_COLORS = {
 
 const BOOKING_TABS = ['appointments', 'types', 'shifts', 'users'];
 const BOOKING_TAB_ALIASES = {
+  appointmenttypes: 'types',
+  'appointment-types': 'types',
   appointment_types: 'types',
+  shifttypes: 'shifts',
+  'shift-types': 'shifts',
   shift_types: 'shifts',
+  bookableusers: 'users',
+  'bookable-users': 'users',
   bookable_users: 'users',
 };
 
@@ -807,7 +813,7 @@ export default function BookingPage() {
   useEffect(() => {
     const syncFromHash = () => {
       const hashTab = normalizeBookingHash(window.location.hash);
-      if (BOOKING_TABS.includes(hashTab)) setTab(hashTab);
+      setTab(BOOKING_TABS.includes(hashTab) ? hashTab : 'appointments');
     };
     syncFromHash();
     window.addEventListener('hashchange', syncFromHash);
