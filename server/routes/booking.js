@@ -997,7 +997,7 @@ async function resolvePublicAppointmentType(companySlug, typeSlug) {
     `SELECT at.*, c.name AS company_name, c.id AS resolved_company_id, c.slug AS company_slug
        FROM appointment_types at
        JOIN companies c ON at.company_id = c.id
-      WHERE c.slug = $1 AND at.slug = $2 AND at.active = true AND at.is_public = true`,
+      WHERE c.slug = $1 AND c.active = true AND at.slug = $2 AND at.active = true AND at.is_public = true`,
     [companySlug, typeSlug]
   );
   return r.rows[0] || null;
@@ -1057,7 +1057,7 @@ publicRouter.post('/manage/:token/cancel', async (req, res) => {
 publicRouter.get('/:companySlug', async (req, res) => {
   try {
     const company = await pool.query(
-      'SELECT id, name, slug FROM companies WHERE slug = $1',
+      'SELECT id, name, slug FROM companies WHERE slug = $1 AND active = true',
       [req.params.companySlug]
     );
     if (company.rowCount === 0) {
