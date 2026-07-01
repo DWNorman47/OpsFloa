@@ -52,6 +52,7 @@ export default function PhotoCapture({ photos, onChange, maxPhotos = 10 }) {
               <button style={styles.removeBtn} onClick={() => remove(i)} aria-label={t.removePhoto}>✕</button>
             </div>
             <input
+              name={`photo_caption_${i}`}
               style={styles.captionInput}
               type="text"
               placeholder={t.captionOptional}
@@ -86,10 +87,10 @@ export default function PhotoCapture({ photos, onChange, maxPhotos = 10 }) {
               </>
             )}
             {/* Camera input — opens native camera on mobile */}
-            <input ref={cameraRef} type="file" accept="image/*" capture="environment"
+            <input ref={cameraRef} name="photo_camera_capture" type="file" accept="image/*" capture="environment"
               style={{ display: 'none' }} onChange={e => { handleFiles(e.target.files); e.target.value = ''; }} />
             {/* File picker — opens gallery */}
-            <input ref={fileRef} type="file" accept="image/*" multiple
+            <input ref={fileRef} name="photo_file_upload" type="file" accept="image/*" multiple
               style={{ display: 'none' }} onChange={e => { handleFiles(e.target.files); e.target.value = ''; }} />
           </div>
         )}

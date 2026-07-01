@@ -9,6 +9,12 @@ function isHttpUrl(url) {
   try { return ['http:', 'https:'].includes(new URL(url).protocol); } catch { return false; }
 }
 
+function asList(data, fallbackKey) {
+  if (Array.isArray(data)) return data;
+  if (fallbackKey && Array.isArray(data?.[fallbackKey])) return data[fallbackKey];
+  return [];
+}
+
 // ── Level config ──────────────────────────────────────────────────────────────
 // Each level knows its API path, its parent's key name, and which parent level feeds it.
 
@@ -559,6 +565,7 @@ export default function InventorySetup({ projects, settings }) {
   const [pendingArchiveItemId, setPendingArchiveItemId] = useState(null);
   const [itemArchiveError, setItemArchiveError] = useState('');
   const [itemRestoreError, setItemRestoreError] = useState('');
+  const loadSeqRef = useRef(0);
 
   // Parent cascade: store selected IDs for each level so child levels can filter
   const [parentSels, setParentSels] = useState({
@@ -582,7 +589,7 @@ export default function InventorySetup({ projects, settings }) {
     const load = async () => {
       // Always keep locations fresh
       const locs = await api.get('/inventory/locations?active=all').catch(() => ({ data: [] }));
-      setParentOpts(p => ({ ...p, locations: locs.data }));
+      setParentOpts(p => ({ ...p, locations: asList(locs.data, 'locations') }));
     };
     load();
   }, []);
@@ -625,6 +632,7 @@ export default function InventorySetup({ projects, settings }) {
 
   // Load items for current level
   const load = async () => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     setError('');
     try {
@@ -634,11 +642,11 @@ export default function InventorySetup({ projects, settings }) {
         if (parentId) url += `&${level.parentKey}=${parentId}`;
       }
       const r = await api.get(url);
-      setItems(r.data);
+      if (seq === loadSeqRef.current) setItems(asList(r.data, level.key));
     } catch {
-      setError(t.invSetupFailedLoad);
+      if (seq === loadSeqRef.current) setError(t.invSetupFailedLoad);
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   };
 

@@ -50,12 +50,13 @@ function parseLines(value) {
     .filter(Boolean);
 }
 
-function ListField({ label, hint, value, onChange, placeholder }) {
+function ListField({ label, hint, name, value, onChange, placeholder }) {
   return (
     <label style={s.field}>
       <span style={s.label}>{label}</span>
       {hint && <span style={s.hintText}>{hint}</span>}
       <textarea
+        name={name}
         style={s.textarea}
         value={(value || []).join('\n')}
         onChange={e => onChange(parseLines(e.target.value))}
@@ -66,11 +67,12 @@ function ListField({ label, hint, value, onChange, placeholder }) {
   );
 }
 
-function TextField({ label, value, onChange, placeholder, rows = 3, maxLength }) {
+function TextField({ label, name, value, onChange, placeholder, rows = 3, maxLength }) {
   return (
     <label style={s.field}>
       <span style={s.label}>{label}</span>
       <textarea
+        name={name}
         style={s.textarea}
         value={value || ''}
         onChange={e => onChange(e.target.value)}
@@ -181,13 +183,13 @@ export default function PublicCompanyProfileAdmin() {
         <div style={s.linkGrid}>
           <div style={s.linkRow}>
             <span>Profile</span>
-            <code>{publicUrl}</code>
+            <code style={s.linkCode}>{publicUrl}</code>
             <button type="button" style={s.smallBtn} onClick={() => copy(publicUrl)}>Copy</button>
           </div>
           {draft.accepts_service_requests && (
             <div style={s.linkRow}>
               <span>Request form</span>
-              <code>{requestUrl}</code>
+              <code style={s.linkCode}>{requestUrl}</code>
               <button type="button" style={s.smallBtn} onClick={() => copy(requestUrl)}>Copy</button>
             </div>
           )}
@@ -198,6 +200,7 @@ export default function PublicCompanyProfileAdmin() {
         <label style={s.field}>
           <span style={s.label}>Public company name</span>
           <input
+            name="public_profile_display_name"
             style={s.input}
             value={draft.display_name || ''}
             onChange={e => update('display_name', e.target.value)}
@@ -207,6 +210,7 @@ export default function PublicCompanyProfileAdmin() {
         </label>
         <TextField
           label="Short description"
+          name="public_profile_short_description"
           value={draft.short_description}
           onChange={value => update('short_description', value)}
           placeholder="A plain-language summary of who you are, what you do, and who you help."
@@ -215,24 +219,28 @@ export default function PublicCompanyProfileAdmin() {
         />
         <ListField
           label="Services offered"
+          name="public_profile_services_offered"
           value={draft.services_offered}
           onChange={value => update('services_offered', value)}
           placeholder={'Repair\nMaintenance\nInstallation'}
         />
         <ListField
           label="Service areas"
+          name="public_profile_service_areas"
           value={draft.service_areas}
           onChange={value => update('service_areas', value)}
           placeholder={'Phoenix\nMesa\nScottsdale'}
         />
         <ListField
           label="Project types"
+          name="public_profile_project_types"
           value={draft.project_types}
           onChange={value => update('project_types', value)}
           placeholder={'Commercial\nResidential\nEmergency work'}
         />
         <ListField
           label="Equipment and capabilities"
+          name="public_profile_equipment_capabilities"
           value={draft.equipment_capabilities}
           onChange={value => update('equipment_capabilities', value)}
           placeholder={'Lift access\nFleet service vehicles\nLicensed technicians'}
@@ -242,6 +250,7 @@ export default function PublicCompanyProfileAdmin() {
       <div style={s.formGrid}>
         <TextField
           label="License/certification info"
+          name="public_profile_license_info"
           value={draft.license_info}
           onChange={value => update('license_info', value)}
           placeholder="License numbers, bonding, insurance, certifications, or compliance notes."
@@ -249,6 +258,7 @@ export default function PublicCompanyProfileAdmin() {
         />
         <TextField
           label="Quote/request instructions"
+          name="public_profile_quote_instructions"
           value={draft.quote_instructions}
           onChange={value => update('quote_instructions', value)}
           placeholder="Tell visitors what details to include and what happens after they submit a request."
@@ -269,6 +279,7 @@ export default function PublicCompanyProfileAdmin() {
             <label key={key} style={s.field}>
               <span style={s.label}>{label}</span>
               <input
+                name={`public_profile_contact_${key}`}
                 style={s.input}
                 value={draft.contact_info?.[key] || ''}
                 onChange={e => updateContact(key, e.target.value)}
@@ -290,6 +301,7 @@ export default function PublicCompanyProfileAdmin() {
             {draft.faq_items.map((item, index) => (
               <div key={index} style={s.faqCard}>
                 <input
+                  name={`public_profile_faq_${index}_question`}
                   style={s.input}
                   value={item.question}
                   onChange={e => updateFaq(index, 'question', e.target.value)}
@@ -297,6 +309,7 @@ export default function PublicCompanyProfileAdmin() {
                   maxLength={220}
                 />
                 <textarea
+                  name={`public_profile_faq_${index}_answer`}
                   style={s.textarea}
                   value={item.answer}
                   onChange={e => updateFaq(index, 'answer', e.target.value)}
@@ -313,7 +326,7 @@ export default function PublicCompanyProfileAdmin() {
 
       <div style={s.subsection}>
         <h4 style={s.subTitle}>Public photos or examples</h4>
-        <p style={s.muted}>Only add photos that are safe to show publicly. Internal job photos stay private unless uploaded here.</p>
+        <p style={s.photoHelp}>Only add photos that are safe to show publicly. Internal job photos stay private unless uploaded here.</p>
         <PhotoCapture photos={draft.photos || []} onChange={photos => update('photos', photos)} maxPhotos={8} />
       </div>
 
@@ -353,8 +366,9 @@ const s = {
   statusOn: { color: '#047857', background: '#d1fae5', borderRadius: 999, padding: '5px 9px', fontSize: 12, fontWeight: 850 },
   statusOff: { color: '#64748b', background: '#f1f5f9', borderRadius: 999, padding: '5px 9px', fontSize: 12, fontWeight: 850 },
   openLink: { color: '#2563eb', fontSize: 12, fontWeight: 800, textDecoration: 'none' },
-  linkGrid: { display: 'flex', flexDirection: 'column', gap: 8, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 10, marginBottom: 16 },
-  linkRow: { display: 'grid', gridTemplateColumns: '90px minmax(0, 1fr) auto', gap: 10, alignItems: 'center', fontSize: 12, color: '#64748b' },
+  linkGrid: { display: 'flex', flexDirection: 'column', gap: 8, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 10, marginBottom: 16, maxWidth: '100%', overflow: 'hidden' },
+  linkRow: { display: 'grid', gridTemplateColumns: 'minmax(72px, 90px) minmax(0, 1fr) auto', gap: 8, alignItems: 'center', fontSize: 12, color: '#64748b', minWidth: 0 },
+  linkCode: { display: 'block', minWidth: 0, whiteSpace: 'normal', overflowWrap: 'anywhere', wordBreak: 'break-word', color: '#475569', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' },
   formGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 14, marginTop: 14 },
   field: { display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 },
   label: { color: '#334155', fontSize: 12, fontWeight: 850 },
@@ -368,6 +382,7 @@ const s = {
   faqList: { display: 'flex', flexDirection: 'column', gap: 10 },
   faqCard: { display: 'grid', gridTemplateColumns: 'minmax(0, 0.9fr) minmax(0, 1.2fr) auto', gap: 10, alignItems: 'start', border: '1px solid #e2e8f0', borderRadius: 8, padding: 10 },
   muted: { color: '#64748b', fontSize: 13, lineHeight: 1.45, margin: 0 },
+  photoHelp: { color: '#64748b', fontSize: 13, lineHeight: 1.45, margin: '0 0 14px' },
   success: { color: '#047857', background: '#ecfdf5', border: '1px solid #a7f3d0', padding: '9px 10px', borderRadius: 8, fontSize: 13, fontWeight: 800 },
   error: { color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', padding: '9px 10px', borderRadius: 8, fontSize: 13, fontWeight: 800 },
   actions: { display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 18 },

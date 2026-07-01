@@ -10,6 +10,28 @@ Scope:
 
 ## Latest Stage Pass - 2026-06-30
 
+### Retest After Dev Promotion
+
+Verified:
+- Stage public/admin presence now uses `Administration > Public` and the `#public` hash cleanly.
+- Guide search for `PO` now returns relevant purchase-order guides first, including subcontractor PO, PO payment, receive-from-PO, and inventory purchase order guidance.
+- Booking hash aliases now route correctly for `#appointments`, `#appointment-types`, `#shift-types`, and `#bookable-users`.
+- Time Clock > Time Off request form shows proper labels/required fields.
+- Team > Add User has normalized Add Manually and Invite by Email fields; Invite by Email includes required stars for first name, last name, and email.
+- Inventory Stock, Items, Transactions, Counts, Conversions, and Valuation loaded without browser console errors.
+- Inventory Items mobile/table mode still keeps horizontal scrolling inside the table wrapper, and sticky first-column cells have solid backgrounds.
+- Broad authenticated route sweep found no browser console errors across Time Clock, Projects, Field Work, Team, Inventory, Booking, and Administration routes tested.
+- Current release-readiness pass intentionally excludes Booking; Booking is hidden locally from the app switcher while remaining routable by URL.
+- Field Work creation panels checked cleanly for Work Notes, Daily Reports, Punchlist, Incidents, RFIs, Safety Talks, Safety Checklists, Inspections, Equipment, and Sub Reports.
+- Inventory tabs checked cleanly for Stock, Transactions, Orders, Counts, Valuation, Items, Locations, Suppliers, and Conversions.
+
+Current issues still observed after promotion:
+- Demo Operations booking setup is still empty: no public appointment types, shift types, appointments, or bookable users, so public booking cannot demonstrate a real scheduling flow.
+- Field Work > Media still shows `0 items`.
+- Demo Operations data is still stale in several areas: Field Daily/Checklists/Inspections around June 20, safety/incidents around April/May, inventory transactions around May, and notifications with old stale-clock alerts.
+- Several authenticated pages can still look stuck during the first few seconds. Time Clock, Projects, Team, and Inventory Stock all resolved after a longer wait, but the quick sweep still caught `Loading...` states.
+- Administration > Public still contains old wording pointing users to `Workspace > Advanced Controls > Service Request Categories`; this should match the current `Company Settings` wording if that is now the source of truth.
+
 Verified:
 - Stage frontend is serving build `1.0.0+96680ed`.
 - Stage API origin is `https://opsfloa-stage.onrender.com/api`.
@@ -28,6 +50,9 @@ Current issues still observed:
 
 Local follow-up:
 - Updated `.github/workflows/refresh-demo-operations.yml` so the demo refresh can seed the staging database when the workflow runs from `stage` or `main`.
+- Hid Booking from the app switcher while leaving `/booking` routable.
+- Fixed Inventory low-stock reorder PO prefill so line items use the `item_id` returned by `/inventory/stock/low`.
+- Guarded Inventory Setup list loads against stale responses and non-array response shapes so setup lists do not show false empty states.
 - Fixed Booking hash aliases locally so `/booking#shift-types`, `/booking#appointment-types`, and `/booking#bookable-users` resolve to the intended tabs; invalid Booking hashes now reset to Appointments instead of leaving a stale previous tab visible.
 - Fixed the Performance weekly-hours chart locally so partial weeks inside the selected date range are included instead of falsely showing no weekly entries.
 
