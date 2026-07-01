@@ -181,13 +181,13 @@ export default function PublicCompanyProfileAdmin() {
         <div style={s.linkGrid}>
           <div style={s.linkRow}>
             <span>Profile</span>
-            <code>{publicUrl}</code>
+            <code style={s.linkCode}>{publicUrl}</code>
             <button type="button" style={s.smallBtn} onClick={() => copy(publicUrl)}>Copy</button>
           </div>
           {draft.accepts_service_requests && (
             <div style={s.linkRow}>
               <span>Request form</span>
-              <code>{requestUrl}</code>
+              <code style={s.linkCode}>{requestUrl}</code>
               <button type="button" style={s.smallBtn} onClick={() => copy(requestUrl)}>Copy</button>
             </div>
           )}
@@ -313,7 +313,7 @@ export default function PublicCompanyProfileAdmin() {
 
       <div style={s.subsection}>
         <h4 style={s.subTitle}>Public photos or examples</h4>
-        <p style={s.muted}>Only add photos that are safe to show publicly. Internal job photos stay private unless uploaded here.</p>
+        <p style={s.photoHelp}>Only add photos that are safe to show publicly. Internal job photos stay private unless uploaded here.</p>
         <PhotoCapture photos={draft.photos || []} onChange={photos => update('photos', photos)} maxPhotos={8} />
       </div>
 
@@ -353,8 +353,9 @@ const s = {
   statusOn: { color: '#047857', background: '#d1fae5', borderRadius: 999, padding: '5px 9px', fontSize: 12, fontWeight: 850 },
   statusOff: { color: '#64748b', background: '#f1f5f9', borderRadius: 999, padding: '5px 9px', fontSize: 12, fontWeight: 850 },
   openLink: { color: '#2563eb', fontSize: 12, fontWeight: 800, textDecoration: 'none' },
-  linkGrid: { display: 'flex', flexDirection: 'column', gap: 8, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 10, marginBottom: 16 },
-  linkRow: { display: 'grid', gridTemplateColumns: '90px minmax(0, 1fr) auto', gap: 10, alignItems: 'center', fontSize: 12, color: '#64748b' },
+  linkGrid: { display: 'flex', flexDirection: 'column', gap: 8, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 10, marginBottom: 16, maxWidth: '100%', overflow: 'hidden' },
+  linkRow: { display: 'grid', gridTemplateColumns: 'minmax(72px, 90px) minmax(0, 1fr) auto', gap: 8, alignItems: 'center', fontSize: 12, color: '#64748b', minWidth: 0 },
+  linkCode: { display: 'block', minWidth: 0, whiteSpace: 'normal', overflowWrap: 'anywhere', wordBreak: 'break-word', color: '#475569', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' },
   formGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 14, marginTop: 14 },
   field: { display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 },
   label: { color: '#334155', fontSize: 12, fontWeight: 850 },
@@ -368,6 +369,7 @@ const s = {
   faqList: { display: 'flex', flexDirection: 'column', gap: 10 },
   faqCard: { display: 'grid', gridTemplateColumns: 'minmax(0, 0.9fr) minmax(0, 1.2fr) auto', gap: 10, alignItems: 'start', border: '1px solid #e2e8f0', borderRadius: 8, padding: 10 },
   muted: { color: '#64748b', fontSize: 13, lineHeight: 1.45, margin: 0 },
+  photoHelp: { color: '#64748b', fontSize: 13, lineHeight: 1.45, margin: '0 0 14px' },
   success: { color: '#047857', background: '#ecfdf5', border: '1px solid #a7f3d0', padding: '9px 10px', borderRadius: 8, fontSize: 13, fontWeight: 800 },
   error: { color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', padding: '9px 10px', borderRadius: 8, fontSize: 13, fontWeight: 800 },
   actions: { display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 18 },
