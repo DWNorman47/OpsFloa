@@ -27,6 +27,7 @@ export const APPS = [
     name: 'Booking',
     bg: '#0d9488',
     adminOnly: true,
+    hidden: true,
     icon: (
       <svg viewBox="0 0 20 20" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
         <rect x="3" y="4" width="14" height="13" rx="2" />
