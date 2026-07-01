@@ -50,12 +50,13 @@ function parseLines(value) {
     .filter(Boolean);
 }
 
-function ListField({ label, hint, value, onChange, placeholder }) {
+function ListField({ label, hint, name, value, onChange, placeholder }) {
   return (
     <label style={s.field}>
       <span style={s.label}>{label}</span>
       {hint && <span style={s.hintText}>{hint}</span>}
       <textarea
+        name={name}
         style={s.textarea}
         value={(value || []).join('\n')}
         onChange={e => onChange(parseLines(e.target.value))}
@@ -66,11 +67,12 @@ function ListField({ label, hint, value, onChange, placeholder }) {
   );
 }
 
-function TextField({ label, value, onChange, placeholder, rows = 3, maxLength }) {
+function TextField({ label, name, value, onChange, placeholder, rows = 3, maxLength }) {
   return (
     <label style={s.field}>
       <span style={s.label}>{label}</span>
       <textarea
+        name={name}
         style={s.textarea}
         value={value || ''}
         onChange={e => onChange(e.target.value)}
@@ -198,6 +200,7 @@ export default function PublicCompanyProfileAdmin() {
         <label style={s.field}>
           <span style={s.label}>Public company name</span>
           <input
+            name="public_profile_display_name"
             style={s.input}
             value={draft.display_name || ''}
             onChange={e => update('display_name', e.target.value)}
@@ -207,6 +210,7 @@ export default function PublicCompanyProfileAdmin() {
         </label>
         <TextField
           label="Short description"
+          name="public_profile_short_description"
           value={draft.short_description}
           onChange={value => update('short_description', value)}
           placeholder="A plain-language summary of who you are, what you do, and who you help."
@@ -215,24 +219,28 @@ export default function PublicCompanyProfileAdmin() {
         />
         <ListField
           label="Services offered"
+          name="public_profile_services_offered"
           value={draft.services_offered}
           onChange={value => update('services_offered', value)}
           placeholder={'Repair\nMaintenance\nInstallation'}
         />
         <ListField
           label="Service areas"
+          name="public_profile_service_areas"
           value={draft.service_areas}
           onChange={value => update('service_areas', value)}
           placeholder={'Phoenix\nMesa\nScottsdale'}
         />
         <ListField
           label="Project types"
+          name="public_profile_project_types"
           value={draft.project_types}
           onChange={value => update('project_types', value)}
           placeholder={'Commercial\nResidential\nEmergency work'}
         />
         <ListField
           label="Equipment and capabilities"
+          name="public_profile_equipment_capabilities"
           value={draft.equipment_capabilities}
           onChange={value => update('equipment_capabilities', value)}
           placeholder={'Lift access\nFleet service vehicles\nLicensed technicians'}
@@ -242,6 +250,7 @@ export default function PublicCompanyProfileAdmin() {
       <div style={s.formGrid}>
         <TextField
           label="License/certification info"
+          name="public_profile_license_info"
           value={draft.license_info}
           onChange={value => update('license_info', value)}
           placeholder="License numbers, bonding, insurance, certifications, or compliance notes."
@@ -249,6 +258,7 @@ export default function PublicCompanyProfileAdmin() {
         />
         <TextField
           label="Quote/request instructions"
+          name="public_profile_quote_instructions"
           value={draft.quote_instructions}
           onChange={value => update('quote_instructions', value)}
           placeholder="Tell visitors what details to include and what happens after they submit a request."
@@ -269,6 +279,7 @@ export default function PublicCompanyProfileAdmin() {
             <label key={key} style={s.field}>
               <span style={s.label}>{label}</span>
               <input
+                name={`public_profile_contact_${key}`}
                 style={s.input}
                 value={draft.contact_info?.[key] || ''}
                 onChange={e => updateContact(key, e.target.value)}
@@ -290,6 +301,7 @@ export default function PublicCompanyProfileAdmin() {
             {draft.faq_items.map((item, index) => (
               <div key={index} style={s.faqCard}>
                 <input
+                  name={`public_profile_faq_${index}_question`}
                   style={s.input}
                   value={item.question}
                   onChange={e => updateFaq(index, 'question', e.target.value)}
@@ -297,6 +309,7 @@ export default function PublicCompanyProfileAdmin() {
                   maxLength={220}
                 />
                 <textarea
+                  name={`public_profile_faq_${index}_answer`}
                   style={s.textarea}
                   value={item.answer}
                   onChange={e => updateFaq(index, 'answer', e.target.value)}
