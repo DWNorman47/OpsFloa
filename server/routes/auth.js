@@ -48,14 +48,7 @@ const authLimiter = rateLimit({
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-function validatePassword(password, username) {
-  // NIST SP 800-63B modern guidance: favour length over forced complexity.
-  // 8-char minimum is the conservative floor; max stays at 128.
-  if (password.length < 8) return 'Password must be at least 8 characters';
-  if (password.length > 128) return 'Password must be 128 characters or fewer';
-  if (username && password.toLowerCase().includes(username.toLowerCase())) return 'Password cannot contain your username';
-  return null;
-}
+const { validatePassword } = require('../passwordPolicy');
 
 function signToken(user) {
   return jwt.sign(
