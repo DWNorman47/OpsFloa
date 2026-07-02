@@ -6,6 +6,8 @@ const bcrypt = require('bcryptjs');
 const { requireSuperAdmin } = require('../middleware/auth');
 const { seedBuiltinRoles } = require('../permissions');
 const { COMPANY_SUBSCRIPTION_STATUSES, COMPANY_PLANS } = require('../constants/companyEnums');
+const { validatePassword } = require('../passwordPolicy');
+const { logAudit } = require('../auditLog');
 
 const DEMO_COMPANY_NAME = 'OpsFloa Demo Workspace';
 const DEMO_COMPANY_SLUG = 'opsfloa-demo-workspace';
@@ -720,6 +722,50 @@ router.post('/users/:id/revoke-sessions', requireSuperAdmin, async (req, res) =>
     res.json({ revoked: true, user: result.rows[0] });
   } catch (err) {
     logger.error({ err }, 'catch block error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /superadmin/users/:id/set-password — directly set a user's password.
+// For recovering locked-out accounts. Sets an exact working password (no
+// forced change), clears any pending reset token, and bumps token_version so
+// existing sessions are logged out — same session semantics as any password
+// change. Every use leaves an audit_log row.
+router.post('/users/:id/set-password', requireSuperAdmin, async (req, res) => {
+  try {
+    const password = req.body?.password;
+    const userRes = await pool.query(
+      'SELECT id, username, full_name, company_id, role FROM users WHERE id = $1',
+      [req.params.id]
+    );
+    if (userRes.rowCount === 0) return res.status(404).json({ error: 'User not found' });
+    const user = userRes.rows[0];
+
+    const invalid = validatePassword(password, user.username);
+    if (invalid) return res.status(400).json({ error: invalid });
+
+    const hash = await bcrypt.hash(password, 10);
+    await pool.query(
+      `UPDATE users
+          SET password_hash = $1,
+              must_change_password = false,
+              reset_token = NULL,
+              reset_token_expires = NULL,
+              token_version = COALESCE(token_version, 0) + 1
+        WHERE id = $2`,
+      [hash, user.id]
+    );
+
+    // Sensitive action — leave a trail (best-effort; never fails the request).
+    logAudit(
+      user.company_id, req.user.id, req.user.full_name || req.user.username,
+      'user.password_set_by_superadmin', 'user', user.id, user.full_name,
+      { target_username: user.username, target_role: user.role }
+    );
+
+    res.json({ ok: true, user: { id: user.id, username: user.username, full_name: user.full_name } });
+  } catch (err) {
+    logger.error({ err }, 'superadmin set-password error');
     res.status(500).json({ error: 'Server error' });
   }
 });

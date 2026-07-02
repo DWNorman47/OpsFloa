@@ -109,6 +109,7 @@ export default function SuperAdmin() {
   // impersonate
   const [impersonating, setImpersonating] = useState(null); // companyId
   const [revoking, setRevoking] = useState(null); // user id
+  const [settingPw, setSettingPw] = useState(null); // user id
   const [impersonationLog, setImpersonationLog] = useState(null); // null = not loaded, [] = empty, [...] = rows
   const [impersonateError, setImpersonateError] = useState(null); // { id, msg }
 
@@ -269,6 +270,23 @@ export default function SuperAdmin() {
     } catch (err) {
       alert(err.response?.data?.error || 'Revoke failed');
     } finally { setRevoking(null); }
+  };
+
+  const handleSetPassword = async (user) => {
+    const pw = window.prompt(
+      `Set a new password for ${user.full_name} (@${user.username}).\n\n` +
+      `Minimum 8 characters. They'll be signed out of any existing sessions and ` +
+      `can log in with this password immediately.`
+    );
+    if (pw == null) return; // cancelled
+    if (pw.length < 8) { alert('Password must be at least 8 characters.'); return; }
+    setSettingPw(user.id);
+    try {
+      await api.post(`/superadmin/users/${user.id}/set-password`, { password: pw });
+      alert(`Password updated for @${user.username}.`);
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to set password');
+    } finally { setSettingPw(null); }
   };
 
   const exportCompany = async (company) => {
@@ -775,6 +793,14 @@ export default function SuperAdmin() {
                                               >
                                                 {revoking === u.id ? '…' : 'Revoke sessions'}
                                               </button>
+                                              <button
+                                                style={{ ...styles.userSetPwBtn, ...(settingPw === u.id ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
+                                                onClick={() => handleSetPassword(u)}
+                                                disabled={settingPw === u.id}
+                                                title="Set this user's password directly"
+                                              >
+                                                {settingPw === u.id ? '…' : 'Set password'}
+                                              </button>
                                             </>
                                           )}
                                         </td>
@@ -837,6 +863,13 @@ export default function SuperAdmin() {
                                                 disabled={revoking === u.id}
                                               >
                                                 {revoking === u.id ? '…' : 'Revoke sessions'}
+                                              </button>
+                                              <button
+                                                style={{ ...styles.userSetPwBtn, ...(settingPw === u.id ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
+                                                onClick={() => handleSetPassword(u)}
+                                                disabled={settingPw === u.id}
+                                              >
+                                                {settingPw === u.id ? '…' : 'Set password'}
                                               </button>
                                             </div>
                                           )}
@@ -1211,6 +1244,7 @@ const styles = {
   roleTag: { padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600 },
   userImpersonateBtn: { padding: '4px 10px', borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', color: '#1e40af', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' },
   userRevokeBtn:      { padding: '4px 10px', borderRadius: 6, border: '1px solid #fca5a5', background: '#fff', color: '#b91c1c', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', marginLeft: 6 },
+  userSetPwBtn:       { padding: '4px 10px', borderRadius: 6, border: '1px solid #93c5fd', background: '#fff', color: '#1d4ed8', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', marginLeft: 6 },
   // Mobile-only user card layout (CSS .sa-users-mobile/.sa-users-table toggle which renders)
   userCard: { border: '1px solid #f0f0f0', borderRadius: 8, marginBottom: 6, overflow: 'hidden' },
   userCardHeader: {
