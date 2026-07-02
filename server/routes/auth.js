@@ -5,7 +5,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const speakeasy = require('speakeasy');
 const qrcode = require('qrcode');
-const sgMail = require('@sendgrid/mail');
+const { sendEmail } = require('../email');
 const rateLimit = require('express-rate-limit');
 const { userOrIpKey } = require('../middleware/rateLimitKey');
 const pool = require('../db');
@@ -46,7 +46,17 @@ const authLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+// The send call sites below use a legacy { to, subject, html } object shape and
+// rely on a throw to signal failure (registration rolls the account back if the
+// confirmation email can't be sent). Forward to the central sendEmail() and
+// re-throw on provider failure so that contract is preserved.
+const sgMail = {
+  send: async ({ to, subject, html }) => {
+    const r = await sendEmail(to, subject, html);
+    if (r && r.ok === false) { const e = new Error('email send failed'); e.emailFailed = true; throw e; }
+    return r;
+  },
+};
 
 const { validatePassword } = require('../passwordPolicy');
 
@@ -284,7 +294,6 @@ router.post('/register', authLimiter, async (req, res) => {
     if (priorCount >= 1) {
       const priorNames = ipQuery.rows[0].company_names || [];
       sgMail.send({
-      from: { name: 'OpsFloa', email: process.env.SENDGRID_FROM_EMAIL },
       to: 'info@opsfloa.com',
       subject: `⚠️ Multiple trial registrations from IP ${registrationIp}`,
       html: `
@@ -350,7 +359,6 @@ router.post('/register', authLimiter, async (req, res) => {
     // Send confirmation email — COMMIT only after success so email failure rolls back the account
     const confirmUrl = `${process.env.APP_URL}/confirm-email?token=${confirmToken}`;
     await sgMail.send({
-      from: { name: 'OpsFloa', email: process.env.SENDGRID_FROM_EMAIL },
       to: email,
       subject: 'Confirm your OpsFloa email',
       html: `
@@ -368,8 +376,8 @@ router.post('/register', authLimiter, async (req, res) => {
   } catch (err) {
     await client.query('ROLLBACK');
     if (err.code === '23505') return res.status(409).json({ error: 'Username already taken at this company' });
-    if (err.response) {
-      logger.error({ err: err.response.body }, 'Confirmation email failed — account not created');
+    if (err.emailFailed || err.response) {
+      logger.error({ err: err.response?.body || err.message }, 'Confirmation email failed — account not created');
       return res.status(500).json({ error: 'Failed to send confirmation email. Please check your email address and try again.' });
     }
     logger.error({ err }, 'catch block error');
@@ -461,7 +469,6 @@ router.post('/resend-confirmation', async (req, res) => {
     const confirmUrl = `${process.env.APP_URL}/confirm-email?token=${confirmToken}`;
     try {
       await sgMail.send({
-        from: { name: 'OpsFloa', email: process.env.SENDGRID_FROM_EMAIL },
         to: email,
         subject: 'Confirm your OpsFloa email',
         html: `
@@ -524,7 +531,6 @@ router.post('/forgot-password', authLimiter, async (req, res) => {
     res.json({ success: true });
 
     sgMail.send({
-      from: { name: 'OpsFloa', email: process.env.SENDGRID_FROM_EMAIL },
       to: email,
       subject: 'Reset your OpsFloa password',
       html: `

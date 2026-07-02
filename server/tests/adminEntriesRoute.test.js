@@ -36,7 +36,6 @@ jest.mock('./inbox', () => ({
 jest.mock('../routes/inbox', () => ({
   createInboxItem: jest.fn(), createInboxItemBatch: jest.fn(),
 }));
-jest.mock('@sendgrid/mail', () => ({ setApiKey: jest.fn(), send: jest.fn() }));
 
 const express = require('express');
 const request = require('supertest');

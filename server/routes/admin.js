@@ -4,7 +4,6 @@ const logger = require('../logger');
 const { csvCell } = require('../utils/csv');
 const { escapeHtml } = require('../utils/htmlEscape');
 const crypto = require('crypto');
-const sgMail = require('@sendgrid/mail');
 const rateLimit = require('express-rate-limit');
 const { userOrIpKey } = require('../middleware/rateLimitKey');
 const { entryInstants, validLocalDate, wallClockInTZ } = require('../utils/timeFormat');
@@ -24,7 +23,15 @@ const { weekRange, weekBucketKey } = require('../utils/weekBounds');
 const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const qbo = require('../services/qbo');
 
-sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+// Legacy { to, subject, html } send shape → central sendEmail(); re-throw on
+// provider failure so the invite try/catch still sets email_sent correctly.
+const sgMail = {
+  send: async ({ to, subject, html }) => {
+    const r = await sendEmail(to, subject, html);
+    if (r && r.ok === false) throw new Error('email send failed');
+    return r;
+  },
+};
 
 // Worker limits per plan (null = unlimited). Trial always gets unlimited.
 const WORKER_LIMITS = { free: 3, starter: 10, business: null };
@@ -1157,7 +1164,6 @@ router.post('/workers/invite', requireAdmin, requirePerm('manage_workers'), invi
     let emailSent = true;
     try {
       await sgMail.send({
-        from: { name: 'OpsFloA', email: process.env.SENDGRID_FROM_EMAIL },
         to: email,
         subject: `You've been invited to OpsFloA`,
         html: `
@@ -1204,7 +1210,6 @@ router.post('/workers/:id/send-invite', requireAdmin, requirePerm('manage_worker
     let emailSent = true;
     try {
       await sgMail.send({
-        from: { name: 'OpsFloA', email: process.env.SENDGRID_FROM_EMAIL },
         to: worker.email,
         subject: `You've been invited to OpsFloA`,
         html: `

@@ -1,6 +1,9 @@
 require('dotenv').config();
 
-const REQUIRED_ENV = ['DATABASE_URL', 'JWT_SECRET', 'R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET_NAME', 'R2_PUBLIC_URL', 'SENDGRID_API_KEY', 'SENDGRID_FROM_EMAIL'];
+// RESEND_API_KEY / EMAIL_FROM are intentionally NOT required: email.js no-ops
+// (with a warning) when the key is absent, so a partially-configured environment
+// still boots. Set them for email to actually send.
+const REQUIRED_ENV = ['DATABASE_URL', 'JWT_SECRET', 'R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET_NAME', 'R2_PUBLIC_URL'];
 const missing = REQUIRED_ENV.filter(k => !process.env[k]);
 if (missing.length) {
   console.error(`ERROR: Missing required environment variables: ${missing.join(', ')}`);
