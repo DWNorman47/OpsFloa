@@ -588,8 +588,8 @@ export default function AdministrationPage() {
   // appear only with the matching perm.
   const tabs = [
     { id: 'company',      label: t.adminTabCompany      },
-    ...(canManageSettings ? [{ id: 'workspace', label: 'Workspace' }] : []),
-    ...(canSeeRequests ? [{ id: 'public', label: 'Public' }] : []),
+    ...(canManageSettings ? [{ id: 'workspace', label: t.admpTabWorkspace }] : []),
+    ...(canSeeRequests ? [{ id: 'public', label: t.admpTabPublic }] : []),
     ...((plan.hasQbo && canManageIntegrations) ? [{ id: 'integrations', label: t.adminTabIntegrations }] : []),
     ...(canManageBilling ? [{ id: 'billing', label: t.adminTabBilling }] : []),
     ...(canSeeLog ? [{ id: 'log', label: t.adminTabLog }] : []),
