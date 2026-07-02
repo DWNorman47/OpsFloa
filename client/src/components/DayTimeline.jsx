@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import api from '../api';
 import { useToast } from '../contexts/ToastContext';
 import { useT } from '../hooks/useT';
+import { useAuth } from '../contexts/AuthContext';
+import { labelSg } from '../companyLabels';
 
 // ── Time helpers ─────────────────────────────────────────────────────────────
 function strToMin(str) {
@@ -47,8 +49,9 @@ function todayLocal() {
 export default function DayTimeline({ entries, projects, settings, onEntryAdded, onEntryUpdated, onRefresh }) {
   const t = useT();
   const toast = useToast();
+  const { user } = useAuth();
   const today = todayLocal();
-  const workLabel = settings?.label_work || 'Project';
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const workLabelLower = workLabel.toLowerCase();
 
   const [clockStatus, setClockStatus] = useState(undefined); // undefined=loading, null=not clocked in, obj=clocked in

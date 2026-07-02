@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { userCanSeeModule, canSeeTimeclockApp } from '../modulePermissions';
 import { userHasAnyPerm } from '../hooks/usePerm';
 import { useT } from '../hooks/useT';
+import { labelSg, labelPl } from '../companyLabels';
 
 function enabled(settings, key, fallback = true) {
   if (!settings) return fallback;
@@ -49,11 +50,12 @@ export default function HomePage() {
   const [showPlaces, setShowPlaces] = useState(false);
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const terms = useMemo(() => ({
-    work: settings?.label_work || 'Project',
-    client: settings?.label_client || 'Customer',
-    worker: settings?.label_worker || 'Team Member',
-    field: settings?.label_field || 'Field Work',
-  }), [settings]);
+    work: labelSg(settings?.label_work, 'work', user?.language),
+    client: labelSg(settings?.label_client, 'client', user?.language),
+    worker: labelSg(settings?.label_worker, 'worker', user?.language),
+    workerPlural: labelPl(settings?.label_worker, 'worker', user?.language),
+    field: labelSg(settings?.label_field, 'field', user?.language),
+  }), [settings, user?.language]);
 
   useEffect(() => {
     let alive = true;
@@ -95,7 +97,7 @@ export default function HomePage() {
         list.push({ title: `${t.hpActionAddWork} ${terms.work.toLowerCase()}`, detail: `${t.hpActionAddWorkDetailCreate} ${terms.work.toLowerCase()} ${t.hpActionAddWorkDetailManage} ${terms.client.toLowerCase()} ${t.hpActionAddWorkDetailRecords}`, to: '/projects', icon: 'W' });
       }
       if (enabled(settings, 'module_team') && can('team')) {
-        list.push({ title: t.hpActionInviteTeamTitle, detail: `${t.hpActionInviteTeamDetailAdd} ${plural(terms.worker).toLowerCase()} ${t.hpActionInviteTeamDetailAccess}`, to: '/team', icon: 'T' });
+        list.push({ title: t.hpActionInviteTeamTitle, detail: `${t.hpActionInviteTeamDetailAdd} ${terms.workerPlural.toLowerCase()} ${t.hpActionInviteTeamDetailAccess}`, to: '/team', icon: 'T' });
       }
       if (can('administration')) {
         list.push({ title: t.hpActionTuneSetupTitle, detail: t.hpActionTuneSetupDetail, to: '/administration', icon: 'S' });
@@ -128,7 +130,7 @@ export default function HomePage() {
       ['timeclock', t.hpPlaceTimeClockName, '/timeclock', t.hpPlaceTimeClockDetail],
       ['field', terms.field, '/field', t.hpPlaceFieldDetail],
       ['projects', terms.work, '/projects', `${terms.work}, ${t.hpPlaceProjectsDetail}`],
-      ['team', t.hpPlaceDirectoryName, '/team', `${plural(terms.worker)}, ${t.hpPlaceDirectoryDetail}`],
+      ['team', t.hpPlaceDirectoryName, '/team', `${terms.workerPlural}, ${t.hpPlaceDirectoryDetail}`],
       ['inventory', t.hpPlaceInventoryName, '/inventory', t.hpPlaceInventoryDetail],
       ['financial_reports', t.hpPlaceReportsName, '/financial-reports', t.hpPlaceReportsDetail],
       ['administration', t.hpPlaceAdminName, '/administration', t.hpPlaceAdminDetail],

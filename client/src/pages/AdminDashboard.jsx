@@ -11,6 +11,7 @@ import { PageIntro } from '../components/PageShell';
 import TabBar from '../components/TabBar';
 import OnboardingChecklist from '../components/OnboardingChecklist';
 import api from '../api';
+import { labelSg, labelPl } from '../companyLabels';
 
 import { silentError } from '../errorReporter';
 // Heavy components — lazy-loaded on first render to reduce initial bundle size
@@ -170,10 +171,10 @@ export function WorkforcePanel() {
   const handleProjectUpdated = p  => setProjects(prev => prev.map(x => x.id === p.id ? p : x));
   const handleProjectRestored= p  => setProjects(prev => [...prev, p]);
 
-  const workerLabel = settings?.label_worker || 'Team Member';
-  const workerLabelPlural = workerLabel.endsWith('s') ? workerLabel : `${workerLabel}s`;
-  const workLabel = settings?.label_work || 'Project';
-  const workLabelPlural = workLabel.endsWith('s') ? workLabel : `${workLabel}s`;
+  const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
+  const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
+  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
 
   return (
     <>

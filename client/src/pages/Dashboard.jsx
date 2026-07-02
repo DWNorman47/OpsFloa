@@ -18,6 +18,7 @@ import OfflineBanner from '../components/OfflineBanner';
 import SignatureModal from '../components/SignatureModal';
 import { WorkforcePanel } from './AdminDashboard';
 import { userCanSeeModule } from '../modulePermissions';
+import { labelSg } from '../companyLabels';
 
 import { silentError } from '../errorReporter';
 // Secondary tabs — lazy-loaded on first visit
@@ -83,7 +84,7 @@ export default function Dashboard() {
   const [entryView, setEntryView] = useState('list');
   const [shiftPrefill, setShiftPrefill] = useState(null);
   const [chatUnread, setChatUnread] = useState(false);
-  const workLabel = settings?.label_work || 'Project';
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
 
   const handleFillFromShift = shift => {
     setShiftPrefill(shift);

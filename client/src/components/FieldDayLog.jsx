@@ -5,6 +5,7 @@ import { useOffline } from '../contexts/OfflineContext';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
 import { langToLocale } from '../utils';
+import { labelSg, labelPl } from '../companyLabels';
 import { SkeletonList } from './Skeleton';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -122,8 +123,8 @@ export default function FieldDayLog({ projects, isAdmin, settings = null }) {
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
-  const workLabel = settings?.label_work || 'Project';
-  const workLabelPlural = /s$/i.test(workLabel) ? workLabel : `${workLabel}s`;
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
+  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
   const { onSync } = useOffline() || {};
 
   const [project, setProject] = useState('');

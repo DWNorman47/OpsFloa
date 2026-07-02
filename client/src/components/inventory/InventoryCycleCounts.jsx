@@ -8,6 +8,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { formatDate } from '../../utils';
 import { SkeletonList } from '../Skeleton';
 import ModalShell from '../ModalShell';
+import { labelSg, labelPl } from '../../companyLabels';
 
 import { silentError } from '../../errorReporter';
 function useCountTypes(t) {
@@ -60,8 +61,8 @@ function formatLineStatus(status, t) {
 function CycleCountDetail({ count, settings, onBack, onComplete }) {
   const t = useT();
   const { user } = useAuth();
-  const workerLabel = settings?.label_worker || 'Team Member';
-  const workerPlural = `${workerLabel}s`;
+  const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
+  const workerPlural = labelPl(settings?.label_worker, 'worker', user?.language);
   const COUNT_TYPES = useCountTypes(t);
   const STATUS_COLORS = useStatusColors(t);
   const ROLE_LABELS = {

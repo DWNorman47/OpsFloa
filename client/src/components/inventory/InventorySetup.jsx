@@ -2,7 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import api from '../../api';
 import BinLabelModal from './BinLabelModal';
 import { useT } from '../../hooks/useT';
+import { useAuth } from '../../contexts/AuthContext';
 import { SkeletonList } from '../Skeleton';
+import { labelSg } from '../../companyLabels';
 
 import { silentError } from '../../errorReporter';
 function isHttpUrl(url) {
@@ -133,8 +135,9 @@ const pg = {
 
 function EntityForm({ level, item, parentId, parentOptions, onSave, onCancel, settings }) {
   const t = useT();
+  const { user } = useAuth();
   const isLocation = level.key === 'locations';
-  const workLabel = settings?.label_work || 'Project';
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
 
   const LEVEL_SGl = {
     locations:    t.invSetupLocationSgl,

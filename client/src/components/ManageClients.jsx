@@ -4,6 +4,8 @@ import { useT } from '../hooks/useT';
 import { useToast } from '../contexts/ToastContext';
 import { SkeletonList, SkeletonBlock } from './Skeleton';
 import EmptyState from './EmptyState';
+import { useAuth } from '../contexts/AuthContext';
+import { labelSg, labelPl } from '../companyLabels';
 
 // Document type metadata
 const DOC_TYPES = [
@@ -354,8 +356,9 @@ function ClientCard({ client, onEdit, onDeleted }) {
 
 export default function ManageClients({ settings = null }) {
   const t = useT();
-  const clientLabel = settings?.label_client || 'Customer';
-  const clientLabelPlural = /s$/i.test(clientLabel) ? clientLabel : `${clientLabel}s`;
+  const { user } = useAuth();
+  const clientLabel = labelSg(settings?.label_client, 'client', user?.language);
+  const clientLabelPlural = labelPl(settings?.label_client, 'client', user?.language);
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
