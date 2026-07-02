@@ -67,6 +67,18 @@ export const APPS = [
     path: '/inventory',
   },
   {
+    id: 'tools',
+    name: 'Tools',
+    bg: '#0f766e',
+    icon: (
+      <svg viewBox="0 0 20 20" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+        <path d="M12.6 3.2a4 4 0 0 0 4.2 4.2L8 16.2a2.1 2.1 0 0 1-3-3L13.8 4.4" />
+        <circle cx="5.8" cy="14.2" r="0.7" fill="#fff" stroke="none" />
+      </svg>
+    ),
+    path: '/tools',
+  },
+  {
     id: 'account',
     name: 'Account',
     bg: '#475569',
@@ -171,7 +183,7 @@ export default function AppSwitcher({ currentApp = 'timeclock', userRole, featur
   const settingsPending = loading && Object.keys(feat).length === 0;
   const APP_NAME_KEYS = {
     timeclock: 'appTimeClock', booking: 'appBooking', field: 'appField',
-    inventory: 'appInventory', account: 'appAccount', team: 'appDirectory',
+    inventory: 'appInventory', tools: 'appTools', account: 'appAccount', team: 'appDirectory',
     projects: 'appProjects', financial_reports: 'appReports',
     administration: 'appAdministration', help: 'appHelp',
   };
@@ -193,6 +205,7 @@ export default function AppSwitcher({ currentApp = 'timeclock', userRole, featur
     if (a.id === 'field' && feat.module_field === false) return false;
     if (a.id === 'projects' && feat.module_projects === false) return false;
     if (a.id === 'inventory' && feat.module_inventory === false) return false;
+    if (a.id === 'tools' && feat.module_tools === false) return false;
     if (a.id === 'team' && feat.module_team === false) return false;
     // Construction-lifecycle modules, each with its own admin toggle.
     // Reports hosts both Performance (Analytics) and the financial reports, so

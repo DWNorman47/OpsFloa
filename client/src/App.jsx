@@ -28,6 +28,7 @@ const ProjectsPage      = lazy(() => import('./pages/ProjectsPage'));
 const AdministrationPage = lazy(() => import('./pages/AdministrationPage'));
 const SuperAdmin        = lazy(() => import('./pages/SuperAdmin'));
 const InventoryPage     = lazy(() => import('./pages/InventoryPage'));
+const ToolsPage         = lazy(() => import('./pages/ToolsPage'));
 const AccountPage       = lazy(() => import('./pages/AccountPage'));
 const PrivacyPolicy     = lazy(() => import('./pages/PrivacyPolicy'));
 const EULA              = lazy(() => import('./pages/EULA'));
@@ -186,6 +187,7 @@ function AppRoutes() {
       {/* Analytics is now the Performance tab of the Reports module. */}
       <Route path="/analytics" element={<Navigate to="/financial-reports#performance" replace />} />
       <Route path="/inventory" element={<PrivateRoute moduleId="inventory"><InventoryPage /></PrivateRoute>} />
+      <Route path="/tools" element={<PrivateRoute moduleId="tools"><ToolsPage /></PrivateRoute>} />
       {/* Sales is now a tab set inside the Projects module. Keep the old paths
           working by deep-linking to the matching Projects tab. */}
       <Route path="/sales" element={<Navigate to="/projects#estimates" replace />} />
