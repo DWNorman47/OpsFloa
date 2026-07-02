@@ -645,6 +645,23 @@ export default function SuperAdmin() {
                             {PLANS.map(p => <option key={p} value={p}>{p}</option>)}
                           </select>
                         </div>
+                        <div style={styles.controlGroup}>
+                          <span style={styles.controlLabel}>Free seats</span>
+                          <input
+                            type="number"
+                            min="0"
+                            key={`seats-${c.id}-${c.bonus_seats ?? 0}`}
+                            style={styles.controlSelect}
+                            defaultValue={c.bonus_seats ?? 0}
+                            onBlur={e => {
+                              const n = parseInt(e.target.value, 10);
+                              const val = Number.isInteger(n) && n >= 0 ? n : 0;
+                              if (val !== (c.bonus_seats ?? 0)) patchCompany(c.id, { bonus_seats: val });
+                            }}
+                            disabled={working === c.id}
+                            title="Complimentary worker seats added on top of the plan limit — not billed via Stripe"
+                          />
+                        </div>
                         {(c.subscription_status === 'trial' || c.trial_ends_at) && (
                           <div style={styles.controlGroup}>
                             <span style={styles.controlLabel}>Trial ends</span>

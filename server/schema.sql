@@ -411,6 +411,7 @@ ALTER TABLE companies ADD COLUMN IF NOT EXISTS pro_addon              BOOLEAN NO
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS addon_qbo             BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS billing_cycle          VARCHAR(10) NOT NULL DEFAULT 'monthly';
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS annual_worker_count    INTEGER;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS bonus_seats            INTEGER NOT NULL DEFAULT 0; -- complimentary worker seats granted by super_admin (added to plan cap, not billed via Stripe)
 -- QBO OAuth tokens (per company)
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS qbo_access_token      TEXT;
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS qbo_refresh_token     TEXT;

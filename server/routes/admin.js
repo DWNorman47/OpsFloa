@@ -39,13 +39,16 @@ const ENTRY_HAS_ENDED_SQL = `end_ts IS NOT NULL AND end_ts <= NOW()`;
 
 async function checkWorkerLimit(companyId) {
   const company = await pool.query(
-    'SELECT plan, subscription_status, trial_ends_at FROM companies WHERE id = $1', [companyId]
+    'SELECT plan, subscription_status, trial_ends_at, bonus_seats FROM companies WHERE id = $1', [companyId]
   );
-  const { plan, subscription_status, trial_ends_at } = company.rows[0] || {};
+  const { plan, subscription_status, trial_ends_at, bonus_seats } = company.rows[0] || {};
   const trialActive = subscription_status === 'trial' && (!trial_ends_at || new Date(trial_ends_at) >= new Date());
   if (trialActive) return null; // active trial = unlimited
-  const limit = WORKER_LIMITS[plan || 'free'];
-  if (limit === null) return null; // business = unlimited
+  const base = WORKER_LIMITS[plan || 'free'];
+  if (base === null) return null; // business = unlimited
+  // Complimentary seats a super_admin granted this company sit on top of the
+  // plan cap and are not billed (see superadmin PATCH bonus_seats).
+  const limit = base + (parseInt(bonus_seats, 10) || 0);
   const count = await pool.query(
     `SELECT COUNT(*) FROM users WHERE company_id = $1 AND role = 'worker' AND active = true`,
     [companyId]

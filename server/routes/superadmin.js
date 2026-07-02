@@ -248,7 +248,7 @@ router.get('/companies', requireSuperAdmin, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT c.id, c.name, c.slug, c.active, c.created_at, c.plan, c.subscription_status,
-              c.trial_ends_at, c.mrr_cents, c.affiliate_id, c.addon_qbo, c.addon_certified_payroll,
+              c.trial_ends_at, c.mrr_cents, c.affiliate_id, c.addon_qbo, c.addon_certified_payroll, c.bonus_seats,
               a.name AS affiliate_name,
               COUNT(DISTINCT u.id) FILTER (WHERE u.role = 'worker' AND u.active = true) AS worker_count,
               COUNT(DISTINCT u.id) FILTER (WHERE u.role = 'admin' AND u.active = true) AS admin_count,
@@ -259,7 +259,7 @@ router.get('/companies', requireSuperAdmin, async (req, res) => {
        LEFT JOIN time_entries te ON te.company_id = c.id
        LEFT JOIN affiliates a ON c.affiliate_id = a.id
        GROUP BY c.id, c.name, c.slug, c.active, c.created_at, c.plan, c.subscription_status,
-                c.trial_ends_at, c.mrr_cents, c.affiliate_id, c.addon_qbo, c.addon_certified_payroll, a.name
+                c.trial_ends_at, c.mrr_cents, c.affiliate_id, c.addon_qbo, c.addon_certified_payroll, c.bonus_seats, a.name
        ORDER BY c.created_at DESC`
     );
     res.json(result.rows);
@@ -307,12 +307,13 @@ router.post('/demo-workspace', requireSuperAdmin, async (req, res) => {
 
 // PATCH /superadmin/companies/:id — update any combination of fields
 router.patch('/companies/:id', requireSuperAdmin, async (req, res) => {
-  const { active, affiliate_id, subscription_status, plan, name, trial_ends_at, addon_qbo, addon_certified_payroll } = req.body;
+  const { active, affiliate_id, subscription_status, plan, name, trial_ends_at, addon_qbo, addon_certified_payroll, bonus_seats } = req.body;
   if (
     active === undefined && affiliate_id === undefined &&
     subscription_status === undefined && plan === undefined &&
     name === undefined && trial_ends_at === undefined &&
-    addon_qbo === undefined && addon_certified_payroll === undefined
+    addon_qbo === undefined && addon_certified_payroll === undefined &&
+    bonus_seats === undefined
   ) return res.status(400).json({ error: 'No fields to update' });
 
   const VALID_STATUSES = COMPANY_SUBSCRIPTION_STATUSES;
@@ -323,6 +324,12 @@ router.patch('/companies/:id', requireSuperAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Invalid plan' });
   if (name !== undefined && !name?.trim())
     return res.status(400).json({ error: 'Name cannot be empty' });
+  let bonusSeatsVal;
+  if (bonus_seats !== undefined) {
+    bonusSeatsVal = Number(bonus_seats);
+    if (!Number.isInteger(bonusSeatsVal) || bonusSeatsVal < 0 || bonusSeatsVal > 100000)
+      return res.status(400).json({ error: 'bonus_seats must be a whole number between 0 and 100000' });
+  }
 
   try {
     const fields = [];
@@ -336,10 +343,11 @@ router.patch('/companies/:id', requireSuperAdmin, async (req, res) => {
     if (trial_ends_at !== undefined)       { fields.push(`trial_ends_at = $${idx++}`);        values.push(trial_ends_at || null); }
     if (addon_qbo !== undefined)           { fields.push(`addon_qbo = $${idx++}`);            values.push(!!addon_qbo); }
     if (addon_certified_payroll !== undefined) { fields.push(`addon_certified_payroll = $${idx++}`); values.push(!!addon_certified_payroll); }
+    if (bonus_seats !== undefined)         { fields.push(`bonus_seats = $${idx++}`);          values.push(bonusSeatsVal); }
     values.push(req.params.id);
     const result = await pool.query(
       `UPDATE companies SET ${fields.join(', ')} WHERE id = $${idx}
-       RETURNING id, name, slug, active, affiliate_id, subscription_status, plan, trial_ends_at, addon_qbo, addon_certified_payroll`,
+       RETURNING id, name, slug, active, affiliate_id, subscription_status, plan, trial_ends_at, addon_qbo, addon_certified_payroll, bonus_seats`,
       values
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Company not found' });
