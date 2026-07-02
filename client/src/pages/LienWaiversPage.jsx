@@ -17,6 +17,7 @@ import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { formatMoney } from '../utils/format';
+import { formatDate, formatDateTime } from '../utils';
 import { silentError } from '../errorReporter';
 import { useT } from '../hooks/useT';
 
@@ -66,6 +67,7 @@ const formatCents = (c) => formatMoney(c, { showCents: true });
 
 function LienWaiversList({ onOpen, onNew }) {
   const t = useT();
+  const { user } = useAuth();
   const [items, setItems] = useState([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
   const [loading, setLoading] = useState(true);
@@ -183,7 +185,7 @@ function LienWaiversList({ onOpen, onNew }) {
                       {w.subcontractor_name && <div style={{ fontSize: 12, color: '#6b7280' }}>{w.subcontractor_name}</div>}
                     </td>
                     <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(w.amount_cents)}</td>
-                    <td style={styles.td}>{new Date(w.through_date).toLocaleDateString()}</td>
+                    <td style={styles.td}>{formatDate(w.through_date, user?.language)}</td>
                     <td style={styles.td}><StatusBadge status={w.status} /></td>
                   </tr>
                 ))}
@@ -207,7 +209,7 @@ function LienWaiversList({ onOpen, onNew }) {
                 <div className="admin-card-sub">{w.project_name}</div>
                 {w.subcontractor_name && <div className="admin-card-sub">{w.subcontractor_name}</div>}
                 <div className="admin-card-row">
-                  <span className="admin-card-sub">{t.lwThrough} {new Date(w.through_date).toLocaleDateString()}</span>
+                  <span className="admin-card-sub">{t.lwThrough} {formatDate(w.through_date, user?.language)}</span>
                   <StatusBadge status={w.status} />
                 </div>
                 <div className="admin-card-row">
@@ -376,6 +378,7 @@ function NewLienWaiverForm({ projects, subs, onSave, onCancel }) {
 
 function LienWaiverDetail({ id, onBack }) {
   const t = useT();
+  const { user } = useAuth();
   const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const [w, setW] = useState(null);
@@ -550,7 +553,7 @@ function LienWaiverDetail({ id, onBack }) {
         <h3 style={styles.formH3}>{t.lwSummary}</h3>
         <div className="admin-form-grid-4">
           <Info label={t.lwAmount} value={formatCents(w.amount_cents)} />
-          <Info label={t.lwThroughDate} value={new Date(w.through_date).toLocaleDateString()} />
+          <Info label={t.lwThroughDate} value={formatDate(w.through_date, user?.language)} />
           <Info label={t.lwState} value={w.state} />
           <Info label={t.lwSignatureMethod} value={w.signature_method} />
         </div>
@@ -562,7 +565,7 @@ function LienWaiverDetail({ id, onBack }) {
           <Info label={t.lwName} value={w.signer_name} />
           <Info label={t.lwCompany} value={w.signer_company} />
           <Info label={t.lwTitle2} value={w.signer_title} />
-          <Info label={t.lwSignedAt} value={w.signed_at ? new Date(w.signed_at).toLocaleString() : null} />
+          <Info label={t.lwSignedAt} value={w.signed_at ? formatDateTime(w.signed_at, user?.language) : null} />
         </div>
       </div>
 

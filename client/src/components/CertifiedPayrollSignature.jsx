@@ -12,6 +12,8 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import ModalShell from './ModalShell';
 import { useT } from '../hooks/useT';
+import { useAuth } from '../contexts/AuthContext';
+import { formatDateTime } from '../utils';
 
 export default function CertifiedPayrollSignature({
   projectId = null,
@@ -22,6 +24,7 @@ export default function CertifiedPayrollSignature({
   defaultTitle = '',
 }) {
   const t = useT();
+  const { user } = useAuth();
   const [complianceText, setComplianceText] = useState('');
   const [existing, setExisting] = useState(null);
   const [name, setName] = useState(defaultName);
@@ -72,7 +75,7 @@ export default function CertifiedPayrollSignature({
         <div role="status" style={styles.existing}>
           {t.cpsAlreadySignedBy} <strong>{existing.signer_name}</strong>
           {existing.signer_title ? ` (${existing.signer_title})` : ''}{' · '}
-          {new Date(existing.signed_at).toLocaleString()}.
+          {formatDateTime(existing.signed_at, user?.language)}.
           <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>{t.cpsReSignNote}</div>
         </div>
       )}

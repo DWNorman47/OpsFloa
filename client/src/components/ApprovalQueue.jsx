@@ -6,7 +6,7 @@ import EmptyState from './EmptyState';
 import MessageThread from './MessageThread';
 import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
-import { fmtHours, langToLocale } from '../utils';
+import { fmtHours, langToLocale, formatDateTime } from '../utils';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -747,7 +747,7 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                     <span style={styles.recentTime}>{formatTime(e.start_time)} – {formatTime(e.end_time)}</span>
                     {e.project_name && <span style={styles.recentProject}>{e.project_name}</span>}
                     {e.qbo_activity_id && (
-                      <span style={styles.qboSyncBadge} title={`Synced to QuickBooks${e.qbo_synced_at ? ' · ' + new Date(e.qbo_synced_at).toLocaleTimeString() : ''}`}>
+                      <span style={styles.qboSyncBadge} title={`Synced to QuickBooks${e.qbo_synced_at ? ' · ' + formatDateTime(e.qbo_synced_at, user?.language) : ''}`}>
                         QB ✓
                       </span>
                     )}
