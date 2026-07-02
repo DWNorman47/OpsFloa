@@ -13,6 +13,7 @@ export default function ServiceRequest() {
   const { slug } = useParams();
   const [companyName, setCompanyName] = useState('');
   const [accepting, setAccepting] = useState(true);
+  const [hasPublicProfile, setHasPublicProfile] = useState(false);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -40,6 +41,7 @@ export default function ServiceRequest() {
       .then(r => {
         setCompanyName(r.data.company_name);
         setAccepting(r.data.accepting);
+        setHasPublicProfile(!!r.data.has_public_profile);
         const cats = r.data.categories || [];
         setCategories(cats);
         if (cats.length > 0) setForm(f => ({ ...f, category: cats[0] }));
@@ -106,6 +108,9 @@ export default function ServiceRequest() {
           <div style={styles.logo}>OpsFloa</div>
           <h1 style={styles.title}>{companyName}</h1>
           <p style={styles.subtitle}>Request service, support, or an estimate</p>
+          {hasPublicProfile && (
+            <a href={`/companies/${slug}`} style={styles.profileLink}>View company profile</a>
+          )}
         </div>
 
         {!accepting ? (
@@ -114,9 +119,9 @@ export default function ServiceRequest() {
           </p>
         ) : (
           <form onSubmit={submit} style={styles.form}>
-            {/* Honeypot, visually hidden and labeled for accessibility tools. */}
-            <div aria-hidden="true" style={{ position: 'absolute', left: '-9999px', height: 0, width: 0, overflow: 'hidden' }}>
-              <label>Website <input type="text" tabIndex={-1} autoComplete="off" value={form.website} onChange={e => set('website', e.target.value)} /></label>
+            {/* Honeypot: present for bots, hidden from humans and assistive tech. */}
+            <div aria-hidden="true" style={styles.honeypot}>
+              <input type="text" tabIndex={-1} autoComplete="off" aria-label="Website" value={form.website} onChange={e => set('website', e.target.value)} />
             </div>
 
             <div style={styles.row}>
@@ -186,9 +191,11 @@ const styles = {
   logo:    { fontSize: 12, color: 'var(--ops-page-accent)', fontWeight: 800, letterSpacing: 2, marginBottom: 8 },
   title:   { fontSize: 22, fontWeight: 800, color: '#111827', margin: 0 },
   subtitle:{ fontSize: 14, color: '#6b7280', marginTop: 6 },
+  profileLink: { display: 'inline-flex', marginTop: 10, color: 'var(--ops-page-accent)', fontSize: 13, fontWeight: 700, textDecoration: 'none' },
   bodyText:{ fontSize: 14, color: '#374151', lineHeight: 1.55 },
   notAccepting: { background: '#fef3c7', color: '#92400e', padding: '14px 16px', borderRadius: 8, fontSize: 14 },
   form:    { display: 'flex', flexDirection: 'column', gap: 14 },
+  honeypot:{ position: 'fixed', top: -1000, left: -1000, width: 1, height: 1, opacity: 0, overflow: 'hidden', pointerEvents: 'none' },
   row:     { display: 'flex', gap: 12, flexWrap: 'wrap' },
   field:   { display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 200px' },
   label:   { fontSize: 12, fontWeight: 700, color: '#374151' },

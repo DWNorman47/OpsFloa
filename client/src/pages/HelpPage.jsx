@@ -56,7 +56,11 @@ export default function HelpPage() {
     ? HELP_SECTIONS.map(section => ({
         ...section,
         items: section.items.filter(it => {
-          const haystack = (it.q + ' ' + (Array.isArray(it.a) ? it.a.join(' ') : it.a)).toLowerCase();
+          const haystack = [
+            it.q,
+            Array.isArray(it.a) ? it.a.join(' ') : it.a,
+            Array.isArray(it.keywords) ? it.keywords.join(' ') : '',
+          ].join(' ').toLowerCase();
           return haystack.includes(q);
         }),
       })).filter(s => s.items.length > 0)
@@ -65,7 +69,7 @@ export default function HelpPage() {
   return (
     <div style={styles.page}>
       <OfflineBanner />
-      <AppHeader currentApp="account" features={settings || {}} />
+      <AppHeader currentApp="help" features={settings || {}} />
 
       <main id="main-content" style={styles.main} className="mobile-main">
         <div style={styles.headerCard}>

@@ -29,6 +29,17 @@ describe('guideContent', () => {
     expect(results.findIndex(task => task.id === 'run-payroll-export')).toBe(-1);
   });
 
+  it('finds time off and PTO guidance from common wording', () => {
+    expect(filterGuideTasks('time off', 'timeclock')[0].id).toBe('request-time-off');
+    expect(filterGuideTasks('PTO', 'timeclock')[0].id).toBe('request-time-off');
+  });
+
+  it('finds inventory count guidance from plain language', () => {
+    const results = filterGuideTasks('inventory count', 'inventory');
+
+    expect(results[0].id).toBe('run-inventory-count');
+  });
+
   it('marks a guide ready when modules and permissions line up', () => {
     const task = findGuideTask('create-subcontractor-po');
     const availability = getGuideTaskAvailability(task, adminUser, { module_projects: true });

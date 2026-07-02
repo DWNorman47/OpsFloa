@@ -42,7 +42,6 @@ export default function AccountPage() {
           <div style={styles.accountRow}>
             <div>
               <div style={styles.accountLabel}>{t.changePasswordTitle}</div>
-              <div style={styles.accountSub}>{t.newPassword}</div>
             </div>
             <button style={styles.accountBtn} onClick={() => setShowChangePassword(true)}>{t.changePassword}</button>
           </div>

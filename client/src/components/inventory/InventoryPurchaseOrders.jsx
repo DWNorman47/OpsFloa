@@ -598,16 +598,19 @@ function POCreateForm({ locations, suppliers, prefillItems, onSaved, onCancel })
     notes: '',
   });
   const [lines, setLines]   = useState(() =>
-    (prefillItems || []).map(item => ({
-      key: item.id,
-      item_id: String(item.id),
-      item_name: item.item_name,
-      sku: item.sku,
-      unit: item.unit,
-      qty_ordered: String(item.reorder_qty > 0 ? item.reorder_qty : 1),
-      unit_cost: item.unit_cost != null ? String(item.unit_cost) : '',
-      notes: '',
-    }))
+    (prefillItems || []).map(item => {
+      const itemId = item.item_id || item.id;
+      return {
+        key: itemId,
+        item_id: String(itemId),
+        item_name: item.item_name,
+        sku: item.sku,
+        unit: item.unit,
+        qty_ordered: String(item.reorder_qty > 0 ? item.reorder_qty : 1),
+        unit_cost: item.unit_cost != null ? String(item.unit_cost) : '',
+        notes: '',
+      };
+    })
   );
   const [items, setItems]   = useState([]);
   const [saving, setSaving] = useState(false);

@@ -1089,13 +1089,14 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
                             </div>
                           </div>
                         ) : (
-                          <div>
+                          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                             <span style={s.infoValue}>{fmtRate(w, currency)}</span>
-                            <span style={{ ...s.infoValue, marginLeft: 10, fontSize: 12, color: '#6b7280' }}>
+                            <span aria-hidden="true" style={{ color: '#94a3b8', fontSize: 12 }}>-</span>
+                            <span style={{ ...s.infoValue, fontSize: 12, color: '#6b7280' }}>
                               {overtimeRules.find(r => r.value === (w.overtime_rule || 'daily'))?.label}
                             </span>
                             {w.guaranteed_weekly_hours != null && parseFloat(w.guaranteed_weekly_hours) > 0 && (
-                              <span style={{ ...s.infoValue, marginLeft: 10, fontSize: 12, color: '#2563eb', background: '#dbeafe', padding: '1px 7px', borderRadius: 8 }}>
+                              <span style={{ ...s.infoValue, fontSize: 12, color: '#2563eb', background: '#dbeafe', padding: '1px 7px', borderRadius: 8 }}>
                                 {parseFloat(w.guaranteed_weekly_hours)}{t.mwHwkMin}
                               </span>
                             )}

@@ -1,5 +1,6 @@
 const pool = require('../db');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const { seedBuiltinRoles } = require('../permissions');
 
 // Manual or scheduled seed for visual QA. It creates/fills only the named
@@ -153,6 +154,18 @@ async function ensureChildRows(client, table, keyName, keyValue, rows) {
   }
 }
 
+async function replaceChildRows(client, table, keyName, keyValue, rows) {
+  await client.query(`DELETE FROM ${table} WHERE ${keyName} = $1`, [keyValue]);
+  for (const row of rows) {
+    const merged = { [keyName]: keyValue, ...row };
+    const cols = Object.keys(merged);
+    await client.query(
+      `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(', ')})`,
+      Object.values(merged)
+    );
+  }
+}
+
 async function ensureDemoCompany(client) {
   // Hard-pin to a company whose subscription_status is 'exempt' — that's
   // a sentinel only the superadmin tools set on intentional demo/internal
@@ -261,6 +274,7 @@ async function ensureDemoSettings(client, companyId) {
     module_analytics: '1',
     module_team: '1',
     module_financial_reports: '1',
+    feature_public: '1',
     feature_scheduling: '1',
     feature_analytics: '1',
     feature_chat: '1',
@@ -288,6 +302,62 @@ async function ensureDemoSettings(client, companyId) {
   }
 }
 
+async function ensureDemoPublicProfile(client, companyId) {
+  await client.query(
+    `INSERT INTO company_public_profiles
+       (company_id, display_name, short_description, services_offered, service_areas,
+        license_info, equipment_capabilities, project_types, quote_instructions,
+        contact_info, faq_items, photos, is_public, published_at, updated_at)
+     VALUES
+       ($1, 'Demo Operations - OpsFloA Demo',
+        'Demo Operations is a fictional public company profile built to show how OpsFloA helps teams run time, people, projects, field updates, inventory, public requests, and reporting from one simple operating system.',
+        $2::jsonb, $3::jsonb, $4, $5::jsonb, $6::jsonb, $7, $8::jsonb, $9::jsonb, $10::jsonb, true, NOW(), NOW())
+     ON CONFLICT (company_id) DO UPDATE SET
+        display_name = EXCLUDED.display_name,
+        short_description = EXCLUDED.short_description,
+        services_offered = EXCLUDED.services_offered,
+        service_areas = EXCLUDED.service_areas,
+        license_info = EXCLUDED.license_info,
+        equipment_capabilities = EXCLUDED.equipment_capabilities,
+        project_types = EXCLUDED.project_types,
+        quote_instructions = EXCLUDED.quote_instructions,
+        contact_info = EXCLUDED.contact_info,
+        faq_items = EXCLUDED.faq_items,
+        photos = EXCLUDED.photos,
+        is_public = true,
+        published_at = COALESCE(company_public_profiles.published_at, NOW()),
+        updated_at = NOW()`,
+    [
+      companyId,
+      JSON.stringify(['Time clock and approvals', 'People and role management', 'Project and customer tracking', 'Field notes, photos, punchlists, and safety', 'Inventory items, stock, counts, and purchase orders', 'Public request intake and company profile']),
+      JSON.stringify(['Fictional Phoenix metro workspace', 'Office operations', 'Mobile field teams', 'Inventory rooms and service routes']),
+      'Demo Operations is not a real service provider. Licenses, contacts, projects, POs, field records, and inventory records are sample data for showing OpsFloA capabilities.',
+      JSON.stringify(['Daily demo data refresh', 'Mobile PWA workflows', 'Role-based admin controls', 'Public profile and request intake', 'Agent-readable business information', 'Reporting and operational dashboards']),
+      JSON.stringify(['Facility service route demo', 'Retail refresh demo', 'Clinic room turnover demo', 'Inventory staging demo', 'Subcontractor PO demo', 'Public request demo']),
+      'Use Request work to submit a sample request and see how OpsFloA can collect outside requests. This demo does not provide real services or dispatch a real crew.',
+      JSON.stringify({
+        name: 'OpsFloA Demo',
+        email: 'info@opsfloa.com',
+        phone: '(555) 010-0100',
+        website: 'https://opsfloa.com',
+        address: 'Demo data only',
+      }),
+      JSON.stringify([
+        { question: 'What am I looking at?', answer: 'This is a fictional public profile for Demo Operations. It exists to show how OpsFloA can publish a clean company profile and request page without exposing internal app data.' },
+        { question: 'What OpsFloA capabilities does the demo show?', answer: 'The demo workspace includes time clock, approvals, team management, projects, field work, photos, safety, inventory, public requests, subcontractor POs, and reporting examples.' },
+        { question: 'Can I submit a request here?', answer: 'Yes, as a demonstration. The request form shows how an outside customer could ask for work, but Demo Operations is not a real service provider.' },
+        { question: 'What should search engines and AI agents know?', answer: 'Demo Operations is a sample company profile for OpsFloA. It should be described as a product demonstration, not as an actual local business offering services.' },
+        { question: 'What information is public?', answer: 'Only the profile fields intentionally published here are public. Internal workers, time entries, payroll, invoices, notes, private photos, and customer records are not exposed.' },
+      ]),
+      JSON.stringify([
+        { url: '/opsfloa-operator-band.png', caption: 'OpsFloA brings office and field work into one operating system.', alt: 'A professional reviewing operations work in a field-ready setting' },
+        { url: '/opsfloa-setup-ready-alt.png', caption: 'Admins choose which tools are visible so the day-to-day app stays simple.', alt: 'A business operator preparing setup decisions' },
+        { url: '/opsfloa-field-hero.png', caption: 'Field notes, photos, safety, punchlists, and inventory can all appear in the demo workspace.', alt: 'A mobile field operations scene' },
+      ]),
+    ]
+  );
+}
+
 async function main() {
   const client = await pool.connect();
   const summary = {};
@@ -297,6 +367,7 @@ async function main() {
     const company = await ensureDemoCompany(client);
     const companyId = company.id;
     await ensureDemoSettings(client, companyId);
+    await ensureDemoPublicProfile(client, companyId);
 
     const admin = await ensureDemoAdmin(client, companyId);
 
@@ -394,7 +465,7 @@ async function main() {
     const projects = [];
     for (const [name, job, clientName, hours, dollars, progress, status, description, address] of projectSeed) {
       const clientRow = allClients.rows.find(c => c.name === clientName) || allClients.rows[0];
-      projects.push(await ensureBy(
+      projects.push(await upsertBy(
         client,
         'projects',
         { company_id: companyId, name },
@@ -429,11 +500,13 @@ async function main() {
       ['End of day closeout', 'Cleaned work zones, secured loose materials, and uploaded photos for the gallery.', 'draft'],
       ['Quality check', 'Verified installed labels, room layouts, and inventory kit placement. Two labels need replacement.', 'reviewed'],
     ];
+    // The demo gallery should roll forward, not accumulate old dated media.
+    // Seeded field notes always use this prefix.
     await client.query(
       `DELETE FROM field_reports
        WHERE company_id = $1
-         AND title LIKE ANY($2::text[])`,
-      [companyId, fieldNotes.map(([title]) => `${title} - %`)]
+         AND title LIKE 'Demo note %'`,
+      [companyId]
     );
     for (let i = 0; i < 14; i++) {
       const [title, notes, status] = fieldNotes[i % fieldNotes.length];
@@ -471,6 +544,15 @@ async function main() {
         );
       }
     }
+
+    // Daily reports are also a rolling demo surface. These are recreated for
+    // today and the prior days each seed run.
+    await client.query(
+      `DELETE FROM daily_reports
+       WHERE company_id = $1
+         AND created_by = $2`,
+      [companyId, admin.id]
+    );
 
     for (let i = 0; i < 18; i++) {
       const project = projectByIndex(i);
@@ -522,7 +604,7 @@ async function main() {
       'Repair loose bracket',
     ];
     for (let i = 0; i < 24; i++) {
-      const item = await ensureBy(
+      const item = await upsertBy(
         client,
         'punchlist_items',
         { company_id: companyId, title: `${punchTitles[i % punchTitles.length]} ${i + 1}` },
@@ -563,7 +645,7 @@ async function main() {
     ];
     for (let i = 0; i < incidents.length; i++) {
       const [type, description, status] = incidents[i];
-      await ensureBy(
+      await upsertBy(
         client,
         'incident_reports',
         { company_id: companyId, description },
@@ -585,11 +667,18 @@ async function main() {
       );
     }
 
+    const subReportCompanies = ['Brightline Support', 'Mesa Specialty Services', 'Cedar Tech Group', 'Northstar Access', 'Valley Finish Crew'];
+    await client.query(
+      `DELETE FROM sub_reports
+       WHERE company_id = $1
+         AND sub_company = ANY($2::text[])`,
+      [companyId, subReportCompanies]
+    );
     for (let i = 0; i < 18; i++) {
       await ensureBy(
         client,
         'sub_reports',
-        { company_id: companyId, project_id: projectByIndex(i).id, report_date: isoDate(-i - 1), sub_company: ['Brightline Support', 'Mesa Specialty Services', 'Cedar Tech Group', 'Northstar Access', 'Valley Finish Crew'][i % 5] },
+        { company_id: companyId, project_id: projectByIndex(i).id, report_date: isoDate(-i - 1), sub_company: subReportCompanies[i % subReportCompanies.length] },
         {
           foreman_name: ['Jamie Cole', 'Drew Allen', 'Mia Torres', 'Rene Holt', 'Priya Shah'][i % 5],
           headcount: 2 + (i % 7),
@@ -607,7 +696,7 @@ async function main() {
     }
 
     for (let i = 0; i < 20; i++) {
-      await ensureBy(
+      await upsertBy(
         client,
         'rfis',
         { company_id: companyId, project_id: projectByIndex(i).id, rfi_number: 100 + i },
@@ -649,7 +738,7 @@ async function main() {
     ];
     for (let i = 0; i < talks.length; i++) {
       const [title, content] = talks[i];
-      const talk = await ensureBy(
+      const talk = await upsertBy(
         client,
         'safety_talks',
         { company_id: companyId, title },
@@ -663,15 +752,13 @@ async function main() {
         },
         '*'
       );
-      const signoffCount = await one(client, 'SELECT COUNT(*)::int AS count FROM safety_talk_signoffs WHERE talk_id = $1', [talk.id]);
-      if (signoffCount.count === 0) {
-        for (const worker of workers.slice(0, 6)) {
-          await client.query(
-            `INSERT INTO safety_talk_signoffs (talk_id, worker_id, worker_name, signed_at, quiz_score, quiz_passed)
-             VALUES ($1,$2,$3,$4,$5,$6)`,
-            [talk.id, worker.id, worker.full_name, isoTimestamp(-i * 2, 9, 10), 82 + ((worker.id + i) % 18), true]
-          );
-        }
+      await client.query('DELETE FROM safety_talk_signoffs WHERE talk_id = $1', [talk.id]);
+      for (const worker of workers.slice(0, 6)) {
+        await client.query(
+          `INSERT INTO safety_talk_signoffs (talk_id, worker_id, worker_name, signed_at, quiz_score, quiz_passed)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [talk.id, worker.id, worker.full_name, isoTimestamp(-i * 2, 9, 10), 82 + ((worker.id + i) % 18), true]
+        );
       }
     }
 
@@ -725,6 +812,10 @@ async function main() {
         '*'
       ));
     }
+    await client.query(
+      'DELETE FROM safety_checklist_submissions WHERE template_id = ANY($1::int[])',
+      [checklistTemplates.map(template => template.id)]
+    );
     for (let i = 0; i < 24; i++) {
       const template = checklistTemplates[i % checklistTemplates.length];
       const worker = workerByIndex(i);
@@ -823,6 +914,10 @@ async function main() {
         '*'
       ));
     }
+    await client.query(
+      'DELETE FROM inspections WHERE company_id = $1 AND template_id = ANY($2::uuid[])',
+      [companyId, inspectionTemplateRows.map(template => template.id)]
+    );
     const templateItems = template => Array.isArray(template.items) ? template.items : JSON.parse(template.items || '[]');
     for (let i = 0; i < 32; i++) {
       const template = inspectionTemplateRows[i % inspectionTemplateRows.length];
@@ -898,6 +993,15 @@ async function main() {
         '*'
       ));
     }
+    await client.query(
+      `DELETE FROM equipment_hours h
+       USING equipment_items e
+       WHERE h.equipment_id = e.id
+         AND h.company_id = $1
+         AND e.company_id = $1
+         AND e.name = ANY($2::text[])`,
+      [companyId, equipmentSeed.map(([name]) => name)]
+    );
     for (let i = 0; i < 60; i++) {
       const eq = equipment[i % equipment.length];
       await ensureBy(
@@ -1048,7 +1152,7 @@ async function main() {
       const locA = allLocations.rows[i % allLocations.rows.length];
       const locB = allLocations.rows[(i + 1) % allLocations.rows.length];
       const type = ['receive', 'issue', 'transfer', 'adjust'][i % 4];
-      await ensureBy(
+      await upsertBy(
         client,
         'inventory_transactions',
         { company_id: companyId, reference_no: `DEMO-TXN-${String(i + 1).padStart(3, '0')}` },
@@ -1071,7 +1175,7 @@ async function main() {
     }
 
     for (let i = 0; i < 5; i++) {
-      const po = await ensureBy(
+      const po = await upsertBy(
         client,
         'purchase_orders',
         { company_id: companyId, po_number: `DEMO-PO-${String(i + 1).padStart(3, '0')}` },
@@ -1089,7 +1193,7 @@ async function main() {
         },
         '*'
       );
-      await ensureChildRows(client, 'purchase_order_lines', 'po_id', po.id, [
+      await replaceChildRows(client, 'purchase_order_lines', 'po_id', po.id, [
         { item_id: allItems.rows[(i * 2) % allItems.rows.length].id, qty_ordered: 12 + i, qty_received: i >= 2 ? 8 + i : 0, unit_cost: allItems.rows[(i * 2) % allItems.rows.length].unit_cost || 10, notes: 'Primary replenishment' },
         { item_id: allItems.rows[(i * 2 + 1) % allItems.rows.length].id, qty_ordered: 6 + i, qty_received: i === 3 ? 6 + i : 0, unit_cost: allItems.rows[(i * 2 + 1) % allItems.rows.length].unit_cost || 10, notes: 'Secondary stock' },
       ]);
@@ -1159,7 +1263,8 @@ async function main() {
           notes: isCounted ? 'Seeded demo count entry.' : null,
         };
       });
-      await ensureChildRows(client, 'inventory_cycle_count_lines', 'cycle_count_id', count.id, lines);
+      await replaceChildRows(client, 'inventory_cycle_count_lines', 'cycle_count_id', count.id, lines);
+      await client.query('DELETE FROM inventory_count_workers WHERE cycle_count_id = $1', [count.id]);
       await client.query(
         `INSERT INTO inventory_count_workers (cycle_count_id, user_id, roles)
          VALUES ($1,$2,$3),($1,$4,$5)
@@ -1168,6 +1273,13 @@ async function main() {
       );
     }
 
+    const demoTimeEntryNotes = ['Demo work block', 'Travel and staging', 'Closeout support', 'Field task execution'];
+    await client.query(
+      `DELETE FROM time_entries
+       WHERE company_id = $1
+         AND notes = ANY($2::text[])`,
+      [companyId, demoTimeEntryNotes]
+    );
     for (let day = -12; day <= -1; day++) {
       for (let i = 0; i < Math.min(8, workers.length); i++) {
         if ((day + i) % 5 === 0) continue;
@@ -1199,6 +1311,7 @@ async function main() {
       }
     }
 
+    await client.query('DELETE FROM active_clock WHERE company_id = $1', [companyId]);
     for (let i = 0; i < Math.min(3, workers.length); i++) {
       const lat = 33.45 + (i / 100);
       const lng = -112.07 - (i / 100);
@@ -1219,6 +1332,61 @@ async function main() {
       });
     }
 
+    const bookingShiftType = await upsertBy(
+      client,
+      'shift_types',
+      { company_id: companyId, name: 'Demo Booking Availability' },
+      {
+        color: '#2563eb',
+        description: 'Seeded availability that lets the demo booking page show real openings.',
+        active: true,
+      },
+      '*'
+    );
+    const bookableUsers = Array.from(
+      new Map([admin, ...admins.slice(0, 2), ...workers.slice(0, 3)]
+        .filter(Boolean)
+        .map(user => [user.id, user]))
+        .values()
+    );
+    const bookableIds = bookableUsers.map(user => user.id);
+    await client.query('UPDATE users SET bookable = false WHERE company_id = $1', [companyId]);
+    for (const user of bookableUsers) {
+      await client.query(
+        `UPDATE users
+         SET bookable = true,
+             bookable_role_label = $1,
+             timezone = COALESCE(timezone, 'America/Phoenix')
+         WHERE id = $2 AND company_id = $3`,
+        [user.id === admin.id || admins.some(adminUser => adminUser.id === user.id) ? 'Demo coordinator' : 'Demo specialist', user.id, companyId]
+      );
+    }
+    await client.query(
+      'DELETE FROM bookable_windows WHERE user_id IN (SELECT id FROM users WHERE company_id = $1)',
+      [companyId]
+    );
+    for (const user of bookableUsers) {
+      for (const weekday of [1, 2, 3, 4, 5]) {
+        await client.query(
+          `INSERT INTO bookable_windows (user_id, weekday, start_time, end_time, active)
+           VALUES ($1,$2,'08:30:00','16:30:00',true)`,
+          [user.id, weekday]
+        );
+      }
+      await client.query(
+        `INSERT INTO bookable_windows (user_id, weekday, start_time, end_time, active)
+         VALUES ($1,6,'09:00:00','12:00:00',true)`,
+        [user.id]
+      );
+    }
+
+    const demoShiftNotes = ['Demo scheduled shift', 'Route support', 'Closeout day', 'Inventory count'];
+    await client.query(
+      `DELETE FROM shifts
+       WHERE company_id = $1
+         AND notes = ANY($2::text[])`,
+      [companyId, demoShiftNotes]
+    );
     for (let i = 0; i < 18; i++) {
       await ensureBy(
         client,
@@ -1228,6 +1396,7 @@ async function main() {
           project_id: projectByIndex(i).id,
           end_time: `${String(15 + (i % 3)).padStart(2, '0')}:30:00`,
           notes: ['Demo scheduled shift', 'Route support', 'Closeout day', 'Inventory count'][i % 4],
+          shift_type_id: bookableIds.includes(workerByIndex(i).id) ? bookingShiftType.id : null,
           start_ts: isoTimestamp(i + 1, 7 + (i % 3), 0),
           end_ts: isoTimestamp(i + 1, 15 + (i % 3), 30),
         },
@@ -1243,6 +1412,12 @@ async function main() {
       [4, 'other', 6, 7, 'School event'],
       [5, 'sick', 13, 13, 'Medical follow-up'],
     ];
+    await client.query(
+      `DELETE FROM time_off_requests
+       WHERE company_id = $1
+         AND note = ANY($2::text[])`,
+      [companyId, timeOffSeed.map(seed => seed[4])]
+    );
     for (let i = 0; i < timeOffSeed.length; i++) {
       const [workerIndex, type, start, end, note] = timeOffSeed[i];
       await ensureBy(
@@ -1261,6 +1436,129 @@ async function main() {
       );
     }
 
+    const bookingTypes = [
+      {
+        slug: 'opsfloa-demo-overview',
+        name: 'OpsFloA demo overview',
+        description: 'See how time, people, field work, inventory, public requests, and reporting fit together.',
+        duration_minutes: 45,
+        buffer_before_min: 10,
+        buffer_after_min: 10,
+        advance_notice_hrs: 4,
+        max_advance_days: 30,
+        slot_interval_min: 30,
+        location_kind: 'video',
+        location_detail: 'Video call link sent after booking',
+      },
+      {
+        slug: 'operations-fit-review',
+        name: 'Operations fit review',
+        description: 'Talk through your workflows and which OpsFloA modules should be on from day one.',
+        duration_minutes: 60,
+        buffer_before_min: 15,
+        buffer_after_min: 15,
+        advance_notice_hrs: 8,
+        max_advance_days: 45,
+        slot_interval_min: 30,
+        location_kind: 'phone',
+        location_detail: 'Phone consultation',
+      },
+      {
+        slug: 'field-inventory-walkthrough',
+        name: 'Field and inventory walkthrough',
+        description: 'A practical demo focused on field notes, photos, counts, stock, purchase orders, and finding materials fast.',
+        duration_minutes: 60,
+        buffer_before_min: 10,
+        buffer_after_min: 20,
+        advance_notice_hrs: 8,
+        max_advance_days: 45,
+        slot_interval_min: 30,
+        location_kind: 'video',
+        location_detail: 'Video call link sent after booking',
+      },
+    ];
+    const appointmentTypes = [];
+    for (const type of bookingTypes) {
+      const appointmentType = await upsertBy(
+        client,
+        'appointment_types',
+        { company_id: companyId, slug: type.slug },
+        {
+          name: type.name,
+          description: type.description,
+          duration_minutes: type.duration_minutes,
+          buffer_before_min: type.buffer_before_min,
+          buffer_after_min: type.buffer_after_min,
+          advance_notice_hrs: type.advance_notice_hrs,
+          max_advance_days: type.max_advance_days,
+          slot_interval_min: type.slot_interval_min,
+          active: true,
+          is_public: true,
+          location_kind: type.location_kind,
+          location_detail: type.location_detail,
+        },
+        '*'
+      );
+      appointmentTypes.push(appointmentType);
+      await client.query('DELETE FROM appointment_type_users WHERE appointment_type_id = $1', [appointmentType.id]);
+      for (const userId of bookableIds) {
+        await client.query(
+          'INSERT INTO appointment_type_users (appointment_type_id, user_id) VALUES ($1,$2)',
+          [appointmentType.id, userId]
+        );
+      }
+      await client.query('DELETE FROM appointment_type_shift_types WHERE appointment_type_id = $1', [appointmentType.id]);
+      await client.query(
+        'INSERT INTO appointment_type_shift_types (appointment_type_id, shift_type_id) VALUES ($1,$2)',
+        [appointmentType.id, bookingShiftType.id]
+      );
+    }
+    await client.query(
+      `DELETE FROM appointments
+       WHERE company_id = $1
+         AND client_email LIKE '%@demo-booking.example.test'`,
+      [companyId]
+    );
+    const appointmentSeed = [
+      [0, 0, 'Jordan Visitor', 'jordan@demo-booking.example.test', 2, 17, 0, 'booked', 'Interested in seeing the overall workflow.'],
+      [1, 1, 'Morgan Planner', 'morgan@demo-booking.example.test', 4, 20, 30, 'confirmed', 'Wants to compare setup options for a mixed office and field team.'],
+      [2, 2, 'Sam Inventory', 'sam@demo-booking.example.test', 7, 16, 30, 'booked', 'Focused on stock visibility, POs, and count workflows.'],
+      [1, 0, 'Alex Completed', 'alex@demo-booking.example.test', -3, 18, 0, 'completed', 'Completed demo call retained for history views.'],
+      [0, 1, 'Casey Cancelled', 'casey@demo-booking.example.test', -1, 21, 0, 'cancelled', 'Cancelled demo appointment retained for status filters.'],
+    ];
+    for (let i = 0; i < appointmentSeed.length; i++) {
+      const [typeIndex, userIndex, clientName, clientEmail, offset, hour, minute, status, notes] = appointmentSeed[i];
+      const appointmentType = appointmentTypes[typeIndex % appointmentTypes.length];
+      const assignedUser = bookableUsers[userIndex % bookableUsers.length];
+      const scheduledAt = isoTimestamp(offset, hour, minute);
+      const tokenHash = crypto.createHash('sha256').update(`demo-booking-${i}-${scheduledAt}`).digest('hex');
+      await client.query(
+        `INSERT INTO appointments
+           (company_id, appointment_type_id, assigned_user_id, client_name, client_email,
+            client_phone, client_notes, project_id, scheduled_at, duration_minutes,
+            status, manage_token_hash, cancelled_at, cancelled_by, cancel_reason, completed_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+        [
+          companyId,
+          appointmentType.id,
+          assignedUser.id,
+          clientName,
+          clientEmail,
+          `(555) 010-${8200 + i}`,
+          notes,
+          projectByIndex(i).id,
+          scheduledAt,
+          appointmentType.duration_minutes,
+          status,
+          tokenHash,
+          status === 'cancelled' ? isoTimestamp(offset, hour - 2, 0) : null,
+          status === 'cancelled' ? 'client' : null,
+          status === 'cancelled' ? 'Demo cancellation example.' : null,
+          status === 'completed' ? isoTimestamp(offset, hour + 1, minute) : null,
+        ]
+      );
+    }
+
     const reimbursements = [
       ['Mileage to clinic pickup', 'mileage', 28.75, -1, 50],
       ['Parking for client walkthrough', 'travel', 16, -3, null],
@@ -1271,7 +1569,7 @@ async function main() {
     ];
     for (let i = 0; i < reimbursements.length; i++) {
       const [description, category, amount, dateOffset, miles] = reimbursements[i];
-      await ensureBy(
+      await upsertBy(
         client,
         'reimbursements',
         { company_id: companyId, user_id: workerByIndex(i).id, description },
@@ -1298,7 +1596,7 @@ async function main() {
     ];
     for (let i = 0; i < requestSeed.length; i++) {
       const [name, category, description, status] = requestSeed[i];
-      await ensureBy(
+      await upsertBy(
         client,
         'service_requests',
         { company_id: companyId, requester_name: name, description },

@@ -59,11 +59,12 @@ const JSON_SOURCES = [
 ];
 
 async function safeQuery(sql, params) {
-  // Some tables may not exist in every environment (e.g. a module not yet
-  // migrated). Don't let one missing table abort the whole wipe.
+  // Some tables/columns may not exist in every environment (e.g. a module not
+  // yet migrated). Don't let one optional cleanup source abort the whole wipe.
   try { return await pool.query(sql, params); }
   catch (err) {
     if (err.code === '42P01') return { rows: [], rowCount: 0 }; // undefined_table
+    if (err.code === '42703') return { rows: [], rowCount: 0 }; // undefined_column
     throw err;
   }
 }

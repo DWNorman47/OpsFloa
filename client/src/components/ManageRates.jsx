@@ -88,6 +88,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
     module_field: settings?.module_field ?? false,
     feature_scheduling: settings?.feature_scheduling ?? true,
     feature_analytics: settings?.feature_analytics ?? true,
+    feature_public: settings?.feature_public ?? true,
     feature_chat: settings?.feature_chat ?? false,
     feature_geolocation: settings?.feature_geolocation ?? true,
     module_timeclock: settings?.module_timeclock ?? true,
@@ -174,6 +175,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
       module_field: settings.module_field ?? false,
       feature_scheduling: settings.feature_scheduling ?? true,
       feature_analytics: settings.feature_analytics ?? true,
+      feature_public: settings.feature_public ?? true,
       feature_chat: settings.feature_chat ?? false,
       feature_geolocation: settings.feature_geolocation ?? true,
       module_timeclock: settings.module_timeclock ?? true,
@@ -238,7 +240,8 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
         feature_overtime: form.feature_overtime,
         module_field: form.module_field,
         feature_scheduling: form.feature_scheduling,
-        feature_analytics: form.feature_analytics,
+        feature_analytics: form.module_analytics,
+        feature_public: form.feature_public,
         feature_chat: form.feature_chat,
         feature_geolocation: form.feature_geolocation,
         module_timeclock: form.module_timeclock,
@@ -384,19 +387,6 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
           </div>
           <div style={styles.row}>
             <div>
-              <div style={styles.label}>{t.mrModuleAnalytics}</div>
-              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrModuleAnalyticsDesc}</div>
-            </div>
-            <label style={{ ...styles.toggle, background: form.module_analytics ? 'var(--ops-page-accent)' : '#d1d5db' }}>
-              <input type="checkbox" checked={form.module_analytics} onChange={e => {
-                set('module_analytics', e.target.checked);
-                if (!e.target.checked) set('feature_analytics', false);
-              }} style={{ display: 'none' }} />
-              <span style={{ ...styles.toggleKnob, transform: form.module_analytics ? 'translateX(46px)' : 'translateX(0)' }} />
-            </label>
-          </div>
-          <div style={styles.row}>
-            <div>
               <div style={styles.label}>{t.mrModuleFinancialReports}</div>
               <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrModuleFinancialReportsDesc}</div>
             </div>
@@ -445,9 +435,22 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
               <div style={styles.label}>{t.featAnalytics}</div>
               <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.featAnalyticsDesc}</div>
             </div>
-            <label style={{ ...styles.toggle, background: form.feature_analytics ? 'var(--ops-page-accent)' : '#d1d5db' }}>
-              <input type="checkbox" checked={form.feature_analytics} onChange={e => set('feature_analytics', e.target.checked)} style={{ display: 'none' }} />
-              <span style={{ ...styles.toggleKnob, transform: form.feature_analytics ? 'translateX(46px)' : 'translateX(0)' }} />
+            <label style={{ ...styles.toggle, background: form.module_analytics ? 'var(--ops-page-accent)' : '#d1d5db' }}>
+              <input type="checkbox" checked={form.module_analytics} onChange={e => {
+                set('module_analytics', e.target.checked);
+                set('feature_analytics', e.target.checked);
+              }} style={{ display: 'none' }} />
+              <span style={{ ...styles.toggleKnob, transform: form.module_analytics ? 'translateX(46px)' : 'translateX(0)' }} />
+            </label>
+          </div>
+          <div style={styles.row}>
+            <div>
+              <div style={styles.label}>{t.mrFeatPublic || 'Public'}</div>
+              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrFeatPublicDesc || 'Show the Public tab for company profile and request intake settings'}</div>
+            </div>
+            <label style={{ ...styles.toggle, background: form.feature_public ? 'var(--ops-page-accent)' : '#d1d5db' }}>
+              <input type="checkbox" checked={form.feature_public} onChange={e => set('feature_public', e.target.checked)} style={{ display: 'none' }} />
+              <span style={{ ...styles.toggleKnob, transform: form.feature_public ? 'translateX(46px)' : 'translateX(0)' }} />
             </label>
           </div>
           <div style={styles.row}>

@@ -12,6 +12,7 @@ import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import { getT } from '../i18n';
 import { detectLanguage } from '../languageDetect';
+import { publicLinkError } from '../utils/publicErrors';
 
 const baseURL = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api';
 const publicApi = axios.create({ baseURL });
@@ -45,7 +46,7 @@ export default function PublicLienWaiverSignPage() {
   useEffect(() => {
     publicApi.get(`/public/lien-waivers/sign/${token}`)
       .then(r => setWaiver(r.data))
-      .catch(err => setError(err.response?.data?.error || t.lwErrNotFound))
+      .catch(err => setError(publicLinkError(err, t.lwErrNotFound)))
       .finally(() => setLoading(false));
   }, [token]);
 
@@ -59,7 +60,7 @@ export default function PublicLienWaiverSignPage() {
       });
       setSigned(true);
     } catch (err) {
-      setError(err.response?.data?.error || t.lwErrSign);
+      setError(publicLinkError(err, t.lwErrSign));
     } finally { setSubmitting(false); }
   }
 

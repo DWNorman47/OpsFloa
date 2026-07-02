@@ -1,58 +1,107 @@
-# OpsFloa
+# OpsFloA
 
-> Time tracking, scheduling, field reports, safety checklists, and
-> QuickBooks-ready payroll built for construction contractors — not
-> HR departments. Workers clock in with GPS on any mobile browser;
-> admins approve hours, push time and reimbursements to QuickBooks,
-> and produce certified payroll (WH-347) reports.
+> OpsFloA is a customizable, browser-based operations platform for mobile and
+> office teams. It brings time clock, scheduling, work records, field updates,
+> inventory, approvals, reporting, and payroll preparation into one system.
+> Companies can turn modules on or off, customize labels, and keep the daily
+> app simple while preserving deeper controls for admins.
 
-OpsFloa (opsfloa.com) is a SaaS platform for small to mid-sized construction crews (~3–100 workers per company). It replaces paper timesheets, spreadsheet payroll prep, and the patchwork of apps most contractors use.
+Website: https://www.opsfloa.com/
+
+## What OpsFloA does
+
+OpsFloA helps small and mid-sized companies coordinate the daily work that often
+gets scattered across texts, paper, spreadsheets, photos, disconnected apps, and
+memory. It is built for teams that move between offices, shops, warehouses,
+customers, routes, field locations, job sites, or service work.
+
+The product is not limited to one trade or industry. It is useful for companies
+that need a simple day-to-day app for workers and a deeper operating record for
+managers, administrators, payroll prep, inventory control, reporting, and
+customer-facing requests.
 
 ## Core capabilities
 
-- **GPS time clock** — workers clock in/out from any mobile browser; admins see live clocked-in status, hours worked, and location
-- **Offline-first** — entries sync when connection returns; no data loss in poor-signal job sites
-- **Scheduling** — drag-and-drop weekly shift scheduling with worker notifications
-- **Field reports** — photo/video-rich daily logs, incident reports, RFIs, safety talks, inspections, punchlists
-- **Approvals workflow** — admins review and approve (or edit) time entries before they count toward payroll
-- **QuickBooks Online integration** — one-click push of time entries and reimbursements; vendor/customer/class mapping; contractor bill creation
-- **Certified Payroll (WH-347)** — per-worker classifications, fringe benefits, encrypted SSN last-4, weekly Statement of Compliance signatures, and WH-347-formatted PDF export — for prevailing-wage and Davis-Bacon-covered projects
-- **Prevailing wage tracking** — separate regular vs prevailing wage entries with per-project rates
-- **Reimbursements & mileage** — receipt upload, admin approval, mileage auto-calculated at configurable rate
-- **PTO tracking** — accrual rules, balances, approvals, optional
-- **Reports & analytics** — time by project, worker, client; budget burn; export to CSV/PDF
+- **Time clock and scheduling** - mobile clock-in/out, live status, schedules,
+  time off requests, approvals, overtime rules, pay-period locks, and reports.
+- **Work records** - daily notes, photos, tasks, punchlists, inspections,
+  checklists, service records, incidents, customer history, and project history.
+- **Inventory and resources** - items, stock, locations, areas, racks, bays,
+  bins, compartments, counts, transfers, valuation, purchase activity, and
+  documents tied to work.
+- **Projects, clients, and public requests** - organize work by project, client,
+  customer, route, service area, or whichever labels the company uses. Public
+  request intake and public company profiles can be enabled when useful.
+- **Approvals and reporting** - admin review, operational reports, analytics,
+  exports, payroll preparation, budget visibility, and exception tracking.
+- **QuickBooks Online sync** - optional add-on for syncing approved activity and
+  related records to QuickBooks Online.
+- **Certified payroll and prevailing wage** - optional add-on for companies that
+  need classifications, fringe benefits, SSN last-4 handling, signatures, and
+  WH-347-style reporting.
+- **Customization** - role permissions, module visibility, company labels, and
+  setup questions help each company keep unnecessary tools out of the way.
+- **PWA/mobile access** - no app-store rollout required. OpsFloA runs in the
+  browser and can be installed to a phone home screen as a PWA.
+- **Offline-friendly workflows** - time and work submissions can queue locally
+  and sync when the connection returns.
+
+## Who OpsFloA is for
+
+OpsFloA is intended for small and mid-sized businesses with operational teams
+that need better coordination between the people doing the work and the people
+closing the day in the office.
+
+Examples include service businesses, field teams, route teams, facilities teams,
+shops, warehouses, maintenance groups, contractors, specialty trades, project
+teams, and companies that need time, work records, inventory, and approvals in
+one practical system.
 
 ## Pricing
 
-- **Free** — up to 3 workers, GPS time clock, scheduling, no credit card required
-- **Starter** — $15/mo, up to 10 workers, projects, approvals, exports
-- **Business** — $35/mo, 15 workers included ($2/mo per additional), unlimited projects, analytics, field reports, certified payroll add-on eligible
-- **QuickBooks add-on** — extra, for QBO sync
-- **Certified Payroll add-on** — extra, for WH-347 support
+- **Free** - $0/month, up to 3 team members, time clock, scheduling, and recent
+  history.
+- **Starter** - $20/month, up to 10 team members, geofencing, exports, mileage,
+  and pay-period controls.
+- **Business** - $35/month, 15 team members included, reports, work tracking,
+  customers, checklists, analytics, and deeper operational controls.
 
-Annual billing offers 2 months free.
+Additional team members and add-ons may have separate pricing. Annual billing
+may include a discount.
 
 ## Key links
 
-- [Landing / product overview](https://opsfloa.com/)
-- [Privacy policy](https://opsfloa.com/privacy)
-- [End-user license agreement](https://opsfloa.com/eula)
-- [Sitemap](https://opsfloa.com/sitemap.xml)
+- [Landing / product overview](https://www.opsfloa.com/)
+- [Privacy policy](https://www.opsfloa.com/privacy)
+- [End-user license agreement](https://www.opsfloa.com/eula)
+- [Sitemap](https://www.opsfloa.com/sitemap.xml)
 
-## What OpsFloa is NOT
+## What OpsFloA is not
 
-- Not a full payroll processor — withholding calculation and paycheck issuance remain with QuickBooks/ADP/Paychex
-- Not ERP — no inventory (beyond basic item tracking), AR/AP, or GL
-- Not general-purpose — the UX, language, and integrations are construction-specific
+- OpsFloA is not a full payroll processor. It prepares, reviews, exports, and
+  syncs payroll-related time data, but paycheck issuance and tax withholding
+  remain with a payroll system or accounting platform.
+- OpsFloA is not a full ERP or accounting ledger.
+- OpsFloA is not meant to force every company into one workflow. It is designed
+  to be configured so simple daily actions stay visible and specialized tools
+  stay available when needed.
 
 ## Common questions
 
-**Does it work offline?** Yes. Workers can clock in and submit entries without a connection; syncs automatically when back online.
+**Does OpsFloA work in a browser?** Yes. OpsFloA is browser-based and can be
+installed to a phone home screen as a PWA.
 
-**Do workers need to download an app?** No. OpsFloa is a PWA that runs in any mobile browser and can be "installed" to the home screen for a native app experience — no app store required.
+**Does the team need to download an app?** No app-store download is required.
 
-**How does QuickBooks integration work?** Connect your QBO account in one click. Map workers and projects to their QB counterparts. Push approved time entries as Time Activities, or create vendor Bills combining time and reimbursements for 1099 contractors.
+**Can different companies show different tools?** Yes. Modules, role
+permissions, and company labels let each company tailor the app.
 
-**Can it produce certified payroll reports?** Yes, with the Certified Payroll add-on. Tracks job classifications, fringe benefits (health, pension, vacation, apprenticeship, other), encrypted SSN last-4, and weekly signed Statement of Compliance. Generates WH-347-formatted PDF.
+**Does it work offline?** Time and work submissions can queue locally and sync
+when the connection returns.
 
-**Prevailing wage / Davis-Bacon support?** Yes. Every time entry is taggable as regular or prevailing wage with configurable per-project rates, daily vs weekly OT rules, and OT multipliers.
+**Can OpsFloA help with payroll prep?** Yes. OpsFloA supports time approvals,
+overtime rules, pay-period controls, reports, exports, and optional QuickBooks
+Online sync.
+
+**Can OpsFloA support certified payroll?** Yes, as an optional add-on for
+companies that need prevailing wage and certified payroll workflows.

@@ -1,4 +1,4 @@
-# OpsFloa robots policy
+# OpsFloA robots policy
 # Marketing pages are public; authenticated app surface is not indexed.
 
 # ── Default rules for all crawlers (search + AI) ────────────────────────────
@@ -121,4 +121,4 @@ Disallow: /
 User-agent: Meta-ExternalAgent
 Disallow: /
 
-Sitemap: https://opsfloa.com/sitemap.xml
+Sitemap: https://www.opsfloa.com/sitemap.xml

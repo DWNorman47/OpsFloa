@@ -336,7 +336,7 @@ export default function SetupQuestionnaire({ currentSettings, onComplete, onDism
           <div className="setup-wizard-brand">
             <img className="setup-wizard-brand-mark" src="/icon-96x96.png" alt="" />
             <span>
-              <strong>OpsFloA</strong>
+              <strong>OpsFloa</strong>
               <small>{t.sqHeaderSubtitle}</small>
             </span>
           </div>

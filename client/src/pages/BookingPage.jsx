@@ -35,6 +35,24 @@ const STATUS_COLORS = {
   rescheduled:  { bg: '#e5e7eb', fg: '#6b7280', labelKey: 'bkStatusRescheduled' },
 };
 
+const BOOKING_TABS = ['appointments', 'types', 'shifts', 'users'];
+const BOOKING_TAB_ALIASES = {
+  appointmenttypes: 'types',
+  'appointment-types': 'types',
+  appointment_types: 'types',
+  shifttypes: 'shifts',
+  'shift-types': 'shifts',
+  shift_types: 'shifts',
+  bookableusers: 'users',
+  'bookable-users': 'users',
+  bookable_users: 'users',
+};
+
+function normalizeBookingHash(rawHash) {
+  const hash = String(rawHash || '').replace('#', '').trim().toLowerCase();
+  return BOOKING_TAB_ALIASES[hash] || hash;
+}
+
 // Weekday label keys, indexed Sun..Sat. Resolved to localized strings
 // in-render via t[...]; values sent to the API stay numeric (0..6).
 const WEEKDAY_LABEL_KEYS = ['bkDaySun', 'bkDayMon', 'bkDayTue', 'bkDayWed', 'bkDayThu', 'bkDayFri', 'bkDaySat'];
@@ -474,7 +492,12 @@ function BookableUsersTab() {
       <p style={{ fontSize: 13, color: '#6b7280', marginTop: -8, marginBottom: 12 }}>
         {t.bkBookableUsersHint}
       </p>
-      {loading ? <SkeletonList rows={4} /> : (
+      {loading ? <SkeletonList rows={4} /> : users.length === 0 ? (
+        <EmptyState
+          title={t.bkNoBookableUsersTitle || 'No bookable users yet'}
+          body={t.bkNoBookableUsersBody || 'Add an active team member first, then return here to make them bookable.'}
+        />
+      ) : (
         <div style={styles.tableWrap}>
           <table style={styles.table}>
             <thead>
@@ -782,14 +805,32 @@ function AppointmentsTab() {
 export default function BookingPage() {
   const t = useT();
   const { user } = useAuth();
-  const [tab, setTab] = useState('appointments');
+  const [tab, setTab] = useState(() => {
+    const hashTab = normalizeBookingHash(window.location.hash);
+    return BOOKING_TABS.includes(hashTab) ? hashTab : 'appointments';
+  });
+
+  useEffect(() => {
+    const syncFromHash = () => {
+      const hashTab = normalizeBookingHash(window.location.hash);
+      setTab(BOOKING_TABS.includes(hashTab) ? hashTab : 'appointments');
+    };
+    syncFromHash();
+    window.addEventListener('hashchange', syncFromHash);
+    return () => window.removeEventListener('hashchange', syncFromHash);
+  }, []);
+
+  const switchTab = nextTab => {
+    setTab(nextTab);
+    history.replaceState(null, '', '#' + nextTab);
+  };
 
   return (
-    <PageShell currentApp="timeclock" maxWidth={1100} headerProps={{ userRole: user?.role }}>
+    <PageShell currentApp="booking" maxWidth={1100} headerProps={{ userRole: user?.role }}>
       <div className="admin-page-shell">
         <TabBar
           active={tab}
-          onChange={setTab}
+          onChange={switchTab}
           tabs={[
             { id: 'appointments', label: t.bkAppointments },
             { id: 'types',        label: t.bkAppointmentTypes },

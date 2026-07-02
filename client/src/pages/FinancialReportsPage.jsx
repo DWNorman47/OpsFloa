@@ -31,6 +31,18 @@ function deltaColor(cents) {
   return cents > 0 ? '#d97706' : '#dc2626';
 }
 
+const REPORT_TABS = ['performance', 'pnl', 'wip'];
+const REPORT_TAB_ALIASES = {
+  analytics: 'performance',
+  profit: 'pnl',
+  'p-and-l': 'pnl',
+};
+
+function normalizeReportHash(rawHash) {
+  const hash = String(rawHash || '').replace('#', '').trim().toLowerCase();
+  return REPORT_TAB_ALIASES[hash] || hash;
+}
+
 // ── P&L portfolio ────────────────────────────────────────────────────────────
 
 function PnLTab() {
@@ -230,10 +242,22 @@ export default function FinancialReportsPage() {
     ...(showFinancial ? [{ id: 'wip', label: 'WIP report' }] : []),
   ];
   const tabIds = tabs.map(tb => tb.id);
-  const hashTab = window.location.hash.replace('#', '');
-  const [tab, setTab] = useState(['performance', 'pnl', 'wip'].includes(hashTab) ? hashTab : 'performance');
+  const [tab, setTab] = useState(() => {
+    const hashTab = normalizeReportHash(window.location.hash);
+    return REPORT_TABS.includes(hashTab) ? hashTab : 'performance';
+  });
   const switchTab = id => { setTab(id); history.replaceState(null, '', '#' + id); };
   const activeTab = tabIds.includes(tab) ? tab : (tabIds[0] || 'performance');
+
+  useEffect(() => {
+    const syncFromHash = () => {
+      const hashTab = normalizeReportHash(window.location.hash);
+      if (REPORT_TABS.includes(hashTab)) setTab(hashTab);
+    };
+    syncFromHash();
+    window.addEventListener('hashchange', syncFromHash);
+    return () => window.removeEventListener('hashchange', syncFromHash);
+  }, []);
 
   return (
     <PageShell currentApp="financial_reports" features={settings || {}} maxWidth={1200} headerProps={{ userRole: user?.role }}>

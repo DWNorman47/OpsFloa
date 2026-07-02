@@ -997,7 +997,7 @@ async function resolvePublicAppointmentType(companySlug, typeSlug) {
     `SELECT at.*, c.name AS company_name, c.id AS resolved_company_id, c.slug AS company_slug
        FROM appointment_types at
        JOIN companies c ON at.company_id = c.id
-      WHERE c.slug = $1 AND at.slug = $2 AND at.active = true AND at.is_public = true`,
+      WHERE c.slug = $1 AND c.active = true AND at.slug = $2 AND at.active = true AND at.is_public = true`,
     [companySlug, typeSlug]
   );
   return r.rows[0] || null;
@@ -1056,26 +1056,26 @@ publicRouter.post('/manage/:token/cancel', async (req, res) => {
 // GET /book/:companySlug — list public appointment types for the company
 publicRouter.get('/:companySlug', async (req, res) => {
   try {
-    const r = await pool.query(
-      `SELECT at.id, at.slug, at.name, at.description, at.duration_minutes,
-              at.location_kind, at.location_detail,
-              c.name AS company_name, c.slug AS company_slug
-         FROM appointment_types at
-         JOIN companies c ON at.company_id = c.id
-        WHERE c.slug = $1 AND at.active = true AND at.is_public = true
-        ORDER BY at.name`,
+    const company = await pool.query(
+      'SELECT id, name, slug FROM companies WHERE slug = $1 AND active = true',
       [req.params.companySlug]
     );
-    if (r.rowCount === 0) {
-      return res.status(404).json({ error: 'No public appointment types found for this company' });
+    if (company.rowCount === 0) {
+      return res.status(404).json({ error: 'Company not found' });
     }
+
+    const r = await pool.query(
+      `SELECT at.id, at.slug, at.name, at.description, at.duration_minutes,
+              at.location_kind, at.location_detail
+         FROM appointment_types at
+        WHERE at.company_id = $1 AND at.active = true AND at.is_public = true
+        ORDER BY at.name`,
+      [company.rows[0].id]
+    );
     res.json({
-      company_name: r.rows[0].company_name,
-      company_slug: r.rows[0].company_slug,
-      types: r.rows.map(row => {
-        const { company_name, company_slug, ...rest } = row;
-        return rest;
-      }),
+      company_name: company.rows[0].name,
+      company_slug: company.rows[0].slug,
+      types: r.rows,
     });
   } catch (err) {
     logger.error({ err }, 'public booking types list error');

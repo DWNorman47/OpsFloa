@@ -148,6 +148,7 @@ export default function ProjectFinancialsTab({ projectId }) {
       {/* Categorized budget + spend */}
       <div style={styles.card}>
         <h3 style={styles.h3}>Budget vs. Spend by category</h3>
+        <div style={styles.tableScroll}>
         <table style={styles.table}>
           <thead>
             <tr style={styles.tableHeader}>
@@ -207,6 +208,7 @@ export default function ProjectFinancialsTab({ projectId }) {
             </tfoot>
           )}
         </table>
+        </div>
       </div>
 
       {/* Manual expenses */}
@@ -263,6 +265,7 @@ export default function ProjectFinancialsTab({ projectId }) {
         {expenses.length === 0 ? (
           <div style={{ fontSize: 14, color: '#6b7280', padding: '12px 0' }}>No manual expenses recorded.</div>
         ) : (
+          <div style={styles.tableScroll}>
           <table style={styles.table}>
             <thead>
               <tr style={styles.tableHeader}>
@@ -293,6 +296,7 @@ export default function ProjectFinancialsTab({ projectId }) {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>
@@ -318,11 +322,12 @@ function Field({ label, required, children }) {
 }
 
 const styles = {
-  card: { background: '#fff', borderRadius: 8, padding: 18, marginBottom: 14, border: '1px solid #e5e7eb' },
+  card: { background: '#fff', borderRadius: 8, padding: 18, marginBottom: 14, border: '1px solid #e5e7eb', minWidth: 0, maxWidth: '100%' },
   h3: { fontSize: 13, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 12px' },
-  statGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 },
-  grid3: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 10 },
-  table: { width: '100%', borderCollapse: 'collapse', fontSize: 14 },
+  statGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(105px, 1fr))', gap: 12 },
+  grid3: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 10 },
+  tableScroll: { maxWidth: '100%', overflowX: 'auto', WebkitOverflowScrolling: 'touch' },
+  table: { width: '100%', minWidth: 520, borderCollapse: 'collapse', fontSize: 14 },
   tableHeader: { background: '#f9fafb' },
   th: { textAlign: 'left', padding: '8px 12px', fontSize: 11, color: '#6b7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' },
   td: { padding: '10px 12px', color: '#111827' },

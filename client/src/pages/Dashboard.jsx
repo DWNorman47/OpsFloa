@@ -33,6 +33,19 @@ function TabLoader() {
   return <div className="ops-loading-state">Loading...</div>;
 }
 
+const TIME_TAB_ALIASES = {
+  availability: 'schedule',
+  expenses: 'reimbursements',
+  pto: 'timeoff',
+  requests: 'timeoff',
+  time_off: 'timeoff',
+};
+
+function normalizeTimeHash(rawHash) {
+  const hash = String(rawHash || '').replace('#', '').trim().toLowerCase();
+  return TIME_TAB_ALIASES[hash] || hash;
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const { onSync } = useOffline() || {};
@@ -48,14 +61,16 @@ export default function Dashboard() {
   const [headerClock, setHeaderClock] = useState(null); // null=loading, false=not clocked in, {clock_in_time}=clocked in
   const [headerElapsed, setHeaderElapsed] = useState(0);
   const headerTimerRef = useRef(null);
+  const [entriesVersion, setEntriesVersion] = useState(0);
   const TABS = ['clock', 'messages', 'timesheet', 'timeoff', 'schedule', 'reimbursements'];
-  const hashTab = window.location.hash.replace('#', '');
+  const rawHashTab = window.location.hash.replace('#', '');
+  const hashTab = normalizeTimeHash(rawHashTab);
   // #availability is legacy — it used to be a top-level tab; now it opens the
   // Availability sub-tab inside Schedule. Anyone with a bookmarked link still
   // lands in the right place.
-  const initialTab = hashTab === 'availability' ? 'schedule' : (TABS.includes(hashTab) ? hashTab : 'clock');
+  const initialTab = TABS.includes(hashTab) ? hashTab : 'clock';
   const [tab, setTab] = useState(initialTab);
-  const [scheduleSubtab, setScheduleSubtab] = useState(hashTab === 'availability' ? 'availability' : 'schedule');
+  const [scheduleSubtab, setScheduleSubtab] = useState(rawHashTab === 'availability' ? 'availability' : 'schedule');
   // Personal (own time clock) vs Workforce (admin oversight) groups. The group
   // row only appears for admins who can see both; everyone else just gets their
   // one group. Workforce tabs carry a '#wf-' hash. An oversight-only admin (can
@@ -101,6 +116,7 @@ export default function Dashboard() {
       const data = await api.get('/time-entries').then(r => r.data);
       await setCached('entries', data);
       setEntries(data);
+      setEntriesVersion(v => v + 1);
       setRefreshError(false);
     } catch {
       setRefreshError(true);
@@ -167,14 +183,21 @@ export default function Dashboard() {
 
   const handleEntryAdded = entry => {
     setEntries(prev => [entry, ...prev]);
+    setEntriesVersion(v => v + 1);
     setHeaderClock(false); // worker clocked out
   };
 
   const handleClockedIn = clockStatus => {
     setHeaderClock(clockStatus); // worker clocked in
   };
-  const handleEntryDeleted = id => setEntries(prev => prev.filter(e => e.id !== id));
-  const handleEntryUpdated = entry => setEntries(prev => prev.map(e => e.id === entry.id ? { ...e, ...entry } : e));
+  const handleEntryDeleted = id => {
+    setEntries(prev => prev.filter(e => e.id !== id));
+    setEntriesVersion(v => v + 1);
+  };
+  const handleEntryUpdated = entry => {
+    setEntries(prev => prev.map(e => e.id === entry.id ? { ...e, ...entry } : e));
+    setEntriesVersion(v => v + 1);
+  };
 
   const handleExportPDF = (signatureDataUrl) => {
     const win = window.open('', '_blank');
@@ -420,6 +443,25 @@ ${signatureDataUrl ? `
     }
   };
 
+  useEffect(() => {
+    const syncGroupFromHash = () => {
+      const rawHash = window.location.hash || '';
+      if (rawHash.startsWith('#wf-')) {
+        setGroup('workforce');
+      } else if (userCanSeeModule(user, 'timeclock')) {
+        setGroup('personal');
+        const nextTab = normalizeTimeHash(rawHash);
+        if (TABS.includes(nextTab)) {
+          setTab(nextTab);
+          setScheduleSubtab(rawHash.replace('#', '') === 'availability' ? 'availability' : 'schedule');
+        }
+      }
+    };
+    syncGroupFromHash();
+    window.addEventListener('hashchange', syncGroupFromHash);
+    return () => window.removeEventListener('hashchange', syncGroupFromHash);
+  }, [user]);
+
   const timeTabs = [
     ...(settings?.module_timeclock !== false ? [
       { id: 'clock', label: t.tabClock },
@@ -487,15 +529,17 @@ ${signatureDataUrl ? `
           description="The daily actions are first. Timesheets, schedule, time off, and expenses stay close without crowding the clock-in flow."
           meta={headerClock ? <span className="ops-pill good">Clocked in</span> : <span className="ops-pill">Ready</span>}
         />
-        <TabBar active={tab} onChange={switchTab} tabs={timeTabs} breakpoint={720} />
+        <TabBar active={tab} onChange={switchTab} tabs={timeTabs} breakpoint={720} ariaLabel="Time Clock tabs" />
 
         {tab === 'messages' && <CompanyChat settings={settings} onRead={() => { setChatUnread(false); localStorage.setItem('chatLastRead', new Date().toISOString()); }} />}
 
         {tab === 'clock' && (
-          <>
-            <ClockInOut projects={projects} onEntryAdded={handleEntryAdded} onClockedIn={handleClockedIn} t={t} geolocationEnabled={settings?.feature_geolocation ?? false} projectsEnabled={settings ? settings.feature_project_integration !== false : false} workLabel={workLabel} />
-            <TimeEntryForm projects={projects} onEntryAdded={handleEntryAdded} t={t} prefill={shiftPrefill} projectsEnabled={settings ? settings.feature_project_integration !== false : false} workLabel={workLabel} />
-          </>
+          loading ? <TabLoader /> : (
+            <>
+              <ClockInOut projects={projects} onEntryAdded={handleEntryAdded} onClockedIn={handleClockedIn} t={t} geolocationEnabled={settings?.feature_geolocation ?? false} projectsEnabled={settings?.feature_project_integration !== false} workLabel={workLabel} />
+              <TimeEntryForm projects={projects} onEntryAdded={handleEntryAdded} t={t} prefill={shiftPrefill} projectsEnabled={settings?.feature_project_integration !== false} workLabel={workLabel} />
+            </>
+          )
         )}
 
         {tab === 'timesheet' && (
@@ -503,7 +547,7 @@ ${signatureDataUrl ? `
           <Suspense fallback={<TabLoader />}>
             <UpcomingShifts onFillEntry={handleFillFromShift} workLabel={workLabel} />
             {!loading && <WorkerSummary entries={entries} hourlyRate={user?.hourly_rate} rateType={user?.rate_type ?? 'hourly'} overtimeMultiplier={settings?.overtime_multiplier ?? 1.5} prevailingRate={settings?.prevailing_wage_rate ?? 0} overtimeEnabled={settings?.feature_overtime ?? true} overtimeRule={settings?.overtime_rule ?? 'daily'} overtimeThreshold={settings?.overtime_threshold ?? 8} weekStart={settings?.week_start ?? 1} showWages={settings?.show_worker_wages ?? false} currency={settings?.currency ?? 'USD'} />}
-            <TimesheetSignOff t={t} />
+            <TimesheetSignOff t={t} refreshKey={entriesVersion} />
             <div style={styles.timesheetToolbar}>
               <div style={styles.viewToggle}>
                 <button style={entryView === 'timesheet' ? styles.toggleActive : styles.toggleBtn} onClick={() => setEntryView('timesheet')}>{t.timesheetView}</button>
@@ -541,6 +585,7 @@ ${signatureDataUrl ? `
                 { id: 'availability', label: t.tabAvailability },
               ]}
               breakpoint={420}
+              ariaLabel="Schedule tabs"
             />
             {scheduleSubtab === 'schedule' && (
               <Suspense fallback={<TabLoader />}><WorkerSchedule /></Suspense>

@@ -29,6 +29,14 @@ function today() {
   return toLocalDate(new Date());
 }
 
+function startOfWeek(dateStr, weekStart) {
+  const d = new Date(`${dateStr}T00:00:00`);
+  const ws = ((Number(weekStart) % 7) + 7) % 7;
+  const daysSinceStart = (d.getDay() - ws + 7) % 7;
+  d.setDate(d.getDate() - daysSinceStart);
+  return d;
+}
+
 function StatCard({ label, value, sub, color }) {
   return (
     <div style={styles.statCard}>
@@ -142,18 +150,16 @@ export default function AnalyticsDashboard({ weekStart = 1, settings = null }) {
       // Use server data as-is for custom range
       (weekly_hours || []).forEach(w => result.push({ week_start: w.week_start, hours: parseFloat(w.hours) }));
     } else {
-      const weekCount = Math.ceil(preset / 7);
-      const ws = ((Number(weekStart) % 7) + 7) % 7;
-      for (let i = weekCount - 1; i >= 0; i--) {
-        const d = new Date();
-        const daysSinceStart = (d.getDay() - ws + 7) % 7;
-        d.setDate(d.getDate() - daysSinceStart - i * 7);
+      const start = startOfWeek(from, weekStart);
+      const end = startOfWeek(to, weekStart);
+      const maxWeeks = 14;
+      for (let d = new Date(start), weeks = 0; d <= end && weeks < maxWeeks; d.setDate(d.getDate() + 7), weeks++) {
         const key = toLocalDate(d);
         result.push({ week_start: key, hours: weeklyMap[key] || 0 });
       }
     }
     return result;
-  }, [data, showCustom, customFrom, customTo, preset]);
+  }, [data, showCustom, customFrom, customTo, from, to, weekStart]);
 
   if (loading) return <><SkeletonStatRow count={4} style={{ marginBottom: 16 }} /><SkeletonList count={4} /></>;
   if (!data) return <p style={{ color: '#e53e3e' }}>{t.failedLoadAnalytics}</p>;
@@ -319,25 +325,25 @@ export default function AnalyticsDashboard({ weekStart = 1, settings = null }) {
 const styles = {
   wrap: { display: 'flex', flexDirection: 'column', gap: 20 },
   rangeRow: { display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' },
-  presetGroup: { display: 'flex', gap: 6 },
+  presetGroup: { display: 'flex', gap: 6, flexWrap: 'wrap' },
   presetBtn: { fontSize: 12, fontWeight: 600, padding: '5px 12px', borderRadius: 20, border: '1px solid #d1d5db', background: '#fff', color: '#374151', cursor: 'pointer' },
   presetBtnActive: { background: '#1a56db', color: '#fff', borderColor: '#1a56db' },
   customRange: { display: 'flex', alignItems: 'center', gap: 6 },
   dateInput: { fontSize: 12, padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, color: '#374151' },
   rangeTag: { fontSize: 11, fontWeight: 400, color: '#6b7280', marginLeft: 6 },
-  statRow: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 },
-  statCard: { background: '#fff', borderRadius: 12, padding: '20px 24px', boxShadow: '0 1px 4px rgba(0,0,0,0.07)' },
+  statRow: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 16, minWidth: 0 },
+  statCard: { background: '#fff', borderRadius: 12, padding: '20px 24px', boxShadow: '0 1px 4px rgba(0,0,0,0.07)', minWidth: 0 },
   statValue: { fontSize: 32, fontWeight: 800, lineHeight: 1, marginBottom: 6 },
   statLabel: { fontSize: 13, fontWeight: 600, color: '#374151' },
   statSub: { fontSize: 12, color: '#6b7280', marginTop: 2 },
-  card: { background: '#fff', borderRadius: 12, padding: '20px 24px', boxShadow: '0 1px 4px rgba(0,0,0,0.07)' },
-  twoCol: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 },
+  card: { background: '#fff', borderRadius: 12, padding: '20px 24px', boxShadow: '0 1px 4px rgba(0,0,0,0.07)', minWidth: 0, maxWidth: '100%' },
+  twoCol: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(260px, 100%), 1fr))', gap: 16, minWidth: 0 },
   sectionTitle: { fontSize: 14, fontWeight: 700, color: '#374151', marginBottom: 16, margin: '0 0 16px', display: 'flex', alignItems: 'baseline' },
   empty: { color: '#6b7280', fontSize: 13 },
   hBarList: { display: 'flex', flexDirection: 'column', gap: 10 },
   hBarRow: { display: 'flex', alignItems: 'center', gap: 10 },
   hBarLabel: { width: 120, fontSize: 13, color: '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 0 },
-  hBarTrack: { flex: 1, height: 10, background: '#f3f4f6', borderRadius: 5, overflow: 'hidden' },
+  hBarTrack: { flex: 1, minWidth: 0, height: 10, background: '#f3f4f6', borderRadius: 5, overflow: 'hidden' },
   hBarFill: { height: '100%', borderRadius: 5, transition: 'width 0.4s ease' },
   hBarValue: { width: 40, fontSize: 12, color: '#6b7280', textAlign: 'right', flexShrink: 0 },
 };

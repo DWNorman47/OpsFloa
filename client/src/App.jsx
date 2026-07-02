@@ -19,6 +19,7 @@ const ResetPassword     = lazy(() => import('./pages/ResetPassword'));
 const AcceptInvite      = lazy(() => import('./pages/AcceptInvite'));
 const ConfirmEmail      = lazy(() => import('./pages/ConfirmEmail'));
 const ServiceRequest    = lazy(() => import('./pages/ServiceRequest'));
+const PublicCompanyProfilePage = lazy(() => import('./pages/PublicCompanyProfilePage'));
 const TeamPage          = lazy(() => import('./pages/TeamPage'));
 const HomePage          = lazy(() => import('./pages/HomePage'));
 const Dashboard         = lazy(() => import('./pages/Dashboard'));
@@ -159,6 +160,7 @@ function AppRoutes() {
       <Route path="/accept-invite" element={<AcceptInvite />} />
       <Route path="/confirm-email" element={<ConfirmEmail />} />
       <Route path="/r/:slug" element={<ServiceRequest />} />
+      <Route path="/companies/:slug" element={<PublicCompanyProfilePage />} />
       <Route path="/e/:token" element={<PublicEstimatePage />} />
       <Route path="/co/:token" element={<PublicChangeOrderPage />} />
       <Route path="/lien-waiver-sign/:token" element={<PublicLienWaiverSignPage />} />
@@ -192,7 +194,7 @@ function AppRoutes() {
       <Route path="/closeout" element={<PrivateRoute adminOnly moduleId="workforce"><CloseoutPage /></PrivateRoute>} />
       <Route path="/lien-waivers" element={<PrivateRoute adminOnly moduleId="workforce"><LienWaiversPage /></PrivateRoute>} />
       <Route path="/catalog" element={<PrivateRoute moduleId="inventory"><CatalogPage /></PrivateRoute>} />
-      <Route path="/booking" element={<PrivateRoute adminOnly moduleId="workforce"><BookingPage /></PrivateRoute>} />
+      <Route path="/booking" element={<PrivateRoute adminOnly moduleId="booking"><BookingPage /></PrivateRoute>} />
       <Route path="/me/booking" element={<PrivateRoute><MyBookingPage /></PrivateRoute>} />
       {/* Subcontractors split: the firm directory is now a tab of the Directory
           module; purchase orders moved to Projects. Keep the old path working. */}

@@ -75,8 +75,11 @@ export function WorkforcePanel() {
   const ALL_TABS = ['live', 'approvals', 'reports', 'timeoff', 'expenses', 'manage'];
   // Workforce tabs use a 'wf-' hash prefix so they don't collide with the
   // Personal group's tabs in the shared Time Clock module.
-  const hashSub = window.location.hash.replace('#wf-', '');
-  const [tab, setTab] = useState(window.location.hash.startsWith('#wf-') && ALL_TABS.includes(hashSub) ? hashSub : 'live');
+  const getHashTab = () => {
+    const hashSub = window.location.hash.replace('#wf-', '');
+    return window.location.hash.startsWith('#wf-') && ALL_TABS.includes(hashSub) ? hashSub : null;
+  };
+  const [tab, setTab] = useState(() => getHashTab() || 'live');
 
   const toggleSection = key => setCollapsedSections(s => {
     const next = { ...s, [key]: !s[key] };
@@ -140,6 +143,16 @@ export function WorkforcePanel() {
     setTab(t);
     history.replaceState(null, '', '#wf-' + t);
   };
+
+  useEffect(() => {
+    const syncFromHash = () => {
+      const next = getHashTab();
+      if (next) setTab(next);
+    };
+    syncFromHash();
+    window.addEventListener('hashchange', syncFromHash);
+    return () => window.removeEventListener('hashchange', syncFromHash);
+  }, []);
 
   useEffect(() => {
     Promise.all([api.get('/admin/workers'), api.get('/admin/projects'), api.get('/admin/settings'), api.get('/company-info')])

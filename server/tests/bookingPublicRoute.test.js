@@ -40,20 +40,32 @@ beforeEach(() => {
 });
 
 describe('GET /api/public/book/:companySlug', () => {
-  test('404 when no public types exist for the company', async () => {
+  test('404 when the company slug does not exist', async () => {
     pool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
     const res = await request(makeApp()).get('/api/public/book/acme');
     expect(res.status).toBe(404);
   });
 
+  test('returns an empty type list when the company exists but has no public appointment types', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'co-1', name: 'Acme GC', slug: 'acme' }] })
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const res = await request(makeApp()).get('/api/public/book/acme');
+    expect(res.status).toBe(200);
+    expect(res.body.company_name).toBe('Acme GC');
+    expect(res.body.types).toEqual([]);
+  });
+
   test('returns company name + types when company exists', async () => {
-    pool.query.mockResolvedValueOnce({
-      rowCount: 2,
-      rows: [
-        { id: 1, slug: 'site-visit',  name: 'Site Visit',  description: 'On site',  duration_minutes: 60, location_kind: 'onsite', location_detail: null, company_name: 'Acme GC', company_slug: 'acme' },
-        { id: 2, slug: 'phone-consult', name: 'Phone Consult', description: null, duration_minutes: 30, location_kind: 'phone', location_detail: null, company_name: 'Acme GC', company_slug: 'acme' },
-      ],
-    });
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'co-1', name: 'Acme GC', slug: 'acme' }] })
+      .mockResolvedValueOnce({
+        rowCount: 2,
+        rows: [
+          { id: 1, slug: 'site-visit',  name: 'Site Visit',  description: 'On site',  duration_minutes: 60, location_kind: 'onsite', location_detail: null },
+          { id: 2, slug: 'phone-consult', name: 'Phone Consult', description: null, duration_minutes: 30, location_kind: 'phone', location_detail: null },
+        ],
+      });
     const res = await request(makeApp()).get('/api/public/book/acme');
     expect(res.status).toBe(200);
     expect(res.body.company_name).toBe('Acme GC');

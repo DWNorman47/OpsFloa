@@ -106,8 +106,8 @@ export default function TimeOffTab() {
         <form onSubmit={handleSubmit} style={s.form}>
           <div style={s.row}>
             <div style={s.fieldGroup}>
-              <label style={s.label}>{t.typeLabel}</label>
-              <select style={s.input} value={form.type} onChange={e => set('type', e.target.value)} disabled={saving}>
+              <label style={s.label} htmlFor="timeoff-type">{t.typeLabel}</label>
+              <select id="timeoff-type" style={s.input} value={form.type} onChange={e => set('type', e.target.value)} disabled={saving}>
                 <option value="vacation">{t.typeVacation}</option>
                 <option value="sick">{t.typeSick}</option>
                 <option value="personal">{t.typePersonal}</option>
@@ -115,17 +115,17 @@ export default function TimeOffTab() {
               </select>
             </div>
             <div style={s.fieldGroup}>
-              <label style={s.label}>{t.startDate}</label>
-              <input style={s.input} type="date" value={form.start_date} onChange={e => set('start_date', e.target.value)} required disabled={saving} />
+              <label style={s.label} htmlFor="timeoff-start-date">{t.startDate}</label>
+              <input id="timeoff-start-date" style={s.input} type="date" value={form.start_date} onChange={e => set('start_date', e.target.value)} required disabled={saving} />
             </div>
             <div style={s.fieldGroup}>
-              <label style={s.label}>{t.endDate}</label>
-              <input style={s.input} type="date" value={form.end_date} min={form.start_date} onChange={e => set('end_date', e.target.value)} required disabled={saving} />
+              <label style={s.label} htmlFor="timeoff-end-date">{t.endDate}</label>
+              <input id="timeoff-end-date" style={s.input} type="date" value={form.end_date} min={form.start_date} onChange={e => set('end_date', e.target.value)} required disabled={saving} />
             </div>
           </div>
           <div style={s.fieldGroup}>
-            <label style={s.label}>{t.noteOptionalLabel}</label>
-            <textarea style={{ ...s.input, resize: 'vertical', minHeight: 56 }} maxLength={500} value={form.note} onChange={e => set('note', e.target.value)} placeholder={t.noteDetailsPlaceholder} disabled={saving} />
+            <label style={s.label} htmlFor="timeoff-note">{t.noteOptionalLabel}</label>
+            <textarea id="timeoff-note" style={{ ...s.input, resize: 'vertical', minHeight: 56 }} maxLength={500} value={form.note} onChange={e => set('note', e.target.value)} placeholder={t.noteDetailsPlaceholder} disabled={saving} />
             <div style={{ fontSize: 11, color: '#6b7280', textAlign: 'right', marginTop: 2 }}>{(form.note || '').length}/500</div>
           </div>
           {error && <p style={s.error}>{error}</p>}
