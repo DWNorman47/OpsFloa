@@ -5,6 +5,7 @@ import AppHeader from '../components/AppHeader';
 import { useAuth } from '../contexts/AuthContext';
 import { userCanSeeModule, canSeeTimeclockApp } from '../modulePermissions';
 import { userHasAnyPerm } from '../hooks/usePerm';
+import { useT } from '../hooks/useT';
 
 function enabled(settings, key, fallback = true) {
   if (!settings) return fallback;
@@ -40,6 +41,7 @@ function Metric({ label, value, tone = 'neutral' }) {
 
 export default function HomePage() {
   const { user } = useAuth();
+  const t = useT();
   const [settings, setSettings] = useState(null);
   const [kpis, setKpis] = useState(null);
   const [clockStatus, setClockStatus] = useState(null);
@@ -84,53 +86,53 @@ export default function HomePage() {
 
     if (isAdmin) {
       if (can('workforce') && hasAny(['approve_entries'])) {
-        list.push({ title: 'Review approvals', detail: 'Clear pending time before payroll', to: '/timeclock#wf-approvals', icon: 'A', primary: true });
+        list.push({ title: t.hpActionReviewApprovalsTitle, detail: t.hpActionReviewApprovalsDetail, to: '/timeclock#wf-approvals', icon: 'A', primary: true });
       }
       if (can('workforce')) {
-        list.push({ title: "Who's working", detail: 'See live clock-ins and exceptions', to: '/timeclock#wf-live', icon: 'L', primary: !list.length });
+        list.push({ title: t.hpActionWhosWorkingTitle, detail: t.hpActionWhosWorkingDetail, to: '/timeclock#wf-live', icon: 'L', primary: !list.length });
       }
       if (enabled(settings, 'module_projects') && can('projects')) {
-        list.push({ title: `Add ${terms.work.toLowerCase()}`, detail: `Create ${terms.work.toLowerCase()} or manage ${terms.client.toLowerCase()} records`, to: '/projects', icon: 'W' });
+        list.push({ title: `${t.hpActionAddWork} ${terms.work.toLowerCase()}`, detail: `${t.hpActionAddWorkDetailCreate} ${terms.work.toLowerCase()} ${t.hpActionAddWorkDetailManage} ${terms.client.toLowerCase()} ${t.hpActionAddWorkDetailRecords}`, to: '/projects', icon: 'W' });
       }
       if (enabled(settings, 'module_team') && can('team')) {
-        list.push({ title: 'Invite team', detail: `Add ${plural(terms.worker).toLowerCase()} and set access`, to: '/team', icon: 'T' });
+        list.push({ title: t.hpActionInviteTeamTitle, detail: `${t.hpActionInviteTeamDetailAdd} ${plural(terms.worker).toLowerCase()} ${t.hpActionInviteTeamDetailAccess}`, to: '/team', icon: 'T' });
       }
       if (can('administration')) {
-        list.push({ title: 'Tune setup', detail: 'Modules, features, billing, and integrations', to: '/administration', icon: 'S' });
+        list.push({ title: t.hpActionTuneSetupTitle, detail: t.hpActionTuneSetupDetail, to: '/administration', icon: 'S' });
       }
     } else {
       if (can('timeclock')) {
         list.push({
-          title: clockStatus ? 'Clock out' : 'Clock in',
-          detail: clockStatus ? `Active on ${clockStatus.project_name || 'work'}` : 'Start your day in one tap',
+          title: clockStatus ? t.hpActionClockOut : t.hpActionClockIn,
+          detail: clockStatus ? `${t.hpActionClockActiveOn} ${clockStatus.project_name || t.hpWork}` : t.hpActionClockInDetail,
           to: '/timeclock#clock',
           icon: 'C',
           primary: true,
         });
-        list.push({ title: 'My timesheet', detail: 'Review today and recent entries', to: '/timeclock#timesheet', icon: 'H' });
+        list.push({ title: t.hpActionMyTimesheetTitle, detail: t.hpActionMyTimesheetDetail, to: '/timeclock#timesheet', icon: 'H' });
       }
       if (enabled(settings, 'module_field', false) && can('field')) {
-        list.push({ title: 'Submit update', detail: `Notes, reports, photos, or ${terms.field.toLowerCase()}`, to: '/field', icon: 'U' });
+        list.push({ title: t.hpActionSubmitUpdateTitle, detail: `${t.hpActionSubmitUpdateDetail} ${terms.field.toLowerCase()}`, to: '/field', icon: 'U' });
       }
       if (enabled(settings, 'module_inventory', false) && can('inventory')) {
-        list.push({ title: 'Inventory', detail: 'Check stock or record movement', to: '/inventory', icon: 'I' });
+        list.push({ title: t.hpActionInventoryTitle, detail: t.hpActionInventoryDetail, to: '/inventory', icon: 'I' });
       }
     }
 
     return list.slice(0, 5);
-  }, [user, isAdmin, settings, clockStatus, terms]);
+  }, [user, isAdmin, settings, clockStatus, terms, t]);
 
   const places = useMemo(() => {
     if (!user) return [];
     const all = [
-      ['timeclock', 'Time Clock', '/timeclock', 'Clock in, submit time, oversight'],
-      ['field', terms.field, '/field', 'Reports, photos, checklists, issues'],
-      ['projects', terms.work, '/projects', `${terms.work}, estimates, change orders, billing`],
-      ['team', 'Directory', '/team', `${plural(terms.worker)}, subcontractors, customers`],
-      ['inventory', 'Inventory', '/inventory', 'Items, locations, counts'],
-      ['financial_reports', 'Reports', '/financial-reports', 'P&L, WIP, and performance'],
-      ['administration', 'Admin', '/administration', 'Company setup and integrations'],
-      ['account', 'Account', '/account', 'Profile and password'],
+      ['timeclock', t.hpPlaceTimeClockName, '/timeclock', t.hpPlaceTimeClockDetail],
+      ['field', terms.field, '/field', t.hpPlaceFieldDetail],
+      ['projects', terms.work, '/projects', `${terms.work}, ${t.hpPlaceProjectsDetail}`],
+      ['team', t.hpPlaceDirectoryName, '/team', `${plural(terms.worker)}, ${t.hpPlaceDirectoryDetail}`],
+      ['inventory', t.hpPlaceInventoryName, '/inventory', t.hpPlaceInventoryDetail],
+      ['financial_reports', t.hpPlaceReportsName, '/financial-reports', t.hpPlaceReportsDetail],
+      ['administration', t.hpPlaceAdminName, '/administration', t.hpPlaceAdminDetail],
+      ['account', t.hpPlaceAccountName, '/account', t.hpPlaceAccountDetail],
     ];
     return all.filter(([id]) => {
       if (['projects', 'financial_reports', 'administration'].includes(id) && !isAdmin) return false;
@@ -144,7 +146,7 @@ export default function HomePage() {
       if (id === 'timeclock') return canSeeTimeclockApp(user);
       return userCanSeeModule(user, id);
     });
-  }, [user, settings, isAdmin, terms]);
+  }, [user, settings, isAdmin, terms, t]);
 
   return (
     <div className="home-page">
@@ -152,41 +154,41 @@ export default function HomePage() {
       <main className="home-shell" id="main">
         <section className="home-hero">
           <div>
-            <p className="home-kicker">{isAdmin ? 'Operations home' : 'Your work today'}</p>
-            <h1>{isAdmin ? 'Start with what needs attention.' : `Hi ${user?.full_name?.split(' ')[0] || 'there'}, keep the day simple.`}</h1>
+            <p className="home-kicker">{isAdmin ? t.hpKickerAdmin : t.hpKickerWorker}</p>
+            <h1>{isAdmin ? t.hpHeadingAdmin : `${t.hpHeadingWorkerHi} ${user?.full_name?.split(' ')[0] || t.hpHeadingWorkerThere}, ${t.hpHeadingWorkerRest}`}</h1>
             <p>
               {isAdmin
-                ? 'OpsFloa keeps the full toolset nearby, but your home screen stays focused on the next few decisions.'
-                : 'The actions you need most are here. Everything else is still available when you look for it.'}
+                ? t.hpIntroAdmin
+                : t.hpIntroWorker}
             </p>
           </div>
           {isAdmin ? (
             <div className="home-metrics">
-              <Metric label="Pending approvals" value={loading ? '-' : kpis?.pending_approvals ?? 0} tone={(kpis?.pending_approvals || 0) > 0 ? 'attention' : 'good'} />
-              <Metric label="Clocked in now" value={loading ? '-' : kpis?.clocked_in_count ?? 0} />
-              <Metric label="Hours this week" value={loading ? '-' : kpis?.company_hours_this_week ?? 0} />
-              <Metric label="OT watch" value={loading ? '-' : kpis?.overtime_workers_this_week ?? 0} tone={(kpis?.overtime_workers_this_week || 0) > 0 ? 'attention' : 'good'} />
+              <Metric label={t.hpMetricPendingApprovals} value={loading ? '-' : kpis?.pending_approvals ?? 0} tone={(kpis?.pending_approvals || 0) > 0 ? 'attention' : 'good'} />
+              <Metric label={t.hpMetricClockedInNow} value={loading ? '-' : kpis?.clocked_in_count ?? 0} />
+              <Metric label={t.hpMetricHoursThisWeek} value={loading ? '-' : kpis?.company_hours_this_week ?? 0} />
+              <Metric label={t.hpMetricOtWatch} value={loading ? '-' : kpis?.overtime_workers_this_week ?? 0} tone={(kpis?.overtime_workers_this_week || 0) > 0 ? 'attention' : 'good'} />
             </div>
           ) : (
             <div className="home-worker-status">
-              <span className={clockStatus ? 'live' : ''}>{clockStatus ? 'Clocked in' : 'Ready'}</span>
-              <strong>{clockStatus?.project_name || 'No active shift'}</strong>
-              <small>{clockStatus ? 'Your current shift is being tracked.' : 'Start when you are ready.'}</small>
+              <span className={clockStatus ? 'live' : ''}>{clockStatus ? t.hpStatusClockedIn : t.hpStatusReady}</span>
+              <strong>{clockStatus?.project_name || t.hpStatusNoActiveShift}</strong>
+              <small>{clockStatus ? t.hpStatusShiftTracked : t.hpStatusStartWhenReady}</small>
             </div>
           )}
         </section>
 
         <section className="home-section">
           <div className="home-section-head">
-            <h2>Most important now</h2>
-            <p>{isAdmin ? 'The workday should begin with decisions, not navigation.' : 'Keep the daily path short.'}</p>
+            <h2>{t.hpMostImportantNow}</h2>
+            <p>{isAdmin ? t.hpMostImportantSubAdmin : t.hpMostImportantSubWorker}</p>
           </div>
           <div className="home-actions">
             {actions.map(action => <ActionCard key={action.title} action={action} />)}
             {!loading && actions.length === 0 && (
               <div className="home-empty-action">
-                <strong>Nothing urgent right now.</strong>
-                <span>Your available tools are still nearby when you need them.</span>
+                <strong>{t.hpEmptyActionTitle}</strong>
+                <span>{t.hpEmptyActionDetail}</span>
               </div>
             )}
           </div>
@@ -195,8 +197,8 @@ export default function HomePage() {
         <section className="home-section home-more">
           <div className="home-section-head">
             <div>
-              <h2>More places</h2>
-              <p>Available because of this company setup and your role.</p>
+              <h2>{t.hpMorePlaces}</h2>
+              <p>{t.hpMorePlacesSub}</p>
             </div>
             <button
               type="button"
@@ -204,7 +206,7 @@ export default function HomePage() {
               aria-expanded={showPlaces}
               onClick={() => setShowPlaces(v => !v)}
             >
-              {showPlaces ? 'Hide tools' : `Show ${places.length} tools`}
+              {showPlaces ? t.hpHideTools : `${t.hpShowTools1} ${places.length} ${t.hpShowTools2}`}
             </button>
           </div>
           {showPlaces && (
@@ -219,7 +221,7 @@ export default function HomePage() {
           )}
           {!showPlaces && isAdmin && userCanSeeModule(user, 'administration') && (
             <Link to="/administration#workspace" className="home-quiet-link">
-              Tune which tools appear for this company
+              {t.hpTuneToolsLink}
             </Link>
           )}
         </section>
