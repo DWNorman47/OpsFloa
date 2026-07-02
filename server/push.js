@@ -4,7 +4,7 @@ const logger = require('./logger');
 
 if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
   webpush.setVapidDetails(
-    `mailto:${process.env.SENDGRID_FROM_EMAIL || 'info@opsfloa.com'}`,
+    `mailto:${process.env.EMAIL_FROM || 'info@opsfloa.com'}`,
     process.env.VAPID_PUBLIC_KEY,
     process.env.VAPID_PRIVATE_KEY
   );

@@ -20,7 +20,6 @@ jest.mock('../services/qbo', () => ({}));
 jest.mock('../routes/inbox', () => ({
   createInboxItem: jest.fn(), createInboxItemBatch: jest.fn(),
 }));
-jest.mock('@sendgrid/mail', () => ({ setApiKey: jest.fn(), send: jest.fn().mockResolvedValue({}) }));
 jest.mock('../r2', () => ({
   getPresignedUploadUrl: jest.fn(),
 }));
