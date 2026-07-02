@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
 import AppHeader from '../components/AppHeader';
 import OfflineBanner from '../components/OfflineBanner';
-import { HELP_SECTIONS } from '../helpContent';
+import { getHelpSections } from '../helpContent';
 import api from '../api';
 import { getOrFetch } from '../offlineDb';
 import { silentError } from '../errorReporter';
@@ -18,11 +18,14 @@ export default function HelpPage() {
   const { user } = useAuth();
   const t = useT();
   const [settings, setSettings] = useState(null);
+  // Content resolved to the user's language ('Spanish' => es, else English).
+  // Section `id`s are language-independent, so hashes/deep-links still work.
+  const sections = getHelpSections(user?.language);
   // First section is open by default, plus whatever the URL hash points at.
   const [open, setOpen] = useState(() => {
-    const initial = new Set([HELP_SECTIONS[0]?.id]);
+    const initial = new Set([sections[0]?.id]);
     const hash = window.location.hash.replace('#', '');
-    if (hash && HELP_SECTIONS.some(s => s.id === hash)) initial.add(hash);
+    if (hash && sections.some(s => s.id === hash)) initial.add(hash);
     return initial;
   });
   const [query, setQuery] = useState('');
@@ -53,7 +56,7 @@ export default function HelpPage() {
   // items whose question or answer matches. Hide sections with zero matches.
   const q = query.trim().toLowerCase();
   const filtered = q
-    ? HELP_SECTIONS.map(section => ({
+    ? sections.map(section => ({
         ...section,
         items: section.items.filter(it => {
           const haystack = [
@@ -64,7 +67,7 @@ export default function HelpPage() {
           return haystack.includes(q);
         }),
       })).filter(s => s.items.length > 0)
-    : HELP_SECTIONS;
+    : sections;
 
   return (
     <div style={styles.page}>
@@ -88,7 +91,7 @@ export default function HelpPage() {
 
         {!q && (
           <nav style={styles.toc} aria-label={t.helpSectionsAria}>
-            {HELP_SECTIONS.map(s => (
+            {sections.map(s => (
               <a
                 key={s.id}
                 href={`#${s.id}`}

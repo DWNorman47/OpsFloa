@@ -5,7 +5,7 @@ import {
   filterGuideTasks,
   findGuideTask,
   getGuideTaskAvailability,
-  GUIDE_TASKS,
+  getGuideTasks,
 } from '../guideContent';
 import { userHasAnyPerm } from '../hooks/usePerm';
 import { useT } from '../hooks/useT';
@@ -62,10 +62,10 @@ function GuideTaskCard({ task, availability, onSelect }) {
   );
 }
 
-function GuideDetail({ task, user, features, onBack, onNavigate, onSelect }) {
+function GuideDetail({ task, allTasks, user, features, onBack, onNavigate, onSelect }) {
   const t = useT();
   const availability = getGuideTaskAvailability(task, user, features);
-  const related = (task.related || []).map(findGuideTask).filter(Boolean);
+  const related = (task.related || []).map(id => findGuideTask(id, allTasks)).filter(Boolean);
   const canNavigate = availability.ready;
 
   const handlePrimary = event => {
@@ -179,8 +179,14 @@ export default function GuideDrawer({ open, onClose, currentApp, features = {} }
     }
   }, [open]);
 
-  const tasks = useMemo(() => filterGuideTasks(query, currentApp, GUIDE_TASKS), [query, currentApp]);
-  const selectedTask = selectedId ? findGuideTask(selectedId) : null;
+  // Resolve guide content to the user's language (falls back to English), then
+  // search/sort against that resolved text so matches follow what users see.
+  const localizedTasks = useMemo(() => getGuideTasks(user?.language), [user?.language]);
+  const tasks = useMemo(
+    () => filterGuideTasks(query, currentApp, localizedTasks),
+    [query, currentApp, localizedTasks],
+  );
+  const selectedTask = selectedId ? findGuideTask(selectedId, localizedTasks) : null;
   const hasSearch = query.trim().length > 0;
   const currentAppTasks = tasks.filter(task => task.app === currentApp);
   const otherTasks = tasks.filter(task => task.app !== currentApp);
@@ -234,6 +240,7 @@ export default function GuideDrawer({ open, onClose, currentApp, features = {} }
           {selectedTask ? (
             <GuideDetail
               task={selectedTask}
+              allTasks={localizedTasks}
               user={user}
               features={features}
               onBack={() => setSelectedId(null)}
