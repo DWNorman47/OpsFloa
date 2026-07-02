@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import api from '../api';
 import { silentError } from '../errorReporter';
+import { useT } from '../hooks/useT';
 import PhotoCapture from './PhotoCapture';
 import PublicCompanyProfileView from './PublicCompanyProfileView';
 
@@ -50,7 +51,7 @@ function parseLines(value) {
     .filter(Boolean);
 }
 
-function ListField({ label, hint, name, value, onChange, placeholder }) {
+function ListField({ label, hint, name, value, onChange, placeholder, emptyPlaceholder }) {
   return (
     <label style={s.field}>
       <span style={s.label}>{label}</span>
@@ -60,7 +61,7 @@ function ListField({ label, hint, name, value, onChange, placeholder }) {
         style={s.textarea}
         value={(value || []).join('\n')}
         onChange={e => onChange(parseLines(e.target.value))}
-        placeholder={placeholder || 'One per line'}
+        placeholder={placeholder || emptyPlaceholder}
         rows={4}
       />
     </label>
@@ -85,6 +86,7 @@ function TextField({ label, name, value, onChange, placeholder, rows = 3, maxLen
 }
 
 export default function PublicCompanyProfileAdmin() {
+  const t = useT();
   const [draft, setDraft] = useState(blankProfile);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -95,7 +97,7 @@ export default function PublicCompanyProfileAdmin() {
   useEffect(() => {
     api.get('/admin/company-profile')
       .then(r => setDraft(normalizeProfile(r.data.profile)))
-      .catch(() => setError('Failed to load public profile settings.'))
+      .catch(() => setError(t.pcpaErrLoad))
       .finally(() => setLoading(false));
   }, []);
 
@@ -121,10 +123,10 @@ export default function PublicCompanyProfileAdmin() {
         ? await api.post('/admin/company-profile/publish', draft)
         : await api.patch('/admin/company-profile', draft);
       setDraft(normalizeProfile(r.data.profile));
-      setMessage(publish ? 'Public profile published.' : 'Public profile saved.');
+      setMessage(publish ? t.pcpaMsgPublished : t.pcpaMsgSaved);
       if (publish) setPreviewOpen(false);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to save public profile.');
+      setError(err.response?.data?.error || t.pcpaErrSave);
     } finally {
       setSaving(false);
     }
@@ -137,9 +139,9 @@ export default function PublicCompanyProfileAdmin() {
     try {
       const r = await api.post('/admin/company-profile/unpublish');
       setDraft(normalizeProfile(r.data.profile));
-      setMessage('Public profile unpublished.');
+      setMessage(t.pcpaMsgUnpublished);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to unpublish public profile.');
+      setError(err.response?.data?.error || t.pcpaErrUnpublish);
     } finally {
       setSaving(false);
     }
@@ -158,39 +160,39 @@ export default function PublicCompanyProfileAdmin() {
   const removeFaq = (index) => update('faq_items', (draft.faq_items || []).filter((_, i) => i !== index));
 
   if (loading) {
-    return <div style={s.card}><p style={s.muted}>Loading public profile settings...</p></div>;
+    return <div style={s.card}><p style={s.muted}>{t.pcpaLoading}</p></div>;
   }
 
   return (
     <section style={s.card}>
       <div style={s.header}>
         <div>
-          <p style={s.kicker}>Public Company Profile</p>
-          <h3 style={s.title}>Explain who this company is before someone sends a request.</h3>
+          <p style={s.kicker}>{t.pcpaKicker}</p>
+          <h3 style={s.title}>{t.pcpaTitle}</h3>
           <p style={s.copy}>
-            This page is public only when published. It uses the existing request form as the next step.
+            {t.pcpaSubtitle}
           </p>
         </div>
         <div style={s.statusBox}>
           <span style={draft.is_public ? s.statusOn : s.statusOff}>
-            {draft.is_public ? 'Published' : 'Private'}
+            {draft.is_public ? t.pcpaStatusPublished : t.pcpaStatusPrivate}
           </span>
-          {publicUrl && draft.is_public && <a href={publicUrl} target="_blank" rel="noopener noreferrer" style={s.openLink}>Open public page</a>}
+          {publicUrl && draft.is_public && <a href={publicUrl} target="_blank" rel="noopener noreferrer" style={s.openLink}>{t.pcpaOpenPublicPage}</a>}
         </div>
       </div>
 
       {publicUrl && (
         <div style={s.linkGrid}>
           <div style={s.linkRow}>
-            <span>Profile</span>
+            <span>{t.pcpaLinkProfile}</span>
             <code style={s.linkCode}>{publicUrl}</code>
-            <button type="button" style={s.smallBtn} onClick={() => copy(publicUrl)}>Copy</button>
+            <button type="button" style={s.smallBtn} onClick={() => copy(publicUrl)}>{t.pcpaCopy}</button>
           </div>
           {draft.accepts_service_requests && (
             <div style={s.linkRow}>
-              <span>Request form</span>
+              <span>{t.pcpaLinkRequestForm}</span>
               <code style={s.linkCode}>{requestUrl}</code>
-              <button type="button" style={s.smallBtn} onClick={() => copy(requestUrl)}>Copy</button>
+              <button type="button" style={s.smallBtn} onClick={() => copy(requestUrl)}>{t.pcpaCopy}</button>
             </div>
           )}
         </div>
@@ -198,83 +200,83 @@ export default function PublicCompanyProfileAdmin() {
 
       <div style={s.formGrid}>
         <label style={s.field}>
-          <span style={s.label}>Public company name</span>
+          <span style={s.label}>{t.pcpaFieldPublicCompanyName}</span>
           <input
             name="public_profile_display_name"
             style={s.input}
             value={draft.display_name || ''}
             onChange={e => update('display_name', e.target.value)}
-            placeholder={draft.company_name || 'Company name'}
+            placeholder={draft.company_name || t.pcpaPhCompanyName}
             maxLength={255}
           />
         </label>
         <TextField
-          label="Short description"
+          label={t.pcpaFieldShortDescription}
           name="public_profile_short_description"
           value={draft.short_description}
           onChange={value => update('short_description', value)}
-          placeholder="A plain-language summary of who you are, what you do, and who you help."
+          placeholder={t.pcpaPhShortDescription}
           rows={3}
           maxLength={700}
         />
         <ListField
-          label="Services offered"
+          label={t.pcpaFieldServicesOffered}
           name="public_profile_services_offered"
           value={draft.services_offered}
           onChange={value => update('services_offered', value)}
-          placeholder={'Repair\nMaintenance\nInstallation'}
+          placeholder={t.pcpaPhServicesOffered}
         />
         <ListField
-          label="Service areas"
+          label={t.pcpaFieldServiceAreas}
           name="public_profile_service_areas"
           value={draft.service_areas}
           onChange={value => update('service_areas', value)}
-          placeholder={'Phoenix\nMesa\nScottsdale'}
+          placeholder={t.pcpaPhServiceAreas}
         />
         <ListField
-          label="Project types"
+          label={t.pcpaFieldProjectTypes}
           name="public_profile_project_types"
           value={draft.project_types}
           onChange={value => update('project_types', value)}
-          placeholder={'Commercial\nResidential\nEmergency work'}
+          placeholder={t.pcpaPhProjectTypes}
         />
         <ListField
-          label="Equipment and capabilities"
+          label={t.pcpaFieldEquipmentCapabilities}
           name="public_profile_equipment_capabilities"
           value={draft.equipment_capabilities}
           onChange={value => update('equipment_capabilities', value)}
-          placeholder={'Lift access\nFleet service vehicles\nLicensed technicians'}
+          placeholder={t.pcpaPhEquipmentCapabilities}
         />
       </div>
 
       <div style={s.formGrid}>
         <TextField
-          label="License/certification info"
+          label={t.pcpaFieldLicenseInfo}
           name="public_profile_license_info"
           value={draft.license_info}
           onChange={value => update('license_info', value)}
-          placeholder="License numbers, bonding, insurance, certifications, or compliance notes."
+          placeholder={t.pcpaPhLicenseInfo}
           rows={3}
         />
         <TextField
-          label="Quote/request instructions"
+          label={t.pcpaFieldQuoteInstructions}
           name="public_profile_quote_instructions"
           value={draft.quote_instructions}
           onChange={value => update('quote_instructions', value)}
-          placeholder="Tell visitors what details to include and what happens after they submit a request."
+          placeholder={t.pcpaPhQuoteInstructions}
           rows={3}
         />
       </div>
 
       <div style={s.subsection}>
-        <h4 style={s.subTitle}>Contact information</h4>
+        <h4 style={s.subTitle}>{t.pcpaContactInfo}</h4>
         <div style={s.contactGrid}>
           {[
-            ['name', 'Contact name'],
-            ['email', 'Public email'],
-            ['phone', 'Public phone'],
-            ['website', 'Website'],
-            ['address', 'Public address'],
+            ['name', t.pcpaContactName],
+            ['email', t.pcpaContactEmail],
+            ['phone', t.pcpaContactPhone],
+            ['website', t.pcpaContactWebsite],
+            ['address', t.pcpaContactAddress],
           ].map(([key, label]) => (
             <label key={key} style={s.field}>
               <span style={s.label}>{label}</span>
@@ -291,11 +293,11 @@ export default function PublicCompanyProfileAdmin() {
 
       <div style={s.subsection}>
         <div style={s.subHeader}>
-          <h4 style={s.subTitle}>FAQ</h4>
-          <button type="button" style={s.smallBtn} onClick={addFaq}>Add FAQ</button>
+          <h4 style={s.subTitle}>{t.pcpaFaqTitle}</h4>
+          <button type="button" style={s.smallBtn} onClick={addFaq}>{t.pcpaAddFaq}</button>
         </div>
         {(draft.faq_items || []).length === 0 ? (
-          <p style={s.muted}>Add common questions if visitors usually need context before requesting work.</p>
+          <p style={s.muted}>{t.pcpaFaqEmpty}</p>
         ) : (
           <div style={s.faqList}>
             {draft.faq_items.map((item, index) => (
@@ -305,7 +307,7 @@ export default function PublicCompanyProfileAdmin() {
                   style={s.input}
                   value={item.question}
                   onChange={e => updateFaq(index, 'question', e.target.value)}
-                  placeholder="Question"
+                  placeholder={t.pcpaFaqQuestion}
                   maxLength={220}
                 />
                 <textarea
@@ -313,11 +315,11 @@ export default function PublicCompanyProfileAdmin() {
                   style={s.textarea}
                   value={item.answer}
                   onChange={e => updateFaq(index, 'answer', e.target.value)}
-                  placeholder="Answer"
+                  placeholder={t.pcpaFaqAnswer}
                   rows={2}
                   maxLength={1200}
                 />
-                <button type="button" style={s.dangerBtn} onClick={() => removeFaq(index)}>Remove</button>
+                <button type="button" style={s.dangerBtn} onClick={() => removeFaq(index)}>{t.pcpaRemove}</button>
               </div>
             ))}
           </div>
@@ -325,8 +327,8 @@ export default function PublicCompanyProfileAdmin() {
       </div>
 
       <div style={s.subsection}>
-        <h4 style={s.subTitle}>Public photos or examples</h4>
-        <p style={s.photoHelp}>Only add photos that are safe to show publicly. Internal job photos stay private unless uploaded here.</p>
+        <h4 style={s.subTitle}>{t.pcpaPhotosTitle}</h4>
+        <p style={s.photoHelp}>{t.pcpaPhotosHelp}</p>
         <PhotoCapture photos={draft.photos || []} onChange={photos => update('photos', photos)} maxPhotos={8} />
       </div>
 
@@ -335,15 +337,15 @@ export default function PublicCompanyProfileAdmin() {
 
       <div style={s.actions}>
         <button type="button" style={s.secondaryBtn} onClick={() => setPreviewOpen(open => !open)}>
-          {previewOpen ? 'Hide preview' : 'Preview'}
+          {previewOpen ? t.pcpaHidePreview : t.pcpaPreview}
         </button>
         <button type="button" style={s.secondaryBtn} onClick={() => save(false)} disabled={saving}>
-          {saving ? 'Saving...' : 'Save changes'}
+          {saving ? t.pcpaSaving : t.pcpaSaveChanges}
         </button>
         {draft.is_public ? (
-          <button type="button" style={s.dangerOutlineBtn} onClick={unpublish} disabled={saving}>Unpublish</button>
+          <button type="button" style={s.dangerOutlineBtn} onClick={unpublish} disabled={saving}>{t.pcpaUnpublish}</button>
         ) : (
-          <button type="button" style={s.primaryBtn} onClick={() => save(true)} disabled={saving}>Publish profile</button>
+          <button type="button" style={s.primaryBtn} onClick={() => save(true)} disabled={saving}>{t.pcpaPublishProfile}</button>
         )}
       </div>
 

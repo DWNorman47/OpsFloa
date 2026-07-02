@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api';
+import { getT } from '../i18n';
+import { detectLanguage } from '../languageDetect';
 import { useDocumentMeta } from '../hooks/useDocumentMeta';
 import PublicCompanyProfileView from '../components/PublicCompanyProfileView';
 
@@ -67,32 +69,37 @@ export default function PublicCompanyProfilePage() {
       .then(r => setProfile(r.data.profile))
       .catch(err => {
         if (err.response?.status === 404) setNotFound(true);
-        else setError('Failed to load this company profile. Please try again.');
+        else setError(getT(detectLanguage(profile?.client_language || profile?.language)).pcpLoadError);
       })
       .finally(() => setLoading(false));
   }, [slug]);
 
-  const title = profile?.display_name || profile?.company_name || 'Company profile';
+  // No logged-in user here — render in the client's stored language when known,
+  // otherwise the visitor's browser language.
+  const language = detectLanguage(profile?.client_language || profile?.language);
+  const t = getT(language);
+
+  const title = profile?.display_name || profile?.company_name || t.pcpCompanyProfile;
   const description = useMemo(() => {
     if (profile?.short_description) return profile.short_description;
-    return `Public company profile for ${title}.`;
-  }, [profile?.short_description, title]);
+    return `${t.pcpMetaDescriptionPrefix} ${title}.`;
+  }, [profile?.short_description, title, t]);
 
   useDocumentMeta({
-    title: profile ? `${title} | Company Profile` : 'Company Profile',
+    title: profile ? `${title} | ${t.pcpCompanyProfile}` : t.pcpCompanyProfile,
     description,
     robots: notFound ? 'noindex' : undefined,
   });
   useJsonLd(profile);
 
-  if (loading) return <div style={styles.center}>Loading...</div>;
+  if (loading) return <div style={styles.center}>{t.pcpLoading}</div>;
 
   if (notFound) {
     return (
       <main style={styles.page}>
         <section style={styles.messageCard}>
-          <h1>Company profile not found.</h1>
-          <p>This profile may be private, unpublished, or the link may be outdated.</p>
+          <h1>{t.pcpNotFoundTitle}</h1>
+          <p>{t.pcpNotFoundBody}</p>
         </section>
       </main>
     );
@@ -102,7 +109,7 @@ export default function PublicCompanyProfilePage() {
     return (
       <main style={styles.page}>
         <section style={styles.messageCard}>
-          <h1>Something went wrong.</h1>
+          <h1>{t.pcpErrorTitle}</h1>
           <p>{error}</p>
         </section>
       </main>
@@ -111,7 +118,7 @@ export default function PublicCompanyProfilePage() {
 
   return (
     <main style={styles.page}>
-      <PublicCompanyProfileView profile={profile} />
+      <PublicCompanyProfileView profile={profile} language={language} t={t} />
     </main>
   );
 }

@@ -8,18 +8,33 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { publicLinkError } from '../utils/publicErrors';
+import { getT } from '../i18n';
+import { detectLanguage } from '../languageDetect';
+import { formatDate, formatDateTime, langToLocale } from '../utils';
 
 const baseURL = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api';
 const pub = axios.create({ baseURL });
 
-const LOCATION_KIND_LABELS = {
-  phone: 'Phone call',
-  video: 'Video meeting',
-  onsite: 'On-site visit',
-  office: 'In our office',
-  other: 'Other',
-};
-const WEEKDAY_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+// Public visitors are anonymous, so resolve the language from the browser.
+const lang = detectLanguage();
+const t = getT(lang);
+
+const locationKindLabels = () => ({
+  phone: t.pbkLocationPhone,
+  video: t.pbkLocationVideo,
+  onsite: t.pbkLocationOnsite,
+  office: t.pbkLocationOffice,
+  other: t.pbkLocationOther,
+});
+const weekdayFull = () => [
+  t.pbkWeekdaySunday,
+  t.pbkWeekdayMonday,
+  t.pbkWeekdayTuesday,
+  t.pbkWeekdayWednesday,
+  t.pbkWeekdayThursday,
+  t.pbkWeekdayFriday,
+  t.pbkWeekdaySaturday,
+];
 
 export default function PublicBookingPage() {
   const { companySlug, typeSlug } = useParams();
@@ -33,6 +48,8 @@ export default function PublicBookingPage() {
   const [pageError, setPageError] = useState(null);
   const [typeError, setTypeError] = useState(null);
   const [selectedSlot, setSelectedSlot] = useState(null);
+
+  const LOCATION_KIND_LABELS = locationKindLabels();
 
   // Step 1: load types if no slug
   useEffect(() => {
@@ -53,7 +70,7 @@ export default function PublicBookingPage() {
       .catch(err => {
         if (!alive) return;
         setTypes([]);
-        setPageError(publicLinkError(err, 'This booking page is not available.'));
+        setPageError(publicLinkError(err, t.pbkPageUnavailable));
       })
       .finally(() => { if (alive) setTypesLoading(false); });
     return () => { alive = false; };
@@ -76,7 +93,7 @@ export default function PublicBookingPage() {
       .catch(err => {
         if (!alive) return;
         setType(null);
-        setTypeError(publicLinkError(err, 'This appointment type is not available.'));
+        setTypeError(publicLinkError(err, t.pbkTypeUnavailable));
       })
       .finally(() => { if (alive) setTypeLoading(false); });
     return () => { alive = false; };
@@ -90,10 +107,10 @@ export default function PublicBookingPage() {
   // ── Type-picker step ─────────────────────────────────────────────────────
   if (!typeSlug && !type) {
     return (
-      <Shell title={companyName ? `Book with ${companyName}` : 'Book an appointment'}>
+      <Shell title={companyName ? `${t.pbkBookWith} ${companyName}` : t.pbkBookAnAppointment}>
         {typesLoading ? (
           <div style={{ padding: 40, textAlign: 'center', color: '#6b7280' }}>
-            Loading booking options...
+            {t.pbkLoadingOptions}
           </div>
         ) : pageError ? (
           <div style={{ padding: 40, textAlign: 'center', color: '#6b7280' }}>
@@ -101,23 +118,23 @@ export default function PublicBookingPage() {
           </div>
         ) : types.length === 0 ? (
           <div style={{ padding: 40, textAlign: 'center', color: '#6b7280' }}>
-            No public appointment types are configured for this company.
+            {t.pbkNoTypes}
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {types.map(t => (
+            {types.map(t2 => (
               <button
-                key={t.id}
-                onClick={() => pickType(t)}
+                key={t2.id}
+                onClick={() => pickType(t2)}
                 style={styles.typeBtn}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
-                  <div style={{ fontSize: 16, fontWeight: 700, color: '#111827' }}>{t.name}</div>
-                  <div style={{ fontSize: 13, color: '#6b7280' }}>{t.duration_minutes} min</div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: '#111827' }}>{t2.name}</div>
+                  <div style={{ fontSize: 13, color: '#6b7280' }}>{t2.duration_minutes} {t.pbkMin}</div>
                 </div>
-                {t.description && <div style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>{t.description}</div>}
+                {t2.description && <div style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>{t2.description}</div>}
                 <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 6, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                  {LOCATION_KIND_LABELS[t.location_kind] || t.location_kind}
+                  {LOCATION_KIND_LABELS[t2.location_kind] || t2.location_kind}
                 </div>
               </button>
             ))}
@@ -129,26 +146,26 @@ export default function PublicBookingPage() {
 
   if (typeLoading) {
     return (
-      <Shell title="Loading...">
+      <Shell title={t.pbkLoading}>
         <div style={{ padding: 40, textAlign: 'center', color: '#6b7280' }}>
-          Loading booking details...
+          {t.pbkLoadingDetails}
         </div>
       </Shell>
     );
   }
 
   if (typeError && !type) {
-    return <Shell title="Booking unavailable"><div style={{ color: '#6b7280', textAlign: 'center' }}>{typeError}</div></Shell>;
+    return <Shell title={t.pbkBookingUnavailable}><div style={{ color: '#6b7280', textAlign: 'center' }}>{typeError}</div></Shell>;
   }
 
-  if (!type) return <Shell title="Booking unavailable"><div /></Shell>;
+  if (!type) return <Shell title={t.pbkBookingUnavailable}><div /></Shell>;
 
   // ── Date + slot step ────────────────────────────────────────────────────
   if (step === 'date') {
     return (
       <Shell
-        title={`Book ${type.name} with ${companyName}`}
-        subtitle={`${type.duration_minutes} min · ${LOCATION_KIND_LABELS[type.location_kind] || type.location_kind}`}
+        title={`${t.pbkBook} ${type.name} ${t.pbkWithLower} ${companyName}`}
+        subtitle={`${type.duration_minutes} ${t.pbkMin} · ${LOCATION_KIND_LABELS[type.location_kind] || type.location_kind}`}
       >
         <SlotPicker
           companySlug={companySlug}
@@ -165,8 +182,8 @@ export default function PublicBookingPage() {
   if (step === 'client') {
     return (
       <Shell
-        title={`Confirm — ${type.name}`}
-        subtitle={`${new Date(selectedSlot).toLocaleString()} · ${type.duration_minutes} min`}
+        title={`${t.pbkConfirm} — ${type.name}`}
+        subtitle={`${formatDateTime(selectedSlot, lang)} · ${type.duration_minutes} ${t.pbkMin}`}
       >
         <ClientForm
           companySlug={companySlug}
@@ -188,6 +205,8 @@ function SlotPicker({ companySlug, typeSlug, duration, onPick, onBack }) {
   const [error, setError] = useState(null);
   const [days, setDays] = useState(14);
 
+  const WEEKDAY_FULL = weekdayFull();
+
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
@@ -196,7 +215,7 @@ function SlotPicker({ companySlug, typeSlug, duration, onPick, onBack }) {
       });
       setSlots(data.slots || []);
     } catch (err) {
-      setError(publicLinkError(err, 'Failed to load availability'));
+      setError(publicLinkError(err, t.pbkAvailabilityLoadFailed));
     } finally { setLoading(false); }
   }, [companySlug, typeSlug, days]);
 
@@ -206,28 +225,28 @@ function SlotPicker({ companySlug, typeSlug, duration, onPick, onBack }) {
   const byDay = {};
   for (const iso of slots) {
     const d = new Date(iso);
-    const key = d.toLocaleDateString();
+    const key = formatDate(d, lang);
     if (!byDay[key]) byDay[key] = [];
-    byDay[key].push({ iso, time: d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) });
+    byDay[key].push({ iso, time: d.toLocaleTimeString(langToLocale(lang), { hour: 'numeric', minute: '2-digit' }) });
   }
   const dayKeys = Object.keys(byDay);
 
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <button onClick={onBack} style={styles.ghostBtn}>← Back</button>
+        <button onClick={onBack} style={styles.ghostBtn}>← {t.pbkBack}</button>
         <select value={days} onChange={e => setDays(parseInt(e.target.value, 10))} style={styles.select}>
-          <option value="7">Next 7 days</option>
-          <option value="14">Next 14 days</option>
-          <option value="30">Next 30 days</option>
+          <option value="7">{t.pbkNext7Days}</option>
+          <option value="14">{t.pbkNext14Days}</option>
+          <option value="30">{t.pbkNext30Days}</option>
         </select>
       </div>
 
-      {loading ? <div style={{ padding: 24, textAlign: 'center', color: '#6b7280' }}>Loading availability...</div> :
+      {loading ? <div style={{ padding: 24, textAlign: 'center', color: '#6b7280' }}>{t.pbkLoadingAvailability}</div> :
         error ? <div style={styles.errorBox}>{error}</div> :
         slots.length === 0 ? (
           <div style={{ padding: 40, textAlign: 'center', color: '#6b7280' }}>
-            No slots available in the selected window. Try a longer range or check back later.
+            {t.pbkNoSlots}
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -278,7 +297,7 @@ function ClientForm({ companySlug, typeSlug, slot, onBack }) {
       });
       setSuccess(data);
     } catch (err) {
-      setError(publicLinkError(err, 'Booking failed - the slot may have just been taken. Try another time.'));
+      setError(publicLinkError(err, t.pbkBookingFailed));
     } finally { setSubmitting(false); }
   }
 
@@ -287,17 +306,17 @@ function ClientForm({ companySlug, typeSlug, slot, onBack }) {
     return (
       <div style={{ textAlign: 'center', padding: 20 }}>
         <div style={{ fontSize: 18, fontWeight: 700, color: '#065f46', marginBottom: 8 }}>
-          ✓ Booked with {success.assigned_user_name}
+          ✓ {t.pbkBookedWith} {success.assigned_user_name}
         </div>
         <div style={{ fontSize: 14, color: '#6b7280', marginBottom: 16 }}>
-          {new Date(success.scheduled_at).toLocaleString()}
+          {formatDateTime(success.scheduled_at, lang)}
         </div>
         <div style={{ background: '#fef3c7', border: '1px solid #fbbf24', borderRadius: 8, padding: 14, textAlign: 'left' }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: '#92400e', marginBottom: 6, textTransform: 'uppercase' }}>
-            Manage link
+            {t.pbkManageLink}
           </div>
           <div style={{ fontSize: 13, color: '#7c3a00', marginBottom: 8 }}>
-            Save this URL to view or cancel your booking later. It's your only way back to this appointment.
+            {t.pbkManageLinkHint}
           </div>
           <input
             readOnly
@@ -306,7 +325,7 @@ function ClientForm({ companySlug, typeSlug, slot, onBack }) {
             style={{ ...styles.input, fontFamily: 'monospace', fontSize: 12 }}
           />
           <button onClick={() => navigator.clipboard?.writeText(manageUrl)} style={{ ...styles.primaryBtn, marginTop: 8 }}>
-            Copy
+            {t.pbkCopy}
           </button>
         </div>
       </div>
@@ -315,27 +334,27 @@ function ClientForm({ companySlug, typeSlug, slot, onBack }) {
 
   return (
     <div>
-      <button onClick={onBack} style={styles.ghostBtn}>← Choose a different time</button>
+      <button onClick={onBack} style={styles.ghostBtn}>← {t.pbkChooseDifferentTime}</button>
       <div style={{ marginTop: 14 }}>
         {error && <div style={styles.errorBox}>{error}</div>}
-        <Field label="Full name" required>
+        <Field label={t.pbkFullName} required>
           <input value={name} onChange={e => setName(e.target.value)} style={styles.input} />
         </Field>
-        <Field label="Email" required>
+        <Field label={t.pbkEmail} required>
           <input type="email" value={email} onChange={e => setEmail(e.target.value)} style={styles.input} />
         </Field>
-        <Field label="Phone">
+        <Field label={t.pbkPhone}>
           <input value={phone} onChange={e => setPhone(e.target.value)} style={styles.input} />
         </Field>
-        <Field label="Notes (optional)">
-          <textarea value={notes} onChange={e => setNotes(e.target.value)} style={{ ...styles.input, minHeight: 80 }} placeholder="Anything we should know in advance?" />
+        <Field label={t.pbkNotesOptional}>
+          <textarea value={notes} onChange={e => setNotes(e.target.value)} style={{ ...styles.input, minHeight: 80 }} placeholder={t.pbkNotesPlaceholder} />
         </Field>
         <button
           onClick={submit}
           disabled={submitting || !name.trim() || !email.trim()}
           style={{ ...styles.primaryBtn, width: '100%', marginTop: 12 }}
         >
-          {submitting ? 'Booking...' : 'Confirm booking'}
+          {submitting ? t.pbkBooking : t.pbkConfirmBooking}
         </button>
       </div>
     </div>
@@ -353,10 +372,12 @@ export function PublicBookingManagePage() {
   const [cancelling, setCancelling] = useState(false);
   const [cancelled, setCancelled] = useState(false);
 
+  const LOCATION_KIND_LABELS = locationKindLabels();
+
   useEffect(() => {
     pub.get(`/public/book/manage/${token}`)
       .then(r => setAppt(r.data))
-      .catch(err => setError(publicLinkError(err, 'Appointment not found')))
+      .catch(err => setError(publicLinkError(err, t.pbkApptNotFound)))
       .finally(() => setLoading(false));
   }, [token]);
 
@@ -366,44 +387,44 @@ export function PublicBookingManagePage() {
       await pub.post(`/public/book/manage/${token}/cancel`, { reason: reason || null });
       setCancelled(true);
     } catch (err) {
-      setError(publicLinkError(err, 'Cancel failed'));
+      setError(publicLinkError(err, t.pbkCancelFailed));
     } finally { setCancelling(false); }
   }
 
-  if (loading) return <Shell title="Loading..."><div /></Shell>;
-  if (error && !appt) return <Shell title="Not found"><div style={{ color: '#6b7280' }}>{error}</div></Shell>;
-  if (cancelled) return <Shell title="Cancelled"><div style={{ color: '#6b7280' }}>The appointment has been cancelled. {appt?.company_name} has been notified.</div></Shell>;
+  if (loading) return <Shell title={t.pbkLoading}><div /></Shell>;
+  if (error && !appt) return <Shell title={t.pbkNotFound}><div style={{ color: '#6b7280' }}>{error}</div></Shell>;
+  if (cancelled) return <Shell title={t.pbkCancelled}><div style={{ color: '#6b7280' }}>{t.pbkCancelledNotice} {appt?.company_name} {t.pbkHasBeenNotified}</div></Shell>;
 
   const canCancel = appt?.status === 'booked' || appt?.status === 'confirmed';
 
   return (
-    <Shell title={`Your appointment with ${appt.company_name}`}>
+    <Shell title={`${t.pbkYourApptWith} ${appt.company_name}`}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 14 }}>
-        <Row label="Status" value={appt.status} />
-        <Row label="When" value={new Date(appt.scheduled_at).toLocaleString()} />
-        <Row label="Duration" value={`${appt.duration_minutes} min`} />
-        <Row label="Type" value={appt.appointment_type_name} />
-        <Row label="With" value={appt.assigned_user_name} />
-        <Row label="Location" value={LOCATION_KIND_LABELS[appt.location_kind]} />
-        {appt.location_detail && <Row label="Details" value={appt.location_detail} />}
+        <Row label={t.pbkStatus} value={appt.status} />
+        <Row label={t.pbkWhen} value={formatDateTime(appt.scheduled_at, lang)} />
+        <Row label={t.pbkDuration} value={`${appt.duration_minutes} ${t.pbkMin}`} />
+        <Row label={t.pbkType} value={appt.appointment_type_name} />
+        <Row label={t.pbkWith} value={appt.assigned_user_name} />
+        <Row label={t.pbkLocation} value={LOCATION_KIND_LABELS[appt.location_kind]} />
+        {appt.location_detail && <Row label={t.pbkDetails} value={appt.location_detail} />}
       </div>
 
       {canCancel ? (
         <div style={{ marginTop: 24, padding: 16, background: '#fef2f2', borderRadius: 8 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: '#991b1b', marginBottom: 8 }}>Need to cancel?</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#991b1b', marginBottom: 8 }}>{t.pbkNeedToCancel}</div>
           <textarea
             value={reason}
             onChange={e => setReason(e.target.value)}
-            placeholder="Reason (optional)"
+            placeholder={t.pbkReasonOptional}
             style={{ ...styles.input, minHeight: 60, marginBottom: 8 }}
           />
           <button onClick={cancel} disabled={cancelling} style={{ background: '#dc2626', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>
-            {cancelling ? 'Cancelling...' : 'Cancel appointment'}
+            {cancelling ? t.pbkCancelling : t.pbkCancelAppointment}
           </button>
         </div>
       ) : (
         <div style={{ marginTop: 24, padding: 14, background: '#f3f4f6', borderRadius: 8, fontSize: 13, color: '#6b7280' }}>
-          This appointment is in <strong>{appt.status}</strong> status and can't be cancelled from here.
+          {t.pbkCannotCancelPrefix} <strong>{appt.status}</strong> {t.pbkCannotCancelSuffix}
         </div>
       )}
     </Shell>
