@@ -396,7 +396,7 @@ function LienWaiverDetail({ id, onBack }) {
         import('@react-pdf/renderer'),
         import('../components/LienWaiverPDF'),
       ]);
-      const el = React.createElement(LienWaiverPDF, { waiver: w });
+      const el = React.createElement(LienWaiverPDF, { waiver: w, language: user?.language });
       const blob = await pdf(el).toBlob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

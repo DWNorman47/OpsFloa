@@ -407,9 +407,10 @@ function ChangeOrderDetail({ id, onBack }) {
       ]);
       // Render the PDF in the CLIENT's language (resolved from the
       // project's client), not the admin's UI language.
-      const pdfT = getT(co.client_language);
+      const pdfLang = co.client_language;
+      const pdfT = getT(pdfLang);
       const statusLabel = pdfT[STATUS_COLORS[co.status]?.labelKey] || co.status;
-      const el = React.createElement(ChangeOrderPDF, { changeOrder: co, companyInfo: companyRes.data || {}, t: pdfT, statusLabel });
+      const el = React.createElement(ChangeOrderPDF, { changeOrder: co, companyInfo: companyRes.data || {}, language: pdfLang, statusLabel });
       const blob = await pdf(el).toBlob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

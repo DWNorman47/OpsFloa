@@ -621,9 +621,10 @@ function EstimateDetail({ id, onBack, onEdit }) {
       // Render the PDF in the CLIENT's language (the document recipient),
       // not the admin's UI language. getT falls back to English when the
       // client has no language set.
-      const pdfT = getT(estimate.client_language);
+      const pdfLang = estimate.client_language;
+      const pdfT = getT(pdfLang);
       const statusLabel = pdfT[STATUS_COLORS[estimate.status]?.labelKey] || estimate.status;
-      const el = React.createElement(EstimatePDF, { estimate, companyInfo: companyRes.data || {}, t: pdfT, statusLabel });
+      const el = React.createElement(EstimatePDF, { estimate, companyInfo: companyRes.data || {}, language: pdfLang, statusLabel });
       const blob = await pdf(el).toBlob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
