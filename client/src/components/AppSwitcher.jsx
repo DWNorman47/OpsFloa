@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
 import { useSettings } from '../contexts/SettingsContext';
+import { useNavigate } from 'react-router-dom';
 import { userCanSeeModule, canSeeTimeclockApp } from '../modulePermissions';
 
 // Workers see: Time Clock, Field, Inventory, Account
@@ -208,10 +209,14 @@ export default function AppSwitcher({ currentApp = 'timeclock', userRole, featur
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  const routerNavigate = useNavigate();
   const navigate = app => {
     setOpen(false);
     if (app.soon) return;
-    window.location.href = app.path;
+    // Client-side navigation on purpose: a full page load (window.location)
+    // would re-paint index.html's pre-hydration content and flash the static
+    // summary before React remounts.
+    routerNavigate(app.path);
   };
 
   return (
