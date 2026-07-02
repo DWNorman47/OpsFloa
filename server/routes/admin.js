@@ -4,7 +4,6 @@ const logger = require('../logger');
 const { csvCell } = require('../utils/csv');
 const { escapeHtml } = require('../utils/htmlEscape');
 const crypto = require('crypto');
-const sgMail = require('@sendgrid/mail');
 const rateLimit = require('express-rate-limit');
 const { userOrIpKey } = require('../middleware/rateLimitKey');
 const { entryInstants, validLocalDate, wallClockInTZ } = require('../utils/timeFormat');
@@ -24,7 +23,15 @@ const { weekRange, weekBucketKey } = require('../utils/weekBounds');
 const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const qbo = require('../services/qbo');
 
-sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+// Legacy { to, subject, html } send shape → central sendEmail(); re-throw on
+// provider failure so the invite try/catch still sets email_sent correctly.
+const sgMail = {
+  send: async ({ to, subject, html }) => {
+    const r = await sendEmail(to, subject, html);
+    if (r && r.ok === false) throw new Error('email send failed');
+    return r;
+  },
+};
 
 // Worker limits per plan (null = unlimited). Trial always gets unlimited.
 const WORKER_LIMITS = { free: 3, starter: 10, business: null };
@@ -32,13 +39,16 @@ const ENTRY_HAS_ENDED_SQL = `end_ts IS NOT NULL AND end_ts <= NOW()`;
 
 async function checkWorkerLimit(companyId) {
   const company = await pool.query(
-    'SELECT plan, subscription_status, trial_ends_at FROM companies WHERE id = $1', [companyId]
+    'SELECT plan, subscription_status, trial_ends_at, bonus_seats FROM companies WHERE id = $1', [companyId]
   );
-  const { plan, subscription_status, trial_ends_at } = company.rows[0] || {};
+  const { plan, subscription_status, trial_ends_at, bonus_seats } = company.rows[0] || {};
   const trialActive = subscription_status === 'trial' && (!trial_ends_at || new Date(trial_ends_at) >= new Date());
   if (trialActive) return null; // active trial = unlimited
-  const limit = WORKER_LIMITS[plan || 'free'];
-  if (limit === null) return null; // business = unlimited
+  const base = WORKER_LIMITS[plan || 'free'];
+  if (base === null) return null; // business = unlimited
+  // Complimentary seats a super_admin granted this company sit on top of the
+  // plan cap and are not billed (see superadmin PATCH bonus_seats).
+  const limit = base + (parseInt(bonus_seats, 10) || 0);
   const count = await pool.query(
     `SELECT COUNT(*) FROM users WHERE company_id = $1 AND role = 'worker' AND active = true`,
     [companyId]
@@ -1157,7 +1167,6 @@ router.post('/workers/invite', requireAdmin, requirePerm('manage_workers'), invi
     let emailSent = true;
     try {
       await sgMail.send({
-        from: { name: 'OpsFloA', email: process.env.SENDGRID_FROM_EMAIL },
         to: email,
         subject: `You've been invited to OpsFloA`,
         html: `
@@ -1204,7 +1213,6 @@ router.post('/workers/:id/send-invite', requireAdmin, requirePerm('manage_worker
     let emailSent = true;
     try {
       await sgMail.send({
-        from: { name: 'OpsFloA', email: process.env.SENDGRID_FROM_EMAIL },
         to: worker.email,
         subject: `You've been invited to OpsFloA`,
         html: `

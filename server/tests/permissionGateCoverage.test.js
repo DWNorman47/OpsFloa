@@ -49,7 +49,6 @@ jest.mock('../push', () => ({ sendPushToUser: jest.fn(), sendPushToAllWorkers: j
 jest.mock('../email', () => ({ sendEmail: jest.fn() }));
 jest.mock('../services/qbo', () => ({}));
 jest.mock('../routes/inbox', () => ({ createInboxItem: jest.fn(), createInboxItemBatch: jest.fn() }));
-jest.mock('@sendgrid/mail', () => ({ setApiKey: jest.fn(), send: jest.fn() }));
 jest.mock('stripe', () => jest.fn(() => ({})));
 
 const express = require('express');

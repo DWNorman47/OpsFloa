@@ -37,7 +37,6 @@ jest.mock('../permissions', () => ({
   seedBuiltinRoles: jest.fn(),
   getUserPermissions: jest.fn().mockResolvedValue(new Set()),
 }));
-jest.mock('@sendgrid/mail', () => ({ setApiKey: jest.fn(), send: jest.fn() }));
 jest.mock('bcryptjs', () => ({
   hash:    jest.fn().mockResolvedValue('hashed-pw'),
   compare: jest.fn(),

@@ -1,8 +1,8 @@
 // Regression tests for the demo-tenant email suppression (security finding:
 // the public demo login must not be usable as a SendGrid spam relay).
 
-const mockSend = jest.fn().mockResolvedValue([{ statusCode: 202 }]);
-jest.mock('@sendgrid/mail', () => ({ setApiKey: jest.fn(), send: mockSend }));
+const mockSend = jest.fn().mockResolvedValue({ data: { id: 'test' }, error: null });
+jest.mock('resend', () => ({ Resend: jest.fn().mockImplementation(() => ({ emails: { send: mockSend } })) }));
 jest.mock('../db', () => ({ query: jest.fn().mockResolvedValue({ rows: [] }) }));
 
 // Control the demo context per-test by mocking getStore().
@@ -11,7 +11,7 @@ jest.mock('../demoMode', () => ({ getStore: mockGetStore }));
 
 // Force "real" send mode so the only thing stopping a send is the demo guard.
 process.env.NODE_ENV = 'production';
-process.env.SENDGRID_API_KEY = 'SG.test';
+process.env.RESEND_API_KEY = 're_test';
 
 const { sendEmail } = require('../email');
 
@@ -52,6 +52,13 @@ describe('sendEmail demo suppression', () => {
     mockGetStore.mockReturnValue({ isDemo: true, emailSuppressed: false });
     const result = await sendEmail('', 'x', 'y');
     expect(mockSend).not.toHaveBeenCalled();
-    expect(result).toBeUndefined();
+    expect(result).toEqual({ skipped: 'no_recipient' });
+  });
+
+  test('returns { ok: false } when the provider rejects the send', async () => {
+    mockGetStore.mockReturnValue(undefined);
+    mockSend.mockResolvedValueOnce({ data: null, error: { message: 'domain not verified' } });
+    const result = await sendEmail('client@example.com', 'x', '<p>y</p>');
+    expect(result).toEqual({ ok: false, error: { message: 'domain not verified' } });
   });
 });

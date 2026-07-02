@@ -6,6 +6,8 @@ const bcrypt = require('bcryptjs');
 const { requireSuperAdmin } = require('../middleware/auth');
 const { seedBuiltinRoles } = require('../permissions');
 const { COMPANY_SUBSCRIPTION_STATUSES, COMPANY_PLANS } = require('../constants/companyEnums');
+const { validatePassword } = require('../passwordPolicy');
+const { logAudit } = require('../auditLog');
 
 const DEMO_COMPANY_NAME = 'OpsFloa Demo Workspace';
 const DEMO_COMPANY_SLUG = 'opsfloa-demo-workspace';
@@ -246,7 +248,7 @@ router.get('/companies', requireSuperAdmin, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT c.id, c.name, c.slug, c.active, c.created_at, c.plan, c.subscription_status,
-              c.trial_ends_at, c.mrr_cents, c.affiliate_id, c.addon_qbo, c.addon_certified_payroll,
+              c.trial_ends_at, c.mrr_cents, c.affiliate_id, c.addon_qbo, c.addon_certified_payroll, c.bonus_seats,
               a.name AS affiliate_name,
               COUNT(DISTINCT u.id) FILTER (WHERE u.role = 'worker' AND u.active = true) AS worker_count,
               COUNT(DISTINCT u.id) FILTER (WHERE u.role = 'admin' AND u.active = true) AS admin_count,
@@ -257,7 +259,7 @@ router.get('/companies', requireSuperAdmin, async (req, res) => {
        LEFT JOIN time_entries te ON te.company_id = c.id
        LEFT JOIN affiliates a ON c.affiliate_id = a.id
        GROUP BY c.id, c.name, c.slug, c.active, c.created_at, c.plan, c.subscription_status,
-                c.trial_ends_at, c.mrr_cents, c.affiliate_id, c.addon_qbo, c.addon_certified_payroll, a.name
+                c.trial_ends_at, c.mrr_cents, c.affiliate_id, c.addon_qbo, c.addon_certified_payroll, c.bonus_seats, a.name
        ORDER BY c.created_at DESC`
     );
     res.json(result.rows);
@@ -305,12 +307,13 @@ router.post('/demo-workspace', requireSuperAdmin, async (req, res) => {
 
 // PATCH /superadmin/companies/:id — update any combination of fields
 router.patch('/companies/:id', requireSuperAdmin, async (req, res) => {
-  const { active, affiliate_id, subscription_status, plan, name, trial_ends_at, addon_qbo, addon_certified_payroll } = req.body;
+  const { active, affiliate_id, subscription_status, plan, name, trial_ends_at, addon_qbo, addon_certified_payroll, bonus_seats } = req.body;
   if (
     active === undefined && affiliate_id === undefined &&
     subscription_status === undefined && plan === undefined &&
     name === undefined && trial_ends_at === undefined &&
-    addon_qbo === undefined && addon_certified_payroll === undefined
+    addon_qbo === undefined && addon_certified_payroll === undefined &&
+    bonus_seats === undefined
   ) return res.status(400).json({ error: 'No fields to update' });
 
   const VALID_STATUSES = COMPANY_SUBSCRIPTION_STATUSES;
@@ -321,6 +324,12 @@ router.patch('/companies/:id', requireSuperAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Invalid plan' });
   if (name !== undefined && !name?.trim())
     return res.status(400).json({ error: 'Name cannot be empty' });
+  let bonusSeatsVal;
+  if (bonus_seats !== undefined) {
+    bonusSeatsVal = Number(bonus_seats);
+    if (!Number.isInteger(bonusSeatsVal) || bonusSeatsVal < 0 || bonusSeatsVal > 100000)
+      return res.status(400).json({ error: 'bonus_seats must be a whole number between 0 and 100000' });
+  }
 
   try {
     const fields = [];
@@ -334,10 +343,11 @@ router.patch('/companies/:id', requireSuperAdmin, async (req, res) => {
     if (trial_ends_at !== undefined)       { fields.push(`trial_ends_at = $${idx++}`);        values.push(trial_ends_at || null); }
     if (addon_qbo !== undefined)           { fields.push(`addon_qbo = $${idx++}`);            values.push(!!addon_qbo); }
     if (addon_certified_payroll !== undefined) { fields.push(`addon_certified_payroll = $${idx++}`); values.push(!!addon_certified_payroll); }
+    if (bonus_seats !== undefined)         { fields.push(`bonus_seats = $${idx++}`);          values.push(bonusSeatsVal); }
     values.push(req.params.id);
     const result = await pool.query(
       `UPDATE companies SET ${fields.join(', ')} WHERE id = $${idx}
-       RETURNING id, name, slug, active, affiliate_id, subscription_status, plan, trial_ends_at, addon_qbo, addon_certified_payroll`,
+       RETURNING id, name, slug, active, affiliate_id, subscription_status, plan, trial_ends_at, addon_qbo, addon_certified_payroll, bonus_seats`,
       values
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Company not found' });
@@ -720,6 +730,50 @@ router.post('/users/:id/revoke-sessions', requireSuperAdmin, async (req, res) =>
     res.json({ revoked: true, user: result.rows[0] });
   } catch (err) {
     logger.error({ err }, 'catch block error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /superadmin/users/:id/set-password — directly set a user's password.
+// For recovering locked-out accounts. Sets an exact working password (no
+// forced change), clears any pending reset token, and bumps token_version so
+// existing sessions are logged out — same session semantics as any password
+// change. Every use leaves an audit_log row.
+router.post('/users/:id/set-password', requireSuperAdmin, async (req, res) => {
+  try {
+    const password = req.body?.password;
+    const userRes = await pool.query(
+      'SELECT id, username, full_name, company_id, role FROM users WHERE id = $1',
+      [req.params.id]
+    );
+    if (userRes.rowCount === 0) return res.status(404).json({ error: 'User not found' });
+    const user = userRes.rows[0];
+
+    const invalid = validatePassword(password, user.username);
+    if (invalid) return res.status(400).json({ error: invalid });
+
+    const hash = await bcrypt.hash(password, 10);
+    await pool.query(
+      `UPDATE users
+          SET password_hash = $1,
+              must_change_password = false,
+              reset_token = NULL,
+              reset_token_expires = NULL,
+              token_version = COALESCE(token_version, 0) + 1
+        WHERE id = $2`,
+      [hash, user.id]
+    );
+
+    // Sensitive action — leave a trail (best-effort; never fails the request).
+    logAudit(
+      user.company_id, req.user.id, req.user.full_name || req.user.username,
+      'user.password_set_by_superadmin', 'user', user.id, user.full_name,
+      { target_username: user.username, target_role: user.role }
+    );
+
+    res.json({ ok: true, user: { id: user.id, username: user.username, full_name: user.full_name } });
+  } catch (err) {
+    logger.error({ err }, 'superadmin set-password error');
     res.status(500).json({ error: 'Server error' });
   }
 });
