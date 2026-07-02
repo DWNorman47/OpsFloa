@@ -65,14 +65,14 @@ export default function AppHeader({
             style={s.guideBtn}
             className="header-guide-button"
             onClick={() => setGuideOpen(true)}
-            title="Guide"
-            aria-label="Open task guide"
+            title={t.guideButton}
+            aria-label={t.guideButtonAria}
           >
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="16" height="16" aria-hidden="true">
               <path d="M10 2.5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15z" />
               <path d="m12.9 7.1-1.4 4.4-4.4 1.4 1.4-4.4 4.4-1.4z" />
             </svg>
-            <span className="header-guide-label">Guide</span>
+            <span className="header-guide-label">{t.guideButton}</span>
           </button>
         </div>
       </div>

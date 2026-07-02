@@ -574,7 +574,7 @@ function ChangeOrderDetail({ id, onBack }) {
         <div style={styles.formCard}>
           <h3 style={styles.formH3}>{t.coAcceptedBy}</h3>
           <div style={{ fontSize: 14 }}>
-            <strong>{co.accepted_signer_name}</strong> on {formatDateTime(co.responded_at, user?.language)}
+            <strong>{co.accepted_signer_name}</strong> {t.coOn} {formatDateTime(co.responded_at, user?.language)}
           </div>
         </div>
       )}

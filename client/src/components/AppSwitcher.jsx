@@ -169,14 +169,20 @@ export default function AppSwitcher({ currentApp = 'timeclock', userRole, featur
   // "fail open" flicker), show just the current module while loading and
   // reveal the rest once the flags resolve.
   const settingsPending = loading && Object.keys(feat).length === 0;
+  const APP_NAME_KEYS = {
+    timeclock: 'appTimeClock', booking: 'appBooking', field: 'appField',
+    inventory: 'appInventory', account: 'appAccount', team: 'appDirectory',
+    projects: 'appProjects', financial_reports: 'appReports',
+    administration: 'appAdministration', help: 'appHelp',
+  };
   const labelFor = app => {
-    if (app.id === 'field') return feat.label_field || app.name;
+    if (app.id === 'field') return feat.label_field || t.appField;
     // Projects module = the collection, so show the plural of the (singular) work label.
     if (app.id === 'projects') {
-      const w = feat.label_work || 'Project';
-      return w.endsWith('s') ? w : `${w}s`;
+      if (feat.label_work) { const w = feat.label_work; return w.endsWith('s') ? w : `${w}s`; }
+      return t.appProjects;
     }
-    return app.name;
+    return t[APP_NAME_KEYS[app.id]] || app.name;
   };
   const visibleApps = settingsPending ? [current] : APPS.filter(a => {
     if (a.hidden && a.id !== currentApp) return false;

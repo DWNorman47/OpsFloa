@@ -2077,14 +2077,14 @@ export default function ProjectsPage() {
                   <h1 style={styles.pageTitle}>{workLabelPlural}</h1>
                   <p style={styles.pageSub}>
                     {loading
-                      ? `Loading ${workLabelPlural.toLowerCase()}...`
-                      : `${activeProjects} active ${activeProjects === 1 ? workLabelLower : workLabelPlural.toLowerCase()}${totalHours > 0 ? ` - ${totalHours.toFixed(0)} total hours` : ''}`}
+                      ? `${t.prjLoadingPrefix} ${workLabelPlural.toLowerCase()}...`
+                      : `${activeProjects} ${t.prjActiveLabel} ${activeProjects === 1 ? workLabelLower : workLabelPlural.toLowerCase()}${totalHours > 0 ? ` - ${totalHours.toFixed(0)} ${t.prjTotalHoursSuffix}` : ''}`}
                   </p>
                 </div>
                 <div style={styles.pageHeaderControls} className="projects-page-header-controls">
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#6b7280', cursor: 'pointer' }}>
                     <input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} style={{ cursor: 'pointer' }} />
-                    Show archived
+                    {t.prjShowArchived}
                   </label>
                   <div style={styles.viewToggle}>
                     <button
