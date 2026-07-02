@@ -94,6 +94,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
     module_timeclock: settings?.module_timeclock ?? true,
     module_projects: settings?.module_projects ?? true,
     module_inventory: settings?.module_inventory ?? false,
+    module_tools: settings?.module_tools ?? true,
     module_analytics: settings?.module_analytics ?? false,
     module_team: settings?.module_team ?? true,
     module_financial_reports: settings?.module_financial_reports ?? false,
@@ -181,6 +182,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
       module_timeclock: settings.module_timeclock ?? true,
       module_projects: settings.module_projects ?? true,
       module_inventory: settings.module_inventory ?? false,
+      module_tools: settings.module_tools ?? true,
       module_analytics: settings.module_analytics ?? false,
       module_team: settings.module_team ?? true,
       module_financial_reports: settings.module_financial_reports ?? false,
@@ -247,6 +249,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
         module_timeclock: form.module_timeclock,
         module_projects: form.module_projects,
         module_inventory: form.module_inventory,
+        module_tools: form.module_tools,
         module_analytics: form.module_analytics,
         module_team: form.module_team,
         module_financial_reports: form.module_financial_reports,
@@ -373,8 +376,16 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
               <span style={{ ...styles.toggleKnob, transform: form.module_inventory ? 'translateX(46px)' : 'translateX(0)' }} />
             </label>
           </div>
-          {/* Inventory count settings (Audit % / Reconcile Threshold) are now
-              a separate section rendered after Reimbursements — see below. */}
+          <div style={styles.row}>
+            <div>
+              <div style={styles.label}>{t.mrModuleTools}</div>
+              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrModuleToolsDesc}</div>
+            </div>
+            <label style={{ ...styles.toggle, background: form.module_tools ? 'var(--ops-page-accent)' : '#d1d5db' }}>
+              <input type="checkbox" checked={form.module_tools} onChange={e => set('module_tools', e.target.checked)} style={{ display: 'none' }} />
+              <span style={{ ...styles.toggleKnob, transform: form.module_tools ? 'translateX(46px)' : 'translateX(0)' }} />
+            </label>
+          </div>
           <div style={styles.row}>
             <div>
               <div style={styles.label}>{t.mrModuleTeam}</div>

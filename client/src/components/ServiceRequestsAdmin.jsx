@@ -11,6 +11,7 @@ import { useT } from '../hooks/useT';
 import { silentError } from '../errorReporter';
 import EmptyState from './EmptyState';
 import { SkeletonList } from './Skeleton';
+import { labelSg } from '../companyLabels';
 
 const STATUS_FILTERS = [
   { key: 'new',       label: 'New' },
@@ -24,8 +25,8 @@ const STATUS_FILTERS = [
 export default function ServiceRequestsAdmin({ settings = null }) {
   const t = useT();
   const { user, updateUser } = useAuth();
-  const clientLabel = settings?.label_client || 'Customer';
-  const workLabel = settings?.label_work || 'Project';
+  const clientLabel = labelSg(settings?.label_client, 'client', user?.language);
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const clientLabelLower = clientLabel.toLowerCase();
   const workLabelLower = workLabel.toLowerCase();
   const [accepting, setAccepting] = useState(!!user?.accepts_service_requests);

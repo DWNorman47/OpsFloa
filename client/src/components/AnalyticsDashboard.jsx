@@ -6,6 +6,7 @@ import api from '../api';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
 import { langToLocale } from '../utils';
+import { labelSg, labelPl } from '../companyLabels';
 import { SkeletonStatRow, SkeletonList } from './Skeleton';
 
 import { silentError } from '../errorReporter';
@@ -81,10 +82,10 @@ export default function AnalyticsDashboard({ weekStart = 1, settings = null }) {
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
-  const workerLabel = settings?.label_worker || 'Team Member';
-  const workerLabelPlural = workerLabel.endsWith('s') ? workerLabel : `${workerLabel}s`;
+  const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
+  const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
   const workerLabelPluralLower = workerLabelPlural.toLowerCase();
-  const workLabel = settings?.label_work || 'Project';
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const formatDay = dateStr => new Date(dateStr + 'T00:00:00').toLocaleDateString(locale, { month: 'short', day: 'numeric' });
   const formatWeek = dateStr => new Date(dateStr + 'T00:00:00').toLocaleDateString(locale, { month: 'short', day: 'numeric' });
   const [data, setData] = useState(null);

@@ -5,6 +5,7 @@ import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
 import { SkeletonList } from './Skeleton';
 import { handlePdfError } from '../pdfError';
+import { labelSg, labelPl } from '../companyLabels';
 
 function downloadCSV(rows, filename) {
   const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
@@ -32,10 +33,11 @@ export default function ProjectReports({ currency = 'USD', settings = null }) {
   const { user } = useAuth();
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
-  const workLabel = settings?.label_work || 'Project';
-  const workLabelPlural = workLabel.endsWith('s') ? workLabel : `${workLabel}s`;
-  const workerLabel = settings?.label_worker || 'Team Member';
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
+  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
+  const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
   const workerLabelLower = workerLabel.toLowerCase();
+  const workerLabelPluralLower = labelPl(settings?.label_worker, 'worker', user?.language).toLowerCase();
 
   useEffect(() => {
     api.get('/admin/projects/metrics')
@@ -48,12 +50,12 @@ export default function ProjectReports({ currency = 'USD', settings = null }) {
 
   return (
     <div style={styles.list}>
-      {projects.map(p => <ProjectCard key={p.id} project={p} currency={currency} workerLabel={workerLabel} workerLabelLower={workerLabelLower} settings={settings} />)}
+      {projects.map(p => <ProjectCard key={p.id} project={p} currency={currency} workerLabel={workerLabel} workerLabelLower={workerLabelLower} workerLabelPluralLower={workerLabelPluralLower} settings={settings} />)}
     </div>
   );
 }
 
-function ProjectCard({ project: p, currency = 'USD', workerLabel = 'Worker', workerLabelLower = 'worker', settings = null }) {
+function ProjectCard({ project: p, currency = 'USD', workerLabel = 'Worker', workerLabelLower = 'worker', workerLabelPluralLower = 'workers', settings = null }) {
   const t = useT();
   const { user } = useAuth();
   const [expanded, setExpanded] = useState(false);
@@ -124,7 +126,7 @@ function ProjectCard({ project: p, currency = 'USD', workerLabel = 'Worker', wor
         <div style={styles.cardHeader}>
           <span style={styles.name}>{p.name}</span>
           <div style={styles.headerRight}>
-            <span style={styles.sub}>{p.worker_count} {p.worker_count === 1 ? workerLabelLower : `${workerLabelLower}s`} · {p.total_entries} entr{p.total_entries !== 1 ? 'ies' : 'y'}</span>
+            <span style={styles.sub}>{p.worker_count} {p.worker_count === 1 ? workerLabelLower : workerLabelPluralLower} · {p.total_entries} entr{p.total_entries !== 1 ? 'ies' : 'y'}</span>
             <span style={styles.expandBtn}>{expanded ? '▲' : '▼'}</span>
           </div>
         </div>

@@ -106,6 +106,7 @@ export const DEFAULT_SETTINGS = {
   module_field: true,
   module_projects: true,
   module_inventory: false,
+  module_tools: true,
   module_analytics: true,
   module_team: true,
   feature_scheduling: true,

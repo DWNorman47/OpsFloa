@@ -1460,6 +1460,81 @@ button {
   font-size: 13px;
   font-weight: 800;
 }
+.ops-button-primary {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--ops-radius);
+  border: 1px solid var(--ops-page-accent);
+  background: var(--ops-page-accent);
+  color: #fff;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 900;
+  text-decoration: none;
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--ops-page-accent) 22%, transparent);
+}
+.ops-button-primary:hover,
+.ops-button-primary:focus-visible {
+  filter: brightness(0.96);
+  outline: none;
+}
+.tools-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 15px;
+  width: 100%;
+  border: 1px solid var(--ops-border);
+  border-radius: var(--ops-radius-lg);
+  background: linear-gradient(180deg, #fff, #f8fafc);
+  color: var(--ops-text);
+  padding: 17px;
+  text-decoration: none;
+  box-shadow: var(--ops-shadow-sm);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
+}
+.tools-card:hover,
+.tools-card:focus-visible {
+  border-color: color-mix(in srgb, var(--ops-page-accent) 34%, var(--ops-border));
+  box-shadow: var(--ops-shadow-md);
+  outline: none;
+  transform: translateY(-1px);
+}
+.tools-card-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--ops-page-accent) 12%, #fff);
+  color: var(--ops-page-accent);
+  border: 1px solid color-mix(in srgb, var(--ops-page-accent) 22%, var(--ops-border));
+}
+.tools-card-icon svg {
+  width: 24px;
+  height: 24px;
+}
+.tools-card-copy {
+  display: grid;
+  gap: 5px;
+}
+.tools-card-copy strong {
+  font-size: 17px;
+  line-height: 1.2;
+}
+.tools-card-copy span {
+  color: var(--ops-text-muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+.tools-card-action {
+  color: var(--ops-page-accent);
+  font-size: 13px;
+  font-weight: 900;
+}
 .ops-section {
   background: var(--ops-surface);
   border: 1px solid var(--ops-border);
@@ -2272,6 +2347,13 @@ input, select, textarea {
   .ops-section-actions {
     justify-content: flex-start;
     margin-top: 12px;
+  }
+  .tools-card {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: flex-start;
+  }
+  .tools-card-action {
+    grid-column: 2;
   }
   .ops-workflow-tab {
     flex: 1;

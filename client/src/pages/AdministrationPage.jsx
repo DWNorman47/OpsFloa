@@ -16,6 +16,7 @@ import QuickBooks from '../components/QuickBooks';
 import MFASetup from '../components/MFASetup';
 import SetupQuestionnaire from '../components/SetupQuestionnaire';
 import { usePlan } from '../hooks/usePlan';
+import { labelSg } from '../companyLabels';
 
 import { silentError } from '../errorReporter';
 function RoleBadge({ role }) {
@@ -242,6 +243,7 @@ function BillingTab() {
 
 function WorkspaceLabels({ settings, onUpdated }) {
   const t = useT();
+  const { user } = useAuth();
   const labelFields = [
     {
       key: 'label_work',
@@ -269,10 +271,10 @@ function WorkspaceLabels({ settings, onUpdated }) {
     },
   ];
   const [form, setForm] = useState({
-    label_work: settings?.label_work || 'Project',
-    label_client: settings?.label_client || 'Customer',
-    label_worker: settings?.label_worker || 'Team Member',
-    label_field: settings?.label_field || 'Field Work',
+    label_work: labelSg(settings?.label_work, 'work', user?.language),
+    label_client: labelSg(settings?.label_client, 'client', user?.language),
+    label_worker: labelSg(settings?.label_worker, 'worker', user?.language),
+    label_field: labelSg(settings?.label_field, 'field', user?.language),
   });
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
@@ -280,10 +282,10 @@ function WorkspaceLabels({ settings, onUpdated }) {
 
   useEffect(() => {
     setForm({
-      label_work: settings?.label_work || 'Project',
-      label_client: settings?.label_client || 'Customer',
-      label_worker: settings?.label_worker || 'Team Member',
-      label_field: settings?.label_field || 'Field Work',
+      label_work: labelSg(settings?.label_work, 'work', user?.language),
+      label_client: labelSg(settings?.label_client, 'client', user?.language),
+      label_worker: labelSg(settings?.label_worker, 'worker', user?.language),
+      label_field: labelSg(settings?.label_field, 'field', user?.language),
     });
   }, [settings]);
 
@@ -660,7 +662,7 @@ export default function AdministrationPage() {
   const handleWorkerUpdated  = w  => setWorkers(prev => prev.map(x => x.id === w.id ? { ...x, ...w } : x));
   const handleWorkerRestored = w  => setWorkers(prev => [...prev, w]);
   const workspaceSummary = [
-    ['Core modules', ['module_timeclock', 'module_team', 'module_projects', 'module_field', 'module_inventory', 'module_financial_reports']],
+    ['Core modules', ['module_timeclock', 'module_team', 'module_projects', 'module_field', 'module_inventory', 'module_tools', 'module_financial_reports']],
     ['Features', ['feature_scheduling', 'feature_pto', 'feature_reimbursements', 'feature_chat', 'feature_broadcast', 'module_analytics', 'feature_public']],
     ['Specialized', ['addon_certified_payroll', 'feature_quickbooks', 'feature_media_gallery', 'feature_geolocation']],
   ].map(([label, keys]) => {

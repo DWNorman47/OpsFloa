@@ -11,6 +11,7 @@ import {
 } from '@dnd-kit/core';
 
 import { silentError } from '../errorReporter';
+import { labelSg } from '../companyLabels';
 import { startOfWeek as computeStartOfWeek } from '../utils/weekBounds';
 // Local wrapper so existing call sites don't need a weekStart arg threaded
 // through; the setting is read per-render inside the component.
@@ -189,8 +190,8 @@ export default function ManageSchedule({ workers, projects, weekStart: companyWe
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
-  const workerLabel = settings?.label_worker || 'Team Member';
-  const workLabel = settings?.label_work || 'Project';
+  const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const workerLabelLower = workerLabel.toLowerCase();
   const workLabelLower = workLabel.toLowerCase();
   const [weekStart, setWeekStart] = useState(() => startOfWeekFor(new Date(), companyWeekStart));

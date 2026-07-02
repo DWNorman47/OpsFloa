@@ -16,6 +16,7 @@ import { EstimatesPanel } from './EstimatesPage';
 import { ChangeOrdersPanel } from './ChangeOrdersPage';
 import { SubPOsPanel } from './SubsPage';
 import { useHasAnyPerm } from '../hooks/usePerm';
+import { labelSg, labelPl } from '../companyLabels';
 
 function punchColor(status) {
   return { open: '#f59e0b', in_progress: '#3b82f6', resolved: '#059669', closed: '#9ca3af' }[status] || '#9ca3af';
@@ -39,7 +40,8 @@ function ProjectCard({ project, metrics, settings, onClick }) {
   const budgetHours = parseFloat(project.budget_hours || 0);
   const budgetDollars = parseFloat(project.budget_dollars || 0);
   const workerCount = parseInt(m.worker_count || 0);
-  const workerLabel = settings?.label_worker || 'Team Member';
+  const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
+  const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
 
   const hoursUsedPct = budgetHours > 0 ? Math.min(100, (totalHours / budgetHours) * 100) : 0;
 
@@ -69,7 +71,7 @@ function ProjectCard({ project, metrics, settings, onClick }) {
         <div style={styles.cardName}>{project.name}</div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0, marginLeft: 8 }}>
           {statusLabel && <span style={{ fontSize: 10, fontWeight: 700, background: statusBg, color: statusFg, padding: '2px 7px', borderRadius: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{statusLabel}</span>}
-          <div style={styles.cardBadge}>{workerCount} {plural(workerLabel).toLowerCase()}</div>
+          <div style={styles.cardBadge}>{workerCount} {workerLabelPlural.toLowerCase()}</div>
         </div>
       </div>
       {project.client_name && <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8, marginTop: -4 }}>{project.client_name}{project.job_number ? ` · ${project.job_number}` : ''}</div>}
@@ -215,11 +217,11 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
     return new Intl.NumberFormat(locale, { style: 'currency', currency: settings?.currency || 'USD', maximumFractionDigits: 0 }).format(n);
   };
 
-  const workLabel = settings?.label_work || 'Project';
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const workLabelLower = workLabel.toLowerCase();
-  const clientLabel = settings?.label_client || 'Customer';
-  const workerLabel = settings?.label_worker || 'Team Member';
-  const workerLabelPlural = plural(workerLabel);
+  const clientLabel = labelSg(settings?.label_client, 'client', user?.language);
+  const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
+  const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
 
   useEffect(() => {
     if (tab === 'entries') {
@@ -1583,9 +1585,10 @@ const pvStyles = {
 
 function ProjectRow({ project, metrics, settings, onClick }) {
   const t = useT();
+  const { user } = useAuth();
   const m = metrics || {};
-  const workerLabel = settings?.label_worker || 'Team Member';
-  const workerLabelPlural = plural(workerLabel);
+  const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
+  const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
   const totalHours = parseFloat(m.total_hours || 0);
   const fmtHours = h => { const n = parseFloat(h); return isNaN(n) || n === 0 ? '0h' : n % 1 === 0 ? `${n}h` : `${n.toFixed(1)}h`; };
   const statusColors = { planning: '#dbeafe|#1d4ed8', in_progress: '#d1fae5|#065f46', on_hold: '#fef3c7|#92400e', completed: '#e5e7eb|#374151' };
@@ -1645,6 +1648,7 @@ async function geocodeAddress(addr) {
 
 function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreated }) {
   const t = useT();
+  const { user } = useAuth();
   const [form, setForm] = useState(BLANK_PROJECT);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -1660,11 +1664,12 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
   useUnsavedChanges(dirty);
   const set = (k, v) => { setDirty(true); setForm(f => ({ ...f, [k]: v })); };
   const showPrevailing = (settings?.prevailing_wage_rate ?? 0) > 0;
-  const workLabel = settings?.label_work || 'Project';
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const workLabelLower = workLabel.toLowerCase();
-  const clientLabel = settings?.label_client || 'Customer';
+  const clientLabel = labelSg(settings?.label_client, 'client', user?.language);
   const clientLabelLower = clientLabel.toLowerCase();
-  const workerLabel = settings?.label_worker || 'Team Member';
+  const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
+  const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
 
   // When the address loses focus, try to fill the geofence from it — but
   // only if the user hasn't already entered any geofence values manually.
@@ -1852,7 +1857,7 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
         <div style={pf.field}>
           <label style={pf.label}>📍 Geofence (optional)</label>
           <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8, lineHeight: 1.5 }}>
-            Require {plural(workerLabel).toLowerCase()} to be physically near the work location to clock in.
+            Require {workerLabelPlural.toLowerCase()} to be physically near the work location to clock in.
             Leave all three fields blank to allow clock-in from anywhere.
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }} className="project-geofence-row">
@@ -2013,9 +2018,9 @@ export default function ProjectsPage() {
 
   const activeProjects = projects.filter(p => p.active).length;
   const totalHours = Object.values(metrics).reduce((s, m) => s + parseFloat(m.total_hours || 0), 0);
-  const workLabel = settings?.label_work || 'Project';
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const workLabelLower = workLabel.toLowerCase();
-  const workLabelPlural = plural(workLabel);
+  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
 
   // Estimates/Change Orders and sub Purchase Orders are part of the Projects
   // module — not separately toggleable. They show to admins who can manage
@@ -2137,9 +2142,9 @@ export default function ProjectsPage() {
             ) : projects.length === 0 ? (
               <EmptyState
                 mark="W"
-                title={`No ${settings?.label_work?.toLowerCase() || 'project'} yet`}
+                title={`No ${workLabelLower} yet`}
                 body={`Create your first ${settings?.label_work?.toLowerCase() || 'work item'} so time, notes, billing, and reports have somewhere to land.`}
-                actionLabel={`Add ${settings?.label_work || 'Project'}`}
+                actionLabel={`Add ${workLabel}`}
                 onAction={() => setShowCreateForm(true)}
               />
             ) : viewMode === 'grid' ? (

@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useOffline } from '../contexts/OfflineContext';
 import { useT } from '../hooks/useT';
 import { langToLocale } from '../utils';
+import { labelSg, labelPl } from '../companyLabels';
 import { SkeletonList } from './Skeleton';
 import Pagination from './Pagination';
 
@@ -480,9 +481,10 @@ function ReportRow({ report: initialReport, onEdit, onDelete, isAdmin, companyNa
 export default function DailyReports({ projects, settings = null }) {
   const { user } = useAuth();
   const t = useT();
-  const workLabel = settings?.label_work || 'Project';
-  const workerLabel = settings?.label_worker || 'Team Member';
-  const workerLabelPlural = workerLabel.endsWith('s') ? workerLabel : `${workerLabel}s`;
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
+  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
+  const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
+  const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
   const locale = langToLocale(user?.language);
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const { onSync } = useOffline() || {};
@@ -568,7 +570,7 @@ export default function DailyReports({ projects, settings = null }) {
     <div>
       <div className="filter-row" style={styles.listHeader}>
         <select style={styles.filterSelect} value={filterProject} onChange={e => setFilterProject(e.target.value)}>
-          <option value="">{`All ${workLabel.endsWith('s') ? workLabel : `${workLabel}s`}`}</option>
+          <option value="">{`All ${workLabelPlural}`}</option>
           {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <button style={styles.newBtn} onClick={() => setEditing('new')}>{t.newReport}</button>

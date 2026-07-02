@@ -7,6 +7,7 @@ import { langToLocale } from '../utils';
 import Pagination from './Pagination';
 import { SkeletonList } from './Skeleton';
 import FieldFilters from './FieldFilters';
+import { labelSg, labelPl } from '../companyLabels';
 
 import { silentError } from '../errorReporter';
 function today() {
@@ -186,11 +187,12 @@ function SubCard({ report, onEdit, onDeleted }) {
 
 export default function SubReports({ projects, settings = null }) {
   const t = useT();
+  const { user } = useAuth();
   const { onSync } = useOffline() || {};
-  const workLabel = settings?.label_work || 'Project';
-  const workLabelPlural = workLabel.endsWith('s') ? workLabel : `${workLabel}s`;
-  const workerLabel = settings?.label_worker || 'Team Member';
-  const workerLabelPlural = workerLabel.endsWith('s') ? workerLabel : `${workerLabel}s`;
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
+  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
+  const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
+  const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
   const workerLabelPluralLower = workerLabelPlural.toLowerCase();
   const [reports, setReports] = useState([]);
   const [page, setPage] = useState(1);

@@ -7,6 +7,7 @@ import { SkeletonList } from '../Skeleton';
 import ModalShell from '../ModalShell';
 import ColumnHeaderMenu from './ColumnHeaderMenu';
 import InventoryColumnPicker from './InventoryColumnPicker';
+import { labelSg } from '../../companyLabels';
 
 import { silentError } from '../../errorReporter';
 function formatBin(area_name, rack_name, bay_name, compartment_name) {
@@ -287,7 +288,8 @@ const a = {
 
 function IssueModal({ item, projects, settings, onClose, onDone }) {
   const t = useT();
-  const workLabel = settings?.label_work || 'Project';
+  const { user } = useAuth();
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const [qty, setQty]             = useState('');
   const [uomId, setUomId]         = useState(item.uom_id ? String(item.uom_id) : '');
   const [itemUoms, setItemUoms]   = useState([]);

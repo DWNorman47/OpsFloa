@@ -271,6 +271,7 @@ async function ensureDemoSettings(client, companyId) {
     module_field: '1',
     module_projects: '1',
     module_inventory: '1',
+    module_tools: '1',
     module_analytics: '1',
     module_team: '1',
     module_financial_reports: '1',

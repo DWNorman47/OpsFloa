@@ -8,6 +8,7 @@ import { useToast } from '../contexts/ToastContext';
 import { SkeletonList } from './Skeleton';
 import Pagination from './Pagination';
 import FieldFilters from './FieldFilters';
+import { labelSg, labelPl } from '../companyLabels';
 
 const STATUS_COLORS = {
   open: { color: '#92400e', bg: '#fef3c7' },
@@ -338,9 +339,9 @@ export default function Punchlist({ projects, settings = null }) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const { onSync } = useOffline() || {};
-  const workLabel = settings?.label_work || 'Project';
-  const workLabelPlural = /s$/i.test(workLabel) ? workLabel : `${workLabel}s`;
-  const workerLabel = settings?.label_worker || 'Team Member';
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
+  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
+  const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);

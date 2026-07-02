@@ -54,6 +54,11 @@ export const MODULE_PERMISSIONS = {
   projects: [
     'view_projects', 'manage_projects', 'manage_project_visibility',
   ],
+  // Tools = standalone utility calculators and helpers. Start with the
+  // excavation takeoff tool, so project/settings access is the right gate.
+  tools: [
+    'view_projects', 'manage_projects', 'manage_settings',
+  ],
   administration: [
     'manage_settings', 'manage_advanced_settings', 'manage_integrations',
     'manage_billing', 'send_broadcast',
