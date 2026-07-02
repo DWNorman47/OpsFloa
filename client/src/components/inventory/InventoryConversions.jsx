@@ -170,7 +170,7 @@ export default function InventoryConversions({ onConversionChange }) {
             </>
           ) : (
             <button style={{ ...s.editBtn, ...(isPending ? s.editBtnPending : {}) }} onClick={() => startEdit(row)}>
-              {isPending ? t.invConvSetFactor : 'Edit'}
+              {isPending ? t.invConvSetFactor : t.invcvEdit}
             </button>
           )}
         </td>
@@ -258,16 +258,16 @@ export default function InventoryConversions({ onConversionChange }) {
               style={s.searchInput}
               value={conversionSearch}
               onChange={e => setConversionSearch(e.target.value)}
-              placeholder="Search conversions..."
+              placeholder={t.invcvSearchPlaceholder}
             />
             {conversionQuery && (
-              <button style={s.clearBtn} onClick={() => setConversionSearch('')}>Clear</button>
+              <button style={s.clearBtn} onClick={() => setConversionSearch('')}>{t.invcvClear}</button>
             )}
           </div>
           <div style={s.filterMeta}>
             {conversionQuery
-              ? `Showing ${filteredRows.length} of ${rows.length} matching conversions`
-              : `${rows.length} conversions`}
+              ? `${t.invcvShowing} ${filteredRows.length} ${t.invcvOf} ${rows.length} ${t.invcvMatchingConversions}`
+              : `${rows.length} ${t.invcvConversions}`}
           </div>
           {/* ── Needs Setup ───────────────────────────────────────────────── */}
           {pending.length > 0 && (
@@ -304,8 +304,8 @@ export default function InventoryConversions({ onConversionChange }) {
           )}
           {rows.length > 0 && filteredRows.length === 0 && (
             <div style={s.emptyState}>
-              <p style={s.emptyTitle}>No conversions match that search.</p>
-              <p style={s.emptySub}>Try an item name, unit, or factor.</p>
+              <p style={s.emptyTitle}>{t.invcvNoMatchTitle}</p>
+              <p style={s.emptySub}>{t.invcvNoMatchSub}</p>
             </div>
           )}
         </>

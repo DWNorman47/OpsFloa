@@ -1,70 +1,73 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useDocumentMeta } from '../hooks/useDocumentMeta';
+import { getT } from '../i18n';
+import { detectLanguage } from '../languageDetect';
 
-const workflows = [
+const buildWorkflows = t => [
   {
-    label: 'People',
-    title: 'Start the day knowing who is working and what needs attention.',
-    items: ['Browser-based clock-in for mobile teams', 'Schedules, time off, and team messages', 'Approvals before payroll closes'],
+    label: t.lpWorkflowPeopleLabel,
+    title: t.lpWorkflowPeopleTitle,
+    items: [t.lpWorkflowPeopleItem1, t.lpWorkflowPeopleItem2, t.lpWorkflowPeopleItem3],
   },
   {
-    label: 'Work',
-    title: 'Capture the workday without chasing texts, photos, and memory.',
-    items: ['Notes, photos, tasks, and service records', 'Checklists for repeatable work', 'Customer, project, and daily history'],
+    label: t.lpWorkflowWorkLabel,
+    title: t.lpWorkflowWorkTitle,
+    items: [t.lpWorkflowWorkItem1, t.lpWorkflowWorkItem2, t.lpWorkflowWorkItem3],
   },
   {
-    label: 'Resources',
-    title: 'Keep stock, tools, and documents attached to the right place.',
-    items: ['Inventory by location, area, rack, bay, and bin', 'Counts, transfers, and purchase activity', 'Files attached to the work they belong to'],
+    label: t.lpWorkflowResourcesLabel,
+    title: t.lpWorkflowResourcesTitle,
+    items: [t.lpWorkflowResourcesItem1, t.lpWorkflowResourcesItem2, t.lpWorkflowResourcesItem3],
   },
   {
-    label: 'Back office',
-    title: 'Turn daily activity into approvals, reports, and cleaner payroll.',
-    items: ['Overtime and pay-period controls', 'Reports for managers and clients', 'QuickBooks Online sync add-on'],
+    label: t.lpWorkflowBackOfficeLabel,
+    title: t.lpWorkflowBackOfficeTitle,
+    items: [t.lpWorkflowBackOfficeItem1, t.lpWorkflowBackOfficeItem2, t.lpWorkflowBackOfficeItem3],
   },
 ];
 
-const differences = [
+const buildDifferences = t => [
   {
-    label: 'Simple for the team',
-    title: 'The daily screen can stay small, even when the system is powerful.',
-    items: ['Show only the tools each role needs', 'Keep specialist workflows tucked away', 'Use labels that match the company language'],
+    label: t.lpDiffSimpleLabel,
+    title: t.lpDiffSimpleTitle,
+    items: [t.lpDiffSimpleItem1, t.lpDiffSimpleItem2, t.lpDiffSimpleItem3],
   },
   {
-    label: 'More than time tracking',
-    title: 'Time, work records, inventory, and approvals live together.',
-    items: ['Fewer disconnected spreadsheets and side chats', 'Cleaner context for payroll and reporting', 'One place to find what happened'],
+    label: t.lpDiffMoreLabel,
+    title: t.lpDiffMoreTitle,
+    items: [t.lpDiffMoreItem1, t.lpDiffMoreItem2, t.lpDiffMoreItem3],
   },
   {
-    label: 'Built for movement',
-    title: 'It works for teams moving between desks, sites, shops, and customers.',
-    items: ['Mobile browser access with no app-store rollout', 'Offline queue for spotty signal', 'Admin controls when the work gets complex'],
+    label: t.lpDiffMovementLabel,
+    title: t.lpDiffMovementTitle,
+    items: [t.lpDiffMovementItem1, t.lpDiffMovementItem2, t.lpDiffMovementItem3],
   },
 ];
 
-const proof = [
-  ['Approvals ready', '18'],
-  ['People active', '7'],
-  ['Open requests', '3'],
-  ['Stock alerts', '6'],
+const buildProof = t => [
+  [t.lpProofApprovals, '18'],
+  [t.lpProofPeople, '7'],
+  [t.lpProofRequests, '3'],
+  [t.lpProofStock, '6'],
 ];
 
-const plans = [
-  { name: 'Free', price: '$0', detail: 'Up to 3 team members, time clock, scheduling, and recent history.' },
-  { name: 'Starter', price: '$20', detail: 'Up to 10 team members, geofencing, exports, mileage, and pay-period controls.' },
-  { name: 'Business', price: '$35', detail: 'Reports, work tracking, customers, checklists, analytics, and 15 team members included.', featured: true },
+const buildPlans = t => [
+  { name: t.lpPlanFreeName, price: '$0', detail: t.lpPlanFreeDetail },
+  { name: t.lpPlanStarterName, price: '$20', detail: t.lpPlanStarterDetail },
+  { name: t.lpPlanBusinessName, price: '$35', detail: t.lpPlanBusinessDetail, featured: true },
 ];
 
-function MiniDashboard() {
+function MiniDashboard({ t }) {
+  const proof = buildProof(t);
   return (
     <div className="landing-product-panel" aria-label="OpsFloa workflow preview">
       <div className="landing-panel-top">
         <div>
-          <span className="landing-panel-eyebrow">Today in OpsFloa</span>
-          <h2>Daily Command Center</h2>
+          <span className="landing-panel-eyebrow">{t.lpPanelEyebrow}</span>
+          <h2>{t.lpPanelTitle}</h2>
         </div>
-        <span className="landing-status-pill">Live</span>
+        <span className="landing-status-pill">{t.lpPanelLive}</span>
       </div>
       <div className="landing-proof-grid">
         {proof.map(([label, value]) => (
@@ -78,22 +81,22 @@ function MiniDashboard() {
         <div className="landing-timeline-row">
           <span className="landing-dot green" />
           <div>
-            <strong>Morning team check-in</strong>
-            <p>People, locations, and exceptions are visible</p>
+            <strong>{t.lpTimeline1Title}</strong>
+            <p>{t.lpTimeline1Text}</p>
           </div>
         </div>
         <div className="landing-timeline-row">
           <span className="landing-dot amber" />
           <div>
-            <strong>Customer request updated</strong>
-            <p>Photos, notes, and status stay with the work</p>
+            <strong>{t.lpTimeline2Title}</strong>
+            <p>{t.lpTimeline2Text}</p>
           </div>
         </div>
         <div className="landing-timeline-row">
           <span className="landing-dot blue" />
           <div>
-            <strong>Payroll prep is cleaner</strong>
-            <p>Approved hours are ready for export or sync</p>
+            <strong>{t.lpTimeline3Title}</strong>
+            <p>{t.lpTimeline3Text}</p>
           </div>
         </div>
       </div>
@@ -103,6 +106,16 @@ function MiniDashboard() {
 
 export default function Landing() {
   const [openFaq, setOpenFaq] = useState(null);
+  const t = getT(detectLanguage());
+  const workflows = buildWorkflows(t);
+  const differences = buildDifferences(t);
+  const plans = buildPlans(t);
+  const faqs = [
+    [t.lpFaq1Q, t.lpFaq1A],
+    [t.lpFaq2Q, t.lpFaq2A],
+    [t.lpFaq3Q, t.lpFaq3A],
+    [t.lpFaq4Q, t.lpFaq4A],
+  ];
 
   useDocumentMeta({
     title: 'OpsFloa - Simple Operations Software for Time, Work, Inventory, and Payroll Prep',
@@ -116,17 +129,17 @@ export default function Landing() {
           <img className="landing-brand-mark" src="/icon-96x96.png" alt="" />
           <span>
             <strong>OpsFloa</strong>
-            <small>Operations Flow Assistant</small>
+            <small>{t.lpBrandTagline}</small>
           </span>
         </a>
         <nav className="landing-nav" aria-label="Landing page navigation">
-          <a href="#workflows">Workflows</a>
-          <a href="#pricing">Pricing</a>
-          <a href="#faq">FAQ</a>
+          <a href="#workflows">{t.lpNavWorkflows}</a>
+          <a href="#pricing">{t.lpNavPricing}</a>
+          <a href="#faq">{t.lpNavFaq}</a>
         </nav>
         <div className="landing-actions">
-          <Link to="/login">Log in</Link>
-          <Link to="/register" className="landing-btn landing-btn-small">Start free</Link>
+          <Link to="/login">{t.lpLogIn}</Link>
+          <Link to="/register" className="landing-btn landing-btn-small">{t.lpStartFree}</Link>
         </div>
       </header>
 
@@ -139,41 +152,41 @@ export default function Landing() {
           <div className="landing-hero-scrim" />
           <div className="landing-shell landing-hero-grid">
             <div className="landing-hero-copy">
-              <p className="landing-kicker">The daily operations hub for teams in motion</p>
+              <p className="landing-kicker">{t.lpHeroKicker}</p>
               <h1>OpsFloa</h1>
               <p className="landing-lede">
-                A simple place to run time, work, inventory, approvals, and payroll prep. Keep the everyday screen clean for the team, while admins get the controls and records they need when the work gets complicated.
+                {t.lpHeroLede}
               </p>
               <div className="landing-hero-proof" aria-label="OpsFloa highlights">
-                <span>No app-store rollout</span>
-                <span>Offline queue</span>
-                <span>Custom roles and labels</span>
+                <span>{t.lpHeroProof1}</span>
+                <span>{t.lpHeroProof2}</span>
+                <span>{t.lpHeroProof3}</span>
               </div>
               <div className="landing-hero-buttons">
-                <Link to="/register" className="landing-btn">Create free account</Link>
-                <a href="#workflows" className="landing-ghost-btn">See what it covers</a>
+                <Link to="/register" className="landing-btn">{t.lpHeroCtaPrimary}</Link>
+                <a href="#workflows" className="landing-ghost-btn">{t.lpHeroCtaSecondary}</a>
               </div>
-              <p className="landing-trust">No credit card to start. Built for crews, shops, service teams, offices, and field/mobile operations that need order without extra busywork.</p>
+              <p className="landing-trust">{t.lpHeroTrust}</p>
             </div>
-            <MiniDashboard />
+            <MiniDashboard t={t} />
           </div>
         </section>
 
         <section className="landing-strip">
           <div className="landing-shell landing-strip-grid">
-            <span>GPS time clock</span>
-            <span>Daily work records</span>
-            <span>Checklists</span>
-            <span>Inventory</span>
-            <span>Payroll approvals</span>
+            <span>{t.lpStrip1}</span>
+            <span>{t.lpStrip2}</span>
+            <span>{t.lpStrip3}</span>
+            <span>{t.lpStrip4}</span>
+            <span>{t.lpStrip5}</span>
           </div>
         </section>
 
         <section id="workflows" className="landing-section landing-shell">
           <div className="landing-section-head">
-            <p className="landing-kicker">One calm operating system</p>
-            <h2>Everything the office needs from the workday, without making the team dig for it.</h2>
-            <p>OpsFloa is designed around the daily loop: people start work, activity is captured, exceptions rise to the surface, and the back office closes the day with fewer loose ends.</p>
+            <p className="landing-kicker">{t.lpWorkflowsKicker}</p>
+            <h2>{t.lpWorkflowsHeading}</h2>
+            <p>{t.lpWorkflowsIntro}</p>
           </div>
           <div className="landing-workflow-grid">
             {workflows.map(workflow => (
@@ -191,21 +204,21 @@ export default function Landing() {
         <section className="landing-operator-band">
           <div className="landing-shell landing-operator-grid">
             <div>
-              <p className="landing-kicker">Mobile-first, office-ready</p>
-              <h2>Built for the gap between doing the work and proving what happened.</h2>
+              <p className="landing-kicker">{t.lpOperatorKicker}</p>
+              <h2>{t.lpOperatorHeading}</h2>
             </div>
             <div className="landing-operator-copy">
-              <p>Team members get a simple daily path. Admins get approvals, reports, inventory movement, customer history, and exceptions. The system keeps the record so no one has to reconstruct the week from messages, memory, and scattered files.</p>
-              <Link to="/register" className="landing-inline-link">Create your free account</Link>
+              <p>{t.lpOperatorCopy}</p>
+              <Link to="/register" className="landing-inline-link">{t.lpOperatorLink}</Link>
             </div>
           </div>
         </section>
 
         <section className="landing-section landing-shell">
           <div className="landing-section-head">
-            <p className="landing-kicker">Why OpsFloa</p>
-            <h2>Use one flexible system instead of forcing the team through five disconnected tools.</h2>
-            <p>Most teams do not need more software noise. They need the important actions up front, the deeper controls nearby, and a reliable record of the day when payroll, customers, managers, or inventory questions come up.</p>
+            <p className="landing-kicker">{t.lpWhyKicker}</p>
+            <h2>{t.lpWhyHeading}</h2>
+            <p>{t.lpWhyIntro}</p>
           </div>
           <div className="landing-difference-grid">
             {differences.map(difference => (
@@ -223,17 +236,17 @@ export default function Landing() {
         <section id="pricing" className="landing-pricing-band">
           <div className="landing-section landing-shell">
             <div className="landing-section-head">
-              <p className="landing-kicker">Simple pricing</p>
-              <h2>Start small. Add the operational depth only when the team needs it.</h2>
+              <p className="landing-kicker">{t.lpPricingKicker}</p>
+              <h2>{t.lpPricingHeading}</h2>
             </div>
             <div className="landing-pricing-grid">
               {plans.map(plan => (
                 <article key={plan.name} className={`landing-plan ${plan.featured ? 'featured' : ''}`}>
-                  {plan.featured && <span className="landing-plan-badge">Most useful</span>}
+                  {plan.featured && <span className="landing-plan-badge">{t.lpPlanBadge}</span>}
                   <h3>{plan.name}</h3>
-                  <div className="landing-price">{plan.price}<small>/mo</small></div>
+                  <div className="landing-price">{plan.price}<small>{t.lpPerMonth}</small></div>
                   <p>{plan.detail}</p>
-                  <Link to="/register" className={plan.featured ? 'landing-btn' : 'landing-ghost-btn dark'}>Start free</Link>
+                  <Link to="/register" className={plan.featured ? 'landing-btn' : 'landing-ghost-btn dark'}>{t.lpStartFree}</Link>
                 </article>
               ))}
             </div>
@@ -242,16 +255,11 @@ export default function Landing() {
 
         <section id="faq" className="landing-section landing-shell landing-faq-section">
           <div className="landing-section-head">
-            <p className="landing-kicker">Questions</p>
-            <h2>The basics, without the brochure fog.</h2>
+            <p className="landing-kicker">{t.lpFaqKicker}</p>
+            <h2>{t.lpFaqHeading}</h2>
           </div>
           <div className="landing-faq-list">
-            {[
-              ['Does the team need an app store download?', 'No. OpsFloa runs in the mobile browser and can be installed to the home screen as a PWA.'],
-              ['Does it work in bad signal?', 'Yes. Clock and work submissions can queue locally and sync when the connection returns.'],
-              ['Can different teams see different tools?', 'Yes. OpsFloa is built around roles, modules, and company labels so the app can stay simple day to day.'],
-              ['Can it handle payroll details?', 'Yes. It supports approvals, overtime, prevailing wage workflows, pay-period locks, reports, and QuickBooks sync as an add-on.'],
-            ].map(([q, a], index) => (
+            {faqs.map(([q, a], index) => (
               <div key={q} className="landing-faq-item">
                 <button type="button" onClick={() => setOpenFaq(openFaq === index ? null : index)}>
                   <span>{q}</span>
@@ -266,8 +274,8 @@ export default function Landing() {
         <section className="landing-final">
           <div className="landing-shell landing-final-content">
             <p className="landing-kicker">OpsFloa</p>
-            <h2>Give the team a simple way to report work. Give the office a clean way to close the day.</h2>
-            <Link to="/register" className="landing-btn">Start free</Link>
+            <h2>{t.lpFinalHeading}</h2>
+            <Link to="/register" className="landing-btn">{t.lpStartFree}</Link>
           </div>
         </section>
       </main>
@@ -275,9 +283,9 @@ export default function Landing() {
       <footer className="landing-footer landing-shell">
         <span>OpsFloa</span>
         <div>
-          <Link to="/privacy">Privacy</Link>
-          <Link to="/eula">Terms</Link>
-          <Link to="/login">Log in</Link>
+          <Link to="/privacy">{t.lpFooterPrivacy}</Link>
+          <Link to="/eula">{t.lpFooterTerms}</Link>
+          <Link to="/login">{t.lpLogIn}</Link>
         </div>
       </footer>
     </div>

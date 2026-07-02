@@ -7,10 +7,14 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api';
+import { getT } from '../i18n';
+import { detectLanguage } from '../languageDetect';
 import { useDocumentMeta } from '../hooks/useDocumentMeta';
 
 export default function ServiceRequest() {
   const { slug } = useParams();
+  // Public page, no auth — render in the visitor's browser language.
+  const t = getT(detectLanguage());
   const [companyName, setCompanyName] = useState('');
   const [accepting, setAccepting] = useState(true);
   const [hasPublicProfile, setHasPublicProfile] = useState(false);
@@ -31,8 +35,8 @@ export default function ServiceRequest() {
   });
 
   useDocumentMeta({
-    title: companyName ? `Request work from ${companyName}` : 'Request work',
-    description: `Submit a service, support, or work request to ${companyName || 'this business'} via OpsFloa.`,
+    title: companyName ? `${t.srMetaTitle} — ${companyName}` : t.srMetaTitle,
+    description: t.srMetaDesc,
     robots: 'noindex',
   });
 
@@ -48,7 +52,7 @@ export default function ServiceRequest() {
       })
       .catch(err => {
         if (err.response?.status === 404) setNotFound(true);
-        else setError('Failed to load form. Please try again.');
+        else setError(t.srErrLoad);
       })
       .finally(() => setLoading(false));
   }, [slug]);
@@ -57,27 +61,27 @@ export default function ServiceRequest() {
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!form.requester_name.trim()) { setError('Please enter your name.'); return; }
-    if (!form.description.trim()) { setError('Please describe what you need.'); return; }
+    if (!form.requester_name.trim()) { setError(t.srErrName); return; }
+    if (!form.description.trim()) { setError(t.srErrDescribe); return; }
     setSubmitting(true); setError('');
     try {
       await api.post(`/public/service-requests/${slug}`, form);
       setSubmitted(true);
     } catch (err) {
-      setError(err.response?.data?.error || 'Submission failed. Please try again.');
+      setError(err.response?.data?.error || t.srErrSubmit);
     } finally {
       setSubmitting(false);
     }
   };
 
-  if (loading) return <div style={styles.loading}>Loading...</div>;
+  if (loading) return <div style={styles.loading}>{t.loading}</div>;
 
   if (notFound) {
     return (
       <div style={styles.page}>
         <div style={styles.card}>
-          <h1 style={styles.title}>We couldn't find that business.</h1>
-          <p style={styles.bodyText}>The link you used may be outdated. Please contact them directly.</p>
+          <h1 style={styles.title}>{t.srNotFoundTitle}</h1>
+          <p style={styles.bodyText}>{t.srNotFoundBody}</p>
         </div>
       </div>
     );
@@ -87,14 +91,13 @@ export default function ServiceRequest() {
     return (
       <div style={styles.page}>
         <div style={styles.card}>
-          <div style={{ fontSize: 48, textAlign: 'center', marginBottom: 12 }}>OK</div>
-          <h1 style={styles.title}>Thanks - your request was sent.</h1>
+          <div style={{ fontSize: 48, textAlign: 'center', marginBottom: 12 }}>✓</div>
+          <h1 style={styles.title}>{t.srSentTitle}</h1>
           <p style={styles.bodyText}>
-            {companyName} has been notified and will follow up with you directly. If you included an
-            email address, they may reply that way; if not, expect a phone call.
+            {companyName} {t.srSentBody}
           </p>
           <p style={{ ...styles.bodyText, fontSize: 13, color: '#6b7280', marginTop: 20 }}>
-            Powered by OpsFloa
+            {t.srPoweredBy}
           </p>
         </div>
       </div>
@@ -107,15 +110,15 @@ export default function ServiceRequest() {
         <div style={styles.header}>
           <div style={styles.logo}>OpsFloa</div>
           <h1 style={styles.title}>{companyName}</h1>
-          <p style={styles.subtitle}>Request service, support, or an estimate</p>
+          <p style={styles.subtitle}>{t.srSubtitle}</p>
           {hasPublicProfile && (
-            <a href={`/companies/${slug}`} style={styles.profileLink}>View company profile</a>
+            <a href={`/companies/${slug}`} style={styles.profileLink}>{t.srViewProfile}</a>
           )}
         </div>
 
         {!accepting ? (
           <p style={styles.notAccepting}>
-            {companyName} isn't accepting new requests through this form right now. Please contact them directly.
+            {companyName} {t.srNotAccepting}
           </p>
         ) : (
           <form onSubmit={submit} style={styles.form}>
@@ -126,33 +129,33 @@ export default function ServiceRequest() {
 
             <div style={styles.row}>
               <label style={styles.field}>
-                <span style={styles.label}>Your name *</span>
+                <span style={styles.label}>{t.srYourName} *</span>
                 <input style={styles.input} type="text" required maxLength={200} value={form.requester_name} onChange={e => set('requester_name', e.target.value)} />
               </label>
             </div>
 
             <div style={styles.row}>
               <label style={styles.field}>
-                <span style={styles.label}>Email</span>
-                <input style={styles.input} type="email" maxLength={200} value={form.requester_email} onChange={e => set('requester_email', e.target.value)} placeholder="optional" />
+                <span style={styles.label}>{t.srEmail}</span>
+                <input style={styles.input} type="email" maxLength={200} value={form.requester_email} onChange={e => set('requester_email', e.target.value)} placeholder={t.srOptional} />
               </label>
               <label style={styles.field}>
-                <span style={styles.label}>Phone</span>
-                <input style={styles.input} type="tel" maxLength={40} value={form.requester_phone} onChange={e => set('requester_phone', e.target.value)} placeholder="optional" />
+                <span style={styles.label}>{t.srPhone}</span>
+                <input style={styles.input} type="tel" maxLength={40} value={form.requester_phone} onChange={e => set('requester_phone', e.target.value)} placeholder={t.srOptional} />
               </label>
             </div>
 
             <div style={styles.row}>
               <label style={styles.field}>
-                <span style={styles.label}>Address (where the work is)</span>
-                <input style={styles.input} type="text" maxLength={500} value={form.requester_address} onChange={e => set('requester_address', e.target.value)} placeholder="optional" />
+                <span style={styles.label}>{t.srAddress}</span>
+                <input style={styles.input} type="text" maxLength={500} value={form.requester_address} onChange={e => set('requester_address', e.target.value)} placeholder={t.srOptional} />
               </label>
             </div>
 
             {categories.length > 0 && (
               <div style={styles.row}>
                 <label style={styles.field}>
-                  <span style={styles.label}>What do you need? *</span>
+                  <span style={styles.label}>{t.srWhatNeed} *</span>
                   <select style={styles.input} value={form.category} onChange={e => set('category', e.target.value)}>
                     {categories.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
@@ -162,8 +165,8 @@ export default function ServiceRequest() {
 
             <div style={styles.row}>
               <label style={styles.field}>
-                <span style={styles.label}>Describe the work *</span>
-                <textarea style={{ ...styles.input, minHeight: 120, resize: 'vertical' }} required maxLength={5000} value={form.description} onChange={e => set('description', e.target.value)} placeholder="Tell the team what you need done, including any relevant details (timing, access, conditions)." />
+                <span style={styles.label}>{t.srDescribe} *</span>
+                <textarea style={{ ...styles.input, minHeight: 120, resize: 'vertical' }} required maxLength={5000} value={form.description} onChange={e => set('description', e.target.value)} placeholder={t.srDescribePlaceholder} />
                 <span style={styles.counter}>{form.description.length} / 5000</span>
               </label>
             </div>
@@ -171,11 +174,10 @@ export default function ServiceRequest() {
             {error && <div role="alert" style={styles.error}>{error}</div>}
 
             <button type="submit" style={{ ...styles.submit, ...(submitting ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} disabled={submitting}>
-              {submitting ? 'Sending...' : 'Send request'}
+              {submitting ? t.srSending : t.srSend}
             </button>
             <p style={styles.note}>
-              By submitting you agree that OpsFloa may share the above with {companyName}.
-              Your information is not shared with anyone else.
+              {t.srNoteA} {companyName}. {t.srNoteB}
             </p>
           </form>
         )}

@@ -5,6 +5,7 @@
 // stands alone).
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import api from '../api';
 import { SkeletonList } from '../components/Skeleton';
@@ -16,7 +17,8 @@ import { useConfirm } from '../components/ConfirmDialog';
 import { useT } from '../hooks/useT';
 import { getT } from '../i18n';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
-import { formatMoney, formatDate, formatDateTime } from '../utils/format';
+import { formatMoney } from '../utils/format';
+import { formatDate, formatDateTime } from '../utils';
 import { computeBreakdown } from '../utils/estimateMath';
 import { silentError } from '../errorReporter';
 
@@ -58,6 +60,7 @@ const formatCents = (c) => formatMoney(c, { showCents: true });
 
 function ChangeOrdersList({ onOpen, onNew }) {
   const t = useT();
+  const { user } = useAuth();
   const [items, setItems] = useState([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
   const [loading, setLoading] = useState(true);
@@ -142,7 +145,7 @@ function ChangeOrdersList({ onOpen, onNew }) {
                     <td style={styles.td}>{co.description}</td>
                     <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(co.total_cents)}</td>
                     <td style={styles.td}><StatusBadge status={co.status} /></td>
-                    <td style={styles.td}>{new Date(co.created_at).toLocaleDateString()}</td>
+                    <td style={styles.td}>{formatDate(co.created_at, user?.language)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -165,7 +168,7 @@ function ChangeOrdersList({ onOpen, onNew }) {
                 <div className="admin-card-sub">{co.project_name}</div>
                 <div className="admin-card-sub" style={{ color: '#374151' }}>{co.description}</div>
                 <div className="admin-card-row">
-                  <span className="admin-card-sub">{new Date(co.created_at).toLocaleDateString()}</span>
+                  <span className="admin-card-sub">{formatDate(co.created_at, user?.language)}</span>
                   <strong style={{ fontSize: 14 }}>{formatCents(co.total_cents)}</strong>
                 </div>
               </div>
@@ -379,6 +382,7 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
 
 function ChangeOrderDetail({ id, onBack }) {
   const t = useT();
+  const { user } = useAuth();
   const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const [co, setCo] = useState(null);
@@ -403,9 +407,10 @@ function ChangeOrderDetail({ id, onBack }) {
       ]);
       // Render the PDF in the CLIENT's language (resolved from the
       // project's client), not the admin's UI language.
-      const pdfT = getT(co.client_language);
+      const pdfLang = co.client_language;
+      const pdfT = getT(pdfLang);
       const statusLabel = pdfT[STATUS_COLORS[co.status]?.labelKey] || co.status;
-      const el = React.createElement(ChangeOrderPDF, { changeOrder: co, companyInfo: companyRes.data || {}, t: pdfT, statusLabel });
+      const el = React.createElement(ChangeOrderPDF, { changeOrder: co, companyInfo: companyRes.data || {}, language: pdfLang, statusLabel });
       const blob = await pdf(el).toBlob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -512,7 +517,7 @@ function ChangeOrderDetail({ id, onBack }) {
           )}
           {co.budget_applied_at && (
             <span style={{ fontSize: 13, color: '#059669', fontWeight: 600 }}>
-              ✓ {t.coBudgetBumped} {new Date(co.budget_applied_at).toLocaleDateString()}
+              ✓ {t.coBudgetBumped} {formatDate(co.budget_applied_at, user?.language)}
             </span>
           )}
         </div>
@@ -569,7 +574,7 @@ function ChangeOrderDetail({ id, onBack }) {
         <div style={styles.formCard}>
           <h3 style={styles.formH3}>{t.coAcceptedBy}</h3>
           <div style={{ fontSize: 14 }}>
-            <strong>{co.accepted_signer_name}</strong> on {new Date(co.responded_at).toLocaleString()}
+            <strong>{co.accepted_signer_name}</strong> on {formatDateTime(co.responded_at, user?.language)}
           </div>
         </div>
       )}

@@ -13,7 +13,7 @@ import Pagination from '../components/Pagination';
 import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
-import { formatDate, formatDateTime } from '../utils/format';
+import { formatDate, formatDateTime } from '../utils';
 import { silentError } from '../errorReporter';
 import { useT } from '../hooks/useT';
 
@@ -51,6 +51,7 @@ function StatusBadge({ status }) {
 
 function SubmittalsList({ onOpen, onNew }) {
   const t = useT();
+  const { user } = useAuth();
   const [items, setItems] = useState([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
   const [loading, setLoading] = useState(true);
@@ -160,7 +161,7 @@ function SubmittalsList({ onOpen, onNew }) {
                     <td style={styles.td}>{s.spec_section || '—'}</td>
                     <td style={styles.td}>{s.title}</td>
                     <td style={styles.td}>{s.project_name}</td>
-                    <td style={styles.td}>{s.required_by ? new Date(s.required_by).toLocaleDateString() : '—'}</td>
+                    <td style={styles.td}>{s.required_by ? formatDate(s.required_by, user?.language) : '—'}</td>
                     <td style={styles.td}>{s.revision > 0 ? `R${s.revision}` : '—'}</td>
                     <td style={styles.td}><StatusBadge status={s.status} /></td>
                   </tr>
@@ -184,7 +185,7 @@ function SubmittalsList({ onOpen, onNew }) {
                 </div>
                 <div className="admin-card-sub" style={{ color: '#374151', fontWeight: 600 }}>{s.title}</div>
                 <div className="admin-card-sub">{s.project_name}{s.spec_section ? ` · ${s.spec_section}` : ''}</div>
-                {s.required_by && <div className="admin-card-sub">{t.submColRequiredBy} {new Date(s.required_by).toLocaleDateString()}</div>}
+                {s.required_by && <div className="admin-card-sub">{t.submColRequiredBy} {formatDate(s.required_by, user?.language)}</div>}
               </div>
             ))}
           </div>
@@ -297,6 +298,7 @@ function NewSubmittalForm({ projects, onSave, onCancel }) {
 
 function SubmittalDetail({ id, onBack }) {
   const t = useT();
+  const { user } = useAuth();
   const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const [s, setS] = useState(null);
@@ -365,7 +367,7 @@ function SubmittalDetail({ id, onBack }) {
           <div style={{ fontSize: 16, color: '#374151', marginTop: 4 }}>{s.title}</div>
           <div style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>
             {s.project_name}{s.spec_section && ` · ${t.submSpec} ${s.spec_section}`}
-            {s.required_by && ` · ${t.submColRequiredBy} ${new Date(s.required_by).toLocaleDateString()}`}
+            {s.required_by && ` · ${t.submColRequiredBy} ${formatDate(s.required_by, user?.language)}`}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -423,7 +425,7 @@ function SubmittalDetail({ id, onBack }) {
           <Info label={t.submFieldName} value={s.reviewer_name} />
           <Info label={t.submFieldOrganization} value={s.reviewer_org} />
           <Info label={t.submFieldEmail} value={s.reviewer_email} />
-          <Info label={t.submSentToReviewer} value={s.sent_to_reviewer_at ? new Date(s.sent_to_reviewer_at).toLocaleDateString() : null} />
+          <Info label={t.submSentToReviewer} value={s.sent_to_reviewer_at ? formatDate(s.sent_to_reviewer_at, user?.language) : null} />
         </div>
         {s.reviewer_stamp && (
           <div style={{ marginTop: 12, padding: 12, background: '#f9fafb', borderRadius: 6 }}>
@@ -433,7 +435,7 @@ function SubmittalDetail({ id, onBack }) {
             </div>
             {s.reviewer_responded_at && (
               <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
-                {new Date(s.reviewer_responded_at).toLocaleString()}
+                {formatDateTime(s.reviewer_responded_at, user?.language)}
               </div>
             )}
           </div>
@@ -470,7 +472,7 @@ function SubmittalDetail({ id, onBack }) {
             <tbody>
               {s.audit.map(a => (
                 <tr key={a.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                  <td style={{ padding: '4px 0', color: '#6b7280' }}>{new Date(a.created_at).toLocaleString()}</td>
+                  <td style={{ padding: '4px 0', color: '#6b7280' }}>{formatDateTime(a.created_at, user?.language)}</td>
                   <td style={{ padding: '4px 0' }}><strong>{a.action.replace(/_/g, ' ')}</strong></td>
                 </tr>
               ))}

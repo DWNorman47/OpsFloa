@@ -96,7 +96,7 @@ function HistoryPanel({ item, onClose }) {
           </div>
           <button style={h.close} aria-label={t.labelModalClose} onClick={onClose}>X</button>
         </div>
-        {error && <div role="alert" style={h.error}>{error} <button style={h.retryBtn} onClick={load}>{t.tryAgain || 'Try again'}</button></div>}
+        {error && <div role="alert" style={h.error}>{error} <button style={h.retryBtn} onClick={load}>{t.tryAgain || t.invskTryAgain}</button></div>}
         {loading ? (
           <SkeletonList count={3} rows={1} />
         ) : rows.length === 0 ? (
@@ -577,7 +577,7 @@ export default function InventoryStock({ isAdmin, locations, projects, settings,
         rowsForExport = rowsForExport.concat(r.data.stock || []);
       }
     } catch (err) {
-      setError(t.exportFailed || 'Export failed. Try again.');
+      setError(t.exportFailed || t.invskExportFailed);
       setExportingCsv(false);
       return;
     }
@@ -643,7 +643,7 @@ export default function InventoryStock({ isAdmin, locations, projects, settings,
       filterValue: itemFilter,
       onFilter: setStockFilter(setItemFilter),
       suggestions: stockSuggestions.items,
-      placeholder: 'Item name',
+      placeholder: t.invskItemNamePlaceholder,
       headerStyle: s.th,
       cellStyle: { ...s.td, fontWeight: 600 },
       getValue: row => row.item_name,
@@ -656,7 +656,7 @@ export default function InventoryStock({ isAdmin, locations, projects, settings,
       filterValue: skuFilter,
       onFilter: setStockFilter(setSkuFilter),
       suggestions: stockSuggestions.skus,
-      placeholder: 'SKU',
+      placeholder: t.invskSkuPlaceholder,
       cellStyle: { ...s.td, color: '#6b7280', fontFamily: 'monospace', fontSize: 12 },
       getValue: row => row.sku,
     },
@@ -667,7 +667,7 @@ export default function InventoryStock({ isAdmin, locations, projects, settings,
       filterType: 'select',
       filterValue: categoryFilter,
       onFilter: setStockFilter(setCategoryFilter),
-      options: [{ value: '', label: t.allCategories || 'All categories' }, ...categories.map(c => ({ value: c, label: c }))],
+      options: [{ value: '', label: t.allCategories || t.invskAllCategories }, ...categories.map(c => ({ value: c, label: c }))],
       getValue: row => row.category,
     },
     {
@@ -683,46 +683,46 @@ export default function InventoryStock({ isAdmin, locations, projects, settings,
     },
     {
       key: 'area',
-      label: 'Area',
+      label: t.invskColArea,
       sortKey: 'area',
       filterType: 'text',
       filterValue: areaFilter,
       onFilter: setStockFilter(setAreaFilter),
       suggestions: stockSuggestions.areas,
-      placeholder: 'Area',
+      placeholder: t.invskColArea,
       getValue: row => row.area_name,
     },
     {
       key: 'rack',
-      label: 'Rack',
+      label: t.invskColRack,
       sortKey: 'rack',
       filterType: 'text',
       filterValue: rackFilter,
       onFilter: setStockFilter(setRackFilter),
       suggestions: stockSuggestions.racks,
-      placeholder: 'Rack',
+      placeholder: t.invskColRack,
       getValue: row => row.rack_name,
     },
     {
       key: 'bay',
-      label: 'Bay',
+      label: t.invskColBay,
       sortKey: 'bay',
       filterType: 'text',
       filterValue: bayFilter,
       onFilter: setStockFilter(setBayFilter),
       suggestions: stockSuggestions.bays,
-      placeholder: 'Bay',
+      placeholder: t.invskColBay,
       getValue: row => row.bay_name,
     },
     {
       key: 'compartment',
-      label: 'Compartment',
+      label: t.invskColCompartment,
       sortKey: 'compartment',
       filterType: 'text',
       filterValue: compartmentFilter,
       onFilter: setStockFilter(setCompartmentFilter),
       suggestions: stockSuggestions.compartments,
-      placeholder: 'Compartment',
+      placeholder: t.invskColCompartment,
       getValue: row => row.compartment_name,
     },
     {
@@ -733,7 +733,7 @@ export default function InventoryStock({ isAdmin, locations, projects, settings,
       filterValue: binFilter,
       onFilter: setStockFilter(setBinFilter),
       suggestions: stockSuggestions.bins,
-      placeholder: 'Bin path',
+      placeholder: t.invskBinPathPlaceholder,
       cellStyle: { ...s.td, color: '#6b7280', fontSize: 12 },
       getValue: row => formatBin(row.area_name, row.rack_name, row.bay_name, row.compartment_name),
     },
@@ -799,7 +799,7 @@ export default function InventoryStock({ isAdmin, locations, projects, settings,
       filterType: 'select',
       filterValue: statusFilter,
       onFilter: setStockFilter(setStatusFilter),
-      options: [{ value: '', label: t.allStatuses || 'All statuses' }, { value: 'in', label: t.invStockStatusInStock }, { value: 'low', label: t.invStockStatusLow }, { value: 'out', label: t.invStockStatusOut }],
+      options: [{ value: '', label: t.allStatuses || t.invskAllStatuses }, { value: 'in', label: t.invStockStatusInStock }, { value: 'low', label: t.invStockStatusLow }, { value: 'out', label: t.invStockStatusOut }],
       getValue: row => {
         const status = stockStatus(row.quantity, row.reorder_point);
         return <span style={{ ...s.badge, color: status.color, background: status.bg }}>{status.label}</span>;
@@ -820,7 +820,7 @@ export default function InventoryStock({ isAdmin, locations, projects, settings,
               style={s.histBtn}
               title={t.invStockViewHistory}
               onClick={() => setHistoryItem(row)}
-            >Log</button>
+            >{t.invskLogBtn}</button>
             {isAdmin && (
               <button
                 style={s.adjBtn}
@@ -864,7 +864,7 @@ export default function InventoryStock({ isAdmin, locations, projects, settings,
       {/* Low stock alert banner */}
       {isAdmin && lowItems.length > 0 && (
         <div style={s.alertBanner}>
-          <span>Warning: {lowItems.length} {t.invStockLowAlert}</span>
+          <span>{t.invskWarningPrefix} {lowItems.length} {t.invStockLowAlert}</span>
           {onReorderClick && (
             <button style={s.reorderBtn} onClick={onReorderClick}>
               {t.invStockCreateReorderPO}
@@ -892,7 +892,7 @@ export default function InventoryStock({ isAdmin, locations, projects, settings,
               setStockPage(0);
             }}
           >
-            Clear
+            {t.invskClear}
           </button>
         )}
         <button
@@ -905,7 +905,7 @@ export default function InventoryStock({ isAdmin, locations, projects, settings,
           &#8635;
         </button>
         {stockTotal > 0 && (
-          <button style={{ ...s.refreshBtn, ...(exportingCsv ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={downloadCSV} disabled={exportingCsv}>{exportingCsv ? 'Exporting...' : t.invValDownloadCSV}</button>
+          <button style={{ ...s.refreshBtn, ...(exportingCsv ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={downloadCSV} disabled={exportingCsv}>{exportingCsv ? t.invskExporting : t.invValDownloadCSV}</button>
         )}
         {stock.length > 0 && (
           <InventoryColumnPicker
@@ -919,7 +919,7 @@ export default function InventoryStock({ isAdmin, locations, projects, settings,
       </div>
 
       <div style={s.mobileControls} className="inventory-mobile-controls">
-        <div style={s.mobileViewToggle} aria-label="Mobile inventory view">
+        <div style={s.mobileViewToggle} aria-label={t.invskMobileViewLabel}>
           {['card', 'list'].map(mode => (
             <button
               key={mode}
@@ -927,7 +927,7 @@ export default function InventoryStock({ isAdmin, locations, projects, settings,
               style={{ ...s.mobileViewBtn, ...(mobileView === mode ? s.mobileViewBtnActive : {}) }}
               onClick={() => setMobileView(mode)}
             >
-              {mode === 'card' ? 'Cards' : 'List'}
+              {mode === 'card' ? t.invskViewCards : t.invskViewList}
             </button>
           ))}
         </div>
@@ -939,9 +939,9 @@ export default function InventoryStock({ isAdmin, locations, projects, settings,
               onClick={() => setShowMobileFilters(open => !open)}
               aria-expanded={showMobileFilters}
             >
-              <span>Filters</span>
-              {hasMobileFilters && <span style={s.mobileFilterBadge}>Active</span>}
-              <span>{showMobileFilters ? 'Hide' : 'Show'}</span>
+              <span>{t.invskFilters}</span>
+              {hasMobileFilters && <span style={s.mobileFilterBadge}>{t.invskActive}</span>}
+              <span>{showMobileFilters ? t.invskHide : t.invskShow}</span>
             </button>
             {showMobileFilters && (
               <>
@@ -968,21 +968,21 @@ export default function InventoryStock({ isAdmin, locations, projects, settings,
                   placeholder={t.invAreaRackBayBin}
                 />
                 <select style={s.mobileInput} value={statusFilter} onChange={e => setStockFilter(setStatusFilter)(e.target.value)}>
-                  <option value="">{t.allStatuses || 'All statuses'}</option>
+                  <option value="">{t.allStatuses || t.invskAllStatuses}</option>
                   <option value="in">{t.invStockStatusInStock}</option>
                   <option value="low">{t.invStockStatusLow}</option>
                   <option value="out">{t.invStockStatusOut}</option>
                 </select>
                 <div style={s.mobileSortRow}>
                   <select style={s.mobileInput} value={sortBy} onChange={e => setColumnSort(e.target.value, sortDir)}>
-                    <option value="item">Sort by item</option>
-                    <option value="location">Sort by location</option>
-                    <option value="quantity">Sort by quantity</option>
-                    <option value="status">Sort by status</option>
-                    <option value="value">Sort by value</option>
+                    <option value="item">{t.invskSortByItem}</option>
+                    <option value="location">{t.invskSortByLocation}</option>
+                    <option value="quantity">{t.invskSortByQuantity}</option>
+                    <option value="status">{t.invskSortByStatus}</option>
+                    <option value="value">{t.invskSortByValue}</option>
                   </select>
                   <button type="button" style={s.mobileSortBtn} onClick={() => setColumnSort(sortBy, sortDir === 'asc' ? 'desc' : 'asc')}>
-                    {sortDir === 'asc' ? 'A-Z' : 'Z-A'}
+                    {sortDir === 'asc' ? t.invskAZ : t.invskZA}
                   </button>
                 </div>
               </>
@@ -1070,36 +1070,36 @@ export default function InventoryStock({ isAdmin, locations, projects, settings,
                 <div style={s.mobileCardTop}>
                   <div style={s.mobileCardTitleWrap}>
                     <strong style={s.mobileCardTitle}>{row.item_name}</strong>
-                    <span style={s.mobileCardSub}>{[row.sku, row.category].filter(Boolean).join(' · ') || 'No SKU'}</span>
+                    <span style={s.mobileCardSub}>{[row.sku, row.category].filter(Boolean).join(' · ') || t.invskNoSku}</span>
                   </div>
                   <span style={{ ...s.badge, color: status.color, background: status.bg }}>{status.label}</span>
                 </div>
                 <div style={s.mobileMetricRow}>
                   <div>
-                    <span style={s.mobileLabel}>Qty</span>
+                    <span style={s.mobileLabel}>{t.invskLabelQty}</span>
                     <strong style={s.mobileValue}>{qty % 1 === 0 ? qty.toFixed(0) : qty.toFixed(2)} {row.unit}</strong>
                   </div>
                   {isAdmin && cost > 0 && (
                     <div>
-                      <span style={s.mobileLabel}>Value</span>
+                      <span style={s.mobileLabel}>{t.invskLabelValue}</span>
                       <strong style={s.mobileValue}>${(cost * Math.max(qty, 0)).toFixed(2)}</strong>
                     </div>
                   )}
                 </div>
                 <div style={s.mobileDetailGrid}>
                   <div>
-                    <span style={s.mobileLabel}>Location</span>
+                    <span style={s.mobileLabel}>{t.invskLabelLocation}</span>
                     <span style={s.mobileText}>{row.location_name || '-'}</span>
                   </div>
                   {bin && (
                     <div>
-                      <span style={s.mobileLabel}>Bin</span>
+                      <span style={s.mobileLabel}>{t.invskLabelBin}</span>
                       <span style={s.mobileText}>{bin}</span>
                     </div>
                   )}
                 </div>
                 <div style={s.mobileActions} onClick={e => e.stopPropagation()}>
-                  <button style={s.histBtn} onClick={() => setHistoryItem(row)}>Log</button>
+                  <button style={s.histBtn} onClick={() => setHistoryItem(row)}>{t.invskLogBtn}</button>
                   {isAdmin && <button style={s.adjBtn} onClick={() => setAdjustItem(row)}>+/-</button>}
                   {!isAdmin && qty > 0 && <button style={s.issueBtn} onClick={() => setIssueItem(row)}>{t.invStockIssueBtn}</button>}
                 </div>
@@ -1109,8 +1109,8 @@ export default function InventoryStock({ isAdmin, locations, projects, settings,
         </div>
         <div style={s.paginationBar}>
           <div style={s.paginationMeta}>
-            <span style={s.paginationText}>Showing {pageStart}-{pageEnd} of {stockTotal}</span>
-            <span style={s.paginationText}>Page {stockPage + 1} of {pageCount}</span>
+            <span style={s.paginationText}>{t.invskShowing} {pageStart}-{pageEnd} {t.invskOf} {stockTotal}</span>
+            <span style={s.paginationText}>{t.invskPage} {stockPage + 1} {t.invskOf} {pageCount}</span>
           </div>
           <div style={s.paginationControls}>
             <label style={s.pageSizeLabel}>
@@ -1133,14 +1133,14 @@ export default function InventoryStock({ isAdmin, locations, projects, settings,
                 disabled={!canPrevPage}
                 onClick={() => setStockPage(p => Math.max(0, p - 1))}
               >
-                Prev
+                {t.invskPrev}
               </button>
               <button
                 style={{ ...s.pageBtn, ...(!canNextPage ? s.pageBtnDisabled : {}) }}
                 disabled={!canNextPage}
                 onClick={() => setStockPage(p => p + 1)}
               >
-                Next
+                {t.invskNext}
               </button>
             </div>
           </div>

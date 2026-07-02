@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../api';
 import UomConversionModal from './UomConversionModal';
 import { useT } from '../../hooks/useT';
+import { useAuth } from '../../contexts/AuthContext';
+import { langToLocale } from '../../utils';
 import { SkeletonList } from '../Skeleton';
 import ModalShell from '../ModalShell';
 import ColumnHeaderMenu from './ColumnHeaderMenu';
@@ -229,7 +231,7 @@ function TransactionForm({ isAdmin, locations, projects, settings, onSave, onCan
     <form className="inventory-transaction-form" onSubmit={submit} style={f.form}>
       <div className="inventory-transaction-title-row" style={f.titleRow}>
         <h3 style={f.title}>{t.invTxLogMovement}</h3>
-        <button type="button" className="inventory-transaction-close" style={f.closeBtn} onClick={onCancel} aria-label={t.labelModalClose || 'Close'}>
+        <button type="button" className="inventory-transaction-close" style={f.closeBtn} onClick={onCancel} aria-label={t.labelModalClose || t.invtxClose}>
           X
         </button>
       </div>
@@ -465,6 +467,8 @@ function TransactionForm({ isAdmin, locations, projects, settings, onSave, onCan
 
 export default function InventoryTransactions({ isAdmin, locations, projects, settings, onTransaction, onConversionSaved }) {
   const t = useT();
+  const { user } = useAuth();
+  const locale = langToLocale(user?.language);
   const workLabel = settings?.label_work || 'Project';
   const TYPE_LABELS = {
     receive:  t.invTxTypeReceive,
@@ -639,7 +643,7 @@ export default function InventoryTransactions({ isAdmin, locations, projects, se
                 style={s.clearDates}
                 onClick={resetFilters}
               >
-                Clear
+                {t.invtxClear}
               </button>
             )}
             <button
@@ -651,7 +655,7 @@ export default function InventoryTransactions({ isAdmin, locations, projects, se
           </div>
 
           <div style={s.mobileControls} className="inventory-mobile-controls">
-            <div style={s.mobileViewToggle} aria-label="Mobile inventory view">
+            <div style={s.mobileViewToggle} aria-label={t.invtxMobileViewLabel}>
               {['card', 'list'].map(mode => (
                 <button
                   key={mode}
@@ -659,7 +663,7 @@ export default function InventoryTransactions({ isAdmin, locations, projects, se
                   style={{ ...s.mobileViewBtn, ...(mobileView === mode ? s.mobileViewBtnActive : {}) }}
                   onClick={() => setMobileView(mode)}
                 >
-                  {mode === 'card' ? 'Cards' : 'List'}
+                  {mode === 'card' ? t.invtxViewCards : t.invtxViewList}
                 </button>
               ))}
             </div>
@@ -701,7 +705,7 @@ export default function InventoryTransactions({ isAdmin, locations, projects, se
                         <ColumnHeaderMenu label={t.invTxColTo} sortKey="to" activeSort={sortBy} sortDir={sortDir} onSort={setColumnSort} filterType="select" filterValue={filters.to_location_id} onFilter={v => setFilter('to_location_id', v)} options={[{ value: '', label: t.invCycAllLocations }, ...activeLocations.map(l => ({ value: String(l.id), label: l.name }))]} />
                       </th>
                       <th style={s.th}>
-                        <ColumnHeaderMenu label={workLabel} sortKey="project" activeSort={sortBy} sortDir={sortDir} onSort={setColumnSort} filterType={projects?.length > 0 ? 'select' : null} filterValue={filters.project_id} onFilter={v => setFilter('project_id', v)} options={[{ value: '', label: `All ${workLabel.toLowerCase()}` }, ...(projects || []).filter(p => p.active !== false).map(p => ({ value: String(p.id), label: p.name }))]} />
+                        <ColumnHeaderMenu label={workLabel} sortKey="project" activeSort={sortBy} sortDir={sortDir} onSort={setColumnSort} filterType={projects?.length > 0 ? 'select' : null} filterValue={filters.project_id} onFilter={v => setFilter('project_id', v)} options={[{ value: '', label: `${t.invtxAllPrefix} ${workLabel.toLowerCase()}` }, ...(projects || []).filter(p => p.active !== false).map(p => ({ value: String(p.id), label: p.name }))]} />
                       </th>
                       {isAdmin && <th style={s.th}>
                         <ColumnHeaderMenu label={t.invTxColSupplier} sortKey="supplier" activeSort={sortBy} sortDir={sortDir} onSort={setColumnSort} filterType={suppliers.length > 0 ? 'select' : null} filterValue={filters.supplier_id} onFilter={v => setFilter('supplier_id', v)} options={[{ value: '', label: t.invTxAllSuppliers }, ...suppliers.map(sup => ({ value: String(sup.id), label: sup.name }))]} />
@@ -718,27 +722,27 @@ export default function InventoryTransactions({ isAdmin, locations, projects, se
                     </tr>
                   </thead>
                   <tbody>
-                    {transactions.map((t, i) => {
-                      const tc = TYPE_COLORS[t.type] || TYPE_COLORS.adjust;
+                    {transactions.map((tx, i) => {
+                      const tc = TYPE_COLORS[tx.type] || TYPE_COLORS.adjust;
                       return (
-                        <tr key={t.id} style={i % 2 === 0 ? s.rowEven : s.row}>
+                        <tr key={tx.id} style={i % 2 === 0 ? s.rowEven : s.row}>
                           <td style={{ ...s.td, whiteSpace: 'nowrap', color: '#6b7280', fontSize: 12 }}>
-                            {new Date(t.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                            {new Date(tx.created_at).toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' })}
                           </td>
                           <td style={s.td}>
-                            <span style={{ ...s.badge, color: tc.color, background: tc.bg }}>{TYPE_LABELS[t.type]}</span>
+                            <span style={{ ...s.badge, color: tc.color, background: tc.bg }}>{TYPE_LABELS[tx.type]}</span>
                           </td>
-                          <td style={{ ...s.td, fontWeight: 600 }}>{t.item_name}</td>
+                          <td style={{ ...s.td, fontWeight: 600 }}>{tx.item_name}</td>
                           <td style={{ ...s.td, textAlign: 'right', fontWeight: 700 }}>
-                            {formatQty(t.quantity)} {t.unit}
+                            {formatQty(tx.quantity)} {tx.unit}
                           </td>
-                          <td style={{ ...s.td, color: '#6b7280', fontSize: 13 }}>{t.from_location_name || '—'}</td>
-                          <td style={{ ...s.td, color: '#6b7280', fontSize: 13 }}>{t.to_location_name || '—'}</td>
-                          <td style={{ ...s.td, fontSize: 13 }}>{t.project_name || '—'}</td>
-                          {isAdmin && <td style={{ ...s.td, fontSize: 13, color: '#6b7280' }}>{t.supplier_name || '—'}</td>}
-                          {isAdmin && <td style={{ ...s.td, fontSize: 12, fontFamily: 'monospace', color: t.lot_number ? '#374151' : '#9ca3af' }}>{t.lot_number || '—'}</td>}
-                          {isAdmin && <td style={{ ...s.td, fontSize: 13 }}>{t.performed_by_name}</td>}
-                          <td style={{ ...s.td, color: '#6b7280', fontSize: 13, maxWidth: 200 }}>{t.notes || (t.reference_no ? `Ref: ${t.reference_no}` : '—')}</td>
+                          <td style={{ ...s.td, color: '#6b7280', fontSize: 13 }}>{tx.from_location_name || '—'}</td>
+                          <td style={{ ...s.td, color: '#6b7280', fontSize: 13 }}>{tx.to_location_name || '—'}</td>
+                          <td style={{ ...s.td, fontSize: 13 }}>{tx.project_name || '—'}</td>
+                          {isAdmin && <td style={{ ...s.td, fontSize: 13, color: '#6b7280' }}>{tx.supplier_name || '—'}</td>}
+                          {isAdmin && <td style={{ ...s.td, fontSize: 12, fontFamily: 'monospace', color: tx.lot_number ? '#374151' : '#9ca3af' }}>{tx.lot_number || '—'}</td>}
+                          {isAdmin && <td style={{ ...s.td, fontSize: 13 }}>{tx.performed_by_name}</td>}
+                          <td style={{ ...s.td, color: '#6b7280', fontSize: 13, maxWidth: 200 }}>{tx.notes || (tx.reference_no ? `${t.invtxRefPrefix} ${tx.reference_no}` : '—')}</td>
                         </tr>
                       );
                     })}
@@ -751,14 +755,14 @@ export default function InventoryTransactions({ isAdmin, locations, projects, se
               >
                 {transactions.map(tx => {
                   const tc = TYPE_COLORS[tx.type] || TYPE_COLORS.adjust;
-                  const movement = [tx.from_location_name || 'Origin', tx.to_location_name || 'Destination'].join(' -> ');
+                  const movement = [tx.from_location_name || t.invtxOrigin, tx.to_location_name || t.invtxDestination].join(' -> ');
                   const details = [tx.supplier_name, tx.lot_number, tx.performed_by_name].filter(Boolean).join(' - ');
                   return (
                     <article key={tx.id} style={s.mobileCard}>
                       <div style={s.mobileCardTop}>
                         <span style={{ ...s.badge, color: tc.color, background: tc.bg }}>{TYPE_LABELS[tx.type]}</span>
                         <span style={s.mobileDate}>
-                          {new Date(tx.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                          {new Date(tx.created_at).toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' })}
                         </span>
                       </div>
                       <div style={s.mobileTitleRow}>
@@ -767,7 +771,7 @@ export default function InventoryTransactions({ isAdmin, locations, projects, se
                       </div>
                       <div style={s.mobileDetailGrid}>
                         <div>
-                          <span style={s.mobileLabel}>Movement</span>
+                          <span style={s.mobileLabel}>{t.invtxMovement}</span>
                           <span style={s.mobileText}>{movement}</span>
                         </div>
                         {tx.project_name && (
@@ -778,14 +782,14 @@ export default function InventoryTransactions({ isAdmin, locations, projects, se
                         )}
                         {isAdmin && details && (
                           <div>
-                            <span style={s.mobileLabel}>Details</span>
+                            <span style={s.mobileLabel}>{t.invtxDetails}</span>
                             <span style={s.mobileText}>{details}</span>
                           </div>
                         )}
                         {(tx.notes || tx.reference_no) && (
                           <div>
-                            <span style={s.mobileLabel}>Notes</span>
-                            <span style={s.mobileText}>{tx.notes || `Ref: ${tx.reference_no}`}</span>
+                            <span style={s.mobileLabel}>{t.invtxNotesLabel}</span>
+                            <span style={s.mobileText}>{tx.notes || `${t.invtxRefPrefix} ${tx.reference_no}`}</span>
                           </div>
                         )}
                       </div>
@@ -795,8 +799,8 @@ export default function InventoryTransactions({ isAdmin, locations, projects, se
               </div>
               <div style={s.pagination}>
                 <div style={s.paginationMeta}>
-                  <span style={s.pageInfo}>Showing {pageStart}-{pageEnd} of {total}</span>
-                  <span style={s.pageInfo}>Page {page + 1} of {pageCount}</span>
+                  <span style={s.pageInfo}>{t.invtxShowing} {pageStart}-{pageEnd} {t.invtxOf} {total}</span>
+                  <span style={s.pageInfo}>{t.invtxPage} {page + 1} {t.invtxOf} {pageCount}</span>
                 </div>
                 <div style={s.paginationControls}>
                   <label style={s.pageSizeLabel}>
@@ -819,14 +823,14 @@ export default function InventoryTransactions({ isAdmin, locations, projects, se
                       disabled={!canPrevPage}
                       onClick={() => load(Math.max(0, page - 1))}
                     >
-                      Prev
+                      {t.invtxPrev}
                     </button>
                     <button
                       style={{ ...s.pageBtn, ...(!canNextPage ? s.pageBtnDisabled : {}) }}
                       disabled={!canNextPage}
                       onClick={() => load(page + 1)}
                     >
-                      Next
+                      {t.invtxNext}
                     </button>
                   </div>
                 </div>

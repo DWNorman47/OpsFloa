@@ -9,6 +9,8 @@
 import React from 'react';
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import { computeBreakdown } from '../utils/estimateMath';
+import { langToLocale } from '../utils';
+import { getT } from '../i18n';
 
 const CATEGORIES = ['labor', 'materials', 'equipment', 'subs', 'overhead', 'contingency', 'other'];
 const CATEGORY_LABEL_KEYS = {
@@ -58,20 +60,22 @@ const s = StyleSheet.create({
   footerText: { fontSize: 8, color: '#9ca3af' },
 });
 
-function fmtCents(cents) {
+function fmtCents(cents, language) {
   const n = (parseInt(cents, 10) || 0) / 100;
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
+  return new Intl.NumberFormat(langToLocale(language), { style: 'currency', currency: 'USD' }).format(n);
 }
-function fmtDate(d) {
+function fmtDate(d, language) {
   if (!d) return '';
   return new Date(d.toString().substring(0, 10) + 'T00:00:00')
-    .toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    .toLocaleDateString(langToLocale(language), { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-// `t` is the resolved translation dictionary passed from the detail page
-// (the PDF renders outside the React tree). `statusLabel` is the already-
-// translated status string. Both fall back to English.
-export default function ChangeOrderPDF({ changeOrder, companyInfo = {}, t = {}, statusLabel }) {
+// `language` is the recipient's language name (e.g. 'Spanish'); the PDF
+// renders outside the React tree, so it resolves its own translation
+// dictionary via getT(language) rather than calling useT. `statusLabel`
+// is the already-translated status string. All fall back to English.
+export default function ChangeOrderPDF({ changeOrder, companyInfo = {}, language, statusLabel }) {
+  const t = getT(language);
   const tr = (k, fallback) => t[k] || fallback;
   const co = changeOrder;
   const lines = co.lines || [];
@@ -90,7 +94,7 @@ export default function ChangeOrderPDF({ changeOrder, companyInfo = {}, t = {}, 
     taxPct: co.tax_pct,
   });
 
-  const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const today = new Date().toLocaleDateString(langToLocale(language), { month: 'short', day: 'numeric', year: 'numeric' });
 
   return (
     <Document>
@@ -132,7 +136,7 @@ export default function ChangeOrderPDF({ changeOrder, companyInfo = {}, t = {}, 
                 <View key={l.id || i} style={s.lineRow}>
                   <Text style={s.lineDesc}>{l.description}</Text>
                   <Text style={s.lineQty}>{l.qty} {l.unit || ''}</Text>
-                  <Text style={s.lineAmt}>{fmtCents(l.total_cents)}</Text>
+                  <Text style={s.lineAmt}>{fmtCents(l.total_cents, language)}</Text>
                 </View>
               ))}
             </View>
@@ -141,29 +145,29 @@ export default function ChangeOrderPDF({ changeOrder, companyInfo = {}, t = {}, 
           <View style={s.totalsBox}>
             <View style={s.totalRow}>
               <Text style={s.totalLabel}>{tr('pdfSubtotal', 'Subtotal')}</Text>
-              <Text style={s.totalValue}>{fmtCents(b.subtotal)}</Text>
+              <Text style={s.totalValue}>{fmtCents(b.subtotal, language)}</Text>
             </View>
             {co.overhead_pct > 0 && (
               <View style={s.totalRow}>
                 <Text style={s.totalLabel}>{tr('pdfOverhead', 'Overhead')} ({co.overhead_pct}%)</Text>
-                <Text style={s.totalValue}>{fmtCents(b.overhead)}</Text>
+                <Text style={s.totalValue}>{fmtCents(b.overhead, language)}</Text>
               </View>
             )}
             {co.margin_pct > 0 && (
               <View style={s.totalRow}>
                 <Text style={s.totalLabel}>{tr('pdfMargin', 'Margin')} ({co.margin_pct}%)</Text>
-                <Text style={s.totalValue}>{fmtCents(b.margin)}</Text>
+                <Text style={s.totalValue}>{fmtCents(b.margin, language)}</Text>
               </View>
             )}
             {co.tax_pct > 0 && (
               <View style={s.totalRow}>
                 <Text style={s.totalLabel}>{tr('pdfTax', 'Tax')} ({co.tax_pct}%)</Text>
-                <Text style={s.totalValue}>{fmtCents(b.tax)}</Text>
+                <Text style={s.totalValue}>{fmtCents(b.tax, language)}</Text>
               </View>
             )}
             <View style={s.grandRow}>
               <Text style={s.grandLabel}>{tr('pdfChangeTotal', 'Change Total')}</Text>
-              <Text style={s.grandValue}>{fmtCents(b.total)}</Text>
+              <Text style={s.grandValue}>{fmtCents(b.total, language)}</Text>
             </View>
           </View>
         </View>
@@ -179,7 +183,7 @@ export default function ChangeOrderPDF({ changeOrder, companyInfo = {}, t = {}, 
           <View style={s.acceptedBox}>
             <Text style={{ fontSize: 9, fontFamily: 'Helvetica-Bold', color: '#065f46' }}>
               {tr('pdfAcceptedBy', 'Accepted by')} {co.accepted_signer_name}
-              {co.responded_at ? ` ${tr('pdfOn', 'on')} ${fmtDate(co.responded_at)}` : ''}
+              {co.responded_at ? ` ${tr('pdfOn', 'on')} ${fmtDate(co.responded_at, language)}` : ''}
             </Text>
           </View>
         ) : (

@@ -4,11 +4,10 @@ import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
 import { useModalA11y } from '../hooks/useModalA11y';
 
-const adminSteps = ['Choose how work is organized', 'Pick the everyday team tools', 'Review the workspace before saving'];
-const workerSteps = ['Open the time clock', 'Check your schedule', 'Submit notes when work changes'];
-
 function WelcomeModalInner({ isAdmin, firstName, handleStart, t }) {
   const modalRef = useModalA11y(handleStart);
+  const adminSteps = [t.wmAdminStep1, t.wmAdminStep2, t.wmAdminStep3];
+  const workerSteps = [t.wmWorkerStep1, t.wmWorkerStep2, t.wmWorkerStep3];
   const steps = isAdmin ? adminSteps : workerSteps;
 
   return (
@@ -19,12 +18,10 @@ function WelcomeModalInner({ isAdmin, firstName, handleStart, t }) {
           <span style={styles.brand}>OpsFloa</span>
         </div>
         <h2 id="welcome-modal-title" style={styles.title}>
-          {isAdmin ? `Welcome, ${firstName}. Let's shape OpsFloa around your company.` : `Welcome, ${firstName}. You're ready for the day.`}
+          {isAdmin ? t.wmAdminTitle.replace('{name}', firstName) : t.wmWorkerTitle.replace('{name}', firstName)}
         </h2>
         <p style={styles.body}>
-          {isAdmin
-            ? 'A short guided setup will ask how work is organized, what your team needs each day, and what managers want to track.'
-            : 'Your time clock, schedule, messages, and work updates are in one place. Keep it simple: clock in, do the work, and submit what changed.'}
+          {isAdmin ? t.wmAdminBody : t.wmWorkerBody}
         </p>
         <div style={styles.steps}>
           {steps.map((step, index) => (
@@ -35,7 +32,7 @@ function WelcomeModalInner({ isAdmin, firstName, handleStart, t }) {
           ))}
         </div>
         <button style={styles.btn} onClick={handleStart}>
-          {isAdmin ? 'Set up my company' : t.welcomeGotIt}
+          {isAdmin ? t.wmSetUpCompany : t.welcomeGotIt}
         </button>
       </div>
     </div>

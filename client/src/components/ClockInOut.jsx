@@ -293,7 +293,7 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
   const handleClockIn = async () => {
   // When work selection is on but the company has zero active work,
     // fall back to project-less clock-in instead of blocking the worker.
-    if (projectsEnabled && hasProjects && !selectedProject) { setError(`Select ${workLabelLower} first.`); return; }
+    if (projectsEnabled && hasProjects && !selectedProject) { setError(`${t.cioSelect} ${workLabelLower} ${t.cioFirst}`); return; }
     setError('');
     setLocationDenied(false);
     setLoading(true);
@@ -423,7 +423,7 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
   };
 
   const handleSwitchProject = async () => {
-    if (!switchProject) { setError(`Select new ${workLabelLower}.`); return; }
+    if (!switchProject) { setError(`${t.cioSelectNew} ${workLabelLower}.`); return; }
     setError('');
     setLoading(true);
     const switchInstant = new Date();
@@ -533,7 +533,7 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
                   onChange={e => setBreakMinutes(e.target.value)}
                   autoFocus
                 />
-                <span style={styles.addedUnit}>min</span>
+                <span style={styles.addedUnit}>{t.cioUnitMin}</span>
                 <button style={styles.removeBtn} aria-label={t.removeBreak} onClick={() => { setBreakAdded(false); setBreakMinutes(''); }}>✕</button>
               </div>
             )}
@@ -548,7 +548,7 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
                   value={mileage}
                   onChange={e => setMileage(e.target.value)}
                 />
-                <span style={styles.addedUnit}>mi</span>
+                <span style={styles.addedUnit}>{t.cioUnitMi}</span>
                 <button style={styles.removeBtn} aria-label={t.removeMileage} onClick={() => { setMileageAdded(false); setMileage(''); }}>✕</button>
               </div>
             )}
@@ -566,8 +566,8 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
             {switchingProject ? (
               <div style={styles.switchBox}>
                 <ProjectWheelPicker
-                  label={`Select new ${workLabelLower}`}
-                  placeholder={`Choose ${workLabelLower}`}
+                  label={`${t.cioSelectNew} ${workLabelLower}`}
+                  placeholder={`${t.cioChoose} ${workLabelLower}`}
                   value={switchProject}
                   options={switchProjects}
                   onChange={setSwitchProject}
@@ -586,7 +586,7 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
             ) : (
               projectsEnabled && projects?.length > 1 && (
                 <button style={{ ...styles.switchProjectBtn, ...(loading ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={() => setSwitchingProject(true)} disabled={loading}>
-                  {`Switch ${workLabelLower}`}
+                  {`${t.cioSwitch} ${workLabelLower}`}
                 </button>
               )
             )}
@@ -648,7 +648,7 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
         {projectsEnabled && hasProjects && (
           <ProjectWheelPicker
             label={projectClockLabel}
-            placeholder={`Choose ${workLabelLower}`}
+            placeholder={`${t.cioChoose} ${workLabelLower}`}
             value={selectedProject}
             options={orderedProjects}
             onChange={setSelectedProject}
@@ -678,10 +678,10 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
             <div style={styles.locationDeniedTitle}>{t.locationAccessBlocked}</div>
             <p style={styles.locationDeniedText}>{t.locationAccessHelp}</p>
             <ul style={styles.locationDeniedList}>
-              <li><strong>iPhone/iPad:</strong> Settings → Privacy → Location Services → Safari (or your browser) → While Using</li>
-              <li><strong>Android:</strong> Tap the lock icon in your browser's address bar → Permissions → Location → Allow</li>
-              <li><strong>Desktop Chrome:</strong> Click the lock icon in the address bar → Site settings → Location → Allow</li>
-              <li><strong>Desktop Firefox:</strong> Click the lock icon → Connection secure → More information → Permissions → Access your location</li>
+              <li><strong>{t.cioLocationHelpIphoneLabel}</strong> {t.cioLocationHelpIphone}</li>
+              <li><strong>{t.cioLocationHelpAndroidLabel}</strong> {t.cioLocationHelpAndroid}</li>
+              <li><strong>{t.cioLocationHelpChromeLabel}</strong> {t.cioLocationHelpChrome}</li>
+              <li><strong>{t.cioLocationHelpFirefoxLabel}</strong> {t.cioLocationHelpFirefox}</li>
             </ul>
             <p style={styles.locationDeniedText}>{t.locationAfterUpdate}</p>
           </div>
@@ -779,7 +779,7 @@ function DayMark({ t, onEntryAdded }) {
         setMarked(true);
         setEntry(err.response.data.entry || null);
       } else {
-        setError(err.response?.data?.error || (t.dayMarkFailed || 'Failed to mark day'));
+        setError(err.response?.data?.error || t.dayMarkFailed);
       }
     } finally {
       setSaving(false);
@@ -787,7 +787,7 @@ function DayMark({ t, onEntryAdded }) {
   };
 
   if (marked === null) {
-    return <div style={styles.card}><p style={{ color: '#6b7280', textAlign: 'center', margin: 0 }}>{t.loading || 'Loading…'}</p></div>;
+    return <div style={styles.card}><p style={{ color: '#6b7280', textAlign: 'center', margin: 0 }}>{t.loading}</p></div>;
   }
 
   if (marked) {
@@ -796,10 +796,10 @@ function DayMark({ t, onEntryAdded }) {
         <div style={{ textAlign: 'center', padding: '12px 0' }}>
           <div style={{ fontSize: 40, marginBottom: 8 }}>✓</div>
           <div style={{ fontSize: 18, fontWeight: 700, color: '#166534', marginBottom: 4 }}>
-            {t.dayMarkAlreadyMarked || 'Marked for today'}
+            {t.dayMarkAlreadyMarked}
           </div>
           <div style={{ fontSize: 13, color: '#166534', opacity: 0.85 }}>
-            {(t.dayMarkPendingApproval || 'Pending admin approval')}
+            {t.dayMarkPendingApproval}
             {entry?.status && entry.status !== 'pending' && ` · ${entry.status}`}
           </div>
         </div>
@@ -811,7 +811,7 @@ function DayMark({ t, onEntryAdded }) {
     <div style={styles.card}>
       <div style={{ textAlign: 'center', padding: '20px 0' }}>
         <div style={{ fontSize: 14, color: '#6b7280', marginBottom: 16 }}>
-          {t.dayMarkIntro || 'Tap to record today as a full work day. No clock-out needed.'}
+          {t.dayMarkIntro}
         </div>
         <button
           type="button"
@@ -823,7 +823,7 @@ function DayMark({ t, onEntryAdded }) {
             opacity: saving ? 0.6 : 1, minWidth: 220,
           }}
         >
-          {saving ? (t.saving || 'Saving…') : (t.dayMarkButton || 'Mark Day Worked')}
+          {saving ? t.saving : t.dayMarkButton}
         </button>
         {error && <p role="alert" style={{ color: '#991b1b', fontSize: 13, marginTop: 14 }}>{error}</p>}
       </div>

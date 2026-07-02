@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import api from '../api';
 import { SkeletonList } from '../components/Skeleton';
@@ -8,7 +9,8 @@ import Pagination from '../components/Pagination';
 import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
-import { formatMoney, formatDate, formatDateTime } from '../utils/format';
+import { formatMoney } from '../utils/format';
+import { formatDate, formatDateTime } from '../utils';
 import { computeBreakdown } from '../utils/estimateMath';
 import { silentError } from '../errorReporter';
 import { useT } from '../hooks/useT';
@@ -62,6 +64,7 @@ const formatCents = (c) => formatMoney(c, { showCents: true });
 
 function EstimatesList({ onOpen, onNew }) {
   const t = useT();
+  const { user } = useAuth();
   const [estimates, setEstimates] = useState([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
   const [loading, setLoading] = useState(true);
@@ -163,7 +166,7 @@ function EstimatesList({ onOpen, onNew }) {
                     <td style={styles.td}>{e.client_name_snapshot}</td>
                     <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(e.total_cents)}</td>
                     <td style={styles.td}><StatusBadge status={e.status} /></td>
-                    <td style={styles.td}>{new Date(e.created_at).toLocaleDateString()}</td>
+                    <td style={styles.td}>{formatDate(e.created_at, user?.language)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -186,7 +189,7 @@ function EstimatesList({ onOpen, onNew }) {
                 <div className="admin-card-sub">{e.project_name}</div>
                 <div className="admin-card-sub">{e.client_name_snapshot}</div>
                 <div className="admin-card-row">
-                  <span className="admin-card-sub">{new Date(e.created_at).toLocaleDateString()}</span>
+                  <span className="admin-card-sub">{formatDate(e.created_at, user?.language)}</span>
                   <strong style={{ fontSize: 14 }}>{formatCents(e.total_cents)}</strong>
                 </div>
               </div>
@@ -591,6 +594,7 @@ function TotalsRow({ label, value, bold }) {
 
 function EstimateDetail({ id, onBack, onEdit }) {
   const t = useT();
+  const { user } = useAuth();
   const [estimate, setEstimate] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -617,9 +621,10 @@ function EstimateDetail({ id, onBack, onEdit }) {
       // Render the PDF in the CLIENT's language (the document recipient),
       // not the admin's UI language. getT falls back to English when the
       // client has no language set.
-      const pdfT = getT(estimate.client_language);
+      const pdfLang = estimate.client_language;
+      const pdfT = getT(pdfLang);
       const statusLabel = pdfT[STATUS_COLORS[estimate.status]?.labelKey] || estimate.status;
-      const el = React.createElement(EstimatePDF, { estimate, companyInfo: companyRes.data || {}, t: pdfT, statusLabel });
+      const el = React.createElement(EstimatePDF, { estimate, companyInfo: companyRes.data || {}, language: pdfLang, statusLabel });
       const blob = await pdf(el).toBlob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -851,7 +856,7 @@ function EstimateDetail({ id, onBack, onEdit }) {
         <div style={styles.formCard}>
           <h3 style={styles.formH3}>{t.estAcceptedBy}</h3>
           <div style={{ fontSize: 14 }}>
-            <strong>{estimate.accepted_signer_name}</strong> {t.estOn} {new Date(estimate.responded_at).toLocaleString()}
+            <strong>{estimate.accepted_signer_name}</strong> {t.estOn} {formatDateTime(estimate.responded_at, user?.language)}
           </div>
         </div>
       )}

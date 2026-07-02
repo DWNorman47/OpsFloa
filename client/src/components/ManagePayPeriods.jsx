@@ -4,7 +4,7 @@ import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { SkeletonList } from './Skeleton';
-import { langToLocale } from '../utils';
+import { langToLocale, formatDate } from '../utils';
 
 import { silentError } from '../errorReporter';
 function fmt(dateStr, locale = 'en-US') {
@@ -107,7 +107,7 @@ export default function ManagePayPeriods() {
               <div style={styles.periodInfo}>
                 <div style={styles.periodLabel}>{p.label || `${fmt(p.period_start, locale)} – ${fmt(p.period_end, locale)}`}</div>
                 {p.label && <div style={styles.periodDates}>{fmt(p.period_start, locale)} – {fmt(p.period_end, locale)}</div>}
-                <div style={styles.periodMeta}>Locked by {p.locked_by_name} · {new Date(p.created_at).toLocaleDateString()}</div>
+                <div style={styles.periodMeta}>Locked by {p.locked_by_name} · {formatDate(p.created_at, user?.language)}</div>
               </div>
               <button
                 style={{ ...styles.unlockBtn, ...(unlocking === p.id ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}

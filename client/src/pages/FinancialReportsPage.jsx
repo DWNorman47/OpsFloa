@@ -5,6 +5,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useT } from '../hooks/useT';
+import { langToLocale, formatDate } from '../utils';
 import api from '../api';
 import { getOrFetch } from '../offlineDb';
 import { PageShell } from '../components/PageShell';
@@ -14,9 +16,9 @@ import TabBar from '../components/TabBar';
 import { AnalyticsPanel } from './AnalyticsPage';
 import { silentError } from '../errorReporter';
 
-function formatCents(cents) {
+function formatCents(cents, locale = 'en-US') {
   const n = (parseInt(cents, 10) || 0) / 100;
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
+  return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
 }
 function marginColor(pct) {
   if (pct == null) return '#6b7280';
@@ -46,6 +48,9 @@ function normalizeReportHash(rawHash) {
 // ── P&L portfolio ────────────────────────────────────────────────────────────
 
 function PnLTab() {
+  const t = useT();
+  const { user } = useAuth();
+  const locale = langToLocale(user?.language);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -60,8 +65,8 @@ function PnLTab() {
   if (!rows.length) {
     return (
       <EmptyState
-        title="No P&L data yet"
-        body="Once you have active projects with revenue (invoices) and spend (time entries, sub PO payments, expenses), they'll appear here."
+        title={t.frPnlEmptyTitle}
+        body={t.frPnlEmptyBody}
       />
     );
   }
@@ -80,36 +85,36 @@ function PnLTab() {
       <table style={styles.table}>
         <thead>
           <tr style={styles.tableHeader}>
-            <th style={styles.th}>Project</th>
-            <th style={{ ...styles.th, textAlign: 'right' }}>Contract</th>
-            <th style={{ ...styles.th, textAlign: 'right' }}>Billed</th>
-            <th style={{ ...styles.th, textAlign: 'right' }}>Spent</th>
-            <th style={{ ...styles.th, textAlign: 'right' }}>Committed</th>
-            <th style={{ ...styles.th, textAlign: 'right' }}>Gross profit</th>
-            <th style={{ ...styles.th, textAlign: 'right' }}>Projected margin</th>
+            <th style={styles.th}>{t.frColProject}</th>
+            <th style={{ ...styles.th, textAlign: 'right' }}>{t.frColContract}</th>
+            <th style={{ ...styles.th, textAlign: 'right' }}>{t.frColBilled}</th>
+            <th style={{ ...styles.th, textAlign: 'right' }}>{t.frColSpent}</th>
+            <th style={{ ...styles.th, textAlign: 'right' }}>{t.frColCommitted}</th>
+            <th style={{ ...styles.th, textAlign: 'right' }}>{t.frColGrossProfit}</th>
+            <th style={{ ...styles.th, textAlign: 'right' }}>{t.frColProjectedMargin}</th>
           </tr>
         </thead>
         <tbody>
           {rows.map(r => (
             <tr key={r.project_id} style={{ borderBottom: '1px solid #f3f4f6' }}>
               <td style={styles.td}><strong>{r.name}</strong></td>
-              <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(r.contract_value_cents)}</td>
-              <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(r.revenue_billed_cents)}</td>
-              <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(r.cost_spent_cents)}</td>
-              <td style={{ ...styles.td, textAlign: 'right', color: '#6b7280' }}>{formatCents(r.cost_committed_cents)}</td>
-              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 600, color: r.gross_profit_cents < 0 ? '#dc2626' : '#111827' }}>{formatCents(r.gross_profit_cents)}</td>
+              <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(r.contract_value_cents, locale)}</td>
+              <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(r.revenue_billed_cents, locale)}</td>
+              <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(r.cost_spent_cents, locale)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', color: '#6b7280' }}>{formatCents(r.cost_committed_cents, locale)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 600, color: r.gross_profit_cents < 0 ? '#dc2626' : '#111827' }}>{formatCents(r.gross_profit_cents, locale)}</td>
               <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: marginColor(r.projected_margin_pct) }}>
                 {r.projected_margin_pct == null ? '—' : `${r.projected_margin_pct.toFixed(1)}%`}
               </td>
             </tr>
           ))}
           <tr style={{ background: '#f9fafb', borderTop: '2px solid #111827' }}>
-            <td style={{ ...styles.td, fontWeight: 700 }}>Total</td>
-            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(totals.contract)}</td>
-            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(totals.billed)}</td>
-            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(totals.spent)}</td>
-            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(totals.committed)}</td>
-            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(totals.gross)}</td>
+            <td style={{ ...styles.td, fontWeight: 700 }}>{t.frTotal}</td>
+            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(totals.contract, locale)}</td>
+            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(totals.billed, locale)}</td>
+            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(totals.spent, locale)}</td>
+            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(totals.committed, locale)}</td>
+            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(totals.gross, locale)}</td>
             <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>—</td>
           </tr>
         </tbody>
@@ -121,6 +126,9 @@ function PnLTab() {
 // ── WIP report ───────────────────────────────────────────────────────────────
 
 function WipTab() {
+  const t = useT();
+  const { user } = useAuth();
+  const locale = langToLocale(user?.language);
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -153,59 +161,59 @@ function WipTab() {
 
   if (loading) return <SkeletonList rows={4} />;
   if (!report?.projects?.length) {
-    return <EmptyState title="No active projects" body="Open at least one project to see WIP." />;
+    return <EmptyState title={t.frWipEmptyTitle} body={t.frWipEmptyBody} />;
   }
 
   return (
     <>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
         <div style={{ fontSize: 13, color: '#6b7280' }}>
-          As of {new Date(report.as_of).toLocaleDateString()}
+          {t.frAsOf} {formatDate(report.as_of, user?.language)}
         </div>
-        <button onClick={downloadCsv} style={styles.ghostBtn}>Download CSV</button>
+        <button onClick={downloadCsv} style={styles.ghostBtn}>{t.frDownloadCsv}</button>
       </div>
       <div style={styles.tableWrap}>
         <table style={styles.table}>
           <thead>
             <tr style={styles.tableHeader}>
-              <th style={styles.th}>Project</th>
-              <th style={{ ...styles.th, textAlign: 'right' }}>Contract</th>
-              <th style={{ ...styles.th, textAlign: 'right' }}>Cost to date</th>
-              <th style={{ ...styles.th, textAlign: 'right' }}>% Complete</th>
-              <th style={{ ...styles.th, textAlign: 'right' }}>Earned revenue</th>
-              <th style={{ ...styles.th, textAlign: 'right' }}>Billed to date</th>
-              <th style={{ ...styles.th, textAlign: 'right' }}>Over / Under</th>
-              <th style={styles.th}>Status</th>
+              <th style={styles.th}>{t.frColProject}</th>
+              <th style={{ ...styles.th, textAlign: 'right' }}>{t.frColContract}</th>
+              <th style={{ ...styles.th, textAlign: 'right' }}>{t.frColCostToDate}</th>
+              <th style={{ ...styles.th, textAlign: 'right' }}>{t.frColPctComplete}</th>
+              <th style={{ ...styles.th, textAlign: 'right' }}>{t.frColEarnedRevenue}</th>
+              <th style={{ ...styles.th, textAlign: 'right' }}>{t.frColBilledToDate}</th>
+              <th style={{ ...styles.th, textAlign: 'right' }}>{t.frColOverUnder}</th>
+              <th style={styles.th}>{t.frColStatus}</th>
             </tr>
           </thead>
           <tbody>
             {report.projects.map(p => (
               <tr key={p.project_id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                 <td style={styles.td}><strong>{p.name}</strong></td>
-                <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(p.contract_value_cents)}</td>
-                <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(p.cost_to_date_cents)}</td>
+                <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(p.contract_value_cents, locale)}</td>
+                <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(p.cost_to_date_cents, locale)}</td>
                 <td style={{ ...styles.td, textAlign: 'right' }}>{p.pct_complete == null ? '—' : `${p.pct_complete.toFixed(1)}%`}</td>
-                <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(p.earned_revenue_cents)}</td>
-                <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(p.billed_to_date_cents)}</td>
+                <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(p.earned_revenue_cents, locale)}</td>
+                <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(p.billed_to_date_cents, locale)}</td>
                 <td style={{ ...styles.td, textAlign: 'right', fontWeight: 600, color: deltaColor(p.over_under_billed_cents) }}>
-                  {formatCents(p.over_under_billed_cents)}
+                  {formatCents(p.over_under_billed_cents, locale)}
                 </td>
                 <td style={styles.td}>
-                  {p.status === 'over_billed'  && <span style={{ ...styles.chip, background: '#fef3c7', color: '#92400e' }}>Over-billed</span>}
-                  {p.status === 'under_billed' && <span style={{ ...styles.chip, background: '#fee2e2', color: '#991b1b' }}>Under-billed</span>}
-                  {p.status === 'on_target'    && <span style={{ ...styles.chip, background: '#d1fae5', color: '#065f46' }}>On target</span>}
+                  {p.status === 'over_billed'  && <span style={{ ...styles.chip, background: '#fef3c7', color: '#92400e' }}>{t.frStatusOverBilled}</span>}
+                  {p.status === 'under_billed' && <span style={{ ...styles.chip, background: '#fee2e2', color: '#991b1b' }}>{t.frStatusUnderBilled}</span>}
+                  {p.status === 'on_target'    && <span style={{ ...styles.chip, background: '#d1fae5', color: '#065f46' }}>{t.frStatusOnTarget}</span>}
                 </td>
               </tr>
             ))}
             <tr style={{ background: '#f9fafb', borderTop: '2px solid #111827' }}>
-              <td style={{ ...styles.td, fontWeight: 700 }}>Total</td>
-              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(report.totals.contract_value_cents)}</td>
-              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(report.totals.cost_to_date_cents)}</td>
+              <td style={{ ...styles.td, fontWeight: 700 }}>{t.frTotal}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(report.totals.contract_value_cents, locale)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(report.totals.cost_to_date_cents, locale)}</td>
               <td style={{ ...styles.td, textAlign: 'right' }}>—</td>
-              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(report.totals.earned_revenue_cents)}</td>
-              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(report.totals.billed_to_date_cents)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(report.totals.earned_revenue_cents, locale)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(report.totals.billed_to_date_cents, locale)}</td>
               <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: deltaColor(report.totals.over_under_billed_cents) }}>
-                {formatCents(report.totals.over_under_billed_cents)}
+                {formatCents(report.totals.over_under_billed_cents, locale)}
               </td>
               <td style={styles.td}></td>
             </tr>
@@ -220,6 +228,7 @@ function WipTab() {
 
 export default function FinancialReportsPage() {
   const { user } = useAuth();
+  const t = useT();
   const [settings, setSettings] = useState(null);
   const [settingsLoading, setSettingsLoading] = useState(true);
 
@@ -237,9 +246,9 @@ export default function FinancialReportsPage() {
   const showFinancial = settings?.module_financial_reports !== false;
 
   const tabs = [
-    ...(showPerformance ? [{ id: 'performance', label: 'Performance' }] : []),
-    ...(showFinancial ? [{ id: 'pnl', label: 'P&L by project' }] : []),
-    ...(showFinancial ? [{ id: 'wip', label: 'WIP report' }] : []),
+    ...(showPerformance ? [{ id: 'performance', label: t.frTabPerformance }] : []),
+    ...(showFinancial ? [{ id: 'pnl', label: t.frTabPnl }] : []),
+    ...(showFinancial ? [{ id: 'wip', label: t.frTabWip }] : []),
   ];
   const tabIds = tabs.map(tb => tb.id);
   const [tab, setTab] = useState(() => {

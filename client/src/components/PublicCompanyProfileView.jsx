@@ -1,4 +1,7 @@
 import React from 'react';
+import { getT } from '../i18n';
+import { detectLanguage } from '../languageDetect';
+import { formatDate } from '../utils';
 
 function ListSection({ title, items }) {
   if (!items?.length) return null;
@@ -22,49 +25,51 @@ function TextSection({ title, children }) {
   );
 }
 
-function ContactBlock({ contact }) {
+function ContactBlock({ contact, t }) {
   const hasContact = contact?.name || contact?.phone || contact?.email || contact?.website || contact?.address;
   if (!hasContact) return null;
   return (
-    <section className="pcp-contact" aria-label="Contact information">
-      {contact.name && <div><strong>Contact</strong><span>{contact.name}</span></div>}
-      {contact.phone && <div><strong>Phone</strong><a href={`tel:${contact.phone}`}>{contact.phone}</a></div>}
-      {contact.email && <div><strong>Email</strong><a href={`mailto:${contact.email}`}>{contact.email}</a></div>}
-      {contact.website && <div><strong>Website</strong><a href={contact.website} target="_blank" rel="noopener noreferrer">{contact.website.replace(/^https?:\/\//, '').replace(/\/$/, '')}</a></div>}
-      {contact.address && <div><strong>Address</strong><span>{contact.address}</span></div>}
+    <section className="pcp-contact" aria-label={t.pcpContactInfoAria}>
+      {contact.name && <div><strong>{t.pcpContact}</strong><span>{contact.name}</span></div>}
+      {contact.phone && <div><strong>{t.pcpPhone}</strong><a href={`tel:${contact.phone}`}>{contact.phone}</a></div>}
+      {contact.email && <div><strong>{t.pcpEmail}</strong><a href={`mailto:${contact.email}`}>{contact.email}</a></div>}
+      {contact.website && <div><strong>{t.pcpWebsite}</strong><a href={contact.website} target="_blank" rel="noopener noreferrer">{contact.website.replace(/^https?:\/\//, '').replace(/\/$/, '')}</a></div>}
+      {contact.address && <div><strong>{t.pcpAddress}</strong><span>{contact.address}</span></div>}
     </section>
   );
 }
 
-export default function PublicCompanyProfileView({ profile, preview = false }) {
+export default function PublicCompanyProfileView({ profile, preview = false, language, t: tProp }) {
+  const lang = language || detectLanguage(profile?.client_language || profile?.language);
+  const t = tProp || getT(lang);
   const contact = profile?.contact_info || {};
   const photos = profile?.photos || [];
   const requestHref = profile?.accepts_service_requests && profile?.slug ? `/r/${profile.slug}` : null;
-  const updated = profile?.updated_at ? new Date(profile.updated_at).toLocaleDateString() : '';
-  const name = profile?.display_name || profile?.company_name || 'Company profile';
+  const updated = profile?.updated_at ? formatDate(profile.updated_at, lang) : '';
+  const name = profile?.display_name || profile?.company_name || t.pcpCompanyProfile;
 
   return (
     <article className={`public-company-profile ${preview ? 'pcp-preview' : ''}`}>
       <style>{css}</style>
       <header className="pcp-hero">
         <div>
-          <p className="pcp-kicker">{preview ? 'Preview' : 'Company Profile'}</p>
+          <p className="pcp-kicker">{preview ? t.pcpPreview : t.pcpCompanyProfile}</p>
           <h1>{name}</h1>
           {profile?.short_description && <p className="pcp-description">{profile.short_description}</p>}
-          {updated && <p className="pcp-updated">Last updated {updated}</p>}
+          {updated && <p className="pcp-updated">{t.pcpLastUpdated} {updated}</p>}
         </div>
         <div className="pcp-actions">
-          {requestHref && <a className="pcp-primary" href={requestHref}>Request work</a>}
-          {contact.email && <a className="pcp-secondary" href={`mailto:${contact.email}`}>Email</a>}
-          {contact.phone && <a className="pcp-secondary" href={`tel:${contact.phone}`}>Call</a>}
+          {requestHref && <a className="pcp-primary" href={requestHref}>{t.pcpRequestWork}</a>}
+          {contact.email && <a className="pcp-secondary" href={`mailto:${contact.email}`}>{t.pcpEmail}</a>}
+          {contact.phone && <a className="pcp-secondary" href={`tel:${contact.phone}`}>{t.pcpCall}</a>}
         </div>
       </header>
 
       {photos.length > 0 && (
-        <section className="pcp-photo-grid" aria-label="Company photos and examples">
+        <section className="pcp-photo-grid" aria-label={t.pcpPhotosAria}>
           {photos.map((photo, index) => (
             <figure key={`${photo.url}-${index}`}>
-              <img src={photo.url} alt={photo.alt || photo.caption || `${name} example ${index + 1}`} loading="lazy" />
+              <img src={photo.url} alt={photo.alt || photo.caption || `${name} ${t.pcpExample} ${index + 1}`} loading="lazy" />
               {photo.caption && <figcaption>{photo.caption}</figcaption>}
             </figure>
           ))}
@@ -73,15 +78,15 @@ export default function PublicCompanyProfileView({ profile, preview = false }) {
 
       <div className="pcp-layout">
         <main className="pcp-main">
-          <ListSection title="Services Offered" items={profile?.services_offered} />
-          <ListSection title="Project Types" items={profile?.project_types} />
-          <ListSection title="Equipment and Capabilities" items={profile?.equipment_capabilities} />
-          <TextSection title="Licenses and Certifications">{profile?.license_info}</TextSection>
-          <TextSection title="Requesting a Quote or Service">{profile?.quote_instructions}</TextSection>
+          <ListSection title={t.pcpServicesOffered} items={profile?.services_offered} />
+          <ListSection title={t.pcpProjectTypes} items={profile?.project_types} />
+          <ListSection title={t.pcpEquipmentCapabilities} items={profile?.equipment_capabilities} />
+          <TextSection title={t.pcpLicensesCertifications}>{profile?.license_info}</TextSection>
+          <TextSection title={t.pcpRequestingQuote}>{profile?.quote_instructions}</TextSection>
 
           {profile?.faq_items?.length > 0 && (
             <section className="pcp-section">
-              <h2>Frequently Asked Questions</h2>
+              <h2>{t.pcpFaqTitle}</h2>
               <div className="pcp-faq-list">
                 {profile.faq_items.map((item, index) => (
                   <details key={`${item.question}-${index}`}>
@@ -95,13 +100,13 @@ export default function PublicCompanyProfileView({ profile, preview = false }) {
         </main>
 
         <aside className="pcp-side">
-          <ListSection title="Service Areas" items={profile?.service_areas} />
-          <ContactBlock contact={contact} />
+          <ListSection title={t.pcpServiceAreas} items={profile?.service_areas} />
+          <ContactBlock contact={contact} t={t} />
           {requestHref && (
             <section className="pcp-request-box">
-              <h2>Need work done?</h2>
-              <p>Send a request with your details and this company can follow up directly.</p>
-              <a href={requestHref}>Open request form</a>
+              <h2>{t.pcpNeedWorkTitle}</h2>
+              <p>{t.pcpNeedWorkBody}</p>
+              <a href={requestHref}>{t.pcpOpenRequestForm}</a>
             </section>
           )}
         </aside>

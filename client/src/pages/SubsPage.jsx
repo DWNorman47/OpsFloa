@@ -8,7 +8,9 @@ import Pagination from '../components/Pagination';
 import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
+import { useAuth } from '../contexts/AuthContext';
 import { formatMoney } from '../utils/format';
+import { formatDate } from '../utils';
 import { silentError } from '../errorReporter';
 import { useT } from '../hooks/useT';
 
@@ -212,6 +214,7 @@ function SubForm({ existing, onSave, onCancel }) {
 
 function SubDetail({ id, onBack, onEdit }) {
   const t = useT();
+  const { user } = useAuth();
   const [sub, setSub] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -280,7 +283,7 @@ function SubDetail({ id, onBack, onEdit }) {
                 <tr key={d.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                   <td style={{ padding: '8px 0' }}><strong>{d.name}</strong> <span style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase' }}>{d.doc_type}</span></td>
                   <td style={{ padding: '8px 0', textAlign: 'right' }}>
-                    {d.expires_on && <span style={{ fontSize: 12, color: '#6b7280' }}>{t.subExpires} {new Date(d.expires_on).toLocaleDateString()}</span>}
+                    {d.expires_on && <span style={{ fontSize: 12, color: '#6b7280' }}>{t.subExpires} {formatDate(d.expires_on, user?.language)}</span>}
                   </td>
                 </tr>
               ))}
@@ -553,6 +556,7 @@ function SubPOForm({ onSave, onCancel }) {
 
 function SubPODetail({ id, onBack }) {
   const t = useT();
+  const { user } = useAuth();
   const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const [po, setPo] = useState(null);
@@ -737,7 +741,7 @@ function SubPODetail({ id, onBack }) {
             <tbody>
               {po.payments.map(p => (
                 <tr key={p.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                  <td style={{ padding: '8px 0' }}>{new Date(p.paid_date).toLocaleDateString()}</td>
+                  <td style={{ padding: '8px 0' }}>{formatDate(p.paid_date, user?.language)}</td>
                   <td style={{ padding: '8px 0' }}><strong>{formatCents(p.amount_cents)}</strong></td>
                   <td style={{ padding: '8px 0' }}>{p.invoice_ref || '—'}</td>
                   <td style={{ padding: '8px 0', color: '#6b7280' }}>{p.notes || ''}</td>
