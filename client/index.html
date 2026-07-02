@@ -122,12 +122,21 @@
         ]
       }
     </script>
+
+    <!-- As soon as we know JavaScript is running, hide the pre-hydration
+         summary in #root (below) so real users never see it flash before
+         React mounts. No-JS visitors and crawlers that don't execute JS
+         still get the summary. -->
+    <style>html.js #prehydrate { display: none; }</style>
+    <script>document.documentElement.classList.add('js');</script>
   </head>
   <body>
     <div id="root">
       <!-- Static pre-hydration content. React replaces this after the bundle
-           loads, but crawlers and no-JS visitors still get a useful summary. -->
-      <div style="min-height:100vh;background:#f4f6f9;color:#111827;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:32px 20px">
+           loads, but crawlers and no-JS visitors still get a useful summary.
+           Hidden from JS users via the `html.js #prehydrate` rule in <head>
+           so it doesn't flash before React mounts. -->
+      <div id="prehydrate" style="min-height:100vh;background:#f4f6f9;color:#111827;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:32px 20px">
         <main style="max-width:1040px;margin:0 auto">
           <header style="display:flex;align-items:center;gap:12px;margin-bottom:48px">
             <img src="/icon-96x96.png" alt="" width="44" height="44" />
