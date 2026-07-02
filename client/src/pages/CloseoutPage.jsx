@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
+import { formatDate } from '../utils';
 import api from '../api';
 import { PageShell } from '../components/PageShell';
 import { SkeletonList } from '../components/Skeleton';
@@ -44,6 +45,7 @@ function StatusBadge({ status }) {
 
 function CloseoutLanding({ onSelect }) {
   const t = useT();
+  const { user } = useAuth();
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [warranties, setWarranties] = useState([]);
@@ -66,7 +68,7 @@ function CloseoutLanding({ onSelect }) {
           </div>
           {warranties.slice(0, 5).map(w => (
             <div key={w.id} style={{ fontSize: 13, color: '#7c3a00', marginBottom: 2 }}>
-              <strong>{w.project_name}</strong> · {t.coExpires} {new Date(w.warranty_end_date).toLocaleDateString()}
+              <strong>{w.project_name}</strong> · {t.coExpires} {formatDate(w.warranty_end_date, user?.language)}
             </div>
           ))}
         </div>
@@ -109,6 +111,7 @@ function CloseoutLanding({ onSelect }) {
 
 function ProjectCloseoutView({ projectId, onBack }) {
   const t = useT();
+  const { user } = useAuth();
   const [closeout, setCloseout] = useState(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -187,9 +190,9 @@ function ProjectCloseoutView({ projectId, onBack }) {
           <div style={styles.formCard}>
             <h3 style={styles.formH3}>{t.coLifecycle}</h3>
             <div style={styles.grid4}>
-              <Info label={t.coSubstantialCompletion} value={closeout.substantial_completion_date ? new Date(closeout.substantial_completion_date).toLocaleDateString() : null} />
-              <Info label={t.coFinalCompletion} value={closeout.final_completion_date ? new Date(closeout.final_completion_date).toLocaleDateString() : null} />
-              <Info label={t.coWarrantyStart} value={closeout.warranty_start_date ? new Date(closeout.warranty_start_date).toLocaleDateString() : null} />
+              <Info label={t.coSubstantialCompletion} value={closeout.substantial_completion_date ? formatDate(closeout.substantial_completion_date, user?.language) : null} />
+              <Info label={t.coFinalCompletion} value={closeout.final_completion_date ? formatDate(closeout.final_completion_date, user?.language) : null} />
+              <Info label={t.coWarrantyStart} value={closeout.warranty_start_date ? formatDate(closeout.warranty_start_date, user?.language) : null} />
               <Info label={t.coWarrantyMonths} value={closeout.warranty_months} />
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
@@ -245,6 +248,7 @@ function ProjectCloseoutView({ projectId, onBack }) {
 
 function ChecklistRow({ item, onChange, busy }) {
   const t = useT();
+  const { user } = useAuth();
   const c = ITEM_STATUS_COLORS[item.status] || ITEM_STATUS_COLORS.pending;
   const isAuto = !!item.auto_source;
   return (
@@ -266,7 +270,7 @@ function ChecklistRow({ item, onChange, busy }) {
         )}
         {item.completed_at && (
           <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
-            {t.coCompleted} {new Date(item.completed_at).toLocaleDateString()}
+            {t.coCompleted} {formatDate(item.completed_at, user?.language)}
           </div>
         )}
       </div>

@@ -5,42 +5,45 @@ import {
   filterGuideTasks,
   findGuideTask,
   getGuideTaskAvailability,
-  GUIDE_TASKS,
+  getGuideTasks,
 } from '../guideContent';
 import { userHasAnyPerm } from '../hooks/usePerm';
+import { useT } from '../hooks/useT';
 
 function GuideStatus({ availability }) {
+  const t = useT();
   return (
     <span className={`guide-status ${availability.ready ? 'is-ready' : 'needs-setup'}`.trim()}>
-      {availability.ready ? 'Ready' : 'Needs setup'}
+      {availability.ready ? t.gdReady : t.gdNeedsSetup}
     </span>
   );
 }
 
 function GuideIssuePanel({ task, availability, user, features }) {
+  const t = useT();
   if (availability.ready) return null;
   const canOpenSettings = userHasAnyPerm(user, ['manage_settings']) && features?.module_administration !== false;
   return (
     <div className="guide-issue-panel">
-      <div className="guide-issue-title">Before this guide will work</div>
+      <div className="guide-issue-title">{t.gdBeforeThisWorks}</div>
       {availability.missingModules.length > 0 && (
-        <p>Turn on: {availability.missingModules.join(', ')}.</p>
+        <p>{t.gdTurnOn}: {availability.missingModules.join(', ')}.</p>
       )}
       {availability.missingRole && (
-        <p>This usually needs {availability.missingRole}.</p>
+        <p>{t.gdUsuallyNeeds} {availability.missingRole}.</p>
       )}
       {availability.missingPermission && (
-        <p>Your role may need permission to {availability.missingPermission}.</p>
+        <p>{t.gdRoleMayNeedPermission} {availability.missingPermission}.</p>
       )}
       {canOpenSettings ? (
         <a className="guide-secondary-link" href="/administration#workspace">
-          Open Company Settings
+          {t.gdOpenCompanySettings}
         </a>
       ) : (
-        <p>Ask an owner or admin to turn it on or adjust your role.</p>
+        <p>{t.gdAskOwnerOrAdmin}</p>
       )}
       <div className="guide-issue-footnote">
-        Guide: {task.title}
+        {t.gdGuideLabel}: {task.title}
       </div>
     </div>
   );
@@ -59,9 +62,10 @@ function GuideTaskCard({ task, availability, onSelect }) {
   );
 }
 
-function GuideDetail({ task, user, features, onBack, onNavigate, onSelect }) {
+function GuideDetail({ task, allTasks, user, features, onBack, onNavigate, onSelect }) {
+  const t = useT();
   const availability = getGuideTaskAvailability(task, user, features);
-  const related = (task.related || []).map(findGuideTask).filter(Boolean);
+  const related = (task.related || []).map(id => findGuideTask(id, allTasks)).filter(Boolean);
   const canNavigate = availability.ready;
 
   const handlePrimary = event => {
@@ -75,7 +79,7 @@ function GuideDetail({ task, user, features, onBack, onNavigate, onSelect }) {
   return (
     <div className="guide-detail">
       <button type="button" className="guide-back-btn" onClick={onBack}>
-        All guides
+        {t.gdAllGuides}
       </button>
 
       <div className="guide-detail-heading">
@@ -92,7 +96,7 @@ function GuideDetail({ task, user, features, onBack, onNavigate, onSelect }) {
 
       {task.before?.length > 0 && (
         <section className="guide-section">
-          <h3>Before you start</h3>
+          <h3>{t.gdBeforeYouStart}</h3>
           <ul className="guide-before-list">
             {task.before.map(item => <li key={item}>{item}</li>)}
           </ul>
@@ -100,7 +104,7 @@ function GuideDetail({ task, user, features, onBack, onNavigate, onSelect }) {
       )}
 
       <section className="guide-section">
-        <h3>Steps</h3>
+        <h3>{t.gdSteps}</h3>
         <ol className="guide-steps">
           {task.steps.map(step => <li key={step}>{step}</li>)}
         </ol>
@@ -113,19 +117,19 @@ function GuideDetail({ task, user, features, onBack, onNavigate, onSelect }) {
           aria-disabled={!canNavigate}
           onClick={handlePrimary}
         >
-          {task.routeLabel || 'Take me there'}
+          {task.routeLabel || t.gdTakeMeThere}
         </a>
         <a href="/help" className="guide-secondary-link" onClick={event => {
           event.preventDefault();
           onNavigate('/help');
         }}>
-          Open Help page
+          {t.gdOpenHelpPage}
         </a>
       </div>
 
       {related.length > 0 && (
         <section className="guide-related">
-          <h3>Related guides</h3>
+          <h3>{t.gdRelatedGuides}</h3>
           <div className="guide-related-list">
             {related.map(item => (
               <button type="button" key={item.id} onClick={() => onSelect(item.id)}>
@@ -140,6 +144,7 @@ function GuideDetail({ task, user, features, onBack, onNavigate, onSelect }) {
 }
 
 export default function GuideDrawer({ open, onClose, currentApp, features = {} }) {
+  const t = useT();
   const { user } = useAuth();
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
@@ -174,8 +179,14 @@ export default function GuideDrawer({ open, onClose, currentApp, features = {} }
     }
   }, [open]);
 
-  const tasks = useMemo(() => filterGuideTasks(query, currentApp, GUIDE_TASKS), [query, currentApp]);
-  const selectedTask = selectedId ? findGuideTask(selectedId) : null;
+  // Resolve guide content to the user's language (falls back to English), then
+  // search/sort against that resolved text so matches follow what users see.
+  const localizedTasks = useMemo(() => getGuideTasks(user?.language), [user?.language]);
+  const tasks = useMemo(
+    () => filterGuideTasks(query, currentApp, localizedTasks),
+    [query, currentApp, localizedTasks],
+  );
+  const selectedTask = selectedId ? findGuideTask(selectedId, localizedTasks) : null;
   const hasSearch = query.trim().length > 0;
   const currentAppTasks = tasks.filter(task => task.app === currentApp);
   const otherTasks = tasks.filter(task => task.app !== currentApp);
@@ -193,16 +204,16 @@ export default function GuideDrawer({ open, onClose, currentApp, features = {} }
       >
         <header className="guide-header">
           <div>
-            <div className="guide-eyebrow">Guide</div>
-            <h1 id="guide-drawer-title">What are you trying to do?</h1>
+            <div className="guide-eyebrow">{t.gdEyebrow}</div>
+            <h1 id="guide-drawer-title">{t.gdWhatTryingToDo}</h1>
           </div>
-          <button type="button" className="guide-close" aria-label="Close guide" onClick={onClose}>
+          <button type="button" className="guide-close" aria-label={t.gdCloseGuide} onClick={onClose}>
             X
           </button>
         </header>
 
         <div className="guide-search-wrap">
-          <label htmlFor="guide-search">Search task guides</label>
+          <label htmlFor="guide-search">{t.gdSearchLabel}</label>
           <input
             id="guide-search"
             ref={searchRef}
@@ -212,7 +223,7 @@ export default function GuideDrawer({ open, onClose, currentApp, features = {} }
               setQuery(event.target.value);
               setSelectedId(null);
             }}
-            placeholder="Search by task or question"
+            placeholder={t.gdSearchPlaceholder}
           />
         </div>
 
@@ -221,7 +232,7 @@ export default function GuideDrawer({ open, onClose, currentApp, features = {} }
             event.preventDefault();
             navigateFromGuide('/help');
           }}>
-            Open Help page
+            {t.gdOpenHelpPage}
           </a>
         </div>
 
@@ -229,6 +240,7 @@ export default function GuideDrawer({ open, onClose, currentApp, features = {} }
           {selectedTask ? (
             <GuideDetail
               task={selectedTask}
+              allTasks={localizedTasks}
               user={user}
               features={features}
               onBack={() => setSelectedId(null)}
@@ -239,14 +251,14 @@ export default function GuideDrawer({ open, onClose, currentApp, features = {} }
             <>
               {tasks.length === 0 && (
                 <div className="guide-empty">
-                  <strong>No guide found.</strong>
-                  <span>Try a simpler search like "time", "PO", "inventory", or "setup".</span>
+                  <strong>{t.gdNoGuideFound}</strong>
+                  <span>{t.gdNoGuideSuggestion}</span>
                 </div>
               )}
 
               {hasSearch && tasks.length > 0 && (
                 <section className="guide-list-section">
-                  <h2>Best matches</h2>
+                  <h2>{t.gdBestMatches}</h2>
                   <div className="guide-task-list">
                     {tasks.map(task => (
                       <GuideTaskCard
@@ -262,7 +274,7 @@ export default function GuideDrawer({ open, onClose, currentApp, features = {} }
 
               {!hasSearch && currentAppTasks.length > 0 && (
                 <section className="guide-list-section">
-                  <h2>Useful here</h2>
+                  <h2>{t.gdUsefulHere}</h2>
                   <div className="guide-task-list">
                     {currentAppTasks.map(task => (
                       <GuideTaskCard
@@ -278,7 +290,7 @@ export default function GuideDrawer({ open, onClose, currentApp, features = {} }
 
               {!hasSearch && otherTasks.length > 0 && (
                 <section className="guide-list-section">
-                  <h2>{currentAppTasks.length > 0 ? 'More guides' : 'Guides'}</h2>
+                  <h2>{currentAppTasks.length > 0 ? t.gdMoreGuides : t.gdGuides}</h2>
                   <div className="guide-task-list">
                     {otherTasks.map(task => (
                       <GuideTaskCard

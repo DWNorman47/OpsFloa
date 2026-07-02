@@ -69,7 +69,7 @@ export default function BinLabelModal({ item, binType, onClose }) {
         <div class="name">${item.name}</div>
         ${parentLine}
         <img class="qr" src="${qrDataUrl}" alt="QR Code" />
-        <div class="footer">OpsFloa Inventory · ID ${item.id}</div>
+        <div class="footer">OpsFloa ${t.invblInventory} · ID ${item.id}</div>
       </div>
       <script>window.onload = () => { window.print(); }<\/script>
     </body></html>`);
@@ -92,7 +92,7 @@ export default function BinLabelModal({ item, binType, onClose }) {
             ? <img src={qrDataUrl} alt="QR Code" style={s.qr} />
             : <div style={s.qrPlaceholder}>{t.labelModalGenerating}</div>
           }
-          <div style={s.previewFooter}>OpsFloa Inventory · ID {item.id}</div>
+          <div style={s.previewFooter}>OpsFloa {t.invblInventory} · ID {item.id}</div>
         </div>
 
         <p style={s.hint}>

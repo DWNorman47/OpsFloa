@@ -7,14 +7,34 @@ import React, { useState, useEffect, useCallback } from 'react';
 import api from '../api';
 import { SkeletonList } from './Skeleton';
 import { silentError } from '../errorReporter';
+import { useT } from '../hooks/useT';
+import { useAuth } from '../contexts/AuthContext';
+import { formatDate } from '../utils';
 
 const STATUS_COLORS = {
-  open:                  { bg: '#f3f4f6', fg: '#374151', label: 'Open' },
-  in_progress:           { bg: '#dbeafe', fg: '#1d4ed8', label: 'In Progress' },
-  substantially_complete:{ bg: '#fef3c7', fg: '#92400e', label: 'Substantially Complete' },
-  final_complete:        { bg: '#d1fae5', fg: '#065f46', label: 'Final Complete' },
-  closed:                { bg: '#a7f3d0', fg: '#065f46', label: 'Closed' },
-  reopened:              { bg: '#fee2e2', fg: '#991b1b', label: 'Reopened' },
+  open:                  { bg: '#f3f4f6', fg: '#374151' },
+  in_progress:           { bg: '#dbeafe', fg: '#1d4ed8' },
+  substantially_complete:{ bg: '#fef3c7', fg: '#92400e' },
+  final_complete:        { bg: '#d1fae5', fg: '#065f46' },
+  closed:                { bg: '#a7f3d0', fg: '#065f46' },
+  reopened:              { bg: '#fee2e2', fg: '#991b1b' },
+};
+
+const STATUS_LABEL_KEYS = {
+  open:                   'pctStatusOpen',
+  in_progress:            'pctStatusInProgress',
+  substantially_complete: 'pctStatusSubstantiallyComplete',
+  final_complete:         'pctStatusFinalComplete',
+  closed:                 'pctStatusClosed',
+  reopened:               'pctStatusReopened',
+};
+
+const ITEM_STATUS_LABEL_KEYS = {
+  pending:     'pctItemPending',
+  in_progress: 'pctItemInProgress',
+  done:        'pctItemDone',
+  waived:      'pctItemWaived',
+  n_a:         'pctItemNA',
 };
 
 const ITEM_ICONS = {
@@ -26,6 +46,8 @@ const ITEM_ICONS = {
 };
 
 export default function ProjectCloseoutTab({ projectId }) {
+  const t = useT();
+  const { user } = useAuth();
   const [closeout, setCloseout] = useState(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -50,7 +72,7 @@ export default function ProjectCloseoutTab({ projectId }) {
       const { data } = await api.post(`/projects/${projectId}/closeout`);
       setCloseout(data.closeout);
       setItems(data.items || []);
-    } catch (err) { setError(err.response?.data?.error || 'Failed to open closeout'); }
+    } catch (err) { setError(err.response?.data?.error || t.pctErrOpenFailed); }
     finally { setBusy(false); }
   }
 
@@ -59,7 +81,7 @@ export default function ProjectCloseoutTab({ projectId }) {
     try {
       await api.post(`/projects/${projectId}/closeout/transition`, { to_status });
       await load();
-    } catch (err) { setError(err.response?.data?.error || 'Transition failed'); }
+    } catch (err) { setError(err.response?.data?.error || t.pctErrTransitionFailed); }
     finally { setBusy(false); }
   }
 
@@ -68,7 +90,7 @@ export default function ProjectCloseoutTab({ projectId }) {
     try {
       await api.patch(`/closeout-items/${item.id}`, { status: newStatus });
       await load();
-    } catch (err) { setError(err.response?.data?.error || 'Update failed'); }
+    } catch (err) { setError(err.response?.data?.error || t.pctErrUpdateFailed); }
     finally { setBusy(false); }
   }
 
@@ -77,13 +99,12 @@ export default function ProjectCloseoutTab({ projectId }) {
   if (!closeout) {
     return (
       <div style={styles.card}>
-        <h2 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 6px' }}>No closeout opened yet</h2>
+        <h2 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 6px' }}>{t.pctNoCloseout}</h2>
         <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 12 }}>
-          Opening a closeout seeds the default checklist for this project. Auto-status items (punchlist, lien
-          waivers, final invoice, retainage) start computing live from the underlying modules.
+          {t.pctNoCloseoutDesc}
         </p>
         <button onClick={openCloseout} disabled={busy} style={styles.btnPrimary}>
-          {busy ? 'Opening...' : 'Open closeout'}
+          {busy ? t.pctOpening : t.pctOpenCloseout}
         </button>
         {error && <div style={styles.errorBox}>{error}</div>}
       </div>
@@ -102,39 +123,39 @@ export default function ProjectCloseoutTab({ projectId }) {
           <span style={{
             fontSize: 12, fontWeight: 700, background: statusColor.bg, color: statusColor.fg,
             padding: '4px 10px', borderRadius: 12, textTransform: 'uppercase', letterSpacing: '0.04em',
-          }}>{statusColor.label}</span>
+          }}>{t[STATUS_LABEL_KEYS[closeout.status]] || t.pctStatusOpen}</span>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {closeout.status === 'open' && (
-              <button onClick={() => transition('in_progress')} disabled={busy} style={styles.btn}>Begin closeout</button>
+              <button onClick={() => transition('in_progress')} disabled={busy} style={styles.btn}>{t.pctBeginCloseout}</button>
             )}
             {closeout.status === 'in_progress' && (
               <button onClick={() => transition('substantially_complete')} disabled={busy} style={styles.btnPrimary}>
-                Mark Substantially Complete
+                {t.pctMarkSubstantiallyComplete}
               </button>
             )}
             {closeout.status === 'substantially_complete' && (
               <button onClick={() => transition('final_complete')} disabled={busy} style={styles.btnPrimary}>
-                Mark Final Complete
+                {t.pctMarkFinalComplete}
               </button>
             )}
             {closeout.status === 'final_complete' && (
-              <button onClick={() => transition('closed')} disabled={busy} style={styles.btnPrimary}>Close</button>
+              <button onClick={() => transition('closed')} disabled={busy} style={styles.btnPrimary}>{t.pctClose}</button>
             )}
             {closeout.status === 'closed' && (
-              <button onClick={() => transition('reopened')} disabled={busy} style={{ ...styles.btn, color: '#991b1b' }}>Reopen</button>
+              <button onClick={() => transition('reopened')} disabled={busy} style={{ ...styles.btn, color: '#991b1b' }}>{t.pctReopen}</button>
             )}
           </div>
         </div>
         <div style={{ ...styles.grid4, marginTop: 14 }}>
-          <Info label="Substantial" value={closeout.substantial_completion_date ? new Date(closeout.substantial_completion_date).toLocaleDateString() : null} />
-          <Info label="Final" value={closeout.final_completion_date ? new Date(closeout.final_completion_date).toLocaleDateString() : null} />
-          <Info label="Warranty start" value={closeout.warranty_start_date ? new Date(closeout.warranty_start_date).toLocaleDateString() : null} />
-          <Info label="Warranty months" value={closeout.warranty_months} />
+          <Info label={t.pctInfoSubstantial} value={formatDate(closeout.substantial_completion_date, user?.language) || null} />
+          <Info label={t.pctInfoFinal} value={formatDate(closeout.final_completion_date, user?.language) || null} />
+          <Info label={t.pctInfoWarrantyStart} value={formatDate(closeout.warranty_start_date, user?.language) || null} />
+          <Info label={t.pctInfoWarrantyMonths} value={closeout.warranty_months} />
         </div>
       </div>
 
       <div style={styles.card}>
-        <h3 style={styles.h3}>Checklist ({completeCount} / {items.length} complete)</h3>
+        <h3 style={styles.h3}>{t.pctChecklist} ({completeCount} / {items.length} {t.pctComplete})</h3>
         {items.map(item => {
           const c = ITEM_ICONS[item.status] || ITEM_ICONS.pending;
           const isAuto = !!item.auto_source;
@@ -144,18 +165,18 @@ export default function ProjectCloseoutTab({ projectId }) {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>
                   {item.title}
-                  {!item.required && <span style={{ fontSize: 10, color: '#9ca3af', marginLeft: 6, fontWeight: 500 }}>(optional)</span>}
-                  {isAuto && <span style={{ fontSize: 9, color: '#1d4ed8', marginLeft: 6, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>auto</span>}
+                  {!item.required && <span style={{ fontSize: 10, color: '#9ca3af', marginLeft: 6, fontWeight: 500 }}>{t.pctOptional}</span>}
+                  {isAuto && <span style={{ fontSize: 9, color: '#1d4ed8', marginLeft: 6, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{t.pctAuto}</span>}
                 </div>
                 {item.completed_at && (
                   <div style={{ fontSize: 11, color: '#6b7280', marginTop: 1 }}>
-                    Completed {new Date(item.completed_at).toLocaleDateString()}
+                    {t.pctCompleted} {formatDate(item.completed_at, user?.language)}
                   </div>
                 )}
               </div>
               <div style={{ flexShrink: 0 }}>
                 {isAuto ? (
-                  <span style={{ fontSize: 11, color: c.fg, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{item.status}</span>
+                  <span style={{ fontSize: 11, color: c.fg, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{t[ITEM_STATUS_LABEL_KEYS[item.status]] || item.status}</span>
                 ) : (
                   <select
                     value={item.status}
@@ -163,11 +184,11 @@ export default function ProjectCloseoutTab({ projectId }) {
                     disabled={busy}
                     style={{ padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12 }}
                   >
-                    <option value="pending">Pending</option>
-                    <option value="in_progress">In Progress</option>
-                    <option value="done">Done</option>
-                    <option value="waived">Waived</option>
-                    <option value="n_a">N/A</option>
+                    <option value="pending">{t.pctItemPending}</option>
+                    <option value="in_progress">{t.pctItemInProgress}</option>
+                    <option value="done">{t.pctItemDone}</option>
+                    <option value="waived">{t.pctItemWaived}</option>
+                    <option value="n_a">{t.pctItemNA}</option>
                   </select>
                 )}
               </div>

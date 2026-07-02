@@ -115,7 +115,7 @@ export default function FieldPage() {
   const fieldGroups = [
     {
       id: 'daily',
-      label: isAdmin ? 'Daily' : 'Today',
+      label: isAdmin ? t.fldGroupDaily : t.fldGroupToday,
       items: [
         { id: 'notes', label: t.fieldTabNotes },
         ...(isAdmin ? [{ id: 'daily', label: t.fieldTabDaily }] : []),
@@ -124,7 +124,7 @@ export default function FieldPage() {
     },
     {
       id: 'issues',
-      label: 'Issues',
+      label: t.fldGroupIssues,
       items: [
         { id: 'punchlist', label: t.fieldTabPunch },
         { id: 'incident', label: t.fieldTabIncidents },
@@ -135,14 +135,14 @@ export default function FieldPage() {
       id: 'safety',
       label: t.fieldTabSafety,
       items: [
-        { id: 'safety', label: 'Talks' },
+        { id: 'safety', label: t.fldTabTalks },
         { id: 'checklists', label: t.fieldTabChecklists },
         ...(isAdmin ? [{ id: 'inspect', label: t.fieldTabInspect }] : []),
       ],
     },
     {
       id: 'resources',
-      label: isAdmin ? 'Resources' : 'More',
+      label: isAdmin ? t.fldGroupResources : t.fldGroupMore,
       items: [
         { id: 'equip', label: t.fieldTabEquip },
         ...(isAdmin ? [{ id: 'subs', label: t.fieldTabSubs }] : []),
@@ -160,11 +160,9 @@ export default function FieldPage() {
     <PageShell currentApp="field" features={features} maxWidth={980} mainClassName="field-main">
         <PageIntro
           introId="field"
-          kicker={features?.label_field || 'Field Work'}
-          title={isAdmin ? 'Capture work as it happens.' : 'Submit the update and move on.'}
-          description={isAdmin
-            ? 'Daily logs, issues, safety, photos, and equipment are grouped here. The common field actions stay first; specialist records stay one tab away.'
-            : 'Notes, photos, issues, and checklists stay lightweight so the field path is quick.'}
+          kicker={features?.label_field || t.fldKicker}
+          title={isAdmin ? t.fldTitle : t.fldTitleWorker}
+          description={isAdmin ? t.fldDescription : t.fldDescriptionWorker}
         />
         <RetryBanner message={loadError} onRetry={init} />
 

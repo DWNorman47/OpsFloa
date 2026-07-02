@@ -13,6 +13,7 @@
 
 import React from 'react';
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
+import { langToLocale } from '../utils';
 
 const TYPE_TITLES = {
   conditional_progress:   'Conditional Waiver and Release on Progress Payment',
@@ -111,19 +112,19 @@ const s = StyleSheet.create({
   smallNote: { fontSize: 8, color: '#9ca3af', marginTop: 24, fontStyle: 'italic' },
 });
 
-function formatCents(cents) {
+function formatCents(cents, language) {
   const n = (parseInt(cents, 10) || 0) / 100;
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
+  return new Intl.NumberFormat(langToLocale(language), { style: 'currency', currency: 'USD' }).format(n);
 }
-function fmtDate(d) {
+function fmtDate(d, language) {
   if (!d) return '';
   return new Date(d.toString().substring(0, 10) + 'T00:00:00')
-    .toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    .toLocaleDateString(langToLocale(language), { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
-function bodyTextFor(waiver) {
-  const amt = formatCents(waiver.amount_cents);
-  const through = fmtDate(waiver.through_date);
+function bodyTextFor(waiver, language) {
+  const amt = formatCents(waiver.amount_cents, language);
+  const through = fmtDate(waiver.through_date, language);
   const project = waiver.project_name || 'the Project';
   const isConditional = waiver.waiver_type?.startsWith('conditional_');
   const isFinal = waiver.waiver_type?.endsWith('_final');
@@ -134,7 +135,7 @@ function bodyTextFor(waiver) {
   return `The undersigned has been paid in full for all labor, services, equipment, or material furnished to or for the benefit of the project located at or known as "${project}" ${isFinal ? 'through completion of the undersigned\'s scope of work' : `through ${through}`}, and does hereby waive and release any mechanic's lien, stop payment notice, or right against any labor and material bond the undersigned has on the project to the extent of the sum of ${amt}.`;
 }
 
-export default function LienWaiverPDF({ waiver }) {
+export default function LienWaiverPDF({ waiver, language }) {
   const stateConf = getStateConfig(waiver.state, waiver.waiver_type);
   const title = stateConf?.title || TYPE_TITLES[waiver.waiver_type] || 'Lien Waiver';
   return (
@@ -168,11 +169,11 @@ export default function LienWaiverPDF({ waiver }) {
           )}
           <View style={s.metaRow}>
             <Text style={s.metaLabel}>Amount</Text>
-            <Text style={s.metaValue}>{formatCents(waiver.amount_cents)}</Text>
+            <Text style={s.metaValue}>{formatCents(waiver.amount_cents, language)}</Text>
           </View>
           <View style={s.metaRow}>
             <Text style={s.metaLabel}>Through Date</Text>
-            <Text style={s.metaValue}>{fmtDate(waiver.through_date)}</Text>
+            <Text style={s.metaValue}>{fmtDate(waiver.through_date, language)}</Text>
           </View>
           <View style={s.metaRow}>
             <Text style={s.metaLabel}>Direction</Text>
@@ -180,7 +181,7 @@ export default function LienWaiverPDF({ waiver }) {
           </View>
         </View>
 
-        <Text style={s.bodyText}>{bodyTextFor(waiver)}</Text>
+        <Text style={s.bodyText}>{bodyTextFor(waiver, language)}</Text>
 
         {/* Notice block — uniform language across types */}
         <Text style={s.bodyText}>
@@ -198,7 +199,7 @@ export default function LienWaiverPDF({ waiver }) {
             <View style={{ width: 16 }} />
             <View style={{ flex: 1 }}>
               <View style={{ ...s.sigField, marginRight: 0, height: 28 }}>
-                <Text style={{ fontSize: 10, paddingTop: 6 }}>{waiver.signed_at ? fmtDate(waiver.signed_at) : ''}</Text>
+                <Text style={{ fontSize: 10, paddingTop: 6 }}>{waiver.signed_at ? fmtDate(waiver.signed_at, language) : ''}</Text>
               </View>
               <Text style={s.sigLabel}>Date</Text>
             </View>

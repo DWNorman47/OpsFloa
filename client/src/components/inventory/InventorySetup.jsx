@@ -62,6 +62,14 @@ const LEVELS = [
   },
 ];
 
+// Maps internal location type VALUES to their translation key (prefix `invst`).
+const LOCATION_TYPE_LABELS = {
+  warehouse: 'invstTypeWarehouse',
+  job_site: 'invstTypeJobSite',
+  truck: 'invstTypeTruck',
+  other: 'invstTypeOther',
+};
+
 // ── Photo Thumbnail component ─────────────────────────────────────────────────
 
 function PhotoGrid({ photos, onRemove, onAdd, readOnly }) {
@@ -96,7 +104,7 @@ function PhotoGrid({ photos, onRemove, onAdd, readOnly }) {
       {!readOnly && (
         <button style={pg.addBtn} onClick={() => inputRef.current?.click()} title={t.addPhoto}>
           <span style={pg.addIcon}>+</span>
-          <span style={pg.addLabel}>Photo</span>
+          <span style={pg.addLabel}>{t.invstPhoto}</span>
         </button>
       )}
       <input
@@ -212,7 +220,7 @@ function EntityForm({ level, item, parentId, parentOptions, onSave, onCancel, se
           style={ef.input}
           value={form.name}
           onChange={e => set('name', e.target.value)}
-          placeholder={`e.g. ${level.key === 'locations' ? `${workLabel} Storage` : level.key === 'areas' ? 'Zone A' : level.key === 'racks' ? 'Rack 3' : level.key === 'bays' ? 'Bay 2' : 'C1'}`}
+          placeholder={`${t.invstEgPrefix} ${level.key === 'locations' ? `${workLabel} ${t.invstEgStorage}` : level.key === 'areas' ? t.invstEgZone : level.key === 'racks' ? t.invstEgRack : level.key === 'bays' ? t.invstEgBay : t.invstEgCompartment}`}
           required
         />
       </div>
@@ -222,7 +230,7 @@ function EntityForm({ level, item, parentId, parentOptions, onSave, onCancel, se
           <div style={ef.field}>
             <label htmlFor="isu-type" style={ef.label}>{t.invSetupTypeField}</label>
             <select id="isu-type" style={ef.input} value={form.type} onChange={e => set('type', e.target.value)}>
-              {level.typeOptions.map(t => <option key={t} value={t}>{t.replace('_', ' ')}</option>)}
+              {level.typeOptions.map(opt => <option key={opt} value={opt}>{LOCATION_TYPE_LABELS[opt] ? t[LOCATION_TYPE_LABELS[opt]] : opt.replace('_', ' ')}</option>)}
             </select>
           </div>
           <div style={ef.field}>
@@ -424,20 +432,20 @@ export function SupplierPanel() {
           style={sp.searchInput}
           value={supplierSearch}
           onChange={e => setSupplierSearch(e.target.value)}
-          placeholder="Search suppliers..."
+          placeholder={t.invstSearchSuppliers}
         />
         <label style={sp.toggle}>
           <input type="checkbox" checked={showAll} onChange={e => setShowAll(e.target.checked)} />
           {t.invSetupShowArchived}
         </label>
-        {supplierQuery && <button style={sp.clearBtn} onClick={() => setSupplierSearch('')}>Clear</button>}
+        {supplierQuery && <button style={sp.clearBtn} onClick={() => setSupplierSearch('')}>{t.invstClear}</button>}
         <button style={sp.addBtn} onClick={openNew}>{t.invSetupAddSupplierBtn}</button>
       </div>
       {!loading && !error && (
         <div style={sp.filterMeta}>
           {supplierQuery
-            ? `Showing ${visibleSuppliers.length} of ${suppliers.length} matching suppliers`
-            : `${suppliers.length} suppliers`}
+            ? `${t.invstShowing} ${visibleSuppliers.length} ${t.invstOf} ${suppliers.length} ${t.invstMatchingSuppliers}`
+            : `${suppliers.length} ${t.invstSuppliersCount}`}
         </div>
       )}
       {error && <div role="alert" style={sp.error}>{error}</div>}
@@ -449,7 +457,7 @@ export function SupplierPanel() {
         </div>
       ) : visibleSuppliers.length === 0 ? (
         <div style={sp.empty}>
-          <p>No suppliers match that search.</p>
+          <p>{t.invstNoSuppliersMatch}</p>
         </div>
       ) : (
         <div style={sp.list}>
@@ -470,20 +478,20 @@ export function SupplierPanel() {
                   {sup.active ? (
                     <>
                       <span style={{ ...sp.badge, color: '#059669', background: '#d1fae5' }}>{t.invSetupActiveStatus}</span>
-                      <button style={sp.iconBtn} onClick={() => openEdit(sup)} title={t.edit}>Edit</button>
+                      <button style={sp.iconBtn} onClick={() => openEdit(sup)} title={t.edit}>{t.invstEdit}</button>
                       {pendingArchiveSupId === sup.id ? (
                         <>
                           <button style={sp.confirmArchiveBtn} onClick={() => archive(sup)}>{t.confirm}</button>
                           <button style={sp.iconBtn} aria-label={t.cancelArchive} onClick={() => setPendingArchiveSupId(null)}>X</button>
                         </>
                       ) : (
-                        <button style={sp.iconBtn} onClick={() => setPendingArchiveSupId(sup.id)} title={t.archive}>Archive</button>
+                        <button style={sp.iconBtn} onClick={() => setPendingArchiveSupId(sup.id)} title={t.archive}>{t.invstArchive}</button>
                       )}
                     </>
                   ) : (
                     <>
                       <span style={{ ...sp.badge, color: '#6b7280', background: '#f3f4f6' }}>{t.invSetupArchivedStatus}</span>
-                      <button style={sp.iconBtn} onClick={() => restore(sup)} title={t.restore}>Restore</button>
+                      <button style={sp.iconBtn} onClick={() => restore(sup)} title={t.restore}>{t.invstRestore}</button>
                     </>
                   )}
                 </div>
@@ -780,16 +788,16 @@ export default function InventorySetup({ projects, settings }) {
               style={s.searchInput}
               value={setupSearch}
               onChange={e => setSetupSearch(e.target.value)}
-              placeholder={`Search ${(LEVEL_LABELS[level.key] || level.label).toLowerCase()}...`}
+              placeholder={`${t.invstSearchPrefix} ${(LEVEL_LABELS[level.key] || level.label).toLowerCase()}...`}
             />
             {setupQuery && (
-              <button style={s.clearBtn} onClick={() => setSetupSearch('')}>Clear</button>
+              <button style={s.clearBtn} onClick={() => setSetupSearch('')}>{t.invstClear}</button>
             )}
           </div>
           <div style={s.toolbar}>
             <span style={s.count}>
               {setupQuery
-                ? `Showing ${visibleItems.length} of ${items.length} ${(LEVEL_LABELS[level.key] || level.label).toLowerCase()}`
+                ? `${t.invstShowing} ${visibleItems.length} ${t.invstOf} ${items.length} ${(LEVEL_LABELS[level.key] || level.label).toLowerCase()}`
                 : `${items.length} ${(LEVEL_LABELS[level.key] || level.label).toLowerCase()}`}
             </span>
             <button style={s.addBtn} onClick={() => setEditing(false)}>
@@ -807,7 +815,7 @@ export default function InventorySetup({ projects, settings }) {
             </div>
           ) : visibleItems.length === 0 ? (
             <div style={s.empty}>
-              <p>No {(LEVEL_LABELS[level.key] || level.label).toLowerCase()} match that search.</p>
+              <p>{t.invstNoPrefix} {(LEVEL_LABELS[level.key] || level.label).toLowerCase()} {t.invstNoMatchSuffix}</p>
             </div>
           ) : (
             <div style={s.list}>
@@ -847,20 +855,20 @@ export default function InventorySetup({ projects, settings }) {
                         {item.active ? (
                           <>
                             {level.key !== 'locations' && (
-                              <button style={s.iconBtn} onClick={() => setPrintItem(item)} title={t.printQRLabel}>Label</button>
+                              <button style={s.iconBtn} onClick={() => setPrintItem(item)} title={t.printQRLabel}>{t.invstLabel}</button>
                             )}
-                            <button style={s.iconBtn} onClick={() => setEditing(item)} title={t.edit}>Edit</button>
+                            <button style={s.iconBtn} onClick={() => setEditing(item)} title={t.edit}>{t.invstEdit}</button>
                             {pendingArchiveItemId === item.id ? (
                               <>
                                 <button style={s.confirmArchiveBtn} onClick={() => archive(item)}>{t.confirm}</button>
                                 <button style={s.iconBtn} aria-label={t.cancelArchive} onClick={() => setPendingArchiveItemId(null)}>X</button>
                               </>
                             ) : (
-                              <button style={s.iconBtn} onClick={() => setPendingArchiveItemId(item.id)} title={t.archive}>Archive</button>
+                              <button style={s.iconBtn} onClick={() => setPendingArchiveItemId(item.id)} title={t.archive}>{t.invstArchive}</button>
                             )}
                           </>
                         ) : (
-                          <button style={s.iconBtn} onClick={() => restore(item)} title={t.restore}>Restore</button>
+                          <button style={s.iconBtn} onClick={() => restore(item)} title={t.restore}>{t.invstRestore}</button>
                         )}
                       </div>
                     </div>

@@ -241,30 +241,31 @@ function BillingTab() {
 }
 
 function WorkspaceLabels({ settings, onUpdated }) {
+  const t = useT();
   const labelFields = [
     {
       key: 'label_work',
-      label: 'Project',
-      note: 'The general word for billable or trackable work. Enter the singular form — the app adds "s" for plurals.',
-      examples: 'Job, route, case',
+      label: t.admpLabelWork,
+      note: t.admpLabelWorkNote,
+      examples: t.admpLabelWorkExamples,
     },
     {
       key: 'label_client',
-      label: 'Customer',
-      note: 'The person or organization the team serves.',
-      examples: 'Client, account, resident',
+      label: t.admpLabelClient,
+      note: t.admpLabelClientNote,
+      examples: t.admpLabelClientExamples,
     },
     {
       key: 'label_worker',
-      label: 'Team Member',
-      note: 'A person using the app day to day.',
-      examples: 'Staff, worker, tech',
+      label: t.admpLabelWorker,
+      note: t.admpLabelWorkerNote,
+      examples: t.admpLabelWorkerExamples,
     },
     {
       key: 'label_field',
-      label: 'Field Work',
-      note: 'The mobile or on-site work area.',
-      examples: 'Service, visit, operation',
+      label: t.admpLabelField,
+      note: t.admpLabelFieldNote,
+      examples: t.admpLabelFieldExamples,
     },
   ];
   const [form, setForm] = useState({
@@ -294,7 +295,7 @@ function WorkspaceLabels({ settings, onUpdated }) {
 
   const save = async () => {
     if (hasBlankLabel) {
-      setMsg('Labels must be 1-32 characters.');
+      setMsg(t.admpLabelsLengthError);
       return;
     }
     setSaving(true); setMsg('');
@@ -302,9 +303,9 @@ function WorkspaceLabels({ settings, onUpdated }) {
       const payload = Object.fromEntries(Object.entries(form).map(([key, value]) => [key, value.trim()]));
       const r = await api.patch('/admin/settings', payload, { suppressToast: true });
       onUpdated(r.data);
-      setMsg('Labels saved.');
+      setMsg(t.admpLabelsSaved);
     } catch (err) {
-      setMsg(err.response?.data?.error || 'Could not save labels.');
+      setMsg(err.response?.data?.error || t.admpLabelsSaveError);
     } finally {
       setSaving(false);
     }
@@ -319,8 +320,8 @@ function WorkspaceLabels({ settings, onUpdated }) {
         onClick={() => setOpen(v => !v)}
       >
         <span style={styles.languageTriggerCopy}>
-          <span style={styles.languageTitle}>Company Labels</span>
-          <span style={styles.languageText}>Rename common app words so the workspace matches this company's language.</span>
+          <span style={styles.languageTitle}>{t.admpCompanyLabelsTitle}</span>
+          <span style={styles.languageText}>{t.admpCompanyLabelsBody}</span>
         </span>
         <span style={{ ...styles.accordionChevron, transform: open ? 'rotate(180deg)' : 'none' }}>▼</span>
       </button>
@@ -332,7 +333,7 @@ function WorkspaceLabels({ settings, onUpdated }) {
                 <span style={styles.labelRowCopy}>
                   <span style={styles.labelRowTitle}>{field.label}</span>
                   <span style={styles.labelRowText}>{field.note}</span>
-                  <span style={styles.labelExamples}>Examples: {field.examples}</span>
+                  <span style={styles.labelExamples}>{t.admpExamplesLabel} {field.examples}</span>
                 </span>
                 <input
                   style={styles.labelInput}
@@ -345,9 +346,9 @@ function WorkspaceLabels({ settings, onUpdated }) {
           </div>
           <div style={styles.languageActions} className="workspace-label-actions">
             <button type="button" style={styles.saveBtn} onClick={save} disabled={saving || hasBlankLabel}>
-              {saving ? 'Saving...' : 'Save labels'}
+              {saving ? t.admpSaving : t.admpSaveLabels}
             </button>
-            {msg && <span style={msg.includes('Could not') ? styles.profileErrorInline : styles.profileSuccessInline}>{msg}</span>}
+            {msg && <span style={msg === t.admpLabelsSaved ? styles.profileSuccessInline : styles.profileErrorInline}>{msg}</span>}
           </div>
         </>
       )}
@@ -587,8 +588,8 @@ export default function AdministrationPage() {
   // appear only with the matching perm.
   const tabs = [
     { id: 'company',      label: t.adminTabCompany      },
-    ...(canManageSettings ? [{ id: 'workspace', label: 'Workspace' }] : []),
-    ...(canSeeRequests ? [{ id: 'public', label: 'Public' }] : []),
+    ...(canManageSettings ? [{ id: 'workspace', label: t.admpTabWorkspace }] : []),
+    ...(canSeeRequests ? [{ id: 'public', label: t.admpTabPublic }] : []),
     ...((plan.hasQbo && canManageIntegrations) ? [{ id: 'integrations', label: t.adminTabIntegrations }] : []),
     ...(canManageBilling ? [{ id: 'billing', label: t.adminTabBilling }] : []),
     ...(canSeeLog ? [{ id: 'log', label: t.adminTabLog }] : []),
@@ -687,9 +688,9 @@ export default function AdministrationPage() {
 
       <PageIntro
         introId="administration"
-        kicker="Administration"
-        title="Tune the workspace without crowding the workday."
-        description="Company details, labels, modules, integrations, billing, and account tools stay here so the daily apps can stay simple."
+        kicker={t.admpIntroKicker}
+        title={t.admpIntroTitle}
+        description={t.admpIntroDescription}
       />
 
         <TabBar active={safeTab} onChange={switchTab} tabs={tabs} />
@@ -704,15 +705,15 @@ export default function AdministrationPage() {
           <div style={styles.tabContent}>
             <section style={styles.workspaceHero} className="workspace-hero">
               <div style={styles.workspaceHeroCopy}>
-                <div style={styles.workspaceKicker}>Workspace setup</div>
-                <h2 style={styles.workspaceTitle}>Shape the app around the work people do every day.</h2>
+                <div style={styles.workspaceKicker}>{t.admpWorkspaceKicker}</div>
+                <h2 style={styles.workspaceTitle}>{t.admpWorkspaceHeroTitle}</h2>
                 <p style={styles.workspaceText}>
-                  Keep common tools visible, tuck specialist controls away, and adjust labels so the app speaks this company's language.
+                  {t.admpWorkspaceHeroText}
                 </p>
               </div>
               <div style={styles.workspaceSide} className="workspace-side">
                 <button type="button" style={styles.workspaceAction} onClick={() => setShowSetup(true)}>
-                  Run guided setup
+                  {t.admpRunGuidedSetup}
                 </button>
                 <div style={styles.workspaceSummaryGrid} className="workspace-summary-grid">
                   {workspaceSummary.map(item => (
@@ -726,15 +727,15 @@ export default function AdministrationPage() {
             </section>
             <WorkspaceLabels settings={settings} onUpdated={setSettings} />
             <WorkspaceSettingGroup
-              title="Company Settings"
-              body="Choose which modules and tools are available, then set the rules and defaults used across the company."
+              title={t.admpCompanySettingsTitle}
+              body={t.admpCompanySettingsBody}
               defaultOpen
             >
               <ManageRates settings={settings} onSettingsUpdated={setSettings} />
             </WorkspaceSettingGroup>
             <WorkspaceSettingGroup
-              title="Advanced Controls"
-              body="Detailed feature switches and behavior settings for teams that need extra control."
+              title={t.admpAdvancedControlsTitle}
+              body={t.admpAdvancedControlsBody}
             >
               <AdvancedSettings settings={settings} embedded />
             </WorkspaceSettingGroup>
@@ -742,9 +743,9 @@ export default function AdministrationPage() {
         )}
         {safeTab === 'public' && (
           <div style={styles.tabContent}>
-            <h2 style={styles.tabTitle}>Presence</h2>
+            <h2 style={styles.tabTitle}>{t.admpPresenceHeading}</h2>
             <PublicCompanyProfileAdmin />
-            <h2 style={{ ...styles.tabTitle, marginTop: 6 }}>Requests</h2>
+            <h2 style={{ ...styles.tabTitle, marginTop: 6 }}>{t.admpRequestsHeading}</h2>
             <ServiceRequestsAdmin settings={settings} />
           </div>
         )}

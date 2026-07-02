@@ -8,11 +8,13 @@ import api from '../api';
 import { PageShell } from '../components/PageShell';
 import { SkeletonList } from '../components/Skeleton';
 import { silentError } from '../errorReporter';
-
-const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+import { getT } from '../i18n';
 
 export default function MyBookingPage() {
   const { user } = useAuth();
+  // Authenticated worker page — follow the user's app language setting.
+  const t = getT(user?.language);
+  const WEEKDAY_LABELS = [t.mbkDaySun, t.mbkDayMon, t.mbkDayTue, t.mbkDayWed, t.mbkDayThu, t.mbkDayFri, t.mbkDaySat];
   const [me, setMe] = useState(null);
   const [windows, setWindows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -66,55 +68,54 @@ export default function MyBookingPage() {
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
-    } catch (err) { setError(err.response?.data?.error || 'Save failed'); }
+    } catch (err) { setError(err.response?.data?.error || t.mbkSaveFailed); }
     finally { setSaving(false); }
   }
 
   return (
     <PageShell currentApp="timeclock" maxWidth={800} headerProps={{ userRole: user?.role }}>
       <div className="admin-page-shell">
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 16px', color: '#111827' }}>My Booking Settings</h1>
+        <h1 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 16px', color: '#111827' }}>{t.mbkTitle}</h1>
         <p style={{ fontSize: 14, color: '#6b7280', marginBottom: 20 }}>
-          Set your role label, timezone, and weekly windows. Once an admin marks you as bookable,
-          clients can book appointments in any of these windows.
+          {t.mbkIntro}
         </p>
 
         {loading ? <SkeletonList rows={4} /> : me && (
           <>
             <div style={styles.card}>
-              <h3 style={styles.h3}>Bookable status</h3>
+              <h3 style={styles.h3}>{t.mbkBookableStatus}</h3>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 {me.bookable ? (
                   <span style={{ fontSize: 13, fontWeight: 700, padding: '4px 10px', borderRadius: 12, background: '#d1fae5', color: '#065f46' }}>
-                    Bookable
+                    {t.mbkBookable}
                   </span>
                 ) : (
-                  <span style={{ fontSize: 13, color: '#6b7280' }}>Not bookable</span>
+                  <span style={{ fontSize: 13, color: '#6b7280' }}>{t.mbkNotBookable}</span>
                 )}
                 <span style={{ fontSize: 12, color: '#6b7280' }}>
-                  {me.bookable ? '— clients can book you' : '— ask an admin to enable bookings on your account'}
+                  {me.bookable ? t.mbkBookableHint : t.mbkNotBookableHint}
                 </span>
               </div>
             </div>
 
             {error && <div style={styles.errorBox}>{error}</div>}
-            {saved && <div style={styles.successBox}>Saved ✓</div>}
+            {saved && <div style={styles.successBox}>{t.mbkSaved}</div>}
 
             <div style={styles.card}>
-              <h3 style={styles.h3}>Display</h3>
-              <Field label="Role label">
+              <h3 style={styles.h3}>{t.mbkDisplay}</h3>
+              <Field label={t.mbkRoleLabel}>
                 <input
                   value={roleLabel}
                   onChange={e => setRoleLabel(e.target.value)}
-                  placeholder="e.g. Estimator, Project Manager"
+                  placeholder={t.mbkRoleLabelPlaceholder}
                   style={styles.input}
                 />
               </Field>
-              <Field label="Timezone">
+              <Field label={t.mbkTimezone}>
                 <input
                   value={timezone}
                   onChange={e => setTimezone(e.target.value)}
-                  placeholder="e.g. America/Phoenix"
+                  placeholder={t.mbkTimezonePlaceholder}
                   style={styles.input}
                 />
               </Field>
@@ -122,21 +123,21 @@ export default function MyBookingPage() {
 
             <div style={styles.card}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <h3 style={styles.h3}>Weekly windows ({windows.length})</h3>
-                <button onClick={addWindow} style={styles.ghostBtn}>+ Add window</button>
+                <h3 style={styles.h3}>{t.mbkWeeklyWindows} ({windows.length})</h3>
+                <button onClick={addWindow} style={styles.ghostBtn}>{t.mbkAddWindow}</button>
               </div>
               {windows.length === 0 ? (
                 <p style={{ fontSize: 13, color: '#6b7280', margin: 0 }}>
-                  No windows set. Add at least one to be reachable for bookings.
+                  {t.mbkNoWindows}
                 </p>
               ) : (
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
                   <thead>
                     <tr>
-                      <th style={styles.th}>Day</th>
-                      <th style={styles.th}>Start</th>
-                      <th style={styles.th}>End</th>
-                      <th style={styles.th}>Active</th>
+                      <th style={styles.th}>{t.mbkColDay}</th>
+                      <th style={styles.th}>{t.mbkColStart}</th>
+                      <th style={styles.th}>{t.mbkColEnd}</th>
+                      <th style={styles.th}>{t.mbkColActive}</th>
                       <th style={styles.th}></th>
                     </tr>
                   </thead>
@@ -187,7 +188,7 @@ export default function MyBookingPage() {
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
               <button onClick={save} disabled={saving} style={styles.primaryBtn}>
-                {saving ? 'Saving...' : 'Save'}
+                {saving ? t.mbkSaving : t.mbkSave}
               </button>
             </div>
           </>

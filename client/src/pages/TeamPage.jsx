@@ -28,9 +28,9 @@ const ManageRoles   = lazy(() => import('../components/ManageRoles'));
 // The three record types the Directory unifies. Each gets a distinct colored
 // chip so a row reads as a person / a sub firm / a customer at a glance.
 const DIR_TYPES = {
-  team:     { label: 'Team',     chip: { background: '#e0e7ff', color: '#3730a3' }, avatar: { background: '#e0e7ff', color: '#3730a3' } },
-  sub:      { label: 'Sub',      chip: { background: '#ffedd5', color: '#9a3412' }, avatar: { background: '#ffedd5', color: '#9a3412' } },
-  customer: { label: 'Customer', chip: { background: '#cffafe', color: '#155e75' }, avatar: { background: '#cffafe', color: '#155e75' } },
+  team:     { labelKey: 'dirTypeTeam',     chip: { background: '#e0e7ff', color: '#3730a3' }, avatar: { background: '#e0e7ff', color: '#3730a3' } },
+  sub:      { labelKey: 'dirTypeSub',      chip: { background: '#ffedd5', color: '#9a3412' }, avatar: { background: '#ffedd5', color: '#9a3412' } },
+  customer: { labelKey: 'dirTypeCustomer', chip: { background: '#cffafe', color: '#155e75' }, avatar: { background: '#cffafe', color: '#155e75' } },
 };
 
 function TabLoader() {
@@ -147,7 +147,7 @@ function DirectoryView({ entries, loading, search, onSearchChange, typeFilter, o
               className={`ops-dir-filter-btn ${typeFilter === id ? 'is-active' : ''}`.trim()}
               onClick={() => onTypeFilterChange(id)}
             >
-              {id === 'all' ? t.dirFilterAll : DIR_TYPES[id].label}
+              {id === 'all' ? t.dirFilterAll : t[DIR_TYPES[id].labelKey]}
               <span className="ops-dir-filter-count">{id === 'all' ? counts.all : counts[id]}</span>
             </button>
           ))}
@@ -170,7 +170,7 @@ function DirectoryView({ entries, loading, search, onSearchChange, typeFilter, o
         <EmptyState
           mark="D"
           title={lower || typeFilter !== 'all' ? t.teamNoMatches : t.dirEmptyTitle}
-          body={lower || typeFilter !== 'all' ? 'Try a different name or filter.' : t.dirEmptyBody}
+          body={lower || typeFilter !== 'all' ? t.dirTryDifferentFilter : t.dirEmptyBody}
         />
       ) : (
         <div className="ops-directory-grid">
@@ -185,7 +185,7 @@ function DirectoryView({ entries, loading, search, onSearchChange, typeFilter, o
                     {e.pending && <span style={s.pendingPill} title={t.teamNotSignedInYet}>{t.teamPendingBadge}</span>}
                   </div>
                   <div className="ops-person-meta">
-                    {showFilter && <span style={{ ...s.typeChip, ...meta.chip }}>{meta.label}</span>}
+                    {showFilter && <span style={{ ...s.typeChip, ...meta.chip }}>{t[meta.labelKey]}</span>}
                     {e.pills.map((p, i) => (
                       <span
                         key={i}
@@ -345,12 +345,10 @@ export default function TeamPage() {
     <PageShell currentApp="team" features={features} maxWidth={940}>
         <PageIntro
           introId="directory"
-          kicker="Directory"
-          title={isAdmin ? 'Everyone you work with, in one place.' : 'Find the people you work with.'}
-          description={isAdmin
-            ? 'The Directory shows your team, subcontractors, and customers together. Each tab manages one of them; Roles defines permissions.'
-            : 'The directory keeps names, roles, and classifications easy to scan.'}
-          meta={<span className="ops-pill">{counts.all} {counts.all === 1 ? 'record' : 'records'}</span>}
+          kicker={t.dirKicker}
+          title={isAdmin ? t.dirTitle : t.dirTitleWorker}
+          description={isAdmin ? t.dirDescription : t.dirDescriptionWorker}
+          meta={<span className="ops-pill">{counts.all} {counts.all === 1 ? t.dirRecord : t.dirRecords}</span>}
         />
         {tabs.length > 1 && (
           <TabBar active={activeTab} onChange={switchTab} tabs={tabs} />

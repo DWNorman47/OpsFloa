@@ -148,7 +148,7 @@ export default function InventoryValuation({ locations }) {
               setLocationFilter('');
             }}
           >
-            Clear
+            {t.invvlClear}
           </button>
         )}
         <label style={s.toggle}>
@@ -161,7 +161,7 @@ export default function InventoryValuation({ locations }) {
       </div>
 
       <div style={s.mobileControls} className="inventory-mobile-controls">
-        <div style={s.mobileViewToggle} aria-label="Mobile valuation view">
+        <div style={s.mobileViewToggle} aria-label={t.invvlMobileViewLabel}>
           {['card', 'list'].map(mode => (
             <button
               key={mode}
@@ -169,7 +169,7 @@ export default function InventoryValuation({ locations }) {
               style={{ ...s.mobileViewBtn, ...(mobileView === mode ? s.mobileViewBtnActive : {}) }}
               onClick={() => setMobileView(mode)}
             >
-              {mode === 'card' ? 'Cards' : 'List'}
+              {mode === 'card' ? t.invvlViewCards : t.invvlViewList}
             </button>
           ))}
         </div>
@@ -180,7 +180,7 @@ export default function InventoryValuation({ locations }) {
       {loading ? (
         <SkeletonList count={4} rows={2} />
       ) : !data || visibleItems.length === 0 ? (
-        <div style={s.empty}>
+        <div style={s.empty}>
           <p>{showZero ? t.invValNoItems : t.invValNoStock}</p>
         </div>
       ) : (

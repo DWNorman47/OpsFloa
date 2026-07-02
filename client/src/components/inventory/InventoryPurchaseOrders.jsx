@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../api';
 import { useT } from '../../hooks/useT';
+import { useAuth } from '../../contexts/AuthContext';
+import { langToLocale } from '../../utils';
 import { SkeletonList } from '../Skeleton';
 import ModalShell from '../ModalShell';
 
@@ -29,11 +31,11 @@ function StatusBadge({ status }) {
 
 // ── Receive Modal ──────────────────────────────────────────────────────────────
 
-function formatDate(value) {
+function formatDate(value, locale) {
   if (!value) return '';
   const datePart = String(value).slice(0, 10);
   const date = new Date(`${datePart}T00:00:00`);
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString();
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(locale);
 }
 
 function ReceiveModal({ po, locations, onDone, onClose }) {
@@ -150,6 +152,8 @@ function ReceiveModal({ po, locations, onDone, onClose }) {
 
 function PODetail({ po: initialPo, locations, suppliers, onBack, onUpdate }) {
   const t = useT();
+  const { user } = useAuth();
+  const locale = langToLocale(user?.language);
   const STATUS = useStatus(t);
   const [po, setPo]           = useState(initialPo);
   const [lines, setLines]     = useState(initialPo.lines || []);
@@ -294,8 +298,8 @@ function PODetail({ po: initialPo, locations, suppliers, onBack, onUpdate }) {
           <div>
             <div style={d.poNumber}>{po.po_number}</div>
             <div style={d.poMeta}>
-              {t.invPOCreatedBy} {po.created_by_name} · {formatDate(po.created_at)}
-              {po.order_date && ` · ${t.invPOOrderedOn} ${formatDate(po.order_date)}`}
+              {t.invPOCreatedBy} {po.created_by_name} · {formatDate(po.created_at, locale)}
+              {po.order_date && ` · ${t.invPOOrderedOn} ${formatDate(po.order_date, locale)}`}
             </div>
           </div>
           <div style={d.headerActions}>
@@ -322,7 +326,7 @@ function PODetail({ po: initialPo, locations, suppliers, onBack, onUpdate }) {
                 style={{ ...d.editBtn, color: emailSent ? '#059669' : '#2563eb', borderColor: emailSent ? '#059669' : '#bfdbfe', background: emailSent ? '#d1fae5' : '#eff6ff', ...(emailSending ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
                 onClick={emailPO}
                 disabled={emailSending}
-                title={`Email PO to ${po.supplier_name}`}
+                title={`${t.invpoEmailToTitle} ${po.supplier_name}`}
               >
                 {emailSending ? t.invPOEmailSending : emailSent ? t.invPOEmailSent : t.invPOEmailBtn}
               </button>
@@ -387,7 +391,7 @@ function PODetail({ po: initialPo, locations, suppliers, onBack, onUpdate }) {
             </div>
             <div style={d.infoItem}>
               <span style={d.infoLabel}>{t.invPOExpected}</span>
-              <span style={d.infoValue}>{po.expected_date ? formatDate(po.expected_date) : <em style={{ color: '#6b7280' }}>{t.invPONotSet}</em>}</span>
+              <span style={d.infoValue}>{po.expected_date ? formatDate(po.expected_date, locale) : <em style={{ color: '#6b7280' }}>{t.invPONotSet}</em>}</span>
             </div>
             {po.reference_no && (
               <div style={d.infoItem}>
@@ -455,7 +459,7 @@ function PODetail({ po: initialPo, locations, suppliers, onBack, onUpdate }) {
                     </td>
                     <td style={{ ...d.td, textAlign: 'right', fontWeight: remaining > 0 ? 700 : 400,
                       color: remaining > 0 ? '#d97706' : '#059669' }}>
-                      {remaining > 0 ? remaining : 'Done'}
+                      {remaining > 0 ? remaining : t.invpoDone}
                     </td>
                     <td style={{ ...d.td, textAlign: 'right', color: '#6b7280' }}>
                       {line.unit_cost != null ? `$${parseFloat(line.unit_cost).toFixed(2)}` : '—'}
@@ -468,7 +472,7 @@ function PODetail({ po: initialPo, locations, suppliers, onBack, onUpdate }) {
                             <button style={d.removeBtn} aria-label={t.cancelRemoveLine} onClick={() => setPendingRemoveLineId(null)}>X</button>
                           </>
                         ) : (
-                          <button style={d.removeBtn} aria-label={t.removeLine} onClick={() => setPendingRemoveLineId(line.id)}>Remove</button>
+                          <button style={d.removeBtn} aria-label={t.removeLine} onClick={() => setPendingRemoveLineId(line.id)}>{t.invpoRemove}</button>
                         )}
                       </td>
                     )}
@@ -483,7 +487,7 @@ function PODetail({ po: initialPo, locations, suppliers, onBack, onUpdate }) {
                   <td style={{ ...d.td, textAlign: 'right', fontWeight: 700 }}>{totalOrdered}</td>
                   <td style={{ ...d.td, textAlign: 'right', fontWeight: 700, color: '#059669' }}>{totalReceived}</td>
                   <td style={{ ...d.td, textAlign: 'right', fontWeight: 700, color: totalOrdered - totalReceived > 0 ? '#d97706' : '#059669' }}>
-                    {totalOrdered - totalReceived > 0 ? totalOrdered - totalReceived : 'Done'}
+                    {totalOrdered - totalReceived > 0 ? totalOrdered - totalReceived : t.invpoDone}
                   </td>
                   <td style={{ ...d.td, textAlign: 'right', fontWeight: 700 }}>
                     {lines.some(l => l.unit_cost != null)
@@ -499,7 +503,7 @@ function PODetail({ po: initialPo, locations, suppliers, onBack, onUpdate }) {
         <div style={d.mobileLineCards} className="inventory-mobile-cards">
           <div style={d.mobileLineSummary}>
             <span style={d.mobileSummaryLabel}>{t.invPOTotal}</span>
-            <strong>{totalReceived}/{totalOrdered} items received</strong>
+            <strong>{totalReceived}/{totalOrdered} {t.invpoItemsReceivedShort}</strong>
           </div>
           {lines.map(line => {
             const ordered = parseFloat(line.qty_ordered);
@@ -513,7 +517,7 @@ function PODetail({ po: initialPo, locations, suppliers, onBack, onUpdate }) {
                     <span style={d.mobileLineSub}>{[line.sku, line.unit].filter(Boolean).join(' - ')}</span>
                   </div>
                   <strong style={{ ...d.mobileRemaining, color: remaining > 0 ? '#d97706' : '#059669' }}>
-                    {remaining > 0 ? remaining : 'Done'}
+                    {remaining > 0 ? remaining : t.invpoDone}
                   </strong>
                 </div>
                 <div style={d.mobileMetrics}>
@@ -777,6 +781,8 @@ function POCreateForm({ locations, suppliers, prefillItems, onSaved, onCancel })
 
 export default function InventoryPurchaseOrders({ locations, suppliers: suppliersProp, prefillLowStock, onPrefillHandled }) {
   const t = useT();
+  const { user } = useAuth();
+  const locale = langToLocale(user?.language);
   const STATUS = useStatus(t);
   const [view, setView]         = useState('list'); // 'list' | 'create' | 'detail'
   const [pos, setPos]           = useState([]);
@@ -907,7 +913,7 @@ export default function InventoryPurchaseOrders({ locations, suppliers: supplier
           style={l.searchInput}
           value={poSearch}
           onChange={e => setPoSearch(e.target.value)}
-          placeholder="Search orders..."
+          placeholder={t.invpoSearchOrders}
         />
         <select style={l.select} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
           <option value="">{t.invPOAllStatuses}</option>
@@ -920,14 +926,14 @@ export default function InventoryPurchaseOrders({ locations, suppliers: supplier
           </select>
         )}
         {hasPOFilters && (
-          <button style={l.clearBtn} onClick={clearPOFilters}>Clear</button>
+          <button style={l.clearBtn} onClick={clearPOFilters}>{t.invpoClear}</button>
         )}
         <button style={l.createBtn} onClick={() => { setPrefillItems([]); setView('create'); }}>{t.invPONewPOBtn}</button>
       </div>
 
       {!loading && !error && (
         <div style={l.filterMeta}>
-          {hasPOFilters ? `Showing ${pos.length} of ${posTotal} matching orders` : `${posTotal} orders`}
+          {hasPOFilters ? `${t.invpoShowing} ${pos.length} ${t.invpoOf} ${posTotal} ${t.invpoMatchingOrders}` : `${posTotal} ${t.invpoOrders}`}
         </div>
       )}
 
@@ -938,7 +944,7 @@ export default function InventoryPurchaseOrders({ locations, suppliers: supplier
         <SkeletonList count={4} rows={2} />
       ) : pos.length === 0 ? (
         <div style={l.empty}>
-          <p>{hasPOFilters ? 'No purchase orders match those filters.' : t.invPONoPOs}</p>
+          <p>{hasPOFilters ? t.invpoNoMatchFilters : t.invPONoPOs}</p>
         </div>
       ) : (
         <>
@@ -955,8 +961,8 @@ export default function InventoryPurchaseOrders({ locations, suppliers: supplier
                     <div style={l.cardMeta}>
                       {po.supplier_name || <em style={{ color: '#6b7280' }}>{t.invPONoSupplier}</em>}
                       {' · '}
-                      {formatDate(po.created_at)}
-                      {po.expected_date && ` · ${t.invPOExpected} ${formatDate(po.expected_date)}`}
+                      {formatDate(po.created_at, locale)}
+                      {po.expected_date && ` · ${t.invPOExpected} ${formatDate(po.expected_date, locale)}`}
                     </div>
                   </div>
                   <div style={l.cardRight}>

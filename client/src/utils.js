@@ -60,6 +60,26 @@ export function langToLocale(language) {
 }
 
 /**
+ * Locale-aware date/time formatting driven by the OpsFloa language name.
+ * Use these instead of a bare `.toLocaleDateString()` (which follows the
+ * browser, not the user's chosen app language) so Spanish users see Spanish
+ * dates. `value` may be a Date, an ISO string, or null/undefined (returns '').
+ */
+export function formatDate(value, language, opts) {
+  if (value == null || value === '') return '';
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString(langToLocale(language), opts);
+}
+
+export function formatDateTime(value, language, opts) {
+  if (value == null || value === '') return '';
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString(langToLocale(language), opts);
+}
+
+/**
  * Format decimal hours as "Xh Ym" (e.g. 1.5 → "1h 30m", 0.25 → "15m", 8 → "8h")
  */
 export function fmtHours(h) {
