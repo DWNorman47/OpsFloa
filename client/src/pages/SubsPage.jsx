@@ -351,14 +351,14 @@ function SubPOsList({ onOpen, onNew }) {
             <option key={k} value={k}>{t[v.labelKey]}</option>
           ))}
         </select>
-        <button type="button" onClick={onNew} style={styles.primaryBtn}>+ New PO</button>
+        <button type="button" onClick={onNew} style={styles.primaryBtn}>+ {t.subNewPo}</button>
       </div>
       {loading ? <SkeletonList rows={3} /> :
         pos.length === 0 ? (
           <EmptyState
             title={t.subPoEmptyTitle}
             body={t.subPoEmptyBody}
-            actionLabel="+ New PO"
+            actionLabel={`+ ${t.subNewPo}`}
             onAction={onNew}
           />
         ) : (
@@ -454,7 +454,7 @@ function SubPOForm({ onSave, onCancel }) {
         subcontractor_id: f.subcontractor_id || subRows?.[0]?.id || '',
       }));
     }).catch(() => {
-      if (alive) setError('Failed to load projects or subcontractors.');
+      if (alive) setError(t.subLoadProjectsFailed);
     }).finally(() => {
       if (alive) setLoading(false);
     });
@@ -469,14 +469,14 @@ function SubPOForm({ onSave, onCancel }) {
   const submit = async e => {
     e.preventDefault();
     setError('');
-    if (!form.project_id) { setError('Choose a project.'); return; }
-    if (!form.subcontractor_id) { setError('Choose a subcontractor.'); return; }
-    if (!form.scope_of_work.trim()) { setError('Scope of work is required.'); return; }
+    if (!form.project_id) { setError(t.subErrChooseProject); return; }
+    if (!form.subcontractor_id) { setError(t.subErrChooseSub); return; }
+    if (!form.scope_of_work.trim()) { setError(t.subErrScopeRequired); return; }
     const amount = parseInt(form.amount_cents, 10);
-    if (!Number.isFinite(amount) || amount <= 0) { setError(t.subAmountInvalid || 'Amount must be positive.'); return; }
+    if (!Number.isFinite(amount) || amount <= 0) { setError(t.subAmountInvalid || t.subErrAmountPositive); return; }
     const retainage = form.retainage_pct === '' ? null : parseFloat(form.retainage_pct);
     if (retainage != null && (Number.isNaN(retainage) || retainage < 0 || retainage > 100)) {
-      setError('Retainage must be between 0 and 100.');
+      setError(t.subErrRetainageRange);
       return;
     }
     setSaving(true);
@@ -491,7 +491,7 @@ function SubPOForm({ onSave, onCancel }) {
       setDirty(false);
       onSave(data);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to create PO.');
+      setError(err.response?.data?.error || t.subPoCreateFailed);
     } finally {
       setSaving(false);
     }
@@ -501,7 +501,7 @@ function SubPOForm({ onSave, onCancel }) {
 
   return (
     <form onSubmit={submit} style={styles.formCard}>
-      <h3 style={styles.formH3}>New subcontractor PO</h3>
+      <h3 style={styles.formH3}>{t.subNewPoTitle}</h3>
       {error && <div style={styles.errorBox}>{error}</div>}
       <div className="admin-form-grid-2">
         <Field label={t.subProject} required>
@@ -547,7 +547,7 @@ function SubPOForm({ onSave, onCancel }) {
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
         <button type="button" onClick={onCancel} style={styles.ghostBtn}>{t.subCancel}</button>
         <button type="submit" disabled={saving} style={styles.primaryBtn}>
-          {saving ? t.subSaving : 'Create draft PO'}
+          {saving ? t.subSaving : t.subCreateDraftPo}
         </button>
       </div>
     </form>

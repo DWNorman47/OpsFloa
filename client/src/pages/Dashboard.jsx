@@ -524,10 +524,10 @@ ${signatureDataUrl ? `
         <>
         <PageIntro
           introId="timeclock"
-          kicker="Today"
-          title={`Keep the day simple${user?.full_name ? `, ${user.full_name.split(' ')[0]}` : ''}.`}
-          description="The daily actions are first. Timesheets, schedule, time off, and expenses stay close without crowding the clock-in flow."
-          meta={headerClock ? <span className="ops-pill good">Clocked in</span> : <span className="ops-pill">Ready</span>}
+          kicker={t.dashKicker}
+          title={`${t.dashTitle}${user?.full_name ? `, ${user.full_name.split(' ')[0]}` : ''}.`}
+          description={t.dashDesc}
+          meta={headerClock ? <span className="ops-pill good">{t.dashClockedIn}</span> : <span className="ops-pill">{t.dashReady}</span>}
         />
         <TabBar active={tab} onChange={switchTab} tabs={timeTabs} breakpoint={720} ariaLabel="Time Clock tabs" />
 
