@@ -59,8 +59,8 @@ export default function InventoryColumnPicker({ columns, selectedColumns, onTogg
               disabled={col.locked}
               onChange={() => onToggle(col.key)}
             />
-            <span style={styles.optionText}>{col.label || 'Actions'}</span>
-            {col.emptyHidden && <span style={styles.muted}>No data</span>}
+            <span style={styles.optionText}>{col.label || t.invcpActions}</span>
+            {col.emptyHidden && <span style={styles.muted}>{t.invcpNoData}</span>}
           </label>
         ))}
       </div>
@@ -70,7 +70,7 @@ export default function InventoryColumnPicker({ columns, selectedColumns, onTogg
   return (
     <div ref={ref} style={styles.wrap}>
       <button type="button" style={buttonStyle || styles.trigger} onClick={toggleOpen}>
-        Columns ({visibleCount})
+        {t.invcpColumns} ({visibleCount})
       </button>
       {open && (
         <>

@@ -13,9 +13,10 @@ export default function ColumnHeaderMenu({
   onFilter,
   options = [],
   suggestions = [],
-  placeholder = 'Filter',
+  placeholder,
 }) {
   const t = useT();
+  const effectivePlaceholder = placeholder ?? t.invchFilter;
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(filterValue || '');
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0, right: 'auto' });
@@ -114,7 +115,7 @@ export default function ColumnHeaderMenu({
                   style={styles.input}
                   value={draft}
                   onChange={e => setDraft(e.target.value)}
-                  placeholder={placeholder}
+                  placeholder={effectivePlaceholder}
                   onKeyDown={e => { if (e.key === 'Enter') applyFilter(); if (e.key === 'Escape') setOpen(false); }}
                   autoFocus
                 />

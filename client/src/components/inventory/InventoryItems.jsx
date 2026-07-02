@@ -9,6 +9,18 @@ const ImportItemsModal = lazy(() => import('./ImportItemsModal'));
 
 import { silentError } from '../../errorReporter';
 const DEFAULT_UNITS = ['each', 'box', 'bag', 'bundle', 'pallet', 'lb', 'kg', 'ft', 'm', 'sq ft', 'gal', 'L', 'roll', 'sheet', 'piece', 'other'];
+// Maps known internal unit VALUES to their translation key (prefix `invit`). Custom/unknown units render as-is.
+const UNIT_LABELS = {
+  each: 'invitUnitEach',
+  box: 'invitUnitBox',
+  bag: 'invitUnitBag',
+  bundle: 'invitUnitBundle',
+  pallet: 'invitUnitPallet',
+  roll: 'invitUnitRoll',
+  sheet: 'invitUnitSheet',
+  piece: 'invitUnitPiece',
+  other: 'invitUnitOther',
+};
 const ITEM_PAGE_SIZE_PREF_KEY = 'inventory_items_page_size';
 const ITEM_COLUMN_PREF_KEY = 'inventory_items_columns';
 const DEFAULT_ITEM_COLUMNS = {
@@ -154,7 +166,7 @@ function ItemForm({ item, onSave, onCancel, activeUnits = DEFAULT_UNITS, knownUn
         <div style={f.field}>
           <label htmlFor="ii-unit" style={f.label}>{t.itemUnitLabel}</label>
           <select id="ii-unit" style={f.input} value={form.useCustomUnit ? 'other' : form.unit} onChange={handleUnitChange}>
-            {activeUnits.map(u => <option key={u} value={u}>{u}</option>)}
+            {activeUnits.map(u => <option key={u} value={u}>{UNIT_LABELS[u] ? t[UNIT_LABELS[u]] : u}</option>)}
           </select>
           {form.useCustomUnit && (
             <input style={{ ...f.input, marginTop: 6 }} value={form.customUnit} onChange={e => set('customUnit', e.target.value)} placeholder={t.enterUnit} />
@@ -328,14 +340,14 @@ function ItemUOMPanel({ item }) {
                     <td style={{ ...u.td, textAlign: 'right' }}>{parseFloat(row.factor)}</td>
                     <td style={u.td}>{row.is_base ? <span style={u.baseBadge}>{t.uomBaseBadge}</span> : ''}</td>
                     <td style={{ ...u.td, whiteSpace: 'nowrap' }}>
-                      <button style={u.iconBtn} aria-label={t.editUnit} onClick={() => { setEditingId(row.id); setEditForm({ unit: row.unit, unit_spec: row.unit_spec || '', factor: String(row.factor), is_base: row.is_base }); }}>Edit</button>
+                      <button style={u.iconBtn} aria-label={t.editUnit} onClick={() => { setEditingId(row.id); setEditForm({ unit: row.unit, unit_spec: row.unit_spec || '', factor: String(row.factor), is_base: row.is_base }); }}>{t.invitEdit}</button>
                       {!row.is_base && (pendingRemoveUomId === row.id ? (
                         <>
                           <button style={u.confirmRemoveBtn} onClick={() => remove(row.id)}>{t.confirm}</button>
                           <button style={u.iconBtn} aria-label={t.cancelRemove} onClick={() => setPendingRemoveUomId(null)}>X</button>
                         </>
                       ) : (
-                        <button style={u.iconBtn} aria-label={t.removeUnit} onClick={() => setPendingRemoveUomId(row.id)}>Remove</button>
+                        <button style={u.iconBtn} aria-label={t.removeUnit} onClick={() => setPendingRemoveUomId(row.id)}>{t.invitRemove}</button>
                       ))}
                     </td>
                   </>
@@ -590,19 +602,19 @@ export default function InventoryItems({ onItemChange }) {
       cellStyle: { ...s.td, whiteSpace: 'nowrap' },
       getValue: item => item.active ? (
         <>
-          <button style={s.iconBtn} onClick={() => setLabelItem(item)} aria-label={t.printLabel}>Label</button>
-          <button style={s.iconBtn} onClick={() => setEditingItem(item)} aria-label={t.editItem}>Edit</button>
+          <button style={s.iconBtn} onClick={() => setLabelItem(item)} aria-label={t.printLabel}>{t.invitLabel}</button>
+          <button style={s.iconBtn} onClick={() => setEditingItem(item)} aria-label={t.editItem}>{t.invitEdit}</button>
           {pendingArchiveItemId === item.id ? (
             <>
               <button style={{ ...s.confirmArchiveBtn, ...(archiving === item.id ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={() => archive(item)} disabled={archiving === item.id}>{t.confirm}</button>
               <button style={s.iconBtn} aria-label={t.cancelArchive} onClick={() => setPendingArchiveItemId(null)}>X</button>
             </>
           ) : (
-            <button style={{ ...s.iconBtn, opacity: archiving === item.id ? 0.5 : 1 }} onClick={() => setPendingArchiveItemId(item.id)} title={t.archive}>Archive</button>
+            <button style={{ ...s.iconBtn, opacity: archiving === item.id ? 0.5 : 1 }} onClick={() => setPendingArchiveItemId(item.id)} title={t.archive}>{t.invitArchive}</button>
           )}
         </>
       ) : (
-        <button style={s.iconBtn} onClick={() => restore(item)} title={t.restore}>Restore</button>
+        <button style={s.iconBtn} onClick={() => restore(item)} title={t.restore}>{t.invitRestore}</button>
       ),
       hasValue: () => true,
     },
@@ -714,7 +726,7 @@ export default function InventoryItems({ onItemChange }) {
                   setPage(0);
                 }}
               >
-                Clear filters
+                {t.invitClearFilters}
               </button>
             )}
             <button style={s.importBtn} onClick={() => setImporting(true)}>{t.invImportBtn || 'Import'}</button>
@@ -736,7 +748,7 @@ export default function InventoryItems({ onItemChange }) {
           </div>
 
           <div style={s.mobileControls} className="inventory-mobile-controls">
-            <div style={s.mobileViewToggle} aria-label="Mobile inventory view">
+            <div style={s.mobileViewToggle} aria-label={t.invitMobileViewLabel}>
               {['card', 'list'].map(mode => (
                 <button
                   key={mode}
@@ -744,7 +756,7 @@ export default function InventoryItems({ onItemChange }) {
                   style={{ ...s.mobileViewBtn, ...(mobileView === mode ? s.mobileViewBtnActive : {}) }}
                   onClick={() => setMobileView(mode)}
                 >
-                  {mode === 'card' ? 'Cards' : 'List'}
+                  {mode === 'card' ? t.invitViewCards : t.invitViewList}
                 </button>
               ))}
             </div>
@@ -756,9 +768,9 @@ export default function InventoryItems({ onItemChange }) {
                   onClick={() => setShowMobileFilters(open => !open)}
                   aria-expanded={showMobileFilters}
                 >
-                  <span>Filters</span>
-                  {hasMobileFilters && <span style={s.mobileFilterBadge}>Active</span>}
-                  <span>{showMobileFilters ? 'Hide' : 'Show'}</span>
+                  <span>{t.invitFilters}</span>
+                  {hasMobileFilters && <span style={s.mobileFilterBadge}>{t.invitFilterActive}</span>}
+                  <span>{showMobileFilters ? t.invitHide : t.invitShow}</span>
                 </button>
                 {showMobileFilters && (
                   <>
@@ -766,13 +778,13 @@ export default function InventoryItems({ onItemChange }) {
                       style={s.mobileInput}
                       value={nameFilter}
                       onChange={e => { setNameFilter(e.target.value); setPage(0); }}
-                      placeholder="Find item"
+                      placeholder={t.invitFindItem}
                     />
                     <input
                       style={s.mobileInput}
                       value={skuFilter}
                       onChange={e => { setSkuFilter(e.target.value); setPage(0); }}
-                      placeholder="SKU"
+                      placeholder={t.invitSku}
                     />
                     <select style={s.mobileInput} value={categoryFilter} onChange={e => { setCategoryFilter(e.target.value); setPage(0); }}>
                       <option value="">{t.allCategories}</option>
@@ -785,11 +797,11 @@ export default function InventoryItems({ onItemChange }) {
                     </select>
                     <div style={s.mobileSortRow}>
                       <select style={s.mobileInput} value={sortBy} onChange={e => setColumnSort(e.target.value, sortDir)}>
-                        <option value="name">Sort by name</option>
-                        <option value="sku">Sort by SKU</option>
-                        <option value="category">Sort by category</option>
-                        <option value="unit_cost">Sort by cost</option>
-                        <option value="reorder_point">Sort by reorder point</option>
+                        <option value="name">{t.invitSortByName}</option>
+                        <option value="sku">{t.invitSortBySku}</option>
+                        <option value="category">{t.invitSortByCategory}</option>
+                        <option value="unit_cost">{t.invitSortByCost}</option>
+                        <option value="reorder_point">{t.invitSortByReorderPoint}</option>
                       </select>
                       <button type="button" style={s.mobileSortBtn} onClick={() => setColumnSort(sortBy, sortDir === 'asc' ? 'desc' : 'asc')}>
                         {sortDir === 'asc' ? 'A-Z' : 'Z-A'}
@@ -878,7 +890,7 @@ export default function InventoryItems({ onItemChange }) {
                     <div style={s.mobileCardTop}>
                       <div style={s.mobileCardTitleWrap}>
                         <strong style={s.mobileCardTitle}>{item.name}</strong>
-                        <span style={s.mobileCardSub}>{[item.sku, item.category].filter(Boolean).join(' · ') || 'No SKU'}</span>
+                        <span style={s.mobileCardSub}>{[item.sku, item.category].filter(Boolean).join(' · ') || t.invitNoSku}</span>
                       </div>
                       {item.active
                         ? <span style={{ ...s.badge, color: '#059669', background: '#d1fae5' }}>{t.itemActiveStatus}</span>
@@ -886,38 +898,38 @@ export default function InventoryItems({ onItemChange }) {
                     </div>
                     <div style={s.mobileMetricRow}>
                       <div>
-                        <span style={s.mobileLabel}>Unit</span>
+                        <span style={s.mobileLabel}>{t.invitUnitLabel}</span>
                         <strong style={s.mobileValue}>{item.unit}{item.unit_spec ? ` (${item.unit_spec})` : ''}</strong>
                       </div>
                       <div>
-                        <span style={s.mobileLabel}>Cost</span>
+                        <span style={s.mobileLabel}>{t.invitCostLabel}</span>
                         <strong style={s.mobileValue}>{item.unit_cost != null ? `$${parseFloat(item.unit_cost).toFixed(2)}` : '-'}</strong>
                       </div>
                     </div>
                     <div style={s.mobileDetailGrid}>
                       <div>
-                        <span style={s.mobileLabel}>Reorder</span>
+                        <span style={s.mobileLabel}>{t.invitReorderLabel}</span>
                         <span style={s.mobileText}>
-                          At {item.reorder_point > 0 ? item.reorder_point : '-'} · Qty {item.reorder_qty > 0 ? item.reorder_qty : '-'}
+                          {t.invitReorderAt} {item.reorder_point > 0 ? item.reorder_point : '-'} · {t.invitReorderQtyShort} {item.reorder_qty > 0 ? item.reorder_qty : '-'}
                         </span>
                       </div>
                     </div>
                     <div style={s.mobileActions}>
                       {item.active ? (
                         <>
-                          <button style={s.iconBtn} onClick={() => setLabelItem(item)} aria-label={t.printLabel}>Label</button>
-                          <button style={s.iconBtn} onClick={() => setEditingItem(item)} aria-label={t.editItem}>Edit</button>
+                          <button style={s.iconBtn} onClick={() => setLabelItem(item)} aria-label={t.printLabel}>{t.invitLabel}</button>
+                          <button style={s.iconBtn} onClick={() => setEditingItem(item)} aria-label={t.editItem}>{t.invitEdit}</button>
                           {pendingArchiveItemId === item.id ? (
                             <>
                               <button style={{ ...s.confirmArchiveBtn, ...(archiving === item.id ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={() => archive(item)} disabled={archiving === item.id}>{t.confirm}</button>
                               <button style={s.iconBtn} aria-label={t.cancelArchive} onClick={() => setPendingArchiveItemId(null)}>X</button>
                             </>
                           ) : (
-                            <button style={{ ...s.iconBtn, opacity: archiving === item.id ? 0.5 : 1 }} onClick={() => setPendingArchiveItemId(item.id)} title={t.archive}>Archive</button>
+                            <button style={{ ...s.iconBtn, opacity: archiving === item.id ? 0.5 : 1 }} onClick={() => setPendingArchiveItemId(item.id)} title={t.archive}>{t.invitArchive}</button>
                           )}
                         </>
                       ) : (
-                        <button style={s.iconBtn} onClick={() => restore(item)} title={t.restore}>Restore</button>
+                        <button style={s.iconBtn} onClick={() => restore(item)} title={t.restore}>{t.invitRestore}</button>
                       )}
                     </div>
                   </article>
@@ -925,8 +937,8 @@ export default function InventoryItems({ onItemChange }) {
               </div>
               <div style={s.pagination}>
                 <div style={s.paginationMeta}>
-                  <span style={s.pageInfo}>Showing {pageStart}-{pageEnd} of {total}</span>
-                  <span style={s.pageInfo}>Page {page + 1} of {pageCount}</span>
+                  <span style={s.pageInfo}>{t.invitShowing} {pageStart}-{pageEnd} {t.invitOf} {total}</span>
+                  <span style={s.pageInfo}>{t.invitPage} {page + 1} {t.invitOf} {pageCount}</span>
                 </div>
                 <div style={s.paginationControls}>
                   <label style={s.pageSizeLabel}>
@@ -949,14 +961,14 @@ export default function InventoryItems({ onItemChange }) {
                       disabled={!canPrevPage}
                       onClick={() => { const p = Math.max(0, page - 1); setPage(p); load(p); }}
                     >
-                      Prev
+                      {t.invitPrev}
                     </button>
                     <button
                       style={{ ...s.pageBtn, ...(!canNextPage ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
                       disabled={!canNextPage}
                       onClick={() => { const p = page + 1; setPage(p); load(p); }}
                     >
-                      Next
+                      {t.invitNext}
                     </button>
                   </div>
                 </div>

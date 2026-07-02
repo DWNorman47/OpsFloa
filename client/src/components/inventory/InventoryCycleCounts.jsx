@@ -4,6 +4,8 @@ import { parseBinQR } from './BinLabelModal';
 import { parseItemQR } from './ItemLabelModal';
 import UomConversionModal from './UomConversionModal';
 import { useT } from '../../hooks/useT';
+import { useAuth } from '../../contexts/AuthContext';
+import { formatDate } from '../../utils';
 import { SkeletonList } from '../Skeleton';
 import ModalShell from '../ModalShell';
 
@@ -37,16 +39,19 @@ function TypeBadge({ type }) {
   );
 }
 
-function formatDate(value) {
-  if (!value) return '';
-  const datePart = String(value).slice(0, 10);
-  const date = new Date(`${datePart}T00:00:00`);
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString();
-}
-
-function formatLineStatus(status) {
-  if (!status || status === 'pending') return 'Pending';
-  return status
+function formatLineStatus(status, t) {
+  const map = {
+    pending:         t.invccStatusPending,
+    counted:         t.invccStatusCounted,
+    needs_audit:     t.invccStatusNeedsAudit,
+    audited:         t.invccStatusAudited,
+    needs_reconcile: t.invccStatusNeedsReconcile,
+    reconciled:      t.invccStatusReconciled,
+    accepted:        t.invccStatusAccepted,
+    overridden:      t.invccStatusOverridden,
+  };
+  if (!status || status === 'pending') return t.invccStatusPending;
+  return map[status] || status
     .split('_')
     .map(part => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
@@ -54,6 +59,7 @@ function formatLineStatus(status) {
 
 function CycleCountDetail({ count, settings, onBack, onComplete }) {
   const t = useT();
+  const { user } = useAuth();
   const workerLabel = settings?.label_worker || 'Team Member';
   const workerPlural = `${workerLabel}s`;
   const COUNT_TYPES = useCountTypes(t);
@@ -528,7 +534,7 @@ function CycleCountDetail({ count, settings, onBack, onComplete }) {
         <td style={d.td}>
           {line.line_status && line.line_status !== 'pending' && (
             <span style={{ ...d.lineStatusBadge, ...lineStatusStyle(line.line_status) }}>
-              {formatLineStatus(line.line_status)}
+              {formatLineStatus(line.line_status, t)}
             </span>
           )}
         </td>
@@ -592,7 +598,7 @@ function CycleCountDetail({ count, settings, onBack, onComplete }) {
           </div>
           {line.line_status && line.line_status !== 'pending' && (
             <span style={{ ...d.lineStatusBadge, ...lineStatusStyle(line.line_status) }}>
-              {formatLineStatus(line.line_status)}
+              {formatLineStatus(line.line_status, t)}
             </span>
           )}
         </div>
@@ -695,7 +701,7 @@ function CycleCountDetail({ count, settings, onBack, onComplete }) {
             <h2 style={d.title}>{COUNT_TYPES[countData.count_type]?.label || t.invCycCountLabel} — {countData.location_name}</h2>
             <TypeBadge type={countData.count_type} />
           </div>
-          <p style={d.sub}>{t.invCycStartedBy} {countData.started_by_name} - {formatDate(countData.started_at)}</p>
+          <p style={d.sub}>{t.invCycStartedBy} {countData.started_by_name} - {formatDate(countData.started_at, user?.language)}</p>
           {isAudit && !isCompleted && (
             <p style={{ ...d.sub, color: '#d97706', fontWeight: 600, marginTop: 4 }}>
               {t.invCycAuditMode}
@@ -704,7 +710,7 @@ function CycleCountDetail({ count, settings, onBack, onComplete }) {
           <div style={d.detailProgress}>
             <div style={d.detailProgressTop}>
               <strong>{countedLineCount}/{lines.length} {t.invCycItemsCounted}</strong>
-              <span>{isCompleted ? t.invCycCompleted : `${uncounted} remaining`}</span>
+              <span>{isCompleted ? t.invCycCompleted : `${uncounted} ${t.invccRemaining}`}</span>
             </div>
             <div style={d.detailProgressBar}>
               <div style={{ ...d.detailProgressFill, width: `${progressPct}%` }} />
@@ -760,7 +766,7 @@ function CycleCountDetail({ count, settings, onBack, onComplete }) {
       {tab === 'workers' && (
         <div style={d.workersPanel}>
           <div className="inventory-count-workers-header" style={d.workersPanelHeader}>
-            <strong style={{ fontSize: 14 }}>Assign {workerPlural.toLowerCase()}</strong>
+            <strong style={{ fontSize: 14 }}>{t.invccAssign} {workerPlural.toLowerCase()}</strong>
             {!isCompleted && (
               <button style={{ ...d.distributeBtn, ...(distributing || workers.filter(w => w.roles.includes('counter')).length === 0 ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={distribute} disabled={distributing || workers.filter(w => w.roles.includes('counter')).length === 0}>
                 {distributing ? t.invCycDistributing : t.invCycDistributeLines}
@@ -768,7 +774,7 @@ function CycleCountDetail({ count, settings, onBack, onComplete }) {
             )}
           </div>
           <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 12px' }}>
-            Choose who can count, audit, or reconcile this inventory count.
+            {t.invccAssignHelp}
           </p>
 
           {/* Existing assigned workers */}
@@ -795,7 +801,7 @@ function CycleCountDetail({ count, settings, onBack, onComplete }) {
                     ))}
                   </div>
                   {!isCompleted && (
-                    <button className="inventory-count-remove-worker" style={d.removeWorkerBtn} onClick={() => removeWorker(w.user_id)}>Remove {workerLabel.toLowerCase()}</button>
+                    <button className="inventory-count-remove-worker" style={d.removeWorkerBtn} onClick={() => removeWorker(w.user_id)}>{t.invccRemove} {workerLabel.toLowerCase()}</button>
                   )}
                 </div>
               ))}
@@ -805,7 +811,7 @@ function CycleCountDetail({ count, settings, onBack, onComplete }) {
                   {/* Add team member from company list */}
           {!isCompleted && (
             <div>
-              <p style={{ fontSize: 12, fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>Add {workerLabel.toLowerCase()}</p>
+              <p style={{ fontSize: 12, fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>{t.invccAdd} {workerLabel.toLowerCase()}</p>
               <select style={d.workerSelect}
                 value=""
                 onChange={e => {
@@ -814,7 +820,7 @@ function CycleCountDetail({ count, settings, onBack, onComplete }) {
                   if (workers.find(w => w.user_id === uid)) return;
                   saveWorker(uid, ['counter']);
                 }}>
-                <option value="">Select {workerLabel.toLowerCase()}...</option>
+                <option value="">{t.invccSelect} {workerLabel.toLowerCase()}...</option>
                 {allWorkers
                   .filter(w => !workers.find(x => x.user_id === w.id))
                   .map(w => <option key={w.id} value={w.id}>{w.full_name}</option>)}
@@ -894,7 +900,7 @@ function CycleCountDetail({ count, settings, onBack, onComplete }) {
               type="search"
               value={lineSearch}
               onChange={e => setLineSearch(e.target.value)}
-              placeholder="Search item, SKU, location, or counter..."
+              placeholder={t.invccLineSearchPlaceholder}
               style={d.lineFilterInput}
             />
             <select
@@ -902,29 +908,29 @@ function CycleCountDetail({ count, settings, onBack, onComplete }) {
               onChange={e => setLineStatusFilter(e.target.value)}
               style={d.lineFilterSelect}
             >
-              <option value="">All lines</option>
-              <option value="remaining">Remaining</option>
-              <option value="finished">Finished</option>
-              <option value="not_counted">Not counted</option>
-              {showExpected && <option value="with_variance">Has variance</option>}
-              <option value="pending">Pending</option>
-              <option value="counted">Counted</option>
-              <option value="needs_audit">Needs audit</option>
-              <option value="needs_reconcile">Needs reconcile</option>
-              <option value="accepted">Accepted</option>
-              <option value="overridden">Overridden</option>
-              <option value="audited">Audited</option>
+              <option value="">{t.invccFilterAllLines}</option>
+              <option value="remaining">{t.invccFilterRemaining}</option>
+              <option value="finished">{t.invccFilterFinished}</option>
+              <option value="not_counted">{t.invccFilterNotCounted}</option>
+              {showExpected && <option value="with_variance">{t.invccFilterHasVariance}</option>}
+              <option value="pending">{t.invccStatusPending}</option>
+              <option value="counted">{t.invccStatusCounted}</option>
+              <option value="needs_audit">{t.invccStatusNeedsAudit}</option>
+              <option value="needs_reconcile">{t.invccStatusNeedsReconcile}</option>
+              <option value="accepted">{t.invccStatusAccepted}</option>
+              <option value="overridden">{t.invccStatusOverridden}</option>
+              <option value="audited">{t.invccStatusAudited}</option>
             </select>
             <select
               value={lineSort}
               onChange={e => setLineSort(e.target.value)}
               style={d.lineFilterSelect}
             >
-              <option value="default">Original order</option>
-              <option value="item">Item A-Z</option>
-              <option value="status">Status</option>
-              <option value="counter">Counter</option>
-              {showExpected && <option value="variance">Largest variance</option>}
+              <option value="default">{t.invccSortDefault}</option>
+              <option value="item">{t.invccSortItem}</option>
+              <option value="status">{t.invccSortStatus}</option>
+              <option value="counter">{t.invccSortCounter}</option>
+              {showExpected && <option value="variance">{t.invccSortVariance}</option>}
             </select>
             {hasLineFilter && (
               <button
@@ -932,13 +938,13 @@ function CycleCountDetail({ count, settings, onBack, onComplete }) {
                 style={d.lineFilterClear}
                 onClick={() => { setLineSearch(''); setLineStatusFilter(''); setLineSort('default'); }}
               >
-                Clear
+                {t.invccClear}
               </button>
             )}
           </div>
           {hasLineFilter && (
             <p style={d.filterCount}>
-              Showing {visibleLines.length} of {lines.length} count lines
+              {t.invccShowing} {visibleLines.length} {t.invccOf} {lines.length} {t.invccCountLines}
             </p>
           )}
         </>
@@ -947,7 +953,7 @@ function CycleCountDetail({ count, settings, onBack, onComplete }) {
       {tab === 'lines' && lines.length === 0 ? (
         <div style={d.empty}>{t.invCycNoItems}</div>
       ) : tab === 'lines' && visibleLines.length === 0 ? (
-        <div style={d.empty}>No count lines match those filters.</div>
+        <div style={d.empty}>{t.invccNoLinesMatch}</div>
       ) : tab === 'lines' && isFull ? (
         // Full count: render grouped lines by location
         Object.entries(groupedLines).map(([locName, locLines]) => (
@@ -1152,6 +1158,7 @@ function CycleCountDetail({ count, settings, onBack, onComplete }) {
 
 export default function InventoryCycleCounts({ locations, settings, onComplete }) {
   const t = useT();
+  const { user } = useAuth();
   const COUNT_TYPES = useCountTypes(t);
   const STATUS_COLORS = useStatusColors(t);
   const [counts, setCounts] = useState([]);
@@ -1283,7 +1290,7 @@ export default function InventoryCycleCounts({ locations, settings, onComplete }
           type="search"
           value={countSearch}
           onChange={e => setCountSearch(e.target.value)}
-          placeholder="Search counts..."
+          placeholder={t.invccSearchCountsPlaceholder}
           style={s.searchInput}
         />
         <select style={s.select} value={filterType} onChange={e => setFilterType(e.target.value)}>
@@ -1308,13 +1315,13 @@ export default function InventoryCycleCounts({ locations, settings, onComplete }
             style={s.clearBtn}
             onClick={() => { setCountSearch(''); setFilterType(''); setFilterStatus(''); setFilterLocation(''); }}
           >
-            Clear
+            {t.invccClear}
           </button>
         )}
       </div>
       {!loading && (
         <p style={s.filterMeta}>
-          {hasCountListFilter ? `Showing ${counts.length} of ${countsTotal} matching counts` : `${countsTotal} counts`}
+          {hasCountListFilter ? `${t.invccShowing} ${counts.length} ${t.invccOf} ${countsTotal} ${t.invccMatchingCounts}` : `${countsTotal} ${t.invccCounts}`}
         </p>
       )}
 
@@ -1325,7 +1332,7 @@ export default function InventoryCycleCounts({ locations, settings, onComplete }
         <SkeletonList count={4} rows={2} />
       ) : counts.length === 0 ? (
         <div style={s.empty}>
-          <p>{hasCountListFilter ? 'No counts match those filters.' : t.invCycNoCountsYet}</p>
+          <p>{hasCountListFilter ? t.invccNoCountsMatch : t.invCycNoCountsYet}</p>
         </div>
       ) : (
         <>
@@ -1339,8 +1346,8 @@ export default function InventoryCycleCounts({ locations, settings, onComplete }
                   <div>
                     <div style={s.cardTitle}>{count.location_name}</div>
                     <div style={s.cardMeta}>
-                      {t.invCycStartedBy} {count.started_by_name} - {formatDate(count.started_at)}
-                      {count.completed_at && ` - ${t.invCycCompleted} ${formatDate(count.completed_at)}`}
+                      {t.invCycStartedBy} {count.started_by_name} - {formatDate(count.started_at, user?.language)}
+                      {count.completed_at && ` - ${t.invCycCompleted} ${formatDate(count.completed_at, user?.language)}`}
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>

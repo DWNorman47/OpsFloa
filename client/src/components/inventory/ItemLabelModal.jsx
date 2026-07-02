@@ -34,7 +34,7 @@ export default function ItemLabelModal({ item, onClose }) {
     if (!qrDataUrl) return;
     const win = window.open('', '_blank', 'width=380,height=480');
     win.document.write(`<!DOCTYPE html><html><head>
-      <title>Item: ${item.name}</title>
+      <title>${t.invilItem}: ${item.name}</title>
       <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: system-ui, sans-serif; display: flex; align-items: center;
@@ -54,11 +54,11 @@ export default function ItemLabelModal({ item, onClose }) {
       </style>
     </head><body>
       <div class="label">
-        <div class="type">ITEM</div>
+        <div class="type">${t.invilItemType}</div>
         <div class="name">${item.name}</div>
         ${item.sku ? `<div class="sku">${item.sku}</div>` : ''}
         <img class="qr" src="${qrDataUrl}" alt="QR Code" />
-        <div class="footer">OpsFloa Inventory · ID ${item.id}</div>
+        <div class="footer">OpsFloa ${t.invilInventory} · ID ${item.id}</div>
       </div>
       <script>window.onload = () => { window.print(); }<\/script>
     </body></html>`);
@@ -74,14 +74,14 @@ export default function ItemLabelModal({ item, onClose }) {
         </div>
 
         <div style={s.preview}>
-          <div style={s.previewType}>ITEM</div>
+          <div style={s.previewType}>{t.invilItemType}</div>
           <div style={s.previewName}>{item.name}</div>
           {item.sku && <div style={s.previewSku}>{item.sku}</div>}
           {qrDataUrl
             ? <img src={qrDataUrl} alt="QR Code" style={s.qr} />
             : <div style={s.qrPlaceholder}>{t.labelModalGenerating}</div>
           }
-          <div style={s.previewFooter}>OpsFloa Inventory · ID {item.id}</div>
+          <div style={s.previewFooter}>OpsFloa {t.invilInventory} · ID {item.id}</div>
         </div>
 
         <p style={s.hint}>
