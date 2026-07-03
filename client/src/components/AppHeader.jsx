@@ -23,6 +23,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
 import AppSwitcher, { APPS } from './AppSwitcher';
 import NotificationBell from './NotificationBell';
+import MessagesBell from './MessagesBell';
 import { RefreshButton, LanguageSwitcher } from './HeaderActions';
 import GuideDrawer from './GuideDrawer';
 
@@ -50,6 +51,7 @@ export default function AppHeader({
           )}
         </div>
         <div style={s.headerRight} className="header-right">
+          {features?.feature_chat !== false && <MessagesBell />}
           <NotificationBell />
           {user?.full_name && (
             <span style={s.userName} className="header-username">{user.full_name}</span>

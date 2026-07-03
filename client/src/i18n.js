@@ -594,6 +594,7 @@ const translations = {
     justNow: 'Just now',
     minutesAgo: '{n}m ago',
     hoursAgo: '{n}h ago',
+    noUnreadMessages: 'No unread messages',
     notifAriaLabel: 'Notifications',
 
     // ── Upcoming Shifts ───────────────────────────────────────────────────────
@@ -4397,6 +4398,7 @@ const translations = {
     justNow: 'Ahora mismo',
     minutesAgo: 'hace {n}m',
     hoursAgo: 'hace {n}h',
+    noUnreadMessages: 'No hay mensajes sin leer',
     notifAriaLabel: 'Notificaciones',
 
     // ── Upcoming Shifts ───────────────────────────────────────────────────────

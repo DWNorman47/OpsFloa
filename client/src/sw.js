@@ -183,11 +183,16 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('push', event => {
   const data = event.data?.json() ?? {};
+  const isMessage = data.type === 'message';
   event.waitUntil(
     self.registration.showNotification(data.title || 'OpsFloa', {
       body: data.body || '',
       icon: '/icon-192.png',
       badge: '/icon-192.png',
+      // Web push can't set a custom sound file reliably — rely on the OS
+      // notification sound plus a vibration pattern for message pushes.
+      // tag+renotify groups a thread but still re-alerts on each new message.
+      ...(isMessage ? { vibrate: [200, 100, 200], tag: 'chat', renotify: true } : {}),
       data: { url: data.url || '/' },
     })
   );
