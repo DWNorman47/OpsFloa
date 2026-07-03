@@ -3160,6 +3160,62 @@ router.get('/payroll-export', requireAdmin, requirePerm('view_reports'), require
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
+// GET /admin/export/worker-hours — one CSV row per worker with their APPROVED
+// hours (Regular / OT / Total + days worked) over a date range. A leaner sibling
+// of /payroll-export (no pay/rate columns). Honors the acting admin's
+// worker_access_ids scope.
+router.get('/export/worker-hours', requireAdmin, requirePerm('view_reports'), requirePlan('starter'), async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) return res.status(400).json({ error: 'from and to required' });
+  const companyId = req.user.company_id;
+  const accessIds = req.user.worker_access_ids;
+  try {
+    const s = await getSettings(companyId);
+    const threshold = parseFloat(s.overtime_threshold) || 8;
+    const weekStart = s.week_start;
+
+    const wConds = ['company_id = $1', "role = 'worker'", 'active = true'];
+    const wVals = [companyId];
+    if (accessIds && accessIds.length) { wVals.push(accessIds); wConds.push(`id = ANY($${wVals.length})`); }
+    const workers = await pool.query(
+      `SELECT id, full_name, invoice_name, overtime_rule FROM users WHERE ${wConds.join(' AND ')} ORDER BY full_name`,
+      wVals
+    );
+
+    const eConds = ['company_id = $1', 'work_date >= $2', 'work_date <= $3', "status = 'approved'"];
+    const eVals = [companyId, from, to];
+    if (accessIds && accessIds.length) { eVals.push(accessIds); eConds.push(`user_id = ANY($${eVals.length})`); }
+    const entries = await pool.query(
+      `SELECT user_id, start_time, end_time, work_date, break_minutes FROM time_entries WHERE ${eConds.join(' AND ')}`,
+      eVals
+    );
+
+    const byWorker = {};
+    entries.rows.forEach(e => { (byWorker[e.user_id] = byWorker[e.user_id] || []).push(e); });
+
+    const netHours = e => hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60;
+    const dayKey = d => (d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10));
+
+    const lines = [['Worker', 'Regular Hrs', 'OT Hrs', 'Total Hrs', 'Days Worked'].join(',')];
+    let tReg = 0, tOt = 0, tTot = 0, tDays = 0;
+    for (const w of workers.rows) {
+      const we = byWorker[w.id] || [];
+      const total = we.reduce((sum, e) => sum + netHours(e), 0);
+      const { overtimeHours } = computeOT(we, w.overtime_rule || 'daily', threshold, weekStart);
+      const ot = Math.min(overtimeHours, total);     // OT can't exceed total worked
+      const regular = Math.max(0, total - ot);        // Regular = Total − OT (no double count)
+      const days = new Set(we.map(e => dayKey(e.work_date))).size;
+      tReg += regular; tOt += ot; tTot += total; tDays += days;
+      lines.push([csvCell(w.invoice_name || w.full_name), regular.toFixed(2), ot.toFixed(2), total.toFixed(2), days].join(','));
+    }
+    lines.push([csvCell('TOTAL'), tReg.toFixed(2), tOt.toFixed(2), tTot.toFixed(2), tDays].join(','));
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="worker-hours-${from}-to-${to}.csv"`);
+    res.send(lines.join('\r\n'));
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
 // GET /admin/company — company profile
 router.get('/company', requireAdmin, async (req, res) => {
   try {
