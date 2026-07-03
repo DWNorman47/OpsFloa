@@ -14,7 +14,7 @@ const SETTINGS_DEFAULTS = {
   // and Analytics start OFF; admin can flip them on from Company Settings.
   // Migration 0093 backfilled '1' rows for every existing company so this
   // default change is a no-op for them.
-  module_field: false, module_timeclock: true, module_projects: true, module_inventory: false, module_tools: true, module_analytics: false, module_team: true,
+  module_field: false, module_timeclock: true, module_projects: true, module_inventory: false, module_tools: false, module_analytics: false, module_team: true,
   // Reports module's financial tabs (P&L portfolio + WIP). New companies start
   // OFF; admins enable from Company Settings → Modules. Migration 0118
   // backfilled '1' for existing companies. (Sales and Subcontractors are NOT
