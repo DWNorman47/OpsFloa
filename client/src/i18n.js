@@ -3916,11 +3916,11 @@ const translations = {
     to: 'Hasta',
 
     // ── Admin Dashboard tabs ─────────────────────────────────────────────────
-    tabLive: 'En Vivo',
-    timeGroupPersonal: 'Personal',
-    timeGroupWorkforce: 'Personal del equipo',
+    tabLive: 'Empleados Activos',
+    timeGroupPersonal: 'Administrador',
+    timeGroupWorkforce: 'Empleados',
     tabAnalytics: 'Análisis',
-    tabApprovals: 'Aprobaciones',
+    tabApprovals: 'Control de Asistencia',
     tabReports: 'Reportes',
     tabManage: 'Gestionar',
     tabSettings: 'Configuración',
@@ -6170,7 +6170,7 @@ const translations = {
     subPoCreateFailed: "No se pudo crear la OC.",
     subNewPoTitle: "Nueva OC de subcontratista",
     subCreateDraftPo: "Crear borrador de OC",
-    appTimeClock: "Reloj de tiempo",
+    appTimeClock: "Registro de entrada",
     appBooking: "Reservas",
     appField: "Campo",
     appInventory: "Inventario",
@@ -7523,13 +7523,13 @@ const translations = {
     confirmEmailFromLoginPage: 'desde la página de inicio de sesión.',
 
     // ── Dashboard tabs ────────────────────────────────────────────────────────
-    tabClock: 'Reloj',
+    tabClock: 'Registro de entrada',
     tabMessages: 'Mensajes',
-    tabTimesheet: 'Tarjeta',
+    tabTimesheet: 'Registro de horas',
     tabTimeOff: 'Tiempo Libre',
     tabSchedule: 'Horario',
     tabAvailability: 'Disponibilidad',
-    tabExpenses: 'Gastos',
+    tabExpenses: 'Gastos reembolsables',
 
     // ── Analytics page ────────────────────────────────────────────────────────
     analyticsTitle: 'Analíticas',
