@@ -41,6 +41,7 @@ const PRESETS = {
     outRef: 'clock', outInterval: '15', outGrace: '0', outDir: 'nearest',
     otMode: 'day',
     otBands: [{ afterHours: '8', mult: '1.5' }, { afterHours: '12', mult: '2' }],
+    sd7Enabled: true, sd7First: '8', sd7FirstMult: '1.5', sd7AfterMult: '2',
     showActualAndPaid: true,
   }),
 };
@@ -53,6 +54,7 @@ function blankForm() {
     inRef: 'schedule', inInterval: '15', inGrace: '0', inDir: 'off',
     outRef: 'schedule', outInterval: '15', outGrace: '0', outDir: 'off',
     otMode: 'off', otBands: [],
+    sd7Enabled: false, sd7First: '8', sd7FirstMult: '1.5', sd7AfterMult: '2',
     showActualAndPaid: true,
   };
 }
@@ -89,6 +91,13 @@ function policyToForm(raw) {
   const toBands = list => list.map(b => ({ afterHours: String(b.afterHours), mult: String(b.mult) }));
   if (Array.isArray(ot.dailyBands) && ot.dailyBands.length) { f.otMode = 'day'; f.otBands = toBands(ot.dailyBands); }
   else if (Array.isArray(ot.weeklyBands) && ot.weeklyBands.length) { f.otMode = 'week'; f.otBands = toBands(ot.weeklyBands); }
+  const sdc = ot.seventhDay;
+  if (sdc && sdc.enabled) {
+    f.sd7Enabled = true;
+    if (sdc.firstHoursThreshold != null) f.sd7First = String(sdc.firstHoursThreshold);
+    if (sdc.firstMult != null) f.sd7FirstMult = String(sdc.firstMult);
+    if (sdc.afterMult != null) f.sd7AfterMult = String(sdc.afterMult);
+  }
   f.showActualAndPaid = p.display ? p.display.showActualAndPaid !== false : true;
   return f;
 }
@@ -105,6 +114,14 @@ function formToPolicy(f) {
       .filter(b => Number.isFinite(b.afterHours) && b.afterHours >= 0 && Number.isFinite(b.mult) && b.mult > 0)
       .sort((a, b) => a.afterHours - b.afterHours);
     if (bands.length) overtime[f.otMode === 'week' ? 'weeklyBands' : 'dailyBands'] = bands;
+  }
+  if (f.sd7Enabled) {
+    overtime.seventhDay = {
+      enabled: true,
+      firstHoursThreshold: parseFloat(f.sd7First) || 0,
+      firstMult: parseFloat(f.sd7FirstMult) || 1.5,
+      afterMult: parseFloat(f.sd7AfterMult) || 2,
+    };
   }
   return {
     version: 1,
@@ -231,6 +248,20 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
                 <button type="button" style={s.addTier} onClick={addBand}>{t.hrOtAddTier}</button>
               </div>
             )}
+            <div style={{ marginTop: 18 }}>
+              <label style={s.checkRow}>
+                <input type="checkbox" checked={form.sd7Enabled} onChange={e => set('sd7Enabled', e.target.checked)} />
+                <span>{t.hrSeventhDay}</span>
+              </label>
+              <p style={s.hint}>{t.hrSeventhDayHint}</p>
+              {form.sd7Enabled && (
+                <div style={s.grid}>
+                  <Field label={t.hrSdFirst}><input type="number" min="0" step="0.5" style={s.input} value={form.sd7First} onChange={e => set('sd7First', e.target.value)} /></Field>
+                  <Field label={t.hrSdFirstMult}><input type="number" min="1" step="0.05" style={s.input} value={form.sd7FirstMult} onChange={e => set('sd7FirstMult', e.target.value)} /></Field>
+                  <Field label={t.hrSdAfterMult}><input type="number" min="1" step="0.05" style={s.input} value={form.sd7AfterMult} onChange={e => set('sd7AfterMult', e.target.value)} /></Field>
+                </div>
+              )}
+            </div>
           </section>
 
           <section style={s.section}>

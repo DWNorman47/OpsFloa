@@ -80,6 +80,15 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null) {
   const bandTotals = bands.map(() => 0);
   let autoReg = 0;
 
+  // 7th-consecutive-day premium (daily rule only): when a worker worked all 7
+  // days of a workweek, that week's chronologically-last worked day is paid
+  // entirely as overtime — the first N hours at one multiplier, the rest at a
+  // higher one (e.g. California: first 8h @1.5×, beyond @2×). No regular hours
+  // accrue on that day.
+  const sd = (otConfig && otConfig.seventhDay && otConfig.seventhDay.enabled && rule === 'daily')
+    ? otConfig.seventhDay : null;
+  let seventhFirst = 0, seventhRest = 0;
+
   if (rule === 'none') {
     autoReg = auto.reduce((s, e) => s + entryDuration(e), 0);
   } else {
@@ -90,21 +99,44 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null) {
         : e.work_date.toString().substring(0, 10);
       buckets[key] = (buckets[key] || 0) + entryDuration(e);
     });
-    Object.values(buckets).forEach(h => {
-      autoReg += Math.min(h, bands[0].afterHours);
-      bands.forEach((b, i) => {
-        const upper = i + 1 < bands.length ? bands[i + 1].afterHours : Infinity;
-        bandTotals[i] += Math.max(0, Math.min(h, upper) - b.afterHours);
+
+    // Identify each week's 7th-day key: group worked days by workweek; a week
+    // with all 7 days worked contributes its latest day.
+    const seventhKeys = new Set();
+    if (sd) {
+      const byWeek = {};
+      Object.keys(buckets).forEach(dk => {
+        const wk = weekBucketKey(dk, weekStart);
+        (byWeek[wk] = byWeek[wk] || []).push(dk);
       });
+      Object.values(byWeek).forEach(daysArr => {
+        if (daysArr.length >= 7) seventhKeys.add(daysArr.slice().sort().pop());
+      });
+    }
+    const firstT = sd ? (parseFloat(sd.firstHoursThreshold) || 0) : 0;
+
+    Object.entries(buckets).forEach(([dk, h]) => {
+      if (sd && seventhKeys.has(dk)) {
+        seventhFirst += Math.min(h, firstT);
+        seventhRest  += Math.max(0, h - firstT);
+      } else {
+        autoReg += Math.min(h, bands[0].afterHours);
+        bands.forEach((b, i) => {
+          const upper = i + 1 < bands.length ? bands[i + 1].afterHours : Infinity;
+          bandTotals[i] += Math.max(0, Math.min(h, upper) - b.afterHours);
+        });
+      }
     });
   }
 
   const otBands = bands
     .map((b, i) => ({ hours: bandTotals[i], mult: b.mult }))
     .filter(b => b.hours > 0);
+  if (sd && seventhFirst > 0) otBands.push({ hours: seventhFirst, mult: parseFloat(sd.firstMult) || 1.5 });
+  if (sd && seventhRest > 0)  otBands.push({ hours: seventhRest,  mult: parseFloat(sd.afterMult)  || 2 });
   if (overrideOt > 0) otBands.push({ hours: overrideOt, mult: null });
 
-  const overtimeHours = bandTotals.reduce((s, h) => s + h, 0) + overrideOt;
+  const overtimeHours = bandTotals.reduce((s, h) => s + h, 0) + seventhFirst + seventhRest + overrideOt;
 
   return {
     regularHours:  overrideReg + autoReg,

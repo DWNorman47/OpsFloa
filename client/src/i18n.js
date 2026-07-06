@@ -647,6 +647,11 @@ const translations = {
     hrOtHoursPay: 'hrs, pay',
     hrOtAddTier: '+ Add tier',
     hrOtRemove: 'Remove tier',
+    hrSeventhDay: '7th consecutive day premium',
+    hrSeventhDayHint: 'When a worker works all 7 days of a workweek, pay the 7th day entirely as overtime (California-style). Applies to daily overtime.',
+    hrSdFirst: 'First hours',
+    hrSdFirstMult: 'First rate ×',
+    hrSdAfterMult: 'Beyond rate ×',
     notifAriaLabel: 'Notifications',
 
     // ── Upcoming Shifts ───────────────────────────────────────────────────────
@@ -4503,6 +4508,11 @@ const translations = {
     hrOtHoursPay: 'h, pagar',
     hrOtAddTier: '+ Añadir nivel',
     hrOtRemove: 'Quitar nivel',
+    hrSeventhDay: 'Prima por 7.º día consecutivo',
+    hrSeventhDayHint: 'Cuando un empleado trabaja los 7 días de la semana laboral, paga el 7.º día completamente como horas extra (estilo California). Aplica a las horas extra diarias.',
+    hrSdFirst: 'Primeras horas',
+    hrSdFirstMult: 'Tarifa inicial ×',
+    hrSdAfterMult: 'Tarifa posterior ×',
     notifAriaLabel: 'Notificaciones',
 
     // ── Upcoming Shifts ───────────────────────────────────────────────────────

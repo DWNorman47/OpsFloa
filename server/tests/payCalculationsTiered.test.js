@@ -85,6 +85,43 @@ describe('computeDailyPayCosts with tiers', () => {
   });
 });
 
+describe('7th-consecutive-day premium (California)', () => {
+  // Workweek Mon 2026-07-06 … Sun 2026-07-12 (weekStart = Monday).
+  const WEEK = ['2026-07-06', '2026-07-07', '2026-07-08', '2026-07-09', '2026-07-10', '2026-07-11', '2026-07-12'];
+  const cfg = {
+    dailyBands: [{ afterHours: 8, mult: 1.5 }, { afterHours: 12, mult: 2 }],
+    seventhDay: { enabled: true, firstHoursThreshold: 8, firstMult: 1.5, afterMult: 2 },
+  };
+
+  test('all 7 days × 8h → 6 days regular, the 7th all OT @1.5', () => {
+    const r = computeOT(WEEK.map(d => entry(d, 8)), 'daily', 8, 1, cfg);
+    expect(r.regularHours).toBeCloseTo(48, 5);
+    expect(r.overtimeHours).toBeCloseTo(8, 5);
+    expect(r.otBands).toEqual([{ hours: 8, mult: 1.5 }]);
+  });
+
+  test('7th day of 10h → first 8h @1.5, remaining 2h @2 (no regular that day)', () => {
+    const entries = WEEK.map((d, i) => entry(d, i === 6 ? 10 : 8));
+    const r = computeOT(entries, 'daily', 8, 1, cfg);
+    expect(r.regularHours).toBeCloseTo(48, 5);
+    expect(r.otBands).toEqual([{ hours: 8, mult: 1.5 }, { hours: 2, mult: 2 }]);
+  });
+
+  test('only 6 days worked → no 7th-day premium, normal tiers apply', () => {
+    // Mon–Sat, with Saturday a 10h day → 2h into the 1.5× tier, no 7th day.
+    const entries = WEEK.slice(0, 6).map((d, i) => entry(d, i === 5 ? 10 : 8));
+    const r = computeOT(entries, 'daily', 8, 1, cfg);
+    expect(r.regularHours).toBeCloseTo(48, 5);
+    expect(r.otBands).toEqual([{ hours: 2, mult: 1.5 }]);
+  });
+
+  test('disabled 7th-day config leaves the last day on normal tiers', () => {
+    const r = computeOT(WEEK.map(d => entry(d, 8)), 'daily', 8, 1, { dailyBands: cfg.dailyBands });
+    expect(r.regularHours).toBeCloseTo(56, 5); // all 7 days regular
+    expect(r.overtimeHours).toBeCloseTo(0, 5);
+  });
+});
+
 describe('weekly tiered OT', () => {
   test('weekly bands slice the week bucket', () => {
     const cfg = { weeklyBands: [{ afterHours: 40, mult: 1.5 }, { afterHours: 50, mult: 2 }] };
