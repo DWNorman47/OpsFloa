@@ -28,6 +28,7 @@ const state = {
   align: { a: 1, b: 0, e: 0, f: 0 },
   boundary: [],            // closed polygon, world px [{x,y}]
   contours: { existing: [], proposed: [] }, // [{ pts:[{x,y}], elev, spot }]
+  walls: [],               // retaining-wall digs: [{ id, pts:[{x,y}], cfg, result }]
 
   draft: [],               // in-progress clicks for trace/boundary
   calibPts: [],            // in-progress calibration clicks
@@ -436,6 +437,7 @@ function paint() {
   });
 
   drawBoundary();
+  drawWall();
   drawCalibration();
   drawDraft();
 
@@ -672,7 +674,7 @@ function updateHud() {
 const TOOL_LABEL = {
   pan: 'Pan', calibrate: 'Scale', boundary: 'Boundary',
   trace: 'Trace contour', wand: 'Auto trace', spot: 'Spot elevation', pad: 'Flat pad',
-  select: 'Select', erase: 'Erase box', align: 'Align sheets',
+  wall: 'Wall dig', select: 'Select', erase: 'Erase box', align: 'Align sheets',
 };
 
 function setTool(t) {
@@ -955,6 +957,9 @@ async function handleClick(w) {
     case 'trace':
       state.draft.push(w);
       break;
+    case 'wall':
+      state.draft.push(w);
+      break;
     case 'pad':
       // clicks on an existing pad edit it rather than starting a new one
       if (!state.draft.length && nearestPadEdge(w, 10 / state.view.zoom)) {
@@ -1174,6 +1179,23 @@ async function finishDraftIfAny(commit) {
         setMsg(`Flat pad at ${elev} recorded.`);
       }
     } else setMsg('A pad needs at least 3 points.');
+  } else if (state.tool === 'wall') {
+    if (pts.length >= 2) {
+      if (!state.calibration) { setMsg('Calibrate the scale (📏) before measuring a wall dig.'); draw(); return; }
+      const cfg = await askWallSection(polyLengthFt(pts), state.contours.existing.length > 0);
+      if (cfg) {
+        const result = computeWallSweep(pts, cfg);
+        if (result) {
+          snapshot();
+          state.walls.push({ id: randId(), pts, cfg, result });
+          renderWalls();
+          saveLocal();
+          let m = `Wall dig: ${fmt(result.netCY)} CY export (${fmt(result.truckCY)} CY loose).`;
+          if (result.noGradeFrac > 0.05) m += ' Some stations had no Existing contour nearby — depth taken as 0 there.';
+          setMsg(m);
+        }
+      }
+    } else setMsg('A wall dig needs at least 2 points along its line.');
   }
   draw();
 }
@@ -1189,6 +1211,7 @@ function takeSnap() {
     align: state.align,
     boundary: state.boundary,
     contours: state.contours,
+    walls: state.walls,
     lastElev: state.lastElev,
     prevElev: state.prevElev,
   });
@@ -1209,6 +1232,7 @@ function undo() {
   state.align = s.align || alignIdentity();
   state.boundary = s.boundary || [];
   state.contours = s.contours || { existing: [], proposed: [] };
+  state.walls = s.walls || [];
   state.lastElev = s.lastElev || { existing: null, proposed: null };
   state.prevElev = s.prevElev || { existing: null, proposed: null };
   state.selected = null;
@@ -1221,6 +1245,7 @@ function undo() {
   els.btnUndo.disabled = !undoStack.length;
   refreshStatuses();
   refreshContourList();
+  renderWalls();
   updateAlignStatus();
   saveLocal();
   setMsg(`Undone.${undoStack.length ? ` ${undoStack.length} more step${undoStack.length === 1 ? '' : 's'} available.` : ''}`);
@@ -1602,6 +1627,7 @@ window.addEventListener('keydown', e => {
       editSelectedElevation(); break;
     case 't': case 'T': setTool('trace'); break;
     case 'a': case 'A': setTool('wand'); break;
+    case 'w': case 'W': setTool('wall'); break;
     case 'p': case 'P': setTool('pad'); break;
     case 'v': case 'V': setTool('select'); break;
     case 'b': case 'B': setTool('boundary'); break;
@@ -1917,6 +1943,182 @@ function renderResults() {
   $(id).addEventListener('input', () => state.result && renderResults()));
 els.inpZoomSpeed.addEventListener('change', () => saveLocal());
 
+/* ============================== Retaining-wall dig ============================== */
+// A wall trench cross-section is a trapezoid: a flat bottom (footing + working
+// room) plus two backslopes rising to grade. Area = width·depth + slope·depth²
+// (each side is a right triangle of base slope·depth and height depth). Volume
+// is that area swept along the wall's length. Export = the excavated native that
+// leaves the site (gross minus any reused as backfill); truck volume swells it.
+
+function wallSectionAreaSf(bottomWidth, depth, slope) {
+  if (!(depth > 0) || !(bottomWidth >= 0)) return 0;
+  return bottomWidth * depth + slope * depth * depth;
+}
+
+function wallComputeCore({ grossFt3, reusePct, swellPct }) {
+  const grossCY = grossFt3 / 27;
+  const reuse = Math.min(1, Math.max(0, (reusePct || 0) / 100));
+  const netCY = grossCY * (1 - reuse);
+  const swell = Math.max(0, (swellPct || 0) / 100);
+  return { grossCY, netCY, truckCY: netCY * (1 + swell), swell };
+}
+
+function polyLengthFt(pts) {
+  const ftPerPx = (state.calibration && state.calibration.ftPerPx) || 0;
+  let d = 0;
+  for (let i = 0; i < pts.length - 1; i++) d += dist(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y);
+  return d * ftPerPx;
+}
+
+// --- Quick calculator (no plans needed) ---
+function wallCalcCompute() {
+  const len = parseFloat($('wcLen').value) || 0;
+  const depth = parseFloat($('wcDepth').value) || 0;
+  const width = parseFloat($('wcWidth').value) || 0;
+  const slope = parseFloat($('wcSlope').value) || 0;
+  const areaSf = wallSectionAreaSf(width, depth, slope);
+  const core = wallComputeCore({
+    grossFt3: areaSf * len,
+    reusePct: parseFloat($('wcReuse').value),
+    swellPct: parseFloat($('wcSwell').value),
+  });
+  const reused = core.grossCY - core.netCY;
+  $('wcResult').innerHTML = `
+    <div class="res-row"><span>Cross-section area</span><b>${fmt(areaSf, 1)} sf</b></div>
+    <div class="res-row"><span>Excavation (bank)</span><b>${fmt(core.grossCY)} CY</b></div>
+    ${reused > 0.5 ? `<div class="res-row"><span>Reused as backfill</span><b>− ${fmt(reused)} CY</b></div>` : ''}
+    <div class="res-row total"><span>EXPORT off site (bank)</span><b>${fmt(core.netCY)} CY</b></div>
+    <div class="res-row"><span>≈ truck volume (loose, × ${(1 + core.swell).toFixed(2)})</span><b>${fmt(core.truckCY)} CY</b></div>
+    <div class="wall-note">Bank = in-ground volume; truck = swelled loose volume for hauling. Cross-section = bottom width × depth + slope × depth² (two backslopes). An estimating number — verify against the plans.</div>`;
+}
+$('btnWallCalc').addEventListener('click', () => {
+  $('wcSwell').value = els.inpSwell.value || 25;
+  wallCalcCompute();
+  $('wallCalc').classList.remove('hidden');
+});
+$('wcClose').addEventListener('click', () => $('wallCalc').classList.add('hidden'));
+['wcLen', 'wcDepth', 'wcWidth', 'wcSlope', 'wcReuse', 'wcSwell']
+  .forEach(id => $(id).addEventListener('input', wallCalcCompute));
+
+// --- Section mode (traced alignment off the plan) ---
+function syncWsMode() {
+  const mode = document.querySelector('input[name=wsMode]:checked').value;
+  $('wsDepth').disabled = mode !== 'constant';
+  $('wsSub').disabled = mode !== 'subgrade';
+}
+document.querySelectorAll('input[name=wsMode]').forEach(r => r.addEventListener('change', syncWsMode));
+
+// Changing Swell % (Settings) refigures each wall's loose/truck volume live,
+// off the stored net bank CY — no re-sweep needed.
+els.inpSwell.addEventListener('input', () => {
+  if (!state.walls.length) return;
+  const swell = Math.max(0, (parseFloat(els.inpSwell.value) || 0) / 100);
+  for (const w of state.walls) { w.result.swell = swell; w.result.truckCY = w.result.netCY * (1 + swell); }
+  renderWalls();
+});
+
+function askWallSection(lengthFt, canSubgrade) {
+  return new Promise(resolve => {
+    $('wsLen').textContent = fmt(lengthFt) + ' ft along the line';
+    const subRadio = document.querySelector('input[name=wsMode][value=subgrade]');
+    subRadio.disabled = !canSubgrade;
+    if (!canSubgrade) document.querySelector('input[name=wsMode][value=constant]').checked = true;
+    $('wsSubHint').textContent = canSubgrade
+      ? 'Reads the Existing ground elevation off your traced contours at each station and digs down to this footing subgrade — so depth follows the real ground.'
+      : 'Trace at least one Existing contour to enable subgrade-elevation mode.';
+    syncWsMode();
+    $('wallSection').classList.remove('hidden');
+    const cleanup = () => { $('wsOk').onclick = null; $('wsCancel').onclick = null; $('wallSection').classList.add('hidden'); };
+    $('wsCancel').onclick = () => { cleanup(); resolve(null); };
+    $('wsOk').onclick = () => {
+      const mode = document.querySelector('input[name=wsMode]:checked').value;
+      cleanup();
+      resolve({
+        bottomWidth: parseFloat($('wsWidth').value) || 0,
+        slope: parseFloat($('wsSlope').value) || 0,
+        reusePct: parseFloat($('wsReuse').value) || 0,
+        depthMode: mode,
+        depth: parseFloat($('wsDepth').value) || 0,
+        subgrade: parseFloat($('wsSub').value) || 0,
+      });
+    };
+  });
+}
+
+function computeWallSweep(pts, cfg) {
+  const ftPerPx = state.calibration && state.calibration.ftPerPx;
+  if (!ftPerPx) return null;
+  const interp = (cfg.depthMode === 'subgrade' && state.contours.existing.length)
+    ? makeInterpolator(state.contours.existing) : null;
+  let lengthFt = 0, volFt3 = 0, dSum = 0, dN = 0, dMin = Infinity, dMax = -Infinity, noGrade = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    const segFt = dist(a.x, a.y, b.x, b.y) * ftPerPx;
+    if (segFt <= 0) continue;
+    const n = Math.max(1, Math.round(segFt)); // ~1-ft stations
+    const dsFt = segFt / n;
+    for (let s = 0; s < n; s++) {
+      const t = (s + 0.5) / n;
+      const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+      let depth;
+      if (interp) {
+        const g = interp(x, y);
+        if (g === null) { depth = 0; noGrade++; } else depth = Math.max(0, g - cfg.subgrade);
+      } else depth = Math.max(0, cfg.depth);
+      volFt3 += wallSectionAreaSf(cfg.bottomWidth, depth, cfg.slope) * dsFt;
+      lengthFt += dsFt; dSum += depth; dN++;
+      if (depth < dMin) dMin = depth;
+      if (depth > dMax) dMax = depth;
+    }
+  }
+  const core = wallComputeCore({ grossFt3: volFt3, reusePct: cfg.reusePct, swellPct: parseFloat(els.inpSwell.value) });
+  return { ...core, lengthFt, avgDepth: dN ? dSum / dN : 0,
+    minDepth: isFinite(dMin) ? dMin : 0, maxDepth: isFinite(dMax) ? dMax : 0,
+    noGradeFrac: dN ? noGrade / dN : 0 };
+}
+
+function drawWall() {
+  if (!state.walls || !state.walls.length) return;
+  for (const w of state.walls) {
+    if (!w.pts || w.pts.length < 2) continue;
+    ctx.strokeStyle = '#e0a03f';
+    ctx.lineWidth = lw(3);
+    ctx.beginPath();
+    w.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+    ctx.stroke();
+    ctx.fillStyle = '#e0a03f';
+    for (const p of w.pts) { ctx.beginPath(); ctx.arc(p.x, p.y, lw(3), 0, Math.PI * 2); ctx.fill(); }
+    const mid = w.pts[Math.floor(w.pts.length / 2)];
+    if (w.result) labelAt(mid.x, mid.y, `${fmt(w.result.netCY)} CY`, '#e0a03f');
+  }
+}
+
+function renderWalls() {
+  const sec = $('secWalls'), list = $('wallList');
+  if (!sec || !list) return;
+  if (!state.walls.length) { sec.classList.add('hidden'); draw(); return; }
+  sec.classList.remove('hidden');
+  const cnt = $('wallCount'); if (cnt) cnt.textContent = state.walls.length;
+  const depthTxt = r => r.minDepth === r.maxDepth
+    ? `${fmt(r.avgDepth, 1)} ft deep`
+    : `${fmt(r.minDepth, 1)}–${fmt(r.maxDepth, 1)} ft deep`;
+  list.innerHTML = state.walls.map((w, i) => `
+    <div class="wall-row">
+      <div class="wall-row-main">
+        <b>${fmt(w.result.netCY)} CY export</b>
+        <span>${fmt(w.result.lengthFt)} ft · ${fmt(w.result.truckCY)} CY loose · ${depthTxt(w.result)}</span>
+      </div>
+      <button class="wall-del" data-i="${i}" title="Delete this wall dig">✕</button>
+    </div>`).join('');
+  list.querySelectorAll('.wall-del').forEach(b => b.addEventListener('click', () => {
+    snapshot();
+    state.walls.splice(parseInt(b.dataset.i, 10), 1);
+    renderWalls();
+    saveLocal();
+  }));
+  draw();
+}
+
 /* ============================== Save / load ============================== */
 
 $('btnNew').addEventListener('click', async () => {
@@ -1947,6 +2149,7 @@ function projectData() {
     align: state.align,
     boundary: state.boundary,
     contours: state.contours,
+    walls: state.walls,
     settings: {
       gridFt: els.inpGrid.value, interval: els.inpInterval.value,
       shrink: els.inpShrink.value, swell: els.inpSwell.value,
@@ -1964,6 +2167,7 @@ function applyProjectData(d) {
     : alignIdentity();
   state.boundary = d.boundary || [];
   state.contours = d.contours || { existing: [], proposed: [] };
+  state.walls = d.walls || [];
   if (d.pages) {
     state.sheets.existing.pageNum = d.pages.existing || 1;
     state.sheets.proposed.pageNum = d.pages.proposed || 2;
@@ -1979,6 +2183,7 @@ function applyProjectData(d) {
   els.resultsSection.classList.add('hidden');
   refreshStatuses();
   refreshContourList();
+  renderWalls();
   updateAlignStatus();
   return true;
 }
@@ -2023,6 +2228,7 @@ function resetTakeoffState() {
   state.align = alignIdentity();
   state.boundary = [];
   state.contours = { existing: [], proposed: [] };
+  state.walls = [];
   state.draft = []; state.calibPts = []; state.alignPts = []; state.alignQs = [];
   state.wandPts = null;
   state.boxA = state.boxB = null;
@@ -2033,6 +2239,7 @@ function resetTakeoffState() {
   els.resultsSection.classList.add('hidden');
   refreshStatuses();
   refreshContourList();
+  renderWalls();
   updateAlignStatus();
 }
 
