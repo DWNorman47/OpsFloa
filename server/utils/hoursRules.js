@@ -115,10 +115,36 @@ function parsePolicy(raw) {
       clockIn:  edge(rounding.clockIn,  DEFAULT_POLICY.rounding.clockIn),
       clockOut: edge(rounding.clockOut, DEFAULT_POLICY.rounding.clockOut),
     },
+    // Tiered overtime + 7th-consecutive-day config (Milestone 2). Passed
+    // through with light normalization; the pay calculator (resolveBands)
+    // validates individual bands.
+    overtime: (obj.overtime && typeof obj.overtime === 'object') ? obj.overtime : {},
     premiums: (obj.premiums && typeof obj.premiums === 'object') ? obj.premiums : {},
     display: {
       showActualAndPaid: obj.display?.showActualAndPaid !== false,
     },
+  };
+}
+
+/**
+ * Extract the tiered-overtime config for the pay calculator from a company
+ * `settings` object, or null when there's nothing tiered configured (so
+ * computeOT stays on its single-tier path). Returns
+ * `{ dailyBands, weeklyBands, seventhDay }` when the enabled policy defines
+ * bands or a 7th-day rule.
+ */
+function otConfigFromSettings(settings) {
+  const p = parsePolicy(settings && settings.hours_rules);
+  if (!p.enabled) return null;
+  const o = p.overtime || {};
+  const hasDaily  = Array.isArray(o.dailyBands)  && o.dailyBands.length  > 0;
+  const hasWeekly = Array.isArray(o.weeklyBands) && o.weeklyBands.length > 0;
+  const has7th    = o.seventhDay && o.seventhDay.enabled === true;
+  if (!hasDaily && !hasWeekly && !has7th) return null;
+  return {
+    dailyBands:  hasDaily  ? o.dailyBands  : [],
+    weeklyBands: hasWeekly ? o.weeklyBands : [],
+    seventhDay:  has7th    ? o.seventhDay  : null,
   };
 }
 
@@ -313,6 +339,7 @@ function roundEntriesFromSettings(entries, settings, ctx = {}) {
 module.exports = {
   DEFAULT_POLICY,
   roundEntriesFromSettings,
+  otConfigFromSettings,
   ROUNDING_DIRECTIONS,
   ROUNDING_REFERENCES,
   parsePolicy,
