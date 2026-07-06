@@ -298,8 +298,19 @@ function roundEntriesForPay(entries, policy, ctx = {}) {
   });
 }
 
+/**
+ * Convenience for route handlers: round a batch of entries using the policy
+ * stored on a company `settings` object (the `hours_rules` key). Equivalent to
+ * `roundEntriesForPay(entries, parsePolicy(settings.hours_rules), ctx)`. Returns
+ * the input untouched when there's no policy.
+ */
+function roundEntriesFromSettings(entries, settings, ctx = {}) {
+  return roundEntriesForPay(entries, parsePolicy(settings && settings.hours_rules), ctx);
+}
+
 module.exports = {
   DEFAULT_POLICY,
+  roundEntriesFromSettings,
   ROUNDING_DIRECTIONS,
   ROUNDING_REFERENCES,
   parsePolicy,

@@ -13,6 +13,7 @@ const {
   toMin,
   weekdayOf,
 } = require('../utils/hoursRules');
+const { computeOT } = require('../utils/payCalculations');
 
 // A company standard day of 07:00–16:00 with a 1h lunch, Mon–Sat, Sunday rest.
 function stdHours() {
@@ -209,5 +210,40 @@ describe('roundEntriesForPay batch transform', () => {
     const out = roundEntriesForPay(entries, policy, { shiftMap });
     // Expected start 05:30; arrived 05:40 (10 late < grace 15) → paid 05:30.
     expect(out[0].start_time).toBe('05:30:00');
+  });
+});
+
+describe('integration with the real computeOT (the wiring contract)', () => {
+  // A 07:15–16:30 day with a 1h lunch: raw = 8.25h → 8 reg + 0.25 OT (daily@8).
+  const rawEntry = () => [{
+    user_id: 1, work_date: MON, wage_type: 'regular',
+    start_time: '07:15:00', end_time: '16:30:00', break_minutes: 60,
+  }];
+
+  test('disabled policy ⇒ computeOT output is identical to raw', () => {
+    const off = parsePolicy(JSON.stringify({ enabled: false, standardHours: stdHours() }));
+    const rawOut = computeOT(rawEntry(), 'daily', 8);
+    const paidOut = computeOT(roundEntriesForPay(rawEntry(), off), 'daily', 8);
+    expect(paidOut).toEqual(rawOut);
+    expect(rawOut.regularHours).toBeCloseTo(8, 5);
+    expect(rawOut.overtimeHours).toBeCloseTo(0.25, 5);
+  });
+
+  test('Honduran policy rounds the punch, changing the computed hours', () => {
+    // Paid 08:00–17:00 − 1h lunch = 8.00h → 8 reg + 0 OT (the 15m tail is docked).
+    const paid = roundEntriesForPay(rawEntry(), honduranPolicy());
+    const { regularHours, overtimeHours } = computeOT(paid, 'daily', 8);
+    expect(regularHours).toBeCloseTo(8, 5);
+    expect(overtimeHours).toBeCloseTo(0, 5);
+  });
+
+  test('overtime_hours_override survives the rounding transform', () => {
+    const entries = roundEntriesForPay(
+      [{ ...rawEntry()[0], overtime_hours_override: 2 }],
+      honduranPolicy()
+    );
+    expect(entries[0].overtime_hours_override).toBe(2);
+    const { overtimeHours } = computeOT(entries, 'daily', 8);
+    expect(overtimeHours).toBeCloseTo(2, 5); // override wins over the auto split
   });
 });

@@ -19,6 +19,7 @@ const { logFailure } = require('../failureLog');
 const { sendPushToUser, sendPushToAllWorkers } = require('../push');
 const { sendEmail } = require('../email');
 const { hoursWorked, computeOT, computeDailyPayCosts } = require('../utils/payCalculations');
+const { roundEntriesFromSettings } = require('../utils/hoursRules');
 const { weekRange, weekBucketKey } = require('../utils/weekBounds');
 const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const qbo = require('../services/qbo');
@@ -174,7 +175,7 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
   // couldn't update them. Added during 2026-04-30 audit pass.
   const adminNumericKeys = ['shift_reminder_hour', 'pto_annual_days', 'cycle_count_audit_pct', 'cycle_count_reconcile_threshold'];
   const numericKeys = [...rateKeys, ...notifKeys, ...adminNumericKeys, 'overtime_threshold', 'media_retention_days', 'qbo_bill_terms_days', 'week_start'];
-  const stringKeys = ['overtime_rule', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_work', 'label_client', 'label_worker', 'label_field'];
+  const stringKeys = ['overtime_rule', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_work', 'label_client', 'label_worker', 'label_field', 'hours_rules'];
   const allowed = [...numericKeys, ...stringKeys, ...FEATURE_KEYS];
   const companyId = req.user.company_id;
   try {
@@ -202,6 +203,16 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
             return res.status(400).json({ error: 'invoice_signature must be none, optional, or required' });
           if (key.startsWith('label_') && (!String(val).trim() || String(val).length > 32))
             return res.status(400).json({ error: 'Labels must be 1-32 characters' });
+          if (key === 'hours_rules' && val !== '') {
+            // Stored as a JSON policy document; the engine (hoursRules.parsePolicy)
+            // normalizes on read, so we only guard shape + size here. A too-large
+            // or non-object value is rejected outright.
+            if (String(val).length > 8000) return res.status(400).json({ error: 'hours_rules is too large' });
+            let parsed;
+            try { parsed = JSON.parse(val); } catch { return res.status(400).json({ error: 'hours_rules must be valid JSON' }); }
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+              return res.status(400).json({ error: 'hours_rules must be a JSON object' });
+          }
           if (key === 'global_required_checklist_template_id' && val !== '') {
             const id = parseInt(val);
             if (isNaN(id)) return res.status(400).json({ error: 'Invalid checklist template ID' });
@@ -967,7 +978,7 @@ router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
       [req.params.id, from || null, to || null]
     );
 
-    const entries = entriesResult.rows;
+    let entries = entriesResult.rows;
 
     const reimbResult = await pool.query(
       `SELECT r.id, r.amount, r.description, r.category, r.expense_date, r.project_id, p.name AS project_name
@@ -983,6 +994,7 @@ router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
     const reimbursementTotal = reimbursements.reduce((sum, r) => sum + parseFloat(r.amount), 0);
 
     const settings = await getSettings(companyId);
+    entries = roundEntriesFromSettings(entries, settings);
     const worker = userResult.rows[0];
     const workerOTRule = worker.overtime_rule || 'daily';
     const { regularHours, overtimeHours } = computeOT(entries, workerOTRule, settings.overtime_threshold, settings.week_start);
@@ -1562,8 +1574,9 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
       [req.params.id, from || null, to || null]
     );
 
-    const entries = entriesResult.rows;
+    let entries = entriesResult.rows;
     const settings = await getSettings(companyId);
+    entries = roundEntriesFromSettings(entries, settings);
 
     // Per-worker OT using each worker's own rule
     const workerEntries = {};
@@ -1639,7 +1652,7 @@ router.get('/projects/metrics', requireAdmin, async (req, res) => {
     ]);
 
     const byProject = new Map();
-    for (const e of entriesRes.rows) {
+    for (const e of roundEntriesFromSettings(entriesRes.rows, metricsSettings)) {
       if (!byProject.has(e.project_id)) byProject.set(e.project_id, []);
       byProject.get(e.project_id).push(e);
     }
@@ -3034,8 +3047,9 @@ router.get('/overtime-report', requireAdmin, requirePerm('view_reports'), requir
     const projectRateMap = {};
     projectRates.rows.forEach(p => { if (p.prevailing_wage_rate != null) projectRateMap[p.id] = parseFloat(p.prevailing_wage_rate); });
 
+    const paidRows = roundEntriesFromSettings(entries.rows, s);
     const byWorker = {};
-    entries.rows.forEach(e => {
+    paidRows.forEach(e => {
       if (!byWorker[e.user_id]) byWorker[e.user_id] = [];
       byWorker[e.user_id].push(e);
     });
@@ -3111,8 +3125,9 @@ router.get('/payroll-export', requireAdmin, requirePerm('view_reports'), require
     const projectRateMapExport = {};
     projectRatesExport.rows.forEach(p => { if (p.prevailing_wage_rate != null) projectRateMapExport[p.id] = parseFloat(p.prevailing_wage_rate); });
 
+    const paidRows = roundEntriesFromSettings(entries.rows, s);
     const byWorker = {};
-    entries.rows.forEach(e => {
+    paidRows.forEach(e => {
       if (!byWorker[e.user_id]) byWorker[e.user_id] = [];
       byWorker[e.user_id].push(e);
     });
@@ -3190,8 +3205,9 @@ router.get('/export/worker-hours', requireAdmin, requirePerm('view_reports'), re
       eVals
     );
 
+    const paidRows = roundEntriesFromSettings(entries.rows, s);
     const byWorker = {};
-    entries.rows.forEach(e => { (byWorker[e.user_id] = byWorker[e.user_id] || []).push(e); });
+    paidRows.forEach(e => { (byWorker[e.user_id] = byWorker[e.user_id] || []).push(e); });
 
     const netHours = e => hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60;
     const dayKey = d => (d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10));
@@ -3359,7 +3375,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_reports'), requ
     const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
     const workerMap = {};
 
-    for (const row of result.rows) {
+    for (const row of roundEntriesFromSettings(result.rows, s)) {
       if (!workerMap[row.user_id]) {
         workerMap[row.user_id] = {
           worker_id: row.user_id,
