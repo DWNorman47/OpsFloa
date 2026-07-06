@@ -18,8 +18,8 @@ const { coerceBody } = require('../middleware/coerce');
 const { logFailure } = require('../failureLog');
 const { sendPushToUser, sendPushToAllWorkers } = require('../push');
 const { sendEmail } = require('../email');
-const { hoursWorked, computeOT, computeDailyPayCosts } = require('../utils/payCalculations');
-const { roundEntriesFromSettings } = require('../utils/hoursRules');
+const { hoursWorked, computeOT, computeDailyPayCosts, otBandsCost, nightPremiumCost } = require('../utils/payCalculations');
+const { roundEntriesFromSettings, otConfigFromSettings } = require('../utils/hoursRules');
 const { weekRange, weekBucketKey } = require('../utils/weekBounds');
 const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const qbo = require('../services/qbo');
@@ -997,7 +997,8 @@ router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
     entries = roundEntriesFromSettings(entries, settings);
     const worker = userResult.rows[0];
     const workerOTRule = worker.overtime_rule || 'daily';
-    const { regularHours, overtimeHours } = computeOT(entries, workerOTRule, settings.overtime_threshold, settings.week_start);
+    const otConfig = otConfigFromSettings(settings);
+    const { regularHours, overtimeHours, otBands } = computeOT(entries, workerOTRule, settings.overtime_threshold, settings.week_start, otConfig);
     const prevailingHours = entries.filter(e => e.wage_type === 'prevailing').reduce((sum, e) => {
       const h = hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60;
       return sum + h;
@@ -1006,12 +1007,13 @@ router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
     const rate = parseFloat(worker.hourly_rate) || settings.default_hourly_rate;
     let regularCost, overtimeCost;
     if (worker.rate_type === 'daily') {
-      const dc = computeDailyPayCosts(entries, workerOTRule, settings.overtime_threshold, rate, settings.overtime_multiplier);
+      const dc = computeDailyPayCosts(entries, workerOTRule, settings.overtime_threshold, rate, settings.overtime_multiplier, otConfig);
       regularCost = dc.regularCost;
       overtimeCost = dc.overtimeCost;
     } else {
       regularCost = regularHours * rate;
-      overtimeCost = overtimeHours * rate * settings.overtime_multiplier;
+      overtimeCost = otBandsCost(otBands, rate, settings.overtime_multiplier)
+        + nightPremiumCost(entries, otConfig && otConfig.nightDifferential, rate);
     }
     const prevailingCost = prevailingHours * settings.prevailing_wage_rate;
     const { shortfall: guaranteeShortfall, minHours: guaranteeMinHours, weeks: guaranteeWeeks } =
@@ -1585,16 +1587,18 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
       workerEntries[e.user_id].items.push(e);
     });
     let regularHours = 0, overtimeHours = 0, regularCost = 0, overtimeCost = 0;
+    const otConfig = otConfigFromSettings(settings);
     Object.values(workerEntries).forEach(({ items, rate, rate_type, overtime_rule }) => {
-      const { regularHours: reg, overtimeHours: ot } = computeOT(items, overtime_rule, settings.overtime_threshold, settings.week_start);
+      const { regularHours: reg, overtimeHours: ot, otBands } = computeOT(items, overtime_rule, settings.overtime_threshold, settings.week_start, otConfig);
       regularHours += reg; overtimeHours += ot;
       if (rate_type === 'daily') {
-        const dc = computeDailyPayCosts(items, overtime_rule, settings.overtime_threshold, rate, settings.overtime_multiplier);
+        const dc = computeDailyPayCosts(items, overtime_rule, settings.overtime_threshold, rate, settings.overtime_multiplier, otConfig);
         regularCost += dc.regularCost;
         overtimeCost += dc.overtimeCost;
       } else {
         regularCost += reg * rate;
-        overtimeCost += ot * rate * settings.overtime_multiplier;
+        overtimeCost += otBandsCost(otBands, rate, settings.overtime_multiplier)
+          + nightPremiumCost(items, otConfig && otConfig.nightDifferential, rate);
       }
     });
 
@@ -3054,10 +3058,11 @@ router.get('/overtime-report', requireAdmin, requirePerm('view_reports'), requir
       byWorker[e.user_id].push(e);
     });
 
+    const otConfig = otConfigFromSettings(s);
     const rows = workers.rows.map(w => {
       const wEntries = byWorker[w.id] || [];
       const workerOTRule = w.overtime_rule || 'daily';
-      const { regularHours, overtimeHours } = computeOT(wEntries, workerOTRule, threshold, s.week_start);
+      const { regularHours, overtimeHours, otBands } = computeOT(wEntries, workerOTRule, threshold, s.week_start, otConfig);
       let prevHours = 0, prevailingCost = 0;
       wEntries.filter(e => e.wage_type === 'prevailing').forEach(e => {
         const h = hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60;
@@ -3068,12 +3073,13 @@ router.get('/overtime-report', requireAdmin, requirePerm('view_reports'), requir
       const rate = parseFloat(w.hourly_rate) || defaultRate;
       let regularCost, overtimeCost;
       if (w.rate_type === 'daily') {
-        const dc = computeDailyPayCosts(wEntries, workerOTRule, threshold, rate, otMult);
+        const dc = computeDailyPayCosts(wEntries, workerOTRule, threshold, rate, otMult, otConfig);
         regularCost = dc.regularCost;
         overtimeCost = dc.overtimeCost;
       } else {
         regularCost = regularHours * rate;
-        overtimeCost = overtimeHours * rate * otMult;
+        overtimeCost = otBandsCost(otBands, rate, otMult)
+          + nightPremiumCost(wEntries, otConfig && otConfig.nightDifferential, rate);
       }
       const totalCost = regularCost + overtimeCost + prevailingCost;
       const mileage = wEntries.reduce((s, e) => s + (parseFloat(e.mileage) || 0), 0);
@@ -3136,10 +3142,11 @@ router.get('/payroll-export', requireAdmin, requirePerm('view_reports'), require
     const headers = ['Worker', 'Rate Type', 'Overtime', 'Rate', 'Regular Hrs', 'OT Hrs', 'Prevailing Hrs', 'Total Hrs', 'Mileage (mi)', 'Regular Pay', 'OT Pay', 'Prevailing Pay', 'Total Pay'];
     const lines = [headers.join(',')];
 
+    const otConfig = otConfigFromSettings(s);
     workers.rows.forEach(w => {
       const wEntries = byWorker[w.id] || [];
       const workerOTRule = w.overtime_rule || 'daily';
-      const { regularHours, overtimeHours } = computeOT(wEntries, workerOTRule, threshold, s.week_start);
+      const { regularHours, overtimeHours, otBands } = computeOT(wEntries, workerOTRule, threshold, s.week_start, otConfig);
       let prevHours = 0, prevailingCost = 0;
       wEntries.filter(e => e.wage_type === 'prevailing').forEach(e => {
         const h = hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60;
@@ -3150,12 +3157,13 @@ router.get('/payroll-export', requireAdmin, requirePerm('view_reports'), require
       const mileage = wEntries.reduce((s, e) => s + (parseFloat(e.mileage) || 0), 0);
       let regularCost, overtimeCost;
       if (w.rate_type === 'daily') {
-        const dc = computeDailyPayCosts(wEntries, workerOTRule, threshold, rate, otMult);
+        const dc = computeDailyPayCosts(wEntries, workerOTRule, threshold, rate, otMult, otConfig);
         regularCost = dc.regularCost;
         overtimeCost = dc.overtimeCost;
       } else {
         regularCost = regularHours * rate;
-        overtimeCost = overtimeHours * rate * otMult;
+        overtimeCost = otBandsCost(otBands, rate, otMult)
+          + nightPremiumCost(wEntries, otConfig && otConfig.nightDifferential, rate);
       }
       lines.push([
         esc(w.invoice_name || w.full_name), w.rate_type || 'hourly', workerOTRule, rate.toFixed(2),

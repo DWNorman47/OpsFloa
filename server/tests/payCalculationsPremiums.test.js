@@ -1,0 +1,80 @@
+/**
+ * Tests for the M3 premiums: rest-day multiplier, minimum-daily-hours floor,
+ * and the night-shift differential. Rest-day and min-daily reclassify hours
+ * inside computeOT (so they flow through otBands); night differential is an
+ * additive cost premium.
+ */
+
+const { computeOT, nightHoursForEntry, nightPremiumCost } = require('../utils/payCalculations');
+
+function entry(date, start, end, over = {}) {
+  return { wage_type: 'regular', work_date: date, start_time: start, end_time: end, break_minutes: 0, ...over };
+}
+// Whole-hour helper: `hDay(date, hours)` → a 00:00-based entry of `hours` length.
+function hDay(date, hours) {
+  return entry(date, '00:00:00', `${String(hours).padStart(2, '0')}:00:00`);
+}
+
+const MON = '2026-07-06';
+const SUN = '2026-07-05';
+
+describe('rest-day premium', () => {
+  const cfg = { restDay: { mult: 2, days: [0] } }; // Sunday is the rest day
+
+  test('all hours on a rest day are paid at the premium, no regular', () => {
+    const r = computeOT([hDay(SUN, 6)], 'daily', 8, 1, cfg);
+    expect(r.regularHours).toBeCloseTo(0, 5);
+    expect(r.overtimeHours).toBeCloseTo(6, 5);
+    expect(r.otBands).toEqual([{ hours: 6, mult: 2 }]);
+  });
+
+  test('a normal weekday is unaffected', () => {
+    const r = computeOT([hDay(MON, 8), hDay(SUN, 5)], 'daily', 8, 1, cfg);
+    expect(r.regularHours).toBeCloseTo(8, 5);       // Monday
+    expect(r.otBands).toEqual([{ hours: 5, mult: 2 }]); // Sunday
+  });
+
+  test('does not apply under the weekly rule', () => {
+    const r = computeOT([hDay(SUN, 6)], 'weekly', 40, 1, cfg);
+    expect(r.overtimeHours).toBeCloseTo(0, 5);
+    expect(r.regularHours).toBeCloseTo(6, 5);
+  });
+});
+
+describe('minimum daily hours (reporting-time floor)', () => {
+  test('a short day is topped up to the floor as regular', () => {
+    const r = computeOT([hDay(MON, 2)], 'daily', 8, 1, { minDailyHours: 4 });
+    expect(r.regularHours).toBeCloseTo(4, 5);
+    expect(r.overtimeHours).toBeCloseTo(0, 5);
+  });
+  test('a day at or above the floor is unaffected', () => {
+    const r = computeOT([hDay(MON, 6)], 'daily', 8, 1, { minDailyHours: 4 });
+    expect(r.regularHours).toBeCloseTo(6, 5);
+  });
+  test('the floor does not suppress overtime on a long day', () => {
+    const r = computeOT([hDay(MON, 10)], 'daily', 8, 1, { minDailyHours: 4 });
+    expect(r.regularHours).toBeCloseTo(8, 5);
+    expect(r.overtimeHours).toBeCloseTo(2, 5);
+  });
+});
+
+describe('night-shift differential', () => {
+  test('overnight shift overlaps the 19:00–05:00 window', () => {
+    // 22:00–06:00 → night portion 22:00–05:00 = 7h.
+    expect(nightHoursForEntry(entry(MON, '22:00:00', '06:00:00'), 19, 5)).toBeCloseTo(7, 5);
+  });
+  test('a daytime shift has no night hours', () => {
+    expect(nightHoursForEntry(entry(MON, '08:00:00', '16:00:00'), 19, 5)).toBeCloseTo(0, 5);
+  });
+  test('an early-morning window (01:00–05:00) that does not wrap', () => {
+    // 03:00–09:00 → night portion 03:00–05:00 = 2h.
+    expect(nightHoursForEntry(entry(MON, '03:00:00', '09:00:00'), 1, 5)).toBeCloseTo(2, 5);
+  });
+  test('nightPremiumCost = night hours × rate × pct', () => {
+    const entries = [entry(MON, '22:00:00', '06:00:00')]; // 7 night hours
+    expect(nightPremiumCost(entries, { fromHour: 19, toHour: 5, pct: 25 }, 10)).toBeCloseTo(7 * 10 * 0.25, 5);
+  });
+  test('no config → zero premium', () => {
+    expect(nightPremiumCost([entry(MON, '22:00:00', '06:00:00')], null, 10)).toBe(0);
+  });
+});
