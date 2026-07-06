@@ -1182,7 +1182,10 @@ async function finishDraftIfAny(commit) {
   } else if (state.tool === 'wall') {
     if (pts.length >= 2) {
       if (!state.calibration) { setMsg('Calibrate the scale (📏) before measuring a wall dig.'); draw(); return; }
-      const cfg = await askWallSection(polyLengthFt(pts), state.contours.existing.length > 0);
+      const cfg = await askWallSection(polyLengthFt(pts), {
+        canSubgrade: state.contours.existing.length > 0,
+        canProposed: state.contours.existing.length > 0 && state.contours.proposed.length > 0,
+      });
       if (cfg) {
         const result = computeWallSweep(pts, cfg);
         if (result) {
@@ -2024,6 +2027,7 @@ function syncWsMode() {
   const mode = document.querySelector('input[name=wsMode]:checked').value;
   $('wsDepth').disabled = mode !== 'constant';
   $('wsSub').disabled = mode !== 'subgrade';
+  $('wsEmbed').disabled = mode !== 'proposed';
 }
 document.querySelectorAll('input[name=wsMode]').forEach(r => r.addEventListener('change', syncWsMode));
 
@@ -2036,15 +2040,23 @@ els.inpSwell.addEventListener('input', () => {
   renderWalls();
 });
 
-function askWallSection(lengthFt, canSubgrade) {
+function askWallSection(lengthFt, caps) {
+  const canSubgrade = !!caps.canSubgrade, canProposed = !!caps.canProposed;
   return new Promise(resolve => {
     $('wsLen').textContent = fmt(lengthFt) + ' ft along the line';
     const subRadio = document.querySelector('input[name=wsMode][value=subgrade]');
+    const propRadio = document.querySelector('input[name=wsMode][value=proposed]');
     subRadio.disabled = !canSubgrade;
-    if (!canSubgrade) document.querySelector('input[name=wsMode][value=constant]').checked = true;
-    $('wsSubHint').textContent = canSubgrade
-      ? 'Reads the Existing ground elevation off your traced contours at each station and digs down to this footing subgrade — so depth follows the real ground.'
-      : 'Trace at least one Existing contour to enable subgrade-elevation mode.';
+    propRadio.disabled = !canProposed;
+    // If the checked mode is no longer available, fall back to constant depth.
+    const checked = document.querySelector('input[name=wsMode]:checked');
+    if ((checked.value === 'subgrade' && !canSubgrade) || (checked.value === 'proposed' && !canProposed))
+      document.querySelector('input[name=wsMode][value=constant]').checked = true;
+    $('wsSubHint').textContent =
+      'Subgrade: digs to a fixed footing elevation off your Existing contours. ' +
+      'Proposed grade: bottom follows the Proposed (finished) surface at the embedment below it — for a benched footing that steps down a slope. ' +
+      (canSubgrade ? '' : 'Trace Existing contours to enable subgrade. ') +
+      (canProposed ? '' : 'Trace Existing + Proposed contours to enable proposed-grade.');
     syncWsMode();
     $('wallSection').classList.remove('hidden');
     const cleanup = () => { $('wsOk').onclick = null; $('wsCancel').onclick = null; $('wallSection').classList.add('hidden'); };
@@ -2061,6 +2073,7 @@ function askWallSection(lengthFt, canSubgrade) {
         depthMode: mode,
         depth: parseFloat($('wsDepth').value) || 0,
         subgrade: parseFloat($('wsSub').value) || 0,
+        embedment: parseFloat($('wsEmbed').value) || 0,
       });
     };
   });
@@ -2069,8 +2082,9 @@ function askWallSection(lengthFt, canSubgrade) {
 function computeWallSweep(pts, cfg) {
   const ftPerPx = state.calibration && state.calibration.ftPerPx;
   if (!ftPerPx) return null;
-  const interp = (cfg.depthMode === 'subgrade' && state.contours.existing.length)
-    ? makeInterpolator(state.contours.existing) : null;
+  const needExist = cfg.depthMode === 'subgrade' || cfg.depthMode === 'proposed';
+  const existInterp = (needExist && state.contours.existing.length) ? makeInterpolator(state.contours.existing) : null;
+  const propInterp = (cfg.depthMode === 'proposed' && state.contours.proposed.length) ? makeInterpolator(state.contours.proposed) : null;
   let lengthFt = 0, volFt3 = 0, dSum = 0, dN = 0, dMin = Infinity, dMax = -Infinity, noGrade = 0;
   for (let i = 0; i < pts.length - 1; i++) {
     const a = pts[i], b = pts[i + 1];
@@ -2082,8 +2096,15 @@ function computeWallSweep(pts, cfg) {
       const t = (s + 0.5) / n;
       const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
       let depth;
-      if (interp) {
-        const g = interp(x, y);
+      if (cfg.depthMode === 'proposed') {
+        // Dig from Existing ground down to the Proposed surface less the footing
+        // embedment: depth = existing − (proposed − embedment).
+        const ge = existInterp ? existInterp(x, y) : null;
+        const gp = propInterp ? propInterp(x, y) : null;
+        if (ge === null || gp === null) { depth = 0; noGrade++; }
+        else depth = Math.max(0, ge - (gp - cfg.embedment));
+      } else if (cfg.depthMode === 'subgrade') {
+        const g = existInterp ? existInterp(x, y) : null;
         if (g === null) { depth = 0; noGrade++; } else depth = Math.max(0, g - cfg.subgrade);
       } else depth = Math.max(0, cfg.depth);
       volFt3 += wallSectionAreaSf(cfg.bottomWidth, depth, cfg.slope) * dsFt;

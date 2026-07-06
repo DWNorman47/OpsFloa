@@ -269,9 +269,12 @@
       <legend>Excavation depth</legend>
       <label class="radio"><input type="radio" name="wsMode" value="constant" checked> Constant depth below grade
         <input type="number" id="wsDepth" min="0" step="0.5" value="4"> ft</label>
-      <label class="radio" title="Reads the Existing ground elevation off your traced contours at each station and digs down to this footing subgrade elevation — so depth follows the real ground.">
+      <label class="radio" title="Reads the Existing ground elevation off your traced contours at each station and digs down to this fixed footing subgrade elevation.">
         <input type="radio" name="wsMode" value="subgrade"> Down to subgrade elevation
         <input type="number" id="wsSub" step="0.5" value="0" disabled> ft</label>
+      <label class="radio" title="Bottom of dig follows the Proposed (finished) surface at a set embedment below it — reads both your Existing and Proposed contours. For a benched/stepped footing that steps down a slope at a constant depth below finished grade.">
+        <input type="radio" name="wsMode" value="proposed"> To proposed grade − embedment
+        <input type="number" id="wsEmbed" min="0" step="0.5" value="2" disabled> ft</label>
       <div id="wsSubHint" class="hint"></div>
     </fieldset>
     <div class="modal-actions">
