@@ -19,6 +19,7 @@ const DOW = [1, 2, 3, 4, 5, 6, 0]; // Mon…Sat, Sun last (display order)
 const PRESETS = {
   off: () => ({ ...blankForm(), enabled: false }),
   honduras: () => ({
+    ...blankForm(),
     enabled: true,
     stdStart: '07:00', stdEnd: '16:00', stdBreak: '60',
     workDays: { 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 0: false },
@@ -33,6 +34,15 @@ const PRESETS = {
     outRef: 'clock', outInterval: '15', outGrace: '0', outDir: 'nearest',
     showActualAndPaid: true,
   }),
+  california: () => ({
+    ...blankForm(),
+    enabled: true,
+    inRef: 'clock', inInterval: '15', inGrace: '0', inDir: 'nearest',
+    outRef: 'clock', outInterval: '15', outGrace: '0', outDir: 'nearest',
+    otMode: 'day',
+    otBands: [{ afterHours: '8', mult: '1.5' }, { afterHours: '12', mult: '2' }],
+    showActualAndPaid: true,
+  }),
 };
 
 function blankForm() {
@@ -42,6 +52,7 @@ function blankForm() {
     workDays: { 1: true, 2: true, 3: true, 4: true, 5: true, 6: false, 0: false },
     inRef: 'schedule', inInterval: '15', inGrace: '0', inDir: 'off',
     outRef: 'schedule', outInterval: '15', outGrace: '0', outDir: 'off',
+    otMode: 'off', otBands: [],
     showActualAndPaid: true,
   };
 }
@@ -74,6 +85,10 @@ function policyToForm(raw) {
   if (co.direction) f.outDir = co.direction;
   if (co.intervalMin != null) f.outInterval = String(co.intervalMin);
   if (co.graceMin != null) f.outGrace = String(co.graceMin);
+  const ot = p.overtime || {};
+  const toBands = list => list.map(b => ({ afterHours: String(b.afterHours), mult: String(b.mult) }));
+  if (Array.isArray(ot.dailyBands) && ot.dailyBands.length) { f.otMode = 'day'; f.otBands = toBands(ot.dailyBands); }
+  else if (Array.isArray(ot.weeklyBands) && ot.weeklyBands.length) { f.otMode = 'week'; f.otBands = toBands(ot.weeklyBands); }
   f.showActualAndPaid = p.display ? p.display.showActualAndPaid !== false : true;
   return f;
 }
@@ -83,6 +98,14 @@ function formToPolicy(f) {
   const standardHours = {};
   const day = { start: f.stdStart, end: f.stdEnd, unpaidBreakMin: parseInt(f.stdBreak, 10) || 0 };
   Object.keys(f.workDays).forEach(d => { if (f.workDays[d]) standardHours[d] = { ...day }; });
+  const overtime = {};
+  if (f.otMode !== 'off' && f.otBands.length) {
+    const bands = f.otBands
+      .map(b => ({ afterHours: parseFloat(b.afterHours), mult: parseFloat(b.mult) }))
+      .filter(b => Number.isFinite(b.afterHours) && b.afterHours >= 0 && Number.isFinite(b.mult) && b.mult > 0)
+      .sort((a, b) => a.afterHours - b.afterHours);
+    if (bands.length) overtime[f.otMode === 'week' ? 'weeklyBands' : 'dailyBands'] = bands;
+  }
   return {
     version: 1,
     enabled: !!f.enabled,
@@ -91,6 +114,7 @@ function formToPolicy(f) {
       clockIn:  { reference: f.inRef,  intervalMin: parseInt(f.inInterval, 10) || 15,  graceMin: parseInt(f.inGrace, 10) || 0,  direction: f.inDir },
       clockOut: { reference: f.outRef, intervalMin: parseInt(f.outInterval, 10) || 15, graceMin: parseInt(f.outGrace, 10) || 0, direction: f.outDir },
     },
+    overtime,
     premiums: {},
     display: { showActualAndPaid: !!f.showActualAndPaid },
   };
@@ -104,8 +128,11 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
   const [error, setError] = useState('');
 
   const set = (k, v) => { setForm(f => ({ ...f, [k]: v })); setSaved(false); };
-  const toggleDay = (d) => setForm(f => ({ ...f, workDays: { ...f.workDays, [d]: !f.workDays[d] } }));
+  const toggleDay = (d) => { setForm(f => ({ ...f, workDays: { ...f.workDays, [d]: !f.workDays[d] } })); setSaved(false); };
   const applyPreset = (key) => { if (PRESETS[key]) { setForm(PRESETS[key]()); setSaved(false); } };
+  const setBand = (i, k, v) => { setForm(f => ({ ...f, otBands: f.otBands.map((b, j) => j === i ? { ...b, [k]: v } : b) })); setSaved(false); };
+  const addBand = () => { setForm(f => ({ ...f, otBands: [...f.otBands, { afterHours: '', mult: '1.5' }] })); setSaved(false); };
+  const removeBand = (i) => { setForm(f => ({ ...f, otBands: f.otBands.filter((_, j) => j !== i) })); setSaved(false); };
 
   const save = async () => {
     setSaving(true); setError('');
@@ -145,6 +172,7 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
         <span style={s.label}>{t.hrPreset}</span>
         <button type="button" style={s.presetBtn} onClick={() => applyPreset('honduras')}>{t.hrPresetHonduras}</button>
         <button type="button" style={s.presetBtn} onClick={() => applyPreset('us_quarter')}>{t.hrPresetUS}</button>
+        <button type="button" style={s.presetBtn} onClick={() => applyPreset('california')}>{t.hrPresetCalifornia}</button>
         <button type="button" style={s.presetBtn} onClick={() => applyPreset('off')}>{t.hrPresetOff}</button>
       </div>
 
@@ -174,6 +202,35 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
             <h4 style={s.h4}>{t.hrRounding}</h4>
             <EdgeEditor t={t} title={t.hrClockIn} prefix="in" form={form} set={set} />
             <EdgeEditor t={t} title={t.hrClockOut} prefix="out" form={form} set={set} />
+          </section>
+
+          <section style={s.section}>
+            <h4 style={s.h4}>{t.hrOtTiers}</h4>
+            <p style={s.hint}>{t.hrOtTiersHint}</p>
+            <div style={s.grid}>
+              <Field label={t.hrOtMode}>
+                <select style={s.input} value={form.otMode} onChange={e => set('otMode', e.target.value)}>
+                  <option value="off">{t.hrOtOff}</option>
+                  <option value="day">{t.hrOtPerDay}</option>
+                  <option value="week">{t.hrOtPerWeek}</option>
+                </select>
+              </Field>
+            </div>
+            {form.otMode !== 'off' && (
+              <div style={{ marginTop: 12 }}>
+                {form.otBands.map((b, i) => (
+                  <div key={i} style={s.tierRow}>
+                    <span style={s.tierLabel}>{t.hrOtAfter}</span>
+                    <input type="number" min="0" step="0.5" style={{ ...s.input, minWidth: 68 }} value={b.afterHours} onChange={e => setBand(i, 'afterHours', e.target.value)} />
+                    <span style={s.tierLabel}>{t.hrOtHoursPay}</span>
+                    <input type="number" min="1" step="0.05" style={{ ...s.input, minWidth: 68 }} value={b.mult} onChange={e => setBand(i, 'mult', e.target.value)} />
+                    <span style={s.tierLabel}>×</span>
+                    <button type="button" style={s.tierRemove} onClick={() => removeBand(i)} aria-label={t.hrOtRemove}>×</button>
+                  </div>
+                ))}
+                <button type="button" style={s.addTier} onClick={addBand}>{t.hrOtAddTier}</button>
+              </div>
+            )}
           </section>
 
           <section style={s.section}>
@@ -265,6 +322,10 @@ const s = {
   days: { display: 'flex', gap: 6, marginTop: 12, flexWrap: 'wrap' },
   dayBtn: { padding: '6px 10px', borderRadius: 7, border: '1px solid #d1d5db', background: '#fff', color: '#9ca3af', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
   dayOn: { background: '#ecfdf5', borderColor: '#059669', color: '#047857' },
+  tierRow: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' },
+  tierLabel: { fontSize: 13, color: '#374151', fontWeight: 600 },
+  tierRemove: { background: '#fef2f2', color: '#ef4444', border: '1px solid #fecaca', borderRadius: 6, width: 26, height: 26, fontSize: 15, fontWeight: 700, cursor: 'pointer', lineHeight: 1 },
+  addTier: { background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', borderRadius: 7, padding: '6px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', marginTop: 4 },
   edge: { marginTop: 12, padding: 12, background: '#f8fafc', borderRadius: 8 },
   edgeTitle: { fontSize: 13, fontWeight: 700, color: '#334155', marginBottom: 8 },
   checkRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: '#374151', cursor: 'pointer' },
