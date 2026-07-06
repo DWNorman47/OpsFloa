@@ -1290,6 +1290,7 @@ function restoreSnap(s) {
   state.alignPts = []; state.alignQs = [];
   state.wandPts = null;
   state.dragDraft = null;
+  state.realignPts = [];
   state.boxA = state.boxB = null;
   state.result = null;
   els.resultsSection.classList.add('hidden');
