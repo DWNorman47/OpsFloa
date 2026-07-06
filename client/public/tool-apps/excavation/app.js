@@ -49,6 +49,7 @@ const state = {
   dragCal: null,           // 'a' | 'b' while dragging a calibration endpoint
   dragBnd: null,           // boundary vertex index while dragging (-1 = click consumed)
   dragPad: null,           // { ci, vi } pad vertex while dragging (-1 = click consumed)
+  dragDraft: null,         // draft vertex index while tracing before commit
   wandPts: null,           // highlighted auto-traced polyline awaiting an elevation
   boxA: null, boxB: null,  // erase-box drag corners (world px)
 };
@@ -70,7 +71,7 @@ const els = {
   resultsSection: $('resultsSection'), results: $('results'),
   chkHeatmap: $('chkHeatmap'), chkGhost: $('chkGhost'),
   btnAlign: $('btnAlign'), btnAlignReset: $('btnAlignReset'), alignStatus: $('alignStatus'),
-  btnEditDist: $('btnEditDist'), btnUndo: $('btnUndo'),
+  btnEditDist: $('btnEditDist'), btnUndo: $('btnUndo'), btnRedo: $('btnRedo'),
   btnProjects: $('btnProjects'), projName: $('projName'),
   projects: $('projects'), projList: $('projList'),
   projNewBtn: $('projNewBtn'), projClose: $('projClose'),
@@ -612,10 +613,16 @@ function drawDraft() {
   ctx.lineTo(m.x, m.y);
   ctx.stroke();
   ctx.setLineDash([]);
+  const editableDraft = ['trace', 'boundary', 'pad', 'wall'].includes(state.tool);
   for (const p of state.draft) {
     ctx.beginPath();
-    ctx.arc(p.x, p.y, lw(3), 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, lw(editableDraft ? 5 : 3), 0, Math.PI * 2);
     ctx.fill();
+    if (editableDraft) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, lw(8), 0, Math.PI * 2);
+      ctx.stroke();
+    }
   }
 }
 
@@ -689,6 +696,7 @@ function setTool(t) {
   state.realignPts = [];
   state.wandPts = null;
   state.boxA = state.boxB = null;
+  state.dragDraft = null;
   document.querySelectorAll('.tool').forEach(b =>
     b.classList.toggle('active', b.dataset.tool === t));
   cv.classList.toggle('crosshair', t !== 'pan');
@@ -742,6 +750,19 @@ cv.addEventListener('mousedown', e => {
 
   if (!state.mouse.panning && e.button === 0 && state.tool === 'erase')
     state.boxA = screenToWorld(state.mouse.sx, state.mouse.sy);
+
+  // While tracing a draft, let earlier vertices be adjusted before committing it.
+  if (!state.mouse.panning && e.button === 0 && state.draft.length &&
+      ['trace', 'boundary', 'pad', 'wall'].includes(state.tool)) {
+    const w = screenToWorld(state.mouse.sx, state.mouse.sy);
+    const thresh = 12 / state.view.zoom;
+    let hit = -1, hd = thresh;
+    state.draft.forEach((p, i) => {
+      const d = dist(w.x, w.y, p.x, p.y);
+      if (d < hd) { hd = d; hit = i; }
+    });
+    if (hit >= 0) state.dragDraft = hit;
+  }
 
   // with the Boundary tool, grabbing a vertex of the closed polygon edits it
   if (!state.mouse.panning && e.button === 0 && state.tool === 'boundary' &&
@@ -814,6 +835,10 @@ cv.addEventListener('mousemove', e => {
     }
     if (state.boxA && state.tool === 'erase' && state.mouse.moved)
       state.boxB = screenToWorld(x, y);
+    if (state.dragDraft !== null) {
+      const w = screenToWorld(x, y);
+      state.draft[state.dragDraft] = { x: w.x, y: w.y };
+    }
     if (state.dragBnd !== null && state.dragBnd >= 0) {
       const w = screenToWorld(x, y);
       state.boundary[state.dragBnd] = { x: w.x, y: w.y };
@@ -849,6 +874,13 @@ cv.addEventListener('mouseup', e => {
   state.mouse.down = false;
   state.mouse.panning = false;
   cv.classList.remove('grabbing');
+  if (state.dragDraft !== null) {
+    const didMove = moved;
+    state.dragDraft = null;
+    if (didMove) setMsg('Draft point moved.');
+    draw();
+    return;
+  }
   if (state.dragPad !== null) {
     const didMove = typeof state.dragPad === 'object' && moved;
     state.dragPad = null;
@@ -1219,6 +1251,7 @@ async function finishDraftIfAny(commit) {
 /* ============================== Undo ============================== */
 
 const undoStack = [];
+const redoStack = [];
 let pendingSnap = null; // pre-drag state, pushed only if the drag actually moved
 
 function takeSnap() {
@@ -1237,13 +1270,14 @@ function pushSnap(s) {
   undoStack.push(s);
   if (undoStack.length > 50) undoStack.shift();
   els.btnUndo.disabled = false;
+  redoStack.length = 0;
+  els.btnRedo.disabled = true;
 }
 
 function snapshot() { pushSnap(takeSnap()); }
 
-function undo() {
-  if (!undoStack.length) return;
-  const s = JSON.parse(undoStack.pop());
+function restoreSnap(s) {
+  s = JSON.parse(s);
   state.calibration = s.calibration;
   state.align = s.align || alignIdentity();
   state.boundary = s.boundary || [];
@@ -1255,20 +1289,40 @@ function undo() {
   state.draft = []; state.calibPts = [];
   state.alignPts = []; state.alignQs = [];
   state.wandPts = null;
+  state.dragDraft = null;
   state.boxA = state.boxB = null;
   state.result = null;
   els.resultsSection.classList.add('hidden');
-  els.btnUndo.disabled = !undoStack.length;
   refreshStatuses();
   refreshContourList();
   renderWalls();
   updateAlignStatus();
   saveLocal();
-  setMsg(`Undone.${undoStack.length ? ` ${undoStack.length} more step${undoStack.length === 1 ? '' : 's'} available.` : ''}`);
   draw();
 }
 
+function undo() {
+  if (!undoStack.length) return;
+  redoStack.push(takeSnap());
+  if (redoStack.length > 50) redoStack.shift();
+  restoreSnap(undoStack.pop());
+  els.btnUndo.disabled = !undoStack.length;
+  els.btnRedo.disabled = false;
+  setMsg(`Undone.${undoStack.length ? ` ${undoStack.length} more step${undoStack.length === 1 ? '' : 's'} available.` : ''}`);
+}
+
+function redo() {
+  if (!redoStack.length) return;
+  undoStack.push(takeSnap());
+  if (undoStack.length > 50) undoStack.shift();
+  restoreSnap(redoStack.pop());
+  els.btnUndo.disabled = false;
+  els.btnRedo.disabled = !redoStack.length;
+  setMsg(`Redone.${redoStack.length ? ` ${redoStack.length} more step${redoStack.length === 1 ? '' : 's'} available.` : ''}`);
+}
+
 els.btnUndo.addEventListener('click', undo);
+els.btnRedo.addEventListener('click', redo);
 
 /* ============================== Vector wand (auto trace) ============================== */
 
@@ -1613,9 +1667,21 @@ window.addEventListener('keydown', e => {
 
   if (e.code === 'Space') { state.spaceHeld = true; e.preventDefault(); return; }
 
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && e.shiftKey) {
+    e.preventDefault();
+    redo();
+    return;
+  }
+
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
     e.preventDefault();
     undo();
+    return;
+  }
+
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+    e.preventDefault();
+    redo();
     return;
   }
 
@@ -2390,7 +2456,9 @@ async function openProject(id, opts = {}) {
 
   // drop everything belonging to the old project
   undoStack.length = 0;
+  redoStack.length = 0;
   els.btnUndo.disabled = true;
+  els.btnRedo.disabled = true;
   state.pdf = null;
   state.sheets.existing = { pageNum: 1, image: null };
   state.sheets.proposed = { pageNum: 2, image: null };
