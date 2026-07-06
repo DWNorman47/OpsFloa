@@ -1955,12 +1955,20 @@ function wallSectionAreaSf(bottomWidth, depth, slope) {
   return bottomWidth * depth + slope * depth * depth;
 }
 
-function wallComputeCore({ grossFt3, reusePct, swellPct }) {
+function wallComputeCore({ grossFt3, concreteCY, aggregateCY, reusePct, swellPct }) {
   const grossCY = grossFt3 / 27;
+  const conc = Math.max(0, concreteCY || 0);   // footing + stem concrete (import)
+  const agg = Math.max(0, aggregateCY || 0);   // drainage aggregate zone (import)
+  // After the wall + aggregate occupy the hole, the rest is backfill. Native can
+  // be reused for that void; whatever's left is imported structural fill.
+  const voidCY = Math.max(0, grossCY - conc - agg);
   const reuse = Math.min(1, Math.max(0, (reusePct || 0) / 100));
-  const netCY = grossCY * (1 - reuse);
+  const reusedCY = voidCY * reuse;             // native put back (not hauled)
+  const netCY = grossCY - reusedCY;            // native exported off site
+  const importBackfillCY = voidCY - reusedCY;  // structural fill to bring in
   const swell = Math.max(0, (swellPct || 0) / 100);
-  return { grossCY, netCY, truckCY: netCY * (1 + swell), swell };
+  return { grossCY, concreteCY: conc, aggregateCY: agg, voidCY, reusedCY,
+    netCY, importBackfillCY, truckCY: netCY * (1 + swell), swell };
 }
 
 function polyLengthFt(pts) {
@@ -1979,17 +1987,12 @@ function wallCalcCompute() {
   const areaSf = wallSectionAreaSf(width, depth, slope);
   const core = wallComputeCore({
     grossFt3: areaSf * len,
+    concreteCY: parseFloat($('wcConcrete').value),
+    aggregateCY: parseFloat($('wcAgg').value),
     reusePct: parseFloat($('wcReuse').value),
     swellPct: parseFloat($('wcSwell').value),
   });
-  const reused = core.grossCY - core.netCY;
-  $('wcResult').innerHTML = `
-    <div class="res-row"><span>Cross-section area</span><b>${fmt(areaSf, 1)} sf</b></div>
-    <div class="res-row"><span>Excavation (bank)</span><b>${fmt(core.grossCY)} CY</b></div>
-    ${reused > 0.5 ? `<div class="res-row"><span>Reused as backfill</span><b>− ${fmt(reused)} CY</b></div>` : ''}
-    <div class="res-row total"><span>EXPORT off site (bank)</span><b>${fmt(core.netCY)} CY</b></div>
-    <div class="res-row"><span>≈ truck volume (loose, × ${(1 + core.swell).toFixed(2)})</span><b>${fmt(core.truckCY)} CY</b></div>
-    <div class="wall-note">Bank = in-ground volume; truck = swelled loose volume for hauling. Cross-section = bottom width × depth + slope × depth² (two backslopes). An estimating number — verify against the plans.</div>`;
+  $('wcResult').innerHTML = wallResultRows(core, areaSf);
 }
 $('btnWallCalc').addEventListener('click', () => {
   $('wcSwell').value = els.inpSwell.value || 25;
@@ -1997,8 +2000,24 @@ $('btnWallCalc').addEventListener('click', () => {
   $('wallCalc').classList.remove('hidden');
 });
 $('wcClose').addEventListener('click', () => $('wallCalc').classList.add('hidden'));
-['wcLen', 'wcDepth', 'wcWidth', 'wcSlope', 'wcReuse', 'wcSwell']
+['wcLen', 'wcDepth', 'wcWidth', 'wcSlope', 'wcReuse', 'wcSwell', 'wcConcrete', 'wcAgg']
   .forEach(id => $(id).addEventListener('input', wallCalcCompute));
+
+// Shared results block for the quick calc and the section-mode recap.
+function wallResultRows(core, areaSf) {
+  const row = (label, val, cls) => `<div class="res-row ${cls || ''}"><span>${label}</span><b>${val}</b></div>`;
+  return [
+    areaSf != null ? row('Cross-section area', `${fmt(areaSf, 1)} sf`) : '',
+    row('Excavation (bank)', `${fmt(core.grossCY)} CY`),
+    core.concreteCY > 0.5 ? row('Concrete — footing + stem (import)', `${fmt(core.concreteCY)} CY`) : '',
+    core.aggregateCY > 0.5 ? row('Drainage aggregate (import)', `${fmt(core.aggregateCY)} CY`) : '',
+    core.reusedCY > 0.5 ? row('Reused as backfill', `− ${fmt(core.reusedCY)} CY`) : '',
+    row('EXPORT off site (bank)', `${fmt(core.netCY)} CY`, 'total'),
+    row(`≈ truck volume (loose, × ${(1 + core.swell).toFixed(2)})`, `${fmt(core.truckCY)} CY`),
+    core.importBackfillCY > 0.5 ? row('Import structural backfill', `${fmt(core.importBackfillCY)} CY`) : '',
+    `<div class="wall-note">Bank = in-ground volume; truck = swelled loose. Concrete &amp; aggregate are imported materials that take up the hole, so reused native backfill is figured against what's left. Cross-section = bottom width × depth + slope × depth². An estimating number — verify against the plans.</div>`,
+  ].join('');
+}
 
 // --- Section mode (traced alignment off the plan) ---
 function syncWsMode() {
@@ -2037,6 +2056,8 @@ function askWallSection(lengthFt, canSubgrade) {
         bottomWidth: parseFloat($('wsWidth').value) || 0,
         slope: parseFloat($('wsSlope').value) || 0,
         reusePct: parseFloat($('wsReuse').value) || 0,
+        concreteCY: parseFloat($('wsConcrete').value) || 0,
+        aggregateCY: parseFloat($('wsAgg').value) || 0,
         depthMode: mode,
         depth: parseFloat($('wsDepth').value) || 0,
         subgrade: parseFloat($('wsSub').value) || 0,
@@ -2071,7 +2092,7 @@ function computeWallSweep(pts, cfg) {
       if (depth > dMax) dMax = depth;
     }
   }
-  const core = wallComputeCore({ grossFt3: volFt3, reusePct: cfg.reusePct, swellPct: parseFloat(els.inpSwell.value) });
+  const core = wallComputeCore({ grossFt3: volFt3, concreteCY: cfg.concreteCY, aggregateCY: cfg.aggregateCY, reusePct: cfg.reusePct, swellPct: parseFloat(els.inpSwell.value) });
   return { ...core, lengthFt, avgDepth: dN ? dSum / dN : 0,
     minDepth: isFinite(dMin) ? dMin : 0, maxDepth: isFinite(dMax) ? dMax : 0,
     noGradeFrac: dN ? noGrade / dN : 0 };

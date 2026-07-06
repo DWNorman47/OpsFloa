@@ -237,7 +237,9 @@
         </select>
       </label>
       <label title="Loose/truck bulking of bank dirt">Swell %<input type="number" id="wcSwell" min="0" max="60" step="1" value="25"></label>
-      <label title="Portion of excavated native reused as backfill (not hauled off). 0 = everything is exported.">Reused as backfill %<input type="number" id="wcReuse" min="0" max="100" step="5" value="0"></label>
+      <label title="Portion of the backfill void filled with reused native (not hauled off). 0 = everything is exported.">Reused as backfill %<input type="number" id="wcReuse" min="0" max="100" step="5" value="0"></label>
+      <label title="Footing + stem concrete volume (import). Optional — leave 0 to skip. Takes up the hole, so less backfill is needed.">Concrete (CY, optional)<input type="number" id="wcConcrete" min="0" step="1" value="0"></label>
+      <label title="Drainage aggregate placed behind the wall (import gravel). Optional.">Drainage aggregate (CY, optional)<input type="number" id="wcAgg" min="0" step="1" value="0"></label>
     </div>
     <div id="wcResult" class="wall-result"></div>
     <div class="modal-actions"><button id="wcClose" class="btn primary">Done</button></div>
@@ -259,7 +261,9 @@
           <option value="1.5">1½ : 1 (Type C)</option>
         </select>
       </label>
-      <label>Reused as backfill %<input type="number" id="wsReuse" min="0" max="100" step="5" value="0"></label>
+      <label title="Portion of the backfill void filled with reused native (not hauled off).">Reused as backfill %<input type="number" id="wsReuse" min="0" max="100" step="5" value="0"></label>
+      <label title="Footing + stem concrete volume (import). Optional.">Concrete (CY, optional)<input type="number" id="wsConcrete" min="0" step="1" value="0"></label>
+      <label title="Drainage aggregate behind the wall (import). Optional.">Drainage aggregate (CY, optional)<input type="number" id="wsAgg" min="0" step="1" value="0"></label>
     </div>
     <fieldset class="wall-depth">
       <legend>Excavation depth</legend>
