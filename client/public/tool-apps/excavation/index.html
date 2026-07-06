@@ -189,7 +189,7 @@
       <li><b>⌫ Erase Box:</b> drag a box — only the line <em>portions</em> inside are erased; lines crossing the box are split and the outside parts survive. <b>With a line selected, only that line is trimmed.</b> Spots inside are removed; pads are only removed when fully boxed.</li>
       <li><b>⌖ Align sheets</b> (sidebar): turn on <b>Ghost other sheet</b> to check the two pages overlay. If not: click a landmark on Existing, the same one on Proposed (fixes the shift), then press <b>Enter</b> to stop — or click a second, far-away landmark pair to also fix rotation. <b>Reset</b> removes the adjustment.</li>
       <li><b>↶ Undo</b> (Ctrl+Z): steps back through the last 50 changes — traces, erases, boundary/pad/scale/alignment edits, Clear, Load, even New.</li>
-      <li><b>📁 Projects:</b> each project is a separate takeoff. <b>Duplicate</b> makes a second version on the same plans (shared PDF, independent traces) — ideal for comparing grading options. Open, rename, or delete from the list; the current one shows in the toolbar. Switching flushes and saves automatically; Undo history doesn't cross projects.</li>
+      <li><b>📁 Projects:</b> each project is a separate takeoff. <b>Duplicate</b> makes a second version on the same plans (shared PDF, independent traces) — ideal for comparing grading options. <b>Revise…</b> forks a takeoff into a new revision: it carries the scale, boundary, and traces forward, then you <b>Open PDF…</b> the updated plan set — the drawing swaps but your work stays, so you only edit what changed (re-check the scale if the new sheet prints at a different size). The original revision is left untouched. Open, rename, or delete from the list; the current one shows in the toolbar. Switching flushes and saves automatically; Undo history doesn't cross projects.</li>
       <li><b>Saving:</b> everything auto-saves in the browser, including the PDF — a refresh reopens the current project. <b>New</b> wipes the current project's takeoff (keeps the PDF open). <b>Save/Load</b> exports/imports a .takeoff.json (the PDF itself is not embedded — keep it with the file).</li>
       <li><b>Sidebar:</b> click any section header to collapse/expand it, and <b>☰</b> in the toolbar hides the whole sidebar (the app remembers both). Shrink/swell % in Settings re-figure the results live after a calculation.</li>
       <li><b>Small screens:</b> the toolbar stacks into rows — the tool buttons become a side-scrolling strip, with Calculate and the file actions on their own rows. ☰ frees up the whole screen for the drawing.</li>
@@ -209,7 +209,7 @@
 <div id="projects" class="modal hidden">
   <div class="modal-box wide">
     <h3>Projects</h3>
-    <div class="hint">Each project is its own takeoff. <b>Duplicate</b> one to price a second version of the same plans — the PDF is shared, the traces are independent.</div>
+    <div class="hint">Each project is its own takeoff. <b>Duplicate</b> one to price a second version of the same plans — the PDF is shared, the traces are independent. <b>Revise…</b> starts a new revision that carries the scale, boundary, and traces forward so you can open the updated plans and edit only what changed.</div>
     <div id="projList" class="proj-list"></div>
     <div class="modal-actions">
       <button id="projNewBtn" class="btn">+ New project</button>

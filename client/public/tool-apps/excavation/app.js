@@ -2356,6 +2356,7 @@ async function showProjects() {
         ? '<span class="pill">current</span>'
         : '<button class="btn tiny" data-act="open">Open</button>'}
       <button class="btn tiny" data-act="dup" title="Copy this takeoff as a new version — same PDF, independent traces">Duplicate</button>
+      <button class="btn tiny" data-act="revise" title="Start a new revision from this takeoff — carries the scale, boundary, and traces; you then open the updated plans and edit only what changed">Revise…</button>
       <button class="btn tiny" data-act="ren" title="Rename">Rename</button>
       <button class="btn tiny danger" data-act="del" title="Delete this project">✕</button>`;
     row.querySelector('.name').textContent = r.name;
@@ -2365,6 +2366,13 @@ async function showProjects() {
     els.projList.appendChild(row);
   }
   els.projects.classList.remove('hidden');
+}
+
+// Suggest the next revision name: "Site Grading Rev 2" → "Site Grading Rev 3",
+// otherwise append " Rev 2".
+function nextRevName(name) {
+  const m = String(name || '').match(/^(.*?)[\s_-]*rev\.?\s*(\d+)\s*$/i);
+  return m ? `${m[1].trim()} Rev ${parseInt(m[2], 10) + 1}` : `${name || 'Takeoff'} Rev 2`;
 }
 
 async function projectAction(act, id) {
@@ -2383,6 +2391,27 @@ async function projectAction(act, id) {
       copy.id = randId(); copy.name = name; copy.modified = Date.now();
       await idbProjPut(copy);
       await openProject(copy.id);
+      return;
+    }
+  } else if (act === 'revise') {
+    await syncProjectNow();
+    const rec = await idbProjGet(id);
+    if (!rec) return;
+    const name = await askText('New revision',
+      "Name for the revision. It carries this takeoff's scale, boundary, and traces. " +
+      'After it opens, use Open PDF… to load the updated plans and edit only what changed.',
+      nextRevName(rec.name));
+    if (name) {
+      // Fork into a new project (the original revision is left untouched). Keep
+      // the old PDF so the revision opens with the traces over the previous
+      // plans; opening the updated PDF swaps only the drawing.
+      const copy = JSON.parse(JSON.stringify(rec));
+      copy.id = randId(); copy.name = name; copy.modified = Date.now();
+      await idbProjPut(copy);
+      await openProject(copy.id);
+      setMsg(`Revision "${name}" created — scale, boundary, and traces carried over. ` +
+        'Click Open PDF… to load the updated plans (your traces stay put, so you edit only what changed). ' +
+        'Re-check the scale (📏) if the revised sheet prints at a different size.');
       return;
     }
   } else if (act === 'ren') {
