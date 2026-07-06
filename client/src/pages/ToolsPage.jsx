@@ -4,6 +4,7 @@ import { getOrFetch } from '../offlineDb';
 import { silentError } from '../errorReporter';
 import { PageIntro, PageSection, PageShell } from '../components/PageShell';
 import TabBar from '../components/TabBar';
+import TranscriptionTool from '../components/TranscriptionTool';
 
 const EXCAVATION_TOOL_URL = '/tool-apps/excavation/index.html';
 
@@ -58,13 +59,16 @@ export default function ToolsPage() {
         kicker="Tools"
         title="Useful calculators and work helpers"
         description="Keep specialized utilities close by without crowding the daily workflow. Tools open separately so the main app stays right where you left it."
-        meta={<span className="ops-pill accent">1 tool available</span>}
+        meta={<span className="ops-pill accent">2 tools available</span>}
       />
 
       <TabBar
         active={tab}
         onChange={switchTab}
-        tabs={[{ id: 'excavation', label: 'Excavation' }]}
+        tabs={[
+          { id: 'excavation', label: 'Excavation' },
+          { id: 'transcription', label: 'Transcription' },
+        ]}
         ariaLabel="Tools sections"
       />
 
@@ -94,6 +98,16 @@ export default function ToolsPage() {
             </span>
             <span className="tools-card-action">Open</span>
           </a>
+        </PageSection>
+      )}
+
+      {tab === 'transcription' && (
+        <PageSection
+          eyebrow="Transcription"
+          title="Voice transcription"
+          description="Upload a meeting or call recording and get back a transcript that separates who said what. Rename speakers, jump the audio to any line, and copy or download the text."
+        >
+          <TranscriptionTool />
         </PageSection>
       )}
     </PageShell>

@@ -1,4 +1,4 @@
-const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { randomUUID } = require('crypto');
 
@@ -52,14 +52,33 @@ async function getPresignedUploadUrl(folder, ext, contentType) {
   return { uploadUrl, publicUrl, key };
 }
 
+function keyFromPublicUrl(publicUrl) {
+  if (!publicUrl?.startsWith(process.env.R2_PUBLIC_URL)) return null;
+  return publicUrl.slice(process.env.R2_PUBLIC_URL.length + 1); // strip leading slash
+}
+
+async function getObjectMetadataByUrl(publicUrl) {
+  const key = keyFromPublicUrl(publicUrl);
+  if (!key) return null;
+  const result = await client.send(new HeadObjectCommand({
+    Bucket: process.env.R2_BUCKET_NAME,
+    Key: key,
+  }));
+  return {
+    key,
+    contentLength: Number(result.ContentLength || 0),
+    contentType: result.ContentType || '',
+  };
+}
+
 /**
  * Delete an object from R2 by its public URL.
  * Extracts the key from the URL (everything after the public base URL).
  */
 async function deleteByUrl(publicUrl) {
-  if (!publicUrl?.startsWith(process.env.R2_PUBLIC_URL)) return;
-  const key = publicUrl.slice(process.env.R2_PUBLIC_URL.length + 1); // strip leading slash
+  const key = keyFromPublicUrl(publicUrl);
+  if (!key) return;
   await client.send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: key }));
 }
 
-module.exports = { uploadBase64, getPresignedUploadUrl, deleteByUrl };
+module.exports = { uploadBase64, getPresignedUploadUrl, getObjectMetadataByUrl, deleteByUrl };
