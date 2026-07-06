@@ -50,6 +50,27 @@ export default function ExportPanel({ workers, projects, settings = null }) {
     }
   };
 
+  // Summary: one row per worker with approved Regular/OT/Total hours + days
+  // worked over the date range (ignores the worker/project/status filters).
+  const downloadHoursSummary = async () => {
+    setError('');
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ from, to });
+      const r = await api.get(`/admin/export/worker-hours?${params}`, { responseType: 'blob' });
+      const url = URL.createObjectURL(new Blob([r.data], { type: 'text/csv' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `worker-hours-${from}-to-${to}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError(t.exportFailed);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div style={styles.card}>
       <h3 style={styles.title}>{t.exportTimeEntries}</h3>
@@ -95,6 +116,9 @@ export default function ExportPanel({ workers, projects, settings = null }) {
         <button style={{ ...styles.downloadBtn, ...((loading || !from || !to) ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={download} disabled={loading || !from || !to}>
           {loading ? t.preparing : t.downloadCSV}
         </button>
+        <button style={{ ...styles.summaryBtn, ...((loading || !from || !to) ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={downloadHoursSummary} disabled={loading || !from || !to}>
+          {t.exportWorkerHours}
+        </button>
         <span style={styles.hint}>{t.exportColumns}</span>
       </div>
     </div>
@@ -112,5 +136,6 @@ const styles = {
   error: { color: '#ef4444', fontSize: 13, marginBottom: 10 },
   actions: { display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' },
   downloadBtn: { background: '#059669', color: '#fff', border: 'none', padding: '10px 22px', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' },
+  summaryBtn: { background: '#fff', color: '#059669', border: '1px solid #059669', padding: '10px 22px', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' },
   hint: { fontSize: 12, color: '#6b7280' },
 };

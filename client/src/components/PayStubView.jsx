@@ -138,8 +138,18 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
                       <td style={s.td}>{fmtDate(e.work_date_str || e.work_date, locale)}</td>
                       <td style={s.td}>{e.project_name || '—'}</td>
                       <td style={{ ...s.td, color: '#6b7280' }}>{e.notes || ''}</td>
-                      <td style={s.td}>{fmtTime(e.start_time)}</td>
-                      <td style={s.td}>{fmtTime(e.end_time)}</td>
+                      <td style={s.td}>
+                        {e.raw_start_time && e.raw_start_time !== e.start_time && (
+                          <span style={s.rawTime}>{fmtTime(e.raw_start_time)}</span>
+                        )}
+                        {fmtTime(e.start_time)}
+                      </td>
+                      <td style={s.td}>
+                        {e.raw_end_time && e.raw_end_time !== e.end_time && (
+                          <span style={s.rawTime}>{fmtTime(e.raw_end_time)}</span>
+                        )}
+                        {fmtTime(e.end_time)}
+                      </td>
                       <td style={s.td}>
                         <span style={{ ...s.badge, background: isPrev ? '#d97706' : '#2563eb' }}>
                           {isPrev ? t.prevailing : t.regular}
@@ -305,6 +315,9 @@ const s = {
   th: { background: '#f9fafb', padding: '8px 10px', textAlign: 'left', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#6b7280', borderBottom: '2px solid #e5e7eb', whiteSpace: 'nowrap' },
   tr: { borderBottom: '1px solid #f3f4f6' },
   td: { padding: '9px 10px', color: '#374151', verticalAlign: 'middle' },
+  // Actual punch shown (struck through) next to the paid/rounded time when the
+  // company's hours rules adjusted it and transparency is on.
+  rawTime: { textDecoration: 'line-through', color: '#9ca3af', fontSize: 11, marginRight: 6 },
   badge: { display: 'inline-block', color: '#fff', padding: '1px 7px', borderRadius: 4, fontSize: 10, fontWeight: 700 },
 
   // Summary

@@ -308,6 +308,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
 });
 
 const { hoursWorked, computeOT } = require('../utils/payCalculations');
+const { roundEntriesFromSettings } = require('../utils/hoursRules');
 const { weekRange } = require('../utils/weekBounds');
 
 // GET /time-entries/pay-stubs — worker's pay periods with aggregated hours
@@ -324,6 +325,7 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
     settingsRows.rows.forEach(r => {
       if (r.key === 'overtime_threshold') s.overtime_threshold = parseFloat(r.value);
       if (r.key === 'default_hourly_rate') s.default_hourly_rate = parseFloat(r.value);
+      if (r.key === 'hours_rules') s.hours_rules = r.value;
     });
     const workerData = workerRow.rows[0] || {};
     const workerOTRule = workerData.overtime_rule || 'daily';
@@ -348,9 +350,12 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
         const entries = allEntries.rows.filter(e => e.work_date_str >= ps && e.work_date_str <= pe);
         if (entries.length === 0) continue;
 
-        const { regularHours, overtimeHours } = computeOT(entries, workerOTRule, s.overtime_threshold, s.week_start);
+        // Apply the company's hours rules (grace/rounding) to the raw punches
+        // before computing hours; paid entries carry raw_* fields for display.
+        const paidEntries = roundEntriesFromSettings(entries, s);
+        const { regularHours, overtimeHours } = computeOT(paidEntries, workerOTRule, s.overtime_threshold, s.week_start);
         let prevailingHours = 0, totalMileage = 0;
-        for (const e of entries) {
+        for (const e of paidEntries) {
           if (e.wage_type === 'prevailing') {
             prevailingHours += hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60;
           }
@@ -373,7 +378,7 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
           period_start: period.period_start,
           period_end: period.period_end,
           label: period.label,
-          entries,
+          entries: paidEntries,
           summary: {
             regular_hours: +regularHours.toFixed(2),
             overtime_hours: +overtimeHours.toFixed(2),

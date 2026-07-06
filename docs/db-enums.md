@@ -167,6 +167,21 @@ that had the previous default.
 - `setup_questionnaire_completed_at` (ISO timestamp string) — set when
   an admin finishes (or dismisses) the first-run setup questionnaire.
 
+- `hours_rules` (JSON policy document, default `''`) — the configurable
+  work-hour / pay rules engine (grace/rounding, tiered OT, premiums). Stored
+  as a JSON string; `''` means no policy → the engine is a pure no-op, so
+  existing companies are unaffected until they opt in. **Not enum-constrained
+  at the DB level** (it's a config document, same posture as the JSON
+  `inventory_items.locations[]` column). Validated on write only for shape
+  (must parse as a JSON object) and size (≤ 8 KB) in the `PATCH /admin/settings`
+  handler; the canonical schema + normalization live in
+  `server/utils/hoursRules.js` (`parsePolicy`, which never throws and degrades
+  any malformed field to a safe default). Sub-fields that are themselves
+  fixed-value: `rounding.clockIn/clockOut.direction`
+  (`against_worker`|`toward_worker`|`nearest`|`off`) and `.reference`
+  (`schedule`|`clock`) — enforced app-side by `parsePolicy` (unknown values
+  fall back to the default edge), not by a DB CHECK.
+
 ### Module visibility flags (`module_*`, boolean, in `FEATURE_KEYS`)
 
 Admin-controlled module toggles: `module_timeclock`, `module_team` (Directory),

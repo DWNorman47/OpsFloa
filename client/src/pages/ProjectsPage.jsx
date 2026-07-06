@@ -319,13 +319,13 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
     setUploading(true);
     setUploadError('');
     try {
-      const { data: { uploadUrl, fileUrl } } = await api.get(
+      const { data: { uploadUrl, publicUrl } } = await api.get(
         `/admin/projects/${project.id}/documents/upload-url`,
-        { params: { name: file.name, type: file.type } }
+        { params: { filename: file.name, contentType: file.type } }
       );
       await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } });
       const { data: doc } = await api.post(`/admin/projects/${project.id}/documents`, {
-        name: file.name, url: fileUrl, size_bytes: file.size,
+        name: file.name, url: publicUrl, size_bytes: file.size,
       });
       setDocs(d => [...d, doc]);
     } catch (err) {
