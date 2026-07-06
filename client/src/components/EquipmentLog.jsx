@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import api from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { langToLocale } from '../utils';
+import { labelSg } from '../companyLabels';
 import { useOffline } from '../contexts/OfflineContext';
 import { useT } from '../hooks/useT';
 import { SkeletonList, SkeletonBlock } from './Skeleton';
@@ -337,7 +338,7 @@ function EquipmentCard({ item, projects, isAdmin, onEdit, onDeleted, onHoursLogg
 export default function EquipmentLog({ projects, settings = null }) {
   const { user } = useAuth();
   const t = useT();
-  const workLabel = settings?.label_work || 'Project';
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const { onSync } = useOffline() || {};
 

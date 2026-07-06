@@ -9,6 +9,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { formatInTz, langToLocale } from '../utils';
 import ModalShell from './ModalShell';
 import EmptyState from './EmptyState';
+import { labelSg, labelPl } from '../companyLabels';
 
 import { silentError } from '../errorReporter';
 // SVG divIcon — avoids all CDN/bundler PNG loading issues
@@ -49,13 +50,13 @@ export default function LiveWorkers({ timezone = '', showInactiveAlerts = true, 
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
-  const workerLabel = settings?.label_worker || 'Team Member';
-  const workerLabelPlural = workerLabel.endsWith('s') ? workerLabel : `${workerLabel}s`;
+  const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
+  const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
   const workerLabelLower = workerLabel.toLowerCase();
   const workerLabelPluralLower = workerLabelPlural.toLowerCase();
-  const workLabel = settings?.label_work || 'Project';
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const workLabelLower = workLabel.toLowerCase();
-  const workLabelPlural = workLabel.endsWith('s') ? workLabel : `${workLabel}s`;
+  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
   const [workers, setWorkers] = useState([]);
   const [inactiveWorkers, setInactiveWorkers] = useState([]);
   const [lastUpdated, setLastUpdated] = useState(null);

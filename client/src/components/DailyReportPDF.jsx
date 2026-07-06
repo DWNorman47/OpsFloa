@@ -5,6 +5,7 @@ import {
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
 import { langToLocale } from '../utils';
+import { labelSg, labelPl } from '../companyLabels';
 
 const pdf = StyleSheet.create({
   page: { fontFamily: 'Helvetica', fontSize: 9, color: '#1a1a1a', padding: '40 48 48 48' },
@@ -71,9 +72,9 @@ function TextBlock({ text, noneLabel }) {
 
 export function DailyReportDocument({ report, companyName, fieldPhotos = [], t = {}, language, settings = null }) {
   const locale = langToLocale(language);
-  const workLabel = settings?.label_work || t.project || 'Project';
-  const workerLabel = settings?.label_worker || 'Team Member';
-  const workerLabelPlural = /s$/i.test(workerLabel) ? workerLabel : `${workerLabel}s`;
+  const workLabel = settings?.label_work || t.project || labelSg(null, 'work', language);
+  const workerLabel = labelSg(settings?.label_worker, 'worker', language);
+  const workerLabelPlural = labelPl(settings?.label_worker, 'worker', language);
   const WEATHER_LABELS = {
     sunny: t.weatherSunny, partly_cloudy: t.weatherPartlyCloudy, cloudy: t.weatherCloudy,
     rainy: t.weatherRainy, stormy: t.weatherStormy, snow: t.weatherSnow, windy: t.weatherWindy,

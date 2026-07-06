@@ -3,6 +3,7 @@ import api from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
 import { langToLocale } from '../utils';
+import { labelSg } from '../companyLabels';
 
 import { silentError } from '../errorReporter';
 function formatTime(str, locale = 'en-US') {
@@ -13,7 +14,7 @@ function formatTime(str, locale = 'en-US') {
 function WorkerChat({ settings, onRead }) {
   const { user } = useAuth();
   const t = useT();
-  const workerLabel = settings?.label_worker || 'Team Member';
+  const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
   const locale = langToLocale(user?.language);
   const [messages, setMessages] = useState([]);
   const [body, setBody] = useState('');
@@ -77,7 +78,7 @@ function WorkerChat({ settings, onRead }) {
 function AdminChat({ workers, settings }) {
   const { user } = useAuth();
   const t = useT();
-  const workerLabel = settings?.label_worker || 'Team Member';
+  const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
   const locale = langToLocale(user?.language);
   const [selectedId, setSelectedId] = useState('');
   const [threads, setThreads] = useState([]); // workers with recent messages

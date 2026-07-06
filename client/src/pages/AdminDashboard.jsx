@@ -11,6 +11,7 @@ import { PageIntro } from '../components/PageShell';
 import TabBar from '../components/TabBar';
 import OnboardingChecklist from '../components/OnboardingChecklist';
 import api from '../api';
+import { labelSg, labelPl } from '../companyLabels';
 
 import { silentError } from '../errorReporter';
 // Heavy components — lazy-loaded on first render to reduce initial bundle size
@@ -170,10 +171,10 @@ export function WorkforcePanel() {
   const handleProjectUpdated = p  => setProjects(prev => prev.map(x => x.id === p.id ? p : x));
   const handleProjectRestored= p  => setProjects(prev => [...prev, p]);
 
-  const workerLabel = settings?.label_worker || 'Team Member';
-  const workerLabelPlural = workerLabel.endsWith('s') ? workerLabel : `${workerLabel}s`;
-  const workLabel = settings?.label_work || 'Project';
-  const workLabelPlural = workLabel.endsWith('s') ? workLabel : `${workLabel}s`;
+  const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
+  const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
+  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
 
   return (
     <>
@@ -216,8 +217,8 @@ export function WorkforcePanel() {
             { id: 'live', label: t.tabLive, dot: chatUnread && settings?.feature_chat !== false ? '#3b82f6' : null },
             ...(canDo('approve_entries') ? [{ id: 'approvals', label: t.tabApprovals, dot: pendingCount > 0 ? '#f59e0b' : null }] : []),
             ...(canDo('view_reports') ? [{ id: 'reports', label: t.tabReports }] : []),
-            ...(settings?.feature_pto !== false ? [{ id: 'timeoff', label: 'Time Off' }] : []),
-            ...(settings?.feature_reimbursements !== false ? [{ id: 'expenses', label: 'Expenses', dot: pendingReimbursements > 0 ? '#f59e0b' : null }] : []),
+            ...(settings?.feature_pto !== false ? [{ id: 'timeoff', label: t.tabTimeOff }] : []),
+            ...(settings?.feature_reimbursements !== false ? [{ id: 'expenses', label: t.tabExpenses, dot: pendingReimbursements > 0 ? '#f59e0b' : null }] : []),
             ...(settings?.feature_scheduling !== false ? [{ id: 'manage', label: t.tabManage }] : []),
           ]}
         />

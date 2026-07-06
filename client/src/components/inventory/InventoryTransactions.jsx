@@ -7,6 +7,7 @@ import { langToLocale } from '../../utils';
 import { SkeletonList } from '../Skeleton';
 import ModalShell from '../ModalShell';
 import ColumnHeaderMenu from './ColumnHeaderMenu';
+import { labelSg } from '../../companyLabels';
 import { silentError } from '../../errorReporter';
 const TYPE_COLORS = {
   receive:  { color: '#059669', bg: '#d1fae5' },
@@ -44,7 +45,8 @@ function formatQty(value) {
 
 function TransactionForm({ isAdmin, locations, projects, settings, onSave, onCancel, onConversionSaved }) {
   const t = useT();
-  const workLabel = settings?.label_work || 'Project';
+  const { user } = useAuth();
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const TYPE_LABELS = {
     receive:  t.invTxTypeReceive,
     issue:    t.invTxTypeIssue,
@@ -469,7 +471,7 @@ export default function InventoryTransactions({ isAdmin, locations, projects, se
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
-  const workLabel = settings?.label_work || 'Project';
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const TYPE_LABELS = {
     receive:  t.invTxTypeReceive,
     issue:    t.invTxTypeIssue,

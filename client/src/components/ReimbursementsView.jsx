@@ -3,6 +3,7 @@ import api from '../api';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
 import { langToLocale } from '../utils';
+import { labelSg } from '../companyLabels';
 
 import { silentError } from '../errorReporter';
 function fmtDate(str, locale = 'en-US') {
@@ -31,7 +32,7 @@ export default function ReimbursementsView({ settings = null }) {
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
-  const workLabel = settings?.label_work || 'Project';
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const [items, setItems] = useState([]);
   const [mileageRate, setMileageRate] = useState(0.67);
   const [loading, setLoading] = useState(true);

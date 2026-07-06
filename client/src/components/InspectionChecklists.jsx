@@ -6,6 +6,7 @@ import { useOffline } from '../contexts/OfflineContext';
 import { useT } from '../hooks/useT';
 import Pagination from './Pagination';
 import FieldFilters from './FieldFilters';
+import { labelSg, labelPl } from '../companyLabels';
 
 function today() { return new Date().toLocaleDateString('en-CA'); }
 
@@ -487,8 +488,8 @@ export default function InspectionChecklists({ projects, settings = null }) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const { onSync } = useOffline() || {};
-  const workLabel = settings?.label_work || 'Project';
-  const workLabelPlural = workLabel.endsWith('s') ? workLabel : `${workLabel}s`;
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
+  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
 
   const [inspections, setInspections] = useState([]);
   const [templates, setTemplates] = useState([]);

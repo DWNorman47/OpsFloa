@@ -20,6 +20,7 @@ import EmptyState from '../components/EmptyState';
 import Pagination from '../components/Pagination';
 import ManageClients from '../components/ManageClients';
 import { SubsDirectoryPanel } from './SubsPage';
+import { labelSg, labelPl } from '../companyLabels';
 import { silentError } from '../errorReporter';
 
 const ManageWorkers = lazy(() => import('../components/ManageWorkers'));
@@ -234,8 +235,8 @@ export default function TeamPage() {
   const [dirSubs, setDirSubs] = useState([]);
   const [dirClients, setDirClients] = useState([]);
 
-  const workerLabel = features?.label_worker || adminSettings?.label_worker || 'Team Member';
-  const clientLabel = features?.label_client || adminSettings?.label_client || 'Customer';
+  const workerLabel = labelSg(features?.label_worker || adminSettings?.label_worker, 'worker', user?.language);
+  const clientLabel = labelSg(features?.label_client || adminSettings?.label_client, 'client', user?.language);
   // Subcontractors is a tab of the Directory module (not separately toggleable);
   // it shows to admins whenever Directory is available.
   const subsEnabled = isAdmin;
@@ -335,9 +336,9 @@ export default function TeamPage() {
 
   const tabs = [
     { id: 'directory', label: t.dirDirectoryTab },
-    ...(canManageTeam ? [{ id: 'team', label: plural(workerLabel) }] : []),
+    ...(canManageTeam ? [{ id: 'team', label: labelPl(features?.label_worker || adminSettings?.label_worker, 'worker', user?.language) }] : []),
     ...(subsEnabled ? [{ id: 'subs', label: t.subSubcontractors }] : []),
-    ...(isAdmin ? [{ id: 'customers', label: plural(clientLabel) }] : []),
+    ...(isAdmin ? [{ id: 'customers', label: labelPl(features?.label_client || adminSettings?.label_client, 'client', user?.language) }] : []),
     ...(canManageRoles ? [{ id: 'roles', label: t.teamRolesTab || 'Roles' }] : []),
   ];
 

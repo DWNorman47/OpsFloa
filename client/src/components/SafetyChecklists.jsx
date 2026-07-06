@@ -6,6 +6,7 @@ import { useT } from '../hooks/useT';
 import Pagination from './Pagination';
 import { SkeletonList } from './Skeleton';
 import FieldFilters from './FieldFilters';
+import { labelSg, labelPl } from '../companyLabels';
 
 const today = () => new Date().toLocaleDateString('en-CA');
 
@@ -402,8 +403,8 @@ export default function SafetyChecklists({ projects, settings = null }) {
   const t = useT();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
-  const workLabel = settings?.label_work || 'Project';
-  const workLabelPlural = workLabel.endsWith('s') ? workLabel : `${workLabel}s`;
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
+  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
   const [view, setView] = useState('list'); // 'list' | 'fill' | 'templates'
   const [templates, setTemplates] = useState([]);
   const [submissions, setSubmissions] = useState([]);

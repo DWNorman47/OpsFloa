@@ -4,6 +4,7 @@ import { fmtHours, formatCurrency } from '../utils';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
 import { handlePdfError } from '../pdfError';
+import { labelSg } from '../companyLabels';
 
 function downloadCSV(rows, filename) {
   const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
@@ -30,7 +31,7 @@ function defaultDates() {
 export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = {}, overtimeEnabled = true, projectsEnabled = true, projects = [], settings = null }) {
   const t = useT();
   const { user } = useAuth();
-  const workLabel = settings?.label_work || 'Project';
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const workLabelLower = workLabel.toLowerCase();
   const [expanded, setExpanded] = useState(false);
   const [from, setFrom] = useState(defaultDates().from);

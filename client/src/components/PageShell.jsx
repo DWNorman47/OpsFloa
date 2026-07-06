@@ -8,6 +8,7 @@ const APP_ACCENTS = {
   workforce: '#1d4ed8',
   field: '#059669',
   inventory: '#b45309',
+  tools: '#0f766e',
   team: '#0284c7',
   projects: '#7c3aed',
   administration: '#475569',

@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import api from '../api';
 import { useT } from '../hooks/useT';
+import { useAuth } from '../contexts/AuthContext';
+import { labelSg, labelPl } from '../companyLabels';
 
 function today() {
   return new Date().toLocaleDateString('en-CA');
@@ -12,10 +14,11 @@ function monthStart() {
 
 export default function ExportPanel({ workers, projects, settings = null }) {
   const t = useT();
-  const workerLabel = settings?.label_worker || 'Team Member';
-  const workerLabelPlural = workerLabel.endsWith('s') ? workerLabel : `${workerLabel}s`;
-  const workLabel = settings?.label_work || 'Project';
-  const workLabelPlural = workLabel.endsWith('s') ? workLabel : `${workLabel}s`;
+  const { user } = useAuth();
+  const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
+  const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
+  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
   const [from, setFrom] = useState(monthStart());
   const [to, setTo] = useState(today());
   const [workerId, setWorkerId] = useState('');
@@ -38,6 +41,27 @@ export default function ExportPanel({ workers, projects, settings = null }) {
       const a = document.createElement('a');
       a.href = url;
       a.download = `timecrunch-${from}-to-${to}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError(t.exportFailed);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Summary: one row per worker with approved Regular/OT/Total hours + days
+  // worked over the date range (ignores the worker/project/status filters).
+  const downloadHoursSummary = async () => {
+    setError('');
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ from, to });
+      const r = await api.get(`/admin/export/worker-hours?${params}`, { responseType: 'blob' });
+      const url = URL.createObjectURL(new Blob([r.data], { type: 'text/csv' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `worker-hours-${from}-to-${to}.csv`;
       a.click();
       URL.revokeObjectURL(url);
     } catch {
@@ -92,6 +116,9 @@ export default function ExportPanel({ workers, projects, settings = null }) {
         <button style={{ ...styles.downloadBtn, ...((loading || !from || !to) ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={download} disabled={loading || !from || !to}>
           {loading ? t.preparing : t.downloadCSV}
         </button>
+        <button style={{ ...styles.summaryBtn, ...((loading || !from || !to) ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={downloadHoursSummary} disabled={loading || !from || !to}>
+          {t.exportWorkerHours}
+        </button>
         <span style={styles.hint}>{t.exportColumns}</span>
       </div>
     </div>
@@ -109,5 +136,6 @@ const styles = {
   error: { color: '#ef4444', fontSize: 13, marginBottom: 10 },
   actions: { display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' },
   downloadBtn: { background: '#059669', color: '#fff', border: 'none', padding: '10px 22px', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' },
+  summaryBtn: { background: '#fff', color: '#059669', border: '1px solid #059669', padding: '10px 22px', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' },
   hint: { fontSize: 12, color: '#6b7280' },
 };

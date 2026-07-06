@@ -8,9 +8,12 @@ import EmptyState from './EmptyState';
 
 import { silentError } from '../errorReporter';
 import HelpTip from './HelpTip';
+import { useAuth } from '../contexts/AuthContext';
+import { labelSg, labelPl } from '../companyLabels';
 export default function ManageProjects({ projects, onProjectAdded, onProjectDeleted, onProjectUpdated, onProjectRestored, showWageType = true, nameEditable = true, showGeofenceBudget = true, defaultPrevailingRate = '', currency = 'USD', settings = null }) {
   const toast = useToast();
   const t = useT();
+  const { user } = useAuth();
   const [name, setName] = useState('');
   const [wageType, setWageType] = useState('regular');
   const [prevailingRate, setPrevailingRate] = useState('');
@@ -296,10 +299,10 @@ export default function ManageProjects({ projects, onProjectAdded, onProjectDele
     setError('');
   };
 
-  const workLabel = settings?.label_work || 'Project';
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const workLabelLower = workLabel.toLowerCase();
-  const workLabelPlural = /s$/i.test(workLabel) ? workLabel : `${workLabel}s`;
-  const clientLabel = settings?.label_client || 'Customer';
+  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
+  const clientLabel = labelSg(settings?.label_client, 'client', user?.language);
   const workNamePlaceholder = `${workLabel} name`;
 
   return (

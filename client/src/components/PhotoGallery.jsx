@@ -6,6 +6,7 @@ import { langToLocale } from '../utils';
 import Pagination from './Pagination';
 import { SkeletonList } from './Skeleton';
 import FieldFilters from './FieldFilters';
+import { labelSg, labelPl } from '../companyLabels';
 
 import { silentError } from '../errorReporter';
 function fmtDate(str, locale = 'en-US') {
@@ -114,8 +115,8 @@ export default function PhotoGallery({ projects, settings = null }) {
   const t = useT();
   const locale = langToLocale(user?.language);
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
-  const workLabel = settings?.label_work || 'Project';
-  const workLabelPlural = /s$/i.test(workLabel) ? workLabel : `${workLabel}s`;
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
+  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
 
   const [media, setMedia] = useState([]);
   const [loading, setLoading] = useState(true);

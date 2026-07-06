@@ -9,6 +9,7 @@ import { SkeletonList } from './Skeleton';
 import FieldFilters from './FieldFilters';
 
 import { silentError } from '../errorReporter';
+import { labelSg } from '../companyLabels';
 function today() {
   return new Date().toLocaleDateString('en-CA');
 }
@@ -292,7 +293,7 @@ function IncidentCard({ incident, isAdmin, onClosed, onDeleted }) {
 export default function IncidentReports({ projects, settings = null }) {
   const { user } = useAuth();
   const t = useT();
-  const workLabel = settings?.label_work || 'Project';
+  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const { onSync } = useOffline() || {};
   const TYPE_LABELS = useMemo(() => ({
