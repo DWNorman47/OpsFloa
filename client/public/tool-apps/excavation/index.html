@@ -74,6 +74,18 @@
     <canvas id="cv"></canvas>
     <div id="hud"></div>
     <div id="dropHint"><span>Drop a PDF here or click <b>Open PDF…</b></span></div>
+    <!-- Edge/corner jump pads: appear when zoomed in past ~70% (less than 70%
+         of the plan visible) and pan a third of a screen in that direction. -->
+    <div id="navPads" class="hidden" aria-hidden="true">
+      <button class="nav-pad n"  data-dx="0"  data-dy="-1" title="Pan up (⅓ screen)" aria-label="Pan up">▲</button>
+      <button class="nav-pad s"  data-dx="0"  data-dy="1"  title="Pan down (⅓ screen)" aria-label="Pan down">▼</button>
+      <button class="nav-pad w"  data-dx="-1" data-dy="0"  title="Pan left (⅓ screen)" aria-label="Pan left">◀</button>
+      <button class="nav-pad e"  data-dx="1"  data-dy="0"  title="Pan right (⅓ screen)" aria-label="Pan right">▶</button>
+      <button class="nav-pad nw" data-dx="-1" data-dy="-1" title="Pan up &amp; left" aria-label="Pan up and left">↖</button>
+      <button class="nav-pad ne" data-dx="1"  data-dy="-1" title="Pan up &amp; right" aria-label="Pan up and right">↗</button>
+      <button class="nav-pad sw" data-dx="-1" data-dy="1"  title="Pan down &amp; left" aria-label="Pan down and left">↙</button>
+      <button class="nav-pad se" data-dx="1"  data-dy="1"  title="Pan down &amp; right" aria-label="Pan down and right">↘</button>
+    </div>
   </div>
 
   <aside id="sidebar">

@@ -61,7 +61,7 @@ const ctx = cv.getContext('2d');
 const $ = id => document.getElementById(id);
 
 const els = {
-  filePdf: $('filePdf'), dropHint: $('dropHint'), hud: $('hud'),
+  filePdf: $('filePdf'), dropHint: $('dropHint'), hud: $('hud'), navPads: $('navPads'),
   pageExisting: $('pageExisting'), pageProposed: $('pageProposed'),
   scaleStatus: $('scaleStatus'), boundaryStatus: $('boundaryStatus'),
   contourTitle: $('contourTitle'), contourCount: $('contourCount'),
@@ -377,6 +377,30 @@ function fitView() {
   state.view.panY = (r.height - img.height * z) / 2;
 }
 
+// Edge/corner jump pads — pan a third of a screen without dragging. dx=+1 is
+// right, dy=+1 is down; decreasing pan reveals content in that direction.
+document.querySelectorAll('.nav-pad').forEach(b => b.addEventListener('click', () => {
+  const dx = parseInt(b.dataset.dx, 10), dy = parseInt(b.dataset.dy, 10);
+  const r = cv.parentElement.getBoundingClientRect();
+  state.view.panX -= dx * r.width / 3;
+  state.view.panY -= dy * r.height / 3;
+  draw();
+}));
+
+// Show the pads only when zoomed in past ~70% (less than 70% of the plan is on
+// screen), where dragging to navigate gets tedious. Called every paint.
+function updateNavPads() {
+  const img = state.sheets[state.sheet].image;
+  let show = false;
+  if (img) {
+    const r = cv.parentElement.getBoundingClientRect();
+    const fitZoom = Math.min(r.width / img.width, r.height / img.height);
+    show = fitZoom > 0 && state.view.zoom > fitZoom / 0.7;
+  }
+  els.navPads.classList.toggle('hidden', !show);
+  cv.parentElement.classList.toggle('nav-active', show);
+}
+
 let drawQueued = false;
 function draw() {
   if (drawQueued) return;
@@ -644,6 +668,7 @@ function drawHeatmap() {
 }
 
 function updateHud() {
+  updateNavPads();
   const msgs = {
     pan: 'Drag to pan · wheel to zoom',
     calibrate: state.calibPts.length === 1 ? 'Click the SECOND point'
