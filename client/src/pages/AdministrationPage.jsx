@@ -8,6 +8,7 @@ import TabBar from '../components/TabBar';
 import { PageIntro, PageShell } from '../components/PageShell';
 import BillingPanel from '../components/BillingPanel';
 import ManageRates from '../components/ManageRates';
+import HoursRulesSettings from '../components/HoursRulesSettings';
 import AdvancedSettings from '../components/AdvancedSettings';
 import AuditLog from '../components/AuditLog';
 import ServiceRequestsAdmin from '../components/ServiceRequestsAdmin';
@@ -734,6 +735,12 @@ export default function AdministrationPage() {
               defaultOpen
             >
               <ManageRates settings={settings} onSettingsUpdated={setSettings} />
+            </WorkspaceSettingGroup>
+            <WorkspaceSettingGroup
+              title={t.hrTitle}
+              body={t.hrGroupBody}
+            >
+              <HoursRulesSettings settings={settings} onSettingsUpdated={setSettings} />
             </WorkspaceSettingGroup>
             <WorkspaceSettingGroup
               title={t.admpAdvancedControlsTitle}

@@ -277,6 +277,9 @@ function roundEntriesForPay(entries, policy, ctx = {}) {
   if (inOff && outOff) return entries;
 
   const { shiftMap, workerStandardById } = ctx;
+  // Whether to surface the original punch alongside the paid time. When a company
+  // opts for "paid only", we still round but don't expose the raw punch.
+  const showRaw = policy.display?.showActualAndPaid !== false;
   return entries.map(e => {
     if (!e.start_time || !e.end_time) return e;
     const dateStr = String(e.work_date).substring(0, 10);
@@ -291,8 +294,7 @@ function roundEntriesForPay(entries, policy, ctx = {}) {
       ...e,
       start_time: start,
       end_time: end,
-      raw_start_time: e.start_time,
-      raw_end_time: e.end_time,
+      ...(showRaw ? { raw_start_time: e.start_time, raw_end_time: e.end_time } : {}),
       rounding_adjusted: true,
     };
   });
