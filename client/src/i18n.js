@@ -652,6 +652,15 @@ const translations = {
     hrSdFirst: 'First hours',
     hrSdFirstMult: 'First rate ×',
     hrSdAfterMult: 'Beyond rate ×',
+    hrPremiums: 'Premiums',
+    hrPremiumsHint: 'Extra pay for rest-day work, a minimum daily-hours guarantee, and a night-shift differential.',
+    hrRestDayMult: 'Rest-day pay ×',
+    hrMinDaily: 'Minimum daily hours',
+    hrNightDiff: 'Night-shift differential',
+    hrNightDiffHint: 'Extra percentage on hours worked in the night window (24-hour clock; the window may cross midnight).',
+    hrNightFrom: 'Night from (hr)',
+    hrNightTo: 'Night to (hr)',
+    hrNightPct: 'Extra %',
     notifAriaLabel: 'Notifications',
 
     // ── Upcoming Shifts ───────────────────────────────────────────────────────
@@ -4513,6 +4522,15 @@ const translations = {
     hrSdFirst: 'Primeras horas',
     hrSdFirstMult: 'Tarifa inicial ×',
     hrSdAfterMult: 'Tarifa posterior ×',
+    hrPremiums: 'Recargos',
+    hrPremiumsHint: 'Pago adicional por trabajo en día de descanso, una garantía de horas mínimas diarias y un recargo por turno nocturno.',
+    hrRestDayMult: 'Pago día de descanso ×',
+    hrMinDaily: 'Horas mínimas diarias',
+    hrNightDiff: 'Recargo nocturno',
+    hrNightDiffHint: 'Porcentaje adicional sobre las horas trabajadas en el horario nocturno (reloj de 24 horas; el horario puede cruzar la medianoche).',
+    hrNightFrom: 'Nocturno desde (h)',
+    hrNightTo: 'Nocturno hasta (h)',
+    hrNightPct: '% adicional',
     notifAriaLabel: 'Notificaciones',
 
     // ── Upcoming Shifts ───────────────────────────────────────────────────────

@@ -180,7 +180,13 @@ that had the previous default.
   fixed-value: `rounding.clockIn/clockOut.direction`
   (`against_worker`|`toward_worker`|`nearest`|`off`) and `.reference`
   (`schedule`|`clock`) — enforced app-side by `parsePolicy` (unknown values
-  fall back to the default edge), not by a DB CHECK.
+  fall back to the default edge), not by a DB CHECK. Other sub-structures
+  (numeric/free, validated by the pay calculator, not enum-constrained):
+  `standardHours` (per-weekday `{start,end,unpaidBreakMin}`), `overtime`
+  (`dailyBands`/`weeklyBands` = `[{afterHours,mult}]`, `seventhDay`), and
+  `premiums` (`restDayMult`, `minDailyHours`,
+  `nightDifferential {fromHour,toHour,pct}`). All consumed by
+  `computeOT` / `otConfigFromSettings`; each defaults to a no-op when absent.
 
 ### Module visibility flags (`module_*`, boolean, in `FEATURE_KEYS`)
 

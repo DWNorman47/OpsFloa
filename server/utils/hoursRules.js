@@ -137,14 +137,35 @@ function otConfigFromSettings(settings) {
   const p = parsePolicy(settings && settings.hours_rules);
   if (!p.enabled) return null;
   const o = p.overtime || {};
+  const prem = p.premiums || {};
   const hasDaily  = Array.isArray(o.dailyBands)  && o.dailyBands.length  > 0;
   const hasWeekly = Array.isArray(o.weeklyBands) && o.weeklyBands.length > 0;
   const has7th    = o.seventhDay && o.seventhDay.enabled === true;
-  if (!hasDaily && !hasWeekly && !has7th) return null;
+
+  // Rest-day premium: the rest days are the weekdays with NO standard hours.
+  // Only meaningful when the schedule actually defines working days (otherwise
+  // "every day is a rest day" — which we must not do).
+  const workDays = Object.keys(p.standardHours || {})
+    .filter(k => p.standardHours[k] && p.standardHours[k].start)
+    .map(Number);
+  const restMult = parseFloat(prem.restDayMult);
+  let restDay = null;
+  if (Number.isFinite(restMult) && restMult > 0 && workDays.length > 0) {
+    const days = [0, 1, 2, 3, 4, 5, 6].filter(d => !workDays.includes(d));
+    if (days.length) restDay = { mult: restMult, days };
+  }
+  const minDailyHours = parseFloat(prem.minDailyHours) || 0;
+  const nightDifferential = (prem.nightDifferential && parseFloat(prem.nightDifferential.pct) > 0)
+    ? prem.nightDifferential : null;
+
+  if (!hasDaily && !hasWeekly && !has7th && !restDay && !minDailyHours && !nightDifferential) return null;
   return {
     dailyBands:  hasDaily  ? o.dailyBands  : [],
     weeklyBands: hasWeekly ? o.weeklyBands : [],
     seventhDay:  has7th    ? o.seventhDay  : null,
+    restDay,
+    minDailyHours,
+    nightDifferential,
   };
 }
 

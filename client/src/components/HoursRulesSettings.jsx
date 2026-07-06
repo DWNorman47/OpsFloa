@@ -25,6 +25,8 @@ const PRESETS = {
     workDays: { 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 0: false },
     inRef: 'schedule', inInterval: '60', inGrace: '15', inDir: 'against_worker',
     outRef: 'schedule', outInterval: '60', outGrace: '30', outDir: 'toward_worker',
+    restDayMult: '2',
+    nightEnabled: true, nightFrom: '19', nightTo: '5', nightPct: '25',
     showActualAndPaid: true,
   }),
   us_quarter: () => ({
@@ -55,6 +57,8 @@ function blankForm() {
     outRef: 'schedule', outInterval: '15', outGrace: '0', outDir: 'off',
     otMode: 'off', otBands: [],
     sd7Enabled: false, sd7First: '8', sd7FirstMult: '1.5', sd7AfterMult: '2',
+    restDayMult: '', minDailyHours: '',
+    nightEnabled: false, nightFrom: '19', nightTo: '5', nightPct: '25',
     showActualAndPaid: true,
   };
 }
@@ -98,6 +102,16 @@ function policyToForm(raw) {
     if (sdc.firstMult != null) f.sd7FirstMult = String(sdc.firstMult);
     if (sdc.afterMult != null) f.sd7AfterMult = String(sdc.afterMult);
   }
+  const prem = p.premiums || {};
+  if (prem.restDayMult != null) f.restDayMult = String(prem.restDayMult);
+  if (prem.minDailyHours != null) f.minDailyHours = String(prem.minDailyHours);
+  const nd = prem.nightDifferential;
+  if (nd && parseFloat(nd.pct) > 0) {
+    f.nightEnabled = true;
+    if (nd.fromHour != null) f.nightFrom = String(nd.fromHour);
+    if (nd.toHour != null) f.nightTo = String(nd.toHour);
+    if (nd.pct != null) f.nightPct = String(nd.pct);
+  }
   f.showActualAndPaid = p.display ? p.display.showActualAndPaid !== false : true;
   return f;
 }
@@ -123,6 +137,18 @@ function formToPolicy(f) {
       afterMult: parseFloat(f.sd7AfterMult) || 2,
     };
   }
+  const premiums = {};
+  const rdm = parseFloat(f.restDayMult);
+  if (Number.isFinite(rdm) && rdm > 0) premiums.restDayMult = rdm;
+  const mdh = parseFloat(f.minDailyHours);
+  if (Number.isFinite(mdh) && mdh > 0) premiums.minDailyHours = mdh;
+  if (f.nightEnabled) {
+    premiums.nightDifferential = {
+      fromHour: parseInt(f.nightFrom, 10) || 0,
+      toHour: parseInt(f.nightTo, 10) || 0,
+      pct: parseFloat(f.nightPct) || 0,
+    };
+  }
   return {
     version: 1,
     enabled: !!f.enabled,
@@ -132,7 +158,7 @@ function formToPolicy(f) {
       clockOut: { reference: f.outRef, intervalMin: parseInt(f.outInterval, 10) || 15, graceMin: parseInt(f.outGrace, 10) || 0, direction: f.outDir },
     },
     overtime,
-    premiums: {},
+    premiums,
     display: { showActualAndPaid: !!f.showActualAndPaid },
   };
 }
@@ -259,6 +285,29 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
                   <Field label={t.hrSdFirst}><input type="number" min="0" step="0.5" style={s.input} value={form.sd7First} onChange={e => set('sd7First', e.target.value)} /></Field>
                   <Field label={t.hrSdFirstMult}><input type="number" min="1" step="0.05" style={s.input} value={form.sd7FirstMult} onChange={e => set('sd7FirstMult', e.target.value)} /></Field>
                   <Field label={t.hrSdAfterMult}><input type="number" min="1" step="0.05" style={s.input} value={form.sd7AfterMult} onChange={e => set('sd7AfterMult', e.target.value)} /></Field>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section style={s.section}>
+            <h4 style={s.h4}>{t.hrPremiums}</h4>
+            <p style={s.hint}>{t.hrPremiumsHint}</p>
+            <div style={s.grid}>
+              <Field label={t.hrRestDayMult}><input type="number" min="0" step="0.05" placeholder="—" style={s.input} value={form.restDayMult} onChange={e => set('restDayMult', e.target.value)} /></Field>
+              <Field label={t.hrMinDaily}><input type="number" min="0" step="0.5" placeholder="0" style={s.input} value={form.minDailyHours} onChange={e => set('minDailyHours', e.target.value)} /></Field>
+            </div>
+            <div style={{ marginTop: 14 }}>
+              <label style={s.checkRow}>
+                <input type="checkbox" checked={form.nightEnabled} onChange={e => set('nightEnabled', e.target.checked)} />
+                <span>{t.hrNightDiff}</span>
+              </label>
+              <p style={s.hint}>{t.hrNightDiffHint}</p>
+              {form.nightEnabled && (
+                <div style={s.grid}>
+                  <Field label={t.hrNightFrom}><input type="number" min="0" max="23" style={s.input} value={form.nightFrom} onChange={e => set('nightFrom', e.target.value)} /></Field>
+                  <Field label={t.hrNightTo}><input type="number" min="0" max="23" style={s.input} value={form.nightTo} onChange={e => set('nightTo', e.target.value)} /></Field>
+                  <Field label={t.hrNightPct}><input type="number" min="0" step="1" style={s.input} value={form.nightPct} onChange={e => set('nightPct', e.target.value)} /></Field>
                 </div>
               )}
             </div>

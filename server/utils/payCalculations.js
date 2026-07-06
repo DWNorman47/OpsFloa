@@ -16,6 +16,54 @@ function entryDuration(e) {
   return hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60;
 }
 
+/** Day of week (0=Sun … 6=Sat) for a YYYY-MM-DD key, timezone-independent. */
+function weekdayOfDate(dk) {
+  const m = String(dk).substring(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay();
+}
+
+/** Minutes since midnight from an "HH:MM[:SS]" string (null-safe). */
+function hmToMin(hhmm) {
+  if (hhmm == null) return null;
+  const m = String(hhmm).match(/^(\d{1,2}):(\d{2})/);
+  return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : null;
+}
+
+/**
+ * Hours of one entry that fall inside a nightly window [fromHour, toHour),
+ * which may wrap midnight (e.g. 19→5). Gross overlap of the shift interval with
+ * the recurring window; break minutes are not subtracted (the window's timing
+ * relative to a break is unknown). Used for a night-shift differential.
+ */
+function nightHoursForEntry(e, fromHour, toHour) {
+  const s = hmToMin(e.start_time);
+  let en = hmToMin(e.end_time);
+  if (s == null || en == null) return 0;
+  if (en < s) en += 1440; // overnight shift
+  const nf = fromHour * 60, nt = toHour * 60;
+  let overlap = 0;
+  for (let off = -1; off <= 1; off++) {
+    const a = nf + off * 1440;
+    const b = (nf < nt ? nt : nt + 1440) + off * 1440;
+    overlap += Math.max(0, Math.min(en, b) - Math.max(s, a));
+  }
+  return overlap / 60;
+}
+
+/**
+ * Additive night-shift differential cost for a batch of entries: night hours ×
+ * base rate × (pct/100). Returns 0 when no night config is supplied.
+ */
+function nightPremiumCost(entries, nightCfg, baseRate) {
+  if (!nightCfg) return 0;
+  const pct = parseFloat(nightCfg.pct) || 0;
+  if (!pct) return 0;
+  const from = parseFloat(nightCfg.fromHour), to = parseFloat(nightCfg.toHour);
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return 0;
+  return entries.reduce((c, e) => c + nightHoursForEntry(e, from, to) * baseRate * (pct / 100), 0);
+}
+
 /**
  * Resolve the overtime *bands* for a bucket (day or week). A band is
  * `{ afterHours, mult }`: hours in the bucket above `afterHours` (and below the
@@ -87,7 +135,13 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null) {
   // accrue on that day.
   const sd = (otConfig && otConfig.seventhDay && otConfig.seventhDay.enabled && rule === 'daily')
     ? otConfig.seventhDay : null;
-  let seventhFirst = 0, seventhRest = 0;
+  // Rest-day premium (daily rule): any hours worked on a designated rest day are
+  // paid entirely at a premium multiplier. Minimum-daily-hours: a short day is
+  // guaranteed a floor of paid regular hours ("reporting time pay").
+  const restDay  = (otConfig && otConfig.restDay && rule === 'daily') ? otConfig.restDay : null;
+  const restDays = restDay ? new Set((restDay.days || []).map(Number)) : null;
+  const minDaily = (otConfig && rule === 'daily') ? (parseFloat(otConfig.minDailyHours) || 0) : 0;
+  let seventhFirst = 0, seventhRest = 0, restDayHours = 0;
 
   if (rule === 'none') {
     autoReg = auto.reduce((s, e) => s + entryDuration(e), 0);
@@ -116,9 +170,13 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null) {
     const firstT = sd ? (parseFloat(sd.firstHoursThreshold) || 0) : 0;
 
     Object.entries(buckets).forEach(([dk, h]) => {
-      if (sd && seventhKeys.has(dk)) {
+      if (restDays && restDays.has(weekdayOfDate(dk))) {
+        restDayHours += h;                       // whole rest day at the premium
+      } else if (sd && seventhKeys.has(dk)) {
         seventhFirst += Math.min(h, firstT);
         seventhRest  += Math.max(0, h - firstT);
+      } else if (minDaily > 0 && h < minDaily) {
+        autoReg += minDaily;                      // short day topped up to the floor
       } else {
         autoReg += Math.min(h, bands[0].afterHours);
         bands.forEach((b, i) => {
@@ -132,11 +190,12 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null) {
   const otBands = bands
     .map((b, i) => ({ hours: bandTotals[i], mult: b.mult }))
     .filter(b => b.hours > 0);
+  if (restDay && restDayHours > 0) otBands.push({ hours: restDayHours, mult: parseFloat(restDay.mult) || 2 });
   if (sd && seventhFirst > 0) otBands.push({ hours: seventhFirst, mult: parseFloat(sd.firstMult) || 1.5 });
   if (sd && seventhRest > 0)  otBands.push({ hours: seventhRest,  mult: parseFloat(sd.afterMult)  || 2 });
   if (overrideOt > 0) otBands.push({ hours: overrideOt, mult: null });
 
-  const overtimeHours = bandTotals.reduce((s, h) => s + h, 0) + seventhFirst + seventhRest + overrideOt;
+  const overtimeHours = bandTotals.reduce((s, h) => s + h, 0) + restDayHours + seventhFirst + seventhRest + overrideOt;
 
   return {
     regularHours:  overrideReg + autoReg,
@@ -180,4 +239,4 @@ function computeDailyPayCosts(entries, overtimeRule, threshold, dailyRate, overt
   };
 }
 
-module.exports = { hoursWorked, computeOT, computeDailyPayCosts, otBandsCost, resolveBands };
+module.exports = { hoursWorked, computeOT, computeDailyPayCosts, otBandsCost, resolveBands, nightHoursForEntry, nightPremiumCost };
