@@ -112,6 +112,12 @@
       <div class="hint">The cut/fill grid only counts area inside the boundary (limits of disturbance).</div>
     </section>
 
+    <section id="secRealign">
+      <h3>Revision align</h3>
+      <button id="btnRealign" class="btn tiny">⌖ Re-align traces to this PDF</button>
+      <div class="hint">If a revised PDF shifted the drawing, this moves your carried scale, boundary, and traces onto it: click a landmark on a trace, then the same spot on the new drawing. Press Enter after one pair (shift) or add a second pair (rotation/scale). Ctrl+Z undoes it.</div>
+    </section>
+
     <section id="secContours">
       <h3><span id="contourTitle">Existing</span> contours <span id="contourCount" class="pill">0</span></h3>
       <div id="contourList" class="list"></div>
@@ -188,6 +194,7 @@
       <li><b>➤ Select:</b> click a line (or its row in the sidebar list) · <b>Delete</b> removes it · <b>E</b> edits its elevation · <b>Esc</b> deselects. The sidebar list's ✕ also deletes.</li>
       <li><b>⌫ Erase Box:</b> drag a box — only the line <em>portions</em> inside are erased; lines crossing the box are split and the outside parts survive. <b>With a line selected, only that line is trimmed.</b> Spots inside are removed; pads are only removed when fully boxed.</li>
       <li><b>⌖ Align sheets</b> (sidebar): turn on <b>Ghost other sheet</b> to check the two pages overlay. If not: click a landmark on Existing, the same one on Proposed (fixes the shift), then press <b>Enter</b> to stop — or click a second, far-away landmark pair to also fix rotation. <b>Reset</b> removes the adjustment.</li>
+      <li><b>⌖ Re-align traces to this PDF</b> (Revision align, sidebar): after opening a revised PDF where the drawing shifted, this moves your carried scale, boundary, and traces onto it. Click a landmark on a carried trace, then the same spot on the new drawing; <b>Enter</b> after one pair for a shift, or add a second far-away pair for rotation/scale. It re-derives ft/px automatically; <b>Ctrl+Z</b> undoes it. (This moves your work; Align sheets above only nudges the Proposed image.)</li>
       <li><b>↶ Undo</b> (Ctrl+Z): steps back through the last 50 changes — traces, erases, boundary/pad/scale/alignment edits, Clear, Load, even New.</li>
       <li><b>📁 Projects:</b> each project is a separate takeoff. <b>Duplicate</b> makes a second version on the same plans (shared PDF, independent traces) — ideal for comparing grading options. <b>Revise…</b> forks a takeoff into a new revision: it carries the scale, boundary, and traces forward, then you <b>Open PDF…</b> the updated plan set — the drawing swaps but your work stays, so you only edit what changed (re-check the scale if the new sheet prints at a different size). The original revision is left untouched. Open, rename, or delete from the list; the current one shows in the toolbar. Switching flushes and saves automatically; Undo history doesn't cross projects.</li>
       <li><b>Saving:</b> everything auto-saves in the browser, including the PDF — a refresh reopens the current project. <b>New</b> wipes the current project's takeoff (keeps the PDF open). <b>Save/Load</b> exports/imports a .takeoff.json (the PDF itself is not embedded — keep it with the file).</li>

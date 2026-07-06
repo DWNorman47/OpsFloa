@@ -34,6 +34,7 @@ const state = {
   calibPts: [],            // in-progress calibration clicks
   alignPts: [],            // align landmarks clicked on the EXISTING sheet (world)
   alignQs: [],             // matching landmarks on the PROPOSED sheet (raw image coords)
+  realignPts: [],          // revision re-align: flat [from,to,from,to,…] world points
   selected: null,          // { sheet, index }
   lastElev: { existing: null, proposed: null },
   prevElev: { existing: null, proposed: null },
@@ -440,6 +441,7 @@ function paint() {
   drawWall();
   drawCalibration();
   drawDraft();
+  drawRealign();
 
   // auto-traced line awaiting its elevation
   if (state.wandPts && state.wandPts.length) {
@@ -675,6 +677,7 @@ const TOOL_LABEL = {
   pan: 'Pan', calibrate: 'Scale', boundary: 'Boundary',
   trace: 'Trace contour', wand: 'Auto trace', spot: 'Spot elevation', pad: 'Flat pad',
   wall: 'Wall dig', select: 'Select', erase: 'Erase box', align: 'Align sheets',
+  realign: 'Re-align traces',
 };
 
 function setTool(t) {
@@ -683,6 +686,7 @@ function setTool(t) {
   state.calibPts = [];
   state.alignPts = [];
   state.alignQs = [];
+  state.realignPts = [];
   state.wandPts = null;
   state.boxA = state.boxB = null;
   document.querySelectorAll('.tool').forEach(b =>
@@ -960,6 +964,15 @@ async function handleClick(w) {
     case 'wall':
       state.draft.push(w);
       break;
+    case 'realign': {
+      state.realignPts.push(w);
+      const pairs = Math.floor(state.realignPts.length / 2);
+      setMsg(state.realignPts.length % 2
+        ? 'Now click that SAME spot on the updated drawing.'
+        : `${pairs} landmark pair${pairs > 1 ? 's' : ''} set. Press Enter to apply` +
+          `${pairs === 1 ? ' (shift)' : ' (shift + rotation/scale)'}, or add another pair.`);
+      break;
+    }
     case 'pad':
       // clicks on an existing pad edit it rather than starting a new one
       if (!state.draft.length && nearestPadEdge(w, 10 / state.view.zoom)) {
@@ -1608,7 +1621,8 @@ window.addEventListener('keydown', e => {
 
   switch (e.key) {
     case 'Enter':
-      if (state.tool === 'align' && state.alignQs.length === 1) {
+      if (state.tool === 'realign') applyRealign();
+      else if (state.tool === 'align' && state.alignQs.length === 1) {
         state.alignPts = []; state.alignQs = [];
         setTool('pan');
         setMsg('Alignment saved (shift only).');
@@ -1618,7 +1632,7 @@ window.addEventListener('keydown', e => {
       state.draft = []; state.calibPts = [];
       state.boxA = state.boxB = null;
       if (state.selected) { state.selected = null; refreshContourList(); }
-      if (state.tool === 'align') setTool('pan');
+      if (state.tool === 'align' || state.tool === 'realign') setTool('pan');
       else { state.alignPts = []; state.alignQs = []; }
       draw(); break;
     case 'Backspace':
@@ -2161,6 +2175,83 @@ function renderWalls() {
   draw();
 }
 
+/* ============================== Revision re-align ============================== */
+// When a revised PDF shifts (or rotates/scales) the drawing, move ALL carried
+// geometry onto it in one step. Every trace lives in the shared world frame, so
+// this bakes a single similarity transform into calibration, boundary, both
+// sheets' contours, and wall lines — then re-derives ft/px from the moved scale
+// points (real feet unchanged). state.align (the proposed-image display offset)
+// is a separate concern and is left alone.
+
+function transformAllGeometry(M) {
+  const T = p => alignApply(M, p);
+  if (state.calibration) {
+    const c = state.calibration;
+    const A = T({ x: c.ax, y: c.ay }), B = T({ x: c.bx, y: c.by });
+    c.ax = A.x; c.ay = A.y; c.bx = B.x; c.by = B.y;
+    const px = dist(c.ax, c.ay, c.bx, c.by);
+    if (px > 0) c.ftPerPx = c.feet / px; // same real distance, new pixel span
+  }
+  state.boundary = state.boundary.map(T);
+  for (const sheet of ['existing', 'proposed'])
+    state.contours[sheet].forEach(c => { c.pts = c.pts.map(T); });
+  state.walls.forEach(w => { w.pts = w.pts.map(T); });
+}
+
+function applyRealign() {
+  const pts = state.realignPts || [];
+  const nPairs = Math.floor(pts.length / 2);
+  if (nPairs < 1) { setMsg('Set at least one landmark pair: a spot on a carried trace, then the same spot on the updated drawing.'); return; }
+
+  let M;
+  if (nPairs === 1) {
+    const from = pts[0], to = pts[1];
+    M = { a: 1, b: 0, e: to.x - from.x, f: to.y - from.y }; // shift only
+  } else {
+    // Similarity (shift + rotation + uniform scale) from the first two pairs.
+    const f1 = pts[0], t1 = pts[1], f2 = pts[2], t2 = pts[3];
+    const dfx = f2.x - f1.x, dfy = f2.y - f1.y;
+    const dtx = t2.x - t1.x, dty = t2.y - t1.y;
+    const len2 = dfx * dfx + dfy * dfy;
+    if (len2 < 4) { setMsg('Those two landmarks are too close together — pick a second one farther away.'); return; }
+    const a = (dfx * dtx + dfy * dty) / len2;
+    const b = (dfx * dty - dfy * dtx) / len2;
+    M = { a, b, e: t1.x - (a * f1.x - b * f1.y), f: t1.y - (b * f1.x + a * f1.y) };
+  }
+
+  snapshot();
+  transformAllGeometry(M);
+  state.realignPts = [];
+  state.result = null; // the cut/fill grid is positional — recompute after moving
+  els.resultsSection.classList.add('hidden');
+  refreshStatuses();
+  refreshContourList();
+  renderWalls();
+  saveLocal();
+  setTool('pan');
+  draw();
+  const scale = Math.hypot(M.a, M.b);
+  setMsg(`Traces re-aligned to this PDF${nPairs >= 2 ? ` (shift + rotation, ×${scale.toFixed(3)})` : ' (shift)'}. ` +
+    'Check the fit; re-verify the scale (📏) if the sheet prints at a different size. Ctrl+Z undoes it.');
+}
+
+function drawRealign() {
+  const pts = state.realignPts;
+  if (!pts || !pts.length) return;
+  ctx.fillStyle = ctx.strokeStyle = '#38d39f';
+  for (let i = 0; i < pts.length; i += 2) {
+    const from = pts[i], to = pts[i + 1];
+    ctx.beginPath(); ctx.arc(from.x, from.y, lw(4), 0, Math.PI * 2); ctx.fill();
+    if (to) {
+      ctx.lineWidth = lw(2);
+      ctx.setLineDash([lw(5), lw(4)]);
+      ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.arc(to.x, to.y, lw(4), 0, Math.PI * 2); ctx.stroke();
+    }
+  }
+}
+
 /* ============================== Save / load ============================== */
 
 $('btnNew').addEventListener('click', async () => {
@@ -2448,6 +2539,16 @@ async function projectAction(act, id) {
   }
   showProjects(); // back to the (refreshed) list
 }
+
+$('btnRealign').addEventListener('click', () => {
+  if (!state.pdf) { setMsg('Open the updated PDF first, then re-align your carried traces to it.'); return; }
+  if (!state.calibration && !state.boundary.length &&
+      !state.contours.existing.length && !state.contours.proposed.length && !state.walls.length) {
+    setMsg('Nothing to re-align yet — this moves already-placed traces onto a shifted drawing.'); return;
+  }
+  setTool('realign');
+  setMsg('Re-align: click a landmark on a carried trace, then the same spot on the updated drawing. Enter to apply, Esc to cancel.');
+});
 
 els.btnProjects.addEventListener('click', showProjects);
 els.projClose.addEventListener('click', () => els.projects.classList.add('hidden'));
