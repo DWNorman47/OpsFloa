@@ -32,7 +32,8 @@ export default function InventoryPage() {
   // independent of manage_inventory — the server authority is the requirePlan
   // ('business') mount on /api/equipment.
   const { isBusiness } = usePlan();
-  const showEquipment = isBusiness && usePerm('manage_equipment');
+  const canEquip = usePerm('manage_equipment');
+  const showEquipment = isBusiness && canEquip;
 
   const [features, setFeatures] = useState(null);
   const [projects, setProjects] = useState([]);
