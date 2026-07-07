@@ -411,6 +411,12 @@ function updateNavPads() {
   cv.parentElement.classList.toggle('nav-active', show);
 }
 
+// a collapsed sidebar section hides its own visuals in the viewport
+function sectionCollapsed(id) {
+  const s = $(id);
+  return !!(s && s.classList.contains('collapsed'));
+}
+
 let drawQueued = false;
 function draw() {
   if (drawQueued) return;
@@ -459,23 +465,26 @@ function paint() {
   // heatmap under the linework
   if (state.result && state.showHeatmap) drawHeatmap();
 
-  // ghost of the other surface's traces
-  if (state.ghost) {
-    ctx.globalAlpha = 0.3;
-    for (const c of state.contours[other]) drawContour(c, other, false);
-    ctx.globalAlpha = 1;
+  // contour linework (both the ghost and this sheet) hides when Contours is collapsed
+  if (!sectionCollapsed('secContours')) {
+    // ghost of the other surface's traces
+    if (state.ghost) {
+      ctx.globalAlpha = 0.3;
+      for (const c of state.contours[other]) drawContour(c, other, false);
+      ctx.globalAlpha = 1;
+    }
+
+    // this sheet's traces
+    state.contours[state.sheet].forEach((c, i) => {
+      const sel = state.selected && state.selected.sheet === state.sheet && state.selected.index === i;
+      drawContour(c, state.sheet, sel);
+    });
   }
 
-  // this sheet's traces
-  state.contours[state.sheet].forEach((c, i) => {
-    const sel = state.selected && state.selected.sheet === state.sheet && state.selected.index === i;
-    drawContour(c, state.sheet, sel);
-  });
-
-  drawBoundary();
+  if (!sectionCollapsed('secBoundary')) drawBoundary();
   drawWall();
   drawTakeoffs();
-  drawCalibration();
+  if (!sectionCollapsed('secScale')) drawCalibration();
   drawDraft();
   drawRealign();
   drawMeasure();
@@ -3114,6 +3123,7 @@ try {
       const now = [...document.querySelectorAll('#sidebar section.collapsed')]
         .map(s => s.id).filter(Boolean);
       try { localStorage.setItem(KEY, JSON.stringify(now)); } catch (_) { /* private mode */ }
+      draw(); // Scale/Boundary/Contours hide their viewport visuals when collapsed
     });
   });
 })();
