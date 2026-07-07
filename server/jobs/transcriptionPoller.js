@@ -17,12 +17,39 @@ const pool = require('../db');
 const logger = require('../logger');
 const { runJob } = require('./runJob');
 const assemblyai = require('../services/assemblyai');
+const { deleteByUrl } = require('../r2');
+const { decrementStorage } = require('../storage');
 
 const UTTERANCE_INSERT_CHUNK = 200;
+
+/**
+ * Video files are staged in R2 only for AssemblyAI to fetch — once the
+ * transcript is stored, delete the file and refund the company's storage.
+ * The media_deleted_at claim guard makes this idempotent (and the DELETE
+ * route skips its own delete/refund when it's set).
+ */
+async function cleanupStagedVideo(recording) {
+  if (recording.media_kind !== 'video' || recording.media_deleted_at) return;
+  const claimed = await pool.query(
+    `UPDATE recordings SET media_deleted_at = NOW(), updated_at = NOW()
+     WHERE id = $1 AND media_deleted_at IS NULL RETURNING id`,
+    [recording.id]
+  );
+  if (claimed.rowCount === 0) return;
+  deleteByUrl(recording.audio_url).catch(err =>
+    logger.warn({ err, recordingId: recording.id }, 'transcriptionPoller: staged video delete failed'));
+  const sizeBytes = parseInt(recording.size_bytes || 0, 10);
+  if (sizeBytes > 0) {
+    decrementStorage(recording.company_id, sizeBytes).catch(err =>
+      logger.warn({ err, recordingId: recording.id }, 'transcriptionPoller: storage refund failed'));
+  }
+  logger.info({ recordingId: recording.id, sizeBytes }, 'transcriptionPoller: staged video removed');
+}
 
 /** Store a completed transcript's utterances atomically. */
 async function storeCompleted(recordingId, transcript) {
   const client = await pool.connect();
+  let completedRow = null;
   try {
     await client.query('BEGIN');
     const upd = await client.query(
@@ -30,10 +57,11 @@ async function storeCompleted(recordingId, transcript) {
        SET status = 'completed', duration_seconds = $2, language_code = $3,
            error_message = NULL, completed_at = NOW(), updated_at = NOW()
        WHERE id = $1 AND status = 'processing'
-       RETURNING id`,
+       RETURNING id, company_id, audio_url, size_bytes, media_kind, media_deleted_at`,
       [recordingId, Math.round(transcript.audio_duration) || null, transcript.language_code || null]
     );
     if (upd.rowCount === 0) { await client.query('ROLLBACK'); return; }
+    completedRow = upd.rows[0];
 
     await client.query('DELETE FROM recording_utterances WHERE recording_id = $1', [recordingId]);
 
@@ -71,6 +99,13 @@ async function storeCompleted(recordingId, transcript) {
     throw err;
   } finally {
     client.release();
+  }
+
+  // Outside the transaction — R2 is an external call, and a cleanup failure
+  // must not undo a stored transcript.
+  if (completedRow) {
+    await cleanupStagedVideo(completedRow).catch(err =>
+      logger.warn({ err, recordingId }, 'transcriptionPoller: video cleanup failed'));
   }
 }
 

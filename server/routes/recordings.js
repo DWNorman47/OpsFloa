@@ -28,7 +28,8 @@ const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 
 // Content types the upload-url endpoint will presign. Keys map to the file
 // extension used for the R2 key. Voice memos are audio/mp4 or audio/x-m4a;
-// browser MediaRecorder output is audio/webm or video/webm.
+// browser MediaRecorder output is audio/webm or video/webm. Video is fine:
+// AssemblyAI extracts the audio track from video files itself.
 const AUDIO_CONTENT_TYPES = {
   'audio/mpeg': 'mp3',
   'audio/mp3': 'mp3',
@@ -44,7 +45,14 @@ const AUDIO_CONTENT_TYPES = {
   'audio/webm': 'webm',
   'video/webm': 'webm',
   'video/mp4': 'mp4',
+  'video/quicktime': 'mov',
+  'video/x-matroska': 'mkv',
+  'video/avi': 'avi',
+  'video/x-msvideo': 'avi',
+  'video/3gpp': '3gp',
 };
+
+const SUPPORTED_TYPES_MSG = 'Unsupported file type. Use mp3, m4a, wav, aac, ogg, flac, or a video file (mp4, mov, webm, mkv, avi, 3gp).';
 
 function isAdmin(user) {
   return user.role === 'admin' || user.role === 'super_admin';
@@ -145,6 +153,7 @@ router.get('/', async (req, res) => {
       pool.query(
         `SELECT r.id, r.title, r.audio_url, r.size_bytes, r.duration_seconds, r.status,
                 r.error_message, r.speaker_names, r.language_code, r.project_id,
+                r.media_kind, r.media_deleted_at,
                 r.created_at, r.completed_at, r.user_id,
                 u.full_name AS uploader_name, p.name AS project_name
          FROM recordings r
@@ -171,7 +180,7 @@ router.post('/upload-url', async (req, res) => {
       return res.status(400).json({ error: 'Transcription is not set up on this server (missing AssemblyAI API key). Ask your administrator to configure it.' });
     }
     const ext = AUDIO_CONTENT_TYPES[contentType];
-    if (!ext) return res.status(400).json({ error: 'Unsupported audio type. Use mp3, m4a, wav, aac, ogg, flac, webm, or mp4.' });
+    if (!ext) return res.status(400).json({ error: SUPPORTED_TYPES_MSG });
     if (sizeBytes <= 0) return res.status(400).json({ error: 'Missing file size' });
     if (sizeBytes > MAX_UPLOAD_BYTES) return res.status(400).json({ error: 'File too large (max 2 GB)' });
 
@@ -248,7 +257,7 @@ router.post('/', async (req, res) => {
     const actualType = String(metadata.contentType || upload.content_type).split(';')[0].trim().toLowerCase();
     if (!AUDIO_CONTENT_TYPES[actualType] && !AUDIO_CONTENT_TYPES[String(upload.content_type || '').toLowerCase()]) {
       await discardPendingUpload(upload);
-      return res.status(400).json({ error: 'Unsupported audio type. Use mp3, m4a, wav, aac, ogg, flac, webm, or mp4.' });
+      return res.status(400).json({ error: SUPPORTED_TYPES_MSG });
     }
 
     const { allowed, used, limit } = await checkStorageLimit(companyId, actualSizeBytes);
@@ -280,10 +289,14 @@ router.post('/', async (req, res) => {
         await client.query('ROLLBACK');
         return res.status(409).json({ error: 'Upload has already been used or expired' });
       }
+      // Video is staged only: the transcription poller deletes it from R2
+      // and refunds the storage once the transcript completes.
+      const mediaKind = actualType.startsWith('video/')
+        || String(upload.content_type || '').toLowerCase().startsWith('video/') ? 'video' : 'audio';
       const inserted = await client.query(
-        `INSERT INTO recordings (company_id, user_id, project_id, title, audio_url, size_bytes)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-        [companyId, req.user.id, project_id || null, title, audio_url, actualSizeBytes]
+        `INSERT INTO recordings (company_id, user_id, project_id, title, audio_url, size_bytes, media_kind)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+        [companyId, req.user.id, project_id || null, title, audio_url, actualSizeBytes, mediaKind]
       );
       await client.query(
         'UPDATE companies SET storage_bytes_used = storage_bytes_used + $2 WHERE id = $1',
@@ -436,9 +449,13 @@ router.delete('/:id', async (req, res) => {
 
     await pool.query('DELETE FROM recordings WHERE id = $1 AND company_id = $2', [recording.id, companyId]);
 
-    deleteByUrl(recording.audio_url).catch(() => {});
-    const sizeBytes = parseInt(recording.size_bytes || 0);
-    if (sizeBytes > 0) decrementStorage(companyId, sizeBytes).catch(() => {});
+    // Staged video is already gone from R2 (and refunded) once the poller
+    // has set media_deleted_at — don't delete or refund twice.
+    if (!recording.media_deleted_at) {
+      deleteByUrl(recording.audio_url).catch(() => {});
+      const sizeBytes = parseInt(recording.size_bytes || 0);
+      if (sizeBytes > 0) decrementStorage(companyId, sizeBytes).catch(() => {});
+    }
 
     logAudit(companyId, req.user.id, req.user.full_name, 'recording.deleted', 'recording', recording.id, recording.title,
       { size_bytes: sizeBytes, status: recording.status });

@@ -14,6 +14,8 @@ import api from '../api';
 const EXT_TO_MIME = {
   mp3: 'audio/mpeg', m4a: 'audio/mp4', wav: 'audio/wav', aac: 'audio/aac',
   ogg: 'audio/ogg', flac: 'audio/flac', webm: 'audio/webm', mp4: 'video/mp4',
+  mov: 'video/quicktime', mkv: 'video/x-matroska', avi: 'video/x-msvideo',
+  '3gp': 'video/3gpp',
 };
 
 const SPEAKER_COLORS = ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#be185d', '#4d7c0f'];
@@ -153,7 +155,7 @@ export default function TranscriptionTool() {
 
     const ext = file.name.split('.').pop()?.toLowerCase();
     const contentType = file.type || EXT_TO_MIME[ext] || '';
-    if (!contentType) { setUploadError('Unrecognized file type. Use mp3, m4a, wav, aac, ogg, flac, webm, or mp4.'); return; }
+    if (!contentType) { setUploadError('Unrecognized file type. Use mp3, m4a, wav, aac, ogg, flac, or a video file (mp4, mov, webm, mkv, avi, 3gp).'); return; }
 
     setUploadProgress(0);
     try {
@@ -285,7 +287,13 @@ export default function TranscriptionTool() {
               {detail.language_code ? ` · ${detail.language_code.toUpperCase()}` : ''}
             </div>
 
-            <audio ref={audioRef} controls src={detail.audio_url} style={{ width: '100%', marginTop: 12 }} preload="metadata" />
+            {detail.media_deleted_at ? (
+              <div style={{ ...styles.notice, marginTop: 12 }}>
+                The video file was removed after transcription to save storage — the transcript below is kept.
+              </div>
+            ) : (
+              <audio ref={audioRef} controls src={detail.audio_url} style={{ width: '100%', marginTop: 12 }} preload="metadata" />
+            )}
 
             {(detail.status === 'processing' || detail.status === 'uploaded') && (
               <div style={styles.notice}>Transcribing — this usually takes a few minutes for longer recordings. The page updates automatically.</div>
@@ -368,7 +376,7 @@ export default function TranscriptionTool() {
         <input
           ref={fileInputRef}
           type="file"
-          accept="audio/*,video/mp4,video/webm,.m4a,.mp3,.wav,.aac,.ogg,.flac"
+          accept="audio/*,video/mp4,video/webm,video/quicktime,video/x-matroska,video/x-msvideo,video/3gpp,.m4a,.mp3,.wav,.aac,.ogg,.flac,.mov,.mkv,.avi,.3gp"
           onChange={handleFile}
           style={{ display: 'none' }}
         />
@@ -377,10 +385,11 @@ export default function TranscriptionTool() {
           onClick={() => fileInputRef.current?.click()}
           disabled={uploadProgress !== null}
         >
-          {uploadProgress !== null ? `Uploading… ${uploadProgress}%` : 'Upload audio'}
+          {uploadProgress !== null ? `Uploading… ${uploadProgress}%` : 'Upload audio or video'}
         </button>
         <span style={{ color: '#64748b', fontSize: 13 }}>
-          Meeting or call recordings (mp3, m4a, wav…). You'll get a transcript that shows who said what.
+          Meeting, call, or video recordings (mp3, m4a, wav, mp4, mov…). You'll get a transcript that shows
+          who said what. Video files are deleted after transcription, so they don't use your storage.
         </span>
       </div>
 
@@ -391,7 +400,7 @@ export default function TranscriptionTool() {
       {!loading && recordings.length === 0 && (
         <div style={styles.card}>
           <div style={{ color: '#475569', fontSize: 14, lineHeight: 1.6 }}>
-            No recordings yet. Upload a meeting or phone-call recording and it comes back as a
+            No recordings yet. Upload a meeting, phone-call, or video recording and it comes back as a
             speaker-by-speaker transcript — rename "Speaker A/B" to real names, jump the audio to
             any line, and copy or download the text.
           </div>
