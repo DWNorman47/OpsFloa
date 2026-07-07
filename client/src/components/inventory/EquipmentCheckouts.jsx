@@ -5,6 +5,8 @@ import { useT } from '../../hooks/useT';
 import { labelSg } from '../../companyLabels';
 import { langToLocale } from '../../utils';
 import { silentError } from '../../errorReporter';
+import QrScannerModal from './QrScannerModal';
+import { parseAssetQR } from './AssetLabelModal';
 
 function today() { return new Date().toLocaleDateString('en-CA'); }
 function fmtDate(value, locale = 'en-US') {
@@ -46,6 +48,8 @@ export default function EquipmentCheckouts({ projects = [], settings = null, onC
   const [error, setError] = useState('');
   const [returningId, setReturningId] = useState(null);
   const [returnPhoto, setReturnPhoto] = useState(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanAssetId, setScanAssetId] = useState('');
 
   const load = useCallback(() => {
     Promise.all([
@@ -74,11 +78,25 @@ export default function EquipmentCheckouts({ projects = [], settings = null, onC
         checkout_photo: form.checkout_photo || null,
       });
       setShowForm(false);
+      setScanAssetId('');
       load();
       onChange?.();
     } catch (err) {
       setError(err?.response?.data?.error || t.eqCheckoutFailed);
     } finally { setBusy(''); }
+  };
+
+  // Scanned an asset QR tag → validate and open the checkout form pre-filled.
+  const onScan = (raw) => {
+    setScanning(false);
+    const parsed = parseAssetQR(raw);
+    if (!parsed) { setError(t.eqScanNotRecognized); return; }
+    const asset = assets.find(a => String(a.id) === String(parsed.id));
+    if (!asset) { setError(t.eqScanNotFound); return; }
+    if (asset.status !== 'available') { setError(`${asset.name}: ${t.eqScanUnavailable}`); return; }
+    setError('');
+    setScanAssetId(String(asset.id));
+    setShowForm(true);
   };
 
   const doReturn = async (assetId, photo) => {
@@ -102,18 +120,22 @@ export default function EquipmentCheckouts({ projects = [], settings = null, onC
           <h2 style={s.heading}>{t.invTabEqCheckedOut}</h2>
           <p style={s.summary}>{checkouts.length} {t.eqOutNow}</p>
         </div>
-        <button style={s.newBtn} onClick={() => { setShowForm(v => !v); setError(''); }}>
-          {showForm ? t.cancel : `＋ ${t.eqCheckOutBtn}`}
-        </button>
+        <div style={s.headBtns}>
+          <button style={s.scanBtn} onClick={() => { setScanning(true); setError(''); }}>📷 {t.eqScanBtn}</button>
+          <button style={s.newBtn} onClick={() => { setShowForm(v => !v); setScanAssetId(''); setError(''); }}>
+            {showForm ? t.cancel : `＋ ${t.eqCheckOutBtn}`}
+          </button>
+        </div>
       </div>
 
       {showForm && (
         <CheckoutForm
           t={t} available={available} team={team} projects={projects}
-          workerLabel={workerLabel} workLabel={workLabel}
-          busy={busy === 'checkout'} onSubmit={doCheckout} onCancel={() => setShowForm(false)}
+          workerLabel={workerLabel} workLabel={workLabel} initialAssetId={scanAssetId}
+          busy={busy === 'checkout'} onSubmit={doCheckout} onCancel={() => { setShowForm(false); setScanAssetId(''); }}
         />
       )}
+      {scanning && <QrScannerModal onDetect={onScan} onClose={() => setScanning(false)} />}
       {error && <p style={s.error} role="alert">{error}</p>}
 
       {checkouts.length === 0 ? (
@@ -168,8 +190,8 @@ export default function EquipmentCheckouts({ projects = [], settings = null, onC
   );
 }
 
-function CheckoutForm({ t, available, team, projects, workerLabel, workLabel, busy, onSubmit, onCancel }) {
-  const [form, setForm] = useState({ asset_id: '', user_id: '', project_id: '', due_at: '', notes: '', checkout_photo: null });
+function CheckoutForm({ t, available, team, projects, workerLabel, workLabel, initialAssetId = '', busy, onSubmit, onCancel }) {
+  const [form, setForm] = useState({ asset_id: initialAssetId || '', user_id: '', project_id: '', due_at: '', notes: '', checkout_photo: null });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const submit = e => { e.preventDefault(); if (form.asset_id) onSubmit(form); };
 
@@ -227,6 +249,8 @@ const s = {
   topRow: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' },
   heading: { fontSize: 22, fontWeight: 800, color: '#111827', margin: 0 },
   summary: { fontSize: 13, color: '#6b7280', margin: '4px 0 0' },
+  headBtns: { display: 'flex', gap: 8, flexWrap: 'wrap', flexShrink: 0 },
+  scanBtn: { background: '#fff', color: '#059669', border: '1px solid #059669', padding: '10px 16px', borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: 'pointer' },
   newBtn: { background: '#059669', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: 'pointer', flexShrink: 0 },
   formCard: { background: '#fff', borderRadius: 12, padding: 24, boxShadow: '0 2px 12px rgba(0,0,0,0.07)', marginBottom: 20 },
   formGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14 },
