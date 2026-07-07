@@ -18,6 +18,7 @@ import MyCount from '../components/MyCount';
 import EquipmentLog from '../components/EquipmentLog';
 import EquipmentCheckouts from '../components/inventory/EquipmentCheckouts';
 import EquipmentRentals from '../components/inventory/EquipmentRentals';
+import EquipmentMaintenanceLog from '../components/inventory/EquipmentMaintenanceLog';
 
 import { silentError } from '../errorReporter';
 export default function InventoryPage() {
@@ -69,6 +70,7 @@ export default function InventoryPage() {
     { id: 'eq-assets', label: t.invTabEqAssets },
     { id: 'eq-out', label: t.invTabEqCheckedOut, dot: checkedOutCount > 0 ? '#f59e0b' : null },
     { id: 'eq-rentals', label: t.invTabEqRentals, dot: rentalDueCount > 0 ? '#d97706' : null },
+    { id: 'eq-maint', label: t.invTabEqMaint },
   ] : [];
   const equipmentTabIds = equipmentTabs.map(d => d.id);
   const setupTabIds = setupTabs.map(d => d.id);
@@ -291,6 +293,9 @@ export default function InventoryPage() {
         )}
         {tab === 'eq-rentals' && showEquipment && (
           <EquipmentRentals settings={features} onChange={refreshEquipCounts} />
+        )}
+        {tab === 'eq-maint' && showEquipment && (
+          <EquipmentMaintenanceLog />
         )}
     </PageShell>
   );

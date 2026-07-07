@@ -2,7 +2,7 @@ const router = require('express').Router();
 const pool = require('../db');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { logAudit } = require('../auditLog');
-const { EQUIPMENT_KINDS, RENTAL_RATE_UNITS } = require('../constants/equipmentEnums');
+const { EQUIPMENT_KINDS, RENTAL_RATE_UNITS, EQUIPMENT_MAINTENANCE_KINDS } = require('../constants/equipmentEnums');
 
 // Parse + validate the shared registry/rental fields for POST and PATCH.
 // Returns { error } (a 400 message) or { v } with normalized values. status is
@@ -307,6 +307,65 @@ router.post('/:id/return', requireAuth, async (req, res) => {
     await client.query('ROLLBACK').catch(() => {});
     req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' });
   } finally { client.release(); }
+});
+
+// ── Maintenance service records (distinct from the usage-hours log) ──────────
+
+// GET /equipment/:id/maintenance — service records for one asset.
+router.get('/:id/maintenance', requireAuth, async (req, res) => {
+  const companyId = req.user.company_id;
+  try {
+    const result = await pool.query(
+      `SELECT m.*, u.full_name AS logged_by_name
+       FROM equipment_maintenance_logs m
+       LEFT JOIN users u ON u.id = m.created_by
+       WHERE m.company_id = $1 AND m.asset_id = $2
+       ORDER BY m.log_date DESC, m.created_at DESC
+       LIMIT 200`,
+      [companyId, req.params.id]
+    );
+    res.json(result.rows);
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
+// POST /equipment/:id/maintenance — add a service record (admin).
+router.post('/:id/maintenance', requireAdmin, async (req, res) => {
+  const { log_date, kind, cost } = req.body;
+  const notes = req.body.notes?.trim() || null;
+  const performed_by = req.body.performed_by?.trim() || null;
+  if (!log_date) return res.status(400).json({ error: 'log_date is required' });
+  if (kind && !EQUIPMENT_MAINTENANCE_KINDS.includes(kind)) return res.status(400).json({ error: 'invalid kind' });
+  if (performed_by && performed_by.length > 255) return res.status(400).json({ error: 'performed_by too long (max 255 characters)' });
+  if (notes && notes.length > 1000) return res.status(400).json({ error: 'notes too long (max 1000 characters)' });
+  const companyId = req.user.company_id;
+  try {
+    const item = await pool.query('SELECT id FROM equipment_items WHERE id=$1 AND company_id=$2 AND active=true', [req.params.id, companyId]);
+    if (item.rowCount === 0) return res.status(404).json({ error: 'Equipment not found' });
+    const full = await pool.query(
+      `WITH inserted AS (
+         INSERT INTO equipment_maintenance_logs (asset_id, company_id, log_date, kind, notes, cost, performed_by, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *
+       )
+       SELECT m.*, u.full_name AS logged_by_name FROM inserted m LEFT JOIN users u ON u.id = m.created_by`,
+      [req.params.id, companyId, log_date, kind || 'service', notes,
+       cost != null && cost !== '' ? parseFloat(cost) : null, performed_by, req.user.id]
+    );
+    logAudit(companyId, req.user.id, req.user.full_name, 'equipment.maintenance_logged', 'equipment', req.params.id, null,
+      { log_date, kind: kind || 'service' });
+    res.status(201).json(full.rows[0]);
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
+// DELETE /equipment/maintenance/:entryId — delete a service record (admin or owner).
+router.delete('/maintenance/:entryId', requireAuth, async (req, res) => {
+  const isAdmin = req.user.role === 'admin' || req.user.role === 'super_admin';
+  try {
+    const cond = isAdmin ? 'company_id = $2' : 'company_id = $2 AND created_by = $3';
+    const params = isAdmin ? [req.params.entryId, req.user.company_id] : [req.params.entryId, req.user.company_id, req.user.id];
+    const result = await pool.query(`DELETE FROM equipment_maintenance_logs WHERE id = $1 AND ${cond} RETURNING id`, params);
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Entry not found' });
+    res.json({ deleted: true });
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
 module.exports = router;
