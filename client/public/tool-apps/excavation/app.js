@@ -28,11 +28,13 @@ const state = {
   align: { a: 1, b: 0, e: 0, f: 0 },
   boundary: [],            // closed polygon, world px [{x,y}]
   contours: { existing: [], proposed: [] }, // [{ pts:[{x,y}], elev, spot }]
+  walls: [],               // retaining-wall digs: [{ id, pts:[{x,y}], cfg, result }]
 
   draft: [],               // in-progress clicks for trace/boundary
   calibPts: [],            // in-progress calibration clicks
   alignPts: [],            // align landmarks clicked on the EXISTING sheet (world)
   alignQs: [],             // matching landmarks on the PROPOSED sheet (raw image coords)
+  realignPts: [],          // revision re-align: flat [from,to,from,to,…] world points
   selected: null,          // { sheet, index }
   lastElev: { existing: null, proposed: null },
   prevElev: { existing: null, proposed: null },
@@ -47,6 +49,7 @@ const state = {
   dragCal: null,           // 'a' | 'b' while dragging a calibration endpoint
   dragBnd: null,           // boundary vertex index while dragging (-1 = click consumed)
   dragPad: null,           // { ci, vi } pad vertex while dragging (-1 = click consumed)
+  dragDraft: null,         // draft vertex index while tracing before commit
   wandPts: null,           // highlighted auto-traced polyline awaiting an elevation
   boxA: null, boxB: null,  // erase-box drag corners (world px)
 };
@@ -58,7 +61,7 @@ const ctx = cv.getContext('2d');
 const $ = id => document.getElementById(id);
 
 const els = {
-  filePdf: $('filePdf'), dropHint: $('dropHint'), hud: $('hud'),
+  filePdf: $('filePdf'), dropHint: $('dropHint'), hud: $('hud'), navPads: $('navPads'),
   pageExisting: $('pageExisting'), pageProposed: $('pageProposed'),
   scaleStatus: $('scaleStatus'), boundaryStatus: $('boundaryStatus'),
   contourTitle: $('contourTitle'), contourCount: $('contourCount'),
@@ -68,7 +71,7 @@ const els = {
   resultsSection: $('resultsSection'), results: $('results'),
   chkHeatmap: $('chkHeatmap'), chkGhost: $('chkGhost'),
   btnAlign: $('btnAlign'), btnAlignReset: $('btnAlignReset'), alignStatus: $('alignStatus'),
-  btnEditDist: $('btnEditDist'), btnUndo: $('btnUndo'),
+  btnEditDist: $('btnEditDist'), btnUndo: $('btnUndo'), btnRedo: $('btnRedo'),
   btnProjects: $('btnProjects'), projName: $('projName'),
   projects: $('projects'), projList: $('projList'),
   projNewBtn: $('projNewBtn'), projClose: $('projClose'),
@@ -374,6 +377,30 @@ function fitView() {
   state.view.panY = (r.height - img.height * z) / 2;
 }
 
+// Edge/corner jump pads — pan a third of a screen without dragging. dx=+1 is
+// right, dy=+1 is down; decreasing pan reveals content in that direction.
+document.querySelectorAll('.nav-pad').forEach(b => b.addEventListener('click', () => {
+  const dx = parseInt(b.dataset.dx, 10), dy = parseInt(b.dataset.dy, 10);
+  const r = cv.parentElement.getBoundingClientRect();
+  state.view.panX -= dx * r.width / 3;
+  state.view.panY -= dy * r.height / 3;
+  draw();
+}));
+
+// Show the pads only when zoomed in past ~70% (less than 70% of the plan is on
+// screen), where dragging to navigate gets tedious. Called every paint.
+function updateNavPads() {
+  const img = state.sheets[state.sheet].image;
+  let show = false;
+  if (img) {
+    const r = cv.parentElement.getBoundingClientRect();
+    const fitZoom = Math.min(r.width / img.width, r.height / img.height);
+    show = fitZoom > 0 && state.view.zoom > fitZoom / 0.7;
+  }
+  els.navPads.classList.toggle('hidden', !show);
+  cv.parentElement.classList.toggle('nav-active', show);
+}
+
 let drawQueued = false;
 function draw() {
   if (drawQueued) return;
@@ -436,8 +463,10 @@ function paint() {
   });
 
   drawBoundary();
+  drawWall();
   drawCalibration();
   drawDraft();
+  drawRealign();
 
   // auto-traced line awaiting its elevation
   if (state.wandPts && state.wandPts.length) {
@@ -608,10 +637,16 @@ function drawDraft() {
   ctx.lineTo(m.x, m.y);
   ctx.stroke();
   ctx.setLineDash([]);
+  const editableDraft = ['trace', 'boundary', 'pad', 'wall'].includes(state.tool);
   for (const p of state.draft) {
     ctx.beginPath();
-    ctx.arc(p.x, p.y, lw(3), 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, lw(editableDraft ? 5 : 3), 0, Math.PI * 2);
     ctx.fill();
+    if (editableDraft) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, lw(8), 0, Math.PI * 2);
+      ctx.stroke();
+    }
   }
 }
 
@@ -633,6 +668,7 @@ function drawHeatmap() {
 }
 
 function updateHud() {
+  updateNavPads();
   const msgs = {
     pan: 'Drag to pan · wheel to zoom',
     calibrate: state.calibPts.length === 1 ? 'Click the SECOND point'
@@ -672,7 +708,8 @@ function updateHud() {
 const TOOL_LABEL = {
   pan: 'Pan', calibrate: 'Scale', boundary: 'Boundary',
   trace: 'Trace contour', wand: 'Auto trace', spot: 'Spot elevation', pad: 'Flat pad',
-  select: 'Select', erase: 'Erase box', align: 'Align sheets',
+  wall: 'Wall dig', select: 'Select', erase: 'Erase box', align: 'Align sheets',
+  realign: 'Re-align traces',
 };
 
 function setTool(t) {
@@ -681,8 +718,10 @@ function setTool(t) {
   state.calibPts = [];
   state.alignPts = [];
   state.alignQs = [];
+  state.realignPts = [];
   state.wandPts = null;
   state.boxA = state.boxB = null;
+  state.dragDraft = null;
   document.querySelectorAll('.tool').forEach(b =>
     b.classList.toggle('active', b.dataset.tool === t));
   cv.classList.toggle('crosshair', t !== 'pan');
@@ -736,6 +775,19 @@ cv.addEventListener('mousedown', e => {
 
   if (!state.mouse.panning && e.button === 0 && state.tool === 'erase')
     state.boxA = screenToWorld(state.mouse.sx, state.mouse.sy);
+
+  // While tracing a draft, let earlier vertices be adjusted before committing it.
+  if (!state.mouse.panning && e.button === 0 && state.draft.length &&
+      ['trace', 'boundary', 'pad', 'wall'].includes(state.tool)) {
+    const w = screenToWorld(state.mouse.sx, state.mouse.sy);
+    const thresh = 12 / state.view.zoom;
+    let hit = -1, hd = thresh;
+    state.draft.forEach((p, i) => {
+      const d = dist(w.x, w.y, p.x, p.y);
+      if (d < hd) { hd = d; hit = i; }
+    });
+    if (hit >= 0) state.dragDraft = hit;
+  }
 
   // with the Boundary tool, grabbing a vertex of the closed polygon edits it
   if (!state.mouse.panning && e.button === 0 && state.tool === 'boundary' &&
@@ -808,6 +860,10 @@ cv.addEventListener('mousemove', e => {
     }
     if (state.boxA && state.tool === 'erase' && state.mouse.moved)
       state.boxB = screenToWorld(x, y);
+    if (state.dragDraft !== null) {
+      const w = screenToWorld(x, y);
+      state.draft[state.dragDraft] = { x: w.x, y: w.y };
+    }
     if (state.dragBnd !== null && state.dragBnd >= 0) {
       const w = screenToWorld(x, y);
       state.boundary[state.dragBnd] = { x: w.x, y: w.y };
@@ -843,6 +899,13 @@ cv.addEventListener('mouseup', e => {
   state.mouse.down = false;
   state.mouse.panning = false;
   cv.classList.remove('grabbing');
+  if (state.dragDraft !== null) {
+    const didMove = moved;
+    state.dragDraft = null;
+    if (didMove) setMsg('Draft point moved.');
+    draw();
+    return;
+  }
   if (state.dragPad !== null) {
     const didMove = typeof state.dragPad === 'object' && moved;
     state.dragPad = null;
@@ -955,6 +1018,18 @@ async function handleClick(w) {
     case 'trace':
       state.draft.push(w);
       break;
+    case 'wall':
+      state.draft.push(w);
+      break;
+    case 'realign': {
+      state.realignPts.push(w);
+      const pairs = Math.floor(state.realignPts.length / 2);
+      setMsg(state.realignPts.length % 2
+        ? 'Now click that SAME spot on the updated drawing.'
+        : `${pairs} landmark pair${pairs > 1 ? 's' : ''} set. Press Enter to apply` +
+          `${pairs === 1 ? ' (shift)' : ' (shift + rotation/scale)'}, or add another pair.`);
+      break;
+    }
     case 'pad':
       // clicks on an existing pad edit it rather than starting a new one
       if (!state.draft.length && nearestPadEdge(w, 10 / state.view.zoom)) {
@@ -1174,6 +1249,26 @@ async function finishDraftIfAny(commit) {
         setMsg(`Flat pad at ${elev} recorded.`);
       }
     } else setMsg('A pad needs at least 3 points.');
+  } else if (state.tool === 'wall') {
+    if (pts.length >= 2) {
+      if (!state.calibration) { setMsg('Calibrate the scale (📏) before measuring a wall dig.'); draw(); return; }
+      const cfg = await askWallSection(polyLengthFt(pts), {
+        canSubgrade: state.contours.existing.length > 0,
+        canProposed: state.contours.existing.length > 0 && state.contours.proposed.length > 0,
+      });
+      if (cfg) {
+        const result = computeWallSweep(pts, cfg);
+        if (result) {
+          snapshot();
+          state.walls.push({ id: randId(), pts, cfg, result });
+          renderWalls();
+          saveLocal();
+          let m = `Wall dig: ${fmt(result.netCY)} CY export (${fmt(result.truckCY)} CY loose).`;
+          if (result.noGradeFrac > 0.05) m += ' Some stations had no Existing contour nearby — depth taken as 0 there.';
+          setMsg(m);
+        }
+      }
+    } else setMsg('A wall dig needs at least 2 points along its line.');
   }
   draw();
 }
@@ -1181,6 +1276,7 @@ async function finishDraftIfAny(commit) {
 /* ============================== Undo ============================== */
 
 const undoStack = [];
+const redoStack = [];
 let pendingSnap = null; // pre-drag state, pushed only if the drag actually moved
 
 function takeSnap() {
@@ -1189,6 +1285,7 @@ function takeSnap() {
     align: state.align,
     boundary: state.boundary,
     contours: state.contours,
+    walls: state.walls,
     lastElev: state.lastElev,
     prevElev: state.prevElev,
   });
@@ -1198,36 +1295,60 @@ function pushSnap(s) {
   undoStack.push(s);
   if (undoStack.length > 50) undoStack.shift();
   els.btnUndo.disabled = false;
+  redoStack.length = 0;
+  els.btnRedo.disabled = true;
 }
 
 function snapshot() { pushSnap(takeSnap()); }
 
-function undo() {
-  if (!undoStack.length) return;
-  const s = JSON.parse(undoStack.pop());
+function restoreSnap(s) {
+  s = JSON.parse(s);
   state.calibration = s.calibration;
   state.align = s.align || alignIdentity();
   state.boundary = s.boundary || [];
   state.contours = s.contours || { existing: [], proposed: [] };
+  state.walls = s.walls || [];
   state.lastElev = s.lastElev || { existing: null, proposed: null };
   state.prevElev = s.prevElev || { existing: null, proposed: null };
   state.selected = null;
   state.draft = []; state.calibPts = [];
   state.alignPts = []; state.alignQs = [];
   state.wandPts = null;
+  state.dragDraft = null;
+  state.realignPts = [];
   state.boxA = state.boxB = null;
   state.result = null;
   els.resultsSection.classList.add('hidden');
-  els.btnUndo.disabled = !undoStack.length;
   refreshStatuses();
   refreshContourList();
+  renderWalls();
   updateAlignStatus();
   saveLocal();
-  setMsg(`Undone.${undoStack.length ? ` ${undoStack.length} more step${undoStack.length === 1 ? '' : 's'} available.` : ''}`);
   draw();
 }
 
+function undo() {
+  if (!undoStack.length) return;
+  redoStack.push(takeSnap());
+  if (redoStack.length > 50) redoStack.shift();
+  restoreSnap(undoStack.pop());
+  els.btnUndo.disabled = !undoStack.length;
+  els.btnRedo.disabled = false;
+  setMsg(`Undone.${undoStack.length ? ` ${undoStack.length} more step${undoStack.length === 1 ? '' : 's'} available.` : ''}`);
+}
+
+function redo() {
+  if (!redoStack.length) return;
+  undoStack.push(takeSnap());
+  if (undoStack.length > 50) undoStack.shift();
+  restoreSnap(redoStack.pop());
+  els.btnUndo.disabled = false;
+  els.btnRedo.disabled = !redoStack.length;
+  setMsg(`Redone.${redoStack.length ? ` ${redoStack.length} more step${redoStack.length === 1 ? '' : 's'} available.` : ''}`);
+}
+
 els.btnUndo.addEventListener('click', undo);
+els.btnRedo.addEventListener('click', redo);
 
 /* ============================== Vector wand (auto trace) ============================== */
 
@@ -1572,15 +1693,28 @@ window.addEventListener('keydown', e => {
 
   if (e.code === 'Space') { state.spaceHeld = true; e.preventDefault(); return; }
 
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && e.shiftKey) {
+    e.preventDefault();
+    redo();
+    return;
+  }
+
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
     e.preventDefault();
     undo();
     return;
   }
 
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+    e.preventDefault();
+    redo();
+    return;
+  }
+
   switch (e.key) {
     case 'Enter':
-      if (state.tool === 'align' && state.alignQs.length === 1) {
+      if (state.tool === 'realign') applyRealign();
+      else if (state.tool === 'align' && state.alignQs.length === 1) {
         state.alignPts = []; state.alignQs = [];
         setTool('pan');
         setMsg('Alignment saved (shift only).');
@@ -1590,7 +1724,7 @@ window.addEventListener('keydown', e => {
       state.draft = []; state.calibPts = [];
       state.boxA = state.boxB = null;
       if (state.selected) { state.selected = null; refreshContourList(); }
-      if (state.tool === 'align') setTool('pan');
+      if (state.tool === 'align' || state.tool === 'realign') setTool('pan');
       else { state.alignPts = []; state.alignQs = []; }
       draw(); break;
     case 'Backspace':
@@ -1602,6 +1736,7 @@ window.addEventListener('keydown', e => {
       editSelectedElevation(); break;
     case 't': case 'T': setTool('trace'); break;
     case 'a': case 'A': setTool('wand'); break;
+    case 'w': case 'W': setTool('wall'); break;
     case 'p': case 'P': setTool('pad'); break;
     case 'v': case 'V': setTool('select'); break;
     case 'b': case 'B': setTool('boundary'); break;
@@ -1917,6 +2052,298 @@ function renderResults() {
   $(id).addEventListener('input', () => state.result && renderResults()));
 els.inpZoomSpeed.addEventListener('change', () => saveLocal());
 
+/* ============================== Retaining-wall dig ============================== */
+// A wall trench cross-section is a trapezoid: a flat bottom (footing + working
+// room) plus two backslopes rising to grade. Area = width·depth + slope·depth²
+// (each side is a right triangle of base slope·depth and height depth). Volume
+// is that area swept along the wall's length. Export = the excavated native that
+// leaves the site (gross minus any reused as backfill); truck volume swells it.
+
+function wallSectionAreaSf(bottomWidth, depth, slope) {
+  if (!(depth > 0) || !(bottomWidth >= 0)) return 0;
+  return bottomWidth * depth + slope * depth * depth;
+}
+
+function wallComputeCore({ grossFt3, concreteCY, aggregateCY, reusePct, swellPct }) {
+  const grossCY = grossFt3 / 27;
+  const conc = Math.max(0, concreteCY || 0);   // footing + stem concrete (import)
+  const agg = Math.max(0, aggregateCY || 0);   // drainage aggregate zone (import)
+  // After the wall + aggregate occupy the hole, the rest is backfill. Native can
+  // be reused for that void; whatever's left is imported structural fill.
+  const voidCY = Math.max(0, grossCY - conc - agg);
+  const reuse = Math.min(1, Math.max(0, (reusePct || 0) / 100));
+  const reusedCY = voidCY * reuse;             // native put back (not hauled)
+  const netCY = grossCY - reusedCY;            // native exported off site
+  const importBackfillCY = voidCY - reusedCY;  // structural fill to bring in
+  const swell = Math.max(0, (swellPct || 0) / 100);
+  return { grossCY, concreteCY: conc, aggregateCY: agg, voidCY, reusedCY,
+    netCY, importBackfillCY, truckCY: netCY * (1 + swell), swell };
+}
+
+function polyLengthFt(pts) {
+  const ftPerPx = (state.calibration && state.calibration.ftPerPx) || 0;
+  let d = 0;
+  for (let i = 0; i < pts.length - 1; i++) d += dist(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y);
+  return d * ftPerPx;
+}
+
+// --- Quick calculator (no plans needed) ---
+function wallCalcCompute() {
+  const len = parseFloat($('wcLen').value) || 0;
+  const depth = parseFloat($('wcDepth').value) || 0;
+  const width = parseFloat($('wcWidth').value) || 0;
+  const slope = parseFloat($('wcSlope').value) || 0;
+  const areaSf = wallSectionAreaSf(width, depth, slope);
+  const core = wallComputeCore({
+    grossFt3: areaSf * len,
+    concreteCY: parseFloat($('wcConcrete').value),
+    aggregateCY: parseFloat($('wcAgg').value),
+    reusePct: parseFloat($('wcReuse').value),
+    swellPct: parseFloat($('wcSwell').value),
+  });
+  $('wcResult').innerHTML = wallResultRows(core, areaSf);
+}
+$('btnWallCalc').addEventListener('click', () => {
+  $('wcSwell').value = els.inpSwell.value || 25;
+  wallCalcCompute();
+  $('wallCalc').classList.remove('hidden');
+});
+$('wcClose').addEventListener('click', () => $('wallCalc').classList.add('hidden'));
+['wcLen', 'wcDepth', 'wcWidth', 'wcSlope', 'wcReuse', 'wcSwell', 'wcConcrete', 'wcAgg']
+  .forEach(id => $(id).addEventListener('input', wallCalcCompute));
+
+// Shared results block for the quick calc and the section-mode recap.
+function wallResultRows(core, areaSf) {
+  const row = (label, val, cls) => `<div class="res-row ${cls || ''}"><span>${label}</span><b>${val}</b></div>`;
+  return [
+    areaSf != null ? row('Cross-section area', `${fmt(areaSf, 1)} sf`) : '',
+    row('Excavation (bank)', `${fmt(core.grossCY)} CY`),
+    core.concreteCY > 0.5 ? row('Concrete — footing + stem (import)', `${fmt(core.concreteCY)} CY`) : '',
+    core.aggregateCY > 0.5 ? row('Drainage aggregate (import)', `${fmt(core.aggregateCY)} CY`) : '',
+    core.reusedCY > 0.5 ? row('Reused as backfill', `− ${fmt(core.reusedCY)} CY`) : '',
+    row('EXPORT off site (bank)', `${fmt(core.netCY)} CY`, 'total'),
+    row(`≈ truck volume (loose, × ${(1 + core.swell).toFixed(2)})`, `${fmt(core.truckCY)} CY`),
+    core.importBackfillCY > 0.5 ? row('Import structural backfill', `${fmt(core.importBackfillCY)} CY`) : '',
+    `<div class="wall-note">Bank = in-ground volume; truck = swelled loose. Concrete &amp; aggregate are imported materials that take up the hole, so reused native backfill is figured against what's left. Cross-section = bottom width × depth + slope × depth². An estimating number — verify against the plans.</div>`,
+  ].join('');
+}
+
+// --- Section mode (traced alignment off the plan) ---
+function syncWsMode() {
+  const mode = document.querySelector('input[name=wsMode]:checked').value;
+  $('wsDepth').disabled = mode !== 'constant';
+  $('wsSub').disabled = mode !== 'subgrade';
+  $('wsEmbed').disabled = mode !== 'proposed';
+}
+document.querySelectorAll('input[name=wsMode]').forEach(r => r.addEventListener('change', syncWsMode));
+
+// Changing Swell % (Settings) refigures each wall's loose/truck volume live,
+// off the stored net bank CY — no re-sweep needed.
+els.inpSwell.addEventListener('input', () => {
+  if (!state.walls.length) return;
+  const swell = Math.max(0, (parseFloat(els.inpSwell.value) || 0) / 100);
+  for (const w of state.walls) { w.result.swell = swell; w.result.truckCY = w.result.netCY * (1 + swell); }
+  renderWalls();
+});
+
+function askWallSection(lengthFt, caps) {
+  const canSubgrade = !!caps.canSubgrade, canProposed = !!caps.canProposed;
+  return new Promise(resolve => {
+    $('wsLen').textContent = fmt(lengthFt) + ' ft along the line';
+    const subRadio = document.querySelector('input[name=wsMode][value=subgrade]');
+    const propRadio = document.querySelector('input[name=wsMode][value=proposed]');
+    subRadio.disabled = !canSubgrade;
+    propRadio.disabled = !canProposed;
+    // If the checked mode is no longer available, fall back to constant depth.
+    const checked = document.querySelector('input[name=wsMode]:checked');
+    if ((checked.value === 'subgrade' && !canSubgrade) || (checked.value === 'proposed' && !canProposed))
+      document.querySelector('input[name=wsMode][value=constant]').checked = true;
+    $('wsSubHint').textContent =
+      'Subgrade: digs to a fixed footing elevation off your Existing contours. ' +
+      'Proposed grade: bottom follows the Proposed (finished) surface at the embedment below it — for a benched footing that steps down a slope. ' +
+      (canSubgrade ? '' : 'Trace Existing contours to enable subgrade. ') +
+      (canProposed ? '' : 'Trace Existing + Proposed contours to enable proposed-grade.');
+    syncWsMode();
+    $('wallSection').classList.remove('hidden');
+    const cleanup = () => { $('wsOk').onclick = null; $('wsCancel').onclick = null; $('wallSection').classList.add('hidden'); };
+    $('wsCancel').onclick = () => { cleanup(); resolve(null); };
+    $('wsOk').onclick = () => {
+      const mode = document.querySelector('input[name=wsMode]:checked').value;
+      cleanup();
+      resolve({
+        bottomWidth: parseFloat($('wsWidth').value) || 0,
+        slope: parseFloat($('wsSlope').value) || 0,
+        reusePct: parseFloat($('wsReuse').value) || 0,
+        concreteCY: parseFloat($('wsConcrete').value) || 0,
+        aggregateCY: parseFloat($('wsAgg').value) || 0,
+        depthMode: mode,
+        depth: parseFloat($('wsDepth').value) || 0,
+        subgrade: parseFloat($('wsSub').value) || 0,
+        embedment: parseFloat($('wsEmbed').value) || 0,
+      });
+    };
+  });
+}
+
+function computeWallSweep(pts, cfg) {
+  const ftPerPx = state.calibration && state.calibration.ftPerPx;
+  if (!ftPerPx) return null;
+  const needExist = cfg.depthMode === 'subgrade' || cfg.depthMode === 'proposed';
+  const existInterp = (needExist && state.contours.existing.length) ? makeInterpolator(state.contours.existing) : null;
+  const propInterp = (cfg.depthMode === 'proposed' && state.contours.proposed.length) ? makeInterpolator(state.contours.proposed) : null;
+  let lengthFt = 0, volFt3 = 0, dSum = 0, dN = 0, dMin = Infinity, dMax = -Infinity, noGrade = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    const segFt = dist(a.x, a.y, b.x, b.y) * ftPerPx;
+    if (segFt <= 0) continue;
+    const n = Math.max(1, Math.round(segFt)); // ~1-ft stations
+    const dsFt = segFt / n;
+    for (let s = 0; s < n; s++) {
+      const t = (s + 0.5) / n;
+      const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+      let depth;
+      if (cfg.depthMode === 'proposed') {
+        // Dig from Existing ground down to the Proposed surface less the footing
+        // embedment: depth = existing − (proposed − embedment).
+        const ge = existInterp ? existInterp(x, y) : null;
+        const gp = propInterp ? propInterp(x, y) : null;
+        if (ge === null || gp === null) { depth = 0; noGrade++; }
+        else depth = Math.max(0, ge - (gp - cfg.embedment));
+      } else if (cfg.depthMode === 'subgrade') {
+        const g = existInterp ? existInterp(x, y) : null;
+        if (g === null) { depth = 0; noGrade++; } else depth = Math.max(0, g - cfg.subgrade);
+      } else depth = Math.max(0, cfg.depth);
+      volFt3 += wallSectionAreaSf(cfg.bottomWidth, depth, cfg.slope) * dsFt;
+      lengthFt += dsFt; dSum += depth; dN++;
+      if (depth < dMin) dMin = depth;
+      if (depth > dMax) dMax = depth;
+    }
+  }
+  const core = wallComputeCore({ grossFt3: volFt3, concreteCY: cfg.concreteCY, aggregateCY: cfg.aggregateCY, reusePct: cfg.reusePct, swellPct: parseFloat(els.inpSwell.value) });
+  return { ...core, lengthFt, avgDepth: dN ? dSum / dN : 0,
+    minDepth: isFinite(dMin) ? dMin : 0, maxDepth: isFinite(dMax) ? dMax : 0,
+    noGradeFrac: dN ? noGrade / dN : 0 };
+}
+
+function drawWall() {
+  if (!state.walls || !state.walls.length) return;
+  for (const w of state.walls) {
+    if (!w.pts || w.pts.length < 2) continue;
+    ctx.strokeStyle = '#e0a03f';
+    ctx.lineWidth = lw(3);
+    ctx.beginPath();
+    w.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+    ctx.stroke();
+    ctx.fillStyle = '#e0a03f';
+    for (const p of w.pts) { ctx.beginPath(); ctx.arc(p.x, p.y, lw(3), 0, Math.PI * 2); ctx.fill(); }
+    const mid = w.pts[Math.floor(w.pts.length / 2)];
+    if (w.result) labelAt(mid.x, mid.y, `${fmt(w.result.netCY)} CY`, '#e0a03f');
+  }
+}
+
+function renderWalls() {
+  const sec = $('secWalls'), list = $('wallList');
+  if (!sec || !list) return;
+  if (!state.walls.length) { sec.classList.add('hidden'); draw(); return; }
+  sec.classList.remove('hidden');
+  const cnt = $('wallCount'); if (cnt) cnt.textContent = state.walls.length;
+  const depthTxt = r => r.minDepth === r.maxDepth
+    ? `${fmt(r.avgDepth, 1)} ft deep`
+    : `${fmt(r.minDepth, 1)}–${fmt(r.maxDepth, 1)} ft deep`;
+  list.innerHTML = state.walls.map((w, i) => `
+    <div class="wall-row">
+      <div class="wall-row-main">
+        <b>${fmt(w.result.netCY)} CY export</b>
+        <span>${fmt(w.result.lengthFt)} ft · ${fmt(w.result.truckCY)} CY loose · ${depthTxt(w.result)}</span>
+      </div>
+      <button class="wall-del" data-i="${i}" title="Delete this wall dig">✕</button>
+    </div>`).join('');
+  list.querySelectorAll('.wall-del').forEach(b => b.addEventListener('click', () => {
+    snapshot();
+    state.walls.splice(parseInt(b.dataset.i, 10), 1);
+    renderWalls();
+    saveLocal();
+  }));
+  draw();
+}
+
+/* ============================== Revision re-align ============================== */
+// When a revised PDF shifts (or rotates/scales) the drawing, move ALL carried
+// geometry onto it in one step. Every trace lives in the shared world frame, so
+// this bakes a single similarity transform into calibration, boundary, both
+// sheets' contours, and wall lines — then re-derives ft/px from the moved scale
+// points (real feet unchanged). state.align (the proposed-image display offset)
+// is a separate concern and is left alone.
+
+function transformAllGeometry(M) {
+  const T = p => alignApply(M, p);
+  if (state.calibration) {
+    const c = state.calibration;
+    const A = T({ x: c.ax, y: c.ay }), B = T({ x: c.bx, y: c.by });
+    c.ax = A.x; c.ay = A.y; c.bx = B.x; c.by = B.y;
+    const px = dist(c.ax, c.ay, c.bx, c.by);
+    if (px > 0) c.ftPerPx = c.feet / px; // same real distance, new pixel span
+  }
+  state.boundary = state.boundary.map(T);
+  for (const sheet of ['existing', 'proposed'])
+    state.contours[sheet].forEach(c => { c.pts = c.pts.map(T); });
+  state.walls.forEach(w => { w.pts = w.pts.map(T); });
+}
+
+function applyRealign() {
+  const pts = state.realignPts || [];
+  const nPairs = Math.floor(pts.length / 2);
+  if (nPairs < 1) { setMsg('Set at least one landmark pair: a spot on a carried trace, then the same spot on the updated drawing.'); return; }
+
+  let M;
+  if (nPairs === 1) {
+    const from = pts[0], to = pts[1];
+    M = { a: 1, b: 0, e: to.x - from.x, f: to.y - from.y }; // shift only
+  } else {
+    // Similarity (shift + rotation + uniform scale) from the first two pairs.
+    const f1 = pts[0], t1 = pts[1], f2 = pts[2], t2 = pts[3];
+    const dfx = f2.x - f1.x, dfy = f2.y - f1.y;
+    const dtx = t2.x - t1.x, dty = t2.y - t1.y;
+    const len2 = dfx * dfx + dfy * dfy;
+    if (len2 < 4) { setMsg('Those two landmarks are too close together — pick a second one farther away.'); return; }
+    const a = (dfx * dtx + dfy * dty) / len2;
+    const b = (dfx * dty - dfy * dtx) / len2;
+    M = { a, b, e: t1.x - (a * f1.x - b * f1.y), f: t1.y - (b * f1.x + a * f1.y) };
+  }
+
+  snapshot();
+  transformAllGeometry(M);
+  state.realignPts = [];
+  state.result = null; // the cut/fill grid is positional — recompute after moving
+  els.resultsSection.classList.add('hidden');
+  refreshStatuses();
+  refreshContourList();
+  renderWalls();
+  saveLocal();
+  setTool('pan');
+  draw();
+  const scale = Math.hypot(M.a, M.b);
+  setMsg(`Traces re-aligned to this PDF${nPairs >= 2 ? ` (shift + rotation, ×${scale.toFixed(3)})` : ' (shift)'}. ` +
+    'Check the fit; re-verify the scale (📏) if the sheet prints at a different size. Ctrl+Z undoes it.');
+}
+
+function drawRealign() {
+  const pts = state.realignPts;
+  if (!pts || !pts.length) return;
+  ctx.fillStyle = ctx.strokeStyle = '#38d39f';
+  for (let i = 0; i < pts.length; i += 2) {
+    const from = pts[i], to = pts[i + 1];
+    ctx.beginPath(); ctx.arc(from.x, from.y, lw(4), 0, Math.PI * 2); ctx.fill();
+    if (to) {
+      ctx.lineWidth = lw(2);
+      ctx.setLineDash([lw(5), lw(4)]);
+      ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.arc(to.x, to.y, lw(4), 0, Math.PI * 2); ctx.stroke();
+    }
+  }
+}
+
 /* ============================== Save / load ============================== */
 
 $('btnNew').addEventListener('click', async () => {
@@ -1947,6 +2374,7 @@ function projectData() {
     align: state.align,
     boundary: state.boundary,
     contours: state.contours,
+    walls: state.walls,
     settings: {
       gridFt: els.inpGrid.value, interval: els.inpInterval.value,
       shrink: els.inpShrink.value, swell: els.inpSwell.value,
@@ -1964,6 +2392,7 @@ function applyProjectData(d) {
     : alignIdentity();
   state.boundary = d.boundary || [];
   state.contours = d.contours || { existing: [], proposed: [] };
+  state.walls = d.walls || [];
   if (d.pages) {
     state.sheets.existing.pageNum = d.pages.existing || 1;
     state.sheets.proposed.pageNum = d.pages.proposed || 2;
@@ -1979,6 +2408,7 @@ function applyProjectData(d) {
   els.resultsSection.classList.add('hidden');
   refreshStatuses();
   refreshContourList();
+  renderWalls();
   updateAlignStatus();
   return true;
 }
@@ -2023,6 +2453,7 @@ function resetTakeoffState() {
   state.align = alignIdentity();
   state.boundary = [];
   state.contours = { existing: [], proposed: [] };
+  state.walls = [];
   state.draft = []; state.calibPts = []; state.alignPts = []; state.alignQs = [];
   state.wandPts = null;
   state.boxA = state.boxB = null;
@@ -2033,6 +2464,7 @@ function resetTakeoffState() {
   els.resultsSection.classList.add('hidden');
   refreshStatuses();
   refreshContourList();
+  renderWalls();
   updateAlignStatus();
 }
 
@@ -2050,7 +2482,9 @@ async function openProject(id, opts = {}) {
 
   // drop everything belonging to the old project
   undoStack.length = 0;
+  redoStack.length = 0;
   els.btnUndo.disabled = true;
+  els.btnRedo.disabled = true;
   state.pdf = null;
   state.sheets.existing = { pageNum: 1, image: null };
   state.sheets.proposed = { pageNum: 2, image: null };
@@ -2107,6 +2541,7 @@ async function showProjects() {
         ? '<span class="pill">current</span>'
         : '<button class="btn tiny" data-act="open">Open</button>'}
       <button class="btn tiny" data-act="dup" title="Copy this takeoff as a new version — same PDF, independent traces">Duplicate</button>
+      <button class="btn tiny" data-act="revise" title="Start a new revision from this takeoff — carries the scale, boundary, and traces; you then open the updated plans and edit only what changed">Revise…</button>
       <button class="btn tiny" data-act="ren" title="Rename">Rename</button>
       <button class="btn tiny danger" data-act="del" title="Delete this project">✕</button>`;
     row.querySelector('.name').textContent = r.name;
@@ -2116,6 +2551,13 @@ async function showProjects() {
     els.projList.appendChild(row);
   }
   els.projects.classList.remove('hidden');
+}
+
+// Suggest the next revision name: "Site Grading Rev 2" → "Site Grading Rev 3",
+// otherwise append " Rev 2".
+function nextRevName(name) {
+  const m = String(name || '').match(/^(.*?)[\s_-]*rev\.?\s*(\d+)\s*$/i);
+  return m ? `${m[1].trim()} Rev ${parseInt(m[2], 10) + 1}` : `${name || 'Takeoff'} Rev 2`;
 }
 
 async function projectAction(act, id) {
@@ -2134,6 +2576,27 @@ async function projectAction(act, id) {
       copy.id = randId(); copy.name = name; copy.modified = Date.now();
       await idbProjPut(copy);
       await openProject(copy.id);
+      return;
+    }
+  } else if (act === 'revise') {
+    await syncProjectNow();
+    const rec = await idbProjGet(id);
+    if (!rec) return;
+    const name = await askText('New revision',
+      "Name for the revision. It carries this takeoff's scale, boundary, and traces. " +
+      'After it opens, use Open PDF… to load the updated plans and edit only what changed.',
+      nextRevName(rec.name));
+    if (name) {
+      // Fork into a new project (the original revision is left untouched). Keep
+      // the old PDF so the revision opens with the traces over the previous
+      // plans; opening the updated PDF swaps only the drawing.
+      const copy = JSON.parse(JSON.stringify(rec));
+      copy.id = randId(); copy.name = name; copy.modified = Date.now();
+      await idbProjPut(copy);
+      await openProject(copy.id);
+      setMsg(`Revision "${name}" created — scale, boundary, and traces carried over. ` +
+        'Click Open PDF… to load the updated plans (your traces stay put, so you edit only what changed). ' +
+        'Re-check the scale (📏) if the revised sheet prints at a different size.');
       return;
     }
   } else if (act === 'ren') {
@@ -2170,6 +2633,16 @@ async function projectAction(act, id) {
   }
   showProjects(); // back to the (refreshed) list
 }
+
+$('btnRealign').addEventListener('click', () => {
+  if (!state.pdf) { setMsg('Open the updated PDF first, then re-align your carried traces to it.'); return; }
+  if (!state.calibration && !state.boundary.length &&
+      !state.contours.existing.length && !state.contours.proposed.length && !state.walls.length) {
+    setMsg('Nothing to re-align yet — this moves already-placed traces onto a shifted drawing.'); return;
+  }
+  setTool('realign');
+  setMsg('Re-align: click a landmark on a carried trace, then the same spot on the updated drawing. Enter to apply, Esc to cancel.');
+});
 
 els.btnProjects.addEventListener('click', showProjects);
 els.projClose.addEventListener('click', () => els.projects.classList.add('hidden'));
