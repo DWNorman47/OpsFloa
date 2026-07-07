@@ -152,6 +152,8 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 .list-item.selected { background: #3d5a7a; }
 .list-item .swatch { width: 14px; height: 3px; border-radius: 2px; flex: 0 0 auto; }
 .list-item .lbl { flex: 1; }
+.list-item .edit { color: var(--muted); background: none; border: none; cursor: pointer; font-size: 13px; padding: 0; }
+.list-item .edit:hover { color: var(--accent); }
 .list-item .del { color: var(--muted); background: none; border: none; cursor: pointer; font-size: 14px; }
 .list-item .del:hover { color: var(--bad); }
 
@@ -267,3 +269,6 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 .nav-pad.se { bottom: 8px; right: 8px; }
 /* shift the HUD clear of the top-left corner pad while the pads are showing */
 #canvasWrap.nav-active #hud { left: 50px; max-width: calc(100% - 100px); }
+
+.preset-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 4px 0 12px; }
+#measureOut { font-weight: 700; color: var(--accent); }

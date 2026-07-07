@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useT } from '../hooks/useT';
 import { usePerm } from '../hooks/usePerm';
+import { usePlan } from '../hooks/usePlan';
 import api from '../api';
 import { getOrFetch } from '../offlineDb';
 import { PageIntro, PageShell } from '../components/PageShell';
@@ -14,6 +15,10 @@ import InventoryValuation from '../components/inventory/InventoryValuation';
 import InventoryPurchaseOrders from '../components/inventory/InventoryPurchaseOrders';
 import InventoryConversions from '../components/inventory/InventoryConversions';
 import MyCount from '../components/MyCount';
+import EquipmentLog from '../components/EquipmentLog';
+import EquipmentCheckouts from '../components/inventory/EquipmentCheckouts';
+import EquipmentRentals from '../components/inventory/EquipmentRentals';
+import EquipmentMaintenanceLog from '../components/inventory/EquipmentMaintenanceLog';
 
 import { silentError } from '../errorReporter';
 export default function InventoryPage() {
@@ -23,12 +28,20 @@ export default function InventoryPage() {
   // management + setup tabs require manage_inventory. The server enforces the
   // same split (reads via requireAuth, writes via requireAdmin).
   const canManage = usePerm('manage_inventory');
+  // The Equipment group keeps its own gating (Business plan + manage_equipment),
+  // independent of manage_inventory — the server authority is the requirePlan
+  // ('business') mount on /api/equipment.
+  const { isBusiness } = usePlan();
+  const canEquip = usePerm('manage_equipment');
+  const showEquipment = isBusiness && canEquip;
 
   const [features, setFeatures] = useState(null);
   const [projects, setProjects] = useState([]);
   const [locations, setLocations] = useState([]);
   const [lowStockCount, setLowStockCount] = useState(0);
   const [pendingConversions, setPendingConversions] = useState(0);
+  const [checkedOutCount, setCheckedOutCount] = useState(0);
+  const [rentalDueCount, setRentalDueCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [poLowStockTrigger, setPoLowStockTrigger] = useState(false);
 
@@ -51,23 +64,40 @@ export default function InventoryPage() {
     { id: 'suppliers',   label: t.invSetupSuppliers },
     { id: 'conversions', label: t.invTabConversions, dot: pendingConversions > 0 ? '#d97706' : null },
   ] : [];
+  // Equipment group (Business plan + manage_equipment). Consolidated here from
+  // the old Field "Equipment Log" tab. M1 ships the Assets tab (the moved
+  // EquipmentLog); Checked-out / Rentals / Maintenance land in later milestones.
+  const equipmentTabs = showEquipment ? [
+    { id: 'eq-assets', label: t.invTabEqAssets },
+    { id: 'eq-out', label: t.invTabEqCheckedOut, dot: checkedOutCount > 0 ? '#f59e0b' : null },
+    { id: 'eq-rentals', label: t.invTabEqRentals, dot: rentalDueCount > 0 ? '#d97706' : null },
+    { id: 'eq-maint', label: t.invTabEqMaint },
+  ] : [];
+  const equipmentTabIds = equipmentTabs.map(d => d.id);
   const setupTabIds = setupTabs.map(d => d.id);
-  const allTabIds = [...opsTabs, ...setupTabs].map(d => d.id);
+  const allTabIds = [...opsTabs, ...equipmentTabs, ...setupTabs].map(d => d.id);
 
   // Legacy hashes: counts→cycle (rename), setup→locations (Setup was split into
-  // Locations + Suppliers tabs under the Setup group).
+  // Locations + Suppliers tabs under the Setup group), equip→eq-assets (Equipment
+  // moved here from the Field module).
   const normalizeInventoryTab = value => ({
     counts: 'cycle',
     setup: 'locations',
     pos: 'orders',
     purchase_orders: 'orders',
     purchaseorders: 'orders',
+    equip: 'eq-assets',
+    equipment: 'eq-assets',
   }[value] || value);
   const hashTab = normalizeInventoryTab(window.location.hash.replace('#', ''));
   const [tab, setTab] = useState(allTabIds.includes(hashTab) ? hashTab : 'stock');
-  const group = setupTabIds.includes(tab) ? 'setup' : 'operations';
-  const visibleTabs = group === 'setup' ? setupTabs : opsTabs;
-  const showGroupRow = canManage && setupTabs.length > 0;
+  const group = equipmentTabIds.includes(tab) ? 'equipment'
+    : setupTabIds.includes(tab) ? 'setup'
+    : 'operations';
+  const visibleTabs = group === 'equipment' ? equipmentTabs
+    : group === 'setup' ? setupTabs
+    : opsTabs;
+  const showGroupRow = (canManage && setupTabs.length > 0) || equipmentTabs.length > 0;
 
   const switchTab = next => {
     const nextTab = normalizeInventoryTab(next);
@@ -75,7 +105,7 @@ export default function InventoryPage() {
     history.replaceState(null, '', '#' + nextTab);
   };
   const switchGroup = g => {
-    const first = (g === 'setup' ? setupTabs : opsTabs)[0];
+    const first = (g === 'equipment' ? equipmentTabs : g === 'setup' ? setupTabs : opsTabs)[0];
     if (first) switchTab(first.id);
   };
 
@@ -139,6 +169,18 @@ export default function InventoryPage() {
     init();
   }, [canManage]);
 
+  // Equipment tab dots: open-checkout count + rentals due soon/overdue.
+  const refreshEquipCounts = () => {
+    if (!showEquipment) return;
+    api.get('/equipment/checkouts').then(r => setCheckedOutCount(r.data.length)).catch(silentError('inventorypage'));
+    api.get('/equipment').then(r => {
+      const cutoff = new Date(); cutoff.setDate(cutoff.getDate() + 3);
+      const c = cutoff.toLocaleDateString('en-CA');
+      setRentalDueCount(r.data.filter(a => a.is_rental && a.rental_return_due && a.rental_return_due.toString().substring(0, 10) <= c).length);
+    }).catch(silentError('inventorypage'));
+  };
+  useEffect(() => { refreshEquipCounts(); }, [showEquipment]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const refreshLowStock    = () => canManage && api.get('/inventory/stock/low').then(r => setLowStockCount(r.data.length)).catch(silentError('inventorypage'));
   const refreshConversions = () => canManage && api.get('/inventory/uom-conversions').then(r => setPendingConversions(r.data.filter(u => parseFloat(u.factor) === 1).length)).catch(silentError('inventorypage'));
 
@@ -177,10 +219,17 @@ export default function InventoryPage() {
           <div className="ops-workflow-tabs" role="tablist" aria-label={t.invSectionsAria}>
             <button type="button" role="tab" aria-selected={group === 'operations'}
               className={`ops-workflow-tab ${group === 'operations' ? 'is-active' : ''}`.trim()}
-              onClick={() => switchGroup('operations')}>{t.invGroupOperations}</button>
-            <button type="button" role="tab" aria-selected={group === 'setup'}
-              className={`ops-workflow-tab ${group === 'setup' ? 'is-active' : ''}`.trim()}
-              onClick={() => switchGroup('setup')}>{t.invGroupSetup}</button>
+              onClick={() => switchGroup('operations')}>{t.invGroupStock}</button>
+            {equipmentTabs.length > 0 && (
+              <button type="button" role="tab" aria-selected={group === 'equipment'}
+                className={`ops-workflow-tab ${group === 'equipment' ? 'is-active' : ''}`.trim()}
+                onClick={() => switchGroup('equipment')}>{t.invGroupEquipment}</button>
+            )}
+            {canManage && setupTabs.length > 0 && (
+              <button type="button" role="tab" aria-selected={group === 'setup'}
+                className={`ops-workflow-tab ${group === 'setup' ? 'is-active' : ''}`.trim()}
+                onClick={() => switchGroup('setup')}>{t.invGroupSetup}</button>
+            )}
           </div>
         )}
         <TabBar active={tab} onChange={switchTab} tabs={visibleTabs} />
@@ -236,6 +285,18 @@ export default function InventoryPage() {
         )}
         {tab === 'mycount' && !canManage && (
           <MyCount />
+        )}
+        {tab === 'eq-assets' && showEquipment && (
+          <EquipmentLog projects={projects} settings={features} />
+        )}
+        {tab === 'eq-out' && showEquipment && (
+          <EquipmentCheckouts projects={projects} settings={features} onChange={refreshEquipCounts} />
+        )}
+        {tab === 'eq-rentals' && showEquipment && (
+          <EquipmentRentals settings={features} onChange={refreshEquipCounts} />
+        )}
+        {tab === 'eq-maint' && showEquipment && (
+          <EquipmentMaintenanceLog />
         )}
     </PageShell>
   );
