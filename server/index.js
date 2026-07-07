@@ -219,6 +219,8 @@ app.use('/api/punchlist', requireAuth, requirePlan('business'), require('./route
 app.use('/api/inspections', requireAuth, requirePlan('business'), require('./routes/inspections'));
 app.use('/api/safety-talks', requireAuth, requirePlan('business'), require('./routes/safetyTalks'));
 app.use('/api/safety-checklists', requireAuth, requirePlan('business'), require('./routes/safetyChecklists'));
+// Voice transcription tool (Tools module) — upload audio, diarized transcript
+app.use('/api/recordings', requireAuth, requirePlan('business'), require('./routes/recordings'));
 app.use('/api/inbox', require('./routes/inbox'));
 app.use('/api/time-off', requireAuth, require('./routes/timeOff'));
 app.use('/api/reimbursements', requireAuth, require('./routes/reimbursements'));
@@ -389,6 +391,8 @@ app.listen(PORT, () => {
   startMediaRetentionJob();
   const { startScheduledReportsJob } = require('./jobs/scheduledReports');
   startScheduledReportsJob();
+  const { startTranscriptionPollerJob } = require('./jobs/transcriptionPoller'); // AssemblyAI result sweep
+  startTranscriptionPollerJob();
   const { startCron } = require('./cron');
   startCron();
 });

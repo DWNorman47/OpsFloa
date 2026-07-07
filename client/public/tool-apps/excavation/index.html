@@ -44,6 +44,7 @@
     <button class="tool" data-tool="wand" title="Click once ON a contour line — the whole line is picked up from the PDF vector data (vector PDFs only)">🪄 Auto Trace</button>
     <button class="tool" data-tool="spot" title="Click a single spot grade (FG spot, high/low point) and enter its elevation">◎ Spot Elev</button>
     <button class="tool" data-tool="pad" title="Draw a building pad polygon; everything inside is held flat at one elevation (FF/FP pads). To edit a pad: drag a point (○), double-click an edge to add a point, Alt+click a point to remove it">▬ Pad</button>
+    <button class="tool" data-tool="wall" title="Retaining-wall dig: click along the wall line; Enter or double-click to finish, then enter the trench cross-section. Depth can be a constant dig or measured down to a footing subgrade elevation off your traced Existing contours. Gives excavation & export CY.">▚ Wall</button>
     <button class="tool" data-tool="select" title="Click a traced line (or its sidebar row) to select it; Delete removes, E edits elevation, Esc deselects">➤ Select</button>
     <button class="tool" data-tool="erase" title="Drag a box — the portions of traced lines inside it are erased; lines crossing the box are split. If a line is selected, only that line is trimmed">⌫ Erase Box</button>
     </div>
@@ -53,7 +54,9 @@
 
   <div class="tb-group tb-run">
     <button id="btnCalc" class="btn go" title="Grid both surfaces and compute cut / fill volumes">∑ Calculate Cut/Fill</button>
+    <button id="btnWallCalc" class="btn" title="Quick retaining-wall dig estimate — enter length, depth, and footing width for excavation & export CY. No plans needed.">📐 Wall Dig</button>
     <button id="btnUndo" class="btn" title="Undo the last change (Ctrl+Z)" disabled>↶ Undo</button>
+    <button id="btnRedo" class="btn" title="Redo the last undone change (Ctrl+Y or Ctrl+Shift+Z)" disabled>Redo ↷</button>
     <button id="btnSidebar" class="btn" title="Show / hide the sidebar">☰</button>
   </div>
 
@@ -71,6 +74,18 @@
     <canvas id="cv"></canvas>
     <div id="hud"></div>
     <div id="dropHint"><span>Drop a PDF here or click <b>Open PDF…</b></span></div>
+    <!-- Edge/corner jump pads: appear when zoomed in past ~70% (less than 70%
+         of the plan visible) and pan a third of a screen in that direction. -->
+    <div id="navPads" class="hidden" aria-hidden="true">
+      <button class="nav-pad n"  data-dx="0"  data-dy="-1" title="Pan up (⅓ screen)" aria-label="Pan up">▲</button>
+      <button class="nav-pad s"  data-dx="0"  data-dy="1"  title="Pan down (⅓ screen)" aria-label="Pan down">▼</button>
+      <button class="nav-pad w"  data-dx="-1" data-dy="0"  title="Pan left (⅓ screen)" aria-label="Pan left">◀</button>
+      <button class="nav-pad e"  data-dx="1"  data-dy="0"  title="Pan right (⅓ screen)" aria-label="Pan right">▶</button>
+      <button class="nav-pad nw" data-dx="-1" data-dy="-1" title="Pan up &amp; left" aria-label="Pan up and left">↖</button>
+      <button class="nav-pad ne" data-dx="1"  data-dy="-1" title="Pan up &amp; right" aria-label="Pan up and right">↗</button>
+      <button class="nav-pad sw" data-dx="-1" data-dy="1"  title="Pan down &amp; left" aria-label="Pan down and left">↙</button>
+      <button class="nav-pad se" data-dx="1"  data-dy="1"  title="Pan down &amp; right" aria-label="Pan down and right">↘</button>
+    </div>
   </div>
 
   <aside id="sidebar">
@@ -110,6 +125,12 @@
       <div class="hint">The cut/fill grid only counts area inside the boundary (limits of disturbance).</div>
     </section>
 
+    <section id="secRealign">
+      <h3>Revision align</h3>
+      <button id="btnRealign" class="btn tiny">⌖ Re-align traces to this PDF</button>
+      <div class="hint">If a revised PDF shifted the drawing, this moves your carried scale, boundary, and traces onto it: click a landmark on a trace, then the same spot on the new drawing. Press Enter after one pair (shift) or add a second pair (rotation/scale). Ctrl+Z undoes it.</div>
+    </section>
+
     <section id="secContours">
       <h3><span id="contourTitle">Existing</span> contours <span id="contourCount" class="pill">0</span></h3>
       <div id="contourList" class="list"></div>
@@ -132,6 +153,12 @@
       <div id="legend" class="legend">
         <span class="sw cut"></span> Cut &nbsp;&nbsp; <span class="sw fill"></span> Fill
       </div>
+    </section>
+
+    <section id="secWalls" class="hidden">
+      <h3>Wall digs <span class="pill" id="wallCount"></span></h3>
+      <div id="wallList" class="list"></div>
+      <div class="hint">Excavation &amp; export for each retaining-wall dig traced with the ▚ Wall tool. Swell % (Settings) refigures the loose volume live.</div>
     </section>
   </aside>
 </main>
@@ -176,18 +203,20 @@
       <li><b>▱ Boundary editing</b> (Boundary tool active, polygon closed): <b>drag a point (○)</b> to move it · <b>double-click an edge</b> to add a point · <b>Alt+click a point</b> to remove it · click away from the polygon to draw a replacement.</li>
       <li><b>🪄 Auto Trace:</b> one click ON a line lifts the whole vector path (vector PDFs only — it will tell you if the page is a scan). Cancel the elevation prompt to discard a bad pick. With a boundary drawn, picks are trimmed to the boundary plus ~20 ft.</li>
       <li><b>▬ Pad editing</b> (Pad tool active): same gestures as the boundary — <b>drag a point (○)</b>, <b>double-click an edge</b> to add, <b>Alt+click</b> to remove. Enter the pad/subgrade elevation (often FF minus slab &amp; base), not the finished floor. Select a pad by clicking anywhere inside it.</li>
+      <li><b>▚ Wall (retaining-wall dig):</b> click along the wall line · <b>Enter</b>/double-click finishes · then enter the trench cross-section (bottom width, side slope, and either a constant depth or a footing subgrade elevation read off your Existing contours). You get excavation and export CY per wall in the sidebar. Or use <b>📐 Wall Dig</b> in the toolbar for a quick estimate with no plans.</li>
       <li><b>➤ Select:</b> click a line (or its row in the sidebar list) · <b>Delete</b> removes it · <b>E</b> edits its elevation · <b>Esc</b> deselects. The sidebar list's ✕ also deletes.</li>
       <li><b>⌫ Erase Box:</b> drag a box — only the line <em>portions</em> inside are erased; lines crossing the box are split and the outside parts survive. <b>With a line selected, only that line is trimmed.</b> Spots inside are removed; pads are only removed when fully boxed.</li>
       <li><b>⌖ Align sheets</b> (sidebar): turn on <b>Ghost other sheet</b> to check the two pages overlay. If not: click a landmark on Existing, the same one on Proposed (fixes the shift), then press <b>Enter</b> to stop — or click a second, far-away landmark pair to also fix rotation. <b>Reset</b> removes the adjustment.</li>
+      <li><b>⌖ Re-align traces to this PDF</b> (Revision align, sidebar): after opening a revised PDF where the drawing shifted, this moves your carried scale, boundary, and traces onto it. Click a landmark on a carried trace, then the same spot on the new drawing; <b>Enter</b> after one pair for a shift, or add a second far-away pair for rotation/scale. It re-derives ft/px automatically; <b>Ctrl+Z</b> undoes it. (This moves your work; Align sheets above only nudges the Proposed image.)</li>
       <li><b>↶ Undo</b> (Ctrl+Z): steps back through the last 50 changes — traces, erases, boundary/pad/scale/alignment edits, Clear, Load, even New.</li>
-      <li><b>📁 Projects:</b> each project is a separate takeoff. <b>Duplicate</b> makes a second version on the same plans (shared PDF, independent traces) — ideal for comparing grading options. Open, rename, or delete from the list; the current one shows in the toolbar. Switching flushes and saves automatically; Undo history doesn't cross projects.</li>
+      <li><b>📁 Projects:</b> each project is a separate takeoff. <b>Duplicate</b> makes a second version on the same plans (shared PDF, independent traces) — ideal for comparing grading options. <b>Revise…</b> forks a takeoff into a new revision: it carries the scale, boundary, and traces forward, then you <b>Open PDF…</b> the updated plan set — the drawing swaps but your work stays, so you only edit what changed (re-check the scale if the new sheet prints at a different size). The original revision is left untouched. Open, rename, or delete from the list; the current one shows in the toolbar. Switching flushes and saves automatically; Undo history doesn't cross projects.</li>
       <li><b>Saving:</b> everything auto-saves in the browser, including the PDF — a refresh reopens the current project. <b>New</b> wipes the current project's takeoff (keeps the PDF open). <b>Save/Load</b> exports/imports a .takeoff.json (the PDF itself is not embedded — keep it with the file).</li>
       <li><b>Sidebar:</b> click any section header to collapse/expand it, and <b>☰</b> in the toolbar hides the whole sidebar (the app remembers both). Shrink/swell % in Settings re-figure the results live after a calculation.</li>
       <li><b>Small screens:</b> the toolbar stacks into rows — the tool buttons become a side-scrolling strip, with Calculate and the file actions on their own rows. ☰ frees up the whole screen for the drawing.</li>
     </ul>
     <h4>Keyboard shortcuts</h4>
     <p class="hint">
-      <b>Ctrl+Z</b> undo · <b>T</b> trace · <b>A</b> auto trace · <b>P</b> pad · <b>B</b> boundary · <b>V</b> select ·
+      <b>Ctrl+Z</b> undo · <b>T</b> trace · <b>A</b> auto trace · <b>W</b> wall · <b>P</b> pad · <b>B</b> boundary · <b>V</b> select ·
       <b>Enter</b>/double-click finish · <b>Backspace</b> undo last click · <b>Esc</b> cancel / deselect ·
       <b>Delete</b> delete selected · <b>E</b> edit selected elevation · <b>Space</b>+drag pan ·
       <b>Alt+click</b> remove a boundary/pad point
@@ -200,12 +229,77 @@
 <div id="projects" class="modal hidden">
   <div class="modal-box wide">
     <h3>Projects</h3>
-    <div class="hint">Each project is its own takeoff. <b>Duplicate</b> one to price a second version of the same plans — the PDF is shared, the traces are independent.</div>
+    <div class="hint">Each project is its own takeoff. <b>Duplicate</b> one to price a second version of the same plans — the PDF is shared, the traces are independent. <b>Revise…</b> starts a new revision that carries the scale, boundary, and traces forward so you can open the updated plans and edit only what changed.</div>
     <div id="projList" class="proj-list"></div>
     <div class="modal-actions">
       <button id="projNewBtn" class="btn">+ New project</button>
       <span class="spacer"></span>
       <button id="projClose" class="btn primary">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Quick retaining-wall dig calculator (no plans needed) -->
+<div id="wallCalc" class="modal hidden">
+  <div class="modal-box wide">
+    <h3>Retaining-wall dig — quick estimate</h3>
+    <div class="hint">Excavation and export for a wall footing/trench dig, from a length and a cross-section. For a plan-accurate takeoff that reads depth off your contours, use the <b>▚ Wall</b> tool instead.</div>
+    <div class="wall-grid">
+      <label>Wall length (ft)<input type="number" id="wcLen" min="0" step="1" value="100"></label>
+      <label>Avg excavation depth (ft)<input type="number" id="wcDepth" min="0" step="0.5" value="4"></label>
+      <label title="Flat trench bottom = footing width + working room on each side">Trench bottom width (ft)<input type="number" id="wcWidth" min="0" step="0.5" value="4"></label>
+      <label title="Backcut of the excavation sides. Steeper (less H) for stable soil or shoring; flatter for loose soil per OSHA.">Side slope (H:V)
+        <select id="wcSlope">
+          <option value="0">Vertical / shored (0)</option>
+          <option value="0.75">¾ : 1 (Type A)</option>
+          <option value="1" selected>1 : 1 (Type B)</option>
+          <option value="1.5">1½ : 1 (Type C)</option>
+        </select>
+      </label>
+      <label title="Loose/truck bulking of bank dirt">Swell %<input type="number" id="wcSwell" min="0" max="60" step="1" value="25"></label>
+      <label title="Portion of the backfill void filled with reused native (not hauled off). 0 = everything is exported.">Reused as backfill %<input type="number" id="wcReuse" min="0" max="100" step="5" value="0"></label>
+      <label title="Footing + stem concrete volume (import). Optional — leave 0 to skip. Takes up the hole, so less backfill is needed.">Concrete (CY, optional)<input type="number" id="wcConcrete" min="0" step="1" value="0"></label>
+      <label title="Drainage aggregate placed behind the wall (import gravel). Optional.">Drainage aggregate (CY, optional)<input type="number" id="wcAgg" min="0" step="1" value="0"></label>
+    </div>
+    <div id="wcResult" class="wall-result"></div>
+    <div class="modal-actions"><button id="wcClose" class="btn primary">Done</button></div>
+  </div>
+</div>
+
+<!-- Wall section config (shown after tracing a wall alignment) -->
+<div id="wallSection" class="modal hidden">
+  <div class="modal-box wide">
+    <h3>Wall trench cross-section</h3>
+    <div class="hint">The dig profile perpendicular to the wall, swept along the line you traced (<span id="wsLen">—</span>).</div>
+    <div class="wall-grid">
+      <label title="Flat trench bottom = footing width + working room on each side">Trench bottom width (ft)<input type="number" id="wsWidth" min="0" step="0.5" value="4"></label>
+      <label title="Backcut of the excavation sides.">Side slope (H:V)
+        <select id="wsSlope">
+          <option value="0">Vertical / shored (0)</option>
+          <option value="0.75">¾ : 1 (Type A)</option>
+          <option value="1" selected>1 : 1 (Type B)</option>
+          <option value="1.5">1½ : 1 (Type C)</option>
+        </select>
+      </label>
+      <label title="Portion of the backfill void filled with reused native (not hauled off).">Reused as backfill %<input type="number" id="wsReuse" min="0" max="100" step="5" value="0"></label>
+      <label title="Footing + stem concrete volume (import). Optional.">Concrete (CY, optional)<input type="number" id="wsConcrete" min="0" step="1" value="0"></label>
+      <label title="Drainage aggregate behind the wall (import). Optional.">Drainage aggregate (CY, optional)<input type="number" id="wsAgg" min="0" step="1" value="0"></label>
+    </div>
+    <fieldset class="wall-depth">
+      <legend>Excavation depth</legend>
+      <label class="radio"><input type="radio" name="wsMode" value="constant" checked> Constant depth below grade
+        <input type="number" id="wsDepth" min="0" step="0.5" value="4"> ft</label>
+      <label class="radio" title="Reads the Existing ground elevation off your traced contours at each station and digs down to this fixed footing subgrade elevation.">
+        <input type="radio" name="wsMode" value="subgrade"> Down to subgrade elevation
+        <input type="number" id="wsSub" step="0.5" value="0" disabled> ft</label>
+      <label class="radio" title="Bottom of dig follows the Proposed (finished) surface at a set embedment below it — reads both your Existing and Proposed contours. For a benched/stepped footing that steps down a slope at a constant depth below finished grade.">
+        <input type="radio" name="wsMode" value="proposed"> To proposed grade − embedment
+        <input type="number" id="wsEmbed" min="0" step="0.5" value="2" disabled> ft</label>
+      <div id="wsSubHint" class="hint"></div>
+    </fieldset>
+    <div class="modal-actions">
+      <button id="wsCancel" class="btn">Cancel</button>
+      <button id="wsOk" class="btn primary">Compute dig</button>
     </div>
   </div>
 </div>
