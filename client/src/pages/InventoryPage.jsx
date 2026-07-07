@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useT } from '../hooks/useT';
 import { usePerm } from '../hooks/usePerm';
+import { usePlan } from '../hooks/usePlan';
 import api from '../api';
 import { getOrFetch } from '../offlineDb';
 import { PageIntro, PageShell } from '../components/PageShell';
@@ -14,6 +15,7 @@ import InventoryValuation from '../components/inventory/InventoryValuation';
 import InventoryPurchaseOrders from '../components/inventory/InventoryPurchaseOrders';
 import InventoryConversions from '../components/inventory/InventoryConversions';
 import MyCount from '../components/MyCount';
+import EquipmentLog from '../components/EquipmentLog';
 
 import { silentError } from '../errorReporter';
 export default function InventoryPage() {
@@ -23,6 +25,11 @@ export default function InventoryPage() {
   // management + setup tabs require manage_inventory. The server enforces the
   // same split (reads via requireAuth, writes via requireAdmin).
   const canManage = usePerm('manage_inventory');
+  // The Equipment group keeps its own gating (Business plan + manage_equipment),
+  // independent of manage_inventory — the server authority is the requirePlan
+  // ('business') mount on /api/equipment.
+  const { isBusiness } = usePlan();
+  const showEquipment = isBusiness && usePerm('manage_equipment');
 
   const [features, setFeatures] = useState(null);
   const [projects, setProjects] = useState([]);
@@ -51,23 +58,37 @@ export default function InventoryPage() {
     { id: 'suppliers',   label: t.invSetupSuppliers },
     { id: 'conversions', label: t.invTabConversions, dot: pendingConversions > 0 ? '#d97706' : null },
   ] : [];
+  // Equipment group (Business plan + manage_equipment). Consolidated here from
+  // the old Field "Equipment Log" tab. M1 ships the Assets tab (the moved
+  // EquipmentLog); Checked-out / Rentals / Maintenance land in later milestones.
+  const equipmentTabs = showEquipment ? [
+    { id: 'eq-assets', label: t.invTabEqAssets },
+  ] : [];
+  const equipmentTabIds = equipmentTabs.map(d => d.id);
   const setupTabIds = setupTabs.map(d => d.id);
-  const allTabIds = [...opsTabs, ...setupTabs].map(d => d.id);
+  const allTabIds = [...opsTabs, ...equipmentTabs, ...setupTabs].map(d => d.id);
 
   // Legacy hashes: counts→cycle (rename), setup→locations (Setup was split into
-  // Locations + Suppliers tabs under the Setup group).
+  // Locations + Suppliers tabs under the Setup group), equip→eq-assets (Equipment
+  // moved here from the Field module).
   const normalizeInventoryTab = value => ({
     counts: 'cycle',
     setup: 'locations',
     pos: 'orders',
     purchase_orders: 'orders',
     purchaseorders: 'orders',
+    equip: 'eq-assets',
+    equipment: 'eq-assets',
   }[value] || value);
   const hashTab = normalizeInventoryTab(window.location.hash.replace('#', ''));
   const [tab, setTab] = useState(allTabIds.includes(hashTab) ? hashTab : 'stock');
-  const group = setupTabIds.includes(tab) ? 'setup' : 'operations';
-  const visibleTabs = group === 'setup' ? setupTabs : opsTabs;
-  const showGroupRow = canManage && setupTabs.length > 0;
+  const group = equipmentTabIds.includes(tab) ? 'equipment'
+    : setupTabIds.includes(tab) ? 'setup'
+    : 'operations';
+  const visibleTabs = group === 'equipment' ? equipmentTabs
+    : group === 'setup' ? setupTabs
+    : opsTabs;
+  const showGroupRow = (canManage && setupTabs.length > 0) || equipmentTabs.length > 0;
 
   const switchTab = next => {
     const nextTab = normalizeInventoryTab(next);
@@ -75,7 +96,7 @@ export default function InventoryPage() {
     history.replaceState(null, '', '#' + nextTab);
   };
   const switchGroup = g => {
-    const first = (g === 'setup' ? setupTabs : opsTabs)[0];
+    const first = (g === 'equipment' ? equipmentTabs : g === 'setup' ? setupTabs : opsTabs)[0];
     if (first) switchTab(first.id);
   };
 
@@ -177,10 +198,17 @@ export default function InventoryPage() {
           <div className="ops-workflow-tabs" role="tablist" aria-label={t.invSectionsAria}>
             <button type="button" role="tab" aria-selected={group === 'operations'}
               className={`ops-workflow-tab ${group === 'operations' ? 'is-active' : ''}`.trim()}
-              onClick={() => switchGroup('operations')}>{t.invGroupOperations}</button>
-            <button type="button" role="tab" aria-selected={group === 'setup'}
-              className={`ops-workflow-tab ${group === 'setup' ? 'is-active' : ''}`.trim()}
-              onClick={() => switchGroup('setup')}>{t.invGroupSetup}</button>
+              onClick={() => switchGroup('operations')}>{t.invGroupStock}</button>
+            {equipmentTabs.length > 0 && (
+              <button type="button" role="tab" aria-selected={group === 'equipment'}
+                className={`ops-workflow-tab ${group === 'equipment' ? 'is-active' : ''}`.trim()}
+                onClick={() => switchGroup('equipment')}>{t.invGroupEquipment}</button>
+            )}
+            {canManage && setupTabs.length > 0 && (
+              <button type="button" role="tab" aria-selected={group === 'setup'}
+                className={`ops-workflow-tab ${group === 'setup' ? 'is-active' : ''}`.trim()}
+                onClick={() => switchGroup('setup')}>{t.invGroupSetup}</button>
+            )}
           </div>
         )}
         <TabBar active={tab} onChange={switchTab} tabs={visibleTabs} />
@@ -236,6 +264,9 @@ export default function InventoryPage() {
         )}
         {tab === 'mycount' && !canManage && (
           <MyCount />
+        )}
+        {tab === 'eq-assets' && showEquipment && (
+          <EquipmentLog projects={projects} settings={features} />
         )}
     </PageShell>
   );

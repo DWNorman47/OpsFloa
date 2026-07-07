@@ -2,6 +2,47 @@ const router = require('express').Router();
 const pool = require('../db');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { logAudit } = require('../auditLog');
+const { EQUIPMENT_KINDS, RENTAL_RATE_UNITS } = require('../constants/equipmentEnums');
+
+// Parse + validate the shared registry/rental fields for POST and PATCH.
+// Returns { error } (a 400 message) or { v } with normalized values. status is
+// NOT set here — it's driven by checkout/return/maintenance, not direct edits.
+function parseItemBody(body) {
+  const name = body.name?.trim();
+  const type = body.type?.trim() || null;
+  const unit_number = body.unit_number?.trim() || null;
+  const notes = body.notes?.trim() || null;
+  if (!name) return { error: 'name is required' };
+  if (name.length > 255) return { error: 'name too long (max 255 characters)' };
+  if (type && type.length > 100) return { error: 'type too long (max 100 characters)' };
+  if (unit_number && unit_number.length > 100) return { error: 'unit_number too long (max 100 characters)' };
+  if (notes && notes.length > 1000) return { error: 'notes too long (max 1000 characters)' };
+
+  const kind = body.kind?.trim() || null;
+  if (kind && !EQUIPMENT_KINDS.includes(kind)) return { error: 'invalid kind' };
+  const serial_number = body.serial_number?.trim() || null;
+  if (serial_number && serial_number.length > 120) return { error: 'serial_number too long (max 120 characters)' };
+  const rental_vendor = body.rental_vendor?.trim() || null;
+  if (rental_vendor && rental_vendor.length > 255) return { error: 'rental_vendor too long (max 255 characters)' };
+  const rental_rate_unit = body.rental_rate_unit?.trim() || null;
+  if (rental_rate_unit && !RENTAL_RATE_UNITS.includes(rental_rate_unit)) return { error: 'invalid rental_rate_unit' };
+  const photo_url = body.photo_url?.trim() || null;
+  const num = x => (x != null && x !== '' ? parseFloat(x) : null);
+
+  return {
+    v: {
+      name, type, unit_number, notes, kind, serial_number, photo_url,
+      maintenance_interval_hours: body.maintenance_interval_hours ? parseInt(body.maintenance_interval_hours) : null,
+      purchase_date: body.purchase_date || null,
+      purchase_cost: num(body.purchase_cost),
+      is_rental: !!body.is_rental,
+      rental_vendor,
+      rental_rate: num(body.rental_rate),
+      rental_rate_unit,
+      rental_return_due: body.rental_return_due || null,
+    },
+  };
+}
 
 // GET /equipment — list all active equipment items with total hours
 router.get('/', requireAuth, async (req, res) => {
@@ -26,61 +67,60 @@ router.get('/', requireAuth, async (req, res) => {
 
 // POST /equipment — create equipment item (admin)
 router.post('/', requireAdmin, async (req, res) => {
-  const { maintenance_interval_hours } = req.body;
-  const name = req.body.name?.trim();
-  const type = req.body.type?.trim() || null;
-  const unit_number = req.body.unit_number?.trim() || null;
-  const notes = req.body.notes?.trim() || null;
-  if (!name) return res.status(400).json({ error: 'name is required' });
-  if (name.length > 255) return res.status(400).json({ error: 'name too long (max 255 characters)' });
-  if (type && type.length > 100) return res.status(400).json({ error: 'type too long (max 100 characters)' });
-  if (unit_number && unit_number.length > 100) return res.status(400).json({ error: 'unit_number too long (max 100 characters)' });
-  if (notes && notes.length > 1000) return res.status(400).json({ error: 'notes too long (max 1000 characters)' });
+  const parsed = parseItemBody(req.body);
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+  const v = parsed.v;
   const companyId = req.user.company_id;
   try {
     const result = await pool.query(
-      `INSERT INTO equipment_items (company_id, name, type, unit_number, maintenance_interval_hours, notes)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [companyId, name, type, unit_number,
-       maintenance_interval_hours ? parseInt(maintenance_interval_hours) : null, notes]
+      `INSERT INTO equipment_items
+         (company_id, name, type, unit_number, maintenance_interval_hours, notes,
+          kind, serial_number, purchase_date, purchase_cost, photo_url,
+          is_rental, rental_vendor, rental_rate, rental_rate_unit, rental_return_due)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
+      [companyId, v.name, v.type, v.unit_number, v.maintenance_interval_hours, v.notes,
+       v.kind, v.serial_number, v.purchase_date, v.purchase_cost, v.photo_url,
+       v.is_rental, v.rental_vendor, v.rental_rate, v.rental_rate_unit, v.rental_return_due]
     );
-    logAudit(companyId, req.user.id, req.user.full_name, 'equipment.created', 'equipment', result.rows[0].id, name,
-      { type, unit_number });
+    logAudit(companyId, req.user.id, req.user.full_name, 'equipment.created', 'equipment', result.rows[0].id, v.name,
+      { type: v.type, unit_number: v.unit_number });
     res.status(201).json({ ...result.rows[0], total_hours: 0, log_count: 0, last_logged: null });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
 // PATCH /equipment/:id — update item (admin)
 router.patch('/:id', requireAdmin, async (req, res) => {
-  const { maintenance_interval_hours } = req.body;
-  const name = req.body.name?.trim();
-  const type = req.body.type?.trim() || null;
-  const unit_number = req.body.unit_number?.trim() || null;
-  const notes = req.body.notes?.trim() || null;
-  if (!name) return res.status(400).json({ error: 'name is required' });
-  if (name.length > 255) return res.status(400).json({ error: 'name too long (max 255 characters)' });
-  if (type && type.length > 100) return res.status(400).json({ error: 'type too long (max 100 characters)' });
-  if (unit_number && unit_number.length > 100) return res.status(400).json({ error: 'unit_number too long (max 100 characters)' });
-  if (notes && notes.length > 1000) return res.status(400).json({ error: 'notes too long (max 1000 characters)' });
+  const parsed = parseItemBody(req.body);
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+  const v = parsed.v;
   const clientUpdatedAt = req.body.updated_at || null;
   const companyId = req.user.company_id;
   try {
-    if (clientUpdatedAt) {
-      const cur = await pool.query('SELECT updated_at FROM equipment_items WHERE id=$1 AND company_id=$2', [req.params.id, companyId]);
-      if (!cur.rows.length) return res.status(404).json({ error: 'Equipment not found' });
-      if (new Date(cur.rows[0].updated_at).getTime() !== new Date(clientUpdatedAt).getTime()) {
-        return res.status(409).json({ error: 'conflict' });
-      }
+    const cur = await pool.query(
+      'SELECT updated_at, rental_return_due FROM equipment_items WHERE id=$1 AND company_id=$2',
+      [req.params.id, companyId]
+    );
+    if (!cur.rows.length) return res.status(404).json({ error: 'Equipment not found' });
+    if (clientUpdatedAt && new Date(cur.rows[0].updated_at).getTime() !== new Date(clientUpdatedAt).getTime()) {
+      return res.status(409).json({ error: 'conflict' });
     }
+    // Re-arm the rental-return reminder if the due date changed.
+    const curDue = cur.rows[0].rental_return_due ? new Date(cur.rows[0].rental_return_due).toISOString().slice(0, 10) : null;
+    const dueChanged = curDue !== (v.rental_return_due || null);
     const result = await pool.query(
-      `UPDATE equipment_items SET name=$1, type=$2, unit_number=$3, maintenance_interval_hours=$4, notes=$5, updated_at=NOW()
-       WHERE id=$6 AND company_id=$7 RETURNING *`,
-      [name, type,
-       unit_number, maintenance_interval_hours ? parseInt(maintenance_interval_hours) : null,
-       notes, req.params.id, companyId]
+      `UPDATE equipment_items SET
+         name=$1, type=$2, unit_number=$3, maintenance_interval_hours=$4, notes=$5,
+         kind=$6, serial_number=$7, purchase_date=$8, purchase_cost=$9, photo_url=$10,
+         is_rental=$11, rental_vendor=$12, rental_rate=$13, rental_rate_unit=$14, rental_return_due=$15,
+         ${dueChanged ? 'rental_reminder_sent_at=NULL, ' : ''}updated_at=NOW()
+       WHERE id=$16 AND company_id=$17 RETURNING *`,
+      [v.name, v.type, v.unit_number, v.maintenance_interval_hours, v.notes,
+       v.kind, v.serial_number, v.purchase_date, v.purchase_cost, v.photo_url,
+       v.is_rental, v.rental_vendor, v.rental_rate, v.rental_rate_unit, v.rental_return_due,
+       req.params.id, companyId]
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Equipment not found' });
-    logAudit(companyId, req.user.id, req.user.full_name, 'equipment.edited', 'equipment', req.params.id, name, null);
+    logAudit(companyId, req.user.id, req.user.full_name, 'equipment.edited', 'equipment', req.params.id, v.name, null);
     res.json(result.rows[0]);
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
