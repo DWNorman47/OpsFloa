@@ -17,6 +17,7 @@ import InventoryConversions from '../components/inventory/InventoryConversions';
 import MyCount from '../components/MyCount';
 import EquipmentLog from '../components/EquipmentLog';
 import EquipmentCheckouts from '../components/inventory/EquipmentCheckouts';
+import EquipmentRentals from '../components/inventory/EquipmentRentals';
 
 import { silentError } from '../errorReporter';
 export default function InventoryPage() {
@@ -38,6 +39,7 @@ export default function InventoryPage() {
   const [lowStockCount, setLowStockCount] = useState(0);
   const [pendingConversions, setPendingConversions] = useState(0);
   const [checkedOutCount, setCheckedOutCount] = useState(0);
+  const [rentalDueCount, setRentalDueCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [poLowStockTrigger, setPoLowStockTrigger] = useState(false);
 
@@ -66,6 +68,7 @@ export default function InventoryPage() {
   const equipmentTabs = showEquipment ? [
     { id: 'eq-assets', label: t.invTabEqAssets },
     { id: 'eq-out', label: t.invTabEqCheckedOut, dot: checkedOutCount > 0 ? '#f59e0b' : null },
+    { id: 'eq-rentals', label: t.invTabEqRentals, dot: rentalDueCount > 0 ? '#d97706' : null },
   ] : [];
   const equipmentTabIds = equipmentTabs.map(d => d.id);
   const setupTabIds = setupTabs.map(d => d.id);
@@ -163,15 +166,20 @@ export default function InventoryPage() {
     init();
   }, [canManage]);
 
-  // Equipment tab dot: count open checkouts (only when the Equipment group shows).
-  useEffect(() => {
+  // Equipment tab dots: open-checkout count + rentals due soon/overdue.
+  const refreshEquipCounts = () => {
     if (!showEquipment) return;
     api.get('/equipment/checkouts').then(r => setCheckedOutCount(r.data.length)).catch(silentError('inventorypage'));
-  }, [showEquipment]);
+    api.get('/equipment').then(r => {
+      const cutoff = new Date(); cutoff.setDate(cutoff.getDate() + 3);
+      const c = cutoff.toLocaleDateString('en-CA');
+      setRentalDueCount(r.data.filter(a => a.is_rental && a.rental_return_due && a.rental_return_due.toString().substring(0, 10) <= c).length);
+    }).catch(silentError('inventorypage'));
+  };
+  useEffect(() => { refreshEquipCounts(); }, [showEquipment]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refreshLowStock    = () => canManage && api.get('/inventory/stock/low').then(r => setLowStockCount(r.data.length)).catch(silentError('inventorypage'));
   const refreshConversions = () => canManage && api.get('/inventory/uom-conversions').then(r => setPendingConversions(r.data.filter(u => parseFloat(u.factor) === 1).length)).catch(silentError('inventorypage'));
-  const refreshEquipCounts = () => showEquipment && api.get('/equipment/checkouts').then(r => setCheckedOutCount(r.data.length)).catch(silentError('inventorypage'));
 
   if (loading) return (
     <PageShell currentApp="inventory" features={features || {}} maxWidth={1040}>
@@ -280,6 +288,9 @@ export default function InventoryPage() {
         )}
         {tab === 'eq-out' && showEquipment && (
           <EquipmentCheckouts projects={projects} settings={features} onChange={refreshEquipCounts} />
+        )}
+        {tab === 'eq-rentals' && showEquipment && (
+          <EquipmentRentals settings={features} onChange={refreshEquipCounts} />
         )}
     </PageShell>
   );

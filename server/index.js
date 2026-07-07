@@ -387,6 +387,8 @@ app.listen(PORT, () => {
   startExpireTrialsJob();
   const { startEquipmentMaintenanceJob } = require('./jobs/equipmentMaintenance');
   startEquipmentMaintenanceJob();
+  const { startRentalReturnRemindersJob } = require('./jobs/rentalReturnReminders');
+  startRentalReturnRemindersJob();
   const { startMediaRetentionJob } = require('./jobs/mediaRetention');
   startMediaRetentionJob();
   const { startScheduledReportsJob } = require('./jobs/scheduledReports');
