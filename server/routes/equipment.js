@@ -3,6 +3,16 @@ const pool = require('../db');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { logAudit } = require('../auditLog');
 const { EQUIPMENT_KINDS, RENTAL_RATE_UNITS, EQUIPMENT_MAINTENANCE_KINDS } = require('../constants/equipmentEnums');
+const { uploadBase64 } = require('../r2');
+
+// Upload an optional base64 condition photo (data URL) to R2, returning its URL
+// (or null). Done before opening a transaction so the DB connection isn't held
+// during the network upload.
+async function uploadPhoto(dataUrl) {
+  if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) return null;
+  const { url } = await uploadBase64(dataUrl, 'equipment');
+  return url;
+}
 
 // Parse + validate the shared registry/rental fields for POST and PATCH.
 // Returns { error } (a 400 message) or { v } with normalized values. status is
@@ -255,8 +265,10 @@ router.get('/:id/checkouts', requireAuth, async (req, res) => {
 router.post('/:id/checkout', requireAuth, async (req, res) => {
   const { user_id, project_id, due_at } = req.body;
   const notes = req.body.notes?.trim() || null;
-  const checkout_photo_url = req.body.checkout_photo_url?.trim() || null;
   const companyId = req.user.company_id;
+  let checkout_photo_url = req.body.checkout_photo_url?.trim() || null;
+  try { checkout_photo_url = (await uploadPhoto(req.body.checkout_photo)) || checkout_photo_url; }
+  catch (err) { req.log.error({ err }, 'photo upload'); return res.status(400).json({ error: 'Photo upload failed' }); }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -287,8 +299,10 @@ router.post('/:id/checkout', requireAuth, async (req, res) => {
 
 // POST /equipment/:id/return — close the open checkout and free the asset.
 router.post('/:id/return', requireAuth, async (req, res) => {
-  const return_photo_url = req.body.return_photo_url?.trim() || null;
   const companyId = req.user.company_id;
+  let return_photo_url = req.body.return_photo_url?.trim() || null;
+  try { return_photo_url = (await uploadPhoto(req.body.return_photo)) || return_photo_url; }
+  catch (err) { req.log.error({ err }, 'photo upload'); return res.status(400).json({ error: 'Photo upload failed' }); }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');

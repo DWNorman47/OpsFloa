@@ -15,6 +15,15 @@ function fmtDate(value, locale = 'en-US') {
 }
 const isOverdue = due => due && due.toString().substring(0, 10) < today();
 
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
 /**
  * Equipment → Checked out. Lists open custody rows (who has which asset out, on
  * what job, due when) and drives the check-out / return actions. Availability
@@ -35,6 +44,8 @@ export default function EquipmentCheckouts({ projects = [], settings = null, onC
   const [showForm, setShowForm] = useState(false);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  const [returningId, setReturningId] = useState(null);
+  const [returnPhoto, setReturnPhoto] = useState(null);
 
   const load = useCallback(() => {
     Promise.all([
@@ -60,6 +71,7 @@ export default function EquipmentCheckouts({ projects = [], settings = null, onC
         project_id: form.project_id || null,
         due_at: form.due_at || null,
         notes: form.notes?.trim() || null,
+        checkout_photo: form.checkout_photo || null,
       });
       setShowForm(false);
       load();
@@ -69,10 +81,11 @@ export default function EquipmentCheckouts({ projects = [], settings = null, onC
     } finally { setBusy(''); }
   };
 
-  const doReturn = async (assetId) => {
+  const doReturn = async (assetId, photo) => {
     setBusy(`return-${assetId}`); setError('');
     try {
-      await api.post(`/equipment/${assetId}/return`, {});
+      await api.post(`/equipment/${assetId}/return`, { return_photo: photo || null });
+      setReturningId(null); setReturnPhoto(null);
       load();
       onChange?.();
     } catch (err) {
@@ -129,11 +142,23 @@ export default function EquipmentCheckouts({ projects = [], settings = null, onC
                       </span>
                     )}
                     <span>· {fmtDate(c.checked_out_at, locale)}</span>
+                    {c.checkout_photo_url && <a href={c.checkout_photo_url} target="_blank" rel="noreferrer" style={s.photoLink} title={t.eqConditionPhoto}>📷</a>}
                   </div>
                 </div>
-                <button style={s.returnBtn} disabled={busy === `return-${c.asset_id}`} onClick={() => doReturn(c.asset_id)}>
-                  {busy === `return-${c.asset_id}` ? '…' : t.eqReturnBtn}
-                </button>
+                {returningId === c.id ? (
+                  <div style={s.returnRow}>
+                    <label style={s.photoPick}>
+                      {returnPhoto ? `✓ ${t.eqPhotoAdded}` : `📷 ${t.eqAddPhoto}`}
+                      <input type="file" accept="image/*" hidden onChange={async e => { const f = e.target.files?.[0]; if (f) setReturnPhoto(await fileToDataUrl(f)); }} />
+                    </label>
+                    <button style={s.returnConfirm} disabled={busy === `return-${c.asset_id}`} onClick={() => doReturn(c.asset_id, returnPhoto)}>
+                      {busy === `return-${c.asset_id}` ? '…' : t.eqConfirmReturn}
+                    </button>
+                    <button style={s.cancelSmall} onClick={() => { setReturningId(null); setReturnPhoto(null); }}>{t.cancel}</button>
+                  </div>
+                ) : (
+                  <button style={s.returnBtn} onClick={() => { setReturningId(c.id); setReturnPhoto(null); setError(''); }}>{t.eqReturnBtn}</button>
+                )}
               </div>
             );
           })}
@@ -144,7 +169,7 @@ export default function EquipmentCheckouts({ projects = [], settings = null, onC
 }
 
 function CheckoutForm({ t, available, team, projects, workerLabel, workLabel, busy, onSubmit, onCancel }) {
-  const [form, setForm] = useState({ asset_id: '', user_id: '', project_id: '', due_at: '', notes: '' });
+  const [form, setForm] = useState({ asset_id: '', user_id: '', project_id: '', due_at: '', notes: '', checkout_photo: null });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const submit = e => { e.preventDefault(); if (form.asset_id) onSubmit(form); };
 
@@ -177,10 +202,17 @@ function CheckoutForm({ t, available, team, projects, workerLabel, workLabel, bu
           <input style={s.input} type="date" value={form.due_at} onChange={e => set('due_at', e.target.value)} />
         </label>
       </div>
-      <label style={{ ...s.field, marginTop: 12 }}>
-        <span style={s.label}>{t.notes}</span>
-        <input style={s.input} value={form.notes} onChange={e => set('notes', e.target.value)} maxLength={1000} />
-      </label>
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 12 }}>
+        <label style={{ ...s.field, flex: 1, minWidth: 180 }}>
+          <span style={s.label}>{t.notes}</span>
+          <input style={s.input} value={form.notes} onChange={e => set('notes', e.target.value)} maxLength={1000} />
+        </label>
+        <label style={{ ...s.field, flex: 1, minWidth: 180 }}>
+          <span style={s.label}>{t.eqConditionPhoto}</span>
+          <input style={s.input} type="file" accept="image/*"
+            onChange={async e => { const f = e.target.files?.[0]; if (f) set('checkout_photo', await fileToDataUrl(f)); }} />
+        </label>
+      </div>
       <div style={s.formActions}>
         <button type="button" style={s.cancelBtn} onClick={onCancel}>{t.cancel}</button>
         <button type="submit" style={{ ...s.saveBtn, ...(busy || !form.asset_id ? { opacity: 0.6 } : {}) }} disabled={busy || !form.asset_id}>
@@ -214,6 +246,11 @@ const s = {
   itemMeta: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', fontSize: 12, color: '#6b7280' },
   overdue: { color: '#ef4444', fontWeight: 700 },
   returnBtn: { background: '#f3f4f6', border: '1px solid #d1d5db', color: '#374151', padding: '8px 16px', borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: 'pointer', flexShrink: 0 },
+  returnRow: { display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' },
+  photoPick: { fontSize: 12, color: '#374151', background: '#f3f4f6', border: '1px solid #d1d5db', padding: '7px 10px', borderRadius: 7, cursor: 'pointer', fontWeight: 600 },
+  returnConfirm: { background: '#059669', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: 'pointer' },
+  cancelSmall: { background: 'none', border: 'none', color: '#6b7280', fontSize: 12, cursor: 'pointer' },
+  photoLink: { textDecoration: 'none', fontSize: 13 },
   empty: { textAlign: 'center', padding: '60px 20px' },
   emptyIcon: { fontSize: 40, marginBottom: 12 },
   emptyTitle: { margin: '0 0 6px', fontSize: 18, fontWeight: 800, color: '#111827' },
