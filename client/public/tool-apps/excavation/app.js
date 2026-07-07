@@ -29,12 +29,14 @@ const state = {
   boundary: [],            // closed polygon, world px [{x,y}]
   contours: { existing: [], proposed: [] }, // [{ pts:[{x,y}], elev, spot }]
   walls: [],               // retaining-wall digs: [{ id, pts:[{x,y}], cfg, result }]
+  takeoffs: [],            // quantity takeoffs: [{ id, kind:'area', pts, cfg, result }]
 
   draft: [],               // in-progress clicks for trace/boundary
   calibPts: [],            // in-progress calibration clicks
   alignPts: [],            // align landmarks clicked on the EXISTING sheet (world)
   alignQs: [],             // matching landmarks on the PROPOSED sheet (raw image coords)
   realignPts: [],          // revision re-align: flat [from,to,from,to,…] world points
+  measurePts: [],          // quick measure tool: up to 2 world points
   selected: null,          // { sheet, index }
   lastElev: { existing: null, proposed: null },
   prevElev: { existing: null, proposed: null },
@@ -136,6 +138,14 @@ function polygonAreaFt2(poly, ftPerPx) {
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++)
     a += (poly[j].x + poly[i].x) * (poly[j].y - poly[i].y);
   return Math.abs(a / 2) * ftPerPx * ftPerPx;
+}
+
+// Closed-polygon perimeter in feet (sums every edge, including last→first).
+function polygonPerimeterFt(poly, ftPerPx) {
+  let p = 0;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++)
+    p += dist(poly[j].x, poly[j].y, poly[i].x, poly[i].y);
+  return p * ftPerPx;
 }
 
 function elevColor(elev, sheet) {
@@ -464,9 +474,11 @@ function paint() {
 
   drawBoundary();
   drawWall();
+  drawTakeoffs();
   drawCalibration();
   drawDraft();
   drawRealign();
+  drawMeasure();
 
   // auto-traced line awaiting its elevation
   if (state.wandPts && state.wandPts.length) {
@@ -708,8 +720,8 @@ function updateHud() {
 const TOOL_LABEL = {
   pan: 'Pan', calibrate: 'Scale', boundary: 'Boundary',
   trace: 'Trace contour', wand: 'Auto trace', spot: 'Spot elevation', pad: 'Flat pad',
-  wall: 'Wall dig', select: 'Select', erase: 'Erase box', align: 'Align sheets',
-  realign: 'Re-align traces',
+  wall: 'Wall dig', area: 'Area takeoff', select: 'Select', erase: 'Erase box', align: 'Align sheets',
+  realign: 'Re-align traces', measure: 'Measure',
 };
 
 function setTool(t) {
@@ -719,6 +731,7 @@ function setTool(t) {
   state.alignPts = [];
   state.alignQs = [];
   state.realignPts = [];
+  state.measurePts = [];
   state.wandPts = null;
   state.boxA = state.boxB = null;
   state.dragDraft = null;
@@ -1021,6 +1034,21 @@ async function handleClick(w) {
     case 'wall':
       state.draft.push(w);
       break;
+    case 'area':
+      state.draft.push(w);
+      break;
+    case 'measure': {
+      if (!state.calibration) { setMsg('Calibrate the scale (📏) first.'); break; }
+      if (state.measurePts.length >= 2) state.measurePts = []; // start a fresh measurement
+      state.measurePts.push(w);
+      if (state.measurePts.length === 2) {
+        const [a, b] = state.measurePts;
+        const ft = dist(a.x, a.y, b.x, b.y) * state.calibration.ftPerPx;
+        $('measureOut').textContent = `${fmt(ft, 1)} ft`;
+        setMsg(`Distance: ${fmt(ft, 1)} ft. Click two new points to measure again.`);
+      } else setMsg('Click the second point.');
+      break;
+    }
     case 'realign': {
       state.realignPts.push(w);
       const pairs = Math.floor(state.realignPts.length / 2);
@@ -1269,6 +1297,20 @@ async function finishDraftIfAny(commit) {
         }
       }
     } else setMsg('A wall dig needs at least 2 points along its line.');
+  } else if (state.tool === 'area') {
+    if (pts.length >= 3) {
+      if (!state.calibration) { setMsg('Calibrate the scale (📏) before an area takeoff.'); draw(); return; }
+      const areaSf = polygonAreaFt2(pts, state.calibration.ftPerPx);
+      const cfg = await askAreaConfig(areaSf);
+      if (cfg) {
+        snapshot();
+        const result = computeAreaResult(areaSf, cfg);
+        state.takeoffs.push({ id: randId(), kind: 'area', pts, cfg, result });
+        renderTakeoffs();
+        saveLocal();
+        setMsg(`Area takeoff: ${fmt(result.quantity, result.unit === 'tons' ? 1 : 0)} ${result.unit} — ${cfg.label}.`);
+      }
+    } else setMsg('An area needs at least 3 points.');
   }
   draw();
 }
@@ -1286,6 +1328,7 @@ function takeSnap() {
     boundary: state.boundary,
     contours: state.contours,
     walls: state.walls,
+    takeoffs: state.takeoffs,
     lastElev: state.lastElev,
     prevElev: state.prevElev,
   });
@@ -1308,6 +1351,7 @@ function restoreSnap(s) {
   state.boundary = s.boundary || [];
   state.contours = s.contours || { existing: [], proposed: [] };
   state.walls = s.walls || [];
+  state.takeoffs = s.takeoffs || [];
   state.lastElev = s.lastElev || { existing: null, proposed: null };
   state.prevElev = s.prevElev || { existing: null, proposed: null };
   state.selected = null;
@@ -1322,6 +1366,7 @@ function restoreSnap(s) {
   refreshStatuses();
   refreshContourList();
   renderWalls();
+  renderTakeoffs();
   updateAlignStatus();
   saveLocal();
   draw();
@@ -1722,9 +1767,10 @@ window.addEventListener('keydown', e => {
       break;
     case 'Escape':
       state.draft = []; state.calibPts = [];
+      state.measurePts = [];
       state.boxA = state.boxB = null;
       if (state.selected) { state.selected = null; refreshContourList(); }
-      if (state.tool === 'align' || state.tool === 'realign') setTool('pan');
+      if (state.tool === 'align' || state.tool === 'realign' || state.tool === 'measure') setTool('pan');
       else { state.alignPts = []; state.alignQs = []; }
       draw(); break;
     case 'Backspace':
@@ -1795,8 +1841,10 @@ function refreshStatuses() {
   if (state.boundary.length >= 3) {
     let txt = `${state.boundary.length}-point polygon`;
     if (state.calibration) {
-      const ac = polygonAreaFt2(state.boundary, state.calibration.ftPerPx) / 43560;
-      txt += ` · ${ac.toFixed(2)} acres`;
+      const ftPerPx = state.calibration.ftPerPx;
+      const ac = polygonAreaFt2(state.boundary, ftPerPx) / 43560;
+      const perim = polygonPerimeterFt(state.boundary, ftPerPx);
+      txt += ` · ${ac.toFixed(2)} acres · ${fmt(perim)} ft perimeter`;
     }
     els.boundaryStatus.textContent = txt;
     els.boundaryStatus.className = 'status good';
@@ -2276,6 +2324,143 @@ function renderWalls() {
   draw();
 }
 
+/* ============================== Area takeoffs ============================== */
+// Turn a traced area into a sitework quantity: area (SF/SY), volume (CY from a
+// thickness), or weight (tons from thickness × compacted density).
+
+const AREA_PRESETS = {
+  asphalt:  { label: 'Asphalt paving', mode: 'tons', thickness: 3, density: 145 },
+  base:     { label: 'Aggregate base', mode: 'tons', thickness: 6, density: 135 },
+  concrete: { label: 'Concrete flatwork', mode: 'cy', thickness: 4 },
+  gravel:   { label: 'Gravel / fill', mode: 'cy', thickness: 6 },
+  topsoil:  { label: 'Topsoil / strip', mode: 'cy', thickness: 6 },
+  areaonly: { label: 'Area', mode: 'area' },
+};
+
+function areaQuantity(areaSf, cfg) {
+  const thickFt = (parseFloat(cfg.thickness) || 0) / 12;
+  if (cfg.mode === 'tons') {
+    const d = parseFloat(cfg.density) || 145;
+    return { quantity: areaSf * thickFt * d / 2000, unit: 'tons' };
+  }
+  if (cfg.mode === 'cy') return { quantity: areaSf * thickFt / 27, unit: 'CY' };
+  return { quantity: areaSf, unit: 'SF' };
+}
+
+function computeAreaResult(areaSf, cfg) {
+  const q = areaQuantity(areaSf, cfg);
+  return { areaSf, sy: areaSf / 9, acres: areaSf / 43560, quantity: q.quantity, unit: q.unit, label: cfg.label };
+}
+
+function areaResultRows(areaSf, cfg) {
+  const r = computeAreaResult(areaSf, cfg);
+  const rows = [['Area', `${fmt(areaSf)} sf · ${fmt(r.sy)} sy · ${fmt(r.acres, 2)} ac`]];
+  if (cfg.mode !== 'area')
+    rows.push([cfg.mode === 'tons' ? 'Weight' : 'Volume', `${fmt(r.quantity, 1)} ${r.unit}`, 'total']);
+  return rows.map(([k, v, cls]) => `<div class="res-row ${cls === 'total' ? 'total' : ''}"><span>${k}</span><b>${v}</b></div>`).join('');
+}
+
+function readAreaCfg() {
+  return {
+    label: $('atLabel').value.trim() || 'Area',
+    mode: $('atMode').value,
+    thickness: $('atThick').value,
+    density: $('atDensity').value,
+  };
+}
+
+function syncAreaMode() {
+  const mode = $('atMode').value;
+  $('atThickWrap').style.display = mode === 'area' ? 'none' : '';
+  $('atDensityWrap').style.display = mode === 'tons' ? '' : 'none';
+}
+
+function askAreaConfig(areaSf) {
+  return new Promise(resolve => {
+    const preview = () => { $('atResult').innerHTML = areaResultRows(areaSf, readAreaCfg()); };
+    $('atArea').textContent = `${fmt(areaSf)} sf`;
+    syncAreaMode();
+    preview();
+    $('areaTakeoff').classList.remove('hidden');
+
+    const onInput = () => { syncAreaMode(); preview(); };
+    const inputs = ['atLabel', 'atMode', 'atThick', 'atDensity'];
+    inputs.forEach(id => $(id).addEventListener('input', onInput));
+    const presetBtns = [...document.querySelectorAll('#atPresets [data-preset]')];
+    const onPreset = e => {
+      const p = AREA_PRESETS[e.target.dataset.preset];
+      if (!p) return;
+      $('atLabel').value = p.label;
+      $('atMode').value = p.mode;
+      if (p.thickness != null) $('atThick').value = p.thickness;
+      if (p.density != null) $('atDensity').value = p.density;
+      onInput();
+    };
+    presetBtns.forEach(b => b.addEventListener('click', onPreset));
+
+    const cleanup = () => {
+      inputs.forEach(id => $(id).removeEventListener('input', onInput));
+      presetBtns.forEach(b => b.removeEventListener('click', onPreset));
+      $('atOk').onclick = null; $('atCancel').onclick = null;
+      $('areaTakeoff').classList.add('hidden');
+    };
+    $('atCancel').onclick = () => { cleanup(); resolve(null); };
+    $('atOk').onclick = () => { const cfg = readAreaCfg(); cleanup(); resolve(cfg); };
+  });
+}
+
+function polyCentroid(pts) {
+  let x = 0, y = 0;
+  for (const p of pts) { x += p.x; y += p.y; }
+  return { x: x / pts.length, y: y / pts.length };
+}
+
+function drawTakeoffs() {
+  if (!state.takeoffs || !state.takeoffs.length) return;
+  for (const t of state.takeoffs) {
+    if (t.kind !== 'area' || !t.pts || t.pts.length < 3) continue;
+    ctx.beginPath();
+    t.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(56, 211, 159, 0.18)';
+    ctx.fill();
+    ctx.strokeStyle = '#38d39f';
+    ctx.lineWidth = lw(2);
+    ctx.stroke();
+    if (t.result) {
+      const c = polyCentroid(t.pts);
+      const q = `${fmt(t.result.quantity, t.result.unit === 'SF' ? 0 : 1)} ${t.result.unit}`;
+      labelAt(c.x, c.y, `${t.cfg.label}: ${q}`, '#0f9d68');
+    }
+  }
+}
+
+function renderTakeoffs() {
+  const sec = $('secTakeoffs'), list = $('takeoffList');
+  if (!sec || !list) return;
+  const areas = state.takeoffs.filter(t => t.kind === 'area');
+  if (!areas.length) { sec.classList.add('hidden'); draw(); return; }
+  sec.classList.remove('hidden');
+  const cnt = $('takeoffCount'); if (cnt) cnt.textContent = areas.length;
+  list.innerHTML = areas.map((t, i) => `
+    <div class="wall-row">
+      <div class="wall-row-main">
+        <b>${fmt(t.result.quantity, t.result.unit === 'SF' ? 0 : 1)} ${t.result.unit}</b>
+        <span>${t.cfg.label} · ${fmt(t.result.areaSf)} sf${t.cfg.mode !== 'area' ? ` · ${t.cfg.thickness}"` : ''}</span>
+      </div>
+      <button class="wall-del" data-i="${i}" title="Delete this takeoff">✕</button>
+    </div>`).join('');
+  list.querySelectorAll('.wall-del').forEach(b => b.addEventListener('click', () => {
+    snapshot();
+    const target = areas[parseInt(b.dataset.i, 10)];
+    const idx = state.takeoffs.indexOf(target);
+    if (idx >= 0) state.takeoffs.splice(idx, 1);
+    renderTakeoffs();
+    saveLocal();
+  }));
+  draw();
+}
+
 /* ============================== Revision re-align ============================== */
 // When a revised PDF shifts (or rotates/scales) the drawing, move ALL carried
 // geometry onto it in one step. Every trace lives in the shared world frame, so
@@ -2353,6 +2538,32 @@ function drawRealign() {
   }
 }
 
+/* ============================== Measure distance ============================== */
+// Quick side tool: click two points, read the distance in feet. Doesn't change
+// the scale or save anything — purely a readout.
+function drawMeasure() {
+  const pts = state.measurePts;
+  if (!pts || !pts.length) return;
+  ctx.fillStyle = ctx.strokeStyle = '#ffd24d';
+  ctx.lineWidth = lw(2);
+  if (pts.length >= 2) {
+    ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); ctx.lineTo(pts[1].x, pts[1].y); ctx.stroke();
+    if (state.calibration) {
+      const ft = dist(pts[0].x, pts[0].y, pts[1].x, pts[1].y) * state.calibration.ftPerPx;
+      const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+      labelAt(mid.x, mid.y, `${fmt(ft, 1)} ft`, '#ffd24d');
+    }
+  }
+  for (const p of pts) { ctx.beginPath(); ctx.arc(p.x, p.y, lw(4), 0, Math.PI * 2); ctx.fill(); }
+}
+
+$('btnMeasure').addEventListener('click', () => {
+  if (!state.calibration) { setMsg('Calibrate the scale (📏) first, then measure.'); return; }
+  setTool('measure');
+  $('measureOut').textContent = '';
+  setMsg('Measure: click two points to read the distance in feet.');
+});
+
 /* ============================== Save / load ============================== */
 
 $('btnNew').addEventListener('click', async () => {
@@ -2384,6 +2595,7 @@ function projectData() {
     boundary: state.boundary,
     contours: state.contours,
     walls: state.walls,
+    takeoffs: state.takeoffs,
     settings: {
       gridFt: els.inpGrid.value, interval: els.inpInterval.value,
       shrink: els.inpShrink.value, swell: els.inpSwell.value,
@@ -2402,6 +2614,7 @@ function applyProjectData(d) {
   state.boundary = d.boundary || [];
   state.contours = d.contours || { existing: [], proposed: [] };
   state.walls = d.walls || [];
+  state.takeoffs = d.takeoffs || [];
   if (d.pages) {
     state.sheets.existing.pageNum = d.pages.existing || 1;
     state.sheets.proposed.pageNum = d.pages.proposed || 2;
@@ -2418,6 +2631,7 @@ function applyProjectData(d) {
   refreshStatuses();
   refreshContourList();
   renderWalls();
+  renderTakeoffs();
   updateAlignStatus();
   return true;
 }
@@ -2463,6 +2677,7 @@ function resetTakeoffState() {
   state.boundary = [];
   state.contours = { existing: [], proposed: [] };
   state.walls = [];
+  state.takeoffs = [];
   state.draft = []; state.calibPts = []; state.alignPts = []; state.alignQs = [];
   state.wandPts = null;
   state.boxA = state.boxB = null;
@@ -2474,6 +2689,7 @@ function resetTakeoffState() {
   refreshStatuses();
   refreshContourList();
   renderWalls();
+  renderTakeoffs();
   updateAlignStatus();
 }
 

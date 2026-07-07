@@ -269,3 +269,6 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 .nav-pad.se { bottom: 8px; right: 8px; }
 /* shift the HUD clear of the top-left corner pad while the pads are showing */
 #canvasWrap.nav-active #hud { left: 50px; max-width: calc(100% - 100px); }
+
+.preset-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 4px 0 12px; }
+#measureOut { font-weight: 700; color: var(--accent); }
