@@ -648,6 +648,11 @@ function drawCalibration() {
 
 function drawDraft() {
   if (!state.draft.length) return;
+  // count drops are discrete markers, not a polyline — no connecting/rubber-band line
+  if (state.tool === 'count') {
+    state.draft.forEach((p, i) => drawCountMarker(p, i + 1));
+    return;
+  }
   ctx.strokeStyle = ctx.fillStyle =
     state.tool === 'boundary' ? '#ffd24d' : state.tool === 'pad' ? '#c07ef7' : '#4da3ff';
   ctx.lineWidth = lw(2);
@@ -729,7 +734,7 @@ function updateHud() {
 const TOOL_LABEL = {
   pan: 'Pan', calibrate: 'Scale', boundary: 'Boundary',
   trace: 'Trace contour', wand: 'Auto trace', spot: 'Spot elevation', pad: 'Flat pad',
-  wall: 'Wall dig', area: 'Area takeoff', line: 'Linear takeoff', select: 'Select', erase: 'Erase box', align: 'Align sheets',
+  wall: 'Wall dig', area: 'Area takeoff', line: 'Linear takeoff', count: 'Count takeoff', select: 'Select', erase: 'Erase box', align: 'Align sheets',
   realign: 'Re-align traces', measure: 'Measure',
 };
 
@@ -1004,7 +1009,7 @@ cv.addEventListener('dblclick', e => {
     return;
   }
   // dblclick fires after two click-adds; drop the duplicate vertex
-  if ((state.tool === 'trace' || state.tool === 'boundary' || state.tool === 'pad') &&
+  if ((state.tool === 'trace' || state.tool === 'boundary' || state.tool === 'pad' || state.tool === 'count') &&
       state.draft.length > 1)
     state.draft.pop();
   finishDraftIfAny(true);
@@ -1048,6 +1053,10 @@ async function handleClick(w) {
       break;
     case 'line':
       state.draft.push(w);
+      break;
+    case 'count':
+      state.draft.push(w);
+      setMsg(`${state.draft.length} dropped — keep clicking items, Enter/double-click to finish.`);
       break;
     case 'measure': {
       if (!state.calibration) { setMsg('Calibrate the scale (📏) first.'); break; }
@@ -1338,6 +1347,19 @@ async function finishDraftIfAny(commit) {
         setMsg(`Linear takeoff: ${q} — ${cfg.label}.`);
       }
     } else setMsg('A line needs at least 2 points.');
+  } else if (state.tool === 'count') {
+    // no calibration needed — counting is scale-independent
+    if (pts.length >= 1) {
+      const cfg = await askCountConfig(pts.length);
+      if (cfg) {
+        snapshot();
+        const result = { count: pts.length, label: cfg.label, unit: cfg.unit };
+        state.takeoffs.push({ id: randId(), kind: 'count', pts, cfg, result });
+        renderTakeoffs();
+        saveLocal();
+        setMsg(`Count takeoff: ${result.count} ${result.unit} — ${cfg.label}.`);
+      }
+    } else setMsg('A count needs at least one point.');
   }
   draw();
 }
@@ -2360,7 +2382,7 @@ const AREA_PRESETS = {
   base:     { label: 'Aggregate base', mode: 'tons', thickness: 6, density: 135 },
   concrete: { label: 'Concrete flatwork', mode: 'cy', thickness: 4 },
   gravel:   { label: 'Gravel / fill', mode: 'cy', thickness: 6 },
-  topsoil:  { label: 'Topsoil / strip', mode: 'cy', thickness: 6 },
+  topsoil:  { label: 'Topsoil strip', mode: 'strip', thickness: 6, swell: 25, respread: 0 },
   areaonly: { label: 'Area', mode: 'area' },
 };
 
@@ -2371,19 +2393,38 @@ function areaQuantity(areaSf, cfg) {
     return { quantity: areaSf * thickFt * d / 2000, unit: 'tons' };
   }
   if (cfg.mode === 'cy') return { quantity: areaSf * thickFt / 27, unit: 'CY' };
+  if (cfg.mode === 'strip') {
+    const stripCY = areaSf * thickFt / 27;                       // bank volume stripped
+    const swell = 1 + (parseFloat(cfg.swell) || 0) / 100;        // loose bulking for hauling
+    const respreadCY = areaSf * ((parseFloat(cfg.respread) || 0) / 12) / 27; // placed back (bank)
+    const netExportCY = Math.max(0, stripCY - respreadCY);       // leaves the site (bank)
+    return {
+      quantity: stripCY, unit: 'CY',
+      stripCY, looseCY: stripCY * swell,
+      respreadCY, netExportCY, netExportLooseCY: netExportCY * swell,
+    };
+  }
   return { quantity: areaSf, unit: 'SF' };
 }
 
 function computeAreaResult(areaSf, cfg) {
   const q = areaQuantity(areaSf, cfg);
-  return { areaSf, sy: areaSf / 9, acres: areaSf / 43560, quantity: q.quantity, unit: q.unit, label: cfg.label };
+  return { areaSf, sy: areaSf / 9, acres: areaSf / 43560, label: cfg.label, ...q };
 }
 
 function areaResultRows(areaSf, cfg) {
   const r = computeAreaResult(areaSf, cfg);
   const rows = [['Area', `${fmt(areaSf)} sf · ${fmt(r.sy)} sy · ${fmt(r.acres, 2)} ac`]];
-  if (cfg.mode !== 'area')
+  if (cfg.mode === 'strip') {
+    rows.push(['Strip volume', `${fmt(r.stripCY, 1)} CY bank`, 'total']);
+    rows.push(['Loose (haul)', `${fmt(r.looseCY, 1)} CY`]);
+    if (r.respreadCY > 0) {
+      rows.push(['Respread', `${fmt(r.respreadCY, 1)} CY bank`]);
+      rows.push(['Net export', `${fmt(r.netExportCY, 1)} CY bank · ${fmt(r.netExportLooseCY, 1)} loose`, 'total']);
+    }
+  } else if (cfg.mode !== 'area') {
     rows.push([cfg.mode === 'tons' ? 'Weight' : 'Volume', `${fmt(r.quantity, 1)} ${r.unit}`, 'total']);
+  }
   return rows.map(([k, v, cls]) => `<div class="res-row ${cls === 'total' ? 'total' : ''}"><span>${k}</span><b>${v}</b></div>`).join('');
 }
 
@@ -2393,6 +2434,8 @@ function readAreaCfg() {
     mode: $('atMode').value,
     thickness: $('atThick').value,
     density: $('atDensity').value,
+    swell: $('atSwell').value,
+    respread: $('atRespread').value,
   };
 }
 
@@ -2400,6 +2443,9 @@ function syncAreaMode() {
   const mode = $('atMode').value;
   $('atThickWrap').style.display = mode === 'area' ? 'none' : '';
   $('atDensityWrap').style.display = mode === 'tons' ? '' : 'none';
+  $('atSwellWrap').style.display = mode === 'strip' ? '' : 'none';
+  $('atRespreadWrap').style.display = mode === 'strip' ? '' : 'none';
+  $('atThickLbl').textContent = mode === 'strip' ? 'Strip depth (in)' : 'Thickness (in)';
 }
 
 function askAreaConfig(areaSf) {
@@ -2411,7 +2457,7 @@ function askAreaConfig(areaSf) {
     $('areaTakeoff').classList.remove('hidden');
 
     const onInput = () => { syncAreaMode(); preview(); };
-    const inputs = ['atLabel', 'atMode', 'atThick', 'atDensity'];
+    const inputs = ['atLabel', 'atMode', 'atThick', 'atDensity', 'atSwell', 'atRespread'];
     inputs.forEach(id => $(id).addEventListener('input', onInput));
     const presetBtns = [...document.querySelectorAll('#atPresets [data-preset]')];
     const onPreset = e => {
@@ -2421,6 +2467,8 @@ function askAreaConfig(areaSf) {
       $('atMode').value = p.mode;
       if (p.thickness != null) $('atThick').value = p.thickness;
       if (p.density != null) $('atDensity').value = p.density;
+      if (p.swell != null) $('atSwell').value = p.swell;
+      if (p.respread != null) $('atRespread').value = p.respread;
       onInput();
     };
     presetBtns.forEach(b => b.addEventListener('click', onPreset));
@@ -2517,16 +2565,96 @@ function askLineConfig(lengthFt) {
   });
 }
 
+// ── Count takeoffs ────────────────────────────────────────────────────────────
+// Scale-independent tally: each dropped point is one item. Presets just seed the
+// label + unit; the count is however many points you dropped.
+
+const COUNT_PRESETS = {
+  catchbasin: { label: 'Catch basin', unit: 'EA' },
+  manhole:    { label: 'Manhole', unit: 'EA' },
+  tree:       { label: 'Tree', unit: 'EA' },
+  sign:       { label: 'Sign', unit: 'EA' },
+  light:      { label: 'Light pole', unit: 'EA' },
+  bollard:    { label: 'Bollard', unit: 'EA' },
+  itemonly:   { label: 'Item', unit: 'EA' },
+};
+
+function readCountCfg() {
+  return {
+    label: $('ctLabel').value.trim() || 'Item',
+    unit: $('ctUnit').value.trim() || 'EA',
+  };
+}
+
+function countResultRows(n, cfg) {
+  return `<div class="res-row total"><span>${cfg.label}</span><b>${n} ${cfg.unit}</b></div>`;
+}
+
+function askCountConfig(n) {
+  return new Promise(resolve => {
+    const preview = () => { $('ctResult').innerHTML = countResultRows(n, readCountCfg()); };
+    $('ctN').textContent = `${n} point${n === 1 ? '' : 's'}`;
+    preview();
+    $('countTakeoff').classList.remove('hidden');
+    const onInput = () => preview();
+    const inputs = ['ctLabel', 'ctUnit'];
+    inputs.forEach(id => $(id).addEventListener('input', onInput));
+    const presetBtns = [...document.querySelectorAll('#ctPresets [data-preset]')];
+    const onPreset = e => {
+      const p = COUNT_PRESETS[e.target.dataset.preset];
+      if (!p) return;
+      $('ctLabel').value = p.label;
+      $('ctUnit').value = p.unit;
+      onInput();
+    };
+    presetBtns.forEach(b => b.addEventListener('click', onPreset));
+    const cleanup = () => {
+      inputs.forEach(id => $(id).removeEventListener('input', onInput));
+      presetBtns.forEach(b => b.removeEventListener('click', onPreset));
+      $('ctOk').onclick = null; $('ctCancel').onclick = null;
+      $('countTakeoff').classList.add('hidden');
+    };
+    $('ctCancel').onclick = () => { cleanup(); resolve(null); };
+    $('ctOk').onclick = () => { const cfg = readCountCfg(); cleanup(); resolve(cfg); };
+  });
+}
+
 function polyCentroid(pts) {
   let x = 0, y = 0;
   for (const p of pts) { x += p.x; y += p.y; }
   return { x: x / pts.length, y: y / pts.length };
 }
 
+// a numbered pin used for both count-draft and stored count markers
+function drawCountMarker(p, num) {
+  const r = lw(7);
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+  ctx.fillStyle = '#38d39f';
+  ctx.fill();
+  ctx.lineWidth = lw(1.5);
+  ctx.strokeStyle = '#0f9d68';
+  ctx.stroke();
+  ctx.fillStyle = '#06371f';
+  ctx.font = `${lw(9)}px system-ui, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(String(num), p.x, p.y + lw(0.5));
+  ctx.textAlign = 'start';
+  ctx.textBaseline = 'alphabetic';
+}
+
 function drawTakeoffs() {
   if (!state.takeoffs || !state.takeoffs.length) return;
   for (const t of state.takeoffs) {
-    if (!t.pts || t.pts.length < 2) continue;
+    if (!t.pts || !t.pts.length) continue;
+    if (t.kind === 'count') {
+      t.pts.forEach((p, i) => drawCountMarker(p, i + 1));
+      const c = t.pts[0];
+      labelAt(c.x + lw(10), c.y - lw(10), `${t.cfg.label}: ${t.result.count} ${t.result.unit}`, '#0f9d68');
+      continue;
+    }
+    if (t.pts.length < 2) continue;
     if (t.kind === 'area') {
       if (t.pts.length < 3) continue;
       ctx.beginPath();
@@ -2560,10 +2688,15 @@ function drawTakeoffs() {
 }
 
 function takeoffRowText(t) {
+  if (t.kind === 'count') {
+    return { headline: `${t.result.count} ${t.result.unit}`, sub: t.cfg.label };
+  }
   if (t.kind === 'area') {
+    const strip = t.cfg.mode === 'strip';
     return {
-      headline: `${fmt(t.result.quantity, t.result.unit === 'SF' ? 0 : 1)} ${t.result.unit}`,
-      sub: `${t.cfg.label} · ${fmt(t.result.areaSf)} sf${t.cfg.mode !== 'area' ? ` · ${t.cfg.thickness}"` : ''}`,
+      headline: `${fmt(t.result.quantity, t.result.unit === 'SF' ? 0 : 1)} ${t.result.unit}${strip ? ' strip' : ''}`,
+      sub: `${t.cfg.label} · ${fmt(t.result.areaSf)} sf${t.cfg.mode !== 'area' ? ` · ${t.cfg.thickness}"` : ''}` +
+        `${strip && t.result.netExportCY > 0 ? ` · ${fmt(t.result.netExportCY, 0)} CY export` : ''}`,
     };
   }
   return {
