@@ -720,7 +720,7 @@ function updateHud() {
 const TOOL_LABEL = {
   pan: 'Pan', calibrate: 'Scale', boundary: 'Boundary',
   trace: 'Trace contour', wand: 'Auto trace', spot: 'Spot elevation', pad: 'Flat pad',
-  wall: 'Wall dig', area: 'Area takeoff', select: 'Select', erase: 'Erase box', align: 'Align sheets',
+  wall: 'Wall dig', area: 'Area takeoff', line: 'Linear takeoff', select: 'Select', erase: 'Erase box', align: 'Align sheets',
   realign: 'Re-align traces', measure: 'Measure',
 };
 
@@ -1037,6 +1037,9 @@ async function handleClick(w) {
     case 'area':
       state.draft.push(w);
       break;
+    case 'line':
+      state.draft.push(w);
+      break;
     case 'measure': {
       if (!state.calibration) { setMsg('Calibrate the scale (📏) first.'); break; }
       if (state.measurePts.length >= 2) state.measurePts = []; // start a fresh measurement
@@ -1311,6 +1314,21 @@ async function finishDraftIfAny(commit) {
         setMsg(`Area takeoff: ${fmt(result.quantity, result.unit === 'tons' ? 1 : 0)} ${result.unit} — ${cfg.label}.`);
       }
     } else setMsg('An area needs at least 3 points.');
+  } else if (state.tool === 'line') {
+    if (pts.length >= 2) {
+      if (!state.calibration) { setMsg('Calibrate the scale (📏) before a linear takeoff.'); draw(); return; }
+      const lengthFt = polyLengthFt(pts);
+      const cfg = await askLineConfig(lengthFt);
+      if (cfg) {
+        snapshot();
+        const result = computeLineResult(lengthFt, cfg);
+        state.takeoffs.push({ id: randId(), kind: 'line', pts, cfg, result });
+        renderTakeoffs();
+        saveLocal();
+        const q = result.trench ? `${fmt(result.trenchCY, 1)} CY trench` : `${fmt(result.lengthFt)} ft`;
+        setMsg(`Linear takeoff: ${q} — ${cfg.label}.`);
+      }
+    } else setMsg('A line needs at least 2 points.');
   }
   draw();
 }
@@ -2409,6 +2427,87 @@ function askAreaConfig(areaSf) {
   });
 }
 
+// ── Linear / trench takeoffs ──────────────────────────────────────────────────
+// Length in feet, plus an optional trench cross-section (reusing the wall
+// section math) for pipe/utility runs → excavation spoil + aggregate bedding.
+
+const LINE_PRESETS = {
+  curb:     { label: 'Curb & gutter', trench: false },
+  pipe:     { label: 'Pipe / utility trench', trench: true, width: 3, depth: 5, slope: 0, bedding: 6 },
+  silt:     { label: 'Silt fence', trench: false },
+  sawcut:   { label: 'Sawcut', trench: false },
+  fence:    { label: 'Fence / guardrail', trench: false },
+  lineonly: { label: 'Line', trench: false },
+};
+
+function computeLineResult(lengthFt, cfg) {
+  const r = { lengthFt, label: cfg.label, trench: !!cfg.trench, trenchCY: 0, beddingCY: 0 };
+  if (cfg.trench) {
+    const w = parseFloat(cfg.width) || 0, d = parseFloat(cfg.depth) || 0, s = parseFloat(cfg.slope) || 0;
+    r.trenchCY = wallSectionAreaSf(w, d, s) * lengthFt / 27; // trapezoid × length
+    const bedIn = parseFloat(cfg.bedding) || 0;
+    r.beddingCY = bedIn > 0 ? (w * (bedIn / 12) * lengthFt) / 27 : 0;
+  }
+  return r;
+}
+
+function lineResultRows(lengthFt, cfg) {
+  const r = computeLineResult(lengthFt, cfg);
+  const rows = [['Length', `${fmt(lengthFt)} ft`, r.trench ? '' : 'total']];
+  if (r.trench) {
+    rows.push(['Trench excavation', `${fmt(r.trenchCY, 1)} CY`, 'total']);
+    if (r.beddingCY > 0) rows.push(['Bedding (import)', `${fmt(r.beddingCY, 1)} CY`]);
+  }
+  return rows.map(([k, v, cls]) => `<div class="res-row ${cls === 'total' ? 'total' : ''}"><span>${k}</span><b>${v}</b></div>`).join('');
+}
+
+function readLineCfg() {
+  return {
+    label: $('ltLabel').value.trim() || 'Line',
+    trench: $('ltTrench').checked,
+    width: $('ltWidth').value, depth: $('ltDepth').value,
+    slope: $('ltSlope').value, bedding: $('ltBedding').value,
+  };
+}
+
+function syncLineTrench() {
+  $('ltTrenchFields').style.display = $('ltTrench').checked ? '' : 'none';
+}
+
+function askLineConfig(lengthFt) {
+  return new Promise(resolve => {
+    const preview = () => { $('ltResult').innerHTML = lineResultRows(lengthFt, readLineCfg()); };
+    $('ltLen').textContent = `${fmt(lengthFt)} ft`;
+    syncLineTrench();
+    preview();
+    $('lineTakeoff').classList.remove('hidden');
+    const onInput = () => { syncLineTrench(); preview(); };
+    const inputs = ['ltLabel', 'ltTrench', 'ltWidth', 'ltDepth', 'ltSlope', 'ltBedding'];
+    inputs.forEach(id => { $(id).addEventListener('input', onInput); $(id).addEventListener('change', onInput); });
+    const presetBtns = [...document.querySelectorAll('#ltPresets [data-preset]')];
+    const onPreset = e => {
+      const p = LINE_PRESETS[e.target.dataset.preset];
+      if (!p) return;
+      $('ltLabel').value = p.label;
+      $('ltTrench').checked = !!p.trench;
+      if (p.width != null) $('ltWidth').value = p.width;
+      if (p.depth != null) $('ltDepth').value = p.depth;
+      if (p.slope != null) $('ltSlope').value = p.slope;
+      if (p.bedding != null) $('ltBedding').value = p.bedding;
+      onInput();
+    };
+    presetBtns.forEach(b => b.addEventListener('click', onPreset));
+    const cleanup = () => {
+      inputs.forEach(id => { $(id).removeEventListener('input', onInput); $(id).removeEventListener('change', onInput); });
+      presetBtns.forEach(b => b.removeEventListener('click', onPreset));
+      $('ltOk').onclick = null; $('ltCancel').onclick = null;
+      $('lineTakeoff').classList.add('hidden');
+    };
+    $('ltCancel').onclick = () => { cleanup(); resolve(null); };
+    $('ltOk').onclick = () => { const cfg = readLineCfg(); cleanup(); resolve(cfg); };
+  });
+}
+
 function polyCentroid(pts) {
   let x = 0, y = 0;
   for (const p of pts) { x += p.x; y += p.y; }
@@ -2418,43 +2517,68 @@ function polyCentroid(pts) {
 function drawTakeoffs() {
   if (!state.takeoffs || !state.takeoffs.length) return;
   for (const t of state.takeoffs) {
-    if (t.kind !== 'area' || !t.pts || t.pts.length < 3) continue;
-    ctx.beginPath();
-    t.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(56, 211, 159, 0.18)';
-    ctx.fill();
-    ctx.strokeStyle = '#38d39f';
-    ctx.lineWidth = lw(2);
-    ctx.stroke();
-    if (t.result) {
-      const c = polyCentroid(t.pts);
-      const q = `${fmt(t.result.quantity, t.result.unit === 'SF' ? 0 : 1)} ${t.result.unit}`;
-      labelAt(c.x, c.y, `${t.cfg.label}: ${q}`, '#0f9d68');
+    if (!t.pts || t.pts.length < 2) continue;
+    if (t.kind === 'area') {
+      if (t.pts.length < 3) continue;
+      ctx.beginPath();
+      t.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(56, 211, 159, 0.18)';
+      ctx.fill();
+      ctx.strokeStyle = '#38d39f';
+      ctx.lineWidth = lw(2);
+      ctx.stroke();
+      if (t.result) {
+        const c = polyCentroid(t.pts);
+        const q = `${fmt(t.result.quantity, t.result.unit === 'SF' ? 0 : 1)} ${t.result.unit}`;
+        labelAt(c.x, c.y, `${t.cfg.label}: ${q}`, '#0f9d68');
+      }
+    } else if (t.kind === 'line') {
+      ctx.beginPath();
+      t.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.strokeStyle = '#38d39f';
+      ctx.lineWidth = lw(3);
+      ctx.stroke();
+      ctx.fillStyle = '#38d39f';
+      for (const p of t.pts) { ctx.beginPath(); ctx.arc(p.x, p.y, lw(2.5), 0, Math.PI * 2); ctx.fill(); }
+      if (t.result) {
+        const mid = t.pts[Math.floor(t.pts.length / 2)];
+        const q = t.result.trench ? `${fmt(t.result.trenchCY, 0)} CY` : `${fmt(t.result.lengthFt)} ft`;
+        labelAt(mid.x, mid.y, `${t.cfg.label}: ${q}`, '#0f9d68');
+      }
     }
   }
+}
+
+function takeoffRowText(t) {
+  if (t.kind === 'area') {
+    return {
+      headline: `${fmt(t.result.quantity, t.result.unit === 'SF' ? 0 : 1)} ${t.result.unit}`,
+      sub: `${t.cfg.label} · ${fmt(t.result.areaSf)} sf${t.cfg.mode !== 'area' ? ` · ${t.cfg.thickness}"` : ''}`,
+    };
+  }
+  return {
+    headline: t.result.trench ? `${fmt(t.result.trenchCY, 1)} CY` : `${fmt(t.result.lengthFt)} ft`,
+    sub: `${t.cfg.label} · ${fmt(t.result.lengthFt)} ft${t.result.trench ? ' trench' : ''}` +
+      `${t.result.beddingCY ? ` · ${fmt(t.result.beddingCY, 1)} CY bed` : ''}`,
+  };
 }
 
 function renderTakeoffs() {
   const sec = $('secTakeoffs'), list = $('takeoffList');
   if (!sec || !list) return;
-  const areas = state.takeoffs.filter(t => t.kind === 'area');
-  if (!areas.length) { sec.classList.add('hidden'); draw(); return; }
+  const items = state.takeoffs || [];
+  if (!items.length) { sec.classList.add('hidden'); draw(); return; }
   sec.classList.remove('hidden');
-  const cnt = $('takeoffCount'); if (cnt) cnt.textContent = areas.length;
-  list.innerHTML = areas.map((t, i) => `
-    <div class="wall-row">
-      <div class="wall-row-main">
-        <b>${fmt(t.result.quantity, t.result.unit === 'SF' ? 0 : 1)} ${t.result.unit}</b>
-        <span>${t.cfg.label} · ${fmt(t.result.areaSf)} sf${t.cfg.mode !== 'area' ? ` · ${t.cfg.thickness}"` : ''}</span>
-      </div>
-      <button class="wall-del" data-i="${i}" title="Delete this takeoff">✕</button>
-    </div>`).join('');
+  const cnt = $('takeoffCount'); if (cnt) cnt.textContent = items.length;
+  list.innerHTML = items.map((t, i) => {
+    const { headline, sub } = takeoffRowText(t);
+    return `<div class="wall-row"><div class="wall-row-main"><b>${headline}</b><span>${sub}</span></div>` +
+      `<button class="wall-del" data-i="${i}" title="Delete this takeoff">✕</button></div>`;
+  }).join('');
   list.querySelectorAll('.wall-del').forEach(b => b.addEventListener('click', () => {
     snapshot();
-    const target = areas[parseInt(b.dataset.i, 10)];
-    const idx = state.takeoffs.indexOf(target);
-    if (idx >= 0) state.takeoffs.splice(idx, 1);
+    state.takeoffs.splice(parseInt(b.dataset.i, 10), 1);
     renderTakeoffs();
     saveLocal();
   }));
