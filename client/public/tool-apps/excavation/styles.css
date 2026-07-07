@@ -152,6 +152,8 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 .list-item.selected { background: #3d5a7a; }
 .list-item .swatch { width: 14px; height: 3px; border-radius: 2px; flex: 0 0 auto; }
 .list-item .lbl { flex: 1; }
+.list-item .edit { color: var(--muted); background: none; border: none; cursor: pointer; font-size: 13px; padding: 0; }
+.list-item .edit:hover { color: var(--accent); }
 .list-item .del { color: var(--muted); background: none; border: none; cursor: pointer; font-size: 14px; }
 .list-item .del:hover { color: var(--bad); }
 

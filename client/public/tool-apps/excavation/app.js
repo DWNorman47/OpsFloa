@@ -1759,19 +1759,26 @@ function deleteSelected() {
   draw();
 }
 
-async function editSelectedElevation() {
-  if (!state.selected) return;
-  const c = state.contours[state.selected.sheet][state.selected.index];
+async function editContourElevation(sheet, index) {
+  const c = state.contours[sheet] && state.contours[sheet][index];
+  if (!c) return;
   const elev = await askNumber('Edit elevation', '', c.elev,
     parseFloat(els.inpInterval.value) || 1);
   if (elev !== null && elev !== c.elev) {
     snapshot();
     c.elev = elev;
     state.result = null;
+    els.resultsSection.classList.add('hidden'); // a changed elevation invalidates the last calc
     refreshContourList();
     saveLocal();
     draw();
   }
+}
+
+// The 'E' shortcut edits the currently-selected contour.
+function editSelectedElevation() {
+  if (!state.selected) return;
+  editContourElevation(state.selected.sheet, state.selected.index);
 }
 
 /* ============================== Sidebar ============================== */
@@ -1814,8 +1821,10 @@ function refreshContourList() {
     div.innerHTML = `
       <span class="swatch" style="background:${elevColor(c.elev, s)}"></span>
       <span class="lbl">${c.elev} ft ${c.spot ? '· spot' : c.pad ? '· flat pad' : `· ${c.pts.length} pts`}</span>
+      <button class="edit" title="Edit elevation">✎</button>
       <button class="del" title="Delete">✕</button>`;
     div.addEventListener('click', e => {
+      if (e.target.classList.contains('edit')) { editContourElevation(s, i); return; }
       if (e.target.classList.contains('del')) {
         snapshot();
         state.contours[s].splice(i, 1);
