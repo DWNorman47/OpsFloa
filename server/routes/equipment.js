@@ -208,4 +208,105 @@ router.delete('/hours/:entryId', requireAuth, async (req, res) => {
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
+// ── Custody: check-out / return ──────────────────────────────────────────────
+
+// GET /equipment/checkouts — open checkouts (who has what out) for the company.
+router.get('/checkouts', requireAuth, async (req, res) => {
+  const companyId = req.user.company_id;
+  try {
+    const result = await pool.query(
+      `SELECT c.*, e.name AS asset_name, e.unit_number, e.kind,
+              u.full_name AS holder_name, p.name AS project_name
+       FROM equipment_checkouts c
+       JOIN equipment_items e ON e.id = c.asset_id
+       LEFT JOIN users u ON u.id = c.user_id
+       LEFT JOIN projects p ON p.id = c.project_id
+       WHERE c.company_id = $1 AND c.returned_at IS NULL
+       ORDER BY c.due_at ASC NULLS LAST, c.checked_out_at DESC
+       LIMIT 500`,
+      [companyId]
+    );
+    res.json(result.rows);
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
+// GET /equipment/:id/checkouts — custody history for one asset.
+router.get('/:id/checkouts', requireAuth, async (req, res) => {
+  const companyId = req.user.company_id;
+  try {
+    const result = await pool.query(
+      `SELECT c.*, u.full_name AS holder_name, p.name AS project_name, b.full_name AS checked_out_by_name
+       FROM equipment_checkouts c
+       LEFT JOIN users u ON u.id = c.user_id
+       LEFT JOIN projects p ON p.id = c.project_id
+       LEFT JOIN users b ON b.id = c.checked_out_by
+       WHERE c.company_id = $1 AND c.asset_id = $2
+       ORDER BY c.checked_out_at DESC
+       LIMIT 200`,
+      [companyId, req.params.id]
+    );
+    res.json(result.rows);
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
+// POST /equipment/:id/checkout — assign an available asset to a worker/project.
+// Field self-service (requireAuth). The partial unique index on the checkouts
+// table (one open row per asset) is the authoritative race backstop.
+router.post('/:id/checkout', requireAuth, async (req, res) => {
+  const { user_id, project_id, due_at } = req.body;
+  const notes = req.body.notes?.trim() || null;
+  const checkout_photo_url = req.body.checkout_photo_url?.trim() || null;
+  const companyId = req.user.company_id;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const asset = await client.query(
+      "SELECT status FROM equipment_items WHERE id=$1 AND company_id=$2 AND active=true",
+      [req.params.id, companyId]
+    );
+    if (asset.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Equipment not found' }); }
+    if (asset.rows[0].status !== 'available') { await client.query('ROLLBACK'); return res.status(409).json({ error: 'Not available' }); }
+    const co = await client.query(
+      `INSERT INTO equipment_checkouts
+         (asset_id, company_id, user_id, project_id, checked_out_by, due_at, checkout_photo_url, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [req.params.id, companyId, user_id || null, project_id || null, req.user.id, due_at || null, checkout_photo_url, notes]
+    );
+    await client.query("UPDATE equipment_items SET status='checked_out', updated_at=NOW() WHERE id=$1 AND company_id=$2",
+      [req.params.id, companyId]);
+    await client.query('COMMIT');
+    logAudit(companyId, req.user.id, req.user.full_name, 'equipment.checked_out', 'equipment', req.params.id, null,
+      { user_id: user_id || null, project_id: project_id || null });
+    res.status(201).json(co.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (err.code === '23505') return res.status(409).json({ error: 'already checked out' });
+    req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' });
+  } finally { client.release(); }
+});
+
+// POST /equipment/:id/return — close the open checkout and free the asset.
+router.post('/:id/return', requireAuth, async (req, res) => {
+  const return_photo_url = req.body.return_photo_url?.trim() || null;
+  const companyId = req.user.company_id;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const co = await client.query(
+      `UPDATE equipment_checkouts SET returned_at=NOW(), return_photo_url=COALESCE($3, return_photo_url)
+       WHERE asset_id=$1 AND company_id=$2 AND returned_at IS NULL RETURNING *`,
+      [req.params.id, companyId, return_photo_url]
+    );
+    if (co.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'No open checkout' }); }
+    await client.query("UPDATE equipment_items SET status='available', updated_at=NOW() WHERE id=$1 AND company_id=$2",
+      [req.params.id, companyId]);
+    await client.query('COMMIT');
+    logAudit(companyId, req.user.id, req.user.full_name, 'equipment.returned', 'equipment', req.params.id, null, null);
+    res.json(co.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' });
+  } finally { client.release(); }
+});
+
 module.exports = router;

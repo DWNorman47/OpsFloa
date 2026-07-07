@@ -16,6 +16,7 @@ import InventoryPurchaseOrders from '../components/inventory/InventoryPurchaseOr
 import InventoryConversions from '../components/inventory/InventoryConversions';
 import MyCount from '../components/MyCount';
 import EquipmentLog from '../components/EquipmentLog';
+import EquipmentCheckouts from '../components/inventory/EquipmentCheckouts';
 
 import { silentError } from '../errorReporter';
 export default function InventoryPage() {
@@ -36,6 +37,7 @@ export default function InventoryPage() {
   const [locations, setLocations] = useState([]);
   const [lowStockCount, setLowStockCount] = useState(0);
   const [pendingConversions, setPendingConversions] = useState(0);
+  const [checkedOutCount, setCheckedOutCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [poLowStockTrigger, setPoLowStockTrigger] = useState(false);
 
@@ -63,6 +65,7 @@ export default function InventoryPage() {
   // EquipmentLog); Checked-out / Rentals / Maintenance land in later milestones.
   const equipmentTabs = showEquipment ? [
     { id: 'eq-assets', label: t.invTabEqAssets },
+    { id: 'eq-out', label: t.invTabEqCheckedOut, dot: checkedOutCount > 0 ? '#f59e0b' : null },
   ] : [];
   const equipmentTabIds = equipmentTabs.map(d => d.id);
   const setupTabIds = setupTabs.map(d => d.id);
@@ -160,8 +163,15 @@ export default function InventoryPage() {
     init();
   }, [canManage]);
 
+  // Equipment tab dot: count open checkouts (only when the Equipment group shows).
+  useEffect(() => {
+    if (!showEquipment) return;
+    api.get('/equipment/checkouts').then(r => setCheckedOutCount(r.data.length)).catch(silentError('inventorypage'));
+  }, [showEquipment]);
+
   const refreshLowStock    = () => canManage && api.get('/inventory/stock/low').then(r => setLowStockCount(r.data.length)).catch(silentError('inventorypage'));
   const refreshConversions = () => canManage && api.get('/inventory/uom-conversions').then(r => setPendingConversions(r.data.filter(u => parseFloat(u.factor) === 1).length)).catch(silentError('inventorypage'));
+  const refreshEquipCounts = () => showEquipment && api.get('/equipment/checkouts').then(r => setCheckedOutCount(r.data.length)).catch(silentError('inventorypage'));
 
   if (loading) return (
     <PageShell currentApp="inventory" features={features || {}} maxWidth={1040}>
@@ -267,6 +277,9 @@ export default function InventoryPage() {
         )}
         {tab === 'eq-assets' && showEquipment && (
           <EquipmentLog projects={projects} settings={features} />
+        )}
+        {tab === 'eq-out' && showEquipment && (
+          <EquipmentCheckouts projects={projects} settings={features} onChange={refreshEquipCounts} />
         )}
     </PageShell>
   );
