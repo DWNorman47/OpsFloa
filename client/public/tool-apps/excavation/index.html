@@ -117,6 +117,7 @@
     <section id="secScale">
       <h3>Scale</h3>
       <div id="scaleStatus" class="status bad">Not calibrated</div>
+      <div class="row"><label class="layer-toggle" title="Show or hide the scale (calibration) line on the drawing"><input type="checkbox" id="showScale" checked> Show on drawing</label></div>
       <div class="row">
         <button id="btnEditDist" class="btn tiny" title="Keep the two endpoints, change the distance in feet">Edit distance…</button>
         <button id="btnMeasure" class="btn tiny" title="Click two points on the drawing to read the distance in feet (needs scale)">📐 Measure</button>
@@ -128,6 +129,7 @@
     <section id="secBoundary">
       <h3>Boundary</h3>
       <div id="boundaryStatus" class="status bad">Not drawn</div>
+      <div class="row"><label class="layer-toggle" title="Show or hide the boundary polygon on the drawing"><input type="checkbox" id="showBoundary" checked> Show on drawing</label></div>
       <div class="hint">The cut/fill grid only counts area inside the boundary (limits of disturbance).</div>
     </section>
 
@@ -139,6 +141,7 @@
 
     <section id="secContours">
       <h3><span id="contourTitle">Existing</span> contours <span id="contourCount" class="pill">0</span></h3>
+      <div class="row"><label class="layer-toggle" title="Show or hide this sheet's traced contours on the drawing"><input type="checkbox" id="showContours" checked> Show on drawing</label></div>
       <div id="contourList" class="list"></div>
       <button id="btnClearSheet" class="btn tiny danger">Clear this sheet's traces</button>
     </section>
@@ -219,7 +222,7 @@
       <li><b>▦ Area (quantity takeoff):</b> click around an area — paving, aggregate base, concrete, gravel, seeding · <b>Enter</b>/double-click closes it · then pick a material preset or set the output (area SF/SY, volume CY, or weight tons) and a thickness. Choose <b>Topsoil strip</b> for strip volume with swell and optional respread → net export CY. Quantities collect in the <b>Quantities</b> sidebar panel.</li>
       <li><b>╱ Line (linear takeoff):</b> click along a run — curb, pipe/utility, silt fence, sawcut, fence · <b>Enter</b>/double-click finishes · gives length in feet. Tick <b>Trench cross-section</b> (pipe/utility) for excavation-spoil CY plus aggregate-bedding CY. Collects in the <b>Quantities</b> panel.</li>
       <li><b>⊕ Count (count takeoff):</b> click each item — catch basins, manholes, trees, signs, light poles · <b>Enter</b>/double-click finishes · then name it. Gives an each (EA) tally in the <b>Quantities</b> panel.</li>
-      <li><b>$ Bid (report):</b> rolls every measured quantity — cut/fill, wall digs, and area/line/count takeoffs — into one priced table. Type a unit price per line; add overhead &amp; profit for the total. Prices save with the project. <b>Export CSV</b> for a spreadsheet, or <b>Print / Save PDF</b> for a clean one-page bid.</li>
+      <li><b>$ Bid (report):</b> rolls every measured quantity — cut/fill, wall digs, and area/line/count takeoffs — into one priced table. Type a unit price per line; add overhead &amp; profit for the total. Prices save with the project and are remembered across projects, pre-filling matching line items next time. <b>Export CSV</b> for a spreadsheet, or <b>Print / Save PDF</b> for a clean one-page bid.</li>
       <li><b>📐 Measure</b> (Scale section, sidebar): click two points to read the straight-line distance in feet — it doesn't change the scale, just a quick readout. A closed <b>▱ Boundary</b> also shows its perimeter and acreage in the Boundary section.</li>
       <li><b>➤ Select:</b> click a line (or its row in the sidebar list) · <b>Delete</b> removes it · <b>E</b> edits its elevation · <b>Esc</b> deselects. The sidebar list's ✕ also deletes.</li>
       <li><b>⌫ Erase Box:</b> drag a box — only the line <em>portions</em> inside are erased; lines crossing the box are split and the outside parts survive. <b>With a line selected, only that line is trimmed.</b> Spots inside are removed; pads are only removed when fully boxed.</li>
@@ -449,7 +452,8 @@
         </div>
         <div class="bid-trow bid-grand"><span>Total bid</span><b id="bidTotal">$0.00</b></div>
       </div>
-      <div class="hint bid-disclaimer">Estimating tool — unit prices are yours to set and are not stored or transmitted anywhere but this project. Verify scale, traces, quantities, and pricing before you submit a bid.</div>
+      <div class="hint bid-disclaimer">Estimating tool — verify scale, traces, quantities, and pricing before you submit a bid. Prices stay on this device; nothing is transmitted.</div>
+      <div class="hint bid-libnote">Unit prices are remembered on this device and pre-fill matching line items on your next project. <button id="bidForget" class="btn tiny" type="button">Forget saved prices</button></div>
     </div>
     <div class="modal-actions">
       <button id="bidCsv" class="btn">Export CSV</button>

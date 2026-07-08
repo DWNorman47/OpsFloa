@@ -45,6 +45,7 @@ const state = {
   result: null,            // { grid, cutCY, fillCY, ... }
   showHeatmap: true,
   ghost: false,
+  layers: { scale: true, boundary: true, contours: true }, // per-section "Show on drawing" toggles
 
   // transient pointer stuff
   mouse: { x: 0, y: 0, down: false, panning: false, sx: 0, sy: 0, moved: false },
@@ -435,12 +436,6 @@ function updateNavPads() {
   cv.parentElement.classList.toggle('nav-active', show);
 }
 
-// a collapsed sidebar section hides its own visuals in the viewport
-function sectionCollapsed(id) {
-  const s = $(id);
-  return !!(s && s.classList.contains('collapsed'));
-}
-
 let drawQueued = false;
 function draw() {
   if (drawQueued) return;
@@ -489,8 +484,8 @@ function paint() {
   // heatmap under the linework
   if (state.result && state.showHeatmap) drawHeatmap();
 
-  // contour linework (both the ghost and this sheet) hides when Contours is collapsed
-  if (!sectionCollapsed('secContours')) {
+  // contour linework — hidden by the Contours section's "Show on drawing" toggle
+  if (state.layers.contours) {
     // ghost of the other surface's traces
     if (state.ghost) {
       ctx.globalAlpha = 0.3;
@@ -505,10 +500,10 @@ function paint() {
     });
   }
 
-  if (!sectionCollapsed('secBoundary')) drawBoundary();
+  if (state.layers.boundary) drawBoundary();
   drawWall();
   drawTakeoffs();
-  if (!sectionCollapsed('secScale')) drawCalibration();
+  if (state.layers.scale) drawCalibration();
   drawDraft();
   drawRealign();
   drawMeasure();
@@ -1983,6 +1978,11 @@ $('btnClearSheet').addEventListener('click', async () => {
 
 els.chkGhost.addEventListener('change', e => { state.ghost = e.target.checked; draw(); });
 
+// per-section "Show on drawing" toggles for the scale line, boundary, and contours
+[['showScale', 'scale'], ['showBoundary', 'boundary'], ['showContours', 'contours']].forEach(([id, key]) => {
+  $(id).addEventListener('change', e => { state.layers[key] = e.target.checked; draw(); });
+});
+
 els.btnEditDist.addEventListener('click', async () => {
   const c = state.calibration;
   if (!c) { setMsg('No scale yet — use the 📏 Scale tool first.'); return; }
@@ -3272,9 +3272,12 @@ function bidState() { if (!state.bid) state.bid = defaultBid(); return state.bid
 
 function buildBidItems() {
   const items = [];
-  const push = (key, group, desc, qty, unit) => {
-    if (qty > 0.05) items.push({ key, group, desc, qty, unit });
+  // key   = per-instance id (holds this project's price)
+  // typeKey = type-level id (holds the remembered price shared across projects)
+  const push = (key, typeKey, group, desc, qty, unit) => {
+    if (qty > 0.05) items.push({ key, typeKey, group, desc, qty, unit });
   };
+  const tk = s => String(s).toLowerCase().trim();
 
   // Earthwork — from the cut/fill result, using the current shrink/swell.
   const res = state.result;
@@ -3284,48 +3287,79 @@ function buildBidItems() {
     const fillBankCY = res.fillCY / Math.max(0.01, 1 - shrink);
     const netBankCY = res.cutCY - fillBankCY;
     const isExport = netBankCY >= 0;
-    push('ew-cut', 'Earthwork', 'Mass excavation — cut (bank)', res.cutCY, 'CY');
-    push('ew-fill', 'Earthwork', 'Embankment / fill (compacted)', res.fillCY, 'CY');
+    push('ew-cut', 'ew-cut', 'Earthwork', 'Mass excavation — cut (bank)', res.cutCY, 'CY');
+    push('ew-fill', 'ew-fill', 'Earthwork', 'Embankment / fill (compacted)', res.fillCY, 'CY');
     const haul = Math.abs(netBankCY) * (isExport ? 1 + swell : 1);
-    push('ew-haul', 'Earthwork',
+    push('ew-haul', 'ew-haul', 'Earthwork',
       isExport ? 'Export & haul off site (loose)' : 'Import fill to site (bank)', haul, 'CY');
   }
 
-  // Retaining-wall digs.
+  // Retaining-wall digs (type keys drop the per-wall id so pricing is shared).
   state.walls.forEach((w, i) => {
     const r = w.result, n = i + 1;
-    push(`wall-${w.id}-exc`, 'Retaining walls', `Wall ${n} — excavation (bank)`, r.grossCY, 'CY');
-    push(`wall-${w.id}-exp`, 'Retaining walls', `Wall ${n} — export off site (loose)`, r.truckCY, 'CY');
-    push(`wall-${w.id}-bf`, 'Retaining walls', `Wall ${n} — import backfill`, r.importBackfillCY, 'CY');
-    push(`wall-${w.id}-conc`, 'Retaining walls', `Wall ${n} — concrete`, r.concreteCY, 'CY');
-    push(`wall-${w.id}-agg`, 'Retaining walls', `Wall ${n} — drainage aggregate`, r.aggregateCY, 'CY');
+    push(`wall-${w.id}-exc`, 'wall-exc', 'Retaining walls', `Wall ${n} — excavation (bank)`, r.grossCY, 'CY');
+    push(`wall-${w.id}-exp`, 'wall-exp', 'Retaining walls', `Wall ${n} — export off site (loose)`, r.truckCY, 'CY');
+    push(`wall-${w.id}-bf`, 'wall-bf', 'Retaining walls', `Wall ${n} — import backfill`, r.importBackfillCY, 'CY');
+    push(`wall-${w.id}-conc`, 'wall-conc', 'Retaining walls', `Wall ${n} — concrete`, r.concreteCY, 'CY');
+    push(`wall-${w.id}-agg`, 'wall-agg', 'Retaining walls', `Wall ${n} — drainage aggregate`, r.aggregateCY, 'CY');
   });
 
-  // Sitework quantity takeoffs.
+  // Sitework quantity takeoffs (type keys use the label so like-named items share a price).
   const g = 'Sitework quantities';
   state.takeoffs.forEach(t => {
+    const lbl = tk(t.cfg.label);
     if (t.kind === 'count') {
-      push(`to-${t.id}`, g, t.cfg.label, t.result.count, t.result.unit);
+      push(`to-${t.id}`, `count:${lbl}:${tk(t.result.unit)}`, g, t.cfg.label, t.result.count, t.result.unit);
     } else if (t.kind === 'line') {
       if (t.result.trench) {
-        push(`to-${t.id}-len`, g, `${t.cfg.label} (run)`, t.result.lengthFt, 'LF');
-        push(`to-${t.id}-tr`, g, `${t.cfg.label} — trench excavation`, t.result.trenchCY, 'CY');
-        push(`to-${t.id}-bed`, g, `${t.cfg.label} — bedding`, t.result.beddingCY, 'CY');
+        push(`to-${t.id}-len`, `line:${lbl}`, g, `${t.cfg.label} (run)`, t.result.lengthFt, 'LF');
+        push(`to-${t.id}-tr`, `line-trench:${lbl}`, g, `${t.cfg.label} — trench excavation`, t.result.trenchCY, 'CY');
+        push(`to-${t.id}-bed`, `line-bed:${lbl}`, g, `${t.cfg.label} — bedding`, t.result.beddingCY, 'CY');
       } else {
-        push(`to-${t.id}`, g, t.cfg.label, t.result.lengthFt, 'LF');
+        push(`to-${t.id}`, `line:${lbl}`, g, t.cfg.label, t.result.lengthFt, 'LF');
       }
     } else if (t.kind === 'area') {
       if (t.cfg.mode === 'strip') {
-        push(`to-${t.id}-strip`, g, `${t.cfg.label} (strip, bank)`, t.result.stripCY, 'CY');
-        push(`to-${t.id}-resp`, g, `${t.cfg.label} — respread`, t.result.respreadCY, 'CY');
-        push(`to-${t.id}-exp`, g, `${t.cfg.label} — net export (loose)`, t.result.netExportLooseCY, 'CY');
+        push(`to-${t.id}-strip`, `strip:${lbl}`, g, `${t.cfg.label} (strip, bank)`, t.result.stripCY, 'CY');
+        push(`to-${t.id}-resp`, `strip-resp:${lbl}`, g, `${t.cfg.label} — respread`, t.result.respreadCY, 'CY');
+        push(`to-${t.id}-exp`, `strip-exp:${lbl}`, g, `${t.cfg.label} — net export (loose)`, t.result.netExportLooseCY, 'CY');
       } else {
-        push(`to-${t.id}`, g, t.cfg.label, t.result.quantity, t.result.unit);
+        push(`to-${t.id}`, `area:${lbl}:${tk(t.result.unit)}`, g, t.cfg.label, t.result.quantity, t.result.unit);
       }
     }
   });
 
   return items;
+}
+
+// Cross-project remembered unit prices, keyed by item type (not instance).
+let priceBookCache = null;
+function loadPriceBook() {
+  if (!priceBookCache) {
+    try { priceBookCache = JSON.parse(localStorage.getItem('ebc-pricebook')); } catch (_) { priceBookCache = null; }
+    if (!priceBookCache || typeof priceBookCache !== 'object') priceBookCache = {};
+  }
+  return priceBookCache;
+}
+function savePriceBook(book) {
+  priceBookCache = book || {};
+  try { localStorage.setItem('ebc-pricebook', JSON.stringify(priceBookCache)); } catch (_) { /* private mode */ }
+}
+
+// Pre-fill any un-priced line from the remembered library (writes into the project).
+function seedPricesFromBook() {
+  const book = loadPriceBook();
+  const prices = bidState().prices;
+  let changed = false;
+  for (const it of buildBidItems()) {
+    const cur = prices[it.key];
+    const remembered = book[it.typeKey];
+    if ((cur == null || cur === '') && remembered != null && remembered !== '') {
+      prices[it.key] = remembered;
+      changed = true;
+    }
+  }
+  if (changed) saveLocal();
 }
 
 // Single source of truth for the priced numbers, shared by render/CSV/print.
@@ -3376,7 +3410,7 @@ function renderBidReport() {
       `<td class="bid-num">${fmt(r.qty, r.unit === 'EA' ? 0 : 1)}</td>` +
       `<td class="bid-unit">${esc(r.unit)}</td>` +
       `<td class="bid-price-cell">$<input type="number" class="bid-price" data-key="${esc(r.key)}" ` +
-        `min="0" step="0.01" value="${pv != null ? esc(pv) : ''}" placeholder="0.00"></td>` +
+        `data-type="${esc(r.typeKey)}" min="0" step="0.01" value="${pv != null ? esc(pv) : ''}" placeholder="0.00"></td>` +
       `<td class="bid-num bid-ext" data-key="${esc(r.key)}">${money(r.ext)}</td>` +
     '</tr>';
   }
@@ -3409,9 +3443,16 @@ function recomputeBidTotals() {
 
 function onBidPriceInput(e) {
   const key = e.target.dataset.key;
+  const typeKey = e.target.dataset.type;
   const v = e.target.value;
   const prices = bidState().prices;
   if (v === '') delete prices[key]; else prices[key] = v;
+  // remember a typed price at the type level for future projects (never wipe on clear)
+  if (typeKey && v !== '') {
+    const book = loadPriceBook();
+    book[typeKey] = v;
+    savePriceBook(book);
+  }
   recomputeBidTotals();
   saveLocal();
 }
@@ -3422,6 +3463,7 @@ function openBidReport() {
   $('bidPrep').value = b.preparedBy || '';
   $('bidMarkup').value = b.markup != null ? b.markup : '';
   if (!$('bidDate').value) $('bidDate').value = new Date().toLocaleDateString();
+  seedPricesFromBook();   // pre-fill matching lines from the remembered library
   renderBidReport();
   $('bidReport').classList.remove('hidden');
 }
@@ -3479,6 +3521,10 @@ $('btnBid').addEventListener('click', openBidReport);
 $('bidClose').addEventListener('click', closeBidReport);
 $('bidCsv').addEventListener('click', bidCSVDownload);
 $('bidPrint').addEventListener('click', printBid);
+$('bidForget').addEventListener('click', () => {
+  savePriceBook({}); // clears the remembered library; this project's typed prices stay
+  setMsg('Saved price library cleared. This project keeps the prices you already typed.');
+});
 $('bidProject').addEventListener('input', e => { bidState().project = e.target.value; saveLocal(); });
 $('bidPrep').addEventListener('input', e => { bidState().preparedBy = e.target.value; saveLocal(); });
 $('bidMarkup').addEventListener('input', e => { bidState().markup = e.target.value; recomputeBidTotals(); saveLocal(); });
@@ -3509,7 +3555,6 @@ try {
       const now = [...document.querySelectorAll('#sidebar section.collapsed')]
         .map(s => s.id).filter(Boolean);
       try { localStorage.setItem(KEY, JSON.stringify(now)); } catch (_) { /* private mode */ }
-      draw(); // Scale/Boundary/Contours hide their viewport visuals when collapsed
     });
   });
 })();

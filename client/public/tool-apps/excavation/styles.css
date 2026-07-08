@@ -272,6 +272,8 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 
 .preset-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 4px 0 12px; }
 #measureOut { font-weight: 700; color: var(--accent); }
+.layer-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); cursor: pointer; }
+.layer-toggle input { margin: 0; }
 
 /* ---------- bid report ---------- */
 .bid-box { max-width: 780px; }
@@ -315,7 +317,8 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
   body.printing-bid #bidReport .modal-box { max-width: none; max-height: none; overflow: visible;
     box-shadow: none; border: none; background: #fff; padding: 0; }
   body.printing-bid #bidReport .modal-actions,
-  body.printing-bid .bid-disclaimer { display: none !important; }
+  body.printing-bid .bid-disclaimer,
+  body.printing-bid .bid-libnote { display: none !important; }
   body.printing-bid #bidReport, body.printing-bid #bidReport * { color: #000 !important; }
   body.printing-bid .bid-head input,
   body.printing-bid .bid-price,
