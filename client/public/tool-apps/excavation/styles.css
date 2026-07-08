@@ -310,6 +310,29 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 .bid-grand b { color: var(--good); }
 .bid-disclaimer { margin-top: 12px; }
 
+/* letterhead */
+.bid-letterhead { display: flex; align-items: center; gap: 14px; padding-bottom: 12px;
+  margin-bottom: 12px; border-bottom: 2px solid var(--border); }
+.bid-letterhead img { max-height: 64px; max-width: 220px; object-fit: contain; }
+.bid-company { flex: 1; }
+.bid-co-name { font-size: 18px; font-weight: 700; color: var(--text); }
+.bid-co-details { font-size: 12.5px; color: var(--muted); line-height: 1.5; margin-top: 3px; }
+.bid-letterhead-edit { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 14px; }
+.bid-lh-label { font-size: 12px; color: var(--muted); font-weight: 600; }
+.bid-lh-name { flex: 0 1 200px; padding: 6px 8px; background: var(--panel2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+.bid-lh-details { flex: 1 1 240px; padding: 6px 8px; background: var(--panel2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; font-size: 13px; resize: vertical; font-family: inherit; }
+.bid-letterhead-edit .btn.tiny { flex: 0 0 auto; }
+
+/* haul summary */
+.bid-haul { margin-top: 12px; padding: 8px 10px; background: var(--panel2); border-radius: 8px;
+  font-size: 13.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.bid-haul-title { font-weight: 700; color: var(--warn); text-transform: uppercase; font-size: 12px; letter-spacing: .04em; }
+.bid-haul b { color: var(--text); font-variant-numeric: tabular-nums; }
+.bid-truck { width: 60px; padding: 4px 6px; background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: 5px; font-size: 13px; text-align: right; }
+
 @media print {
   /* only the Print / Save PDF button sets this class, so a plain Ctrl+P is unaffected */
   body.printing-bid > *:not(#bidReport) { display: none !important; }
@@ -318,14 +341,18 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
     box-shadow: none; border: none; background: #fff; padding: 0; }
   body.printing-bid #bidReport .modal-actions,
   body.printing-bid .bid-disclaimer,
-  body.printing-bid .bid-libnote { display: none !important; }
+  body.printing-bid .bid-libnote,
+  body.printing-bid .bid-letterhead-edit { display: none !important; }
   body.printing-bid #bidReport, body.printing-bid #bidReport * { color: #000 !important; }
   body.printing-bid .bid-head input,
   body.printing-bid .bid-price,
+  body.printing-bid .bid-truck,
   body.printing-bid .bid-markup { border: none !important; background: none !important;
     padding: 0 !important; -webkit-appearance: none; appearance: none; }
   body.printing-bid .bid-group td { background: #eee !important; color: #000 !important; }
   body.printing-bid .bid-table th,
   body.printing-bid .bid-table td { border-bottom: 1px solid #bbb !important; }
   body.printing-bid .bid-grand { border-top: 2px solid #000 !important; }
+  body.printing-bid .bid-letterhead { border-bottom: 2px solid #000 !important; }
+  body.printing-bid .bid-haul { background: none !important; padding-left: 0 !important; }
 }
