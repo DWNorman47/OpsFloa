@@ -425,12 +425,17 @@ function fitView() {
 
 // Edge/corner jump pads — pan a third of a screen without dragging. dx=+1 is
 // right, dy=+1 is down; decreasing pan reveals content in that direction.
-document.querySelectorAll('.nav-pad').forEach(b => b.addEventListener('click', () => {
-  const dx = parseInt(b.dataset.dx, 10), dy = parseInt(b.dataset.dy, 10);
+const PAN_STEP = 0.12; // arrow-key pan step, as a fraction of the viewport
+// pan by a fraction of the viewport (dx/dy in screen fractions; + = reveal that side)
+function panBy(dxFrac, dyFrac) {
   const r = cv.parentElement.getBoundingClientRect();
-  state.view.panX -= dx * r.width / 3;
-  state.view.panY -= dy * r.height / 3;
+  state.view.panX -= dxFrac * r.width;
+  state.view.panY -= dyFrac * r.height;
   draw();
+}
+
+document.querySelectorAll('.nav-pad').forEach(b => b.addEventListener('click', () => {
+  panBy(parseInt(b.dataset.dx, 10) / 3, parseInt(b.dataset.dy, 10) / 3);
 }));
 
 // Show the pads only when zoomed in past ~70% (less than 70% of the plan is on
@@ -1073,19 +1078,19 @@ async function handleClick(w) {
       break;
     }
     case 'trace':
-      state.draft.push(w);
+      addDraftPoint(w);
       break;
     case 'wall':
-      state.draft.push(w);
+      addDraftPoint(w);
       break;
     case 'area':
-      state.draft.push(w);
+      addDraftPoint(w);
       break;
     case 'line':
-      state.draft.push(w);
+      addDraftPoint(w);
       break;
     case 'count':
-      state.draft.push(w);
+      addDraftPoint(w);
       setMsg(`${state.draft.length} dropped — keep clicking items, Enter/double-click to finish.`);
       break;
     case 'measure': {
@@ -1115,7 +1120,7 @@ async function handleClick(w) {
         setMsg('Double-click the pad edge to add a point · drag a point (○) to move it · Alt+click removes it. Click away from pads to draw a new one.');
         break;
       }
-      state.draft.push(w);
+      addDraftPoint(w);
       break;
     case 'boundary':
       // clicks on the existing polygon edit it rather than starting a redraw
@@ -1124,7 +1129,7 @@ async function handleClick(w) {
         setMsg('Double-click the edge to add a point · drag a point (○) to move it · Alt+click a point removes it. Click away from the boundary to redraw it.');
         break;
       }
-      state.draft.push(w);
+      addDraftPoint(w);
       break;
     case 'wand':
       await wandPick(w);
@@ -1294,6 +1299,7 @@ async function finishDraftIfAny(commit) {
   if (!state.draft.length) { return; }
   const pts = state.draft;
   state.draft = [];
+  updateUndoButtons(); // draft consumed; commit branches push the single shape snapshot
 
   if (!commit) { draw(); return; }
 
@@ -1414,12 +1420,23 @@ function takeSnap() {
   });
 }
 
+function updateUndoButtons() {
+  els.btnUndo.disabled = !(state.draft.length || undoStack.length);
+  els.btnRedo.disabled = !redoStack.length || state.draft.length > 0;
+}
+
+// a point placed while drawing is undoable (Ctrl+Z / Undo / Backspace) but never
+// enters the geometry undo stack — so finishing the shape leaves exactly one undo
+function addDraftPoint(w) {
+  state.draft.push(w);
+  updateUndoButtons();
+}
+
 function pushSnap(s) {
   undoStack.push(s);
   if (undoStack.length > 50) undoStack.shift();
-  els.btnUndo.disabled = false;
   redoStack.length = 0;
-  els.btnRedo.disabled = true;
+  updateUndoButtons();
 }
 
 function snapshot() { pushSnap(takeSnap()); }
@@ -1453,22 +1470,28 @@ function restoreSnap(s) {
 }
 
 function undo() {
+  if (state.draft.length) {                 // undo point-by-point while still drawing
+    state.draft.pop();
+    updateUndoButtons();
+    setMsg(state.draft.length ? `Point removed — ${state.draft.length} placed.` : 'Points cleared.');
+    draw();
+    return;
+  }
   if (!undoStack.length) return;
   redoStack.push(takeSnap());
   if (redoStack.length > 50) redoStack.shift();
   restoreSnap(undoStack.pop());
-  els.btnUndo.disabled = !undoStack.length;
-  els.btnRedo.disabled = false;
+  updateUndoButtons();
   setMsg(`Undone.${undoStack.length ? ` ${undoStack.length} more step${undoStack.length === 1 ? '' : 's'} available.` : ''}`);
 }
 
 function redo() {
+  if (state.draft.length) return;           // don't restore a snapshot mid-draft (it would wipe the points)
   if (!redoStack.length) return;
   undoStack.push(takeSnap());
   if (undoStack.length > 50) undoStack.shift();
   restoreSnap(redoStack.pop());
-  els.btnUndo.disabled = false;
-  els.btnRedo.disabled = !redoStack.length;
+  updateUndoButtons();
   setMsg(`Redone.${redoStack.length ? ` ${redoStack.length} more step${redoStack.length === 1 ? '' : 's'} available.` : ''}`);
 }
 
@@ -1860,9 +1883,10 @@ window.addEventListener('keydown', e => {
       if (state.selected) { state.selected = null; refreshContourList(); }
       if (state.tool === 'align' || state.tool === 'realign' || state.tool === 'measure') setTool('pan');
       else { state.alignPts = []; state.alignQs = []; }
+      updateUndoButtons(); // draft may have been cleared
       draw(); break;
     case 'Backspace':
-      if (state.draft.length) { state.draft.pop(); draw(); e.preventDefault(); }
+      if (state.draft.length) { undo(); e.preventDefault(); } // same as Ctrl+Z: drop the last point
       break;
     case 'Delete':
       deleteSelected(); break;
@@ -1874,6 +1898,10 @@ window.addEventListener('keydown', e => {
     case 'p': case 'P': setTool('pad'); break;
     case 'v': case 'V': setTool('select'); break;
     case 'b': case 'B': setTool('boundary'); break;
+    case 'ArrowUp':    panBy(0, -PAN_STEP); e.preventDefault(); break;
+    case 'ArrowDown':  panBy(0,  PAN_STEP); e.preventDefault(); break;
+    case 'ArrowLeft':  panBy(-PAN_STEP, 0); e.preventDefault(); break;
+    case 'ArrowRight': panBy( PAN_STEP, 0); e.preventDefault(); break;
     case ' ': break;
   }
 });
