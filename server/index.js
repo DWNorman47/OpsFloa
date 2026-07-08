@@ -221,6 +221,7 @@ app.use('/api/safety-talks', requireAuth, requirePlan('business'), require('./ro
 app.use('/api/safety-checklists', requireAuth, requirePlan('business'), require('./routes/safetyChecklists'));
 // Voice transcription tool (Tools module) — upload audio, diarized transcript
 app.use('/api/recordings', requireAuth, requirePlan('business'), require('./routes/recordings'));
+app.use('/api/office', requireAuth, requirePlan('business'), require('./routes/officeTools'));
 app.use('/api/inbox', require('./routes/inbox'));
 app.use('/api/time-off', requireAuth, require('./routes/timeOff'));
 app.use('/api/reimbursements', requireAuth, require('./routes/reimbursements'));

@@ -5,6 +5,7 @@ import { silentError } from '../errorReporter';
 import { PageIntro, PageSection, PageShell } from '../components/PageShell';
 import TabBar from '../components/TabBar';
 import TranscriptionTool from '../components/TranscriptionTool';
+import SummarizerTool from '../components/SummarizerTool';
 
 const SITEWORK_TOOL_URL = '/tool-apps/sitework/index.html';
 const PDFTOOLS_TOOL_URL = '/tool-apps/pdftools/index.html';
@@ -66,7 +67,7 @@ export default function ToolsPage() {
         kicker="Tools"
         title="Useful calculators and work helpers"
         description="Keep specialized utilities close by without crowding the daily workflow. Tools open separately so the main app stays right where you left it."
-        meta={<span className="ops-pill accent">3 tools available</span>}
+        meta={<span className="ops-pill accent">4 tools available</span>}
       />
 
       <TabBar
@@ -75,6 +76,7 @@ export default function ToolsPage() {
         tabs={[
           { id: 'sitework', label: 'Sitework Takeoff' },
           { id: 'transcription', label: 'Transcription' },
+          { id: 'summarizer', label: 'Summarizer' },
           { id: 'pdftools', label: 'PDF Toolkit' },
         ]}
         ariaLabel="Tools sections"
@@ -116,6 +118,16 @@ export default function ToolsPage() {
           description="Upload a meeting or call recording and get back a transcript that separates who said what. Rename speakers, jump the audio to any line, and copy or download the text."
         >
           <TranscriptionTool />
+        </PageSection>
+      )}
+
+      {tab === 'summarizer' && (
+        <PageSection
+          eyebrow="Office"
+          title="Meeting & call summarizer"
+          description="Paste a transcript or notes and get a clean summary with key points and action items. Pairs with the transcription tool."
+        >
+          <SummarizerTool />
         </PageSection>
       )}
 
