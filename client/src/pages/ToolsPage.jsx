@@ -7,6 +7,7 @@ import TabBar from '../components/TabBar';
 import TranscriptionTool from '../components/TranscriptionTool';
 import SummarizerTool from '../components/SummarizerTool';
 import DocQATool from '../components/DocQATool';
+import EmailDrafterTool from '../components/EmailDrafterTool';
 
 const SITEWORK_TOOL_URL = '/tool-apps/sitework/index.html';
 const PDFTOOLS_TOOL_URL = '/tool-apps/pdftools/index.html';
@@ -68,7 +69,7 @@ export default function ToolsPage() {
         kicker="Tools"
         title="Useful calculators and work helpers"
         description="Keep specialized utilities close by without crowding the daily workflow. Tools open separately so the main app stays right where you left it."
-        meta={<span className="ops-pill accent">5 tools available</span>}
+        meta={<span className="ops-pill accent">6 tools available</span>}
       />
 
       <TabBar
@@ -79,6 +80,7 @@ export default function ToolsPage() {
           { id: 'transcription', label: 'Transcription' },
           { id: 'summarizer', label: 'Summarizer' },
           { id: 'docqa', label: 'Doc Q&A' },
+          { id: 'emaildraft', label: 'Email Drafter' },
           { id: 'pdftools', label: 'PDF Toolkit' },
         ]}
         ariaLabel="Tools sections"
@@ -140,6 +142,16 @@ export default function ToolsPage() {
           description="Open a contract, spec, or insurance cert and ask questions about it — answers come only from the document. Great for the dense paperwork you don't have time to read."
         >
           <DocQATool />
+        </PageSection>
+      )}
+
+      {tab === 'emaildraft' && (
+        <PageSection
+          eyebrow="Office"
+          title="Email & message drafter"
+          description="Turn a few notes into a polished email or text — payment reminders, quote follow-ups, running-late messages — in the tone you pick."
+        >
+          <EmailDrafterTool />
         </PageSection>
       )}
 
