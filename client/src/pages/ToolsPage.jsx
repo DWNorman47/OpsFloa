@@ -66,7 +66,7 @@ export default function ToolsPage() {
         active={tab}
         onChange={switchTab}
         tabs={[
-          { id: 'excavation', label: 'Excavation' },
+          { id: 'excavation', label: 'Sitework Takeoff' },
           { id: 'transcription', label: 'Transcription' },
         ]}
         ariaLabel="Tools sections"
@@ -74,9 +74,9 @@ export default function ToolsPage() {
 
       {tab === 'excavation' && (
         <PageSection
-          eyebrow="Excavation"
-          title="Excavation takeoff"
-          description="Open the cut/fill takeoff calculator for civil plans, contours, pads, boundaries, and volume estimates."
+          eyebrow="Sitework"
+          title="Sitework Takeoff Estimator"
+          description="Take off quantities from civil plan sets — earthwork cut/fill, paving, concrete, utilities, and site items — and turn them into a priced, branded bid."
           actions={(
             <a className="ops-button-primary" href={EXCAVATION_TOOL_URL} target="_blank" rel="noopener noreferrer">
               Open in new tab
@@ -93,8 +93,8 @@ export default function ToolsPage() {
               </svg>
             </span>
             <span className="tools-card-copy">
-              <strong>Excavation Bid Calculator</strong>
-              <span>Load a PDF plan set, trace existing and proposed surfaces, and estimate cut/fill volume. Work saves in the browser for this device.</span>
+              <strong>Sitework Takeoff Estimator</strong>
+              <span>Load a PDF plan set and take off earthwork, paving, concrete, utilities, and site quantities — then build a priced, branded bid. Work saves in the browser for this device.</span>
             </span>
             <span className="tools-card-action">Open</span>
           </a>
