@@ -2285,12 +2285,22 @@ async function calculate() {
       grid: { x0, y0, cellPx, cols, rows, dz, maxAbs },
     };
     renderResults();
+    collapseForResults(); // tuck away the inputs so the fresh numbers are front-and-center
     setMsg('Done. Adjust shrink/swell in Settings to refine the export number.');
   } finally {
     btn.disabled = false;
     btn.textContent = '∑ Calculate Cut/Fill';
   }
   draw();
+}
+
+// after a cut/fill calc, collapse the input sections so the Results panel (and the
+// quantity panels below it) are what you see. Not persisted — a fresh session still
+// opens with the inputs expanded for tracing.
+function collapseForResults() {
+  ['secSheet', 'secScale', 'secBoundary', 'secRealign', 'secContours', 'secSettings']
+    .forEach(id => { const s = $(id); if (s) s.classList.add('collapsed'); });
+  els.resultsSection.classList.remove('collapsed');
 }
 
 function renderResults() {
