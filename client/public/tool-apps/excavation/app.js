@@ -411,6 +411,12 @@ function updateNavPads() {
   cv.parentElement.classList.toggle('nav-active', show);
 }
 
+// a collapsed sidebar section hides its own visuals in the viewport
+function sectionCollapsed(id) {
+  const s = $(id);
+  return !!(s && s.classList.contains('collapsed'));
+}
+
 let drawQueued = false;
 function draw() {
   if (drawQueued) return;
@@ -459,23 +465,26 @@ function paint() {
   // heatmap under the linework
   if (state.result && state.showHeatmap) drawHeatmap();
 
-  // ghost of the other surface's traces
-  if (state.ghost) {
-    ctx.globalAlpha = 0.3;
-    for (const c of state.contours[other]) drawContour(c, other, false);
-    ctx.globalAlpha = 1;
+  // contour linework (both the ghost and this sheet) hides when Contours is collapsed
+  if (!sectionCollapsed('secContours')) {
+    // ghost of the other surface's traces
+    if (state.ghost) {
+      ctx.globalAlpha = 0.3;
+      for (const c of state.contours[other]) drawContour(c, other, false);
+      ctx.globalAlpha = 1;
+    }
+
+    // this sheet's traces
+    state.contours[state.sheet].forEach((c, i) => {
+      const sel = state.selected && state.selected.sheet === state.sheet && state.selected.index === i;
+      drawContour(c, state.sheet, sel);
+    });
   }
 
-  // this sheet's traces
-  state.contours[state.sheet].forEach((c, i) => {
-    const sel = state.selected && state.selected.sheet === state.sheet && state.selected.index === i;
-    drawContour(c, state.sheet, sel);
-  });
-
-  drawBoundary();
+  if (!sectionCollapsed('secBoundary')) drawBoundary();
   drawWall();
   drawTakeoffs();
-  drawCalibration();
+  if (!sectionCollapsed('secScale')) drawCalibration();
   drawDraft();
   drawRealign();
   drawMeasure();
@@ -639,6 +648,11 @@ function drawCalibration() {
 
 function drawDraft() {
   if (!state.draft.length) return;
+  // count drops are discrete markers, not a polyline — no connecting/rubber-band line
+  if (state.tool === 'count') {
+    state.draft.forEach((p, i) => drawCountMarker(p, i + 1));
+    return;
+  }
   ctx.strokeStyle = ctx.fillStyle =
     state.tool === 'boundary' ? '#ffd24d' : state.tool === 'pad' ? '#c07ef7' : '#4da3ff';
   ctx.lineWidth = lw(2);
@@ -720,7 +734,7 @@ function updateHud() {
 const TOOL_LABEL = {
   pan: 'Pan', calibrate: 'Scale', boundary: 'Boundary',
   trace: 'Trace contour', wand: 'Auto trace', spot: 'Spot elevation', pad: 'Flat pad',
-  wall: 'Wall dig', area: 'Area takeoff', select: 'Select', erase: 'Erase box', align: 'Align sheets',
+  wall: 'Wall dig', area: 'Area takeoff', line: 'Linear takeoff', count: 'Count takeoff', select: 'Select', erase: 'Erase box', align: 'Align sheets',
   realign: 'Re-align traces', measure: 'Measure',
 };
 
@@ -995,7 +1009,7 @@ cv.addEventListener('dblclick', e => {
     return;
   }
   // dblclick fires after two click-adds; drop the duplicate vertex
-  if ((state.tool === 'trace' || state.tool === 'boundary' || state.tool === 'pad') &&
+  if ((state.tool === 'trace' || state.tool === 'boundary' || state.tool === 'pad' || state.tool === 'count') &&
       state.draft.length > 1)
     state.draft.pop();
   finishDraftIfAny(true);
@@ -1036,6 +1050,13 @@ async function handleClick(w) {
       break;
     case 'area':
       state.draft.push(w);
+      break;
+    case 'line':
+      state.draft.push(w);
+      break;
+    case 'count':
+      state.draft.push(w);
+      setMsg(`${state.draft.length} dropped — keep clicking items, Enter/double-click to finish.`);
       break;
     case 'measure': {
       if (!state.calibration) { setMsg('Calibrate the scale (📏) first.'); break; }
@@ -1311,6 +1332,34 @@ async function finishDraftIfAny(commit) {
         setMsg(`Area takeoff: ${fmt(result.quantity, result.unit === 'tons' ? 1 : 0)} ${result.unit} — ${cfg.label}.`);
       }
     } else setMsg('An area needs at least 3 points.');
+  } else if (state.tool === 'line') {
+    if (pts.length >= 2) {
+      if (!state.calibration) { setMsg('Calibrate the scale (📏) before a linear takeoff.'); draw(); return; }
+      const lengthFt = polyLengthFt(pts);
+      const cfg = await askLineConfig(lengthFt);
+      if (cfg) {
+        snapshot();
+        const result = computeLineResult(lengthFt, cfg);
+        state.takeoffs.push({ id: randId(), kind: 'line', pts, cfg, result });
+        renderTakeoffs();
+        saveLocal();
+        const q = result.trench ? `${fmt(result.trenchCY, 1)} CY trench` : `${fmt(result.lengthFt)} ft`;
+        setMsg(`Linear takeoff: ${q} — ${cfg.label}.`);
+      }
+    } else setMsg('A line needs at least 2 points.');
+  } else if (state.tool === 'count') {
+    // no calibration needed — counting is scale-independent
+    if (pts.length >= 1) {
+      const cfg = await askCountConfig(pts.length);
+      if (cfg) {
+        snapshot();
+        const result = { count: pts.length, label: cfg.label, unit: cfg.unit };
+        state.takeoffs.push({ id: randId(), kind: 'count', pts, cfg, result });
+        renderTakeoffs();
+        saveLocal();
+        setMsg(`Count takeoff: ${result.count} ${result.unit} — ${cfg.label}.`);
+      }
+    } else setMsg('A count needs at least one point.');
   }
   draw();
 }
@@ -2333,7 +2382,7 @@ const AREA_PRESETS = {
   base:     { label: 'Aggregate base', mode: 'tons', thickness: 6, density: 135 },
   concrete: { label: 'Concrete flatwork', mode: 'cy', thickness: 4 },
   gravel:   { label: 'Gravel / fill', mode: 'cy', thickness: 6 },
-  topsoil:  { label: 'Topsoil / strip', mode: 'cy', thickness: 6 },
+  topsoil:  { label: 'Topsoil strip', mode: 'strip', thickness: 6, swell: 25, respread: 0 },
   areaonly: { label: 'Area', mode: 'area' },
 };
 
@@ -2344,19 +2393,38 @@ function areaQuantity(areaSf, cfg) {
     return { quantity: areaSf * thickFt * d / 2000, unit: 'tons' };
   }
   if (cfg.mode === 'cy') return { quantity: areaSf * thickFt / 27, unit: 'CY' };
+  if (cfg.mode === 'strip') {
+    const stripCY = areaSf * thickFt / 27;                       // bank volume stripped
+    const swell = 1 + (parseFloat(cfg.swell) || 0) / 100;        // loose bulking for hauling
+    const respreadCY = areaSf * ((parseFloat(cfg.respread) || 0) / 12) / 27; // placed back (bank)
+    const netExportCY = Math.max(0, stripCY - respreadCY);       // leaves the site (bank)
+    return {
+      quantity: stripCY, unit: 'CY',
+      stripCY, looseCY: stripCY * swell,
+      respreadCY, netExportCY, netExportLooseCY: netExportCY * swell,
+    };
+  }
   return { quantity: areaSf, unit: 'SF' };
 }
 
 function computeAreaResult(areaSf, cfg) {
   const q = areaQuantity(areaSf, cfg);
-  return { areaSf, sy: areaSf / 9, acres: areaSf / 43560, quantity: q.quantity, unit: q.unit, label: cfg.label };
+  return { areaSf, sy: areaSf / 9, acres: areaSf / 43560, label: cfg.label, ...q };
 }
 
 function areaResultRows(areaSf, cfg) {
   const r = computeAreaResult(areaSf, cfg);
   const rows = [['Area', `${fmt(areaSf)} sf · ${fmt(r.sy)} sy · ${fmt(r.acres, 2)} ac`]];
-  if (cfg.mode !== 'area')
+  if (cfg.mode === 'strip') {
+    rows.push(['Strip volume', `${fmt(r.stripCY, 1)} CY bank`, 'total']);
+    rows.push(['Loose (haul)', `${fmt(r.looseCY, 1)} CY`]);
+    if (r.respreadCY > 0) {
+      rows.push(['Respread', `${fmt(r.respreadCY, 1)} CY bank`]);
+      rows.push(['Net export', `${fmt(r.netExportCY, 1)} CY bank · ${fmt(r.netExportLooseCY, 1)} loose`, 'total']);
+    }
+  } else if (cfg.mode !== 'area') {
     rows.push([cfg.mode === 'tons' ? 'Weight' : 'Volume', `${fmt(r.quantity, 1)} ${r.unit}`, 'total']);
+  }
   return rows.map(([k, v, cls]) => `<div class="res-row ${cls === 'total' ? 'total' : ''}"><span>${k}</span><b>${v}</b></div>`).join('');
 }
 
@@ -2366,6 +2434,8 @@ function readAreaCfg() {
     mode: $('atMode').value,
     thickness: $('atThick').value,
     density: $('atDensity').value,
+    swell: $('atSwell').value,
+    respread: $('atRespread').value,
   };
 }
 
@@ -2373,6 +2443,9 @@ function syncAreaMode() {
   const mode = $('atMode').value;
   $('atThickWrap').style.display = mode === 'area' ? 'none' : '';
   $('atDensityWrap').style.display = mode === 'tons' ? '' : 'none';
+  $('atSwellWrap').style.display = mode === 'strip' ? '' : 'none';
+  $('atRespreadWrap').style.display = mode === 'strip' ? '' : 'none';
+  $('atThickLbl').textContent = mode === 'strip' ? 'Strip depth (in)' : 'Thickness (in)';
 }
 
 function askAreaConfig(areaSf) {
@@ -2384,7 +2457,7 @@ function askAreaConfig(areaSf) {
     $('areaTakeoff').classList.remove('hidden');
 
     const onInput = () => { syncAreaMode(); preview(); };
-    const inputs = ['atLabel', 'atMode', 'atThick', 'atDensity'];
+    const inputs = ['atLabel', 'atMode', 'atThick', 'atDensity', 'atSwell', 'atRespread'];
     inputs.forEach(id => $(id).addEventListener('input', onInput));
     const presetBtns = [...document.querySelectorAll('#atPresets [data-preset]')];
     const onPreset = e => {
@@ -2394,6 +2467,8 @@ function askAreaConfig(areaSf) {
       $('atMode').value = p.mode;
       if (p.thickness != null) $('atThick').value = p.thickness;
       if (p.density != null) $('atDensity').value = p.density;
+      if (p.swell != null) $('atSwell').value = p.swell;
+      if (p.respread != null) $('atRespread').value = p.respread;
       onInput();
     };
     presetBtns.forEach(b => b.addEventListener('click', onPreset));
@@ -2409,52 +2484,243 @@ function askAreaConfig(areaSf) {
   });
 }
 
+// ── Linear / trench takeoffs ──────────────────────────────────────────────────
+// Length in feet, plus an optional trench cross-section (reusing the wall
+// section math) for pipe/utility runs → excavation spoil + aggregate bedding.
+
+const LINE_PRESETS = {
+  curb:     { label: 'Curb & gutter', trench: false },
+  pipe:     { label: 'Pipe / utility trench', trench: true, width: 3, depth: 5, slope: 0, bedding: 6 },
+  silt:     { label: 'Silt fence', trench: false },
+  sawcut:   { label: 'Sawcut', trench: false },
+  fence:    { label: 'Fence / guardrail', trench: false },
+  lineonly: { label: 'Line', trench: false },
+};
+
+function computeLineResult(lengthFt, cfg) {
+  const r = { lengthFt, label: cfg.label, trench: !!cfg.trench, trenchCY: 0, beddingCY: 0 };
+  if (cfg.trench) {
+    const w = parseFloat(cfg.width) || 0, d = parseFloat(cfg.depth) || 0, s = parseFloat(cfg.slope) || 0;
+    r.trenchCY = wallSectionAreaSf(w, d, s) * lengthFt / 27; // trapezoid × length
+    const bedIn = parseFloat(cfg.bedding) || 0;
+    r.beddingCY = bedIn > 0 ? (w * (bedIn / 12) * lengthFt) / 27 : 0;
+  }
+  return r;
+}
+
+function lineResultRows(lengthFt, cfg) {
+  const r = computeLineResult(lengthFt, cfg);
+  const rows = [['Length', `${fmt(lengthFt)} ft`, r.trench ? '' : 'total']];
+  if (r.trench) {
+    rows.push(['Trench excavation', `${fmt(r.trenchCY, 1)} CY`, 'total']);
+    if (r.beddingCY > 0) rows.push(['Bedding (import)', `${fmt(r.beddingCY, 1)} CY`]);
+  }
+  return rows.map(([k, v, cls]) => `<div class="res-row ${cls === 'total' ? 'total' : ''}"><span>${k}</span><b>${v}</b></div>`).join('');
+}
+
+function readLineCfg() {
+  return {
+    label: $('ltLabel').value.trim() || 'Line',
+    trench: $('ltTrench').checked,
+    width: $('ltWidth').value, depth: $('ltDepth').value,
+    slope: $('ltSlope').value, bedding: $('ltBedding').value,
+  };
+}
+
+function syncLineTrench() {
+  $('ltTrenchFields').style.display = $('ltTrench').checked ? '' : 'none';
+}
+
+function askLineConfig(lengthFt) {
+  return new Promise(resolve => {
+    const preview = () => { $('ltResult').innerHTML = lineResultRows(lengthFt, readLineCfg()); };
+    $('ltLen').textContent = `${fmt(lengthFt)} ft`;
+    syncLineTrench();
+    preview();
+    $('lineTakeoff').classList.remove('hidden');
+    const onInput = () => { syncLineTrench(); preview(); };
+    const inputs = ['ltLabel', 'ltTrench', 'ltWidth', 'ltDepth', 'ltSlope', 'ltBedding'];
+    inputs.forEach(id => { $(id).addEventListener('input', onInput); $(id).addEventListener('change', onInput); });
+    const presetBtns = [...document.querySelectorAll('#ltPresets [data-preset]')];
+    const onPreset = e => {
+      const p = LINE_PRESETS[e.target.dataset.preset];
+      if (!p) return;
+      $('ltLabel').value = p.label;
+      $('ltTrench').checked = !!p.trench;
+      if (p.width != null) $('ltWidth').value = p.width;
+      if (p.depth != null) $('ltDepth').value = p.depth;
+      if (p.slope != null) $('ltSlope').value = p.slope;
+      if (p.bedding != null) $('ltBedding').value = p.bedding;
+      onInput();
+    };
+    presetBtns.forEach(b => b.addEventListener('click', onPreset));
+    const cleanup = () => {
+      inputs.forEach(id => { $(id).removeEventListener('input', onInput); $(id).removeEventListener('change', onInput); });
+      presetBtns.forEach(b => b.removeEventListener('click', onPreset));
+      $('ltOk').onclick = null; $('ltCancel').onclick = null;
+      $('lineTakeoff').classList.add('hidden');
+    };
+    $('ltCancel').onclick = () => { cleanup(); resolve(null); };
+    $('ltOk').onclick = () => { const cfg = readLineCfg(); cleanup(); resolve(cfg); };
+  });
+}
+
+// ── Count takeoffs ────────────────────────────────────────────────────────────
+// Scale-independent tally: each dropped point is one item. Presets just seed the
+// label + unit; the count is however many points you dropped.
+
+const COUNT_PRESETS = {
+  catchbasin: { label: 'Catch basin', unit: 'EA' },
+  manhole:    { label: 'Manhole', unit: 'EA' },
+  tree:       { label: 'Tree', unit: 'EA' },
+  sign:       { label: 'Sign', unit: 'EA' },
+  light:      { label: 'Light pole', unit: 'EA' },
+  bollard:    { label: 'Bollard', unit: 'EA' },
+  itemonly:   { label: 'Item', unit: 'EA' },
+};
+
+function readCountCfg() {
+  return {
+    label: $('ctLabel').value.trim() || 'Item',
+    unit: $('ctUnit').value.trim() || 'EA',
+  };
+}
+
+function countResultRows(n, cfg) {
+  return `<div class="res-row total"><span>${cfg.label}</span><b>${n} ${cfg.unit}</b></div>`;
+}
+
+function askCountConfig(n) {
+  return new Promise(resolve => {
+    const preview = () => { $('ctResult').innerHTML = countResultRows(n, readCountCfg()); };
+    $('ctN').textContent = `${n} point${n === 1 ? '' : 's'}`;
+    preview();
+    $('countTakeoff').classList.remove('hidden');
+    const onInput = () => preview();
+    const inputs = ['ctLabel', 'ctUnit'];
+    inputs.forEach(id => $(id).addEventListener('input', onInput));
+    const presetBtns = [...document.querySelectorAll('#ctPresets [data-preset]')];
+    const onPreset = e => {
+      const p = COUNT_PRESETS[e.target.dataset.preset];
+      if (!p) return;
+      $('ctLabel').value = p.label;
+      $('ctUnit').value = p.unit;
+      onInput();
+    };
+    presetBtns.forEach(b => b.addEventListener('click', onPreset));
+    const cleanup = () => {
+      inputs.forEach(id => $(id).removeEventListener('input', onInput));
+      presetBtns.forEach(b => b.removeEventListener('click', onPreset));
+      $('ctOk').onclick = null; $('ctCancel').onclick = null;
+      $('countTakeoff').classList.add('hidden');
+    };
+    $('ctCancel').onclick = () => { cleanup(); resolve(null); };
+    $('ctOk').onclick = () => { const cfg = readCountCfg(); cleanup(); resolve(cfg); };
+  });
+}
+
 function polyCentroid(pts) {
   let x = 0, y = 0;
   for (const p of pts) { x += p.x; y += p.y; }
   return { x: x / pts.length, y: y / pts.length };
 }
 
+// a numbered pin used for both count-draft and stored count markers
+function drawCountMarker(p, num) {
+  const r = lw(7);
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+  ctx.fillStyle = '#38d39f';
+  ctx.fill();
+  ctx.lineWidth = lw(1.5);
+  ctx.strokeStyle = '#0f9d68';
+  ctx.stroke();
+  ctx.fillStyle = '#06371f';
+  ctx.font = `${lw(9)}px system-ui, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(String(num), p.x, p.y + lw(0.5));
+  ctx.textAlign = 'start';
+  ctx.textBaseline = 'alphabetic';
+}
+
 function drawTakeoffs() {
   if (!state.takeoffs || !state.takeoffs.length) return;
   for (const t of state.takeoffs) {
-    if (t.kind !== 'area' || !t.pts || t.pts.length < 3) continue;
-    ctx.beginPath();
-    t.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(56, 211, 159, 0.18)';
-    ctx.fill();
-    ctx.strokeStyle = '#38d39f';
-    ctx.lineWidth = lw(2);
-    ctx.stroke();
-    if (t.result) {
-      const c = polyCentroid(t.pts);
-      const q = `${fmt(t.result.quantity, t.result.unit === 'SF' ? 0 : 1)} ${t.result.unit}`;
-      labelAt(c.x, c.y, `${t.cfg.label}: ${q}`, '#0f9d68');
+    if (!t.pts || !t.pts.length) continue;
+    if (t.kind === 'count') {
+      t.pts.forEach((p, i) => drawCountMarker(p, i + 1));
+      const c = t.pts[0];
+      labelAt(c.x + lw(10), c.y - lw(10), `${t.cfg.label}: ${t.result.count} ${t.result.unit}`, '#0f9d68');
+      continue;
+    }
+    if (t.pts.length < 2) continue;
+    if (t.kind === 'area') {
+      if (t.pts.length < 3) continue;
+      ctx.beginPath();
+      t.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(56, 211, 159, 0.18)';
+      ctx.fill();
+      ctx.strokeStyle = '#38d39f';
+      ctx.lineWidth = lw(2);
+      ctx.stroke();
+      if (t.result) {
+        const c = polyCentroid(t.pts);
+        const q = `${fmt(t.result.quantity, t.result.unit === 'SF' ? 0 : 1)} ${t.result.unit}`;
+        labelAt(c.x, c.y, `${t.cfg.label}: ${q}`, '#0f9d68');
+      }
+    } else if (t.kind === 'line') {
+      ctx.beginPath();
+      t.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.strokeStyle = '#38d39f';
+      ctx.lineWidth = lw(3);
+      ctx.stroke();
+      ctx.fillStyle = '#38d39f';
+      for (const p of t.pts) { ctx.beginPath(); ctx.arc(p.x, p.y, lw(2.5), 0, Math.PI * 2); ctx.fill(); }
+      if (t.result) {
+        const mid = t.pts[Math.floor(t.pts.length / 2)];
+        const q = t.result.trench ? `${fmt(t.result.trenchCY, 0)} CY` : `${fmt(t.result.lengthFt)} ft`;
+        labelAt(mid.x, mid.y, `${t.cfg.label}: ${q}`, '#0f9d68');
+      }
     }
   }
+}
+
+function takeoffRowText(t) {
+  if (t.kind === 'count') {
+    return { headline: `${t.result.count} ${t.result.unit}`, sub: t.cfg.label };
+  }
+  if (t.kind === 'area') {
+    const strip = t.cfg.mode === 'strip';
+    return {
+      headline: `${fmt(t.result.quantity, t.result.unit === 'SF' ? 0 : 1)} ${t.result.unit}${strip ? ' strip' : ''}`,
+      sub: `${t.cfg.label} · ${fmt(t.result.areaSf)} sf${t.cfg.mode !== 'area' ? ` · ${t.cfg.thickness}"` : ''}` +
+        `${strip && t.result.netExportCY > 0 ? ` · ${fmt(t.result.netExportCY, 0)} CY export` : ''}`,
+    };
+  }
+  return {
+    headline: t.result.trench ? `${fmt(t.result.trenchCY, 1)} CY` : `${fmt(t.result.lengthFt)} ft`,
+    sub: `${t.cfg.label} · ${fmt(t.result.lengthFt)} ft${t.result.trench ? ' trench' : ''}` +
+      `${t.result.beddingCY ? ` · ${fmt(t.result.beddingCY, 1)} CY bed` : ''}`,
+  };
 }
 
 function renderTakeoffs() {
   const sec = $('secTakeoffs'), list = $('takeoffList');
   if (!sec || !list) return;
-  const areas = state.takeoffs.filter(t => t.kind === 'area');
-  if (!areas.length) { sec.classList.add('hidden'); draw(); return; }
+  const items = state.takeoffs || [];
+  if (!items.length) { sec.classList.add('hidden'); draw(); return; }
   sec.classList.remove('hidden');
-  const cnt = $('takeoffCount'); if (cnt) cnt.textContent = areas.length;
-  list.innerHTML = areas.map((t, i) => `
-    <div class="wall-row">
-      <div class="wall-row-main">
-        <b>${fmt(t.result.quantity, t.result.unit === 'SF' ? 0 : 1)} ${t.result.unit}</b>
-        <span>${t.cfg.label} · ${fmt(t.result.areaSf)} sf${t.cfg.mode !== 'area' ? ` · ${t.cfg.thickness}"` : ''}</span>
-      </div>
-      <button class="wall-del" data-i="${i}" title="Delete this takeoff">✕</button>
-    </div>`).join('');
+  const cnt = $('takeoffCount'); if (cnt) cnt.textContent = items.length;
+  list.innerHTML = items.map((t, i) => {
+    const { headline, sub } = takeoffRowText(t);
+    return `<div class="wall-row"><div class="wall-row-main"><b>${headline}</b><span>${sub}</span></div>` +
+      `<button class="wall-del" data-i="${i}" title="Delete this takeoff">✕</button></div>`;
+  }).join('');
   list.querySelectorAll('.wall-del').forEach(b => b.addEventListener('click', () => {
     snapshot();
-    const target = areas[parseInt(b.dataset.i, 10)];
-    const idx = state.takeoffs.indexOf(target);
-    if (idx >= 0) state.takeoffs.splice(idx, 1);
+    state.takeoffs.splice(parseInt(b.dataset.i, 10), 1);
     renderTakeoffs();
     saveLocal();
   }));
@@ -2990,6 +3256,7 @@ try {
       const now = [...document.querySelectorAll('#sidebar section.collapsed')]
         .map(s => s.id).filter(Boolean);
       try { localStorage.setItem(KEY, JSON.stringify(now)); } catch (_) { /* private mode */ }
+      draw(); // Scale/Boundary/Contours hide their viewport visuals when collapsed
     });
   });
 })();

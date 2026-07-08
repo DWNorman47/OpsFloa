@@ -46,6 +46,8 @@
     <button class="tool" data-tool="pad" title="Draw a building pad polygon; everything inside is held flat at one elevation (FF/FP pads). To edit a pad: drag a point (○), double-click an edge to add a point, Alt+click a point to remove it">▬ Pad</button>
     <button class="tool" data-tool="wall" title="Retaining-wall dig: click along the wall line; Enter or double-click to finish, then enter the trench cross-section. Depth can be a constant dig or measured down to a footing subgrade elevation off your traced Existing contours. Gives excavation & export CY.">▚ Wall</button>
     <button class="tool" data-tool="area" title="Area takeoff: click around an area (paving, base, concrete, seeding); Enter or double-click to close, then pick a material to get area (SF/SY), volume (CY), or weight (tons).">▦ Area</button>
+    <button class="tool" data-tool="line" title="Linear takeoff: click along a run (curb, pipe, silt fence); Enter or double-click to finish. Gives length in feet, plus optional trench excavation & bedding CY for pipe/utility runs.">╱ Line</button>
+    <button class="tool" data-tool="count" title="Count takeoff: click each item (catch basin, manhole, tree, sign, light pole…); Enter or double-click to finish, then name it. Gives an each (EA) tally that collects in the Quantities panel.">⊕ Count</button>
     <button class="tool" data-tool="select" title="Click a traced line (or its sidebar row) to select it; Delete removes, E edits elevation, Esc deselects">➤ Select</button>
     <button class="tool" data-tool="erase" title="Drag a box — the portions of traced lines inside it are erased; lines crossing the box are split. If a line is selected, only that line is trimmed">⌫ Erase Box</button>
     </div>
@@ -167,7 +169,7 @@
     <section id="secTakeoffs" class="hidden">
       <h3>Quantities <span class="pill" id="takeoffCount"></span></h3>
       <div id="takeoffList" class="list"></div>
-      <div class="hint">Area takeoffs (▦ Area) — paving, base, concrete, seeding. Quantities in area (SF/SY), volume (CY), or weight (tons).</div>
+      <div class="hint">Quantity takeoffs — ▦ Area (paving, base, concrete, topsoil strip), ╱ Line (curb, pipe/utility trench, fence), and ⊕ Count (structures, trees, signs). Area (SF/SY), volume (CY), weight (tons), length (LF), and each (EA).</div>
     </section>
   </aside>
 </main>
@@ -213,7 +215,9 @@
       <li><b>🪄 Auto Trace:</b> one click ON a line lifts the whole vector path (vector PDFs only — it will tell you if the page is a scan). Cancel the elevation prompt to discard a bad pick. With a boundary drawn, picks are trimmed to the boundary plus ~20 ft.</li>
       <li><b>▬ Pad editing</b> (Pad tool active): same gestures as the boundary — <b>drag a point (○)</b>, <b>double-click an edge</b> to add, <b>Alt+click</b> to remove. Enter the pad/subgrade elevation (often FF minus slab &amp; base), not the finished floor. Select a pad by clicking anywhere inside it.</li>
       <li><b>▚ Wall (retaining-wall dig):</b> click along the wall line · <b>Enter</b>/double-click finishes · then enter the trench cross-section (bottom width, side slope, and either a constant depth or a footing subgrade elevation read off your Existing contours). You get excavation and export CY per wall in the sidebar. Or use <b>📐 Wall Dig</b> in the toolbar for a quick estimate with no plans.</li>
-      <li><b>▦ Area (quantity takeoff):</b> click around an area — paving, aggregate base, concrete, gravel, seeding · <b>Enter</b>/double-click closes it · then pick a material preset or set the output (area SF/SY, volume CY, or weight tons) and a thickness. Quantities collect in the <b>Quantities</b> sidebar panel.</li>
+      <li><b>▦ Area (quantity takeoff):</b> click around an area — paving, aggregate base, concrete, gravel, seeding · <b>Enter</b>/double-click closes it · then pick a material preset or set the output (area SF/SY, volume CY, or weight tons) and a thickness. Choose <b>Topsoil strip</b> for strip volume with swell and optional respread → net export CY. Quantities collect in the <b>Quantities</b> sidebar panel.</li>
+      <li><b>╱ Line (linear takeoff):</b> click along a run — curb, pipe/utility, silt fence, sawcut, fence · <b>Enter</b>/double-click finishes · gives length in feet. Tick <b>Trench cross-section</b> (pipe/utility) for excavation-spoil CY plus aggregate-bedding CY. Collects in the <b>Quantities</b> panel.</li>
+      <li><b>⊕ Count (count takeoff):</b> click each item — catch basins, manholes, trees, signs, light poles · <b>Enter</b>/double-click finishes · then name it. Gives an each (EA) tally in the <b>Quantities</b> panel.</li>
       <li><b>📐 Measure</b> (Scale section, sidebar): click two points to read the straight-line distance in feet — it doesn't change the scale, just a quick readout. A closed <b>▱ Boundary</b> also shows its perimeter and acreage in the Boundary section.</li>
       <li><b>➤ Select:</b> click a line (or its row in the sidebar list) · <b>Delete</b> removes it · <b>E</b> edits its elevation · <b>Esc</b> deselects. The sidebar list's ✕ also deletes.</li>
       <li><b>⌫ Erase Box:</b> drag a box — only the line <em>portions</em> inside are erased; lines crossing the box are split and the outside parts survive. <b>With a line selected, only that line is trimmed.</b> Spots inside are removed; pads are only removed when fully boxed.</li>
@@ -335,15 +339,84 @@
           <option value="area">Area (SF / SY)</option>
           <option value="cy">Volume (CY)</option>
           <option value="tons">Weight (tons)</option>
+          <option value="strip">Topsoil strip (CY)</option>
         </select>
       </label>
-      <label id="atThickWrap">Thickness (in)<input type="number" id="atThick" min="0" step="0.5" value="4"></label>
+      <label id="atThickWrap"><span id="atThickLbl">Thickness (in)</span><input type="number" id="atThick" min="0" step="0.5" value="4"></label>
       <label id="atDensityWrap" title="Compacted unit weight — asphalt ≈ 145, aggregate base ≈ 135 lb/ft³">Density (lb/ft³)<input type="number" id="atDensity" min="0" step="1" value="145"></label>
+      <label id="atSwellWrap" title="Bulking / swell of stripped topsoil once loosened for hauling. Topsoil ≈ 20–25%.">Swell (%)<input type="number" id="atSwell" min="0" step="1" value="25"></label>
+      <label id="atRespreadWrap" title="Depth of topsoil respread back over the area at finish grade. 0 = haul all off.">Respread (in)<input type="number" id="atRespread" min="0" step="0.5" value="0"></label>
     </div>
     <div id="atResult" class="wall-result"></div>
     <div class="modal-actions">
       <button id="atCancel" class="btn">Cancel</button>
       <button id="atOk" class="btn primary">Add takeoff</button>
+    </div>
+  </div>
+</div>
+
+<!-- Linear takeoff config (shown after finishing a line) -->
+<div id="lineTakeoff" class="modal hidden">
+  <div class="modal-box wide">
+    <h3>Linear takeoff</h3>
+    <div class="hint">Length of the line you traced (<span id="ltLen">—</span>). Add a trench cross-section for pipe/utility runs to get excavation &amp; bedding CY.</div>
+    <div class="preset-row" id="ltPresets">
+      <button type="button" class="btn tiny" data-preset="curb">Curb</button>
+      <button type="button" class="btn tiny" data-preset="pipe">Pipe trench</button>
+      <button type="button" class="btn tiny" data-preset="silt">Silt fence</button>
+      <button type="button" class="btn tiny" data-preset="sawcut">Sawcut</button>
+      <button type="button" class="btn tiny" data-preset="fence">Fence</button>
+      <button type="button" class="btn tiny" data-preset="lineonly">Line only</button>
+    </div>
+    <div class="wall-grid">
+      <label>Material / label<input type="text" id="ltLabel" value="Line" maxlength="40"></label>
+    </div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:8px 0;">
+      <input type="checkbox" id="ltTrench"> Trench cross-section (pipe / utility)
+    </label>
+    <div class="wall-grid" id="ltTrenchFields">
+      <label>Trench bottom width (ft)<input type="number" id="ltWidth" min="0" step="0.5" value="3"></label>
+      <label>Depth (ft)<input type="number" id="ltDepth" min="0" step="0.5" value="5"></label>
+      <label title="Backcut of the trench sides (H per 1 V). 0 = vertical / shored.">Side slope (H:V)
+        <select id="ltSlope">
+          <option value="0">Vertical / shored (0)</option>
+          <option value="0.5">½ : 1</option>
+          <option value="1">1 : 1</option>
+          <option value="1.5">1½ : 1</option>
+        </select>
+      </label>
+      <label title="Aggregate bedding under the pipe (import). 0 to skip.">Bedding (in)<input type="number" id="ltBedding" min="0" step="1" value="6"></label>
+    </div>
+    <div id="ltResult" class="wall-result"></div>
+    <div class="modal-actions">
+      <button id="ltCancel" class="btn">Cancel</button>
+      <button id="ltOk" class="btn primary">Add takeoff</button>
+    </div>
+  </div>
+</div>
+
+<!-- Count takeoff config (shown after finishing a count) -->
+<div id="countTakeoff" class="modal hidden">
+  <div class="modal-box wide">
+    <h3>Count takeoff</h3>
+    <div class="hint">You dropped <span id="ctN">—</span>. Name what you're counting.</div>
+    <div class="preset-row" id="ctPresets">
+      <button type="button" class="btn tiny" data-preset="catchbasin">Catch basin</button>
+      <button type="button" class="btn tiny" data-preset="manhole">Manhole</button>
+      <button type="button" class="btn tiny" data-preset="tree">Tree</button>
+      <button type="button" class="btn tiny" data-preset="sign">Sign</button>
+      <button type="button" class="btn tiny" data-preset="light">Light pole</button>
+      <button type="button" class="btn tiny" data-preset="bollard">Bollard</button>
+      <button type="button" class="btn tiny" data-preset="itemonly">Item</button>
+    </div>
+    <div class="wall-grid">
+      <label>Item / label<input type="text" id="ctLabel" value="Item" maxlength="40"></label>
+      <label>Unit<input type="text" id="ctUnit" value="EA" maxlength="8"></label>
+    </div>
+    <div id="ctResult" class="wall-result"></div>
+    <div class="modal-actions">
+      <button id="ctCancel" class="btn">Cancel</button>
+      <button id="ctOk" class="btn primary">Add takeoff</button>
     </div>
   </div>
 </div>
