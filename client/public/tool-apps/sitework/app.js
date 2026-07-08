@@ -54,6 +54,7 @@ const state = {
   dragCal: null,           // 'a' | 'b' while dragging a calibration endpoint
   dragBnd: null,           // boundary vertex index while dragging (-1 = click consumed)
   dragPad: null,           // { ci, vi } pad vertex while dragging (-1 = click consumed)
+  dragSel: null,           // selected-contour vertex index while dragging (-1 = click consumed)
   dragDraft: null,         // draft vertex index while tracing before commit
   wandPts: null,           // highlighted auto-traced polyline awaiting an elevation
   boxA: null, boxB: null,  // erase-box drag corners (world px)
@@ -587,8 +588,8 @@ function drawContour(c, sheet, selected) {
     const cx2 = c.pts.reduce((s, p) => s + p.x, 0) / c.pts.length;
     const cy2 = c.pts.reduce((s, p) => s + p.y, 0) / c.pts.length;
     labelAt(cx2, cy2, `PAD ${c.elev}`, col);
-    // editable vertex handles while the Pad tool is active
-    if (state.tool === 'pad' && !state.draft.length && sheet === state.sheet) {
+    // editable vertex handles while the Pad tool is active, or when selected
+    if ((state.tool === 'pad' || (selected && state.tool === 'select')) && !state.draft.length && sheet === state.sheet) {
       for (const p of c.pts) {
         ctx.beginPath();
         ctx.arc(p.x, p.y, lw(8), 0, Math.PI * 2);
@@ -614,6 +615,11 @@ function drawContour(c, sheet, selected) {
   c.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
   ctx.stroke();
   ctx.setLineDash([]);
+
+  // draggable vertex handles when this contour is selected (Select tool)
+  if (selected && state.tool === 'select' && sheet === state.sheet) {
+    for (const p of c.pts) { ctx.beginPath(); ctx.arc(p.x, p.y, lw(7), 0, Math.PI * 2); ctx.stroke(); }
+  }
 
   const mid = c.pts[Math.floor(c.pts.length / 2)];
   labelAt(mid.x, mid.y - lw(8), String(c.elev), col);
@@ -751,7 +757,9 @@ function updateHud() {
       : state.contours[state.sheet].some(c => c.pad)
         ? 'Click around a new pad — or edit one: drag a point (○) · double-click an edge to add a point · Alt+click removes'
         : 'Click around the building pad footprint — everything inside is held flat at one elevation',
-    select: 'Click a line to select · Delete removes · E edits elevation',
+    select: state.selected
+      ? 'Reshape: drag a point (○) · double-click an edge to add a point · Alt+click removes · Delete removes the line · E edits elevation'
+      : 'Click a line to select it, then drag its points (○) to reshape · Delete removes · E edits elevation',
     erase: state.selected && state.selected.sheet === state.sheet
       ? 'Drag a box — erases only from the SELECTED line · Esc deselects to erase from all lines'
       : 'Drag a box — traced line portions inside it are erased (lines crossing it are split)',
@@ -784,6 +792,7 @@ function setTool(t) {
   state.wandPts = null;
   state.boxA = state.boxB = null;
   state.dragDraft = null;
+  state.dragSel = null;
   document.querySelectorAll('.tool').forEach(b =>
     b.classList.toggle('active', b.dataset.tool === t));
   cv.classList.toggle('crosshair', t !== 'pan');
@@ -899,6 +908,30 @@ cv.addEventListener('mousedown', e => {
     }
   }
 
+  // with the Select tool, grabbing a vertex of the selected contour reshapes it
+  if (!state.mouse.panning && e.button === 0 && state.tool === 'select' &&
+      state.selected && state.selected.sheet === state.sheet && !state.draft.length) {
+    const c = state.contours[state.sheet][state.selected.index];
+    if (c) {
+      const w = screenToWorld(state.mouse.sx, state.mouse.sy);
+      const thresh = 12 / state.view.zoom;
+      let hit = -1, hd = thresh;
+      c.pts.forEach((p, i) => { const d = dist(w.x, w.y, p.x, p.y); if (d < hd) { hd = d; hit = i; } });
+      if (hit >= 0) {
+        const isSpot = c.spot || c.pts.length === 1;
+        const min = c.pad ? 3 : 2;
+        if (e.altKey && !isSpot) {
+          if (c.pts.length > min) {
+            snapshot();
+            c.pts.splice(hit, 1);
+            padEdited('Contour point removed.');
+          } else setMsg(`This shape needs at least ${min} points — use Delete to remove the whole contour.`);
+          state.dragSel = -1; // consume the coming click
+        } else { state.dragSel = hit; pendingSnap = takeSnap(); }
+      }
+    }
+  }
+
   // with the Scale tool, grabbing an existing endpoint drags it instead of re-clicking
   if (!state.mouse.panning && e.button === 0 && state.tool === 'calibrate' &&
       state.calibration && !state.calibPts.length) {
@@ -933,6 +966,11 @@ cv.addEventListener('mousemove', e => {
     if (state.dragPad !== null && typeof state.dragPad === 'object') {
       const w = screenToWorld(x, y);
       state.contours[state.sheet][state.dragPad.ci].pts[state.dragPad.vi] = { x: w.x, y: w.y };
+    }
+    if (state.dragSel !== null && state.dragSel >= 0 && state.selected) {
+      const w = screenToWorld(x, y);
+      const c = state.contours[state.selected.sheet][state.selected.index];
+      if (c) c.pts[state.dragSel] = { x: w.x, y: w.y };
     }
     if (state.dragCal) {
       const w = screenToWorld(x, y);
@@ -990,6 +1028,17 @@ cv.addEventListener('mouseup', e => {
     draw();
     return;
   }
+  if (state.dragSel !== null) {
+    const didMove = state.dragSel >= 0 && moved;
+    state.dragSel = null;
+    if (didMove) {
+      if (pendingSnap) pushSnap(pendingSnap);
+      padEdited('Contour point moved.');
+    }
+    pendingSnap = null;
+    draw();
+    return;
+  }
   if (state.dragCal) {
     state.dragCal = null;
     if (moved && pendingSnap) pushSnap(pendingSnap);
@@ -1040,6 +1089,22 @@ cv.addEventListener('dblclick', e => {
       state.boundary.splice(hit.i + 1, 0, hit.p);
       boundaryEdited('Boundary point added — drag it into place.');
       draw();
+    }
+    return;
+  }
+  // double-click an edge of the selected contour inserts a vertex there
+  if (state.tool === 'select' && state.selected && state.selected.sheet === state.sheet) {
+    const c = state.contours[state.sheet][state.selected.index];
+    if (c && !c.spot && c.pts.length >= 2) {
+      const r = cv.getBoundingClientRect();
+      const w = screenToWorld(e.clientX - r.left, e.clientY - r.top);
+      const hit = nearestContourEdge(c, w, 10 / state.view.zoom);
+      if (hit) {
+        snapshot();
+        c.pts.splice(hit.i + 1, 0, hit.p);
+        padEdited('Contour point added — drag it into place.');
+        draw();
+      }
     }
     return;
   }
@@ -1278,6 +1343,23 @@ function nearestPadEdge(w, thresh) {
   return best;
 }
 
+// closest point on a contour's edges within thresh, or null (open trace vs closed pad)
+function nearestContourEdge(c, w, thresh) {
+  const P = c.pts, n = c.pad ? P.length : P.length - 1;
+  let best = null, bd = thresh;
+  for (let i = 0; i < n; i++) {
+    const a = P[i], b = P[(i + 1) % P.length];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    let t = len2 ? ((w.x - a.x) * dx + (w.y - a.y) * dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const px = a.x + t * dx, py = a.y + t * dy;
+    const d = dist(w.x, w.y, px, py);
+    if (d < bd) { bd = d; best = { i, p: { x: px, y: py } }; }
+  }
+  return best;
+}
+
 // closest point on the closed boundary within thresh, or null
 function nearestBoundaryEdge(w, thresh) {
   const B = state.boundary;
@@ -1456,6 +1538,7 @@ function restoreSnap(s) {
   state.alignPts = []; state.alignQs = [];
   state.wandPts = null;
   state.dragDraft = null;
+  state.dragSel = null;
   state.realignPts = [];
   state.boxA = state.boxB = null;
   state.result = null;
