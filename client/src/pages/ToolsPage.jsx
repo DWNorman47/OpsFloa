@@ -6,6 +6,7 @@ import { PageIntro, PageSection, PageShell } from '../components/PageShell';
 import TabBar from '../components/TabBar';
 import TranscriptionTool from '../components/TranscriptionTool';
 import SummarizerTool from '../components/SummarizerTool';
+import DocQATool from '../components/DocQATool';
 
 const SITEWORK_TOOL_URL = '/tool-apps/sitework/index.html';
 const PDFTOOLS_TOOL_URL = '/tool-apps/pdftools/index.html';
@@ -67,7 +68,7 @@ export default function ToolsPage() {
         kicker="Tools"
         title="Useful calculators and work helpers"
         description="Keep specialized utilities close by without crowding the daily workflow. Tools open separately so the main app stays right where you left it."
-        meta={<span className="ops-pill accent">4 tools available</span>}
+        meta={<span className="ops-pill accent">5 tools available</span>}
       />
 
       <TabBar
@@ -77,6 +78,7 @@ export default function ToolsPage() {
           { id: 'sitework', label: 'Sitework Takeoff' },
           { id: 'transcription', label: 'Transcription' },
           { id: 'summarizer', label: 'Summarizer' },
+          { id: 'docqa', label: 'Doc Q&A' },
           { id: 'pdftools', label: 'PDF Toolkit' },
         ]}
         ariaLabel="Tools sections"
@@ -128,6 +130,16 @@ export default function ToolsPage() {
           description="Paste a transcript or notes and get a clean summary with key points and action items. Pairs with the transcription tool."
         >
           <SummarizerTool />
+        </PageSection>
+      )}
+
+      {tab === 'docqa' && (
+        <PageSection
+          eyebrow="Office"
+          title="Document Q&A"
+          description="Open a contract, spec, or insurance cert and ask questions about it — answers come only from the document. Great for the dense paperwork you don't have time to read."
+        >
+          <DocQATool />
         </PageSection>
       )}
 
