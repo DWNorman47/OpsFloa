@@ -54,6 +54,7 @@ const state = {
   dragCal: null,           // 'a' | 'b' while dragging a calibration endpoint
   dragBnd: null,           // boundary vertex index while dragging (-1 = click consumed)
   dragPad: null,           // { ci, vi } pad vertex while dragging (-1 = click consumed)
+  dragSel: null,           // selected-contour vertex index while dragging (-1 = click consumed)
   dragDraft: null,         // draft vertex index while tracing before commit
   wandPts: null,           // highlighted auto-traced polyline awaiting an elevation
   boxA: null, boxB: null,  // erase-box drag corners (world px)
@@ -425,12 +426,17 @@ function fitView() {
 
 // Edge/corner jump pads — pan a third of a screen without dragging. dx=+1 is
 // right, dy=+1 is down; decreasing pan reveals content in that direction.
-document.querySelectorAll('.nav-pad').forEach(b => b.addEventListener('click', () => {
-  const dx = parseInt(b.dataset.dx, 10), dy = parseInt(b.dataset.dy, 10);
+const PAN_STEP = 0.12; // arrow-key pan step, as a fraction of the viewport
+// pan by a fraction of the viewport (dx/dy in screen fractions; + = reveal that side)
+function panBy(dxFrac, dyFrac) {
   const r = cv.parentElement.getBoundingClientRect();
-  state.view.panX -= dx * r.width / 3;
-  state.view.panY -= dy * r.height / 3;
+  state.view.panX -= dxFrac * r.width;
+  state.view.panY -= dyFrac * r.height;
   draw();
+}
+
+document.querySelectorAll('.nav-pad').forEach(b => b.addEventListener('click', () => {
+  panBy(parseInt(b.dataset.dx, 10) / 3, parseInt(b.dataset.dy, 10) / 3);
 }));
 
 // Show the pads only when zoomed in past ~70% (less than 70% of the plan is on
@@ -582,8 +588,8 @@ function drawContour(c, sheet, selected) {
     const cx2 = c.pts.reduce((s, p) => s + p.x, 0) / c.pts.length;
     const cy2 = c.pts.reduce((s, p) => s + p.y, 0) / c.pts.length;
     labelAt(cx2, cy2, `PAD ${c.elev}`, col);
-    // editable vertex handles while the Pad tool is active
-    if (state.tool === 'pad' && !state.draft.length && sheet === state.sheet) {
+    // editable vertex handles while the Pad tool is active, or when selected
+    if ((state.tool === 'pad' || (selected && state.tool === 'select')) && !state.draft.length && sheet === state.sheet) {
       for (const p of c.pts) {
         ctx.beginPath();
         ctx.arc(p.x, p.y, lw(8), 0, Math.PI * 2);
@@ -609,6 +615,11 @@ function drawContour(c, sheet, selected) {
   c.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
   ctx.stroke();
   ctx.setLineDash([]);
+
+  // draggable vertex handles when this contour is selected (Select tool)
+  if (selected && state.tool === 'select' && sheet === state.sheet) {
+    for (const p of c.pts) { ctx.beginPath(); ctx.arc(p.x, p.y, lw(7), 0, Math.PI * 2); ctx.stroke(); }
+  }
 
   const mid = c.pts[Math.floor(c.pts.length / 2)];
   labelAt(mid.x, mid.y - lw(8), String(c.elev), col);
@@ -746,7 +757,9 @@ function updateHud() {
       : state.contours[state.sheet].some(c => c.pad)
         ? 'Click around a new pad — or edit one: drag a point (○) · double-click an edge to add a point · Alt+click removes'
         : 'Click around the building pad footprint — everything inside is held flat at one elevation',
-    select: 'Click a line to select · Delete removes · E edits elevation',
+    select: state.selected
+      ? 'Reshape: drag a point (○) · double-click an edge to add a point · Alt+click removes · Delete removes the line · E edits elevation'
+      : 'Click a line to select it, then drag its points (○) to reshape · Delete removes · E edits elevation',
     erase: state.selected && state.selected.sheet === state.sheet
       ? 'Drag a box — erases only from the SELECTED line · Esc deselects to erase from all lines'
       : 'Drag a box — traced line portions inside it are erased (lines crossing it are split)',
@@ -779,6 +792,7 @@ function setTool(t) {
   state.wandPts = null;
   state.boxA = state.boxB = null;
   state.dragDraft = null;
+  state.dragSel = null;
   document.querySelectorAll('.tool').forEach(b =>
     b.classList.toggle('active', b.dataset.tool === t));
   cv.classList.toggle('crosshair', t !== 'pan');
@@ -894,6 +908,30 @@ cv.addEventListener('mousedown', e => {
     }
   }
 
+  // with the Select tool, grabbing a vertex of the selected contour reshapes it
+  if (!state.mouse.panning && e.button === 0 && state.tool === 'select' &&
+      state.selected && state.selected.sheet === state.sheet && !state.draft.length) {
+    const c = state.contours[state.sheet][state.selected.index];
+    if (c) {
+      const w = screenToWorld(state.mouse.sx, state.mouse.sy);
+      const thresh = 12 / state.view.zoom;
+      let hit = -1, hd = thresh;
+      c.pts.forEach((p, i) => { const d = dist(w.x, w.y, p.x, p.y); if (d < hd) { hd = d; hit = i; } });
+      if (hit >= 0) {
+        const isSpot = c.spot || c.pts.length === 1;
+        const min = c.pad ? 3 : 2;
+        if (e.altKey && !isSpot) {
+          if (c.pts.length > min) {
+            snapshot();
+            c.pts.splice(hit, 1);
+            padEdited('Contour point removed.');
+          } else setMsg(`This shape needs at least ${min} points — use Delete to remove the whole contour.`);
+          state.dragSel = -1; // consume the coming click
+        } else { state.dragSel = hit; pendingSnap = takeSnap(); }
+      }
+    }
+  }
+
   // with the Scale tool, grabbing an existing endpoint drags it instead of re-clicking
   if (!state.mouse.panning && e.button === 0 && state.tool === 'calibrate' &&
       state.calibration && !state.calibPts.length) {
@@ -928,6 +966,11 @@ cv.addEventListener('mousemove', e => {
     if (state.dragPad !== null && typeof state.dragPad === 'object') {
       const w = screenToWorld(x, y);
       state.contours[state.sheet][state.dragPad.ci].pts[state.dragPad.vi] = { x: w.x, y: w.y };
+    }
+    if (state.dragSel !== null && state.dragSel >= 0 && state.selected) {
+      const w = screenToWorld(x, y);
+      const c = state.contours[state.selected.sheet][state.selected.index];
+      if (c) c.pts[state.dragSel] = { x: w.x, y: w.y };
     }
     if (state.dragCal) {
       const w = screenToWorld(x, y);
@@ -980,6 +1023,17 @@ cv.addEventListener('mouseup', e => {
     if (moved2) {
       if (pendingSnap) pushSnap(pendingSnap);
       boundaryEdited('Boundary point moved.');
+    }
+    pendingSnap = null;
+    draw();
+    return;
+  }
+  if (state.dragSel !== null) {
+    const didMove = state.dragSel >= 0 && moved;
+    state.dragSel = null;
+    if (didMove) {
+      if (pendingSnap) pushSnap(pendingSnap);
+      padEdited('Contour point moved.');
     }
     pendingSnap = null;
     draw();
@@ -1038,6 +1092,22 @@ cv.addEventListener('dblclick', e => {
     }
     return;
   }
+  // double-click an edge of the selected contour inserts a vertex there
+  if (state.tool === 'select' && state.selected && state.selected.sheet === state.sheet) {
+    const c = state.contours[state.sheet][state.selected.index];
+    if (c && !c.spot && c.pts.length >= 2) {
+      const r = cv.getBoundingClientRect();
+      const w = screenToWorld(e.clientX - r.left, e.clientY - r.top);
+      const hit = nearestContourEdge(c, w, 10 / state.view.zoom);
+      if (hit) {
+        snapshot();
+        c.pts.splice(hit.i + 1, 0, hit.p);
+        padEdited('Contour point added — drag it into place.');
+        draw();
+      }
+    }
+    return;
+  }
   // dblclick fires after two click-adds; drop the duplicate vertex
   if ((state.tool === 'trace' || state.tool === 'boundary' || state.tool === 'pad' || state.tool === 'count') &&
       state.draft.length > 1)
@@ -1073,19 +1143,19 @@ async function handleClick(w) {
       break;
     }
     case 'trace':
-      state.draft.push(w);
+      addDraftPoint(w);
       break;
     case 'wall':
-      state.draft.push(w);
+      addDraftPoint(w);
       break;
     case 'area':
-      state.draft.push(w);
+      addDraftPoint(w);
       break;
     case 'line':
-      state.draft.push(w);
+      addDraftPoint(w);
       break;
     case 'count':
-      state.draft.push(w);
+      addDraftPoint(w);
       setMsg(`${state.draft.length} dropped — keep clicking items, Enter/double-click to finish.`);
       break;
     case 'measure': {
@@ -1115,7 +1185,7 @@ async function handleClick(w) {
         setMsg('Double-click the pad edge to add a point · drag a point (○) to move it · Alt+click removes it. Click away from pads to draw a new one.');
         break;
       }
-      state.draft.push(w);
+      addDraftPoint(w);
       break;
     case 'boundary':
       // clicks on the existing polygon edit it rather than starting a redraw
@@ -1124,7 +1194,7 @@ async function handleClick(w) {
         setMsg('Double-click the edge to add a point · drag a point (○) to move it · Alt+click a point removes it. Click away from the boundary to redraw it.');
         break;
       }
-      state.draft.push(w);
+      addDraftPoint(w);
       break;
     case 'wand':
       await wandPick(w);
@@ -1273,6 +1343,23 @@ function nearestPadEdge(w, thresh) {
   return best;
 }
 
+// closest point on a contour's edges within thresh, or null (open trace vs closed pad)
+function nearestContourEdge(c, w, thresh) {
+  const P = c.pts, n = c.pad ? P.length : P.length - 1;
+  let best = null, bd = thresh;
+  for (let i = 0; i < n; i++) {
+    const a = P[i], b = P[(i + 1) % P.length];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    let t = len2 ? ((w.x - a.x) * dx + (w.y - a.y) * dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const px = a.x + t * dx, py = a.y + t * dy;
+    const d = dist(w.x, w.y, px, py);
+    if (d < bd) { bd = d; best = { i, p: { x: px, y: py } }; }
+  }
+  return best;
+}
+
 // closest point on the closed boundary within thresh, or null
 function nearestBoundaryEdge(w, thresh) {
   const B = state.boundary;
@@ -1291,9 +1378,11 @@ function nearestBoundaryEdge(w, thresh) {
 }
 
 async function finishDraftIfAny(commit) {
+  draftRedo.length = 0;  // finishing or abandoning a shape ends its draft-redo chain
   if (!state.draft.length) { return; }
   const pts = state.draft;
   state.draft = [];
+  updateUndoButtons(); // draft consumed; commit branches push the single shape snapshot
 
   if (!commit) { draw(); return; }
 
@@ -1399,6 +1488,7 @@ async function finishDraftIfAny(commit) {
 
 const undoStack = [];
 const redoStack = [];
+const draftRedo = [];   // points undone mid-draw, so redo can re-add them within the same shape
 let pendingSnap = null; // pre-drag state, pushed only if the drag actually moved
 
 function takeSnap() {
@@ -1414,12 +1504,24 @@ function takeSnap() {
   });
 }
 
+function updateUndoButtons() {
+  els.btnUndo.disabled = !(state.draft.length || undoStack.length);
+  els.btnRedo.disabled = !(draftRedo.length || (redoStack.length && !state.draft.length));
+}
+
+// a point placed while drawing is undoable (Ctrl+Z / Undo / Backspace) but never
+// enters the geometry undo stack — so finishing the shape leaves exactly one undo
+function addDraftPoint(w) {
+  draftRedo.length = 0;   // a fresh point invalidates the draft-redo chain
+  state.draft.push(w);
+  updateUndoButtons();
+}
+
 function pushSnap(s) {
   undoStack.push(s);
   if (undoStack.length > 50) undoStack.shift();
-  els.btnUndo.disabled = false;
   redoStack.length = 0;
-  els.btnRedo.disabled = true;
+  updateUndoButtons();
 }
 
 function snapshot() { pushSnap(takeSnap()); }
@@ -1439,6 +1541,7 @@ function restoreSnap(s) {
   state.alignPts = []; state.alignQs = [];
   state.wandPts = null;
   state.dragDraft = null;
+  state.dragSel = null;
   state.realignPts = [];
   state.boxA = state.boxB = null;
   state.result = null;
@@ -1453,22 +1556,36 @@ function restoreSnap(s) {
 }
 
 function undo() {
+  if (state.draft.length) {                 // undo point-by-point while still drawing
+    draftRedo.push(state.draft.pop());
+    updateUndoButtons();
+    setMsg(state.draft.length ? `Point removed — ${state.draft.length} placed.` : 'Points cleared.');
+    draw();
+    return;
+  }
+  draftRedo.length = 0;                      // undoing committed history ends the draft-redo chain
   if (!undoStack.length) return;
   redoStack.push(takeSnap());
   if (redoStack.length > 50) redoStack.shift();
   restoreSnap(undoStack.pop());
-  els.btnUndo.disabled = !undoStack.length;
-  els.btnRedo.disabled = false;
+  updateUndoButtons();
   setMsg(`Undone.${undoStack.length ? ` ${undoStack.length} more step${undoStack.length === 1 ? '' : 's'} available.` : ''}`);
 }
 
 function redo() {
+  if (draftRedo.length) {                    // re-add a point undone while drawing
+    state.draft.push(draftRedo.pop());
+    updateUndoButtons();
+    setMsg(`Point restored — ${state.draft.length} placed.`);
+    draw();
+    return;
+  }
+  if (state.draft.length) return;           // drafting but nothing to redo → don't clobber the draft
   if (!redoStack.length) return;
   undoStack.push(takeSnap());
   if (undoStack.length > 50) undoStack.shift();
   restoreSnap(redoStack.pop());
-  els.btnUndo.disabled = false;
-  els.btnRedo.disabled = !redoStack.length;
+  updateUndoButtons();
   setMsg(`Redone.${redoStack.length ? ` ${redoStack.length} more step${redoStack.length === 1 ? '' : 's'} available.` : ''}`);
 }
 
@@ -1854,15 +1971,16 @@ window.addEventListener('keydown', e => {
       } else finishDraftIfAny(true);
       break;
     case 'Escape':
-      state.draft = []; state.calibPts = [];
+      state.draft = []; draftRedo.length = 0; state.calibPts = [];
       state.measurePts = [];
       state.boxA = state.boxB = null;
       if (state.selected) { state.selected = null; refreshContourList(); }
       if (state.tool === 'align' || state.tool === 'realign' || state.tool === 'measure') setTool('pan');
       else { state.alignPts = []; state.alignQs = []; }
+      updateUndoButtons(); // draft may have been cleared
       draw(); break;
     case 'Backspace':
-      if (state.draft.length) { state.draft.pop(); draw(); e.preventDefault(); }
+      if (state.draft.length) { undo(); e.preventDefault(); } // same as Ctrl+Z: drop the last point
       break;
     case 'Delete':
       deleteSelected(); break;
@@ -1874,6 +1992,10 @@ window.addEventListener('keydown', e => {
     case 'p': case 'P': setTool('pad'); break;
     case 'v': case 'V': setTool('select'); break;
     case 'b': case 'B': setTool('boundary'); break;
+    case 'ArrowUp':    panBy(0, -PAN_STEP); e.preventDefault(); break;
+    case 'ArrowDown':  panBy(0,  PAN_STEP); e.preventDefault(); break;
+    case 'ArrowLeft':  panBy(-PAN_STEP, 0); e.preventDefault(); break;
+    case 'ArrowRight': panBy( PAN_STEP, 0); e.preventDefault(); break;
     case ' ': break;
   }
 });
