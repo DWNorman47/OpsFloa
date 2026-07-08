@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import api from '../api';
+import AiUsageBadge from './AiUsageBadge';
 
 const TONES = ['Professional', 'Friendly', 'Firm', 'Brief', 'Apologetic'];
 
@@ -10,12 +11,14 @@ export default function EmailDrafterTool() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [usageRefresh, setUsageRefresh] = useState(0);
 
   const run = async () => {
     setError(''); setResult(''); setLoading(true);
     try {
       const { data } = await api.post('/office/draft-email', { points, tone }, { suppressToast: true });
       setResult(data.result || '');
+      setUsageRefresh(n => n + 1);
     } catch (e) {
       setError(e?.response?.data?.error || 'Could not draft the message. Please try again.');
     } finally {
@@ -29,6 +32,7 @@ export default function EmailDrafterTool() {
 
   return (
     <div>
+      <AiUsageBadge refreshSignal={usageRefresh} />
       <p style={styles.hint}>
         Jot a few notes about what the message should say — a payment reminder, a running-late text,
         a quote follow-up — and get a polished draft you can tweak and send.

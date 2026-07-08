@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import api from '../api';
+import AiUsageBadge from './AiUsageBadge';
 
 // small, safe markdown-lite renderer (React escapes text, so no injection)
 function inline(text, k) {
@@ -38,6 +39,7 @@ export default function DocQATool() {
   const [thread, setThread] = useState([]); // [{ q, a }]
   const [asking, setAsking] = useState(false);
   const [error, setError] = useState('');
+  const [usageRefresh, setUsageRefresh] = useState(0);
 
   const openFile = async file => {
     if (!file) return;
@@ -61,6 +63,7 @@ export default function DocQATool() {
     try {
       const { data } = await api.post('/office/ask', { context: doc.text, question: query }, { suppressToast: true });
       setThread(t => [...t, { q: query, a: data.result || '' }]);
+      setUsageRefresh(n => n + 1);
     } catch (e) {
       setError(e?.response?.data?.error || 'The question failed. Please try again.');
       setQuestion(query); // don't lose what they typed
@@ -73,6 +76,7 @@ export default function DocQATool() {
 
   return (
     <div>
+      <AiUsageBadge refreshSignal={usageRefresh} />
       <p style={styles.hint}>
         Open a text-based PDF — a subcontract, spec section, or insurance cert — and ask questions
         about it, or get a plain-English summary. Answers come only from the document.

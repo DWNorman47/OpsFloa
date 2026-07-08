@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import api from '../api';
+import AiUsageBadge from './AiUsageBadge';
 
 // render **bold** spans safely (React escapes the text, so no injection risk)
 function inline(text, keyBase) {
@@ -33,6 +34,7 @@ export default function SummarizerTool() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [usageRefresh, setUsageRefresh] = useState(0);
 
   const run = async () => {
     setError(''); setResult(''); setLoading(true);
@@ -40,6 +42,7 @@ export default function SummarizerTool() {
       const { data } = await api.post('/office/summarize', { text }, { suppressToast: true });
       setResult(data.result || '');
       setClipped(!!data.clipped);
+      setUsageRefresh(n => n + 1);
     } catch (e) {
       setError(e?.response?.data?.error || 'Could not summarize. Please try again.');
     } finally {
@@ -55,6 +58,7 @@ export default function SummarizerTool() {
 
   return (
     <div>
+      <AiUsageBadge refreshSignal={usageRefresh} />
       <p style={styles.hint}>
         Paste a call or meeting transcript, rough notes, or a message thread and get back a clean
         summary with key points and action items. Nothing is stored — the text is sent only to
