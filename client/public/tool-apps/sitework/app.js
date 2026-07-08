@@ -1378,6 +1378,7 @@ function nearestBoundaryEdge(w, thresh) {
 }
 
 async function finishDraftIfAny(commit) {
+  draftRedo.length = 0;  // finishing or abandoning a shape ends its draft-redo chain
   if (!state.draft.length) { return; }
   const pts = state.draft;
   state.draft = [];
@@ -1487,6 +1488,7 @@ async function finishDraftIfAny(commit) {
 
 const undoStack = [];
 const redoStack = [];
+const draftRedo = [];   // points undone mid-draw, so redo can re-add them within the same shape
 let pendingSnap = null; // pre-drag state, pushed only if the drag actually moved
 
 function takeSnap() {
@@ -1504,12 +1506,13 @@ function takeSnap() {
 
 function updateUndoButtons() {
   els.btnUndo.disabled = !(state.draft.length || undoStack.length);
-  els.btnRedo.disabled = !redoStack.length || state.draft.length > 0;
+  els.btnRedo.disabled = !(draftRedo.length || (redoStack.length && !state.draft.length));
 }
 
 // a point placed while drawing is undoable (Ctrl+Z / Undo / Backspace) but never
 // enters the geometry undo stack — so finishing the shape leaves exactly one undo
 function addDraftPoint(w) {
+  draftRedo.length = 0;   // a fresh point invalidates the draft-redo chain
   state.draft.push(w);
   updateUndoButtons();
 }
@@ -1554,12 +1557,13 @@ function restoreSnap(s) {
 
 function undo() {
   if (state.draft.length) {                 // undo point-by-point while still drawing
-    state.draft.pop();
+    draftRedo.push(state.draft.pop());
     updateUndoButtons();
     setMsg(state.draft.length ? `Point removed — ${state.draft.length} placed.` : 'Points cleared.');
     draw();
     return;
   }
+  draftRedo.length = 0;                      // undoing committed history ends the draft-redo chain
   if (!undoStack.length) return;
   redoStack.push(takeSnap());
   if (redoStack.length > 50) redoStack.shift();
@@ -1569,7 +1573,14 @@ function undo() {
 }
 
 function redo() {
-  if (state.draft.length) return;           // don't restore a snapshot mid-draft (it would wipe the points)
+  if (draftRedo.length) {                    // re-add a point undone while drawing
+    state.draft.push(draftRedo.pop());
+    updateUndoButtons();
+    setMsg(`Point restored — ${state.draft.length} placed.`);
+    draw();
+    return;
+  }
+  if (state.draft.length) return;           // drafting but nothing to redo → don't clobber the draft
   if (!redoStack.length) return;
   undoStack.push(takeSnap());
   if (undoStack.length > 50) undoStack.shift();
@@ -1960,7 +1971,7 @@ window.addEventListener('keydown', e => {
       } else finishDraftIfAny(true);
       break;
     case 'Escape':
-      state.draft = []; state.calibPts = [];
+      state.draft = []; draftRedo.length = 0; state.calibPts = [];
       state.measurePts = [];
       state.boxA = state.boxB = null;
       if (state.selected) { state.selected = null; refreshContourList(); }
