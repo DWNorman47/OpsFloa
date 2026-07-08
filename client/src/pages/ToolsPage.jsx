@@ -68,7 +68,7 @@ export default function ToolsPage() {
         onChange={switchTab}
         tabs={[
           { id: 'sitework', label: 'Sitework Takeoff' },
-          { id: 'excavation', label: 'Excavation' },
+          { id: 'excavation', label: 'Excavation (old)' },
           { id: 'transcription', label: 'Transcription' },
         ]}
         ariaLabel="Tools sections"
