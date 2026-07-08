@@ -30,6 +30,7 @@ const state = {
   contours: { existing: [], proposed: [] }, // [{ pts:[{x,y}], elev, spot }]
   walls: [],               // retaining-wall digs: [{ id, pts:[{x,y}], cfg, result }]
   takeoffs: [],            // quantity takeoffs: [{ id, kind:'area', pts, cfg, result }]
+  bid: null,               // bid report meta: { project, preparedBy, markup, prices:{key->$} }
 
   draft: [],               // in-progress clicks for trace/boundary
   calibPts: [],            // in-progress calibration clicks
@@ -158,6 +159,29 @@ function elevColor(elev, sheet) {
 
 function fmt(n, d = 0) {
   return n.toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });
+}
+
+function money(n) {
+  return '$' + (Math.round((n || 0) * 100) / 100)
+    .toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function defaultBid() { return { project: '', preparedBy: '', markup: '', prices: {} }; }
+
+function normalizeBid(d) {
+  const b = defaultBid();
+  if (d && typeof d === 'object') {
+    b.project = d.project || '';
+    b.preparedBy = d.preparedBy || '';
+    b.markup = d.markup != null ? d.markup : '';
+    b.prices = (d.prices && typeof d.prices === 'object') ? { ...d.prices } : {};
+  }
+  return b;
 }
 
 function setMsg(t) { els.sbMsg.textContent = t || ''; }
@@ -1782,6 +1806,10 @@ window.addEventListener('keydown', e => {
     if (e.key === 'Escape') els.projects.classList.add('hidden');
     return;
   }
+  if (!$('bidReport').classList.contains('hidden')) {
+    if (e.key === 'Escape') closeBidReport();
+    return; // bid report open: don't fire tool shortcuts underneath
+  }
   if (!els.modal.classList.contains('hidden') || !els.help.classList.contains('hidden')) return;
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
 
@@ -2862,6 +2890,7 @@ function projectData() {
     contours: state.contours,
     walls: state.walls,
     takeoffs: state.takeoffs,
+    bid: state.bid || defaultBid(),
     settings: {
       gridFt: els.inpGrid.value, interval: els.inpInterval.value,
       shrink: els.inpShrink.value, swell: els.inpSwell.value,
@@ -2881,6 +2910,7 @@ function applyProjectData(d) {
   state.contours = d.contours || { existing: [], proposed: [] };
   state.walls = d.walls || [];
   state.takeoffs = d.takeoffs || [];
+  state.bid = normalizeBid(d.bid);
   if (d.pages) {
     state.sheets.existing.pageNum = d.pages.existing || 1;
     state.sheets.proposed.pageNum = d.pages.proposed || 2;
@@ -2944,6 +2974,7 @@ function resetTakeoffState() {
   state.contours = { existing: [], proposed: [] };
   state.walls = [];
   state.takeoffs = [];
+  state.bid = defaultBid();
   state.draft = []; state.calibPts = []; state.alignPts = []; state.alignQs = [];
   state.wandPts = null;
   state.boxA = state.boxB = null;
@@ -3229,6 +3260,228 @@ $('fileImport').addEventListener('change', async e => {
   } catch (err) { setMsg('Could not read that file: ' + err.message); }
   e.target.value = '';
 });
+
+/* ============================== Bid report ============================== */
+// Rolls every measured quantity — cut/fill, wall digs, and area/line/count
+// takeoffs — into one priced table. Unit prices are keyed by a stable id so
+// they survive recompute and reload; overhead & profit is applied to the
+// subtotal. Export to CSV, or Print (the browser's dialog offers Save as PDF;
+// the @media print rules isolate just the report).
+
+function bidState() { if (!state.bid) state.bid = defaultBid(); return state.bid; }
+
+function buildBidItems() {
+  const items = [];
+  const push = (key, group, desc, qty, unit) => {
+    if (qty > 0.05) items.push({ key, group, desc, qty, unit });
+  };
+
+  // Earthwork — from the cut/fill result, using the current shrink/swell.
+  const res = state.result;
+  if (res) {
+    const shrink = (parseFloat(els.inpShrink.value) || 0) / 100;
+    const swell = (parseFloat(els.inpSwell.value) || 0) / 100;
+    const fillBankCY = res.fillCY / Math.max(0.01, 1 - shrink);
+    const netBankCY = res.cutCY - fillBankCY;
+    const isExport = netBankCY >= 0;
+    push('ew-cut', 'Earthwork', 'Mass excavation — cut (bank)', res.cutCY, 'CY');
+    push('ew-fill', 'Earthwork', 'Embankment / fill (compacted)', res.fillCY, 'CY');
+    const haul = Math.abs(netBankCY) * (isExport ? 1 + swell : 1);
+    push('ew-haul', 'Earthwork',
+      isExport ? 'Export & haul off site (loose)' : 'Import fill to site (bank)', haul, 'CY');
+  }
+
+  // Retaining-wall digs.
+  state.walls.forEach((w, i) => {
+    const r = w.result, n = i + 1;
+    push(`wall-${w.id}-exc`, 'Retaining walls', `Wall ${n} — excavation (bank)`, r.grossCY, 'CY');
+    push(`wall-${w.id}-exp`, 'Retaining walls', `Wall ${n} — export off site (loose)`, r.truckCY, 'CY');
+    push(`wall-${w.id}-bf`, 'Retaining walls', `Wall ${n} — import backfill`, r.importBackfillCY, 'CY');
+    push(`wall-${w.id}-conc`, 'Retaining walls', `Wall ${n} — concrete`, r.concreteCY, 'CY');
+    push(`wall-${w.id}-agg`, 'Retaining walls', `Wall ${n} — drainage aggregate`, r.aggregateCY, 'CY');
+  });
+
+  // Sitework quantity takeoffs.
+  const g = 'Sitework quantities';
+  state.takeoffs.forEach(t => {
+    if (t.kind === 'count') {
+      push(`to-${t.id}`, g, t.cfg.label, t.result.count, t.result.unit);
+    } else if (t.kind === 'line') {
+      if (t.result.trench) {
+        push(`to-${t.id}-len`, g, `${t.cfg.label} (run)`, t.result.lengthFt, 'LF');
+        push(`to-${t.id}-tr`, g, `${t.cfg.label} — trench excavation`, t.result.trenchCY, 'CY');
+        push(`to-${t.id}-bed`, g, `${t.cfg.label} — bedding`, t.result.beddingCY, 'CY');
+      } else {
+        push(`to-${t.id}`, g, t.cfg.label, t.result.lengthFt, 'LF');
+      }
+    } else if (t.kind === 'area') {
+      if (t.cfg.mode === 'strip') {
+        push(`to-${t.id}-strip`, g, `${t.cfg.label} (strip, bank)`, t.result.stripCY, 'CY');
+        push(`to-${t.id}-resp`, g, `${t.cfg.label} — respread`, t.result.respreadCY, 'CY');
+        push(`to-${t.id}-exp`, g, `${t.cfg.label} — net export (loose)`, t.result.netExportLooseCY, 'CY');
+      } else {
+        push(`to-${t.id}`, g, t.cfg.label, t.result.quantity, t.result.unit);
+      }
+    }
+  });
+
+  return items;
+}
+
+// Single source of truth for the priced numbers, shared by render/CSV/print.
+function bidComputed() {
+  const items = buildBidItems();
+  const prices = bidState().prices;
+  let subtotal = 0;
+  const groupSubs = {};
+  const rows = items.map(it => {
+    const parsed = parseFloat(prices[it.key]);
+    const price = isFinite(parsed) ? parsed : 0;
+    const ext = it.qty * price;
+    subtotal += ext;
+    groupSubs[it.group] = (groupSubs[it.group] || 0) + ext;
+    return { ...it, price, ext };
+  });
+  const markupPct = parseFloat(bidState().markup) || 0;
+  const markupAmt = subtotal * markupPct / 100;
+  return { rows, subtotal, groupSubs, markupPct, markupAmt, total: subtotal + markupAmt };
+}
+
+function bidSubrow(group, val) {
+  return `<tr class="bid-subrow" data-group="${esc(group)}">` +
+    `<td colspan="4">${esc(group)} subtotal</td>` +
+    `<td class="bid-num bid-subval">${money(val)}</td></tr>`;
+}
+
+function renderBidReport() {
+  const c = bidComputed();
+  const body = $('bidTableBody');
+  if (!c.rows.length) {
+    body.innerHTML = '<tr><td colspan="5" class="bid-empty">Nothing to price yet — run ∑ Calculate ' +
+      'Cut/Fill, add a wall dig, or take off areas / lines / counts.</td></tr>';
+    applyBidTotals(c);
+    return;
+  }
+  const prices = bidState().prices;
+  let html = '', curGroup = null;
+  for (const r of c.rows) {
+    if (r.group !== curGroup) {
+      if (curGroup !== null) html += bidSubrow(curGroup, c.groupSubs[curGroup]);
+      curGroup = r.group;
+      html += `<tr class="bid-group"><td colspan="5">${esc(curGroup)}</td></tr>`;
+    }
+    const pv = prices[r.key];
+    html += '<tr>' +
+      `<td class="bid-desc">${esc(r.desc)}</td>` +
+      `<td class="bid-num">${fmt(r.qty, r.unit === 'EA' ? 0 : 1)}</td>` +
+      `<td class="bid-unit">${esc(r.unit)}</td>` +
+      `<td class="bid-price-cell">$<input type="number" class="bid-price" data-key="${esc(r.key)}" ` +
+        `min="0" step="0.01" value="${pv != null ? esc(pv) : ''}" placeholder="0.00"></td>` +
+      `<td class="bid-num bid-ext" data-key="${esc(r.key)}">${money(r.ext)}</td>` +
+    '</tr>';
+  }
+  html += bidSubrow(curGroup, c.groupSubs[curGroup]);
+  body.innerHTML = html;
+  body.querySelectorAll('.bid-price').forEach(inp => inp.addEventListener('input', onBidPriceInput));
+  applyBidTotals(c);
+}
+
+function applyBidTotals(c) {
+  $('bidSubtotal').textContent = money(c.subtotal);
+  $('bidMarkupAmt').textContent = money(c.markupAmt);
+  $('bidTotal').textContent = money(c.total);
+}
+
+// Update the money cells in place (keeps input focus/caret) without re-rendering.
+function recomputeBidTotals() {
+  const c = bidComputed();
+  const body = $('bidTableBody');
+  for (const r of c.rows) {
+    const cell = body.querySelector(`.bid-ext[data-key="${r.key}"]`);
+    if (cell) cell.textContent = money(r.ext);
+  }
+  body.querySelectorAll('.bid-subrow').forEach(tr => {
+    const cell = tr.querySelector('.bid-subval');
+    if (cell) cell.textContent = money(c.groupSubs[tr.dataset.group] || 0);
+  });
+  applyBidTotals(c);
+}
+
+function onBidPriceInput(e) {
+  const key = e.target.dataset.key;
+  const v = e.target.value;
+  const prices = bidState().prices;
+  if (v === '') delete prices[key]; else prices[key] = v;
+  recomputeBidTotals();
+  saveLocal();
+}
+
+function openBidReport() {
+  const b = bidState();
+  $('bidProject').value = b.project || (state.pdfName ? state.pdfName.replace(/\.pdf$/i, '') : '');
+  $('bidPrep').value = b.preparedBy || '';
+  $('bidMarkup').value = b.markup != null ? b.markup : '';
+  if (!$('bidDate').value) $('bidDate').value = new Date().toLocaleDateString();
+  renderBidReport();
+  $('bidReport').classList.remove('hidden');
+}
+
+function closeBidReport() { $('bidReport').classList.add('hidden'); }
+
+function bidCSVDownload() {
+  const c = bidComputed();
+  if (!c.rows.length) { setMsg('Nothing to export yet — measure some quantities first.'); return; }
+  const cell = s => {
+    const t = String(s == null ? '' : s);
+    return /[",\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+  };
+  const row = arr => arr.map(cell).join(',');
+  const num = n => (Math.round((n || 0) * 100) / 100).toFixed(2);
+  const lines = [
+    row(['Bid summary']),
+    row(['Project', $('bidProject').value]),
+    row(['Prepared by', $('bidPrep').value]),
+    row(['Date', $('bidDate').value]),
+    '',
+    row(['Group', 'Description', 'Quantity', 'Unit', 'Unit price', 'Extended']),
+  ];
+  for (const r of c.rows)
+    lines.push(row([r.group, r.desc, Math.round(r.qty * 100) / 100, r.unit, num(r.price), num(r.ext)]));
+  lines.push('');
+  lines.push(row(['', '', '', '', 'Subtotal', num(c.subtotal)]));
+  lines.push(row(['', '', '', '', `Overhead & profit (${c.markupPct}%)`, num(c.markupAmt)]));
+  lines.push(row(['', '', '', '', 'Total bid', num(c.total)]));
+
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const base = ($('bidProject').value || (state.pdfName ? state.pdfName.replace(/\.pdf$/i, '') : 'bid')).trim() || 'bid';
+  a.download = base.replace(/[^\w.-]+/g, '_') + '.bid.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  setMsg('Bid exported as CSV.');
+}
+
+function printBid() {
+  renderBidReport();   // make sure the printed numbers are current
+  // isolate just the report for the print/PDF layout, then restore the app
+  document.body.classList.add('printing-bid');
+  const cleanup = () => {
+    document.body.classList.remove('printing-bid');
+    window.removeEventListener('afterprint', cleanup);
+  };
+  window.addEventListener('afterprint', cleanup);
+  window.print();      // the browser's print dialog offers "Save as PDF"
+  setTimeout(cleanup, 1500); // fallback if afterprint never fires
+}
+
+$('btnBid').addEventListener('click', openBidReport);
+$('bidClose').addEventListener('click', closeBidReport);
+$('bidCsv').addEventListener('click', bidCSVDownload);
+$('bidPrint').addEventListener('click', printBid);
+$('bidProject').addEventListener('input', e => { bidState().project = e.target.value; saveLocal(); });
+$('bidPrep').addEventListener('input', e => { bidState().preparedBy = e.target.value; saveLocal(); });
+$('bidMarkup').addEventListener('input', e => { bidState().markup = e.target.value; recomputeBidTotals(); saveLocal(); });
 
 /* ============================== Init ============================== */
 

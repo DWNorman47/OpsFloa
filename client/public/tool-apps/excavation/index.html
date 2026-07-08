@@ -58,6 +58,7 @@
   <div class="tb-group tb-run">
     <button id="btnCalc" class="btn go" title="Grid both surfaces and compute cut / fill volumes">∑ Calculate Cut/Fill</button>
     <button id="btnWallCalc" class="btn" title="Quick retaining-wall dig estimate — enter length, depth, and footing width for excavation & export CY. No plans needed.">📐 Wall Dig</button>
+    <button id="btnBid" class="btn" title="Consolidated bid report — every quantity (cut/fill, wall digs, areas, lines, counts) in one priced table with editable unit prices, overhead &amp; profit, and CSV / print (Save as PDF) export">$ Bid</button>
     <button id="btnUndo" class="btn" title="Undo the last change (Ctrl+Z)" disabled>↶ Undo</button>
     <button id="btnRedo" class="btn" title="Redo the last undone change (Ctrl+Y or Ctrl+Shift+Z)" disabled>Redo ↷</button>
     <button id="btnSidebar" class="btn" title="Show / hide the sidebar">☰</button>
@@ -218,6 +219,7 @@
       <li><b>▦ Area (quantity takeoff):</b> click around an area — paving, aggregate base, concrete, gravel, seeding · <b>Enter</b>/double-click closes it · then pick a material preset or set the output (area SF/SY, volume CY, or weight tons) and a thickness. Choose <b>Topsoil strip</b> for strip volume with swell and optional respread → net export CY. Quantities collect in the <b>Quantities</b> sidebar panel.</li>
       <li><b>╱ Line (linear takeoff):</b> click along a run — curb, pipe/utility, silt fence, sawcut, fence · <b>Enter</b>/double-click finishes · gives length in feet. Tick <b>Trench cross-section</b> (pipe/utility) for excavation-spoil CY plus aggregate-bedding CY. Collects in the <b>Quantities</b> panel.</li>
       <li><b>⊕ Count (count takeoff):</b> click each item — catch basins, manholes, trees, signs, light poles · <b>Enter</b>/double-click finishes · then name it. Gives an each (EA) tally in the <b>Quantities</b> panel.</li>
+      <li><b>$ Bid (report):</b> rolls every measured quantity — cut/fill, wall digs, and area/line/count takeoffs — into one priced table. Type a unit price per line; add overhead &amp; profit for the total. Prices save with the project. <b>Export CSV</b> for a spreadsheet, or <b>Print / Save PDF</b> for a clean one-page bid.</li>
       <li><b>📐 Measure</b> (Scale section, sidebar): click two points to read the straight-line distance in feet — it doesn't change the scale, just a quick readout. A closed <b>▱ Boundary</b> also shows its perimeter and acreage in the Boundary section.</li>
       <li><b>➤ Select:</b> click a line (or its row in the sidebar list) · <b>Delete</b> removes it · <b>E</b> edits its elevation · <b>Esc</b> deselects. The sidebar list's ✕ also deletes.</li>
       <li><b>⌫ Erase Box:</b> drag a box — only the line <em>portions</em> inside are erased; lines crossing the box are split and the outside parts survive. <b>With a line selected, only that line is trimmed.</b> Spots inside are removed; pads are only removed when fully boxed.</li>
@@ -417,6 +419,43 @@
     <div class="modal-actions">
       <button id="ctCancel" class="btn">Cancel</button>
       <button id="ctOk" class="btn primary">Add takeoff</button>
+    </div>
+  </div>
+</div>
+
+<!-- Consolidated bid report -->
+<div id="bidReport" class="modal hidden">
+  <div class="modal-box wide bid-box">
+    <div id="bidPrintable">
+      <h3>Bid summary</h3>
+      <div class="bid-head">
+        <label>Project<input type="text" id="bidProject" maxlength="80" placeholder="Project name"></label>
+        <label>Prepared by<input type="text" id="bidPrep" maxlength="60" placeholder="Your company"></label>
+        <label>Date<input type="text" id="bidDate" maxlength="24"></label>
+      </div>
+      <div class="bid-scroll">
+        <table class="bid-table">
+          <thead>
+            <tr><th>Description</th><th class="bid-num">Qty</th><th>Unit</th><th class="bid-num">Unit price</th><th class="bid-num">Extended</th></tr>
+          </thead>
+          <tbody id="bidTableBody"></tbody>
+        </table>
+      </div>
+      <div class="bid-totals">
+        <div class="bid-trow"><span>Subtotal</span><b id="bidSubtotal">$0.00</b></div>
+        <div class="bid-trow">
+          <span>Overhead &amp; profit <input type="number" id="bidMarkup" min="0" step="1" placeholder="0" class="bid-markup"> %</span>
+          <b id="bidMarkupAmt">$0.00</b>
+        </div>
+        <div class="bid-trow bid-grand"><span>Total bid</span><b id="bidTotal">$0.00</b></div>
+      </div>
+      <div class="hint bid-disclaimer">Estimating tool — unit prices are yours to set and are not stored or transmitted anywhere but this project. Verify scale, traces, quantities, and pricing before you submit a bid.</div>
+    </div>
+    <div class="modal-actions">
+      <button id="bidCsv" class="btn">Export CSV</button>
+      <button id="bidPrint" class="btn">Print / Save PDF</button>
+      <span class="spacer"></span>
+      <button id="bidClose" class="btn primary">Close</button>
     </div>
   </div>
 </div>
