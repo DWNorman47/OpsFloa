@@ -1341,10 +1341,11 @@ async function finishDraftIfAny(commit) {
     if (pts.length >= 3) {
       if (!state.calibration) { setMsg('Calibrate the scale (📏) before an area takeoff.'); draw(); return; }
       const areaSf = polygonAreaFt2(pts, state.calibration.ftPerPx);
-      const cfg = await askAreaConfig(areaSf);
+      const perimFt = polygonPerimeterFt(pts, state.calibration.ftPerPx);
+      const cfg = await askAreaConfig(areaSf, perimFt);
       if (cfg) {
         snapshot();
-        const result = computeAreaResult(areaSf, cfg);
+        const result = computeAreaResult(areaSf, cfg, perimFt);
         state.takeoffs.push({ id: randId(), kind: 'area', pts, cfg, result });
         renderTakeoffs();
         saveLocal();
@@ -2414,13 +2415,27 @@ function renderWalls() {
 // thickness), or weight (tons from thickness × compacted density).
 
 const AREA_PRESETS = {
-  asphalt:  { label: 'Asphalt paving', mode: 'tons', thickness: 3, density: 145 },
+  asphalt:  { label: 'Asphalt paving', mode: 'paving', thickness: 3, density: 145, tack: 0.10 },
   base:     { label: 'Aggregate base', mode: 'tons', thickness: 6, density: 135 },
-  concrete: { label: 'Concrete flatwork', mode: 'cy', thickness: 4 },
+  concrete: { label: 'Concrete flatwork', mode: 'concrete', thickness: 4, rebar: '#4@18', form: true },
   gravel:   { label: 'Gravel / fill', mode: 'cy', thickness: 6 },
   topsoil:  { label: 'Topsoil strip', mode: 'strip', thickness: 6, swell: 25, respread: 0 },
   areaonly: { label: 'Area', mode: 'area' },
 };
+
+// bar unit weights (lb/ft); grid spacing in feet
+const REBAR = {
+  '#4@18': { bar: '#4', spacing: '18', sp: 1.5, lb: 0.668 },
+  '#4@12': { bar: '#4', spacing: '12', sp: 1.0, lb: 0.668 },
+  '#5@12': { bar: '#5', spacing: '12', sp: 1.0, lb: 1.043 },
+};
+function rebarQuantity(areaSf, key) {
+  if (key === 'mesh') return { type: 'mesh', meshSf: areaSf * 1.05 }; // 5% overlap
+  const r = REBAR[key];
+  if (!r) return null;
+  const lf = 2 * areaSf / r.sp * 1.10; // both directions + 10% laps/waste
+  return { type: r.bar, spacing: r.spacing, lf, weightLb: lf * r.lb };
+}
 
 function areaQuantity(areaSf, cfg) {
   const thickFt = (parseFloat(cfg.thickness) || 0) / 12;
@@ -2428,7 +2443,11 @@ function areaQuantity(areaSf, cfg) {
     const d = parseFloat(cfg.density) || 145;
     return { quantity: areaSf * thickFt * d / 2000, unit: 'tons' };
   }
-  if (cfg.mode === 'cy') return { quantity: areaSf * thickFt / 27, unit: 'CY' };
+  if (cfg.mode === 'paving') {
+    const d = parseFloat(cfg.density) || 145;
+    return { quantity: areaSf * thickFt * d / 2000, unit: 'tons' };
+  }
+  if (cfg.mode === 'cy' || cfg.mode === 'concrete') return { quantity: areaSf * thickFt / 27, unit: 'CY' };
   if (cfg.mode === 'strip') {
     const stripCY = areaSf * thickFt / 27;                       // bank volume stripped
     const swell = 1 + (parseFloat(cfg.swell) || 0) / 100;        // loose bulking for hauling
@@ -2443,13 +2462,23 @@ function areaQuantity(areaSf, cfg) {
   return { quantity: areaSf, unit: 'SF' };
 }
 
-function computeAreaResult(areaSf, cfg) {
+function computeAreaResult(areaSf, cfg, perimFt) {
   const q = areaQuantity(areaSf, cfg);
-  return { areaSf, sy: areaSf / 9, acres: areaSf / 43560, label: cfg.label, ...q };
+  const r = { areaSf, sy: areaSf / 9, acres: areaSf / 43560, label: cfg.label, perimFt: perimFt || 0, ...q };
+  if (cfg.mode === 'concrete') {
+    if (cfg.form !== false && perimFt > 0) r.formworkLF = perimFt; // edge forms run the perimeter
+    const reb = rebarQuantity(areaSf, cfg.rebar);
+    if (reb) r.rebar = reb;
+  } else if (cfg.mode === 'paving') {
+    const rate = parseFloat(cfg.tack);
+    const tackRate = isFinite(rate) ? rate : 0.10;
+    if (tackRate > 0) r.tackGal = (areaSf / 9) * tackRate; // gal = SY × rate
+  }
+  return r;
 }
 
-function areaResultRows(areaSf, cfg) {
-  const r = computeAreaResult(areaSf, cfg);
+function areaResultRows(areaSf, cfg, perimFt) {
+  const r = computeAreaResult(areaSf, cfg, perimFt);
   const rows = [['Area', `${fmt(areaSf)} sf · ${fmt(r.sy)} sy · ${fmt(r.acres, 2)} ac`]];
   if (cfg.mode === 'strip') {
     rows.push(['Strip volume', `${fmt(r.stripCY, 1)} CY bank`, 'total']);
@@ -2458,6 +2487,15 @@ function areaResultRows(areaSf, cfg) {
       rows.push(['Respread', `${fmt(r.respreadCY, 1)} CY bank`]);
       rows.push(['Net export', `${fmt(r.netExportCY, 1)} CY bank · ${fmt(r.netExportLooseCY, 1)} loose`, 'total']);
     }
+  } else if (cfg.mode === 'concrete') {
+    rows.push(['Concrete volume', `${fmt(r.quantity, 1)} CY`, 'total']);
+    if (r.formworkLF) rows.push(['Edge forms', `${fmt(r.formworkLF)} LF`]);
+    if (r.rebar) rows.push(r.rebar.type === 'mesh'
+      ? ['Wire mesh', `${fmt(r.rebar.meshSf)} SF`]
+      : [`Rebar ${r.rebar.type} @ ${r.rebar.spacing}"`, `${fmt(r.rebar.lf)} LF · ${fmt(r.rebar.weightLb)} lb`]);
+  } else if (cfg.mode === 'paving') {
+    rows.push(['Asphalt weight', `${fmt(r.quantity, 1)} tons`, 'total']);
+    if (r.tackGal) rows.push(['Tack coat', `${fmt(r.tackGal)} gal`]);
   } else if (cfg.mode !== 'area') {
     rows.push([cfg.mode === 'tons' ? 'Weight' : 'Volume', `${fmt(r.quantity, 1)} ${r.unit}`, 'total']);
   }
@@ -2470,6 +2508,9 @@ function readAreaCfg() {
     mode: $('atMode').value,
     thickness: $('atThick').value,
     density: $('atDensity').value,
+    rebar: $('atRebar').value,
+    form: $('atForm').checked,
+    tack: $('atTack').value,
     swell: $('atSwell').value,
     respread: $('atRespread').value,
   };
@@ -2478,23 +2519,26 @@ function readAreaCfg() {
 function syncAreaMode() {
   const mode = $('atMode').value;
   $('atThickWrap').style.display = mode === 'area' ? 'none' : '';
-  $('atDensityWrap').style.display = mode === 'tons' ? '' : 'none';
+  $('atDensityWrap').style.display = (mode === 'tons' || mode === 'paving') ? '' : 'none';
+  $('atRebarWrap').style.display = mode === 'concrete' ? '' : 'none';
+  $('atFormWrap').style.display = mode === 'concrete' ? '' : 'none';
+  $('atTackWrap').style.display = mode === 'paving' ? '' : 'none';
   $('atSwellWrap').style.display = mode === 'strip' ? '' : 'none';
   $('atRespreadWrap').style.display = mode === 'strip' ? '' : 'none';
   $('atThickLbl').textContent = mode === 'strip' ? 'Strip depth (in)' : 'Thickness (in)';
 }
 
-function askAreaConfig(areaSf) {
+function askAreaConfig(areaSf, perimFt) {
   return new Promise(resolve => {
-    const preview = () => { $('atResult').innerHTML = areaResultRows(areaSf, readAreaCfg()); };
+    const preview = () => { $('atResult').innerHTML = areaResultRows(areaSf, readAreaCfg(), perimFt); };
     $('atArea').textContent = `${fmt(areaSf)} sf`;
     syncAreaMode();
     preview();
     $('areaTakeoff').classList.remove('hidden');
 
     const onInput = () => { syncAreaMode(); preview(); };
-    const inputs = ['atLabel', 'atMode', 'atThick', 'atDensity', 'atSwell', 'atRespread'];
-    inputs.forEach(id => $(id).addEventListener('input', onInput));
+    const inputs = ['atLabel', 'atMode', 'atThick', 'atDensity', 'atRebar', 'atForm', 'atTack', 'atSwell', 'atRespread'];
+    inputs.forEach(id => { $(id).addEventListener('input', onInput); $(id).addEventListener('change', onInput); });
     const presetBtns = [...document.querySelectorAll('#atPresets [data-preset]')];
     const onPreset = e => {
       const p = AREA_PRESETS[e.target.dataset.preset];
@@ -2503,6 +2547,9 @@ function askAreaConfig(areaSf) {
       $('atMode').value = p.mode;
       if (p.thickness != null) $('atThick').value = p.thickness;
       if (p.density != null) $('atDensity').value = p.density;
+      if (p.rebar != null) $('atRebar').value = p.rebar;
+      if (p.form != null) $('atForm').checked = p.form;
+      if (p.tack != null) $('atTack').value = p.tack;
       if (p.swell != null) $('atSwell').value = p.swell;
       if (p.respread != null) $('atRespread').value = p.respread;
       onInput();
@@ -2510,7 +2557,7 @@ function askAreaConfig(areaSf) {
     presetBtns.forEach(b => b.addEventListener('click', onPreset));
 
     const cleanup = () => {
-      inputs.forEach(id => $(id).removeEventListener('input', onInput));
+      inputs.forEach(id => { $(id).removeEventListener('input', onInput); $(id).removeEventListener('change', onInput); });
       presetBtns.forEach(b => b.removeEventListener('click', onPreset));
       $('atOk').onclick = null; $('atCancel').onclick = null;
       $('areaTakeoff').classList.add('hidden');
@@ -2729,10 +2776,14 @@ function takeoffRowText(t) {
   }
   if (t.kind === 'area') {
     const strip = t.cfg.mode === 'strip';
+    let extra = '';
+    if (strip && t.result.netExportCY > 0) extra = ` · ${fmt(t.result.netExportCY, 0)} CY export`;
+    else if (t.cfg.mode === 'concrete' && t.result.rebar)
+      extra = ` · ${t.result.rebar.type === 'mesh' ? 'mesh' : t.result.rebar.type}${t.result.formworkLF ? ' + forms' : ''}`;
+    else if (t.cfg.mode === 'paving' && t.result.tackGal) extra = ` · ${fmt(t.result.tackGal)} gal tack`;
     return {
       headline: `${fmt(t.result.quantity, t.result.unit === 'SF' ? 0 : 1)} ${t.result.unit}${strip ? ' strip' : ''}`,
-      sub: `${t.cfg.label} · ${fmt(t.result.areaSf)} sf${t.cfg.mode !== 'area' ? ` · ${t.cfg.thickness}"` : ''}` +
-        `${strip && t.result.netExportCY > 0 ? ` · ${fmt(t.result.netExportCY, 0)} CY export` : ''}`,
+      sub: `${t.cfg.label} · ${fmt(t.result.areaSf)} sf${t.cfg.mode !== 'area' ? ` · ${t.cfg.thickness}"` : ''}${extra}`,
     };
   }
   return {
@@ -3334,6 +3385,18 @@ function buildBidItems() {
         push(`to-${t.id}-strip`, `strip:${lbl}`, g, `${t.cfg.label} (strip, bank)`, t.result.stripCY, 'CY');
         push(`to-${t.id}-resp`, `strip-resp:${lbl}`, g, `${t.cfg.label} — respread`, t.result.respreadCY, 'CY');
         push(`to-${t.id}-exp`, `strip-exp:${lbl}`, g, `${t.cfg.label} — net export (loose)`, t.result.netExportLooseCY, 'CY', true);
+      } else if (t.cfg.mode === 'concrete') {
+        push(`to-${t.id}`, `concrete:${lbl}`, g, t.cfg.label, t.result.quantity, 'CY');
+        if (t.result.formworkLF) push(`to-${t.id}-form`, `concrete-form:${lbl}`, g, `${t.cfg.label} — edge forms`, t.result.formworkLF, 'LF');
+        if (t.result.rebar) {
+          if (t.result.rebar.type === 'mesh')
+            push(`to-${t.id}-mesh`, `concrete-mesh:${lbl}`, g, `${t.cfg.label} — wire mesh`, t.result.rebar.meshSf, 'SF');
+          else
+            push(`to-${t.id}-rebar`, `concrete-rebar:${lbl}:${t.result.rebar.type}`, g, `${t.cfg.label} — rebar ${t.result.rebar.type}`, t.result.rebar.weightLb, 'lb');
+        }
+      } else if (t.cfg.mode === 'paving') {
+        push(`to-${t.id}`, `paving:${lbl}`, g, t.cfg.label, t.result.quantity, 'tons');
+        if (t.result.tackGal) push(`to-${t.id}-tack`, `tack:${lbl}`, g, `${t.cfg.label} — tack coat`, t.result.tackGal, 'gal');
       } else {
         push(`to-${t.id}`, `area:${lbl}:${tk(t.result.unit)}`, g, t.cfg.label, t.result.quantity, t.result.unit);
       }

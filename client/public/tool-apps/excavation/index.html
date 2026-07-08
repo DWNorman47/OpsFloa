@@ -220,7 +220,7 @@
       <li><b>🪄 Auto Trace:</b> one click ON a line lifts the whole vector path (vector PDFs only — it will tell you if the page is a scan). Cancel the elevation prompt to discard a bad pick. With a boundary drawn, picks are trimmed to the boundary plus ~20 ft.</li>
       <li><b>▬ Pad editing</b> (Pad tool active): same gestures as the boundary — <b>drag a point (○)</b>, <b>double-click an edge</b> to add, <b>Alt+click</b> to remove. Enter the pad/subgrade elevation (often FF minus slab &amp; base), not the finished floor. Select a pad by clicking anywhere inside it.</li>
       <li><b>▚ Wall (retaining-wall dig):</b> click along the wall line · <b>Enter</b>/double-click finishes · then enter the trench cross-section (bottom width, side slope, and either a constant depth or a footing subgrade elevation read off your Existing contours). You get excavation and export CY per wall in the sidebar. Or use <b>📐 Wall Dig</b> in the toolbar for a quick estimate with no plans.</li>
-      <li><b>▦ Area (quantity takeoff):</b> click around an area — paving, aggregate base, concrete, gravel, seeding · <b>Enter</b>/double-click closes it · then pick a material preset or set the output (area SF/SY, volume CY, or weight tons) and a thickness. Choose <b>Topsoil strip</b> for strip volume with swell and optional respread → net export CY. Quantities collect in the <b>Quantities</b> sidebar panel.</li>
+      <li><b>▦ Area (quantity takeoff):</b> click around an area — paving, aggregate base, concrete, gravel, seeding · <b>Enter</b>/double-click closes it · then pick a material preset or set the output (area SF/SY, volume CY, or weight tons) and a thickness. Choose <b>Concrete</b> for volume plus edge-form LF and rebar/mesh, <b>Asphalt paving</b> for tonnage plus tack coat, or <b>Topsoil strip</b> for strip volume with swell and optional respread → net export CY. Quantities collect in the <b>Quantities</b> sidebar panel.</li>
       <li><b>╱ Line (linear takeoff):</b> click along a run — curb, pipe/utility, silt fence, sawcut, fence · <b>Enter</b>/double-click finishes · gives length in feet. Tick <b>Trench cross-section</b> (pipe/utility) for excavation-spoil CY plus aggregate-bedding CY. Collects in the <b>Quantities</b> panel.</li>
       <li><b>⊕ Count (count takeoff):</b> click each item — catch basins, manholes, trees, signs, light poles · <b>Enter</b>/double-click finishes · then name it. Gives an each (EA) tally in the <b>Quantities</b> panel.</li>
       <li><b>$ Bid (report):</b> rolls every measured quantity — cut/fill, wall digs, and area/line/count takeoffs — into one priced table. Type a unit price per line; add overhead &amp; profit for the total. Prices save with the project and are remembered across projects, pre-filling matching line items next time. Add your logo + company block for a branded letterhead, and the haul line turns export CY into truck loads at your truck capacity. <b>Export CSV</b> for a spreadsheet, or <b>Print / Save PDF</b> for a clean one-page bid.</li>
@@ -345,11 +345,24 @@
           <option value="area">Area (SF / SY)</option>
           <option value="cy">Volume (CY)</option>
           <option value="tons">Weight (tons)</option>
+          <option value="concrete">Concrete (CY + rebar + forms)</option>
+          <option value="paving">Asphalt paving (tons + tack)</option>
           <option value="strip">Topsoil strip (CY)</option>
         </select>
       </label>
       <label id="atThickWrap"><span id="atThickLbl">Thickness (in)</span><input type="number" id="atThick" min="0" step="0.5" value="4"></label>
       <label id="atDensityWrap" title="Compacted unit weight — asphalt ≈ 145, aggregate base ≈ 135 lb/ft³">Density (lb/ft³)<input type="number" id="atDensity" min="0" step="1" value="145"></label>
+      <label id="atRebarWrap" title="Reinforcement in the slab. Rebar is estimated as a grid both ways with 10% for laps/waste; mesh by area with 5% overlap.">Reinforcement
+        <select id="atRebar">
+          <option value="none">None</option>
+          <option value="mesh">Wire mesh (WWM)</option>
+          <option value="#4@18">Rebar #4 @ 18"</option>
+          <option value="#4@12">Rebar #4 @ 12"</option>
+          <option value="#5@12">Rebar #5 @ 12"</option>
+        </select>
+      </label>
+      <label id="atFormWrap" class="atCheck" title="Edge forms run the slab perimeter (LF)."><input type="checkbox" id="atForm" checked> Edge forms (perimeter)</label>
+      <label id="atTackWrap" title="Tack/prime coat between lifts or on base. Typical 0.05–0.10 gal/SY.">Tack coat (gal/SY)<input type="number" id="atTack" min="0" step="0.01" value="0.10"></label>
       <label id="atSwellWrap" title="Bulking / swell of stripped topsoil once loosened for hauling. Topsoil ≈ 20–25%.">Swell (%)<input type="number" id="atSwell" min="0" step="1" value="25"></label>
       <label id="atRespreadWrap" title="Depth of topsoil respread back over the area at finish grade. 0 = haul all off.">Respread (in)<input type="number" id="atRespread" min="0" step="0.5" value="0"></label>
     </div>
