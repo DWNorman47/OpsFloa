@@ -71,9 +71,8 @@ export const APPS = [
     name: 'Tools',
     bg: '#0f766e',
     icon: (
-      <svg viewBox="0 0 20 20" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
-        <path d="M12.6 3.2a4 4 0 0 0 4.2 4.2L8 16.2a2.1 2.1 0 0 1-3-3L13.8 4.4" />
-        <circle cx="5.8" cy="14.2" r="0.7" fill="#fff" stroke="none" />
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
       </svg>
     ),
     path: '/tools',
