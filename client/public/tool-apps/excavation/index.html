@@ -59,6 +59,7 @@
     <button id="btnCalc" class="btn go" title="Grid both surfaces and compute cut / fill volumes">∑ Calculate Cut/Fill</button>
     <button id="btnWallCalc" class="btn" title="Quick retaining-wall dig estimate — enter length, depth, and footing width for excavation & export CY. No plans needed.">📐 Wall Dig</button>
     <button id="btnBid" class="btn" title="Consolidated bid report — every quantity (cut/fill, wall digs, areas, lines, counts) in one priced table with editable unit prices, overhead &amp; profit, and CSV / print (Save as PDF) export">$ Bid</button>
+    <button id="btnProd" class="btn" title="Production log — record haul tickets and daily field reports against this job, track hauled CY vs. the estimated export, and export / print the log">🗒 Log</button>
     <button id="btnUndo" class="btn" title="Undo the last change (Ctrl+Z)" disabled>↶ Undo</button>
     <button id="btnRedo" class="btn" title="Redo the last undone change (Ctrl+Y or Ctrl+Shift+Z)" disabled>Redo ↷</button>
     <button id="btnSidebar" class="btn" title="Show / hide the sidebar">☰</button>
@@ -224,6 +225,7 @@
       <li><b>╱ Line (linear takeoff):</b> click along a run — curb, pipe/utility, silt fence, sawcut, fence · <b>Enter</b>/double-click finishes · gives length in feet. Tick <b>Trench cross-section</b> (pipe/utility) for excavation-spoil CY plus aggregate-bedding CY. Collects in the <b>Quantities</b> panel.</li>
       <li><b>⊕ Count (count takeoff):</b> click each item — catch basins, manholes, trees, signs, light poles · <b>Enter</b>/double-click finishes · then name it. Gives an each (EA) tally in the <b>Quantities</b> panel.</li>
       <li><b>$ Bid (report):</b> rolls every measured quantity — cut/fill, wall digs, and area/line/count takeoffs — into one priced table. Type a unit price per line; add overhead &amp; profit for the total. Prices save with the project and are remembered across projects, pre-filling matching line items next time. Add your logo + company block for a branded letterhead, and the haul line turns export CY into truck loads at your truck capacity. <b>Export CSV</b> for a spreadsheet, or <b>Print / Save PDF</b> for a clean one-page bid.</li>
+      <li><b>🗒 Log (production log):</b> once the job is running, record <b>haul tickets</b> (date, ticket #, hauler, material, qty) and <b>daily reports</b> (weather, crew, hours, work performed) against this project. It tallies hauled CY against your estimated export and totals man-hours, with CSV and Print / Save PDF export. Saved with the project.</li>
       <li><b>📐 Measure</b> (Scale section, sidebar): click two points to read the straight-line distance in feet — it doesn't change the scale, just a quick readout. A closed <b>▱ Boundary</b> also shows its perimeter and acreage in the Boundary section.</li>
       <li><b>➤ Select:</b> click a line (or its row in the sidebar list) · <b>Delete</b> removes it · <b>E</b> edits its elevation · <b>Esc</b> deselects. The sidebar list's ✕ also deletes.</li>
       <li><b>⌫ Erase Box:</b> drag a box — only the line <em>portions</em> inside are erased; lines crossing the box are split and the outside parts survive. <b>With a line selected, only that line is trimmed.</b> Spots inside are removed; pads are only removed when fully boxed.</li>
@@ -492,6 +494,66 @@
       <button id="bidPrint" class="btn">Print / Save PDF</button>
       <span class="spacer"></span>
       <button id="bidClose" class="btn primary">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Production log: haul tickets + daily field reports -->
+<div id="prodLog" class="modal hidden">
+  <div class="modal-box wide bid-box">
+    <div id="prodPrintable">
+      <h3>Production log</h3>
+      <div class="bid-sub" id="prodProjectLine"></div>
+      <div class="prod-tabs">
+        <button type="button" class="btn tiny prod-tab active" data-tab="haul">Haul tickets</button>
+        <button type="button" class="btn tiny prod-tab" data-tab="daily">Daily reports</button>
+      </div>
+
+      <div class="prod-pane" id="prodHaulPane">
+        <h4 class="prod-pane-title">Haul tickets</h4>
+        <div class="prod-add">
+          <input type="date" id="htDate" title="Date">
+          <input type="text" id="htTicket" maxlength="24" placeholder="Ticket #">
+          <input type="text" id="htHauler" maxlength="40" placeholder="Hauler / truck">
+          <input type="text" id="htMaterial" maxlength="40" placeholder="Material">
+          <input type="number" id="htQty" min="0" step="0.1" placeholder="Qty">
+          <select id="htUnit"><option value="CY">CY</option><option value="tons">tons</option><option value="loads">loads</option></select>
+          <input type="text" id="htNotes" maxlength="60" placeholder="Notes">
+          <button id="htAdd" class="btn tiny primary" type="button">Add ticket</button>
+        </div>
+        <div class="prod-scroll">
+          <table class="prod-table">
+            <thead><tr><th>Date</th><th>Ticket</th><th>Hauler</th><th>Material</th><th class="bid-num">Qty</th><th>Unit</th><th>Notes</th><th></th></tr></thead>
+            <tbody id="htBody"></tbody>
+          </table>
+        </div>
+        <div class="prod-summary" id="htSummary"></div>
+      </div>
+
+      <div class="prod-pane hidden" id="prodDailyPane">
+        <h4 class="prod-pane-title">Daily reports</h4>
+        <div class="prod-add">
+          <input type="date" id="drDate" title="Date">
+          <input type="text" id="drWeather" maxlength="40" placeholder="Weather">
+          <input type="number" id="drCrew" min="0" step="1" placeholder="Crew">
+          <input type="number" id="drHours" min="0" step="0.5" placeholder="Hours">
+          <input type="text" id="drNotes" maxlength="120" placeholder="Work performed">
+          <button id="drAdd" class="btn tiny primary" type="button">Add day</button>
+        </div>
+        <div class="prod-scroll">
+          <table class="prod-table">
+            <thead><tr><th>Date</th><th>Weather</th><th class="bid-num">Crew</th><th class="bid-num">Hours</th><th>Work performed</th><th></th></tr></thead>
+            <tbody id="drBody"></tbody>
+          </table>
+        </div>
+        <div class="prod-summary" id="drSummary"></div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button id="prodCsv" class="btn">Export CSV</button>
+      <button id="prodPrint" class="btn">Print / Save PDF</button>
+      <span class="spacer"></span>
+      <button id="prodClose" class="btn primary">Close</button>
     </div>
   </div>
 </div>

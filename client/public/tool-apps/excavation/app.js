@@ -31,6 +31,7 @@ const state = {
   walls: [],               // retaining-wall digs: [{ id, pts:[{x,y}], cfg, result }]
   takeoffs: [],            // quantity takeoffs: [{ id, kind:'area', pts, cfg, result }]
   bid: null,               // bid report meta: { project, preparedBy, markup, prices:{key->$} }
+  production: null,        // job production log: { tickets:[…], days:[…] }
 
   draft: [],               // in-progress clicks for trace/boundary
   calibPts: [],            // in-progress calibration clicks
@@ -173,6 +174,16 @@ function esc(s) {
 }
 
 function defaultBid() { return { project: '', preparedBy: '', markup: '', prices: {} }; }
+
+function defaultProduction() { return { tickets: [], days: [] }; }
+function normalizeProduction(d) {
+  const p = defaultProduction();
+  if (d && typeof d === 'object') {
+    if (Array.isArray(d.tickets)) p.tickets = d.tickets;
+    if (Array.isArray(d.days)) p.days = d.days;
+  }
+  return p;
+}
 
 function normalizeBid(d) {
   const b = defaultBid();
@@ -1806,6 +1817,10 @@ window.addEventListener('keydown', e => {
     if (e.key === 'Escape') closeBidReport();
     return; // bid report open: don't fire tool shortcuts underneath
   }
+  if (!$('prodLog').classList.contains('hidden')) {
+    if (e.key === 'Escape') closeProdLog();
+    return; // production log open: don't fire tool shortcuts underneath
+  }
   if (!els.modal.classList.contains('hidden') || !els.help.classList.contains('hidden')) return;
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
 
@@ -2950,6 +2965,7 @@ function projectData() {
     walls: state.walls,
     takeoffs: state.takeoffs,
     bid: state.bid || defaultBid(),
+    production: state.production || defaultProduction(),
     settings: {
       gridFt: els.inpGrid.value, interval: els.inpInterval.value,
       shrink: els.inpShrink.value, swell: els.inpSwell.value,
@@ -2971,6 +2987,7 @@ function applyProjectData(d) {
   state.walls = d.walls || [];
   state.takeoffs = d.takeoffs || [];
   state.bid = normalizeBid(d.bid);
+  state.production = normalizeProduction(d.production);
   if (d.pages) {
     state.sheets.existing.pageNum = d.pages.existing || 1;
     state.sheets.proposed.pageNum = d.pages.proposed || 2;
@@ -3036,6 +3053,7 @@ function resetTakeoffState() {
   state.walls = [];
   state.takeoffs = [];
   state.bid = defaultBid();
+  state.production = defaultProduction();
   state.draft = []; state.calibPts = []; state.alignPts = []; state.alignQs = [];
   state.wandPts = null;
   state.boxA = state.boxB = null;
@@ -3702,6 +3720,177 @@ $('bidForget').addEventListener('click', () => {
 $('bidProject').addEventListener('input', e => { bidState().project = e.target.value; saveLocal(); });
 $('bidPrep').addEventListener('input', e => { bidState().preparedBy = e.target.value; saveLocal(); });
 $('bidMarkup').addEventListener('input', e => { bidState().markup = e.target.value; recomputeBidTotals(); saveLocal(); });
+
+/* ============================== Production log ============================== */
+// Haul tickets + daily field reports kept against THIS job, so hauled CY can be
+// tracked against the estimated export and the whole log exported/printed.
+
+function prodState() { if (!state.production) state.production = defaultProduction(); return state.production; }
+function todayISO() { return new Date().toLocaleDateString('en-CA'); } // YYYY-MM-DD in local time
+
+function openProdLog() {
+  const name = bidState().project || (state.pdfName ? state.pdfName.replace(/\.pdf$/i, '') : 'Untitled project');
+  $('prodProjectLine').textContent = `${name} · ${todayISO()}`;
+  if (!$('htDate').value) $('htDate').value = todayISO();
+  if (!$('drDate').value) $('drDate').value = todayISO();
+  renderHaulTickets();
+  renderDailyReports();
+  $('prodLog').classList.remove('hidden');
+}
+function closeProdLog() { $('prodLog').classList.add('hidden'); }
+
+function setProdTab(tab) {
+  document.querySelectorAll('.prod-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  $('prodHaulPane').classList.toggle('hidden', tab !== 'haul');
+  $('prodDailyPane').classList.toggle('hidden', tab !== 'daily');
+}
+
+function addHaulTicket() {
+  const t = {
+    id: randId(),
+    date: $('htDate').value,
+    ticket: $('htTicket').value.trim(),
+    hauler: $('htHauler').value.trim(),
+    material: $('htMaterial').value.trim(),
+    qty: $('htQty').value,
+    unit: $('htUnit').value,
+    notes: $('htNotes').value.trim(),
+  };
+  const qty = parseFloat(t.qty) || 0;
+  if (!(qty > 0) && !t.ticket && !t.material) { setMsg('Enter at least a quantity, ticket #, or material.'); return; }
+  prodState().tickets.push(t);
+  saveLocal();
+  ['htTicket', 'htQty', 'htNotes'].forEach(id => { $(id).value = ''; }); // keep date/hauler/material/unit for fast entry
+  renderHaulTickets();
+  $('htTicket').focus();
+}
+
+function renderHaulTickets() {
+  const list = prodState().tickets;
+  const body = $('htBody');
+  body.innerHTML = list.length
+    ? list.map((t, i) => '<tr>' +
+        `<td>${esc(t.date)}</td><td>${esc(t.ticket)}</td><td>${esc(t.hauler)}</td><td>${esc(t.material)}</td>` +
+        `<td class="bid-num">${fmt(parseFloat(t.qty) || 0, 1)}</td><td>${esc(t.unit)}</td><td>${esc(t.notes)}</td>` +
+        `<td><button class="wall-del" data-i="${i}" title="Delete this ticket">✕</button></td></tr>`).join('')
+    : '<tr><td colspan="8" class="bid-empty">No haul tickets yet — add one above as loads leave the site.</td></tr>';
+  body.querySelectorAll('.wall-del').forEach(b => b.addEventListener('click', () => {
+    prodState().tickets.splice(parseInt(b.dataset.i, 10), 1);
+    saveLocal();
+    renderHaulTickets();
+  }));
+
+  let cy = 0, tons = 0, loads = 0;
+  for (const t of list) {
+    const q = parseFloat(t.qty) || 0;
+    if (t.unit === 'tons') tons += q; else if (t.unit === 'loads') loads += q; else cy += q;
+  }
+  const est = bidComputed().haulCY;
+  const parts = [`${list.length} ticket${list.length === 1 ? '' : 's'}`, `${fmt(cy)} CY`];
+  if (tons) parts.push(`${fmt(tons)} tons`);
+  if (loads) parts.push(`${fmt(loads)} loads`);
+  let s = parts.join(' · ');
+  if (est > 0.5) s += ` · vs est. export ${fmt(est)} CY (${Math.round(cy / est * 100)}%)`;
+  $('htSummary').textContent = s;
+}
+
+function addDailyReport() {
+  const d = {
+    id: randId(),
+    date: $('drDate').value,
+    weather: $('drWeather').value.trim(),
+    crew: $('drCrew').value,
+    hours: $('drHours').value,
+    notes: $('drNotes').value.trim(),
+  };
+  if (!d.notes && !d.weather && !(parseFloat(d.crew) > 0)) { setMsg('Enter crew, weather, or a work note for the day.'); return; }
+  prodState().days.push(d);
+  saveLocal();
+  ['drWeather', 'drNotes'].forEach(id => { $(id).value = ''; });
+  renderDailyReports();
+  $('drNotes').focus();
+}
+
+function renderDailyReports() {
+  const list = prodState().days;
+  const body = $('drBody');
+  body.innerHTML = list.length
+    ? list.map((d, i) => '<tr>' +
+        `<td>${esc(d.date)}</td><td>${esc(d.weather)}</td>` +
+        `<td class="bid-num">${esc(d.crew)}</td><td class="bid-num">${esc(d.hours)}</td><td>${esc(d.notes)}</td>` +
+        `<td><button class="wall-del" data-i="${i}" title="Delete this day">✕</button></td></tr>`).join('')
+    : '<tr><td colspan="6" class="bid-empty">No daily reports yet — log the crew, weather, and work each day.</td></tr>';
+  body.querySelectorAll('.wall-del').forEach(b => b.addEventListener('click', () => {
+    prodState().days.splice(parseInt(b.dataset.i, 10), 1);
+    saveLocal();
+    renderDailyReports();
+  }));
+  const manHours = list.reduce((s, d) => s + (parseFloat(d.crew) || 0) * (parseFloat(d.hours) || 0), 0);
+  $('drSummary').textContent = `${list.length} day${list.length === 1 ? '' : 's'} · ${fmt(manHours, 1)} man-hours`;
+}
+
+function prodCSVDownload() {
+  const p = prodState();
+  if (!p.tickets.length && !p.days.length) { setMsg('Nothing to export yet — log a ticket or a day first.'); return; }
+  const cell = s => {
+    const t = String(s == null ? '' : s);
+    return /[",\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+  };
+  const row = arr => arr.map(cell).join(',');
+  const name = bidState().project || (state.pdfName ? state.pdfName.replace(/\.pdf$/i, '') : 'log');
+  const lines = [row(['Production log']), row(['Project', name]), row(['Date', todayISO()]), ''];
+
+  lines.push(row(['Haul tickets']));
+  lines.push(row(['Date', 'Ticket', 'Hauler', 'Material', 'Qty', 'Unit', 'Notes']));
+  let cy = 0;
+  for (const t of p.tickets) {
+    if (t.unit === 'CY') cy += parseFloat(t.qty) || 0;
+    lines.push(row([t.date, t.ticket, t.hauler, t.material, parseFloat(t.qty) || 0, t.unit, t.notes]));
+  }
+  lines.push(row(['', '', '', '', cy, 'CY total', `${p.tickets.length} tickets`]));
+  lines.push('');
+
+  lines.push(row(['Daily reports']));
+  lines.push(row(['Date', 'Weather', 'Crew', 'Hours', 'Man-hours', 'Work performed']));
+  let mh = 0;
+  for (const d of p.days) {
+    const dmh = (parseFloat(d.crew) || 0) * (parseFloat(d.hours) || 0);
+    mh += dmh;
+    lines.push(row([d.date, d.weather, d.crew, d.hours, dmh, d.notes]));
+  }
+  lines.push(row(['', '', '', '', mh, 'man-hours total']));
+
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name.replace(/[^\w.-]+/g, '_') + '.production.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  setMsg('Production log exported as CSV.');
+}
+
+function printProd() {
+  renderHaulTickets();
+  renderDailyReports();
+  document.body.classList.add('printing-log');
+  const cleanup = () => {
+    document.body.classList.remove('printing-log');
+    window.removeEventListener('afterprint', cleanup);
+  };
+  window.addEventListener('afterprint', cleanup);
+  window.print();
+  setTimeout(cleanup, 1500);
+}
+
+$('btnProd').addEventListener('click', openProdLog);
+$('prodClose').addEventListener('click', closeProdLog);
+$('prodCsv').addEventListener('click', prodCSVDownload);
+$('prodPrint').addEventListener('click', printProd);
+$('htAdd').addEventListener('click', addHaulTicket);
+$('drAdd').addEventListener('click', addDailyReport);
+document.querySelectorAll('.prod-tab').forEach(b => b.addEventListener('click', () => setProdTab(b.dataset.tab)));
+$('prodHaulPane').querySelector('.prod-add').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addHaulTicket(); } });
+$('prodDailyPane').querySelector('.prod-add').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addDailyReport(); } });
 
 /* ============================== Init ============================== */
 

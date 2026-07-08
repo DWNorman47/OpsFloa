@@ -327,6 +327,27 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
   border: 1px solid var(--border); border-radius: 6px; font-size: 13px; resize: vertical; font-family: inherit; }
 .bid-letterhead-edit .btn.tiny { flex: 0 0 auto; }
 
+/* production log */
+.bid-sub { color: var(--muted); font-size: 13px; margin: -4px 0 12px; }
+.prod-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+.prod-tab.active { background: var(--accent); border-color: var(--accent); color: #08243f; font-weight: 600; }
+.prod-pane-title { display: none; margin: 4px 0 10px; }
+.prod-add { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; align-items: center; }
+.prod-add input, .prod-add select { padding: 6px 8px; background: var(--panel2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+.prod-add input[type=text] { flex: 1 1 120px; min-width: 90px; }
+.prod-add input[type=number] { width: 74px; }
+.prod-add input[type=date] { flex: 0 0 auto; }
+.prod-scroll { overflow-x: auto; }
+.prod-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.prod-table th { text-align: left; color: var(--muted); font-weight: 600; font-size: 12px;
+  padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.prod-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.prod-table .bid-num { text-align: right; font-variant-numeric: tabular-nums; }
+.prod-table .wall-del { padding: 2px 7px; }
+.prod-summary { margin-top: 10px; font-size: 13.5px; font-weight: 600; color: var(--text);
+  font-variant-numeric: tabular-nums; }
+
 /* haul summary */
 .bid-haul { margin-top: 12px; padding: 8px 10px; background: var(--panel2); border-radius: 8px;
   font-size: 13.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -357,4 +378,22 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
   body.printing-bid .bid-grand { border-top: 2px solid #000 !important; }
   body.printing-bid .bid-letterhead { border-bottom: 2px solid #000 !important; }
   body.printing-bid .bid-haul { background: none !important; padding-left: 0 !important; }
+
+  /* production log print */
+  body.printing-log > *:not(#prodLog) { display: none !important; }
+  body.printing-log #prodLog { position: static; inset: auto; background: none; display: block; }
+  body.printing-log #prodLog .modal-box { max-width: none; max-height: none; overflow: visible;
+    box-shadow: none; border: none; background: #fff; padding: 0; }
+  body.printing-log #prodLog .modal-actions,
+  body.printing-log .prod-tabs,
+  body.printing-log .prod-add,
+  body.printing-log .prod-table th:last-child,
+  body.printing-log .prod-table td:last-child { display: none !important; }
+  body.printing-log #prodLog, body.printing-log #prodLog * { color: #000 !important; }
+  body.printing-log .prod-pane.hidden { display: block !important; }  /* print both tabs */
+  body.printing-log .prod-pane-title { display: block !important; font-size: 15px; font-weight: 700;
+    margin: 16px 0 8px; }
+  body.printing-log .prod-pane:first-of-type .prod-pane-title { margin-top: 0; }
+  body.printing-log .prod-table th, body.printing-log .prod-table td { border-bottom: 1px solid #bbb !important; }
+  body.printing-log .prod-summary { margin-top: 8px; }
 }
