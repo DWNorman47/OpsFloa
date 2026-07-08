@@ -7,12 +7,17 @@ import TabBar from '../components/TabBar';
 import TranscriptionTool from '../components/TranscriptionTool';
 
 const SITEWORK_TOOL_URL = '/tool-apps/sitework/index.html';
-const EXCAVATION_TOOL_URL = '/tool-apps/excavation/index.html';
+
+// the old excavation tool was removed; its '#excavation' deep links land on sitework
+function resolveTab() {
+  const h = window.location.hash.replace('#', '');
+  return !h || h === 'excavation' ? 'sitework' : h;
+}
 
 export default function ToolsPage() {
   const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState(() => window.location.hash.replace('#', '') || 'sitework');
+  const [tab, setTab] = useState(resolveTab);
 
   useEffect(() => {
     let cancelled = false;
@@ -24,7 +29,7 @@ export default function ToolsPage() {
   }, []);
 
   useEffect(() => {
-    const onHash = () => setTab(window.location.hash.replace('#', '') || 'sitework');
+    const onHash = () => setTab(resolveTab());
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
@@ -60,7 +65,7 @@ export default function ToolsPage() {
         kicker="Tools"
         title="Useful calculators and work helpers"
         description="Keep specialized utilities close by without crowding the daily workflow. Tools open separately so the main app stays right where you left it."
-        meta={<span className="ops-pill accent">3 tools available</span>}
+        meta={<span className="ops-pill accent">2 tools available</span>}
       />
 
       <TabBar
@@ -68,7 +73,6 @@ export default function ToolsPage() {
         onChange={switchTab}
         tabs={[
           { id: 'sitework', label: 'Sitework Takeoff' },
-          { id: 'excavation', label: 'Excavation (old)' },
           { id: 'transcription', label: 'Transcription' },
         ]}
         ariaLabel="Tools sections"
@@ -97,35 +101,6 @@ export default function ToolsPage() {
             <span className="tools-card-copy">
               <strong>Sitework Takeoff Estimator</strong>
               <span>Load a PDF plan set and take off earthwork, paving, concrete, utilities, and site quantities — then build a priced, branded bid. Work saves in the browser for this device.</span>
-            </span>
-            <span className="tools-card-action">Open</span>
-          </a>
-        </PageSection>
-      )}
-
-      {tab === 'excavation' && (
-        <PageSection
-          eyebrow="Excavation"
-          title="Excavation takeoff"
-          description="Open the cut/fill takeoff calculator for civil plans, contours, pads, boundaries, and volume estimates."
-          actions={(
-            <a className="ops-button-primary" href={EXCAVATION_TOOL_URL} target="_blank" rel="noopener noreferrer">
-              Open in new tab
-            </a>
-          )}
-        >
-          <a className="tools-card" href={EXCAVATION_TOOL_URL} target="_blank" rel="noopener noreferrer">
-            <span className="tools-card-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M4 19h16" />
-                <path d="m6 19 6-14 6 14" />
-                <path d="M8 14h8" />
-                <path d="M10 9h4" />
-              </svg>
-            </span>
-            <span className="tools-card-copy">
-              <strong>Excavation Bid Calculator</strong>
-              <span>Load a PDF plan set, trace existing and proposed surfaces, and estimate cut/fill volume. Work saves in the browser for this device.</span>
             </span>
             <span className="tools-card-action">Open</span>
           </a>
