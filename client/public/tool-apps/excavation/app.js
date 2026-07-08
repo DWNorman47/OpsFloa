@@ -71,7 +71,7 @@ const els = {
   contourTitle: $('contourTitle'), contourCount: $('contourCount'),
   contourList: $('contourList'),
   inpGrid: $('inpGrid'), inpInterval: $('inpInterval'), inpZoomSpeed: $('inpZoomSpeed'),
-  inpShrink: $('inpShrink'), inpSwell: $('inpSwell'),
+  inpShrink: $('inpShrink'), inpSwell: $('inpSwell'), inpTruck: $('inpTruck'),
   resultsSection: $('resultsSection'), results: $('results'),
   chkHeatmap: $('chkHeatmap'), chkGhost: $('chkGhost'),
   btnAlign: $('btnAlign'), btnAlignReset: $('btnAlignReset'), alignStatus: $('alignStatus'),
@@ -2165,6 +2165,8 @@ function renderResults() {
   const netBankCY = res.cutCY - fillBankCY;                    // + means surplus dirt on site
   const isExport = netBankCY >= 0;
   const haulCY = Math.abs(netBankCY) * (isExport ? 1 + swell : 1); // export hauls loose
+  const cap = parseFloat(els.inpTruck.value) || 0;
+  const loads = cap > 0 ? Math.ceil(haulCY / cap) : 0;
 
   els.results.innerHTML = `
     <div class="res-row"><span>Disturbed area</span><b>${fmt(res.areaFt2 / 43560, 2)} ac (${fmt(res.areaFt2)} sf)</b></div>
@@ -2177,13 +2179,19 @@ function renderResults() {
       <b>${fmt(Math.abs(netBankCY))} CY bank</b>
     </div>
     ${isExport ? `<div class="res-row exportc"><span>≈ truck volume (loose, × ${(1 + swell).toFixed(2)})</span><b>${fmt(haulCY)} CY</b></div>` : ''}
-    <div class="hint">Balanced site = 0. Positive cut means dirt leaves; shrink/swell come from the Settings panel. This is an estimating number — verify scale and traces before you bid.</div>`;
+    ${isExport && loads > 0 ? `<div class="res-row exportc"><span>≈ haul loads @ ${fmt(cap)} CY</span><b>${fmt(loads)} loads</b></div>` : ''}
+    <div class="hint">Balanced site = 0. Positive cut means dirt leaves; shrink/swell/truck size come from the Settings panel. This is an estimating number — verify scale and traces before you bid.</div>`;
   els.resultsSection.classList.remove('hidden');
   els.resultsSection.classList.remove('collapsed'); // fresh numbers should be visible
 }
 
 ['inpShrink', 'inpSwell'].forEach(id =>
   $(id).addEventListener('input', () => state.result && renderResults()));
+els.inpTruck.addEventListener('input', () => {
+  if (state.result) renderResults();
+  if (!$('bidReport').classList.contains('hidden')) { $('bidTruck').value = els.inpTruck.value; renderHaulSummary(); }
+  saveLocal();
+});
 els.inpZoomSpeed.addEventListener('change', () => saveLocal());
 
 /* ============================== Retaining-wall dig ============================== */
@@ -2894,6 +2902,7 @@ function projectData() {
     settings: {
       gridFt: els.inpGrid.value, interval: els.inpInterval.value,
       shrink: els.inpShrink.value, swell: els.inpSwell.value,
+      truckCap: els.inpTruck.value,
       zoomSpeed: els.inpZoomSpeed.value,
     },
   };
@@ -2920,6 +2929,7 @@ function applyProjectData(d) {
     els.inpInterval.value = d.settings.interval ?? 1;
     els.inpShrink.value = d.settings.shrink ?? 15;
     els.inpSwell.value = d.settings.swell ?? 25;
+    els.inpTruck.value = d.settings.truckCap ?? 12;
     els.inpZoomSpeed.value = d.settings.zoomSpeed ?? 100;
   }
   state.result = null;
@@ -3274,8 +3284,9 @@ function buildBidItems() {
   const items = [];
   // key   = per-instance id (holds this project's price)
   // typeKey = type-level id (holds the remembered price shared across projects)
-  const push = (key, typeKey, group, desc, qty, unit) => {
-    if (qty > 0.05) items.push({ key, typeKey, group, desc, qty, unit });
+  // haul  = loose CY leaving the site, summed into the truck-load count
+  const push = (key, typeKey, group, desc, qty, unit, haul) => {
+    if (qty > 0.05) items.push({ key, typeKey, group, desc, qty, unit, haul: !!haul });
   };
   const tk = s => String(s).toLowerCase().trim();
 
@@ -3291,14 +3302,14 @@ function buildBidItems() {
     push('ew-fill', 'ew-fill', 'Earthwork', 'Embankment / fill (compacted)', res.fillCY, 'CY');
     const haul = Math.abs(netBankCY) * (isExport ? 1 + swell : 1);
     push('ew-haul', 'ew-haul', 'Earthwork',
-      isExport ? 'Export & haul off site (loose)' : 'Import fill to site (bank)', haul, 'CY');
+      isExport ? 'Export & haul off site (loose)' : 'Import fill to site (bank)', haul, 'CY', isExport);
   }
 
   // Retaining-wall digs (type keys drop the per-wall id so pricing is shared).
   state.walls.forEach((w, i) => {
     const r = w.result, n = i + 1;
     push(`wall-${w.id}-exc`, 'wall-exc', 'Retaining walls', `Wall ${n} — excavation (bank)`, r.grossCY, 'CY');
-    push(`wall-${w.id}-exp`, 'wall-exp', 'Retaining walls', `Wall ${n} — export off site (loose)`, r.truckCY, 'CY');
+    push(`wall-${w.id}-exp`, 'wall-exp', 'Retaining walls', `Wall ${n} — export off site (loose)`, r.truckCY, 'CY', true);
     push(`wall-${w.id}-bf`, 'wall-bf', 'Retaining walls', `Wall ${n} — import backfill`, r.importBackfillCY, 'CY');
     push(`wall-${w.id}-conc`, 'wall-conc', 'Retaining walls', `Wall ${n} — concrete`, r.concreteCY, 'CY');
     push(`wall-${w.id}-agg`, 'wall-agg', 'Retaining walls', `Wall ${n} — drainage aggregate`, r.aggregateCY, 'CY');
@@ -3322,7 +3333,7 @@ function buildBidItems() {
       if (t.cfg.mode === 'strip') {
         push(`to-${t.id}-strip`, `strip:${lbl}`, g, `${t.cfg.label} (strip, bank)`, t.result.stripCY, 'CY');
         push(`to-${t.id}-resp`, `strip-resp:${lbl}`, g, `${t.cfg.label} — respread`, t.result.respreadCY, 'CY');
-        push(`to-${t.id}-exp`, `strip-exp:${lbl}`, g, `${t.cfg.label} — net export (loose)`, t.result.netExportLooseCY, 'CY');
+        push(`to-${t.id}-exp`, `strip-exp:${lbl}`, g, `${t.cfg.label} — net export (loose)`, t.result.netExportLooseCY, 'CY', true);
       } else {
         push(`to-${t.id}`, `area:${lbl}:${tk(t.result.unit)}`, g, t.cfg.label, t.result.quantity, t.result.unit);
       }
@@ -3366,19 +3377,20 @@ function seedPricesFromBook() {
 function bidComputed() {
   const items = buildBidItems();
   const prices = bidState().prices;
-  let subtotal = 0;
+  let subtotal = 0, haulCY = 0;
   const groupSubs = {};
   const rows = items.map(it => {
     const parsed = parseFloat(prices[it.key]);
     const price = isFinite(parsed) ? parsed : 0;
     const ext = it.qty * price;
     subtotal += ext;
+    if (it.haul) haulCY += it.qty;
     groupSubs[it.group] = (groupSubs[it.group] || 0) + ext;
     return { ...it, price, ext };
   });
   const markupPct = parseFloat(bidState().markup) || 0;
   const markupAmt = subtotal * markupPct / 100;
-  return { rows, subtotal, groupSubs, markupPct, markupAmt, total: subtotal + markupAmt };
+  return { rows, subtotal, groupSubs, markupPct, markupAmt, total: subtotal + markupAmt, haulCY };
 }
 
 function bidSubrow(group, val) {
@@ -3426,6 +3438,18 @@ function applyBidTotals(c) {
   $('bidTotal').textContent = money(c.total);
 }
 
+// Total loose export CY → truck loads at the configured capacity.
+function renderHaulSummary() {
+  const haulCY = bidComputed().haulCY;
+  const el = $('bidHaul');
+  if (!(haulCY > 0.05)) { el.hidden = true; return; }
+  el.hidden = false;
+  const cap = parseFloat($('bidTruck').value) || 0;
+  const loads = cap > 0 ? Math.ceil(haulCY / cap) : 0;
+  $('bidHaulCy').textContent = `${fmt(haulCY)} CY`;
+  $('bidHaulLoads').textContent = `${fmt(loads)} load${loads === 1 ? '' : 's'}`;
+}
+
 // Update the money cells in place (keeps input focus/caret) without re-rendering.
 function recomputeBidTotals() {
   const c = bidComputed();
@@ -3463,8 +3487,12 @@ function openBidReport() {
   $('bidPrep').value = b.preparedBy || '';
   $('bidMarkup').value = b.markup != null ? b.markup : '';
   if (!$('bidDate').value) $('bidDate').value = new Date().toLocaleDateString();
+  $('bidTruck').value = els.inpTruck.value;
+  fillLetterheadEditor();
+  renderLetterhead();
   seedPricesFromBook();   // pre-fill matching lines from the remembered library
   renderBidReport();
+  renderHaulSummary();
   $('bidReport').classList.remove('hidden');
 }
 
@@ -3516,6 +3544,89 @@ function printBid() {
   window.print();      // the browser's print dialog offers "Save as PDF"
   setTimeout(cleanup, 1500); // fallback if afterprint never fires
 }
+
+// ── Letterhead (device-local company profile, shared across projects) ──────────
+let companyCache = null;
+function loadCompany() {
+  if (!companyCache) {
+    try { companyCache = JSON.parse(localStorage.getItem('ebc-company')); } catch (_) { companyCache = null; }
+    if (!companyCache || typeof companyCache !== 'object') companyCache = { name: '', details: '', logo: '' };
+  }
+  return companyCache;
+}
+function saveCompany(c) {
+  companyCache = c;
+  try { localStorage.setItem('ebc-company', JSON.stringify(c)); }
+  catch (_) { setMsg('Could not save the letterhead — storage is full. Try a smaller logo.'); }
+}
+
+function fillLetterheadEditor() {
+  const co = loadCompany();
+  $('bidCompanyName').value = co.name || '';
+  $('bidCompanyDetails').value = co.details || '';
+}
+
+function renderLetterhead() {
+  const co = loadCompany();
+  const img = $('bidLogoImg');
+  if (co.logo) { img.src = co.logo; img.hidden = false; } else { img.removeAttribute('src'); img.hidden = true; }
+  $('bidLogoRemove').hidden = !co.logo;
+  const name = co.name ? `<div class="bid-co-name">${esc(co.name)}</div>` : '';
+  const details = co.details ? `<div class="bid-co-details">${esc(co.details).replace(/\n/g, '<br>')}</div>` : '';
+  $('bidCompanyRender').innerHTML = name + details;
+  $('bidLetterhead').hidden = !(co.logo || co.name || co.details);
+}
+
+function fileToDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
+// Cap the logo so it prints crisp and doesn't blow the localStorage quota.
+function downscaleImage(dataUrl, maxW, maxH) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxW / img.width, maxH / img.height);
+      const w = Math.max(1, Math.round(img.width * scale)), h = Math.max(1, Math.round(img.height * scale));
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      try { resolve(c.toDataURL('image/png')); } catch (_) { resolve(dataUrl); }
+    };
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+}
+
+$('bidCompanyName').addEventListener('input', e => {
+  const co = loadCompany(); co.name = e.target.value; saveCompany(co); renderLetterhead();
+});
+$('bidCompanyDetails').addEventListener('input', e => {
+  const co = loadCompany(); co.details = e.target.value; saveCompany(co); renderLetterhead();
+});
+$('bidLogoFile').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  try {
+    const scaled = await downscaleImage(await fileToDataURL(f), 400, 200);
+    const co = loadCompany(); co.logo = scaled; saveCompany(co); renderLetterhead();
+    setMsg('Logo added to the bid letterhead.');
+  } catch (_) { setMsg('Could not load that image.'); }
+  e.target.value = '';
+});
+$('bidLogoRemove').addEventListener('click', () => {
+  const co = loadCompany(); co.logo = ''; saveCompany(co); renderLetterhead();
+});
+$('bidTruck').addEventListener('input', () => {
+  els.inpTruck.value = $('bidTruck').value; // one capacity, shown in two places
+  if (state.result) renderResults();
+  renderHaulSummary();
+  saveLocal();
+});
 
 $('btnBid').addEventListener('click', openBidReport);
 $('bidClose').addEventListener('click', closeBidReport);
