@@ -19,7 +19,7 @@ export const GUIDE_TASKS = [
       en: 'Set up a purchase order for a subcontractor and tie it to the project it belongs to.',
       es: 'Crea una orden de compra para un subcontratista y vincúlala al proyecto al que pertenece.',
     },
-    route: '/projects#pos',
+    route: '/work#pos',
     routeLabel: { en: 'Open subcontractor POs', es: 'Abrir órdenes de compra de subcontratistas' },
     requiredModules: ['projects'],
     requiredAnyPerms: ['manage_projects', 'manage_settings'],
@@ -104,7 +104,7 @@ export const GUIDE_TASKS = [
       en: 'Track partial or final payments against a subcontractor PO.',
       es: 'Lleva el control de los pagos parciales o finales de una orden de compra de subcontratista.',
     },
-    route: '/projects#pos',
+    route: '/work#pos',
     routeLabel: { en: 'Open subcontractor POs', es: 'Abrir órdenes de compra de subcontratistas' },
     requiredModules: ['projects'],
     requiredAnyPerms: ['manage_projects', 'manage_settings'],
@@ -148,7 +148,7 @@ export const GUIDE_TASKS = [
       en: 'Add a project, job, route, or customer work bucket people can clock into and report against.',
       es: 'Agrega un proyecto, trabajo, ruta o grupo de trabajo de cliente al que las personas puedan registrar tiempo y reportar.',
     },
-    route: '/projects',
+    route: '/work',
     routeLabel: { en: 'Open Projects', es: 'Abrir Proyectos' },
     requiredModules: ['projects'],
     requiredAnyPerms: ['manage_projects'],
@@ -759,6 +759,8 @@ export function isGuideModuleEnabled(features = {}, moduleId) {
   if (moduleId === 'financial_reports') {
     return !(features.module_financial_reports === false && features.module_analytics === false);
   }
+  // The Work module keeps the internal id 'projects' but its toggle is module_work.
+  if (moduleId === 'projects') return features.module_work !== false;
   return features[`module_${moduleId}`] !== false;
 }
 

@@ -94,7 +94,7 @@ export default function HomePage() {
         list.push({ title: t.hpActionWhosWorkingTitle, detail: t.hpActionWhosWorkingDetail, to: '/timeclock#wf-live', icon: 'L', primary: !list.length });
       }
       if (enabled(settings, 'module_work') && can('projects')) {
-        list.push({ title: `${t.hpActionAddWork} ${terms.work.toLowerCase()}`, detail: `${t.hpActionAddWorkDetailCreate} ${terms.work.toLowerCase()} ${t.hpActionAddWorkDetailManage} ${terms.client.toLowerCase()} ${t.hpActionAddWorkDetailRecords}`, to: '/projects', icon: 'W' });
+        list.push({ title: `${t.hpActionAddWork} ${terms.work.toLowerCase()}`, detail: `${t.hpActionAddWorkDetailCreate} ${terms.work.toLowerCase()} ${t.hpActionAddWorkDetailManage} ${terms.client.toLowerCase()} ${t.hpActionAddWorkDetailRecords}`, to: '/work', icon: 'W' });
       }
       if (enabled(settings, 'module_team') && can('team')) {
         list.push({ title: t.hpActionInviteTeamTitle, detail: `${t.hpActionInviteTeamDetailAdd} ${terms.workerPlural.toLowerCase()} ${t.hpActionInviteTeamDetailAccess}`, to: '/team', icon: 'T' });
@@ -129,7 +129,7 @@ export default function HomePage() {
     const all = [
       ['timeclock', t.hpPlaceTimeClockName, '/timeclock', t.hpPlaceTimeClockDetail],
       ['field', terms.field, '/field', t.hpPlaceFieldDetail],
-      ['projects', terms.work, '/projects', `${terms.work}, ${t.hpPlaceProjectsDetail}`],
+      ['projects', terms.work, '/work', `${terms.work}, ${t.hpPlaceProjectsDetail}`],
       ['team', t.hpPlaceDirectoryName, '/team', `${terms.workerPlural}, ${t.hpPlaceDirectoryDetail}`],
       ['inventory', t.hpPlaceInventoryName, '/inventory', t.hpPlaceInventoryDetail],
       ['financial_reports', t.hpPlaceReportsName, '/financial-reports', t.hpPlaceReportsDetail],

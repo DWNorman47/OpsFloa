@@ -111,7 +111,7 @@ const LANDING_PRIORITY = [
   { id: 'timeclock',      path: '/timeclock' },      // participating + Workforce group (everyone starts here)
   // 'workforce' is the Workforce group of Time Clock now (/workforce redirects),
   // so it's not a separate landing target. Its perm set still gates that group.
-  { id: 'projects',       path: '/projects', adminOnly: true },
+  { id: 'projects',       path: '/work', adminOnly: true },
   // 'sales' and 'subs' are intentionally not landing targets: they now live as
   // tabs inside other modules (Projects / Directory) and their old routes
   // redirect there, so landing on them directly could bounce and loop.

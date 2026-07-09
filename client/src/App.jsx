@@ -182,7 +182,8 @@ function AppRoutes() {
           old PWA bookmarks still work. HashRedirect preserves the #tab. */}
       <Route path="/dashboard" element={<HashRedirect to="/timeclock" />} />
       <Route path="/field" element={<PrivateRoute moduleId="field"><FieldPage /></PrivateRoute>} />
-      <Route path="/projects" element={<PrivateRoute adminOnly moduleId="projects"><ProjectsPage /></PrivateRoute>} />
+      <Route path="/work" element={<PrivateRoute adminOnly moduleId="projects"><ProjectsPage /></PrivateRoute>} />
+      <Route path="/projects" element={<HashRedirect to="/work" />} />
       <Route path="/administration" element={<PrivateRoute adminOnly moduleId="administration"><AdministrationPage /></PrivateRoute>} />
       {/* Analytics is now the Performance tab of the Reports module. */}
       <Route path="/analytics" element={<Navigate to="/financial-reports#performance" replace />} />
@@ -190,8 +191,8 @@ function AppRoutes() {
       <Route path="/tools" element={<PrivateRoute moduleId="tools"><ToolsPage /></PrivateRoute>} />
       {/* Sales is now a tab set inside the Projects module. Keep the old paths
           working by deep-linking to the matching Projects tab. */}
-      <Route path="/sales" element={<Navigate to="/projects#estimates" replace />} />
-      <Route path="/change-orders" element={<Navigate to="/projects#change_orders" replace />} />
+      <Route path="/sales" element={<Navigate to="/work#estimates" replace />} />
+      <Route path="/change-orders" element={<Navigate to="/work#change_orders" replace />} />
       <Route path="/submittals" element={<PrivateRoute adminOnly moduleId="field"><SubmittalsPage /></PrivateRoute>} />
       <Route path="/closeout" element={<PrivateRoute adminOnly moduleId="workforce"><CloseoutPage /></PrivateRoute>} />
       <Route path="/lien-waivers" element={<PrivateRoute adminOnly moduleId="workforce"><LienWaiversPage /></PrivateRoute>} />

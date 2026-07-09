@@ -117,7 +117,7 @@ export const APPS = [
         <rect x="11.5" y="11.5" width="6" height="6" rx="1" />
       </svg>
     ),
-    path: '/projects',
+    path: '/work',
   },
   {
     id: 'financial_reports',
