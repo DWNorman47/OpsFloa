@@ -2992,13 +2992,18 @@ const AREA_MODE_COLORS = {
   strip:    '#6fae4d', // topsoil — green
 };
 const AREA_PALETTE = ['#38d39f', '#4da3ff', '#c07ef7', '#e0912b', '#e05555', '#2bb3c0', '#d24d8c', '#8bbf3f'];
-function areaColorHex(t) {
-  const m = AREA_MODE_COLORS[t.cfg.mode];
+// The auto color the tool would pick from mode/label (seeds the color picker).
+function autoAreaColor(mode, label) {
+  const m = AREA_MODE_COLORS[mode];
   if (m) return m;
-  const s = String(t.cfg.label || '');
+  const s = String(label || '');
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   return AREA_PALETTE[h % AREA_PALETTE.length];
+}
+// A user-chosen cfg.color always wins; otherwise fall back to the auto color.
+function areaColorHex(t) {
+  return (t.cfg && t.cfg.color) || autoAreaColor(t.cfg.mode, t.cfg.label);
 }
 function hexToRgba(hex, a) {
   const n = parseInt(hex.slice(1), 16);
@@ -3096,6 +3101,7 @@ function readAreaCfg() {
     swell: $('atSwell').value,
     respread: $('atRespread').value,
     deduct: $('atDeduct').checked,
+    color: $('atColor').value,
   };
 }
 
@@ -3127,6 +3133,8 @@ function askAreaConfig(areaSf, perimFt, prefill) {
       if (prefill.swell != null) $('atSwell').value = prefill.swell;
       if (prefill.respread != null) $('atRespread').value = prefill.respread;
     }
+    // Seed the color picker: a saved color, else the auto color for this mode/label.
+    $('atColor').value = (prefill && prefill.color) || autoAreaColor($('atMode').value, $('atLabel').value);
     syncAreaMode();
     preview();
     $('areaTakeoff').classList.remove('hidden');
@@ -3147,6 +3155,7 @@ function askAreaConfig(areaSf, perimFt, prefill) {
       if (p.tack != null) $('atTack').value = p.tack;
       if (p.swell != null) $('atSwell').value = p.swell;
       if (p.respread != null) $('atRespread').value = p.respread;
+      $('atColor').value = autoAreaColor(p.mode, p.label); // seed the material's canonical color
       onInput();
     };
     presetBtns.forEach(b => b.addEventListener('click', onPreset));

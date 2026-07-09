@@ -235,6 +235,7 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 }
 .wall-grid label.atCheck { flex-direction: row; align-items: center; gap: 8px; align-self: end; padding-bottom: 8px; }
 .wall-grid label.atCheck input { width: auto; padding: 0; }
+.wall-grid input[type=color] { height: 34px; padding: 2px; cursor: pointer; }
 .wall-depth { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px 12px; margin: 8px 0; }
 .wall-depth legend { font-size: 11.5px; font-weight: 700; color: var(--muted); padding: 0 6px; text-transform: uppercase; letter-spacing: .05em; }
 .wall-depth .radio { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); margin: 8px 0; flex-wrap: wrap; }
