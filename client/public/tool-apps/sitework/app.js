@@ -18,6 +18,7 @@ const state = {
   caps: null,              // per-active-page capabilities, e.g. { hatch, reason, stats }
 
   tool: 'pan',
+  smooth: false,           // curve mode: draw smooth curves through the clicked points
   view: { zoom: 1, panX: 0, panY: 0 },   // screen = world*zoom + pan
 
   projectId: null,         // current project record id (IndexedDB 'projects' store)
@@ -47,7 +48,7 @@ const state = {
   result: null,            // { grid, cutCY, fillCY, ... }
   showHeatmap: true,
   ghost: false,
-  layers: { scale: true, boundary: true, contours: true }, // per-section "Show on drawing" toggles
+  layers: { scale: true, boundary: true, contours: true, areas: true, areaLabels: true }, // per-section "Show on drawing" toggles
 
   // transient pointer stuff
   mouse: { x: 0, y: 0, down: false, panning: false, sx: 0, sy: 0, moved: false },
@@ -61,6 +62,8 @@ const state = {
   boxA: null, boxB: null,  // erase-box drag corners (world px)
   selTake: null,           // selected takeoff index (state.takeoffs) for reshape/edit
   dragTake: null,          // selected-takeoff vertex index while dragging (-1 = click consumed)
+  dragMove: null,          // whole-shape move: { what:'takeoff'|'contour', last:{x,y} }
+  clipboard: null,         // copied shape: { type:'takeoff'|'contour', data }
 };
 
 /* ============================== DOM ============================== */
@@ -153,6 +156,29 @@ function polygonPerimeterFt(poly, ftPerPx) {
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++)
     p += dist(poly[j].x, poly[j].y, poly[i].x, poly[i].y);
   return p * ftPerPx;
+}
+
+// Catmull-Rom spline: a smooth curve that passes THROUGH every input point.
+// Returns a densified polyline. `closed` wraps the ends into a loop (areas);
+// open curves clamp the ends (contours, lines). <3 points can't curve.
+function catmullRomSpline(pts, closed, segs = 14) {
+  const n = pts.length;
+  if (n < 3) return pts.map(p => ({ x: p.x, y: p.y }));
+  const get = i => closed ? pts[((i % n) + n) % n] : pts[Math.max(0, Math.min(n - 1, i))];
+  const out = [];
+  const spans = closed ? n : n - 1;
+  for (let i = 0; i < spans; i++) {
+    const p0 = get(i - 1), p1 = get(i), p2 = get(i + 1), p3 = get(i + 2);
+    for (let s = 0; s < segs; s++) {
+      const t = s / segs, t2 = t * t, t3 = t2 * t;
+      out.push({
+        x: 0.5 * (2 * p1.x + (-p0.x + p2.x) * t + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3),
+        y: 0.5 * (2 * p1.y + (-p0.y + p2.y) * t + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3),
+      });
+    }
+  }
+  if (!closed) out.push({ x: pts[n - 1].x, y: pts[n - 1].y });
+  return out;
 }
 
 function elevColor(elev, sheet) {
@@ -704,9 +730,15 @@ function drawDraft() {
   ctx.lineWidth = lw(2);
   ctx.setLineDash([lw(5), lw(5)]);
   ctx.beginPath();
-  state.draft.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
   const m = screenToWorld(state.mouse.x, state.mouse.y);
-  ctx.lineTo(m.x, m.y);
+  if (state.smooth && SMOOTHABLE_TOOLS.includes(state.tool) && state.draft.length >= 2) {
+    // preview the smooth curve through the placed points + the rubber-band point
+    const curve = catmullRomSpline(state.draft.concat([m]), false);
+    curve.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+  } else {
+    state.draft.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+    ctx.lineTo(m.x, m.y);
+  }
   ctx.stroke();
   ctx.setLineDash([]);
   const editableDraft = ['trace', 'boundary', 'pad', 'wall', 'area', 'line'].includes(state.tool);
@@ -763,10 +795,10 @@ function updateHud() {
         ? 'Click around a new pad — or edit one: drag a point (○) · double-click an edge to add a point · Alt+click removes'
         : 'Click around the building pad footprint — everything inside is held flat at one elevation',
     select: state.selected
-      ? 'Reshape: drag a point (○) · double-click an edge to add a point · Alt+click removes · Delete removes the line · E edits elevation'
+      ? 'Drag the body to move · drag a point (○) to reshape · double-click an edge to add · Alt+click removes · Ctrl+C/V copies · Delete removes · E edits elevation'
       : state.selTake != null
-        ? 'Reshape this takeoff: drag a point (○) · double-click an edge to add · Alt+click removes · Delete removes it · E re-picks type'
-        : 'Click a line, area, or line takeoff to select it, then drag its points (○) to reshape · Delete removes · E edits',
+        ? 'Drag the body to move · drag a point (○) to reshape · double-click an edge to add · Alt+click removes · Ctrl+C/V copies · Delete removes · E re-picks type'
+        : 'Click a line, area, or line takeoff to select it — then move/reshape/copy it · Delete removes · E edits',
     erase: state.selected && state.selected.sheet === state.sheet
       ? 'Drag a box — erases only from the SELECTED line · Esc deselects to erase from all lines'
       : 'Drag a box — traced line portions inside it are erased (lines crossing it are split)',
@@ -801,6 +833,7 @@ function setTool(t) {
   state.dragDraft = null;
   state.dragSel = null;
   state.dragTake = null;
+  state.dragMove = null;
   document.querySelectorAll('.tool').forEach(b =>
     b.classList.toggle('active', b.dataset.tool === t));
   cv.classList.toggle('crosshair', t !== 'pan');
@@ -827,6 +860,20 @@ function switchSheet(s) {
 
 document.querySelectorAll('.tab').forEach(b =>
   b.addEventListener('click', () => switchSheet(b.dataset.sheet)));
+
+function renderSmoothUI() {
+  const b = $('btnSmooth');
+  if (b) b.classList.toggle('on', state.smooth);
+}
+function setSmooth(on) {
+  state.smooth = on;
+  renderSmoothUI();
+  setMsg(on
+    ? 'Curve mode ON — points you place are joined by a smooth curve through them. Press C to turn off.'
+    : 'Curve mode off — points join with straight segments.');
+  draw();
+}
+$('btnSmooth').addEventListener('click', () => setSmooth(!state.smooth));
 
 cv.addEventListener('contextmenu', e => e.preventDefault());
 
@@ -969,6 +1016,21 @@ cv.addEventListener('mousedown', e => {
     }
   }
 
+  // with the Select tool, pressing the BODY of the selected shape (not a vertex)
+  // moves the whole shape
+  if (!state.mouse.panning && e.button === 0 && state.tool === 'select' && !state.draft.length &&
+      state.dragTake === null && state.dragSel === null && !e.altKey) {
+    const w = screenToWorld(state.mouse.sx, state.mouse.sy);
+    if (state.selTake != null && hitTakeoff(w) === state.selTake) {
+      state.dragMove = { what: 'takeoff', last: { x: w.x, y: w.y } }; pendingSnap = takeSnap();
+    } else if (state.selected && state.selected.sheet === state.sheet) {
+      const h = hitTest(w);
+      if (h && h.sheet === state.selected.sheet && h.index === state.selected.index) {
+        state.dragMove = { what: 'contour', last: { x: w.x, y: w.y } }; pendingSnap = takeSnap();
+      }
+    }
+  }
+
   // with the Scale tool, grabbing an existing endpoint drags it instead of re-clicking
   if (!state.mouse.panning && e.button === 0 && state.tool === 'calibrate' &&
       state.calibration && !state.calibPts.length) {
@@ -1013,6 +1075,15 @@ cv.addEventListener('mousemove', e => {
       const w = screenToWorld(x, y);
       const t = state.takeoffs[state.selTake];
       if (t) t.pts[state.dragTake] = { x: w.x, y: w.y };
+    }
+    if (state.dragMove) {
+      const w = screenToWorld(x, y);
+      const dx = w.x - state.dragMove.last.x, dy = w.y - state.dragMove.last.y;
+      const pts = state.dragMove.what === 'takeoff'
+        ? (state.takeoffs[state.selTake] || {}).pts
+        : (state.contours[state.selected.sheet][state.selected.index] || {}).pts;
+      if (pts) { for (const p of pts) { p.x += dx; p.y += dy; } }
+      state.dragMove.last = { x: w.x, y: w.y };
     }
     if (state.dragCal) {
       const w = screenToWorld(x, y);
@@ -1090,6 +1161,18 @@ cv.addEventListener('mouseup', e => {
       if (t) recomputeTakeoff(t);
       renderTakeoffs(); saveLocal();
       setMsg('Takeoff point moved.');
+    }
+    pendingSnap = null;
+    draw();
+    return;
+  }
+  if (state.dragMove) {
+    const what = state.dragMove.what;
+    state.dragMove = null;
+    if (moved) {
+      if (pendingSnap) pushSnap(pendingSnap);
+      if (what === 'takeoff') { renderTakeoffs(); saveLocal(); setMsg('Shape moved.'); } // area/length unchanged by a translate
+      else padEdited('Contour moved.'); // invalidates the stale cut/fill result + saves
     }
     pendingSnap = null;
     draw();
@@ -1403,6 +1486,45 @@ function nearestTakeoffEdge(pts, w, thresh, closed) {
   return best;
 }
 
+// ── Copy / paste a selected shape ─────────────────────────────────────────────
+const cloneDeep = o => JSON.parse(JSON.stringify(o));
+
+function copySelection() {
+  if (state.selTake != null && state.takeoffs[state.selTake]) {
+    state.clipboard = { type: 'takeoff', data: cloneDeep(state.takeoffs[state.selTake]) };
+    setMsg('Copied. Ctrl+V pastes a copy next to it.');
+  } else if (state.selected) {
+    const c = state.contours[state.selected.sheet][state.selected.index];
+    if (c) { state.clipboard = { type: 'contour', data: cloneDeep(c) }; setMsg('Copied. Ctrl+V pastes a copy next to it.'); }
+  } else setMsg('Select a shape first (➤ Select), then Ctrl+C to copy.');
+}
+
+function pasteClipboard() {
+  if (!state.clipboard) { setMsg('Nothing copied yet — select a shape and press Ctrl+C.'); return; }
+  snapshot();
+  const off = 24 / state.view.zoom; // offset so the pasted copy is visibly separate
+  const clone = cloneDeep(state.clipboard.data);
+  clone.pts.forEach(p => { p.x += off; p.y += off; });
+  if (state.tool !== 'select') setTool('select');
+  if (state.clipboard.type === 'takeoff') {
+    clone.id = randId();
+    state.takeoffs.push(clone);
+    state.selTake = state.takeoffs.length - 1;
+    state.selected = null;
+    renderTakeoffs();
+  } else {
+    state.contours[state.sheet].push(clone); // paste onto the active sheet
+    state.selected = { sheet: state.sheet, index: state.contours[state.sheet].length - 1 };
+    state.selTake = null;
+    state.result = null; // new contour geometry invalidates the last cut/fill
+    els.resultsSection.classList.add('hidden');
+    refreshContourList();
+  }
+  saveLocal();
+  draw();
+  setMsg('Pasted a copy — drag its body to reposition, or its points to reshape.');
+}
+
 // Re-open the material / line config for the selected takeoff (E key).
 async function editSelectedTakeoff() {
   const t = state.takeoffs[state.selTake];
@@ -1518,14 +1640,21 @@ function nearestBoundaryEdge(w, thresh) {
   return best;
 }
 
+const SMOOTHABLE_TOOLS = ['trace', 'area', 'line', 'boundary', 'pad'];
+const CLOSED_TOOLS = ['area', 'boundary', 'pad'];
+
 async function finishDraftIfAny(commit) {
   draftRedo.length = 0;  // finishing or abandoning a shape ends its draft-redo chain
   if (!state.draft.length) { return; }
-  const pts = state.draft;
+  let pts = state.draft;
   state.draft = [];
   updateUndoButtons(); // draft consumed; commit branches push the single shape snapshot
 
   if (!commit) { draw(); return; }
+
+  // Curve mode: replace the clicked knots with a smooth spline through them.
+  if (state.smooth && SMOOTHABLE_TOOLS.includes(state.tool) && pts.length >= 3)
+    pts = catmullRomSpline(pts, CLOSED_TOOLS.includes(state.tool));
 
   if (state.tool === 'boundary') {
     if (pts.length >= 3) {
@@ -2225,6 +2354,9 @@ window.addEventListener('keydown', e => {
     return;
   }
 
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') { e.preventDefault(); copySelection(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') { e.preventDefault(); pasteClipboard(); return; }
+
   switch (e.key) {
     case 'Enter':
       if (state.tool === 'realign') applyRealign();
@@ -2241,6 +2373,7 @@ window.addEventListener('keydown', e => {
       if (state.selected) { state.selected = null; refreshContourList(); }
       if (state.selTake != null) { state.selTake = null; renderTakeoffs(); }
       state.dragTake = null;
+      state.dragMove = null;
       if (state.tool === 'align' || state.tool === 'realign' || state.tool === 'measure') setTool('pan');
       else { state.alignPts = []; state.alignQs = []; }
       updateUndoButtons(); // draft may have been cleared
@@ -2258,6 +2391,7 @@ window.addEventListener('keydown', e => {
     case 'p': case 'P': setTool('pad'); break;
     case 'v': case 'V': setTool('select'); break;
     case 'b': case 'B': setTool('boundary'); break;
+    case 'c': case 'C': if (!e.ctrlKey && !e.metaKey) setSmooth(!state.smooth); break;
     case 'ArrowUp':    panBy(0, -PAN_STEP); e.preventDefault(); break;
     case 'ArrowDown':  panBy(0,  PAN_STEP); e.preventDefault(); break;
     case 'ArrowLeft':  panBy(-PAN_STEP, 0); e.preventDefault(); break;
@@ -2392,7 +2526,8 @@ $('btnClearSheet').addEventListener('click', async () => {
 els.chkGhost.addEventListener('change', e => { state.ghost = e.target.checked; draw(); });
 
 // per-section "Show on drawing" toggles for the scale line, boundary, and contours
-[['showScale', 'scale'], ['showBoundary', 'boundary'], ['showContours', 'contours']].forEach(([id, key]) => {
+[['showScale', 'scale'], ['showBoundary', 'boundary'], ['showContours', 'contours'],
+ ['showAreas', 'areas'], ['showAreaLabels', 'areaLabels']].forEach(([id, key]) => {
   $(id).addEventListener('change', e => { state.layers[key] = e.target.checked; draw(); });
 });
 
@@ -2857,13 +2992,18 @@ const AREA_MODE_COLORS = {
   strip:    '#6fae4d', // topsoil — green
 };
 const AREA_PALETTE = ['#38d39f', '#4da3ff', '#c07ef7', '#e0912b', '#e05555', '#2bb3c0', '#d24d8c', '#8bbf3f'];
-function areaColorHex(t) {
-  const m = AREA_MODE_COLORS[t.cfg.mode];
+// The auto color the tool would pick from mode/label (seeds the color picker).
+function autoAreaColor(mode, label) {
+  const m = AREA_MODE_COLORS[mode];
   if (m) return m;
-  const s = String(t.cfg.label || '');
+  const s = String(label || '');
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   return AREA_PALETTE[h % AREA_PALETTE.length];
+}
+// A user-chosen cfg.color always wins; otherwise fall back to the auto color.
+function areaColorHex(t) {
+  return (t.cfg && t.cfg.color) || autoAreaColor(t.cfg.mode, t.cfg.label);
 }
 function hexToRgba(hex, a) {
   const n = parseInt(hex.slice(1), 16);
@@ -2960,6 +3100,8 @@ function readAreaCfg() {
     tack: $('atTack').value,
     swell: $('atSwell').value,
     respread: $('atRespread').value,
+    deduct: $('atDeduct').checked,
+    color: $('atColor').value,
   };
 }
 
@@ -2979,6 +3121,7 @@ function askAreaConfig(areaSf, perimFt, prefill) {
   return new Promise(resolve => {
     const preview = () => { $('atResult').innerHTML = areaResultRows(areaSf, readAreaCfg(), perimFt); };
     $('atArea').textContent = `${fmt(areaSf)} sf`;
+    $('atDeduct').checked = !!(prefill && prefill.deduct); // default off for a new area
     if (prefill) {
       $('atLabel').value = prefill.label ?? '';
       $('atMode').value = prefill.mode ?? 'area';
@@ -2990,6 +3133,8 @@ function askAreaConfig(areaSf, perimFt, prefill) {
       if (prefill.swell != null) $('atSwell').value = prefill.swell;
       if (prefill.respread != null) $('atRespread').value = prefill.respread;
     }
+    // Seed the color picker: a saved color, else the auto color for this mode/label.
+    $('atColor').value = (prefill && prefill.color) || autoAreaColor($('atMode').value, $('atLabel').value);
     syncAreaMode();
     preview();
     $('areaTakeoff').classList.remove('hidden');
@@ -3010,6 +3155,7 @@ function askAreaConfig(areaSf, perimFt, prefill) {
       if (p.tack != null) $('atTack').value = p.tack;
       if (p.swell != null) $('atSwell').value = p.swell;
       if (p.respread != null) $('atRespread').value = p.respread;
+      $('atColor').value = autoAreaColor(p.mode, p.label); // seed the material's canonical color
       onInput();
     };
     presetBtns.forEach(b => b.addEventListener('click', onPreset));
@@ -3225,19 +3371,23 @@ function drawTakeoffs() {
     if (t.pts.length < 2) continue;
     if (t.kind === 'area') {
       if (t.pts.length < 3) continue;
+      if (!state.layers.areas && !selT) continue; // hidden — but a selected area still shows so you can edit it
+      const deduct = !!t.cfg.deduct;
       const areaCol = areaColorHex(t);
       ctx.beginPath();
       t.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
       ctx.closePath();
-      ctx.fillStyle = hexToRgba(areaCol, 0.18);
+      ctx.fillStyle = hexToRgba(areaCol, deduct ? 0.08 : 0.18);
       ctx.fill();
       ctx.strokeStyle = areaCol;
       ctx.lineWidth = lw(2);
+      if (deduct) ctx.setLineDash([lw(7), lw(5)]); // dashed = subtracted (hole / cutout)
       ctx.stroke();
-      if (t.result) {
+      ctx.setLineDash([]);
+      if (t.result && state.layers.areaLabels) {
         const c = polyCentroid(t.pts);
         const q = `${fmt(t.result.quantity, t.result.unit === 'SF' ? 0 : 1)} ${t.result.unit}`;
-        labelAt(c.x, c.y, `${t.cfg.label}: ${q}`, '#0f9d68');
+        labelAt(c.x, c.y, `${deduct ? '− ' : ''}${t.cfg.label}: ${q}`, deduct ? '#e0912b' : '#0f9d68');
       }
       if (selT) drawTakeoffHandles(t.pts);
     } else if (t.kind === 'line') {
@@ -3269,9 +3419,10 @@ function takeoffRowText(t) {
     else if (t.cfg.mode === 'concrete' && t.result.rebar)
       extra = ` · ${t.result.rebar.type === 'mesh' ? 'mesh' : t.result.rebar.type}${t.result.formworkLF ? ' + forms' : ''}`;
     else if (t.cfg.mode === 'paving' && t.result.tackGal) extra = ` · ${fmt(t.result.tackGal)} gal tack`;
+    const sign = t.cfg.deduct ? '− ' : '';
     return {
-      headline: `${fmt(t.result.quantity, t.result.unit === 'SF' ? 0 : 1)} ${t.result.unit}${strip ? ' strip' : ''}`,
-      sub: `${t.cfg.label} · ${fmt(t.result.areaSf)} sf${t.cfg.mode !== 'area' ? ` · ${t.cfg.thickness}"` : ''}${extra}`,
+      headline: `${sign}${fmt(t.result.quantity, t.result.unit === 'SF' ? 0 : 1)} ${t.result.unit}${strip ? ' strip' : ''}`,
+      sub: `${t.cfg.deduct ? 'DEDUCT · ' : ''}${t.cfg.label} · ${fmt(t.result.areaSf)} sf${t.cfg.mode !== 'area' ? ` · ${t.cfg.thickness}"` : ''}${extra}`,
     };
   }
   return {
@@ -3310,7 +3461,7 @@ function renderTakeoffs() {
     for (const x of areaItems) {
       const key = x.t.cfg.label || 'Area';
       const g = groups.get(key) || { color: areaColorHex(x.t), sf: 0, rows: [] };
-      g.sf += x.t.result.areaSf || 0;
+      g.sf += (x.t.cfg.deduct ? -1 : 1) * (x.t.result.areaSf || 0); // holes/cutouts subtract
       g.rows.push(x);
       groups.set(key, g);
     }
@@ -3876,7 +4027,7 @@ function buildBidItems() {
   // typeKey = type-level id (holds the remembered price shared across projects)
   // haul  = loose CY leaving the site, summed into the truck-load count
   const push = (key, typeKey, group, desc, qty, unit, haul) => {
-    if (qty > 0.05) items.push({ key, typeKey, group, desc, qty, unit, haul: !!haul });
+    if (Math.abs(qty) > 0.05) items.push({ key, typeKey, group, desc, qty, unit, haul: !!haul });
   };
   const tk = s => String(s).toLowerCase().trim();
 
@@ -3920,24 +4071,32 @@ function buildBidItems() {
         push(`to-${t.id}`, `line:${lbl}`, g, t.cfg.label, t.result.lengthFt, 'LF');
       }
     } else if (t.kind === 'area') {
+      // A deduct (hole / cutout) subtracts only its PRIMARY quantity from the same
+      // type key; secondary add-ons (rebar/forms/tack/respread) are skipped since a
+      // cutout's effect on those is ambiguous.
+      const sgn = t.cfg.deduct ? -1 : 1, dPfx = t.cfg.deduct ? 'Deduct — ' : '';
       if (t.cfg.mode === 'strip') {
-        push(`to-${t.id}-strip`, `strip:${lbl}`, g, `${t.cfg.label} (strip, bank)`, t.result.stripCY, 'CY');
-        push(`to-${t.id}-resp`, `strip-resp:${lbl}`, g, `${t.cfg.label} — respread`, t.result.respreadCY, 'CY');
-        push(`to-${t.id}-exp`, `strip-exp:${lbl}`, g, `${t.cfg.label} — net export (loose)`, t.result.netExportLooseCY, 'CY', true);
+        push(`to-${t.id}-strip`, `strip:${lbl}`, g, `${dPfx}${t.cfg.label} (strip, bank)`, sgn * t.result.stripCY, 'CY');
+        if (!t.cfg.deduct) {
+          push(`to-${t.id}-resp`, `strip-resp:${lbl}`, g, `${t.cfg.label} — respread`, t.result.respreadCY, 'CY');
+          push(`to-${t.id}-exp`, `strip-exp:${lbl}`, g, `${t.cfg.label} — net export (loose)`, t.result.netExportLooseCY, 'CY', true);
+        }
       } else if (t.cfg.mode === 'concrete') {
-        push(`to-${t.id}`, `concrete:${lbl}`, g, t.cfg.label, t.result.quantity, 'CY');
-        if (t.result.formworkLF) push(`to-${t.id}-form`, `concrete-form:${lbl}`, g, `${t.cfg.label} — edge forms`, t.result.formworkLF, 'LF');
-        if (t.result.rebar) {
-          if (t.result.rebar.type === 'mesh')
-            push(`to-${t.id}-mesh`, `concrete-mesh:${lbl}`, g, `${t.cfg.label} — wire mesh`, t.result.rebar.meshSf, 'SF');
-          else
-            push(`to-${t.id}-rebar`, `concrete-rebar:${lbl}:${t.result.rebar.type}`, g, `${t.cfg.label} — rebar ${t.result.rebar.type}`, t.result.rebar.weightLb, 'lb');
+        push(`to-${t.id}`, `concrete:${lbl}`, g, `${dPfx}${t.cfg.label}`, sgn * t.result.quantity, 'CY');
+        if (!t.cfg.deduct) {
+          if (t.result.formworkLF) push(`to-${t.id}-form`, `concrete-form:${lbl}`, g, `${t.cfg.label} — edge forms`, t.result.formworkLF, 'LF');
+          if (t.result.rebar) {
+            if (t.result.rebar.type === 'mesh')
+              push(`to-${t.id}-mesh`, `concrete-mesh:${lbl}`, g, `${t.cfg.label} — wire mesh`, t.result.rebar.meshSf, 'SF');
+            else
+              push(`to-${t.id}-rebar`, `concrete-rebar:${lbl}:${t.result.rebar.type}`, g, `${t.cfg.label} — rebar ${t.result.rebar.type}`, t.result.rebar.weightLb, 'lb');
+          }
         }
       } else if (t.cfg.mode === 'paving') {
-        push(`to-${t.id}`, `paving:${lbl}`, g, t.cfg.label, t.result.quantity, 'tons');
-        if (t.result.tackGal) push(`to-${t.id}-tack`, `tack:${lbl}`, g, `${t.cfg.label} — tack coat`, t.result.tackGal, 'gal');
+        push(`to-${t.id}`, `paving:${lbl}`, g, `${dPfx}${t.cfg.label}`, sgn * t.result.quantity, 'tons');
+        if (!t.cfg.deduct && t.result.tackGal) push(`to-${t.id}-tack`, `tack:${lbl}`, g, `${t.cfg.label} — tack coat`, t.result.tackGal, 'gal');
       } else {
-        push(`to-${t.id}`, `area:${lbl}:${tk(t.result.unit)}`, g, t.cfg.label, t.result.quantity, t.result.unit);
+        push(`to-${t.id}`, `area:${lbl}:${tk(t.result.unit)}`, g, `${dPfx}${t.cfg.label}`, sgn * t.result.quantity, t.result.unit);
       }
     }
   });

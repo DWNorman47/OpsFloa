@@ -52,6 +52,7 @@
     <button class="tool" data-tool="count" title="Count takeoff: click each item (catch basin, manhole, tree, sign, light pole…); Enter or double-click to finish, then name it. Gives an each (EA) tally that collects in the Quantities panel.">⊕ Count</button>
     <button class="tool" data-tool="select" title="Click a traced line, an AREA, or a line takeoff (or its sidebar row) to select it, then reshape it: drag a point (○), double-click an edge to add a point, Alt+click a point to remove it. Delete removes it; E edits elevation (contour) or re-picks the material/type (area/line); Esc deselects.">➤ Select</button>
     <button class="tool" data-tool="erase" title="Drag a box — the portions of traced lines inside it are erased; lines crossing the box are split. If a line is selected, only that line is trimmed">⌫ Erase Box</button>
+    <button id="btnSmooth" class="btn smooth-toggle" title="Curve mode: the points you place are joined by a smooth curve that passes through them — for contours, areas, and lines. Toggle with C.">〜 Curve</button>
     </div>
   </div>
 
@@ -176,6 +177,10 @@
 
     <section id="secTakeoffs" class="hidden">
       <h3>Quantities <span class="pill" id="takeoffCount"></span></h3>
+      <div class="row">
+        <label class="layer-toggle" title="Show or hide the area shapes on the drawing (their quantities stay in this list)"><input type="checkbox" id="showAreas" checked> Show areas</label>
+        <label class="layer-toggle" title="Show or hide the area name labels on the drawing"><input type="checkbox" id="showAreaLabels" checked> Show names</label>
+      </div>
       <div id="takeoffList" class="list"></div>
       <div class="hint">Quantity takeoffs — ▦ Area (paving, base, concrete, topsoil strip), ╱ Line (curb, pipe/utility trench, fence), and ⊕ Count (structures, trees, signs). Area (SF/SY), volume (CY), weight (tons), length (LF), and each (EA).</div>
     </section>
@@ -344,6 +349,7 @@
     </div>
     <div class="wall-grid">
       <label>Material / label<input type="text" id="atLabel" value="Area" maxlength="40"></label>
+      <label class="atColorLbl" title="Color of this area on the drawing and in the Quantities list. Change it so different surfaces read apart.">Color<input type="color" id="atColor" value="#38d39f"></label>
       <label>Output
         <select id="atMode">
           <option value="area">Area (SF / SY)</option>
@@ -370,6 +376,7 @@
       <label id="atSwellWrap" title="Bulking / swell of stripped topsoil once loosened for hauling. Topsoil ≈ 20–25%.">Swell (%)<input type="number" id="atSwell" min="0" step="1" value="25"></label>
       <label id="atRespreadWrap" title="Depth of topsoil respread back over the area at finish grade. 0 = haul all off.">Respread (in)<input type="number" id="atRespread" min="0" step="0.5" value="0"></label>
     </div>
+    <label class="atCheck" title="Subtract this area from its type's total — a hole, island, or cutout inside a larger area of the same type. Give it the SAME material/label as the area it cuts out of."><input type="checkbox" id="atDeduct"> Deduct — subtract this area from its type (hole / cutout)</label>
     <div id="atResult" class="wall-result"></div>
     <div class="modal-actions">
       <button id="atCancel" class="btn">Cancel</button>
