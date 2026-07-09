@@ -8,6 +8,7 @@
 
 const router = require('express').Router();
 const pool = require('../db');
+const { hasPerm, requirePerm } = require('../permissions');
 const {
   WORK_ORDER_STATUSES, WORK_ORDER_STATUS_DEFAULT,
   WORK_ORDER_PRIORITIES, WORK_ORDER_PRIORITY_DEFAULT,
@@ -39,6 +40,11 @@ router.get('/', async (req, res) => {
   try {
     const params = [req.user.company_id];
     let where = 'company_id = $1 AND active = true';
+    // Managers (view_projects) see all; a field worker sees only their assigned jobs.
+    if (!(await hasPerm(req, 'view_projects'))) {
+      params.push(req.user.id);
+      where += ` AND assigned_to = $${params.length}`;
+    }
     if (req.query.status && WORK_ORDER_STATUSES.includes(req.query.status)) {
       params.push(req.query.status);
       where += ` AND status = $${params.length}`;
@@ -67,6 +73,10 @@ router.get('/:id', async (req, res) => {
       [req.params.id, req.user.company_id],
     );
     if (!rows[0]) return res.status(404).json({ error: 'Work order not found.' });
+    // Workers can only open a work order assigned to them (404 hides the rest).
+    if (rows[0].assigned_to !== req.user.id && !(await hasPerm(req, 'view_projects'))) {
+      return res.status(404).json({ error: 'Work order not found.' });
+    }
     res.json(rows[0]);
   } catch (err) {
     if (req.log && req.log.error) req.log.error({ err }, 'get work order failed');
@@ -74,8 +84,8 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// POST /  — create
-router.post('/', async (req, res) => {
+// POST /  — create (managers/dispatchers)
+router.post('/', requirePerm('manage_projects'), async (req, res) => {
   const wo = readBody(req.body || {});
   if (!wo.title) return res.status(400).json({ error: 'A title is required.' });
   try {
@@ -97,8 +107,8 @@ router.post('/', async (req, res) => {
   }
 });
 
-// PATCH /:id  — update
-router.patch('/:id', async (req, res) => {
+// PATCH /:id  — update (managers/dispatchers)
+router.patch('/:id', requirePerm('manage_projects'), async (req, res) => {
   const wo = readBody(req.body || {});
   if (!wo.title) return res.status(400).json({ error: 'A title is required.' });
   try {
@@ -123,8 +133,8 @@ router.patch('/:id', async (req, res) => {
   }
 });
 
-// DELETE /:id  — soft delete
-router.delete('/:id', async (req, res) => {
+// DELETE /:id  — soft delete (managers/dispatchers)
+router.delete('/:id', requirePerm('manage_projects'), async (req, res) => {
   try {
     const { rowCount } = await pool.query(
       'UPDATE work_orders SET active = false, updated_at = NOW() WHERE id = $1 AND company_id = $2',

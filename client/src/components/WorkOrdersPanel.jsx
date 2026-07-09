@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import api from '../api';
 import { silentError } from '../errorReporter';
+import { usePerm } from '../hooks/usePerm';
 
 const STATUSES = [
   { v: 'open', label: 'Open' },
@@ -35,6 +36,7 @@ const fmtWhen = ts => {
 };
 
 export default function WorkOrdersPanel() {
+  const canManage = usePerm('manage_projects');
   const [orders, setOrders] = useState([]);
   const [clients, setClients] = useState([]);
   const [projects, setProjects] = useState([]);
@@ -101,7 +103,7 @@ export default function WorkOrdersPanel() {
   return (
     <div style={styles.wrap}>
       <div style={styles.toolbar}>
-        <button className="ops-button-primary" onClick={openNew}>+ New work order</button>
+        {canManage && <button className="ops-button-primary" onClick={openNew}>+ New work order</button>}
         <select style={styles.filter} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
           <option value="active">Active</option>
           <option value="all">All</option>
@@ -144,7 +146,8 @@ export default function WorkOrdersPanel() {
       {editing && (
         <div style={styles.modalBg} onClick={close}>
           <div style={styles.modal} onClick={e => e.stopPropagation()}>
-            <h3 style={styles.modalTitle}>{editing.id ? 'Edit work order' : 'New work order'}</h3>
+            <h3 style={styles.modalTitle}>{editing.id ? (canManage ? 'Edit work order' : 'Work order') : 'New work order'}</h3>
+            <fieldset disabled={!canManage} style={styles.fieldset}>
             <div style={styles.grid}>
               <label style={styles.full}>Title
                 <input style={styles.input} value={form.title} maxLength={255}
@@ -194,12 +197,13 @@ export default function WorkOrdersPanel() {
                   onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
               </label>
             </div>
+            </fieldset>
             {error && <div style={styles.error}>{error}</div>}
             <div style={styles.actions}>
-              {editing.id && <button className="ops-button" style={styles.del} onClick={() => remove(editing)}>Delete</button>}
+              {canManage && editing.id && <button className="ops-button" style={styles.del} onClick={() => remove(editing)}>Delete</button>}
               <span style={{ flex: 1 }} />
-              <button className="ops-button" onClick={close} disabled={saving}>Cancel</button>
-              <button className="ops-button-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+              <button className="ops-button" onClick={close} disabled={saving}>{canManage ? 'Cancel' : 'Close'}</button>
+              {canManage && <button className="ops-button-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>}
             </div>
           </div>
         </div>
@@ -229,6 +233,7 @@ const styles = {
   modalBg: { position: 'fixed', inset: 0, background: 'rgba(15,23,42,.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 90, padding: 16 },
   modal: { background: '#fff', borderRadius: 14, padding: 20, width: 'min(640px, 100%)', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,.3)' },
   modalTitle: { margin: '0 0 14px', fontSize: 18, color: '#0f172a' },
+  fieldset: { border: 'none', padding: 0, margin: 0, minWidth: 0 },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 },
   full: { gridColumn: '1 / -1' },
   input: { width: '100%', boxSizing: 'border-box', marginTop: 5, padding: '8px 10px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 14, fontFamily: 'inherit', background: '#fff', color: '#0f172a' },
