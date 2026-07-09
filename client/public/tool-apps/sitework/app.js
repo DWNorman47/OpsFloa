@@ -48,7 +48,7 @@ const state = {
   result: null,            // { grid, cutCY, fillCY, ... }
   showHeatmap: true,
   ghost: false,
-  layers: { scale: true, boundary: true, contours: true }, // per-section "Show on drawing" toggles
+  layers: { scale: true, boundary: true, contours: true, areas: true, areaLabels: true }, // per-section "Show on drawing" toggles
 
   // transient pointer stuff
   mouse: { x: 0, y: 0, down: false, panning: false, sx: 0, sy: 0, moved: false },
@@ -2526,7 +2526,8 @@ $('btnClearSheet').addEventListener('click', async () => {
 els.chkGhost.addEventListener('change', e => { state.ghost = e.target.checked; draw(); });
 
 // per-section "Show on drawing" toggles for the scale line, boundary, and contours
-[['showScale', 'scale'], ['showBoundary', 'boundary'], ['showContours', 'contours']].forEach(([id, key]) => {
+[['showScale', 'scale'], ['showBoundary', 'boundary'], ['showContours', 'contours'],
+ ['showAreas', 'areas'], ['showAreaLabels', 'areaLabels']].forEach(([id, key]) => {
   $(id).addEventListener('change', e => { state.layers[key] = e.target.checked; draw(); });
 });
 
@@ -3361,6 +3362,7 @@ function drawTakeoffs() {
     if (t.pts.length < 2) continue;
     if (t.kind === 'area') {
       if (t.pts.length < 3) continue;
+      if (!state.layers.areas && !selT) continue; // hidden — but a selected area still shows so you can edit it
       const deduct = !!t.cfg.deduct;
       const areaCol = areaColorHex(t);
       ctx.beginPath();
@@ -3373,7 +3375,7 @@ function drawTakeoffs() {
       if (deduct) ctx.setLineDash([lw(7), lw(5)]); // dashed = subtracted (hole / cutout)
       ctx.stroke();
       ctx.setLineDash([]);
-      if (t.result) {
+      if (t.result && state.layers.areaLabels) {
         const c = polyCentroid(t.pts);
         const q = `${fmt(t.result.quantity, t.result.unit === 'SF' ? 0 : 1)} ${t.result.unit}`;
         labelAt(c.x, c.y, `${deduct ? '− ' : ''}${t.cfg.label}: ${q}`, deduct ? '#e0912b' : '#0f9d68');
