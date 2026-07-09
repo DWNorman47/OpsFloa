@@ -5,8 +5,12 @@ import { silentError } from '../errorReporter';
 import { PageIntro, PageSection, PageShell } from '../components/PageShell';
 import TabBar from '../components/TabBar';
 import TranscriptionTool from '../components/TranscriptionTool';
+import SummarizerTool from '../components/SummarizerTool';
+import DocQATool from '../components/DocQATool';
+import EmailDrafterTool from '../components/EmailDrafterTool';
 
 const SITEWORK_TOOL_URL = '/tool-apps/sitework/index.html';
+const PDFTOOLS_TOOL_URL = '/tool-apps/pdftools/index.html';
 
 // the old excavation tool was removed; its '#excavation' deep links land on sitework
 function resolveTab() {
@@ -65,7 +69,7 @@ export default function ToolsPage() {
         kicker="Tools"
         title="Useful calculators and work helpers"
         description="Keep specialized utilities close by without crowding the daily workflow. Tools open separately so the main app stays right where you left it."
-        meta={<span className="ops-pill accent">2 tools available</span>}
+        meta={<span className="ops-pill accent">6 tools available</span>}
       />
 
       <TabBar
@@ -74,6 +78,10 @@ export default function ToolsPage() {
         tabs={[
           { id: 'sitework', label: 'Sitework Takeoff' },
           { id: 'transcription', label: 'Transcription' },
+          { id: 'summarizer', label: 'Summarizer' },
+          { id: 'docqa', label: 'Doc Q&A' },
+          { id: 'emaildraft', label: 'Email Drafter' },
+          { id: 'pdftools', label: 'PDF Toolkit' },
         ]}
         ariaLabel="Tools sections"
       />
@@ -114,6 +122,65 @@ export default function ToolsPage() {
           description="Upload a meeting or call recording and get back a transcript that separates who said what. Rename speakers, jump the audio to any line, and copy or download the text."
         >
           <TranscriptionTool />
+        </PageSection>
+      )}
+
+      {tab === 'summarizer' && (
+        <PageSection
+          eyebrow="Office"
+          title="Meeting & call summarizer"
+          description="Paste a transcript or notes and get a clean summary with key points and action items. Pairs with the transcription tool."
+        >
+          <SummarizerTool />
+        </PageSection>
+      )}
+
+      {tab === 'docqa' && (
+        <PageSection
+          eyebrow="Office"
+          title="Document Q&A"
+          description="Open a contract, spec, or insurance cert and ask questions about it — answers come only from the document. Great for the dense paperwork you don't have time to read."
+        >
+          <DocQATool />
+        </PageSection>
+      )}
+
+      {tab === 'emaildraft' && (
+        <PageSection
+          eyebrow="Office"
+          title="Email & message drafter"
+          description="Turn a few notes into a polished email or text — payment reminders, quote follow-ups, running-late messages — in the tone you pick."
+        >
+          <EmailDrafterTool />
+        </PageSection>
+      )}
+
+      {tab === 'pdftools' && (
+        <PageSection
+          eyebrow="Office"
+          title="PDF Toolkit"
+          description="Combine, reorder, rotate, delete, and extract PDF pages right in your browser — no upload, nothing leaves your device."
+          actions={(
+            <a className="ops-button-primary" href={PDFTOOLS_TOOL_URL} target="_blank" rel="noopener noreferrer">
+              Open in new tab
+            </a>
+          )}
+        >
+          <a className="tools-card" href={PDFTOOLS_TOOL_URL} target="_blank" rel="noopener noreferrer">
+            <span className="tools-card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+                <path d="M14 3v5h5" />
+                <path d="M9 13h6" />
+                <path d="M9 17h6" />
+              </svg>
+            </span>
+            <span className="tools-card-copy">
+              <strong>PDF Toolkit</strong>
+              <span>Merge several PDFs into one, drag pages to reorder, rotate or delete pages, or tick a few and extract them as a new file. Runs entirely on your device.</span>
+            </span>
+            <span className="tools-card-action">Open</span>
+          </a>
         </PageSection>
       )}
     </PageShell>

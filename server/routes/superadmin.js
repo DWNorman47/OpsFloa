@@ -76,7 +76,7 @@ async function createDemoWorkspace(client) {
   const settings = {
     prevailing_wage_rate: '45', default_hourly_rate: '34', overtime_multiplier: '1.5',
     overtime_rule: 'daily', overtime_threshold: '8',
-    module_timeclock: '1', module_field: '1', module_projects: '1', module_inventory: '1', module_tools: '1', module_analytics: '1', module_team: '1',
+    module_timeclock: '1', module_field: '1', module_work: '1', module_inventory: '1', module_tools: '1', module_analytics: '1', module_team: '1',
     module_financial_reports: '1',
     feature_scheduling: '1', feature_analytics: '1', feature_chat: '1', feature_prevailing_wage: '1',
     feature_reimbursements: '1', feature_pto: '1', feature_project_integration: '1', feature_overtime: '1',

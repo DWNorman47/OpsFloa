@@ -279,7 +279,7 @@ describe('smoke: FieldPage hash routes', () => {
     const api = (await import('../api')).default;
     api.get.mockImplementation((url) => {
       if (url.startsWith('/settings')) return Promise.resolve({ data: fieldSettings });
-      if (url.startsWith('/projects')) return Promise.resolve({ data: projects });
+      if (url === '/work' || url.startsWith('/projects')) return Promise.resolve({ data: projects });
       if (url.startsWith('/field-reports/photos')) return Promise.resolve({ data: pagedEmpty });
       if (url.startsWith('/field-reports')) return Promise.resolve({ data: pagedEmpty });
       if (url.startsWith('/daily-reports')) return Promise.resolve({ data: pagedEmpty });
@@ -327,7 +327,7 @@ describe('smoke: populated list views (catches sub-component bugs)', () => {
     ];
     api.get.mockImplementation((url) => {
       if (url.startsWith('/time-entries')) return Promise.resolve({ data: entries });
-      if (url.startsWith('/projects')) return Promise.resolve({ data: projects });
+      if (url === '/work' || url.startsWith('/projects')) return Promise.resolve({ data: projects });
       if (url.startsWith('/settings')) return Promise.resolve({ data: DEFAULT_SETTINGS });
       if (url.startsWith('/clock/status')) return Promise.resolve({ data: null });
       return Promise.resolve({ data: [] });
@@ -372,7 +372,7 @@ describe('smoke: populated list views (catches sub-component bugs)', () => {
       if (url.startsWith('/admin/kpis')) return Promise.resolve({ data: { pending_entries: 1, clocked_in: 1, hours_this_week: 40 } });
       if (url.startsWith('/admin/workers')) return Promise.resolve({ data: workers });
       if (url.startsWith('/admin/projects')) return Promise.resolve({ data: projects });
-      if (url.startsWith('/projects')) return Promise.resolve({ data: projects });
+      if (url === '/work' || url.startsWith('/projects')) return Promise.resolve({ data: projects });
       if (url.startsWith('/admin/entries/pending') || url.startsWith('/admin/entries/recently-approved')) return Promise.resolve({ data: pendingEntries });
       if (url.startsWith('/admin/active-clocks')) return Promise.resolve({ data: activeClocks });
       if (url.startsWith('/admin/settings')) return Promise.resolve({ data: DEFAULT_SETTINGS });
@@ -401,7 +401,7 @@ describe('smoke: populated list views (catches sub-component bugs)', () => {
     };
     const metrics = { [project.id]: { total_hours: 40, worker_count: 3, overtime_hours: 0 } };
     api.get.mockImplementation((url) => {
-      if (url.startsWith('/projects')) return Promise.resolve({ data: [project] });
+      if (url === '/work' || url.startsWith('/projects')) return Promise.resolve({ data: [project] });
       if (url.startsWith('/project-metrics')) return Promise.resolve({ data: metrics });
       if (url.startsWith('/settings')) return Promise.resolve({ data: DEFAULT_SETTINGS });
       return Promise.resolve({ data: [] });

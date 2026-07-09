@@ -49,7 +49,7 @@ function SectionHeader({ title }) {
 
 export function RFIDocument({ rfi, companyName, t = {}, language, settings = null }) {
   const locale = langToLocale(language);
-  const workLabel = settings?.label_work || t.project || 'Project';
+  const workLabel = settings?.label_work || 'Work';
   const statusColors = STATUS_COLORS[rfi.status] || STATUS_COLORS.open;
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
 

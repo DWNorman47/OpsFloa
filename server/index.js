@@ -195,7 +195,10 @@ app.use('/api', demoContextMiddleware);
 refreshDemoCompanies(); // prime the demo-company cache at startup
 
 app.use('/api/auth', require('./routes/auth'));
-app.use('/api/projects', require('./routes/projects'));
+const projectsRouter = require('./routes/projects');
+app.use('/api/work', projectsRouter);        // renamed home for the core Work/Projects resource
+app.use('/api/projects', projectsRouter);     // legacy alias (project sub-resources still live at /api/projects/:id/...)
+app.use('/api/work-orders', requireAuth, require('./routes/workOrders'));
 app.use('/api/time-entries', require('./routes/timeEntries'));
 app.use('/api/admin', require('./routes/admin'));
 // QBO OAuth callback must be public (Intuit redirects here without a JWT)
@@ -221,6 +224,7 @@ app.use('/api/safety-talks', requireAuth, requirePlan('business'), require('./ro
 app.use('/api/safety-checklists', requireAuth, requirePlan('business'), require('./routes/safetyChecklists'));
 // Voice transcription tool (Tools module) — upload audio, diarized transcript
 app.use('/api/recordings', requireAuth, requirePlan('business'), require('./routes/recordings'));
+app.use('/api/office', requireAuth, requirePlan('business'), require('./routes/officeTools'));
 app.use('/api/inbox', require('./routes/inbox'));
 app.use('/api/time-off', requireAuth, require('./routes/timeOff'));
 app.use('/api/reimbursements', requireAuth, require('./routes/reimbursements'));

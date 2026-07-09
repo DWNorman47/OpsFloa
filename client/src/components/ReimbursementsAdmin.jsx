@@ -189,7 +189,7 @@ export default function ReimbursementsAdmin({ settings = null }) {
 
   useEffect(() => {
     api.get('/admin/workers').then(r => setWorkers(r.data)).catch(silentError('reimbursementsadmin'));
-    api.get('/projects').then(r => setProjects(r.data)).catch(silentError('reimbursementsadmin'));
+    api.get('/work').then(r => setProjects(r.data)).catch(silentError('reimbursementsadmin'));
     api.get('/reimbursements/categories').then(r => setCategories(r.data)).catch(silentError('reimbursementsadmin'));
   }, []);
 

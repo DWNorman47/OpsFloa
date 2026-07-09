@@ -129,7 +129,7 @@ export default function InventoryPage() {
       try {
         const [s, p] = await Promise.all([
           getOrFetch('settings', () => api.get('/settings').then(r => r.data)),
-          getOrFetch('projects', () => api.get('/projects').then(r => r.data)),
+          getOrFetch('projects', () => api.get('/work').then(r => r.data)),
         ]);
         setFeatures(s);
         setProjects(p);

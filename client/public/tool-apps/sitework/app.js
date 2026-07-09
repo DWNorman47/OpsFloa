@@ -15,6 +15,7 @@ const state = {
     proposed: { pageNum: 2, image: null },
   },
   renderScale: null,       // pdf units -> image px, shared by both sheets
+  caps: null,              // per-active-page capabilities, e.g. { hatch, reason, stats }
 
   tool: 'pan',
   view: { zoom: 1, panX: 0, panY: 0 },   // screen = world*zoom + pan
@@ -58,6 +59,8 @@ const state = {
   dragDraft: null,         // draft vertex index while tracing before commit
   wandPts: null,           // highlighted auto-traced polyline awaiting an elevation
   boxA: null, boxB: null,  // erase-box drag corners (world px)
+  selTake: null,           // selected takeoff index (state.takeoffs) for reshape/edit
+  dragTake: null,          // selected-takeoff vertex index while dragging (-1 = click consumed)
 };
 
 /* ============================== DOM ============================== */
@@ -352,6 +355,7 @@ async function openPdfBytes(buf, name) {
   state.pdf = await pdfjsLib.getDocument({ data: buf }).promise;
   state.pdfName = name;
   Object.keys(pathCache).forEach(k => delete pathCache[k]);
+  Object.keys(hatchCapCache).forEach(k => delete hatchCapCache[k]);
   els.dropHint.classList.add('hidden');
 
   const n = state.pdf.numPages;
@@ -371,6 +375,7 @@ async function openPdfBytes(buf, name) {
 
   await renderSheet('existing');
   await renderSheet('proposed');
+  await updateHatchCap();
   fitView();
   setMsg(`Loaded ${name} (${n} page${n > 1 ? 's' : ''}).` +
     (state.calibration ? '' : ' Now calibrate the scale (📏).'));
@@ -393,11 +398,11 @@ async function renderSheet(sheet) {
 
 els.pageExisting.addEventListener('change', async e => {
   state.sheets.existing.pageNum = parseInt(e.target.value);
-  await renderSheet('existing'); saveLocal(); draw();
+  await renderSheet('existing'); saveLocal(); draw(); updateHatchCap();
 });
 els.pageProposed.addEventListener('change', async e => {
   state.sheets.proposed.pageNum = parseInt(e.target.value);
-  await renderSheet('proposed'); saveLocal(); draw();
+  await renderSheet('proposed'); saveLocal(); draw(); updateHatchCap();
 });
 
 /* ============================== View / canvas ============================== */
@@ -704,7 +709,7 @@ function drawDraft() {
   ctx.lineTo(m.x, m.y);
   ctx.stroke();
   ctx.setLineDash([]);
-  const editableDraft = ['trace', 'boundary', 'pad', 'wall'].includes(state.tool);
+  const editableDraft = ['trace', 'boundary', 'pad', 'wall', 'area', 'line'].includes(state.tool);
   for (const p of state.draft) {
     ctx.beginPath();
     ctx.arc(p.x, p.y, lw(editableDraft ? 5 : 3), 0, Math.PI * 2);
@@ -759,7 +764,9 @@ function updateHud() {
         : 'Click around the building pad footprint — everything inside is held flat at one elevation',
     select: state.selected
       ? 'Reshape: drag a point (○) · double-click an edge to add a point · Alt+click removes · Delete removes the line · E edits elevation'
-      : 'Click a line to select it, then drag its points (○) to reshape · Delete removes · E edits elevation',
+      : state.selTake != null
+        ? 'Reshape this takeoff: drag a point (○) · double-click an edge to add · Alt+click removes · Delete removes it · E re-picks type'
+        : 'Click a line, area, or line takeoff to select it, then drag its points (○) to reshape · Delete removes · E edits',
     erase: state.selected && state.selected.sheet === state.sheet
       ? 'Drag a box — erases only from the SELECTED line · Esc deselects to erase from all lines'
       : 'Drag a box — traced line portions inside it are erased (lines crossing it are split)',
@@ -793,6 +800,7 @@ function setTool(t) {
   state.boxA = state.boxB = null;
   state.dragDraft = null;
   state.dragSel = null;
+  state.dragTake = null;
   document.querySelectorAll('.tool').forEach(b =>
     b.classList.toggle('active', b.dataset.tool === t));
   cv.classList.toggle('crosshair', t !== 'pan');
@@ -801,7 +809,10 @@ function setTool(t) {
 }
 
 document.querySelectorAll('.tool').forEach(b =>
-  b.addEventListener('click', () => setTool(b.dataset.tool)));
+  b.addEventListener('click', () => {
+    if (b.dataset.tool === 'autoarea') { autoAreaClick(); return; } // placeholder (Phase 1)
+    setTool(b.dataset.tool);
+  }));
 
 function switchSheet(s) {
   finishDraftIfAny(false);
@@ -811,6 +822,7 @@ function switchSheet(s) {
     t.classList.toggle('active', t.dataset.sheet === s));
   refreshContourList();
   draw();
+  updateHatchCap();
 }
 
 document.querySelectorAll('.tab').forEach(b =>
@@ -849,7 +861,7 @@ cv.addEventListener('mousedown', e => {
 
   // While tracing a draft, let earlier vertices be adjusted before committing it.
   if (!state.mouse.panning && e.button === 0 && state.draft.length &&
-      ['trace', 'boundary', 'pad', 'wall'].includes(state.tool)) {
+      ['trace', 'boundary', 'pad', 'wall', 'area', 'line'].includes(state.tool)) {
     const w = screenToWorld(state.mouse.sx, state.mouse.sy);
     const thresh = 12 / state.view.zoom;
     let hit = -1, hd = thresh;
@@ -932,6 +944,31 @@ cv.addEventListener('mousedown', e => {
     }
   }
 
+  // with the Select tool, grabbing a vertex of the selected takeoff reshapes it
+  if (!state.mouse.panning && e.button === 0 && state.tool === 'select' &&
+      state.selTake != null && !state.draft.length) {
+    const t = state.takeoffs[state.selTake];
+    if (t && t.pts) {
+      const w = screenToWorld(state.mouse.sx, state.mouse.sy);
+      const thresh = 12 / state.view.zoom;
+      let hit = -1, hd = thresh;
+      t.pts.forEach((p, i) => { const d = dist(w.x, w.y, p.x, p.y); if (d < hd) { hd = d; hit = i; } });
+      if (hit >= 0) {
+        const min = t.kind === 'area' ? 3 : 2;
+        if (e.altKey) {
+          if (t.pts.length > min) {
+            snapshot();
+            t.pts.splice(hit, 1);
+            recomputeTakeoff(t);
+            renderTakeoffs(); saveLocal();
+            setMsg('Point removed.');
+          } else setMsg(`This ${t.kind} needs at least ${min} points — use Delete to remove it.`);
+          state.dragTake = -1; // consume the coming click
+        } else { state.dragTake = hit; pendingSnap = takeSnap(); }
+      }
+    }
+  }
+
   // with the Scale tool, grabbing an existing endpoint drags it instead of re-clicking
   if (!state.mouse.panning && e.button === 0 && state.tool === 'calibrate' &&
       state.calibration && !state.calibPts.length) {
@@ -971,6 +1008,11 @@ cv.addEventListener('mousemove', e => {
       const w = screenToWorld(x, y);
       const c = state.contours[state.selected.sheet][state.selected.index];
       if (c) c.pts[state.dragSel] = { x: w.x, y: w.y };
+    }
+    if (state.dragTake !== null && state.dragTake >= 0 && state.selTake != null) {
+      const w = screenToWorld(x, y);
+      const t = state.takeoffs[state.selTake];
+      if (t) t.pts[state.dragTake] = { x: w.x, y: w.y };
     }
     if (state.dragCal) {
       const w = screenToWorld(x, y);
@@ -1034,6 +1076,20 @@ cv.addEventListener('mouseup', e => {
     if (didMove) {
       if (pendingSnap) pushSnap(pendingSnap);
       padEdited('Contour point moved.');
+    }
+    pendingSnap = null;
+    draw();
+    return;
+  }
+  if (state.dragTake !== null) {
+    const didMove = state.dragTake >= 0 && moved;
+    state.dragTake = null;
+    if (didMove) {
+      if (pendingSnap) pushSnap(pendingSnap);
+      const t = state.takeoffs[state.selTake];
+      if (t) recomputeTakeoff(t);
+      renderTakeoffs(); saveLocal();
+      setMsg('Takeoff point moved.');
     }
     pendingSnap = null;
     draw();
@@ -1103,6 +1159,24 @@ cv.addEventListener('dblclick', e => {
         snapshot();
         c.pts.splice(hit.i + 1, 0, hit.p);
         padEdited('Contour point added — drag it into place.');
+        draw();
+      }
+    }
+    return;
+  }
+  // double-click an edge of the selected takeoff (area/line) inserts a vertex
+  if (state.tool === 'select' && state.selTake != null) {
+    const t = state.takeoffs[state.selTake];
+    if (t && (t.kind === 'area' || t.kind === 'line') && t.pts.length >= 2) {
+      const r = cv.getBoundingClientRect();
+      const w = screenToWorld(e.clientX - r.left, e.clientY - r.top);
+      const hit = nearestTakeoffEdge(t.pts, w, 10 / state.view.zoom, t.kind === 'area');
+      if (hit) {
+        snapshot();
+        t.pts.splice(hit.i + 1, 0, hit.p);
+        recomputeTakeoff(t);
+        renderTakeoffs(); saveLocal();
+        setMsg('Point added — drag it into place.');
         draw();
       }
     }
@@ -1210,8 +1284,10 @@ async function handleClick(w) {
     }
     case 'select': {
       const hit = hitTest(w);
-      state.selected = hit;
+      if (hit) { state.selected = hit; state.selTake = null; }
+      else { state.selTake = hitTakeoff(w); state.selected = null; }
       refreshContourList();
+      renderTakeoffs();
       break;
     }
     case 'align': {
@@ -1276,6 +1352,71 @@ function hitTest(w) {
     if (d < bestD) { bestD = d; best = { sheet: state.sheet, index: i }; }
   });
   return best;
+}
+
+// ── Editing completed takeoffs (areas / lines) ────────────────────────────────
+// Recompute an area's SF/volume or a line's length after its points move.
+function recomputeTakeoff(t) {
+  if (!state.calibration) return;
+  if (t.kind === 'area') {
+    const areaSf = polygonAreaFt2(t.pts, state.calibration.ftPerPx);
+    const perimFt = polygonPerimeterFt(t.pts, state.calibration.ftPerPx);
+    t.result = computeAreaResult(areaSf, t.cfg, perimFt);
+  } else if (t.kind === 'line') {
+    t.result = computeLineResult(polyLengthFt(t.pts), t.cfg);
+  }
+}
+
+// Which takeoff is under the cursor? Topmost area fill wins; else nearest edge /
+// line / count point within a small threshold. Returns an index or null.
+function hitTakeoff(w) {
+  for (let i = state.takeoffs.length - 1; i >= 0; i--) {
+    const t = state.takeoffs[i];
+    if (t.kind === 'area' && t.pts.length >= 3 && pointInPolygon(w.x, w.y, t.pts)) return i;
+  }
+  const thresh = 8 / state.view.zoom;
+  let best = null, bestD = thresh;
+  for (let i = state.takeoffs.length - 1; i >= 0; i--) {
+    const t = state.takeoffs[i];
+    if (!t.pts || !t.pts.length) continue;
+    let d = Infinity;
+    if (t.kind === 'area') d = distToPolyline(w.x, w.y, t.pts.concat([t.pts[0]]));
+    else if (t.kind === 'line') d = distToPolyline(w.x, w.y, t.pts);
+    else if (t.kind === 'count') for (const p of t.pts) d = Math.min(d, dist(w.x, w.y, p.x, p.y));
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+
+// Nearest point on a takeoff's edges (for double-click insert). closed = area.
+function nearestTakeoffEdge(pts, w, thresh, closed) {
+  const n = closed ? pts.length : pts.length - 1;
+  let best = null, bd = thresh;
+  for (let i = 0; i < n; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy;
+    let tt = len2 ? ((w.x - a.x) * dx + (w.y - a.y) * dy) / len2 : 0;
+    tt = Math.max(0, Math.min(1, tt));
+    const px = a.x + tt * dx, py = a.y + tt * dy, d = dist(w.x, w.y, px, py);
+    if (d < bd) { bd = d; best = { i, p: { x: px, y: py } }; }
+  }
+  return best;
+}
+
+// Re-open the material / line config for the selected takeoff (E key).
+async function editSelectedTakeoff() {
+  const t = state.takeoffs[state.selTake];
+  if (!t || !state.calibration) return;
+  if (t.kind === 'area') {
+    const areaSf = polygonAreaFt2(t.pts, state.calibration.ftPerPx);
+    const perimFt = polygonPerimeterFt(t.pts, state.calibration.ftPerPx);
+    const cfg = await askAreaConfig(areaSf, perimFt, t.cfg);
+    if (cfg) { snapshot(); t.cfg = cfg; t.result = computeAreaResult(areaSf, cfg, perimFt); renderTakeoffs(); saveLocal(); draw(); }
+  } else if (t.kind === 'line') {
+    const lengthFt = polyLengthFt(t.pts);
+    const cfg = await askLineConfig(lengthFt, t.cfg);
+    if (cfg) { snapshot(); t.cfg = cfg; t.result = computeLineResult(lengthFt, cfg); renderTakeoffs(); saveLocal(); draw(); }
+  }
 }
 
 async function promptElevation(prefillOverride) {
@@ -1595,6 +1736,7 @@ els.btnRedo.addEventListener('click', redo);
 /* ============================== Vector wand (auto trace) ============================== */
 
 const pathCache = {}; // pageNum -> { polys, labels } in image/world px
+const hatchCapCache = {}; // pageNum -> { hatch, reason, stats } from detectHatchCap
 
 function matMul(A, B) { // compose: apply B, then A
   return [
@@ -1702,6 +1844,128 @@ async function buildPathIndex(pageNum) {
   const res = { polys, labels };
   pathCache[pageNum] = res;
   return res;
+}
+
+// ── Vector-hatch capability probe ──────────────────────────────────────────────
+// Phase 1 of the "auto-select an area by its hatch" idea: a cheap detector that
+// classifies the active page so the UI only offers auto-select when it can work.
+// Reads the same operator list Auto Trace uses. A hatched fill (asphalt //,
+// gravel xx…) shows up as MANY short line segments clustered at one or two
+// angles; a scan shows up as a big image with almost no vector paths. Thresholds
+// are heuristic — the numbers are surfaced in the button tooltip so they can be
+// tuned against real plans.
+async function detectHatchCap(pageNum) {
+  if (hatchCapCache[pageNum]) return hatchCapCache[pageNum];
+  const OPS = pdfjsLib.OPS;
+  let result;
+  try {
+    const page = await state.pdf.getPage(pageNum);
+    const vp = page.getViewport({ scale: state.renderScale });
+    const opList = await page.getOperatorList();
+    const F = opList.fnArray, A = opList.argsArray;
+    const pageArea = vp.width * vp.height || 1;
+    const shortMax = Math.hypot(vp.width, vp.height) * 0.02; // "hatch-line short" ≈ 2% of diagonal
+
+    const IMG = new Set([OPS.paintImageXObject, OPS.paintJpegXObject,
+      OPS.paintImageMaskXObject, OPS.paintInlineImageXObject].filter(v => v != null));
+    const BINS = 36; // 5° bins over 0..180
+    const hist = new Float64Array(BINS);
+    let shortSegs = 0, imageArea = 0, pathOps = 0;
+
+    let M = vp.transform.slice();
+    const stack = [];
+    for (let i = 0; i < F.length; i++) {
+      const fn = F[i];
+      if (fn === OPS.save) stack.push(M.slice());
+      else if (fn === OPS.restore) { if (stack.length) M = stack.pop(); }
+      else if (fn === OPS.transform) M = matMul(M, A[i]);
+      else if (fn === OPS.paintFormXObjectBegin) { stack.push(M.slice()); if (A[i] && A[i][0]) M = matMul(M, A[i][0]); }
+      else if (fn === OPS.paintFormXObjectEnd) { if (stack.length) M = stack.pop(); }
+      else if (IMG.has(fn)) {
+        const o = matApply(M, 0, 0), ux = matApply(M, 1, 0), uy = matApply(M, 0, 1);
+        imageArea += Math.hypot(ux.x - o.x, ux.y - o.y) * Math.hypot(uy.x - o.x, uy.y - o.y);
+      } else if (fn === OPS.constructPath) {
+        pathOps++;
+        const [subOps, co] = A[i];
+        let k = 0, cur = null;
+        for (const op of subOps) {
+          if (op === OPS.moveTo) { cur = matApply(M, co[k], co[k + 1]); k += 2; }
+          else if (op === OPS.lineTo) {
+            const p = matApply(M, co[k], co[k + 1]); k += 2;
+            if (cur) {
+              const dx = p.x - cur.x, dy = p.y - cur.y, len = Math.hypot(dx, dy);
+              if (len > 0.5 && len <= shortMax) {
+                shortSegs++;
+                let ang = Math.atan2(dy, dx) * 180 / Math.PI;
+                ang = ((ang % 180) + 180) % 180; // undirected: 0..180
+                hist[Math.min(BINS - 1, (ang / (180 / BINS)) | 0)]++;
+              }
+              cur = p;
+            }
+          } else if (op === OPS.curveTo) { cur = matApply(M, co[k + 4], co[k + 5]); k += 6; }
+          else if (op === OPS.curveTo2 || op === OPS.curveTo3) { cur = matApply(M, co[k + 2], co[k + 3]); k += 4; }
+          else if (op === OPS.rectangle) { k += 4; cur = null; }
+        }
+      }
+    }
+
+    // Concentration = share of short segments in the two busiest angle bins.
+    let top1 = 0, top1i = -1, top2 = 0;
+    for (let b = 0; b < BINS; b++) if (hist[b] > top1) { top1 = hist[b]; top1i = b; }
+    for (let b = 0; b < BINS; b++) if (b !== top1i && hist[b] > top2) top2 = hist[b];
+    const concentration = shortSegs ? (top1 + top2) / shortSegs : 0;
+    const dominantDeg = top1i >= 0 ? Math.round((top1i + 0.5) * (180 / BINS)) : null;
+    const imageCover = imageArea / pageArea;
+
+    const isRaster = imageCover > 0.5 && pathOps < 60;
+    const isHatch = !isRaster && shortSegs >= 150 && concentration >= 0.45;
+    result = {
+      hatch: isHatch,
+      reason: isRaster ? 'raster' : (isHatch ? 'hatch' : 'no-hatch'),
+      stats: { shortSegs, concentration: +concentration.toFixed(2), dominantDeg,
+        imageCover: +imageCover.toFixed(2), pathOps },
+    };
+  } catch (e) {
+    result = { hatch: false, reason: 'error', stats: {} };
+  }
+  hatchCapCache[pageNum] = result;
+  return result;
+}
+
+function reasonHint(reason) {
+  if (reason === 'raster') return 'This sheet looks like a scan / raster image — no vector hatches to auto-select. Trace areas with ▦ Area.';
+  if (reason === 'no-hatch') return 'No vector hatch pattern detected on this sheet. Trace areas with ▦ Area.';
+  if (reason === 'error') return 'Could not read this sheet’s vectors. Trace areas with ▦ Area.';
+  return 'Open a PDF to check for vector hatching.';
+}
+
+function renderHatchCapUI() {
+  const cap = state.caps || { hatch: false, reason: 'no-pdf', stats: {} };
+  const s = cap.stats || {};
+  const okTitle = `Vector hatching detected${s.dominantDeg != null ? ` (~${s.dominantDeg}°, ${fmt(s.shortSegs)} pattern segments)` : ''}. ` +
+    'One-click area select by ground type is coming soon (beta).';
+  const btn = $('btnAutoArea');
+  if (btn) { btn.disabled = !cap.hatch; btn.title = cap.hatch ? okTitle : reasonHint(cap.reason); }
+  const pill = $('hatchCap');
+  if (pill) {
+    pill.classList.toggle('hidden', !cap.hatch);
+    if (cap.hatch) { pill.textContent = 'hatch ✓'; pill.title = okTitle; }
+  }
+}
+
+async function updateHatchCap() {
+  if (!state.pdf) { state.caps = { hatch: false, reason: 'no-pdf', stats: {} }; renderHatchCapUI(); return; }
+  const cap = await detectHatchCap(state.sheets[state.sheet].pageNum);
+  state.caps = cap;
+  renderHatchCapUI();
+}
+
+function autoAreaClick() {
+  const cap = state.caps || { hatch: false };
+  if (!cap.hatch) return; // the button is disabled in this state, but guard anyway
+  const s = cap.stats || {};
+  setMsg(`Auto Area (beta): vector hatching detected${s.dominantDeg != null ? ` at ~${s.dominantDeg}°` : ''} — ` +
+    `${fmt(s.shortSegs)} pattern segments. One-click select by ground type is coming soon; for now trace it with ▦ Area.`);
 }
 
 // Grow a chain from the picked fragment: exact-touch joins freely; larger gaps
@@ -1975,6 +2239,8 @@ window.addEventListener('keydown', e => {
       state.measurePts = [];
       state.boxA = state.boxB = null;
       if (state.selected) { state.selected = null; refreshContourList(); }
+      if (state.selTake != null) { state.selTake = null; renderTakeoffs(); }
+      state.dragTake = null;
       if (state.tool === 'align' || state.tool === 'realign' || state.tool === 'measure') setTool('pan');
       else { state.alignPts = []; state.alignQs = []; }
       updateUndoButtons(); // draft may have been cleared
@@ -1985,7 +2251,7 @@ window.addEventListener('keydown', e => {
     case 'Delete':
       deleteSelected(); break;
     case 'e': case 'E':
-      editSelectedElevation(); break;
+      if (state.selTake != null) editSelectedTakeoff(); else editSelectedElevation(); break;
     case 't': case 'T': setTool('trace'); break;
     case 'a': case 'A': setTool('wand'); break;
     case 'w': case 'W': setTool('wall'); break;
@@ -2004,6 +2270,15 @@ window.addEventListener('keyup', e => {
 });
 
 function deleteSelected() {
+  if (state.selTake != null) {
+    snapshot();
+    state.takeoffs.splice(state.selTake, 1);
+    state.selTake = null;
+    renderTakeoffs();
+    saveLocal();
+    draw();
+    return;
+  }
   if (!state.selected) return;
   snapshot();
   state.contours[state.selected.sheet].splice(state.selected.index, 1);
@@ -2285,12 +2560,22 @@ async function calculate() {
       grid: { x0, y0, cellPx, cols, rows, dz, maxAbs },
     };
     renderResults();
+    collapseForResults(); // tuck away the inputs so the fresh numbers are front-and-center
     setMsg('Done. Adjust shrink/swell in Settings to refine the export number.');
   } finally {
     btn.disabled = false;
     btn.textContent = '∑ Calculate Cut/Fill';
   }
   draw();
+}
+
+// after a cut/fill calc, collapse the input sections so the Results panel (and the
+// quantity panels below it) are what you see. Not persisted — a fresh session still
+// opens with the inputs expanded for tracing.
+function collapseForResults() {
+  ['secSheet', 'secScale', 'secBoundary', 'secRealign', 'secContours', 'secSettings']
+    .forEach(id => { const s = $(id); if (s) s.classList.add('collapsed'); });
+  els.resultsSection.classList.remove('collapsed');
 }
 
 function renderResults() {
@@ -2560,6 +2845,31 @@ const AREA_PRESETS = {
   areaonly: { label: 'Area', mode: 'area' },
 };
 
+// Each surface type draws in its own color so concrete, paving, base, etc. read
+// apart on the plan. Known materials get a real-world color by mode; generic
+// "Area" takeoffs get a stable color hashed from their (custom) label, so two
+// differently-named Area-only takeoffs come out different colors.
+const AREA_MODE_COLORS = {
+  concrete: '#9aa7b8', // concrete — gray
+  paving:   '#5b6472', // asphalt — charcoal
+  tons:     '#c7a55f', // aggregate base — tan
+  cy:       '#b07d43', // gravel / fill — brown
+  strip:    '#6fae4d', // topsoil — green
+};
+const AREA_PALETTE = ['#38d39f', '#4da3ff', '#c07ef7', '#e0912b', '#e05555', '#2bb3c0', '#d24d8c', '#8bbf3f'];
+function areaColorHex(t) {
+  const m = AREA_MODE_COLORS[t.cfg.mode];
+  if (m) return m;
+  const s = String(t.cfg.label || '');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return AREA_PALETTE[h % AREA_PALETTE.length];
+}
+function hexToRgba(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+}
+
 // bar unit weights (lb/ft); grid spacing in feet
 const REBAR = {
   '#4@18': { bar: '#4', spacing: '18', sp: 1.5, lb: 0.668 },
@@ -2665,10 +2975,21 @@ function syncAreaMode() {
   $('atThickLbl').textContent = mode === 'strip' ? 'Strip depth (in)' : 'Thickness (in)';
 }
 
-function askAreaConfig(areaSf, perimFt) {
+function askAreaConfig(areaSf, perimFt, prefill) {
   return new Promise(resolve => {
     const preview = () => { $('atResult').innerHTML = areaResultRows(areaSf, readAreaCfg(), perimFt); };
     $('atArea').textContent = `${fmt(areaSf)} sf`;
+    if (prefill) {
+      $('atLabel').value = prefill.label ?? '';
+      $('atMode').value = prefill.mode ?? 'area';
+      if (prefill.thickness != null) $('atThick').value = prefill.thickness;
+      if (prefill.density != null) $('atDensity').value = prefill.density;
+      if (prefill.rebar != null) $('atRebar').value = prefill.rebar;
+      if (prefill.form != null) $('atForm').checked = !!prefill.form;
+      if (prefill.tack != null) $('atTack').value = prefill.tack;
+      if (prefill.swell != null) $('atSwell').value = prefill.swell;
+      if (prefill.respread != null) $('atRespread').value = prefill.respread;
+    }
     syncAreaMode();
     preview();
     $('areaTakeoff').classList.remove('hidden');
@@ -2711,6 +3032,12 @@ function askAreaConfig(areaSf, perimFt) {
 const LINE_PRESETS = {
   curb:     { label: 'Curb & gutter', trench: false },
   pipe:     { label: 'Pipe / utility trench', trench: true, width: 3, depth: 5, slope: 0, bedding: 6 },
+  // Pipe-size presets seed a typical trench bottom width (pipe OD + working room);
+  // depth/slope are starting points — set each segment's actual average depth.
+  pipe12:   { label: '12" pipe trench', trench: true, width: 3,   depth: 5, slope: 0, bedding: 6 },
+  pipe18:   { label: '18" pipe trench', trench: true, width: 3.5, depth: 5, slope: 0, bedding: 6 },
+  pipe24:   { label: '24" pipe trench', trench: true, width: 4,   depth: 6, slope: 0, bedding: 6 },
+  pipe36:   { label: '36" pipe trench', trench: true, width: 5,   depth: 6, slope: 0, bedding: 6 },
   silt:     { label: 'Silt fence', trench: false },
   sawcut:   { label: 'Sawcut', trench: false },
   fence:    { label: 'Fence / guardrail', trench: false },
@@ -2751,10 +3078,18 @@ function syncLineTrench() {
   $('ltTrenchFields').style.display = $('ltTrench').checked ? '' : 'none';
 }
 
-function askLineConfig(lengthFt) {
+function askLineConfig(lengthFt, prefill) {
   return new Promise(resolve => {
     const preview = () => { $('ltResult').innerHTML = lineResultRows(lengthFt, readLineCfg()); };
     $('ltLen').textContent = `${fmt(lengthFt)} ft`;
+    if (prefill) {
+      $('ltLabel').value = prefill.label ?? '';
+      $('ltTrench').checked = !!prefill.trench;
+      if (prefill.width != null) $('ltWidth').value = prefill.width;
+      if (prefill.depth != null) $('ltDepth').value = prefill.depth;
+      if (prefill.slope != null) $('ltSlope').value = prefill.slope;
+      if (prefill.bedding != null) $('ltBedding').value = prefill.bedding;
+    }
     syncLineTrench();
     preview();
     $('lineTakeoff').classList.remove('hidden');
@@ -2792,6 +3127,11 @@ function askLineConfig(lengthFt) {
 const COUNT_PRESETS = {
   catchbasin: { label: 'Catch basin', unit: 'EA' },
   manhole:    { label: 'Manhole', unit: 'EA' },
+  inlet:      { label: 'Inlet', unit: 'EA' },
+  jbox:       { label: 'Junction box', unit: 'EA' },
+  cleanout:   { label: 'Cleanout', unit: 'EA' },
+  fes:        { label: 'Flared end section', unit: 'EA' },
+  areadrain:  { label: 'Area drain', unit: 'EA' },
   tree:       { label: 'Tree', unit: 'EA' },
   sign:       { label: 'Sign', unit: 'EA' },
   light:      { label: 'Light pole', unit: 'EA' },
@@ -2864,25 +3204,34 @@ function drawCountMarker(p, num) {
   ctx.textBaseline = 'alphabetic';
 }
 
+function drawTakeoffHandles(pts) {
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = lw(2);
+  for (const p of pts) { ctx.beginPath(); ctx.arc(p.x, p.y, lw(6), 0, Math.PI * 2); ctx.stroke(); }
+}
+
 function drawTakeoffs() {
   if (!state.takeoffs || !state.takeoffs.length) return;
   for (const t of state.takeoffs) {
     if (!t.pts || !t.pts.length) continue;
+    const selT = state.tool === 'select' && state.takeoffs[state.selTake] === t;
     if (t.kind === 'count') {
       t.pts.forEach((p, i) => drawCountMarker(p, i + 1));
       const c = t.pts[0];
       labelAt(c.x + lw(10), c.y - lw(10), `${t.cfg.label}: ${t.result.count} ${t.result.unit}`, '#0f9d68');
+      if (selT) drawTakeoffHandles(t.pts);
       continue;
     }
     if (t.pts.length < 2) continue;
     if (t.kind === 'area') {
       if (t.pts.length < 3) continue;
+      const areaCol = areaColorHex(t);
       ctx.beginPath();
       t.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
       ctx.closePath();
-      ctx.fillStyle = 'rgba(56, 211, 159, 0.18)';
+      ctx.fillStyle = hexToRgba(areaCol, 0.18);
       ctx.fill();
-      ctx.strokeStyle = '#38d39f';
+      ctx.strokeStyle = areaCol;
       ctx.lineWidth = lw(2);
       ctx.stroke();
       if (t.result) {
@@ -2890,6 +3239,7 @@ function drawTakeoffs() {
         const q = `${fmt(t.result.quantity, t.result.unit === 'SF' ? 0 : 1)} ${t.result.unit}`;
         labelAt(c.x, c.y, `${t.cfg.label}: ${q}`, '#0f9d68');
       }
+      if (selT) drawTakeoffHandles(t.pts);
     } else if (t.kind === 'line') {
       ctx.beginPath();
       t.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
@@ -2903,6 +3253,7 @@ function drawTakeoffs() {
         const q = t.result.trench ? `${fmt(t.result.trenchCY, 0)} CY` : `${fmt(t.result.lengthFt)} ft`;
         labelAt(mid.x, mid.y, `${t.cfg.label}: ${q}`, '#0f9d68');
       }
+      if (selT) drawTakeoffHandles(t.pts);
     }
   }
 }
@@ -2937,16 +3288,62 @@ function renderTakeoffs() {
   if (!items.length) { sec.classList.add('hidden'); draw(); return; }
   sec.classList.remove('hidden');
   const cnt = $('takeoffCount'); if (cnt) cnt.textContent = items.length;
-  list.innerHTML = items.map((t, i) => {
+
+  // Keep each takeoff's real index (for delete) while we regroup for display.
+  const indexed = items.map((t, i) => ({ t, i }));
+  const rowHtml = ({ t, i }) => {
     const { headline, sub } = takeoffRowText(t);
-    return `<div class="wall-row"><div class="wall-row-main"><b>${headline}</b><span>${sub}</span></div>` +
+    const dot = t.kind === 'area'
+      ? `<span class="swatch" style="background:${areaColorHex(t)}"></span>` : '';
+    const sel = i === state.selTake ? ' selected' : '';
+    return `<div class="wall-row${sel}" data-take="${i}" title="Click to select on the plan (reshape with ➤ Select)">` +
+      `<div class="wall-row-main"><b>${dot}${headline}</b><span>${sub}</span></div>` +
       `<button class="wall-del" data-i="${i}" title="Delete this takeoff">✕</button></div>`;
-  }).join('');
-  list.querySelectorAll('.wall-del').forEach(b => b.addEventListener('click', () => {
+  };
+
+  // Areas group by type: a color-matched subheader carrying the COMBINED SF (+ SY)
+  // for that surface, then that type's individual takeoff rows beneath it.
+  let html = '';
+  const areaItems = indexed.filter(x => x.t.kind === 'area' && x.t.result);
+  if (areaItems.length) {
+    const groups = new Map(); // label -> { color, sf, rows }
+    for (const x of areaItems) {
+      const key = x.t.cfg.label || 'Area';
+      const g = groups.get(key) || { color: areaColorHex(x.t), sf: 0, rows: [] };
+      g.sf += x.t.result.areaSf || 0;
+      g.rows.push(x);
+      groups.set(key, g);
+    }
+    for (const [label, g] of groups) {
+      html += `<div class="to-group"><span class="swatch" style="background:${g.color}"></span>` +
+        `<span class="to-group-label">${esc(label)}</span>` +
+        `<b>${fmt(g.sf)} sf</b><span class="to-group-sub">${fmt(g.sf / 9)} sy</span></div>` +
+        g.rows.map(rowHtml).join('');
+    }
+  }
+
+  // Lines & counts list below (unchanged), under a plain subheader when areas are shown.
+  const others = indexed.filter(x => x.t.kind !== 'area');
+  if (others.length) {
+    if (areaItems.length) html += `<div class="to-group to-group-plain"><span class="to-group-label">Lines &amp; counts</span></div>`;
+    html += others.map(rowHtml).join('');
+  }
+  list.innerHTML = html;
+  list.querySelectorAll('.wall-del').forEach(b => b.addEventListener('click', e => {
+    e.stopPropagation();
     snapshot();
     state.takeoffs.splice(parseInt(b.dataset.i, 10), 1);
+    state.selTake = null;
     renderTakeoffs();
     saveLocal();
+  }));
+  // Click a row to select that takeoff on the plan (then reshape with ➤ Select).
+  list.querySelectorAll('.wall-row[data-take]').forEach(row => row.addEventListener('click', () => {
+    state.selTake = parseInt(row.dataset.take, 10);
+    state.selected = null;
+    if (state.tool !== 'select') setTool('select');
+    renderTakeoffs();
+    draw();
   }));
   draw();
 }
@@ -3213,6 +3610,8 @@ async function openProject(id, opts = {}) {
   state.sheets.proposed = { pageNum: 2, image: null };
   state.renderScale = null;
   Object.keys(pathCache).forEach(k => delete pathCache[k]);
+  Object.keys(hatchCapCache).forEach(k => delete hatchCapCache[k]);
+  updateHatchCap();
   for (const sel of [els.pageExisting, els.pageProposed]) { sel.innerHTML = ''; sel.disabled = true; }
   els.dropHint.classList.remove('hidden');
 

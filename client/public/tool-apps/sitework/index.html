@@ -46,9 +46,11 @@
     <button class="tool" data-tool="pad" title="Draw a building pad polygon; everything inside is held flat at one elevation (FF/FP pads). To edit a pad: drag a point (○), double-click an edge to add a point, Alt+click a point to remove it">▬ Pad</button>
     <button class="tool" data-tool="wall" title="Retaining-wall dig: click along the wall line; Enter or double-click to finish, then enter the trench cross-section. Depth can be a constant dig or measured down to a footing subgrade elevation off your traced Existing contours. Gives excavation & export CY.">▚ Wall</button>
     <button class="tool" data-tool="area" title="Area takeoff: click around an area (paving, base, concrete, seeding); Enter or double-click to close, then pick a material to get area (SF/SY), volume (CY), or weight (tons).">▦ Area</button>
+    <button class="tool" data-tool="autoarea" id="btnAutoArea" disabled title="Open a PDF to check for vector hatching.">🎯 Auto Area</button>
+    <span id="hatchCap" class="hatch-cap hidden" title="">hatch ✓</span>
     <button class="tool" data-tool="line" title="Linear takeoff: click along a run (curb, pipe, silt fence); Enter or double-click to finish. Gives length in feet, plus optional trench excavation & bedding CY for pipe/utility runs.">╱ Line</button>
     <button class="tool" data-tool="count" title="Count takeoff: click each item (catch basin, manhole, tree, sign, light pole…); Enter or double-click to finish, then name it. Gives an each (EA) tally that collects in the Quantities panel.">⊕ Count</button>
-    <button class="tool" data-tool="select" title="Click a traced line (or its sidebar row) to select it, then reshape it: drag a point (○), double-click an edge to add a point, Alt+click a point to remove it. Delete removes the line, E edits elevation, Esc deselects.">➤ Select</button>
+    <button class="tool" data-tool="select" title="Click a traced line, an AREA, or a line takeoff (or its sidebar row) to select it, then reshape it: drag a point (○), double-click an edge to add a point, Alt+click a point to remove it. Delete removes it; E edits elevation (contour) or re-picks the material/type (area/line); Esc deselects.">➤ Select</button>
     <button class="tool" data-tool="erase" title="Drag a box — the portions of traced lines inside it are erased; lines crossing the box are split. If a line is selected, only that line is trimmed">⌫ Erase Box</button>
     </div>
   </div>
@@ -384,6 +386,10 @@
     <div class="preset-row" id="ltPresets">
       <button type="button" class="btn tiny" data-preset="curb">Curb</button>
       <button type="button" class="btn tiny" data-preset="pipe">Pipe trench</button>
+      <button type="button" class="btn tiny" data-preset="pipe12">12&quot; pipe</button>
+      <button type="button" class="btn tiny" data-preset="pipe18">18&quot; pipe</button>
+      <button type="button" class="btn tiny" data-preset="pipe24">24&quot; pipe</button>
+      <button type="button" class="btn tiny" data-preset="pipe36">36&quot; pipe</button>
       <button type="button" class="btn tiny" data-preset="silt">Silt fence</button>
       <button type="button" class="btn tiny" data-preset="sawcut">Sawcut</button>
       <button type="button" class="btn tiny" data-preset="fence">Fence</button>
@@ -424,6 +430,11 @@
     <div class="preset-row" id="ctPresets">
       <button type="button" class="btn tiny" data-preset="catchbasin">Catch basin</button>
       <button type="button" class="btn tiny" data-preset="manhole">Manhole</button>
+      <button type="button" class="btn tiny" data-preset="inlet">Inlet</button>
+      <button type="button" class="btn tiny" data-preset="jbox">Junction box</button>
+      <button type="button" class="btn tiny" data-preset="cleanout">Cleanout</button>
+      <button type="button" class="btn tiny" data-preset="fes">FES</button>
+      <button type="button" class="btn tiny" data-preset="areadrain">Area drain</button>
       <button type="button" class="btn tiny" data-preset="tree">Tree</button>
       <button type="button" class="btn tiny" data-preset="sign">Sign</button>
       <button type="button" class="btn tiny" data-preset="light">Light pole</button>

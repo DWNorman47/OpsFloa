@@ -156,7 +156,7 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
     if (dateTo) params.to = dateTo;
     Promise.all([
       api.get('/admin/entries/pending', { params }),
-      getOrFetch('projects', () => api.get('/projects').then(r => r.data)),
+      getOrFetch('projects', () => api.get('/work').then(r => r.data)),
       getOrFetch('settings', () => api.get('/settings').then(r => r.data)),
     ])
       .then(([r, p, s]) => {
@@ -196,7 +196,7 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
     if (dateTo) params.to = dateTo;
     Promise.all([
       api.get('/admin/entries/pending', { params }),
-      getOrFetch('projects', () => api.get('/projects').then(r => r.data)),
+      getOrFetch('projects', () => api.get('/work').then(r => r.data)),
     ])
       .then(([r, p]) => { if (!mounted) return; setEntries(r.data.entries); setHasMore(r.data.has_more); setProjects(p); })
       .catch(() => { if (mounted) setFetchError(true); })

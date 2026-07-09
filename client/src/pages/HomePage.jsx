@@ -93,8 +93,8 @@ export default function HomePage() {
       if (can('workforce')) {
         list.push({ title: t.hpActionWhosWorkingTitle, detail: t.hpActionWhosWorkingDetail, to: '/timeclock#wf-live', icon: 'L', primary: !list.length });
       }
-      if (enabled(settings, 'module_projects') && can('projects')) {
-        list.push({ title: `${t.hpActionAddWork} ${terms.work.toLowerCase()}`, detail: `${t.hpActionAddWorkDetailCreate} ${terms.work.toLowerCase()} ${t.hpActionAddWorkDetailManage} ${terms.client.toLowerCase()} ${t.hpActionAddWorkDetailRecords}`, to: '/projects', icon: 'W' });
+      if (enabled(settings, 'module_work') && can('projects')) {
+        list.push({ title: `${t.hpActionAddWork} ${terms.work.toLowerCase()}`, detail: `${t.hpActionAddWorkDetailCreate} ${terms.work.toLowerCase()} ${t.hpActionAddWorkDetailManage} ${terms.client.toLowerCase()} ${t.hpActionAddWorkDetailRecords}`, to: '/work', icon: 'W' });
       }
       if (enabled(settings, 'module_team') && can('team')) {
         list.push({ title: t.hpActionInviteTeamTitle, detail: `${t.hpActionInviteTeamDetailAdd} ${terms.workerPlural.toLowerCase()} ${t.hpActionInviteTeamDetailAccess}`, to: '/team', icon: 'T' });
@@ -129,7 +129,7 @@ export default function HomePage() {
     const all = [
       ['timeclock', t.hpPlaceTimeClockName, '/timeclock', t.hpPlaceTimeClockDetail],
       ['field', terms.field, '/field', t.hpPlaceFieldDetail],
-      ['projects', terms.work, '/projects', `${terms.work}, ${t.hpPlaceProjectsDetail}`],
+      ['projects', terms.work, '/work', `${terms.work}, ${t.hpPlaceProjectsDetail}`],
       ['team', t.hpPlaceDirectoryName, '/team', `${terms.workerPlural}, ${t.hpPlaceDirectoryDetail}`],
       ['inventory', t.hpPlaceInventoryName, '/inventory', t.hpPlaceInventoryDetail],
       ['financial_reports', t.hpPlaceReportsName, '/financial-reports', t.hpPlaceReportsDetail],
@@ -139,7 +139,7 @@ export default function HomePage() {
     return all.filter(([id]) => {
       if (['projects', 'financial_reports', 'administration'].includes(id) && !isAdmin) return false;
       if (id === 'field' && !enabled(settings, 'module_field', false)) return false;
-      if (id === 'projects' && !enabled(settings, 'module_projects')) return false;
+      if (id === 'projects' && !enabled(settings, 'module_work')) return false;
       if (id === 'inventory' && !enabled(settings, 'module_inventory', false)) return false;
       // Reports is hidden only when BOTH its halves are off (matches AppSwitcher).
       if (id === 'financial_reports' && !enabled(settings, 'module_financial_reports') && !enabled(settings, 'module_analytics')) return false;
@@ -170,6 +170,9 @@ export default function HomePage() {
               <Metric label={t.hpMetricClockedInNow} value={loading ? '-' : kpis?.clocked_in_count ?? 0} />
               <Metric label={t.hpMetricHoursThisWeek} value={loading ? '-' : kpis?.company_hours_this_week ?? 0} />
               <Metric label={t.hpMetricOtWatch} value={loading ? '-' : kpis?.overtime_workers_this_week ?? 0} tone={(kpis?.overtime_workers_this_week || 0) > 0 ? 'attention' : 'good'} />
+              {enabled(settings, 'module_work') && (
+                <Metric label="Open work orders" value={loading ? '-' : kpis?.open_work_orders ?? 0} tone={(kpis?.open_work_orders || 0) > 0 ? 'attention' : 'good'} />
+              )}
             </div>
           ) : (
             <div className="home-worker-status">

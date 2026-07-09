@@ -118,6 +118,20 @@ export default function ServiceRequestsAdmin({ settings = null }) {
     finally { setConvertingId(null); }
   };
 
+  const convertToWorkOrder = async (req) => {
+    const title = window.prompt('Work order title:', `Service call — ${req.requester_name}`);
+    if (!title) return;
+    setConvertingId(req.id);
+    try {
+      await api.post(`/admin/service-requests/${req.id}/convert-work-order`, {
+        title,
+        address: req.requester_address || undefined,
+      });
+      load();
+    } catch (err) { setError(err.response?.data?.error || 'Conversion failed'); }
+    finally { setConvertingId(null); }
+  };
+
   return (
     <div style={s.wrap}>
       {/* Public URL + accepting toggle */}
@@ -236,6 +250,11 @@ export default function ServiceRequestsAdmin({ settings = null }) {
                         Converted to {workLabelLower}: <strong>{r.converted_project_name || `#${r.converted_project_id}`}</strong>
                       </div>
                     )}
+                    {r.converted_work_order_id && (
+                      <div style={s.convertedLabel}>
+                        Converted to work order: <strong>{r.converted_work_order_title || `#${r.converted_work_order_id}`}</strong>
+                      </div>
+                    )}
                     <div style={s.notesBlock}>
                       <label style={s.notesLabel}>{t.srInternalNotes}</label>
                       <textarea
@@ -259,6 +278,13 @@ export default function ServiceRequestsAdmin({ settings = null }) {
                             style={s.convertBtn}
                           >
                             {convertingId === r.id ? 'Converting...' : `Convert to ${workLabelLower}`}
+                          </button>
+                          <button
+                            onClick={() => convertToWorkOrder(r)}
+                            disabled={convertingId === r.id}
+                            style={s.convertBtn}
+                          >
+                            {convertingId === r.id ? 'Converting...' : 'Convert to work order'}
                           </button>
                           <button onClick={() => updateStatus(r.id, 'declined')} style={s.declineBtn}>Decline</button>
                           <button onClick={() => updateStatus(r.id, 'spam')} style={s.spamBtn}>Spam</button>
