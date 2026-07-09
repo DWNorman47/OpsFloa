@@ -72,7 +72,7 @@ function TextBlock({ text, noneLabel }) {
 
 export function DailyReportDocument({ report, companyName, fieldPhotos = [], t = {}, language, settings = null }) {
   const locale = langToLocale(language);
-  const workLabel = settings?.label_work || t.project || labelSg(null, 'work', language);
+  const workLabel = labelSg(settings?.label_work, 'work', language);
   const workerLabel = labelSg(settings?.label_worker, 'worker', language);
   const workerLabelPlural = labelPl(settings?.label_worker, 'worker', language);
   const WEATHER_LABELS = {

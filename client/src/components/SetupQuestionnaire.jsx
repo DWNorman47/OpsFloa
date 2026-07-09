@@ -36,7 +36,6 @@ const MANAGER_OPTIONS = [
 // business nuances (Customer vs Client) don't map 1:1 to Spanish, so the chip
 // values stay as-is; admins can type any term in the Custom field.
 const LABEL_CHOICES = {
-  work: ['Project', 'Job', 'Work Order', 'Route'],
   client: ['Customer', 'Client', 'Account', 'Member'],
   worker: ['Team Member', 'Employee', 'Staff Member', 'Technician'],
   field: ['Field Work', 'Daily Work', 'Operations', 'Service'],
@@ -65,7 +64,6 @@ const SUMMARY_LABEL_KEYS = {
 
 function selectedFromSettings(settings = {}) {
   const labels = {
-    work: settings.label_work || 'Project',
     client: settings.label_client || 'Customer',
     worker: settings.label_worker || 'Team Member',
     field: settings.label_field || 'Field Work',
@@ -137,7 +135,6 @@ export function buildSetupSettings(answers) {
     feature_overtime: manager.has('overtime'),
     feature_overtime_alerts: manager.has('overtime'),
     feature_prevailing_wage: manager.has('compliance'),
-    label_work: answers.labels.work.trim() || 'Project',
     label_client: answers.labels.client.trim() || 'Customer',
     label_worker: answers.labels.worker.trim() || 'Team Member',
     label_field: answers.labels.field.trim() || 'Field Work',
@@ -424,7 +421,6 @@ export default function SetupQuestionnaire({ currentSettings, onComplete, onDism
               </div>
               <div className="setup-wizard-labels">
                 {[
-                  ['work', t.sqLabelPromptWork],
                   ['client', t.sqLabelPromptClient],
                   ['worker', t.sqLabelPromptWorker],
                   ['field', t.sqLabelPromptField],
@@ -470,7 +466,6 @@ export default function SetupQuestionnaire({ currentSettings, onComplete, onDism
                 <SummaryList title={t.sqReadyForTeam} items={visibleSummary} />
                 <SummaryList title={t.sqHiddenForNow} items={hiddenSummary} muted />
                 <div className="setup-wizard-language-summary">
-                  <span>{settings.label_work}</span>
                   <span>{settings.label_client}</span>
                   <span>{settings.label_worker}</span>
                   <span>{settings.label_field}</span>

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { buildSetupSettings } from './SetupQuestionnaire';
 
 const labels = {
-  work: 'Job',
   client: 'Client',
   worker: 'Employee',
   field: 'Service',
@@ -30,7 +29,6 @@ describe('buildSetupSettings', () => {
       feature_chat: false,
       feature_geolocation: false,
       feature_overtime: false,
-      label_work: 'Job',
       label_client: 'Client',
       label_worker: 'Employee',
       label_field: 'Service',

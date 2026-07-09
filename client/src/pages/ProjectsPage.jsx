@@ -2159,7 +2159,7 @@ export default function ProjectsPage() {
               <EmptyState
                 mark="W"
                 title={`No ${workLabelLower} yet`}
-                body={`Create your first ${settings?.label_work?.toLowerCase() || 'work item'} so time, notes, billing, and reports have somewhere to land.`}
+                body={`Create your first ${workLabelLower} so time, notes, billing, and reports have somewhere to land.`}
                 actionLabel={`Add ${workLabel}`}
                 onAction={() => setShowCreateForm(true)}
               />

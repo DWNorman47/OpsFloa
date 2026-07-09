@@ -188,11 +188,8 @@ export default function AppSwitcher({ currentApp = 'timeclock', userRole, featur
   };
   const labelFor = app => {
     if (app.id === 'field') return feat.label_field || t.appField;
-    // Projects module = the collection, so show the plural of the (singular) work label.
-    if (app.id === 'projects') {
-      if (feat.label_work) { const w = feat.label_work; return w.endsWith('s') ? w : `${w}s`; }
-      return t.appProjects;
-    }
+    // The former "Projects" module is now fixed as "Work" (t.appProjects), holding
+    // the Projects + Work Orders tabs — no longer renamed via a company label.
     return t[APP_NAME_KEYS[app.id]] || app.name;
   };
   const visibleApps = settingsPending ? [current] : APPS.filter(a => {

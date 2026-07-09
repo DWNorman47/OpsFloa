@@ -247,12 +247,6 @@ function WorkspaceLabels({ settings, onUpdated }) {
   const { user } = useAuth();
   const labelFields = [
     {
-      key: 'label_work',
-      label: t.admpLabelWork,
-      note: t.admpLabelWorkNote,
-      examples: t.admpLabelWorkExamples,
-    },
-    {
       key: 'label_client',
       label: t.admpLabelClient,
       note: t.admpLabelClientNote,
@@ -272,7 +266,6 @@ function WorkspaceLabels({ settings, onUpdated }) {
     },
   ];
   const [form, setForm] = useState({
-    label_work: labelSg(settings?.label_work, 'work', user?.language),
     label_client: labelSg(settings?.label_client, 'client', user?.language),
     label_worker: labelSg(settings?.label_worker, 'worker', user?.language),
     label_field: labelSg(settings?.label_field, 'field', user?.language),
@@ -283,7 +276,6 @@ function WorkspaceLabels({ settings, onUpdated }) {
 
   useEffect(() => {
     setForm({
-      label_work: labelSg(settings?.label_work, 'work', user?.language),
       label_client: labelSg(settings?.label_client, 'client', user?.language),
       label_worker: labelSg(settings?.label_worker, 'worker', user?.language),
       label_field: labelSg(settings?.label_field, 'field', user?.language),

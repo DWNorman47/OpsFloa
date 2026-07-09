@@ -15,7 +15,10 @@
 const DEFAULTS = {
   worker: { en: { sg: 'Team Member', pl: 'Team Members' }, es: { sg: 'Miembro del equipo', pl: 'Miembros del equipo' } },
   client: { en: { sg: 'Customer', pl: 'Customers' },       es: { sg: 'Cliente', pl: 'Clientes' } },
-  work:   { en: { sg: 'Project', pl: 'Projects' },         es: { sg: 'Proyecto', pl: 'Proyectos' } },
+  // 'work' is fixed to "Work" — no longer company-customizable (the module has
+  // explicit Projects + Work Orders now). settings.label_work is dropped; the
+  // first arg to labelSg/labelPl('work', …) stays as a future per-report hook.
+  work:   { en: { sg: 'Work', pl: 'Work' },                es: { sg: 'Trabajo', pl: 'Trabajo' } },
   field:  { en: { sg: 'Field Work', pl: 'Field Work' },    es: { sg: 'Trabajo de campo', pl: 'Trabajos de campo' } },
 };
 
