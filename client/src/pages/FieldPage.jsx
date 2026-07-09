@@ -106,7 +106,7 @@ export default function FieldPage() {
     setLoadError(null);
     try {
       const [p, s] = await Promise.all([
-        getOrFetch('projects', () => api.get('/projects').then(r => r.data)),
+        getOrFetch('projects', () => api.get('/work').then(r => r.data)),
         getOrFetch('settings', () => api.get('/settings').then(r => r.data)),
       ]);
       setFeatures(s);

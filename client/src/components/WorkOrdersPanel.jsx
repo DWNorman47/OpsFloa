@@ -60,7 +60,7 @@ export default function WorkOrdersPanel() {
   useEffect(() => {
     load();
     api.get('/admin/clients').then(r => setClients(r.data || [])).catch(silentError('wo clients'));
-    api.get('/projects').then(r => setProjects(r.data || [])).catch(silentError('wo projects'));
+    api.get('/work').then(r => setProjects(r.data || [])).catch(silentError('wo projects'));
     api.get('/admin/workers').then(r => setWorkers(r.data || [])).catch(silentError('wo workers'));
   }, []);
 

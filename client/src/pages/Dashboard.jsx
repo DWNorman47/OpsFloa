@@ -97,7 +97,7 @@ export default function Dashboard() {
     try {
       const [entries, projects, settings, ci] = await Promise.all([
         getOrFetch('entries', () => api.get('/time-entries').then(r => r.data)),
-        getOrFetch('projects', () => api.get('/projects').then(r => r.data)),
+        getOrFetch('projects', () => api.get('/work').then(r => r.data)),
         getOrFetch('settings', () => api.get('/settings').then(r => r.data)),
         api.get('/company-info').then(r => r.data).catch(() => ({})),
       ]);

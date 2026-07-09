@@ -442,7 +442,7 @@ function SubPOForm({ onSave, onCancel }) {
     let alive = true;
     setLoading(true);
     Promise.all([
-      api.get('/projects').then(r => r.data),
+      api.get('/work').then(r => r.data),
       api.get('/subcontractors', { params: { limit: 500 } }).then(r => r.data.items || []),
     ]).then(([projectRows, subRows]) => {
       if (!alive) return;

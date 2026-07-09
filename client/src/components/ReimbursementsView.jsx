@@ -63,7 +63,7 @@ export default function ReimbursementsView({ settings = null }) {
   };
 
   useEffect(() => { load(); }, []);
-  useEffect(() => { api.get('/projects').then(r => setProjects(r.data)).catch(silentError('reimbursementsview')); }, []);
+  useEffect(() => { api.get('/work').then(r => setProjects(r.data)).catch(silentError('reimbursementsview')); }, []);
   useEffect(() => { api.get('/reimbursements/categories').then(r => setCategories(r.data)).catch(silentError('reimbursementsview')); }, []);
 
   const handleFileChange = e => {
