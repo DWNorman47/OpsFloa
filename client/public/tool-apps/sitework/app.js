@@ -15,6 +15,7 @@ const state = {
     proposed: { pageNum: 2, image: null },
   },
   renderScale: null,       // pdf units -> image px, shared by both sheets
+  caps: null,              // per-active-page capabilities, e.g. { hatch, reason, stats }
 
   tool: 'pan',
   view: { zoom: 1, panX: 0, panY: 0 },   // screen = world*zoom + pan
@@ -352,6 +353,7 @@ async function openPdfBytes(buf, name) {
   state.pdf = await pdfjsLib.getDocument({ data: buf }).promise;
   state.pdfName = name;
   Object.keys(pathCache).forEach(k => delete pathCache[k]);
+  Object.keys(hatchCapCache).forEach(k => delete hatchCapCache[k]);
   els.dropHint.classList.add('hidden');
 
   const n = state.pdf.numPages;
@@ -371,6 +373,7 @@ async function openPdfBytes(buf, name) {
 
   await renderSheet('existing');
   await renderSheet('proposed');
+  await updateHatchCap();
   fitView();
   setMsg(`Loaded ${name} (${n} page${n > 1 ? 's' : ''}).` +
     (state.calibration ? '' : ' Now calibrate the scale (📏).'));
@@ -393,11 +396,11 @@ async function renderSheet(sheet) {
 
 els.pageExisting.addEventListener('change', async e => {
   state.sheets.existing.pageNum = parseInt(e.target.value);
-  await renderSheet('existing'); saveLocal(); draw();
+  await renderSheet('existing'); saveLocal(); draw(); updateHatchCap();
 });
 els.pageProposed.addEventListener('change', async e => {
   state.sheets.proposed.pageNum = parseInt(e.target.value);
-  await renderSheet('proposed'); saveLocal(); draw();
+  await renderSheet('proposed'); saveLocal(); draw(); updateHatchCap();
 });
 
 /* ============================== View / canvas ============================== */
@@ -801,7 +804,10 @@ function setTool(t) {
 }
 
 document.querySelectorAll('.tool').forEach(b =>
-  b.addEventListener('click', () => setTool(b.dataset.tool)));
+  b.addEventListener('click', () => {
+    if (b.dataset.tool === 'autoarea') { autoAreaClick(); return; } // placeholder (Phase 1)
+    setTool(b.dataset.tool);
+  }));
 
 function switchSheet(s) {
   finishDraftIfAny(false);
@@ -811,6 +817,7 @@ function switchSheet(s) {
     t.classList.toggle('active', t.dataset.sheet === s));
   refreshContourList();
   draw();
+  updateHatchCap();
 }
 
 document.querySelectorAll('.tab').forEach(b =>
@@ -1595,6 +1602,7 @@ els.btnRedo.addEventListener('click', redo);
 /* ============================== Vector wand (auto trace) ============================== */
 
 const pathCache = {}; // pageNum -> { polys, labels } in image/world px
+const hatchCapCache = {}; // pageNum -> { hatch, reason, stats } from detectHatchCap
 
 function matMul(A, B) { // compose: apply B, then A
   return [
@@ -1702,6 +1710,128 @@ async function buildPathIndex(pageNum) {
   const res = { polys, labels };
   pathCache[pageNum] = res;
   return res;
+}
+
+// ── Vector-hatch capability probe ──────────────────────────────────────────────
+// Phase 1 of the "auto-select an area by its hatch" idea: a cheap detector that
+// classifies the active page so the UI only offers auto-select when it can work.
+// Reads the same operator list Auto Trace uses. A hatched fill (asphalt //,
+// gravel xx…) shows up as MANY short line segments clustered at one or two
+// angles; a scan shows up as a big image with almost no vector paths. Thresholds
+// are heuristic — the numbers are surfaced in the button tooltip so they can be
+// tuned against real plans.
+async function detectHatchCap(pageNum) {
+  if (hatchCapCache[pageNum]) return hatchCapCache[pageNum];
+  const OPS = pdfjsLib.OPS;
+  let result;
+  try {
+    const page = await state.pdf.getPage(pageNum);
+    const vp = page.getViewport({ scale: state.renderScale });
+    const opList = await page.getOperatorList();
+    const F = opList.fnArray, A = opList.argsArray;
+    const pageArea = vp.width * vp.height || 1;
+    const shortMax = Math.hypot(vp.width, vp.height) * 0.02; // "hatch-line short" ≈ 2% of diagonal
+
+    const IMG = new Set([OPS.paintImageXObject, OPS.paintJpegXObject,
+      OPS.paintImageMaskXObject, OPS.paintInlineImageXObject].filter(v => v != null));
+    const BINS = 36; // 5° bins over 0..180
+    const hist = new Float64Array(BINS);
+    let shortSegs = 0, imageArea = 0, pathOps = 0;
+
+    let M = vp.transform.slice();
+    const stack = [];
+    for (let i = 0; i < F.length; i++) {
+      const fn = F[i];
+      if (fn === OPS.save) stack.push(M.slice());
+      else if (fn === OPS.restore) { if (stack.length) M = stack.pop(); }
+      else if (fn === OPS.transform) M = matMul(M, A[i]);
+      else if (fn === OPS.paintFormXObjectBegin) { stack.push(M.slice()); if (A[i] && A[i][0]) M = matMul(M, A[i][0]); }
+      else if (fn === OPS.paintFormXObjectEnd) { if (stack.length) M = stack.pop(); }
+      else if (IMG.has(fn)) {
+        const o = matApply(M, 0, 0), ux = matApply(M, 1, 0), uy = matApply(M, 0, 1);
+        imageArea += Math.hypot(ux.x - o.x, ux.y - o.y) * Math.hypot(uy.x - o.x, uy.y - o.y);
+      } else if (fn === OPS.constructPath) {
+        pathOps++;
+        const [subOps, co] = A[i];
+        let k = 0, cur = null;
+        for (const op of subOps) {
+          if (op === OPS.moveTo) { cur = matApply(M, co[k], co[k + 1]); k += 2; }
+          else if (op === OPS.lineTo) {
+            const p = matApply(M, co[k], co[k + 1]); k += 2;
+            if (cur) {
+              const dx = p.x - cur.x, dy = p.y - cur.y, len = Math.hypot(dx, dy);
+              if (len > 0.5 && len <= shortMax) {
+                shortSegs++;
+                let ang = Math.atan2(dy, dx) * 180 / Math.PI;
+                ang = ((ang % 180) + 180) % 180; // undirected: 0..180
+                hist[Math.min(BINS - 1, (ang / (180 / BINS)) | 0)]++;
+              }
+              cur = p;
+            }
+          } else if (op === OPS.curveTo) { cur = matApply(M, co[k + 4], co[k + 5]); k += 6; }
+          else if (op === OPS.curveTo2 || op === OPS.curveTo3) { cur = matApply(M, co[k + 2], co[k + 3]); k += 4; }
+          else if (op === OPS.rectangle) { k += 4; cur = null; }
+        }
+      }
+    }
+
+    // Concentration = share of short segments in the two busiest angle bins.
+    let top1 = 0, top1i = -1, top2 = 0;
+    for (let b = 0; b < BINS; b++) if (hist[b] > top1) { top1 = hist[b]; top1i = b; }
+    for (let b = 0; b < BINS; b++) if (b !== top1i && hist[b] > top2) top2 = hist[b];
+    const concentration = shortSegs ? (top1 + top2) / shortSegs : 0;
+    const dominantDeg = top1i >= 0 ? Math.round((top1i + 0.5) * (180 / BINS)) : null;
+    const imageCover = imageArea / pageArea;
+
+    const isRaster = imageCover > 0.5 && pathOps < 60;
+    const isHatch = !isRaster && shortSegs >= 150 && concentration >= 0.45;
+    result = {
+      hatch: isHatch,
+      reason: isRaster ? 'raster' : (isHatch ? 'hatch' : 'no-hatch'),
+      stats: { shortSegs, concentration: +concentration.toFixed(2), dominantDeg,
+        imageCover: +imageCover.toFixed(2), pathOps },
+    };
+  } catch (e) {
+    result = { hatch: false, reason: 'error', stats: {} };
+  }
+  hatchCapCache[pageNum] = result;
+  return result;
+}
+
+function reasonHint(reason) {
+  if (reason === 'raster') return 'This sheet looks like a scan / raster image — no vector hatches to auto-select. Trace areas with ▦ Area.';
+  if (reason === 'no-hatch') return 'No vector hatch pattern detected on this sheet. Trace areas with ▦ Area.';
+  if (reason === 'error') return 'Could not read this sheet’s vectors. Trace areas with ▦ Area.';
+  return 'Open a PDF to check for vector hatching.';
+}
+
+function renderHatchCapUI() {
+  const cap = state.caps || { hatch: false, reason: 'no-pdf', stats: {} };
+  const s = cap.stats || {};
+  const okTitle = `Vector hatching detected${s.dominantDeg != null ? ` (~${s.dominantDeg}°, ${fmt(s.shortSegs)} pattern segments)` : ''}. ` +
+    'One-click area select by ground type is coming soon (beta).';
+  const btn = $('btnAutoArea');
+  if (btn) { btn.disabled = !cap.hatch; btn.title = cap.hatch ? okTitle : reasonHint(cap.reason); }
+  const pill = $('hatchCap');
+  if (pill) {
+    pill.classList.toggle('hidden', !cap.hatch);
+    if (cap.hatch) { pill.textContent = 'hatch ✓'; pill.title = okTitle; }
+  }
+}
+
+async function updateHatchCap() {
+  if (!state.pdf) { state.caps = { hatch: false, reason: 'no-pdf', stats: {} }; renderHatchCapUI(); return; }
+  const cap = await detectHatchCap(state.sheets[state.sheet].pageNum);
+  state.caps = cap;
+  renderHatchCapUI();
+}
+
+function autoAreaClick() {
+  const cap = state.caps || { hatch: false };
+  if (!cap.hatch) return; // the button is disabled in this state, but guard anyway
+  const s = cap.stats || {};
+  setMsg(`Auto Area (beta): vector hatching detected${s.dominantDeg != null ? ` at ~${s.dominantDeg}°` : ''} — ` +
+    `${fmt(s.shortSegs)} pattern segments. One-click select by ground type is coming soon; for now trace it with ▦ Area.`);
 }
 
 // Grow a chain from the picked fragment: exact-touch joins freely; larger gaps
@@ -3281,6 +3411,8 @@ async function openProject(id, opts = {}) {
   state.sheets.proposed = { pageNum: 2, image: null };
   state.renderScale = null;
   Object.keys(pathCache).forEach(k => delete pathCache[k]);
+  Object.keys(hatchCapCache).forEach(k => delete hatchCapCache[k]);
+  updateHatchCap();
   for (const sel of [els.pageExisting, els.pageProposed]) { sel.innerHTML = ''; sel.disabled = true; }
   els.dropHint.classList.remove('hidden');
 
