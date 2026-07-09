@@ -2960,6 +2960,7 @@ function readAreaCfg() {
     tack: $('atTack').value,
     swell: $('atSwell').value,
     respread: $('atRespread').value,
+    deduct: $('atDeduct').checked,
   };
 }
 
@@ -2979,6 +2980,7 @@ function askAreaConfig(areaSf, perimFt, prefill) {
   return new Promise(resolve => {
     const preview = () => { $('atResult').innerHTML = areaResultRows(areaSf, readAreaCfg(), perimFt); };
     $('atArea').textContent = `${fmt(areaSf)} sf`;
+    $('atDeduct').checked = !!(prefill && prefill.deduct); // default off for a new area
     if (prefill) {
       $('atLabel').value = prefill.label ?? '';
       $('atMode').value = prefill.mode ?? 'area';
@@ -3225,19 +3227,22 @@ function drawTakeoffs() {
     if (t.pts.length < 2) continue;
     if (t.kind === 'area') {
       if (t.pts.length < 3) continue;
+      const deduct = !!t.cfg.deduct;
       const areaCol = areaColorHex(t);
       ctx.beginPath();
       t.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
       ctx.closePath();
-      ctx.fillStyle = hexToRgba(areaCol, 0.18);
+      ctx.fillStyle = hexToRgba(areaCol, deduct ? 0.08 : 0.18);
       ctx.fill();
       ctx.strokeStyle = areaCol;
       ctx.lineWidth = lw(2);
+      if (deduct) ctx.setLineDash([lw(7), lw(5)]); // dashed = subtracted (hole / cutout)
       ctx.stroke();
+      ctx.setLineDash([]);
       if (t.result) {
         const c = polyCentroid(t.pts);
         const q = `${fmt(t.result.quantity, t.result.unit === 'SF' ? 0 : 1)} ${t.result.unit}`;
-        labelAt(c.x, c.y, `${t.cfg.label}: ${q}`, '#0f9d68');
+        labelAt(c.x, c.y, `${deduct ? '− ' : ''}${t.cfg.label}: ${q}`, deduct ? '#e0912b' : '#0f9d68');
       }
       if (selT) drawTakeoffHandles(t.pts);
     } else if (t.kind === 'line') {
@@ -3269,9 +3274,10 @@ function takeoffRowText(t) {
     else if (t.cfg.mode === 'concrete' && t.result.rebar)
       extra = ` · ${t.result.rebar.type === 'mesh' ? 'mesh' : t.result.rebar.type}${t.result.formworkLF ? ' + forms' : ''}`;
     else if (t.cfg.mode === 'paving' && t.result.tackGal) extra = ` · ${fmt(t.result.tackGal)} gal tack`;
+    const sign = t.cfg.deduct ? '− ' : '';
     return {
-      headline: `${fmt(t.result.quantity, t.result.unit === 'SF' ? 0 : 1)} ${t.result.unit}${strip ? ' strip' : ''}`,
-      sub: `${t.cfg.label} · ${fmt(t.result.areaSf)} sf${t.cfg.mode !== 'area' ? ` · ${t.cfg.thickness}"` : ''}${extra}`,
+      headline: `${sign}${fmt(t.result.quantity, t.result.unit === 'SF' ? 0 : 1)} ${t.result.unit}${strip ? ' strip' : ''}`,
+      sub: `${t.cfg.deduct ? 'DEDUCT · ' : ''}${t.cfg.label} · ${fmt(t.result.areaSf)} sf${t.cfg.mode !== 'area' ? ` · ${t.cfg.thickness}"` : ''}${extra}`,
     };
   }
   return {
@@ -3310,7 +3316,7 @@ function renderTakeoffs() {
     for (const x of areaItems) {
       const key = x.t.cfg.label || 'Area';
       const g = groups.get(key) || { color: areaColorHex(x.t), sf: 0, rows: [] };
-      g.sf += x.t.result.areaSf || 0;
+      g.sf += (x.t.cfg.deduct ? -1 : 1) * (x.t.result.areaSf || 0); // holes/cutouts subtract
       g.rows.push(x);
       groups.set(key, g);
     }
@@ -3876,7 +3882,7 @@ function buildBidItems() {
   // typeKey = type-level id (holds the remembered price shared across projects)
   // haul  = loose CY leaving the site, summed into the truck-load count
   const push = (key, typeKey, group, desc, qty, unit, haul) => {
-    if (qty > 0.05) items.push({ key, typeKey, group, desc, qty, unit, haul: !!haul });
+    if (Math.abs(qty) > 0.05) items.push({ key, typeKey, group, desc, qty, unit, haul: !!haul });
   };
   const tk = s => String(s).toLowerCase().trim();
 
@@ -3920,24 +3926,32 @@ function buildBidItems() {
         push(`to-${t.id}`, `line:${lbl}`, g, t.cfg.label, t.result.lengthFt, 'LF');
       }
     } else if (t.kind === 'area') {
+      // A deduct (hole / cutout) subtracts only its PRIMARY quantity from the same
+      // type key; secondary add-ons (rebar/forms/tack/respread) are skipped since a
+      // cutout's effect on those is ambiguous.
+      const sgn = t.cfg.deduct ? -1 : 1, dPfx = t.cfg.deduct ? 'Deduct — ' : '';
       if (t.cfg.mode === 'strip') {
-        push(`to-${t.id}-strip`, `strip:${lbl}`, g, `${t.cfg.label} (strip, bank)`, t.result.stripCY, 'CY');
-        push(`to-${t.id}-resp`, `strip-resp:${lbl}`, g, `${t.cfg.label} — respread`, t.result.respreadCY, 'CY');
-        push(`to-${t.id}-exp`, `strip-exp:${lbl}`, g, `${t.cfg.label} — net export (loose)`, t.result.netExportLooseCY, 'CY', true);
+        push(`to-${t.id}-strip`, `strip:${lbl}`, g, `${dPfx}${t.cfg.label} (strip, bank)`, sgn * t.result.stripCY, 'CY');
+        if (!t.cfg.deduct) {
+          push(`to-${t.id}-resp`, `strip-resp:${lbl}`, g, `${t.cfg.label} — respread`, t.result.respreadCY, 'CY');
+          push(`to-${t.id}-exp`, `strip-exp:${lbl}`, g, `${t.cfg.label} — net export (loose)`, t.result.netExportLooseCY, 'CY', true);
+        }
       } else if (t.cfg.mode === 'concrete') {
-        push(`to-${t.id}`, `concrete:${lbl}`, g, t.cfg.label, t.result.quantity, 'CY');
-        if (t.result.formworkLF) push(`to-${t.id}-form`, `concrete-form:${lbl}`, g, `${t.cfg.label} — edge forms`, t.result.formworkLF, 'LF');
-        if (t.result.rebar) {
-          if (t.result.rebar.type === 'mesh')
-            push(`to-${t.id}-mesh`, `concrete-mesh:${lbl}`, g, `${t.cfg.label} — wire mesh`, t.result.rebar.meshSf, 'SF');
-          else
-            push(`to-${t.id}-rebar`, `concrete-rebar:${lbl}:${t.result.rebar.type}`, g, `${t.cfg.label} — rebar ${t.result.rebar.type}`, t.result.rebar.weightLb, 'lb');
+        push(`to-${t.id}`, `concrete:${lbl}`, g, `${dPfx}${t.cfg.label}`, sgn * t.result.quantity, 'CY');
+        if (!t.cfg.deduct) {
+          if (t.result.formworkLF) push(`to-${t.id}-form`, `concrete-form:${lbl}`, g, `${t.cfg.label} — edge forms`, t.result.formworkLF, 'LF');
+          if (t.result.rebar) {
+            if (t.result.rebar.type === 'mesh')
+              push(`to-${t.id}-mesh`, `concrete-mesh:${lbl}`, g, `${t.cfg.label} — wire mesh`, t.result.rebar.meshSf, 'SF');
+            else
+              push(`to-${t.id}-rebar`, `concrete-rebar:${lbl}:${t.result.rebar.type}`, g, `${t.cfg.label} — rebar ${t.result.rebar.type}`, t.result.rebar.weightLb, 'lb');
+          }
         }
       } else if (t.cfg.mode === 'paving') {
-        push(`to-${t.id}`, `paving:${lbl}`, g, t.cfg.label, t.result.quantity, 'tons');
-        if (t.result.tackGal) push(`to-${t.id}-tack`, `tack:${lbl}`, g, `${t.cfg.label} — tack coat`, t.result.tackGal, 'gal');
+        push(`to-${t.id}`, `paving:${lbl}`, g, `${dPfx}${t.cfg.label}`, sgn * t.result.quantity, 'tons');
+        if (!t.cfg.deduct && t.result.tackGal) push(`to-${t.id}-tack`, `tack:${lbl}`, g, `${t.cfg.label} — tack coat`, t.result.tackGal, 'gal');
       } else {
-        push(`to-${t.id}`, `area:${lbl}:${tk(t.result.unit)}`, g, t.cfg.label, t.result.quantity, t.result.unit);
+        push(`to-${t.id}`, `area:${lbl}:${tk(t.result.unit)}`, g, `${dPfx}${t.cfg.label}`, sgn * t.result.quantity, t.result.unit);
       }
     }
   });

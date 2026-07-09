@@ -370,6 +370,7 @@
       <label id="atSwellWrap" title="Bulking / swell of stripped topsoil once loosened for hauling. Topsoil ≈ 20–25%.">Swell (%)<input type="number" id="atSwell" min="0" step="1" value="25"></label>
       <label id="atRespreadWrap" title="Depth of topsoil respread back over the area at finish grade. 0 = haul all off.">Respread (in)<input type="number" id="atRespread" min="0" step="0.5" value="0"></label>
     </div>
+    <label class="atCheck" title="Subtract this area from its type's total — a hole, island, or cutout inside a larger area of the same type. Give it the SAME material/label as the area it cuts out of."><input type="checkbox" id="atDeduct"> Deduct — subtract this area from its type (hole / cutout)</label>
     <div id="atResult" class="wall-result"></div>
     <div class="modal-actions">
       <button id="atCancel" class="btn">Cancel</button>
