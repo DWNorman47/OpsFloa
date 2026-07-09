@@ -93,6 +93,8 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
     feature_geolocation: settings?.feature_geolocation ?? true,
     module_timeclock: settings?.module_timeclock ?? true,
     module_projects: settings?.module_projects ?? true,
+    hide_work_orders_tab: settings?.hide_work_orders_tab ?? false,
+    hide_projects_tab: settings?.hide_projects_tab ?? false,
     module_inventory: settings?.module_inventory ?? false,
     module_tools: settings?.module_tools ?? true,
     module_analytics: settings?.module_analytics ?? false,
@@ -181,6 +183,8 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
       feature_geolocation: settings.feature_geolocation ?? true,
       module_timeclock: settings.module_timeclock ?? true,
       module_projects: settings.module_projects ?? true,
+      hide_work_orders_tab: settings.hide_work_orders_tab ?? false,
+      hide_projects_tab: settings.hide_projects_tab ?? false,
       module_inventory: settings.module_inventory ?? false,
       module_tools: settings.module_tools ?? true,
       module_analytics: settings.module_analytics ?? false,
@@ -248,6 +252,8 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
         feature_geolocation: form.feature_geolocation,
         module_timeclock: form.module_timeclock,
         module_projects: form.module_projects,
+        hide_work_orders_tab: form.hide_work_orders_tab,
+        hide_projects_tab: form.hide_projects_tab,
         module_inventory: form.module_inventory,
         module_tools: form.module_tools,
         module_analytics: form.module_analytics,
@@ -366,6 +372,30 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
               <span style={{ ...styles.toggleKnob, transform: form.module_projects ? 'translateX(46px)' : 'translateX(0)' }} />
             </label>
           </div>
+          {form.module_projects && (
+            <>
+              <div style={{ ...styles.row, paddingLeft: 16 }}>
+                <div>
+                  <div style={styles.label}>Show Work Orders tab</div>
+                  <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>Service calls & standalone jobs. Turn off if you only run projects.</div>
+                </div>
+                <label style={{ ...styles.toggle, background: !form.hide_work_orders_tab ? 'var(--ops-page-accent)' : '#d1d5db' }}>
+                  <input type="checkbox" checked={!form.hide_work_orders_tab} onChange={e => set('hide_work_orders_tab', !e.target.checked)} style={{ display: 'none' }} />
+                  <span style={{ ...styles.toggleKnob, transform: !form.hide_work_orders_tab ? 'translateX(46px)' : 'translateX(0)' }} />
+                </label>
+              </div>
+              <div style={{ ...styles.row, paddingLeft: 16 }}>
+                <div>
+                  <div style={styles.label}>Show Projects tab</div>
+                  <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>Multi-week jobs with budgets & docs. Turn off if you only do service work.</div>
+                </div>
+                <label style={{ ...styles.toggle, background: !form.hide_projects_tab ? 'var(--ops-page-accent)' : '#d1d5db' }}>
+                  <input type="checkbox" checked={!form.hide_projects_tab} onChange={e => set('hide_projects_tab', !e.target.checked)} style={{ display: 'none' }} />
+                  <span style={{ ...styles.toggleKnob, transform: !form.hide_projects_tab ? 'translateX(46px)' : 'translateX(0)' }} />
+                </label>
+              </div>
+            </>
+          )}
           <div style={styles.row}>
             <div>
               <div style={styles.label}>{t.mrModuleInventory}</div>

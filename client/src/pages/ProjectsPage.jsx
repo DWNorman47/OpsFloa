@@ -2028,23 +2028,31 @@ export default function ProjectsPage() {
   // project work; the Projects module itself is gated upstream (route + switcher).
   const canSeeSales = hasSalesPerm;
   const canSeePOs = hasSalesPerm;
-  // Fall back to Projects if a gated tab is deep-linked by someone without access.
-  const tabAllowed = (id) => {
-    if (id === 'estimates' || id === 'change_orders') return canSeeSales;
-    if (id === 'pos') return canSeePOs;
-    return true;
-  };
-  const activeTab = tabAllowed(mainTab) ? mainTab : 'projects';
+  // A company can hide the tab it doesn't use — but never both (that would empty
+  // the module). If both are flagged, we ignore the flags and show both.
+  let hideProjects = settings?.hide_projects_tab === true || settings?.hide_projects_tab === '1';
+  let hideWorkOrders = settings?.hide_work_orders_tab === true || settings?.hide_work_orders_tab === '1';
+  if (hideProjects && hideWorkOrders) { hideProjects = false; hideWorkOrders = false; }
 
   const tabs = [
-    { id: 'projects', label: 'Projects' },
-    { id: 'work_orders', label: 'Work Orders' },
+    ...(hideProjects ? [] : [{ id: 'projects', label: 'Projects' }]),
+    ...(hideWorkOrders ? [] : [{ id: 'work_orders', label: 'Work Orders' }]),
     ...(canSeeSales ? [
       { id: 'estimates', label: t.estList },
       { id: 'change_orders', label: t.coList },
     ] : []),
     ...(canSeePOs ? [{ id: 'pos', label: t.subPurchaseOrders }] : []),
   ];
+
+  // Fall back to the first visible tab if the requested one is hidden or gated.
+  const tabAllowed = (id) => {
+    if (id === 'estimates' || id === 'change_orders') return canSeeSales;
+    if (id === 'pos') return canSeePOs;
+    if (id === 'projects') return !hideProjects;
+    if (id === 'work_orders') return !hideWorkOrders;
+    return true;
+  };
+  const activeTab = tabAllowed(mainTab) ? mainTab : ((tabs[0] && tabs[0].id) || 'projects');
 
   return (
     <div style={styles.page}>
