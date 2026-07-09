@@ -170,6 +170,9 @@ export default function HomePage() {
               <Metric label={t.hpMetricClockedInNow} value={loading ? '-' : kpis?.clocked_in_count ?? 0} />
               <Metric label={t.hpMetricHoursThisWeek} value={loading ? '-' : kpis?.company_hours_this_week ?? 0} />
               <Metric label={t.hpMetricOtWatch} value={loading ? '-' : kpis?.overtime_workers_this_week ?? 0} tone={(kpis?.overtime_workers_this_week || 0) > 0 ? 'attention' : 'good'} />
+              {enabled(settings, 'module_work') && (
+                <Metric label="Open work orders" value={loading ? '-' : kpis?.open_work_orders ?? 0} tone={(kpis?.open_work_orders || 0) > 0 ? 'attention' : 'good'} />
+              )}
             </div>
           ) : (
             <div className="home-worker-status">

@@ -74,7 +74,7 @@ router.get('/kpis', requireAdmin, async (req, res) => {
   try {
     const settings = await getSettings(companyId);
     const weekStartDateStr = weekRange(settings.week_start, 0).from; // ISO start-of-current-week
-    const [pending, clockedIn, weekHours] = await Promise.all([
+    const [pending, clockedIn, weekHours, openWorkOrders] = await Promise.all([
       pool.query(`SELECT COUNT(*) FROM time_entries WHERE company_id = $1 AND status = 'pending'`, [companyId]),
       pool.query(`SELECT COUNT(*) FROM active_clock WHERE company_id = $1`, [companyId]),
       pool.query(
@@ -93,6 +93,7 @@ router.get('/kpis', requireAdmin, async (req, res) => {
            AND status != 'rejected'`,
         [companyId, weekStartDateStr]
       ),
+      pool.query(`SELECT COUNT(*) FROM work_orders WHERE company_id = $1 AND active = true AND status NOT IN ('completed','canceled')`, [companyId]),
     ]);
 
     // Workers who've exceeded the OT threshold this week
@@ -148,6 +149,7 @@ router.get('/kpis', requireAdmin, async (req, res) => {
       clocked_in_count: parseInt(clockedIn.rows[0].count),
       company_hours_this_week: +parseFloat(weekHours.rows[0].hours).toFixed(1),
       overtime_workers_this_week: otWorkers,
+      open_work_orders: parseInt(openWorkOrders.rows[0].count),
     });
   } catch (err) {
     logger.error({ err }, 'catch block error');
