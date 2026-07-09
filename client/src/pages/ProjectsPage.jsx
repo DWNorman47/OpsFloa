@@ -15,6 +15,7 @@ import ProjectCloseoutTab from '../components/ProjectCloseoutTab';
 import { EstimatesPanel } from './EstimatesPage';
 import { ChangeOrdersPanel } from './ChangeOrdersPage';
 import { SubPOsPanel } from './SubsPage';
+import WorkOrdersPanel from '../components/WorkOrdersPanel';
 import { useHasAnyPerm } from '../hooks/usePerm';
 import { labelSg, labelPl } from '../companyLabels';
 
@@ -2036,7 +2037,8 @@ export default function ProjectsPage() {
   const activeTab = tabAllowed(mainTab) ? mainTab : 'projects';
 
   const tabs = [
-    { id: 'projects', label: workLabelPlural },
+    { id: 'projects', label: 'Projects' },
+    { id: 'work_orders', label: 'Work Orders' },
     ...(canSeeSales ? [
       { id: 'estimates', label: t.estList },
       { id: 'change_orders', label: t.coList },
@@ -2071,6 +2073,12 @@ export default function ProjectsPage() {
         {activeTab === 'pos' && (
           <div style={{ marginTop: 24 }}>
             <SubPOsPanel />
+          </div>
+        )}
+
+        {activeTab === 'work_orders' && (
+          <div style={{ marginTop: 24 }}>
+            <WorkOrdersPanel />
           </div>
         )}
 

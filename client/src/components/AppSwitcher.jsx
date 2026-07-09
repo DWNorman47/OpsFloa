@@ -106,7 +106,7 @@ export const APPS = [
   },
   {
     id: 'projects',
-    name: 'Projects',
+    name: 'Work',
     bg: '#7c3aed',
     adminOnly: true,
     icon: (
