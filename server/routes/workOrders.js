@@ -133,6 +133,40 @@ router.patch('/:id', requirePerm('manage_projects'), async (req, res) => {
   }
 });
 
+// PATCH /:id/status — field update: the assigned worker (or a manager) can move
+// the status and edit the notes on their own work order, without manage_projects.
+router.patch('/:id/status', async (req, res) => {
+  const status = WORK_ORDER_STATUSES.includes(req.body && req.body.status) ? req.body.status : null;
+  if (!status) return res.status(400).json({ error: 'Invalid status.' });
+  const note = typeof (req.body && req.body.description) === 'string' ? req.body.description : null;
+  try {
+    const found = await pool.query(
+      'SELECT assigned_to FROM work_orders WHERE id = $1 AND company_id = $2 AND active = true',
+      [req.params.id, req.user.company_id],
+    );
+    if (!found.rows[0]) return res.status(404).json({ error: 'Work order not found.' });
+    const isAssignee = found.rows[0].assigned_to === req.user.id;
+    if (!isAssignee && !(await hasPerm(req, 'manage_projects'))) {
+      return res.status(403).json({ error: 'You can only update a work order assigned to you.' });
+    }
+    const { rows } = await pool.query(
+      `UPDATE work_orders SET
+         status = $1,
+         description = COALESCE($4, description),
+         completed_at = CASE WHEN $1 = 'completed' AND completed_at IS NULL THEN NOW()
+                             WHEN $1 <> 'completed' THEN NULL ELSE completed_at END,
+         updated_at = NOW()
+       WHERE id = $2 AND company_id = $3 AND active = true
+       RETURNING *`,
+      [status, req.params.id, req.user.company_id, note],
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    if (req.log && req.log.error) req.log.error({ err }, 'work order status update failed');
+    res.status(500).json({ error: 'Could not update the work order.' });
+  }
+});
+
 // DELETE /:id  — soft delete (managers/dispatchers)
 router.delete('/:id', requirePerm('manage_projects'), async (req, res) => {
   try {

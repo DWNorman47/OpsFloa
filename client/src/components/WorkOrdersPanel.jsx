@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import api from '../api';
 import { silentError } from '../errorReporter';
 import { usePerm } from '../hooks/usePerm';
+import { useAuth } from '../contexts/AuthContext';
 
 const STATUSES = [
   { v: 'open', label: 'Open' },
@@ -37,6 +38,7 @@ const fmtWhen = ts => {
 
 export default function WorkOrdersPanel() {
   const canManage = usePerm('manage_projects');
+  const { user } = useAuth();
   const [orders, setOrders] = useState([]);
   const [clients, setClients] = useState([]);
   const [projects, setProjects] = useState([]);
@@ -94,11 +96,29 @@ export default function WorkOrdersPanel() {
     catch (e) { setError(e?.response?.data?.error || 'Could not delete.'); }
   };
 
+  // field-worker update: status + notes only, on their own assigned job
+  const saveStatus = async () => {
+    setSaving(true); setError('');
+    try {
+      await api.patch(`/work-orders/${editing.id}/status`,
+        { status: form.status, description: form.description }, { suppressToast: true });
+      close(); load();
+    } catch (e) {
+      setError(e?.response?.data?.error || 'Could not update the work order.');
+    } finally { setSaving(false); }
+  };
+
   const visible = useMemo(() => {
     if (statusFilter === 'all') return orders;
     if (statusFilter === 'active') return orders.filter(o => o.status !== 'completed' && o.status !== 'canceled');
     return orders.filter(o => o.status === statusFilter);
   }, [orders, statusFilter]);
+
+  const isAssignee = !!(editing && editing.id && user && editing.assigned_to === user.id);
+  const canFieldUpdate = !canManage && isAssignee;   // tech can move status + notes
+  const canEdit = canManage || canFieldUpdate;
+  const lockAll = !canManage;                         // general fields: managers only
+  const lockStatus = !canManage && !isAssignee;       // status + notes: manager or assignee
 
   return (
     <div style={styles.wrap}>
@@ -147,63 +167,66 @@ export default function WorkOrdersPanel() {
         <div style={styles.modalBg} onClick={close}>
           <div style={styles.modal} onClick={e => e.stopPropagation()}>
             <h3 style={styles.modalTitle}>{editing.id ? (canManage ? 'Edit work order' : 'Work order') : 'New work order'}</h3>
-            <fieldset disabled={!canManage} style={styles.fieldset}>
             <div style={styles.grid}>
               <label style={styles.full}>Title
-                <input style={styles.input} value={form.title} maxLength={255}
+                <input style={styles.input} value={form.title} maxLength={255} disabled={lockAll}
                   onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g. Fix AC — no cooling" />
               </label>
               <label>Customer
-                <select style={styles.input} value={form.client_id} onChange={e => setForm(f => ({ ...f, client_id: e.target.value }))}>
+                <select style={styles.input} value={form.client_id} disabled={lockAll} onChange={e => setForm(f => ({ ...f, client_id: e.target.value }))}>
                   <option value="">—</option>
                   {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </label>
               <label>Project <span style={styles.optional}>(optional)</span>
-                <select style={styles.input} value={form.project_id} onChange={e => setForm(f => ({ ...f, project_id: e.target.value }))}>
+                <select style={styles.input} value={form.project_id} disabled={lockAll} onChange={e => setForm(f => ({ ...f, project_id: e.target.value }))}>
                   <option value="">Standalone (service call)</option>
                   {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </label>
               <label style={styles.full}>Address
-                <input style={styles.input} value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} />
+                <input style={styles.input} value={form.address} disabled={lockAll} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} />
               </label>
               <label>Status
-                <select style={styles.input} value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
+                <select style={styles.input} value={form.status} disabled={lockStatus} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
                   {STATUSES.map(s => <option key={s.v} value={s.v}>{s.label}</option>)}
                 </select>
               </label>
               <label>Priority
-                <select style={styles.input} value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))}>
+                <select style={styles.input} value={form.priority} disabled={lockAll} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))}>
                   {PRIORITIES.map(p => <option key={p.v} value={p.v}>{p.label}</option>)}
                 </select>
               </label>
               <label>Assigned to
-                <select style={styles.input} value={form.assigned_to} onChange={e => setForm(f => ({ ...f, assigned_to: e.target.value }))}>
+                <select style={styles.input} value={form.assigned_to} disabled={lockAll} onChange={e => setForm(f => ({ ...f, assigned_to: e.target.value }))}>
                   <option value="">Unassigned</option>
                   {workers.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
                 </select>
               </label>
               <label>Scheduled
-                <input type="datetime-local" style={styles.input} value={form.scheduled_at}
+                <input type="datetime-local" style={styles.input} value={form.scheduled_at} disabled={lockAll}
                   onChange={e => setForm(f => ({ ...f, scheduled_at: e.target.value }))} />
               </label>
               <label>Amount ($)
-                <input type="number" min="0" step="0.01" style={styles.input} value={form.amount}
+                <input type="number" min="0" step="0.01" style={styles.input} value={form.amount} disabled={lockAll}
                   onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
               </label>
               <label style={styles.full}>Notes
-                <textarea style={{ ...styles.input, minHeight: 70, resize: 'vertical' }} value={form.description}
+                <textarea style={{ ...styles.input, minHeight: 70, resize: 'vertical' }} value={form.description} disabled={lockStatus}
                   onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
               </label>
             </div>
-            </fieldset>
+            {canFieldUpdate && <div style={styles.fieldHint}>You're assigned to this job — you can update its status and notes.</div>}
             {error && <div style={styles.error}>{error}</div>}
             <div style={styles.actions}>
               {canManage && editing.id && <button className="ops-button" style={styles.del} onClick={() => remove(editing)}>Delete</button>}
               <span style={{ flex: 1 }} />
-              <button className="ops-button" onClick={close} disabled={saving}>{canManage ? 'Cancel' : 'Close'}</button>
-              {canManage && <button className="ops-button-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>}
+              <button className="ops-button" onClick={close} disabled={saving}>{canEdit ? 'Cancel' : 'Close'}</button>
+              {canEdit && (
+                <button className="ops-button-primary" onClick={canManage ? save : saveStatus} disabled={saving}>
+                  {saving ? 'Saving…' : (canManage ? 'Save' : 'Save status')}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -233,8 +256,8 @@ const styles = {
   modalBg: { position: 'fixed', inset: 0, background: 'rgba(15,23,42,.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 90, padding: 16 },
   modal: { background: '#fff', borderRadius: 14, padding: 20, width: 'min(640px, 100%)', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,.3)' },
   modalTitle: { margin: '0 0 14px', fontSize: 18, color: '#0f172a' },
-  fieldset: { border: 'none', padding: 0, margin: 0, minWidth: 0 },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 },
+  fieldHint: { marginTop: 10, fontSize: 12.5, color: '#0d9488' },
   full: { gridColumn: '1 / -1' },
   input: { width: '100%', boxSizing: 'border-box', marginTop: 5, padding: '8px 10px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 14, fontFamily: 'inherit', background: '#fff', color: '#0f172a' },
   optional: { color: '#94a3b8', fontWeight: 400, fontSize: 12 },
