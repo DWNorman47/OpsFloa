@@ -62,6 +62,8 @@ const state = {
   boxA: null, boxB: null,  // erase-box drag corners (world px)
   selTake: null,           // selected takeoff index (state.takeoffs) for reshape/edit
   dragTake: null,          // selected-takeoff vertex index while dragging (-1 = click consumed)
+  dragMove: null,          // whole-shape move: { what:'takeoff'|'contour', last:{x,y} }
+  clipboard: null,         // copied shape: { type:'takeoff'|'contour', data }
 };
 
 /* ============================== DOM ============================== */
@@ -793,10 +795,10 @@ function updateHud() {
         ? 'Click around a new pad — or edit one: drag a point (○) · double-click an edge to add a point · Alt+click removes'
         : 'Click around the building pad footprint — everything inside is held flat at one elevation',
     select: state.selected
-      ? 'Reshape: drag a point (○) · double-click an edge to add a point · Alt+click removes · Delete removes the line · E edits elevation'
+      ? 'Drag the body to move · drag a point (○) to reshape · double-click an edge to add · Alt+click removes · Ctrl+C/V copies · Delete removes · E edits elevation'
       : state.selTake != null
-        ? 'Reshape this takeoff: drag a point (○) · double-click an edge to add · Alt+click removes · Delete removes it · E re-picks type'
-        : 'Click a line, area, or line takeoff to select it, then drag its points (○) to reshape · Delete removes · E edits',
+        ? 'Drag the body to move · drag a point (○) to reshape · double-click an edge to add · Alt+click removes · Ctrl+C/V copies · Delete removes · E re-picks type'
+        : 'Click a line, area, or line takeoff to select it — then move/reshape/copy it · Delete removes · E edits',
     erase: state.selected && state.selected.sheet === state.sheet
       ? 'Drag a box — erases only from the SELECTED line · Esc deselects to erase from all lines'
       : 'Drag a box — traced line portions inside it are erased (lines crossing it are split)',
@@ -831,6 +833,7 @@ function setTool(t) {
   state.dragDraft = null;
   state.dragSel = null;
   state.dragTake = null;
+  state.dragMove = null;
   document.querySelectorAll('.tool').forEach(b =>
     b.classList.toggle('active', b.dataset.tool === t));
   cv.classList.toggle('crosshair', t !== 'pan');
@@ -1013,6 +1016,21 @@ cv.addEventListener('mousedown', e => {
     }
   }
 
+  // with the Select tool, pressing the BODY of the selected shape (not a vertex)
+  // moves the whole shape
+  if (!state.mouse.panning && e.button === 0 && state.tool === 'select' && !state.draft.length &&
+      state.dragTake === null && state.dragSel === null && !e.altKey) {
+    const w = screenToWorld(state.mouse.sx, state.mouse.sy);
+    if (state.selTake != null && hitTakeoff(w) === state.selTake) {
+      state.dragMove = { what: 'takeoff', last: { x: w.x, y: w.y } }; pendingSnap = takeSnap();
+    } else if (state.selected && state.selected.sheet === state.sheet) {
+      const h = hitTest(w);
+      if (h && h.sheet === state.selected.sheet && h.index === state.selected.index) {
+        state.dragMove = { what: 'contour', last: { x: w.x, y: w.y } }; pendingSnap = takeSnap();
+      }
+    }
+  }
+
   // with the Scale tool, grabbing an existing endpoint drags it instead of re-clicking
   if (!state.mouse.panning && e.button === 0 && state.tool === 'calibrate' &&
       state.calibration && !state.calibPts.length) {
@@ -1057,6 +1075,15 @@ cv.addEventListener('mousemove', e => {
       const w = screenToWorld(x, y);
       const t = state.takeoffs[state.selTake];
       if (t) t.pts[state.dragTake] = { x: w.x, y: w.y };
+    }
+    if (state.dragMove) {
+      const w = screenToWorld(x, y);
+      const dx = w.x - state.dragMove.last.x, dy = w.y - state.dragMove.last.y;
+      const pts = state.dragMove.what === 'takeoff'
+        ? (state.takeoffs[state.selTake] || {}).pts
+        : (state.contours[state.selected.sheet][state.selected.index] || {}).pts;
+      if (pts) { for (const p of pts) { p.x += dx; p.y += dy; } }
+      state.dragMove.last = { x: w.x, y: w.y };
     }
     if (state.dragCal) {
       const w = screenToWorld(x, y);
@@ -1134,6 +1161,18 @@ cv.addEventListener('mouseup', e => {
       if (t) recomputeTakeoff(t);
       renderTakeoffs(); saveLocal();
       setMsg('Takeoff point moved.');
+    }
+    pendingSnap = null;
+    draw();
+    return;
+  }
+  if (state.dragMove) {
+    const what = state.dragMove.what;
+    state.dragMove = null;
+    if (moved) {
+      if (pendingSnap) pushSnap(pendingSnap);
+      if (what === 'takeoff') { renderTakeoffs(); saveLocal(); setMsg('Shape moved.'); } // area/length unchanged by a translate
+      else padEdited('Contour moved.'); // invalidates the stale cut/fill result + saves
     }
     pendingSnap = null;
     draw();
@@ -1445,6 +1484,45 @@ function nearestTakeoffEdge(pts, w, thresh, closed) {
     if (d < bd) { bd = d; best = { i, p: { x: px, y: py } }; }
   }
   return best;
+}
+
+// ── Copy / paste a selected shape ─────────────────────────────────────────────
+const cloneDeep = o => JSON.parse(JSON.stringify(o));
+
+function copySelection() {
+  if (state.selTake != null && state.takeoffs[state.selTake]) {
+    state.clipboard = { type: 'takeoff', data: cloneDeep(state.takeoffs[state.selTake]) };
+    setMsg('Copied. Ctrl+V pastes a copy next to it.');
+  } else if (state.selected) {
+    const c = state.contours[state.selected.sheet][state.selected.index];
+    if (c) { state.clipboard = { type: 'contour', data: cloneDeep(c) }; setMsg('Copied. Ctrl+V pastes a copy next to it.'); }
+  } else setMsg('Select a shape first (➤ Select), then Ctrl+C to copy.');
+}
+
+function pasteClipboard() {
+  if (!state.clipboard) { setMsg('Nothing copied yet — select a shape and press Ctrl+C.'); return; }
+  snapshot();
+  const off = 24 / state.view.zoom; // offset so the pasted copy is visibly separate
+  const clone = cloneDeep(state.clipboard.data);
+  clone.pts.forEach(p => { p.x += off; p.y += off; });
+  if (state.tool !== 'select') setTool('select');
+  if (state.clipboard.type === 'takeoff') {
+    clone.id = randId();
+    state.takeoffs.push(clone);
+    state.selTake = state.takeoffs.length - 1;
+    state.selected = null;
+    renderTakeoffs();
+  } else {
+    state.contours[state.sheet].push(clone); // paste onto the active sheet
+    state.selected = { sheet: state.sheet, index: state.contours[state.sheet].length - 1 };
+    state.selTake = null;
+    state.result = null; // new contour geometry invalidates the last cut/fill
+    els.resultsSection.classList.add('hidden');
+    refreshContourList();
+  }
+  saveLocal();
+  draw();
+  setMsg('Pasted a copy — drag its body to reposition, or its points to reshape.');
 }
 
 // Re-open the material / line config for the selected takeoff (E key).
@@ -2276,6 +2354,9 @@ window.addEventListener('keydown', e => {
     return;
   }
 
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') { e.preventDefault(); copySelection(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') { e.preventDefault(); pasteClipboard(); return; }
+
   switch (e.key) {
     case 'Enter':
       if (state.tool === 'realign') applyRealign();
@@ -2292,6 +2373,7 @@ window.addEventListener('keydown', e => {
       if (state.selected) { state.selected = null; refreshContourList(); }
       if (state.selTake != null) { state.selTake = null; renderTakeoffs(); }
       state.dragTake = null;
+      state.dragMove = null;
       if (state.tool === 'align' || state.tool === 'realign' || state.tool === 'measure') setTool('pan');
       else { state.alignPts = []; state.alignQs = []; }
       updateUndoButtons(); // draft may have been cleared
