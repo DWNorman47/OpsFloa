@@ -211,12 +211,14 @@ router.get('/', requireAdmin, async (req, res) => {
     const { rows } = await pool.query(
       `SELECT r.id, r.requester_name, r.requester_email, r.requester_phone, r.requester_address,
               r.category, r.description, r.status, r.admin_notes, r.created_at, r.updated_at,
-              r.converted_project_id, r.reviewed_at,
+              r.converted_project_id, r.converted_work_order_id, r.reviewed_at,
               u.full_name AS reviewed_by_name,
-              p.name AS converted_project_name
+              p.name AS converted_project_name,
+              wo.title AS converted_work_order_title
          FROM service_requests r
          LEFT JOIN users u    ON r.reviewed_by = u.id
          LEFT JOIN projects p ON r.converted_project_id = p.id
+         LEFT JOIN work_orders wo ON r.converted_work_order_id = wo.id
         WHERE ${whereClause}
         ORDER BY r.created_at DESC
         LIMIT 500`,
@@ -373,6 +375,49 @@ router.post('/:id/convert', requireAdmin, async (req, res) => {
 
     await logAudit(req.user.company_id, req.user.id, req.user.full_name, 'service_request.converted', 'service_request', r.id, proj.rows[0].name, { project_id: proj.rows[0].id });
     res.json({ project_id: proj.rows[0].id, project_name: proj.rows[0].name });
+  } catch (err) {
+    logger.error({ err }, 'catch block error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/admin/service-requests/:id/convert-work-order — create a Work Order
+// (a service call) from the request, instead of a full Project.
+router.post('/:id/convert-work-order', requireAdmin, async (req, res) => {
+  const { title, address } = req.body;
+  try {
+    const reqRow = await pool.query(
+      'SELECT * FROM service_requests WHERE id = $1 AND company_id = $2',
+      [req.params.id, req.user.company_id]
+    );
+    if (reqRow.rowCount === 0) return res.status(404).json({ error: 'Request not found' });
+    const r = reqRow.rows[0];
+    if (r.status === 'converted') return res.status(400).json({ error: 'Already converted' });
+
+    const woTitle = String(title || '').trim() || `Service call — ${r.requester_name}`;
+    const addr = String(address || '').trim() || r.requester_address || null;
+
+    const wo = await pool.query(
+      `INSERT INTO work_orders (company_id, client_id, title, address, status, description, created_by)
+       VALUES ($1, $2, $3, $4, 'open', $5, $6)
+       RETURNING id, title`,
+      [req.user.company_id, r.client_id || null, woTitle.slice(0, 255), addr,
+        `From client request #${r.id}:\n\n${r.description}`, req.user.id]
+    );
+
+    await pool.query(
+      `UPDATE service_requests
+          SET status = 'converted',
+              converted_work_order_id = $1,
+              reviewed_by = $2,
+              reviewed_at = NOW(),
+              updated_at = NOW()
+        WHERE id = $3`,
+      [wo.rows[0].id, req.user.id, r.id]
+    );
+
+    await logAudit(req.user.company_id, req.user.id, req.user.full_name, 'service_request.converted_work_order', 'service_request', r.id, wo.rows[0].title, { work_order_id: wo.rows[0].id });
+    res.json({ work_order_id: wo.rows[0].id, work_order_title: wo.rows[0].title });
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });
