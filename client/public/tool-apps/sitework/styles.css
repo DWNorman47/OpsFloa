@@ -86,6 +86,7 @@ body.nosidebar #sidebar { display: none; }
   padding: 6px 10px; cursor: pointer; font-size: 13px;
 }
 .tool.active { background: #3d5a7a; border-color: var(--accent); }
+.smooth-toggle.on { background: #2f5a3d; border-color: var(--good); color: var(--good); }
 .tool:disabled { opacity: .4; cursor: not-allowed; }
 #btnAutoArea:not(:disabled) { border-color: var(--good); color: var(--good); }
 .hatch-cap { align-self: center; flex: 0 0 auto; font-size: 11px; font-weight: 600; color: var(--good);

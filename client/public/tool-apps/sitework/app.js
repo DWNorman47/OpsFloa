@@ -18,6 +18,7 @@ const state = {
   caps: null,              // per-active-page capabilities, e.g. { hatch, reason, stats }
 
   tool: 'pan',
+  smooth: false,           // curve mode: draw smooth curves through the clicked points
   view: { zoom: 1, panX: 0, panY: 0 },   // screen = world*zoom + pan
 
   projectId: null,         // current project record id (IndexedDB 'projects' store)
@@ -153,6 +154,29 @@ function polygonPerimeterFt(poly, ftPerPx) {
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++)
     p += dist(poly[j].x, poly[j].y, poly[i].x, poly[i].y);
   return p * ftPerPx;
+}
+
+// Catmull-Rom spline: a smooth curve that passes THROUGH every input point.
+// Returns a densified polyline. `closed` wraps the ends into a loop (areas);
+// open curves clamp the ends (contours, lines). <3 points can't curve.
+function catmullRomSpline(pts, closed, segs = 14) {
+  const n = pts.length;
+  if (n < 3) return pts.map(p => ({ x: p.x, y: p.y }));
+  const get = i => closed ? pts[((i % n) + n) % n] : pts[Math.max(0, Math.min(n - 1, i))];
+  const out = [];
+  const spans = closed ? n : n - 1;
+  for (let i = 0; i < spans; i++) {
+    const p0 = get(i - 1), p1 = get(i), p2 = get(i + 1), p3 = get(i + 2);
+    for (let s = 0; s < segs; s++) {
+      const t = s / segs, t2 = t * t, t3 = t2 * t;
+      out.push({
+        x: 0.5 * (2 * p1.x + (-p0.x + p2.x) * t + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3),
+        y: 0.5 * (2 * p1.y + (-p0.y + p2.y) * t + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3),
+      });
+    }
+  }
+  if (!closed) out.push({ x: pts[n - 1].x, y: pts[n - 1].y });
+  return out;
 }
 
 function elevColor(elev, sheet) {
@@ -704,9 +728,15 @@ function drawDraft() {
   ctx.lineWidth = lw(2);
   ctx.setLineDash([lw(5), lw(5)]);
   ctx.beginPath();
-  state.draft.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
   const m = screenToWorld(state.mouse.x, state.mouse.y);
-  ctx.lineTo(m.x, m.y);
+  if (state.smooth && SMOOTHABLE_TOOLS.includes(state.tool) && state.draft.length >= 2) {
+    // preview the smooth curve through the placed points + the rubber-band point
+    const curve = catmullRomSpline(state.draft.concat([m]), false);
+    curve.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+  } else {
+    state.draft.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+    ctx.lineTo(m.x, m.y);
+  }
   ctx.stroke();
   ctx.setLineDash([]);
   const editableDraft = ['trace', 'boundary', 'pad', 'wall', 'area', 'line'].includes(state.tool);
@@ -827,6 +857,20 @@ function switchSheet(s) {
 
 document.querySelectorAll('.tab').forEach(b =>
   b.addEventListener('click', () => switchSheet(b.dataset.sheet)));
+
+function renderSmoothUI() {
+  const b = $('btnSmooth');
+  if (b) b.classList.toggle('on', state.smooth);
+}
+function setSmooth(on) {
+  state.smooth = on;
+  renderSmoothUI();
+  setMsg(on
+    ? 'Curve mode ON — points you place are joined by a smooth curve through them. Press C to turn off.'
+    : 'Curve mode off — points join with straight segments.');
+  draw();
+}
+$('btnSmooth').addEventListener('click', () => setSmooth(!state.smooth));
 
 cv.addEventListener('contextmenu', e => e.preventDefault());
 
@@ -1518,14 +1562,21 @@ function nearestBoundaryEdge(w, thresh) {
   return best;
 }
 
+const SMOOTHABLE_TOOLS = ['trace', 'area', 'line', 'boundary', 'pad'];
+const CLOSED_TOOLS = ['area', 'boundary', 'pad'];
+
 async function finishDraftIfAny(commit) {
   draftRedo.length = 0;  // finishing or abandoning a shape ends its draft-redo chain
   if (!state.draft.length) { return; }
-  const pts = state.draft;
+  let pts = state.draft;
   state.draft = [];
   updateUndoButtons(); // draft consumed; commit branches push the single shape snapshot
 
   if (!commit) { draw(); return; }
+
+  // Curve mode: replace the clicked knots with a smooth spline through them.
+  if (state.smooth && SMOOTHABLE_TOOLS.includes(state.tool) && pts.length >= 3)
+    pts = catmullRomSpline(pts, CLOSED_TOOLS.includes(state.tool));
 
   if (state.tool === 'boundary') {
     if (pts.length >= 3) {
@@ -2258,6 +2309,7 @@ window.addEventListener('keydown', e => {
     case 'p': case 'P': setTool('pad'); break;
     case 'v': case 'V': setTool('select'); break;
     case 'b': case 'B': setTool('boundary'); break;
+    case 'c': case 'C': if (!e.ctrlKey && !e.metaKey) setSmooth(!state.smooth); break;
     case 'ArrowUp':    panBy(0, -PAN_STEP); e.preventDefault(); break;
     case 'ArrowDown':  panBy(0,  PAN_STEP); e.preventDefault(); break;
     case 'ArrowLeft':  panBy(-PAN_STEP, 0); e.preventDefault(); break;
