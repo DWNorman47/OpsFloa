@@ -66,6 +66,8 @@ For each column we record:
 | Table.column | Allowed values | DB enforcement | App validation | Stakes |
 |---|---|---|---|---|
 | `projects.status` | `planning`, `in_progress`, `on_hold`, `completed` | **enforced** (CHECK in `0101`) | `server/constants/projectEnums.js`, `server/routes/admin.js:1679` | Project tracking dashboards. Caused the `0249ac4` bug — column is nullable, so the CHECK is `IS NULL OR ...`. |
+| `work_orders.status` | `open`, `scheduled`, `in_progress`, `completed`, `canceled` | **enforced** (CHECK in `0127`) | `server/constants/workOrderEnums.js`, `server/routes/workOrders.js` | Work-order (dispatch/service) lifecycle. NOT NULL DEFAULT `open`, so plain `IN (...)` CHECK. Setting `completed` stamps `completed_at`. |
+| `work_orders.priority` | `low`, `normal`, `high`, `urgent` | **enforced** (CHECK in `0127`) | `server/constants/workOrderEnums.js`, `server/routes/workOrders.js` | Work-order dispatch priority. NOT NULL DEFAULT `normal`. |
 | `daily_reports.status` | `draft`, `submitted`, `reviewed` | **enforced** (CHECK in `0100`, was wrong in `0071`) | `server/routes/dailyReports.js:199` | Daily-report workflow + edit lock. `0071` had `approved` instead; `0100` corrects to `reviewed`. |
 | `field_reports.status` | `draft`, `submitted`, `reviewed` | **enforced** (CHECK in `0100`, was missing `draft` in `0071`) | `server/routes/fieldReports.js:30` | Field-report workflow + edit lock. |
 | `incident_reports.status` | `open`, `under_review`, `closed` | **enforced** (CHECK in `0100`, was missing `under_review` in `0071`) | `server/routes/incidents.js:8` | Incident workflow. |

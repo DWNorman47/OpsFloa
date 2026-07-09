@@ -196,6 +196,7 @@ refreshDemoCompanies(); // prime the demo-company cache at startup
 
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/projects', require('./routes/projects'));
+app.use('/api/work-orders', requireAuth, require('./routes/workOrders'));
 app.use('/api/time-entries', require('./routes/timeEntries'));
 app.use('/api/admin', require('./routes/admin'));
 // QBO OAuth callback must be public (Intuit redirects here without a JWT)
