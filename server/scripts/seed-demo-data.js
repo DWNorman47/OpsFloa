@@ -269,7 +269,7 @@ async function ensureDemoSettings(client, companyId) {
   const settings = {
     module_timeclock: '1',
     module_field: '1',
-    module_projects: '1',
+    module_work: '1',
     module_inventory: '1',
     module_tools: '1',
     module_analytics: '1',

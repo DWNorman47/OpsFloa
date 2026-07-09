@@ -42,7 +42,7 @@ describe('guideContent', () => {
 
   it('marks a guide ready when modules and permissions line up', () => {
     const task = findGuideTask('create-subcontractor-po');
-    const availability = getGuideTaskAvailability(task, adminUser, { module_projects: true });
+    const availability = getGuideTaskAvailability(task, adminUser, { module_work: true });
 
     expect(availability.ready).toBe(true);
   });
@@ -56,7 +56,7 @@ describe('guideContent', () => {
 
   it('warns when the required company module is off', () => {
     const task = findGuideTask('create-subcontractor-po');
-    const availability = getGuideTaskAvailability(task, adminUser, { module_projects: false });
+    const availability = getGuideTaskAvailability(task, adminUser, { module_work: false });
 
     expect(availability.ready).toBe(false);
     expect(availability.missingModules).toContain('Projects');

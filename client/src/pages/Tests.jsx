@@ -95,7 +95,7 @@ function validCoords(lat, lng) {
 }
 
 // settingsDefaults.js
-const FEATURE_KEYS_TEST = ['feature_scheduling','feature_analytics','feature_public','feature_chat','feature_prevailing_wage','module_field','module_timeclock','module_projects','module_inventory','module_tools','module_analytics','feature_project_integration','feature_overtime','feature_geolocation','feature_inactive_alerts','feature_overtime_alerts','feature_broadcast','feature_media_gallery','show_worker_wages','notification_use_work_hours','media_delete_on_project_archive','notify_timeoff_requests','notify_budget_alerts','notify_entry_submitted'];
+const FEATURE_KEYS_TEST = ['feature_scheduling','feature_analytics','feature_public','feature_chat','feature_prevailing_wage','module_field','module_timeclock','module_work','module_inventory','module_tools','module_analytics','feature_project_integration','feature_overtime','feature_geolocation','feature_inactive_alerts','feature_overtime_alerts','feature_broadcast','feature_media_gallery','show_worker_wages','notification_use_work_hours','media_delete_on_project_archive','notify_timeoff_requests','notify_budget_alerts','notify_entry_submitted'];
 const STRING_KEYS_TEST  = ['overtime_rule','currency','company_timezone','invoice_signature','default_temp_password','global_required_checklist_template_id'];
 function applySettingsRows(rows, defaults) {
   const s = { ...defaults };

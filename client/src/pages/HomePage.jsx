@@ -93,7 +93,7 @@ export default function HomePage() {
       if (can('workforce')) {
         list.push({ title: t.hpActionWhosWorkingTitle, detail: t.hpActionWhosWorkingDetail, to: '/timeclock#wf-live', icon: 'L', primary: !list.length });
       }
-      if (enabled(settings, 'module_projects') && can('projects')) {
+      if (enabled(settings, 'module_work') && can('projects')) {
         list.push({ title: `${t.hpActionAddWork} ${terms.work.toLowerCase()}`, detail: `${t.hpActionAddWorkDetailCreate} ${terms.work.toLowerCase()} ${t.hpActionAddWorkDetailManage} ${terms.client.toLowerCase()} ${t.hpActionAddWorkDetailRecords}`, to: '/projects', icon: 'W' });
       }
       if (enabled(settings, 'module_team') && can('team')) {
@@ -139,7 +139,7 @@ export default function HomePage() {
     return all.filter(([id]) => {
       if (['projects', 'financial_reports', 'administration'].includes(id) && !isAdmin) return false;
       if (id === 'field' && !enabled(settings, 'module_field', false)) return false;
-      if (id === 'projects' && !enabled(settings, 'module_projects')) return false;
+      if (id === 'projects' && !enabled(settings, 'module_work')) return false;
       if (id === 'inventory' && !enabled(settings, 'module_inventory', false)) return false;
       // Reports is hidden only when BOTH its halves are off (matches AppSwitcher).
       if (id === 'financial_reports' && !enabled(settings, 'module_financial_reports') && !enabled(settings, 'module_analytics')) return false;

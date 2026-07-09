@@ -663,7 +663,7 @@ export default function AdministrationPage() {
   const handleWorkerUpdated  = w  => setWorkers(prev => prev.map(x => x.id === w.id ? { ...x, ...w } : x));
   const handleWorkerRestored = w  => setWorkers(prev => [...prev, w]);
   const workspaceSummary = [
-    ['Core modules', ['module_timeclock', 'module_team', 'module_projects', 'module_field', 'module_inventory', 'module_tools', 'module_financial_reports']],
+    ['Core modules', ['module_timeclock', 'module_team', 'module_work', 'module_field', 'module_inventory', 'module_tools', 'module_financial_reports']],
     ['Features', ['feature_scheduling', 'feature_pto', 'feature_reimbursements', 'feature_chat', 'feature_broadcast', 'module_analytics', 'feature_public']],
     ['Specialized', ['addon_certified_payroll', 'feature_quickbooks', 'feature_media_gallery', 'feature_geolocation']],
   ].map(([label, keys]) => {

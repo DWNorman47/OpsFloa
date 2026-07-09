@@ -48,7 +48,7 @@ const STEPS = ['welcome', 'work', 'team', 'manager', 'language', 'review'];
 const SUMMARY_LABEL_KEYS = {
   module_timeclock: 'sqSumTimeclock',
   module_team: 'sqSumTeam',
-  module_projects: 'sqSumProjects',
+  module_work: 'sqSumProjects',
   module_field: 'sqSumField',
   module_inventory: 'sqSumInventory',
   module_analytics: 'sqSumAnalytics',
@@ -81,7 +81,7 @@ function selectedFromSettings(settings = {}) {
   }
 
   const work = [];
-  if (settings.module_projects !== false) work.push('projects');
+  if (settings.module_work !== false) work.push('projects');
   if (settings.module_field === true) work.push('field');
   if (settings.module_inventory === true) work.push('inventory');
   if (settings.module_team !== false) work.push('people');
@@ -120,7 +120,7 @@ export function buildSetupSettings(answers) {
   return {
     module_timeclock: team.has('time'),
     module_team: work.has('people'),
-    module_projects: projectsEnabled,
+    module_work: projectsEnabled,
     module_field: work.has('field'),
     module_inventory: work.has('inventory'),
     module_analytics: manager.has('performance'),

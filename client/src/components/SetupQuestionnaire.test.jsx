@@ -20,7 +20,7 @@ describe('buildSetupSettings', () => {
     expect(settings).toMatchObject({
       module_timeclock: true,
       module_team: true,
-      module_projects: false,
+      module_work: false,
       module_field: false,
       module_inventory: false,
       module_analytics: false,
@@ -48,7 +48,7 @@ describe('buildSetupSettings', () => {
     expect(settings).toMatchObject({
       module_timeclock: true,
       module_team: true,
-      module_projects: true,
+      module_work: true,
       module_field: true,
       module_inventory: true,
       module_analytics: true,
@@ -71,7 +71,7 @@ describe('buildSetupSettings', () => {
       labels,
     });
 
-    expect(settings.module_projects).toBe(true);
+    expect(settings.module_work).toBe(true);
     expect(settings.module_financial_reports).toBe(true);
     expect(settings.feature_project_integration).toBe(false);
   });

@@ -199,7 +199,7 @@ that had the previous default.
 ### Module visibility flags (`module_*`, boolean, in `FEATURE_KEYS`)
 
 Admin-controlled module toggles: `module_timeclock`, `module_team` (Directory),
-`module_projects`, `module_field`, `module_inventory`, `module_analytics`
+`module_work` (Work — Projects/Work Orders; renamed from `module_projects` in `0128`), `module_field`, `module_inventory`, `module_analytics`
 (Reports → Performance tab), and `module_financial_reports` (Reports → P&L +
 WIP tabs). The app switcher (`client/src/components/AppSwitcher.jsx`) hides an
 app when its `module_*` flag is `false`.

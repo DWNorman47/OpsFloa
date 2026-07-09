@@ -202,7 +202,7 @@ export default function AppSwitcher({ currentApp = 'timeclock', userRole, featur
     // Company-level feature toggles (admin choice). These hide modules
     // entirely regardless of user perms — the company doesn't use the feature.
     if (a.id === 'field' && feat.module_field === false) return false;
-    if (a.id === 'projects' && feat.module_projects === false) return false;
+    if (a.id === 'projects' && feat.module_work === false) return false;
     if (a.id === 'inventory' && feat.module_inventory === false) return false;
     if (a.id === 'tools' && feat.module_tools === false) return false;
     if (a.id === 'team' && feat.module_team === false) return false;
