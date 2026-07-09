@@ -707,7 +707,7 @@ function drawDraft() {
   ctx.lineTo(m.x, m.y);
   ctx.stroke();
   ctx.setLineDash([]);
-  const editableDraft = ['trace', 'boundary', 'pad', 'wall'].includes(state.tool);
+  const editableDraft = ['trace', 'boundary', 'pad', 'wall', 'area', 'line'].includes(state.tool);
   for (const p of state.draft) {
     ctx.beginPath();
     ctx.arc(p.x, p.y, lw(editableDraft ? 5 : 3), 0, Math.PI * 2);
@@ -856,7 +856,7 @@ cv.addEventListener('mousedown', e => {
 
   // While tracing a draft, let earlier vertices be adjusted before committing it.
   if (!state.mouse.panning && e.button === 0 && state.draft.length &&
-      ['trace', 'boundary', 'pad', 'wall'].includes(state.tool)) {
+      ['trace', 'boundary', 'pad', 'wall', 'area', 'line'].includes(state.tool)) {
     const w = screenToWorld(state.mouse.sx, state.mouse.sy);
     const thresh = 12 / state.view.zoom;
     let hit = -1, hd = thresh;
@@ -3114,32 +3114,45 @@ function renderTakeoffs() {
   if (!items.length) { sec.classList.add('hidden'); draw(); return; }
   sec.classList.remove('hidden');
   const cnt = $('takeoffCount'); if (cnt) cnt.textContent = items.length;
-  const rowsHtml = items.map((t, i) => {
+
+  // Keep each takeoff's real index (for delete) while we regroup for display.
+  const indexed = items.map((t, i) => ({ t, i }));
+  const rowHtml = ({ t, i }) => {
     const { headline, sub } = takeoffRowText(t);
     const dot = t.kind === 'area'
       ? `<span class="swatch" style="background:${areaColorHex(t)}"></span>` : '';
     return `<div class="wall-row"><div class="wall-row-main"><b>${dot}${headline}</b><span>${sub}</span></div>` +
       `<button class="wall-del" data-i="${i}" title="Delete this takeoff">✕</button></div>`;
-  }).join('');
-  // Per-type area totals — sum SF for each surface type, color-matched to the plan.
-  const areas = items.filter(t => t.kind === 'area' && t.result);
-  let summaryHtml = '';
-  if (areas.length) {
-    const byType = new Map();
-    for (const t of areas) {
-      const key = t.cfg.label || 'Area';
-      const e = byType.get(key) || { sf: 0, color: areaColorHex(t) };
-      e.sf += t.result.areaSf || 0;
-      byType.set(key, e);
+  };
+
+  // Areas group by type: a color-matched subheader carrying the COMBINED SF (+ SY)
+  // for that surface, then that type's individual takeoff rows beneath it.
+  let html = '';
+  const areaItems = indexed.filter(x => x.t.kind === 'area' && x.t.result);
+  if (areaItems.length) {
+    const groups = new Map(); // label -> { color, sf, rows }
+    for (const x of areaItems) {
+      const key = x.t.cfg.label || 'Area';
+      const g = groups.get(key) || { color: areaColorHex(x.t), sf: 0, rows: [] };
+      g.sf += x.t.result.areaSf || 0;
+      g.rows.push(x);
+      groups.set(key, g);
     }
-    const sumRows = [...byType.entries()].map(([label, e]) =>
-      `<div class="area-sum-row"><span class="swatch" style="background:${e.color}"></span>` +
-      `<span class="area-sum-label">${esc(label)}</span>` +
-      `<b>${fmt(e.sf)} sf</b><span class="area-sum-sy">${fmt(e.sf / 9)} sy</span></div>`
-    ).join('');
-    summaryHtml = `<div class="area-summary"><div class="area-summary-title">Areas by type</div>${sumRows}</div>`;
+    for (const [label, g] of groups) {
+      html += `<div class="to-group"><span class="swatch" style="background:${g.color}"></span>` +
+        `<span class="to-group-label">${esc(label)}</span>` +
+        `<b>${fmt(g.sf)} sf</b><span class="to-group-sub">${fmt(g.sf / 9)} sy</span></div>` +
+        g.rows.map(rowHtml).join('');
+    }
   }
-  list.innerHTML = rowsHtml + summaryHtml;
+
+  // Lines & counts list below (unchanged), under a plain subheader when areas are shown.
+  const others = indexed.filter(x => x.t.kind !== 'area');
+  if (others.length) {
+    if (areaItems.length) html += `<div class="to-group to-group-plain"><span class="to-group-label">Lines &amp; counts</span></div>`;
+    html += others.map(rowHtml).join('');
+  }
+  list.innerHTML = html;
   list.querySelectorAll('.wall-del').forEach(b => b.addEventListener('click', () => {
     snapshot();
     state.takeoffs.splice(parseInt(b.dataset.i, 10), 1);
