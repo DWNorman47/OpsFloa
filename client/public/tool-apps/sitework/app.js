@@ -2721,6 +2721,12 @@ function askAreaConfig(areaSf, perimFt) {
 const LINE_PRESETS = {
   curb:     { label: 'Curb & gutter', trench: false },
   pipe:     { label: 'Pipe / utility trench', trench: true, width: 3, depth: 5, slope: 0, bedding: 6 },
+  // Pipe-size presets seed a typical trench bottom width (pipe OD + working room);
+  // depth/slope are starting points — set each segment's actual average depth.
+  pipe12:   { label: '12" pipe trench', trench: true, width: 3,   depth: 5, slope: 0, bedding: 6 },
+  pipe18:   { label: '18" pipe trench', trench: true, width: 3.5, depth: 5, slope: 0, bedding: 6 },
+  pipe24:   { label: '24" pipe trench', trench: true, width: 4,   depth: 6, slope: 0, bedding: 6 },
+  pipe36:   { label: '36" pipe trench', trench: true, width: 5,   depth: 6, slope: 0, bedding: 6 },
   silt:     { label: 'Silt fence', trench: false },
   sawcut:   { label: 'Sawcut', trench: false },
   fence:    { label: 'Fence / guardrail', trench: false },
@@ -2802,6 +2808,11 @@ function askLineConfig(lengthFt) {
 const COUNT_PRESETS = {
   catchbasin: { label: 'Catch basin', unit: 'EA' },
   manhole:    { label: 'Manhole', unit: 'EA' },
+  inlet:      { label: 'Inlet', unit: 'EA' },
+  jbox:       { label: 'Junction box', unit: 'EA' },
+  cleanout:   { label: 'Cleanout', unit: 'EA' },
+  fes:        { label: 'Flared end section', unit: 'EA' },
+  areadrain:  { label: 'Area drain', unit: 'EA' },
   tree:       { label: 'Tree', unit: 'EA' },
   sign:       { label: 'Sign', unit: 'EA' },
   light:      { label: 'Light pole', unit: 'EA' },
