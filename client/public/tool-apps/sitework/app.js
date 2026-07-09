@@ -2570,6 +2570,31 @@ const AREA_PRESETS = {
   areaonly: { label: 'Area', mode: 'area' },
 };
 
+// Each surface type draws in its own color so concrete, paving, base, etc. read
+// apart on the plan. Known materials get a real-world color by mode; generic
+// "Area" takeoffs get a stable color hashed from their (custom) label, so two
+// differently-named Area-only takeoffs come out different colors.
+const AREA_MODE_COLORS = {
+  concrete: '#9aa7b8', // concrete — gray
+  paving:   '#5b6472', // asphalt — charcoal
+  tons:     '#c7a55f', // aggregate base — tan
+  cy:       '#b07d43', // gravel / fill — brown
+  strip:    '#6fae4d', // topsoil — green
+};
+const AREA_PALETTE = ['#38d39f', '#4da3ff', '#c07ef7', '#e0912b', '#e05555', '#2bb3c0', '#d24d8c', '#8bbf3f'];
+function areaColorHex(t) {
+  const m = AREA_MODE_COLORS[t.cfg.mode];
+  if (m) return m;
+  const s = String(t.cfg.label || '');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return AREA_PALETTE[h % AREA_PALETTE.length];
+}
+function hexToRgba(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+}
+
 // bar unit weights (lb/ft); grid spacing in feet
 const REBAR = {
   '#4@18': { bar: '#4', spacing: '18', sp: 1.5, lb: 0.668 },
@@ -2898,12 +2923,13 @@ function drawTakeoffs() {
     if (t.pts.length < 2) continue;
     if (t.kind === 'area') {
       if (t.pts.length < 3) continue;
+      const areaCol = areaColorHex(t);
       ctx.beginPath();
       t.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
       ctx.closePath();
-      ctx.fillStyle = 'rgba(56, 211, 159, 0.18)';
+      ctx.fillStyle = hexToRgba(areaCol, 0.18);
       ctx.fill();
-      ctx.strokeStyle = '#38d39f';
+      ctx.strokeStyle = areaCol;
       ctx.lineWidth = lw(2);
       ctx.stroke();
       if (t.result) {
@@ -2958,11 +2984,32 @@ function renderTakeoffs() {
   if (!items.length) { sec.classList.add('hidden'); draw(); return; }
   sec.classList.remove('hidden');
   const cnt = $('takeoffCount'); if (cnt) cnt.textContent = items.length;
-  list.innerHTML = items.map((t, i) => {
+  const rowsHtml = items.map((t, i) => {
     const { headline, sub } = takeoffRowText(t);
-    return `<div class="wall-row"><div class="wall-row-main"><b>${headline}</b><span>${sub}</span></div>` +
+    const dot = t.kind === 'area'
+      ? `<span class="swatch" style="background:${areaColorHex(t)}"></span>` : '';
+    return `<div class="wall-row"><div class="wall-row-main"><b>${dot}${headline}</b><span>${sub}</span></div>` +
       `<button class="wall-del" data-i="${i}" title="Delete this takeoff">✕</button></div>`;
   }).join('');
+  // Per-type area totals — sum SF for each surface type, color-matched to the plan.
+  const areas = items.filter(t => t.kind === 'area' && t.result);
+  let summaryHtml = '';
+  if (areas.length) {
+    const byType = new Map();
+    for (const t of areas) {
+      const key = t.cfg.label || 'Area';
+      const e = byType.get(key) || { sf: 0, color: areaColorHex(t) };
+      e.sf += t.result.areaSf || 0;
+      byType.set(key, e);
+    }
+    const sumRows = [...byType.entries()].map(([label, e]) =>
+      `<div class="area-sum-row"><span class="swatch" style="background:${e.color}"></span>` +
+      `<span class="area-sum-label">${esc(label)}</span>` +
+      `<b>${fmt(e.sf)} sf</b><span class="area-sum-sy">${fmt(e.sf / 9)} sy</span></div>`
+    ).join('');
+    summaryHtml = `<div class="area-summary"><div class="area-summary-title">Areas by type</div>${sumRows}</div>`;
+  }
+  list.innerHTML = rowsHtml + summaryHtml;
   list.querySelectorAll('.wall-del').forEach(b => b.addEventListener('click', () => {
     snapshot();
     state.takeoffs.splice(parseInt(b.dataset.i, 10), 1);
