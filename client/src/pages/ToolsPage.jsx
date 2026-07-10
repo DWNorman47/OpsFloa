@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import api from '../api';
+import { useAuth } from '../contexts/AuthContext';
 import { getOrFetch } from '../offlineDb';
 import { silentError } from '../errorReporter';
 import { PageIntro, PageSection, PageShell } from '../components/PageShell';
@@ -19,9 +20,14 @@ function resolveTab() {
 }
 
 export default function ToolsPage() {
+  const { user } = useAuth();
   const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState(resolveTab);
+
+  // Sitework Takeoff is a paid add-on — visible only to companies that own it
+  // (or during trial / while exempt, matching the server's requireTakeoffAddon).
+  const hasTakeoff = !!(user?.addon_takeoff || ['exempt', 'trial'].includes(user?.subscription_status));
 
   useEffect(() => {
     let cancelled = false;
@@ -37,6 +43,14 @@ export default function ToolsPage() {
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
+
+  // If they land on the (hidden) takeoff tab without the add-on, move them off it.
+  useEffect(() => {
+    if (user && !hasTakeoff && tab === 'sitework') {
+      setTab('transcription');
+      history.replaceState(null, '', '#transcription');
+    }
+  }, [user, hasTakeoff, tab]);
 
   const switchTab = next => {
     setTab(next);
@@ -62,6 +76,15 @@ export default function ToolsPage() {
     );
   }
 
+  const tabs = [
+    ...(hasTakeoff ? [{ id: 'sitework', label: 'Sitework Takeoff' }] : []),
+    { id: 'transcription', label: 'Transcription' },
+    { id: 'summarizer', label: 'Summarizer' },
+    { id: 'docqa', label: 'Doc Q&A' },
+    { id: 'emaildraft', label: 'Email Drafter' },
+    { id: 'pdftools', label: 'PDF Toolkit' },
+  ];
+
   return (
     <PageShell currentApp="tools" features={settings || {}} maxWidth={960}>
       <PageIntro
@@ -69,24 +92,17 @@ export default function ToolsPage() {
         kicker="Tools"
         title="Useful calculators and work helpers"
         description="Keep specialized utilities close by without crowding the daily workflow. Tools open separately so the main app stays right where you left it."
-        meta={<span className="ops-pill accent">6 tools available</span>}
+        meta={<span className="ops-pill accent">{tabs.length} tools available</span>}
       />
 
       <TabBar
         active={tab}
         onChange={switchTab}
-        tabs={[
-          { id: 'sitework', label: 'Sitework Takeoff' },
-          { id: 'transcription', label: 'Transcription' },
-          { id: 'summarizer', label: 'Summarizer' },
-          { id: 'docqa', label: 'Doc Q&A' },
-          { id: 'emaildraft', label: 'Email Drafter' },
-          { id: 'pdftools', label: 'PDF Toolkit' },
-        ]}
+        tabs={tabs}
         ariaLabel="Tools sections"
       />
 
-      {tab === 'sitework' && (
+      {tab === 'sitework' && hasTakeoff && (
         <PageSection
           eyebrow="Sitework"
           title="Sitework Takeoff Estimator"

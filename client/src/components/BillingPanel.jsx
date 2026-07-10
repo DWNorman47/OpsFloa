@@ -70,6 +70,7 @@ export default function BillingPanel() {
   const [annual, setAnnual] = useState(false);
   const [workerCount, setWorkerCount] = useState(15);
   const [addQbo, setAddQbo] = useState(false);
+  const [addTakeoff, setAddTakeoff] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [workerInputMode, setWorkerInputMode] = useState('slider');
   const [workerDraft, setWorkerDraft] = useState('');
@@ -92,6 +93,10 @@ export default function BillingPanel() {
         ...(addQbo && plans?.qbo ? {
           add_qbo: true,
           qbo_price_id: annual ? plans.qbo.annual_price_id : plans.qbo.monthly_price_id,
+        } : {}),
+        ...(addTakeoff && plans?.takeoff ? {
+          add_takeoff: true,
+          takeoff_price_id: annual ? plans.takeoff.annual_price_id : plans.takeoff.monthly_price_id,
         } : {}),
       });
       window.location.href = r.data.url;
@@ -132,6 +137,7 @@ export default function BillingPanel() {
   const sub = status?.subscription_status;
   const currentPlan = status?.plan || 'free';
   const hasQbo = status?.addon_qbo;
+  const hasTakeoff = status?.addon_takeoff;
   const isActive = sub === 'active';
   const isTrial = sub === 'trial';
   const isTrialExpired = sub === 'trial_expired';
@@ -412,6 +418,23 @@ export default function BillingPanel() {
               {t.billingQBODesc}
             </div>
           </div>
+
+          {!hasTakeoff && plans?.takeoff?.monthly_price_id && (
+            <div style={s.addonCard}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                <input type="checkbox" checked={addTakeoff} onChange={e => setAddTakeoff(e.target.checked)}
+                  style={{ accentColor: '#d97706', width: 16, height: 16 }} />
+                <span style={s.addonTitle}>
+                  Sitework Takeoff add-on &nbsp;
+                  <span style={{ fontSize: 18, fontWeight: 800, color: '#d97706' }}>${plans?.takeoff?.monthly ?? '—'}</span>
+                  <span style={{ fontSize: 13, color: '#6b7280' }}>/mo</span>
+                </span>
+              </label>
+              <div style={{ paddingLeft: 26, fontSize: 12, color: '#6b7280', lineHeight: 1.5, marginTop: 6 }}>
+                Plan takeoffs from civil drawings — earthwork cut/fill, paving, concrete, and utilities — into a priced, branded bid, with company-shared projects.
+              </div>
+            </div>
+          )}
 
           <ClientPortalProPlaceholder />
 
