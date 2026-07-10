@@ -40,26 +40,20 @@ body { display: flex; flex-direction: column; }
    utilities). When the tools no longer fit beside main, the bottom bar drops to
    its own full-width row and the spacer splits Calculate from the utilities. */
 .tb-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
-.tb-main  { flex: 0 0 auto; }
-.tb-tools { flex: 0 1 auto; }
-.tb-bottom { flex: 1 1 auto; }
-.tb-util { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tb-s1, .tb-s2, .tb-s3, .tb-s5 { flex: 0 0 auto; }
+.tb-s4 { flex: 0 1 auto; }                    /* tools can shrink → wrap within their own group */
+.tb-menu { flex: 0 0 auto; margin-left: auto; } /* ? + Menu always pinned to the far right */
 
 body.nosidebar #sidebar { display: none; }
 
 /* ---------- phone layout ---------- */
 @media (max-width: 820px) {
-  .tb-group { width: 100%; }                  /* main / tools / bottom each stack on their own row */
   #sidebar { flex: 0 0 min(300px, 55vw); }
 }
-/* Bottom bar tightens as it narrows: full labels -> icons -> its own line */
+/* When the bar gets tight, the labeled buttons (New/Save/Load, Undo…Log)
+   collapse to icons; sections wrap to new lines as needed. */
 @media (max-width: 760px) {
-  .tb-util .btn-label { display: none; }      /* Undo…Menu become icon-only */
-  .tb-util .btn { padding: 6px 9px; }
-}
-@media (max-width: 560px) {
-  .tb-bottom .spacer { display: none; }
-  .tb-util { flex-basis: 100%; }              /* the icons drop to their own line under Calculate */
+  #topbar .btn-label { display: none; }
 }
 
 .btn {

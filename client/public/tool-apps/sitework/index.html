@@ -21,20 +21,35 @@
 </head>
 <body>
 <header id="topbar">
-  <div class="tb-group tb-main">
+  <!-- 1. Brand + project + company -->
+  <div class="tb-group tb-s1">
     <div class="brand">Sitework&nbsp;Takeoff</div>
-
     <button id="btnProjects" class="btn" title="Switch, duplicate, or manage takeoff projects">📁 <span id="projName">Project</span></button>
     <button id="btnCompany" class="btn" title="Share this takeoff with your company, or open one a teammate shared">☁ Company</button>
+  </div>
+
+  <!-- 2. File actions: New / Save / Load / Open PDF -->
+  <div class="tb-group tb-s2">
+    <button id="btnNew" class="btn" title="Clear the scale, boundary, alignment and all traces — start a fresh takeoff">📄<span class="btn-label"> New</span></button>
+    <button id="btnExport" class="btn" title="Download the whole takeoff as one self-contained file — traces, scale, boundary, areas, AND the plan PDF embedded — so you can hand it to anyone">💾<span class="btn-label"> Save</span></button>
+    <button id="btnImport" class="btn" title="Load a saved takeoff file (opens the embedded plan PDF automatically if it has one)">📂<span class="btn-label"> Load</span></button>
+    <input type="file" id="fileImport" accept="application/json" hidden>
     <button id="btnOpenPdf" class="btn primary" title="Open the civil drawing PDF (plan set)">Open PDF…</button>
     <input type="file" id="filePdf" accept="application/pdf" hidden>
+  </div>
+
+  <!-- 3. Sheet tabs + Calculate -->
+  <div class="tb-group tb-s3">
     <div class="sheet-tabs" id="sheetTabs">
       <button class="tab active" data-sheet="existing" title="Existing Conditions sheet — trace the dashed contours here">1. Existing</button>
       <button class="tab" data-sheet="proposed" title="Grading Plan sheet — trace the solid proposed contours here">2. Proposed</button>
     </div>
+    <button id="btnCalc" class="btn go" title="Grid both surfaces and compute cut / fill volumes">∑ Calculate Cut/Fill</button>
+    <button id="btnWallCalc" class="btn hidden" title="Quick retaining-wall dig estimate — enter length, depth, and footing width for excavation & export CY. No plans needed.">📐 Wall Dig</button>
   </div>
 
-  <div class="tb-group tb-tools">
+  <!-- 4. Drawing tools: Pan … Curve -->
+  <div class="tb-group tb-s4">
 
   <div class="toolgroup" id="tools">
     <button class="tool active" data-tool="pan" title="Pan / zoom (you can also drag with right mouse or hold Space in any tool)">✋ Pan</button>
@@ -78,22 +93,18 @@
     </div>
   </div>
 
-  <div class="tb-group tb-bottom">
-    <button id="btnCalc" class="btn go" title="Grid both surfaces and compute cut / fill volumes">∑ Calculate Cut/Fill</button>
-    <button id="btnWallCalc" class="btn hidden" title="Quick retaining-wall dig estimate — enter length, depth, and footing width for excavation & export CY. No plans needed.">📐 Wall Dig</button>
-    <span class="spacer"></span>
-    <div class="tb-util">
-      <button id="btnUndo" class="btn" title="Undo the last change (Ctrl+Z)" disabled>↶<span class="btn-label"> Undo</span></button>
-      <button id="btnRedo" class="btn" title="Redo the last undone change (Ctrl+Y or Ctrl+Shift+Z)" disabled><span class="btn-label">Redo </span>↷</button>
-      <button id="btnBid" class="btn" title="Consolidated bid report — every quantity (cut/fill, wall digs, areas, lines, counts) in one priced table with editable unit prices, overhead &amp; profit, and CSV / print (Save as PDF) export">$<span class="btn-label"> Bid</span></button>
-      <button id="btnProd" class="btn" title="Production log — record haul tickets and daily field reports against this job, track hauled CY vs. the estimated export, and export / print the log">🗒<span class="btn-label"> Log</span></button>
-      <button id="btnNew" class="btn" title="Clear the scale, boundary, alignment and all traces — start a fresh takeoff">📄<span class="btn-label"> New</span></button>
-      <button id="btnExport" class="btn" title="Download the whole takeoff as one self-contained file — traces, scale, boundary, areas, AND the plan PDF embedded — so you can hand it to anyone">💾<span class="btn-label"> Save</span></button>
-      <button id="btnImport" class="btn" title="Load a saved takeoff file (opens the embedded plan PDF automatically if it has one)">📂<span class="btn-label"> Load</span></button>
-      <input type="file" id="fileImport" accept="application/json" hidden>
-      <button id="btnHelp" class="btn" title="How to use">?</button>
-      <button id="btnSidebar" class="btn" title="Show / hide the side menu">☰</button>
-    </div>
+  <!-- 5. History + reports: Undo / Redo / Bid / Log -->
+  <div class="tb-group tb-s5">
+    <button id="btnUndo" class="btn" title="Undo the last change (Ctrl+Z)" disabled>↶<span class="btn-label"> Undo</span></button>
+    <button id="btnRedo" class="btn" title="Redo the last undone change (Ctrl+Y or Ctrl+Shift+Z)" disabled><span class="btn-label">Redo </span>↷</button>
+    <button id="btnBid" class="btn" title="Consolidated bid report — every quantity (cut/fill, wall digs, areas, lines, counts) in one priced table with editable unit prices, overhead &amp; profit, and CSV / print (Save as PDF) export">$<span class="btn-label"> Bid</span></button>
+    <button id="btnProd" class="btn" title="Production log — record haul tickets and daily field reports against this job, track hauled CY vs. the estimated export, and export / print the log">🗒<span class="btn-label"> Log</span></button>
+  </div>
+
+  <!-- 6. Help + menu opener (always pinned to the far right) -->
+  <div class="tb-group tb-menu">
+    <button id="btnHelp" class="btn" title="How to use">?</button>
+    <button id="btnSidebar" class="btn" title="Show / hide the side menu">☰</button>
   </div>
 </header>
 
