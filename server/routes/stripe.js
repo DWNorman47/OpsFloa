@@ -162,6 +162,50 @@ router.post('/portal', requireAdmin, requirePerm('manage_billing'), async (req, 
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Failed to open billing portal' }); }
 });
 
+// One-click add-ons: map -> { price env getters, entitlement column }. The
+// column names are a fixed allowlist (never user input) so interpolating them
+// into the UPDATE below is safe.
+const ADDON_PRICES = {
+  qbo:     { monthly: () => process.env.STRIPE_PRICE_QBO,     annual: () => process.env.STRIPE_PRICE_QBO_ANNUAL,     col: 'addon_qbo' },
+  takeoff: { monthly: () => process.env.STRIPE_PRICE_TAKEOFF, annual: () => process.env.STRIPE_PRICE_TAKEOFF_ANNUAL, col: 'addon_takeoff' },
+};
+
+// POST /stripe/addon — add a paid add-on to the company's EXISTING subscription
+// in one click, as a prorated line item (no re-checkout). For already-subscribed
+// companies; new/trial companies use the bundled checkout instead.
+router.post('/addon', requireAdmin, requirePerm('manage_billing'), async (req, res) => {
+  const cfg = ADDON_PRICES[req.body && req.body.addon];
+  if (!cfg) return res.status(400).json({ error: 'Unknown add-on' });
+  try {
+    const r = await pool.query('SELECT stripe_subscription_id FROM companies WHERE id = $1', [req.user.company_id]);
+    const subId = r.rows[0] && r.rows[0].stripe_subscription_id;
+    if (!subId) return res.status(400).json({ error: 'No active subscription — subscribe to a plan first.', code: 'no_subscription' });
+
+    const stripe = getStripe();
+    const sub = await stripe.subscriptions.retrieve(subId);
+    if (!['active', 'trialing', 'past_due'].includes(sub.status)) {
+      return res.status(400).json({ error: 'Subscription is not active.' });
+    }
+    // Match the add-on's interval to the subscription's — Stripe requires every
+    // recurring item in one subscription to share the same billing interval.
+    const interval = sub.items.data[0] && sub.items.data[0].price.recurring && sub.items.data[0].price.recurring.interval;
+    const priceId = interval === 'year' ? cfg.annual() : cfg.monthly();
+    if (!priceId) return res.status(400).json({ error: 'Add-on price is not configured.' });
+
+    // Idempotent — if the add-on is already on the subscription, just re-affirm.
+    const already = sub.items.data.some(i => i.price.id === cfg.monthly() || i.price.id === cfg.annual());
+    if (!already) {
+      await stripe.subscriptionItems.create({
+        subscription: subId, price: priceId, quantity: 1,
+        proration_behavior: 'create_prorations',
+      });
+    }
+    // Reflect immediately; the customer.subscription.updated webhook also confirms.
+    await pool.query(`UPDATE companies SET ${cfg.col} = true WHERE id = $1`, [req.user.company_id]);
+    res.json({ ok: true });
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Failed to add the add-on' }); }
+});
+
 // POST /stripe/webhook
 router.post('/webhook', async (req, res) => {
   const sig = req.headers['stripe-signature'];
