@@ -904,7 +904,11 @@ function syncToolGroups() {
   for (const grp in TOOL_GROUPS) {
     const main = document.querySelector(`.tool-group-main[data-group="${grp}"]`);
     if (!main) continue;
-    main.textContent = TOOL_FACE[groupCurrent[grp]] || grp;
+    const face = TOOL_FACE[groupCurrent[grp]] || grp;  // e.g. "〰 Trace"
+    const sp = face.indexOf(' ');                       // icon before the space, name after
+    const icon = sp > 0 ? face.slice(0, sp) : face;
+    const name = sp > 0 ? face.slice(sp) : '';
+    main.innerHTML = `${icon}<span class="btn-label">${name}</span>`; // name hides at narrow widths
     main.classList.toggle('active', TOOL_GROUPS[grp].includes(state.tool));
   }
 }
