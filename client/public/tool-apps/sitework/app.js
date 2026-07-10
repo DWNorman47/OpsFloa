@@ -3637,6 +3637,10 @@ function transformAllGeometry(M) {
   for (const sheet of ['existing', 'proposed'])
     state.contours[sheet].forEach(c => { c.pts = c.pts.map(T); });
   state.walls.forEach(w => { w.pts = w.pts.map(T); });
+  // Carry the quantity takeoffs (areas / lines / counts) onto the revised sheet
+  // too. Re-align keeps the real-world scale, so their ft-quantities are
+  // unchanged — only the on-sheet position moves.
+  state.takeoffs.forEach(t => { if (t.pts) t.pts = t.pts.map(T); });
 }
 
 function applyRealign() {
@@ -3668,6 +3672,7 @@ function applyRealign() {
   refreshStatuses();
   refreshContourList();
   renderWalls();
+  renderTakeoffs();
   saveLocal();
   setTool('pan');
   draw();
