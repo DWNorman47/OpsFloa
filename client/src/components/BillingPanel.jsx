@@ -502,7 +502,7 @@ export default function BillingPanel() {
                 <input type="checkbox" checked={addTakeoff} onChange={e => setAddTakeoff(e.target.checked)}
                   style={{ accentColor: '#d97706', width: 16, height: 16 }} />
                 <span style={s.addonTitle}>
-                  Sitework Takeoff add-on &nbsp;
+                  + Sitework Takeoff add-on &nbsp;
                   <span style={{ fontSize: 18, fontWeight: 800, color: '#d97706' }}>${plans?.takeoff?.monthly ?? '—'}</span>
                   <span style={{ fontSize: 13, color: '#6b7280' }}>/mo</span>
                 </span>

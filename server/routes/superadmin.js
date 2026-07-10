@@ -56,9 +56,9 @@ async function deleteDemoWorkspace(client) {
 async function createDemoWorkspace(client) {
   const { rows } = await client.query(
     `INSERT INTO companies
-      (name, slug, subscription_status, plan, trial_ends_at, pro_addon, addon_qbo, addon_certified_payroll,
+      (name, slug, subscription_status, plan, trial_ends_at, pro_addon, addon_qbo, addon_certified_payroll, addon_takeoff,
        address, phone, contact_email, accepts_service_requests, client_portal_pro_interest, registration_ip)
-     VALUES ($1,$2,'exempt','business',NOW() + INTERVAL '90 days',true,true,true,
+     VALUES ($1,$2,'exempt','business',NOW() + INTERVAL '90 days',true,true,true,true,
        '7427 Innovation Loop, Phoenix, AZ 85004','(602) 555-0198','ops@example.com',true,true,'127.0.0.1')
      RETURNING id, name, slug, plan, subscription_status, created_at`,
     [DEMO_COMPANY_NAME, DEMO_COMPANY_SLUG]
@@ -248,7 +248,7 @@ router.get('/companies', requireSuperAdmin, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT c.id, c.name, c.slug, c.active, c.created_at, c.plan, c.subscription_status,
-              c.trial_ends_at, c.mrr_cents, c.affiliate_id, c.addon_qbo, c.addon_certified_payroll, c.bonus_seats,
+              c.trial_ends_at, c.mrr_cents, c.affiliate_id, c.addon_qbo, c.addon_certified_payroll, c.addon_takeoff, c.bonus_seats,
               a.name AS affiliate_name,
               COUNT(DISTINCT u.id) FILTER (WHERE u.role = 'worker' AND u.active = true) AS worker_count,
               COUNT(DISTINCT u.id) FILTER (WHERE u.role = 'admin' AND u.active = true) AS admin_count,
@@ -259,7 +259,7 @@ router.get('/companies', requireSuperAdmin, async (req, res) => {
        LEFT JOIN time_entries te ON te.company_id = c.id
        LEFT JOIN affiliates a ON c.affiliate_id = a.id
        GROUP BY c.id, c.name, c.slug, c.active, c.created_at, c.plan, c.subscription_status,
-                c.trial_ends_at, c.mrr_cents, c.affiliate_id, c.addon_qbo, c.addon_certified_payroll, c.bonus_seats, a.name
+                c.trial_ends_at, c.mrr_cents, c.affiliate_id, c.addon_qbo, c.addon_certified_payroll, c.addon_takeoff, c.bonus_seats, a.name
        ORDER BY c.created_at DESC`
     );
     res.json(result.rows);
@@ -307,13 +307,13 @@ router.post('/demo-workspace', requireSuperAdmin, async (req, res) => {
 
 // PATCH /superadmin/companies/:id — update any combination of fields
 router.patch('/companies/:id', requireSuperAdmin, async (req, res) => {
-  const { active, affiliate_id, subscription_status, plan, name, trial_ends_at, addon_qbo, addon_certified_payroll, bonus_seats } = req.body;
+  const { active, affiliate_id, subscription_status, plan, name, trial_ends_at, addon_qbo, addon_certified_payroll, addon_takeoff, bonus_seats } = req.body;
   if (
     active === undefined && affiliate_id === undefined &&
     subscription_status === undefined && plan === undefined &&
     name === undefined && trial_ends_at === undefined &&
     addon_qbo === undefined && addon_certified_payroll === undefined &&
-    bonus_seats === undefined
+    addon_takeoff === undefined && bonus_seats === undefined
   ) return res.status(400).json({ error: 'No fields to update' });
 
   const VALID_STATUSES = COMPANY_SUBSCRIPTION_STATUSES;
@@ -343,11 +343,12 @@ router.patch('/companies/:id', requireSuperAdmin, async (req, res) => {
     if (trial_ends_at !== undefined)       { fields.push(`trial_ends_at = $${idx++}`);        values.push(trial_ends_at || null); }
     if (addon_qbo !== undefined)           { fields.push(`addon_qbo = $${idx++}`);            values.push(!!addon_qbo); }
     if (addon_certified_payroll !== undefined) { fields.push(`addon_certified_payroll = $${idx++}`); values.push(!!addon_certified_payroll); }
+    if (addon_takeoff !== undefined)       { fields.push(`addon_takeoff = $${idx++}`);        values.push(!!addon_takeoff); }
     if (bonus_seats !== undefined)         { fields.push(`bonus_seats = $${idx++}`);          values.push(bonusSeatsVal); }
     values.push(req.params.id);
     const result = await pool.query(
       `UPDATE companies SET ${fields.join(', ')} WHERE id = $${idx}
-       RETURNING id, name, slug, active, affiliate_id, subscription_status, plan, trial_ends_at, addon_qbo, addon_certified_payroll, bonus_seats`,
+       RETURNING id, name, slug, active, affiliate_id, subscription_status, plan, trial_ends_at, addon_qbo, addon_certified_payroll, addon_takeoff, bonus_seats`,
       values
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Company not found' });
