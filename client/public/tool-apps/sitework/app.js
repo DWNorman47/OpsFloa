@@ -1210,8 +1210,7 @@ cv.addEventListener('mouseup', e => {
     state.dragCal = null;
     if (moved && pendingSnap) pushSnap(pendingSnap);
     pendingSnap = null;
-    state.result = null;
-    els.resultsSection.classList.add('hidden');
+    if (moved) rescaleAll(); // endpoint moved → scale changed → recompute everything
     refreshStatuses();
     updateAlignStatus();
     saveLocal();
@@ -1315,8 +1314,7 @@ async function handleClick(w) {
         if (feet && feet > 0) {
           snapshot();
           state.calibration = { ax: a.x, ay: a.y, bx: b.x, by: b.y, feet, ftPerPx: feet / px };
-          state.result = null;
-          els.resultsSection.classList.add('hidden');
+          rescaleAll(); // recompute any existing takeoffs/walls to the new scale
           refreshStatuses();
           updateAlignStatus();
           setMsg(`Scale set: 1 px = ${state.calibration.ftPerPx.toFixed(4)} ft. Now draw the ▱ Boundary.`);
@@ -1476,6 +1474,27 @@ function recomputeTakeoff(t) {
   } else if (t.kind === 'line') {
     t.result = computeLineResult(polyLengthFt(t.pts), t.cfg);
   }
+  // count is scale-independent — nothing to recompute
+}
+
+function recomputeWall(w) {
+  if (!state.calibration || !w.pts || w.pts.length < 2) return;
+  w.result = computeWallSweep(w.pts, w.cfg);
+}
+
+// The scale (ftPerPx) changed, so every ft-based quantity computed against the
+// old scale is now stale. Recompute every area/line takeoff and wall dig, and
+// drop the cut/fill result (its grid cell area depends on scale — re-run
+// ∑ Calculate). Callers refresh statuses + redraw.
+function rescaleAll() {
+  if (!state.calibration) return;
+  for (const t of state.takeoffs) recomputeTakeoff(t);
+  for (const w of state.walls) recomputeWall(w);
+  state.result = null;
+  els.resultsSection.classList.add('hidden');
+  renderTakeoffs();
+  renderWalls();
+  saveLocal();
 }
 
 // Which takeoff is under the cursor? Topmost area fill wins; else nearest edge /
@@ -2573,8 +2592,7 @@ els.btnEditDist.addEventListener('click', async () => {
     snapshot();
     c.feet = feet;
     c.ftPerPx = feet / dist(c.ax, c.ay, c.bx, c.by);
-    state.result = null;
-    els.resultsSection.classList.add('hidden');
+    rescaleAll(); // recompute takeoffs/walls to the new scale
     refreshStatuses();
     updateAlignStatus();
     saveLocal();
