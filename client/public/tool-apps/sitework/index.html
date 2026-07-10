@@ -28,14 +28,13 @@
     <button id="btnCompany" class="btn" title="Share this takeoff with your company, or open one a teammate shared">☁ Company</button>
     <button id="btnOpenPdf" class="btn primary" title="Open the civil drawing PDF (plan set)">Open PDF…</button>
     <input type="file" id="filePdf" accept="application/pdf" hidden>
+    <div class="sheet-tabs" id="sheetTabs">
+      <button class="tab active" data-sheet="existing" title="Existing Conditions sheet — trace the dashed contours here">1. Existing</button>
+      <button class="tab" data-sheet="proposed" title="Grading Plan sheet — trace the solid proposed contours here">2. Proposed</button>
+    </div>
   </div>
 
   <div class="tb-group tb-tools">
-
-  <div class="sheet-tabs" id="sheetTabs">
-    <button class="tab active" data-sheet="existing" title="Existing Conditions sheet — trace the dashed contours here">1. Existing</button>
-    <button class="tab" data-sheet="proposed" title="Grading Plan sheet — trace the solid proposed contours here">2. Proposed</button>
-  </div>
 
   <div class="toolgroup" id="tools">
     <button class="tool active" data-tool="pan" title="Pan / zoom (you can also drag with right mouse or hold Space in any tool)">✋ Pan</button>
