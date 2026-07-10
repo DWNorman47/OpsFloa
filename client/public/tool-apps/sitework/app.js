@@ -4181,11 +4181,19 @@ async function apiFetch(path, opts = {}) {
   });
 }
 
+// Show status in the Company modal (so it's visible over the dialog) and the HUD.
+function companyMsg(t, isError) {
+  const el = $('companyMsg');
+  if (el) { el.textContent = t || ''; el.style.color = isError ? '#f87171' : ''; }
+  setMsg(t);
+}
+
 async function shareToCompany() {
   if (!state.takeoffs.length && !state.contours.existing.length && !state.contours.proposed.length && !state.pdf) {
-    setMsg('Nothing to share yet — open a plan and take off some quantities first.'); return;
+    companyMsg('Nothing to share yet — open a plan and take off some quantities first.', true); return;
   }
   const name = state.projectName || (state.pdfName ? state.pdfName.replace(/\.pdf$/i, '') : 'Takeoff');
+  companyMsg('Sharing…');
   try {
     if (state.serverId) {
       const res = await apiFetch('/' + state.serverId, {
@@ -4194,7 +4202,7 @@ async function shareToCompany() {
       if (res.status === 409) { return shareConflict(await res.json()); }
       if (!res.ok) throw new Error('HTTP ' + res.status);
       state.serverVersion = (await res.json()).version;
-      setMsg('Saved to the company copy — teammates will see your changes.');
+      companyMsg('Saved to the company copy — teammates will see your changes.');
     } else {
       let pdfBase64 = null;
       if (state.pdfKey) { try { const rec = await idbFilesGet(state.pdfKey); if (rec && rec.bytes) pdfBase64 = bytesToBase64(rec.bytes); } catch (_) {} }
@@ -4202,10 +4210,15 @@ async function shareToCompany() {
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const out = await res.json();
       state.serverId = out.id; state.serverVersion = out.version;
-      setMsg('Shared to the company. Teammates can open it from ☁ Company.');
+      companyMsg('Shared to the company. Teammates can open it from ☁ Company.');
     }
     if (!$('company').classList.contains('hidden')) refreshCompanyList();
-  } catch (e) { setMsg('Could not reach the company library (are you signed in?): ' + e.message); }
+  } catch (e) {
+    const msg = /HTTP 413/.test(e.message)
+      ? 'The plan PDF is too large to share to the company library. Try a smaller / more compressed PDF.'
+      : 'Could not reach the company library (are you signed in?): ' + e.message;
+    companyMsg(msg, true);
+  }
 }
 
 async function shareConflict(c) {
@@ -4275,7 +4288,7 @@ async function deleteCompanyTakeoff(id, name) {
   } catch (e) { setMsg('Could not delete: ' + e.message); }
 }
 
-$('btnCompany').addEventListener('click', () => { $('company').classList.remove('hidden'); refreshCompanyList(); });
+$('btnCompany').addEventListener('click', () => { $('company').classList.remove('hidden'); companyMsg(''); refreshCompanyList(); });
 $('companyClose').addEventListener('click', () => $('company').classList.add('hidden'));
 $('companyShareBtn').addEventListener('click', shareToCompany);
 
