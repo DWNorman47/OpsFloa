@@ -3054,6 +3054,14 @@ function autoLineColor(label) {
 function lineColorHex(t) {
   return (t.cfg && t.cfg.color) || autoLineColor(t.cfg.label);
 }
+// A new line defaults to the selected line's color, else the last color used,
+// so you can lay several same-colored runs without re-picking each time.
+let lastLineColor = null;
+function defaultNewLineColor() {
+  const sel = state.selTake != null ? state.takeoffs[state.selTake] : null;
+  if (sel && sel.kind === 'line') return lineColorHex(sel);
+  return lastLineColor; // may be null → caller falls back to the auto color
+}
 function hexToRgba(hex, a) {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
@@ -3286,8 +3294,9 @@ function askLineConfig(lengthFt, prefill) {
       if (prefill.slope != null) $('ltSlope').value = prefill.slope;
       if (prefill.bedding != null) $('ltBedding').value = prefill.bedding;
     }
-    // Seed the color picker: a saved color, else the auto color for this label.
-    $('ltColor').value = (prefill && prefill.color) || autoLineColor($('ltLabel').value);
+    // Seed the color picker: the line's saved color when editing, else the last
+    // color used / the selected line's color, else the auto color for this label.
+    $('ltColor').value = (prefill && prefill.color) || defaultNewLineColor() || autoLineColor($('ltLabel').value);
     syncLineTrench();
     preview();
     $('lineTakeoff').classList.remove('hidden');
@@ -3315,7 +3324,7 @@ function askLineConfig(lengthFt, prefill) {
       $('lineTakeoff').classList.add('hidden');
     };
     $('ltCancel').onclick = () => { cleanup(); resolve(null); };
-    $('ltOk').onclick = () => { const cfg = readLineCfg(); cleanup(); resolve(cfg); };
+    $('ltOk').onclick = () => { const cfg = readLineCfg(); lastLineColor = cfg.color; cleanup(); resolve(cfg); };
   });
 }
 

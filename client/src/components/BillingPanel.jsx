@@ -62,6 +62,7 @@ function PlanCard({ name, priceEl, subline, features, color, highlight, tag, onS
 
 export default function BillingPanel() {
   const t = useT();
+  const { updateUser } = useAuth();
   const [status, setStatus] = useState(null);
   const [plans, setPlans] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -114,6 +115,42 @@ export default function BillingPanel() {
       window.location.href = r.data.url;
     } catch (err) {
       setBillingError(err.response?.data?.error || t.portalFailed);
+      setRedirecting(null);
+    }
+  };
+
+  // One-click: add a paid add-on to the EXISTING subscription (prorated item),
+  // then reflect it immediately in the billing status + the auth session (so
+  // gated tools appear without a reload).
+  const addAddon = async (addon) => {
+    setBillingError('');
+    setRedirecting('addon-' + addon);
+    try {
+      await api.post('/stripe/addon', { addon });
+      const r = await api.get('/stripe/status');
+      setStatus(r.data);
+      if (addon === 'takeoff') updateUser?.({ addon_takeoff: true });
+      if (addon === 'qbo') updateUser?.({ addon_qbo: true });
+    } catch (err) {
+      setBillingError(err.response?.data?.error || 'Could not add the add-on.');
+    } finally {
+      setRedirecting(null);
+    }
+  };
+
+  const removeAddon = async (addon) => {
+    if (!window.confirm('Remove this add-on from your subscription? Your bill is prorated and you can add it back anytime.')) return;
+    setBillingError('');
+    setRedirecting('rmaddon-' + addon);
+    try {
+      await api.post('/stripe/addon/remove', { addon });
+      const r = await api.get('/stripe/status');
+      setStatus(r.data);
+      if (addon === 'takeoff') updateUser?.({ addon_takeoff: false });
+      if (addon === 'qbo') updateUser?.({ addon_qbo: false });
+    } catch (err) {
+      setBillingError(err.response?.data?.error || 'Could not remove the add-on.');
+    } finally {
       setRedirecting(null);
     }
   };
@@ -206,6 +243,46 @@ export default function BillingPanel() {
           <button style={{ ...s.portalBtn, ...(redirecting === 'portal' ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={portal} disabled={redirecting === 'portal'}>
             {redirecting === 'portal' ? t.billingRedirecting : t.manageSub}
           </button>
+
+          {[
+            { key: 'takeoff', title: 'Sitework Takeoff', owned: hasTakeoff, plan: plans?.takeoff, desc: 'Plan takeoffs from civil drawings into a priced, branded bid, with company-shared projects.' },
+            { key: 'qbo', title: 'QuickBooks Online', owned: hasQbo, plan: plans?.qbo, desc: 'Push invoices to QuickBooks and keep their payment status in sync.' },
+          ].map(a => {
+            if (a.owned) {
+              return (
+                <div key={a.key} style={{ ...s.addonCard, marginTop: 14, marginBottom: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                    <span style={s.addonTitle}>{a.title} add-on <span style={{ color: '#059669', fontWeight: 700 }}>· included</span></span>
+                    <button style={{ ...s.removeBtn, ...(redirecting ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={() => removeAddon(a.key)} disabled={!!redirecting}>
+                      {redirecting === 'rmaddon-' + a.key ? 'Removing…' : 'Remove'}
+                    </button>
+                  </div>
+                </div>
+              );
+            }
+            if (!a.plan?.monthly_price_id) return null;
+            return (
+              <div key={a.key} style={{ ...s.addonCard, marginTop: 14, marginBottom: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                  <span style={s.addonTitle}>
+                    Add the {a.title} add-on &nbsp;
+                    <span style={{ fontSize: 18, fontWeight: 800, color: '#d97706' }}>${a.plan?.monthly ?? '—'}</span>
+                    <span style={{ fontSize: 13, color: '#6b7280' }}>/mo</span>
+                  </span>
+                  <button
+                    style={{ ...s.ctaBtn, ...(redirecting ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
+                    onClick={() => addAddon(a.key)}
+                    disabled={!!redirecting}
+                  >
+                    {redirecting === 'addon-' + a.key ? 'Adding…' : 'Add to my subscription'}
+                  </button>
+                </div>
+                <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.5, marginTop: 6 }}>
+                  {a.desc} Prorated onto your current subscription — no re-checkout.
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -563,5 +640,6 @@ const s = {
   addonTitle: { fontSize: 15, fontWeight: 700, color: '#92400e' },
   trialCta: { background: '#f0fdf4', border: '2px solid #bbf7d0', borderRadius: 10, padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 },
   ctaBtn: { background: '#059669', color: '#fff', border: 'none', padding: '12px', borderRadius: 8, fontSize: 15, fontWeight: 700, cursor: 'pointer' },
+  removeBtn: { background: '#fff', color: '#b91c1c', border: '1px solid #fca5a5', padding: '8px 16px', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   billingError: { color: '#dc2626', fontSize: 13, margin: '0 0 12px' },
 };
