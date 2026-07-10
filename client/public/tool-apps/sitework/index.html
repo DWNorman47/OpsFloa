@@ -82,16 +82,18 @@
     <button id="btnCalc" class="btn go" title="Grid both surfaces and compute cut / fill volumes">∑ Calculate Cut/Fill</button>
     <button id="btnWallCalc" class="btn hidden" title="Quick retaining-wall dig estimate — enter length, depth, and footing width for excavation & export CY. No plans needed.">📐 Wall Dig</button>
     <span class="spacer"></span>
-    <button id="btnUndo" class="btn" title="Undo the last change (Ctrl+Z)" disabled>↶ Undo</button>
-    <button id="btnRedo" class="btn" title="Redo the last undone change (Ctrl+Y or Ctrl+Shift+Z)" disabled>Redo ↷</button>
-    <button id="btnBid" class="btn" title="Consolidated bid report — every quantity (cut/fill, wall digs, areas, lines, counts) in one priced table with editable unit prices, overhead &amp; profit, and CSV / print (Save as PDF) export">$ Bid</button>
-    <button id="btnProd" class="btn" title="Production log — record haul tickets and daily field reports against this job, track hauled CY vs. the estimated export, and export / print the log">🗒 Log</button>
-    <button id="btnNew" class="btn" title="Clear the scale, boundary, alignment and all traces — start a fresh takeoff">New</button>
-    <button id="btnExport" class="btn" title="Download the whole takeoff as one self-contained file — traces, scale, boundary, areas, AND the plan PDF embedded — so you can hand it to anyone">Save</button>
-    <button id="btnImport" class="btn" title="Load a saved takeoff file (opens the embedded plan PDF automatically if it has one)">Load</button>
-    <input type="file" id="fileImport" accept="application/json" hidden>
-    <button id="btnHelp" class="btn" title="How to use">?</button>
-    <button id="btnSidebar" class="btn" title="Show / hide the side menu">☰</button>
+    <div class="tb-util">
+      <button id="btnUndo" class="btn" title="Undo the last change (Ctrl+Z)" disabled>↶<span class="btn-label"> Undo</span></button>
+      <button id="btnRedo" class="btn" title="Redo the last undone change (Ctrl+Y or Ctrl+Shift+Z)" disabled><span class="btn-label">Redo </span>↷</button>
+      <button id="btnBid" class="btn" title="Consolidated bid report — every quantity (cut/fill, wall digs, areas, lines, counts) in one priced table with editable unit prices, overhead &amp; profit, and CSV / print (Save as PDF) export">$<span class="btn-label"> Bid</span></button>
+      <button id="btnProd" class="btn" title="Production log — record haul tickets and daily field reports against this job, track hauled CY vs. the estimated export, and export / print the log">🗒<span class="btn-label"> Log</span></button>
+      <button id="btnNew" class="btn" title="Clear the scale, boundary, alignment and all traces — start a fresh takeoff">📄<span class="btn-label"> New</span></button>
+      <button id="btnExport" class="btn" title="Download the whole takeoff as one self-contained file — traces, scale, boundary, areas, AND the plan PDF embedded — so you can hand it to anyone">💾<span class="btn-label"> Save</span></button>
+      <button id="btnImport" class="btn" title="Load a saved takeoff file (opens the embedded plan PDF automatically if it has one)">📂<span class="btn-label"> Load</span></button>
+      <input type="file" id="fileImport" accept="application/json" hidden>
+      <button id="btnHelp" class="btn" title="How to use">?</button>
+      <button id="btnSidebar" class="btn" title="Show / hide the side menu">☰</button>
+    </div>
   </div>
 </header>
 
