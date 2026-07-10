@@ -25,6 +25,7 @@
     <div class="brand">Sitework&nbsp;Takeoff</div>
 
     <button id="btnProjects" class="btn" title="Switch, duplicate, or manage takeoff projects">📁 <span id="projName">Project</span></button>
+    <button id="btnCompany" class="btn" title="Share this takeoff with your company, or open one a teammate shared">☁ Company</button>
     <button id="btnOpenPdf" class="btn primary" title="Open the civil drawing PDF (plan set)">Open PDF…</button>
     <input type="file" id="filePdf" accept="application/pdf" hidden>
   </div>
@@ -70,8 +71,8 @@
 
   <div class="tb-group tb-file">
     <button id="btnNew" class="btn" title="Clear the scale, boundary, alignment and all traces — start a fresh takeoff">New</button>
-    <button id="btnExport" class="btn" title="Download the takeoff (traces, scale, boundary) as a .json file">Save</button>
-    <button id="btnImport" class="btn" title="Load a previously saved takeoff .json">Load</button>
+    <button id="btnExport" class="btn" title="Download the whole takeoff as one self-contained file — traces, scale, boundary, areas, AND the plan PDF embedded — so you can hand it to anyone">Save</button>
+    <button id="btnImport" class="btn" title="Load a saved takeoff file (opens the embedded plan PDF automatically if it has one)">Load</button>
     <input type="file" id="fileImport" accept="application/json" hidden>
     <button id="btnHelp" class="btn" title="How to use">?</button>
   </div>
@@ -179,7 +180,11 @@
       <h3>Quantities <span class="pill" id="takeoffCount"></span></h3>
       <div class="row">
         <label class="layer-toggle" title="Show or hide the area shapes on the drawing (their quantities stay in this list)"><input type="checkbox" id="showAreas" checked> Show areas</label>
-        <label class="layer-toggle" title="Show or hide the area name labels on the drawing"><input type="checkbox" id="showAreaLabels" checked> Show names</label>
+        <label class="layer-toggle" title="Show or hide the area name labels on the drawing"><input type="checkbox" id="showAreaLabels" checked> Area labels</label>
+      </div>
+      <div class="row">
+        <label class="layer-toggle" title="Show or hide the line shapes on the drawing (their quantities stay in this list)"><input type="checkbox" id="showLines" checked> Show lines</label>
+        <label class="layer-toggle" title="Show or hide the line name labels on the drawing"><input type="checkbox" id="showLineLabels" checked> Line labels</label>
       </div>
       <div id="takeoffList" class="list"></div>
       <div class="hint">Quantity takeoffs — ▦ Area (paving, base, concrete, topsoil strip), ╱ Line (curb, pipe/utility trench, fence), and ⊕ Count (structures, trees, signs). Area (SF/SY), volume (CY), weight (tons), length (LF), and each (EA).</div>
@@ -265,6 +270,20 @@
       <button id="projNewBtn" class="btn">+ New project</button>
       <span class="spacer"></span>
       <button id="projClose" class="btn primary">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Company-shared takeoffs -->
+<div id="company" class="modal hidden">
+  <div class="modal-box wide">
+    <h3>Company takeoffs</h3>
+    <div class="hint">Shared with everyone in your company. <b>Open</b> loads a teammate's takeoff — plan and all. <b>Share current takeoff</b> saves the one you're working on; if a teammate changed the shared copy since you opened it, you'll be warned before overwriting. Needs you to be signed in to OpsFloa.</div>
+    <div id="companyList" class="proj-list"></div>
+    <div class="modal-actions">
+      <button id="companyShareBtn" class="btn primary">⬆ Share current takeoff</button>
+      <span class="spacer"></span>
+      <button id="companyClose" class="btn">Close</button>
     </div>
   </div>
 </div>
@@ -404,6 +423,7 @@
     </div>
     <div class="wall-grid">
       <label>Material / label<input type="text" id="ltLabel" value="Line" maxlength="40"></label>
+      <label class="atColorLbl" title="Color of this line on the drawing and in the Quantities list. Change it so different runs read apart.">Color<input type="color" id="ltColor" value="#38d39f"></label>
     </div>
     <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:8px 0;">
       <input type="checkbox" id="ltTrench"> Trench cross-section (pipe / utility)

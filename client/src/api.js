@@ -3,6 +3,11 @@ import axios from 'axios';
 const baseURL = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api';
 const api = axios.create({ baseURL });
 
+// Static tool-apps (e.g. the sitework takeoff tool) share this origin's
+// localStorage but not the Vite build env, so they can't see VITE_API_URL.
+// Persist the API origin here so a tool can reach the backend the same way.
+try { localStorage.setItem('tc_api_base', import.meta.env.VITE_API_URL || ''); } catch { /* storage may be blocked */ }
+
 // Toast integration — ToastContext calls setApiToastHandler on mount so the
 // interceptor can surface user-friendly messages for common status codes.
 let toastHandler = null;

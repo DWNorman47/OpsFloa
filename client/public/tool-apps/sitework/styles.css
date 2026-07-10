@@ -254,12 +254,14 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 .wall-row-main b .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
 .wall-row[data-take] { cursor: pointer; }
 .wall-row.selected { border-color: var(--accent); background: #2f3a47; }
-.to-group { display: flex; align-items: center; gap: 8px; margin: 8px 0 4px; padding: 5px 8px; border-radius: 6px; background: var(--panel2); border: 1px solid var(--border); }
+.to-group { display: flex; align-items: center; gap: 7px; margin: 13px 0 3px; padding: 2px 2px 5px; border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; }
+.to-group:first-child { margin-top: 2px; }
+.to-group:hover { background: rgba(255,255,255,.04); }
+.to-caret { flex: 0 0 auto; width: 11px; text-align: center; color: var(--muted); font-size: 10px; }
 .to-group .swatch { width: 12px; height: 12px; border-radius: 3px; flex: 0 0 auto; }
-.to-group-label { flex: 1 1 auto; min-width: 0; color: var(--text); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.to-group b { color: var(--good); font-size: 12.5px; }
-.to-group-sub { color: var(--muted); font-size: 11px; min-width: 50px; text-align: right; }
-.to-group-plain { background: transparent; border: none; margin-top: 12px; }
+.to-group-label { flex: 1 1 auto; min-width: 0; color: var(--text); font-weight: 700; letter-spacing: .01em; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.to-group b { color: var(--good); font-size: 12px; }
+.to-group-sub { color: var(--muted); font-size: 11px; min-width: 46px; text-align: right; }
 .wall-del { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; flex-shrink: 0; }
 .wall-del:hover { color: var(--bad); }
 

@@ -24,6 +24,8 @@ const state = {
   projectId: null,         // current project record id (IndexedDB 'projects' store)
   projectName: null,
   pdfKey: null,            // content-hash key of the PDF in the 'files' store
+  serverId: null,          // takeoff_projects id when linked to a company-shared copy
+  serverVersion: null,     // its version, for optimistic-concurrency saves
 
   calibration: null,       // { ax, ay, bx, by, feet, ftPerPx }
   // similarity transform proposed-image -> world: world = [[a,-b],[b,a]]·q + [e,f]
@@ -48,7 +50,7 @@ const state = {
   result: null,            // { grid, cutCY, fillCY, ... }
   showHeatmap: true,
   ghost: false,
-  layers: { scale: true, boundary: true, contours: true, areas: true, areaLabels: true }, // per-section "Show on drawing" toggles
+  layers: { scale: true, boundary: true, contours: true, areas: true, areaLabels: true, lines: true, lineLabels: true }, // per-section "Show on drawing" toggles
 
   // transient pointer stuff
   mouse: { x: 0, y: 0, down: false, panning: false, sx: 0, sy: 0, moved: false },
@@ -375,6 +377,32 @@ async function loadPdfFile(file) {
     setMsg('Could not open that PDF: ' + err.message);
   }
   draw();
+}
+
+// Base64 <-> bytes for embedding the PDF in an exported takeoff file.
+function bytesToBase64(bufOrView) {
+  const bytes = bufOrView instanceof Uint8Array ? bufOrView : new Uint8Array(bufOrView);
+  let bin = '';
+  const chunk = 0x8000; // avoid arg-count limits on fromCharCode
+  for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  return btoa(bin);
+}
+function base64ToBytes(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+// Open a PDF from raw bytes and persist it locally (mirrors loadPdfFile).
+async function loadPdfFromBytes(buf, name) {
+  const copy = buf.slice(0); // pdf.js detaches the buffer it opens
+  try {
+    const key = await hashBytes(copy);
+    await idbFilesPut(key, { name, bytes: copy });
+    state.pdfKey = key;
+  } catch (_) { /* private mode / quota — session still works */ }
+  await openPdfBytes(buf, name);
 }
 
 async function openPdfBytes(buf, name) {
@@ -2323,6 +2351,10 @@ window.addEventListener('keydown', e => {
     if (e.key === 'Escape') els.projects.classList.add('hidden');
     return;
   }
+  if (!$('company').classList.contains('hidden')) {
+    if (e.key === 'Escape') $('company').classList.add('hidden');
+    return; // company modal open: don't fire tool shortcuts underneath
+  }
   if (!$('bidReport').classList.contains('hidden')) {
     if (e.key === 'Escape') closeBidReport();
     return; // bid report open: don't fire tool shortcuts underneath
@@ -2527,7 +2559,8 @@ els.chkGhost.addEventListener('change', e => { state.ghost = e.target.checked; d
 
 // per-section "Show on drawing" toggles for the scale line, boundary, and contours
 [['showScale', 'scale'], ['showBoundary', 'boundary'], ['showContours', 'contours'],
- ['showAreas', 'areas'], ['showAreaLabels', 'areaLabels']].forEach(([id, key]) => {
+ ['showAreas', 'areas'], ['showAreaLabels', 'areaLabels'],
+ ['showLines', 'lines'], ['showLineLabels', 'lineLabels']].forEach(([id, key]) => {
   $(id).addEventListener('change', e => { state.layers[key] = e.target.checked; draw(); });
 });
 
@@ -3005,6 +3038,22 @@ function autoAreaColor(mode, label) {
 function areaColorHex(t) {
   return (t.cfg && t.cfg.color) || autoAreaColor(t.cfg.mode, t.cfg.label);
 }
+// Lines: canonical colors for common types (pipe, curb, silt, sawcut, fence),
+// else a stable hash of the label — with a per-line cfg.color override.
+function autoLineColor(label) {
+  const s = String(label || '').toLowerCase();
+  if (s.includes('pipe')) return '#4da3ff';                          // utilities — blue
+  if (s.includes('curb')) return '#c9ced6';                          // curb & gutter — light gray
+  if (s.includes('silt')) return '#8bbf3f';                          // silt fence — green
+  if (s.includes('saw')) return '#e05555';                           // sawcut — red
+  if (s.includes('fence') || s.includes('guardrail')) return '#c07ef7'; // fence — purple
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return AREA_PALETTE[h % AREA_PALETTE.length];
+}
+function lineColorHex(t) {
+  return (t.cfg && t.cfg.color) || autoLineColor(t.cfg.label);
+}
 function hexToRgba(hex, a) {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
@@ -3217,6 +3266,7 @@ function readLineCfg() {
     trench: $('ltTrench').checked,
     width: $('ltWidth').value, depth: $('ltDepth').value,
     slope: $('ltSlope').value, bedding: $('ltBedding').value,
+    color: $('ltColor').value,
   };
 }
 
@@ -3236,6 +3286,8 @@ function askLineConfig(lengthFt, prefill) {
       if (prefill.slope != null) $('ltSlope').value = prefill.slope;
       if (prefill.bedding != null) $('ltBedding').value = prefill.bedding;
     }
+    // Seed the color picker: a saved color, else the auto color for this label.
+    $('ltColor').value = (prefill && prefill.color) || autoLineColor($('ltLabel').value);
     syncLineTrench();
     preview();
     $('lineTakeoff').classList.remove('hidden');
@@ -3252,6 +3304,7 @@ function askLineConfig(lengthFt, prefill) {
       if (p.depth != null) $('ltDepth').value = p.depth;
       if (p.slope != null) $('ltSlope').value = p.slope;
       if (p.bedding != null) $('ltBedding').value = p.bedding;
+      $('ltColor').value = autoLineColor(p.label); // seed the type's color
       onInput();
     };
     presetBtns.forEach(b => b.addEventListener('click', onPreset));
@@ -3391,14 +3444,16 @@ function drawTakeoffs() {
       }
       if (selT) drawTakeoffHandles(t.pts);
     } else if (t.kind === 'line') {
+      if (!state.layers.lines && !selT) continue; // hidden — a selected line still shows so you can edit it
+      const lineCol = lineColorHex(t);
       ctx.beginPath();
       t.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
-      ctx.strokeStyle = '#38d39f';
+      ctx.strokeStyle = lineCol;
       ctx.lineWidth = lw(3);
       ctx.stroke();
-      ctx.fillStyle = '#38d39f';
+      ctx.fillStyle = lineCol;
       for (const p of t.pts) { ctx.beginPath(); ctx.arc(p.x, p.y, lw(2.5), 0, Math.PI * 2); ctx.fill(); }
-      if (t.result) {
+      if (t.result && state.layers.lineLabels) {
         const mid = t.pts[Math.floor(t.pts.length / 2)];
         const q = t.result.trench ? `${fmt(t.result.trenchCY, 0)} CY` : `${fmt(t.result.lengthFt)} ft`;
         labelAt(mid.x, mid.y, `${t.cfg.label}: ${q}`, '#0f9d68');
@@ -3432,6 +3487,8 @@ function takeoffRowText(t) {
   };
 }
 
+const collapsedGroups = new Set(); // Quantities-panel group headers collapsed by the user
+
 function renderTakeoffs() {
   const sec = $('secTakeoffs'), list = $('takeoffList');
   if (!sec || !list) return;
@@ -3444,16 +3501,24 @@ function renderTakeoffs() {
   const indexed = items.map((t, i) => ({ t, i }));
   const rowHtml = ({ t, i }) => {
     const { headline, sub } = takeoffRowText(t);
-    const dot = t.kind === 'area'
-      ? `<span class="swatch" style="background:${areaColorHex(t)}"></span>` : '';
+    const dot = t.kind === 'area' ? `<span class="swatch" style="background:${areaColorHex(t)}"></span>`
+      : t.kind === 'line' ? `<span class="swatch" style="background:${lineColorHex(t)}"></span>` : '';
     const sel = i === state.selTake ? ' selected' : '';
     return `<div class="wall-row${sel}" data-take="${i}" title="Click to select on the plan (reshape with ➤ Select)">` +
       `<div class="wall-row-main"><b>${dot}${headline}</b><span>${sub}</span></div>` +
       `<button class="wall-del" data-i="${i}" title="Delete this takeoff">✕</button></div>`;
   };
 
-  // Areas group by type: a color-matched subheader carrying the COMBINED SF (+ SY)
-  // for that surface, then that type's individual takeoff rows beneath it.
+  // Collapsible section header carrying the combined total for a group.
+  const groupHeader = (key, swatch, label, right) => {
+    const collapsed = collapsedGroups.has(key);
+    return `<div class="to-group${collapsed ? ' collapsed' : ''}" data-group="${esc(key)}" title="Click to collapse / expand">` +
+      `<span class="to-caret">${collapsed ? '▸' : '▾'}</span>` +
+      (swatch ? `<span class="swatch" style="background:${swatch}"></span>` : '') +
+      `<span class="to-group-label">${esc(label)}</span>${right}</div>`;
+  };
+
+  // Areas group by type: a header with the COMBINED SF (+ SY), then that type's rows.
   let html = '';
   const areaItems = indexed.filter(x => x.t.kind === 'area' && x.t.result);
   if (areaItems.length) {
@@ -3466,20 +3531,45 @@ function renderTakeoffs() {
       groups.set(key, g);
     }
     for (const [label, g] of groups) {
-      html += `<div class="to-group"><span class="swatch" style="background:${g.color}"></span>` +
-        `<span class="to-group-label">${esc(label)}</span>` +
-        `<b>${fmt(g.sf)} sf</b><span class="to-group-sub">${fmt(g.sf / 9)} sy</span></div>` +
-        g.rows.map(rowHtml).join('');
+      const right = `<b>${fmt(g.sf)} sf</b><span class="to-group-sub">${fmt(g.sf / 9)} sy</span>`;
+      const gk = 'area:' + label;
+      html += groupHeader(gk, g.color, label, right);
+      if (!collapsedGroups.has(gk)) html += g.rows.map(rowHtml).join('');
     }
   }
 
-  // Lines & counts list below (unchanged), under a plain subheader when areas are shown.
-  const others = indexed.filter(x => x.t.kind !== 'area');
-  if (others.length) {
-    if (areaItems.length) html += `<div class="to-group to-group-plain"><span class="to-group-label">Lines &amp; counts</span></div>`;
-    html += others.map(rowHtml).join('');
+  // Lines group by type: a header with the COMBINED LF, then that type's rows.
+  const lineItems = indexed.filter(x => x.t.kind === 'line' && x.t.result);
+  if (lineItems.length) {
+    const groups = new Map(); // label -> { color, lf, rows }
+    for (const x of lineItems) {
+      const key = x.t.cfg.label || 'Line';
+      const g = groups.get(key) || { color: lineColorHex(x.t), lf: 0, rows: [] };
+      g.lf += x.t.result.lengthFt || 0;
+      g.rows.push(x);
+      groups.set(key, g);
+    }
+    for (const [label, g] of groups) {
+      const right = `<b>${fmt(g.lf)} lf</b>`;
+      const gk = 'line:' + label;
+      html += groupHeader(gk, g.color, label, right);
+      if (!collapsedGroups.has(gk)) html += g.rows.map(rowHtml).join('');
+    }
+  }
+
+  // Counts under their own collapsible header.
+  const countItems = indexed.filter(x => x.t.kind === 'count');
+  if (countItems.length) {
+    const gk = '__counts__';
+    html += groupHeader(gk, null, 'Counts', '');
+    if (!collapsedGroups.has(gk)) html += countItems.map(rowHtml).join('');
   }
   list.innerHTML = html;
+  list.querySelectorAll('.to-group[data-group]').forEach(h => h.addEventListener('click', () => {
+    const key = h.dataset.group;
+    if (collapsedGroups.has(key)) collapsedGroups.delete(key); else collapsedGroups.add(key);
+    renderTakeoffs();
+  }));
   list.querySelectorAll('.wall-del').forEach(b => b.addEventListener('click', e => {
     e.stopPropagation();
     snapshot();
@@ -3647,6 +3737,9 @@ function projectData() {
 
 function applyProjectData(d) {
   if (!d || d.app !== 'excavation-bid-calculator') return false;
+  // A freshly loaded takeoff is NOT the shared company copy until we say so
+  // (openCompanyTakeoff re-sets these right after calling this).
+  state.serverId = null; state.serverVersion = null;
   state.calibration = d.calibration || null;
   const al = d.align;
   state.align = al && 'a' in al ? al
@@ -3978,14 +4071,137 @@ async function initProjects(liveRestored) {
   } catch (_) { /* IndexedDB unavailable: single-takeoff mode still works */ }
 }
 
-$('btnExport').addEventListener('click', () => {
-  const blob = new Blob([JSON.stringify(projectData(), null, 2)], { type: 'application/json' });
+/* ===================== Company sharing (server-backed) ===================== */
+// The tool shares this origin's localStorage with the main OpsFloa app (same
+// domain) but not its Vite build env, so it reads the API base + auth token the
+// app persisted there. One authoritative shared copy per takeoff; saves use an
+// optimistic-concurrency version so a stale save can't silently overwrite a
+// teammate.
+function toolApiBase() { return (localStorage.getItem('tc_api_base') || '') + '/api'; }
+function toolToken() { return localStorage.getItem('tc_token') || sessionStorage.getItem('tc_token') || ''; }
+async function apiFetch(path, opts = {}) {
+  return fetch(toolApiBase() + '/takeoffs' + path, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + toolToken(), ...(opts.headers || {}) },
+  });
+}
+
+async function shareToCompany() {
+  if (!state.takeoffs.length && !state.contours.existing.length && !state.contours.proposed.length && !state.pdf) {
+    setMsg('Nothing to share yet — open a plan and take off some quantities first.'); return;
+  }
+  const name = state.projectName || (state.pdfName ? state.pdfName.replace(/\.pdf$/i, '') : 'Takeoff');
+  try {
+    if (state.serverId) {
+      const res = await apiFetch('/' + state.serverId, {
+        method: 'PUT', body: JSON.stringify({ name, data: projectData(), version: state.serverVersion }),
+      });
+      if (res.status === 409) { return shareConflict(await res.json()); }
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      state.serverVersion = (await res.json()).version;
+      setMsg('Saved to the company copy — teammates will see your changes.');
+    } else {
+      let pdfBase64 = null;
+      if (state.pdfKey) { try { const rec = await idbFilesGet(state.pdfKey); if (rec && rec.bytes) pdfBase64 = bytesToBase64(rec.bytes); } catch (_) {} }
+      const res = await apiFetch('', { method: 'POST', body: JSON.stringify({ name, data: projectData(), pdfBase64, pdfName: state.pdfName }) });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const out = await res.json();
+      state.serverId = out.id; state.serverVersion = out.version;
+      setMsg('Shared to the company. Teammates can open it from ☁ Company.');
+    }
+    if (!$('company').classList.contains('hidden')) refreshCompanyList();
+  } catch (e) { setMsg('Could not reach the company library (are you signed in?): ' + e.message); }
+}
+
+async function shareConflict(c) {
+  const who = c.updatedByName || 'A teammate';
+  const ok = confirm(`${who} changed this shared takeoff since you opened it.\n\nOK = save YOURS as a new, separate company copy.\nCancel = leave the shared copy as theirs (keep editing locally).`);
+  if (ok) { state.serverId = null; state.serverVersion = null; await shareToCompany(); }
+}
+
+async function refreshCompanyList() {
+  const list = $('companyList');
+  list.innerHTML = '<div class="hint">Loading…</div>';
+  try {
+    const res = await apiFetch('');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const rows = await res.json();
+    if (!rows.length) { list.innerHTML = '<div class="hint">No shared takeoffs yet. Open a takeoff and hit “Share current takeoff”.</div>'; return; }
+    list.innerHTML = '';
+    for (const r of rows) {
+      const when = r.updated_at ? new Date(r.updated_at).toLocaleString() : '';
+      const row = document.createElement('div');
+      row.className = 'proj-row' + (String(r.id) === String(state.serverId) ? ' current' : '');
+      row.innerHTML =
+        `<div class="grow"><div class="name"></div>` +
+        `<div class="meta">${r.pdf_name ? esc(r.pdf_name) + ' · ' : ''}v${r.version}${r.updated_by_name ? ' · by ' + esc(r.updated_by_name) : ''} · ${when}</div></div>` +
+        (String(r.id) === String(state.serverId) ? '<span class="pill">open</span>' : '<button class="btn tiny" data-act="open">Open</button>') +
+        '<button class="btn tiny danger" data-act="del" title="Delete this shared takeoff">✕</button>';
+      row.querySelector('.name').textContent = r.name;
+      const openBtn = row.querySelector('[data-act="open"]');
+      if (openBtn) openBtn.addEventListener('click', () => openCompanyTakeoff(r.id));
+      row.querySelector('[data-act="del"]').addEventListener('click', () => deleteCompanyTakeoff(r.id, r.name));
+      list.appendChild(row);
+    }
+  } catch (e) {
+    list.innerHTML = `<div class="hint">Could not load the company library: ${esc(e.message)}. Make sure you’re signed in to OpsFloa.</div>`;
+  }
+}
+
+async function openCompanyTakeoff(id) {
+  setMsg('Opening from the company library…');
+  try {
+    const res = await apiFetch('/' + id);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const t = await res.json();
+    const preLoad = takeSnap();
+    if (!applyProjectData(t.data || {})) { setMsg('That shared takeoff could not be read.'); return; }
+    pushSnap(preLoad);
+    state.serverId = t.id; state.serverVersion = t.version; state.projectName = t.name;
+    if (t.pdf_url) {
+      const pres = await apiFetch('/' + id + '/pdf'); // PDF proxied through the API (no R2 CORS)
+      if (pres.ok) { const pj = await pres.json(); await loadPdfFromBytes(base64ToBytes(pj.b64).buffer, pj.name || t.pdf_name || 'plan.pdf'); }
+    }
+    saveLocal(); updateProjectBtn(); draw();
+    $('company').classList.add('hidden');
+    setMsg(`Opened “${t.name}” from the company library.`);
+  } catch (e) { setMsg('Could not open that shared takeoff: ' + e.message); }
+}
+
+async function deleteCompanyTakeoff(id, name) {
+  if (!confirm(`Delete the shared takeoff “${name}” for the whole company? This cannot be undone.`)) return;
+  try {
+    const res = await apiFetch('/' + id, { method: 'DELETE' });
+    if (res.status === 403) { setMsg('Only the person who shared it (or an admin) can delete it.'); return; }
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    if (String(id) === String(state.serverId)) { state.serverId = null; state.serverVersion = null; }
+    refreshCompanyList();
+    setMsg('Shared takeoff deleted.');
+  } catch (e) { setMsg('Could not delete: ' + e.message); }
+}
+
+$('btnCompany').addEventListener('click', () => { $('company').classList.remove('hidden'); refreshCompanyList(); });
+$('companyClose').addEventListener('click', () => $('company').classList.add('hidden'));
+$('companyShareBtn').addEventListener('click', shareToCompany);
+
+$('btnExport').addEventListener('click', async () => {
+  const data = projectData();
+  // Embed the plan PDF so the file is self-contained — one file to share.
+  if (state.pdfKey) {
+    try {
+      const rec = await idbFilesGet(state.pdfKey);
+      if (rec && rec.bytes) data.pdf = { name: rec.name || state.pdfName || 'plan.pdf', b64: bytesToBase64(rec.bytes) };
+    } catch (_) { /* embed is best-effort; fall back to a PDF-less export */ }
+  }
+  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = (state.pdfName ? state.pdfName.replace(/\.pdf$/i, '') : 'takeoff') + '.takeoff.json';
   a.click();
   URL.revokeObjectURL(a.href);
-  setMsg('Takeoff saved. The PDF itself is not embedded — keep it next to the .json.');
+  setMsg(data.pdf
+    ? 'Takeoff saved — the plan PDF is embedded, so this one file is all you need to share.'
+    : 'Takeoff saved. No PDF was open to embed — keep the plan PDF next to the .json.');
 });
 
 $('btnImport').addEventListener('click', () => $('fileImport').click());
@@ -3997,7 +4213,10 @@ $('fileImport').addEventListener('change', async e => {
     const preLoad = takeSnap();
     if (applyProjectData(d)) {
       pushSnap(preLoad);
-      if (state.pdf) {
+      if (d.pdf && d.pdf.b64) {
+        // Self-contained export: open the embedded plan PDF.
+        await loadPdfFromBytes(base64ToBytes(d.pdf.b64).buffer, d.pdf.name || d.pdfName || 'plan.pdf');
+      } else if (state.pdf) {
         els.pageExisting.value = state.sheets.existing.pageNum;
         els.pageProposed.value = state.sheets.proposed.pageNum;
         await renderSheet('existing');
