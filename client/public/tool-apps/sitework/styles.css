@@ -41,7 +41,9 @@ body { display: flex; flex-direction: column; }
    its own full-width row and the spacer splits Calculate from the utilities. */
 .tb-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
 .tb-s1, .tb-s2, .tb-s3, .tb-s5 { flex: 0 0 auto; }
-.tb-s4 { flex: 0 1 auto; }                    /* tools can shrink → wrap within their own group */
+.tb-s4 { display: contents; }                 /* flatten: let #tools size to its content so the
+                                                 next buttons pack up beside it, not below it */
+#tools { flex: 0 1 auto; min-width: 0; }      /* content-width flex item (was full-width, trapping space) */
 .tb-menu { flex: 0 0 auto; margin-left: auto; } /* ? + Menu always pinned to the far right */
 
 body.nosidebar #sidebar { display: none; }
