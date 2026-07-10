@@ -303,7 +303,9 @@ els.modalBody.addEventListener('click', e => {
 });
 
 $('btnHelp').addEventListener('click', () => els.help.classList.remove('hidden'));
-$('helpClose').addEventListener('click', () => els.help.classList.add('hidden'));
+$('helpX').addEventListener('click', () => els.help.classList.add('hidden'));
+// clicking the dark backdrop (outside the box) closes help too
+els.help.addEventListener('click', e => { if (e.target === els.help) els.help.classList.add('hidden'); });
 
 /* ============================== PDF loading ============================== */
 
@@ -2435,7 +2437,11 @@ window.addEventListener('keydown', e => {
     if (e.key === 'Escape') closeProdLog();
     return; // production log open: don't fire tool shortcuts underneath
   }
-  if (!els.modal.classList.contains('hidden') || !els.help.classList.contains('hidden')) return;
+  if (!els.help.classList.contains('hidden')) {
+    if (e.key === 'Escape') els.help.classList.add('hidden');
+    return; // help open: Esc closes it, don't fire tool shortcuts underneath
+  }
+  if (!els.modal.classList.contains('hidden')) return;
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
 
   if (e.code === 'Space') { state.spaceHeld = true; e.preventDefault(); return; }
