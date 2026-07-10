@@ -18,7 +18,7 @@ router.get('/', async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT t.id, t.name, t.pdf_name, t.version, t.updated_at, t.created_by,
-              u.name AS updated_by_name
+              u.full_name AS updated_by_name
          FROM takeoff_projects t
          LEFT JOIN users u ON u.id = t.updated_by
         WHERE t.company_id = $1
@@ -76,7 +76,7 @@ router.put('/:id', async (req, res) => {
   try {
     const { name, data, version } = req.body || {};
     const cur = await pool.query(
-      `SELECT t.version, t.updated_at, u.name AS updated_by_name
+      `SELECT t.version, t.updated_at, u.full_name AS updated_by_name
          FROM takeoff_projects t LEFT JOIN users u ON u.id = t.updated_by
         WHERE t.id = $1 AND t.company_id = $2`,
       [req.params.id, req.user.company_id]);
