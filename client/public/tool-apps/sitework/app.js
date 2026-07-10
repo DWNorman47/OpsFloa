@@ -50,7 +50,7 @@ const state = {
   result: null,            // { grid, cutCY, fillCY, ... }
   showHeatmap: true,
   ghost: false,
-  layers: { scale: true, boundary: true, contours: true, areas: true, areaLabels: true }, // per-section "Show on drawing" toggles
+  layers: { scale: true, boundary: true, contours: true, areas: true, areaLabels: true, lines: true, lineLabels: true }, // per-section "Show on drawing" toggles
 
   // transient pointer stuff
   mouse: { x: 0, y: 0, down: false, panning: false, sx: 0, sy: 0, moved: false },
@@ -2559,7 +2559,8 @@ els.chkGhost.addEventListener('change', e => { state.ghost = e.target.checked; d
 
 // per-section "Show on drawing" toggles for the scale line, boundary, and contours
 [['showScale', 'scale'], ['showBoundary', 'boundary'], ['showContours', 'contours'],
- ['showAreas', 'areas'], ['showAreaLabels', 'areaLabels']].forEach(([id, key]) => {
+ ['showAreas', 'areas'], ['showAreaLabels', 'areaLabels'],
+ ['showLines', 'lines'], ['showLineLabels', 'lineLabels']].forEach(([id, key]) => {
   $(id).addEventListener('change', e => { state.layers[key] = e.target.checked; draw(); });
 });
 
@@ -3037,6 +3038,22 @@ function autoAreaColor(mode, label) {
 function areaColorHex(t) {
   return (t.cfg && t.cfg.color) || autoAreaColor(t.cfg.mode, t.cfg.label);
 }
+// Lines: canonical colors for common types (pipe, curb, silt, sawcut, fence),
+// else a stable hash of the label — with a per-line cfg.color override.
+function autoLineColor(label) {
+  const s = String(label || '').toLowerCase();
+  if (s.includes('pipe')) return '#4da3ff';                          // utilities — blue
+  if (s.includes('curb')) return '#c9ced6';                          // curb & gutter — light gray
+  if (s.includes('silt')) return '#8bbf3f';                          // silt fence — green
+  if (s.includes('saw')) return '#e05555';                           // sawcut — red
+  if (s.includes('fence') || s.includes('guardrail')) return '#c07ef7'; // fence — purple
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return AREA_PALETTE[h % AREA_PALETTE.length];
+}
+function lineColorHex(t) {
+  return (t.cfg && t.cfg.color) || autoLineColor(t.cfg.label);
+}
 function hexToRgba(hex, a) {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
@@ -3249,6 +3266,7 @@ function readLineCfg() {
     trench: $('ltTrench').checked,
     width: $('ltWidth').value, depth: $('ltDepth').value,
     slope: $('ltSlope').value, bedding: $('ltBedding').value,
+    color: $('ltColor').value,
   };
 }
 
@@ -3268,6 +3286,8 @@ function askLineConfig(lengthFt, prefill) {
       if (prefill.slope != null) $('ltSlope').value = prefill.slope;
       if (prefill.bedding != null) $('ltBedding').value = prefill.bedding;
     }
+    // Seed the color picker: a saved color, else the auto color for this label.
+    $('ltColor').value = (prefill && prefill.color) || autoLineColor($('ltLabel').value);
     syncLineTrench();
     preview();
     $('lineTakeoff').classList.remove('hidden');
@@ -3284,6 +3304,7 @@ function askLineConfig(lengthFt, prefill) {
       if (p.depth != null) $('ltDepth').value = p.depth;
       if (p.slope != null) $('ltSlope').value = p.slope;
       if (p.bedding != null) $('ltBedding').value = p.bedding;
+      $('ltColor').value = autoLineColor(p.label); // seed the type's color
       onInput();
     };
     presetBtns.forEach(b => b.addEventListener('click', onPreset));
@@ -3423,14 +3444,16 @@ function drawTakeoffs() {
       }
       if (selT) drawTakeoffHandles(t.pts);
     } else if (t.kind === 'line') {
+      if (!state.layers.lines && !selT) continue; // hidden — a selected line still shows so you can edit it
+      const lineCol = lineColorHex(t);
       ctx.beginPath();
       t.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
-      ctx.strokeStyle = '#38d39f';
+      ctx.strokeStyle = lineCol;
       ctx.lineWidth = lw(3);
       ctx.stroke();
-      ctx.fillStyle = '#38d39f';
+      ctx.fillStyle = lineCol;
       for (const p of t.pts) { ctx.beginPath(); ctx.arc(p.x, p.y, lw(2.5), 0, Math.PI * 2); ctx.fill(); }
-      if (t.result) {
+      if (t.result && state.layers.lineLabels) {
         const mid = t.pts[Math.floor(t.pts.length / 2)];
         const q = t.result.trench ? `${fmt(t.result.trenchCY, 0)} CY` : `${fmt(t.result.lengthFt)} ft`;
         labelAt(mid.x, mid.y, `${t.cfg.label}: ${q}`, '#0f9d68');
@@ -3478,8 +3501,8 @@ function renderTakeoffs() {
   const indexed = items.map((t, i) => ({ t, i }));
   const rowHtml = ({ t, i }) => {
     const { headline, sub } = takeoffRowText(t);
-    const dot = t.kind === 'area'
-      ? `<span class="swatch" style="background:${areaColorHex(t)}"></span>` : '';
+    const dot = t.kind === 'area' ? `<span class="swatch" style="background:${areaColorHex(t)}"></span>`
+      : t.kind === 'line' ? `<span class="swatch" style="background:${lineColorHex(t)}"></span>` : '';
     const sel = i === state.selTake ? ' selected' : '';
     return `<div class="wall-row${sel}" data-take="${i}" title="Click to select on the plan (reshape with ➤ Select)">` +
       `<div class="wall-row-main"><b>${dot}${headline}</b><span>${sub}</span></div>` +
@@ -3509,17 +3532,37 @@ function renderTakeoffs() {
     }
     for (const [label, g] of groups) {
       const right = `<b>${fmt(g.sf)} sf</b><span class="to-group-sub">${fmt(g.sf / 9)} sy</span>`;
-      html += groupHeader(label, g.color, label, right);
-      if (!collapsedGroups.has(label)) html += g.rows.map(rowHtml).join('');
+      const gk = 'area:' + label;
+      html += groupHeader(gk, g.color, label, right);
+      if (!collapsedGroups.has(gk)) html += g.rows.map(rowHtml).join('');
     }
   }
 
-  // Lines & counts under their own collapsible header.
-  const others = indexed.filter(x => x.t.kind !== 'area');
-  if (others.length) {
-    const OK = '__lines_counts__';
-    html += groupHeader(OK, null, 'Lines & counts', '');
-    if (!collapsedGroups.has(OK)) html += others.map(rowHtml).join('');
+  // Lines group by type: a header with the COMBINED LF, then that type's rows.
+  const lineItems = indexed.filter(x => x.t.kind === 'line' && x.t.result);
+  if (lineItems.length) {
+    const groups = new Map(); // label -> { color, lf, rows }
+    for (const x of lineItems) {
+      const key = x.t.cfg.label || 'Line';
+      const g = groups.get(key) || { color: lineColorHex(x.t), lf: 0, rows: [] };
+      g.lf += x.t.result.lengthFt || 0;
+      g.rows.push(x);
+      groups.set(key, g);
+    }
+    for (const [label, g] of groups) {
+      const right = `<b>${fmt(g.lf)} lf</b>`;
+      const gk = 'line:' + label;
+      html += groupHeader(gk, g.color, label, right);
+      if (!collapsedGroups.has(gk)) html += g.rows.map(rowHtml).join('');
+    }
+  }
+
+  // Counts under their own collapsible header.
+  const countItems = indexed.filter(x => x.t.kind === 'count');
+  if (countItems.length) {
+    const gk = '__counts__';
+    html += groupHeader(gk, null, 'Counts', '');
+    if (!collapsedGroups.has(gk)) html += countItems.map(rowHtml).join('');
   }
   list.innerHTML = html;
   list.querySelectorAll('.to-group[data-group]').forEach(h => h.addEventListener('click', () => {

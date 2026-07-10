@@ -180,7 +180,11 @@
       <h3>Quantities <span class="pill" id="takeoffCount"></span></h3>
       <div class="row">
         <label class="layer-toggle" title="Show or hide the area shapes on the drawing (their quantities stay in this list)"><input type="checkbox" id="showAreas" checked> Show areas</label>
-        <label class="layer-toggle" title="Show or hide the area name labels on the drawing"><input type="checkbox" id="showAreaLabels" checked> Show names</label>
+        <label class="layer-toggle" title="Show or hide the area name labels on the drawing"><input type="checkbox" id="showAreaLabels" checked> Area labels</label>
+      </div>
+      <div class="row">
+        <label class="layer-toggle" title="Show or hide the line shapes on the drawing (their quantities stay in this list)"><input type="checkbox" id="showLines" checked> Show lines</label>
+        <label class="layer-toggle" title="Show or hide the line name labels on the drawing"><input type="checkbox" id="showLineLabels" checked> Line labels</label>
       </div>
       <div id="takeoffList" class="list"></div>
       <div class="hint">Quantity takeoffs — ▦ Area (paving, base, concrete, topsoil strip), ╱ Line (curb, pipe/utility trench, fence), and ⊕ Count (structures, trees, signs). Area (SF/SY), volume (CY), weight (tons), length (LF), and each (EA).</div>
@@ -419,6 +423,7 @@
     </div>
     <div class="wall-grid">
       <label>Material / label<input type="text" id="ltLabel" value="Line" maxlength="40"></label>
+      <label class="atColorLbl" title="Color of this line on the drawing and in the Quantities list. Change it so different runs read apart.">Color<input type="color" id="ltColor" value="#38d39f"></label>
     </div>
     <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:8px 0;">
       <input type="checkbox" id="ltTrench"> Trench cross-section (pipe / utility)
