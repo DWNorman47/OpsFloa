@@ -41,18 +41,40 @@
     <button class="tool active" data-tool="pan" title="Pan / zoom (you can also drag with right mouse or hold Space in any tool)">✋ Pan</button>
     <button class="tool" data-tool="calibrate" title="Click two points a known distance apart, then enter the distance in feet. Afterwards: drag an endpoint (○) to adjust, or click two new points to re-measure">📏 Scale</button>
     <button class="tool" data-tool="boundary" title="Click around the limits of disturbance; Enter or double-click to close. To edit the closed polygon: drag a point (○), double-click an edge to add a point, Alt+click a point to remove it">▱ Boundary</button>
-    <button class="tool" data-tool="trace" title="Click along a contour line; Enter or double-click to finish, then type its elevation">〰 Trace Contour</button>
-    <button class="tool" data-tool="wand" title="Click once ON a contour line — the whole line is picked up from the PDF vector data (vector PDFs only)">🪄 Auto Trace</button>
-    <button class="tool" data-tool="spot" title="Click a single spot grade (FG spot, high/low point) and enter its elevation">◎ Spot Elev</button>
-    <button class="tool" data-tool="pad" title="Draw a building pad polygon; everything inside is held flat at one elevation (FF/FP pads). To edit a pad: drag a point (○), double-click an edge to add a point, Alt+click a point to remove it">▬ Pad</button>
-    <button class="tool" data-tool="wall" title="Retaining-wall dig: click along the wall line; Enter or double-click to finish, then enter the trench cross-section. Depth can be a constant dig or measured down to a footing subgrade elevation off your traced Existing contours. Gives excavation & export CY.">▚ Wall</button>
-    <button class="tool" data-tool="area" title="Area takeoff: click around an area (paving, base, concrete, seeding); Enter or double-click to close, then pick a material to get area (SF/SY), volume (CY), or weight (tons).">▦ Area</button>
-    <button class="tool" data-tool="autoarea" id="btnAutoArea" disabled title="Open a PDF to check for vector hatching.">🎯 Auto Area</button>
-    <span id="hatchCap" class="hatch-cap hidden" title="">hatch ✓</span>
-    <button class="tool" data-tool="line" title="Linear takeoff: click along a run (curb, pipe, silt fence); Enter or double-click to finish. Gives length in feet, plus optional trench excavation & bedding CY for pipe/utility runs.">╱ Line</button>
-    <button class="tool" data-tool="count" title="Count takeoff: click each item (catch basin, manhole, tree, sign, light pole…); Enter or double-click to finish, then name it. Gives an each (EA) tally that collects in the Quantities panel.">⊕ Count</button>
-    <button class="tool" data-tool="select" title="Click a traced line, an AREA, or a line takeoff (or its sidebar row) to select it, then reshape it: drag a point (○), double-click an edge to add a point, Alt+click a point to remove it. Delete removes it; E edits elevation (contour) or re-picks the material/type (area/line); Esc deselects.">➤ Select</button>
-    <button class="tool" data-tool="erase" title="Drag a box — the portions of traced lines inside it are erased; lines crossing the box are split. If a line is selected, only that line is trimmed">⌫ Erase Box</button>
+
+    <div class="tool-group" data-group="grade">
+      <button class="tool-group-main" data-group="grade" title="Grade tools — contours & elevations. Click to use the shown tool; ▾ for Trace, Auto Trace, Spot, Pad.">⛰ Grade</button>
+      <button class="tool-group-caret" data-group="grade" aria-label="More grade tools">▾</button>
+      <div class="tool-flyout hidden" data-flyout="grade">
+        <button class="tool" data-tool="trace" title="Click along a contour line; Enter or double-click to finish, then type its elevation">〰 Trace Contour</button>
+        <button class="tool" data-tool="wand" title="Click once ON a contour line — the whole line is picked up from the PDF vector data (vector PDFs only)">🪄 Auto Trace</button>
+        <button class="tool" data-tool="spot" title="Click a single spot grade (FG spot, high/low point) and enter its elevation">◎ Spot Elev</button>
+        <button class="tool" data-tool="pad" title="Draw a building pad polygon; everything inside is held flat at one elevation (FF/FP pads). To edit a pad: drag a point (○), double-click an edge to add a point, Alt+click a point to remove it">▬ Pad</button>
+      </div>
+    </div>
+
+    <div class="tool-group" data-group="takeoff">
+      <button class="tool-group-main" data-group="takeoff" title="Takeoff tools — priced quantities. Click to use the shown tool; ▾ for Area, Auto Area, Line, Count, Wall.">▦ Takeoff</button>
+      <button class="tool-group-caret" data-group="takeoff" aria-label="More takeoff tools">▾</button>
+      <div class="tool-flyout hidden" data-flyout="takeoff">
+        <button class="tool" data-tool="area" title="Area takeoff: click around an area (paving, base, concrete, seeding); Enter or double-click to close, then pick a material to get area (SF/SY), volume (CY), or weight (tons).">▦ Area</button>
+        <button class="tool" data-tool="autoarea" id="btnAutoArea" disabled title="Open a PDF to check for vector hatching.">🎯 Auto Area</button>
+        <span id="hatchCap" class="hatch-cap hidden" title="">hatch ✓</span>
+        <button class="tool" data-tool="line" title="Linear takeoff: click along a run (curb, pipe, silt fence); Enter or double-click to finish. Gives length in feet, plus optional trench excavation & bedding CY for pipe/utility runs.">╱ Line</button>
+        <button class="tool" data-tool="count" title="Count takeoff: click each item (catch basin, manhole, tree, sign, light pole…); Enter or double-click to finish, then name it. Gives an each (EA) tally that collects in the Quantities panel.">⊕ Count</button>
+        <button class="tool" data-tool="wall" title="Retaining-wall dig: click along the wall line; Enter or double-click to finish, then enter the trench cross-section. Depth can be a constant dig or measured down to a footing subgrade elevation off your traced Existing contours. Gives excavation & export CY.">▚ Wall</button>
+      </div>
+    </div>
+
+    <div class="tool-group" data-group="edit">
+      <button class="tool-group-main" data-group="edit" title="Edit tools — change existing traces. Click to use the shown tool; ▾ for Select, Erase Box.">✎ Edit</button>
+      <button class="tool-group-caret" data-group="edit" aria-label="More edit tools">▾</button>
+      <div class="tool-flyout hidden" data-flyout="edit">
+        <button class="tool" data-tool="select" title="Click a traced line, an AREA, or a line takeoff (or its sidebar row) to select it, then reshape it: drag a point (○), double-click an edge to add a point, Alt+click a point to remove it. Delete removes it; E edits elevation (contour) or re-picks the material/type (area/line); Esc deselects.">➤ Select</button>
+        <button class="tool" data-tool="erase" title="Drag a box — the portions of traced lines inside it are erased; lines crossing the box are split. If a line is selected, only that line is trimmed">⌫ Erase Box</button>
+      </div>
+    </div>
+
     <button id="btnSmooth" class="btn smooth-toggle" title="Curve mode: the points you place are joined by a smooth curve that passes through them — for contours, areas, and lines. Toggle with C.">〜 Curve</button>
     </div>
   </div>

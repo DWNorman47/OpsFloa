@@ -848,6 +848,20 @@ const TOOL_LABEL = {
   realign: 'Re-align traces', measure: 'Measure',
 };
 
+// The tool row collapses Grade / Takeoff / Edit into flyout dropdowns. Each
+// group's face shows the last tool used from it; the ▾ opens the rest.
+const TOOL_GROUPS = {
+  grade:   ['trace', 'wand', 'spot', 'pad'],
+  takeoff: ['area', 'autoarea', 'line', 'count', 'wall'],
+  edit:    ['select', 'erase'],
+};
+const TOOL_FACE = {
+  trace: '〰 Trace', wand: '🪄 Auto Trace', spot: '◎ Spot', pad: '▬ Pad',
+  area: '▦ Area', autoarea: '🎯 Auto Area', line: '╱ Line', count: '⊕ Count', wall: '▚ Wall',
+  select: '➤ Select', erase: '⌫ Erase',
+};
+const groupCurrent = { grade: 'trace', takeoff: 'area', edit: 'select' };
+
 function setTool(t) {
   finishDraftIfAny(false);
   state.tool = t;
@@ -866,14 +880,53 @@ function setTool(t) {
     b.classList.toggle('active', b.dataset.tool === t));
   cv.classList.toggle('crosshair', t !== 'pan');
   els.sbTool.textContent = TOOL_LABEL[t];
+  syncToolGroups();
   draw();
 }
 
 document.querySelectorAll('.tool').forEach(b =>
   b.addEventListener('click', () => {
+    closeToolFlyouts();
     if (b.dataset.tool === 'autoarea') { autoAreaClick(); return; } // placeholder (Phase 1)
     setTool(b.dataset.tool);
   }));
+
+/* ===================== Tool-group dropdowns ===================== */
+function toolGroupOf(tool) {
+  for (const g in TOOL_GROUPS) if (TOOL_GROUPS[g].includes(tool)) return g;
+  return null;
+}
+function syncToolGroups() {
+  const g = toolGroupOf(state.tool);
+  if (g) groupCurrent[g] = state.tool; // remember the last-used tool per group
+  for (const grp in TOOL_GROUPS) {
+    const main = document.querySelector(`.tool-group-main[data-group="${grp}"]`);
+    if (!main) continue;
+    main.textContent = TOOL_FACE[groupCurrent[grp]] || grp;
+    main.classList.toggle('active', TOOL_GROUPS[grp].includes(state.tool));
+  }
+}
+function closeToolFlyouts() {
+  document.querySelectorAll('.tool-flyout').forEach(f => f.classList.add('hidden'));
+}
+// The flyout is position:fixed and placed under its group, so no ancestor's
+// overflow (e.g. the phone tool strip) can clip it.
+function toggleFlyout(grp, anchor) {
+  const fly = document.querySelector(`.tool-flyout[data-flyout="${grp}"]`);
+  const willOpen = fly.classList.contains('hidden');
+  closeToolFlyouts();
+  if (willOpen) {
+    const r = anchor.closest('.tool-group').getBoundingClientRect();
+    fly.style.top = `${r.bottom + 4}px`;
+    fly.style.left = `${r.left}px`;
+    fly.classList.remove('hidden');
+  }
+}
+// The whole group button (label + ▾) opens its dropdown; picking a tool uses it.
+document.querySelectorAll('.tool-group-main, .tool-group-caret').forEach(el =>
+  el.addEventListener('click', e => { e.stopPropagation(); toggleFlyout(el.dataset.group, el); }));
+document.addEventListener('click', e => { if (!e.target.closest('.tool-group')) closeToolFlyouts(); });
+syncToolGroups(); // initial faces
 
 function switchSheet(s) {
   finishDraftIfAny(false);
