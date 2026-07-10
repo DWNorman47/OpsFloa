@@ -24,6 +24,8 @@ const state = {
   projectId: null,         // current project record id (IndexedDB 'projects' store)
   projectName: null,
   pdfKey: null,            // content-hash key of the PDF in the 'files' store
+  serverId: null,          // takeoff_projects id when linked to a company-shared copy
+  serverVersion: null,     // its version, for optimistic-concurrency saves
 
   calibration: null,       // { ax, ay, bx, by, feet, ftPerPx }
   // similarity transform proposed-image -> world: world = [[a,-b],[b,a]]·q + [e,f]
@@ -2349,6 +2351,10 @@ window.addEventListener('keydown', e => {
     if (e.key === 'Escape') els.projects.classList.add('hidden');
     return;
   }
+  if (!$('company').classList.contains('hidden')) {
+    if (e.key === 'Escape') $('company').classList.add('hidden');
+    return; // company modal open: don't fire tool shortcuts underneath
+  }
   if (!$('bidReport').classList.contains('hidden')) {
     if (e.key === 'Escape') closeBidReport();
     return; // bid report open: don't fire tool shortcuts underneath
@@ -3688,6 +3694,9 @@ function projectData() {
 
 function applyProjectData(d) {
   if (!d || d.app !== 'excavation-bid-calculator') return false;
+  // A freshly loaded takeoff is NOT the shared company copy until we say so
+  // (openCompanyTakeoff re-sets these right after calling this).
+  state.serverId = null; state.serverVersion = null;
   state.calibration = d.calibration || null;
   const al = d.align;
   state.align = al && 'a' in al ? al
@@ -4018,6 +4027,119 @@ async function initProjects(liveRestored) {
     }
   } catch (_) { /* IndexedDB unavailable: single-takeoff mode still works */ }
 }
+
+/* ===================== Company sharing (server-backed) ===================== */
+// The tool shares this origin's localStorage with the main OpsFloa app (same
+// domain) but not its Vite build env, so it reads the API base + auth token the
+// app persisted there. One authoritative shared copy per takeoff; saves use an
+// optimistic-concurrency version so a stale save can't silently overwrite a
+// teammate.
+function toolApiBase() { return (localStorage.getItem('tc_api_base') || '') + '/api'; }
+function toolToken() { return localStorage.getItem('tc_token') || sessionStorage.getItem('tc_token') || ''; }
+async function apiFetch(path, opts = {}) {
+  return fetch(toolApiBase() + '/takeoffs' + path, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + toolToken(), ...(opts.headers || {}) },
+  });
+}
+
+async function shareToCompany() {
+  if (!state.takeoffs.length && !state.contours.existing.length && !state.contours.proposed.length && !state.pdf) {
+    setMsg('Nothing to share yet — open a plan and take off some quantities first.'); return;
+  }
+  const name = state.projectName || (state.pdfName ? state.pdfName.replace(/\.pdf$/i, '') : 'Takeoff');
+  try {
+    if (state.serverId) {
+      const res = await apiFetch('/' + state.serverId, {
+        method: 'PUT', body: JSON.stringify({ name, data: projectData(), version: state.serverVersion }),
+      });
+      if (res.status === 409) { return shareConflict(await res.json()); }
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      state.serverVersion = (await res.json()).version;
+      setMsg('Saved to the company copy — teammates will see your changes.');
+    } else {
+      let pdfBase64 = null;
+      if (state.pdfKey) { try { const rec = await idbFilesGet(state.pdfKey); if (rec && rec.bytes) pdfBase64 = bytesToBase64(rec.bytes); } catch (_) {} }
+      const res = await apiFetch('', { method: 'POST', body: JSON.stringify({ name, data: projectData(), pdfBase64, pdfName: state.pdfName }) });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const out = await res.json();
+      state.serverId = out.id; state.serverVersion = out.version;
+      setMsg('Shared to the company. Teammates can open it from ☁ Company.');
+    }
+    if (!$('company').classList.contains('hidden')) refreshCompanyList();
+  } catch (e) { setMsg('Could not reach the company library (are you signed in?): ' + e.message); }
+}
+
+async function shareConflict(c) {
+  const who = c.updatedByName || 'A teammate';
+  const ok = confirm(`${who} changed this shared takeoff since you opened it.\n\nOK = save YOURS as a new, separate company copy.\nCancel = leave the shared copy as theirs (keep editing locally).`);
+  if (ok) { state.serverId = null; state.serverVersion = null; await shareToCompany(); }
+}
+
+async function refreshCompanyList() {
+  const list = $('companyList');
+  list.innerHTML = '<div class="hint">Loading…</div>';
+  try {
+    const res = await apiFetch('');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const rows = await res.json();
+    if (!rows.length) { list.innerHTML = '<div class="hint">No shared takeoffs yet. Open a takeoff and hit “Share current takeoff”.</div>'; return; }
+    list.innerHTML = '';
+    for (const r of rows) {
+      const when = r.updated_at ? new Date(r.updated_at).toLocaleString() : '';
+      const row = document.createElement('div');
+      row.className = 'proj-row' + (String(r.id) === String(state.serverId) ? ' current' : '');
+      row.innerHTML =
+        `<div class="grow"><div class="name"></div>` +
+        `<div class="meta">${r.pdf_name ? esc(r.pdf_name) + ' · ' : ''}v${r.version}${r.updated_by_name ? ' · by ' + esc(r.updated_by_name) : ''} · ${when}</div></div>` +
+        (String(r.id) === String(state.serverId) ? '<span class="pill">open</span>' : '<button class="btn tiny" data-act="open">Open</button>') +
+        '<button class="btn tiny danger" data-act="del" title="Delete this shared takeoff">✕</button>';
+      row.querySelector('.name').textContent = r.name;
+      const openBtn = row.querySelector('[data-act="open"]');
+      if (openBtn) openBtn.addEventListener('click', () => openCompanyTakeoff(r.id));
+      row.querySelector('[data-act="del"]').addEventListener('click', () => deleteCompanyTakeoff(r.id, r.name));
+      list.appendChild(row);
+    }
+  } catch (e) {
+    list.innerHTML = `<div class="hint">Could not load the company library: ${esc(e.message)}. Make sure you’re signed in to OpsFloa.</div>`;
+  }
+}
+
+async function openCompanyTakeoff(id) {
+  setMsg('Opening from the company library…');
+  try {
+    const res = await apiFetch('/' + id);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const t = await res.json();
+    const preLoad = takeSnap();
+    if (!applyProjectData(t.data || {})) { setMsg('That shared takeoff could not be read.'); return; }
+    pushSnap(preLoad);
+    state.serverId = t.id; state.serverVersion = t.version; state.projectName = t.name;
+    if (t.pdf_url) {
+      const pres = await apiFetch('/' + id + '/pdf'); // PDF proxied through the API (no R2 CORS)
+      if (pres.ok) { const pj = await pres.json(); await loadPdfFromBytes(base64ToBytes(pj.b64).buffer, pj.name || t.pdf_name || 'plan.pdf'); }
+    }
+    saveLocal(); updateProjectBtn(); draw();
+    $('company').classList.add('hidden');
+    setMsg(`Opened “${t.name}” from the company library.`);
+  } catch (e) { setMsg('Could not open that shared takeoff: ' + e.message); }
+}
+
+async function deleteCompanyTakeoff(id, name) {
+  if (!confirm(`Delete the shared takeoff “${name}” for the whole company? This cannot be undone.`)) return;
+  try {
+    const res = await apiFetch('/' + id, { method: 'DELETE' });
+    if (res.status === 403) { setMsg('Only the person who shared it (or an admin) can delete it.'); return; }
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    if (String(id) === String(state.serverId)) { state.serverId = null; state.serverVersion = null; }
+    refreshCompanyList();
+    setMsg('Shared takeoff deleted.');
+  } catch (e) { setMsg('Could not delete: ' + e.message); }
+}
+
+$('btnCompany').addEventListener('click', () => { $('company').classList.remove('hidden'); refreshCompanyList(); });
+$('companyClose').addEventListener('click', () => $('company').classList.add('hidden'));
+$('companyShareBtn').addEventListener('click', shareToCompany);
 
 $('btnExport').addEventListener('click', async () => {
   const data = projectData();

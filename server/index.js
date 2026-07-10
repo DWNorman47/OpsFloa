@@ -199,6 +199,7 @@ const projectsRouter = require('./routes/projects');
 app.use('/api/work', projectsRouter);        // renamed home for the core Work/Projects resource
 app.use('/api/projects', projectsRouter);     // legacy alias (project sub-resources still live at /api/projects/:id/...)
 app.use('/api/work-orders', requireAuth, require('./routes/workOrders'));
+app.use('/api/takeoffs', requireAuth, require('./routes/takeoffs')); // company-shared sitework takeoffs
 app.use('/api/time-entries', require('./routes/timeEntries'));
 app.use('/api/admin', require('./routes/admin'));
 // QBO OAuth callback must be public (Intuit redirects here without a JWT)

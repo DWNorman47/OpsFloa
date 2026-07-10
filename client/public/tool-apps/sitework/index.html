@@ -25,6 +25,7 @@
     <div class="brand">Sitework&nbsp;Takeoff</div>
 
     <button id="btnProjects" class="btn" title="Switch, duplicate, or manage takeoff projects">📁 <span id="projName">Project</span></button>
+    <button id="btnCompany" class="btn" title="Share this takeoff with your company, or open one a teammate shared">☁ Company</button>
     <button id="btnOpenPdf" class="btn primary" title="Open the civil drawing PDF (plan set)">Open PDF…</button>
     <input type="file" id="filePdf" accept="application/pdf" hidden>
   </div>
@@ -265,6 +266,20 @@
       <button id="projNewBtn" class="btn">+ New project</button>
       <span class="spacer"></span>
       <button id="projClose" class="btn primary">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Company-shared takeoffs -->
+<div id="company" class="modal hidden">
+  <div class="modal-box wide">
+    <h3>Company takeoffs</h3>
+    <div class="hint">Shared with everyone in your company. <b>Open</b> loads a teammate's takeoff — plan and all. <b>Share current takeoff</b> saves the one you're working on; if a teammate changed the shared copy since you opened it, you'll be warned before overwriting. Needs you to be signed in to OpsFloa.</div>
+    <div id="companyList" class="proj-list"></div>
+    <div class="modal-actions">
+      <button id="companyShareBtn" class="btn primary">⬆ Share current takeoff</button>
+      <span class="spacer"></span>
+      <button id="companyClose" class="btn">Close</button>
     </div>
   </div>
 </div>

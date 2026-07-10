@@ -1,4 +1,4 @@
-const { S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { randomUUID } = require('crypto');
 
@@ -81,4 +81,15 @@ async function deleteByUrl(publicUrl) {
   await client.send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: key }));
 }
 
-module.exports = { uploadBase64, getPresignedUploadUrl, getObjectMetadataByUrl, deleteByUrl };
+// Read an object's bytes back from R2 by its public URL (server-side, so a
+// browser on another origin doesn't need R2 CORS — the API proxies it).
+async function getBytesByUrl(publicUrl) {
+  const key = keyFromPublicUrl(publicUrl);
+  if (!key) return null;
+  const out = await client.send(new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: key }));
+  const chunks = [];
+  for await (const chunk of out.Body) chunks.push(chunk);
+  return Buffer.concat(chunks);
+}
+
+module.exports = { uploadBase64, getPresignedUploadUrl, getObjectMetadataByUrl, deleteByUrl, getBytesByUrl };
