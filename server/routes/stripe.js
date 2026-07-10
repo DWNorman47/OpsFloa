@@ -206,6 +206,31 @@ router.post('/addon', requireAdmin, requirePerm('manage_billing'), async (req, r
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Failed to add the add-on' }); }
 });
 
+// POST /stripe/addon/remove — remove a paid add-on from the existing
+// subscription (prorated) and clear the entitlement, in one click.
+router.post('/addon/remove', requireAdmin, requirePerm('manage_billing'), async (req, res) => {
+  const cfg = ADDON_PRICES[req.body && req.body.addon];
+  if (!cfg) return res.status(400).json({ error: 'Unknown add-on' });
+  try {
+    const r = await pool.query('SELECT stripe_subscription_id FROM companies WHERE id = $1', [req.user.company_id]);
+    const subId = r.rows[0] && r.rows[0].stripe_subscription_id;
+    if (subId) {
+      const stripe = getStripe();
+      const sub = await stripe.subscriptions.retrieve(subId);
+      const item = sub.items.data.find(i => i.price.id === cfg.monthly() || i.price.id === cfg.annual());
+      if (item) {
+        if (sub.items.data.length <= 1) {
+          return res.status(400).json({ error: 'This add-on is the only item on your subscription — cancel the subscription from Manage billing instead.' });
+        }
+        await stripe.subscriptionItems.del(item.id, { proration_behavior: 'create_prorations' });
+      }
+    }
+    // Clear immediately; the customer.subscription.updated webhook also confirms.
+    await pool.query(`UPDATE companies SET ${cfg.col} = false WHERE id = $1`, [req.user.company_id]);
+    res.json({ ok: true });
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Failed to remove the add-on' }); }
+});
+
 // POST /stripe/webhook
 router.post('/webhook', async (req, res) => {
   const sig = req.headers['stripe-signature'];
