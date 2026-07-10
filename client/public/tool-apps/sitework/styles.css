@@ -40,10 +40,13 @@ body { display: flex; flex-direction: column; }
    utilities). When the tools no longer fit beside main, the bottom bar drops to
    its own full-width row and the spacer splits Calculate from the utilities. */
 .tb-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
-.tb-s1, .tb-s2, .tb-s3, .tb-s5 { flex: 0 0 auto; }
-.tb-s4 { display: contents; }                 /* flatten: let #tools size to its content so the
-                                                 next buttons pack up beside it, not below it */
-#tools { flex: 0 1 auto; min-width: 0; }      /* content-width flex item (was full-width, trapping space) */
+.tb-s1, .tb-s2, .tb-s3 { flex: 0 0 auto; }
+/* Tools + undo/redo + menu occupy one full-width wrapping row below the top
+   groups. Flattening tb-s4/#tools/tb-s5 (display:contents) makes every tool an
+   individual item in that row, so when the tools wrap, the following buttons
+   pack onto the leftover space instead of being pushed to a new line below. */
+.tb-actionrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 1 1 100%; min-width: 0; }
+.tb-s4, #tools, .tb-s5 { display: contents; }
 .tb-menu { flex: 0 0 auto; margin-left: auto; } /* ? + Menu always pinned to the far right */
 
 body.nosidebar #sidebar { display: none; }
