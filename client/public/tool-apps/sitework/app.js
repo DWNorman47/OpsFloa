@@ -3432,6 +3432,8 @@ function takeoffRowText(t) {
   };
 }
 
+const collapsedGroups = new Set(); // Quantities-panel group headers collapsed by the user
+
 function renderTakeoffs() {
   const sec = $('secTakeoffs'), list = $('takeoffList');
   if (!sec || !list) return;
@@ -3452,8 +3454,16 @@ function renderTakeoffs() {
       `<button class="wall-del" data-i="${i}" title="Delete this takeoff">✕</button></div>`;
   };
 
-  // Areas group by type: a color-matched subheader carrying the COMBINED SF (+ SY)
-  // for that surface, then that type's individual takeoff rows beneath it.
+  // Collapsible section header carrying the combined total for a group.
+  const groupHeader = (key, swatch, label, right) => {
+    const collapsed = collapsedGroups.has(key);
+    return `<div class="to-group${collapsed ? ' collapsed' : ''}" data-group="${esc(key)}" title="Click to collapse / expand">` +
+      `<span class="to-caret">${collapsed ? '▸' : '▾'}</span>` +
+      (swatch ? `<span class="swatch" style="background:${swatch}"></span>` : '') +
+      `<span class="to-group-label">${esc(label)}</span>${right}</div>`;
+  };
+
+  // Areas group by type: a header with the COMBINED SF (+ SY), then that type's rows.
   let html = '';
   const areaItems = indexed.filter(x => x.t.kind === 'area' && x.t.result);
   if (areaItems.length) {
@@ -3466,20 +3476,25 @@ function renderTakeoffs() {
       groups.set(key, g);
     }
     for (const [label, g] of groups) {
-      html += `<div class="to-group"><span class="swatch" style="background:${g.color}"></span>` +
-        `<span class="to-group-label">${esc(label)}</span>` +
-        `<b>${fmt(g.sf)} sf</b><span class="to-group-sub">${fmt(g.sf / 9)} sy</span></div>` +
-        g.rows.map(rowHtml).join('');
+      const right = `<b>${fmt(g.sf)} sf</b><span class="to-group-sub">${fmt(g.sf / 9)} sy</span>`;
+      html += groupHeader(label, g.color, label, right);
+      if (!collapsedGroups.has(label)) html += g.rows.map(rowHtml).join('');
     }
   }
 
-  // Lines & counts list below (unchanged), under a plain subheader when areas are shown.
+  // Lines & counts under their own collapsible header.
   const others = indexed.filter(x => x.t.kind !== 'area');
   if (others.length) {
-    if (areaItems.length) html += `<div class="to-group to-group-plain"><span class="to-group-label">Lines &amp; counts</span></div>`;
-    html += others.map(rowHtml).join('');
+    const OK = '__lines_counts__';
+    html += groupHeader(OK, null, 'Lines & counts', '');
+    if (!collapsedGroups.has(OK)) html += others.map(rowHtml).join('');
   }
   list.innerHTML = html;
+  list.querySelectorAll('.to-group[data-group]').forEach(h => h.addEventListener('click', () => {
+    const key = h.dataset.group;
+    if (collapsedGroups.has(key)) collapsedGroups.delete(key); else collapsedGroups.add(key);
+    renderTakeoffs();
+  }));
   list.querySelectorAll('.wall-del').forEach(b => b.addEventListener('click', e => {
     e.stopPropagation();
     snapshot();
