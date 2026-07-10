@@ -377,6 +377,32 @@ async function loadPdfFile(file) {
   draw();
 }
 
+// Base64 <-> bytes for embedding the PDF in an exported takeoff file.
+function bytesToBase64(bufOrView) {
+  const bytes = bufOrView instanceof Uint8Array ? bufOrView : new Uint8Array(bufOrView);
+  let bin = '';
+  const chunk = 0x8000; // avoid arg-count limits on fromCharCode
+  for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  return btoa(bin);
+}
+function base64ToBytes(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+// Open a PDF from raw bytes and persist it locally (mirrors loadPdfFile).
+async function loadPdfFromBytes(buf, name) {
+  const copy = buf.slice(0); // pdf.js detaches the buffer it opens
+  try {
+    const key = await hashBytes(copy);
+    await idbFilesPut(key, { name, bytes: copy });
+    state.pdfKey = key;
+  } catch (_) { /* private mode / quota — session still works */ }
+  await openPdfBytes(buf, name);
+}
+
 async function openPdfBytes(buf, name) {
   state.pdf = await pdfjsLib.getDocument({ data: buf }).promise;
   state.pdfName = name;
@@ -3993,14 +4019,24 @@ async function initProjects(liveRestored) {
   } catch (_) { /* IndexedDB unavailable: single-takeoff mode still works */ }
 }
 
-$('btnExport').addEventListener('click', () => {
-  const blob = new Blob([JSON.stringify(projectData(), null, 2)], { type: 'application/json' });
+$('btnExport').addEventListener('click', async () => {
+  const data = projectData();
+  // Embed the plan PDF so the file is self-contained — one file to share.
+  if (state.pdfKey) {
+    try {
+      const rec = await idbFilesGet(state.pdfKey);
+      if (rec && rec.bytes) data.pdf = { name: rec.name || state.pdfName || 'plan.pdf', b64: bytesToBase64(rec.bytes) };
+    } catch (_) { /* embed is best-effort; fall back to a PDF-less export */ }
+  }
+  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = (state.pdfName ? state.pdfName.replace(/\.pdf$/i, '') : 'takeoff') + '.takeoff.json';
   a.click();
   URL.revokeObjectURL(a.href);
-  setMsg('Takeoff saved. The PDF itself is not embedded — keep it next to the .json.');
+  setMsg(data.pdf
+    ? 'Takeoff saved — the plan PDF is embedded, so this one file is all you need to share.'
+    : 'Takeoff saved. No PDF was open to embed — keep the plan PDF next to the .json.');
 });
 
 $('btnImport').addEventListener('click', () => $('fileImport').click());
@@ -4012,7 +4048,10 @@ $('fileImport').addEventListener('change', async e => {
     const preLoad = takeSnap();
     if (applyProjectData(d)) {
       pushSnap(preLoad);
-      if (state.pdf) {
+      if (d.pdf && d.pdf.b64) {
+        // Self-contained export: open the embedded plan PDF.
+        await loadPdfFromBytes(base64ToBytes(d.pdf.b64).buffer, d.pdf.name || d.pdfName || 'plan.pdf');
+      } else if (state.pdf) {
         els.pageExisting.value = state.sheets.existing.pageNum;
         els.pageProposed.value = state.sheets.proposed.pageNum;
         await renderSheet('existing');
