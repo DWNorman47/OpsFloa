@@ -34,6 +34,15 @@ was filed (YYYY-MM-DD). "→ memory: name" points at a related saved memory note
   explicit "overwrite theirs" choice and/or a "checked out by X" lock indicator.
   (2026-07-11)
 
+## ❓ Open questions / decisions for you
+*Blocked on your call before anyone builds.*
+
+- **Share-conflict model** — leave it fork-only, or add an "overwrite theirs"
+  choice and/or a "checked out by X" lock indicator? (see Design flaws)
+  (2026-07-11)
+- **Presigned R2 upload** — pull the trigger now, or stay on the 64 MB base64
+  bandaid until plans actually exceed the ceiling? (see Improvements) (2026-07-10)
+
 ## ✨ Ideas — improvements
 
 - **Presigned direct-to-R2 upload for shared-takeoff PDFs.** Replaces the current
@@ -43,10 +52,6 @@ was filed (YYYY-MM-DD). "→ memory: name" points at a related saved memory note
 
 ## 🚀 Ideas — new features or tools
 
-- **Equipment tracking → Inventory consolidation** — *scoped, has a full M1–M4
-  plan* (`~/.claude/plans/mossy-launching-mist.md`): move the Field equipment log
-  into an Inventory "Equipment" group and add check-out/return, rentals + reminder
-  cron, and maintenance logs. Not started.
 - **Storm/Utility takeoff deep module** — invert-driven storm-drain takeoff as a
   paid add-on; quick-win presets already shipped, deep version deferred.
   → memory: project_storm_utility_module.
@@ -56,6 +61,26 @@ was filed (YYYY-MM-DD). "→ memory: name" points at a related saved memory note
 - **Tools-module roadmap** — full backlog of suggested tools.
   → memory: project_tool_roadmap.
 
+## 📌 Planned / ready-to-build
+*Scoped with a plan; just not started.*
+
+- **Equipment tracking → Inventory consolidation** — full M1–M4 plan at
+  `~/.claude/plans/mossy-launching-mist.md`: move the Field equipment log into an
+  Inventory "Equipment" group and add check-out/return, rentals + a reminder cron,
+  and maintenance logs. (2026-07-11)
+
 ## ✅ Things I need to do (David)
 
 - *(nothing filed yet — add as they come up)*
+
+## 📖 Done / shipped log
+*Landed on `dev`, newest first. (What happens past dev is handled outside this doc.)*
+
+- **2026-07-10/11 — Company takeoff sharing fixed end-to-end.** The 500 that broke
+  it entirely (`users.full_name`), the 413 on large plan PDFs (64 MB body limit +
+  the error surfaced in the modal), and the bug where opening a shared takeoff
+  overwrote a local project — now a "Copy to my projects" prompt (new vs
+  overwrite, with an editable name).
+- **2026-07-09/11 — Sitework takeoff topbar overhaul.** Six-section layout,
+  responsive collapse to icons then wrapping, action-row packing fix, Bid/Log
+  moved next to Calculate, help-modal close-X, Wall Dig hidden.
