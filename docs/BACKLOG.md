@@ -68,10 +68,6 @@ that holds the exhaustive detail.
   64 MB base64-through-the-API approach; removes the ~48 MB ceiling and cuts server
   memory. Caveats: needs R2 bucket CORS + orphaned-object cleanup.
   → memory: project_takeoff_pdf_storage. (2026-07-10)
-- **Recategorize the `manage_equipment` permission.** It still sits in the **Field**
-  module group (label "Equipment log") even though the equipment UI moved to
-  Inventory; `InventoryPage` gates the Equipment group on it cross-module. Cosmetic
-  cleanup for clarity. (2026-07-11)
 
 ## 🚀 Ideas — new features or tools
 
@@ -123,6 +119,11 @@ that holds the exhaustive detail.
 
 ## 📖 Done / shipped log
 *Landed on `dev`, newest first. (What happens past dev is handled outside this doc.)*
+
+- **2026-07-11 — Recategorized `manage_equipment` to the Inventory module.** Moved
+  it Field → Inventory in the permission catalog (label "Equipment log" →
+  "Equipment") and added it to `MODULE_PERMISSIONS.inventory` so a role holding only
+  it can reach the Equipment group; kept in `field` too (no regression).
 
 - **2026-07-10/11 — Company takeoff sharing fixed end-to-end.** The 500 that broke
   it entirely (`users.full_name`), the 413 on large plan PDFs (64 MB body limit +
