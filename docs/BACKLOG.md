@@ -67,9 +67,10 @@ that holds the exhaustive detail.
 - **Presigned direct-to-R2 upload for shared-takeoff PDFs.** Replaces the current
   64 MB base64-through-the-API approach; removes the ~48 MB ceiling and cuts server
   memory. Caveats: needs R2 bucket CORS + orphaned-object cleanup.
-  → memory: project_takeoff_pdf_storage. (2026-07-10) **Note:** now a hard M1
-  dependency of the Plan Room plan (`docs/plans/plan-viewer-markup.md`) — building
-  that tool delivers this improvement as a side effect.
+  → memory: project_takeoff_pdf_storage. (2026-07-10) **Note:** scheduled as M4
+  of the Plan Room plan (`docs/plans/plan-viewer-markup.md`) — full-size plan
+  sets (50–200 MB) need it for library share and go-live, so building that tool
+  delivers this improvement along the way.
 
 ## 🚀 Ideas — new features or tools
 
@@ -118,11 +119,15 @@ that holds the exhaustive detail.
   squares + roof lines/counts + materials math + branded bid. User action before
   M4: create Stripe prices (`STRIPE_PRICE_ROOFING`, `_ANNUAL`).
 - **Plan Room: viewer + markup + measure add-on** — full scoped plan at
-  `docs/plans/plan-viewer-markup.md` (2026-07-11). Own SKU (`addon_planviewer`),
-  **real-time multi-user markups** (ws layer, presence, LWW-per-object), cloud-
-  first sets in R2 — which makes the **presigned upload + R2 CORS** improvement a
-  hard dependency (M1), plus orphan cleanup. Shares M0 with roofing. User actions:
-  Stripe prices (`STRIPE_PRICE_PLANVIEWER`, `_ANNUAL`) + R2 bucket CORS.
+  `docs/plans/plan-viewer-markup.md` (2026-07-11; architecture revised same day:
+  **local-first + ephemeral live sessions**, replacing cloud-first). Own SKU
+  (`addon_planviewer`); projects live in the browser like the takeoffs, company
+  library reuses the takeoffs route; a **generic live-session layer** (ws rooms,
+  presence, server-held snapshots, survives host drops, idle sweep) lets a host
+  "go live" on a project — and later gives the takeoff tools the same button.
+  Presigned upload + R2 CORS land in M4 (full-size plan sets). Shares M0 with
+  roofing. User actions: Stripe prices (`STRIPE_PRICE_PLANVIEWER`, `_ANNUAL`) +
+  R2 bucket CORS at M4.
 - *(queued to scope next, per user: drywall & paint takeoff — rides on the same
   M0 shared engine)*
 
