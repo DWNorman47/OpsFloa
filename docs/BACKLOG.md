@@ -68,6 +68,10 @@ that holds the exhaustive detail.
   64 MB base64-through-the-API approach; removes the ~48 MB ceiling and cuts server
   memory. Caveats: needs R2 bucket CORS + orphaned-object cleanup.
   → memory: project_takeoff_pdf_storage. (2026-07-10)
+- **Recategorize the `manage_equipment` permission.** It still sits in the **Field**
+  module group (label "Equipment log") even though the equipment UI moved to
+  Inventory; `InventoryPage` gates the Equipment group on it cross-module. Cosmetic
+  cleanup for clarity. (2026-07-11)
 
 ## 🚀 Ideas — new features or tools
 
@@ -110,10 +114,8 @@ that holds the exhaustive detail.
 ## 📌 Planned / ready-to-build
 *Scoped with a plan; just not started.*
 
-- **Equipment tracking → Inventory consolidation** — full M1–M4 plan at
-  `~/.claude/plans/mossy-launching-mist.md`: move the Field equipment log into an
-  Inventory "Equipment" group and add check-out/return, rentals + a reminder cron,
-  and maintenance logs. (2026-07-11)
+- *(nothing scoped-and-waiting right now — the Equipment→Inventory plan turned out
+  to be already shipped; see Done log)*
 
 ## ✅ Things I need to do (David)
 
@@ -130,3 +132,8 @@ that holds the exhaustive detail.
 - **2026-07-09/11 — Sitework takeoff topbar overhaul.** Six-section layout,
   responsive collapse to icons then wrapping, action-row packing fix, Bid/Log moved
   next to Calculate, help-modal close-X, Wall Dig hidden.
+- **Earlier (prior session) — Equipment tracking → Inventory consolidation.** The
+  full M1–M4 plan (`~/.claude/plans/mossy-launching-mist.md`) shipped: migration
+  `0125_equipment_tracking.sql`, equipment enums, check-out/return + rentals +
+  maintenance endpoints and cron, the Inventory **Equipment** group, and the Field
+  `#equip` redirect. (verified 2026-07-11)
