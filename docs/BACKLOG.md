@@ -113,23 +113,21 @@ that holds the exhaustive detail.
 ## 📌 Planned / ready-to-build
 *Scoped with a plan; just not started.*
 
-- **Roofing Takeoff add-on** — full scoped plan at `docs/plans/roofing-takeoff.md`
-  (2026-07-11). Own Stripe SKU (`addon_roofing`), shared-engine extraction first
-  (M0, pays off across the next two tools), PDF + aerial-image input, pitch →
-  squares + roof lines/counts + materials math + branded bid. User action before
-  M4: create Stripe prices (`STRIPE_PRICE_ROOFING`, `_ANNUAL`).
-- **Plan Room: viewer + markup + measure add-on** — full scoped plan at
-  `docs/plans/plan-viewer-markup.md` (2026-07-11; architecture revised same day:
-  **local-first + ephemeral live sessions**, replacing cloud-first). Own SKU
-  (`addon_planviewer`); projects live in the browser like the takeoffs, company
-  library reuses the takeoffs route; a **generic live-session layer** (ws rooms,
-  presence, server-held snapshots, survives host drops, idle sweep) lets a host
-  "go live" on a project — and later gives the takeoff tools the same button.
-  Presigned upload + R2 CORS land in M4 (full-size plan sets). Shares M0 with
-  roofing. User actions: Stripe prices (`STRIPE_PRICE_PLANVIEWER`, `_ANNUAL`) +
-  R2 bucket CORS at M4.
-- *(queued to scope next, per user: drywall & paint takeoff — rides on the same
-  M0 shared engine)*
+- **Plan Room platform (MASTER PLAN)** — `docs/plans/plan-viewer-markup.md`
+  (2026-07-11, restructured into two tiers). **Base add-on ~$40/mo**
+  (`addon_planroom`): viewer + markup + measure + company library + generic
+  live-session layer (local-first; host "goes live", sessions survive drops) +
+  flatten/export. **Takeoff layer ~$60/mo** (reuses `addon_takeoff`, requires
+  base, stacked billing): all trade packs + price library + bid engine.
+  Sitework folds in at M8 with an **M9 user-confirmation gate** before the
+  standalone tool redirects (grandfathering decided at cutover). User actions:
+  Stripe Plan Room prices; R2 CORS at M4; the M9 confirmation.
+- **Roofing trade pack** — `docs/plans/roofing-takeoff.md` (2026-07-11,
+  restructured: no own SKU/app — ships inside Plan Room M8). Pitch → squares,
+  roof lines/counts, materials math, aerial-image input for re-roofs, bid
+  defaults. Auto-measure from address stays M-later.
+- *(future trade packs to scope when wanted: drywall & paint, and others from
+  the tools roadmap)*
 
 ## ✅ Things I need to do (David)
 

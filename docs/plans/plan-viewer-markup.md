@@ -1,147 +1,151 @@
-# OpsFloa — Plan Room: viewer + markup + measure (paid add-on, local-first + live sessions)
+# OpsFloa — Plan Room platform: viewer base + takeoff layer
 
-Status: **scoped, not started** (2026-07-11; architecture revised same day —
-replaced the original cloud-first design after weighing its downsides). Depends
-on the **M0 shared-engine extraction** in `docs/plans/roofing-takeoff.md` —
-whichever plan builds first does M0. File references name mechanisms, not line
-numbers.
+Status: **scoped, not started** (2026-07-11; revised twice same day — first from
+cloud-first to local-first + live sessions, then restructured from sibling tools
+into a **two-tier platform**: viewer base add-on + takeoff layer add-on). This is
+now the **master plan** for the plan-tools product line; the roofing plan
+(`docs/plans/roofing-takeoff.md`) is a trade pack under it. File references name
+mechanisms, not line numbers.
 
-## Context
-The strongest horizontal "expensive-incumbent replacement" on the roadmap:
-Bluebeam Revu (~$260–440/user/yr, per-seat) / PlanGrid / Fieldwire. A daily-use
-tool for anyone who works plan sets — GCs, PMs, estimators, supers. ~60% of the
-viewer core exists: the shared engine (canvas/pan/zoom, pdf.js, measure math,
-storage/undo, UI) plus pdf-lib already vendored in the PDF Toolkit app.
+## The product structure (locked with user, 2026-07-11)
+- **Plan Room (base add-on, target $40/mo)** — `addon_planroom`,
+  `STRIPE_PRICE_PLANROOM(_ANNUAL)`. Viewer + markup + **measure** (lengths/
+  areas/counts with values — Bluebeam-Core-equivalent) + company library +
+  live sessions + flatten/export.
+- **Takeoff layer (add-on on the base, target $60/mo)** — reuses the existing
+  **`addon_takeoff`** flag. Turns measurements into money: **all trade packs
+  included** (sitework grading/cut-fill/trench, roofing pitch/squares, future
+  drywall/paint…), price library, bid report, production log (sitework pack).
+- **Stacked billing:** takeoff requires the base ($40 + $60 = $100 all-in).
+  Checkout/one-click-add enforces it: adding takeoff without the base adds both
+  items. Integrated takeoff features gate on BOTH flags.
+- **Competitive frame:** Bluebeam Revu ~$22–37/mo (Studio collaboration costs
+  more); PlanSwift ~$146/mo. "$100/mo for viewer + every-trade takeoff in one
+  app" vs ~$170–180/mo for the incumbent pair.
+- **Sitework fold-in with a user-confirmation gate:** the shipped standalone
+  sitework tool keeps working unchanged (gated on `addon_takeoff` as today)
+  until the user personally confirms the integrated sitework pack works; only
+  then does the standalone tool redirect. Existing `addon_takeoff` holders are
+  grandfathered — exact terms (gift the base? legacy price?) decided at
+  cutover, not now.
 
-## Decisions (locked with user, 2026-07-11)
-1. **Own add-on SKU** — `addon_planviewer`, `STRIPE_PRICE_PLANVIEWER(_ANNUAL)`,
-   mirroring the takeoff/roofing pattern end to end.
-2. **Local-first + ephemeral live sessions** (revised from cloud-first).
-   Projects live in the browser exactly like the takeoff tool — IndexedDB,
-   save/load file, company-cloud library with "Copy to my projects". Realtime
-   arrives as **live sessions**: the host "goes live" on their local project,
-   teammates join and co-mark-up in real time; when the session ends the host
-   owns the result and can optionally publish it to the company cloud, where
-   others can copy it and host their own sessions (the existing fork
-   philosophy, extended).
-3. **Sessions survive host disconnect.** Server holds session state; everyone
-   keeps working, the host rejoins and catches up. Auto-end on idle (no
-   participants ~30 min, tunable), final state preserved for the host.
-4. **The session layer is generic** — it syncs opaque JSON objects per tool
-   (plan markups today; sitework/roofing takeoff shapes later get a "go live"
-   button on the same rails). Gating is per-tool add-on flag.
-
-### Why local-first won (recorded so it isn't relitigated)
-Cloud-first's costs for this user base: no offline on jobsites (solo work must
-work in dead zones), the server becomes load-bearing for daily work, holding
-every customer's confidential plan sets (liability + unbounded storage), data
-behind a lapsed subscription, and no private drafts. Local-first keeps all of
-that, and buys realtime only for the moments people actually want it — a
-session is inherently an online activity. The one capability given up: a
-persistent "living master set" (Bluebeam Studio's long-running project).
-Sessions + published snapshots require re-publish discipline instead. Accepted.
+## Architecture (carried from the local-first revision)
+- **Local-first:** projects in IndexedDB, save/load file, offline solo work.
+  Markups + takeoff objects live in the project JSON — no permanent per-object
+  tables.
+- **Company library:** the takeoff-sharing pattern (`takeoff_projects` route)
+  with a `data.app` marker; "Copy to my projects" prompt (new-vs-overwrite).
+- **Live sessions (generic layer):** host "goes live" on a local project;
+  teammates join over ws (rooms, presence, LWW-per-object ops). Server keeps a
+  rolling snapshot in **`live_sessions.state`** — sessions survive host drops
+  and server restarts (bounded seconds of loss); idle sweep auto-ends; on end,
+  participants get "Save a copy?", host gets "Share to cloud?". Generic =
+  opaque JSON objects per tool, so takeoff objects ride the same rails
+  ("go live on a bid" is an M-later flip, not a build).
+- **Session PDF synergy:** already-shared projects reference their existing R2
+  PDF — instant go-live; otherwise host uploads at start.
+- **Why local-first won (recorded so it isn't relitigated):** cloud-first
+  meant no offline on jobsites, a load-bearing server for daily work, holding
+  every customer's confidential sets (liability + unbounded storage), data
+  hostage to a lapsed subscription, and no private drafts. Live sessions are
+  inherently online; solo work never is. Given up: a persistent "living master
+  set" — sessions + published snapshots + re-publish discipline instead.
 
 ## Data model (migration — take the next free number at build time)
-Markups live **inside the local project JSON** (like takeoff geometry) — no
-permanent markup table, no per-markup DB enum. Only sessions touch the DB:
+- `companies.addon_planroom BOOLEAN NOT NULL DEFAULT false` (addon_takeoff
+  exists).
 - **`live_sessions`**: id, `company_id UUID` (no FK, staging convention),
-  **`tool`** (`planroom|sitework|roofing` — CHECK + shared constant +
-  `docs/db-enums.md` row), host_user_id, name, `pdf_url` (R2 — see PDF note),
-  `state JSONB` (server-side snapshot of the object set), **`status`**
-  (`active|ended` — CHECK + constant + db-enums row), created_at,
-  last_activity_at, ended_at. Index on company_id + status.
-- Company library: **reuse `takeoff_projects`** + `server/routes/takeoffs.js`
-  with a `data.app` marker (`'plan-room'`), lists filtered per tool — same
-  approach as the roofing plan. Generalize the mount gate to "has any of the
-  tool add-ons".
+  **`tool`** (`planroom` now; `sitework|roofing` reserved — CHECK + shared
+  constant + `docs/db-enums.md` row), host_user_id, name, `pdf_url`,
+  `state JSONB`, **`status`** (`active|ended` — CHECK + constant + db-enums
+  row), created_at, last_activity_at, ended_at. Index company_id+status.
 
-## Live-session layer (generic; the net-new server work)
-- **REST** `server/routes/liveSessions.js`: start (create row; PDF ref or
-  upload), list active for company (per tool), join (returns snapshot +
-  pdf ref), end (host or admin), heartbeat.
-- **WS** `server/ws.js`: `ws` on the same HTTP server (`upgrade` handler,
-  `tc_token` auth, path `/ws/session/:id`), rooms per session, presence
-  roster, op broadcast (create/update/delete of opaque objects, LWW per
-  object id). Server applies ops to an in-memory doc and **snapshots to
-  `state` every few seconds/ops** — a server restart loses at most the last
-  few seconds and the room rebuilds from the snapshot. Late joiners and the
-  rejoining host load snapshot + live tail.
-- **Idle sweeper**: interval job auto-ends sessions with no participants past
-  the timeout; final snapshot stays on the row for the host to reclaim.
-- **Session PDF:** if the project is already company-shared, its PDF is
-  already in R2 — "go live" references it and starts instantly. Otherwise the
-  host uploads at go-live. **Full-size plan sets (50–200 MB) exceed the JSON
-  body path (~48 MB PDF max), so the presigned three-step upload (pattern in
-  `server/routes/recordings.js`, `getPresignedUploadUrl` in `server/r2.js`)
-  is needed for the Plan Room's library share AND go-live** — scheduled M4,
-  with its known caveats (R2 bucket CORS = infra action; orphan sweep).
-- **End-of-session UX:** host ends → participants get "Save a copy to my
-  projects?"; host gets "Share to company cloud?". Attribution (author +
-  timestamp) rides on every object created in a session.
+## Server
+- `server/routes/liveSessions.js`: start / list-active / join (snapshot +
+  pdf ref) / end / heartbeat. Gate = the hosting tool's add-on flag(s).
+- `server/ws.js`: `ws` on the same HTTP server (`upgrade`, `tc_token` auth),
+  rooms per session, presence, op broadcast, periodic snapshot write; idle
+  sweeper. (Greenfield — chat polls; no ws exists today.)
+- Library route gate generalized: "has any plan-tools add-on", lists filtered
+  by `data.app`.
+- Stripe: `addon_planroom` product/prices; webhook mapping; `ADDON_PRICES`;
+  one-click add/remove **with the takeoff-requires-base rule**; session +
+  AuthContext + superadmin toggles + BillingPanel cards ("+ Plan Room",
+  "+ Takeoff (requires Plan Room)").
 
-## Client — `client/public/tool-apps/planroom/` (on the shared engine + pdf-lib)
-- **Viewer:** open local PDF; fast page navigation — lazy cached thumbnail
-  strip, page jump, rotate, fit/zoom. Projects in IndexedDB like sitework.
-- **Markups:** cloud, rect/ellipse, arrow/line, freehand, highlighter, text,
-  callout; select/move/resize/delete; color + line-weight; per-page. Text
-  entry via DOM overlay input. Filterable **markup list panel** (page/author/
-  kind, click to jump).
-- **Measure:** per-sheet scale calibration + length/area/count markups with
-  values (engine-measure).
-- **Company library:** ☁ panel with the takeoff pattern — share, "Copy to my
-  projects" (new-vs-overwrite prompt), delete; **LIVE badge** on sets with an
-  active session + Join button.
-- **Live session UX:** "Go Live" button → session banner (name, roster,
-  End/Leave), teammate markups appear live with author colors; reconnect
-  banner on socket drop (REST + snapshot keep it recoverable).
-- **Export:** pdf-lib flatten for download/print; markup summary CSV.
-
-## Platform wiring (mirror the takeoff add-on)
-Migration adds `companies.addon_planviewer`; stripe.js plans/status/checkout/
-webhook + `ADDON_PRICES` + one-click add/remove; session + AuthContext flag;
-superadmin toggle; BillingPanel card ("+ Plan Room add-on"); ToolsPage tab
-hidden without add-on/trial/exempt.
-**User actions:** Stripe product/prices (`STRIPE_PRICE_PLANVIEWER`, `_ANNUAL`)
-in Render env; **R2 bucket CORS** when M4's presigned upload lands.
+## Client — `client/public/tool-apps/planroom/` (one integrated app)
+Built on the **M0 shared engine** (see roofing plan — whichever builds first
+does M0; the sitework monolith's leftovers become the sitework trade pack).
+- **Base tier UI:** viewer (lazy thumbnail strip, page nav, rotate, fit/zoom),
+  markup toolset (cloud, rect/ellipse, arrow/line, freehand, highlight, text,
+  callout; select/move/resize; DOM-overlay text entry), filterable markup list
+  panel, per-sheet scale + measure (length/area/count with values), ☁ library
+  with LIVE badges + Join, Go Live UX (banner, roster, End/Leave, reconnect),
+  pdf-lib flatten + markup CSV. PDF **and raster image** input (engine-doc).
+- **Takeoff tier UI (gated on both flags):** trade-pack picker, priced
+  quantities (the measure objects gain material/pricing configs), price
+  library, bid report, production log. Packs:
+  - **Sitework pack** = today's sitework domain (contours/grading/cut-fill,
+    trench/line/count presets, walls) ported onto the integrated app.
+  - **Roofing pack** = `docs/plans/roofing-takeoff.md` domain spec.
+  - Future: drywall/paint, others from the roadmap.
 
 ## Milestones (committable slices, all to `dev`, push after each)
-- **M0** — shared-engine extraction (if roofing hasn't done it; see that plan).
-- **M1 — viewer core (local-first):** open PDF, thumbnails/nav, projects,
-  save/load file. Fully offline-capable from day one.
-- **M2 — markups:** full toolset + markup list panel + undo, in project data.
-- **M3 — measure:** calibration + measure markups.
-- **M4 — company library:** takeoffs-route reuse w/ marker + the presigned
-  upload upgrade (+ CORS, orphan sweep) so full-size sets share.
-- **M5 — live sessions:** `live_sessions` + REST + ws + sweeper + Go
-  Live/join/end UX. Generic layer, wired for `tool='planroom'` only.
+- **M0 — shared engine extraction** (from the sitework monolith; sitework tool
+  stays green throughout — see roofing plan for the module list and rules).
+- **M1 — viewer core (local-first):** open PDF/image, thumbnails/nav,
+  projects, save/load. Offline-capable from day one.
+- **M2 — markups:** toolset + list panel + undo.
+- **M3 — measure:** calibration + length/area/count with values (base tier).
+- **M4 — company library:** route reuse w/ marker + **presigned upload**
+  (+ R2 CORS, orphan sweep) for full-size sets (50–200 MB).
+- **M5 — live sessions:** table + REST + ws + sweeper + Go Live/join/end UX.
 - **M6 — export:** pdf-lib flatten + markup CSV; print.
-- **M7 — platform:** add-on wiring end to end; tool goes live gated.
-- **M-later:** "Go live" on sitework/roofing takeoffs (the generic layer's
-  payoff), revision compare/overlay (port sitework ghost+align), text search,
-  live cursors, external guest sessions (big auth surface, own decision).
+- **M7 — platform:** `addon_planroom` wiring end to end + stacked-billing rule;
+  base tier goes live gated. (Takeoff features not yet in the app — the
+  standalone sitework tool is untouched.)
+- **M8 — takeoff layer:** bid/price engine integration + **sitework pack**
+  ported + **roofing pack** built (its plan's M1–M3 domain scope).
+- **M9 — transition (user-gated):** parity checklist vs the standalone
+  sitework tool → **user confirms the integrated pack works** → standalone
+  tool redirects to Plan Room; grandfathering terms decided and executed.
+- **M-later:** drywall/paint pack, "go live" enabled for takeoff objects,
+  revision compare/overlay (port ghost+align), text search, live cursors,
+  external guest sessions (big auth surface, own decision).
+
+## User actions
+- Stripe: create Plan Room product/prices (`STRIPE_PRICE_PLANROOM`,
+  `_ANNUAL`, ~$40/mo) — and at M8, decide whether the existing takeoff Stripe
+  product's price moves to $60 (new price IDs; existing subscribers stay on
+  their legacy price automatically).
+- R2 bucket CORS when M4's presigned upload lands.
+- M9's cutover confirmation is explicitly yours.
 
 ## Verification
-- **Offline:** full solo workflow (open/markup/measure/save) with the network
-  cut; only ☁ and Go Live require connectivity.
-- **Markups:** create/edit/delete each kind; reload → identical render.
-- **Library:** 150 MB set shares via presigned PUT; copy-down prompt works;
-  libraries stay separated per tool marker.
-- **Sessions:** two browsers see each other's ops <1s; **kill the host** →
-  others keep working, host rejoins and converges; server restart → room
-  rebuilds from snapshot (bounded loss); idle sweep ends abandoned sessions;
-  end-of-session prompts fire; no add-on → REST 403 + WS upgrade rejected.
-- **Export:** flattened PDF renders markups correctly in an external viewer.
+- **Offline:** full solo workflow with the network cut; only ☁/Go Live need it.
+- **Tiering:** base-only company sees no takeoff UI and gets 403 on takeoff
+  surfaces; adding takeoff without base adds both items; both-flags company
+  sees packs. Superadmin overrides work per flag.
+- **Sessions:** two browsers <1s op propagation; host kill → others continue,
+  host rejoin converges; server restart → snapshot rebuild; idle sweep; end
+  prompts; gating on ws upgrade.
+- **Library:** 150 MB presigned share; copy-down; per-tool list separation.
+- **Sitework parity (M9 gate):** a real project produces identical quantities
+  and bid totals in both tools before any redirect.
 - **Perf:** 200-page set — lazy thumbnails, warm page switch under ~1s.
 
 ## Risks
-- **Scope = Revu.** Non-goals at MVP: no OCR, no forms, no document
-  folders/DMS, no 3D, no external guests, no persistent living master set.
-- **Websocket-on-Render behavior** (idle timeouts, restarts): the
-  snapshot-in-DB design bounds the damage to seconds; reconnect must be solid.
-- **Snapshot-loss window:** a crash between snapshots drops the last few
-  seconds of a session — document it, keep the interval small.
-- **Two sharing modes confusing users** (cloud copy vs live session): the ☁
-  panel presents both in one place (LIVE badge on the same rows) to keep one
-  mental model.
-- **Big-PDF performance:** render caching + lazy thumbnails from M1; test with
-  a real 200-page set before M2, not after.
+- **Scope = Revu.** Non-goals at MVP: no OCR, forms, DMS folders, 3D, guests,
+  persistent living master set.
+- **M8 is the big lift** — porting sitework's grading/cut-fill is the hardest
+  single piece; M0's discipline (domain glue cleanly separated) is what makes
+  it tractable. Don't start M8 until M0's boundaries have proven themselves.
+- **Transition trust:** your own company uses the standalone tool — the M9
+  user-confirmation gate exists so the fold-in can never strand active work.
+- **Websocket-on-Render** restarts/timeouts: snapshot design bounds loss;
+  reconnect must be solid.
+- **Two sharing modes** (cloud copy vs live session): one ☁ panel with LIVE
+  badges keeps a single mental model.
+- **Price anchoring:** $40 sits at Revu-Complete level — the collaboration
+  (sessions, library) and platform integration are the justification; revisit
+  after first sales.
