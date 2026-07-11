@@ -66,13 +66,14 @@ const PERMISSIONS = [
   { key: 'manage_punchlist', group: 'field', label: 'Punchlist items' },
   { key: 'manage_rfis', group: 'field', label: 'RFIs' },
   { key: 'manage_safety_checklists', group: 'field', label: 'Safety checklists' },
-  { key: 'manage_equipment', group: 'field', label: 'Equipment log' },
   { key: 'manage_incidents', group: 'field', label: 'Incident reports' },
   { key: 'manage_inspections', group: 'field', label: 'Inspections' },
 
   // Inventory
   { key: 'view_inventory', group: 'inventory', label: 'View inventory' },
   { key: 'manage_inventory', group: 'inventory', label: 'Manage inventory' },
+  // Equipment tracking moved from Field into the Inventory module.
+  { key: 'manage_equipment', group: 'inventory', label: 'Equipment' },
 
   // Company
   { key: 'manage_settings', group: 'company', label: 'Edit company settings' },
