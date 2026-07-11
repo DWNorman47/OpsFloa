@@ -110,8 +110,13 @@ that holds the exhaustive detail.
 ## 📌 Planned / ready-to-build
 *Scoped with a plan; just not started.*
 
-- *(nothing scoped-and-waiting right now — the Equipment→Inventory plan turned out
-  to be already shipped; see Done log)*
+- **Roofing Takeoff add-on** — full scoped plan at `docs/plans/roofing-takeoff.md`
+  (2026-07-11). Own Stripe SKU (`addon_roofing`), shared-engine extraction first
+  (M0, pays off across the next two tools), PDF + aerial-image input, pitch →
+  squares + roof lines/counts + materials math + branded bid. User action before
+  M4: create Stripe prices (`STRIPE_PRICE_ROOFING`, `_ANNUAL`).
+- *(queued to scope next, per user: Bluebeam-style plan viewer/markup, then
+  drywall & paint takeoff — both ride on the M0 shared engine)*
 
 ## ✅ Things I need to do (David)
 
