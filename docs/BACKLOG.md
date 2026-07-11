@@ -67,7 +67,9 @@ that holds the exhaustive detail.
 - **Presigned direct-to-R2 upload for shared-takeoff PDFs.** Replaces the current
   64 MB base64-through-the-API approach; removes the ~48 MB ceiling and cuts server
   memory. Caveats: needs R2 bucket CORS + orphaned-object cleanup.
-  → memory: project_takeoff_pdf_storage. (2026-07-10)
+  → memory: project_takeoff_pdf_storage. (2026-07-10) **Note:** now a hard M1
+  dependency of the Plan Room plan (`docs/plans/plan-viewer-markup.md`) — building
+  that tool delivers this improvement as a side effect.
 
 ## 🚀 Ideas — new features or tools
 
@@ -115,8 +117,14 @@ that holds the exhaustive detail.
   (M0, pays off across the next two tools), PDF + aerial-image input, pitch →
   squares + roof lines/counts + materials math + branded bid. User action before
   M4: create Stripe prices (`STRIPE_PRICE_ROOFING`, `_ANNUAL`).
-- *(queued to scope next, per user: Bluebeam-style plan viewer/markup, then
-  drywall & paint takeoff — both ride on the M0 shared engine)*
+- **Plan Room: viewer + markup + measure add-on** — full scoped plan at
+  `docs/plans/plan-viewer-markup.md` (2026-07-11). Own SKU (`addon_planviewer`),
+  **real-time multi-user markups** (ws layer, presence, LWW-per-object), cloud-
+  first sets in R2 — which makes the **presigned upload + R2 CORS** improvement a
+  hard dependency (M1), plus orphan cleanup. Shares M0 with roofing. User actions:
+  Stripe prices (`STRIPE_PRICE_PLANVIEWER`, `_ANNUAL`) + R2 bucket CORS.
+- *(queued to scope next, per user: drywall & paint takeoff — rides on the same
+  M0 shared engine)*
 
 ## ✅ Things I need to do (David)
 
