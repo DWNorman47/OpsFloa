@@ -4262,17 +4262,25 @@ async function openCompanyTakeoff(id) {
     const res = await apiFetch('/' + id);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const t = await res.json();
-    const preLoad = takeSnap();
-    if (!applyProjectData(t.data || {})) { setMsg('That shared takeoff could not be read.'); return; }
-    pushSnap(preLoad);
+    if (!t.data || t.data.app !== 'excavation-bid-calculator') { setMsg('That shared takeoff could not be read.'); return; }
+    // Open the shared takeoff as its OWN local project — never overwrite the
+    // project that happens to be current. Flush the current one to IndexedDB,
+    // then switch to a fresh local slot before applying the shared data.
+    await syncProjectNow();
+    state.projectId = randId();
+    state.pdf = null; state.pdfKey = null;
+    undoStack.length = 0; redoStack.length = 0;
+    els.btnUndo.disabled = true; els.btnRedo.disabled = true;
+    applyProjectData(t.data);
     state.serverId = t.id; state.serverVersion = t.version; state.projectName = t.name;
+    try { localStorage.setItem('ebc-current', state.projectId); } catch (_) {}
     if (t.pdf_url) {
       const pres = await apiFetch('/' + id + '/pdf'); // PDF proxied through the API (no R2 CORS)
       if (pres.ok) { const pj = await pres.json(); await loadPdfFromBytes(base64ToBytes(pj.b64).buffer, pj.name || t.pdf_name || 'plan.pdf'); }
     }
     saveLocal(); updateProjectBtn(); draw();
     $('company').classList.add('hidden');
-    setMsg(`Opened “${t.name}” from the company library.`);
+    setMsg(`Opened “${t.name}” from the company library as its own local project.`);
   } catch (e) { setMsg('Could not open that shared takeoff: ' + e.message); }
 }
 
