@@ -2076,11 +2076,6 @@ $('btnProjNew').addEventListener('click', async () => {
   els.projects.classList.add('hidden');
   await newProject(name);
 });
-$('btnNew').addEventListener('click', async () => {
-  const name = await modals.askText('New project', 'Name the project', '');
-  if (name === null) return;
-  await newProject(name);
-});
 
 /* ============================== Save / load file ============================== */
 
