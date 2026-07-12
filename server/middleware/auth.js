@@ -217,7 +217,7 @@ async function requireTakeoffAddon(req, res, next) {
 async function requirePlanToolsAddon(req, res, next) {
   try {
     const r = await pool.query(
-      'SELECT plan, subscription_status, addon_takeoff, trial_ends_at FROM companies WHERE id = $1',
+      'SELECT plan, subscription_status, addon_takeoff, addon_planroom, trial_ends_at FROM companies WHERE id = $1',
       [req.user.company_id]
     );
     const company = r.rows[0];
@@ -230,7 +230,7 @@ async function requirePlanToolsAddon(req, res, next) {
     if (company.subscription_status === 'canceled' || company.subscription_status === 'trial_expired') {
       return res.status(403).json({ error: 'Subscription required', code: 'subscription_required' });
     }
-    if (company.subscription_status === 'exempt' || company.subscription_status === 'trial' || company.addon_takeoff) {
+    if (company.subscription_status === 'exempt' || company.subscription_status === 'trial' || company.addon_takeoff || company.addon_planroom) {
       req.company = company;
       return next();
     }

@@ -72,6 +72,7 @@ export default function BillingPanel() {
   const [workerCount, setWorkerCount] = useState(15);
   const [addQbo, setAddQbo] = useState(false);
   const [addTakeoff, setAddTakeoff] = useState(false);
+  const [addPlanroom, setAddPlanroom] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [workerInputMode, setWorkerInputMode] = useState('slider');
   const [workerDraft, setWorkerDraft] = useState('');
@@ -98,6 +99,10 @@ export default function BillingPanel() {
         ...(addTakeoff && plans?.takeoff ? {
           add_takeoff: true,
           takeoff_price_id: annual ? plans.takeoff.annual_price_id : plans.takeoff.monthly_price_id,
+        } : {}),
+        ...(addPlanroom && plans?.planroom ? {
+          add_planroom: true,
+          planroom_price_id: annual ? plans.planroom.annual_price_id : plans.planroom.monthly_price_id,
         } : {}),
       });
       window.location.href = r.data.url;
@@ -130,6 +135,7 @@ export default function BillingPanel() {
       const r = await api.get('/stripe/status');
       setStatus(r.data);
       if (addon === 'takeoff') updateUser?.({ addon_takeoff: true });
+      if (addon === 'planroom') updateUser?.({ addon_planroom: true });
       if (addon === 'qbo') updateUser?.({ addon_qbo: true });
     } catch (err) {
       setBillingError(err.response?.data?.error || 'Could not add the add-on.');
@@ -147,6 +153,7 @@ export default function BillingPanel() {
       const r = await api.get('/stripe/status');
       setStatus(r.data);
       if (addon === 'takeoff') updateUser?.({ addon_takeoff: false });
+      if (addon === 'planroom') updateUser?.({ addon_planroom: false });
       if (addon === 'qbo') updateUser?.({ addon_qbo: false });
     } catch (err) {
       setBillingError(err.response?.data?.error || 'Could not remove the add-on.');
@@ -175,6 +182,7 @@ export default function BillingPanel() {
   const currentPlan = status?.plan || 'free';
   const hasQbo = status?.addon_qbo;
   const hasTakeoff = status?.addon_takeoff;
+  const hasPlanroom = status?.addon_planroom;
   const isActive = sub === 'active';
   const isTrial = sub === 'trial';
   const isTrialExpired = sub === 'trial_expired';
@@ -245,6 +253,7 @@ export default function BillingPanel() {
           </button>
 
           {[
+            { key: 'planroom', title: 'Plan Room', owned: hasPlanroom, plan: plans?.planroom, desc: 'View, mark up, and measure plan sets in the browser, with a company library and live share sessions.' },
             { key: 'takeoff', title: 'Sitework Takeoff', owned: hasTakeoff, plan: plans?.takeoff, desc: 'Plan takeoffs from civil drawings into a priced, branded bid, with company-shared projects.' },
             { key: 'qbo', title: 'QuickBooks Online', owned: hasQbo, plan: plans?.qbo, desc: 'Push invoices to QuickBooks and keep their payment status in sync.' },
           ].map(a => {
@@ -495,6 +504,23 @@ export default function BillingPanel() {
               {t.billingQBODesc}
             </div>
           </div>
+
+          {!hasPlanroom && plans?.planroom?.monthly_price_id && (
+            <div style={s.addonCard}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                <input type="checkbox" checked={addPlanroom} onChange={e => setAddPlanroom(e.target.checked)}
+                  style={{ accentColor: '#d97706', width: 16, height: 16 }} />
+                <span style={s.addonTitle}>
+                  + Plan Room add-on &nbsp;
+                  <span style={{ fontSize: 18, fontWeight: 800, color: '#d97706' }}>${plans?.planroom?.monthly ?? '—'}</span>
+                  <span style={{ fontSize: 13, color: '#6b7280' }}>/mo</span>
+                </span>
+              </label>
+              <div style={{ paddingLeft: 26, fontSize: 12, color: '#6b7280', lineHeight: 1.5, marginTop: 6 }}>
+                View, mark up, and measure plan sets right in the browser — clouds, callouts, lengths, areas, counts — with a company library, live share sessions, and flattened-PDF export.
+              </div>
+            </div>
+          )}
 
           {!hasTakeoff && plans?.takeoff?.monthly_price_id && (
             <div style={s.addonCard}>

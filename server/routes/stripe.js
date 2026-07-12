@@ -38,17 +38,25 @@ router.get('/plans', requireAdmin, async (req, res) => {
     monthly: null,
     annual: null,
   };
+  const planroom = {
+    monthly_price_id: process.env.STRIPE_PRICE_PLANROOM || null,
+    annual_price_id: process.env.STRIPE_PRICE_PLANROOM_ANNUAL || null,
+    monthly: null,
+    annual: null,
+  };
   try {
     const stripe = getStripe();
-    if (takeoff.monthly_price_id) {
-      const p = await stripe.prices.retrieve(takeoff.monthly_price_id);
-      if (p.unit_amount != null) takeoff.monthly = p.unit_amount / 100;
+    for (const addon of [takeoff, planroom]) {
+      if (addon.monthly_price_id) {
+        const p = await stripe.prices.retrieve(addon.monthly_price_id);
+        if (p.unit_amount != null) addon.monthly = p.unit_amount / 100;
+      }
+      if (addon.annual_price_id) {
+        const p = await stripe.prices.retrieve(addon.annual_price_id);
+        if (p.unit_amount != null) addon.annual = p.unit_amount / 100;
+      }
     }
-    if (takeoff.annual_price_id) {
-      const p = await stripe.prices.retrieve(takeoff.annual_price_id);
-      if (p.unit_amount != null) takeoff.annual = p.unit_amount / 100;
-    }
-  } catch (err) { req.log.warn({ err: { message: err.message } }, 'takeoff price fetch failed'); }
+  } catch (err) { req.log.warn({ err: { message: err.message } }, 'add-on price fetch failed'); }
 
   res.json({
     starter: {
@@ -74,6 +82,7 @@ router.get('/plans', requireAdmin, async (req, res) => {
       annual: 250, // 2 months free
     },
     takeoff,
+    planroom,
   });
 });
 
@@ -84,7 +93,7 @@ router.get('/plans', requireAdmin, async (req, res) => {
 router.get('/status', requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT subscription_status, trial_ends_at, plan, addon_qbo, addon_takeoff, billing_cycle, stripe_customer_id, stripe_subscription_id FROM companies WHERE id = $1',
+      'SELECT subscription_status, trial_ends_at, plan, addon_qbo, addon_takeoff, addon_planroom, billing_cycle, stripe_customer_id, stripe_subscription_id FROM companies WHERE id = $1',
       [req.user.company_id]
     );
     res.json(result.rows[0] || {});
@@ -93,7 +102,7 @@ router.get('/status', requireAdmin, async (req, res) => {
 
 // POST /stripe/checkout — create Stripe Checkout session
 router.post('/checkout', requireAdmin, requirePerm('manage_billing'), async (req, res) => {
-  const { price_id, worker_price_id, worker_count, add_qbo, qbo_price_id, add_takeoff, takeoff_price_id } = req.body;
+  const { price_id, worker_price_id, worker_count, add_qbo, qbo_price_id, add_takeoff, takeoff_price_id, add_planroom, planroom_price_id } = req.body;
   if (!price_id) return res.status(400).json({ error: 'price_id required' });
   try {
     const stripe = getStripe();
@@ -129,6 +138,9 @@ router.post('/checkout', requireAdmin, requirePerm('manage_billing'), async (req
     }
     if (add_takeoff && takeoff_price_id) {
       lineItems.push({ price: takeoff_price_id, quantity: 1 });
+    }
+    if (add_planroom && planroom_price_id) {
+      lineItems.push({ price: planroom_price_id, quantity: 1 });
     }
 
     const session = await stripe.checkout.sessions.create({
@@ -166,8 +178,9 @@ router.post('/portal', requireAdmin, requirePerm('manage_billing'), async (req, 
 // column names are a fixed allowlist (never user input) so interpolating them
 // into the UPDATE below is safe.
 const ADDON_PRICES = {
-  qbo:     { monthly: () => process.env.STRIPE_PRICE_QBO,     annual: () => process.env.STRIPE_PRICE_QBO_ANNUAL,     col: 'addon_qbo' },
-  takeoff: { monthly: () => process.env.STRIPE_PRICE_TAKEOFF, annual: () => process.env.STRIPE_PRICE_TAKEOFF_ANNUAL, col: 'addon_takeoff' },
+  qbo:      { monthly: () => process.env.STRIPE_PRICE_QBO,      annual: () => process.env.STRIPE_PRICE_QBO_ANNUAL,      col: 'addon_qbo' },
+  takeoff:  { monthly: () => process.env.STRIPE_PRICE_TAKEOFF,  annual: () => process.env.STRIPE_PRICE_TAKEOFF_ANNUAL,  col: 'addon_takeoff' },
+  planroom: { monthly: () => process.env.STRIPE_PRICE_PLANROOM, annual: () => process.env.STRIPE_PRICE_PLANROOM_ANNUAL, col: 'addon_planroom' },
 };
 
 // POST /stripe/addon — add a paid add-on to the company's EXISTING subscription
@@ -257,10 +270,12 @@ router.post('/webhook', async (req, res) => {
         const hasProAddon = items.some(i => proIds.includes(i.price.id));
         const takeoffIds = [process.env.STRIPE_PRICE_TAKEOFF, process.env.STRIPE_PRICE_TAKEOFF_ANNUAL].filter(Boolean);
         const hasTakeoff = items.some(i => takeoffIds.includes(i.price.id));
+        const planroomIds = [process.env.STRIPE_PRICE_PLANROOM, process.env.STRIPE_PRICE_PLANROOM_ANNUAL].filter(Boolean);
+        const hasPlanroom = items.some(i => planroomIds.includes(i.price.id));
         const mrrCents = calcMrrCents(items);
         await pool.query(
-          'UPDATE companies SET stripe_subscription_id = $1, subscription_status = $2, plan = $3, addon_qbo = $4, addon_takeoff = $5, mrr_cents = $6 WHERE id = $7',
-          [obj.subscription, 'active', plan, hasProAddon, hasTakeoff, mrrCents, companyId]
+          'UPDATE companies SET stripe_subscription_id = $1, subscription_status = $2, plan = $3, addon_qbo = $4, addon_takeoff = $5, addon_planroom = $6, mrr_cents = $7 WHERE id = $8',
+          [obj.subscription, 'active', plan, hasProAddon, hasTakeoff, hasPlanroom, mrrCents, companyId]
         );
       }
     } else if (event.type === 'customer.subscription.updated') {
@@ -272,21 +287,23 @@ router.post('/webhook', async (req, res) => {
         const hasProAddon = items.some(i => proIds.includes(i.price.id));
         const takeoffIds = [process.env.STRIPE_PRICE_TAKEOFF, process.env.STRIPE_PRICE_TAKEOFF_ANNUAL].filter(Boolean);
         const hasTakeoff = items.some(i => takeoffIds.includes(i.price.id));
+        const planroomIds = [process.env.STRIPE_PRICE_PLANROOM, process.env.STRIPE_PRICE_PLANROOM_ANNUAL].filter(Boolean);
+        const hasPlanroom = items.some(i => planroomIds.includes(i.price.id));
         const mrrCents = calcMrrCents(items);
         // Map Stripe's subscription status (`trialing`, `incomplete`,
         // `unpaid`, etc.) onto our internal set before writing — the
         // companies.subscription_status column is CHECK-constrained and
         // a raw Stripe value would fail the constraint.
         await pool.query(
-          'UPDATE companies SET subscription_status = $1, plan = $2, addon_qbo = $3, addon_takeoff = $4, mrr_cents = $5 WHERE id = $6',
-          [mapStripeStatus(obj.status), plan, hasProAddon, hasTakeoff, mrrCents, companyId]
+          'UPDATE companies SET subscription_status = $1, plan = $2, addon_qbo = $3, addon_takeoff = $4, addon_planroom = $5, mrr_cents = $6 WHERE id = $7',
+          [mapStripeStatus(obj.status), plan, hasProAddon, hasTakeoff, hasPlanroom, mrrCents, companyId]
         );
       }
     } else if (event.type === 'customer.subscription.deleted') {
       const companyId = obj.metadata?.company_id;
       if (companyId) {
         await pool.query(
-          'UPDATE companies SET subscription_status = $1, addon_qbo = false, addon_takeoff = false WHERE id = $2',
+          'UPDATE companies SET subscription_status = $1, addon_qbo = false, addon_takeoff = false, addon_planroom = false WHERE id = $2',
           ['canceled', companyId]
         );
       }
