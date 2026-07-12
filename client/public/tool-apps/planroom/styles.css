@@ -167,6 +167,32 @@ body.nothumbs #thumbRail { display: none; }
 .mk-row .pg { color: var(--muted); flex: 0 0 auto; }
 .mk-empty { color: var(--muted); font-size: 12px; padding: 10px; }
 
+/* ---------- roofing bid ---------- */
+.bid-box { max-width: 720px; }
+#bidTableWrap { max-height: 52vh; overflow-y: auto; margin-top: 10px; }
+#bidTable { width: 100%; border-collapse: collapse; font-size: 13px; }
+#bidTable th, #bidTable td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; }
+#bidTable th { color: var(--muted); font-weight: 600; }
+#bidTable td.num, #bidTable th.num { text-align: right; font-variant-numeric: tabular-nums; }
+#bidTable input.price {
+  width: 74px; text-align: right; background: var(--panel2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 5px; padding: 3px 5px;
+}
+.bid-foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 12px; flex-wrap: wrap; }
+.bid-foot input { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 3px 5px; margin: 0 3px; }
+#bidTotals { text-align: right; font-size: 14px; line-height: 1.7; }
+#bidTotals .grand { font-weight: 800; font-size: 18px; color: var(--accent); }
+
+@media print {
+  body.printing-bid > *:not(#roofBid) { display: none !important; }
+  body.printing-bid #roofBid { position: static; display: block !important; background: #fff; }
+  body.printing-bid #roofBid .modal-box { max-width: none; box-shadow: none; border: none; background: #fff; color: #000; padding: 0; }
+  body.printing-bid #roofBid h3, body.printing-bid #roofBid td, body.printing-bid #roofBid th, body.printing-bid #roofBid label, body.printing-bid #bidTotals { color: #000; }
+  body.printing-bid #bidTableWrap { max-height: none; overflow: visible; }
+  body.printing-bid #roofBid .modal-actions, body.printing-bid .bid-foot label { display: none; }
+  body.printing-bid #bidTable input.price { border: none; background: none; color: #000; }
+}
+
 /* ---------- modals (sitework idiom) ---------- */
 .modal {
   position: fixed; inset: 0; background: rgba(0,0,0,.55);

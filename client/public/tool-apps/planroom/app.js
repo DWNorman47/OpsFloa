@@ -8,7 +8,7 @@
 import { createViewport } from '../shared/engine-view.js?v=1';
 import { createStore, randId, hashBytes } from '../shared/engine-store.js?v=1';
 import { openDoc, bytesToBase64, base64ToBytes, defaultRenderScale } from '../shared/engine-doc.js?v=1';
-import { createModals, esc, fmt } from '../shared/engine-ui.js?v=1';
+import { createModals, esc, fmt, money } from '../shared/engine-ui.js?v=1';
 import { distToPolyline, pointSegDist, simplifyPts, polyLengthFt, polygonAreaFt2, pointInPolygon, dist } from '../shared/engine-measure.js?v=1';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '../shared/pdf.worker.min.js';
@@ -31,6 +31,8 @@ const state = {
   serverVersion: null, // its optimistic-concurrency version at open/last save
   roofPitch: 6,     // takeoff layer: main roof pitch (rise/12) for edge factors
   roofWaste: 12,    // takeoff layer: waste % applied to squares
+  roofPrices: {},   // takeoff layer: unit-price overrides by bid-line key
+  roofOP: 15,       // takeoff layer: overhead & profit %
 };
 
 const store = createStore('planroom');
@@ -107,6 +109,39 @@ function edgeFactor(etype, pitch) {
 }
 const planeSquares = (m, ftPerPx) => polygonAreaFt2(m.pts, ftPerPx) * slopeFactor(m.pitch) / 100;
 const edgeFt = (m, ftPerPx) => polyLengthFt(m.pts, ftPerPx) * edgeFactor(m.etype, state.roofPitch);
+
+// Roofing bid lines: materials/labor derived from the live takeoff, with
+// editable unit prices. Sensible defaults; every quantity traces to the roof.
+const DEFAULT_ROOF_PRICES = {
+  tearoff: 50, install: 125, shingles: 38, ridgecap: 4.5, underlayment: 45,
+  icewater: 1.75, dripedge: 1.25, starter: 1.1,
+  item_boot: 30, item_vent: 35, item_skylight: 350, item_chimney: 450,
+};
+const priceFor = key => (state.roofPrices[key] != null ? state.roofPrices[key] : (DEFAULT_ROOF_PRICES[key] || 0));
+
+function roofBidLines() {
+  const T = roofingTotals();
+  const sq = T.squaresWaste;
+  const ridgeHip = (T.edges.ridge || 0) + (T.edges.hip || 0);
+  const eaveRake = (T.edges.eave || 0) + (T.edges.rake || 0);
+  const iceWater = (T.edges.eave || 0) + (T.edges.valley || 0);
+  const lines = [
+    { key: 'tearoff', label: 'Tear-off & disposal', qty: sq, unit: 'sq', q: 1 },
+    { key: 'install', label: 'Shingle install (labor)', qty: sq, unit: 'sq', q: 1 },
+    { key: 'shingles', label: 'Shingles (3 bundles/sq)', qty: Math.ceil(sq * 3), unit: 'bdl', q: 0 },
+    { key: 'ridgecap', label: 'Ridge / hip cap', qty: ridgeHip, unit: 'LF', q: 0 },
+    { key: 'underlayment', label: 'Underlayment (4 sq/roll)', qty: Math.ceil(sq / 4), unit: 'roll', q: 0 },
+    { key: 'icewater', label: 'Ice & water (eave + valley)', qty: iceWater, unit: 'LF', q: 0 },
+    { key: 'dripedge', label: 'Drip edge (eave + rake)', qty: eaveRake, unit: 'LF', q: 0 },
+    { key: 'starter', label: 'Starter strip (eave + rake)', qty: eaveRake, unit: 'LF', q: 0 },
+  ].concat(ITEM_TYPES.filter(k => T.items[k]).map(k => ({
+    key: 'item_' + k, label: ITEM_LABEL[k] + ' flashing', qty: T.items[k], unit: 'EA', q: 0,
+  })));
+  for (const l of lines) { l.price = priceFor(l.key); l.ext = l.qty * l.price; }
+  const subtotal = lines.reduce((a, l) => a + l.ext, 0);
+  const op = subtotal * (Number(state.roofOP) || 0) / 100;
+  return { lines, subtotal, op, total: subtotal + op };
+}
 
 // aggregate roofing quantities across the whole set (live)
 function roofingTotals() {
@@ -1216,6 +1251,70 @@ $('btnUpsell').addEventListener('click', () => {
   setMsg('Takeoff layer ($60/mo add-on): turn your measurements into roofing squares, pitch-corrected edges, materials, and a priced, branded bid. Add it from Billing.');
 });
 
+/* ---- roofing bid ---- */
+function renderRoofBid() {
+  const { lines, subtotal, op, total } = roofBidLines();
+  const head = '<thead><tr><th>Item</th><th class="num">Qty</th><th>Unit</th><th class="num">Unit price</th><th class="num">Extended</th></tr></thead>';
+  const body = lines.map(l =>
+    `<tr>
+      <td>${esc(l.label)}</td>
+      <td class="num">${fmt(l.qty, l.q || 0)}</td>
+      <td>${l.unit}</td>
+      <td class="num"><input class="price" type="number" min="0" step="0.01" data-key="${l.key}" value="${l.price}"></td>
+      <td class="num">${money(l.ext)}</td>
+    </tr>`).join('');
+  $('bidTable').innerHTML = head + '<tbody>' + (lines.length ? body : '<tr><td colspan="5" class="mk-empty">No roof takeoff yet — trace planes, edges, and items first.</td></tr>') + '</tbody>';
+  $('bidTotals').innerHTML =
+    `Subtotal: <b>${money(subtotal)}</b><br>` +
+    `Overhead &amp; profit (${fmt(state.roofOP)}%): <b>${money(op)}</b><br>` +
+    `<span class="grand">Total: ${money(total)}</span>`;
+  $('bidTable').querySelectorAll('input.price').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const v = parseFloat(inp.value);
+      state.roofPrices[inp.dataset.key] = isNaN(v) ? 0 : v;
+      scheduleSave();
+      renderRoofBid();
+    });
+  });
+}
+
+function openRoofBid() {
+  $('bidOP').value = state.roofOP;
+  renderRoofBid();
+  $('roofBid').classList.remove('hidden');
+}
+
+function printRoofBid() {
+  document.body.classList.add('printing-bid');
+  const done = () => { document.body.classList.remove('printing-bid'); window.removeEventListener('afterprint', done); };
+  window.addEventListener('afterprint', done);
+  window.print();
+  setTimeout(done, 1000); // Safari sometimes skips afterprint
+}
+
+function bidCsv() {
+  const { lines, subtotal, op, total } = roofBidLines();
+  const qc = s => '"' + String(s == null ? '' : s).replace(/"/g, '""') + '"';
+  const rows = [['Item', 'Qty', 'Unit', 'Unit price', 'Extended'].map(qc).join(',')];
+  for (const l of lines) rows.push([l.label, fmt(l.qty, l.q || 0), l.unit, l.price, l.ext.toFixed(2)].map(qc).join(','));
+  rows.push('');
+  rows.push([qc('Subtotal'), '', '', '', qc(subtotal.toFixed(2))].join(','));
+  rows.push([qc(`Overhead & profit ${fmt(state.roofOP)}%`), '', '', '', qc(op.toFixed(2))].join(','));
+  rows.push([qc('Total'), '', '', '', qc(total.toFixed(2))].join(','));
+  download(new Blob([rows.join('\r\n')], { type: 'text/csv' }), safeName() + '-roofing-bid.csv');
+}
+
+$('btnBid').addEventListener('click', openRoofBid);
+$('bidClose').addEventListener('click', () => $('roofBid').classList.add('hidden'));
+$('roofBid').addEventListener('click', e => { if (e.target === $('roofBid')) $('roofBid').classList.add('hidden'); });
+$('bidOP').addEventListener('input', e => {
+  state.roofOP = Math.max(0, Math.min(100, parseFloat(e.target.value) || 0));
+  scheduleSave();
+  renderRoofBid();
+});
+$('bidPrint').addEventListener('click', printRoofBid);
+$('bidCsv').addEventListener('click', bidCsv);
+
 /* ============================== Topbar & keyboard ============================== */
 
 els.btnPrev.addEventListener('click', () => setPage(state.page - 1));
@@ -1228,9 +1327,11 @@ $('btnThumbs').addEventListener('click', () => document.body.classList.toggle('n
 
 document.addEventListener('keydown', e => {
   const companyOpen = !$('company').classList.contains('hidden');
-  if (modals.isOpen() || companyOpen || !els.projects.classList.contains('hidden')) {
+  const bidOpen = !$('roofBid').classList.contains('hidden');
+  if (modals.isOpen() || companyOpen || bidOpen || !els.projects.classList.contains('hidden')) {
     if (e.key === 'Escape' && !modals.isOpen()) {
       if (companyOpen) $('company').classList.add('hidden');
+      if (bidOpen) $('roofBid').classList.add('hidden');
       els.projects.classList.add('hidden');
     }
     return;
@@ -1268,6 +1369,7 @@ function projectData() {
     app: 'plan-room', version: 1, page: state.page,
     markups: state.markups, scales: state.scales,
     roofPitch: state.roofPitch, roofWaste: state.roofWaste,
+    roofPrices: state.roofPrices, roofOP: state.roofOP,
   };
 }
 
@@ -1316,6 +1418,8 @@ async function openProject(rec) {
   state.scales = (rec.data && rec.data.scales) || {};
   state.roofPitch = (rec.data && rec.data.roofPitch != null) ? rec.data.roofPitch : 6;
   state.roofWaste = (rec.data && rec.data.roofWaste != null) ? rec.data.roofWaste : 12;
+  state.roofPrices = (rec.data && rec.data.roofPrices) || {};
+  state.roofOP = (rec.data && rec.data.roofOP != null) ? rec.data.roofOP : 15;
   renderMarkupList(); syncRoofInputs();
   try { localStorage.setItem('planroom-current', rec.id); } catch (_) {}
   updateProjectBtn();
@@ -1345,7 +1449,7 @@ async function newProject(name) {
   resetDocState();
   state.markups = [];
   state.scales = {};
-  state.roofPitch = 6; state.roofWaste = 12;
+  state.roofPitch = 6; state.roofWaste = 12; state.roofPrices = {}; state.roofOP = 15;
   renderMarkupList(); syncRoofInputs();
   try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
   updateProjectBtn();
@@ -1456,6 +1560,8 @@ $('fileImport').addEventListener('change', async e => {
   state.scales = d.scales || {};
   if (d.roofPitch != null) state.roofPitch = d.roofPitch;
   if (d.roofWaste != null) state.roofWaste = d.roofWaste;
+  state.roofPrices = d.roofPrices || {};
+  if (d.roofOP != null) state.roofOP = d.roofOP;
   renderMarkupList(); syncRoofInputs();
   if (d.docB64) {
     const bytes = base64ToBytes(d.docB64);
@@ -1736,6 +1842,8 @@ async function copyCompanyProject(id) {
     state.scales = t.data.scales || {};
     if (t.data.roofPitch != null) state.roofPitch = t.data.roofPitch;
     if (t.data.roofWaste != null) state.roofWaste = t.data.roofWaste;
+    state.roofPrices = t.data.roofPrices || {};
+    if (t.data.roofOP != null) state.roofOP = t.data.roofOP;
     renderMarkupList(); syncRoofInputs();
     try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
     updateProjectBtn();
