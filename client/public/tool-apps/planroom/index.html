@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plan Room</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="styles.css">
+<script>
+(() => {
+  try {
+    if (!localStorage.getItem('tc_token') && !sessionStorage.getItem('tc_token')) {
+      window.location.replace('/login');
+    }
+  } catch (_) {
+    window.location.replace('/login');
+  }
+})();
+</script>
+<script src="../shared/pdf.min.js"></script>
+</head>
+<body>
+<header id="topbar">
+  <div class="tb-group">
+    <div class="brand">Plan&nbsp;Room</div>
+    <button id="btnProjects" class="btn" title="Switch, create, or manage plan projects">📁 <span id="projName">Project</span></button>
+  </div>
+
+  <div class="tb-group">
+    <button id="btnNew" class="btn" title="Start a fresh project">📄<span class="btn-label"> New</span></button>
+    <button id="btnExport" class="btn" title="Download this project as one self-contained file — plans and markups embedded — so you can hand it to anyone">💾<span class="btn-label"> Save</span></button>
+    <button id="btnImport" class="btn" title="Load a saved Plan Room file">📂<span class="btn-label"> Load</span></button>
+    <input type="file" id="fileImport" accept="application/json" hidden>
+    <button id="btnOpenDoc" class="btn primary" title="Open a plan set — PDF, or an image (aerial / photo of a sheet)">Open Plans…</button>
+    <input type="file" id="fileDoc" accept="application/pdf,image/*" hidden>
+  </div>
+
+  <div class="spacer"></div>
+
+  <div class="tb-group">
+    <button id="btnPrevPage" class="btn" title="Previous sheet" disabled>◀</button>
+    <span id="pageInfo" class="page-info">– / –</span>
+    <button id="btnNextPage" class="btn" title="Next sheet" disabled>▶</button>
+    <button id="btnFit" class="btn" title="Fit the sheet to the window" disabled>⤢ Fit</button>
+    <button id="btnThumbs" class="btn" title="Show / hide the sheet strip">🗂</button>
+  </div>
+</header>
+
+<main>
+  <aside id="thumbRail" aria-label="Sheets"></aside>
+  <div id="canvasWrap">
+    <canvas id="cv"></canvas>
+    <div id="hud"></div>
+    <div id="dropHint"><span>Drop a PDF or image here, or click <b>Open Plans…</b></span></div>
+  </div>
+</main>
+
+<!-- generic ask-modal (engine-ui createModals shape) -->
+<div id="modal" class="modal hidden" tabindex="-1">
+  <div class="modal-box">
+    <h3 id="modalTitle"></h3>
+    <div id="modalBody"></div>
+    <div class="modal-actions">
+      <button id="modalCancel" class="btn">Cancel</button>
+      <button id="modalOk" class="btn primary">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- projects modal -->
+<div id="projects" class="modal hidden">
+  <div class="modal-box wide">
+    <h3>Projects</h3>
+    <div id="projList" class="proj-list"></div>
+    <div class="modal-actions">
+      <button id="btnProjNew" class="btn primary">+ New project</button>
+      <span class="spacer"></span>
+      <button id="projClose" class="btn">Close</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="app.js?v=1"></script>
+</body>
+</html>

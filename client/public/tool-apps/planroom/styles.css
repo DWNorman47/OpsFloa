@@ -1,0 +1,132 @@
+/* Plan Room — visual language shared with the sitework takeoff tool
+   (same theme variables / button / modal idiom; see that tool's styles). */
+
+:root {
+  --bg: #1b1f24;
+  --panel: #23292f;
+  --panel2: #2b323a;
+  --border: #3a434d;
+  --text: #e8ecf0;
+  --muted: #9aa7b2;
+  --accent: #4da3ff;
+  --good: #3fbf6f;
+  --bad: #e05555;
+  --warn: #e0a03f;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; height: 100%;
+  background: var(--bg); color: var(--text);
+  font: 14px/1.4 "Segoe UI", system-ui, sans-serif;
+  overflow: hidden;
+}
+
+body { display: flex; flex-direction: column; }
+
+/* ---------- top bar ---------- */
+#topbar {
+  display: flex; align-items: center; gap: 8px; row-gap: 6px;
+  padding: 6px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+.brand { font-weight: 700; letter-spacing: .5px; margin-right: 6px; color: var(--accent); }
+.spacer { flex: 1; }
+.tb-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.page-info { color: var(--muted); font-size: 13px; min-width: 64px; text-align: center; }
+
+.btn {
+  background: var(--panel2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 12px; cursor: pointer; font-size: 13px;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #08243f; font-weight: 600; }
+.btn:disabled { opacity: .45; cursor: default; }
+
+@media (max-width: 760px) {
+  #topbar .btn-label { display: none; }
+}
+
+/* ---------- main layout ---------- */
+main { flex: 1 1 auto; display: flex; min-height: 0; }
+
+#thumbRail {
+  flex: 0 0 148px; overflow-y: auto;
+  background: var(--panel); border-right: 1px solid var(--border);
+  padding: 8px; display: flex; flex-direction: column; gap: 8px;
+}
+#thumbRail:empty { display: none; }
+body.nothumbs #thumbRail { display: none; }
+.thumb {
+  border: 2px solid var(--border); border-radius: 6px; overflow: hidden;
+  background: #fff; cursor: pointer; padding: 0; position: relative;
+}
+.thumb.current { border-color: var(--accent); }
+.thumb canvas, .thumb .thumb-ph { display: block; width: 100%; }
+.thumb .thumb-ph { aspect-ratio: 4 / 3; background: var(--panel2); }
+.thumb .thumb-num {
+  position: absolute; bottom: 4px; right: 6px;
+  background: rgba(20,23,27,.85); color: var(--text);
+  border-radius: 4px; padding: 0 5px; font-size: 11px;
+}
+
+#canvasWrap { position: relative; flex: 1 1 auto; background: #14171b; min-width: 0; }
+#cv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
+#cv.grabbing { cursor: grabbing; }
+
+#hud {
+  position: absolute; top: 10px; left: 10px;
+  background: rgba(20,23,27,.85); border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 10px; font-size: 12.5px; color: var(--text);
+  max-width: 420px; pointer-events: none;
+}
+#hud:empty { display: none; }
+
+#dropHint {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--muted); font-size: 18px; pointer-events: none;
+}
+
+/* ---------- modals (sitework idiom) ---------- */
+.modal {
+  position: fixed; inset: 0; background: rgba(0,0,0,.55);
+  display: flex; align-items: center; justify-content: center; z-index: 50;
+}
+.modal.hidden, .hidden { display: none; }
+.modal-box {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 18px 20px; min-width: 320px; max-width: 420px;
+  box-shadow: 0 10px 40px rgba(0,0,0,.5);
+}
+.modal-box.wide { max-width: 560px; }
+.modal-box h3 { margin: 0 0 10px; }
+.modal-box input[type="text"], .modal-box input[type="number"] {
+  width: 100%; padding: 7px 9px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--panel2); color: var(--text);
+}
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.modal-actions .spacer { flex: 1; }
+.hint { color: var(--muted); font-size: 12px; margin: 6px 0; }
+.stepper { display: flex; gap: 6px; margin-top: 8px; }
+
+/* ---------- projects list (sitework idiom) ---------- */
+.proj-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; max-height: 55vh; overflow-y: auto; }
+.proj-row {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--panel2);
+}
+.proj-row.current { border-color: var(--accent); }
+.proj-row .grow { flex: 1; min-width: 0; cursor: pointer; }
+.proj-row .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-row .meta { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn.tiny { padding: 3px 8px; font-size: 12px; }
+.btn.danger { border-color: var(--bad); color: var(--bad); background: transparent; }
+.pill {
+  background: var(--accent); color: #08243f; border-radius: 10px;
+  padding: 1px 8px; font-size: 11px; font-weight: 700;
+}
