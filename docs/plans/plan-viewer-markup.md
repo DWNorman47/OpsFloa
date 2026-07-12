@@ -159,8 +159,9 @@ both.
   in the product, which is exactly why it's unscheduled: it must not start
   until M0's boundaries have proven themselves AND roofing has shipped and
   validated the integrated takeoff UX.
-- **Transition trust:** your own company uses the standalone tool — the M9
-  user-confirmation gate exists so the fold-in can never strand active work.
+- **Transition trust:** your own company uses the standalone tool — the
+  consolidation's user-confirmation gate exists so the fold-in can never
+  strand active work.
 - **Websocket-on-Render** restarts/timeouts: snapshot design bounds loss;
   reconnect must be solid.
 - **Two sharing modes** (cloud copy vs live session): one ☁ panel with LIVE
