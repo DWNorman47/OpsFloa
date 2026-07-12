@@ -37,6 +37,7 @@ const state = {
   // page numbers; align maps proposed-page px -> existing-page px at compute.
   earthwork: { existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 },
     gridFt: 5, shrink: 15, swell: 25, truckCap: 12, result: null },
+  trade: '',        // takeoff trade mode: '' (markup only) | 'roofing' | 'dirt'
 };
 let curSurface = 'existing';                 // which surface new contours/spots/pads belong to
 const lastElev = { existing: null, proposed: null };
@@ -160,12 +161,14 @@ const DEFAULT_ROOF_PRICES = {
 const priceFor = key => (state.roofPrices[key] != null ? state.roofPrices[key] : (DEFAULT_ROOF_PRICES[key] || 0));
 
 function roofBidLines() {
-  // A trade's FULL line list shows whenever that trade is in play at all —
-  // the zero rows are the menu of what the bid can price (and where unit
-  // prices get reviewed). A trade with no markups contributes nothing, so a
-  // dirt-only bid has no roofing rows and vice versa.
+  // Trade mode drives the bid: a selected trade shows its FULL line list
+  // (zeros included — the menu of what the bid can price). With no trade
+  // selected, the bid is the consolidated view: every trade with actual
+  // quantities, zero rows dropped.
   const lines = [];
-  const roofingActive = state.markups.some(m => ['plane', 'redge', 'ritem'].includes(m.kind));
+  const trade = state.trade || '';
+  const roofingActive = trade === 'roofing' ||
+    (!trade && state.markups.some(m => ['plane', 'redge', 'ritem'].includes(m.kind)));
   if (roofingActive) {
     const T = roofingTotals();
     const sq = T.squaresWaste;
@@ -188,7 +191,7 @@ function roofBidLines() {
   }
   // earthwork lines from the cut/fill result (same math as the dirt panel)
   const R = state.earthwork.result;
-  if (R) {
+  if ((trade === 'dirt' || !trade) && R) {
     const shrink = (Number(state.earthwork.shrink) || 0) / 100;
     const swell = (Number(state.earthwork.swell) || 0) / 100;
     const fillBank = R.fillCY / Math.max(0.01, 1 - shrink);
@@ -197,10 +200,12 @@ function roofBidLines() {
     lines.push({ key: 'ew_fill', label: 'Earthwork — fill placed (compacted)', qty: R.fillCY, unit: 'CY', q: 0 });
     if (net > 0) lines.push({ key: 'ew_haul', label: 'Earthwork — export haul-off (loose)', qty: net * (1 + swell), unit: 'CY', q: 0 });
   }
-  for (const l of lines) { l.price = priceFor(l.key); l.ext = l.qty * l.price; }
-  const subtotal = lines.reduce((a, l) => a + l.ext, 0);
+  // consolidated view (no trade selected): only rows with real quantities
+  const finalLines = trade ? lines : lines.filter(l => l.qty > 0);
+  for (const l of finalLines) { l.price = priceFor(l.key); l.ext = l.qty * l.price; }
+  const subtotal = finalLines.reduce((a, l) => a + l.ext, 0);
   const op = subtotal * (Number(state.roofOP) || 0) / 100;
-  return { lines, subtotal, op, total: subtotal + op };
+  return { lines: finalLines, subtotal, op, total: subtotal + op };
 }
 
 // aggregate roofing quantities across the whole set (live)
@@ -1499,6 +1504,31 @@ function applyTakeoffGate() {
   document.body.classList.toggle('has-takeoff', hasTakeoffLayer());
 }
 
+/* trade mode: which takeoff trade's tools/panels/bid are in play */
+const TRADE_TOOLS = {
+  roofing: ['plane', 'redge', 'ritem'],
+  dirt: ['contour', 'espot', 'epad', 'ebound', 'align'],
+};
+function setTrade(t, { save = true } = {}) {
+  state.trade = t || '';
+  document.body.classList.toggle('trade-roofing', state.trade === 'roofing');
+  document.body.classList.toggle('trade-dirt', state.trade === 'dirt');
+  if ($('tradeSel')) $('tradeSel').value = state.trade;
+  // drop a now-hidden tool + close the other trade's panel
+  for (const [tr, tools] of Object.entries(TRADE_TOOLS)) {
+    if (state.trade !== tr && tools.includes(tool)) setTool('pan');
+  }
+  if (state.trade !== 'roofing') $('roofPanel').classList.add('hidden');
+  if (state.trade !== 'dirt') $('dirtPanel').classList.add('hidden');
+  if (save) { // hints only on a user switch — not when a load restores the mode
+    if (state.trade === 'roofing') setMsg('Roofing takeoff — trace planes (▰), edges (╱), items (⊕); totals in 🏠 Roof, prices in $ Bid.');
+    else if (state.trade === 'dirt') setMsg('Earthwork takeoff — set the sheets in ⛰ Dirt, trace contours (⛰), align (⌖), then ∑ Calculate.');
+    scheduleSave();
+  }
+}
+function syncTradeUI() { setTrade(state.trade, { save: false }); }
+if ($('tradeSel')) $('tradeSel').addEventListener('change', e => setTrade(e.target.value));
+
 // push loaded roof settings into the inputs + refresh the panel
 function syncRoofInputs() {
   if ($('roofPitch')) { $('roofPitch').value = state.roofPitch; $('roofWaste').value = state.roofWaste; }
@@ -1539,7 +1569,11 @@ function renderRoofBid() {
       <td class="num"><input class="price" type="number" min="0" step="0.01" data-key="${l.key}" value="${l.price}"></td>
       <td class="num">${money(l.ext)}</td>
     </tr>`).join('');
-  $('bidTable').innerHTML = head + '<tbody>' + (lines.length ? body : '<tr><td colspan="5" class="mk-empty">No takeoff yet — trace roof planes/edges/items, or run the earthwork cut/fill.</td></tr>') + '</tbody>';
+  const emptyMsg =
+    state.trade === 'dirt' ? 'No earthwork volumes yet — run ∑ Calculate in the ⛰ Dirt panel first.'
+    : state.trade === 'roofing' ? 'No roofing takeoff yet — trace planes (▰), edges (╱), and items (⊕).'
+    : 'No takeoff yet — pick a trade in the toolbar dropdown, or trace a takeoff and come back.';
+  $('bidTable').innerHTML = head + '<tbody>' + (lines.length ? body : `<tr><td colspan="5" class="mk-empty">${emptyMsg}</td></tr>`) + '</tbody>';
   $('bidTotals').innerHTML =
     `Subtotal: <b>${money(subtotal)}</b><br>` +
     `Overhead &amp; profit (${fmt(state.roofOP)}%): <b>${money(op)}</b><br>` +
@@ -1555,6 +1589,10 @@ function renderRoofBid() {
 }
 
 function openRoofBid() {
+  $('bidTitle').textContent =
+    state.trade === 'roofing' ? '🏠 Roofing bid'
+    : state.trade === 'dirt' ? '⛰ Earthwork bid'
+    : '$ Takeoff bid';
   $('bidOP').value = state.roofOP;
   renderRoofBid();
   $('roofBid').classList.remove('hidden');
@@ -1883,6 +1921,7 @@ function projectData() {
     roofPitch: state.roofPitch, roofWaste: state.roofWaste,
     roofPrices: state.roofPrices, roofOP: state.roofOP,
     earthwork: state.earthwork,
+    trade: state.trade,
   };
 }
 const defaultEarthwork = () => ({ existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 }, gridFt: 5, shrink: 15, swell: 25, truckCap: 12, result: null });
@@ -1938,7 +1977,8 @@ async function openProject(rec) {
   state.roofPrices = (rec.data && rec.data.roofPrices) || {};
   state.roofOP = (rec.data && rec.data.roofOP != null) ? rec.data.roofOP : 15;
   state.earthwork = (rec.data && rec.data.earthwork) || defaultEarthwork();
-  renderMarkupList(); syncRoofInputs(); syncDirtInputs();
+  state.trade = (rec.data && rec.data.trade) || '';
+  renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncTradeUI();
   try { localStorage.setItem('planroom-current', rec.id); } catch (_) {}
   updateProjectBtn();
   if (rec.docKey) {
@@ -1969,7 +2009,8 @@ async function newProject(name) {
   state.scales = {};
   state.roofPitch = 6; state.roofWaste = 12; state.roofPrices = {}; state.roofOP = 15;
   state.earthwork = defaultEarthwork();
-  renderMarkupList(); syncRoofInputs(); syncDirtInputs();
+  state.trade = '';
+  renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncTradeUI();
   try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
   updateProjectBtn();
   await saveProjectNow();
@@ -2082,7 +2123,8 @@ $('fileImport').addEventListener('change', async e => {
   state.roofPrices = d.roofPrices || {};
   if (d.roofOP != null) state.roofOP = d.roofOP;
   state.earthwork = d.earthwork || defaultEarthwork();
-  renderMarkupList(); syncRoofInputs(); syncDirtInputs();
+  state.trade = d.trade || '';
+  renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncTradeUI();
   if (d.docB64) {
     const bytes = base64ToBytes(d.docB64);
     await openFromBytes(bytes.buffer, d.docName || 'plans.pdf', d.docType);
@@ -2381,7 +2423,8 @@ async function copyCompanyProject(id) {
     state.roofPrices = t.data.roofPrices || {};
     if (t.data.roofOP != null) state.roofOP = t.data.roofOP;
     state.earthwork = t.data.earthwork || defaultEarthwork();
-    renderMarkupList(); syncRoofInputs(); syncDirtInputs();
+    state.trade = t.data.trade || '';
+    renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncTradeUI();
     try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
     updateProjectBtn();
     if (t.pdf_url) {

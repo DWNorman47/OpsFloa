@@ -62,10 +62,14 @@ body { display: flex; flex-direction: column; }
 .tool.active { background: var(--accent); border-color: var(--accent); color: #08243f; font-weight: 700; }
 .tb-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 3px; }
 .mini-sel { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 4px; font-size: 12px; }
-/* takeoff-layer gating: roofing controls hidden without the add-on; the upsell
+/* takeoff-layer gating: takeoff controls hidden without the add-on; the upsell
    button shows only for base-tier (no takeoff layer) */
-body:not(.has-takeoff) .tb-takeoff { display: none; }
+body:not(.has-takeoff) .tb-takeoff { display: none !important; }
 body.has-takeoff .tb-upsell { display: none; }
+/* trade mode: each trade's tools/panels show only when that trade is selected
+   in the #tradeSel dropdown (default = plain markup & measure) */
+body:not(.trade-roofing) .tr-roof { display: none; }
+body:not(.trade-dirt) .tr-dirt { display: none; }
 #btnUpsell { border-color: var(--warn); color: var(--warn); }
 #mkColor {
   width: 34px; height: 30px; padding: 2px; cursor: pointer;
