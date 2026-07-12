@@ -172,6 +172,19 @@ that holds the exhaustive detail.
 ## 📖 Done / shipped log
 *Landed on `dev`, newest first. (What happens past dev is handled outside this doc.)*
 
+- **2026-07-11 — Plan Room product built end-to-end (M0–M8).** The two-tier
+  plan-tools line: a shared engine copied out of the sitework monolith
+  (`tool-apps/shared/`, sitework untouched); the **$40 base tier** — viewer
+  (PDF + aerial image, density-aware render + zoom sharpening), 9 markup kinds +
+  select/undo + list, measure (per-sheet scale → length/area/count), company
+  library with presigned R2 upload, flatten-PDF + CSV export, and **live
+  sessions** (SSE rooms + REST ops, presence, DB snapshots, idle sweep); the
+  **$60 takeoff layer** — roofing pack (planes→squares, pitch-corrected edges,
+  items, materials + priced bid), gated on the takeoff add-on with an upsell
+  teaser; platform wiring (`addon_planroom` migration/Stripe/superadmin/billing,
+  visible-but-locked ToolsPage). Migrations 0133–0134. **Unscheduled:** the
+  sitework consolidation (still its own standalone tool, untouched).
+
 - **2026-07-11 — Recategorized `manage_equipment` to the Inventory module.** Moved
   it Field → Inventory in the permission catalog (label "Equipment log" →
   "Equipment") and added it to `MODULE_PERMISSIONS.inventory` so a role holding only
