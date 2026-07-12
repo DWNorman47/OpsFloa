@@ -8,8 +8,8 @@
 import { createViewport } from '../shared/engine-view.js?v=1';
 import { createStore, randId, hashBytes } from '../shared/engine-store.js?v=1';
 import { openDoc, bytesToBase64, base64ToBytes, defaultRenderScale } from '../shared/engine-doc.js?v=1';
-import { createModals, esc } from '../shared/engine-ui.js?v=1';
-import { distToPolyline, pointSegDist, simplifyPts } from '../shared/engine-measure.js?v=1';
+import { createModals, esc, fmt } from '../shared/engine-ui.js?v=1';
+import { distToPolyline, pointSegDist, simplifyPts, polyLengthFt, polygonAreaFt2, pointInPolygon, dist } from '../shared/engine-measure.js?v=1';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '../shared/pdf.worker.min.js';
 
@@ -26,6 +26,7 @@ const state = {
   docType: null,
   page: 1,
   markups: [],      // markup objects; geometry in world/base px (see MK kinds)
+  scales: {},       // pageNum -> ftPerPx (per-sheet calibration; measures recompute live)
 };
 
 const store = createStore('planroom');
@@ -61,15 +62,37 @@ function setMsg(t) { els.hud.textContent = t || ''; }
  * Widths/sizes are document-space (base px) so markups print/zoom like ink.
  */
 
-const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout'];
+const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
 const MK_LABEL = {
   cloud: 'Cloud', rect: 'Rectangle', ellipse: 'Ellipse', arrow: 'Arrow', line: 'Line',
   freehand: 'Pen', highlight: 'Highlight', text: 'Text', callout: 'Callout',
+  mlength: 'Length', marea: 'Area', mcount: 'Count',
 };
 const MK_ICON = {
   cloud: '☁', rect: '▭', ellipse: '⬭', arrow: '↗', line: '╲',
   freehand: '✏', highlight: '🖍', text: 'T', callout: '🏷',
+  mlength: '↔', marea: '⬠', mcount: '🔢',
 };
+const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
+
+/* ---- per-sheet scale + measured values (recomputed live, never stored) ---- */
+
+const pageFtPerPx = (p = state.page) => state.scales[p] || 0;
+
+function measureValue(m) {
+  const s = state.scales[m.page] || 0;
+  if (m.kind === 'mcount') return `${m.pts.length} × ${m.text || 'items'}`;
+  if (!s) return 'no scale — 📏 this sheet';
+  if (m.kind === 'mlength') {
+    const ft = polyLengthFt(m.pts, s);
+    return fmt(ft, ft < 100 ? 1 : 0) + ' ft';
+  }
+  if (m.kind === 'marea') {
+    const sf = polygonAreaFt2(m.pts, s);
+    return fmt(sf, 0) + ' SF' + (sf > 21780 ? ` (${fmt(sf / 43560, 2)} ac)` : '');
+  }
+  return '';
+}
 const LINE_W = { S: 2, M: 4, L: 8 };
 const FONT_S = { S: 12, M: 18, L: 28 };
 
@@ -81,6 +104,14 @@ let tool = 'pan';
 let selectedId = null;
 let drag = null;      // {mode:'pan'|'draw'|'move'|'handle', ...}
 let undoCapture = null;
+let draft = null;     // click-built measure in progress {kind, pts, prev}
+let calibPts = null;  // [firstPoint] while calibrating
+let hoverW = null;    // cursor world pos while drafting (rubber band)
+
+const centroid = pts => ({
+  x: pts.reduce((a, p) => a + p.x, 0) / pts.length,
+  y: pts.reduce((a, p) => a + p.y, 0) / pts.length,
+});
 
 const curColor = () => els.mkColor.value;
 const curWidth = () => LINE_W[els.mkWidth.value] || LINE_W.M;
@@ -246,8 +277,74 @@ function drawMarkup(ctx, m) {
       arrowHead(ctx, { x: cx, y: cy }, p1, (m.width || 4) * 2.5 + 4);
       break;
     }
+    case 'mlength': {
+      ctx.beginPath();
+      m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.stroke();
+      const mid = m.pts[Math.floor((m.pts.length - 1) / 2)];
+      labelAt(ctx, m, mid.x, mid.y - (m.width || 4) * 2.5);
+      break;
+    }
+    case 'marea': {
+      if (m.pts.length >= 2) {
+        ctx.beginPath();
+        m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+        ctx.closePath();
+        ctx.globalAlpha = 0.12; ctx.fill();
+        ctx.globalAlpha = 1; ctx.stroke();
+      }
+      if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y); }
+      break;
+    }
+    case 'mcount': {
+      const r = (m.width || 4) * 1.5 + 3;
+      for (const p of m.pts) { ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); }
+      const c = centroid(m.pts);
+      labelAt(ctx, m, c.x, c.y - r * 2.4);
+      break;
+    }
   }
   ctx.restore();
+}
+
+// Measured-value label: white-haloed bold text, sized to the sheet.
+function labelAt(ctx, m, x, y) {
+  const base = pageBase.get(m.page);
+  const fs = Math.max(11, Math.min(30, (base ? base.width : 2800) / 110));
+  ctx.save();
+  ctx.font = `700 ${fs}px "Segoe UI", system-ui, sans-serif`;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'center';
+  ctx.lineWidth = fs / 4.5;
+  ctx.strokeStyle = 'rgba(255,255,255,.92)';
+  ctx.strokeText(measureValue(m), x, y);
+  ctx.fillStyle = m.color;
+  ctx.fillText(measureValue(m), x, y);
+  ctx.restore();
+}
+
+// In-progress measure/calibration overlay (rubber-banded to the cursor).
+function drawDraft(ctx) {
+  if (calibPts && calibPts.length) {
+    const a = calibPts[0], b = hoverW || a;
+    ctx.save();
+    ctx.strokeStyle = '#e0a03f';
+    ctx.fillStyle = '#e0a03f';
+    ctx.lineWidth = 2 / vp.view.zoom;
+    ctx.setLineDash([8 / vp.view.zoom, 5 / vp.view.zoom]);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.setLineDash([]);
+    for (const p of [a, b]) { ctx.beginPath(); ctx.arc(p.x, p.y, 5 / vp.view.zoom, 0, Math.PI * 2); ctx.fill(); }
+    ctx.restore();
+  }
+  if (draft && draft.pts.length) {
+    const pts = (hoverW && draft.kind !== 'mcount') ? [...draft.pts, hoverW] : draft.pts;
+    drawMarkup(ctx, {
+      kind: draft.kind, pts, page: state.page,
+      color: curColor(), width: curWidth(),
+      text: draft.kind === 'mcount' ? '…' : undefined,
+    });
+  }
 }
 
 // Bounding box in world px (for selection, centering, hit slop).
@@ -339,8 +436,15 @@ function hitMarkup(ctx, w) {
       case 'line': case 'arrow':
         if (pointSegDist(w.x, w.y, p0.x, p0.y, p1.x, p1.y) < t) return m;
         break;
-      case 'freehand':
+      case 'freehand': case 'mlength':
         if (distToPolyline(w.x, w.y, m.pts) < t) return m;
+        break;
+      case 'marea':
+        if (pointInPolygon(w.x, w.y, m.pts) ||
+            distToPolyline(w.x, w.y, [...m.pts, m.pts[0]]) < t) return m;
+        break;
+      case 'mcount':
+        if (m.pts.some(p => dist(w.x, w.y, p.x, p.y) < (m.width || 4) * 1.5 + 3 + t)) return m;
         break;
       case 'text': case 'callout': {
         const tb = textBox(ctx, m);
@@ -436,6 +540,7 @@ function paint(ctx) {
   } else if (state.doc) ensurePage(state.page);
   for (const m of state.markups) if (m.page === state.page) drawMarkup(ctx, m);
   if (drag && drag.mode === 'draw' && drag.markup) drawMarkup(ctx, drag.markup);
+  drawDraft(ctx);
   const sel = selMarkup();
   if (sel && sel.page === state.page) drawSelection(ctx, sel);
   ctx.restore();
@@ -553,11 +658,19 @@ $('canvasWrap').addEventListener('drop', e => {
 function setTool(t) {
   tool = t;
   cancelOverlay();
+  cancelDraft();
   drag = null;
   document.querySelectorAll('.tool').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
   els.cv.classList.toggle('crosshair', t !== 'pan' && t !== 'select');
   // per-tool color memory (highlighter yellow, ink red, user overrides stick)
   if (t !== 'pan' && t !== 'select') els.mkColor.value = toolColors[t] || DEFAULT_COLOR;
+  if (t === 'calibrate') {
+    setMsg(pageFtPerPx()
+      ? `Sheet ${state.page} already has a scale — recalibrating replaces it. Click the first point.`
+      : 'Click two points a known distance apart (a dimension line, a scale bar).');
+  } else if ((t === 'mlength' || t === 'marea') && !pageFtPerPx()) {
+    setMsg('This sheet has no scale yet — calibrate first (📏).');
+  }
 }
 document.querySelectorAll('.tool').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
 
@@ -581,6 +694,46 @@ els.cv.addEventListener('pointerdown', e => {
     return;
   }
   if (!state.doc) return;
+
+  // scale calibration: two clicks, then the real-world distance
+  if (tool === 'calibrate') {
+    const p = { x: w.x, y: w.y };
+    if (!calibPts || !calibPts.length) {
+      calibPts = [p];
+      setMsg('Now click the second point of the known distance.');
+    } else {
+      const a = calibPts[0];
+      calibPts = null;
+      const px = dist(a.x, a.y, p.x, p.y);
+      if (px < 4) { setMsg('Those points are on top of each other — click two points a known distance apart.'); vp.requestDraw(); return; }
+      modals.askNumber('Real-world distance between the two points',
+        "Feet (e.g. 50). Sets this sheet's scale — every measurement on it updates live.", '', null)
+        .then(ftv => {
+          if (ftv && ftv > 0) {
+            state.scales[state.page] = ftv / px;
+            scheduleSave(); renderMarkupList();
+            setMsg(`Scale set for sheet ${state.page}. Measurements on this sheet are live.`);
+          } else setMsg('Calibration cancelled.');
+          vp.requestDraw();
+        });
+    }
+    vp.requestDraw();
+    return;
+  }
+
+  // click-built measures: length / area / count
+  if (tool === 'mlength' || tool === 'marea' || tool === 'mcount') {
+    if (tool !== 'mcount' && !pageFtPerPx()) {
+      setMsg('This sheet has no scale yet — calibrate it first (📏): click two points a known distance apart.');
+      setTool('calibrate');
+      return;
+    }
+    if (!draft) draft = { kind: tool, pts: [], prev: snapshot() };
+    draft.pts.push({ x: w.x, y: w.y });
+    if (draft.kind === 'mcount') setMsg(`${draft.pts.length} counted — Enter or double-click to finish.`);
+    vp.requestDraw();
+    return;
+  }
 
   if (tool === 'select') {
     const ctx = vp.ctx;
@@ -623,6 +776,11 @@ els.cv.addEventListener('pointerdown', e => {
 });
 
 els.cv.addEventListener('pointermove', e => {
+  if (draft || calibPts) { // rubber-band the in-progress measure/calibration
+    const sp = screenPt(e);
+    hoverW = vp.screenToWorld(sp.x, sp.y);
+    vp.requestDraw();
+  }
   if (!drag || e.pointerId !== drag.ptr) return;
   const s = screenPt(e);
   const w = vp.screenToWorld(s.x, s.y);
@@ -705,9 +863,39 @@ function endDrag(e) {
 els.cv.addEventListener('pointerup', endDrag);
 els.cv.addEventListener('pointercancel', endDrag);
 
-// double-click a note to edit its text
+/* ---- click-built measure drafts: commit / cancel ---- */
+
+function commitDraft() {
+  if (!draft) return;
+  const d = draft;
+  draft = null; hoverW = null;
+  const pts = d.pts;
+  // double-click leaves two points on top of each other — drop the duplicate
+  if (pts.length >= 2 &&
+      dist(pts[pts.length - 1].x, pts[pts.length - 1].y, pts[pts.length - 2].x, pts[pts.length - 2].y) < 3 / vp.view.zoom) pts.pop();
+  const min = d.kind === 'marea' ? 3 : d.kind === 'mlength' ? 2 : 1;
+  if (pts.length < min) { vp.requestDraw(); return; }
+  const finish = text => {
+    state.markups.push({
+      id: randId(), page: state.page, kind: d.kind, color: curColor(),
+      width: curWidth(), pts, text, created: Date.now(),
+    });
+    pushUndo(d.prev);
+    markupsChanged();
+  };
+  if (d.kind === 'mcount') modals.askText('What are you counting?', `${pts.length} clicked`, '').then(t => finish(t || 'items'));
+  else finish(undefined);
+}
+
+function cancelDraft() {
+  draft = null; calibPts = null; hoverW = null;
+  vp.requestDraw();
+}
+
+// double-click: finish a measure draft, or edit a note's text
 els.cv.addEventListener('dblclick', e => {
   if (!state.doc) return;
+  if (draft) { commitDraft(); return; }
   const s = screenPt(e);
   const w = vp.screenToWorld(s.x, s.y);
   const hit = hitMarkup(vp.ctx, w);
@@ -840,7 +1028,10 @@ function renderMarkupList() {
       `<span class="grow"></span>` +
       `<span class="pg">p${m.page}</span>` +
       `<button class="btn tiny danger" title="Delete">✕</button>`;
-    row.querySelector('.grow').textContent = m.text ? m.text.split('\n')[0] : MK_LABEL[m.kind];
+    row.querySelector('.grow').textContent =
+      m.kind === 'mcount' ? measureValue(m)
+      : (m.kind === 'mlength' || m.kind === 'marea') ? `${MK_LABEL[m.kind]} — ${measureValue(m)}`
+      : m.text ? m.text.split('\n')[0] : MK_LABEL[m.kind];
     row.addEventListener('click', async e => {
       if (e.target.closest('button')) return;
       selectedId = m.id;
@@ -882,9 +1073,17 @@ document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
   if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
+  if (e.key === 'Enter' && draft) { e.preventDefault(); commitDraft(); return; }
+  if (e.key === 'Backspace' && draft) {
+    e.preventDefault();
+    draft.pts.pop();
+    if (!draft.pts.length) cancelDraft(); else vp.requestDraw();
+    return;
+  }
   if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelected(); return; }
   if (e.key === 'Escape') {
-    if (drag) { drag = null; vp.requestDraw(); }
+    if (draft || calibPts) { cancelDraft(); }
+    else if (drag) { drag = null; vp.requestDraw(); }
     else if (selectedId) { selectedId = null; renderMarkupList(); vp.requestDraw(); }
     return;
   }
@@ -900,7 +1099,7 @@ document.addEventListener('keydown', e => {
 /* ============================== Projects (local-first) ============================== */
 
 function projectData() {
-  return { app: 'plan-room', version: 1, page: state.page, markups: state.markups };
+  return { app: 'plan-room', version: 1, page: state.page, markups: state.markups, scales: state.scales };
 }
 
 let saveTimer = null;
@@ -944,6 +1143,7 @@ async function openProject(rec) {
   state.projectName = rec.name;
   resetDocState();
   state.markups = (rec.data && Array.isArray(rec.data.markups)) ? rec.data.markups : [];
+  state.scales = (rec.data && rec.data.scales) || {};
   renderMarkupList();
   try { localStorage.setItem('planroom-current', rec.id); } catch (_) {}
   updateProjectBtn();
@@ -972,6 +1172,7 @@ async function newProject(name) {
   state.projectName = name || 'Project ' + new Date().toLocaleDateString();
   resetDocState();
   state.markups = [];
+  state.scales = {};
   renderMarkupList();
   try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
   updateProjectBtn();
@@ -1079,6 +1280,7 @@ $('fileImport').addEventListener('change', async e => {
   // Always land in a NEW project — never overwrite the one that's open.
   await newProject(d.name || file.name.replace(/\.planroom\.json$|\.json$/i, ''));
   state.markups = Array.isArray(d.markups) ? d.markups : [];
+  state.scales = d.scales || {};
   renderMarkupList();
   if (d.docB64) {
     const bytes = base64ToBytes(d.docB64);

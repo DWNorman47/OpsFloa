@@ -60,6 +60,7 @@ body { display: flex; flex-direction: column; }
 }
 .tool:hover { border-color: var(--accent); }
 .tool.active { background: var(--accent); border-color: var(--accent); color: #08243f; font-weight: 700; }
+.tb-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 3px; }
 #mkColor {
   width: 34px; height: 30px; padding: 2px; cursor: pointer;
   background: var(--panel2); border: 1px solid var(--border); border-radius: 6px;
