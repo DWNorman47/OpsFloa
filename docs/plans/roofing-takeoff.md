@@ -4,7 +4,9 @@ Status: **scoped, not started** (2026-07-11; restructured same day — originall
 its own tool-app + `addon_roofing` SKU, now a **trade pack inside the Plan Room
 takeoff layer**; see the master plan `docs/plans/plan-viewer-markup.md`).
 No own SKU, no own tool-app: the $60 takeoff layer includes all trades.
-This doc owns the roofing **domain spec**; it ships as Plan Room **M8**.
+This doc owns the roofing **domain spec**; it ships as Plan Room **M7** —
+deliberately ahead of the sitework port (roofing = new revenue; the port =
+consolidation, unscheduled).
 
 ## Why roofing is the first new trade
 Roofers already pay per measurement (EagleView / Hover, $20–100 *per report*) —
@@ -21,8 +23,8 @@ builds first** (in the current sequence, Plan Room M0). Rules unchanged:
 - engine-doc gains **raster image input** (PNG/JPG as a 1-page doc) — needed by
   the base viewer generally and roofing especially (see below).
 - Done = sitework's `app.js` is only domain glue (grading/contours/cut-fill,
-  walls, hatch detection, its presets) — which then becomes the **sitework
-  trade pack** in Plan Room M8.
+  walls, hatch detection, its presets) — which later becomes the **sitework
+  trade pack** when the unscheduled consolidation happens.
 
 ## Roofing domain spec (the pack itself)
 - **Input reality:** new-construction bids come from PDF plan sets; residential
@@ -48,7 +50,7 @@ builds first** (in the current sequence, Plan Room M0). Rules unchanged:
   top-down capture + calibrate on a known straight dimension; estimator-grade
   accuracy disclaimer (we are not claiming EagleView precision).
 
-## Delivery (as part of Plan Room M8)
+## Delivery (as part of Plan Room M7)
 - Pack = presets + configs + compute glue on the shared engine inside the
   planroom app: plane tool (area object + pitch attribute), roofing line/count
   preset sets, materials calculators, bid defaults.

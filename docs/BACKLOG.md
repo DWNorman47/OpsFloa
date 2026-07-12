@@ -114,18 +114,22 @@ that holds the exhaustive detail.
 *Scoped with a plan; just not started.*
 
 - **Plan Room platform (MASTER PLAN)** — `docs/plans/plan-viewer-markup.md`
-  (2026-07-11, restructured into two tiers). **Base add-on ~$40/mo**
-  (`addon_planroom`): viewer + markup + measure + company library + generic
-  live-session layer (local-first; host "goes live", sessions survive drops) +
-  flatten/export. **Takeoff layer ~$60/mo** (reuses `addon_takeoff`, requires
-  base, stacked billing): all trade packs + price library + bid engine.
-  Sitework folds in at M8 with an **M9 user-confirmation gate** before the
-  standalone tool redirects (grandfathering decided at cutover). User actions:
-  Stripe Plan Room prices; R2 CORS at M4; the M9 confirmation.
+  (2026-07-11, two tiers, **money-first sequencing**). **Base add-on ~$40/mo**
+  (`addon_planroom`): viewer + markup + measure + company library +
+  flatten/export, **visible-but-locked** in ToolsPage; on sale at M6.
+  **Takeoff layer ~$60/mo** (reuses `addon_takeoff`, requires base, stacked
+  billing): all trade packs + price library + bid engine — **roofing pack
+  first at M7**. Live sessions (generic layer, local-first host "goes live",
+  survives drops) follow at M8, off the revenue path. **Sitework port is
+  unscheduled** ("when consolidation earns it") behind the user-confirmation
+  gate; the standalone tool serves as the interim sitework pack. User actions:
+  Stripe Plan Room prices; takeoff price decision at M7; R2 CORS at M4; the
+  cutover confirmation.
 - **Roofing trade pack** — `docs/plans/roofing-takeoff.md` (2026-07-11,
-  restructured: no own SKU/app — ships inside Plan Room M8). Pitch → squares,
-  roof lines/counts, materials math, aerial-image input for re-roofs, bid
-  defaults. Auto-measure from address stays M-later.
+  restructured: no own SKU/app — ships inside Plan Room **M7**, ahead of the
+  sitework port). Pitch → squares, roof lines/counts, materials math,
+  aerial-image input for re-roofs, bid defaults. Auto-measure from address
+  stays M-later.
 - *(future trade packs to scope when wanted: drywall & paint, and others from
   the tools roadmap)*
 
