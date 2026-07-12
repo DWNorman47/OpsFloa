@@ -160,23 +160,32 @@ const DEFAULT_ROOF_PRICES = {
 const priceFor = key => (state.roofPrices[key] != null ? state.roofPrices[key] : (DEFAULT_ROOF_PRICES[key] || 0));
 
 function roofBidLines() {
-  const T = roofingTotals();
-  const sq = T.squaresWaste;
-  const ridgeHip = (T.edges.ridge || 0) + (T.edges.hip || 0);
-  const eaveRake = (T.edges.eave || 0) + (T.edges.rake || 0);
-  const iceWater = (T.edges.eave || 0) + (T.edges.valley || 0);
-  const lines = [
-    { key: 'tearoff', label: 'Tear-off & disposal', qty: sq, unit: 'sq', q: 1 },
-    { key: 'install', label: 'Shingle install (labor)', qty: sq, unit: 'sq', q: 1 },
-    { key: 'shingles', label: 'Shingles (3 bundles/sq)', qty: Math.ceil(sq * 3), unit: 'bdl', q: 0 },
-    { key: 'ridgecap', label: 'Ridge / hip cap', qty: ridgeHip, unit: 'LF', q: 0 },
-    { key: 'underlayment', label: 'Underlayment (4 sq/roll)', qty: Math.ceil(sq / 4), unit: 'roll', q: 0 },
-    { key: 'icewater', label: 'Ice & water (eave + valley)', qty: iceWater, unit: 'LF', q: 0 },
-    { key: 'dripedge', label: 'Drip edge (eave + rake)', qty: eaveRake, unit: 'LF', q: 0 },
-    { key: 'starter', label: 'Starter strip (eave + rake)', qty: eaveRake, unit: 'LF', q: 0 },
-  ].concat(ITEM_TYPES.filter(k => T.items[k]).map(k => ({
-    key: 'item_' + k, label: ITEM_LABEL[k] + ' flashing', qty: T.items[k], unit: 'EA', q: 0,
-  })));
+  // A trade's FULL line list shows whenever that trade is in play at all —
+  // the zero rows are the menu of what the bid can price (and where unit
+  // prices get reviewed). A trade with no markups contributes nothing, so a
+  // dirt-only bid has no roofing rows and vice versa.
+  const lines = [];
+  const roofingActive = state.markups.some(m => ['plane', 'redge', 'ritem'].includes(m.kind));
+  if (roofingActive) {
+    const T = roofingTotals();
+    const sq = T.squaresWaste;
+    const ridgeHip = (T.edges.ridge || 0) + (T.edges.hip || 0);
+    const eaveRake = (T.edges.eave || 0) + (T.edges.rake || 0);
+    const iceWater = (T.edges.eave || 0) + (T.edges.valley || 0);
+    lines.push(
+      { key: 'tearoff', label: 'Tear-off & disposal', qty: sq, unit: 'sq', q: 1 },
+      { key: 'install', label: 'Shingle install (labor)', qty: sq, unit: 'sq', q: 1 },
+      { key: 'shingles', label: 'Shingles (3 bundles/sq)', qty: Math.ceil(sq * 3), unit: 'bdl', q: 0 },
+      { key: 'ridgecap', label: 'Ridge / hip cap', qty: ridgeHip, unit: 'LF', q: 0 },
+      { key: 'underlayment', label: 'Underlayment (4 sq/roll)', qty: Math.ceil(sq / 4), unit: 'roll', q: 0 },
+      { key: 'icewater', label: 'Ice & water (eave + valley)', qty: iceWater, unit: 'LF', q: 0 },
+      { key: 'dripedge', label: 'Drip edge (eave + rake)', qty: eaveRake, unit: 'LF', q: 0 },
+      { key: 'starter', label: 'Starter strip (eave + rake)', qty: eaveRake, unit: 'LF', q: 0 },
+      ...ITEM_TYPES.filter(k => T.items[k]).map(k => ({
+        key: 'item_' + k, label: ITEM_LABEL[k] + ' flashing', qty: T.items[k], unit: 'EA', q: 0,
+      })),
+    );
+  }
   // earthwork lines from the cut/fill result (same math as the dirt panel)
   const R = state.earthwork.result;
   if (R) {
@@ -188,13 +197,10 @@ function roofBidLines() {
     lines.push({ key: 'ew_fill', label: 'Earthwork — fill placed (compacted)', qty: R.fillCY, unit: 'CY', q: 0 });
     if (net > 0) lines.push({ key: 'ew_haul', label: 'Earthwork — export haul-off (loose)', qty: net * (1 + swell), unit: 'CY', q: 0 });
   }
-  // zero-quantity lines drop out (a dirt-only project shows no roofing rows,
-  // and vice versa); an empty list triggers the "no takeoff yet" message
-  const finalLines = lines.filter(l => l.qty > 0);
-  for (const l of finalLines) { l.price = priceFor(l.key); l.ext = l.qty * l.price; }
-  const subtotal = finalLines.reduce((a, l) => a + l.ext, 0);
+  for (const l of lines) { l.price = priceFor(l.key); l.ext = l.qty * l.price; }
+  const subtotal = lines.reduce((a, l) => a + l.ext, 0);
   const op = subtotal * (Number(state.roofOP) || 0) / 100;
-  return { lines: finalLines, subtotal, op, total: subtotal + op };
+  return { lines, subtotal, op, total: subtotal + op };
 }
 
 // aggregate roofing quantities across the whole set (live)
