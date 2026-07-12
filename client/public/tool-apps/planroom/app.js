@@ -90,7 +90,7 @@ const MK_ICON = {
   contour: '⛰', espot: '◎', epad: '◫', ebound: '⬚',
 };
 const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
-const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound']; // click-built (vs drag)
+const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound']; // click-built (vs drag; espot/align are special-cased)
 const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge']; // produce ft / SF / squares
 
 /* ---- earthwork (sitework pack) helpers ---- */
@@ -100,6 +100,22 @@ function elevColor(elev, surface) {
   return surface === 'existing' ? `hsl(${h}, 70%, 62%)` : `hsl(${h}, 85%, 52%)`;
 }
 const surfaceContours = surface => state.markups.filter(m => m.kind === 'contour' && m.surface === surface);
+
+// inverse of the align transform (proposed→existing) as another {a,b,e,f}
+function alignInverse(M) {
+  const s2 = M.a * M.a + M.b * M.b || 1;
+  return {
+    a: M.a / s2, b: -M.b / s2,
+    e: -(M.a * M.e + M.b * M.f) / s2,
+    f: (M.b * M.e - M.a * M.f) / s2,
+  };
+}
+
+/* two-sheet alignment state: click a landmark on the existing sheet, then its
+   match on the proposed sheet. 1 pair = shift; 2 pairs = shift+rotation+scale. */
+let alignDraft = null;   // { pts:[existing-page pts], qs:[proposed-page pts], prevAlign }
+let ghostOn = false;     // overlay the other sheet through the align transform
+
 function earthworkCounts() {
   return {
     existing: state.markups.filter(m => (m.kind === 'contour' || m.kind === 'espot' || m.kind === 'epad') && m.surface === 'existing').length,
@@ -514,6 +530,39 @@ function labelAt(ctx, m, x, y) {
   ctx.restore();
 }
 
+function drawCross(ctx, x, y, r, color) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2 / vp.view.zoom;
+  ctx.beginPath();
+  ctx.moveTo(x - r, y); ctx.lineTo(x + r, y);
+  ctx.moveTo(x, y - r); ctx.lineTo(x, y + r);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.55, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// alignment landmarks (and the predicted-spot hint on the proposed sheet)
+function drawAlignDraft(ctx) {
+  if (!alignDraft) return;
+  const E = state.earthwork;
+  const r = 12 / vp.view.zoom;
+  if (state.page === E.existingPage) {
+    for (const p of alignDraft.pts) drawCross(ctx, p.x, p.y, r, '#e0a03f');
+  } else if (state.page === E.proposedPage) {
+    for (const q of alignDraft.qs) drawCross(ctx, q.x, q.y, r, '#e0a03f');
+    // where the current alignment predicts the pending landmark lands
+    if (alignDraft.pts.length > alignDraft.qs.length && alignIsSet()) {
+      const p = alignDraft.pts[alignDraft.pts.length - 1];
+      const inv = alignInverse(E.align);
+      const g = { x: inv.a * p.x - inv.b * p.y + inv.e, y: inv.b * p.x + inv.a * p.y + inv.f };
+      drawCross(ctx, g.x, g.y, r * 1.3, '#3fbf6f');
+    }
+  }
+}
+
 // In-progress measure/calibration overlay (rubber-banded to the cursor).
 function drawDraft(ctx) {
   if (calibPts && calibPts.length) {
@@ -740,9 +789,29 @@ function paint(ctx) {
     ctx.drawImage(entry.canvas, 0, 0, base.width, base.height);
     maybeSharpen(entry, base);
   } else if (state.doc) ensurePage(state.page);
+  // ghost: the OTHER earthwork sheet (image + its contours) through the align
+  // transform, so the fit can be eyeballed
+  const EW = state.earthwork;
+  if (ghostOn && state.doc && EW.existingPage && EW.proposedPage && EW.existingPage !== EW.proposedPage &&
+      (state.page === EW.existingPage || state.page === EW.proposedPage)) {
+    const onExisting = state.page === EW.existingPage;
+    const other = onExisting ? EW.proposedPage : EW.existingPage;
+    const M = onExisting ? EW.align : alignInverse(EW.align);
+    const oEntry = pageCanvas.get(other), oBase = pageBase.get(other);
+    if (oEntry && oBase) {
+      ctx.save();
+      ctx.globalAlpha = 0.35;
+      ctx.transform(M.a, M.b, -M.b, M.a, M.e, M.f);
+      ctx.drawImage(oEntry.canvas, 0, 0, oBase.width, oBase.height);
+      for (const m of state.markups)
+        if (m.page === other && ['contour', 'espot', 'epad'].includes(m.kind)) drawMarkup(ctx, m);
+      ctx.restore();
+    } else if (state.doc) ensurePage(other);
+  }
   for (const m of state.markups) if (m.page === state.page) drawMarkup(ctx, m);
   if (drag && drag.mode === 'draw' && drag.markup) drawMarkup(ctx, drag.markup);
   drawDraft(ctx);
+  drawAlignDraft(ctx);
   const sel = selMarkup();
   if (sel && sel.page === state.page) drawSelection(ctx, sel);
   ctx.restore();
@@ -861,6 +930,7 @@ function setTool(t) {
   tool = t;
   cancelOverlay();
   cancelDraft();
+  if (alignDraft && t !== 'align') alignDraft = null; // keep any applied shift; drop the in-progress pair
   drag = null;
   document.querySelectorAll('.tool').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
   els.cv.classList.toggle('crosshair', t !== 'pan' && t !== 'select');
@@ -878,8 +948,17 @@ function setTool(t) {
     setMsg(`Trace a ${EDGE_LABEL[($('edgeType') || {}).value] || 'roof'} edge; hip/valley/rake are pitch-corrected off the ${state.roofPitch}/12 main pitch.`);
   } else if (t === 'contour') {
     setMsg(`Trace a ${curSurface} contour; finish with Enter/double-click, then type its elevation.`);
+  } else if (t === 'espot') {
+    setMsg(`Click a ${curSurface} spot grade — you'll type its elevation.`);
+  } else if (t === 'epad') {
+    setMsg(`Trace a ${curSurface} building pad (flat at one elevation); Enter/double-click to close.`);
   } else if (t === 'ebound') {
     setMsg('Trace the limits of disturbance — the area gridded for cut/fill. Enter/double-click to close.');
+  } else if (t === 'align') {
+    const E = state.earthwork;
+    setMsg((!E.existingPage || !E.proposedPage)
+      ? 'Designate the Existing and Proposed sheets in the ⛰ Dirt panel first.'
+      : `Click a sharp landmark on the Existing sheet (page ${E.existingPage}) — a property corner works well.`);
   }
 }
 document.querySelectorAll('.tool').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
@@ -926,6 +1005,66 @@ els.cv.addEventListener('pointerdown', e => {
           } else setMsg('Calibration cancelled.');
           vp.requestDraw();
         });
+    }
+    vp.requestDraw();
+    return;
+  }
+
+  // spot elevation: one click = one markup + elevation prompt
+  if (tool === 'espot') {
+    const prev = snapshot();
+    const surf = curSurface;
+    const m = { id: randId(), page: state.page, kind: 'espot', surface: surf, color: curColor(), width: curWidth(), pts: [{ x: w.x, y: w.y }], elev: null, created: Date.now() };
+    state.markups.push(m);
+    pushUndo(prev);
+    markupsChanged();
+    modals.askNumber(`Spot elevation (ft) — ${surf}`, 'e.g. 812.5', lastElev[surf] != null ? lastElev[surf] : '', 1)
+      .then(v => { if (v != null) { m.elev = v; lastElev[surf] = v; markupsChanged(); } });
+    return;
+  }
+
+  // two-sheet alignment: landmark on existing, its match on proposed
+  if (tool === 'align') {
+    const E = state.earthwork;
+    if (!E.existingPage || !E.proposedPage) { setMsg('Designate the Existing and Proposed sheets first (⛰ Dirt panel).'); return; }
+    if (E.existingPage === E.proposedPage) { setMsg('Both surfaces are on the same sheet — no alignment needed.'); return; }
+    if (!alignDraft) alignDraft = { pts: [], qs: [], prevAlign: { ...E.align } };
+    if (alignDraft.pts.length === alignDraft.qs.length) {
+      // expecting a landmark on the EXISTING sheet
+      if (state.page !== E.existingPage) { setPage(E.existingPage); setMsg(`Jumped to the Existing sheet (page ${E.existingPage}) — click a sharp landmark (a property corner).`); return; }
+      alignDraft.pts.push({ x: w.x, y: w.y });
+      setPage(E.proposedPage);
+      setMsg('Now click that SAME landmark on the Proposed sheet' + (alignIsSet() ? ' (the ⌖ cross marks where the current alignment predicts it).' : '.'));
+    } else {
+      // its match on the PROPOSED sheet
+      if (state.page !== E.proposedPage) { setPage(E.proposedPage); setMsg(`Jumped to the Proposed sheet (page ${E.proposedPage}) — click the matching landmark.`); return; }
+      alignDraft.qs.push({ x: w.x, y: w.y });
+      if (alignDraft.qs.length === 1) {
+        const p = alignDraft.pts[0], q = alignDraft.qs[0];
+        E.align = { a: 1, b: 0, e: p.x - q.x, f: p.y - q.y }; // pair 1: shift only
+        scheduleSave(); renderDirtPanel();
+        setPage(E.existingPage);
+        setMsg('Shift applied. Press Enter to finish, or click a SECOND landmark (far from the first) to also fix rotation & scale.');
+      } else {
+        const [p1, p2] = alignDraft.pts, [q1, q2] = alignDraft.qs;
+        const dqx = q2.x - q1.x, dqy = q2.y - q1.y;
+        const dpx = p2.x - p1.x, dpy = p2.y - p1.y;
+        const len2 = dqx * dqx + dqy * dqy;
+        if (Math.sqrt(len2) < 20) {
+          alignDraft.pts.pop(); alignDraft.qs.pop();
+          setPage(E.existingPage);
+          setMsg('Those landmarks are too close together — click a second landmark farther from the first.');
+          vp.requestDraw();
+          return;
+        }
+        const a = (dqx * dpx + dqy * dpy) / len2;
+        const b = (dqx * dpy - dqy * dpx) / len2;
+        E.align = { a, b, e: p1.x - (a * q1.x - b * q1.y), f: p1.y - (b * q1.x + a * q1.y) };
+        alignDraft = null;
+        scheduleSave(); renderDirtPanel();
+        setMsg('Sheets aligned (shift + rotation + scale). Turn on Ghost in the ⛰ Dirt panel to double-check the fit.');
+        setTool('pan');
+      }
     }
     vp.requestDraw();
     return;
@@ -1135,6 +1274,21 @@ els.cv.addEventListener('dblclick', e => {
   if (hit && (hit.kind === 'text' || hit.kind === 'callout')) {
     selectedId = hit.id;
     openOverlay({ mode: 'edit', markup: hit });
+    return;
+  }
+  // double-click an earthwork markup to fix its elevation
+  if (hit && (hit.kind === 'contour' || hit.kind === 'espot' || hit.kind === 'epad')) {
+    selectedId = hit.id;
+    vp.requestDraw();
+    modals.askNumber(`${MK_LABEL[hit.kind]} elevation (ft) — ${hit.surface}`, 'e.g. 812.5', hit.elev != null ? hit.elev : '', 1)
+      .then(v => {
+        if (v == null) return;
+        const prev = snapshot();
+        hit.elev = v;
+        lastElev[hit.surface] = v;
+        pushUndo(prev);
+        markupsChanged();
+      });
   }
 });
 
@@ -1429,7 +1583,8 @@ function renderDirtPanel() {
   rows.push(`<button class="btn tiny dirt-btn" data-act="set-existing">Set current page (${state.page}) as Existing</button>`);
   rows.push(`<div class="dirt-row"><span>Proposed sheet</span><span class="v">${E.proposedPage ? 'page ' + E.proposedPage : '—'}</span></div>`);
   rows.push(`<button class="btn tiny dirt-btn" data-act="set-proposed">Set current page (${state.page}) as Proposed</button>`);
-  rows.push(`<div class="dirt-row"><span>Alignment</span><span class="v">${alignIsSet() ? 'set' : 'not set'}</span></div>`);
+  rows.push(`<div class="dirt-row"><span>Alignment</span><span class="v">${alignIsSet() ? 'set' : 'not set'} · use ⌖</span></div>`);
+  rows.push(`<label class="dirt-row" style="cursor:pointer"><span>Ghost the other sheet</span><input type="checkbox" id="ghostChk" ${ghostOn ? 'checked' : ''}></label>`);
 
   rows.push('<div class="roof-sub">Traced</div>');
   rows.push(`<div class="dirt-row"><span>Existing contours / pads</span><span class="v">${c.existing}</span></div>`);
@@ -1458,6 +1613,8 @@ function renderDirtPanel() {
   body.querySelector('[data-act="set-existing"]').addEventListener('click', () => { E.existingPage = state.page; scheduleSave(); renderDirtPanel(); });
   body.querySelector('[data-act="set-proposed"]').addEventListener('click', () => { E.proposedPage = state.page; scheduleSave(); renderDirtPanel(); });
   body.querySelector('[data-act="calc"]').addEventListener('click', calculateCutFill);
+  const gk = body.querySelector('#ghostChk');
+  if (gk) gk.addEventListener('change', e => { ghostOn = e.target.checked; vp.requestDraw(); });
 }
 
 function syncDirtInputs() { renderDirtPanel(); }
@@ -1507,6 +1664,21 @@ document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
   if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
+  if (e.key === 'Enter' && alignDraft) { // accept the shift-only alignment
+    e.preventDefault();
+    alignDraft = null;
+    setTool('pan');
+    setMsg('Alignment saved (shift only). Turn on Ghost in the ⛰ Dirt panel to double-check the fit.');
+    return;
+  }
+  if (e.key === 'Escape' && alignDraft) {
+    e.preventDefault();
+    if (!alignDraft.qs.length) state.earthwork.align = alignDraft.prevAlign; // nothing applied yet — restore
+    alignDraft = null;
+    vp.requestDraw();
+    setMsg('Alignment cancelled.');
+    return;
+  }
   if (e.key === 'Enter' && draft) { e.preventDefault(); commitDraft(); return; }
   if (e.key === 'Backspace' && draft) {
     e.preventDefault();
