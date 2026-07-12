@@ -33,7 +33,13 @@ const state = {
   roofWaste: 12,    // takeoff layer: waste % applied to squares
   roofPrices: {},   // takeoff layer: unit-price overrides by bid-line key
   roofOP: 15,       // takeoff layer: overhead & profit %
+  // takeoff layer: earthwork/cut-fill (sitework pack). existing & proposed are
+  // page numbers; align maps proposed-page px -> existing-page px at compute.
+  earthwork: { existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 },
+    gridFt: 5, shrink: 15, swell: 25, truckCap: 12, result: null },
 };
+let curSurface = 'existing';                 // which surface new contours/spots/pads belong to
+const lastElev = { existing: null, proposed: null };
 
 const store = createStore('planroom');
 
@@ -68,22 +74,39 @@ function setMsg(t) { els.hud.textContent = t || ''; }
  * Widths/sizes are document-space (base px) so markups print/zoom like ink.
  */
 
-const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem'];
+const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound'];
 const MK_LABEL = {
   cloud: 'Cloud', rect: 'Rectangle', ellipse: 'Ellipse', arrow: 'Arrow', line: 'Line',
   freehand: 'Pen', highlight: 'Highlight', text: 'Text', callout: 'Callout',
   mlength: 'Length', marea: 'Area', mcount: 'Count',
   plane: 'Roof plane', redge: 'Roof edge', ritem: 'Roof item',
+  contour: 'Contour', espot: 'Spot elev', epad: 'Pad', ebound: 'Earthwork boundary',
 };
 const MK_ICON = {
   cloud: '☁', rect: '▭', ellipse: '⬭', arrow: '↗', line: '╲',
   freehand: '✏', highlight: '🖍', text: 'T', callout: '🏷',
   mlength: '↔', marea: '⬠', mcount: '🔢',
   plane: '▰', redge: '╱', ritem: '⊕',
+  contour: '⛰', espot: '◎', epad: '◫', ebound: '⬚',
 };
 const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
-const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem']; // click-built (vs drag)
+const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound']; // click-built (vs drag)
 const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge']; // produce ft / SF / squares
+
+/* ---- earthwork (sitework pack) helpers ---- */
+// stable hue per elevation so equal elevations match visually; existing lighter
+function elevColor(elev, surface) {
+  const h = ((elev * 47) % 360 + 360) % 360;
+  return surface === 'existing' ? `hsl(${h}, 70%, 62%)` : `hsl(${h}, 85%, 52%)`;
+}
+const surfaceContours = surface => state.markups.filter(m => m.kind === 'contour' && m.surface === surface);
+function earthworkCounts() {
+  return {
+    existing: state.markups.filter(m => (m.kind === 'contour' || m.kind === 'espot' || m.kind === 'epad') && m.surface === 'existing').length,
+    proposed: state.markups.filter(m => (m.kind === 'contour' || m.kind === 'espot' || m.kind === 'epad') && m.surface === 'proposed').length,
+    boundary: state.markups.some(m => m.kind === 'ebound'),
+  };
+}
 
 /* ---- roofing takeoff (the $60 takeoff layer) ---- */
 const EDGE_TYPES = ['eave', 'rake', 'ridge', 'hip', 'valley', 'flashing'];
@@ -179,6 +202,10 @@ function measureValue(m) {
     const ft = edgeFt(m, s);
     return `${EDGE_LABEL[m.etype] || 'Edge'} · ${fmt(ft, ft < 100 ? 1 : 0)} ft`;
   }
+  if (m.kind === 'contour' || m.kind === 'espot' || m.kind === 'epad') {
+    return `${m.surface === 'existing' ? 'EG' : 'FG'} ${m.elev != null ? fmt(m.elev, Number.isInteger(m.elev) ? 0 : 1) : '?'}`;
+  }
+  if (m.kind === 'ebound') return 'Limits of disturbance';
   return '';
 }
 const LINE_W = { S: 2, M: 4, L: 8 };
@@ -235,6 +262,7 @@ els.btnRedo.addEventListener('click', redo);
 function markupsChanged() {
   renderMarkupList();
   if (typeof renderRoofPanel === 'function') renderRoofPanel();
+  if (typeof renderDirtPanel === 'function') renderDirtPanel();
   scheduleSave();
   vp.requestDraw();
 }
@@ -411,7 +439,62 @@ function drawMarkup(ctx, m) {
       labelAt(ctx, m, mid.x, mid.y - (m.width || 4) * 2.5);
       break;
     }
+    case 'contour': {
+      const col = elevColor(m.elev || 0, m.surface);
+      ctx.strokeStyle = col;
+      if (m.surface === 'existing') ctx.setLineDash([11, 6]); // existing dashed, proposed solid
+      ctx.beginPath();
+      m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      const e = m.pts[m.pts.length - 1];
+      elevLabel(ctx, m, e.x, e.y, col);
+      break;
+    }
+    case 'espot': {
+      const col = elevColor(m.elev || 0, m.surface);
+      const p = m.pts[0]; const r = (m.width || 4) * 1.4 + 2;
+      ctx.strokeStyle = col; ctx.fillStyle = col;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(1.5, r / 4), 0, Math.PI * 2); ctx.fill();
+      elevLabel(ctx, m, p.x + r * 1.8, p.y, col);
+      break;
+    }
+    case 'epad': {
+      const col = elevColor(m.elev || 0, m.surface);
+      ctx.strokeStyle = col; ctx.fillStyle = col;
+      if (m.pts.length >= 2) {
+        ctx.beginPath(); m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath();
+        ctx.globalAlpha = 0.18; ctx.fill(); ctx.globalAlpha = 1; ctx.stroke();
+      }
+      if (m.pts.length >= 3) { const c = centroid(m.pts); elevLabel(ctx, m, c.x, c.y, col); }
+      break;
+    }
+    case 'ebound': {
+      ctx.strokeStyle = '#e0a03f'; ctx.fillStyle = '#e0a03f';
+      ctx.setLineDash([14, 8]);
+      if (m.pts.length >= 2) {
+        ctx.beginPath(); m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath();
+        ctx.globalAlpha = 0.06; ctx.fill(); ctx.globalAlpha = 1; ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      break;
+    }
   }
+  ctx.restore();
+}
+
+// elevation label (white-haloed, colored by elevation) for earthwork markups
+function elevLabel(ctx, m, x, y, col) {
+  const base = pageBase.get(m.page);
+  const fs = Math.max(11, Math.min(28, (base ? base.width : 2800) / 120));
+  ctx.save();
+  ctx.font = `700 ${fs}px "Segoe UI", system-ui, sans-serif`;
+  ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
+  const txt = m.elev != null ? fmt(m.elev, Number.isInteger(m.elev) ? 0 : 1) : '?';
+  ctx.lineWidth = fs / 4.5; ctx.strokeStyle = 'rgba(255,255,255,.92)';
+  ctx.strokeText(txt, x, y);
+  ctx.fillStyle = col; ctx.fillText(txt, x, y);
   ctx.restore();
 }
 
@@ -549,15 +632,21 @@ function hitMarkup(ctx, w) {
       case 'line': case 'arrow':
         if (pointSegDist(w.x, w.y, p0.x, p0.y, p1.x, p1.y) < t) return m;
         break;
-      case 'freehand': case 'mlength': case 'redge':
+      case 'freehand': case 'mlength': case 'redge': case 'contour':
         if (distToPolyline(w.x, w.y, m.pts) < t) return m;
         break;
-      case 'marea': case 'plane':
+      case 'marea': case 'plane': case 'epad':
         if (pointInPolygon(w.x, w.y, m.pts) ||
             distToPolyline(w.x, w.y, [...m.pts, m.pts[0]]) < t) return m;
         break;
+      case 'ebound':
+        if (distToPolyline(w.x, w.y, [...m.pts, m.pts[0]]) < t) return m; // edge only (fill is faint)
+        break;
       case 'mcount': case 'ritem':
         if (m.pts.some(p => dist(w.x, w.y, p.x, p.y) < (m.width || 4) * 1.5 + 3 + t)) return m;
+        break;
+      case 'espot':
+        if (dist(w.x, w.y, m.pts[0].x, m.pts[0].y) < (m.width || 4) * 1.4 + 4 + t) return m;
         break;
       case 'text': case 'callout': {
         const tb = textBox(ctx, m);
@@ -787,6 +876,10 @@ function setTool(t) {
     setMsg(`Trace a roof face; finish with Enter/double-click, then set its pitch. Main pitch ${state.roofPitch}/12.`);
   } else if (t === 'redge') {
     setMsg(`Trace a ${EDGE_LABEL[($('edgeType') || {}).value] || 'roof'} edge; hip/valley/rake are pitch-corrected off the ${state.roofPitch}/12 main pitch.`);
+  } else if (t === 'contour') {
+    setMsg(`Trace a ${curSurface} contour; finish with Enter/double-click, then type its elevation.`);
+  } else if (t === 'ebound') {
+    setMsg('Trace the limits of disturbance — the area gridded for cut/fill. Enter/double-click to close.');
   }
 }
 document.querySelectorAll('.tool').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
@@ -982,7 +1075,7 @@ els.cv.addEventListener('pointercancel', endDrag);
 
 /* ---- click-built measure drafts: commit / cancel ---- */
 
-const CLOSED_KINDS = ['marea', 'plane'];      // 3+ pts, closed polygon
+const CLOSED_KINDS = ['marea', 'plane', 'epad', 'ebound']; // 3+ pts, closed polygon
 const POINT_KINDS = ['mcount', 'ritem'];      // 1+ pts, no rubber band
 
 function commitDraft() {
@@ -999,6 +1092,8 @@ function commitDraft() {
   if (d.kind === 'plane') extra.pitch = state.roofPitch;
   else if (d.kind === 'redge') extra.etype = $('edgeType') ? $('edgeType').value : 'eave';
   else if (d.kind === 'ritem') extra.itype = $('itemType') ? $('itemType').value : 'boot';
+  else if (d.kind === 'contour' || d.kind === 'epad') extra.surface = curSurface;
+  if (d.kind === 'ebound') state.markups = state.markups.filter(m => m.kind !== 'ebound'); // one boundary
   const finish = text => {
     state.markups.push({
       id: randId(), page: state.page, kind: d.kind, color: curColor(),
@@ -1014,6 +1109,11 @@ function commitDraft() {
     if (d.kind === 'plane') {
       modals.askNumber(`Roof plane pitch (rise per 12)`, 'e.g. 6 for 6/12. Sloped area & squares update live.', state.roofPitch, 1)
         .then(v => { if (v != null && v >= 0) { const m = state.markups[state.markups.length - 1]; if (m && m.kind === 'plane') { m.pitch = v; markupsChanged(); } } });
+    } else if (d.kind === 'contour' || d.kind === 'epad') {
+      const surf = extra.surface;
+      modals.askNumber(`${d.kind === 'contour' ? 'Contour' : 'Pad'} elevation (ft) — ${surf === 'existing' ? 'existing' : 'proposed'}`,
+        'e.g. 812.5', lastElev[surf] != null ? lastElev[surf] : '', 1)
+        .then(v => { if (v != null) { const m = state.markups[state.markups.length - 1]; if (m && (m.kind === 'contour' || m.kind === 'epad')) { m.elev = v; lastElev[surf] = v; markupsChanged(); } } });
     }
   };
   if (d.kind === 'mcount') modals.askText('What are you counting?', `${pts.length} clicked`, '').then(t => finish(t || 'items'));
@@ -1138,7 +1238,7 @@ function deleteSelected() {
 
 $('btnList').addEventListener('click', () => {
   els.markupPanel.classList.toggle('hidden');
-  if (!els.markupPanel.classList.contains('hidden')) { $('roofPanel').classList.add('hidden'); renderMarkupList(); }
+  if (!els.markupPanel.classList.contains('hidden')) { $('roofPanel').classList.add('hidden'); $('dirtPanel').classList.add('hidden'); renderMarkupList(); }
 });
 els.mkKindFilter.addEventListener('change', renderMarkupList);
 els.mkThisSheet.addEventListener('change', renderMarkupList);
@@ -1245,7 +1345,7 @@ if ($('roofPitch')) {
 }
 $('btnRoof').addEventListener('click', () => {
   $('roofPanel').classList.toggle('hidden');
-  if (!$('roofPanel').classList.contains('hidden')) { els.markupPanel.classList.add('hidden'); renderRoofPanel(); }
+  if (!$('roofPanel').classList.contains('hidden')) { els.markupPanel.classList.add('hidden'); $('dirtPanel').classList.add('hidden'); renderRoofPanel(); }
 });
 $('btnUpsell').addEventListener('click', () => {
   setMsg('Takeoff layer ($60/mo add-on): turn your measurements into roofing squares, pitch-corrected edges, materials, and a priced, branded bid. Add it from Billing.');
@@ -1315,6 +1415,74 @@ $('bidOP').addEventListener('input', e => {
 $('bidPrint').addEventListener('click', printRoofBid);
 $('bidCsv').addEventListener('click', bidCsv);
 
+/* ---- earthwork (sitework pack, S1: trace + designate; compute = next slice) ---- */
+const alignIsSet = () => { const a = state.earthwork.align; return !(a.a === 1 && a.b === 0 && a.e === 0 && a.f === 0); };
+
+function renderDirtPanel() {
+  const panel = $('dirtPanel');
+  if (!panel || panel.classList.contains('hidden')) return;
+  const E = state.earthwork;
+  const c = earthworkCounts();
+  const rows = [];
+  rows.push('<div class="roof-sub">Sheets</div>');
+  rows.push(`<div class="dirt-row"><span>Existing sheet</span><span class="v">${E.existingPage ? 'page ' + E.existingPage : '—'}</span></div>`);
+  rows.push(`<button class="btn tiny dirt-btn" data-act="set-existing">Set current page (${state.page}) as Existing</button>`);
+  rows.push(`<div class="dirt-row"><span>Proposed sheet</span><span class="v">${E.proposedPage ? 'page ' + E.proposedPage : '—'}</span></div>`);
+  rows.push(`<button class="btn tiny dirt-btn" data-act="set-proposed">Set current page (${state.page}) as Proposed</button>`);
+  rows.push(`<div class="dirt-row"><span>Alignment</span><span class="v">${alignIsSet() ? 'set' : 'not set'}</span></div>`);
+
+  rows.push('<div class="roof-sub">Traced</div>');
+  rows.push(`<div class="dirt-row"><span>Existing contours / pads</span><span class="v">${c.existing}</span></div>`);
+  rows.push(`<div class="dirt-row"><span>Proposed contours / pads</span><span class="v">${c.proposed}</span></div>`);
+  rows.push(`<div class="dirt-row"><span>Boundary</span><span class="v">${c.boundary ? 'set' : '—'}</span></div>`);
+  rows.push(`<div class="hint" style="margin:6px 0">New contours are <b>${curSurface}</b> (toolbar toggle). Existing draws dashed, proposed solid; type each elevation.</div>`);
+
+  rows.push('<div class="roof-sub">Earthwork</div>');
+  rows.push('<div class="dirt-set">Grid <input type="number" id="ewGrid" min="0.5" step="0.5"> ft · Shrink <input type="number" id="ewShrink" min="0"> % · Swell <input type="number" id="ewSwell" min="0"> % · Truck <input type="number" id="ewTruck" min="1"> CY</div>');
+  rows.push('<button class="btn go dirt-btn" data-act="calc">∑ Calculate Cut / Fill</button>');
+  if (E.result) {
+    const R = E.result;
+    rows.push(`<div class="dirt-row"><span>Cut</span><span class="v">${fmt(R.cutCY, 0)} CY</span></div>`);
+    rows.push(`<div class="dirt-row"><span>Fill</span><span class="v">${fmt(R.fillCY, 0)} CY</span></div>`);
+    rows.push(`<div class="dirt-row"><span>Net export</span><span class="v">${fmt(R.exportCY, 0)} CY</span></div>`);
+    rows.push(`<div class="dirt-row"><span>Truck loads</span><span class="v">${fmt(R.trucks, 0)}</span></div>`);
+  }
+  const body = $('dirtBody');
+  body.innerHTML = rows.join('');
+  $('ewGrid').value = E.gridFt; $('ewShrink').value = E.shrink; $('ewSwell').value = E.swell; $('ewTruck').value = E.truckCap;
+  const numHandler = (el, key, min, def) => el.addEventListener('change', e => { E[key] = Math.max(min, parseFloat(e.target.value) || def); e.target.value = E[key]; scheduleSave(); });
+  numHandler($('ewGrid'), 'gridFt', 0.5, 5);
+  numHandler($('ewShrink'), 'shrink', 0, 15);
+  numHandler($('ewSwell'), 'swell', 0, 25);
+  numHandler($('ewTruck'), 'truckCap', 1, 12);
+  body.querySelector('[data-act="set-existing"]').addEventListener('click', () => { E.existingPage = state.page; scheduleSave(); renderDirtPanel(); });
+  body.querySelector('[data-act="set-proposed"]').addEventListener('click', () => { E.proposedPage = state.page; scheduleSave(); renderDirtPanel(); });
+  body.querySelector('[data-act="calc"]').addEventListener('click', calculateCutFill);
+}
+
+function syncDirtInputs() { renderDirtPanel(); }
+
+// S1 stub — the interpolator + grid land in the next slice (needs alignment first)
+function calculateCutFill() {
+  const c = earthworkCounts();
+  if (!alignIsSet() && state.earthwork.existingPage !== state.earthwork.proposedPage)
+    return setMsg('Align the two sheets first (coming in the next update) — proposed contours must map into existing space.');
+  if (!c.existing || !c.proposed) return setMsg('Trace at least one existing and one proposed contour first.');
+  if (!c.boundary) return setMsg('Draw the earthwork boundary (⬚) first.');
+  setMsg('Cut/fill compute lands in the next update — tracing, sheet designation, and alignment come first.');
+}
+
+$('btnDirt').addEventListener('click', () => {
+  const p = $('dirtPanel');
+  p.classList.toggle('hidden');
+  if (!p.classList.contains('hidden')) { els.markupPanel.classList.add('hidden'); $('roofPanel').classList.add('hidden'); renderDirtPanel(); }
+});
+if ($('surfaceSel')) $('surfaceSel').addEventListener('change', e => {
+  curSurface = e.target.value;
+  renderDirtPanel();
+  if (tool === 'contour') setMsg(`Tracing ${curSurface} contours.`);
+});
+
 /* ============================== Topbar & keyboard ============================== */
 
 els.btnPrev.addEventListener('click', () => setPage(state.page - 1));
@@ -1370,8 +1538,10 @@ function projectData() {
     markups: state.markups, scales: state.scales,
     roofPitch: state.roofPitch, roofWaste: state.roofWaste,
     roofPrices: state.roofPrices, roofOP: state.roofOP,
+    earthwork: state.earthwork,
   };
 }
+const defaultEarthwork = () => ({ existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 }, gridFt: 5, shrink: 15, swell: 25, truckCap: 12, result: null });
 
 let saveTimer = null;
 function scheduleSave(now = false) {
@@ -1421,7 +1591,8 @@ async function openProject(rec) {
   state.roofWaste = (rec.data && rec.data.roofWaste != null) ? rec.data.roofWaste : 12;
   state.roofPrices = (rec.data && rec.data.roofPrices) || {};
   state.roofOP = (rec.data && rec.data.roofOP != null) ? rec.data.roofOP : 15;
-  renderMarkupList(); syncRoofInputs();
+  state.earthwork = (rec.data && rec.data.earthwork) || defaultEarthwork();
+  renderMarkupList(); syncRoofInputs(); syncDirtInputs();
   try { localStorage.setItem('planroom-current', rec.id); } catch (_) {}
   updateProjectBtn();
   if (rec.docKey) {
@@ -1451,7 +1622,8 @@ async function newProject(name) {
   state.markups = [];
   state.scales = {};
   state.roofPitch = 6; state.roofWaste = 12; state.roofPrices = {}; state.roofOP = 15;
-  renderMarkupList(); syncRoofInputs();
+  state.earthwork = defaultEarthwork();
+  renderMarkupList(); syncRoofInputs(); syncDirtInputs();
   try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
   updateProjectBtn();
   await saveProjectNow();
@@ -1563,7 +1735,8 @@ $('fileImport').addEventListener('change', async e => {
   if (d.roofWaste != null) state.roofWaste = d.roofWaste;
   state.roofPrices = d.roofPrices || {};
   if (d.roofOP != null) state.roofOP = d.roofOP;
-  renderMarkupList(); syncRoofInputs();
+  state.earthwork = d.earthwork || defaultEarthwork();
+  renderMarkupList(); syncRoofInputs(); syncDirtInputs();
   if (d.docB64) {
     const bytes = base64ToBytes(d.docB64);
     await openFromBytes(bytes.buffer, d.docName || 'plans.pdf', d.docType);
@@ -1861,7 +2034,8 @@ async function copyCompanyProject(id) {
     if (t.data.roofWaste != null) state.roofWaste = t.data.roofWaste;
     state.roofPrices = t.data.roofPrices || {};
     if (t.data.roofOP != null) state.roofOP = t.data.roofOP;
-    renderMarkupList(); syncRoofInputs();
+    state.earthwork = t.data.earthwork || defaultEarthwork();
+    renderMarkupList(); syncRoofInputs(); syncDirtInputs();
     try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
     updateProjectBtn();
     if (t.pdf_url) {
@@ -1921,7 +2095,7 @@ async function apiLive(path, opts = {}) {
 }
 
 function sessionDoc() {
-  return { scales: state.scales, page: state.page, roofPitch: state.roofPitch, roofWaste: state.roofWaste, roofPrices: state.roofPrices, roofOP: state.roofOP };
+  return { scales: state.scales, page: state.page, roofPitch: state.roofPitch, roofWaste: state.roofWaste, roofPrices: state.roofPrices, roofOP: state.roofOP, earthwork: state.earthwork };
 }
 function applySessionDoc(d) {
   if (!d) return;
@@ -1930,6 +2104,7 @@ function applySessionDoc(d) {
   if (d.roofWaste != null) state.roofWaste = d.roofWaste;
   if (d.roofPrices) state.roofPrices = d.roofPrices;
   if (d.roofOP != null) state.roofOP = d.roofOP;
+  if (d.earthwork) state.earthwork = d.earthwork;
   if (d.page && d.page !== state.page && state.doc) setPage(d.page);
 }
 
@@ -1997,7 +2172,7 @@ function applyStream(msg) {
   session.lastSync = new Map(state.markups.map(m => [m.id, JSON.stringify(m)]));
   session.docHash = JSON.stringify(sessionDoc());
   if (selectedId && !selMarkup()) selectedId = null;
-  renderMarkupList(); renderRoofPanel(); syncRoofInputs();
+  renderMarkupList(); renderRoofPanel(); syncRoofInputs(); syncDirtInputs();
   scheduleSave(); vp.requestDraw();
   session.applying = false;
 }

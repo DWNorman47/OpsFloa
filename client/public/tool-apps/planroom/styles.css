@@ -141,11 +141,17 @@ body.nothumbs #thumbRail { display: none; }
 }
 
 /* ---------- markup list panel ---------- */
-#markupPanel, #roofPanel {
-  flex: 0 0 262px; display: flex; flex-direction: column; min-height: 0;
+#markupPanel, #roofPanel, #dirtPanel {
+  flex: 0 0 268px; display: flex; flex-direction: column; min-height: 0;
   background: var(--panel); border-left: 1px solid var(--border);
 }
-#markupPanel.hidden, #roofPanel.hidden { display: none; }
+#markupPanel.hidden, #roofPanel.hidden, #dirtPanel.hidden { display: none; }
+.dirt-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 2px; font-size: 12.5px; }
+.dirt-row .v { color: var(--accent); font-variant-numeric: tabular-nums; }
+.dirt-set { display: flex; align-items: center; gap: 6px; padding: 6px 2px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+.dirt-set input { width: 54px; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 3px 5px; }
+.dirt-btn { width: 100%; margin: 4px 0; }
+#dirtBody .btn.go { background: var(--good); border-color: var(--good); color: #062915; font-weight: 700; }
 .roof-settings {
   display: flex; gap: 12px; flex-wrap: wrap; padding: 8px 10px;
   border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted);

@@ -74,6 +74,13 @@
       <option value="skylight">Skylight</option>
       <option value="chimney">Chimney</option>
     </select>
+    <span class="tb-sep tb-takeoff" aria-hidden="true"></span>
+    <button class="tool tb-takeoff" data-tool="contour" title="Contour — trace a contour line, then type its elevation. Tagged existing or proposed per the surface toggle →">⛰</button>
+    <button class="tool tb-takeoff" data-tool="ebound" title="Earthwork boundary — the limits of disturbance that get gridded for cut/fill (one per project)">⬚</button>
+    <select id="surfaceSel" class="mini-sel tb-takeoff" title="Which surface new contours/pads belong to">
+      <option value="existing">Existing</option>
+      <option value="proposed">Proposed</option>
+    </select>
     <input type="color" id="mkColor" value="#e05555" title="Markup color (applies to the selected markup too)">
     <select id="mkWidth" title="Line weight / text size (applies to the selected markup too)">
       <option value="S">Thin</option>
@@ -89,6 +96,7 @@
     <button id="btnRedo" class="btn" title="Redo (Ctrl+Y)" disabled>↷</button>
     <button id="btnList" class="btn" title="Markup list — every markup across the set, click to jump">📋</button>
     <button id="btnRoof" class="btn tb-takeoff" title="Roofing takeoff — squares, edges, and counts across the set">🏠<span class="btn-label"> Roof</span></button>
+    <button id="btnDirt" class="btn tb-takeoff" title="Earthwork / cut-fill takeoff — designate sheets, trace contours, compute volumes">⛰<span class="btn-label"> Dirt</span></button>
     <button id="btnBid" class="btn tb-takeoff" title="Roofing bid — materials & labor from the takeoff, editable prices, print / CSV">$<span class="btn-label"> Bid</span></button>
     <button id="btnUpsell" class="btn tb-upsell" title="Turn your measurements into a priced takeoff & bid — Takeoff layer add-on">🔒<span class="btn-label"> Takeoff</span></button>
     <button id="btnFlat" class="btn" title="Download a PDF with all markups burned in — share it or print it from any PDF viewer">⤓<span class="btn-label"> PDF</span></button>
@@ -151,6 +159,10 @@
       <label>Waste <input type="number" id="roofWaste" min="0" max="40" step="1" style="width:48px"> %</label>
     </div>
     <div id="roofBody" class="mk-list"></div>
+  </aside>
+  <aside id="dirtPanel" class="hidden" aria-label="Earthwork takeoff">
+    <div class="mk-head"><b>⛰ Earthwork (cut / fill)</b></div>
+    <div id="dirtBody" class="mk-list"></div>
   </aside>
 </main>
 
