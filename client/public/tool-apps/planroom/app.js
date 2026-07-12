@@ -2248,9 +2248,9 @@ $('btnProjects').addEventListener('click', showProjects);
 $('projClose').addEventListener('click', () => els.projects.classList.add('hidden'));
 els.projects.addEventListener('click', e => { if (e.target === els.projects) els.projects.classList.add('hidden'); });
 $('btnProjNew').addEventListener('click', async () => {
+  els.projects.classList.add('hidden'); // close first — the name prompt would otherwise render behind it
   const name = await modals.askText('New project', 'Name the project', '');
   if (name === null) return;
-  els.projects.classList.add('hidden');
   await newProject(name);
 });
 
@@ -2419,11 +2419,23 @@ $('btnCsv').addEventListener('click', exportCsv);
 
 function toolApiBase() { return (localStorage.getItem('tc_api_base') || '') + '/api'; }
 function toolToken() { return localStorage.getItem('tc_token') || sessionStorage.getItem('tc_token') || ''; }
+// opts.timeout (ms) aborts a request that never settles — so a hung backend
+// can't freeze the UI waiting on it
+function withTimeout(opts) {
+  const { timeout, ...rest } = opts;
+  if (!timeout) return { rest, done: () => {} };
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(), timeout);
+  return { rest: { ...rest, signal: rest.signal || c.signal }, done: () => clearTimeout(t) };
+}
 async function apiFetch(path, opts = {}) {
-  return fetch(toolApiBase() + '/takeoffs' + path, {
-    ...opts,
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + toolToken(), ...(opts.headers || {}) },
-  });
+  const { rest, done } = withTimeout(opts);
+  try {
+    return await fetch(toolApiBase() + '/takeoffs' + path, {
+      ...rest,
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + toolToken(), ...(rest.headers || {}) },
+    });
+  } finally { done(); }
 }
 
 // Show status inside the Company modal (visible over the dialog) and the HUD.
@@ -2507,12 +2519,20 @@ function shareConflict(c) {
 async function refreshCompanyList() {
   const list = $('companyList');
   list.innerHTML = '<div class="hint">Loading…</div>';
-  let live = [];
-  try { const sr = await apiLive('?tool=planroom'); if (sr.ok) live = await sr.json(); } catch (_) {}
-  try {
-    const res = await apiFetch('?app=plan-room');
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const rows = await res.json();
+  // load both concurrently with hard timeouts — the (optional) live-sessions
+  // lookup must never block or hang the primary shared-projects list
+  const [liveR, sharedR] = await Promise.allSettled([
+    apiLive('?tool=planroom', { timeout: 8000 }).then(r => (r.ok ? r.json() : [])),
+    apiFetch('?app=plan-room', { timeout: 12000 }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }),
+  ]);
+  const live = liveR.status === 'fulfilled' && Array.isArray(liveR.value) ? liveR.value : [];
+  if (sharedR.status === 'rejected') {
+    const why = sharedR.reason && sharedR.reason.name === 'AbortError' ? 'timed out' : (sharedR.reason && sharedR.reason.message) || 'failed';
+    list.innerHTML = `<div class="hint">Could not load the company library (${esc(why)}). Make sure you're signed in to OpsFloa, then reopen this.</div>`;
+    return;
+  }
+  const rows = Array.isArray(sharedR.value) ? sharedR.value : [];
+  {
     list.innerHTML = '';
     // live sessions first — join to co-edit in real time
     for (const s of live) {
@@ -2549,8 +2569,6 @@ async function refreshCompanyList() {
       row.querySelector('[data-act="del"]').addEventListener('click', () => deleteCompanyShared(r.id, r.name));
       list.appendChild(row);
     }
-  } catch (e) {
-    list.innerHTML = `<div class="hint">Could not load the company library: ${esc(e.message)}. Make sure you're signed in to OpsFloa.</div>`;
   }
 }
 
@@ -2649,10 +2667,13 @@ $('company').addEventListener('click', e => { if (e.target === $('company')) $('
 let session = null; // { id, clientId, es, applying, isHost, lastSync, docHash, timer }
 
 async function apiLive(path, opts = {}) {
-  return fetch(toolApiBase() + '/live' + path, {
-    ...opts,
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + toolToken(), ...(opts.headers || {}) },
-  });
+  const { rest, done } = withTimeout(opts);
+  try {
+    return await fetch(toolApiBase() + '/live' + path, {
+      ...rest,
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + toolToken(), ...(rest.headers || {}) },
+    });
+  } finally { done(); }
 }
 
 function sessionDoc() {

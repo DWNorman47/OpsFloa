@@ -249,6 +249,9 @@ body.nothumbs #thumbRail { display: none; }
 }
 /* !important so it beats ID-specificity display rules (e.g. #dropHint { display:flex }) */
 .modal.hidden, .hidden { display: none !important; }
+/* the generic ask/confirm prompt always sits above any other modal that opened
+   it (Projects rename/delete, page-picker, etc.) — DOM order alone wouldn't */
+#modal { z-index: 60; }
 .modal-box {
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
   padding: 18px 20px; min-width: 320px; max-width: 420px;
