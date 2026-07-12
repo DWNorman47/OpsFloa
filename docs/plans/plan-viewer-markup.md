@@ -122,6 +122,13 @@ both.
   on sale. The standalone sitework tool continues untouched as the interim
   sitework "pack" — a $100 customer gets roofing inside Plan Room + sitework
   standalone, linked from ToolsPage as today.
+  **Upsell teasers on base-tier measurements:** when a base-only user draws a
+  measure, show a locked hint of what the takeoff layer would do with it
+  ("12,480 SF → 288 tons asphalt · priced bid — Takeoff layer") — their own
+  measurement is the ad. The tier boundary is measure ("how big is it?") vs
+  takeoff ("what do I need and what do I charge?"): materials math, trade
+  packs, cut/fill surfaces, pricing/bid. Mirrors the proven Bluebeam
+  (measure-in-base) vs PlanSwift (assemblies/pricing) market split.
 - **M8 — live sessions:** table + REST + ws + sweeper + Go Live/join/end UX.
   Generic layer, wired for `tool='planroom'` only. Deliberately off the
   revenue-critical path — a websocket rabbit hole can't delay a sale.
