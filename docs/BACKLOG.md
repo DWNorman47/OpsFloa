@@ -140,7 +140,28 @@ that holds the exhaustive detail.
 
 ## ✅ Things I need to do (David)
 
-- *(nothing filed yet — add as they come up)*
+**Plan Room — before the base tier can actually sell (M6 shipped, needs these):**
+- **Stripe:** create the Plan Room product with a monthly (~$40) and an annual
+  price, then set `STRIPE_PRICE_PLANROOM` + `STRIPE_PRICE_PLANROOM_ANNUAL` in
+  Render env. (The billing card hides itself until these exist. The **superadmin
+  On/Off toggle already works without Stripe** — flip Plan Room on for your own
+  company to use it now.)
+- **R2 bucket CORS:** allow `PUT` + `content-type` from the app origins
+  (opsfloa.com / www / dev / stage) on the plan-tools bucket — needed for the ☁
+  share-upload path (M4). Reads/copy-down work without it.
+
+**Plan Room — optional / later:**
+- **Orphan sweep:** set `R2_ORPHAN_SWEEP=1` in Render — but ONLY on the
+  environment whose DB exclusively owns the bucket (if stage & prod share a
+  bucket, one env's sweep deletes the other's files). Cleans up abandoned
+  presigned uploads.
+- **Smoke-test Plan Room end-to-end** on dev: open a plan set (PDF + an aerial
+  image), mark up, calibrate + measure against a known dimension, share to the
+  company + copy it down on another browser profile, export the flattened PDF,
+  and confirm the locked card shows for a company without the add-on.
+
+**Later trade packs (when built):** Stripe price for the $60 takeoff layer at
+M7; the sitework-consolidation cutover confirmation is yours when it comes.
 
 ## 📖 Done / shipped log
 *Landed on `dev`, newest first. (What happens past dev is handled outside this doc.)*
