@@ -26,6 +26,7 @@
     <div class="brand">Plan&nbsp;Room</div>
     <button id="btnProjects" class="btn" title="Switch, create, or manage plan projects">📁 <span id="projName">Project</span></button>
     <button id="btnCompany" class="btn" title="Share this project with your company, or copy one a teammate shared">☁<span class="btn-label"> Company</span></button>
+    <button id="btnLive" class="btn" title="Go live — let teammates join and mark up this project with you in real time">🟢<span class="btn-label"> Go Live</span></button>
   </div>
 
   <div class="tb-group">
@@ -99,6 +100,16 @@
     <button id="btnThumbs" class="btn" title="Show / hide the sheet strip">🗂</button>
   </div>
 </header>
+
+<div id="liveBar" class="hidden">
+  <span class="live-dot" aria-hidden="true"></span>
+  <b id="liveName">Live session</b>
+  <span id="liveRoster" class="live-roster"></span>
+  <span class="spacer"></span>
+  <span id="liveState" class="live-state"></span>
+  <button id="liveLeave" class="btn tiny">Leave</button>
+  <button id="liveEnd" class="btn tiny danger hidden">End for all</button>
+</div>
 
 <main>
   <aside id="thumbRail" aria-label="Sheets"></aside>

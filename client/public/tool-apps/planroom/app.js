@@ -1377,6 +1377,7 @@ let saveTimer = null;
 function scheduleSave(now = false) {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveProjectNow, now ? 0 : 600);
+  if (typeof sessionSyncSoon === 'function') sessionSyncSoon(); // push live edits (no-op if not in a session / applying incoming)
 }
 async function saveProjectNow() {
   clearTimeout(saveTimer); saveTimer = null;
@@ -1774,15 +1775,31 @@ function shareConflict(c) {
 async function refreshCompanyList() {
   const list = $('companyList');
   list.innerHTML = '<div class="hint">Loading…</div>';
+  let live = [];
+  try { const sr = await apiLive('?tool=planroom'); if (sr.ok) live = await sr.json(); } catch (_) {}
   try {
     const res = await apiFetch('?app=plan-room');
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const rows = await res.json();
-    if (!rows.length) {
-      list.innerHTML = '<div class="hint">No shared plan sets yet. Open one and hit “Share current project”.</div>';
+    list.innerHTML = '';
+    // live sessions first — join to co-edit in real time
+    for (const s of live) {
+      const mine = session && String(session.id) === String(s.id);
+      const row = document.createElement('div');
+      row.className = 'proj-row';
+      row.innerHTML =
+        `<div class="grow"><div class="name"></div>` +
+        `<div class="meta"><span class="pill" style="background:var(--good);color:#062915">LIVE</span> ${s.host_name ? 'by ' + esc(s.host_name) + ' · ' : ''}${s.participants || 0} here</div></div>` +
+        (mine ? '<span class="pill">in this</span>' : '<button class="btn tiny primary" data-act="join">Join live</button>');
+      row.querySelector('.name').textContent = s.name || 'Live session';
+      const jb = row.querySelector('[data-act="join"]');
+      if (jb) jb.addEventListener('click', () => joinSession(s.id));
+      list.appendChild(row);
+    }
+    if (!rows.length && !live.length) {
+      list.innerHTML = '<div class="hint">No shared plan sets or live sessions yet. Open a set and hit “Share current project”, or 🟢 Go Live.</div>';
       return;
     }
-    list.innerHTML = '';
     for (const r of rows) {
       const when = r.updated_at ? new Date(r.updated_at).toLocaleString() : '';
       const row = document.createElement('div');
@@ -1885,6 +1902,194 @@ $('btnCompany').addEventListener('click', () => {
 $('companyShareBtn').addEventListener('click', shareToCompany);
 $('companyClose').addEventListener('click', () => $('company').classList.add('hidden'));
 $('company').addEventListener('click', e => { if (e.target === $('company')) $('company').classList.add('hidden'); });
+
+/* ===================== Live sessions (SSE + REST ops) =====================
+ * Host "goes live" on the current project; teammates join and co-edit in real
+ * time. Server→client push via EventSource; client→server via REST ops. Every
+ * persistent change (markups + scale/roof settings) is diffed against the last
+ * synced state and pushed as ops; incoming ops apply without re-emitting.
+ * Base-tier feature — not gated on the takeoff layer.
+ */
+
+let session = null; // { id, clientId, es, applying, isHost, lastSync, docHash, timer }
+
+async function apiLive(path, opts = {}) {
+  return fetch(toolApiBase() + '/live' + path, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + toolToken(), ...(opts.headers || {}) },
+  });
+}
+
+function sessionDoc() {
+  return { scales: state.scales, page: state.page, roofPitch: state.roofPitch, roofWaste: state.roofWaste, roofPrices: state.roofPrices, roofOP: state.roofOP };
+}
+function applySessionDoc(d) {
+  if (!d) return;
+  if (d.scales) state.scales = d.scales;
+  if (d.roofPitch != null) state.roofPitch = d.roofPitch;
+  if (d.roofWaste != null) state.roofWaste = d.roofWaste;
+  if (d.roofPrices) state.roofPrices = d.roofPrices;
+  if (d.roofOP != null) state.roofOP = d.roofOP;
+  if (d.page && d.page !== state.page && state.doc) setPage(d.page);
+}
+
+function setLiveState(t) { $('liveState').textContent = t || ''; }
+function updateLiveBar(roster) {
+  const label = $('btnLive').querySelector('.btn-label');
+  if (!session) {
+    $('liveBar').classList.add('hidden');
+    $('btnLive').classList.remove('live-on');
+    if (label) label.textContent = ' Go Live';
+    return;
+  }
+  $('liveBar').classList.remove('hidden');
+  $('liveName').textContent = state.projectName || 'Live session';
+  $('btnLive').classList.add('live-on');
+  if (label) label.textContent = ' Live';
+  $('liveEnd').classList.toggle('hidden', !session.isHost);
+  if (roster) $('liveRoster').textContent = roster.length ? `${roster.length} here: ${roster.map(r => r.name).join(', ')}` : '';
+}
+
+// diff current state vs last-synced and push ops (debounced; hooked into scheduleSave)
+function sessionSyncSoon() {
+  if (!session || session.applying) return;
+  clearTimeout(session.timer);
+  session.timer = setTimeout(sessionPush, 250);
+}
+async function sessionPush() {
+  if (!session) return;
+  const ops = [];
+  const cur = new Map();
+  for (const m of state.markups) {
+    const j = JSON.stringify(m);
+    cur.set(m.id, j);
+    if (session.lastSync.get(m.id) !== j) ops.push({ t: 'up', id: m.id, o: m, ts: Date.now() });
+  }
+  for (const id of session.lastSync.keys()) if (!cur.has(id)) ops.push({ t: 'del', id, ts: Date.now() });
+  session.lastSync = cur;
+  const docNow = sessionDoc();
+  const docHash = JSON.stringify(docNow);
+  const doc = docHash !== session.docHash ? docNow : null;
+  session.docHash = docHash;
+  if (!ops.length && !doc) return;
+  try { await apiLive('/' + session.id + '/op', { method: 'POST', body: JSON.stringify({ clientId: session.clientId, ops, doc, docTs: Date.now() }) }); } catch (_) {}
+}
+
+function applyStream(msg) {
+  if (!session) return;
+  if (msg.type === 'presence') { updateLiveBar(msg.roster); return; }
+  if (msg.type === 'ended') { endSessionLocal(true); return; }
+  session.applying = true;
+  if (msg.type === 'init') {
+    if (Array.isArray(msg.objects)) state.markups = msg.objects;
+    applySessionDoc(msg.doc);
+    updateLiveBar(msg.roster);
+  } else if (msg.type === 'ops') {
+    for (const op of msg.ops || []) {
+      if (op.t === 'del') state.markups = state.markups.filter(m => m.id !== op.id);
+      else if (op.t === 'up' && op.o) {
+        const i = state.markups.findIndex(m => m.id === op.o.id);
+        if (i >= 0) state.markups[i] = op.o; else state.markups.push(op.o);
+      }
+    }
+    applySessionDoc(msg.doc);
+  }
+  session.lastSync = new Map(state.markups.map(m => [m.id, JSON.stringify(m)]));
+  session.docHash = JSON.stringify(sessionDoc());
+  if (selectedId && !selMarkup()) selectedId = null;
+  renderMarkupList(); renderRoofPanel(); syncRoofInputs();
+  scheduleSave(); vp.requestDraw();
+  session.applying = false;
+}
+
+function openStream() {
+  const url = toolApiBase() + '/live/' + session.id + '/stream?token=' + encodeURIComponent(toolToken()) + '&client=' + encodeURIComponent(session.clientId);
+  const es = new EventSource(url);
+  session.es = es;
+  es.onopen = () => setLiveState('');
+  es.onmessage = e => { try { applyStream(JSON.parse(e.data)); } catch (_) {} };
+  es.onerror = () => setLiveState('reconnecting…'); // EventSource auto-reconnects; the server resends init
+}
+
+async function goLive() {
+  if (session) return;
+  if (!state.doc) { setMsg('Open a plan set before going live.'); return; }
+  setMsg('Starting the live session…');
+  try {
+    const pdfUrl = await uploadDocToR2(); // presigned upload — needs R2 CORS
+    const res = await apiLive('/', { method: 'POST', body: JSON.stringify({
+      tool: 'planroom', name: state.projectName || 'Live session', pdfUrl, pdfName: state.docName,
+      objects: state.markups, doc: sessionDoc(),
+    }) });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const { id } = await res.json();
+    session = {
+      id: String(id), clientId: randId(), applying: false, isHost: true, timer: null,
+      lastSync: new Map(state.markups.map(m => [m.id, JSON.stringify(m)])), docHash: JSON.stringify(sessionDoc()),
+    };
+    openStream();
+    updateLiveBar();
+    setMsg('You are live. Teammates can join from ☁ Company (it shows a LIVE badge).');
+  } catch (e) { setMsg('Could not start the session (signed in? is R2 CORS configured?): ' + e.message); }
+}
+
+async function joinSession(id) {
+  if (session) endSessionLocal(false);
+  setMsg('Joining the live session…');
+  let t;
+  try { const res = await apiLive('/' + id); if (!res.ok) throw new Error('HTTP ' + res.status); t = await res.json(); }
+  catch (e) { setMsg('Could not join: ' + e.message); return; }
+  // land the shared doc in a FRESH local project — never overwrite the open one
+  await saveProjectNow();
+  state.projectId = randId();
+  state.projectName = t.name || 'Live session';
+  resetDocState();
+  state.markups = Array.isArray(t.objects) ? t.objects : [];
+  applySessionDoc(t.doc);
+  updateProjectBtn(); renderMarkupList(); syncRoofInputs();
+  try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
+  if (t.pdfUrl) {
+    try {
+      const pr = await apiLive('/' + id + '/pdf');
+      if (pr.ok) { const pj = await pr.json(); await openFromBytes(base64ToBytes(pj.b64).buffer, pj.name || t.pdfName || 'plans.pdf', null); if (t.doc && t.doc.page) await setPage(t.doc.page); }
+    } catch (_) { setMsg('Joined, but could not load the plans.'); }
+  }
+  session = {
+    id: String(id), clientId: randId(), applying: false, isHost: false, timer: null,
+    lastSync: new Map(state.markups.map(m => [m.id, JSON.stringify(m)])), docHash: JSON.stringify(sessionDoc()),
+  };
+  $('company').classList.add('hidden');
+  openStream();
+  updateLiveBar();
+  scheduleSave(true);
+  setMsg(`Joined “${t.name}”. Your markups appear for everyone live.`);
+}
+
+function endSessionLocal(remote) {
+  if (!session) return;
+  const wasHost = session.isHost;
+  if (session.es) { try { session.es.close(); } catch (_) {} }
+  clearTimeout(session.timer);
+  session = null;
+  updateLiveBar();
+  setMsg(remote ? 'The live session ended — your copy is saved in your projects.'
+    : wasHost ? 'Live session ended.' : 'You left the session — your copy is saved in your projects.');
+}
+
+async function endOrLeave(endForAll) {
+  if (!session) return;
+  const id = session.id;
+  if (endForAll && session.isHost) { try { await apiLive('/' + id + '/end', { method: 'POST' }); } catch (_) {} }
+  endSessionLocal(false);
+}
+
+$('btnLive').addEventListener('click', () => {
+  if (!session) return goLive();
+  if (session.isHost) { if (confirm('End the session for everyone? Each person keeps their own copy.')) endOrLeave(true); }
+  else endOrLeave(false);
+});
+$('liveLeave').addEventListener('click', () => endOrLeave(false));
+$('liveEnd').addEventListener('click', () => { if (confirm('End the session for everyone? Each person keeps their own copy.')) endOrLeave(true); });
 
 /* ============================== Boot ============================== */
 

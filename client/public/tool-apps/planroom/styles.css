@@ -76,6 +76,19 @@ body.has-takeoff .tb-upsell { display: none; }
   border-radius: 6px; padding: 6px 6px; font-size: 13px;
 }
 
+/* ---------- live session bar ---------- */
+#liveBar {
+  display: flex; align-items: center; gap: 10px; flex: 0 0 auto;
+  padding: 5px 12px; background: #17321f; border-bottom: 1px solid var(--good);
+  color: var(--text); font-size: 13px;
+}
+#liveBar.hidden { display: none; }
+.live-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 0 rgba(63,191,111,.6); animation: livepulse 2s infinite; }
+@keyframes livepulse { 0% { box-shadow: 0 0 0 0 rgba(63,191,111,.6); } 70% { box-shadow: 0 0 0 8px rgba(63,191,111,0); } 100% { box-shadow: 0 0 0 0 rgba(63,191,111,0); } }
+.live-roster { color: var(--muted); }
+.live-state { color: var(--warn); font-size: 12px; }
+#btnLive.live-on { background: var(--good); border-color: var(--good); color: #062915; font-weight: 700; }
+
 /* ---------- main layout ---------- */
 main { flex: 1 1 auto; display: flex; min-height: 0; }
 

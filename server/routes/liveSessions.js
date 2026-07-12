@@ -20,7 +20,7 @@
 const jwt = require('jsonwebtoken');
 const router = require('express').Router();
 const pool = require('../db');
-const { keyFromPublicUrl } = require('../r2');
+const { keyFromPublicUrl, getBytesByUrl } = require('../r2');
 const { LIVE_SESSION_TOOLS, LIVE_SESSION_TOOL_DEFAULT } = require('../constants/liveSessionEnums');
 
 const rooms = new Map();        // sessionId(string) -> Room
@@ -151,6 +151,19 @@ router.get('/:id', async (req, res) => {
       objects: clientObjects(room), doc: room.doc, roster: roster(room),
     });
   } catch (err) { req.log && req.log.error({ err }, 'live join'); res.status(500).json({ error: 'server error' }); }
+});
+
+// GET /:id/pdf  — the session's plan doc, proxied from R2 as base64 (no R2 CORS
+// needed to read; a joiner downloads it once on join)
+router.get('/:id/pdf', async (req, res) => {
+  try {
+    const room = await loadRoom(String(req.params.id));
+    if (!room || room.companyId !== String(req.user.company_id)) return res.status(404).json({ error: 'not found' });
+    if (!room.meta.pdfUrl) return res.status(404).json({ error: 'no pdf' });
+    const bytes = await getBytesByUrl(room.meta.pdfUrl);
+    if (!bytes) return res.status(404).json({ error: 'no pdf' });
+    res.json({ name: room.meta.pdfName || 'plans.pdf', b64: bytes.toString('base64') });
+  } catch (err) { req.log && req.log.error({ err }, 'live pdf'); res.status(500).json({ error: 'server error' }); }
 });
 
 // POST /:id/op  — apply markup ops + doc settings, broadcast to others
