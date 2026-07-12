@@ -64,16 +64,11 @@ that holds the exhaustive detail.
 
 ## ✨ Ideas — improvements
 
-- **Plan Room: multi-PDF projects.** Today a project holds ONE document; split
-  sets (arch + civil + addenda, or existing/proposed as separate files) need
-  either separate projects or a PDF Toolkit merge first. Real fix = a doc list
-  per project with pages namespaced per doc (touches markup keys, scales,
-  sharing, export, live sessions — scope as its own plan). Interim workaround:
-  merge via PDF Toolkit. (2026-07-12)
-- **Plan Room: warn on doc replacement with markups present.** Opening a new
-  PDF into a project keeps markups (revision-swap case) but they're keyed by
-  page number — mismatched sheets silently land markups on wrong pages. Add a
-  "keep markups / start clean?" prompt. (2026-07-12)
+- **Plan Room: page-level reorder / remove.** Import now appends sheets
+  (page numbers stay stable so markups/earthwork refs survive). A future add
+  is reordering or removing sheets — which renumbers pages, so it needs a
+  page-id remap across markups/scales/earthwork. Deferred until asked.
+  (2026-07-12)
 
 - **Presigned direct-to-R2 upload for shared-takeoff PDFs.** Replaces the current
   64 MB base64-through-the-API approach; removes the ~48 MB ceiling and cuts server
@@ -186,6 +181,18 @@ that holds the exhaustive detail.
 
 ## 📖 Done / shipped log
 *Landed on `dev`, newest first. (What happens past dev is handled outside this doc.)*
+
+- **2026-07-12 — Plan Room: combined-document projects (multi-PDF, page
+  selection).** Opening plans moved into the 📁 Projects modal: pick a
+  file → a thumbnail page-picker (check/uncheck sheets) → only the chosen
+  sheets load. "Add more sheets" appends from other PDFs/images into one
+  combined PDF (pdf-lib merges; images become pages; existing page numbers
+  stay stable so markups/earthwork refs survive). Removed the topbar
+  "Open Plans" + "Load"; progressive disclosure hides the whole toolbar
+  except 📁 Project until a document is loaded; Projects modal is now the
+  genesis hub (open/add plans, load saved file, ☁ company / join live). This
+  resolves the multi-PDF-projects and doc-replacement-warning items (append,
+  never silent-replace).
 
 - **2026-07-11 — Plan Room product built end-to-end (M0–M8).** The two-tier
   plan-tools line: a shared engine copied out of the sitework monolith

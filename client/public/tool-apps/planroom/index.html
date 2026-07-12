@@ -24,21 +24,19 @@
 <header id="topbar">
   <div class="tb-group">
     <div class="brand">Plan&nbsp;Room</div>
-    <button id="btnProjects" class="btn" title="Switch, create, or manage plan projects">📁 <span id="projName">Project</span></button>
-    <button id="btnCompany" class="btn" title="Share this project with your company, or copy one a teammate shared">☁<span class="btn-label"> Company</span></button>
-    <button id="btnLive" class="btn" title="Live co-edit — teammates join and mark up this project with you in real time (nothing is published)">🟢<span class="btn-label"> Live Co-Edit</span></button>
+    <button id="btnProjects" class="btn" title="Open plans, switch projects, or add more sheets">📁 <span id="projName">Project</span></button>
+    <button id="btnCompany" class="btn needs-doc" title="Share this project with your company, or copy one a teammate shared">☁<span class="btn-label"> Company</span></button>
+    <button id="btnLive" class="btn needs-doc" title="Live co-edit — teammates join and mark up this project with you in real time (nothing is published)">🟢<span class="btn-label"> Live Co-Edit</span></button>
   </div>
 
-  <div class="tb-group">
+  <div class="tb-group needs-doc">
     <button id="btnExport" class="btn" title="Download this project as one self-contained file — plans and markups embedded — so you can hand it to anyone">💾<span class="btn-label"> Save</span></button>
-    <button id="btnImport" class="btn" title="Load a saved Plan Room file">📂<span class="btn-label"> Load</span></button>
-    <input type="file" id="fileImport" accept="application/json" hidden>
-    <button id="btnOpenDoc" class="btn primary" title="Open a plan set — PDF, or an image (aerial / photo of a sheet)">Open Plans…</button>
-    <input type="file" id="fileDoc" accept="application/pdf,image/*" hidden>
   </div>
+  <input type="file" id="fileImport" accept="application/json" hidden>
+  <input type="file" id="filePlans" accept="application/pdf,image/*" multiple hidden>
 
   <!-- markup tools -->
-  <div class="tb-group tb-tools">
+  <div class="tb-group tb-tools needs-doc">
     <button class="tool active" data-tool="pan" title="Pan / zoom (middle-drag pans in any tool)">✋</button>
     <button class="tool" data-tool="select" title="Select / move / resize markups. Delete removes; double-click a note to edit it">➤</button>
     <button class="tool" data-tool="cloud" title="Revision cloud — drag a box">☁</button>
@@ -97,7 +95,7 @@
 
   <div class="spacer"></div>
 
-  <div class="tb-group">
+  <div class="tb-group needs-doc">
     <button id="btnUndo" class="btn" title="Undo (Ctrl+Z)" disabled>↶</button>
     <button id="btnRedo" class="btn" title="Redo (Ctrl+Y)" disabled>↷</button>
     <button id="btnList" class="btn" title="Markup list — every markup across the set, click to jump">📋</button>
@@ -130,7 +128,7 @@
   <div id="canvasWrap">
     <canvas id="cv"></canvas>
     <div id="hud"></div>
-    <div id="dropHint"><span>Drop a PDF or image here, or click <b>Open Plans…</b></span></div>
+    <div id="dropHint"><span>Drop a PDF or image here, or open plans from <b>📁 Project</b></span></div>
     <textarea id="textOverlay" class="hidden" rows="2" spellcheck="false"
       placeholder="Type the note — Enter to place, Esc to cancel"></textarea>
   </div>
@@ -222,11 +220,32 @@
 <div id="projects" class="modal hidden">
   <div class="modal-box wide">
     <h3>Projects</h3>
+    <div id="projCurrent" class="proj-current"></div>
+    <div class="proj-list-head">Your projects</div>
     <div id="projList" class="proj-list"></div>
     <div class="modal-actions">
       <button id="btnProjNew" class="btn primary">+ New project</button>
       <span class="spacer"></span>
       <button id="projClose" class="btn">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- page-picker modal: choose which sheets of a PDF load into the project -->
+<div id="pagePick" class="modal hidden">
+  <div class="modal-box wide">
+    <h3 id="pagePickTitle">Choose sheets</h3>
+    <div class="hint">Only the sheets you keep checked load into the project. Uncheck cover pages, details, or anything you don't need.</div>
+    <div class="pagePick-bar">
+      <button id="pagePickAll" class="btn tiny">Check all</button>
+      <button id="pagePickNone" class="btn tiny">Uncheck all</button>
+      <span id="pagePickCount" class="hint"></span>
+    </div>
+    <div id="pagePickGrid" class="pagePick-grid"></div>
+    <div class="modal-actions">
+      <button id="pagePickCancel" class="btn">Cancel</button>
+      <span class="spacer"></span>
+      <button id="pagePickOk" class="btn primary">Add checked sheets</button>
     </div>
   </div>
 </div>

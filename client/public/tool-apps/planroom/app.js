@@ -926,6 +926,7 @@ async function openFromBytes(buf, name, type, { persist = true } = {}) {
   state.docType = type || null;
   pageCanvas.clear(); pageBase.clear(); inflight.clear();
   els.dropHint.classList.add('hidden');
+  document.body.classList.add('has-doc');
   buildThumbs();
   await setPage(1, { fit: true });
   const n = state.doc.numPages;
@@ -933,23 +934,177 @@ async function openFromBytes(buf, name, type, { persist = true } = {}) {
   return true;
 }
 
-async function openFile(file) {
-  const buf = await file.arrayBuffer();
-  const ok = await openFromBytes(buf, file.name, file.type);
-  if (ok) scheduleSave(true);
+/* Combined-document model: a project's plan set is ONE PDF that we build by
+   copying the sheets you pick out of each source file (images become pages).
+   "Add plans" appends — existing sheets keep their page numbers, so markups
+   and earthwork page refs stay valid. pdf-lib (global PDFLib) does the merge;
+   pdf.js renders the picker thumbnails. */
+
+async function currentCombinedBytes() {
+  if (!state.docKey) return null;
+  try { const f = await store.filesGet(state.docKey); return f && f.bytes ? f.bytes : null; } catch (_) { return null; }
 }
 
-$('btnOpenDoc').addEventListener('click', () => $('fileDoc').click());
-$('fileDoc').addEventListener('change', e => {
-  if (e.target.files[0]) openFile(e.target.files[0]);
+// swap the project's document to freshly-built combined bytes and reopen it
+async function finalizeCombined(combined, name) {
+  const bytes = await combined.save(); // Uint8Array
+  const oldKey = state.docKey;
+  let key = null;
+  try { key = await hashBytes(bytes); await store.filesPut(key, { name, type: 'application/pdf', bytes }); } catch (_) {}
+  // openFromBytes copies internally (pdf.js detaches its copy, not `bytes`), so
+  // the just-stored bytes stay intact
+  const ok = await openFromBytes(bytes, name, 'application/pdf', { persist: false });
+  if (!ok) { state.docKey = oldKey; return false; }
+  state.docKey = key || oldKey;
+  state.docName = name;
+  scheduleSave(true);
+  if (!$('projects').classList.contains('hidden')) renderProjCurrent(); // reflect the new sheet count
+  // drop the previous combined blob if nothing else references it
+  if (oldKey && key && oldKey !== key) {
+    try { const all = await store.projAll(); if (!all.some(p => p.docKey === oldKey && p.id !== state.projectId)) await store.filesDelete(oldKey); } catch (_) {}
+  }
+  return true;
+}
+
+// image → one page sized to the image; JPG/PNG embed directly, else via canvas→PNG
+async function embedImagePage(combined, bytes, mime) {
+  let img;
+  if (/jpe?g/i.test(mime)) img = await combined.embedJpg(bytes);
+  else if (/png/i.test(mime)) img = await combined.embedPng(bytes);
+  else {
+    const png = await imageBytesToPng(bytes, mime);
+    img = await combined.embedPng(png);
+  }
+  const page = combined.addPage([img.width, img.height]);
+  page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height });
+}
+
+// decode any browser-supported image and re-encode as PNG bytes (webp/gif/etc.)
+function imageBytesToPng(bytes, mime) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(new Blob([bytes], { type: mime || 'image/png' }));
+    const im = new Image();
+    im.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = im.naturalWidth; c.height = im.naturalHeight;
+      c.getContext('2d').drawImage(im, 0, 0);
+      URL.revokeObjectURL(url);
+      c.toBlob(b => b ? b.arrayBuffer().then(ab => resolve(new Uint8Array(ab))) : reject(new Error('encode failed')), 'image/png');
+    };
+    im.onerror = () => { URL.revokeObjectURL(url); reject(new Error('could not read image')); };
+    im.src = url;
+  });
+}
+
+// import one file into the current project (page picker for multi-page PDFs)
+async function importOneFile(file) {
+  const { PDFDocument } = PDFLib;
+  const buf = new Uint8Array(await file.arrayBuffer());
+  const isPdf = /pdf$/i.test(file.type) || /\.pdf$/i.test(file.name);
+  try {
+    const existing = await currentCombinedBytes();
+    const combined = existing ? await PDFDocument.load(existing, { ignoreEncryption: true }) : await PDFDocument.create();
+    const baseName = state.docName || file.name;
+
+    if (!isPdf) {
+      setMsg(`Adding ${file.name}…`);
+      await embedImagePage(combined, buf, file.type);
+      return finalizeCombined(combined, existing ? baseName : file.name);
+    }
+
+    // PDF: pick which sheets to bring in
+    const src = await openDoc(new Uint8Array(buf), { type: 'application/pdf' });
+    const indices = await showPagePicker(src, file.name); // 0-based, or null to cancel
+    if (!indices || !indices.length) { setMsg('Nothing added.'); return false; }
+    setMsg(`Adding ${indices.length} sheet${indices.length === 1 ? '' : 's'}…`);
+    const srcDoc = await PDFDocument.load(buf, { ignoreEncryption: true });
+    const copied = await combined.copyPages(srcDoc, indices);
+    for (const pg of copied) combined.addPage(pg);
+    return finalizeCombined(combined, existing ? baseName : file.name);
+  } catch (err) {
+    console.error(err);
+    setMsg(`Could not add ${file.name}: ${err.message}`);
+    return false;
+  }
+}
+
+async function importFiles(files) {
+  for (const f of files) await importOneFile(f); // sequential — each PDF pops its own picker
+}
+
+$('filePlans').addEventListener('change', e => {
+  const files = [...e.target.files];
   e.target.value = '';
+  if (files.length) importFiles(files);
 });
 $('canvasWrap').addEventListener('dragover', e => e.preventDefault());
 $('canvasWrap').addEventListener('drop', e => {
   e.preventDefault();
-  const f = e.dataTransfer.files[0];
-  if (f) openFile(f);
+  const files = [...e.dataTransfer.files];
+  if (files.length) importFiles(files);
 });
+
+/* ---- page picker ---- */
+let pagePickResolve = null;
+async function showPagePicker(pdfDoc, name) {
+  $('pagePickTitle').textContent = `Choose sheets — ${name}`;
+  const grid = $('pagePickGrid');
+  grid.innerHTML = '';
+  const n = pdfDoc.numPages;
+  const cells = [];
+  const obs = new IntersectionObserver(entries => {
+    for (const en of entries) {
+      if (!en.isIntersecting) continue;
+      obs.unobserve(en.target);
+      const p = +en.target.dataset.page;
+      const cell = en.target;
+      pdfDoc.baseSize(p)
+        .then(b => pdfDoc.renderPage(p, Math.min(1, (300 * (window.devicePixelRatio || 1)) / b.width)))
+        .then(cv => { const ph = cell.querySelector('.pp-thumb'); if (ph) ph.replaceWith(cv); })
+        .catch(() => {});
+    }
+  }, { root: grid, rootMargin: '250px' });
+  for (let p = 1; p <= n; p++) {
+    const cell = document.createElement('label');
+    cell.className = 'pp-cell on';
+    cell.dataset.page = p;
+    cell.innerHTML = `<input type="checkbox" class="pp-check" checked><div class="pp-thumb">sheet ${p}…</div><span class="pp-num">${p}</span>`;
+    const chk = cell.querySelector('.pp-check');
+    chk.addEventListener('change', () => { cell.classList.toggle('on', chk.checked); updatePagePickCount(); });
+    grid.appendChild(cell);
+    cells.push(cell);
+    obs.observe(cell);
+  }
+  updatePagePickCount();
+  $('pagePick').classList.remove('hidden');
+  return new Promise(resolve => {
+    pagePickResolve = picked => { obs.disconnect(); $('pagePick').classList.add('hidden'); pagePickResolve = null; resolve(picked); };
+  });
+}
+function updatePagePickCount() {
+  const cells = [...$('pagePickGrid').children];
+  const on = cells.filter(c => c.querySelector('.pp-check').checked).length;
+  $('pagePickCount').textContent = `${on} of ${cells.length} sheet${cells.length === 1 ? '' : 's'} selected`;
+  $('pagePickOk').disabled = on === 0;
+}
+function setAllPagePicks(v) {
+  for (const c of $('pagePickGrid').children) { c.querySelector('.pp-check').checked = v; c.classList.toggle('on', v); }
+  updatePagePickCount();
+}
+$('pagePickAll').addEventListener('click', () => setAllPagePicks(true));
+$('pagePickNone').addEventListener('click', () => setAllPagePicks(false));
+$('pagePickCancel').addEventListener('click', () => { if (pagePickResolve) pagePickResolve(null); });
+$('pagePick').addEventListener('click', e => { if (e.target === $('pagePick') && pagePickResolve) pagePickResolve(null); });
+$('pagePickOk').addEventListener('click', () => {
+  if (!pagePickResolve) return;
+  const idx = [...$('pagePickGrid').children]
+    .filter(c => c.querySelector('.pp-check').checked)
+    .map(c => +c.dataset.page - 1); // pdf-lib copyPages wants 0-based
+  pagePickResolve(idx);
+});
+
+// triggered from the Projects modal ("Open / add plans")
+function pickPlans() { $('filePlans').click(); }
 
 /* ============================== Tools & pointer input ============================== */
 
@@ -1961,6 +2116,7 @@ function resetDocState() {
   pageCanvas.clear(); pageBase.clear(); inflight.clear();
   els.thumbRail.innerHTML = '';
   els.dropHint.classList.remove('hidden');
+  document.body.classList.remove('has-doc');
   updatePageUI();
   vp.requestDraw();
 }
@@ -2017,8 +2173,29 @@ async function newProject(name) {
   setMsg(`"${state.projectName}" created. Open a plan set to get started.`);
 }
 
+function renderProjCurrent() {
+  const n = state.doc ? state.doc.numPages : 0;
+  const hasDoc = !!state.doc;
+  const meta = hasDoc
+    ? `${esc(state.docName || 'plans')} · ${n} sheet${n === 1 ? '' : 's'}`
+    : 'No plans loaded yet.';
+  $('projCurrent').innerHTML = `
+    <div class="pc-name"></div>
+    <div class="pc-meta">${meta}</div>
+    <div class="pc-actions">
+      <button id="pcOpen" class="btn primary">${hasDoc ? '＋ Add more sheets…' : '📄 Open plans…'}</button>
+      <button id="pcLoad" class="btn">📂 Load saved file</button>
+      <button id="pcCompany" class="btn">☁ Company / join live</button>
+    </div>`;
+  $('projCurrent').querySelector('.pc-name').textContent = state.projectName || 'Project';
+  $('pcOpen').addEventListener('click', pickPlans);
+  $('pcLoad').addEventListener('click', () => $('fileImport').click());
+  $('pcCompany').addEventListener('click', () => { els.projects.classList.add('hidden'); openCompany(); });
+}
+
 async function showProjects() {
   await saveProjectNow();
+  renderProjCurrent();
   let recs = [];
   try { recs = (await store.projAll()).sort((a, b) => (b.modified || 0) - (a.modified || 0)); } catch (_) {}
   els.projList.innerHTML = '';
@@ -2101,7 +2278,6 @@ $('btnExport').addEventListener('click', async () => {
   setMsg('Saved. The file has the plans and markups embedded — hand it to anyone.');
 });
 
-$('btnImport').addEventListener('click', () => $('fileImport').click());
 $('fileImport').addEventListener('change', async e => {
   const file = e.target.files[0];
   e.target.value = '';
@@ -2452,11 +2628,12 @@ async function deleteCompanyShared(id, name) {
   } catch (e) { companyMsg('Could not delete: ' + e.message, true); }
 }
 
-$('btnCompany').addEventListener('click', () => {
+function openCompany() {
   $('company').classList.remove('hidden');
   companyMsg('');
   refreshCompanyList();
-});
+}
+$('btnCompany').addEventListener('click', openCompany);
 $('companyShareBtn').addEventListener('click', shareToCompany);
 $('companyClose').addEventListener('click', () => $('company').classList.add('hidden'));
 $('company').addEventListener('click', e => { if (e.target === $('company')) $('company').classList.add('hidden'); });
