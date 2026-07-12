@@ -9,7 +9,7 @@ import { createViewport } from '../shared/engine-view.js?v=1';
 import { createStore, randId, hashBytes } from '../shared/engine-store.js?v=1';
 import { openDoc, bytesToBase64, base64ToBytes, defaultRenderScale } from '../shared/engine-doc.js?v=1';
 import { createModals, esc, fmt, money } from '../shared/engine-ui.js?v=1';
-import { distToPolyline, pointSegDist, simplifyPts, polyLengthFt, polygonAreaFt2, pointInPolygon, dist } from '../shared/engine-measure.js?v=1';
+import { distToPolyline, pointSegDist, simplifyPts, polyLengthFt, polygonAreaFt2, pointInPolygon, dist, alignApply } from '../shared/engine-measure.js?v=1';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '../shared/pdf.worker.min.js';
 
@@ -155,6 +155,7 @@ const DEFAULT_ROOF_PRICES = {
   tearoff: 50, install: 125, shingles: 38, ridgecap: 4.5, underlayment: 45,
   icewater: 1.75, dripedge: 1.25, starter: 1.1,
   item_boot: 30, item_vent: 35, item_skylight: 350, item_chimney: 450,
+  ew_cut: 4.5, ew_fill: 6, ew_haul: 12, // earthwork $/CY (editable like the rest)
 };
 const priceFor = key => (state.roofPrices[key] != null ? state.roofPrices[key] : (DEFAULT_ROOF_PRICES[key] || 0));
 
@@ -176,10 +177,24 @@ function roofBidLines() {
   ].concat(ITEM_TYPES.filter(k => T.items[k]).map(k => ({
     key: 'item_' + k, label: ITEM_LABEL[k] + ' flashing', qty: T.items[k], unit: 'EA', q: 0,
   })));
-  for (const l of lines) { l.price = priceFor(l.key); l.ext = l.qty * l.price; }
-  const subtotal = lines.reduce((a, l) => a + l.ext, 0);
+  // earthwork lines from the cut/fill result (same math as the dirt panel)
+  const R = state.earthwork.result;
+  if (R) {
+    const shrink = (Number(state.earthwork.shrink) || 0) / 100;
+    const swell = (Number(state.earthwork.swell) || 0) / 100;
+    const fillBank = R.fillCY / Math.max(0.01, 1 - shrink);
+    const net = R.cutCY - fillBank;
+    lines.push({ key: 'ew_cut', label: 'Earthwork — excavation (cut, bank)', qty: R.cutCY, unit: 'CY', q: 0 });
+    lines.push({ key: 'ew_fill', label: 'Earthwork — fill placed (compacted)', qty: R.fillCY, unit: 'CY', q: 0 });
+    if (net > 0) lines.push({ key: 'ew_haul', label: 'Earthwork — export haul-off (loose)', qty: net * (1 + swell), unit: 'CY', q: 0 });
+  }
+  // zero-quantity lines drop out (a dirt-only project shows no roofing rows,
+  // and vice versa); an empty list triggers the "no takeoff yet" message
+  const finalLines = lines.filter(l => l.qty > 0);
+  for (const l of finalLines) { l.price = priceFor(l.key); l.ext = l.qty * l.price; }
+  const subtotal = finalLines.reduce((a, l) => a + l.ext, 0);
   const op = subtotal * (Number(state.roofOP) || 0) / 100;
-  return { lines, subtotal, op, total: subtotal + op };
+  return { lines: finalLines, subtotal, op, total: subtotal + op };
 }
 
 // aggregate roofing quantities across the whole set (live)
@@ -808,6 +823,7 @@ function paint(ctx) {
       ctx.restore();
     } else if (state.doc) ensurePage(other);
   }
+  if (heatGrid && state.page === heatGrid.page) drawHeat(ctx);
   for (const m of state.markups) if (m.page === state.page) drawMarkup(ctx, m);
   if (drag && drag.mode === 'draw' && drag.markup) drawMarkup(ctx, drag.markup);
   drawDraft(ctx);
@@ -1517,7 +1533,7 @@ function renderRoofBid() {
       <td class="num"><input class="price" type="number" min="0" step="0.01" data-key="${l.key}" value="${l.price}"></td>
       <td class="num">${money(l.ext)}</td>
     </tr>`).join('');
-  $('bidTable').innerHTML = head + '<tbody>' + (lines.length ? body : '<tr><td colspan="5" class="mk-empty">No roof takeoff yet — trace planes, edges, and items first.</td></tr>') + '</tbody>';
+  $('bidTable').innerHTML = head + '<tbody>' + (lines.length ? body : '<tr><td colspan="5" class="mk-empty">No takeoff yet — trace roof planes/edges/items, or run the earthwork cut/fill.</td></tr>') + '</tbody>';
   $('bidTotals').innerHTML =
     `Subtotal: <b>${money(subtotal)}</b><br>` +
     `Overhead &amp; profit (${fmt(state.roofOP)}%): <b>${money(op)}</b><br>` +
@@ -1555,7 +1571,7 @@ function bidCsv() {
   rows.push([qc('Subtotal'), '', '', '', qc(subtotal.toFixed(2))].join(','));
   rows.push([qc(`Overhead & profit ${fmt(state.roofOP)}%`), '', '', '', qc(op.toFixed(2))].join(','));
   rows.push([qc('Total'), '', '', '', qc(total.toFixed(2))].join(','));
-  download(new Blob([rows.join('\r\n')], { type: 'text/csv' }), safeName() + '-roofing-bid.csv');
+  download(new Blob([rows.join('\r\n')], { type: 'text/csv' }), safeName() + '-takeoff-bid.csv');
 }
 
 $('btnBid').addEventListener('click', openRoofBid);
@@ -1596,11 +1612,26 @@ function renderDirtPanel() {
   rows.push('<div class="dirt-set">Grid <input type="number" id="ewGrid" min="0.5" step="0.5"> ft · Shrink <input type="number" id="ewShrink" min="0"> % · Swell <input type="number" id="ewSwell" min="0"> % · Truck <input type="number" id="ewTruck" min="1"> CY</div>');
   rows.push('<button class="btn go dirt-btn" data-act="calc">∑ Calculate Cut / Fill</button>');
   if (E.result) {
+    // same math as the standalone tool: fill needs bank dirt ÷(1−shrink);
+    // net = cut − fillBank (+ = surplus leaves site); export hauls loose ×(1+swell)
     const R = E.result;
-    rows.push(`<div class="dirt-row"><span>Cut</span><span class="v">${fmt(R.cutCY, 0)} CY</span></div>`);
-    rows.push(`<div class="dirt-row"><span>Fill</span><span class="v">${fmt(R.fillCY, 0)} CY</span></div>`);
-    rows.push(`<div class="dirt-row"><span>Net export</span><span class="v">${fmt(R.exportCY, 0)} CY</span></div>`);
-    rows.push(`<div class="dirt-row"><span>Truck loads</span><span class="v">${fmt(R.trucks, 0)}</span></div>`);
+    const shrink = (Number(E.shrink) || 0) / 100;
+    const swell = (Number(E.swell) || 0) / 100;
+    const fillBank = R.fillCY / Math.max(0.01, 1 - shrink);
+    const net = R.cutCY - fillBank;
+    const isExport = net >= 0;
+    const haul = Math.abs(net) * (isExport ? 1 + swell : 1);
+    const loads = E.truckCap > 0 ? Math.ceil(haul / E.truckCap) : 0;
+    rows.push('<div class="roof-sub">Results</div>');
+    rows.push(`<div class="dirt-row"><span>Disturbed area</span><span class="v">${fmt(R.areaFt2 / 43560, 2)} ac</span></div>`);
+    rows.push(`<div class="dirt-row"><span>Grid cell used</span><span class="v">${fmt(R.gridFt, 1)} ft</span></div>`);
+    rows.push(`<div class="dirt-row"><span>Cut (bank)</span><span class="v">${fmt(R.cutCY, 0)} CY</span></div>`);
+    rows.push(`<div class="dirt-row"><span>Fill (compacted)</span><span class="v">${fmt(R.fillCY, 0)} CY</span></div>`);
+    rows.push(`<div class="dirt-row"><span>Fill in bank CY</span><span class="v">${fmt(fillBank, 0)} CY</span></div>`);
+    rows.push(`<div class="dirt-row"><b>${isExport ? 'EXPORT off site' : 'IMPORT to site'}</b><span class="v"><b>${fmt(Math.abs(net), 0)} CY</b></span></div>`);
+    if (isExport) rows.push(`<div class="dirt-row"><span>≈ truck volume (loose)</span><span class="v">${fmt(haul, 0)} CY</span></div>`);
+    if (isExport && loads > 0) rows.push(`<div class="dirt-row"><span>≈ haul loads @ ${fmt(E.truckCap)} CY</span><span class="v">${fmt(loads, 0)}</span></div>`);
+    rows.push('<div class="hint" style="margin:4px 0">Estimating numbers — verify scale, alignment, and traces before you bid.</div>');
   }
   const body = $('dirtBody');
   body.innerHTML = rows.join('');
@@ -1619,14 +1650,149 @@ function renderDirtPanel() {
 
 function syncDirtInputs() { renderDirtPanel(); }
 
-// S1 stub — the interpolator + grid land in the next slice (needs alignment first)
-function calculateCutFill() {
-  const c = earthworkCounts();
-  if (!alignIsSet() && state.earthwork.existingPage !== state.earthwork.proposedPage)
-    return setMsg('Align the two sheets first (coming in the next update) — proposed contours must map into existing space.');
-  if (!c.existing || !c.proposed) return setMsg('Trace at least one existing and one proposed contour first.');
-  if (!c.boundary) return setMsg('Draw the earthwork boundary (⬚) first.');
-  setMsg('Cut/fill compute lands in the next update — tracing, sheet designation, and alignment come first.');
+/* Cut/fill compute — ported from the standalone sitework tool (see
+   shared/PARITY.md). One adaptation: sitework stores both surfaces in one
+   world space; Plan Room keeps geometry in native page coords and maps the
+   PROPOSED surface into existing space through the align transform here. */
+
+let heatGrid = null; // session-only heat overlay {page,x0,y0,cellPx,cols,rows,dz,maxAbs}
+
+// Classic linear-between-contours: elevation at a point = distance-weighted
+// blend of the nearest contour and the nearest contour at a DIFFERENT
+// elevation; flat inside pads. (Copied verbatim from sitework.)
+function makeInterpolator(contours) {
+  const n = contours.length;
+  const dists = new Float64Array(n);
+  const pads = contours.filter(c => c.pad);
+  const rings = contours.map(c => c.pad ? c.pts.concat([c.pts[0]]) : c.pts);
+  return function (px, py) {
+    for (const p of pads)
+      if (pointInPolygon(px, py, p.pts)) return p.elev;
+    let d1 = Infinity, z1 = null;
+    for (let i = 0; i < n; i++) {
+      const d = distToPolyline(px, py, rings[i]);
+      dists[i] = d;
+      if (d < d1) { d1 = d; z1 = contours[i].elev; }
+    }
+    if (z1 === null) return null;
+    let d2 = Infinity, z2 = null;
+    for (let i = 0; i < n; i++) {
+      if (contours[i].elev !== z1 && dists[i] < d2) { d2 = dists[i]; z2 = contours[i].elev; }
+    }
+    if (z2 === null || d1 === 0) return z1;
+    return (z1 * d2 + z2 * d1) / (d1 + d2);
+  };
+}
+
+// A surface's contours/spots/pads, mapped into EXISTING-sheet space.
+function surfaceInputs(surface) {
+  const E = state.earthwork;
+  const wantPage = surface === 'existing' ? E.existingPage : E.proposedPage;
+  const mapPt = (surface === 'proposed' && E.existingPage !== E.proposedPage)
+    ? p => alignApply(E.align, p)
+    : p => ({ x: p.x, y: p.y });
+  return state.markups
+    .filter(m => ['contour', 'espot', 'epad'].includes(m.kind) && m.surface === surface && m.elev != null && m.page === wantPage)
+    .map(m => ({ pts: m.pts.map(mapPt), elev: m.elev, pad: m.kind === 'epad' }));
+}
+
+async function calculateCutFill() {
+  const E = state.earthwork;
+  const problems = [];
+  if (!state.doc) problems.push('open the plan set');
+  if (!E.existingPage) problems.push('designate the Existing sheet');
+  if (!E.proposedPage) problems.push('designate the Proposed sheet');
+  const ftPerPx = E.existingPage ? (state.scales[E.existingPage] || 0) : 0;
+  if (E.existingPage && !ftPerPx) problems.push(`calibrate the Existing sheet (📏 on page ${E.existingPage})`);
+  if (E.existingPage && E.proposedPage && E.existingPage !== E.proposedPage && !alignIsSet()) problems.push('align the sheets (⌖)');
+  const bound = state.markups.find(m => m.kind === 'ebound');
+  if (!bound) problems.push('trace the earthwork boundary (⬚)');
+  const exist = E.existingPage ? surfaceInputs('existing') : [];
+  const prop = E.proposedPage ? surfaceInputs('proposed') : [];
+  if (E.existingPage && !exist.length) problems.push(`trace at least one Existing contour/spot/pad (with elevation) on page ${E.existingPage}`);
+  if (E.proposedPage && !prop.length) problems.push(`trace at least one Proposed contour/spot/pad (with elevation) on page ${E.proposedPage}`);
+  if (problems.length) { setMsg('Before calculating: ' + problems.join(', ') + '.'); return; }
+
+  // boundary into existing space
+  let bpts;
+  if (bound.page === E.existingPage) bpts = bound.pts;
+  else if (bound.page === E.proposedPage) bpts = bound.pts.map(p => alignApply(E.align, p));
+  else { setMsg(`The boundary is on page ${bound.page} — trace it on the Existing or Proposed sheet.`); return; }
+
+  const distinct = list => new Set(list.map(c => c.elev)).size;
+  if (distinct(exist) < 2) setMsg('Heads up: only one distinct Existing elevation — that surface will be flat.');
+  if (distinct(prop) < 2) setMsg('Heads up: only one distinct Proposed elevation — that surface will be flat.');
+
+  let gridFt = Math.max(0.5, E.gridFt || 5);
+  let cellPx = gridFt / ftPerPx;
+  const xs = bpts.map(p => p.x), ys = bpts.map(p => p.y);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  const y0 = Math.min(...ys), y1 = Math.max(...ys);
+
+  // cap grid size so the browser stays responsive (coarsen for huge sites)
+  const MAXCELLS = 60000;
+  let cols = Math.ceil((x1 - x0) / cellPx), rows = Math.ceil((y1 - y0) / cellPx);
+  if (cols * rows > MAXCELLS) {
+    const f = Math.sqrt((cols * rows) / MAXCELLS);
+    cellPx *= f; gridFt *= f;
+    cols = Math.ceil((x1 - x0) / cellPx); rows = Math.ceil((y1 - y0) / cellPx);
+    setMsg(`Large site — grid coarsened to ${gridFt.toFixed(1)} ft cells to stay fast.`);
+  }
+
+  const interpE = makeInterpolator(exist);
+  const interpP = makeInterpolator(prop);
+  const dz = new Array(cols * rows).fill(null);
+  const cellAreaFt2 = (cellPx * ftPerPx) ** 2;
+  let cutFt3 = 0, fillFt3 = 0, cellsInside = 0, maxAbs = 0.01;
+
+  for (let r = 0; r < rows; r++) {
+    const cy = y0 + (r + 0.5) * cellPx;
+    for (let cI = 0; cI < cols; cI++) {
+      const cx = x0 + (cI + 0.5) * cellPx;
+      if (!pointInPolygon(cx, cy, bpts)) continue;
+      const ze = interpE(cx, cy);
+      const zp = interpP(cx, cy);
+      if (ze === null || zp === null) continue;
+      const d = zp - ze;           // + fill, − cut
+      dz[r * cols + cI] = d;
+      cellsInside++;
+      if (d > 0) fillFt3 += d * cellAreaFt2;
+      else cutFt3 += -d * cellAreaFt2;
+      if (Math.abs(d) > maxAbs) maxAbs = Math.abs(d);
+    }
+    if (r % 24 === 23) { // chunk by rows to keep the UI alive on big grids
+      setMsg(`Calculating… ${Math.round((r / rows) * 100)}%`);
+      await new Promise(res => setTimeout(res, 0));
+    }
+  }
+
+  // summary persists with the project; the heavy grid stays session-only
+  E.result = { cutCY: cutFt3 / 27, fillCY: fillFt3 / 27, areaFt2: cellsInside * cellAreaFt2, gridFt };
+  heatGrid = { page: E.existingPage, x0, y0, cellPx, cols, rows, dz, maxAbs };
+  scheduleSave();
+  renderDirtPanel();
+  if (state.page !== E.existingPage) await setPage(E.existingPage);
+  vp.requestDraw();
+  setMsg('Done — volumes in the ⛰ Dirt panel; the overlay shows cut (red) and fill (blue). Verify scale and traces before you bid.');
+}
+
+// cut/fill heat overlay on the existing sheet (copied from sitework)
+function drawHeat(ctx) {
+  const g = heatGrid;
+  ctx.save();
+  ctx.globalAlpha = 0.45;
+  for (let r = 0; r < g.rows; r++) {
+    for (let cI = 0; cI < g.cols; cI++) {
+      const dz = g.dz[r * g.cols + cI];
+      if (dz === null || Math.abs(dz) < 0.02) continue;
+      const t = Math.min(1, Math.abs(dz) / g.maxAbs);
+      ctx.fillStyle = dz < 0
+        ? `rgba(224,85,85,${0.25 + 0.75 * t})`     // cut
+        : `rgba(77,163,255,${0.25 + 0.75 * t})`;   // fill
+      ctx.fillRect(g.x0 + cI * g.cellPx, g.y0 + r * g.cellPx, g.cellPx + 0.5, g.cellPx + 0.5);
+    }
+  }
+  ctx.restore();
 }
 
 $('btnDirt').addEventListener('click', () => {
@@ -1742,6 +1908,8 @@ function updateProjectBtn() { els.projName.textContent = state.projectName || 'P
 function resetDocState() {
   state.doc = null; state.docKey = null; state.docName = null; state.docType = null; state.page = 1;
   state.serverId = null; state.serverVersion = null;
+  heatGrid = null;
+  alignDraft = null;
   selectedId = null;
   cancelOverlay();
   undoStack.length = 0; redoStack.length = 0; updateUndoButtons();

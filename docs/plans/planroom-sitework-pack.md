@@ -1,6 +1,7 @@
 # Plan Room — Sitework (earthwork) trade pack
 
-Status: **in progress** (2026-07-11). The takeoff layer's second trade pack:
+Status: **S1–S3 built** (2026-07-11) — tracing, alignment+ghost, and cut/fill
+compute all shipped; S4 (cutover) awaits the user's parity confirmation. The takeoff layer's second trade pack:
 dirt/cut-fill takeoff inside Plan Room, at full parity with the standalone
 Sitework Takeoff tool. This IS the "sitework consolidation" — but built as a
 copy, so the standalone tool keeps running untouched until the user confirms

@@ -21,3 +21,9 @@ places.** Keep this ledger current when copying more code.
 | engine-view.js | `resizeCanvas`, `fitView`, `panBy`, wheel zoom-at-cursor, rAF-coalesced `draw`, `paint` transform setup, nav-pads zoom heuristic | View/canvas + Tools&input sections | reworked into `createViewport(...)` factory (originals read `state.view`/`cv`/`els`); the math is verbatim |
 | engine-ui.js | `fmt`, `money`, `esc` | Utilities section | verbatim |
 | engine-ui.js | `askModal`, `closeModal`, `readModalValue`, `askNumber`, `askText`, stepper + Enter/Escape wiring | Modal section | reworked into `createModals(...)` factory taking the modal DOM nodes; logic verbatim |
+| planroom/app.js | `makeInterpolator` | Surface-interpolation section | verbatim |
+| planroom/app.js | cut/fill grid loop (`calculate` core: bbox, 60k-cell coarsen, `zp−ze`, chunked rows) | Cut/fill section | verbatim math; adapted to per-page geometry — proposed surface + boundary map into existing space via the align transform at compute time |
+| planroom/app.js | export math (`fillBank = fill/(1−shrink)`, `net = cut − fillBank`, export hauls `×(1+swell)`, loads) | `renderResults` | verbatim |
+| planroom/app.js | align solve (1 pair = shift; 2 pairs: `a=(dq·dp)/|dq|²`, `b=(dq×dp)/|dq|²`, 20px too-close guard) | Tools&input align branch | verbatim math; page-jump flow instead of sheet-switch; raw page coords (no world-space `alignInvert` on input) |
+| planroom/app.js | `drawHeat` cut/fill heat overlay | `drawHeatmap` | verbatim (red cut / blue fill, 0.02 dead-band) |
+| planroom/app.js | `elevColor` | Utilities section | verbatim (proposed lightness 52 vs 55) |
