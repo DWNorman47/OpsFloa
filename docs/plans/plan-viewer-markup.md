@@ -96,8 +96,14 @@ Sequenced **money-first** (revised 2026-07-11 with user): the base tier goes on
 sale before the websocket build; the roofing pack (new revenue) ships before
 the sitework port (consolidation, zero new revenue); live sessions land after
 both.
-- **M0 — shared engine extraction** (from the sitework monolith; sitework tool
-  stays green throughout — see roofing plan for the module list and rules).
+- **M0 — shared engine, COPY-don't-move** (revised 2026-07-11 at build start,
+  per user: "I definitely don't want [sitework] broken"): the shared modules
+  under `client/public/tool-apps/shared/` are **copies derived from** the
+  sitework monolith, parameterized/cleaned as needed — **sitework's files are
+  not modified at all** and keep running their own monolith. Every copied
+  function is recorded in `shared/PARITY.md`; until consolidation, a fix to
+  copied code must be applied in both places. Rewiring sitework onto the
+  shared engine happens ONLY at the gated, unscheduled consolidation.
 - **M1 — viewer core (local-first):** open PDF/image, thumbnails/nav,
   projects, save/load. Offline-capable from day one.
 - **M2 — markups:** toolset + list panel + undo.

@@ -14,17 +14,18 @@ the strongest proven willingness to pay on the roadmap — and roof takeoff is
 exactly the engine's motion: polygon area + linear feet + counts, plus pitch
 math. Big, fragmented market new to OpsFloa.
 
-## M0 note (shared-engine extraction)
-The original plan here carried M0 — splitting the ~5,000-line sitework monolith
-into shared ES modules (`client/public/tool-apps/shared/`: engine-view/doc/
-measure/store/ui/bid/share), one module per commit, sitework green throughout,
-`?v=` import versioning for Vercel caching. **M0 now belongs to whichever plan
-builds first** (in the current sequence, Plan Room M0). Rules unchanged:
+## M0 note (shared engine — copy-don't-move)
+M0 belongs to the Plan Room build (see the master plan; revised at build start
+2026-07-11): the shared ES modules (`client/public/tool-apps/shared/`:
+engine-view/doc/measure/store/ui/bid/share) are **copies derived from** the
+sitework monolith — **sitework's files are not modified**; it keeps running its
+own monolith until the gated consolidation. Copied functions are recorded in
+`shared/PARITY.md`. `?v=` import versioning for Vercel caching. Notes:
 - engine-doc gains **raster image input** (PNG/JPG as a 1-page doc) — needed by
   the base viewer generally and roofing especially (see below).
-- Done = sitework's `app.js` is only domain glue (grading/contours/cut-fill,
-  walls, hatch detection, its presets) — which later becomes the **sitework
-  trade pack** when the unscheduled consolidation happens.
+- Sitework's domain glue (grading/contours/cut-fill, walls, hatch detection,
+  its presets) becomes the **sitework trade pack** only at the unscheduled,
+  user-gated consolidation.
 
 ## Roofing domain spec (the pack itself)
 - **Input reality:** new-construction bids come from PDF plan sets; residential
