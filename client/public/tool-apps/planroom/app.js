@@ -356,43 +356,84 @@ function hitMarkup(ctx, w) {
 
 /* ============================== Page rendering ============================== */
 
-// Rendered page canvases, capped; base sizes are tiny and kept for all pages.
-const pageCanvas = new Map();  // pageNum -> canvas (at render scale)
+// Rendered page canvases (with the scale they were rendered at), kept under a
+// pixel budget; base sizes are tiny and kept for all pages.
+const pageCanvas = new Map();  // pageNum -> { canvas, scale }
 const pageBase = new Map();    // pageNum -> { width, height } at scale 1
 const inflight = new Map();    // pageNum -> Promise
-const PAGE_CACHE_MAX = 6;
+const PAGE_PIXEL_BUDGET = 60e6;   // ~240 MB of RGBA across cached pages
+const PAGE_MAX_PIXELS = 22e6;     // per-page cap when sharpening zoomed views
 
 async function baseSize(p) {
   if (!pageBase.has(p)) pageBase.set(p, await state.doc.baseSize(p));
   return pageBase.get(p);
 }
 
-function ensurePage(p) {
-  if (!state.doc || pageCanvas.has(p)) return Promise.resolve();
+// Density-aware base target: enough pixels for THIS screen at fit, not a
+// fixed width — a blurry viewer is a broken viewer.
+function dprTargetWidth() {
+  const r = els.cv.parentElement.getBoundingClientRect();
+  return Math.min(4200, Math.max(2600, r.width * devicePixelRatio * 1.25));
+}
+const scaleCapFor = base => Math.max(1, Math.min(4, Math.sqrt(PAGE_MAX_PIXELS / (base.width * base.height))));
+const defaultScaleFor = base =>
+  Math.min(defaultRenderScale(base.width, { targetWidth: dprTargetWidth(), maxScale: 3 }), scaleCapFor(base));
+
+function ensurePage(p, wantScale) {
+  if (!state.doc) return Promise.resolve();
+  const cur = pageCanvas.get(p);
+  if (cur && (!wantScale || cur.scale >= wantScale * 0.99)) return Promise.resolve();
   if (inflight.has(p)) return inflight.get(p);
   const job = (async () => {
     const base = await baseSize(p);
-    const canvas = await state.doc.renderPage(p, defaultRenderScale(base.width));
-    pageCanvas.set(p, canvas);
-    // evict oldest rendered page beyond the cap (never the current one)
-    while (pageCanvas.size > PAGE_CACHE_MAX) {
-      const first = [...pageCanvas.keys()].find(k => k !== state.page);
-      if (first == null) break;
-      pageCanvas.delete(first);
-    }
+    const scale = wantScale ? Math.min(wantScale, scaleCapFor(base)) : defaultScaleFor(base);
+    const have = pageCanvas.get(p);
+    if (have && have.scale >= scale * 0.99) return;
+    const canvas = await state.doc.renderPage(p, scale);
+    pageCanvas.delete(p);                    // re-insert = most recently used
+    pageCanvas.set(p, { canvas, scale });
+    evictPages();
     vp.requestDraw();
   })().finally(() => inflight.delete(p));
   inflight.set(p, job);
   return job;
 }
 
+function evictPages() {
+  let total = 0;
+  for (const { canvas } of pageCanvas.values()) total += canvas.width * canvas.height;
+  for (const k of [...pageCanvas.keys()]) {
+    if (total <= PAGE_PIXEL_BUDGET || pageCanvas.size <= 1) break;
+    if (k === state.page) continue;
+    const e = pageCanvas.get(k);
+    total -= e.canvas.width * e.canvas.height;
+    pageCanvas.delete(k);
+  }
+}
+
+// Progressive sharpening: once zooming settles, re-render the current page at
+// the resolution the view actually needs (bounded by the per-page pixel cap).
+let sharpenTimer = null;
+function maybeSharpen(entry, base) {
+  const needed = Math.min(vp.view.zoom * devicePixelRatio, scaleCapFor(base));
+  if (needed > entry.scale * 1.25) {
+    clearTimeout(sharpenTimer);
+    const p = state.page;
+    sharpenTimer = setTimeout(() => { if (state.page === p) ensurePage(p, needed); }, 200);
+  }
+}
+
 function paint(ctx) {
   vp.beginPaint(ctx);
-  const img = pageCanvas.get(state.page);
+  const entry = pageCanvas.get(state.page);
   const base = pageBase.get(state.page);
   // world units = base-scale px, so markups are resolution-independent
-  if (img && base) ctx.drawImage(img, 0, 0, base.width, base.height);
-  else if (state.doc) ensurePage(state.page);
+  if (entry && base) {
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(entry.canvas, 0, 0, base.width, base.height);
+    maybeSharpen(entry, base);
+  } else if (state.doc) ensurePage(state.page);
   for (const m of state.markups) if (m.page === state.page) drawMarkup(ctx, m);
   if (drag && drag.mode === 'draw' && drag.markup) drawMarkup(ctx, drag.markup);
   const sel = selMarkup();
@@ -453,7 +494,9 @@ function buildThumbs() {
 async function renderThumb(btn) {
   const p = parseInt(btn.dataset.page, 10);
   const base = await baseSize(p);
-  const canvas = await state.doc.renderPage(p, THUMB_W / base.width);
+  // render at display density ×1.5 supersample — CSS scales it down sharp
+  // (at 1:1 CSS px, dense notes sheets collapse into black smears)
+  const canvas = await state.doc.renderPage(p, (THUMB_W * devicePixelRatio * 1.5) / base.width);
   btn.querySelector('.thumb-ph').replaceWith(canvas);
 }
 
