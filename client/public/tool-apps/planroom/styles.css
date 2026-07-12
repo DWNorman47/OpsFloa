@@ -82,6 +82,7 @@ body.nothumbs #thumbRail { display: none; }
 .thumb {
   border: 2px solid var(--border); border-radius: 6px; overflow: hidden;
   background: #fff; cursor: pointer; padding: 0; position: relative;
+  flex: 0 0 auto; /* flex children shrink by default — that squashed the previews instead of letting the rail scroll */
 }
 .thumb.current { border-color: var(--accent); }
 .thumb canvas, .thumb .thumb-ph { display: block; width: 100%; }
@@ -152,7 +153,8 @@ body.nothumbs #thumbRail { display: none; }
   position: fixed; inset: 0; background: rgba(0,0,0,.55);
   display: flex; align-items: center; justify-content: center; z-index: 50;
 }
-.modal.hidden, .hidden { display: none; }
+/* !important so it beats ID-specificity display rules (e.g. #dropHint { display:flex }) */
+.modal.hidden, .hidden { display: none !important; }
 .modal-box {
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
   padding: 18px 20px; min-width: 320px; max-width: 420px;
