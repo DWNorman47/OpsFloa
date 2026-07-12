@@ -27,6 +27,8 @@ const state = {
   page: 1,
   markups: [],      // markup objects; geometry in world/base px (see MK kinds)
   scales: {},       // pageNum -> ftPerPx (per-sheet calibration; measures recompute live)
+  serverId: null,     // takeoff_projects id when linked to a company-shared copy
+  serverVersion: null, // its optimistic-concurrency version at open/last save
 };
 
 const store = createStore('planroom');
@@ -1066,8 +1068,12 @@ els.btnFit.addEventListener('click', async () => {
 $('btnThumbs').addEventListener('click', () => document.body.classList.toggle('nothumbs'));
 
 document.addEventListener('keydown', e => {
-  if (modals.isOpen() || !els.projects.classList.contains('hidden')) {
-    if (e.key === 'Escape' && !els.projects.classList.contains('hidden')) els.projects.classList.add('hidden');
+  const companyOpen = !$('company').classList.contains('hidden');
+  if (modals.isOpen() || companyOpen || !els.projects.classList.contains('hidden')) {
+    if (e.key === 'Escape' && !modals.isOpen()) {
+      if (companyOpen) $('company').classList.add('hidden');
+      els.projects.classList.add('hidden');
+    }
     return;
   }
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
@@ -1127,6 +1133,7 @@ function updateProjectBtn() { els.projName.textContent = state.projectName || 'P
 
 function resetDocState() {
   state.doc = null; state.docKey = null; state.docName = null; state.docType = null; state.page = 1;
+  state.serverId = null; state.serverVersion = null;
   selectedId = null;
   cancelOverlay();
   undoStack.length = 0; redoStack.length = 0; updateUndoButtons();
@@ -1289,6 +1296,212 @@ $('fileImport').addEventListener('change', async e => {
   }
   scheduleSave(true);
 });
+
+/* ===================== Company library (server-backed) =====================
+ * Shares this project — plans, markups, measurements — to the company library
+ * (the shared /api/takeoffs route, rows marked data.app='plan-room'). Big plan
+ * sets upload straight to R2 via a presigned PUT (needs bucket CORS), then
+ * only the small JSON goes through the API. `version` gives optimistic-
+ * concurrency: a stale save 409s so it can't silently overwrite a teammate.
+ */
+
+function toolApiBase() { return (localStorage.getItem('tc_api_base') || '') + '/api'; }
+function toolToken() { return localStorage.getItem('tc_token') || sessionStorage.getItem('tc_token') || ''; }
+async function apiFetch(path, opts = {}) {
+  return fetch(toolApiBase() + '/takeoffs' + path, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + toolToken(), ...(opts.headers || {}) },
+  });
+}
+
+// Show status inside the Company modal (visible over the dialog) and the HUD.
+function companyMsg(t, isError) {
+  const el = $('companyMsg');
+  if (el) { el.textContent = t || ''; el.style.color = isError ? '#f87171' : ''; }
+  setMsg(t);
+}
+
+const UPLOAD_MIME = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp' };
+function docExt() {
+  const m = /\.(pdf|png|jpe?g|webp)$/i.exec(state.docName || '');
+  if (m) return m[1].toLowerCase().replace('jpeg', 'jpg');
+  const t = state.docType || '';
+  if (t.includes('png')) return 'png';
+  if (t.includes('jpeg') || t.includes('jpg')) return 'jpg';
+  if (t.includes('webp')) return 'webp';
+  return 'pdf';
+}
+
+// Presigned three-step: URL from the API → browser PUTs bytes straight to R2
+// → the create call carries only the resulting publicUrl.
+async function uploadDocToR2() {
+  if (!state.docKey) return null;
+  const f = await store.filesGet(state.docKey);
+  if (!f || !f.bytes) return null;
+  const ext = docExt();
+  const ur = await apiFetch('/upload-url', { method: 'POST', body: JSON.stringify({ ext }) });
+  if (!ur.ok) throw new Error('HTTP ' + ur.status + ' (upload-url)');
+  const { uploadUrl, publicUrl } = await ur.json();
+  companyMsg('Uploading the plans…');
+  const put = await fetch(uploadUrl, {
+    method: 'PUT',
+    body: f.bytes,
+    headers: { 'Content-Type': UPLOAD_MIME[ext] }, // must match the presigned signature
+  });
+  if (!put.ok) throw new Error('HTTP ' + put.status + ' (R2 upload — is bucket CORS configured?)');
+  return publicUrl;
+}
+
+async function shareToCompany() {
+  if (!state.doc && !state.markups.length) {
+    companyMsg('Nothing to share yet — open a plan set first.', true);
+    return;
+  }
+  const name = state.projectName || 'Plan set';
+  companyMsg('Sharing…');
+  try {
+    if (state.serverId) {
+      const res = await apiFetch('/' + state.serverId, {
+        method: 'PUT', body: JSON.stringify({ name, data: projectData(), version: state.serverVersion }),
+      });
+      if (res.status === 409) { return shareConflict(await res.json()); }
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      state.serverVersion = (await res.json()).version;
+      companyMsg('Saved to the company copy — teammates will see your changes.');
+    } else {
+      const pdfUrl = await uploadDocToR2();
+      const res = await apiFetch('', {
+        method: 'POST',
+        body: JSON.stringify({ name, data: projectData(), pdfUrl, pdfName: state.docName }),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const out = await res.json();
+      state.serverId = out.id; state.serverVersion = out.version;
+      companyMsg('Shared to the company. Teammates can copy it from ☁ Company.');
+    }
+    if (!$('company').classList.contains('hidden')) refreshCompanyList();
+  } catch (e) {
+    companyMsg('Could not share (are you signed in to OpsFloa?): ' + e.message, true);
+  }
+}
+
+function shareConflict(c) {
+  const who = c.updatedByName || 'A teammate';
+  const ok = confirm(`${who} changed this shared project since you opened it.\n\nOK = save YOURS as a new, separate company copy.\nCancel = leave the shared copy as theirs (keep editing locally).`);
+  if (ok) { state.serverId = null; state.serverVersion = null; return shareToCompany(); }
+  companyMsg('Left the shared copy as theirs — your work is still saved locally.');
+}
+
+async function refreshCompanyList() {
+  const list = $('companyList');
+  list.innerHTML = '<div class="hint">Loading…</div>';
+  try {
+    const res = await apiFetch('?app=plan-room');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const rows = await res.json();
+    if (!rows.length) {
+      list.innerHTML = '<div class="hint">No shared plan sets yet. Open one and hit “Share current project”.</div>';
+      return;
+    }
+    list.innerHTML = '';
+    for (const r of rows) {
+      const when = r.updated_at ? new Date(r.updated_at).toLocaleString() : '';
+      const row = document.createElement('div');
+      row.className = 'proj-row' + (String(r.id) === String(state.serverId) ? ' current' : '');
+      row.innerHTML =
+        `<div class="grow"><div class="name"></div>` +
+        `<div class="meta">${r.pdf_name ? esc(r.pdf_name) + ' · ' : ''}v${r.version}${r.updated_by_name ? ' · by ' + esc(r.updated_by_name) : ''} · ${when}</div></div>` +
+        (String(r.id) === String(state.serverId)
+          ? '<span class="pill">current</span>'
+          : '<button class="btn tiny" data-act="copy">Copy to my projects</button>') +
+        '<button class="btn tiny danger" data-act="del" title="Delete this shared project">✕</button>';
+      row.querySelector('.name').textContent = r.name;
+      const copyBtn = row.querySelector('[data-act="copy"]');
+      if (copyBtn) copyBtn.addEventListener('click', () => copyCompanyProject(r.id));
+      row.querySelector('[data-act="del"]').addEventListener('click', () => deleteCompanyShared(r.id, r.name));
+      list.appendChild(row);
+    }
+  } catch (e) {
+    list.innerHTML = `<div class="hint">Could not load the company library: ${esc(e.message)}. Make sure you're signed in to OpsFloa.</div>`;
+  }
+}
+
+async function copyCompanyProject(id) {
+  let t;
+  try {
+    const res = await apiFetch('/' + id);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    t = await res.json();
+  } catch (e) { companyMsg('Could not reach that shared project: ' + e.message, true); return; }
+  if (!t.data || t.data.app !== 'plan-room') { companyMsg('That shared project could not be read.', true); return; }
+
+  // How should it land locally? (name field first — askModal returns it; the
+  // radio choice is read from the modal body afterward, which persists.)
+  const nameAttr = String(t.name || 'Plan set').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  const name = await modals.askModal({
+    title: 'Copy to my projects',
+    body: `
+      <input type="text" id="modalTxt" maxlength="80" value="${nameAttr}">
+      <label style="display:block;margin:8px 0 0"><input type="radio" name="cpmode" value="new" checked> Save as a new project</label>
+      <label style="display:block;margin:4px 0 0"><input type="radio" name="cpmode" value="over"> Overwrite the project I have open now</label>
+      <div class="hint">Pulls the shared set — plans, markups, and measurements — into your projects on this device.</div>`,
+    focusSel: '#modalTxt',
+  });
+  if (name === null) { companyMsg(''); return; }
+  const overwrite = !!$('modalBody').querySelector('input[name="cpmode"][value="over"]:checked');
+  const finalName = String(name).trim() || t.name || 'Plan set';
+
+  companyMsg('Copying from the company library…');
+  try {
+    await saveProjectNow(); // flush the outgoing project first
+    if (!overwrite) state.projectId = randId();
+    state.projectName = finalName;
+    const keepId = state.projectId;
+    resetDocState();
+    state.projectId = keepId;
+    state.markups = Array.isArray(t.data.markups) ? t.data.markups : [];
+    state.scales = t.data.scales || {};
+    renderMarkupList();
+    try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
+    updateProjectBtn();
+    if (t.pdf_url) {
+      const pres = await apiFetch('/' + id + '/pdf'); // doc proxied through the API (no R2 CORS needed to read)
+      if (!pres.ok) throw new Error('HTTP ' + pres.status + ' (plans download)');
+      const pj = await pres.json();
+      await openFromBytes(base64ToBytes(pj.b64).buffer, pj.name || t.pdf_name || 'plans.pdf', t.data.docType);
+      if (t.data.page) await setPage(t.data.page);
+    }
+    state.serverId = t.id; state.serverVersion = t.version;
+    scheduleSave(true);
+    $('company').classList.add('hidden');
+    companyMsg(overwrite ? `Overwrote your open project with “${finalName}”.` : `Copied “${finalName}” into your projects.`);
+  } catch (e) { companyMsg('Could not copy that shared project: ' + e.message, true); }
+}
+
+async function deleteCompanyShared(id, name) {
+  const ok = await modals.askModal({
+    title: `Delete the shared “${name}”?`,
+    body: '<div class="hint">Removes it from the company library for everyone. Local copies people already made are not affected. This cannot be undone.</div>',
+  });
+  if (ok === null) return;
+  try {
+    const res = await apiFetch('/' + id, { method: 'DELETE' });
+    if (res.status === 403) { companyMsg('Only the person who shared it (or an admin) can delete it.', true); return; }
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    if (String(id) === String(state.serverId)) { state.serverId = null; state.serverVersion = null; }
+    refreshCompanyList();
+    companyMsg('Shared project deleted.');
+  } catch (e) { companyMsg('Could not delete: ' + e.message, true); }
+}
+
+$('btnCompany').addEventListener('click', () => {
+  $('company').classList.remove('hidden');
+  companyMsg('');
+  refreshCompanyList();
+});
+$('companyShareBtn').addEventListener('click', shareToCompany);
+$('companyClose').addEventListener('click', () => $('company').classList.add('hidden'));
+$('company').addEventListener('click', e => { if (e.target === $('company')) $('company').classList.add('hidden'); });
 
 /* ============================== Boot ============================== */
 
