@@ -1297,6 +1297,111 @@ $('fileImport').addEventListener('change', async e => {
   scheduleSave(true);
 });
 
+/* ============================== Export (flatten + CSV) ============================== */
+
+function download(blob, filename) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function safeName() {
+  return (state.projectName || 'plan-room').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') || 'plan-room';
+}
+
+// Render one page's markups onto a transparent canvas (world coords), for
+// embedding over the PDF page. Raster overlay: reliable for every markup
+// kind, and the original page's vector content stays untouched underneath.
+async function markupOverlayPng(p) {
+  const base = await baseSize(p);
+  const S = Math.min(3, Math.max(1.5, 3000 / base.width));
+  const c = document.createElement('canvas');
+  c.width = Math.ceil(base.width * S);
+  c.height = Math.ceil(base.height * S);
+  const ctx = c.getContext('2d');
+  ctx.scale(S, S);
+  for (const m of state.markups) if (m.page === p) drawMarkup(ctx, m);
+  return c.toDataURL('image/png');
+}
+
+async function exportFlatPdf() {
+  if (!state.doc) { setMsg('Open a plan set first.'); return; }
+  setMsg('Building the marked-up PDF…');
+  try {
+    const { PDFDocument, degrees } = PDFLib;
+    const pagesWith = new Set(state.markups.map(m => m.page));
+    let out;
+    if (state.doc.kind === 'pdf') {
+      const f = state.docKey ? await store.filesGet(state.docKey) : null;
+      if (!f || !f.bytes) throw new Error('the original PDF is not stored on this device');
+      out = await PDFDocument.load(f.bytes.slice(0), { ignoreEncryption: true });
+      const pages = out.getPages();
+      for (const p of pagesWith) {
+        const page = pages[p - 1];
+        if (!page) continue;
+        setMsg(`Flattening sheet ${p}…`);
+        const png = await out.embedPng(await markupOverlayPng(p));
+        const rot = ((page.getRotation().angle % 360) + 360) % 360;
+        const W = page.getWidth(), H = page.getHeight();
+        // the overlay is in VIEWER orientation; rotated pages swap dims and
+        // need the image rotated back into raw page space
+        const vw = (rot === 90 || rot === 270) ? H : W;
+        const vh = (rot === 90 || rot === 270) ? W : H;
+        const place =
+          rot === 90 ? { x: W, y: 0, rotate: degrees(90) } :
+          rot === 180 ? { x: W, y: H, rotate: degrees(180) } :
+          rot === 270 ? { x: 0, y: H, rotate: degrees(270) } :
+          { x: 0, y: 0 };
+        page.drawImage(png, { ...place, width: vw, height: vh });
+      }
+    } else {
+      // image doc → single-page PDF: re-encode via canvas (handles jpg/png/webp
+      // uniformly), then composite the overlay
+      const base = await baseSize(1);
+      out = await PDFDocument.create();
+      const page = out.addPage([base.width, base.height]);
+      const full = await state.doc.renderPage(1, 1);
+      const img = await out.embedPng(full.toDataURL('image/png'));
+      page.drawImage(img, { x: 0, y: 0, width: base.width, height: base.height });
+      if (pagesWith.has(1)) {
+        const png = await out.embedPng(await markupOverlayPng(1));
+        page.drawImage(png, { x: 0, y: 0, width: base.width, height: base.height });
+      }
+    }
+    const bytes = await out.save();
+    download(new Blob([bytes], { type: 'application/pdf' }), safeName() + '-marked.pdf');
+    setMsg('Marked-up PDF downloaded — markups are burned in; print it from any PDF viewer.');
+  } catch (e) {
+    console.error(e);
+    setMsg('Could not build the PDF: ' + e.message);
+  }
+}
+
+function exportCsv() {
+  if (!state.markups.length) { setMsg('No markups yet — nothing to summarize.'); return; }
+  const q = s => '"' + String(s == null ? '' : s).replace(/"/g, '""') + '"';
+  const rows = [['Sheet', 'Type', 'Text / label', 'Value', 'Color', 'Created'].map(q).join(',')];
+  const sorted = [...state.markups].sort((a, b) => a.page - b.page || (a.created || 0) - (b.created || 0));
+  for (const m of sorted) {
+    const isMeasure = m.kind === 'mlength' || m.kind === 'marea' || m.kind === 'mcount';
+    rows.push([
+      m.page,
+      MK_LABEL[m.kind] || m.kind,
+      m.text || '',
+      isMeasure ? measureValue(m) : '',
+      m.color || '',
+      m.created ? new Date(m.created).toLocaleString() : '',
+    ].map(q).join(','));
+  }
+  download(new Blob([rows.join('\r\n')], { type: 'text/csv' }), safeName() + '-markups.csv');
+  setMsg('Markup summary CSV downloaded.');
+}
+
+$('btnFlat').addEventListener('click', exportFlatPdf);
+$('btnCsv').addEventListener('click', exportCsv);
+
 /* ===================== Company library (server-backed) =====================
  * Shares this project — plans, markups, measurements — to the company library
  * (the shared /api/takeoffs route, rows marked data.app='plan-room'). Big plan

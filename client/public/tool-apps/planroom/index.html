@@ -18,6 +18,7 @@
 })();
 </script>
 <script src="../shared/pdf.min.js"></script>
+<script src="../shared/pdf-lib.min.js"></script>
 </head>
 <body>
 <header id="topbar">
@@ -68,6 +69,8 @@
     <button id="btnUndo" class="btn" title="Undo (Ctrl+Z)" disabled>↶</button>
     <button id="btnRedo" class="btn" title="Redo (Ctrl+Y)" disabled>↷</button>
     <button id="btnList" class="btn" title="Markup list — every markup across the set, click to jump">📋</button>
+    <button id="btnFlat" class="btn" title="Download a PDF with all markups burned in — share it or print it from any PDF viewer">⤓<span class="btn-label"> PDF</span></button>
+    <button id="btnCsv" class="btn" title="Download the markup summary as CSV — sheet, type, text, measured value">⤓<span class="btn-label"> CSV</span></button>
     <button id="btnPrevPage" class="btn" title="Previous sheet" disabled>◀</button>
     <span id="pageInfo" class="page-info">– / –</span>
     <button id="btnNextPage" class="btn" title="Next sheet" disabled>▶</button>
