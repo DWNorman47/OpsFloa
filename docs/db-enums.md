@@ -114,6 +114,8 @@ For each column we record:
 | `equipment_items.kind` | `heavy`, `vehicle`, `trailer`, `power_tool`, `hand_tool`, `safety`, `other` (nullable) | **enforced** (CHECK in `0125`) | `server/constants/equipmentEnums.js`, `server/routes/equipment.js` | Category for filtering/labeling an asset. Nullable, so CHECK is `IS NULL OR ...`. |
 | `equipment_items.rental_rate_unit` | `day`, `week`, `month` (nullable) | **enforced** (CHECK in `0125`) | `server/constants/equipmentEnums.js`, `server/routes/equipment.js` | The billing period for a rental's `rental_rate`. Only meaningful when `is_rental=true`. |
 | `equipment_maintenance_logs.kind` | `service`, `repair`, `inspection`, `other` | **enforced** (CHECK in `0125`) | `server/constants/equipmentEnums.js`, `server/routes/equipment.js` | Type of a discrete maintenance record (distinct from the `equipment_hours` usage log). |
+| `live_sessions.tool` | `planroom`, `sitework`, `roofing` | **enforced** (CHECK in `0134`) | `server/constants/liveSessionEnums.js`, `server/routes/liveSessions.js` | Which plan tool hosts an ephemeral live-collab session. The session layer syncs opaque JSON, so Plan Room ships first; `sitework`/`roofing` are reserved for the "go live on a takeoff" flip. |
+| `live_sessions.status` | `active`, `ended` | **enforced** (CHECK in `0134`) | `server/constants/liveSessionEnums.js`, `server/routes/liveSessions.js` | Session lifecycle. `active` until the host ends it or the idle sweeper closes it; `ended` rows keep their final `state` snapshot for the host to reclaim. |
 
 ## Cosmetic / UI columns
 

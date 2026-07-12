@@ -203,6 +203,12 @@ app.use('/api/work', projectsRouter);        // renamed home for the core Work/P
 app.use('/api/projects', projectsRouter);     // legacy alias (project sub-resources still live at /api/projects/:id/...)
 app.use('/api/work-orders', requireAuth, require('./routes/workOrders'));
 app.use('/api/takeoffs', requireAuth, requirePlanToolsAddon, require('./routes/takeoffs')); // company-shared plan-tools library (sitework takeoff + Plan Room)
+// Live collaboration sessions. The SSE stream authenticates via a query token
+// (EventSource can't send a Bearer header) so it's registered BEFORE the gated
+// router — otherwise requireAuth would reject it for the missing header.
+const liveSessions = require('./routes/liveSessions');
+app.get('/api/live/:id/stream', liveSessions.streamHandler);
+app.use('/api/live', requireAuth, requirePlanToolsAddon, liveSessions.router);
 app.use('/api/time-entries', require('./routes/timeEntries'));
 app.use('/api/admin', require('./routes/admin'));
 // QBO OAuth callback must be public (Intuit redirects here without a JWT)
@@ -405,6 +411,8 @@ app.listen(PORT, () => {
   startTranscriptionPollerJob();
   const { startTakeoffOrphanSweepJob } = require('./jobs/takeoffOrphanSweep'); // presigned-upload leak cleanup (opt-in via R2_ORPHAN_SWEEP=1)
   startTakeoffOrphanSweepJob();
+  const { startLiveSessionSweepJob } = require('./jobs/liveSessionSweep'); // end abandoned live sessions
+  startLiveSessionSweepJob();
   const { startCron } = require('./cron');
   startCron();
 });

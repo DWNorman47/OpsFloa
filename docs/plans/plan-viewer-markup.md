@@ -63,9 +63,16 @@ mechanisms, not line numbers.
 ## Server
 - `server/routes/liveSessions.js`: start / list-active / join (snapshot +
   pdf ref) / end / heartbeat. Gate = the hosting tool's add-on flag(s).
-- `server/ws.js`: `ws` on the same HTTP server (`upgrade`, `tc_token` auth),
-  rooms per session, presence, op broadcast, periodic snapshot write; idle
-  sweeper. (Greenfield — chat polls; no ws exists today.)
+- **Live channel = Server-Sent Events, not raw ws** (decided at M8 build, 2026-
+  07-11): SSE gives real-time server→client push with no new dependency and no
+  `http.Server` refactor (the app uses `app.listen`, no compression middleware
+  to buffer the stream), and it's more robust through Render's proxy than a ws
+  upgrade. Client→server ops go over REST `POST`, exactly matching this plan's
+  "REST is the source of truth; the channel is a live-notification layer." The
+  room registry / presence / LWW-per-object / DB-snapshot design is unchanged —
+  only the push transport differs from the earlier `ws` note. Browser auth uses
+  a `?token=` query param (EventSource can't set headers — same constraint ws
+  would have). Idle sweeper as its own cron job.
 - Library route gate generalized: "has any plan-tools add-on", lists filtered
   by `data.app`.
 - Stripe: `addon_planroom` product/prices; webhook mapping; `ADDON_PRICES`;

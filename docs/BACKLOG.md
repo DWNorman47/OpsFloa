@@ -160,8 +160,14 @@ that holds the exhaustive detail.
   company + copy it down on another browser profile, export the flattened PDF,
   and confirm the locked card shows for a company without the add-on.
 
-**Later trade packs (when built):** Stripe price for the $60 takeoff layer at
-M7; the sitework-consolidation cutover confirmation is yours when it comes.
+**Takeoff layer (M7 shipped — roofing pack):**
+- **Stripe:** the $60 takeoff layer reuses the existing `addon_takeoff` product.
+  Decide whether to move its price to ~$60 (new price IDs; existing subscribers
+  keep their legacy price automatically). The superadmin Takeoff toggle already
+  turns the roofing tools on for your own company with no Stripe change.
+- **Verify the roofing math** against a hand calc (a plane's squares, a
+  hip/valley pitch-corrected LF) before selling it.
+- The sitework-consolidation cutover confirmation is yours when it comes.
 
 ## 📖 Done / shipped log
 *Landed on `dev`, newest first. (What happens past dev is handled outside this doc.)*
