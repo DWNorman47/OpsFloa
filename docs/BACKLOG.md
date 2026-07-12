@@ -167,7 +167,11 @@ that holds the exhaustive detail.
   turns the roofing tools on for your own company with no Stripe change.
 - **Verify the roofing math** against a hand calc (a plane's squares, a
   hip/valley pitch-corrected LF) before selling it.
-- The sitework-consolidation cutover confirmation is yours when it comes.
+- **Parity test (the S4 cutover gate):** dirt takeoff is now built in Plan Room
+  (contours/spots/pads, two-sheet ⌖ alignment + ghost, cut/fill + heat overlay,
+  bid lines). Run the SAME job in Plan Room and the standalone Sitework tool and
+  compare cut/fill/export CY — only after you confirm they match does the
+  standalone tool redirect (`docs/plans/planroom-sitework-pack.md` S4).
 
 ## 📖 Done / shipped log
 *Landed on `dev`, newest first. (What happens past dev is handled outside this doc.)*
