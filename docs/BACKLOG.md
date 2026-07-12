@@ -130,8 +130,13 @@ that holds the exhaustive detail.
   sitework port). Pitch → squares, roof lines/counts, materials math,
   aerial-image input for re-roofs, bid defaults. Auto-measure from address
   stays M-later.
-- *(future trade packs to scope when wanted: drywall & paint, and others from
-  the tools roadmap)*
+- **Drywall & Paint trade pack** — `docs/plans/drywall-paint-pack.md`
+  (2026-07-11). No own SKU/app; ships M-later after roofing proves the
+  integrated takeoff UX. Height-per-wall-run is the core move (LF × height →
+  SF, 1-or-2 sides), ceilings via room polygons, opening deducts, board/mud/
+  tape/paint-gallon math into the shared bid engine.
+- *(further trade packs to scope when wanted: see the tools roadmap —
+  flooring/tile, framing, siding, fencing, striping, landscape…)*
 
 ## ✅ Things I need to do (David)
 
