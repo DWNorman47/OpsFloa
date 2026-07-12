@@ -35,9 +35,33 @@
     <input type="file" id="fileDoc" accept="application/pdf,image/*" hidden>
   </div>
 
+  <!-- markup tools -->
+  <div class="tb-group tb-tools">
+    <button class="tool active" data-tool="pan" title="Pan / zoom (middle-drag pans in any tool)">✋</button>
+    <button class="tool" data-tool="select" title="Select / move / resize markups. Delete removes; double-click a note to edit it">➤</button>
+    <button class="tool" data-tool="cloud" title="Revision cloud — drag a box">☁</button>
+    <button class="tool" data-tool="rect" title="Rectangle — drag">▭</button>
+    <button class="tool" data-tool="ellipse" title="Ellipse — drag">⬭</button>
+    <button class="tool" data-tool="arrow" title="Arrow — drag from tail to head">↗</button>
+    <button class="tool" data-tool="line" title="Line — drag">╲</button>
+    <button class="tool" data-tool="freehand" title="Pen — draw freehand">✏</button>
+    <button class="tool" data-tool="highlight" title="Highlighter — drag a box">🖍</button>
+    <button class="tool" data-tool="text" title="Text note — click where it goes, type, Enter">T</button>
+    <button class="tool" data-tool="callout" title="Callout — drag from the thing you're flagging to where the note goes">🏷</button>
+    <input type="color" id="mkColor" value="#e05555" title="Markup color (applies to the selected markup too)">
+    <select id="mkWidth" title="Line weight / text size (applies to the selected markup too)">
+      <option value="S">Thin</option>
+      <option value="M" selected>Medium</option>
+      <option value="L">Thick</option>
+    </select>
+  </div>
+
   <div class="spacer"></div>
 
   <div class="tb-group">
+    <button id="btnUndo" class="btn" title="Undo (Ctrl+Z)" disabled>↶</button>
+    <button id="btnRedo" class="btn" title="Redo (Ctrl+Y)" disabled>↷</button>
+    <button id="btnList" class="btn" title="Markup list — every markup across the set, click to jump">📋</button>
     <button id="btnPrevPage" class="btn" title="Previous sheet" disabled>◀</button>
     <span id="pageInfo" class="page-info">– / –</span>
     <button id="btnNextPage" class="btn" title="Next sheet" disabled>▶</button>
@@ -52,7 +76,28 @@
     <canvas id="cv"></canvas>
     <div id="hud"></div>
     <div id="dropHint"><span>Drop a PDF or image here, or click <b>Open Plans…</b></span></div>
+    <textarea id="textOverlay" class="hidden" rows="2" spellcheck="false"
+      placeholder="Type the note — Enter to place, Esc to cancel"></textarea>
   </div>
+  <aside id="markupPanel" class="hidden" aria-label="Markup list">
+    <div class="mk-head">
+      <b>Markups</b>
+      <label class="mk-sheet"><input type="checkbox" id="mkThisSheet"> this sheet</label>
+      <select id="mkKindFilter" title="Filter by type">
+        <option value="">All types</option>
+        <option value="cloud">Clouds</option>
+        <option value="rect">Rectangles</option>
+        <option value="ellipse">Ellipses</option>
+        <option value="arrow">Arrows</option>
+        <option value="line">Lines</option>
+        <option value="freehand">Pen</option>
+        <option value="highlight">Highlights</option>
+        <option value="text">Text</option>
+        <option value="callout">Callouts</option>
+      </select>
+    </div>
+    <div id="mkList" class="mk-list"></div>
+  </aside>
 </main>
 
 <!-- generic ask-modal (engine-ui createModals shape) -->

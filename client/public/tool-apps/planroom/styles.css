@@ -52,6 +52,23 @@ body { display: flex; flex-direction: column; }
   #topbar .btn-label { display: none; }
 }
 
+/* ---------- markup tools ---------- */
+.tool {
+  background: var(--panel2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 10px; cursor: pointer; font-size: 13px; line-height: 1;
+}
+.tool:hover { border-color: var(--accent); }
+.tool.active { background: var(--accent); border-color: var(--accent); color: #08243f; font-weight: 700; }
+#mkColor {
+  width: 34px; height: 30px; padding: 2px; cursor: pointer;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 6px;
+}
+#mkWidth {
+  background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 6px; font-size: 13px;
+}
+
 /* ---------- main layout ---------- */
 main { flex: 1 1 auto; display: flex; min-height: 0; }
 
@@ -78,6 +95,7 @@ body.nothumbs #thumbRail { display: none; }
 #canvasWrap { position: relative; flex: 1 1 auto; background: #14171b; min-width: 0; }
 #cv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
 #cv.grabbing { cursor: grabbing; }
+#cv.crosshair { cursor: crosshair; }
 
 #hud {
   position: absolute; top: 10px; left: 10px;
@@ -91,6 +109,43 @@ body.nothumbs #thumbRail { display: none; }
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   color: var(--muted); font-size: 18px; pointer-events: none;
 }
+
+/* in-place text entry for text / callout markups */
+#textOverlay {
+  position: absolute; z-index: 5; min-width: 180px; max-width: 340px;
+  background: rgba(35,41,47,.96); color: var(--text);
+  border: 1px solid var(--accent); border-radius: 6px;
+  padding: 6px 8px; font: 13px/1.4 "Segoe UI", system-ui, sans-serif;
+  resize: both;
+}
+
+/* ---------- markup list panel ---------- */
+#markupPanel {
+  flex: 0 0 262px; display: flex; flex-direction: column; min-height: 0;
+  background: var(--panel); border-left: 1px solid var(--border);
+}
+#markupPanel.hidden { display: none; }
+.mk-head {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 10px; border-bottom: 1px solid var(--border);
+}
+.mk-head select {
+  background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 3px 4px; font-size: 12px;
+}
+.mk-sheet { color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 4px; }
+.mk-list { flex: 1 1 auto; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 5px; }
+.mk-row {
+  display: flex; align-items: center; gap: 7px; padding: 6px 8px;
+  border: 1px solid var(--border); border-radius: 7px; background: var(--panel2);
+  cursor: pointer; font-size: 12.5px;
+}
+.mk-row:hover { border-color: var(--accent); }
+.mk-row.selected { border-color: var(--accent); }
+.mk-row .swatch { width: 10px; height: 10px; border-radius: 3px; flex: 0 0 auto; }
+.mk-row .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mk-row .pg { color: var(--muted); flex: 0 0 auto; }
+.mk-empty { color: var(--muted); font-size: 12px; padding: 10px; }
 
 /* ---------- modals (sitework idiom) ---------- */
 .modal {
