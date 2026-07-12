@@ -64,6 +64,17 @@ that holds the exhaustive detail.
 
 ## ✨ Ideas — improvements
 
+- **Plan Room: multi-PDF projects.** Today a project holds ONE document; split
+  sets (arch + civil + addenda, or existing/proposed as separate files) need
+  either separate projects or a PDF Toolkit merge first. Real fix = a doc list
+  per project with pages namespaced per doc (touches markup keys, scales,
+  sharing, export, live sessions — scope as its own plan). Interim workaround:
+  merge via PDF Toolkit. (2026-07-12)
+- **Plan Room: warn on doc replacement with markups present.** Opening a new
+  PDF into a project keeps markups (revision-swap case) but they're keyed by
+  page number — mismatched sheets silently land markups on wrong pages. Add a
+  "keep markups / start clean?" prompt. (2026-07-12)
+
 - **Presigned direct-to-R2 upload for shared-takeoff PDFs.** Replaces the current
   64 MB base64-through-the-API approach; removes the ~48 MB ceiling and cuts server
   memory. Caveats: needs R2 bucket CORS + orphaned-object cleanup.
