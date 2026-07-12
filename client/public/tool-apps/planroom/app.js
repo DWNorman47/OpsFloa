@@ -29,6 +29,8 @@ const state = {
   scales: {},       // pageNum -> ftPerPx (per-sheet calibration; measures recompute live)
   serverId: null,     // takeoff_projects id when linked to a company-shared copy
   serverVersion: null, // its optimistic-concurrency version at open/last save
+  roofPitch: 6,     // takeoff layer: main roof pitch (rise/12) for edge factors
+  roofWaste: 12,    // takeoff layer: waste % applied to squares
 };
 
 const store = createStore('planroom');
@@ -64,18 +66,61 @@ function setMsg(t) { els.hud.textContent = t || ''; }
  * Widths/sizes are document-space (base px) so markups print/zoom like ink.
  */
 
-const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
+const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem'];
 const MK_LABEL = {
   cloud: 'Cloud', rect: 'Rectangle', ellipse: 'Ellipse', arrow: 'Arrow', line: 'Line',
   freehand: 'Pen', highlight: 'Highlight', text: 'Text', callout: 'Callout',
   mlength: 'Length', marea: 'Area', mcount: 'Count',
+  plane: 'Roof plane', redge: 'Roof edge', ritem: 'Roof item',
 };
 const MK_ICON = {
   cloud: '☁', rect: '▭', ellipse: '⬭', arrow: '↗', line: '╲',
   freehand: '✏', highlight: '🖍', text: 'T', callout: '🏷',
   mlength: '↔', marea: '⬠', mcount: '🔢',
+  plane: '▰', redge: '╱', ritem: '⊕',
 };
 const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
+const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem']; // click-built (vs drag)
+const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge']; // produce ft / SF / squares
+
+/* ---- roofing takeoff (the $60 takeoff layer) ---- */
+const EDGE_TYPES = ['eave', 'rake', 'ridge', 'hip', 'valley', 'flashing'];
+const EDGE_LABEL = { eave: 'Eave', rake: 'Rake', ridge: 'Ridge', hip: 'Hip', valley: 'Valley', flashing: 'Flashing' };
+const ITEM_TYPES = ['boot', 'vent', 'skylight', 'chimney'];
+const ITEM_LABEL = { boot: 'Pipe boot', vent: 'Vent', skylight: 'Skylight', chimney: 'Chimney' };
+
+// entitlement gate — the main app exposes tc_addons; the takeoff layer needs it
+function hasTakeoffLayer() {
+  try {
+    const a = JSON.parse(localStorage.getItem('tc_addons') || '{}');
+    return !!(a.takeoff || a.status === 'exempt' || a.status === 'trial');
+  } catch (_) { return false; }
+}
+
+// pitch-correction: sloped length / area factor for a given rise-per-12
+function slopeFactor(pitch) { const p = (pitch || 0) / 12; return Math.sqrt(1 + p * p); }
+function hipValleyFactor(pitch) { const p = (pitch || 0) / 12; return Math.sqrt(1 + p * p / 2); }
+function edgeFactor(etype, pitch) {
+  if (etype === 'rake') return slopeFactor(pitch);
+  if (etype === 'hip' || etype === 'valley') return hipValleyFactor(pitch);
+  return 1; // eave, ridge, flashing measured directly on the plan
+}
+const planeSquares = (m, ftPerPx) => polygonAreaFt2(m.pts, ftPerPx) * slopeFactor(m.pitch) / 100;
+const edgeFt = (m, ftPerPx) => polyLengthFt(m.pts, ftPerPx) * edgeFactor(m.etype, state.roofPitch);
+
+// aggregate roofing quantities across the whole set (live)
+function roofingTotals() {
+  const wasteMul = 1 + (Number(state.roofWaste) || 0) / 100;
+  let squares = 0, planes = 0, scaleMissing = false;
+  const edges = {}, items = {};
+  for (const m of state.markups) {
+    const s = state.scales[m.page] || 0;
+    if (m.kind === 'plane') { planes++; if (s) squares += planeSquares(m, s); else scaleMissing = true; }
+    else if (m.kind === 'redge') { if (s) edges[m.etype] = (edges[m.etype] || 0) + edgeFt(m, s); else scaleMissing = true; }
+    else if (m.kind === 'ritem') items[m.itype] = (items[m.itype] || 0) + m.pts.length;
+  }
+  return { squares, squaresWaste: squares * wasteMul, planes, edges, items, scaleMissing };
+}
 
 /* ---- per-sheet scale + measured values (recomputed live, never stored) ---- */
 
@@ -84,6 +129,7 @@ const pageFtPerPx = (p = state.page) => state.scales[p] || 0;
 function measureValue(m) {
   const s = state.scales[m.page] || 0;
   if (m.kind === 'mcount') return `${m.pts.length} × ${m.text || 'items'}`;
+  if (m.kind === 'ritem') return `${m.pts.length} × ${ITEM_LABEL[m.itype] || 'item'}`;
   if (!s) return 'no scale — 📏 this sheet';
   if (m.kind === 'mlength') {
     const ft = polyLengthFt(m.pts, s);
@@ -93,13 +139,18 @@ function measureValue(m) {
     const sf = polygonAreaFt2(m.pts, s);
     return fmt(sf, 0) + ' SF' + (sf > 21780 ? ` (${fmt(sf / 43560, 2)} ac)` : '');
   }
+  if (m.kind === 'plane') return `${fmt(m.pitch || 0)}/12 · ${fmt(planeSquares(m, s), 1)} sq`;
+  if (m.kind === 'redge') {
+    const ft = edgeFt(m, s);
+    return `${EDGE_LABEL[m.etype] || 'Edge'} · ${fmt(ft, ft < 100 ? 1 : 0)} ft`;
+  }
   return '';
 }
 const LINE_W = { S: 2, M: 4, L: 8 };
 const FONT_S = { S: 12, M: 18, L: 28 };
 
-// last-used color per tool (highlighter starts yellow, ink starts red)
-const toolColors = { highlight: '#ffe066' };
+// last-used color per tool (highlighter yellow; roofing kinds distinct)
+const toolColors = { highlight: '#ffe066', plane: '#3fbf6f', redge: '#4da3ff', ritem: '#e0a03f' };
 const DEFAULT_COLOR = '#e05555';
 
 let tool = 'pan';
@@ -145,9 +196,10 @@ function redo() { if (redoStack.length) { undoStack.push(snapshot()); restoreMar
 els.btnUndo.addEventListener('click', undo);
 els.btnRedo.addEventListener('click', redo);
 
-// every mutation funnels through here: redraw, refresh list, autosave
+// every mutation funnels through here: redraw, refresh lists, autosave
 function markupsChanged() {
   renderMarkupList();
+  if (typeof renderRoofPanel === 'function') renderRoofPanel();
   scheduleSave();
   vp.requestDraw();
 }
@@ -298,11 +350,30 @@ function drawMarkup(ctx, m) {
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y); }
       break;
     }
-    case 'mcount': {
+    case 'mcount': case 'ritem': {
       const r = (m.width || 4) * 1.5 + 3;
       for (const p of m.pts) { ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); }
       const c = centroid(m.pts);
-      labelAt(ctx, m, c.x, c.y - r * 2.4);
+      if (m.pts.length) labelAt(ctx, m, c.x, c.y - r * 2.4);
+      break;
+    }
+    case 'plane': {
+      if (m.pts.length >= 2) {
+        ctx.beginPath();
+        m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+        ctx.closePath();
+        ctx.globalAlpha = 0.14; ctx.fill();
+        ctx.globalAlpha = 1; ctx.stroke();
+      }
+      if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y); }
+      break;
+    }
+    case 'redge': {
+      ctx.beginPath();
+      m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.stroke();
+      const mid = m.pts[Math.floor((m.pts.length - 1) / 2)];
+      labelAt(ctx, m, mid.x, mid.y - (m.width || 4) * 2.5);
       break;
     }
   }
@@ -340,11 +411,16 @@ function drawDraft(ctx) {
     ctx.restore();
   }
   if (draft && draft.pts.length) {
-    const pts = (hoverW && draft.kind !== 'mcount') ? [...draft.pts, hoverW] : draft.pts;
+    const pts = (hoverW && !POINT_KINDS.includes(draft.kind)) ? [...draft.pts, hoverW] : draft.pts;
+    const previewExtra =
+      draft.kind === 'plane' ? { pitch: state.roofPitch } :
+      draft.kind === 'redge' ? { etype: ($('edgeType') || {}).value || 'eave' } :
+      draft.kind === 'ritem' ? { itype: ($('itemType') || {}).value || 'boot' } : {};
     drawMarkup(ctx, {
       kind: draft.kind, pts, page: state.page,
       color: curColor(), width: curWidth(),
-      text: draft.kind === 'mcount' ? '…' : undefined,
+      text: POINT_KINDS.includes(draft.kind) ? '…' : undefined,
+      ...previewExtra,
     });
   }
 }
@@ -438,14 +514,14 @@ function hitMarkup(ctx, w) {
       case 'line': case 'arrow':
         if (pointSegDist(w.x, w.y, p0.x, p0.y, p1.x, p1.y) < t) return m;
         break;
-      case 'freehand': case 'mlength':
+      case 'freehand': case 'mlength': case 'redge':
         if (distToPolyline(w.x, w.y, m.pts) < t) return m;
         break;
-      case 'marea':
+      case 'marea': case 'plane':
         if (pointInPolygon(w.x, w.y, m.pts) ||
             distToPolyline(w.x, w.y, [...m.pts, m.pts[0]]) < t) return m;
         break;
-      case 'mcount':
+      case 'mcount': case 'ritem':
         if (m.pts.some(p => dist(w.x, w.y, p.x, p.y) < (m.width || 4) * 1.5 + 3 + t)) return m;
         break;
       case 'text': case 'callout': {
@@ -670,8 +746,12 @@ function setTool(t) {
     setMsg(pageFtPerPx()
       ? `Sheet ${state.page} already has a scale — recalibrating replaces it. Click the first point.`
       : 'Click two points a known distance apart (a dimension line, a scale bar).');
-  } else if ((t === 'mlength' || t === 'marea') && !pageFtPerPx()) {
+  } else if (NEEDS_SCALE.includes(t) && !pageFtPerPx()) {
     setMsg('This sheet has no scale yet — calibrate first (📏).');
+  } else if (t === 'plane') {
+    setMsg(`Trace a roof face; finish with Enter/double-click, then set its pitch. Main pitch ${state.roofPitch}/12.`);
+  } else if (t === 'redge') {
+    setMsg(`Trace a ${EDGE_LABEL[($('edgeType') || {}).value] || 'roof'} edge; hip/valley/rake are pitch-corrected off the ${state.roofPitch}/12 main pitch.`);
   }
 }
 document.querySelectorAll('.tool').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
@@ -723,16 +803,16 @@ els.cv.addEventListener('pointerdown', e => {
     return;
   }
 
-  // click-built measures: length / area / count
-  if (tool === 'mlength' || tool === 'marea' || tool === 'mcount') {
-    if (tool !== 'mcount' && !pageFtPerPx()) {
+  // click-built tools: measures (length/area/count) + roofing (plane/edge/item)
+  if (CLICK_TOOLS.includes(tool)) {
+    if (NEEDS_SCALE.includes(tool) && !pageFtPerPx()) {
       setMsg('This sheet has no scale yet — calibrate it first (📏): click two points a known distance apart.');
       setTool('calibrate');
       return;
     }
     if (!draft) draft = { kind: tool, pts: [], prev: snapshot() };
     draft.pts.push({ x: w.x, y: w.y });
-    if (draft.kind === 'mcount') setMsg(`${draft.pts.length} counted — Enter or double-click to finish.`);
+    if (draft.kind === 'mcount' || draft.kind === 'ritem') setMsg(`${draft.pts.length} clicked — Enter or double-click to finish.`);
     vp.requestDraw();
     return;
   }
@@ -867,6 +947,9 @@ els.cv.addEventListener('pointercancel', endDrag);
 
 /* ---- click-built measure drafts: commit / cancel ---- */
 
+const CLOSED_KINDS = ['marea', 'plane'];      // 3+ pts, closed polygon
+const POINT_KINDS = ['mcount', 'ritem'];      // 1+ pts, no rubber band
+
 function commitDraft() {
   if (!draft) return;
   const d = draft;
@@ -875,15 +958,28 @@ function commitDraft() {
   // double-click leaves two points on top of each other — drop the duplicate
   if (pts.length >= 2 &&
       dist(pts[pts.length - 1].x, pts[pts.length - 1].y, pts[pts.length - 2].x, pts[pts.length - 2].y) < 3 / vp.view.zoom) pts.pop();
-  const min = d.kind === 'marea' ? 3 : d.kind === 'mlength' ? 2 : 1;
+  const min = CLOSED_KINDS.includes(d.kind) ? 3 : POINT_KINDS.includes(d.kind) ? 1 : 2;
   if (pts.length < min) { vp.requestDraw(); return; }
+  const extra = {};
+  if (d.kind === 'plane') extra.pitch = state.roofPitch;
+  else if (d.kind === 'redge') extra.etype = $('edgeType') ? $('edgeType').value : 'eave';
+  else if (d.kind === 'ritem') extra.itype = $('itemType') ? $('itemType').value : 'boot';
   const finish = text => {
     state.markups.push({
       id: randId(), page: state.page, kind: d.kind, color: curColor(),
-      width: curWidth(), pts, text, created: Date.now(),
+      width: curWidth(), pts, text, created: Date.now(), ...extra,
     });
     pushUndo(d.prev);
     markupsChanged();
+    // the measurement is the ad: nudge base-tier users toward the takeoff layer
+    if ((d.kind === 'marea' || d.kind === 'mlength') && !hasTakeoffLayer()) {
+      const m = state.markups[state.markups.length - 1];
+      setMsg(`${measureValue(m)} — turn measurements into a priced takeoff & bid: 🔒 Takeoff layer.`);
+    }
+    if (d.kind === 'plane') {
+      modals.askNumber(`Roof plane pitch (rise per 12)`, 'e.g. 6 for 6/12. Sloped area & squares update live.', state.roofPitch, 1)
+        .then(v => { if (v != null && v >= 0) { const m = state.markups[state.markups.length - 1]; if (m && m.kind === 'plane') { m.pitch = v; markupsChanged(); } } });
+    }
   };
   if (d.kind === 'mcount') modals.askText('What are you counting?', `${pts.length} clicked`, '').then(t => finish(t || 'items'));
   else finish(undefined);
@@ -1005,7 +1101,10 @@ function deleteSelected() {
 
 /* ============================== Markup list panel ============================== */
 
-$('btnList').addEventListener('click', () => els.markupPanel.classList.toggle('hidden'));
+$('btnList').addEventListener('click', () => {
+  els.markupPanel.classList.toggle('hidden');
+  if (!els.markupPanel.classList.contains('hidden')) { $('roofPanel').classList.add('hidden'); renderMarkupList(); }
+});
 els.mkKindFilter.addEventListener('change', renderMarkupList);
 els.mkThisSheet.addEventListener('change', renderMarkupList);
 
@@ -1031,8 +1130,8 @@ function renderMarkupList() {
       `<span class="pg">p${m.page}</span>` +
       `<button class="btn tiny danger" title="Delete">✕</button>`;
     row.querySelector('.grow').textContent =
-      m.kind === 'mcount' ? measureValue(m)
-      : (m.kind === 'mlength' || m.kind === 'marea') ? `${MK_LABEL[m.kind]} — ${measureValue(m)}`
+      (m.kind === 'mcount' || m.kind === 'ritem') ? measureValue(m)
+      : (m.kind === 'mlength' || m.kind === 'marea' || m.kind === 'plane' || m.kind === 'redge') ? `${MK_LABEL[m.kind]} — ${measureValue(m)}`
       : m.text ? m.text.split('\n')[0] : MK_LABEL[m.kind];
     row.addEventListener('click', async e => {
       if (e.target.closest('button')) return;
@@ -1056,6 +1155,66 @@ function renderMarkupList() {
     els.mkList.appendChild(row);
   }
 }
+
+/* ============================== Roofing takeoff panel (takeoff layer) ============================== */
+
+function renderRoofPanel() {
+  const panel = $('roofPanel');
+  if (!panel || panel.classList.contains('hidden')) return;
+  const T = roofingTotals();
+  const rows = [];
+  rows.push(`<div class="roof-tot big"><span>Squares (with waste)</span><span class="v">${fmt(T.squaresWaste, 1)} sq</span></div>`);
+  rows.push(`<div class="roof-tot"><span>Base squares</span><span class="v">${fmt(T.squares, 1)} sq</span></div>`);
+  rows.push(`<div class="roof-tot"><span>Roof planes</span><span class="v">${T.planes}</span></div>`);
+  if (T.scaleMissing) rows.push(`<div class="hint" style="margin:6px 0">Some sheets aren't calibrated (📏) — those planes/edges are excluded.</div>`);
+
+  const edgeKeys = EDGE_TYPES.filter(k => T.edges[k]);
+  if (edgeKeys.length) {
+    rows.push('<div class="roof-sub">Edges (LF)</div>');
+    for (const k of edgeKeys) rows.push(`<div class="roof-tot"><span>${EDGE_LABEL[k]}</span><span class="v">${fmt(T.edges[k], 0)} ft</span></div>`);
+  }
+  const itemKeys = ITEM_TYPES.filter(k => T.items[k]);
+  if (itemKeys.length) {
+    rows.push('<div class="roof-sub">Items (EA)</div>');
+    for (const k of itemKeys) rows.push(`<div class="roof-tot"><span>${ITEM_LABEL[k]}</span><span class="v">${T.items[k]}</span></div>`);
+  }
+  if (!T.planes && !edgeKeys.length && !itemKeys.length) {
+    rows.push('<div class="mk-empty">No roof takeoff yet — trace a plane (▰) and set its pitch, then add edges (╱) and items (⊕).</div>');
+  }
+  $('roofBody').innerHTML = rows.join('');
+}
+
+function applyTakeoffGate() {
+  document.body.classList.toggle('has-takeoff', hasTakeoffLayer());
+}
+
+// push loaded roof settings into the inputs + refresh the panel
+function syncRoofInputs() {
+  if ($('roofPitch')) { $('roofPitch').value = state.roofPitch; $('roofWaste').value = state.roofWaste; }
+  renderRoofPanel();
+}
+
+if ($('roofPitch')) {
+  $('roofPitch').value = state.roofPitch;
+  $('roofWaste').value = state.roofWaste;
+  $('roofPitch').addEventListener('change', e => {
+    state.roofPitch = Math.max(0, Math.min(24, parseFloat(e.target.value) || 0));
+    e.target.value = state.roofPitch;
+    scheduleSave(); renderRoofPanel(); renderMarkupList(); vp.requestDraw();
+  });
+  $('roofWaste').addEventListener('change', e => {
+    state.roofWaste = Math.max(0, Math.min(40, parseFloat(e.target.value) || 0));
+    e.target.value = state.roofWaste;
+    scheduleSave(); renderRoofPanel();
+  });
+}
+$('btnRoof').addEventListener('click', () => {
+  $('roofPanel').classList.toggle('hidden');
+  if (!$('roofPanel').classList.contains('hidden')) { els.markupPanel.classList.add('hidden'); renderRoofPanel(); }
+});
+$('btnUpsell').addEventListener('click', () => {
+  setMsg('Takeoff layer ($60/mo add-on): turn your measurements into roofing squares, pitch-corrected edges, materials, and a priced, branded bid. Add it from Billing.');
+});
 
 /* ============================== Topbar & keyboard ============================== */
 
@@ -1105,7 +1264,11 @@ document.addEventListener('keydown', e => {
 /* ============================== Projects (local-first) ============================== */
 
 function projectData() {
-  return { app: 'plan-room', version: 1, page: state.page, markups: state.markups, scales: state.scales };
+  return {
+    app: 'plan-room', version: 1, page: state.page,
+    markups: state.markups, scales: state.scales,
+    roofPitch: state.roofPitch, roofWaste: state.roofWaste,
+  };
 }
 
 let saveTimer = null;
@@ -1151,7 +1314,9 @@ async function openProject(rec) {
   resetDocState();
   state.markups = (rec.data && Array.isArray(rec.data.markups)) ? rec.data.markups : [];
   state.scales = (rec.data && rec.data.scales) || {};
-  renderMarkupList();
+  state.roofPitch = (rec.data && rec.data.roofPitch != null) ? rec.data.roofPitch : 6;
+  state.roofWaste = (rec.data && rec.data.roofWaste != null) ? rec.data.roofWaste : 12;
+  renderMarkupList(); syncRoofInputs();
   try { localStorage.setItem('planroom-current', rec.id); } catch (_) {}
   updateProjectBtn();
   if (rec.docKey) {
@@ -1180,7 +1345,8 @@ async function newProject(name) {
   resetDocState();
   state.markups = [];
   state.scales = {};
-  renderMarkupList();
+  state.roofPitch = 6; state.roofWaste = 12;
+  renderMarkupList(); syncRoofInputs();
   try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
   updateProjectBtn();
   await saveProjectNow();
@@ -1288,7 +1454,9 @@ $('fileImport').addEventListener('change', async e => {
   await newProject(d.name || file.name.replace(/\.planroom\.json$|\.json$/i, ''));
   state.markups = Array.isArray(d.markups) ? d.markups : [];
   state.scales = d.scales || {};
-  renderMarkupList();
+  if (d.roofPitch != null) state.roofPitch = d.roofPitch;
+  if (d.roofWaste != null) state.roofWaste = d.roofWaste;
+  renderMarkupList(); syncRoofInputs();
   if (d.docB64) {
     const bytes = base64ToBytes(d.docB64);
     await openFromBytes(bytes.buffer, d.docName || 'plans.pdf', d.docType);
@@ -1566,7 +1734,9 @@ async function copyCompanyProject(id) {
     state.projectId = keepId;
     state.markups = Array.isArray(t.data.markups) ? t.data.markups : [];
     state.scales = t.data.scales || {};
-    renderMarkupList();
+    if (t.data.roofPitch != null) state.roofPitch = t.data.roofPitch;
+    if (t.data.roofWaste != null) state.roofWaste = t.data.roofWaste;
+    renderMarkupList(); syncRoofInputs();
     try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
     updateProjectBtn();
     if (t.pdf_url) {
@@ -1612,6 +1782,7 @@ $('company').addEventListener('click', e => { if (e.target === $('company')) $('
 
 async function boot() {
   vp.attach(paint);
+  applyTakeoffGate();
   updatePageUI();
   let rec = null;
   try {
