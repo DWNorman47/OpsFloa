@@ -1797,7 +1797,7 @@ async function refreshCompanyList() {
       list.appendChild(row);
     }
     if (!rows.length && !live.length) {
-      list.innerHTML = '<div class="hint">No shared plan sets or live sessions yet. Open a set and hit “Share current project”, or 🟢 Go Live.</div>';
+      list.innerHTML = '<div class="hint">No shared plan sets or live co-edit sessions yet. Open a set and hit “Share current project”, or 🟢 Live Co-Edit.</div>';
       return;
     }
     for (const r of rows) {
@@ -1939,13 +1939,13 @@ function updateLiveBar(roster) {
   if (!session) {
     $('liveBar').classList.add('hidden');
     $('btnLive').classList.remove('live-on');
-    if (label) label.textContent = ' Go Live';
+    if (label) label.textContent = ' Live Co-Edit';
     return;
   }
   $('liveBar').classList.remove('hidden');
   $('liveName').textContent = state.projectName || 'Live session';
   $('btnLive').classList.add('live-on');
-  if (label) label.textContent = ' Live';
+  if (label) label.textContent = ' Co-Editing';
   $('liveEnd').classList.toggle('hidden', !session.isHost);
   if (roster) $('liveRoster').textContent = roster.length ? `${roster.length} here: ${roster.map(r => r.name).join(', ')}` : '';
 }
@@ -2029,7 +2029,7 @@ async function goLive() {
     };
     openStream();
     updateLiveBar();
-    setMsg('You are live. Teammates can join from ☁ Company (it shows a LIVE badge).');
+    setMsg('Live co-edit started. Teammates can join from ☁ Company (it shows a LIVE badge).');
   } catch (e) { setMsg('Could not start the session (signed in? is R2 CORS configured?): ' + e.message); }
 }
 
