@@ -58,6 +58,7 @@
       <option value="">Takeoff: off</option>
       <option value="roofing">🏠 Roofing</option>
       <option value="dirt">⛰ Earthwork</option>
+      <option value="drywall">🧱 Drywall &amp; Paint</option>
     </select>
     <button class="tool tb-takeoff tr-roof" data-tool="plane" title="Roof plane — trace a roof face, set its pitch → sloped area + squares">▰</button>
     <button class="tool tb-takeoff tr-roof" data-tool="redge" title="Roof edge — trace eave/rake/ridge/hip/valley/flashing → linear feet (hip/valley/rake pitch-corrected)">╱</button>
@@ -93,6 +94,14 @@
       <button class="tool" data-tool="qline" title="Line takeoff — trace a run (curb, pipe, silt fence…); add a trench cross-section for excavation & bedding CY">⌇</button>
       <button class="tool" data-tool="qcount" title="Count takeoff — drop a point on each item (catch basin, manhole, tree…), name it → counted & priced in the bid">⊙</button>
     </div>
+    <div class="tb-sub tb-takeoff tr-dwall">
+      <button class="tool" data-tool="dwall" title="Wall run — trace a wall; SF = length × height × sides. Double-click a run to set its own height.">▬</button>
+      <button class="tool" data-tool="dceiling" title="Ceiling — trace a room outline → ceiling SF">⬜</button>
+      <select id="dwSidesSel" class="mini-sel" title="Sides for new wall runs — 2 = interior partition (both faces), 1 = perimeter / against structure">
+        <option value="2">2 sides</option>
+        <option value="1">1 side</option>
+      </select>
+    </div>
     <input type="color" id="mkColor" class="dirt-hide" value="#e05555" title="Markup color (applies to the selected markup too)">
     <select id="mkWidth" class="dirt-hide" title="Line weight / text size (applies to the selected markup too)">
       <option value="S">Thin</option>
@@ -109,6 +118,7 @@
     <button id="btnList" class="btn" title="Markup list — every markup across the set, click to jump">📋</button>
     <button id="btnRoof" class="btn tb-takeoff tr-roof" title="Roofing takeoff — squares, edges, and counts across the set">🏠<span class="btn-label"> Roof</span></button>
     <button id="btnDirt" class="btn tb-takeoff tr-dirt" title="Earthwork / cut-fill takeoff — designate sheets, trace contours, compute volumes">⛰<span class="btn-label"> Dirt</span></button>
+    <button id="btnDw" class="btn tb-takeoff tr-dwall" title="Drywall & Paint — wall height, sheet size, waste, coverage; net SF & materials">🧱<span class="btn-label"> Drywall</span></button>
     <button id="btnBid" class="btn tb-takeoff" title="Takeoff bid — roofing materials & labor and earthwork volumes, editable prices, print / CSV">$<span class="btn-label"> Bid</span></button>
     <button id="btnUpsell" class="btn tb-upsell" title="Turn your measurements into a priced takeoff & bid — Takeoff layer add-on">🔒<span class="btn-label"> Takeoff</span></button>
     <div class="menu-wrap">
@@ -184,6 +194,10 @@
   <aside id="dirtPanel" class="hidden" aria-label="Earthwork takeoff">
     <div class="mk-head"><b>⛰ Earthwork (cut / fill)</b></div>
     <div id="dirtBody" class="mk-list"></div>
+  </aside>
+  <aside id="dwPanel" class="hidden" aria-label="Drywall &amp; Paint takeoff">
+    <div class="mk-head"><b>🧱 Drywall &amp; Paint</b></div>
+    <div id="dwBody" class="mk-list"></div>
   </aside>
 </main>
 

@@ -93,6 +93,7 @@ body.has-takeoff .tb-upsell { display: none; }
    in the #tradeSel dropdown (default = plain markup & measure) */
 body:not(.trade-roofing) .tr-roof { display: none; }
 body:not(.trade-dirt) .tr-dirt { display: none; }
+body:not(.trade-drywall) .tr-dwall { display: none; }
 /* trade focus: with a trade active, collapse the general redlining + generic
    measure tools so the trade's own tools stand out (base tier keeps them all) */
 body.trade-active .tb-focus-hide { display: none !important; }
@@ -202,11 +203,11 @@ body.nothumbs #thumbRail { display: none; }
 }
 
 /* ---------- markup list panel ---------- */
-#markupPanel, #roofPanel, #dirtPanel {
+#markupPanel, #roofPanel, #dirtPanel, #dwPanel {
   flex: 0 0 268px; display: flex; flex-direction: column; min-height: 0;
   background: var(--panel); border-left: 1px solid var(--border);
 }
-#markupPanel.hidden, #roofPanel.hidden, #dirtPanel.hidden { display: none; }
+#markupPanel.hidden, #roofPanel.hidden, #dirtPanel.hidden, #dwPanel.hidden { display: none; }
 .dirt-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 2px; font-size: 12.5px; }
 .dirt-row .v { color: var(--accent); font-variant-numeric: tabular-nums; }
 .dirt-set { display: flex; align-items: center; gap: 6px; padding: 6px 2px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
