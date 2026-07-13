@@ -2418,20 +2418,20 @@ function exportCsv() {
   setMsg('Markup summary CSV downloaded.');
 }
 
-// Print / export dropdown
-const printMenu = $('printMenu');
-$('btnPrint').addEventListener('click', e => { e.stopPropagation(); printMenu.classList.toggle('hidden'); });
-printMenu.addEventListener('click', e => {
+// Export dropdown
+const exportMenu = $('exportMenu');
+$('btnExportMenu').addEventListener('click', e => { e.stopPropagation(); exportMenu.classList.toggle('hidden'); });
+exportMenu.addEventListener('click', e => {
   const item = e.target.closest('[data-act]');
   if (!item) return;
-  printMenu.classList.add('hidden');
+  exportMenu.classList.add('hidden');
   if (item.dataset.act === 'pdf') exportFlatPdf();
   else if (item.dataset.act === 'csv') exportCsv();
 });
 document.addEventListener('click', e => {
-  if (!printMenu.classList.contains('hidden') && !e.target.closest('.menu-wrap')) printMenu.classList.add('hidden');
+  if (!exportMenu.classList.contains('hidden') && !e.target.closest('.menu-wrap')) exportMenu.classList.add('hidden');
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') printMenu.classList.add('hidden'); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') exportMenu.classList.add('hidden'); });
 
 /* ===================== Company library (server-backed) =====================
  * Shares this project — plans, markups, measurements — to the company library
