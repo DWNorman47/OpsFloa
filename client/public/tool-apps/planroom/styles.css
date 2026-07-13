@@ -51,8 +51,13 @@ body { display: flex; flex-direction: column; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #08243f; font-weight: 600; }
 .btn:disabled { opacity: .45; cursor: default; }
 
+.tb-menu-toggle { display: none; } /* desktop: the whole toolbar shows, no toggle */
 @media (max-width: 760px) {
   #topbar .btn-label { display: none; }
+  /* mobile: collapse everything after Save behind a ☰ toggle to reclaim space */
+  .tb-menu-toggle { display: inline-flex; }
+  .tb-collapsible { display: none; }
+  body.tb-menu-open .tb-collapsible { display: flex; }
 }
 /* very narrow: drop the project name, leaving just the 📁 icon */
 @media (max-width: 460px) {

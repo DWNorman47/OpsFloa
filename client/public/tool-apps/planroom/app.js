@@ -2810,6 +2810,13 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') exportMenu.classList.add('hidden'); });
 
+// mobile toolbar toggle — show/hide everything after Save
+$('btnMenuToggle').addEventListener('click', () => {
+  const open = document.body.classList.toggle('tb-menu-open');
+  $('btnMenuToggle').setAttribute('aria-expanded', open ? 'true' : 'false');
+  $('btnMenuToggle').classList.toggle('primary', open);
+});
+
 // Layers dropdown — show/hide markup categories
 const layersMenu = $('layersMenu');
 $('btnLayers').addEventListener('click', e => { e.stopPropagation(); layersMenu.classList.toggle('hidden'); });

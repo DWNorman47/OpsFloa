@@ -31,12 +31,13 @@
 
   <div class="tb-group needs-doc">
     <button id="btnExport" class="btn" title="Download this project as one self-contained file — plans and markups embedded — so you can hand it to anyone">💾<span class="btn-label"> Save</span></button>
+    <button id="btnMenuToggle" class="btn tb-menu-toggle" title="Show / hide the rest of the toolbar" aria-expanded="false">☰</button>
   </div>
   <input type="file" id="fileImport" accept="application/json" hidden>
   <input type="file" id="filePlans" accept="application/pdf,image/*" multiple hidden>
 
   <!-- markup tools -->
-  <div class="tb-group tb-tools needs-doc">
+  <div class="tb-group tb-tools needs-doc tb-collapsible">
     <button class="tool active" data-tool="pan" title="Pan / zoom (middle-drag pans in any tool)">✋</button>
     <button class="tool" data-tool="select" title="Select / move / resize markups. Delete removes; double-click a note to edit it">➤</button>
     <button class="tool tb-focus-hide" data-tool="cloud" title="Revision cloud — drag a box">☁</button>
@@ -122,9 +123,9 @@
     </select>
   </div>
 
-  <div class="spacer"></div>
+  <div class="spacer tb-collapsible"></div>
 
-  <div class="tb-group needs-doc">
+  <div class="tb-group needs-doc tb-collapsible">
     <button id="btnUndo" class="btn" title="Undo (Ctrl+Z)" disabled>↶</button>
     <button id="btnRedo" class="btn" title="Redo (Ctrl+Y)" disabled>↷</button>
     <button id="btnList" class="btn" title="Markup list — every markup across the set, click to jump">📋</button>
