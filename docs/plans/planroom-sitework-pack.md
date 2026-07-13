@@ -55,6 +55,26 @@ time) — storage/rendering stay in native page coords.
   Room's earthwork matches the standalone tool on a real job, redirect the
   standalone tool.
 
+## Parity gap — what the standalone tool has that Plan Room does NOT (2026-07-12)
+Plan Room earthwork = **cut/fill core only** today. To reach parity (and retire
+the standalone tool) these must come over. User approved porting the quantity
+takeoffs + auto-trace first (2026-07-12):
+- **Q1 Area takeoff** — polygon → SF; form: thickness, material, density, rebar,
+  respread, swell, deductions → SF/tons/CY + bid line. *(building)*
+- **Q2 Line takeoff** — polyline → LF; trench width/depth, bedding, slope →
+  LF + excavation CY + bedding.
+- **Q3 Count takeoff** — points → count; unit type + price.
+- **Q4 Wall dig** — line → wall/footing excavation; depth/width/slope, concrete,
+  aggregate, reuse.
+- **W1 Auto-trace (vector wand)** — extract vector paths from the PDF page
+  (pdf.js operator list) → click-to-trace a contour/area; + smooth. `simplifyPts`
+  already in engine-measure.
+Deferred (not in this round): revision re-align; production/haul log; bid
+branding (letterhead/logo/markup/prepared-by); layer toggles + legend +
+per-contour list + contour interval; eraser/clear-sheet/nav-pads.
+All quantity takeoffs live under the ⛰ trade, feed the Takeoff bid, copy from
+sitework/app.js (record in PARITY.md), sitework untouched.
+
 ## Verification
 Trace a known simple case (a flat pad cut into a uniform slope) and match cut/fill
 against a hand calc; a real project's totals should match the standalone tool

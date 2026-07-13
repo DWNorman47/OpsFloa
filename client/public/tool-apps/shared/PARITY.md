@@ -27,3 +27,4 @@ places.** Keep this ledger current when copying more code.
 | planroom/app.js | align solve (1 pair = shift; 2 pairs: `a=(dq·dp)/|dq|²`, `b=(dq×dp)/|dq|²`, 20px too-close guard) | Tools&input align branch | verbatim math; page-jump flow instead of sheet-switch; raw page coords (no world-space `alignInvert` on input) |
 | planroom/app.js | `drawHeat` cut/fill heat overlay | `drawHeatmap` | verbatim (red cut / blue fill, 0.02 dead-band) |
 | planroom/app.js | `elevColor` | Utilities section | verbatim (proposed lightness 52 vs 55) |
+| planroom/app.js | Area takeoff: `AREA_PRESETS`, `AREA_MODE_COLORS`, `autoAreaColor`, `REBAR`, `rebarQuantity`, `areaQuantity`, `computeAreaResult`, `areaResultRows`, `readAreaCfg`, `syncAreaMode`, `askAreaConfig` | Area-takeoff section | verbatim math; `areaColorHex` takes cfg directly; a qarea markup stores the cfg + polygon (area/perimeter recompute from geometry × sheet scale) instead of sitework's `state.takeoffs` |

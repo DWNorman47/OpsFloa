@@ -9,7 +9,7 @@ import { createViewport } from '../shared/engine-view.js?v=1';
 import { createStore, randId, hashBytes } from '../shared/engine-store.js?v=1';
 import { openDoc, bytesToBase64, base64ToBytes, defaultRenderScale } from '../shared/engine-doc.js?v=1';
 import { createModals, esc, fmt, money } from '../shared/engine-ui.js?v=1';
-import { distToPolyline, pointSegDist, simplifyPts, polyLengthFt, polygonAreaFt2, pointInPolygon, dist, alignApply } from '../shared/engine-measure.js?v=1';
+import { distToPolyline, pointSegDist, simplifyPts, polyLengthFt, polygonAreaFt2, polygonPerimeterFt, pointInPolygon, dist, alignApply } from '../shared/engine-measure.js?v=1';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '../shared/pdf.worker.min.js';
 
@@ -83,13 +83,14 @@ els.hud.addEventListener('click', () => { clearTimeout(hudTimer); els.hud.classL
  * Widths/sizes are document-space (base px) so markups print/zoom like ink.
  */
 
-const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound'];
+const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea'];
 const MK_LABEL = {
   cloud: 'Cloud', rect: 'Rectangle', ellipse: 'Ellipse', arrow: 'Arrow', line: 'Line',
   freehand: 'Pen', highlight: 'Highlight', text: 'Text', callout: 'Callout',
   mlength: 'Length', marea: 'Area', mcount: 'Count',
   plane: 'Roof plane', redge: 'Roof edge', ritem: 'Roof item',
   contour: 'Contour', espot: 'Spot elev', epad: 'Pad', ebound: 'Earthwork boundary',
+  qarea: 'Area takeoff',
 };
 const MK_ICON = {
   cloud: '☁', rect: '▭', ellipse: '⬭', arrow: '↗', line: '╲',
@@ -97,10 +98,11 @@ const MK_ICON = {
   mlength: '↔', marea: '⬠', mcount: '🔢',
   plane: '▰', redge: '╱', ritem: '⊕',
   contour: '⛰', espot: '◎', epad: '◫', ebound: '⬚',
+  qarea: '▨',
 };
 const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
-const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound']; // click-built (vs drag; espot/align are special-cased)
-const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge']; // produce ft / SF / squares
+const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea']; // click-built (vs drag; espot/align are special-cased)
+const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea']; // produce ft / SF / squares
 
 /* ---- earthwork (sitework pack) helpers ---- */
 // stable hue per elevation so equal elevations match visually; existing lighter
@@ -166,7 +168,7 @@ const DEFAULT_ROOF_PRICES = {
   item_boot: 30, item_vent: 35, item_skylight: 350, item_chimney: 450,
   ew_cut: 4.5, ew_fill: 6, ew_haul: 12, // earthwork $/CY (editable like the rest)
 };
-const priceFor = key => (state.roofPrices[key] != null ? state.roofPrices[key] : (DEFAULT_ROOF_PRICES[key] || 0));
+const priceFor = (key, def = 0) => (state.roofPrices[key] != null ? state.roofPrices[key] : (DEFAULT_ROOF_PRICES[key] != null ? DEFAULT_ROOF_PRICES[key] : def));
 
 function roofBidLines() {
   // Trade mode drives the bid: a selected trade shows its FULL line list
@@ -208,9 +210,11 @@ function roofBidLines() {
     lines.push({ key: 'ew_fill', label: 'Earthwork — fill placed (compacted)', qty: R.fillCY, unit: 'CY', q: 0 });
     if (net > 0) lines.push({ key: 'ew_haul', label: 'Earthwork — export haul-off (loose)', qty: net * (1 + swell), unit: 'CY', q: 0 });
   }
+  // quantity takeoffs (area/line/count/wall) belong to the sitework trade
+  if (trade === 'dirt' || !trade) lines.push(...areaBidLines());
   // consolidated view (no trade selected): only rows with real quantities
-  const finalLines = trade ? lines : lines.filter(l => l.qty > 0);
-  for (const l of finalLines) { l.price = priceFor(l.key); l.ext = l.qty * l.price; }
+  const finalLines = trade ? lines.filter(l => Math.abs(l.qty) > 0.001) : lines.filter(l => l.qty > 0);
+  for (const l of finalLines) { l.price = priceFor(l.key, l.defPrice || 0); l.ext = l.qty * l.price; }
   const subtotal = finalLines.reduce((a, l) => a + l.ext, 0);
   const op = subtotal * (Number(state.roofOP) || 0) / 100;
   return { lines: finalLines, subtotal, op, total: subtotal + op };
@@ -256,6 +260,14 @@ function measureValue(m) {
     return `${m.surface === 'existing' ? 'EG' : 'FG'} ${m.elev != null ? fmt(m.elev, Number.isInteger(m.elev) ? 0 : 1) : '?'}`;
   }
   if (m.kind === 'ebound') return 'Limits of disturbance';
+  if (m.kind === 'qarea') {
+    const cfg = m.cfg || {};
+    const r = computeAreaResult(qareaSf(m), cfg, qareaPerimFt(m));
+    const q = cfg.mode === 'strip' ? `${fmt(r.stripCY, 1)} CY`
+      : cfg.mode === 'area' ? `${fmt(r.areaSf)} SF`
+      : `${fmt(r.quantity, 1)} ${r.unit}`;
+    return `${cfg.deduct ? '– ' : ''}${cfg.label || 'Area'} · ${q}`;
+  }
   return '';
 }
 const LINE_W = { S: 2, M: 4, L: 8 };
@@ -530,6 +542,16 @@ function drawMarkup(ctx, m) {
       ctx.setLineDash([]);
       break;
     }
+    case 'qarea': {
+      const col = areaColorHex(m.cfg || {});
+      ctx.strokeStyle = col; ctx.fillStyle = col;
+      if (m.pts.length >= 2) {
+        ctx.beginPath(); m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath();
+        ctx.globalAlpha = m.cfg && m.cfg.deduct ? 0.28 : 0.2; ctx.fill(); ctx.globalAlpha = 1; ctx.stroke();
+      }
+      if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y, col); }
+      break;
+    }
   }
   ctx.restore();
 }
@@ -549,7 +571,7 @@ function elevLabel(ctx, m, x, y, col) {
 }
 
 // Measured-value label: white-haloed bold text, sized to the sheet.
-function labelAt(ctx, m, x, y) {
+function labelAt(ctx, m, x, y, color) {
   const base = pageBase.get(m.page);
   const fs = Math.max(11, Math.min(30, (base ? base.width : 2800) / 110));
   ctx.save();
@@ -559,7 +581,7 @@ function labelAt(ctx, m, x, y) {
   ctx.lineWidth = fs / 4.5;
   ctx.strokeStyle = 'rgba(255,255,255,.92)';
   ctx.strokeText(measureValue(m), x, y);
-  ctx.fillStyle = m.color;
+  ctx.fillStyle = color || m.color;
   ctx.fillText(measureValue(m), x, y);
   ctx.restore();
 }
@@ -718,7 +740,7 @@ function hitMarkup(ctx, w) {
       case 'freehand': case 'mlength': case 'redge': case 'contour':
         if (distToPolyline(w.x, w.y, m.pts) < t) return m;
         break;
-      case 'marea': case 'plane': case 'epad':
+      case 'marea': case 'plane': case 'epad': case 'qarea':
         if (pointInPolygon(w.x, w.y, m.pts) ||
             distToPolyline(w.x, w.y, [...m.pts, m.pts[0]]) < t) return m;
         break;
@@ -1144,6 +1166,8 @@ function setTool(t) {
     setMsg(`Trace a ${curSurface} building pad (flat at one elevation); Enter/double-click to close.`);
   } else if (t === 'ebound') {
     setMsg('Trace the limits of disturbance — the area gridded for cut/fill. Enter/double-click to close.');
+  } else if (t === 'qarea') {
+    setMsg('Trace a paved/graded area; Enter/double-click to close, then pick a material. Double-click it later to edit.');
   } else if (t === 'align') {
     const E = state.earthwork;
     setMsg((!E.existingPage || !E.proposedPage)
@@ -1404,7 +1428,7 @@ els.cv.addEventListener('pointercancel', endDrag);
 
 /* ---- click-built measure drafts: commit / cancel ---- */
 
-const CLOSED_KINDS = ['marea', 'plane', 'epad', 'ebound']; // 3+ pts, closed polygon
+const CLOSED_KINDS = ['marea', 'plane', 'epad', 'ebound', 'qarea']; // 3+ pts, closed polygon
 const POINT_KINDS = ['mcount', 'ritem'];      // 1+ pts, no rubber band
 
 function commitDraft() {
@@ -1417,6 +1441,18 @@ function commitDraft() {
       dist(pts[pts.length - 1].x, pts[pts.length - 1].y, pts[pts.length - 2].x, pts[pts.length - 2].y) < 3 / vp.view.zoom) pts.pop();
   const min = CLOSED_KINDS.includes(d.kind) ? 3 : POINT_KINDS.includes(d.kind) ? 1 : 2;
   if (pts.length < min) { vp.requestDraw(); return; }
+  // area takeoff: show the material form; create the markup only if confirmed
+  if (d.kind === 'qarea') {
+    const s = pageFtPerPx();
+    askAreaConfig(polygonAreaFt2(pts, s), polygonPerimeterFt(pts, s), lastAreaCfg).then(cfg => {
+      if (!cfg) { vp.requestDraw(); return; }
+      lastAreaCfg = cfg;
+      state.markups.push({ id: randId(), page: state.page, kind: 'qarea', pts, cfg, created: Date.now() });
+      pushUndo(d.prev);
+      markupsChanged();
+    });
+    return;
+  }
   const extra = {};
   if (d.kind === 'plane') extra.pitch = state.roofPitch;
   else if (d.kind === 'redge') extra.etype = $('edgeType') ? $('edgeType').value : 'eave';
@@ -1464,6 +1500,21 @@ els.cv.addEventListener('dblclick', e => {
   if (hit && (hit.kind === 'text' || hit.kind === 'callout')) {
     selectedId = hit.id;
     openOverlay({ mode: 'edit', markup: hit });
+    return;
+  }
+  // double-click an area takeoff to re-open its material form
+  if (hit && hit.kind === 'qarea') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    const s = state.scales[hit.page] || 0;
+    askAreaConfig(polygonAreaFt2(hit.pts, s), polygonPerimeterFt(hit.pts, s), hit.cfg).then(cfg => {
+      if (!cfg) return;
+      const prev = snapshot();
+      hit.cfg = cfg;
+      lastAreaCfg = cfg;
+      pushUndo(prev);
+      markupsChanged();
+    });
     return;
   }
   // double-click an earthwork markup to fix its elevation
@@ -1670,7 +1721,7 @@ function applyTakeoffGate() {
 /* trade mode: which takeoff trade's tools/panels/bid are in play */
 const TRADE_TOOLS = {
   roofing: ['plane', 'redge', 'ritem'],
-  dirt: ['contour', 'espot', 'epad', 'ebound', 'align'],
+  dirt: ['contour', 'espot', 'epad', 'ebound', 'align', 'qarea'],
 };
 // general redlining + generic measure tools that collapse while a trade is active
 const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
@@ -2679,6 +2730,211 @@ $('btnCompany').addEventListener('click', openCompany);
 $('companyShareBtn').addEventListener('click', shareToCompany);
 $('companyClose').addEventListener('click', () => $('company').classList.add('hidden'));
 $('company').addEventListener('click', e => { if (e.target === $('company')) $('company').classList.add('hidden'); });
+
+/* ===================== Sitework quantity takeoffs — Area (Q1) =====================
+ * Copied from sitework/app.js (see shared/PARITY.md). A qarea markup is a
+ * polygon + a cfg {label,mode,thickness,density,rebar,form,tack,swell,respread,
+ * deduct,color}; area/perimeter recompute live from geometry × the sheet scale.
+ */
+
+const AREA_PRESETS = {
+  asphalt:  { label: 'Asphalt paving', mode: 'paving', thickness: 3, density: 145, tack: 0.10 },
+  base:     { label: 'Aggregate base', mode: 'tons', thickness: 6, density: 135 },
+  concrete: { label: 'Concrete flatwork', mode: 'concrete', thickness: 4, rebar: '#4@18', form: true },
+  gravel:   { label: 'Gravel / fill', mode: 'cy', thickness: 6 },
+  topsoil:  { label: 'Topsoil strip', mode: 'strip', thickness: 6, swell: 25, respread: 0 },
+  areaonly: { label: 'Area', mode: 'area' },
+};
+const AREA_MODE_COLORS = { concrete: '#9aa7b8', paving: '#5b6472', tons: '#c7a55f', cy: '#b07d43', strip: '#6fae4d' };
+const AREA_PALETTE = ['#38d39f', '#4da3ff', '#c07ef7', '#e0912b', '#e05555', '#2bb3c0', '#d24d8c', '#8bbf3f'];
+function autoAreaColor(mode, label) {
+  const m = AREA_MODE_COLORS[mode];
+  if (m) return m;
+  const s = String(label || '');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return AREA_PALETTE[h % AREA_PALETTE.length];
+}
+const areaColorHex = cfg => (cfg && cfg.color) || autoAreaColor(cfg.mode, cfg.label);
+
+const REBAR = {
+  '#4@18': { bar: '#4', spacing: '18', sp: 1.5, lb: 0.668 },
+  '#4@12': { bar: '#4', spacing: '12', sp: 1.0, lb: 0.668 },
+  '#5@12': { bar: '#5', spacing: '12', sp: 1.0, lb: 1.043 },
+};
+function rebarQuantity(areaSf, key) {
+  if (key === 'mesh') return { type: 'mesh', meshSf: areaSf * 1.05 };
+  const r = REBAR[key];
+  if (!r) return null;
+  const lf = 2 * areaSf / r.sp * 1.10; // both directions + 10% laps/waste
+  return { type: r.bar, spacing: r.spacing, lf, weightLb: lf * r.lb };
+}
+function areaQuantity(areaSf, cfg) {
+  const thickFt = (parseFloat(cfg.thickness) || 0) / 12;
+  if (cfg.mode === 'tons' || cfg.mode === 'paving') {
+    const d = parseFloat(cfg.density) || 145;
+    return { quantity: areaSf * thickFt * d / 2000, unit: 'tons' };
+  }
+  if (cfg.mode === 'cy' || cfg.mode === 'concrete') return { quantity: areaSf * thickFt / 27, unit: 'CY' };
+  if (cfg.mode === 'strip') {
+    const stripCY = areaSf * thickFt / 27;
+    const swell = 1 + (parseFloat(cfg.swell) || 0) / 100;
+    const respreadCY = areaSf * ((parseFloat(cfg.respread) || 0) / 12) / 27;
+    const netExportCY = Math.max(0, stripCY - respreadCY);
+    return { quantity: stripCY, unit: 'CY', stripCY, looseCY: stripCY * swell, respreadCY, netExportCY, netExportLooseCY: netExportCY * swell };
+  }
+  return { quantity: areaSf, unit: 'SF' };
+}
+function computeAreaResult(areaSf, cfg, perimFt) {
+  const q = areaQuantity(areaSf, cfg);
+  const r = { areaSf, sy: areaSf / 9, acres: areaSf / 43560, label: cfg.label, perimFt: perimFt || 0, ...q };
+  if (cfg.mode === 'concrete') {
+    if (cfg.form !== false && perimFt > 0) r.formworkLF = perimFt;
+    const reb = rebarQuantity(areaSf, cfg.rebar);
+    if (reb) r.rebar = reb;
+  } else if (cfg.mode === 'paving') {
+    const rate = parseFloat(cfg.tack);
+    const tackRate = isFinite(rate) ? rate : 0.10;
+    if (tackRate > 0) r.tackGal = (areaSf / 9) * tackRate;
+  }
+  return r;
+}
+function areaResultRows(areaSf, cfg, perimFt) {
+  const r = computeAreaResult(areaSf, cfg, perimFt);
+  const rows = [['Area', `${fmt(areaSf)} sf · ${fmt(r.sy)} sy · ${fmt(r.acres, 2)} ac`]];
+  if (cfg.mode === 'strip') {
+    rows.push(['Strip volume', `${fmt(r.stripCY, 1)} CY bank`, 'total']);
+    rows.push(['Loose (haul)', `${fmt(r.looseCY, 1)} CY`]);
+    if (r.respreadCY > 0) {
+      rows.push(['Respread', `${fmt(r.respreadCY, 1)} CY bank`]);
+      rows.push(['Net export', `${fmt(r.netExportCY, 1)} CY bank · ${fmt(r.netExportLooseCY, 1)} loose`, 'total']);
+    }
+  } else if (cfg.mode === 'concrete') {
+    rows.push(['Concrete volume', `${fmt(r.quantity, 1)} CY`, 'total']);
+    if (r.formworkLF) rows.push(['Edge forms', `${fmt(r.formworkLF)} LF`]);
+    if (r.rebar) rows.push(r.rebar.type === 'mesh'
+      ? ['Wire mesh', `${fmt(r.rebar.meshSf)} SF`]
+      : [`Rebar ${r.rebar.type} @ ${r.rebar.spacing}"`, `${fmt(r.rebar.lf)} LF · ${fmt(r.rebar.weightLb)} lb`]);
+  } else if (cfg.mode === 'paving') {
+    rows.push(['Asphalt weight', `${fmt(r.quantity, 1)} tons`, 'total']);
+    if (r.tackGal) rows.push(['Tack coat', `${fmt(r.tackGal)} gal`]);
+  } else if (cfg.mode !== 'area') {
+    rows.push([cfg.mode === 'tons' ? 'Weight' : 'Volume', `${fmt(r.quantity, 1)} ${r.unit}`, 'total']);
+  }
+  return rows.map(([k, v, cls]) => `<div class="res-row ${cls === 'total' ? 'total' : ''}"><span>${k}</span><b>${v}</b></div>`).join('');
+}
+function readAreaCfg() {
+  return {
+    label: $('atLabel').value.trim() || 'Area', mode: $('atMode').value,
+    thickness: $('atThick').value, density: $('atDensity').value, rebar: $('atRebar').value,
+    form: $('atForm').checked, tack: $('atTack').value, swell: $('atSwell').value,
+    respread: $('atRespread').value, deduct: $('atDeduct').checked, color: $('atColor').value,
+  };
+}
+function syncAreaMode() {
+  const mode = $('atMode').value;
+  $('atThickWrap').style.display = mode === 'area' ? 'none' : '';
+  $('atDensityWrap').style.display = (mode === 'tons' || mode === 'paving') ? '' : 'none';
+  $('atRebarWrap').style.display = mode === 'concrete' ? '' : 'none';
+  $('atFormWrap').style.display = mode === 'concrete' ? '' : 'none';
+  $('atTackWrap').style.display = mode === 'paving' ? '' : 'none';
+  $('atSwellWrap').style.display = mode === 'strip' ? '' : 'none';
+  $('atRespreadWrap').style.display = mode === 'strip' ? '' : 'none';
+  $('atThickLbl').textContent = mode === 'strip' ? 'Strip depth (in)' : 'Thickness (in)';
+}
+let lastAreaCfg = null;
+function askAreaConfig(areaSf, perimFt, prefill) {
+  return new Promise(resolve => {
+    const preview = () => { $('atResult').innerHTML = areaResultRows(areaSf, readAreaCfg(), perimFt); };
+    $('atArea').textContent = `${fmt(areaSf)} sf`;
+    $('atDeduct').checked = !!(prefill && prefill.deduct);
+    if (prefill) {
+      $('atLabel').value = prefill.label != null ? prefill.label : '';
+      $('atMode').value = prefill.mode || 'area';
+      if (prefill.thickness != null) $('atThick').value = prefill.thickness;
+      if (prefill.density != null) $('atDensity').value = prefill.density;
+      if (prefill.rebar != null) $('atRebar').value = prefill.rebar;
+      if (prefill.form != null) $('atForm').checked = !!prefill.form;
+      if (prefill.tack != null) $('atTack').value = prefill.tack;
+      if (prefill.swell != null) $('atSwell').value = prefill.swell;
+      if (prefill.respread != null) $('atRespread').value = prefill.respread;
+    }
+    $('atColor').value = (prefill && prefill.color) || autoAreaColor($('atMode').value, $('atLabel').value);
+    syncAreaMode();
+    preview();
+    $('areaTakeoff').classList.remove('hidden');
+    const onInput = () => { syncAreaMode(); preview(); };
+    const inputs = ['atLabel', 'atMode', 'atThick', 'atDensity', 'atRebar', 'atForm', 'atTack', 'atSwell', 'atRespread'];
+    inputs.forEach(id => { $(id).addEventListener('input', onInput); $(id).addEventListener('change', onInput); });
+    const presetBtns = [...document.querySelectorAll('#atPresets [data-preset]')];
+    const onPreset = e => {
+      const p = AREA_PRESETS[e.target.dataset.preset];
+      if (!p) return;
+      $('atLabel').value = p.label; $('atMode').value = p.mode;
+      if (p.thickness != null) $('atThick').value = p.thickness;
+      if (p.density != null) $('atDensity').value = p.density;
+      $('atRebar').value = p.rebar != null ? p.rebar : 'none';
+      $('atForm').checked = p.form != null ? p.form : false;
+      if (p.tack != null) $('atTack').value = p.tack;
+      if (p.swell != null) $('atSwell').value = p.swell;
+      if (p.respread != null) $('atRespread').value = p.respread;
+      $('atColor').value = autoAreaColor(p.mode, p.label);
+      onInput();
+    };
+    presetBtns.forEach(b => b.addEventListener('click', onPreset));
+    const cleanup = () => {
+      inputs.forEach(id => { $(id).removeEventListener('input', onInput); $(id).removeEventListener('change', onInput); });
+      presetBtns.forEach(b => b.removeEventListener('click', onPreset));
+      $('atOk').onclick = null; $('atCancel').onclick = null;
+      $('areaTakeoff').classList.add('hidden');
+    };
+    $('atCancel').onclick = () => { cleanup(); resolve(null); };
+    $('atOk').onclick = () => { const cfg = readAreaCfg(); cleanup(); resolve(cfg); };
+  });
+}
+
+// live area/perimeter (feet) for a stored qarea markup, from its sheet's scale
+const qareaSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0);
+const qareaPerimFt = m => polygonPerimeterFt(m.pts, state.scales[m.page] || 0);
+
+// rough $/unit starting points per material component (user edits in the bid)
+const QA_COMP_LABEL = { concrete: 'concrete', forms: 'edge forms', rebar: 'rebar', mesh: 'wire mesh', asphalt: 'asphalt', tack: 'tack coat', base: 'agg. base', gravel: 'gravel / fill', strip: 'topsoil haul-off', area: 'area' };
+const QA_COMP_PRICE = { concrete: 165, forms: 3.5, rebar: 0.9, mesh: 0.35, asphalt: 95, tack: 3, base: 28, gravel: 32, strip: 8, area: 0 };
+
+// aggregate qarea markups into bid lines (deducts subtract from their label's
+// components; quantities computed per-area so differing thicknesses are exact)
+function areaBidLines() {
+  const groups = new Map(); // label -> { comps: { comp: {unit, qty} } }
+  for (const m of state.markups) {
+    if (m.kind !== 'qarea') continue;
+    const cfg = m.cfg || {};
+    const sign = cfg.deduct ? -1 : 1;
+    const r = computeAreaResult(qareaSf(m), cfg, qareaPerimFt(m));
+    const g = groups.get(cfg.label) || { comps: {} };
+    const add = (comp, unit, val) => { if (!val) return; (g.comps[comp] = g.comps[comp] || { unit, qty: 0 }).qty += sign * val; };
+    if (cfg.mode === 'concrete') {
+      add('concrete', 'CY', r.quantity);
+      if (r.formworkLF) add('forms', 'LF', r.formworkLF);
+      if (r.rebar) r.rebar.type === 'mesh' ? add('mesh', 'SF', r.rebar.meshSf) : add('rebar', 'lb', r.rebar.weightLb);
+    } else if (cfg.mode === 'paving') {
+      add('asphalt', 'tons', r.quantity);
+      if (r.tackGal) add('tack', 'gal', r.tackGal);
+    } else if (cfg.mode === 'tons') add('base', 'tons', r.quantity);
+    else if (cfg.mode === 'cy') add('gravel', 'CY', r.quantity);
+    else if (cfg.mode === 'strip') add('strip', 'CY', r.netExportLooseCY);
+    else add('area', 'SF', r.areaSf);
+    groups.set(cfg.label, g);
+  }
+  const lines = [];
+  for (const [label, g] of groups) {
+    const slug = String(label).replace(/[^a-z0-9]+/gi, '_'); // keep the price key attribute-safe
+    for (const [comp, { unit, qty }] of Object.entries(g.comps)) {
+      if (Math.abs(qty) < 0.01) continue;
+      lines.push({ key: `qa_${slug}_${comp}`, label: `${label} — ${QA_COMP_LABEL[comp] || comp}`, qty, unit, q: 0, defPrice: QA_COMP_PRICE[comp] || 0 });
+    }
+  }
+  return lines;
+}
 
 /* ===================== Live sessions (SSE + REST ops) =====================
  * Host "goes live" on the current project; teammates join and co-edit in real
