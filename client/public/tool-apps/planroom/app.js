@@ -2528,6 +2528,7 @@ $('btnExport').addEventListener('click', async () => {
     if (f && f.bytes) docB64 = bytesToBase64(f.bytes);
   } catch (_) {}
   const out = {
+    app: 'plan-room', version: 1, // Load checks this marker — must be present
     ...projectData(),
     name: state.projectName,
     docName: state.docName, docType: state.docType, docB64,
@@ -2547,7 +2548,10 @@ $('fileImport').addEventListener('change', async e => {
   if (!file) return;
   let d;
   try { d = JSON.parse(await file.text()); } catch (_) { setMsg('That is not a Plan Room file.'); return; }
-  if (!d || d.app !== 'plan-room') { setMsg('That is not a Plan Room file.'); return; }
+  // accept marked files, plus older saves that predate the marker (by shape),
+  // but reject files exported by a different tool
+  const ok = d && (d.app === 'plan-room' || (!d.app && (Array.isArray(d.markups) || d.docB64)));
+  if (!ok) { setMsg('That is not a Plan Room file.'); return; }
   // Always land in a NEW project — never overwrite the one that's open.
   await newProject(d.name || file.name.replace(/\.planroom\.json$|\.json$/i, ''));
   state.markups = Array.isArray(d.markups) ? d.markups : [];
