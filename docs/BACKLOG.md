@@ -128,6 +128,16 @@ that holds the exhaustive detail.
 ## 📌 Planned / ready-to-build
 *Scoped with a plan; just not started.*
 
+- **Production & Haul Log (main app)** — `docs/plans/production-log.md`
+  (2026-07-13). Relocates the standalone sitework tool's production log into
+  OpsFloa proper. Key finding: `daily_reports` already covers daily production,
+  so the only new build is **haul tickets** (new `haul_tickets` table, migration
+  0135, Field-module Haul tab) + an **estimate-vs-actual reconciliation**.
+  **Gating decision:** the log is **base ops** (business plan + a
+  `manage_haul_tickets` perm — NOT the takeoff add-on); only the
+  estimate-vs-actual reconciliation is **takeoff-add-on gated**
+  (`requireTakeoffAddon`), since it needs takeoff data. That's the upsell
+  without walling off a base capability.
 - **Plan Room platform (MASTER PLAN)** — `docs/plans/plan-viewer-markup.md`
   (2026-07-11, two tiers, **money-first sequencing**). **Base add-on ~$40/mo**
   (`addon_planroom`): viewer + markup + measure + company library +
