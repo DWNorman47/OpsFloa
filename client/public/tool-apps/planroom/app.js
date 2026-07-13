@@ -5,7 +5,7 @@
  * See docs/plans/plan-viewer-markup.md.
  */
 
-import { createViewport } from '../shared/engine-view.js?v=1';
+import { createViewport } from '../shared/engine-view.js?v=2';
 import { createStore, randId, hashBytes } from '../shared/engine-store.js?v=1';
 import { openDoc, bytesToBase64, base64ToBytes, defaultRenderScale } from '../shared/engine-doc.js?v=1';
 import { createModals, esc, fmt, money } from '../shared/engine-ui.js?v=1';
@@ -2377,8 +2377,16 @@ if ($('surfaceSel')) $('surfaceSel').addEventListener('change', e => {
 els.btnPrev.addEventListener('click', () => setPage(state.page - 1));
 els.btnNext.addEventListener('click', () => setPage(state.page + 1));
 els.btnFit.addEventListener('click', async () => {
+  if (!state.doc) return;
   const b = await baseSize(state.page);
-  vp.fitTo(b.width, b.height);
+  // already showing the whole sheet? a second Fit fills the black space instead
+  // of doing nothing (usually vertically, for a wide sheet). Fit again → contain.
+  if (vp.isAtFit(b.width, b.height)) {
+    vp.fitTo(b.width, b.height, { cover: true });
+    setMsg('Filled to the view — drag to see the edges. Fit again to show the whole sheet.');
+  } else {
+    vp.fitTo(b.width, b.height);
+  }
 });
 $('btnThumbs').addEventListener('click', () => document.body.classList.toggle('nothumbs'));
 
