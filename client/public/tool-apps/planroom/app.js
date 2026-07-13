@@ -2820,9 +2820,9 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') exportMenu.c
 
 // mobile toolbar toggle — show/hide everything after Save
 $('btnMenuToggle').addEventListener('click', () => {
-  const open = document.body.classList.toggle('tb-menu-open');
-  $('btnMenuToggle').setAttribute('aria-expanded', open ? 'true' : 'false');
-  $('btnMenuToggle').classList.toggle('primary', open);
+  const closed = document.body.classList.toggle('tb-menu-closed'); // shown by default
+  $('btnMenuToggle').setAttribute('aria-expanded', closed ? 'false' : 'true');
+  $('btnMenuToggle').classList.toggle('primary', closed); // highlight when the toolbar is hidden
 });
 
 // Layers dropdown — show/hide markup categories
