@@ -83,14 +83,14 @@ els.hud.addEventListener('click', () => { clearTimeout(hudTimer); els.hud.classL
  * Widths/sizes are document-space (base px) so markups print/zoom like ink.
  */
 
-const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea'];
+const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline'];
 const MK_LABEL = {
   cloud: 'Cloud', rect: 'Rectangle', ellipse: 'Ellipse', arrow: 'Arrow', line: 'Line',
   freehand: 'Pen', highlight: 'Highlight', text: 'Text', callout: 'Callout',
   mlength: 'Length', marea: 'Area', mcount: 'Count',
   plane: 'Roof plane', redge: 'Roof edge', ritem: 'Roof item',
   contour: 'Contour', espot: 'Spot elev', epad: 'Pad', ebound: 'Earthwork boundary',
-  qarea: 'Area takeoff',
+  qarea: 'Area takeoff', qline: 'Line takeoff',
 };
 const MK_ICON = {
   cloud: '☁', rect: '▭', ellipse: '⬭', arrow: '↗', line: '╲',
@@ -98,11 +98,11 @@ const MK_ICON = {
   mlength: '↔', marea: '⬠', mcount: '🔢',
   plane: '▰', redge: '╱', ritem: '⊕',
   contour: '⛰', espot: '◎', epad: '◫', ebound: '⬚',
-  qarea: '▨',
+  qarea: '▨', qline: '⌇',
 };
 const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
-const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea']; // click-built (vs drag; espot/align are special-cased)
-const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea']; // produce ft / SF / squares
+const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline']; // click-built (vs drag; espot/align are special-cased)
+const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline']; // produce ft / SF / squares
 
 /* ---- earthwork (sitework pack) helpers ---- */
 // stable hue per elevation so equal elevations match visually; existing lighter
@@ -211,7 +211,7 @@ function roofBidLines() {
     if (net > 0) lines.push({ key: 'ew_haul', label: 'Earthwork — export haul-off (loose)', qty: net * (1 + swell), unit: 'CY', q: 0 });
   }
   // quantity takeoffs (area/line/count/wall) belong to the sitework trade
-  if (trade === 'dirt' || !trade) lines.push(...areaBidLines());
+  if (trade === 'dirt' || !trade) { lines.push(...areaBidLines()); lines.push(...lineBidLines()); }
   // consolidated view (no trade selected): only rows with real quantities
   const finalLines = trade ? lines.filter(l => Math.abs(l.qty) > 0.001) : lines.filter(l => l.qty > 0);
   for (const l of finalLines) { l.price = priceFor(l.key, l.defPrice || 0); l.ext = l.qty * l.price; }
@@ -267,6 +267,11 @@ function measureValue(m) {
       : cfg.mode === 'area' ? `${fmt(r.areaSf)} SF`
       : `${fmt(r.quantity, 1)} ${r.unit}`;
     return `${cfg.deduct ? '– ' : ''}${cfg.label || 'Area'} · ${q}`;
+  }
+  if (m.kind === 'qline') {
+    const cfg = m.cfg || {};
+    const r = computeLineResult(qlineLenFt(m), cfg);
+    return `${cfg.label || 'Line'} · ${fmt(r.lengthFt)} ft${r.trenchCY ? ` · ${fmt(r.trenchCY, 1)} CY` : ''}`;
   }
   return '';
 }
@@ -552,6 +557,16 @@ function drawMarkup(ctx, m) {
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y, col); }
       break;
     }
+    case 'qline': {
+      const col = lineColorHex(m.cfg || {});
+      ctx.strokeStyle = col;
+      ctx.beginPath();
+      m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.stroke();
+      const mid = m.pts[Math.floor((m.pts.length - 1) / 2)];
+      labelAt(ctx, m, mid.x, mid.y - (m.width || 4) * 2.5, col);
+      break;
+    }
   }
   ctx.restore();
 }
@@ -737,7 +752,7 @@ function hitMarkup(ctx, w) {
       case 'line': case 'arrow':
         if (pointSegDist(w.x, w.y, p0.x, p0.y, p1.x, p1.y) < t) return m;
         break;
-      case 'freehand': case 'mlength': case 'redge': case 'contour':
+      case 'freehand': case 'mlength': case 'redge': case 'contour': case 'qline':
         if (distToPolyline(w.x, w.y, m.pts) < t) return m;
         break;
       case 'marea': case 'plane': case 'epad': case 'qarea':
@@ -1168,6 +1183,8 @@ function setTool(t) {
     setMsg('Trace the limits of disturbance — the area gridded for cut/fill. Enter/double-click to close.');
   } else if (t === 'qarea') {
     setMsg('Trace a paved/graded area; Enter/double-click to close, then pick a material. Double-click it later to edit.');
+  } else if (t === 'qline') {
+    setMsg('Trace a run (curb, pipe, silt fence…); Enter/double-click to finish, then set the type / trench.');
   } else if (t === 'align') {
     const E = state.earthwork;
     setMsg((!E.existingPage || !E.proposedPage)
@@ -1453,6 +1470,17 @@ function commitDraft() {
     });
     return;
   }
+  // line takeoff: show the trench form; create the markup only if confirmed
+  if (d.kind === 'qline') {
+    askLineConfig(polyLengthFt(pts, pageFtPerPx()), lastLineCfg).then(cfg => {
+      if (!cfg) { vp.requestDraw(); return; }
+      lastLineCfg = cfg;
+      state.markups.push({ id: randId(), page: state.page, kind: 'qline', pts, cfg, created: Date.now() });
+      pushUndo(d.prev);
+      markupsChanged();
+    });
+    return;
+  }
   const extra = {};
   if (d.kind === 'plane') extra.pitch = state.roofPitch;
   else if (d.kind === 'redge') extra.etype = $('edgeType') ? $('edgeType').value : 'eave';
@@ -1512,6 +1540,20 @@ els.cv.addEventListener('dblclick', e => {
       const prev = snapshot();
       hit.cfg = cfg;
       lastAreaCfg = cfg;
+      pushUndo(prev);
+      markupsChanged();
+    });
+    return;
+  }
+  // double-click a line takeoff to re-open its trench form
+  if (hit && hit.kind === 'qline') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    askLineConfig(polyLengthFt(hit.pts, state.scales[hit.page] || 0), hit.cfg).then(cfg => {
+      if (!cfg) return;
+      const prev = snapshot();
+      hit.cfg = cfg;
+      lastLineCfg = cfg; lastLineColor = cfg.color;
       pushUndo(prev);
       markupsChanged();
     });
@@ -1721,7 +1763,7 @@ function applyTakeoffGate() {
 /* trade mode: which takeoff trade's tools/panels/bid are in play */
 const TRADE_TOOLS = {
   roofing: ['plane', 'redge', 'ritem'],
-  dirt: ['contour', 'espot', 'epad', 'ebound', 'align', 'qarea'],
+  dirt: ['contour', 'espot', 'epad', 'ebound', 'align', 'qarea', 'qline'],
 };
 // general redlining + generic measure tools that collapse while a trade is active
 const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
@@ -2931,6 +2973,139 @@ function areaBidLines() {
     for (const [comp, { unit, qty }] of Object.entries(g.comps)) {
       if (Math.abs(qty) < 0.01) continue;
       lines.push({ key: `qa_${slug}_${comp}`, label: `${label} — ${QA_COMP_LABEL[comp] || comp}`, qty, unit, q: 0, defPrice: QA_COMP_PRICE[comp] || 0 });
+    }
+  }
+  return lines;
+}
+
+/* ---- Q2: Line / trench takeoff (copied from sitework — see PARITY.md) ---- */
+// trench cross-section (trapezoid): bottom width w, depth d, side slope s (H:V)
+function wallSectionAreaSf(bottomWidth, depth, slope) {
+  if (!(depth > 0) || !(bottomWidth >= 0)) return 0;
+  return bottomWidth * depth + slope * depth * depth;
+}
+const LINE_PRESETS = {
+  curb:     { label: 'Curb & gutter', trench: false },
+  pipe:     { label: 'Pipe / utility trench', trench: true, width: 3, depth: 5, slope: 0, bedding: 6 },
+  pipe12:   { label: '12" pipe trench', trench: true, width: 3,   depth: 5, slope: 0, bedding: 6 },
+  pipe18:   { label: '18" pipe trench', trench: true, width: 3.5, depth: 5, slope: 0, bedding: 6 },
+  pipe24:   { label: '24" pipe trench', trench: true, width: 4,   depth: 6, slope: 0, bedding: 6 },
+  pipe36:   { label: '36" pipe trench', trench: true, width: 5,   depth: 6, slope: 0, bedding: 6 },
+  silt:     { label: 'Silt fence', trench: false },
+  sawcut:   { label: 'Sawcut', trench: false },
+  fence:    { label: 'Fence / guardrail', trench: false },
+  lineonly: { label: 'Line', trench: false },
+};
+function autoLineColor(label) {
+  const s = String(label || '').toLowerCase();
+  if (s.includes('pipe')) return '#4da3ff';
+  if (s.includes('curb')) return '#c9ced6';
+  if (s.includes('silt')) return '#8bbf3f';
+  if (s.includes('saw')) return '#e05555';
+  if (s.includes('fence') || s.includes('guardrail')) return '#c07ef7';
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return AREA_PALETTE[h % AREA_PALETTE.length];
+}
+const lineColorHex = cfg => (cfg && cfg.color) || autoLineColor(cfg && cfg.label);
+let lastLineColor = null;
+let lastLineCfg = null;
+function defaultNewLineColor() {
+  const sel = selMarkup();
+  if (sel && sel.kind === 'qline') return lineColorHex(sel.cfg);
+  return lastLineColor;
+}
+function computeLineResult(lengthFt, cfg) {
+  const r = { lengthFt, label: cfg.label, trench: !!cfg.trench, trenchCY: 0, beddingCY: 0 };
+  if (cfg.trench) {
+    const w = parseFloat(cfg.width) || 0, d = parseFloat(cfg.depth) || 0, s = parseFloat(cfg.slope) || 0;
+    r.trenchCY = wallSectionAreaSf(w, d, s) * lengthFt / 27;
+    const bedIn = parseFloat(cfg.bedding) || 0;
+    r.beddingCY = bedIn > 0 ? (w * (bedIn / 12) * lengthFt) / 27 : 0;
+  }
+  return r;
+}
+function lineResultRows(lengthFt, cfg) {
+  const r = computeLineResult(lengthFt, cfg);
+  const rows = [['Length', `${fmt(lengthFt)} ft`, r.trench ? '' : 'total']];
+  if (r.trench) {
+    rows.push(['Trench excavation', `${fmt(r.trenchCY, 1)} CY`, 'total']);
+    if (r.beddingCY > 0) rows.push(['Bedding (import)', `${fmt(r.beddingCY, 1)} CY`]);
+  }
+  return rows.map(([k, v, cls]) => `<div class="res-row ${cls === 'total' ? 'total' : ''}"><span>${k}</span><b>${v}</b></div>`).join('');
+}
+function readLineCfg() {
+  return {
+    label: $('ltLabel').value.trim() || 'Line', trench: $('ltTrench').checked,
+    width: $('ltWidth').value, depth: $('ltDepth').value, slope: $('ltSlope').value,
+    bedding: $('ltBedding').value, color: $('ltColor').value,
+  };
+}
+function syncLineTrench() { $('ltTrenchFields').style.display = $('ltTrench').checked ? '' : 'none'; }
+function askLineConfig(lengthFt, prefill) {
+  return new Promise(resolve => {
+    const preview = () => { $('ltResult').innerHTML = lineResultRows(lengthFt, readLineCfg()); };
+    $('ltLen').textContent = `${fmt(lengthFt)} ft`;
+    if (prefill) {
+      $('ltLabel').value = prefill.label != null ? prefill.label : '';
+      $('ltTrench').checked = !!prefill.trench;
+      if (prefill.width != null) $('ltWidth').value = prefill.width;
+      if (prefill.depth != null) $('ltDepth').value = prefill.depth;
+      if (prefill.slope != null) $('ltSlope').value = prefill.slope;
+      if (prefill.bedding != null) $('ltBedding').value = prefill.bedding;
+    }
+    $('ltColor').value = (prefill && prefill.color) || defaultNewLineColor() || autoLineColor($('ltLabel').value);
+    syncLineTrench();
+    preview();
+    $('lineTakeoff').classList.remove('hidden');
+    const onInput = () => { syncLineTrench(); preview(); };
+    const inputs = ['ltLabel', 'ltTrench', 'ltWidth', 'ltDepth', 'ltSlope', 'ltBedding'];
+    inputs.forEach(id => { $(id).addEventListener('input', onInput); $(id).addEventListener('change', onInput); });
+    const presetBtns = [...document.querySelectorAll('#ltPresets [data-preset]')];
+    const onPreset = e => {
+      const p = LINE_PRESETS[e.target.dataset.preset];
+      if (!p) return;
+      $('ltLabel').value = p.label; $('ltTrench').checked = !!p.trench;
+      if (p.width != null) $('ltWidth').value = p.width;
+      if (p.depth != null) $('ltDepth').value = p.depth;
+      if (p.slope != null) $('ltSlope').value = p.slope;
+      if (p.bedding != null) $('ltBedding').value = p.bedding;
+      $('ltColor').value = autoLineColor(p.label);
+      onInput();
+    };
+    presetBtns.forEach(b => b.addEventListener('click', onPreset));
+    const cleanup = () => {
+      inputs.forEach(id => { $(id).removeEventListener('input', onInput); $(id).removeEventListener('change', onInput); });
+      presetBtns.forEach(b => b.removeEventListener('click', onPreset));
+      $('ltOk').onclick = null; $('ltCancel').onclick = null;
+      $('lineTakeoff').classList.add('hidden');
+    };
+    $('ltCancel').onclick = () => { cleanup(); resolve(null); };
+    $('ltOk').onclick = () => { const cfg = readLineCfg(); lastLineColor = cfg.color; cleanup(); resolve(cfg); };
+  });
+}
+const qlineLenFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0);
+const QL_DEFAULT_PRICE = { lf: 0, trench: 6, bedding: 32 };
+function lineBidLines() {
+  const groups = new Map();
+  for (const m of state.markups) {
+    if (m.kind !== 'qline') continue;
+    const cfg = m.cfg || {};
+    const r = computeLineResult(qlineLenFt(m), cfg);
+    const g = groups.get(cfg.label) || { comps: {} };
+    const add = (comp, unit, val) => { if (!val) return; (g.comps[comp] = g.comps[comp] || { unit, qty: 0 }).qty += val; };
+    add('lf', 'LF', r.lengthFt);
+    add('trench', 'CY', r.trenchCY);
+    add('bedding', 'CY', r.beddingCY);
+    groups.set(cfg.label, g);
+  }
+  const COMP = { lf: '', trench: 'trench excavation', bedding: 'bedding' };
+  const lines = [];
+  for (const [label, g] of groups) {
+    const slug = String(label).replace(/[^a-z0-9]+/gi, '_');
+    for (const [comp, { unit, qty }] of Object.entries(g.comps)) {
+      if (Math.abs(qty) < 0.01) continue;
+      lines.push({ key: `ql_${slug}_${comp}`, label: comp === 'lf' ? label : `${label} — ${COMP[comp]}`, qty, unit, q: 0, defPrice: QL_DEFAULT_PRICE[comp] || 0 });
     }
   }
   return lines;
