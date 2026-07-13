@@ -80,6 +80,15 @@ that holds the exhaustive detail.
 
 ## 🚀 Ideas — new features or tools
 
+- **Plan Room: Wall Dig takeoff (sitework pack Q4, deferred).** Retaining-wall /
+  footing excavation — a trench swept along a traced line, net export vs. reused
+  backfill after concrete + aggregate fill the hole; the ▚ Wall variant reads
+  depth off contours (constant / to-subgrade / proposed−embedment). Deferred
+  because the *dig* overlaps the Line trench takeoff and its concrete/agg are
+  usually the concrete sub's scope, not the excavator's. **Full rebuildable spec
+  (cross-section + wallComputeCore formulas + form fields + bid lines) lives in
+  `docs/plans/planroom-sitework-pack.md` → "Q4 Wall dig — full spec"**, so it
+  survives even if the standalone sitework tool is deleted first. (2026-07-12)
 - **Tools-module roadmap (large idea backlog).** Full categorized list in memory.
   Headline categories: **takeoff siblings** (📐 same measure→bid engine — Roofing,
   Drywall/Paint, Flooring/Tile, Framing, Siding/Gutters, Erosion control,

@@ -64,8 +64,10 @@ takeoffs + auto-trace first (2026-07-12):
 - **Q2 Line takeoff** — polyline → LF; trench width/depth, bedding, slope →
   LF + excavation CY + bedding.
 - **Q3 Count takeoff** — points → count; unit type + price.
-- **Q4 Wall dig** — line → wall/footing excavation; depth/width/slope, concrete,
-  aggregate, reuse.
+- **Q4 Wall dig — DEFERRED (user, 2026-07-12).** Most niche of the four; the
+  *dig* overlaps Q2's trench cross-section, and its unique concrete/rebar/agg
+  are usually the concrete sub's scope, not the excavator's. Full self-contained
+  spec below so it's rebuildable even if the standalone tool is deleted first.
 - **W1 Auto-trace (vector wand)** — extract vector paths from the PDF page
   (pdf.js operator list) → click-to-trace a contour/area; + smooth. `simplifyPts`
   already in engine-measure.
@@ -74,6 +76,47 @@ branding (letterhead/logo/markup/prepared-by); layer toggles + legend +
 per-contour list + contour interval; eraser/clear-sheet/nav-pads.
 All quantity takeoffs live under the ⛰ trade, feed the Takeoff bid, copy from
 sitework/app.js (record in PARITY.md), sitework untouched.
+
+## Q4 Wall dig — full spec (deferred; rebuildable without the standalone tool)
+Excavation for a retaining wall / footing: a trench swept along a traced line,
+netting export vs. reused backfill after concrete + aggregate occupy the hole.
+Two entry points in the standalone tool:
+- **▚ Wall tool (plan-accurate):** trace the wall line; depth comes from one of
+  three modes (below) read off the contours; sweep the cross-section along it.
+- **Quick calculator (no plans):** type length + avg depth + cross-section.
+
+**Cross-section** (already ported as `wallSectionAreaSf`): trapezoid area (SF)
+`= bottomWidth·depth + slope·depth²`, where bottomWidth = footing width + working
+room, slope = side backcut H:V (0 vertical/shored, 0.75 Type A, 1 Type B, 1.5
+Type C). Gross ft³ = cross-section × length.
+
+**Core volumes** (`wallComputeCore`, verbatim math to port):
+```
+grossCY   = grossFt3 / 27
+void      = max(0, grossCY − concreteCY − aggregateCY)   // hole left after wall+agg
+reused    = void × clamp(reusePct/100, 0..1)             // native put back
+netExport = grossCY − reused                              // bank dirt hauled off
+importBackfill = void − reused                            // structural fill to bring in
+truckCY   = netExport × (1 + swellPct/100)                // loose/haul volume
+```
+Concrete (footing+stem CY) and drainage aggregate (CY) are optional imports that
+take up the hole, so reused native is figured against what's left.
+
+**Depth modes for the ▚ Wall tool** (needs contours; integrates depth per station
+along the swept line): (1) **constant** depth below grade; (2) **down to subgrade
+elevation** — reads Existing ground elev at each station, digs to a fixed footing
+subgrade elev; (3) **proposed grade − embedment** — bottom follows the Proposed
+surface at a set embedment (reads both Existing + Proposed contours; for a
+benched/stepped footing down a slope). Source refs (if the tool still exists):
+`recomputeWall`, `computeWallSweep`, `askWallSection`, `wallResultRows`,
+`wallCalcCompute` in sitework/app.js.
+
+**Form fields:** length (calc only), avg/constant depth, trench bottom width,
+side slope select, swell %, reused-as-backfill %, concrete CY (opt), drainage
+aggregate CY (opt). **Bid lines:** wall excavation (net export bank CY), import
+structural backfill CY, concrete CY, aggregate CY — each at editable $/unit.
+Model as a `qwall` markup (polyline + cfg) parallel to qline, reusing
+`wallSectionAreaSf` + `wallComputeCore`.
 
 ## Verification
 Trace a known simple case (a flat pad cut into a uniform slope) and match cut/fill
