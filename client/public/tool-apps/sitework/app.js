@@ -4243,7 +4243,7 @@ async function refreshCompanyList() {
       row.innerHTML =
         `<div class="grow"><div class="name"></div>` +
         `<div class="meta">${r.pdf_name ? esc(r.pdf_name) + ' · ' : ''}v${r.version}${r.updated_by_name ? ' · by ' + esc(r.updated_by_name) : ''} · ${when}</div></div>` +
-        (String(r.id) === String(state.serverId) ? '<span class="pill">open</span>' : '<button class="btn tiny" data-act="open">Open</button>') +
+        (String(r.id) === String(state.serverId) ? '<span class="pill">current</span>' : '<button class="btn tiny" data-act="open">Copy to my projects</button>') +
         '<button class="btn tiny danger" data-act="del" title="Delete this shared takeoff">✕</button>';
       row.querySelector('.name').textContent = r.name;
       const openBtn = row.querySelector('[data-act="open"]');
@@ -4257,23 +4257,51 @@ async function refreshCompanyList() {
 }
 
 async function openCompanyTakeoff(id) {
-  setMsg('Opening from the company library…');
+  let t;
   try {
     const res = await apiFetch('/' + id);
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    const t = await res.json();
-    const preLoad = takeSnap();
-    if (!applyProjectData(t.data || {})) { setMsg('That shared takeoff could not be read.'); return; }
-    pushSnap(preLoad);
-    state.serverId = t.id; state.serverVersion = t.version; state.projectName = t.name;
+    t = await res.json();
+  } catch (e) { setMsg('Could not reach that shared takeoff: ' + e.message); return; }
+  if (!t.data || t.data.app !== 'excavation-bid-calculator') { setMsg('That shared takeoff could not be read.'); return; }
+
+  // Ask how it should land locally: a new project (default, safe) or overwriting
+  // the one currently open. The name field is first so askModal returns it; the
+  // radio choice is read from the modal body afterward (it persists on close).
+  const nameAttr = String(t.name || 'Takeoff').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  const name = await askModal({
+    title: 'Copy to my projects',
+    body: `
+      <input type="text" id="modalTxt" maxlength="80" value="${nameAttr}">
+      <label style="display:block;margin:8px 0 0"><input type="radio" name="cpmode" value="new" checked> Save as a new project</label>
+      <label style="display:block;margin:4px 0 0"><input type="radio" name="cpmode" value="over"> Overwrite the project I have open now</label>
+      <div class="hint">Pulls this shared takeoff — plan and all — into your projects on this device.</div>`,
+    focusSel: '#modalTxt',
+  });
+  if (name === null) { setMsg(''); return; } // cancelled
+  const overwrite = !!els.modalBody.querySelector('input[name="cpmode"][value="over"]:checked');
+  const finalName = String(name).trim() || t.name || 'Takeoff';
+
+  setMsg('Copying from the company library…');
+  try {
+    await syncProjectNow();                     // flush the current project first
+    if (!overwrite) state.projectId = randId();  // new project → its own local slot
+    state.pdf = null; state.pdfKey = null;
+    undoStack.length = 0; redoStack.length = 0;
+    els.btnUndo.disabled = true; els.btnRedo.disabled = true;
+    applyProjectData(t.data);
+    state.serverId = t.id; state.serverVersion = t.version;
+    state.projectName = finalName;
+    state.pdfName = t.pdf_name || (t.data && t.data.pdfName) || null;
+    try { localStorage.setItem('ebc-current', state.projectId); } catch (_) {}
     if (t.pdf_url) {
       const pres = await apiFetch('/' + id + '/pdf'); // PDF proxied through the API (no R2 CORS)
       if (pres.ok) { const pj = await pres.json(); await loadPdfFromBytes(base64ToBytes(pj.b64).buffer, pj.name || t.pdf_name || 'plan.pdf'); }
     }
     saveLocal(); updateProjectBtn(); draw();
     $('company').classList.add('hidden');
-    setMsg(`Opened “${t.name}” from the company library.`);
-  } catch (e) { setMsg('Could not open that shared takeoff: ' + e.message); }
+    setMsg(overwrite ? `Overwrote your open project with “${finalName}”.` : `Copied “${finalName}” into your projects.`);
+  } catch (e) { setMsg('Could not copy that shared takeoff: ' + e.message); }
 }
 
 async function deleteCompanyTakeoff(id, name) {

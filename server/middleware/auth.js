@@ -210,6 +210,37 @@ async function requireTakeoffAddon(req, res, next) {
   }
 }
 
+// Any plan-tools add-on unlocks the shared library routes (/api/takeoffs
+// serves both the sitework takeoff tool and Plan Room, list-filtered by the
+// data.app marker). M6 of docs/plans/plan-viewer-markup.md adds the
+// addon_planroom column + flag to this check when that SKU lands.
+async function requirePlanToolsAddon(req, res, next) {
+  try {
+    const r = await pool.query(
+      'SELECT plan, subscription_status, addon_takeoff, addon_planroom, trial_ends_at FROM companies WHERE id = $1',
+      [req.user.company_id]
+    );
+    const company = r.rows[0];
+    if (!company) return res.status(403).json({ error: 'Company not found' });
+
+    if (company.subscription_status === 'trial' && company.trial_ends_at && new Date(company.trial_ends_at) < new Date()) {
+      await pool.query('UPDATE companies SET subscription_status = $1 WHERE id = $2', ['trial_expired', req.user.company_id]);
+      return res.status(403).json({ error: 'Trial expired', code: 'subscription_required' });
+    }
+    if (company.subscription_status === 'canceled' || company.subscription_status === 'trial_expired') {
+      return res.status(403).json({ error: 'Subscription required', code: 'subscription_required' });
+    }
+    if (company.subscription_status === 'exempt' || company.subscription_status === 'trial' || company.addon_takeoff || company.addon_planroom) {
+      req.company = company;
+      return next();
+    }
+    return res.status(403).json({ error: 'Plan-tools add-on required', code: 'takeoff_required' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
 // Returns true if the user has a given admin permission.
 // null admin_permissions = full access (existing admins + company founder).
 function hasAdminPermission(user, key) {
@@ -235,7 +266,7 @@ function requirePermission(key) {
 const { hasPerm, requirePerm } = require('../permissions');
 
 module.exports = {
-  requireAuth, requireAdmin, requireSuperAdmin, requirePlan, requireProAddon, requireCertifiedPayrollAddon, requireTakeoffAddon,
+  requireAuth, requireAdmin, requireSuperAdmin, requirePlan, requireProAddon, requireCertifiedPayrollAddon, requireTakeoffAddon, requirePlanToolsAddon,
   hasAdminPermission, requirePermission,
   hasPerm, requirePerm,
 };

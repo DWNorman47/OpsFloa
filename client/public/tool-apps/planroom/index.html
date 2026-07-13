@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plan Room</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="styles.css">
+<script>
+(() => {
+  try {
+    if (!localStorage.getItem('tc_token') && !sessionStorage.getItem('tc_token')) {
+      window.location.replace('/login');
+    }
+  } catch (_) {
+    window.location.replace('/login');
+  }
+})();
+</script>
+<script src="../shared/pdf.min.js"></script>
+<script src="../shared/pdf-lib.min.js"></script>
+</head>
+<body>
+<header id="topbar">
+  <div class="tb-group">
+    <div class="brand">Plan&nbsp;Room</div>
+    <button id="btnProjects" class="btn" title="Open plans, switch projects, or add more sheets">📁 <span id="projName">Project</span></button>
+    <button id="btnCompany" class="btn needs-doc" title="Share this project with your company, or copy one a teammate shared">☁<span class="btn-label"> Company</span></button>
+    <button id="btnLive" class="btn needs-doc" title="Live co-edit — teammates join and mark up this project with you in real time (nothing is published)">🟢<span class="btn-label"> Live Co-Edit</span></button>
+  </div>
+
+  <div class="tb-group needs-doc">
+    <button id="btnExport" class="btn" title="Download this project as one self-contained file — plans and markups embedded — so you can hand it to anyone">💾<span class="btn-label"> Save</span></button>
+  </div>
+  <input type="file" id="fileImport" accept="application/json" hidden>
+  <input type="file" id="filePlans" accept="application/pdf,image/*" multiple hidden>
+
+  <!-- markup tools -->
+  <div class="tb-group tb-tools needs-doc">
+    <button class="tool active" data-tool="pan" title="Pan / zoom (middle-drag pans in any tool)">✋</button>
+    <button class="tool" data-tool="select" title="Select / move / resize markups. Delete removes; double-click a note to edit it">➤</button>
+    <button class="tool tb-focus-hide" data-tool="cloud" title="Revision cloud — drag a box">☁</button>
+    <button class="tool tb-focus-hide" data-tool="rect" title="Rectangle — drag">▭</button>
+    <button class="tool tb-focus-hide" data-tool="ellipse" title="Ellipse — drag">⬭</button>
+    <button class="tool tb-focus-hide" data-tool="arrow" title="Arrow — drag from tail to head">↗</button>
+    <button class="tool tb-focus-hide" data-tool="line" title="Line — drag">╲</button>
+    <button class="tool tb-focus-hide" data-tool="freehand" title="Pen — draw freehand">✏</button>
+    <button class="tool tb-focus-hide" data-tool="highlight" title="Highlighter — drag a box">🖍</button>
+    <button class="tool tb-focus-hide" data-tool="text" title="Text note — click where it goes, type, Enter">T</button>
+    <button class="tool tb-focus-hide" data-tool="callout" title="Callout — drag from the thing you're flagging to where the note goes">🏷</button>
+    <span class="tb-sep" aria-hidden="true"></span>
+    <button class="tool" data-tool="calibrate" title="Calibrate this sheet's scale — click two points a known distance apart, then enter the distance in feet. Measurements need this once per sheet.">📏</button>
+    <button class="tool tb-focus-hide" data-tool="mlength" title="Measure length — click along the run, double-click or Enter to finish (Backspace removes the last point)">↔</button>
+    <button class="tool tb-focus-hide" data-tool="marea" title="Measure area — click around the region, double-click or Enter to close">⬠</button>
+    <button class="tool tb-focus-hide" data-tool="mcount" title="Count — click each item, double-click or Enter to finish and name the group">🔢</button>
+    <span class="tb-sep tb-takeoff" aria-hidden="true"></span>
+    <select id="tradeSel" class="mini-sel tb-takeoff" title="Takeoff trade — pick one to show its tools and bid; leave off for plain markup & measure">
+      <option value="">Takeoff: off</option>
+      <option value="roofing">🏠 Roofing</option>
+      <option value="dirt">⛰ Earthwork</option>
+    </select>
+    <button class="tool tb-takeoff tr-roof" data-tool="plane" title="Roof plane — trace a roof face, set its pitch → sloped area + squares">▰</button>
+    <button class="tool tb-takeoff tr-roof" data-tool="redge" title="Roof edge — trace eave/rake/ridge/hip/valley/flashing → linear feet (hip/valley/rake pitch-corrected)">╱</button>
+    <select id="edgeType" class="mini-sel tb-takeoff tr-roof" title="Roof-edge type for the next edge drawn">
+      <option value="eave">Eave</option>
+      <option value="rake">Rake</option>
+      <option value="ridge">Ridge</option>
+      <option value="hip">Hip</option>
+      <option value="valley">Valley</option>
+      <option value="flashing">Flashing</option>
+    </select>
+    <button class="tool tb-takeoff tr-roof" data-tool="ritem" title="Roof item — count pipe boots / vents / skylights / chimneys">⊕</button>
+    <select id="itemType" class="mini-sel tb-takeoff tr-roof" title="Roof-item type for the next count">
+      <option value="boot">Pipe boot</option>
+      <option value="vent">Vent</option>
+      <option value="skylight">Skylight</option>
+      <option value="chimney">Chimney</option>
+    </select>
+    <div class="tb-sub tb-takeoff tr-dirt">
+      <button class="tool" data-tool="wand" title="Auto-trace — click a contour on a vector PDF to pick up the whole line in one click (prefills elevation from the nearest printed number)">🪄</button>
+      <button class="tool" data-tool="contour" title="Contour — trace a contour line, then type its elevation. Tagged existing or proposed per the surface toggle →">⛰</button>
+      <button class="tool" data-tool="espot" title="Spot elevation — click a single grade point (FG spot, high/low) and type its elevation">◎</button>
+      <button class="tool" data-tool="epad" title="Building pad — trace a polygon held flat at one elevation (FF/FP pads)">◫</button>
+      <button class="tool" data-tool="ebound" title="Earthwork boundary — the limits of disturbance that get gridded for cut/fill (one per project)">⬚</button>
+      <button class="tool" data-tool="align" title="Align the two sheets — click a landmark on the Existing sheet, then the same spot on the Proposed sheet. One pair fixes the shift; a second far-away pair also fixes rotation & scale.">⌖</button>
+      <select id="surfaceSel" class="mini-sel" title="Which surface new contours/pads belong to">
+        <option value="existing">Existing</option>
+        <option value="proposed">Proposed</option>
+      </select>
+      <span class="tb-sep" aria-hidden="true"></span>
+      <button class="tool" data-tool="autoarea" title="Auto-area — click a closed outline on a vector PDF (building, paving edge) to pick up the whole shape as an area takeoff in one click">▩</button>
+      <button class="tool" data-tool="qarea" title="Area takeoff — trace a paved / graded area, pick a material (concrete, asphalt, base, topsoil…) → priced quantities in the bid">▨</button>
+      <button class="tool" data-tool="qline" title="Line takeoff — trace a run (curb, pipe, silt fence…); add a trench cross-section for excavation & bedding CY">⌇</button>
+      <button class="tool" data-tool="qcount" title="Count takeoff — drop a point on each item (catch basin, manhole, tree…), name it → counted & priced in the bid">⊙</button>
+    </div>
+    <input type="color" id="mkColor" class="dirt-hide" value="#e05555" title="Markup color (applies to the selected markup too)">
+    <select id="mkWidth" class="dirt-hide" title="Line weight / text size (applies to the selected markup too)">
+      <option value="S">Thin</option>
+      <option value="M" selected>Medium</option>
+      <option value="L">Thick</option>
+    </select>
+  </div>
+
+  <div class="spacer"></div>
+
+  <div class="tb-group needs-doc">
+    <button id="btnUndo" class="btn" title="Undo (Ctrl+Z)" disabled>↶</button>
+    <button id="btnRedo" class="btn" title="Redo (Ctrl+Y)" disabled>↷</button>
+    <button id="btnList" class="btn" title="Markup list — every markup across the set, click to jump">📋</button>
+    <button id="btnRoof" class="btn tb-takeoff tr-roof" title="Roofing takeoff — squares, edges, and counts across the set">🏠<span class="btn-label"> Roof</span></button>
+    <button id="btnDirt" class="btn tb-takeoff tr-dirt" title="Earthwork / cut-fill takeoff — designate sheets, trace contours, compute volumes">⛰<span class="btn-label"> Dirt</span></button>
+    <button id="btnBid" class="btn tb-takeoff" title="Takeoff bid — roofing materials & labor and earthwork volumes, editable prices, print / CSV">$<span class="btn-label"> Bid</span></button>
+    <button id="btnUpsell" class="btn tb-upsell" title="Turn your measurements into a priced takeoff & bid — Takeoff layer add-on">🔒<span class="btn-label"> Takeoff</span></button>
+    <div class="menu-wrap">
+      <button id="btnExportMenu" class="btn" title="Export this project" aria-haspopup="true">⤓<span class="btn-label"> Export</span> ▾</button>
+      <div id="exportMenu" class="menu hidden" role="menu">
+        <button data-act="pdf" role="menuitem">📄 PDF — markups burned in</button>
+        <div class="menu-hint">A flat PDF to print or email from any viewer.</div>
+        <button data-act="csv" role="menuitem">📊 CSV — markup &amp; measurement list</button>
+        <div class="menu-hint">Sheet, type, note, and measured value per markup.</div>
+      </div>
+    </div>
+    <div class="tb-nav">
+      <button id="btnPrevPage" class="btn" title="Previous sheet" disabled>◀</button>
+      <span id="pageInfo" class="page-info">– / –</span>
+      <button id="btnNextPage" class="btn" title="Next sheet" disabled>▶</button>
+    </div>
+    <button id="btnFit" class="btn" title="Fit the sheet to the window" disabled>⤢ Fit</button>
+    <button id="btnThumbs" class="btn" title="Show / hide the sheet strip">🗂</button>
+  </div>
+</header>
+
+<div id="liveBar" class="hidden">
+  <span class="live-dot" aria-hidden="true"></span>
+  <b id="liveName">Live session</b>
+  <span id="liveRoster" class="live-roster"></span>
+  <span class="spacer"></span>
+  <span id="liveState" class="live-state"></span>
+  <button id="liveLeave" class="btn tiny">Leave</button>
+  <button id="liveEnd" class="btn tiny danger hidden">End for all</button>
+</div>
+
+<main>
+  <aside id="thumbRail" aria-label="Sheets"></aside>
+  <div id="canvasWrap">
+    <canvas id="cv"></canvas>
+    <div id="hud"></div>
+    <div id="dropHint"><span>Drop a PDF or image here, or open plans from <b>📁 Project</b></span></div>
+    <textarea id="textOverlay" class="hidden" rows="2" spellcheck="false"
+      placeholder="Type the note — Enter to place, Esc to cancel"></textarea>
+  </div>
+  <aside id="markupPanel" class="hidden" aria-label="Markup list">
+    <div class="mk-head">
+      <b>Markups</b>
+      <label class="mk-sheet"><input type="checkbox" id="mkThisSheet"> this sheet</label>
+      <select id="mkKindFilter" title="Filter by type">
+        <option value="">All types</option>
+        <option value="cloud">Clouds</option>
+        <option value="rect">Rectangles</option>
+        <option value="ellipse">Ellipses</option>
+        <option value="arrow">Arrows</option>
+        <option value="line">Lines</option>
+        <option value="freehand">Pen</option>
+        <option value="highlight">Highlights</option>
+        <option value="text">Text</option>
+        <option value="callout">Callouts</option>
+        <option value="mlength">Lengths</option>
+        <option value="marea">Areas</option>
+        <option value="mcount">Counts</option>
+      </select>
+    </div>
+    <div id="mkList" class="mk-list"></div>
+  </aside>
+  <aside id="roofPanel" class="hidden" aria-label="Roofing takeoff">
+    <div class="mk-head">
+      <b>🏠 Roofing takeoff</b>
+    </div>
+    <div class="roof-settings">
+      <label>Main pitch <input type="number" id="roofPitch" min="0" max="24" step="1" style="width:52px"> /12</label>
+      <label>Waste <input type="number" id="roofWaste" min="0" max="40" step="1" style="width:48px"> %</label>
+    </div>
+    <div id="roofBody" class="mk-list"></div>
+  </aside>
+  <aside id="dirtPanel" class="hidden" aria-label="Earthwork takeoff">
+    <div class="mk-head"><b>⛰ Earthwork (cut / fill)</b></div>
+    <div id="dirtBody" class="mk-list"></div>
+  </aside>
+</main>
+
+<!-- generic ask-modal (engine-ui createModals shape) -->
+<div id="modal" class="modal hidden" tabindex="-1">
+  <div class="modal-box">
+    <h3 id="modalTitle"></h3>
+    <div id="modalBody"></div>
+    <div class="modal-actions">
+      <button id="modalCancel" class="btn">Cancel</button>
+      <button id="modalOk" class="btn primary">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- area takeoff modal (sitework pack) -->
+<div id="areaTakeoff" class="modal hidden">
+  <div class="modal-box wide">
+    <h3>Area takeoff</h3>
+    <div class="hint">Quantity for the area you traced (<span id="atArea">—</span>). Pick a preset or set it manually.</div>
+    <div class="preset-row" id="atPresets">
+      <button type="button" class="btn tiny" data-preset="asphalt">Asphalt</button>
+      <button type="button" class="btn tiny" data-preset="base">Agg. base</button>
+      <button type="button" class="btn tiny" data-preset="concrete">Concrete</button>
+      <button type="button" class="btn tiny" data-preset="gravel">Gravel</button>
+      <button type="button" class="btn tiny" data-preset="topsoil">Topsoil</button>
+      <button type="button" class="btn tiny" data-preset="areaonly">Area only</button>
+    </div>
+    <div class="wall-grid">
+      <label>Material / label<input type="text" id="atLabel" value="Area" maxlength="40"></label>
+      <label title="Color of this area on the drawing and in the bid.">Color<input type="color" id="atColor" value="#38d39f"></label>
+      <label>Output
+        <select id="atMode">
+          <option value="area">Area (SF / SY)</option>
+          <option value="cy">Volume (CY)</option>
+          <option value="tons">Weight (tons)</option>
+          <option value="concrete">Concrete (CY + rebar + forms)</option>
+          <option value="paving">Asphalt paving (tons + tack)</option>
+          <option value="strip">Topsoil strip (CY)</option>
+        </select>
+      </label>
+      <label id="atThickWrap"><span id="atThickLbl">Thickness (in)</span><input type="number" id="atThick" min="0" step="0.5" value="4"></label>
+      <label id="atDensityWrap" title="Compacted unit weight — asphalt ≈ 145, aggregate base ≈ 135 lb/ft³">Density (lb/ft³)<input type="number" id="atDensity" min="0" step="1" value="145"></label>
+      <label id="atRebarWrap" title="Rebar estimated as a grid both ways +10% laps/waste; mesh by area +5% overlap.">Reinforcement
+        <select id="atRebar">
+          <option value="none">None</option>
+          <option value="mesh">Wire mesh (WWM)</option>
+          <option value="#4@18">Rebar #4 @ 18"</option>
+          <option value="#4@12">Rebar #4 @ 12"</option>
+          <option value="#5@12">Rebar #5 @ 12"</option>
+        </select>
+      </label>
+      <label id="atFormWrap" class="atCheck" title="Edge forms run the slab perimeter (LF)."><input type="checkbox" id="atForm" checked> Edge forms (perimeter)</label>
+      <label id="atTackWrap" title="Tack/prime coat. Typical 0.05–0.10 gal/SY.">Tack coat (gal/SY)<input type="number" id="atTack" min="0" step="0.01" value="0.10"></label>
+      <label id="atSwellWrap" title="Bulking of stripped topsoil once loosened. ≈ 20–25%.">Swell (%)<input type="number" id="atSwell" min="0" step="1" value="25"></label>
+      <label id="atRespreadWrap" title="Depth of topsoil respread at finish grade. 0 = haul all off.">Respread (in)<input type="number" id="atRespread" min="0" step="0.5" value="0"></label>
+    </div>
+    <label class="atCheck" title="Subtract this area from its type's total — a hole/cutout. Give it the SAME material/label."><input type="checkbox" id="atDeduct"> Deduct — subtract this area from its type (hole / cutout)</label>
+    <div id="atResult" class="wall-result"></div>
+    <div class="modal-actions">
+      <button id="atCancel" class="btn">Cancel</button>
+      <span class="spacer"></span>
+      <button id="atOk" class="btn primary">Add takeoff</button>
+    </div>
+  </div>
+</div>
+
+<!-- count takeoff modal (sitework pack) -->
+<div id="countTakeoff" class="modal hidden">
+  <div class="modal-box wide">
+    <h3>Count takeoff</h3>
+    <div class="hint">You dropped <span id="ctN">—</span>. Name what you're counting.</div>
+    <div class="preset-row" id="ctPresets">
+      <button type="button" class="btn tiny" data-preset="catchbasin">Catch basin</button>
+      <button type="button" class="btn tiny" data-preset="manhole">Manhole</button>
+      <button type="button" class="btn tiny" data-preset="inlet">Inlet</button>
+      <button type="button" class="btn tiny" data-preset="jbox">Junction box</button>
+      <button type="button" class="btn tiny" data-preset="cleanout">Cleanout</button>
+      <button type="button" class="btn tiny" data-preset="fes">FES</button>
+      <button type="button" class="btn tiny" data-preset="areadrain">Area drain</button>
+      <button type="button" class="btn tiny" data-preset="tree">Tree</button>
+      <button type="button" class="btn tiny" data-preset="sign">Sign</button>
+      <button type="button" class="btn tiny" data-preset="light">Light pole</button>
+      <button type="button" class="btn tiny" data-preset="bollard">Bollard</button>
+      <button type="button" class="btn tiny" data-preset="itemonly">Item</button>
+    </div>
+    <div class="wall-grid">
+      <label>Item / label<input type="text" id="ctLabel" value="Item" maxlength="40"></label>
+      <label>Unit<input type="text" id="ctUnit" value="EA" maxlength="8"></label>
+    </div>
+    <div id="ctResult" class="wall-result"></div>
+    <div class="modal-actions">
+      <button id="ctCancel" class="btn">Cancel</button>
+      <span class="spacer"></span>
+      <button id="ctOk" class="btn primary">Add takeoff</button>
+    </div>
+  </div>
+</div>
+
+<!-- line takeoff modal (sitework pack) -->
+<div id="lineTakeoff" class="modal hidden">
+  <div class="modal-box wide">
+    <h3>Linear takeoff</h3>
+    <div class="hint">Length of the line you traced (<span id="ltLen">—</span>). Add a trench cross-section for pipe/utility runs to get excavation &amp; bedding CY.</div>
+    <div class="preset-row" id="ltPresets">
+      <button type="button" class="btn tiny" data-preset="curb">Curb</button>
+      <button type="button" class="btn tiny" data-preset="pipe">Pipe trench</button>
+      <button type="button" class="btn tiny" data-preset="pipe12">12" pipe</button>
+      <button type="button" class="btn tiny" data-preset="pipe18">18" pipe</button>
+      <button type="button" class="btn tiny" data-preset="pipe24">24" pipe</button>
+      <button type="button" class="btn tiny" data-preset="pipe36">36" pipe</button>
+      <button type="button" class="btn tiny" data-preset="silt">Silt fence</button>
+      <button type="button" class="btn tiny" data-preset="sawcut">Sawcut</button>
+      <button type="button" class="btn tiny" data-preset="fence">Fence</button>
+      <button type="button" class="btn tiny" data-preset="lineonly">Line only</button>
+    </div>
+    <div class="wall-grid">
+      <label>Material / label<input type="text" id="ltLabel" value="Line" maxlength="40"></label>
+      <label title="Color of this line on the drawing and in the bid.">Color<input type="color" id="ltColor" value="#38d39f"></label>
+    </div>
+    <label class="atCheck" style="display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0;">
+      <input type="checkbox" id="ltTrench"> Trench cross-section (pipe / utility)
+    </label>
+    <div class="wall-grid" id="ltTrenchFields">
+      <label>Trench bottom width (ft)<input type="number" id="ltWidth" min="0" step="0.5" value="3"></label>
+      <label>Depth (ft)<input type="number" id="ltDepth" min="0" step="0.5" value="5"></label>
+      <label title="Backcut of the trench sides (H per 1 V). 0 = vertical / shored.">Side slope (H:V)
+        <select id="ltSlope">
+          <option value="0">Vertical / shored (0)</option>
+          <option value="0.5">½ : 1</option>
+          <option value="1">1 : 1</option>
+          <option value="1.5">1½ : 1</option>
+        </select>
+      </label>
+      <label title="Aggregate bedding under the pipe (import). 0 to skip.">Bedding (in)<input type="number" id="ltBedding" min="0" step="1" value="6"></label>
+    </div>
+    <div id="ltResult" class="wall-result"></div>
+    <div class="modal-actions">
+      <button id="ltCancel" class="btn">Cancel</button>
+      <span class="spacer"></span>
+      <button id="ltOk" class="btn primary">Add takeoff</button>
+    </div>
+  </div>
+</div>
+
+<!-- roofing bid modal -->
+<div id="roofBid" class="modal hidden">
+  <div class="modal-box wide bid-box">
+    <h3 id="bidTitle">$ Takeoff bid</h3>
+    <div class="hint">Quantities come live from your takeoff — roofing (squares include waste) and earthwork (cut/fill volumes). Unit prices are editable and save with the project.</div>
+    <div id="bidTableWrap"><table id="bidTable"></table></div>
+    <div class="bid-foot">
+      <label>Overhead &amp; profit <input type="number" id="bidOP" min="0" max="100" step="1" style="width:52px"> %</label>
+      <div id="bidTotals"></div>
+    </div>
+    <div class="modal-actions">
+      <button id="bidPrint" class="btn">🖨 Print / PDF</button>
+      <button id="bidCsv" class="btn">⤓ CSV</button>
+      <span class="spacer"></span>
+      <button id="bidClose" class="btn primary">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- company library modal -->
+<div id="company" class="modal hidden">
+  <div class="modal-box wide">
+    <h3>Company library</h3>
+    <div class="hint">Shared with everyone in your company. <b>Copy to my projects</b> pulls a teammate's set — plans, markups, and measurements — into your own projects (as a new one, or overwriting the one you have open). <b>Share current project</b> uploads yours; if a teammate changed the shared copy since you opened it, you'll be warned before overwriting. Needs you to be signed in to OpsFloa.</div>
+    <div id="companyList" class="proj-list"></div>
+    <div id="companyMsg" class="hint" aria-live="polite" style="min-height:1.2em"></div>
+    <div class="modal-actions">
+      <button id="companyShareBtn" class="btn primary">⬆ Share current project</button>
+      <span class="spacer"></span>
+      <button id="companyClose" class="btn">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- projects modal -->
+<div id="projects" class="modal hidden">
+  <div class="modal-box wide">
+    <h3>Projects</h3>
+    <div id="projCurrent" class="proj-current"></div>
+    <div class="proj-list-head">Your projects</div>
+    <div id="projList" class="proj-list"></div>
+    <div class="modal-actions">
+      <button id="btnProjNew" class="btn primary">+ New project</button>
+      <span class="spacer"></span>
+      <button id="projClose" class="btn">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- page-picker modal: choose which sheets of a PDF load into the project -->
+<div id="pagePick" class="modal hidden">
+  <div class="modal-box wide">
+    <h3 id="pagePickTitle">Choose sheets</h3>
+    <div class="hint">Only the sheets you keep checked load into the project. Uncheck cover pages, details, or anything you don't need.</div>
+    <div class="pagePick-bar">
+      <button id="pagePickAll" class="btn tiny">Check all</button>
+      <button id="pagePickNone" class="btn tiny">Uncheck all</button>
+      <span id="pagePickCount" class="hint"></span>
+    </div>
+    <div id="pagePickGrid" class="pagePick-grid"></div>
+    <div class="modal-actions">
+      <button id="pagePickCancel" class="btn">Cancel</button>
+      <span class="spacer"></span>
+      <button id="pagePickOk" class="btn primary">Add checked sheets</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="app.js?v=1"></script>
+</body>
+</html>

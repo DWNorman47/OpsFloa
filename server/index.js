@@ -28,7 +28,7 @@ const helmet = require('helmet');
 const pinoHttp = require('pino-http');
 const crypto = require('crypto');
 const v8 = require('v8');
-const { requireAuth, requirePlan, requireProAddon, requireTakeoffAddon } = require('./middleware/auth');
+const { requireAuth, requirePlan, requireProAddon, requirePlanToolsAddon } = require('./middleware/auth');
 const pool = require('./db');
 const logger = require('./logger');
 
@@ -202,7 +202,13 @@ const projectsRouter = require('./routes/projects');
 app.use('/api/work', projectsRouter);        // renamed home for the core Work/Projects resource
 app.use('/api/projects', projectsRouter);     // legacy alias (project sub-resources still live at /api/projects/:id/...)
 app.use('/api/work-orders', requireAuth, require('./routes/workOrders'));
-app.use('/api/takeoffs', requireAuth, requireTakeoffAddon, require('./routes/takeoffs')); // company-shared sitework takeoffs (paid add-on)
+app.use('/api/takeoffs', requireAuth, requirePlanToolsAddon, require('./routes/takeoffs')); // company-shared plan-tools library (sitework takeoff + Plan Room)
+// Live collaboration sessions. The SSE stream authenticates via a query token
+// (EventSource can't send a Bearer header) so it's registered BEFORE the gated
+// router — otherwise requireAuth would reject it for the missing header.
+const liveSessions = require('./routes/liveSessions');
+app.get('/api/live/:id/stream', liveSessions.streamHandler);
+app.use('/api/live', requireAuth, requirePlanToolsAddon, liveSessions.router);
 app.use('/api/time-entries', require('./routes/timeEntries'));
 app.use('/api/admin', require('./routes/admin'));
 // QBO OAuth callback must be public (Intuit redirects here without a JWT)
@@ -403,6 +409,10 @@ app.listen(PORT, () => {
   startScheduledReportsJob();
   const { startTranscriptionPollerJob } = require('./jobs/transcriptionPoller'); // AssemblyAI result sweep
   startTranscriptionPollerJob();
+  const { startTakeoffOrphanSweepJob } = require('./jobs/takeoffOrphanSweep'); // presigned-upload leak cleanup (opt-in via R2_ORPHAN_SWEEP=1)
+  startTakeoffOrphanSweepJob();
+  const { startLiveSessionSweepJob } = require('./jobs/liveSessionSweep'); // end abandoned live sessions
+  startLiveSessionSweepJob();
   const { startCron } = require('./cron');
   startCron();
 });

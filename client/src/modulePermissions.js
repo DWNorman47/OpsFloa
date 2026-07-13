@@ -40,7 +40,11 @@ export const MODULE_PERMISSIONS = {
     'manage_incidents', 'manage_inspections',
   ],
   inventory: [
-    'view_inventory', 'manage_inventory',
+    // Equipment tracking lives in the Inventory module now, so manage_equipment
+    // unlocks it too (a role with only that perm can still reach the Equipment
+    // group). It's intentionally left in `field` as well to avoid regressing an
+    // existing role that relied on it for Field visibility.
+    'view_inventory', 'manage_inventory', 'manage_equipment',
   ],
   // Directory (module id stays 'team') now hosts Team, Subs, Customers, and
   // Roles. Unlock it for anyone who can manage ANY of those, so a customer/sub

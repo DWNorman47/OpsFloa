@@ -11,6 +11,7 @@ import DocQATool from '../components/DocQATool';
 import EmailDrafterTool from '../components/EmailDrafterTool';
 
 const SITEWORK_TOOL_URL = '/tool-apps/sitework/index.html';
+const PLANROOM_TOOL_URL = '/tool-apps/planroom/index.html';
 const PDFTOOLS_TOOL_URL = '/tool-apps/pdftools/index.html';
 
 // the old excavation tool was removed; its '#excavation' deep links land on sitework
@@ -28,6 +29,11 @@ export default function ToolsPage() {
   // Sitework Takeoff is a paid add-on — visible only to companies that own it
   // (or during trial / while exempt, matching the server's requireTakeoffAddon).
   const hasTakeoff = !!(user?.addon_takeoff || ['exempt', 'trial'].includes(user?.subscription_status));
+  // Plan Room is the $40 base tier — a daily-use horizontal tool. Unlike the
+  // vertical takeoff (hidden without the add-on), its tab is always visible so
+  // the whole company can discover it; unowned, it shows a locked card.
+  const hasPlanroom = !!(user?.addon_planroom || ['exempt', 'trial'].includes(user?.subscription_status));
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
 
   useEffect(() => {
     let cancelled = false;
@@ -44,11 +50,12 @@ export default function ToolsPage() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  // If they land on the (hidden) takeoff tab without the add-on, move them off it.
+  // If they land on the (hidden) takeoff tab without the add-on, move them to
+  // Plan Room (always visible), not off into an unrelated tool.
   useEffect(() => {
     if (user && !hasTakeoff && tab === 'sitework') {
-      setTab('transcription');
-      history.replaceState(null, '', '#transcription');
+      setTab('planroom');
+      history.replaceState(null, '', '#planroom');
     }
   }, [user, hasTakeoff, tab]);
 
@@ -77,6 +84,7 @@ export default function ToolsPage() {
   }
 
   const tabs = [
+    { id: 'planroom', label: 'Plan Room' },
     ...(hasTakeoff ? [{ id: 'sitework', label: 'Sitework Takeoff' }] : []),
     { id: 'transcription', label: 'Transcription' },
     { id: 'summarizer', label: 'Summarizer' },
@@ -101,6 +109,55 @@ export default function ToolsPage() {
         tabs={tabs}
         ariaLabel="Tools sections"
       />
+
+      {tab === 'planroom' && (
+        <PageSection
+          eyebrow="Plan Room"
+          title="Plan viewer, markup & measure"
+          description="Open a plan set — PDF or aerial image — mark it up, and measure lengths, areas, and counts to scale. Share to a company library or run a live session."
+          actions={hasPlanroom ? (
+            <a className="ops-button-primary" href={PLANROOM_TOOL_URL} target="_blank" rel="noopener noreferrer">
+              Open in new tab
+            </a>
+          ) : null}
+        >
+          {hasPlanroom ? (
+            <a className="tools-card" href={PLANROOM_TOOL_URL} target="_blank" rel="noopener noreferrer">
+              <span className="tools-card-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="4" width="18" height="14" rx="2" />
+                  <path d="M3 9h18" />
+                  <path d="M8 4v14" />
+                </svg>
+              </span>
+              <span className="tools-card-copy">
+                <strong>Plan Room</strong>
+                <span>View, mark up, and measure plan sets in the browser — clouds, callouts, highlights, lengths, areas, counts. Work saves on this device; share a set to your company or export a flattened PDF.</span>
+              </span>
+              <span className="tools-card-action">Open</span>
+            </a>
+          ) : (
+            <div className="tools-card" style={{ cursor: 'default' }}>
+              <span className="tools-card-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="5" y="11" width="14" height="9" rx="2" />
+                  <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+                </svg>
+              </span>
+              <span className="tools-card-copy">
+                <strong>Plan Room — add-on</strong>
+                <span>
+                  View, mark up, and measure plan sets right in the browser — clouds, callouts, lengths, areas, counts — with a company library, live share sessions, and flattened-PDF export.{' '}
+                  {isAdmin ? 'Add it from Billing to switch it on for your company.' : 'Ask an admin to add it from Billing.'}
+                </span>
+              </span>
+              {isAdmin
+                ? <a className="tools-card-action" href="/administration#billing">Add it</a>
+                : <span className="tools-card-action">Locked</span>}
+            </div>
+          )}
+        </PageSection>
+      )}
 
       {tab === 'sitework' && hasTakeoff && (
         <PageSection

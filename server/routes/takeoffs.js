@@ -9,22 +9,47 @@
 
 const router = require('express').Router();
 const pool = require('../db');
-const { uploadBase64, deleteByUrl, getBytesByUrl } = require('../r2');
+const { uploadBase64, deleteByUrl, getBytesByUrl, getPresignedUploadUrl, keyFromPublicUrl } = require('../r2');
 
 const isAdmin = req => req.user.role === 'admin' || req.user.role === 'super_admin';
 
-// GET /  — this company's takeoffs (metadata only, newest edit first)
+// GET /  — this company's shared projects (metadata only, newest edit first).
+// The table serves every plan tool; rows carry a data.app marker. ?app=<marker>
+// filters to one tool's library. No param = the sitework takeoff tool (its
+// shipped client predates the marker filter and must keep working unchanged),
+// so the default excludes other tools' rows rather than requiring the param.
 router.get('/', async (req, res) => {
   try {
+    const app = req.query.app ? String(req.query.app) : null;
     const { rows } = await pool.query(
       `SELECT t.id, t.name, t.pdf_name, t.version, t.updated_at, t.created_by,
               u.full_name AS updated_by_name
          FROM takeoff_projects t
          LEFT JOIN users u ON u.id = t.updated_by
         WHERE t.company_id = $1
-        ORDER BY t.updated_at DESC`, [req.user.company_id]);
+          AND ${app ? `t.data->>'app' = $2`
+                    : `COALESCE(t.data->>'app', 'excavation-bid-calculator') = 'excavation-bid-calculator'`}
+        ORDER BY t.updated_at DESC`,
+      app ? [req.user.company_id, app] : [req.user.company_id]);
     res.json(rows);
   } catch (err) { req.log && req.log.error({ err }, 'takeoffs list'); res.status(500).json({ error: 'server error' }); }
+});
+
+// POST /upload-url — presigned direct-to-R2 PUT for large plan documents
+// (full plan sets run 50–200 MB, far past the JSON-body path). The browser
+// PUTs the file straight to R2, then POSTs the returned publicUrl as pdfUrl.
+// Requires CORS on the R2 bucket (browser PUT to the S3 endpoint).
+const UPLOAD_TYPES = {
+  pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg',
+  jpeg: 'image/jpeg', webp: 'image/webp',
+};
+router.post('/upload-url', async (req, res) => {
+  try {
+    const ext = String((req.body || {}).ext || '').toLowerCase();
+    if (!UPLOAD_TYPES[ext]) return res.status(400).json({ error: 'unsupported file type' });
+    const out = await getPresignedUploadUrl('takeoffs', ext, UPLOAD_TYPES[ext]);
+    res.json(out); // { uploadUrl, publicUrl, key }
+  } catch (err) { req.log && req.log.error({ err }, 'takeoffs upload-url'); res.status(500).json({ error: 'server error' }); }
 });
 
 // GET /:id  — full takeoff: data + PDF url + current version
@@ -52,12 +77,18 @@ router.get('/:id/pdf', async (req, res) => {
   } catch (err) { req.log && req.log.error({ err }, 'takeoffs pdf'); res.status(500).json({ error: 'server error' }); }
 });
 
-// POST /  — create a new shared takeoff.  { name, data, pdfBase64?, pdfName? }
+// POST /  — create a new shared project.
+// { name, data, pdfName?, pdfBase64? }        — small docs, through the API
+// { name, data, pdfName?, pdfUrl? }           — big docs, presigned direct upload
 router.post('/', async (req, res) => {
   try {
     const { name, data, pdfBase64, pdfName } = req.body || {};
     let pdfUrl = null;
-    if (pdfBase64) {
+    if (req.body && req.body.pdfUrl) {
+      // must be an object in OUR bucket (from /upload-url), not an arbitrary URL
+      if (!keyFromPublicUrl(String(req.body.pdfUrl))) return res.status(400).json({ error: 'bad pdfUrl' });
+      pdfUrl = String(req.body.pdfUrl);
+    } else if (pdfBase64) {
       const up = await uploadBase64(`data:application/pdf;base64,${pdfBase64}`, 'takeoffs');
       pdfUrl = up.url;
     }
