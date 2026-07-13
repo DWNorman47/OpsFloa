@@ -68,9 +68,10 @@ takeoffs + auto-trace first (2026-07-12):
   *dig* overlaps Q2's trench cross-section, and its unique concrete/rebar/agg
   are usually the concrete sub's scope, not the excavator's. Full self-contained
   spec below so it's rebuildable even if the standalone tool is deleted first.
-- **W1 Auto-trace (vector wand)** — extract vector paths from the PDF page
-  (pdf.js operator list) → click-to-trace a contour/area; + smooth. `simplifyPts`
-  already in engine-measure.
+- **W1 Auto-trace (vector wand)** — DONE (b88f8b1). 🪄 click a contour on a
+  vector PDF → whole line picked up (buildPathIndex + stitchChain), elevation
+  prefilled from nearest printed number. Contours only for now; auto-area
+  (qarea from a closed vector path) is an easy follow-up.
 Deferred (not in this round): revision re-align; production/haul log; bid
 branding (letterhead/logo/markup/prepared-by); layer toggles + legend +
 per-contour list + contour interval; eraser/clear-sheet/nav-pads.
