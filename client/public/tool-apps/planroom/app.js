@@ -1174,6 +1174,8 @@ function setTool(t) {
     setMsg(`Trace a roof face; finish with Enter/double-click, then set its pitch. Main pitch ${state.roofPitch}/12.`);
   } else if (t === 'redge') {
     setMsg(`Trace a ${EDGE_LABEL[($('edgeType') || {}).value] || 'roof'} edge; hip/valley/rake are pitch-corrected off the ${state.roofPitch}/12 main pitch.`);
+  } else if (t === 'wand') {
+    setMsg(`Auto-trace (${curSurface}) — click right on a contour; it picks up the whole line and prefills the elevation. Vector PDFs only.`);
   } else if (t === 'contour') {
     setMsg(`Trace a ${curSurface} contour; finish with Enter/double-click, then type its elevation.`);
   } else if (t === 'espot') {
@@ -1256,6 +1258,9 @@ els.cv.addEventListener('pointerdown', e => {
       .then(v => { if (v != null) { m.elev = v; lastElev[surf] = v; markupsChanged(); } });
     return;
   }
+
+  // auto-trace wand: one click snaps to the nearest vector line as a contour
+  if (tool === 'wand') { wandTrace(w); return; }
 
   // two-sheet alignment: landmark on existing, its match on proposed
   if (tool === 'align') {
@@ -1790,7 +1795,7 @@ function applyTakeoffGate() {
 /* trade mode: which takeoff trade's tools/panels/bid are in play */
 const TRADE_TOOLS = {
   roofing: ['plane', 'redge', 'ritem'],
-  dirt: ['contour', 'espot', 'epad', 'ebound', 'align', 'qarea', 'qline', 'qcount'],
+  dirt: ['wand', 'contour', 'espot', 'epad', 'ebound', 'align', 'qarea', 'qline', 'qcount'],
 };
 // general redlining + generic measure tools that collapse while a trade is active
 const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
@@ -2242,6 +2247,7 @@ function resetDocState() {
   state.serverId = null; state.serverVersion = null;
   heatGrid = null;
   alignDraft = null;
+  if (typeof clearPathCache === 'function') clearPathCache();
   selectedId = null;
   cancelOverlay();
   undoStack.length = 0; redoStack.length = 0; updateUndoButtons();
@@ -3193,6 +3199,155 @@ function countBidLines() {
   return lines;
 }
 let lastCountCfg = null;
+
+/* ===================== W1: Auto-trace vector wand =====================
+ * Reads the page's vector line work (pdf.js operator list) and, on click,
+ * snaps to the nearest stroked path — stitching adjacent segments into one
+ * run — to lay down a contour in a single click, prefilling its elevation
+ * from the nearest printed number. Copied from sitework (see PARITY.md).
+ */
+const pathCache = {}; // `${docKey}:${page}` -> { polys, labels } in base px
+function clearPathCache() { for (const k of Object.keys(pathCache)) delete pathCache[k]; }
+function matMul(A, B) {
+  return [
+    A[0] * B[0] + A[2] * B[1], A[1] * B[0] + A[3] * B[1],
+    A[0] * B[2] + A[2] * B[3], A[1] * B[2] + A[3] * B[3],
+    A[0] * B[4] + A[2] * B[5] + A[4], A[1] * B[4] + A[3] * B[5] + A[5],
+  ];
+}
+const matApply = (M, x, y) => ({ x: M[0] * x + M[2] * y + M[4], y: M[1] * x + M[3] * y + M[5] });
+function flattenCubic(p0, c1, c2, p3, out) {
+  for (let i = 1; i <= 8; i++) {
+    const t = i / 8, u = 1 - t;
+    out.push({
+      x: u * u * u * p0.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * p3.x,
+      y: u * u * u * p0.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * p3.y,
+    });
+  }
+}
+async function buildPathIndex(pageNum) {
+  const key = `${state.docKey}:${pageNum}`;
+  if (pathCache[key]) return pathCache[key];
+  const page = await state.doc.raw.getPage(pageNum);
+  const pvp = page.getViewport({ scale: 1 }); // base px = markup coordinate space
+  const opList = await page.getOperatorList();
+  const OPS = pdfjsLib.OPS;
+  const F = opList.fnArray, A = opList.argsArray;
+  const STROKES = new Set([OPS.stroke, OPS.closeStroke, OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke]);
+  const polys = [];
+  let M = pvp.transform.slice();
+  const stack = [];
+  const finishPoly = pts => {
+    if (pts.length < 2) return;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of pts) { if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x; if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y; }
+    polys.push({ pts, x0, y0, x1, y1 });
+  };
+  for (let i = 0; i < F.length; i++) {
+    const fn = F[i];
+    if (fn === OPS.save) stack.push(M.slice());
+    else if (fn === OPS.restore) { if (stack.length) M = stack.pop(); }
+    else if (fn === OPS.transform) M = matMul(M, A[i]);
+    else if (fn === OPS.paintFormXObjectBegin) { stack.push(M.slice()); if (A[i] && A[i][0]) M = matMul(M, A[i][0]); }
+    else if (fn === OPS.paintFormXObjectEnd) { if (stack.length) M = stack.pop(); }
+    else if (fn === OPS.constructPath) {
+      if (!STROKES.has(F[i + 1])) continue; // fills (hatches, blobs) aren't contours
+      const [subOps, co] = A[i];
+      let k = 0, cur = [], start = null;
+      const raw = (x, y) => matApply(M, x, y);
+      for (const op of subOps) {
+        if (op === OPS.moveTo) { finishPoly(cur); start = raw(co[k], co[k + 1]); k += 2; cur = [start]; }
+        else if (op === OPS.lineTo) { cur.push(raw(co[k], co[k + 1])); k += 2; }
+        else if (op === OPS.curveTo) { const c1 = raw(co[k], co[k + 1]), c2 = raw(co[k + 2], co[k + 3]), p3 = raw(co[k + 4], co[k + 5]); k += 6; if (cur.length) flattenCubic(cur[cur.length - 1], c1, c2, p3, cur); }
+        else if (op === OPS.curveTo2) { const c2 = raw(co[k], co[k + 1]), p3 = raw(co[k + 2], co[k + 3]); k += 4; if (cur.length) flattenCubic(cur[cur.length - 1], cur[cur.length - 1], c2, p3, cur); }
+        else if (op === OPS.curveTo3) { const c1 = raw(co[k], co[k + 1]), p3 = raw(co[k + 2], co[k + 3]); k += 4; if (cur.length) flattenCubic(cur[cur.length - 1], c1, p3, p3, cur); }
+        else if (op === OPS.closePath) { if (start && cur.length) cur.push({ x: start.x, y: start.y }); }
+        else if (op === OPS.rectangle) { finishPoly(cur); cur = []; const x = co[k], y = co[k + 1], w2 = co[k + 2], h2 = co[k + 3]; k += 4; finishPoly([raw(x, y), raw(x + w2, y), raw(x + w2, y + h2), raw(x, y + h2), raw(x, y)]); }
+      }
+      finishPoly(cur);
+    }
+  }
+  const labels = []; // numeric text (for elevation prefill)
+  try {
+    const tc = await page.getTextContent();
+    for (const it of tc.items) {
+      const s = it.str.trim();
+      if (/^\d{2,4}(?:\.\d{1,2})?$/.test(s)) { const T = matMul(pvp.transform, it.transform); labels.push({ x: T[4], y: T[5], val: parseFloat(s) }); }
+    }
+  } catch (_) { /* no text layer */ }
+  const res = { polys, labels };
+  pathCache[key] = res;
+  return res;
+}
+// join contiguous stroked segments end-to-end (bridging small gaps, angle-gated)
+function stitchChain(seed, polys) {
+  const TOUCH = 3, BRIDGE = 18, ANG = Math.cos(35 * Math.PI / 180);
+  const unit = (x, y) => { const l = Math.hypot(x, y) || 1; return { x: x / l, y: y / l }; };
+  const dot = (u, v) => u.x * v.x + u.y * v.y;
+  const used = new Set([seed]);
+  let chain = seed.pts.slice();
+  const grow = atEnd => {
+    for (;;) {
+      if (chain.length > 20000) break;
+      const tip = atEnd ? chain[chain.length - 1] : chain[0];
+      const nb = atEnd ? chain[chain.length - 2] : chain[1];
+      let pick = null, pickRev = false, pickD = BRIDGE;
+      for (const poly of polys) {
+        if (used.has(poly)) continue;
+        if (tip.x < poly.x0 - BRIDGE || tip.x > poly.x1 + BRIDGE || tip.y < poly.y0 - BRIDGE || tip.y > poly.y1 + BRIDGE) continue;
+        const a = poly.pts[0], b = poly.pts[poly.pts.length - 1];
+        const da = dist(tip.x, tip.y, a.x, a.y), db = dist(tip.x, tip.y, b.x, b.y);
+        const rev = db < da, d = rev ? db : da;
+        if (d >= pickD) continue;
+        if (d > TOUCH) {
+          const first = rev ? b : a;
+          const second = (rev ? poly.pts[poly.pts.length - 2] : poly.pts[1]) || first;
+          const dirTip = unit(tip.x - nb.x, tip.y - nb.y);
+          const dirGap = unit(first.x - tip.x, first.y - tip.y);
+          const dirNew = unit(second.x - first.x, second.y - first.y);
+          if (dot(dirTip, dirGap) < ANG || dot(dirGap, dirNew) < ANG) continue;
+        }
+        pick = poly; pickRev = rev; pickD = d;
+      }
+      if (!pick) break;
+      used.add(pick);
+      const pts = pickRev ? pick.pts.slice().reverse() : pick.pts.slice();
+      if (atEnd) chain = chain.concat(pts);
+      else chain = pts.reverse().concat(chain);
+    }
+  };
+  grow(true);
+  grow(false);
+  return chain;
+}
+async function wandTrace(w) {
+  if (!state.doc || state.doc.kind !== 'pdf') { setMsg('Auto-trace needs a vector PDF — use ⛰ Contour to trace by hand.'); return; }
+  setMsg('Reading the page’s vector line work…');
+  let idx;
+  try { idx = await buildPathIndex(state.page); }
+  catch (_) { setMsg('Could not read vector paths from this page (scanned PDF?) — use ⛰ Contour instead.'); return; }
+  if (!idx.polys.length) { setMsg('No vector line work on this page (scanned PDF?) — use ⛰ Contour instead.'); return; }
+  const thresh = Math.max(3, 8 / vp.view.zoom);
+  let best = null, bestD = thresh;
+  for (const poly of idx.polys) {
+    if (w.x < poly.x0 - thresh || w.x > poly.x1 + thresh || w.y < poly.y0 - thresh || w.y > poly.y1 + thresh) continue;
+    const d = distToPolyline(w.x, w.y, poly.pts);
+    if (d < bestD) { bestD = d; best = poly; }
+  }
+  if (!best) { setMsg('No line under the click — zoom in and click right on the contour.'); return; }
+  const pts = simplifyPts(stitchChain(best, idx.polys), 2.5);
+  if (pts.length < 2) { setMsg('That line is a single point — use ◎ Spot for spot grades.'); return; }
+  let labelVal = null, labelD = 90;
+  for (const L of idx.labels) { const d = dist(w.x, w.y, L.x, L.y); if (d < labelD) { labelD = d; labelVal = L.val; } }
+  const surf = curSurface;
+  const prev = snapshot();
+  const m = { id: randId(), page: state.page, kind: 'contour', surface: surf, color: curColor(), width: curWidth(), pts, elev: null, created: Date.now() };
+  state.markups.push(m);
+  pushUndo(prev);
+  markupsChanged();
+  modals.askNumber(`Contour elevation (ft) — ${surf}`, 'prefilled from the nearest printed number if one was found', labelVal != null ? labelVal : (lastElev[surf] != null ? lastElev[surf] : ''), 1)
+    .then(v => { if (v != null) { m.elev = v; lastElev[surf] = v; markupsChanged(); } });
+}
 
 /* ===================== Live sessions (SSE + REST ops) =====================
  * Host "goes live" on the current project; teammates join and co-edit in real
