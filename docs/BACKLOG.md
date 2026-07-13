@@ -129,6 +129,16 @@ that holds the exhaustive detail.
 ## 📌 Planned / ready-to-build
 *Scoped with a plan; just not started.*
 
+- **Bid workflow: Estimate ⇄ Plan Room** — `docs/plans/bid-workflow-estimate-planroom.md`
+  (2026-07-13). Makes the Estimate the hub of a bid: (1) **bid due date/time**
+  (`bid_due_at`) + a "due soon" badge + reminder (cron/push/inbox) so deadlines
+  aren't missed; (2) **attach the plan PDF** to the estimate (R2); (3) **"Take
+  off in Plan Room"** button → auto-opens a linked Plan Room project on that PDF
+  (`?estimate=id`, find-or-create, stores `estimateId`); (4) **push the takeoff's
+  bid pricing back** into the estimate's line items. Base for the deadline/PDF;
+  takeoff add-on for the launch + pricing-back. Migration 0135 (coordinate — the
+  production-log plan also claims 0135). Built around David's wife's bid-a-job
+  flow.
 - **Production & Haul Log (main app)** — `docs/plans/production-log.md`
   (2026-07-13). Relocates the standalone sitework tool's production log into
   OpsFloa proper. Key finding: `daily_reports` already covers daily production,
