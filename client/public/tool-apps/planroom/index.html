@@ -89,6 +89,7 @@
       <span class="tb-sep" aria-hidden="true"></span>
       <button class="tool" data-tool="qarea" title="Area takeoff — trace a paved / graded area, pick a material (concrete, asphalt, base, topsoil…) → priced quantities in the bid">▨</button>
       <button class="tool" data-tool="qline" title="Line takeoff — trace a run (curb, pipe, silt fence…); add a trench cross-section for excavation & bedding CY">⌇</button>
+      <button class="tool" data-tool="qcount" title="Count takeoff — drop a point on each item (catch basin, manhole, tree…), name it → counted & priced in the bid">⊙</button>
     </div>
     <input type="color" id="mkColor" class="dirt-hide" value="#e05555" title="Markup color (applies to the selected markup too)">
     <select id="mkWidth" class="dirt-hide" title="Line weight / text size (applies to the selected markup too)">
@@ -244,6 +245,38 @@
       <button id="atCancel" class="btn">Cancel</button>
       <span class="spacer"></span>
       <button id="atOk" class="btn primary">Add takeoff</button>
+    </div>
+  </div>
+</div>
+
+<!-- count takeoff modal (sitework pack) -->
+<div id="countTakeoff" class="modal hidden">
+  <div class="modal-box wide">
+    <h3>Count takeoff</h3>
+    <div class="hint">You dropped <span id="ctN">—</span>. Name what you're counting.</div>
+    <div class="preset-row" id="ctPresets">
+      <button type="button" class="btn tiny" data-preset="catchbasin">Catch basin</button>
+      <button type="button" class="btn tiny" data-preset="manhole">Manhole</button>
+      <button type="button" class="btn tiny" data-preset="inlet">Inlet</button>
+      <button type="button" class="btn tiny" data-preset="jbox">Junction box</button>
+      <button type="button" class="btn tiny" data-preset="cleanout">Cleanout</button>
+      <button type="button" class="btn tiny" data-preset="fes">FES</button>
+      <button type="button" class="btn tiny" data-preset="areadrain">Area drain</button>
+      <button type="button" class="btn tiny" data-preset="tree">Tree</button>
+      <button type="button" class="btn tiny" data-preset="sign">Sign</button>
+      <button type="button" class="btn tiny" data-preset="light">Light pole</button>
+      <button type="button" class="btn tiny" data-preset="bollard">Bollard</button>
+      <button type="button" class="btn tiny" data-preset="itemonly">Item</button>
+    </div>
+    <div class="wall-grid">
+      <label>Item / label<input type="text" id="ctLabel" value="Item" maxlength="40"></label>
+      <label>Unit<input type="text" id="ctUnit" value="EA" maxlength="8"></label>
+    </div>
+    <div id="ctResult" class="wall-result"></div>
+    <div class="modal-actions">
+      <button id="ctCancel" class="btn">Cancel</button>
+      <span class="spacer"></span>
+      <button id="ctOk" class="btn primary">Add takeoff</button>
     </div>
   </div>
 </div>

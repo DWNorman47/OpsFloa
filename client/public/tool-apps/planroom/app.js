@@ -83,14 +83,14 @@ els.hud.addEventListener('click', () => { clearTimeout(hudTimer); els.hud.classL
  * Widths/sizes are document-space (base px) so markups print/zoom like ink.
  */
 
-const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline'];
+const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount'];
 const MK_LABEL = {
   cloud: 'Cloud', rect: 'Rectangle', ellipse: 'Ellipse', arrow: 'Arrow', line: 'Line',
   freehand: 'Pen', highlight: 'Highlight', text: 'Text', callout: 'Callout',
   mlength: 'Length', marea: 'Area', mcount: 'Count',
   plane: 'Roof plane', redge: 'Roof edge', ritem: 'Roof item',
   contour: 'Contour', espot: 'Spot elev', epad: 'Pad', ebound: 'Earthwork boundary',
-  qarea: 'Area takeoff', qline: 'Line takeoff',
+  qarea: 'Area takeoff', qline: 'Line takeoff', qcount: 'Count takeoff',
 };
 const MK_ICON = {
   cloud: '☁', rect: '▭', ellipse: '⬭', arrow: '↗', line: '╲',
@@ -98,10 +98,10 @@ const MK_ICON = {
   mlength: '↔', marea: '⬠', mcount: '🔢',
   plane: '▰', redge: '╱', ritem: '⊕',
   contour: '⛰', espot: '◎', epad: '◫', ebound: '⬚',
-  qarea: '▨', qline: '⌇',
+  qarea: '▨', qline: '⌇', qcount: '⊙',
 };
 const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
-const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline']; // click-built (vs drag; espot/align are special-cased)
+const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount']; // click-built (vs drag; espot/align are special-cased)
 const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline']; // produce ft / SF / squares
 
 /* ---- earthwork (sitework pack) helpers ---- */
@@ -211,7 +211,7 @@ function roofBidLines() {
     if (net > 0) lines.push({ key: 'ew_haul', label: 'Earthwork — export haul-off (loose)', qty: net * (1 + swell), unit: 'CY', q: 0 });
   }
   // quantity takeoffs (area/line/count/wall) belong to the sitework trade
-  if (trade === 'dirt' || !trade) { lines.push(...areaBidLines()); lines.push(...lineBidLines()); }
+  if (trade === 'dirt' || !trade) { lines.push(...areaBidLines()); lines.push(...lineBidLines()); lines.push(...countBidLines()); }
   // consolidated view (no trade selected): only rows with real quantities
   const finalLines = trade ? lines.filter(l => Math.abs(l.qty) > 0.001) : lines.filter(l => l.qty > 0);
   for (const l of finalLines) { l.price = priceFor(l.key, l.defPrice || 0); l.ext = l.qty * l.price; }
@@ -273,6 +273,7 @@ function measureValue(m) {
     const r = computeLineResult(qlineLenFt(m), cfg);
     return `${cfg.label || 'Line'} · ${fmt(r.lengthFt)} ft${r.trenchCY ? ` · ${fmt(r.trenchCY, 1)} CY` : ''}`;
   }
+  if (m.kind === 'qcount') { const cfg = m.cfg || {}; return `${m.pts.length} ${cfg.unit || 'EA'} · ${cfg.label || 'Item'}`; }
   return '';
 }
 const LINE_W = { S: 2, M: 4, L: 8 };
@@ -480,7 +481,7 @@ function drawMarkup(ctx, m) {
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y); }
       break;
     }
-    case 'mcount': case 'ritem': {
+    case 'mcount': case 'ritem': case 'qcount': {
       const r = (m.width || 4) * 1.5 + 3;
       for (const p of m.pts) { ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); }
       const c = centroid(m.pts);
@@ -762,7 +763,7 @@ function hitMarkup(ctx, w) {
       case 'ebound':
         if (distToPolyline(w.x, w.y, [...m.pts, m.pts[0]]) < t) return m; // edge only (fill is faint)
         break;
-      case 'mcount': case 'ritem':
+      case 'mcount': case 'ritem': case 'qcount':
         if (m.pts.some(p => dist(w.x, w.y, p.x, p.y) < (m.width || 4) * 1.5 + 3 + t)) return m;
         break;
       case 'espot':
@@ -1185,6 +1186,8 @@ function setTool(t) {
     setMsg('Trace a paved/graded area; Enter/double-click to close, then pick a material. Double-click it later to edit.');
   } else if (t === 'qline') {
     setMsg('Trace a run (curb, pipe, silt fence…); Enter/double-click to finish, then set the type / trench.');
+  } else if (t === 'qcount') {
+    setMsg('Click each item to count; Enter or double-click to finish and name it.');
   } else if (t === 'align') {
     const E = state.earthwork;
     setMsg((!E.existingPage || !E.proposedPage)
@@ -1446,7 +1449,7 @@ els.cv.addEventListener('pointercancel', endDrag);
 /* ---- click-built measure drafts: commit / cancel ---- */
 
 const CLOSED_KINDS = ['marea', 'plane', 'epad', 'ebound', 'qarea']; // 3+ pts, closed polygon
-const POINT_KINDS = ['mcount', 'ritem'];      // 1+ pts, no rubber band
+const POINT_KINDS = ['mcount', 'ritem', 'qcount']; // 1+ pts, no rubber band
 
 function commitDraft() {
   if (!draft) return;
@@ -1476,6 +1479,17 @@ function commitDraft() {
       if (!cfg) { vp.requestDraw(); return; }
       lastLineCfg = cfg;
       state.markups.push({ id: randId(), page: state.page, kind: 'qline', pts, cfg, created: Date.now() });
+      pushUndo(d.prev);
+      markupsChanged();
+    });
+    return;
+  }
+  // count takeoff: name what was dropped; create the markup only if confirmed
+  if (d.kind === 'qcount') {
+    askCountConfig(pts.length, lastCountCfg).then(cfg => {
+      if (!cfg) { vp.requestDraw(); return; }
+      lastCountCfg = cfg;
+      state.markups.push({ id: randId(), page: state.page, kind: 'qcount', color: curColor(), width: curWidth(), pts, cfg, created: Date.now() });
       pushUndo(d.prev);
       markupsChanged();
     });
@@ -1540,6 +1554,19 @@ els.cv.addEventListener('dblclick', e => {
       const prev = snapshot();
       hit.cfg = cfg;
       lastAreaCfg = cfg;
+      pushUndo(prev);
+      markupsChanged();
+    });
+    return;
+  }
+  // double-click a count takeoff to rename it
+  if (hit && hit.kind === 'qcount') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    askCountConfig(hit.pts.length, hit.cfg).then(cfg => {
+      if (!cfg) return;
+      const prev = snapshot();
+      hit.cfg = cfg; lastCountCfg = cfg;
       pushUndo(prev);
       markupsChanged();
     });
@@ -1763,7 +1790,7 @@ function applyTakeoffGate() {
 /* trade mode: which takeoff trade's tools/panels/bid are in play */
 const TRADE_TOOLS = {
   roofing: ['plane', 'redge', 'ritem'],
-  dirt: ['contour', 'espot', 'epad', 'ebound', 'align', 'qarea', 'qline'],
+  dirt: ['contour', 'espot', 'epad', 'ebound', 'align', 'qarea', 'qline', 'qcount'],
 };
 // general redlining + generic measure tools that collapse while a trade is active
 const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
@@ -3110,6 +3137,62 @@ function lineBidLines() {
   }
   return lines;
 }
+
+/* ---- Q3: Count takeoff (copied from sitework — see PARITY.md) ---- */
+const COUNT_PRESETS = {
+  catchbasin: { label: 'Catch basin', unit: 'EA' }, manhole: { label: 'Manhole', unit: 'EA' },
+  inlet: { label: 'Inlet', unit: 'EA' }, jbox: { label: 'Junction box', unit: 'EA' },
+  cleanout: { label: 'Cleanout', unit: 'EA' }, fes: { label: 'Flared end section', unit: 'EA' },
+  areadrain: { label: 'Area drain', unit: 'EA' }, tree: { label: 'Tree', unit: 'EA' },
+  sign: { label: 'Sign', unit: 'EA' }, light: { label: 'Light pole', unit: 'EA' },
+  bollard: { label: 'Bollard', unit: 'EA' }, itemonly: { label: 'Item', unit: 'EA' },
+};
+const readCountCfg = () => ({ label: $('ctLabel').value.trim() || 'Item', unit: $('ctUnit').value.trim() || 'EA' });
+const countResultRows = (n, cfg) => `<div class="res-row total"><span>${esc(cfg.label)}</span><b>${n} ${esc(cfg.unit)}</b></div>`;
+function askCountConfig(n, prefill) {
+  return new Promise(resolve => {
+    const preview = () => { $('ctResult').innerHTML = countResultRows(n, readCountCfg()); };
+    $('ctN').textContent = `${n} point${n === 1 ? '' : 's'}`;
+    if (prefill) { $('ctLabel').value = prefill.label != null ? prefill.label : 'Item'; $('ctUnit').value = prefill.unit || 'EA'; }
+    preview();
+    $('countTakeoff').classList.remove('hidden');
+    const onInput = () => preview();
+    const inputs = ['ctLabel', 'ctUnit'];
+    inputs.forEach(id => $(id).addEventListener('input', onInput));
+    const presetBtns = [...document.querySelectorAll('#ctPresets [data-preset]')];
+    const onPreset = e => {
+      const p = COUNT_PRESETS[e.target.dataset.preset];
+      if (!p) return;
+      $('ctLabel').value = p.label; $('ctUnit').value = p.unit; onInput();
+    };
+    presetBtns.forEach(b => b.addEventListener('click', onPreset));
+    const cleanup = () => {
+      inputs.forEach(id => $(id).removeEventListener('input', onInput));
+      presetBtns.forEach(b => b.removeEventListener('click', onPreset));
+      $('ctOk').onclick = null; $('ctCancel').onclick = null;
+      $('countTakeoff').classList.add('hidden');
+    };
+    $('ctCancel').onclick = () => { cleanup(); resolve(null); };
+    $('ctOk').onclick = () => { const cfg = readCountCfg(); cleanup(); resolve(cfg); };
+  });
+}
+function countBidLines() {
+  const groups = new Map(); // label -> { unit, qty }
+  for (const m of state.markups) {
+    if (m.kind !== 'qcount') continue;
+    const cfg = m.cfg || {};
+    const g = groups.get(cfg.label) || { unit: cfg.unit || 'EA', qty: 0 };
+    g.qty += m.pts.length;
+    groups.set(cfg.label, g);
+  }
+  const lines = [];
+  for (const [label, g] of groups) {
+    if (!g.qty) continue;
+    lines.push({ key: `qc_${String(label).replace(/[^a-z0-9]+/gi, '_')}`, label, qty: g.qty, unit: g.unit, q: 0, defPrice: 0 });
+  }
+  return lines;
+}
+let lastCountCfg = null;
 
 /* ===================== Live sessions (SSE + REST ops) =====================
  * Host "goes live" on the current project; teammates join and co-edit in real
