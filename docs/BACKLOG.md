@@ -61,6 +61,12 @@ that holds the exhaustive detail.
   bandaid until plans actually exceed the ceiling? (see Improvements) (2026-07-10)
 - **Wall Dig button** — hidden "for now" in the takeoff tool; bring it back, remove
   it, or leave it hidden? (2026-07-10)
+- **Production/Haul Log — where does it live?** Field-module tab with a project
+  dropdown (matches `daily_reports`, least surface area — the plan's assumption),
+  or a per-job "Production" tab on the project detail page (`ProjectDetail`)?
+  (see `docs/plans/production-log.md`) (2026-07-13)
+- **Production/Haul Log — worker self-logging?** Can field crews add haul tickets
+  (a worker-level `manage_haul_tickets` perm), or admin-only? (2026-07-13)
 
 ## ✨ Ideas — improvements
 

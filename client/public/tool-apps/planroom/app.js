@@ -48,6 +48,12 @@ const OPENING_LABEL = { door: 'Door', window: 'Window', opening: 'Opening' };
 const TRIM_LABEL = { base: 'Base', crown: 'Crown', chair: 'Chair rail' };
 let curDwOpening = 'door';
 let curDwTrim = 'base';
+// layer visibility (session view state) — declutter a busy sheet by category
+const layers = { annot: true, measure: true, takeoff: true, labels: true };
+const ANNOT_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout'];
+const MEASURE_KINDS = ['mlength', 'marea', 'mcount'];
+const markupLayer = kind => ANNOT_KINDS.includes(kind) ? 'annot' : MEASURE_KINDS.includes(kind) ? 'measure' : 'takeoff';
+const layerVisible = m => layers[markupLayer(m.kind)];
 let curSurface = 'existing';                 // which surface new contours/spots/pads belong to
 const lastElev = { existing: null, proposed: null };
 
@@ -616,6 +622,7 @@ function drawMarkup(ctx, m) {
 
 // elevation label (white-haloed, colored by elevation) for earthwork markups
 function elevLabel(ctx, m, x, y, col) {
+  if (!layers.labels) return;
   const base = pageBase.get(m.page);
   const fs = Math.max(11, Math.min(28, (base ? base.width : 2800) / 120));
   ctx.save();
@@ -630,6 +637,7 @@ function elevLabel(ctx, m, x, y, col) {
 
 // Measured-value label: white-haloed bold text, sized to the sheet.
 function labelAt(ctx, m, x, y, color) {
+  if (!layers.labels) return;
   const base = pageBase.get(m.page);
   const fs = Math.max(11, Math.min(30, (base ? base.width : 2800) / 110));
   ctx.save();
@@ -766,7 +774,7 @@ function hitMarkup(ctx, w) {
   const tol = Math.max(6 / vp.view.zoom, 3);
   for (let i = state.markups.length - 1; i >= 0; i--) {
     const m = state.markups[i];
-    if (m.page !== state.page) continue;
+    if (m.page !== state.page || !layerVisible(m)) continue; // hidden layers aren't clickable
     const t = tol + (m.width || 4) / 2;
     const [p0, p1] = m.pts;
     switch (m.kind) {
@@ -922,8 +930,8 @@ function paint(ctx) {
       ctx.restore();
     } else if (state.doc) ensurePage(other);
   }
-  if (heatGrid && state.page === heatGrid.page) drawHeat(ctx);
-  for (const m of state.markups) if (m.page === state.page) drawMarkup(ctx, m);
+  if (heatGrid && state.page === heatGrid.page && layers.takeoff) drawHeat(ctx);
+  for (const m of state.markups) if (m.page === state.page && layerVisible(m)) drawMarkup(ctx, m);
   if (drag && drag.mode === 'draw' && drag.markup) drawMarkup(ctx, drag.markup);
   drawDraft(ctx);
   drawAlignDraft(ctx);
@@ -2728,6 +2736,19 @@ document.addEventListener('click', e => {
   if (!exportMenu.classList.contains('hidden') && !e.target.closest('.menu-wrap')) exportMenu.classList.add('hidden');
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') exportMenu.classList.add('hidden'); });
+
+// Layers dropdown — show/hide markup categories
+const layersMenu = $('layersMenu');
+$('btnLayers').addEventListener('click', e => { e.stopPropagation(); layersMenu.classList.toggle('hidden'); });
+layersMenu.querySelectorAll('input[data-layer]').forEach(inp => inp.addEventListener('change', () => {
+  layers[inp.dataset.layer] = inp.checked;
+  $('btnLayers').classList.toggle('primary', Object.values(layers).some(v => !v)); // highlight when something's hidden
+  vp.requestDraw();
+}));
+document.addEventListener('click', e => {
+  if (!layersMenu.classList.contains('hidden') && !e.target.closest('.menu-wrap')) layersMenu.classList.add('hidden');
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') layersMenu.classList.add('hidden'); });
 
 /* ===================== Company library (server-backed) =====================
  * Shares this project — plans, markups, measurements — to the company library

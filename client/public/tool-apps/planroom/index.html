@@ -128,6 +128,15 @@
     <button id="btnUndo" class="btn" title="Undo (Ctrl+Z)" disabled>↶</button>
     <button id="btnRedo" class="btn" title="Redo (Ctrl+Y)" disabled>↷</button>
     <button id="btnList" class="btn" title="Markup list — every markup across the set, click to jump">📋</button>
+    <div class="menu-wrap">
+      <button id="btnLayers" class="btn" title="Show / hide categories of markups to declutter" aria-haspopup="true">◫<span class="btn-label"> Layers</span> ▾</button>
+      <div id="layersMenu" class="menu hidden" role="menu">
+        <label><input type="checkbox" data-layer="annot" checked> Annotations</label>
+        <label><input type="checkbox" data-layer="measure" checked> Measurements</label>
+        <label><input type="checkbox" data-layer="takeoff" checked> Takeoffs</label>
+        <label><input type="checkbox" data-layer="labels" checked> Value labels</label>
+      </div>
+    </div>
     <button id="btnRoof" class="btn tb-takeoff tr-roof" title="Roofing takeoff — squares, edges, and counts across the set">🏠<span class="btn-label"> Roof</span></button>
     <button id="btnDirt" class="btn tb-takeoff tr-dirt" title="Earthwork / cut-fill takeoff — designate sheets, trace contours, compute volumes">⛰<span class="btn-label"> Dirt</span></button>
     <button id="btnDw" class="btn tb-takeoff tr-dwall" title="Drywall & Paint — wall height, sheet size, waste, coverage; net SF & materials">🧱<span class="btn-label"> Drywall</span></button>
