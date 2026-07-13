@@ -73,6 +73,7 @@ body { display: flex; flex-direction: column; }
   box-shadow: 0 8px 24px rgba(0,0,0,.45); padding: 5px; z-index: 30;
   min-width: 230px; max-width: calc(100vw - 20px);
 }
+.menu.menu-left { left: auto; right: 0; } /* flip to open leftward when opening right would overflow */
 .menu button {
   display: block; width: 100%; text-align: left; padding: 8px 10px;
   background: none; border: none; color: var(--text); border-radius: 6px;

@@ -2803,9 +2803,18 @@ function exportCsv() {
   setMsg('Markup summary CSV downloaded.');
 }
 
+// open a dropdown rightward, but flip it leftward if that would run off-screen
+function openMenu(menu) {
+  menu.classList.remove('hidden', 'menu-left');
+  if (menu.getBoundingClientRect().right > window.innerWidth - 8) menu.classList.add('menu-left');
+}
+
 // Export dropdown
 const exportMenu = $('exportMenu');
-$('btnExportMenu').addEventListener('click', e => { e.stopPropagation(); exportMenu.classList.toggle('hidden'); });
+$('btnExportMenu').addEventListener('click', e => {
+  e.stopPropagation();
+  if (exportMenu.classList.contains('hidden')) openMenu(exportMenu); else exportMenu.classList.add('hidden');
+});
 exportMenu.addEventListener('click', e => {
   const item = e.target.closest('[data-act]');
   if (!item) return;
@@ -2827,7 +2836,10 @@ $('btnMenuToggle').addEventListener('click', () => {
 
 // Layers dropdown — show/hide markup categories
 const layersMenu = $('layersMenu');
-$('btnLayers').addEventListener('click', e => { e.stopPropagation(); layersMenu.classList.toggle('hidden'); });
+$('btnLayers').addEventListener('click', e => {
+  e.stopPropagation();
+  if (layersMenu.classList.contains('hidden')) openMenu(layersMenu); else layersMenu.classList.add('hidden');
+});
 layersMenu.querySelectorAll('input[data-layer]').forEach(inp => inp.addEventListener('change', () => {
   layers[inp.dataset.layer] = inp.checked;
   $('btnLayers').classList.toggle('primary', Object.values(layers).some(v => !v)); // highlight when something's hidden
