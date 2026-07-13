@@ -43,6 +43,11 @@ const state = {
   drywall: { wallHeight: 9, sheetSF: 32, waste: 10, coverage: 375, coats: 2, finish: 'L4' },
 };
 let curDwSides = 2;  // 1 = perimeter/against structure, 2 = interior partition (both faces)
+const OPENING_DEDUCT = { door: 21, window: 15, opening: 15 }; // SF deducted from wall per opening
+const OPENING_LABEL = { door: 'Door', window: 'Window', opening: 'Opening' };
+const TRIM_LABEL = { base: 'Base', crown: 'Crown', chair: 'Chair rail' };
+let curDwOpening = 'door';
+let curDwTrim = 'base';
 let curSurface = 'existing';                 // which surface new contours/spots/pads belong to
 const lastElev = { existing: null, proposed: null };
 
@@ -87,7 +92,7 @@ els.hud.addEventListener('click', () => { clearTimeout(hudTimer); els.hud.classL
  * Widths/sizes are document-space (base px) so markups print/zoom like ink.
  */
 
-const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling'];
+const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim'];
 const MK_LABEL = {
   cloud: 'Cloud', rect: 'Rectangle', ellipse: 'Ellipse', arrow: 'Arrow', line: 'Line',
   freehand: 'Pen', highlight: 'Highlight', text: 'Text', callout: 'Callout',
@@ -95,7 +100,7 @@ const MK_LABEL = {
   plane: 'Roof plane', redge: 'Roof edge', ritem: 'Roof item',
   contour: 'Contour', espot: 'Spot elev', epad: 'Pad', ebound: 'Earthwork boundary',
   qarea: 'Area takeoff', qline: 'Line takeoff', qcount: 'Count takeoff',
-  dwall: 'Wall run', dceiling: 'Ceiling',
+  dwall: 'Wall run', dceiling: 'Ceiling', dopening: 'Opening', dtrim: 'Trim',
 };
 const MK_ICON = {
   cloud: '☁', rect: '▭', ellipse: '⬭', arrow: '↗', line: '╲',
@@ -104,11 +109,11 @@ const MK_ICON = {
   plane: '▰', redge: '╱', ritem: '⊕',
   contour: '⛰', espot: '◎', epad: '◫', ebound: '⬚',
   qarea: '▨', qline: '⌇', qcount: '⊙',
-  dwall: '▬', dceiling: '⬜',
+  dwall: '▬', dceiling: '⬜', dopening: '🚪', dtrim: '▁',
 };
 const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
-const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling']; // click-built (vs drag; espot/align are special-cased)
-const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling']; // produce ft / SF / squares
+const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim']; // click-built (vs drag; espot/align are special-cased)
+const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling', 'dtrim']; // produce ft / SF / squares
 
 /* ---- earthwork (sitework pack) helpers ---- */
 // stable hue per elevation so equal elevations match visually; existing lighter
@@ -283,6 +288,8 @@ function measureValue(m) {
   if (m.kind === 'qcount') { const cfg = m.cfg || {}; return `${m.pts.length} ${cfg.unit || 'EA'} · ${cfg.label || 'Item'}`; }
   if (m.kind === 'dwall') return `${fmt(dwallLenFt(m))} ft · ${fmt(dwallSf(m))} SF (${m.sides || 2}s @ ${fmt(dwallHeight(m))}')`;
   if (m.kind === 'dceiling') return `Ceiling · ${fmt(dceilingSf(m))} SF`;
+  if (m.kind === 'dopening') { const c = m.cfg || {}; const n = m.pts.length; return `${n} ${OPENING_LABEL[c.otype] || 'Opening'}${n === 1 ? '' : 's'} (−${fmt(c.deductSF || 0)} SF ea)`; }
+  if (m.kind === 'dtrim') { const c = m.cfg || {}; return `${TRIM_LABEL[c.ttype] || 'Trim'} · ${fmt(polyLengthFt(m.pts, state.scales[m.page] || 0))} ft`; }
   return '';
 }
 const LINE_W = { S: 2, M: 4, L: 8 };
@@ -491,11 +498,19 @@ function drawMarkup(ctx, m) {
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y); }
       break;
     }
-    case 'mcount': case 'ritem': case 'qcount': {
+    case 'mcount': case 'ritem': case 'qcount': case 'dopening': {
       const r = (m.width || 4) * 1.5 + 3;
       for (const p of m.pts) { ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); }
       const c = centroid(m.pts);
       if (m.pts.length) labelAt(ctx, m, c.x, c.y - r * 2.4);
+      break;
+    }
+    case 'dtrim': {
+      ctx.beginPath();
+      m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.stroke();
+      const mid = m.pts[Math.floor((m.pts.length - 1) / 2)];
+      labelAt(ctx, m, mid.x, mid.y - (m.width || 4) * 2.5);
       break;
     }
     case 'plane': {
@@ -780,7 +795,7 @@ function hitMarkup(ctx, w) {
       case 'line': case 'arrow':
         if (pointSegDist(w.x, w.y, p0.x, p0.y, p1.x, p1.y) < t) return m;
         break;
-      case 'freehand': case 'mlength': case 'redge': case 'contour': case 'qline': case 'dwall':
+      case 'freehand': case 'mlength': case 'redge': case 'contour': case 'qline': case 'dwall': case 'dtrim':
         if (distToPolyline(w.x, w.y, m.pts) < t) return m;
         break;
       case 'marea': case 'plane': case 'epad': case 'qarea': case 'dceiling':
@@ -790,7 +805,7 @@ function hitMarkup(ctx, w) {
       case 'ebound':
         if (distToPolyline(w.x, w.y, [...m.pts, m.pts[0]]) < t) return m; // edge only (fill is faint)
         break;
-      case 'mcount': case 'ritem': case 'qcount':
+      case 'mcount': case 'ritem': case 'qcount': case 'dopening':
         if (m.pts.some(p => dist(w.x, w.y, p.x, p.y) < (m.width || 4) * 1.5 + 3 + t)) return m;
         break;
       case 'espot':
@@ -1223,6 +1238,10 @@ function setTool(t) {
     setMsg(`Trace a wall run (${curDwSides}-side @ ${fmt(state.drywall.wallHeight)}'); Enter/double-click to finish. Double-click a run to set its height.`);
   } else if (t === 'dceiling') {
     setMsg('Trace a room outline for its ceiling SF; Enter/double-click to close.');
+  } else if (t === 'dopening') {
+    setMsg(`Click each ${OPENING_LABEL[curDwOpening].toLowerCase()} (−${OPENING_DEDUCT[curDwOpening]} SF each); Enter/double-click to finish.`);
+  } else if (t === 'dtrim') {
+    setMsg(`Trace a ${TRIM_LABEL[curDwTrim].toLowerCase()} run; Enter/double-click to finish → LF.`);
   } else if (t === 'align') {
     const E = state.earthwork;
     setMsg((!E.existingPage || !E.proposedPage)
@@ -1488,7 +1507,7 @@ els.cv.addEventListener('pointercancel', endDrag);
 /* ---- click-built measure drafts: commit / cancel ---- */
 
 const CLOSED_KINDS = ['marea', 'plane', 'epad', 'ebound', 'qarea', 'dceiling']; // 3+ pts, closed polygon
-const POINT_KINDS = ['mcount', 'ritem', 'qcount']; // 1+ pts, no rubber band
+const POINT_KINDS = ['mcount', 'ritem', 'qcount', 'dopening']; // 1+ pts, no rubber band
 
 function commitDraft() {
   if (!draft) return;
@@ -1540,6 +1559,8 @@ function commitDraft() {
   else if (d.kind === 'ritem') extra.itype = $('itemType') ? $('itemType').value : 'boot';
   else if (d.kind === 'contour' || d.kind === 'epad') extra.surface = curSurface;
   else if (d.kind === 'dwall') { extra.height = state.drywall.wallHeight; extra.sides = curDwSides; }
+  else if (d.kind === 'dopening') extra.cfg = { otype: curDwOpening, deductSF: OPENING_DEDUCT[curDwOpening] };
+  else if (d.kind === 'dtrim') extra.cfg = { ttype: curDwTrim };
   if (d.kind === 'ebound') state.markups = state.markups.filter(m => m.kind !== 'ebound'); // one boundary
   const finish = text => {
     state.markups.push({
@@ -1597,6 +1618,15 @@ els.cv.addEventListener('dblclick', e => {
       pushUndo(prev);
       markupsChanged();
     });
+    return;
+  }
+  // double-click an opening group to set its per-opening deduct SF
+  if (hit && hit.kind === 'dopening') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    const c = hit.cfg || {};
+    modals.askNumber(`${OPENING_LABEL[c.otype] || 'Opening'} deduct (SF each)`, 'SF subtracted from wall area per opening', c.deductSF != null ? c.deductSF : 15, 0)
+      .then(v => { if (v != null && v >= 0) { const prev = snapshot(); hit.cfg = { ...c, deductSF: v }; pushUndo(prev); markupsChanged(); } });
     return;
   }
   // double-click a wall run to set its height (this run only)
@@ -1839,7 +1869,7 @@ function applyTakeoffGate() {
 const TRADE_TOOLS = {
   roofing: ['plane', 'redge', 'ritem'],
   dirt: ['wand', 'contour', 'espot', 'epad', 'ebound', 'align', 'autoarea', 'qarea', 'qline', 'qcount'],
-  drywall: ['dwall', 'dceiling'],
+  drywall: ['dwall', 'dceiling', 'dopening', 'dtrim'],
 };
 // general redlining + generic measure tools that collapse while a trade is active
 const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
@@ -3525,31 +3555,39 @@ const dceilingSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0);
 const FINISH_MUD = { L3: 0.020, L4: 0.027, L5: 0.036 }; // gal ready-mix / SF by finish level
 function drywallTotals() {
   const D = state.drywall;
-  let wallSF = 0, ceilSF = 0, wallLF = 0;
+  let wallSF = 0, ceilSF = 0, wallLF = 0, openDeductSF = 0;
+  const openCounts = { door: 0, window: 0, opening: 0 };
+  const trimLF = { base: 0, crown: 0, chair: 0 };
   for (const m of state.markups) {
     if (m.kind === 'dwall') { wallSF += dwallSf(m); wallLF += dwallLenFt(m); }
     else if (m.kind === 'dceiling') ceilSF += dceilingSf(m);
+    else if (m.kind === 'dopening') { const c = m.cfg || {}; const n = m.pts.length; openDeductSF += n * (Number(c.deductSF) || 0); if (openCounts[c.otype] != null) openCounts[c.otype] += n; }
+    else if (m.kind === 'dtrim') { const c = m.cfg || {}; if (trimLF[c.ttype] != null) trimLF[c.ttype] += polyLengthFt(m.pts, state.scales[m.page] || 0); }
   }
-  const boardSF = Math.max(0, wallSF + ceilSF);
+  const netWallSF = Math.max(0, wallSF - openDeductSF);
+  const boardSF = Math.max(0, netWallSF + ceilSF);
   const boards = Math.ceil(boardSF * (1 + (Number(D.waste) || 0) / 100) / (Number(D.sheetSF) || 32));
   const mudGal = boardSF * (FINISH_MUD[D.finish] || 0.027);
   const tapeLF = boardSF * 0.37;
   const paintGal = Number(D.coverage) > 0 ? (boardSF / Number(D.coverage)) * (Number(D.coats) || 1) : 0;
-  return { wallSF, ceilSF, boardSF, wallLF, boards, mudGal, tapeLF, paintGal };
+  return { wallSF, netWallSF, ceilSF, boardSF, wallLF, openDeductSF, openCounts, trimLF, boards, mudGal, tapeLF, paintGal };
 }
-const DW_DEFAULT_PRICE = { hang: 0.55, finish: 0.65, board: 12, mud: 16, tape: 5, paint: 45 };
+const DW_DEFAULT_PRICE = { hang: 0.55, finish: 0.65, board: 12, mud: 16, tape: 5, paint: 45, door: 65, window: 45, opening: 30, trim_base: 2.5, trim_crown: 4.5, trim_chair: 3.5 };
 function drywallBidLines() {
   const T = drywallTotals();
-  if (T.boardSF < 0.5) return [];
   const D = state.drywall;
-  return [
+  const lines = [];
+  if (T.boardSF >= 0.5) lines.push(
     { key: 'dw_hang', label: 'Drywall hang (labor)', qty: T.boardSF, unit: 'SF', q: 0, defPrice: DW_DEFAULT_PRICE.hang },
     { key: 'dw_finish', label: `Drywall finish ${D.finish} (labor)`, qty: T.boardSF, unit: 'SF', q: 0, defPrice: DW_DEFAULT_PRICE.finish },
     { key: 'dw_board', label: `Drywall board (${D.sheetSF} SF sheets · ${D.waste}% waste)`, qty: T.boards, unit: 'sheet', q: 0, defPrice: DW_DEFAULT_PRICE.board },
     { key: 'dw_mud', label: 'Joint compound', qty: T.mudGal, unit: 'gal', q: 0, defPrice: DW_DEFAULT_PRICE.mud },
     { key: 'dw_tape', label: 'Joint tape', qty: T.tapeLF, unit: 'LF', q: 0, defPrice: DW_DEFAULT_PRICE.tape },
     { key: 'dw_paint', label: `Paint (${D.coats} coats)`, qty: T.paintGal, unit: 'gal', q: 0, defPrice: DW_DEFAULT_PRICE.paint },
-  ];
+  );
+  for (const k of ['door', 'window', 'opening']) if (T.openCounts[k]) lines.push({ key: 'dw_' + k, label: `${OPENING_LABEL[k]} (paint / case)`, qty: T.openCounts[k], unit: 'EA', q: 0, defPrice: DW_DEFAULT_PRICE[k] });
+  for (const k of ['base', 'crown', 'chair']) if (T.trimLF[k] > 0.5) lines.push({ key: 'dw_trim_' + k, label: `${TRIM_LABEL[k]} trim`, qty: T.trimLF[k], unit: 'LF', q: 0, defPrice: DW_DEFAULT_PRICE['trim_' + k] });
+  return lines;
 }
 function renderDrywallPanel() {
   const panel = $('dwPanel');
@@ -3562,14 +3600,19 @@ function renderDrywallPanel() {
   rows.push('<div class="dirt-set">Sheet <select id="dwSheet"><option value="32">4×8 (32)</option><option value="40">4×10 (40)</option><option value="48">4×12 (48)</option></select> SF · Waste <input type="number" id="dwWaste" min="0"> %</div>');
   rows.push('<div class="dirt-set">Paint <input type="number" id="dwCov" min="1"> SF/gal · Coats <input type="number" id="dwCoats" min="1"> · Finish <select id="dwFinish"><option>L3</option><option>L4</option><option>L5</option></select></div>');
   rows.push('<div class="roof-sub">Quantities</div>');
-  rows.push(`<div class="dirt-row"><span>Wall SF (net)</span><span class="v">${fmt(T.wallSF)}</span></div>`);
+  rows.push(`<div class="dirt-row"><span>Wall SF (gross)</span><span class="v">${fmt(T.wallSF)}</span></div>`);
+  if (T.openDeductSF > 0) rows.push(`<div class="dirt-row"><span>− openings</span><span class="v">−${fmt(T.openDeductSF)}</span></div>`);
   rows.push(`<div class="dirt-row"><span>Ceiling SF</span><span class="v">${fmt(T.ceilSF)}</span></div>`);
   rows.push(`<div class="dirt-row"><b>Board &amp; finish SF</b><span class="v"><b>${fmt(T.boardSF)}</b></span></div>`);
   rows.push(`<div class="dirt-row"><span>Boards (${D.sheetSF} SF)</span><span class="v">${fmt(T.boards, 0)}</span></div>`);
   rows.push(`<div class="dirt-row"><span>Joint compound</span><span class="v">${fmt(T.mudGal, 1)} gal</span></div>`);
   rows.push(`<div class="dirt-row"><span>Tape</span><span class="v">${fmt(T.tapeLF, 0)} LF</span></div>`);
   rows.push(`<div class="dirt-row"><span>Paint (${D.coats} coats)</span><span class="v">${fmt(T.paintGal, 1)} gal</span></div>`);
-  rows.push('<div class="hint" style="margin:4px 0">Wall SF = length × height × sides. Prices in $ Bid. Openings &amp; trim come next.</div>');
+  const oc = T.openCounts, tl = T.trimLF;
+  if (oc.door || oc.window || oc.opening) rows.push(`<div class="dirt-row"><span>Openings</span><span class="v">${[oc.door && oc.door + ' dr', oc.window && oc.window + ' win', oc.opening && oc.opening + ' op'].filter(Boolean).join(' · ')}</span></div>`);
+  const trimBits = ['base', 'crown', 'chair'].filter(k => tl[k] > 0.5).map(k => `${TRIM_LABEL[k]} ${fmt(tl[k], 0)}`);
+  if (trimBits.length) rows.push(`<div class="dirt-row"><span>Trim LF</span><span class="v">${trimBits.join(' · ')}</span></div>`);
+  rows.push('<div class="hint" style="margin:4px 0">Wall SF = length × height × sides, less opening deducts. Prices in $ Bid.</div>');
   const body = $('dwBody');
   body.innerHTML = rows.join('');
   $('dwHeight').value = D.wallHeight; $('dwSheet').value = String(D.sheetSF); $('dwWaste').value = D.waste;
@@ -3593,6 +3636,8 @@ if ($('dwSidesSel')) $('dwSidesSel').addEventListener('change', e => {
   renderDrywallPanel();
   if (tool === 'dwall') setMsg(`New wall runs are ${curDwSides}-side.`);
 });
+if ($('dwOpeningSel')) $('dwOpeningSel').addEventListener('change', e => { curDwOpening = e.target.value; if (tool === 'dopening') setTool('dopening'); });
+if ($('dwTrimSel')) $('dwTrimSel').addEventListener('change', e => { curDwTrim = e.target.value; if (tool === 'dtrim') setTool('dtrim'); });
 
 /* ===================== Live sessions (SSE + REST ops) =====================
  * Host "goes live" on the current project; teammates join and co-edit in real

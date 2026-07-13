@@ -101,6 +101,18 @@
         <option value="2">2 sides</option>
         <option value="1">1 side</option>
       </select>
+      <button class="tool" data-tool="dopening" title="Opening — click each door / window / opening; each deducts SF from wall area and counts for the bid. Double-click a group to edit its deduct.">🚪</button>
+      <select id="dwOpeningSel" class="mini-sel" title="Opening type for new counts">
+        <option value="door">Door (−21)</option>
+        <option value="window">Window (−15)</option>
+        <option value="opening">Opening (−15)</option>
+      </select>
+      <button class="tool" data-tool="dtrim" title="Trim — trace a base / crown / chair-rail run → LF">▁</button>
+      <select id="dwTrimSel" class="mini-sel" title="Trim type for new runs">
+        <option value="base">Base</option>
+        <option value="crown">Crown</option>
+        <option value="chair">Chair rail</option>
+      </select>
     </div>
     <input type="color" id="mkColor" class="dirt-hide" value="#e05555" title="Markup color (applies to the selected markup too)">
     <select id="mkWidth" class="dirt-hide" title="Line weight / text size (applies to the selected markup too)">
