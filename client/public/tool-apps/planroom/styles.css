@@ -129,6 +129,10 @@ body:not(.has-doc) .needs-doc { display: none !important; }
 .proj-current .pc-meta { color: var(--muted); font-size: 12.5px; margin: 3px 0 10px; }
 .proj-current .pc-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .proj-list-head { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; margin: 4px 0 6px; }
+.sheet-thumb { flex: 0 0 auto; width: 64px; height: 46px; background: #fff; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.sheet-thumb canvas { max-width: 100%; max-height: 100%; }
+.proj-row.sheet-removed { opacity: 0.5; }
+.proj-row.sheet-removed .name { text-decoration: line-through; }
 #btnUpsell { border-color: var(--warn); color: var(--warn); }
 #mkColor {
   width: 34px; height: 30px; padding: 2px; cursor: pointer;

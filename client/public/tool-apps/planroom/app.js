@@ -1202,6 +1202,77 @@ $('pagePickOk').addEventListener('click', () => {
 // triggered from the Projects modal ("Open / add plans")
 function pickPlans() { $('filePlans').click(); }
 
+/* ---- manage sheets: reorder / remove within the combined document ----
+ * Rebuilds the combined PDF in the new order (pdf-lib) and remaps every
+ * page-number reference — markups, per-sheet scales, and earthwork sheet
+ * assignments — so nothing lands on the wrong sheet. Removing a sheet drops
+ * its markups. */
+let sheetPlan = null; // [{ page, removed }] in display order
+const markupCountOnPage = p => state.markups.filter(m => m.page === p).length;
+function renderSheetMgr() {
+  const list = $('sheetMgrList');
+  list.innerHTML = '';
+  sheetPlan.forEach((s, i) => {
+    const row = document.createElement('div');
+    row.className = 'proj-row' + (s.removed ? ' sheet-removed' : '');
+    const n = markupCountOnPage(s.page);
+    row.innerHTML =
+      '<div class="sheet-thumb"></div>' +
+      `<div class="grow"><div class="name">Sheet ${s.page}</div><div class="meta">${n} markup${n === 1 ? '' : 's'}${s.removed ? ' · will be removed' : ''}</div></div>` +
+      `<button class="btn tiny" data-act="up"${i === 0 ? ' disabled' : ''}>▲</button>` +
+      `<button class="btn tiny" data-act="down"${i === sheetPlan.length - 1 ? ' disabled' : ''}>▼</button>` +
+      `<button class="btn tiny${s.removed ? '' : ' danger'}" data-act="del">${s.removed ? 'Keep' : '✕'}</button>`;
+    row.querySelector('[data-act="up"]').addEventListener('click', () => { if (i > 0) { [sheetPlan[i - 1], sheetPlan[i]] = [sheetPlan[i], sheetPlan[i - 1]]; renderSheetMgr(); } });
+    row.querySelector('[data-act="down"]').addEventListener('click', () => { if (i < sheetPlan.length - 1) { [sheetPlan[i + 1], sheetPlan[i]] = [sheetPlan[i], sheetPlan[i + 1]]; renderSheetMgr(); } });
+    row.querySelector('[data-act="del"]').addEventListener('click', () => { s.removed = !s.removed; renderSheetMgr(); });
+    list.appendChild(row);
+    const th = row.querySelector('.sheet-thumb');
+    state.doc.baseSize(s.page).then(b => state.doc.renderPage(s.page, Math.min(1, 128 / b.width))).then(cv => { th.innerHTML = ''; th.appendChild(cv); }).catch(() => {});
+  });
+}
+function openSheetMgr() {
+  if (!state.doc || state.doc.numPages < 1) return;
+  sheetPlan = [];
+  for (let p = 1; p <= state.doc.numPages; p++) sheetPlan.push({ page: p, removed: false });
+  renderSheetMgr();
+  $('sheetMgr').classList.remove('hidden');
+}
+async function applySheetPlan(order) {
+  const oldBytes = await currentCombinedBytes();
+  if (!oldBytes) { setMsg('Could not read the current set.'); return; }
+  setMsg('Rebuilding the set…');
+  try {
+    const { PDFDocument } = PDFLib;
+    const srcDoc = await PDFDocument.load(oldBytes, { ignoreEncryption: true });
+    const out = await PDFDocument.create();
+    const copied = await out.copyPages(srcDoc, order.map(p => p - 1));
+    for (const pg of copied) out.addPage(pg);
+    const map = {}; // old 1-based page -> new 1-based page
+    order.forEach((oldP, i) => { map[oldP] = i + 1; });
+    state.markups = state.markups.filter(m => map[m.page] != null); // drop removed sheets
+    for (const m of state.markups) m.page = map[m.page];
+    const ns = {};
+    for (const [p, v] of Object.entries(state.scales)) if (map[p] != null) ns[map[p]] = v;
+    state.scales = ns;
+    const E = state.earthwork;
+    if (E.existingPage != null) E.existingPage = map[E.existingPage] || null;
+    if (E.proposedPage != null) E.proposedPage = map[E.proposedPage] || null;
+    heatGrid = null; // page indices shifted — clear the session overlay
+    await finalizeCombined(out, state.docName || 'plans.pdf');
+    markupsChanged();
+    setMsg('Sheets updated.');
+  } catch (err) { console.error(err); setMsg('Could not rebuild the set: ' + err.message); }
+}
+$('sheetMgrCancel').addEventListener('click', () => $('sheetMgr').classList.add('hidden'));
+$('sheetMgr').addEventListener('click', e => { if (e.target === $('sheetMgr')) $('sheetMgr').classList.add('hidden'); });
+$('sheetMgrApply').addEventListener('click', async () => {
+  const order = sheetPlan.filter(s => !s.removed).map(s => s.page);
+  if (!order.length) { setMsg('Keep at least one sheet.'); return; }
+  const unchanged = order.length === state.doc.numPages && order.every((p, i) => p === i + 1);
+  $('sheetMgr').classList.add('hidden');
+  if (!unchanged) await applySheetPlan(order);
+});
+
 /* ============================== Tools & pointer input ============================== */
 
 function setTool(t) {
@@ -2490,11 +2561,13 @@ function renderProjCurrent() {
     <div class="pc-meta">${meta}</div>
     <div class="pc-actions">
       <button id="pcOpen" class="btn primary">${hasDoc ? '＋ Add more sheets…' : '📄 Open plans…'}</button>
+      ${hasDoc && n > 1 ? '<button id="pcSheets" class="btn">🗂 Manage sheets</button>' : ''}
       <button id="pcLoad" class="btn">📂 Load saved file</button>
       <button id="pcCompany" class="btn">☁ Company / join live</button>
     </div>`;
   $('projCurrent').querySelector('.pc-name').textContent = state.projectName || 'Project';
   $('pcOpen').addEventListener('click', pickPlans);
+  if ($('pcSheets')) $('pcSheets').addEventListener('click', () => { els.projects.classList.add('hidden'); openSheetMgr(); });
   $('pcLoad').addEventListener('click', () => $('fileImport').click());
   $('pcCompany').addEventListener('click', () => { els.projects.classList.add('hidden'); openCompany(); });
 }
