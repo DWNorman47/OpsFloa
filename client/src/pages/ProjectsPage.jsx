@@ -218,7 +218,7 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
     return new Intl.NumberFormat(locale, { style: 'currency', currency: settings?.currency || 'USD', maximumFractionDigits: 0 }).format(n);
   };
 
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
+  const workLabel = labelSg(settings?.label_work, 'project', user?.language);
   const workLabelLower = workLabel.toLowerCase();
   const clientLabel = labelSg(settings?.label_client, 'client', user?.language);
   const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
@@ -1665,7 +1665,7 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
   useUnsavedChanges(dirty);
   const set = (k, v) => { setDirty(true); setForm(f => ({ ...f, [k]: v })); };
   const showPrevailing = (settings?.prevailing_wage_rate ?? 0) > 0;
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
+  const workLabel = labelSg(settings?.label_work, 'project', user?.language);
   const workLabelLower = workLabel.toLowerCase();
   const clientLabel = labelSg(settings?.label_client, 'client', user?.language);
   const clientLabelLower = clientLabel.toLowerCase();
@@ -2019,9 +2019,9 @@ export default function ProjectsPage() {
 
   const activeProjects = projects.filter(p => p.active).length;
   const totalHours = Object.values(metrics).reduce((s, m) => s + parseFloat(m.total_hours || 0), 0);
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
+  const workLabel = labelSg(settings?.label_work, 'project', user?.language);
   const workLabelLower = workLabel.toLowerCase();
-  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
+  const workLabelPlural = labelPl(settings?.label_work, 'project', user?.language);
 
   // Estimates/Change Orders and sub Purchase Orders are part of the Projects
   // module — not separately toggleable. They show to admins who can manage
@@ -2095,7 +2095,6 @@ export default function ProjectsPage() {
             <div style={styles.pageHeader} className="projects-page-header">
               <div style={styles.pageHeaderRow} className="projects-page-header-row">
                 <div style={styles.pageHeaderCopy}>
-                  <h1 style={styles.pageTitle}>{workLabelPlural}</h1>
                   <p style={styles.pageSub}>
                     {loading
                       ? `${t.prjLoadingPrefix} ${workLabelPlural.toLowerCase()}...`
