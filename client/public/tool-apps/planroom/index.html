@@ -329,15 +329,33 @@
   </div>
 </div>
 
-<!-- roofing bid modal -->
+<!-- takeoff bid modal (with letterhead / branding) -->
 <div id="roofBid" class="modal hidden">
   <div class="modal-box wide bid-box">
-    <h3 id="bidTitle">$ Takeoff bid</h3>
-    <div class="hint">Quantities come live from your takeoff — roofing (squares include waste) and earthwork (cut/fill volumes). Unit prices are editable and save with the project.</div>
-    <div id="bidTableWrap"><table id="bidTable"></table></div>
-    <div class="bid-foot">
-      <label>Overhead &amp; profit <input type="number" id="bidOP" min="0" max="100" step="1" style="width:52px"> %</label>
-      <div id="bidTotals"></div>
+    <div id="bidPrintable">
+      <div class="bid-letterhead" id="bidLetterhead" hidden>
+        <img id="bidLogoImg" alt="">
+        <div class="bid-company" id="bidCompanyRender"></div>
+      </div>
+      <div class="bid-letterhead-edit">
+        <span class="bid-lh-label">Letterhead</span>
+        <input type="text" id="bidCompanyName" maxlength="60" placeholder="Your Company LLC" class="bid-lh-name">
+        <textarea id="bidCompanyDetails" maxlength="240" rows="2" placeholder="Address · license # · phone · email" class="bid-lh-details"></textarea>
+        <label class="btn tiny" for="bidLogoFile">Logo…</label>
+        <input type="file" id="bidLogoFile" accept="image/*" hidden>
+        <button id="bidLogoRemove" class="btn tiny" type="button" hidden>Remove logo</button>
+      </div>
+      <h3 id="bidTitle">$ Takeoff bid</h3>
+      <div class="bid-head">
+        <label>Project<input type="text" id="bidProject" maxlength="80" placeholder="Project name"></label>
+        <label>Prepared by<input type="text" id="bidPrep" maxlength="60" placeholder="Your company"></label>
+        <label>Date<input type="text" id="bidDate" maxlength="24"></label>
+      </div>
+      <div id="bidTableWrap"><table id="bidTable"></table></div>
+      <div class="bid-foot">
+        <label>Overhead &amp; profit <input type="number" id="bidOP" min="0" max="100" step="1" style="width:52px"> %</label>
+        <div id="bidTotals"></div>
+      </div>
     </div>
     <div class="modal-actions">
       <button id="bidPrint" class="btn">🖨 Print / PDF</button>

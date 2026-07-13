@@ -38,6 +38,7 @@ const state = {
   earthwork: { existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 },
     gridFt: 5, shrink: 15, swell: 25, truckCap: 12, result: null },
   trade: '',        // takeoff trade mode: '' (markup only) | 'roofing' | 'dirt'
+  bidMeta: {},      // per-bid project / prepared-by / date overrides
 };
 let curSurface = 'existing';                 // which surface new contours/spots/pads belong to
 const lastElev = { existing: null, proposed: null };
@@ -1852,6 +1853,60 @@ $('btnUpsell').addEventListener('click', () => {
   setMsg('Takeoff layer ($60/mo add-on): turn your measurements into roofing squares, pitch-corrected edges, materials, and a priced, branded bid. Add it from Billing.');
 });
 
+/* ---- bid letterhead / branding (company info persists across all projects
+ *      in localStorage; per-bid project/prepared/date persist with the project) ---- */
+let brandingCache = null;
+function loadBranding() {
+  if (brandingCache) return brandingCache;
+  try { brandingCache = JSON.parse(localStorage.getItem('planroom-branding') || '{}') || {}; }
+  catch (_) { brandingCache = {}; }
+  return brandingCache;
+}
+function saveBranding(b) {
+  brandingCache = b;
+  try { localStorage.setItem('planroom-branding', JSON.stringify(b)); }
+  catch (_) { setMsg('Could not save the letterhead — storage is full. Try a smaller logo.'); }
+}
+function renderLetterhead() {
+  const co = loadBranding();
+  const img = $('bidLogoImg');
+  if (co.logo) { img.src = co.logo; img.hidden = false; } else { img.removeAttribute('src'); img.hidden = true; }
+  $('bidLogoRemove').hidden = !co.logo;
+  const name = co.name ? `<div class="bid-co-name">${esc(co.name)}</div>` : '';
+  const details = co.details ? `<div class="bid-co-details">${esc(co.details).replace(/\n/g, '<br>')}</div>` : '';
+  $('bidCompanyRender').innerHTML = name + details;
+  $('bidLetterhead').hidden = !(co.logo || co.name || co.details);
+}
+const fileToDataURL = file => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
+// cap the logo so it prints crisp and doesn't blow the localStorage quota
+function downscaleImage(dataUrl, maxW, maxH) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxW / img.width, maxH / img.height);
+      const w = Math.max(1, Math.round(img.width * scale)), h = Math.max(1, Math.round(img.height * scale));
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      try { resolve(c.toDataURL('image/png')); } catch (_) { resolve(dataUrl); }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+$('bidCompanyName').addEventListener('input', e => { const co = loadBranding(); co.name = e.target.value; saveBranding(co); renderLetterhead(); });
+$('bidCompanyDetails').addEventListener('input', e => { const co = loadBranding(); co.details = e.target.value; saveBranding(co); renderLetterhead(); });
+$('bidLogoFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  try { const scaled = await downscaleImage(await fileToDataURL(f), 440, 128); const co = loadBranding(); co.logo = scaled; saveBranding(co); renderLetterhead(); }
+  catch (_) { setMsg('Could not read that image.'); }
+});
+$('bidLogoRemove').addEventListener('click', () => { const co = loadBranding(); co.logo = ''; saveBranding(co); renderLetterhead(); });
+['bidProject', 'bidPrep', 'bidDate'].forEach(id => $(id).addEventListener('input', () => {
+  state.bidMeta = { project: $('bidProject').value, prep: $('bidPrep').value, date: $('bidDate').value };
+  scheduleSave();
+}));
+
 /* ---- roofing bid ---- */
 function renderRoofBid() {
   const { lines, subtotal, op, total } = roofBidLines();
@@ -1888,6 +1943,14 @@ function openRoofBid() {
     state.trade === 'roofing' ? '🏠 Roofing bid'
     : state.trade === 'dirt' ? '⛰ Earthwork bid'
     : '$ Takeoff bid';
+  const co = loadBranding();
+  $('bidCompanyName').value = co.name || '';
+  $('bidCompanyDetails').value = co.details || '';
+  renderLetterhead();
+  const meta = state.bidMeta || {};
+  $('bidProject').value = meta.project || state.projectName || '';
+  $('bidPrep').value = meta.prep || co.name || '';
+  $('bidDate').value = meta.date || new Date().toLocaleDateString();
   $('bidOP').value = state.roofOP;
   renderRoofBid();
   $('roofBid').classList.remove('hidden');
@@ -1904,7 +1967,14 @@ function printRoofBid() {
 function bidCsv() {
   const { lines, subtotal, op, total } = roofBidLines();
   const qc = s => '"' + String(s == null ? '' : s).replace(/"/g, '""') + '"';
-  const rows = [['Item', 'Qty', 'Unit', 'Unit price', 'Extended'].map(qc).join(',')];
+  const co = loadBranding(), meta = state.bidMeta || {};
+  const rows = [];
+  if (co.name) rows.push(qc(co.name));
+  rows.push([qc('Project'), qc(meta.project || state.projectName || '')].join(','));
+  rows.push([qc('Prepared by'), qc(meta.prep || co.name || '')].join(','));
+  rows.push([qc('Date'), qc(meta.date || new Date().toLocaleDateString())].join(','));
+  rows.push('');
+  rows.push(['Item', 'Qty', 'Unit', 'Unit price', 'Extended'].map(qc).join(','));
   for (const l of lines) rows.push([l.label, fmt(l.qty, l.q || 0), l.unit, l.price, l.ext.toFixed(2)].map(qc).join(','));
   rows.push('');
   rows.push([qc('Subtotal'), '', '', '', qc(subtotal.toFixed(2))].join(','));
@@ -2217,6 +2287,7 @@ function projectData() {
     roofPrices: state.roofPrices, roofOP: state.roofOP,
     earthwork: state.earthwork,
     trade: state.trade,
+    bidMeta: state.bidMeta,
   };
 }
 const defaultEarthwork = () => ({ existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 }, gridFt: 5, shrink: 15, swell: 25, truckCap: 12, result: null });
@@ -2275,6 +2346,7 @@ async function openProject(rec) {
   state.roofOP = (rec.data && rec.data.roofOP != null) ? rec.data.roofOP : 15;
   state.earthwork = (rec.data && rec.data.earthwork) || defaultEarthwork();
   state.trade = (rec.data && rec.data.trade) || '';
+  state.bidMeta = (rec.data && rec.data.bidMeta) || {};
   renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncTradeUI();
   try { localStorage.setItem('planroom-current', rec.id); } catch (_) {}
   updateProjectBtn();
@@ -2307,6 +2379,7 @@ async function newProject(name) {
   state.roofPitch = 6; state.roofWaste = 12; state.roofPrices = {}; state.roofOP = 15;
   state.earthwork = defaultEarthwork();
   state.trade = '';
+  state.bidMeta = {};
   renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncTradeUI();
   try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
   updateProjectBtn();
@@ -2436,6 +2509,7 @@ $('fileImport').addEventListener('change', async e => {
   if (d.roofOP != null) state.roofOP = d.roofOP;
   state.earthwork = d.earthwork || defaultEarthwork();
   state.trade = d.trade || '';
+  state.bidMeta = d.bidMeta || {};
   renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncTradeUI();
   if (d.docB64) {
     const bytes = base64ToBytes(d.docB64);
@@ -2766,6 +2840,7 @@ async function copyCompanyProject(id) {
     if (t.data.roofOP != null) state.roofOP = t.data.roofOP;
     state.earthwork = t.data.earthwork || defaultEarthwork();
     state.trade = t.data.trade || '';
+    state.bidMeta = t.data.bidMeta || {};
     renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncTradeUI();
     try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
     updateProjectBtn();
