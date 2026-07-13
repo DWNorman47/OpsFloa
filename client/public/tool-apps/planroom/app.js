@@ -36,7 +36,7 @@ const state = {
   // takeoff layer: earthwork/cut-fill (sitework pack). existing & proposed are
   // page numbers; align maps proposed-page px -> existing-page px at compute.
   earthwork: { existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 },
-    gridFt: 5, shrink: 15, swell: 25, truckCap: 12, result: null },
+    gridFt: 5, shrink: 15, swell: 25, truckCap: 12, interval: 1, result: null },
   trade: '',        // takeoff trade mode: '' (markup only) | 'roofing' | 'dirt' | 'drywall'
   bidMeta: {},      // per-bid project / prepared-by / date overrides
   // drywall & paint pack settings (project-wide)
@@ -1580,7 +1580,7 @@ function commitDraft() {
     } else if (d.kind === 'contour' || d.kind === 'epad') {
       const surf = extra.surface;
       modals.askNumber(`${d.kind === 'contour' ? 'Contour' : 'Pad'} elevation (ft) — ${surf === 'existing' ? 'existing' : 'proposed'}`,
-        'e.g. 812.5', lastElev[surf] != null ? lastElev[surf] : '', 1)
+        'e.g. 812.5', d.kind === 'contour' ? nextElevDefault(surf) : (lastElev[surf] != null ? lastElev[surf] : ''), 1)
         .then(v => { if (v != null) { const m = state.markups[state.markups.length - 1]; if (m && (m.kind === 'contour' || m.kind === 'epad')) { m.elev = v; lastElev[surf] = v; markupsChanged(); } } });
     }
   };
@@ -2093,6 +2093,7 @@ function renderDirtPanel() {
   rows.push(`<div class="hint" style="margin:6px 0">New contours are <b>${curSurface}</b> (toolbar toggle). Existing draws dashed, proposed solid; type each elevation.</div>`);
 
   rows.push('<div class="roof-sub">Earthwork</div>');
+  rows.push('<div class="dirt-set">Contour interval <input type="number" id="ewInterval" min="0" step="0.5"> ft <span class="hint">— next contour auto-steps by this</span></div>');
   rows.push('<div class="dirt-set">Grid <input type="number" id="ewGrid" min="0.5" step="0.5"> ft · Shrink <input type="number" id="ewShrink" min="0"> % · Swell <input type="number" id="ewSwell" min="0"> % · Truck <input type="number" id="ewTruck" min="1"> CY</div>');
   rows.push('<button class="btn go dirt-btn" data-act="calc">∑ Calculate Cut / Fill</button>');
   if (E.result) {
@@ -2120,7 +2121,9 @@ function renderDirtPanel() {
   const body = $('dirtBody');
   body.innerHTML = rows.join('');
   $('ewGrid').value = E.gridFt; $('ewShrink').value = E.shrink; $('ewSwell').value = E.swell; $('ewTruck').value = E.truckCap;
+  $('ewInterval').value = E.interval != null ? E.interval : 1;
   const numHandler = (el, key, min, def) => el.addEventListener('change', e => { E[key] = Math.max(min, parseFloat(e.target.value) || def); e.target.value = E[key]; scheduleSave(); });
+  numHandler($('ewInterval'), 'interval', 0, 1);
   numHandler($('ewGrid'), 'gridFt', 0.5, 5);
   numHandler($('ewShrink'), 'shrink', 0, 15);
   numHandler($('ewSwell'), 'swell', 0, 25);
@@ -2367,7 +2370,9 @@ function projectData() {
   };
 }
 const defaultDrywall = () => ({ wallHeight: 9, sheetSF: 32, waste: 10, coverage: 375, coats: 2, finish: 'L4' });
-const defaultEarthwork = () => ({ existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 }, gridFt: 5, shrink: 15, swell: 25, truckCap: 12, result: null });
+const defaultEarthwork = () => ({ existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 }, gridFt: 5, shrink: 15, swell: 25, truckCap: 12, interval: 1, result: null });
+// next contour's default elevation = last + interval (auto-steps up a slope)
+const nextElevDefault = surf => { const iv = Number(state.earthwork.interval) || 0; return lastElev[surf] != null ? lastElev[surf] + iv : ''; };
 
 let saveTimer = null;
 function scheduleSave(now = false) {
@@ -3519,7 +3524,7 @@ async function wandTrace(w) {
   state.markups.push(m);
   pushUndo(prev);
   markupsChanged();
-  modals.askNumber(`Contour elevation (ft) — ${surf}`, 'prefilled from the nearest printed number if one was found', labelVal != null ? labelVal : (lastElev[surf] != null ? lastElev[surf] : ''), 1)
+  modals.askNumber(`Contour elevation (ft) — ${surf}`, 'prefilled from the nearest printed number if one was found', labelVal != null ? labelVal : nextElevDefault(surf), 1)
     .then(v => { if (v != null) { m.elev = v; lastElev[surf] = v; markupsChanged(); } });
 }
 
