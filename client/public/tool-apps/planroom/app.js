@@ -1176,6 +1176,8 @@ function setTool(t) {
     setMsg(`Trace a ${EDGE_LABEL[($('edgeType') || {}).value] || 'roof'} edge; hip/valley/rake are pitch-corrected off the ${state.roofPitch}/12 main pitch.`);
   } else if (t === 'wand') {
     setMsg(`Auto-trace (${curSurface}) — click right on a contour; it picks up the whole line and prefills the elevation. Vector PDFs only.`);
+  } else if (t === 'autoarea') {
+    setMsg('Auto-area — click a closed outline (building, paving edge) on a vector PDF to pick it up as an area takeoff.');
   } else if (t === 'contour') {
     setMsg(`Trace a ${curSurface} contour; finish with Enter/double-click, then type its elevation.`);
   } else if (t === 'espot') {
@@ -1261,6 +1263,7 @@ els.cv.addEventListener('pointerdown', e => {
 
   // auto-trace wand: one click snaps to the nearest vector line as a contour
   if (tool === 'wand') { wandTrace(w); return; }
+  if (tool === 'autoarea') { wandArea(w); return; } // closed boundary → area takeoff
 
   // two-sheet alignment: landmark on existing, its match on proposed
   if (tool === 'align') {
@@ -1795,7 +1798,7 @@ function applyTakeoffGate() {
 /* trade mode: which takeoff trade's tools/panels/bid are in play */
 const TRADE_TOOLS = {
   roofing: ['plane', 'redge', 'ritem'],
-  dirt: ['wand', 'contour', 'espot', 'epad', 'ebound', 'align', 'qarea', 'qline', 'qcount'],
+  dirt: ['wand', 'contour', 'espot', 'epad', 'ebound', 'align', 'autoarea', 'qarea', 'qline', 'qcount'],
 };
 // general redlining + generic measure tools that collapse while a trade is active
 const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
@@ -3320,13 +3323,14 @@ function stitchChain(seed, polys) {
   grow(false);
   return chain;
 }
-async function wandTrace(w) {
-  if (!state.doc || state.doc.kind !== 'pdf') { setMsg('Auto-trace needs a vector PDF — use ⛰ Contour to trace by hand.'); return; }
+// shared: read the page vectors and pick the stitched run nearest the click
+async function wandPickPath(w) {
+  if (!state.doc || state.doc.kind !== 'pdf') { setMsg('Auto-trace needs a vector PDF — trace by hand instead.'); return null; }
   setMsg('Reading the page’s vector line work…');
   let idx;
   try { idx = await buildPathIndex(state.page); }
-  catch (_) { setMsg('Could not read vector paths from this page (scanned PDF?) — use ⛰ Contour instead.'); return; }
-  if (!idx.polys.length) { setMsg('No vector line work on this page (scanned PDF?) — use ⛰ Contour instead.'); return; }
+  catch (_) { setMsg('Could not read vector paths from this page (scanned PDF?).'); return null; }
+  if (!idx.polys.length) { setMsg('No vector line work on this page (scanned PDF?).'); return null; }
   const thresh = Math.max(3, 8 / vp.view.zoom);
   let best = null, bestD = thresh;
   for (const poly of idx.polys) {
@@ -3334,8 +3338,14 @@ async function wandTrace(w) {
     const d = distToPolyline(w.x, w.y, poly.pts);
     if (d < bestD) { bestD = d; best = poly; }
   }
-  if (!best) { setMsg('No line under the click — zoom in and click right on the contour.'); return; }
-  const pts = simplifyPts(stitchChain(best, idx.polys), 2.5);
+  if (!best) { setMsg('No line under the click — zoom in and click right on the line.'); return null; }
+  return { pts: simplifyPts(stitchChain(best, idx.polys), 2.5), idx };
+}
+
+async function wandTrace(w) {
+  const r = await wandPickPath(w);
+  if (!r) return;
+  const { pts, idx } = r;
   if (pts.length < 2) { setMsg('That line is a single point — use ◎ Spot for spot grades.'); return; }
   let labelVal = null, labelD = 90;
   for (const L of idx.labels) { const d = dist(w.x, w.y, L.x, L.y); if (d < labelD) { labelD = d; labelVal = L.val; } }
@@ -3347,6 +3357,26 @@ async function wandTrace(w) {
   markupsChanged();
   modals.askNumber(`Contour elevation (ft) — ${surf}`, 'prefilled from the nearest printed number if one was found', labelVal != null ? labelVal : (lastElev[surf] != null ? lastElev[surf] : ''), 1)
     .then(v => { if (v != null) { m.elev = v; lastElev[surf] = v; markupsChanged(); } });
+}
+
+// auto-area: click a CLOSED vector boundary → area takeoff (NEW — sitework's
+// autoAreaClick was only a hatch-detect stub, so this has no counterpart there)
+async function wandArea(w) {
+  if (!pageFtPerPx()) { setMsg('Calibrate this sheet (📏) first — area needs a scale.'); return; }
+  const r = await wandPickPath(w);
+  if (!r) return;
+  const pts = r.pts;
+  const closed = pts.length >= 4 && dist(pts[0].x, pts[0].y, pts[pts.length - 1].x, pts[pts.length - 1].y) < 12;
+  if (!closed) { setMsg('That isn’t a closed shape — click the outline of a closed area (a building / paving edge), or use ▨ Area to trace it.'); return; }
+  const s = pageFtPerPx();
+  askAreaConfig(polygonAreaFt2(pts, s), polygonPerimeterFt(pts, s), lastAreaCfg).then(cfg => {
+    if (!cfg) { vp.requestDraw(); return; }
+    const prev = snapshot();
+    lastAreaCfg = cfg;
+    state.markups.push({ id: randId(), page: state.page, kind: 'qarea', pts, cfg, created: Date.now() });
+    pushUndo(prev);
+    markupsChanged();
+  });
 }
 
 /* ===================== Live sessions (SSE + REST ops) =====================
