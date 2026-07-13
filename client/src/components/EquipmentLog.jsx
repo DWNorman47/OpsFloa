@@ -6,6 +6,7 @@ import { labelSg } from '../companyLabels';
 import { useOffline } from '../contexts/OfflineContext';
 import { useT } from '../hooks/useT';
 import { SkeletonList, SkeletonBlock } from './Skeleton';
+import AssetLabelModal from './inventory/AssetLabelModal';
 
 function today() { return new Date().toLocaleDateString('en-CA'); }
 
@@ -167,6 +168,7 @@ function EquipmentCard({ item, projects, isAdmin, onEdit, onDeleted, onHoursLogg
   const locale = langToLocale(user?.language);
   const [expanded, setExpanded] = useState(false);
   const [loggingHours, setLoggingHours] = useState(false);
+  const [showLabel, setShowLabel] = useState(false);
   const [hours, setHours] = useState([]);
   const [loadingHours, setLoadingHours] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -262,6 +264,7 @@ function EquipmentCard({ item, projects, isAdmin, onEdit, onDeleted, onHoursLogg
           ) : (
             <div style={styles.bodyActions}>
               <button style={styles.logBtn} onClick={() => setLoggingHours(true)}>+ {t.logHoursBtn}</button>
+              <button style={styles.editBtn} onClick={() => setShowLabel(true)}>🏷 {t.eqLabelBtn}</button>
               {isAdmin && (
                 <>
                   <button style={styles.editBtn} onClick={() => onEdit(item)}>{t.edit}</button>
@@ -278,6 +281,7 @@ function EquipmentCard({ item, projects, isAdmin, onEdit, onDeleted, onHoursLogg
               )}
             </div>
           )}
+          {showLabel && <AssetLabelModal asset={item} onClose={() => setShowLabel(false)} />}
 
           {!loggingHours && (
             <div style={styles.hoursHistory}>

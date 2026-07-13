@@ -1,26 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { buildSetupSettings } from './SetupQuestionnaire';
 
-const labels = {
-  work: 'Job',
-  client: 'Client',
-  worker: 'Employee',
-  field: 'Service',
-};
-
 describe('buildSetupSettings', () => {
   it('keeps a people-only workspace focused', () => {
     const settings = buildSetupSettings({
       work: ['people'],
       team: ['time'],
       manager: ['essentials'],
-      labels,
     });
 
     expect(settings).toMatchObject({
       module_timeclock: true,
       module_team: true,
-      module_projects: false,
+      module_work: false,
       module_field: false,
       module_inventory: false,
       module_analytics: false,
@@ -30,10 +22,6 @@ describe('buildSetupSettings', () => {
       feature_chat: false,
       feature_geolocation: false,
       feature_overtime: false,
-      label_work: 'Job',
-      label_client: 'Client',
-      label_worker: 'Employee',
-      label_field: 'Service',
     });
   });
 
@@ -42,13 +30,12 @@ describe('buildSetupSettings', () => {
       work: ['field', 'inventory', 'people'],
       team: ['time', 'scheduling', 'expenses', 'location'],
       manager: ['performance', 'financial', 'overtime', 'media'],
-      labels,
     });
 
     expect(settings).toMatchObject({
       module_timeclock: true,
       module_team: true,
-      module_projects: true,
+      module_work: true,
       module_field: true,
       module_inventory: true,
       module_analytics: true,
@@ -68,10 +55,9 @@ describe('buildSetupSettings', () => {
       work: ['people'],
       team: ['admin_only'],
       manager: ['financial'],
-      labels,
     });
 
-    expect(settings.module_projects).toBe(true);
+    expect(settings.module_work).toBe(true);
     expect(settings.module_financial_reports).toBe(true);
     expect(settings.feature_project_integration).toBe(false);
   });
@@ -81,7 +67,6 @@ describe('buildSetupSettings', () => {
       work: ['people'],
       team: ['admin_only'],
       manager: ['essentials'],
-      labels,
     });
 
     expect(settings.module_team).toBe(true);
@@ -93,7 +78,6 @@ describe('buildSetupSettings', () => {
       work: ['projects', 'people'],
       team: ['time'],
       manager: ['media'],
-      labels,
     });
 
     expect(settings.module_field).toBe(false);

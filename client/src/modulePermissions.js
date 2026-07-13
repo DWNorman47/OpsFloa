@@ -40,7 +40,11 @@ export const MODULE_PERMISSIONS = {
     'manage_incidents', 'manage_inspections',
   ],
   inventory: [
-    'view_inventory', 'manage_inventory',
+    // Equipment tracking lives in the Inventory module now, so manage_equipment
+    // unlocks it too (a role with only that perm can still reach the Equipment
+    // group). It's intentionally left in `field` as well to avoid regressing an
+    // existing role that relied on it for Field visibility.
+    'view_inventory', 'manage_inventory', 'manage_equipment',
   ],
   // Directory (module id stays 'team') now hosts Team, Subs, Customers, and
   // Roles. Unlock it for anyone who can manage ANY of those, so a customer/sub
@@ -111,7 +115,7 @@ const LANDING_PRIORITY = [
   { id: 'timeclock',      path: '/timeclock' },      // participating + Workforce group (everyone starts here)
   // 'workforce' is the Workforce group of Time Clock now (/workforce redirects),
   // so it's not a separate landing target. Its perm set still gates that group.
-  { id: 'projects',       path: '/projects', adminOnly: true },
+  { id: 'projects',       path: '/work', adminOnly: true },
   // 'sales' and 'subs' are intentionally not landing targets: they now live as
   // tabs inside other modules (Projects / Directory) and their old routes
   // redirect there, so landing on them directly could bounce and loop.

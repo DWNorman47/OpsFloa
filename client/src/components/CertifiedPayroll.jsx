@@ -29,7 +29,7 @@ export default function CertifiedPayroll({ projects, settings, requireSignature 
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
-  const workLabel = settings?.label_work || 'Project';
+  const workLabel = settings?.label_work || 'Work';
   const workerLabel = settings?.label_worker || 'Team Member';
   const [showSignModal, setShowSignModal] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);

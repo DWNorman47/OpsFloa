@@ -74,7 +74,7 @@ const s = StyleSheet.create({
 export default function BillPDF({ data, companyInfo = {}, overtimeEnabled = true, showProject = true, showRateType = true, t = {}, language, settings = null }) {
   const locale = langToLocale(language);
   const { worker, entries, reimbursements = [], summary, period } = data;
-  const workLabel = settings?.label_work || t.pdfProjectCol || t.project || 'Project';
+  const workLabel = settings?.label_work || 'Work';
 
   const periodStr = period.from || period.to
     ? `${period.from ? fmtDateShort(period.from, locale) : (t.pdfBeginning || 'Beginning')} – ${period.to ? fmtDateShort(period.to, locale) : (t.pdfPresent || 'Present')}`

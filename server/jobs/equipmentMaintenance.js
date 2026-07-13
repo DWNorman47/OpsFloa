@@ -40,7 +40,7 @@ async function checkEquipmentMaintenance() {
       await sendPushToCompanyAdmins(companyId, {
         title: alertTitle,
         body: alertBody,
-        url: '/field#equip',
+        url: '/inventory#eq-assets',
       });
 
       const adminRows = await pool.query(
@@ -48,7 +48,7 @@ async function checkEquipmentMaintenance() {
         [companyId]
       );
       for (const a of adminRows.rows) {
-        createInboxItem(a.id, companyId, 'equipment_maintenance', alertTitle, alertBody, '/field#equip');
+        createInboxItem(a.id, companyId, 'equipment_maintenance', alertTitle, alertBody, '/inventory#eq-assets');
       }
     }
 }

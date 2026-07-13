@@ -71,9 +71,8 @@ export const APPS = [
     name: 'Tools',
     bg: '#0f766e',
     icon: (
-      <svg viewBox="0 0 20 20" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
-        <path d="M12.6 3.2a4 4 0 0 0 4.2 4.2L8 16.2a2.1 2.1 0 0 1-3-3L13.8 4.4" />
-        <circle cx="5.8" cy="14.2" r="0.7" fill="#fff" stroke="none" />
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
       </svg>
     ),
     path: '/tools',
@@ -107,7 +106,7 @@ export const APPS = [
   },
   {
     id: 'projects',
-    name: 'Projects',
+    name: 'Work',
     bg: '#7c3aed',
     adminOnly: true,
     icon: (
@@ -118,7 +117,7 @@ export const APPS = [
         <rect x="11.5" y="11.5" width="6" height="6" rx="1" />
       </svg>
     ),
-    path: '/projects',
+    path: '/work',
   },
   {
     id: 'financial_reports',
@@ -189,11 +188,8 @@ export default function AppSwitcher({ currentApp = 'timeclock', userRole, featur
   };
   const labelFor = app => {
     if (app.id === 'field') return feat.label_field || t.appField;
-    // Projects module = the collection, so show the plural of the (singular) work label.
-    if (app.id === 'projects') {
-      if (feat.label_work) { const w = feat.label_work; return w.endsWith('s') ? w : `${w}s`; }
-      return t.appProjects;
-    }
+    // The former "Projects" module is now fixed as "Work" (t.appProjects), holding
+    // the Projects + Work Orders tabs — no longer renamed via a company label.
     return t[APP_NAME_KEYS[app.id]] || app.name;
   };
   const visibleApps = settingsPending ? [current] : APPS.filter(a => {
@@ -203,7 +199,7 @@ export default function AppSwitcher({ currentApp = 'timeclock', userRole, featur
     // Company-level feature toggles (admin choice). These hide modules
     // entirely regardless of user perms — the company doesn't use the feature.
     if (a.id === 'field' && feat.module_field === false) return false;
-    if (a.id === 'projects' && feat.module_projects === false) return false;
+    if (a.id === 'projects' && feat.module_work === false) return false;
     if (a.id === 'inventory' && feat.module_inventory === false) return false;
     if (a.id === 'tools' && feat.module_tools === false) return false;
     if (a.id === 'team' && feat.module_team === false) return false;

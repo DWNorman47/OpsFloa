@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDF Toolkit</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="styles.css">
+<script>
+(() => {
+  try {
+    if (!localStorage.getItem('tc_token') && !sessionStorage.getItem('tc_token')) {
+      window.location.replace('/login');
+    }
+  } catch (_) {
+    window.location.replace('/login');
+  }
+})();
+</script>
+<script src="pdf.min.js"></script>
+<script src="pdf-lib.min.js"></script>
+</head>
+<body>
+<header id="topbar">
+  <div class="brand">PDF&nbsp;Toolkit</div>
+  <button id="btnOpen" class="btn primary">Open PDFs…</button>
+  <input type="file" id="fileInput" accept="application/pdf" multiple hidden>
+  <span class="spacer"></span>
+  <span id="pageInfo" class="info"></span>
+  <button id="btnSelectAll" class="btn" disabled>Select all</button>
+  <button id="btnExtract" class="btn" disabled title="Save only the checked pages as a new PDF">Extract selected…</button>
+  <button id="btnDownload" class="btn go" disabled title="Save every page, in the current order and rotation, as one PDF">Download PDF</button>
+  <button id="btnClear" class="btn" disabled>Clear</button>
+  <button id="btnHelp" class="btn" title="How to use">?</button>
+</header>
+
+<main id="main">
+  <div id="dropZone" class="drop">
+    <div class="drop-inner">
+      <div class="drop-emoji">🗂️</div>
+      <div class="drop-title">Drop PDF files here</div>
+      <div class="drop-sub">or click <b>Open PDFs…</b> — combine several files, reorder, rotate, and delete pages, or extract a few, then download. Everything stays on your device; nothing is uploaded.</div>
+    </div>
+  </div>
+  <div id="grid" class="grid hidden"></div>
+</main>
+
+<div id="busy" class="busy hidden"><div class="busy-box"><div class="spinner"></div><span id="busyMsg">Working…</span></div></div>
+<div id="toast" class="toast hidden"></div>
+
+<div id="help" class="modal hidden">
+  <div class="modal-box">
+    <h3>PDF Toolkit</h3>
+    <ul class="help-list">
+      <li><b>Open / drop</b> one or more PDFs — their pages all appear together as thumbnails.</li>
+      <li><b>Combine (merge):</b> open several files, then <b>Download PDF</b> saves all pages as one document.</li>
+      <li><b>Reorder:</b> drag a page thumbnail to a new spot.</li>
+      <li><b>Rotate:</b> the ⟳ button on a page turns it 90°.</li>
+      <li><b>Delete:</b> the ✕ button removes a page from the set (your original file is untouched).</li>
+      <li><b>Extract / split:</b> tick the pages you want, then <b>Extract selected…</b> saves just those as a new PDF.</li>
+      <li>It all runs in your browser — no file ever leaves your device.</li>
+    </ul>
+    <div class="modal-actions"><button id="helpClose" class="btn primary">Got it</button></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

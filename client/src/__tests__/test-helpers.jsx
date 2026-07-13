@@ -104,7 +104,7 @@ export const OFFLINE_VALUE = {
 export const DEFAULT_SETTINGS = {
   module_timeclock: true,
   module_field: true,
-  module_projects: true,
+  module_work: true,
   module_inventory: false,
   module_tools: true,
   module_analytics: true,

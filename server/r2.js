@@ -1,4 +1,4 @@
-const { S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand, GetObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { randomUUID } = require('crypto');
 
@@ -81,4 +81,38 @@ async function deleteByUrl(publicUrl) {
   await client.send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: key }));
 }
 
-module.exports = { uploadBase64, getPresignedUploadUrl, getObjectMetadataByUrl, deleteByUrl };
+// Read an object's bytes back from R2 by its public URL (server-side, so a
+// browser on another origin doesn't need R2 CORS — the API proxies it).
+async function getBytesByUrl(publicUrl) {
+  const key = keyFromPublicUrl(publicUrl);
+  if (!key) return null;
+  const out = await client.send(new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: key }));
+  const chunks = [];
+  for await (const chunk of out.Body) chunks.push(chunk);
+  return Buffer.concat(chunks);
+}
+
+// List objects under a prefix (paginated). Returns [{ key, lastModified, size }].
+async function listByPrefix(prefix) {
+  const out = [];
+  let ContinuationToken;
+  do {
+    const r = await client.send(new ListObjectsV2Command({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Prefix: prefix,
+      ContinuationToken,
+    }));
+    for (const o of r.Contents || []) out.push({ key: o.Key, lastModified: o.LastModified, size: o.Size });
+    ContinuationToken = r.IsTruncated ? r.NextContinuationToken : undefined;
+  } while (ContinuationToken);
+  return out;
+}
+
+async function deleteByKey(key) {
+  await client.send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: key }));
+}
+
+module.exports = {
+  uploadBase64, getPresignedUploadUrl, getObjectMetadataByUrl, deleteByUrl, getBytesByUrl,
+  keyFromPublicUrl, listByPrefix, deleteByKey,
+};

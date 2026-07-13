@@ -68,7 +68,7 @@ const styles = StyleSheet.create({
 export default function CertifiedPayrollPDF({ report, settings }) {
   if (!report) return null;
   const { contractor, project, week_start, week_end, workers = [], signature } = report;
-  const workLabel = settings?.label_work || 'Project';
+  const workLabel = settings?.label_work || 'Work';
   const workerLabel = settings?.label_worker || 'Team Member';
 
   return (

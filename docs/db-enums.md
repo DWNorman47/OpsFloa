@@ -66,6 +66,8 @@ For each column we record:
 | Table.column | Allowed values | DB enforcement | App validation | Stakes |
 |---|---|---|---|---|
 | `projects.status` | `planning`, `in_progress`, `on_hold`, `completed` | **enforced** (CHECK in `0101`) | `server/constants/projectEnums.js`, `server/routes/admin.js:1679` | Project tracking dashboards. Caused the `0249ac4` bug — column is nullable, so the CHECK is `IS NULL OR ...`. |
+| `work_orders.status` | `open`, `scheduled`, `in_progress`, `completed`, `canceled` | **enforced** (CHECK in `0127`) | `server/constants/workOrderEnums.js`, `server/routes/workOrders.js` | Work-order (dispatch/service) lifecycle. NOT NULL DEFAULT `open`, so plain `IN (...)` CHECK. Setting `completed` stamps `completed_at`. |
+| `work_orders.priority` | `low`, `normal`, `high`, `urgent` | **enforced** (CHECK in `0127`) | `server/constants/workOrderEnums.js`, `server/routes/workOrders.js` | Work-order dispatch priority. NOT NULL DEFAULT `normal`. |
 | `daily_reports.status` | `draft`, `submitted`, `reviewed` | **enforced** (CHECK in `0100`, was wrong in `0071`) | `server/routes/dailyReports.js:199` | Daily-report workflow + edit lock. `0071` had `approved` instead; `0100` corrects to `reviewed`. |
 | `field_reports.status` | `draft`, `submitted`, `reviewed` | **enforced** (CHECK in `0100`, was missing `draft` in `0071`) | `server/routes/fieldReports.js:30` | Field-report workflow + edit lock. |
 | `incident_reports.status` | `open`, `under_review`, `closed` | **enforced** (CHECK in `0100`, was missing `under_review` in `0071`) | `server/routes/incidents.js:8` | Incident workflow. |
@@ -108,6 +110,12 @@ For each column we record:
 | `estimate_audit.actor_kind` | `admin`, `client`, `system` | **enforced** (CHECK in `0104`) | `server/constants/projectMoneyEnums.js`, `server/routes/estimates.js` | Distinguishes a public token-keyed action (no `actor_user_id`) from a logged-in admin or a background job. |
 | `recordings.status` | `uploaded`, `processing`, `completed`, `failed` | **enforced** (CHECK in `0123`) | `server/constants/recordingEnums.js`, `server/routes/recordings.js`, `server/jobs/transcriptionPoller.js` | Voice-transcription lifecycle (Tools module). `uploaded` → `processing` on successful AssemblyAI submit; the poller flips to `completed`/`failed` and is guarded by `AND status = 'processing'` so a stale poll can't clobber a retry. `failed` is retryable. |
 | `recordings.media_kind` | `audio`, `video` | **enforced** (CHECK in `0124`) | `server/constants/recordingEnums.js`, `server/routes/recordings.js`, `server/jobs/transcriptionPoller.js` | Derived from the upload content type at claim time. `video` files are staged in R2 only for AssemblyAI to fetch — the poller deletes them and refunds storage after the transcript is stored, stamping `media_deleted_at` (the claim guard against double delete/refund vs the DELETE route). `audio` files are kept for in-transcript playback. |
+| `equipment_items.status` | `available`, `checked_out`, `maintenance`, `retired` | **enforced** (CHECK in `0125`) | `server/constants/equipmentEnums.js`, `server/routes/equipment.js` | Asset custody state (Inventory → Equipment). A cache of the open-checkout truth: `available ⇄ checked_out` is flipped inside the same TX as the `equipment_checkouts` insert/return (the partial unique index `idx_equipment_checkout_open` is the real backstop). `retired` is a terminal state distinct from the `active=false` soft-delete. |
+| `equipment_items.kind` | `heavy`, `vehicle`, `trailer`, `power_tool`, `hand_tool`, `safety`, `other` (nullable) | **enforced** (CHECK in `0125`) | `server/constants/equipmentEnums.js`, `server/routes/equipment.js` | Category for filtering/labeling an asset. Nullable, so CHECK is `IS NULL OR ...`. |
+| `equipment_items.rental_rate_unit` | `day`, `week`, `month` (nullable) | **enforced** (CHECK in `0125`) | `server/constants/equipmentEnums.js`, `server/routes/equipment.js` | The billing period for a rental's `rental_rate`. Only meaningful when `is_rental=true`. |
+| `equipment_maintenance_logs.kind` | `service`, `repair`, `inspection`, `other` | **enforced** (CHECK in `0125`) | `server/constants/equipmentEnums.js`, `server/routes/equipment.js` | Type of a discrete maintenance record (distinct from the `equipment_hours` usage log). |
+| `live_sessions.tool` | `planroom`, `sitework`, `roofing` | **enforced** (CHECK in `0134`) | `server/constants/liveSessionEnums.js`, `server/routes/liveSessions.js` | Which plan tool hosts an ephemeral live-collab session. The session layer syncs opaque JSON, so Plan Room ships first; `sitework`/`roofing` are reserved for the "go live on a takeoff" flip. |
+| `live_sessions.status` | `active`, `ended` | **enforced** (CHECK in `0134`) | `server/constants/liveSessionEnums.js`, `server/routes/liveSessions.js` | Session lifecycle. `active` until the host ends it or the idle sweeper closes it; `ended` rows keep their final `state` snapshot for the host to reclaim. |
 
 ## Cosmetic / UI columns
 
@@ -193,7 +201,7 @@ that had the previous default.
 ### Module visibility flags (`module_*`, boolean, in `FEATURE_KEYS`)
 
 Admin-controlled module toggles: `module_timeclock`, `module_team` (Directory),
-`module_projects`, `module_field`, `module_inventory`, `module_analytics`
+`module_work` (Work — Projects/Work Orders; renamed from `module_projects` in `0128`), `module_field`, `module_inventory`, `module_analytics`
 (Reports → Performance tab), and `module_financial_reports` (Reports → P&L +
 WIP tabs). The app switcher (`client/src/components/AppSwitcher.jsx`) hides an
 app when its `module_*` flag is `false`.

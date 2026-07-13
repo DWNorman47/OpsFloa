@@ -28,7 +28,7 @@ const helmet = require('helmet');
 const pinoHttp = require('pino-http');
 const crypto = require('crypto');
 const v8 = require('v8');
-const { requireAuth, requirePlan, requireProAddon } = require('./middleware/auth');
+const { requireAuth, requirePlan, requireProAddon, requirePlanToolsAddon } = require('./middleware/auth');
 const pool = require('./db');
 const logger = require('./logger');
 
@@ -143,6 +143,9 @@ app.use('/api/auth', express.json({ limit: '256kb' }));
 app.use('/api/client-errors', express.json({ limit: '256kb' }));
 app.use('/api/sendgrid-events', express.json({ limit: '1mb' }));
 app.use('/api/public', express.json({ limit: '1mb' }));
+// Company-shared takeoffs embed the whole plan PDF as base64 (≈+33%), so they
+// need a bigger body than the 20 MB app-wide cap. Runs first, so it wins.
+app.use('/api/takeoffs', express.json({ limit: '64mb' }));
 app.use(express.json({ limit: '20mb' }));
 
 // Health probes must be registered before any catch-all authenticated /api
@@ -195,7 +198,17 @@ app.use('/api', demoContextMiddleware);
 refreshDemoCompanies(); // prime the demo-company cache at startup
 
 app.use('/api/auth', require('./routes/auth'));
-app.use('/api/projects', require('./routes/projects'));
+const projectsRouter = require('./routes/projects');
+app.use('/api/work', projectsRouter);        // renamed home for the core Work/Projects resource
+app.use('/api/projects', projectsRouter);     // legacy alias (project sub-resources still live at /api/projects/:id/...)
+app.use('/api/work-orders', requireAuth, require('./routes/workOrders'));
+app.use('/api/takeoffs', requireAuth, requirePlanToolsAddon, require('./routes/takeoffs')); // company-shared plan-tools library (sitework takeoff + Plan Room)
+// Live collaboration sessions. The SSE stream authenticates via a query token
+// (EventSource can't send a Bearer header) so it's registered BEFORE the gated
+// router — otherwise requireAuth would reject it for the missing header.
+const liveSessions = require('./routes/liveSessions');
+app.get('/api/live/:id/stream', liveSessions.streamHandler);
+app.use('/api/live', requireAuth, requirePlanToolsAddon, liveSessions.router);
 app.use('/api/time-entries', require('./routes/timeEntries'));
 app.use('/api/admin', require('./routes/admin'));
 // QBO OAuth callback must be public (Intuit redirects here without a JWT)
@@ -221,6 +234,7 @@ app.use('/api/safety-talks', requireAuth, requirePlan('business'), require('./ro
 app.use('/api/safety-checklists', requireAuth, requirePlan('business'), require('./routes/safetyChecklists'));
 // Voice transcription tool (Tools module) — upload audio, diarized transcript
 app.use('/api/recordings', requireAuth, requirePlan('business'), require('./routes/recordings'));
+app.use('/api/office', requireAuth, requirePlan('business'), require('./routes/officeTools'));
 app.use('/api/inbox', require('./routes/inbox'));
 app.use('/api/time-off', requireAuth, require('./routes/timeOff'));
 app.use('/api/reimbursements', requireAuth, require('./routes/reimbursements'));
@@ -387,12 +401,18 @@ app.listen(PORT, () => {
   startExpireTrialsJob();
   const { startEquipmentMaintenanceJob } = require('./jobs/equipmentMaintenance');
   startEquipmentMaintenanceJob();
+  const { startRentalReturnRemindersJob } = require('./jobs/rentalReturnReminders');
+  startRentalReturnRemindersJob();
   const { startMediaRetentionJob } = require('./jobs/mediaRetention');
   startMediaRetentionJob();
   const { startScheduledReportsJob } = require('./jobs/scheduledReports');
   startScheduledReportsJob();
   const { startTranscriptionPollerJob } = require('./jobs/transcriptionPoller'); // AssemblyAI result sweep
   startTranscriptionPollerJob();
+  const { startTakeoffOrphanSweepJob } = require('./jobs/takeoffOrphanSweep'); // presigned-upload leak cleanup (opt-in via R2_ORPHAN_SWEEP=1)
+  startTakeoffOrphanSweepJob();
+  const { startLiveSessionSweepJob } = require('./jobs/liveSessionSweep'); // end abandoned live sessions
+  startLiveSessionSweepJob();
   const { startCron } = require('./cron');
   startCron();
 });

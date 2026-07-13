@@ -10,7 +10,7 @@ import { reportClientError } from '../errorReporter';
 import RetryBanner from '../components/RetryBanner';
 import ErrorBoundary from '../components/ErrorBoundary';
 
-const FIELD_TABS = ['notes', 'daily', 'punchlist', 'safety', 'checklists', 'incident', 'gallery', 'subs', 'equip', 'rfi', 'inspect'];
+const FIELD_TABS = ['notes', 'daily', 'punchlist', 'safety', 'checklists', 'incident', 'gallery', 'subs', 'rfi', 'inspect'];
 const FIELD_HASH_ALIASES = {
   today: 'notes',
   'work-notes': 'notes',
@@ -21,7 +21,6 @@ const FIELD_HASH_ALIASES = {
   incidents: 'incident',
   media: 'gallery',
   photos: 'gallery',
-  equipment: 'equip',
   'sub-reports': 'subs',
   rfis: 'rfi',
   inspections: 'inspect',
@@ -29,7 +28,7 @@ const FIELD_HASH_ALIASES = {
   talks: 'safety',
   checklist: 'checklists',
 };
-const FIELD_GROUP_DEFAULTS = { daily: 'notes', issues: 'punchlist', safety: 'safety', resources: 'equip' };
+const FIELD_GROUP_DEFAULTS = { daily: 'notes', issues: 'punchlist', safety: 'safety', resources: 'subs' };
 
 function resolveFieldTab(rawHash) {
   const hash = String(rawHash || '').replace('#', '').trim().toLowerCase();
@@ -46,7 +45,6 @@ const SafetyChecklists    = lazy(() => import('../components/SafetyChecklists'))
 const IncidentReports     = lazy(() => import('../components/IncidentReports'));
 const PhotoGallery        = lazy(() => import('../components/PhotoGallery'));
 const SubReports          = lazy(() => import('../components/SubReports'));
-const EquipmentLog        = lazy(() => import('../components/EquipmentLog'));
 const RFITracking         = lazy(() => import('../components/RFITracking'));
 const InspectionChecklists = lazy(() => import('../components/InspectionChecklists'));
 
@@ -91,12 +89,24 @@ export default function FieldPage() {
     return () => window.removeEventListener('hashchange', syncFromHash);
   }, []);
 
+  // The Equipment Log moved to Inventory → Equipment. Bounce any old #equip
+  // deep links / bookmarks / push URLs so they don't dead-end on Notes.
+  useEffect(() => {
+    const bounce = () => {
+      if (['equip', 'equipment'].includes(window.location.hash.replace('#', '').toLowerCase()))
+        window.location.replace('/inventory#eq-assets');
+    };
+    bounce();
+    window.addEventListener('hashchange', bounce);
+    return () => window.removeEventListener('hashchange', bounce);
+  }, []);
+
   const init = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
       const [p, s] = await Promise.all([
-        getOrFetch('projects', () => api.get('/projects').then(r => r.data)),
+        getOrFetch('projects', () => api.get('/work').then(r => r.data)),
         getOrFetch('settings', () => api.get('/settings').then(r => r.data)),
       ]);
       setFeatures(s);
@@ -144,11 +154,10 @@ export default function FieldPage() {
       id: 'resources',
       label: isAdmin ? t.fldGroupResources : t.fldGroupMore,
       items: [
-        { id: 'equip', label: t.fieldTabEquip },
         ...(isAdmin ? [{ id: 'subs', label: t.fieldTabSubs }] : []),
       ],
     },
-  ];
+  ].filter(group => group.items.length > 0);
   const activeGroup = fieldGroups.find(group => group.items.some(item => item.id === fieldTab)) || fieldGroups[0];
   const activeFieldTab = activeGroup.items.some(item => item.id === fieldTab) ? fieldTab : activeGroup.items[0].id;
   const switchGroup = groupId => {
@@ -211,8 +220,6 @@ export default function FieldPage() {
               <PhotoGallery projects={projects} settings={features} />
             ) : activeFieldTab === 'subs' ? (
               <SubReports projects={projects} settings={features} />
-            ) : activeFieldTab === 'equip' ? (
-              <EquipmentLog projects={projects} settings={features} />
             ) : activeFieldTab === 'rfi' ? (
               <RFITracking projects={projects} settings={features} />
             ) : activeFieldTab === 'inspect' ? (

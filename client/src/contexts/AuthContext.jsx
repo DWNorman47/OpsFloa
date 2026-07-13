@@ -71,6 +71,23 @@ export function AuthProvider({ children }) {
       .finally(() => setLoading(false));
   }, []);
 
+  // Expose entitlement flags to the static tool-apps — they read localStorage,
+  // not React context. Kept in sync as the user loads / add-ons toggle (via
+  // updateUser). The takeoff layer inside Plan Room gates on tc_addons.
+  useEffect(() => {
+    try {
+      if (user) {
+        localStorage.setItem('tc_addons', JSON.stringify({
+          takeoff: !!user.addon_takeoff,
+          planroom: !!user.addon_planroom,
+          status: user.subscription_status || null,
+        }));
+      } else {
+        localStorage.removeItem('tc_addons');
+      }
+    } catch { /* storage blocked */ }
+  }, [user]);
+
   const login = async (username, password, company_name) => {
     await clearCache();
     clearOfflineQueue();

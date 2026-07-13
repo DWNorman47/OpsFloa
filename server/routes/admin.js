@@ -74,7 +74,7 @@ router.get('/kpis', requireAdmin, async (req, res) => {
   try {
     const settings = await getSettings(companyId);
     const weekStartDateStr = weekRange(settings.week_start, 0).from; // ISO start-of-current-week
-    const [pending, clockedIn, weekHours] = await Promise.all([
+    const [pending, clockedIn, weekHours, openWorkOrders] = await Promise.all([
       pool.query(`SELECT COUNT(*) FROM time_entries WHERE company_id = $1 AND status = 'pending'`, [companyId]),
       pool.query(`SELECT COUNT(*) FROM active_clock WHERE company_id = $1`, [companyId]),
       pool.query(
@@ -93,6 +93,7 @@ router.get('/kpis', requireAdmin, async (req, res) => {
            AND status != 'rejected'`,
         [companyId, weekStartDateStr]
       ),
+      pool.query(`SELECT COUNT(*) FROM work_orders WHERE company_id = $1 AND active = true AND status NOT IN ('completed','canceled')`, [companyId]),
     ]);
 
     // Workers who've exceeded the OT threshold this week
@@ -148,6 +149,7 @@ router.get('/kpis', requireAdmin, async (req, res) => {
       clocked_in_count: parseInt(clockedIn.rows[0].count),
       company_hours_this_week: +parseFloat(weekHours.rows[0].hours).toFixed(1),
       overtime_workers_this_week: otWorkers,
+      open_work_orders: parseInt(openWorkOrders.rows[0].count),
     });
   } catch (err) {
     logger.error({ err }, 'catch block error');
@@ -175,7 +177,7 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
   // couldn't update them. Added during 2026-04-30 audit pass.
   const adminNumericKeys = ['shift_reminder_hour', 'pto_annual_days', 'cycle_count_audit_pct', 'cycle_count_reconcile_threshold'];
   const numericKeys = [...rateKeys, ...notifKeys, ...adminNumericKeys, 'overtime_threshold', 'media_retention_days', 'qbo_bill_terms_days', 'week_start'];
-  const stringKeys = ['overtime_rule', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_work', 'label_client', 'label_worker', 'label_field', 'hours_rules'];
+  const stringKeys = ['overtime_rule', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules'];
   const allowed = [...numericKeys, ...stringKeys, ...FEATURE_KEYS];
   const companyId = req.user.company_id;
   try {

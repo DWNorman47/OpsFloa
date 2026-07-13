@@ -32,23 +32,13 @@ const MANAGER_OPTIONS = [
   { id: 'essentials',  titleKey: 'sqMgrEssentialsTitle',  descKey: 'sqMgrEssentialsDesc',  icon: 'spark', exclusive: true },
 ];
 
-// Suggestion chips become the company-wide stored label value, and English
-// business nuances (Customer vs Client) don't map 1:1 to Spanish, so the chip
-// values stay as-is; admins can type any term in the Custom field.
-const LABEL_CHOICES = {
-  work: ['Project', 'Job', 'Work Order', 'Route'],
-  client: ['Customer', 'Client', 'Account', 'Member'],
-  worker: ['Team Member', 'Employee', 'Staff Member', 'Technician'],
-  field: ['Field Work', 'Daily Work', 'Operations', 'Service'],
-};
-
-const STEPS = ['welcome', 'work', 'team', 'manager', 'language', 'review'];
+const STEPS = ['welcome', 'work', 'team', 'manager', 'review'];
 
 // Maps a setting flag to its translation key for the review summary.
 const SUMMARY_LABEL_KEYS = {
   module_timeclock: 'sqSumTimeclock',
   module_team: 'sqSumTeam',
-  module_projects: 'sqSumProjects',
+  module_work: 'sqSumProjects',
   module_field: 'sqSumField',
   module_inventory: 'sqSumInventory',
   module_analytics: 'sqSumAnalytics',
@@ -64,24 +54,16 @@ const SUMMARY_LABEL_KEYS = {
 };
 
 function selectedFromSettings(settings = {}) {
-  const labels = {
-    work: settings.label_work || 'Project',
-    client: settings.label_client || 'Customer',
-    worker: settings.label_worker || 'Team Member',
-    field: settings.label_field || 'Field Work',
-  };
-
   if (!settings.setup_questionnaire_completed_at) {
     return {
       work: ['projects', 'people'],
       team: ['time'],
       manager: ['essentials'],
-      labels,
     };
   }
 
   const work = [];
-  if (settings.module_projects !== false) work.push('projects');
+  if (settings.module_work !== false) work.push('projects');
   if (settings.module_field === true) work.push('field');
   if (settings.module_inventory === true) work.push('inventory');
   if (settings.module_team !== false) work.push('people');
@@ -107,7 +89,6 @@ function selectedFromSettings(settings = {}) {
     work,
     team,
     manager,
-    labels,
   };
 }
 
@@ -120,7 +101,7 @@ export function buildSetupSettings(answers) {
   return {
     module_timeclock: team.has('time'),
     module_team: work.has('people'),
-    module_projects: projectsEnabled,
+    module_work: projectsEnabled,
     module_field: work.has('field'),
     module_inventory: work.has('inventory'),
     module_analytics: manager.has('performance'),
@@ -137,10 +118,6 @@ export function buildSetupSettings(answers) {
     feature_overtime: manager.has('overtime'),
     feature_overtime_alerts: manager.has('overtime'),
     feature_prevailing_wage: manager.has('compliance'),
-    label_work: answers.labels.work.trim() || 'Project',
-    label_client: answers.labels.client.trim() || 'Customer',
-    label_worker: answers.labels.worker.trim() || 'Team Member',
-    label_field: answers.labels.field.trim() || 'Field Work',
   };
 }
 
@@ -270,17 +247,12 @@ export default function SetupQuestionnaire({ currentSettings, onComplete, onDism
     });
   };
 
-  const setLabel = (key, value) => {
-    setAnswers(prev => ({ ...prev, labels: { ...prev.labels, [key]: value } }));
-  };
-
   const canContinue = (
     isWelcome ||
     isReview ||
     (stepId === 'work' && answers.work.length > 0) ||
     (stepId === 'team' && answers.team.length > 0) ||
-    (stepId === 'manager' && answers.manager.length > 0) ||
-    (stepId === 'language' && Object.values(answers.labels).every(value => value.trim()))
+    (stepId === 'manager' && answers.manager.length > 0)
   );
 
   const dismiss = async () => {
@@ -415,50 +387,6 @@ export default function SetupQuestionnaire({ currentSettings, onComplete, onDism
             </section>
           )}
 
-          {stepId === 'language' && (
-            <section className="setup-wizard-step">
-              <div className="setup-wizard-step-heading">
-                <span className="setup-wizard-kicker">{t.sqLangKicker}</span>
-                <h2 id="setup-wizard-title">{t.sqLangTitle}</h2>
-                <p>{t.sqLangLead}</p>
-              </div>
-              <div className="setup-wizard-labels">
-                {[
-                  ['work', t.sqLabelPromptWork],
-                  ['client', t.sqLabelPromptClient],
-                  ['worker', t.sqLabelPromptWorker],
-                  ['field', t.sqLabelPromptField],
-                ].map(([key, prompt]) => (
-                  <div key={key} className="setup-wizard-label-row">
-                    <div className="setup-wizard-label-prompt">{prompt}</div>
-                    <div className="setup-wizard-label-controls">
-                      <div className="setup-wizard-label-choices">
-                        {LABEL_CHOICES[key].map(label => (
-                          <button
-                            key={label}
-                            type="button"
-                            className={answers.labels[key] === label ? 'is-selected' : ''}
-                            onClick={() => setLabel(key, label)}
-                          >
-                            {label}
-                          </button>
-                        ))}
-                      </div>
-                      <label>
-                        <span>{t.sqCustomLabel}</span>
-                        <input
-                          value={answers.labels[key]}
-                          maxLength={32}
-                          onChange={event => setLabel(key, event.target.value)}
-                        />
-                      </label>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
           {isReview && (
             <section className="setup-wizard-review">
               <div className="setup-wizard-review-copy">
@@ -469,12 +397,6 @@ export default function SetupQuestionnaire({ currentSettings, onComplete, onDism
                 </p>
                 <SummaryList title={t.sqReadyForTeam} items={visibleSummary} />
                 <SummaryList title={t.sqHiddenForNow} items={hiddenSummary} muted />
-                <div className="setup-wizard-language-summary">
-                  <span>{settings.label_work}</span>
-                  <span>{settings.label_client}</span>
-                  <span>{settings.label_worker}</span>
-                  <span>{settings.label_field}</span>
-                </div>
                 {error && <p className="setup-wizard-error" role="alert">{error}</p>}
               </div>
               <div className="setup-wizard-review-image" role="img" aria-label={t.sqReviewImageAlt}>
