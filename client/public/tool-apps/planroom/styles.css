@@ -38,8 +38,9 @@ body { display: flex; flex-direction: column; }
 .spacer { flex: 1; }
 .tb-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
 .page-info { color: var(--muted); font-size: 13px; min-width: 64px; text-align: center; }
-/* keep the ◀ 5/9 ▶ page nav together — wraps to the next line as one unit */
-.tb-nav { display: inline-flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
+/* keep related controls together — the ◀ 5/9 ▶ page nav and the earthwork
+   tool set each wrap to the next line as one unit rather than splitting */
+.tb-nav, .tb-sub { display: inline-flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
 
 .btn {
   background: var(--panel2); color: var(--text);

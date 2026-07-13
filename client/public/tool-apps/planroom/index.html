@@ -76,15 +76,17 @@
       <option value="skylight">Skylight</option>
       <option value="chimney">Chimney</option>
     </select>
-    <button class="tool tb-takeoff tr-dirt" data-tool="contour" title="Contour — trace a contour line, then type its elevation. Tagged existing or proposed per the surface toggle →">⛰</button>
-    <button class="tool tb-takeoff tr-dirt" data-tool="espot" title="Spot elevation — click a single grade point (FG spot, high/low) and type its elevation">◎</button>
-    <button class="tool tb-takeoff tr-dirt" data-tool="epad" title="Building pad — trace a polygon held flat at one elevation (FF/FP pads)">◫</button>
-    <button class="tool tb-takeoff tr-dirt" data-tool="ebound" title="Earthwork boundary — the limits of disturbance that get gridded for cut/fill (one per project)">⬚</button>
-    <button class="tool tb-takeoff tr-dirt" data-tool="align" title="Align the two sheets — click a landmark on the Existing sheet, then the same spot on the Proposed sheet. One pair fixes the shift; a second far-away pair also fixes rotation & scale.">⌖</button>
-    <select id="surfaceSel" class="mini-sel tb-takeoff tr-dirt" title="Which surface new contours/pads belong to">
-      <option value="existing">Existing</option>
-      <option value="proposed">Proposed</option>
-    </select>
+    <div class="tb-sub tb-takeoff tr-dirt">
+      <button class="tool" data-tool="contour" title="Contour — trace a contour line, then type its elevation. Tagged existing or proposed per the surface toggle →">⛰</button>
+      <button class="tool" data-tool="espot" title="Spot elevation — click a single grade point (FG spot, high/low) and type its elevation">◎</button>
+      <button class="tool" data-tool="epad" title="Building pad — trace a polygon held flat at one elevation (FF/FP pads)">◫</button>
+      <button class="tool" data-tool="ebound" title="Earthwork boundary — the limits of disturbance that get gridded for cut/fill (one per project)">⬚</button>
+      <button class="tool" data-tool="align" title="Align the two sheets — click a landmark on the Existing sheet, then the same spot on the Proposed sheet. One pair fixes the shift; a second far-away pair also fixes rotation & scale.">⌖</button>
+      <select id="surfaceSel" class="mini-sel" title="Which surface new contours/pads belong to">
+        <option value="existing">Existing</option>
+        <option value="proposed">Proposed</option>
+      </select>
+    </div>
     <input type="color" id="mkColor" class="dirt-hide" value="#e05555" title="Markup color (applies to the selected markup too)">
     <select id="mkWidth" class="dirt-hide" title="Line weight / text size (applies to the selected markup too)">
       <option value="S">Thin</option>
