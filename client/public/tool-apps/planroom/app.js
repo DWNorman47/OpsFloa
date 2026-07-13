@@ -60,7 +60,15 @@ const modals = createModals({
 
 const vp = createViewport({ canvas: els.cv });
 
-function setMsg(t) { els.hud.textContent = t || ''; }
+// status toast: shows the message, then fades itself out (and click dismisses)
+let hudTimer = null;
+function setMsg(t) {
+  clearTimeout(hudTimer);
+  els.hud.textContent = t || '';
+  els.hud.classList.remove('gone');
+  if (t) hudTimer = setTimeout(() => els.hud.classList.add('gone'), 6000);
+}
+els.hud.addEventListener('click', () => { clearTimeout(hudTimer); els.hud.classList.add('gone'); });
 
 /* ============================== Markup model ==============================
  * kind        pts                                other

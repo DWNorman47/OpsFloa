@@ -152,9 +152,11 @@ body.nothumbs #thumbRail { display: none; }
   position: absolute; top: 10px; left: 10px;
   background: rgba(20,23,27,.85); border: 1px solid var(--border); border-radius: 6px;
   padding: 6px 10px; font-size: 12.5px; color: var(--text);
-  max-width: 420px; pointer-events: none;
+  max-width: 420px; cursor: pointer; transition: opacity .45s ease;
 }
+#hud::after { content: " ✕"; color: var(--muted); }
 #hud:empty { display: none; }
+#hud.gone { opacity: 0; pointer-events: none; } /* faded out — click or 6s */
 
 #dropHint {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
