@@ -1,6 +1,8 @@
 # OpsFloa — Drywall & Paint trade pack (inside the Plan Room takeoff layer)
 
-Status: **scoped, not started** (2026-07-11). A trade pack under the master plan
+Status: **D1 built** (2026-07-12) — 🧱 trade mode, wall-run + ceiling tools,
+height/sides attributes, materials (board/mud/tape/paint) into the bid, drywall
+panel. **Next (D2): openings (Count → deduct SF) + trim (Line → LF).** A trade pack under the master plan
 (`docs/plans/plan-viewer-markup.md`) — no own SKU, no own tool-app; included in
 the $60 takeoff layer. Ships **M-later, after the roofing pack (M7)** proves the
 integrated takeoff UX. This doc owns the drywall/paint **domain spec** only.
