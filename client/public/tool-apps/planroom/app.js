@@ -1672,8 +1672,11 @@ const TRADE_TOOLS = {
   roofing: ['plane', 'redge', 'ritem'],
   dirt: ['contour', 'espot', 'epad', 'ebound', 'align'],
 };
+// general redlining + generic measure tools that collapse while a trade is active
+const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
 function setTrade(t, { save = true } = {}) {
   state.trade = t || '';
+  document.body.classList.toggle('trade-active', !!state.trade);
   document.body.classList.toggle('trade-roofing', state.trade === 'roofing');
   document.body.classList.toggle('trade-dirt', state.trade === 'dirt');
   if ($('tradeSel')) $('tradeSel').value = state.trade;
@@ -1681,6 +1684,7 @@ function setTrade(t, { save = true } = {}) {
   for (const [tr, tools] of Object.entries(TRADE_TOOLS)) {
     if (state.trade !== tr && tools.includes(tool)) setTool('pan');
   }
+  if (state.trade && FOCUS_HIDDEN_TOOLS.includes(tool)) setTool('pan'); // annotation/measure collapse in trade focus
   if (state.trade !== 'roofing') $('roofPanel').classList.add('hidden');
   if (state.trade !== 'dirt') $('dirtPanel').classList.add('hidden');
   if (save) { // hints only on a user switch — not when a load restores the mode
