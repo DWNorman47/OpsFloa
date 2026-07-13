@@ -2418,8 +2418,20 @@ function exportCsv() {
   setMsg('Markup summary CSV downloaded.');
 }
 
-$('btnFlat').addEventListener('click', exportFlatPdf);
-$('btnCsv').addEventListener('click', exportCsv);
+// Print / export dropdown
+const printMenu = $('printMenu');
+$('btnPrint').addEventListener('click', e => { e.stopPropagation(); printMenu.classList.toggle('hidden'); });
+printMenu.addEventListener('click', e => {
+  const item = e.target.closest('[data-act]');
+  if (!item) return;
+  printMenu.classList.add('hidden');
+  if (item.dataset.act === 'pdf') exportFlatPdf();
+  else if (item.dataset.act === 'csv') exportCsv();
+});
+document.addEventListener('click', e => {
+  if (!printMenu.classList.contains('hidden') && !e.target.closest('.menu-wrap')) printMenu.classList.add('hidden');
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') printMenu.classList.add('hidden'); });
 
 /* ===================== Company library (server-backed) =====================
  * Shares this project — plans, markups, measurements — to the company library

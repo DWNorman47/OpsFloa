@@ -52,6 +52,21 @@ body { display: flex; flex-direction: column; }
   #topbar .btn-label { display: none; }
 }
 
+/* dropdown action menu (Print / export) */
+.menu-wrap { position: relative; display: inline-flex; }
+.menu {
+  position: absolute; top: 100%; right: 0; margin-top: 5px;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.45); padding: 5px; z-index: 30; min-width: 250px;
+}
+.menu button {
+  display: block; width: 100%; text-align: left; padding: 8px 10px;
+  background: none; border: none; color: var(--text); border-radius: 6px;
+  cursor: pointer; font-size: 13px;
+}
+.menu button:hover { background: var(--accent); color: #08243f; }
+.menu .menu-hint { color: var(--muted); font-size: 11px; padding: 0 10px 7px; }
+
 /* ---------- markup tools ---------- */
 .tool {
   background: var(--panel2); color: var(--text);

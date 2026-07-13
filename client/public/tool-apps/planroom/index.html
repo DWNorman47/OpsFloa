@@ -103,8 +103,15 @@
     <button id="btnDirt" class="btn tb-takeoff tr-dirt" title="Earthwork / cut-fill takeoff — designate sheets, trace contours, compute volumes">⛰<span class="btn-label"> Dirt</span></button>
     <button id="btnBid" class="btn tb-takeoff" title="Takeoff bid — roofing materials & labor and earthwork volumes, editable prices, print / CSV">$<span class="btn-label"> Bid</span></button>
     <button id="btnUpsell" class="btn tb-upsell" title="Turn your measurements into a priced takeoff & bid — Takeoff layer add-on">🔒<span class="btn-label"> Takeoff</span></button>
-    <button id="btnFlat" class="btn" title="Download a PDF with all markups burned in — share it or print it from any PDF viewer">⤓<span class="btn-label"> PDF</span></button>
-    <button id="btnCsv" class="btn" title="Download the markup summary as CSV — sheet, type, text, measured value">⤓<span class="btn-label"> CSV</span></button>
+    <div class="menu-wrap">
+      <button id="btnPrint" class="btn" title="Print / export this project" aria-haspopup="true">🖨<span class="btn-label"> Print</span> ▾</button>
+      <div id="printMenu" class="menu hidden" role="menu">
+        <button data-act="pdf" role="menuitem">📄 PDF — markups burned in</button>
+        <div class="menu-hint">A flat PDF to print or email from any viewer.</div>
+        <button data-act="csv" role="menuitem">📊 CSV — markup &amp; measurement list</button>
+        <div class="menu-hint">Sheet, type, note, and measured value per markup.</div>
+      </div>
+    </div>
     <button id="btnPrevPage" class="btn" title="Previous sheet" disabled>◀</button>
     <span id="pageInfo" class="page-info">– / –</span>
     <button id="btnNextPage" class="btn" title="Next sheet" disabled>▶</button>
