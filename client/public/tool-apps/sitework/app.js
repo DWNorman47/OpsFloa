@@ -4346,23 +4346,33 @@ $('fileImport').addEventListener('change', async e => {
   if (!f) return;
   try {
     const d = JSON.parse(await f.text());
-    const preLoad = takeSnap();
-    if (applyProjectData(d)) {
-      pushSnap(preLoad);
-      if (d.pdf && d.pdf.b64) {
-        // Self-contained export: open the embedded plan PDF.
-        await loadPdfFromBytes(base64ToBytes(d.pdf.b64).buffer, d.pdf.name || d.pdfName || 'plan.pdf');
-      } else if (state.pdf) {
-        els.pageExisting.value = state.sheets.existing.pageNum;
-        els.pageProposed.value = state.sheets.proposed.pageNum;
-        await renderSheet('existing');
-        await renderSheet('proposed');
-      }
-      saveLocal();
-      setMsg(`Takeoff loaded${d.pdfName ? ` (made from ${d.pdfName})` : ''}.` +
-             (state.pdf ? '' : ' Now open the matching PDF.'));
-      draw();
-    } else setMsg('That file is not a takeoff export.');
+    if (!d || d.app !== 'excavation-bid-calculator') { setMsg('That file is not a takeoff export.'); e.target.value = ''; return; }
+    // A loaded file lands in its OWN project slot — never overwrite the one
+    // that's open. Flush the open project first, then give the import a new id
+    // (mirrors the company-copy path). Without this, saveLocal() below wrote the
+    // import over the currently-open project's record.
+    await syncProjectNow();
+    if (!applyProjectData(d)) { setMsg('That file is not a takeoff export.'); e.target.value = ''; return; }
+    state.projectId = randId();
+    state.projectName = String(d.name || d.projectName || f.name.replace(/\.[^.]+$/, '') || 'Imported takeoff').trim();
+    state.serverId = null; state.serverVersion = null;
+    undoStack.length = 0; redoStack.length = 0; // fresh project → fresh history
+    els.btnUndo.disabled = true; els.btnRedo.disabled = true;
+    try { localStorage.setItem('ebc-current', state.projectId); } catch (_) {}
+    updateProjectBtn();
+    if (d.pdf && d.pdf.b64) {
+      // Self-contained export: open the embedded plan PDF.
+      await loadPdfFromBytes(base64ToBytes(d.pdf.b64).buffer, d.pdf.name || d.pdfName || 'plan.pdf');
+    } else if (state.pdf) {
+      els.pageExisting.value = state.sheets.existing.pageNum;
+      els.pageProposed.value = state.sheets.proposed.pageNum;
+      await renderSheet('existing');
+      await renderSheet('proposed');
+    }
+    saveLocal();
+    setMsg(`Takeoff loaded as a new project${d.pdfName ? ` (made from ${d.pdfName})` : ''}.` +
+           (state.pdf ? '' : ' Now open the matching PDF.'));
+    draw();
   } catch (err) { setMsg('Could not read that file: ' + err.message); }
   e.target.value = '';
 });
