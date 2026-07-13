@@ -53,6 +53,11 @@ body { display: flex; flex-direction: column; }
 @media (max-width: 760px) {
   #topbar .btn-label { display: none; }
 }
+/* very narrow: drop the project name, leaving just the 📁 icon */
+@media (max-width: 460px) {
+  #projName { display: none; }
+  #btnProjects { padding-right: 10px; }
+}
 
 /* dropdown action menu (Print / export) */
 .menu-wrap { position: relative; display: inline-flex; }
