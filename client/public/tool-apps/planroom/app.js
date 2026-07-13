@@ -2552,8 +2552,10 @@ $('fileImport').addEventListener('change', async e => {
   // but reject files exported by a different tool
   const ok = d && (d.app === 'plan-room' || (!d.app && (Array.isArray(d.markups) || d.docB64)));
   if (!ok) { setMsg('That is not a Plan Room file.'); return; }
-  // Always land in a NEW project — never overwrite the one that's open.
-  await newProject(d.name || file.name.replace(/\.planroom\.json$|\.json$/i, ''));
+  // Always land in a NEW project — never overwrite the one that's open. Suffix
+  // the name so an imported copy is obviously distinct from its source.
+  const baseName = d.name || file.name.replace(/\.planroom\.json$|\.json$/i, '');
+  await newProject(/\(imported\)\s*$/.test(baseName) ? baseName : `${baseName} (imported)`);
   state.markups = Array.isArray(d.markups) ? d.markups : [];
   state.scales = d.scales || {};
   if (d.roofPitch != null) state.roofPitch = d.roofPitch;
@@ -2570,7 +2572,9 @@ $('fileImport').addEventListener('change', async e => {
     await openFromBytes(bytes.buffer, d.docName || 'plans.pdf', d.docType);
     if (d.page) await setPage(d.page);
   }
-  scheduleSave(true);
+  updateProjectBtn();
+  await saveProjectNow();
+  setMsg(`Loaded as a new project “${state.projectName}”. Your previous project is still in 📁 Projects.`);
 });
 
 /* ============================== Export (flatten + CSV) ============================== */
