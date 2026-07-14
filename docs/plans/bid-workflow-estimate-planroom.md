@@ -94,8 +94,11 @@ db-enums.md change. (No CHECK constraints needed.)
   "Send pricing to estimate" action — they only make sense with Plan Room.
 
 ## Milestones (each to `dev`, push after each)
-- **M1 — deadline:** `bid_due_at` + `bid_reminder_sent_at` migration; estimate
-  form field; list badge + sort/"Bidding" filter; reminder cron + push + inbox.
+- **M1 — deadline: DONE (f49f373 + 524ac95).** Migration 0135 (`bid_due_at` +
+  `bid_reminder_sent_at`); estimate form field + list "due soon/overdue" chip;
+  hourly reminder cron (push + inbox), claim-then-send, re-armed on due-date
+  change. (Sort/"Bidding" filter not yet — list badge covers the visibility for
+  now.) **Needs migration 0135 run on the DB.**
 - **M2 — attach plans:** `plan_pdf_url`/`_name`; presigned upload from the
   estimate; show/download the attached PDF.
 - **M3 — launch takeoff:** `/api/estimates/:id/plan-pdf` proxy; the "Take off in
