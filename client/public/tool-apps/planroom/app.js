@@ -1331,8 +1331,9 @@ function setTool(t) {
   // per-tool color memory (highlighter yellow, ink red, user overrides stick)
   if (t !== 'pan' && t !== 'select') els.mkColor.value = toolColors[t] || DEFAULT_COLOR;
   if (t === 'calibrate') {
-    setMsg(pageFtPerPx()
-      ? `Sheet ${state.page} already has a scale — recalibrating replaces it. Click the first point.`
+    const fpp = pageFtPerPx();
+    setMsg(fpp
+      ? `Sheet ${state.page} scale: 1 ft ≈ ${fmt(1 / fpp, 1)} px (${fmt(fpp, 3)} ft/px). Click two points to recalibrate, or pick another tool / Esc to keep it.`
       : 'Click two points a known distance apart (a dimension line, a scale bar).');
   } else if (NEEDS_SCALE.includes(t) && !pageFtPerPx()) {
     setMsg('This sheet has no scale yet — calibrate first (📏).');
