@@ -235,6 +235,18 @@ body.nothumbs #thumbRail { display: none; }
 /* inline clickable action inside the panel (e.g. activate alignment) */
 .dirt-link { color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .dirt-link:hover { color: var(--text); }
+/* contour list (dirt panel) — the traced lines/spots/pads for the focused surface */
+.dirt-crow { display: flex; align-items: center; gap: 8px; padding: 2px 2px 6px; }
+.dirt-crow .hint { flex: 1 1 auto; }
+.ctr-row { display: flex; align-items: center; gap: 7px; padding: 4px 5px; border-radius: 5px; cursor: pointer; font-size: 12.5px; }
+.ctr-row:hover { background: var(--panel2); }
+.ctr-row.sel { background: rgba(77,163,255,.16); outline: 1px solid var(--accent); }
+.ctr-sw { width: 13px; height: 13px; border-radius: 3px; flex: 0 0 auto; border: 1px solid rgba(0,0,0,.35); }
+.ctr-lbl { flex: 1 1 auto; font-variant-numeric: tabular-nums; }
+.ctr-btn { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; line-height: 1; padding: 2px 4px; border-radius: 4px; }
+.ctr-btn:hover { color: var(--text); background: var(--border); }
+.ctr-clear { flex: 0 0 auto; background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 5px; font-size: 11px; padding: 2px 8px; cursor: pointer; }
+.ctr-clear:hover { color: var(--warn); border-color: var(--warn); }
 .dirt-row .v { color: var(--accent); font-variant-numeric: tabular-nums; }
 .dirt-set { display: flex; align-items: center; gap: 6px; padding: 6px 2px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
 .dirt-set input { width: 54px; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 3px 5px; }

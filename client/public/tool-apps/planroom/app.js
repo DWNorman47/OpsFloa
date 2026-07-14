@@ -57,10 +57,17 @@ const markupLayer = kind => ANNOT_KINDS.includes(kind) ? 'annot' : MEASURE_KINDS
 const layerVisible = m => layers[markupLayer(m.kind)];
 let curSurface = 'existing';                 // which surface new contours/spots/pads belong to
 let dirtSheetsCollapsed = false;             // dirt panel: Sheets section starts collapsed once the two-sheet setup is done
-// In earthwork mode the Existing/Proposed toggle focuses one surface: contours /
-// pads tagged with the other surface are hidden (and non-clickable). Markups with
-// no surface field, and everything outside dirt mode, are unaffected.
-const surfaceVisible = m => state.trade !== 'dirt' || !m.surface || m.surface === curSurface;
+let dirtContoursCollapsed = false;           // dirt panel: the traced-contours list section
+// Earthwork mode declutters the canvas: only dirt-trade markups draw, and only
+// the focused surface's contours/pads. General redline + other-trade markups are
+// hidden (they reappear when you leave dirt mode). Layer toggles apply on top.
+const DIRT_KINDS = new Set(['contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount']);
+function markupShown(m) {
+  if (!layerVisible(m)) return false;
+  if (state.trade !== 'dirt') return true;
+  if (!DIRT_KINDS.has(m.kind)) return false;
+  return !m.surface || m.surface === curSurface;
+}
 const lastElev = { existing: null, proposed: null };
 
 const store = createStore('planroom');
@@ -780,7 +787,7 @@ function hitMarkup(ctx, w) {
   const tol = Math.max(6 / vp.view.zoom, 3);
   for (let i = state.markups.length - 1; i >= 0; i--) {
     const m = state.markups[i];
-    if (m.page !== state.page || !layerVisible(m) || !surfaceVisible(m)) continue; // hidden layers/surfaces aren't clickable
+    if (m.page !== state.page || !markupShown(m)) continue; // hidden layers/surfaces/kinds aren't clickable
     const t = tol + (m.width || 4) / 2;
     const [p0, p1] = m.pts;
     switch (m.kind) {
@@ -937,7 +944,7 @@ function paint(ctx) {
     } else if (state.doc) ensurePage(other);
   }
   if (heatGrid && state.page === heatGrid.page && layers.takeoff) drawHeat(ctx);
-  for (const m of state.markups) if (m.page === state.page && layerVisible(m) && surfaceVisible(m)) drawMarkup(ctx, m);
+  for (const m of state.markups) if (m.page === state.page && markupShown(m)) drawMarkup(ctx, m);
   if (drag && drag.mode === 'draw' && drag.markup) drawMarkup(ctx, drag.markup);
   drawDraft(ctx);
   drawAlignDraft(ctx);
@@ -2270,11 +2277,30 @@ function renderDirtPanel() {
     rows.push(`<label class="dirt-row" style="cursor:pointer"><span>Ghost the other sheet</span><input type="checkbox" id="ghostChk" ${ghostOn ? 'checked' : ''}></label>`);
   }
 
-  rows.push('<div class="roof-sub">Traced</div>');
-  rows.push(`<div class="dirt-row"><span>Existing contours / pads</span><span class="v">${c.existing}</span></div>`);
-  rows.push(`<div class="dirt-row"><span>Proposed contours / pads</span><span class="v">${c.proposed}</span></div>`);
+  // Contours — the focused surface's traced lines/spots/pads, sitework-style:
+  // sorted by elevation, color swatch, edit ✎ / delete ✕, click to select & jump.
+  const surfLabel = curSurface === 'proposed' ? 'Proposed' : 'Existing';
+  const surfItems = state.markups
+    .filter(m => (m.kind === 'contour' || m.kind === 'espot' || m.kind === 'epad') && (m.surface || 'existing') === curSurface)
+    .sort((a, b) => (b.elev == null ? -1e9 : b.elev) - (a.elev == null ? -1e9 : a.elev));
+  rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-contours"><span>${surfLabel} contours (${surfItems.length})</span><span class="v">${dirtContoursCollapsed ? '▸' : '▾'}</span></div>`);
+  if (!dirtContoursCollapsed) {
+    rows.push(`<div class="dirt-crow"><span class="hint">New traces are <b>${curSurface}</b> · dashed = existing, solid = proposed</span>${surfItems.length ? '<button class="ctr-clear" data-act="clear-surface" title="Delete all traces on this surface">Clear</button>' : ''}</div>`);
+    if (!surfItems.length) {
+      rows.push('<div class="hint" style="margin:2px 0 8px">No traces on this surface yet — trace a contour (⛰), spot (◎), or pad (◫).</div>');
+    } else {
+      for (const m of surfItems) {
+        const typ = m.kind === 'espot' ? 'spot' : m.kind === 'epad' ? 'flat pad' : `${m.pts.length} pts`;
+        rows.push(`<div class="ctr-row${m.id === selectedId ? ' sel' : ''}" data-id="${m.id}">` +
+          `<span class="ctr-sw" style="background:${elevColor(m.elev || 0, m.surface)}"></span>` +
+          `<span class="ctr-lbl">${m.elev != null ? fmt(m.elev, 1) + ' ft' : 'no elev'} · ${typ}</span>` +
+          `<button class="ctr-btn" data-act="edit-elev" title="Edit elevation">✎</button>` +
+          `<button class="ctr-btn" data-act="del-ctr" title="Delete">✕</button>` +
+          `</div>`);
+      }
+    }
+  }
   rows.push(`<div class="dirt-row"><span>Boundary</span><span class="v">${c.boundary ? 'set' : '—'}</span></div>`);
-  rows.push(`<div class="hint" style="margin:6px 0">New contours are <b>${curSurface}</b> (toolbar toggle). Existing draws dashed, proposed solid; type each elevation.</div>`);
 
   rows.push('<div class="roof-sub">Earthwork</div>');
   rows.push('<div class="dirt-set">Contour interval <input type="number" id="ewInterval" min="0" step="0.5"> ft <span class="hint">— next contour auto-steps by this</span></div>');
@@ -2320,9 +2346,66 @@ function renderDirtPanel() {
   if (toggleSheets) toggleSheets.addEventListener('click', () => { dirtSheetsCollapsed = !dirtSheetsCollapsed; renderDirtPanel(); });
   const doAlign = body.querySelector('[data-act="do-align"]');
   if (doAlign) doAlign.addEventListener('click', () => setTool('align'));
+  const toggleContours = body.querySelector('[data-act="toggle-contours"]');
+  if (toggleContours) toggleContours.addEventListener('click', () => { dirtContoursCollapsed = !dirtContoursCollapsed; renderDirtPanel(); });
+  const clearSurf = body.querySelector('[data-act="clear-surface"]');
+  if (clearSurf) clearSurf.addEventListener('click', clearSurfaceContours);
+  body.querySelectorAll('.ctr-row').forEach(row => {
+    row.addEventListener('click', e => {
+      const btn = e.target.closest('button');
+      const id = row.dataset.id;
+      if (btn && btn.dataset.act === 'edit-elev') { editContourElev(id); return; }
+      if (btn && btn.dataset.act === 'del-ctr') { deleteContourById(id); return; }
+      selectContourById(id);
+    });
+  });
   body.querySelector('[data-act="calc"]').addEventListener('click', calculateCutFill);
   const gk = body.querySelector('#ghostChk');
   if (gk) gk.addEventListener('change', e => { ghostOn = e.target.checked; vp.requestDraw(); });
+}
+
+// Contour-list actions (dirt panel) — mirror the sitework tool's list.
+async function selectContourById(id) {
+  const m = state.markups.find(x => x.id === id);
+  if (!m) return;
+  selectedId = id;
+  await setPage(m.page);
+  // center the view on the picked trace (same as the markup-list jump)
+  const bb = markupBBox(vp.ctx, m);
+  const r = els.cv.parentElement.getBoundingClientRect();
+  vp.view.panX = r.width / 2 - ((bb.x0 + bb.x1) / 2) * vp.view.zoom;
+  vp.view.panY = r.height / 2 - ((bb.y0 + bb.y1) / 2) * vp.view.zoom;
+  renderDirtPanel();
+  vp.requestDraw();
+}
+function editContourElev(id) {
+  const m = state.markups.find(x => x.id === id);
+  if (!m) return;
+  modals.askNumber(`Edit elevation (ft) — ${m.surface === 'proposed' ? 'proposed' : 'existing'}`, 'e.g. 812.5',
+    m.elev != null ? m.elev : '', 1)
+    .then(v => { if (v != null) { const prev = snapshot(); m.elev = v; lastElev[m.surface] = v; state.earthwork.result = null; pushUndo(prev); markupsChanged(); } });
+}
+function deleteContourById(id) {
+  if (!state.markups.some(x => x.id === id)) return;
+  const prev = snapshot();
+  state.markups = state.markups.filter(x => x.id !== id);
+  if (selectedId === id) selectedId = null;
+  state.earthwork.result = null;
+  pushUndo(prev);
+  markupsChanged();
+}
+function clearSurfaceContours() {
+  const ids = new Set(state.markups
+    .filter(m => (m.kind === 'contour' || m.kind === 'espot' || m.kind === 'epad') && (m.surface || 'existing') === curSurface)
+    .map(m => m.id));
+  if (!ids.size) return;
+  if (!window.confirm(`Delete all ${ids.size} traced ${curSurface} line${ids.size === 1 ? '' : 's'} on this surface? This can be undone.`)) return;
+  const prev = snapshot();
+  state.markups = state.markups.filter(m => !ids.has(m.id));
+  if (selectedId && ids.has(selectedId)) selectedId = null;
+  state.earthwork.result = null;
+  pushUndo(prev);
+  markupsChanged();
 }
 
 function syncDirtInputs() { renderDirtPanel(); }
