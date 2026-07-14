@@ -27,6 +27,7 @@ const state = {
   page: 1,
   markups: [],      // markup objects; geometry in world/base px (see MK kinds)
   scales: {},       // pageNum -> ftPerPx (per-sheet calibration; measures recompute live)
+  scaleBars: {},    // pageNum -> { a:{x,y}, b:{x,y}, feet } — the editable on-canvas calibration bar (source of ftPerPx)
   serverId: null,     // takeoff_projects id when linked to a company-shared copy
   serverVersion: null, // its optimistic-concurrency version at open/last save
   roofPitch: 6,     // takeoff layer: main roof pitch (rise/12) for edge factors
@@ -274,6 +275,62 @@ function roofingTotals() {
 /* ---- per-sheet scale + measured values (recomputed live, never stored) ---- */
 
 const pageFtPerPx = (p = state.page) => state.scales[p] || 0;
+
+/* ---- editable on-canvas scale bar (per sheet). The bar's geometry + real-world
+   feet are the source of truth; state.scales[page] (ftPerPx) is kept in sync so
+   every measurement keeps reading it unchanged. ---- */
+function applyScaleBar(page) {
+  const bar = state.scaleBars[page];
+  if (!bar) return;
+  const px = Math.hypot(bar.b.x - bar.a.x, bar.b.y - bar.a.y);
+  if (bar.feet > 0 && px > 0.5) state.scales[page] = bar.feet / px;
+}
+function clearScale(page) {
+  delete state.scaleBars[page];
+  delete state.scales[page];
+  scheduleSave(); markupsChanged();
+  setMsg(`Scale cleared for sheet ${page} — recalibrate with 📏 (click two points).`);
+}
+function scaleBarHandle(bar, w) {
+  const h = 9 / vp.view.zoom;
+  if (Math.abs(w.x - bar.a.x) <= h && Math.abs(w.y - bar.a.y) <= h) return 'a';
+  if (Math.abs(w.x - bar.b.x) <= h && Math.abs(w.y - bar.b.y) <= h) return 'b';
+  return null;
+}
+const niceRound = n => { if (!(n > 0)) return 1; const p = Math.pow(10, Math.floor(Math.log10(n))); const f = n / p; return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * p; };
+// Rebuild an editable bar for a sheet that has a scale but no bar (calibrated
+// before bars existed) — a horizontal bar at view center, round-foot label, exact scale.
+function synthScaleBar(page) {
+  const fpp = state.scales[page];
+  if (!fpp) return;
+  const r = els.cv.parentElement.getBoundingClientRect();
+  const cx = (r.width / 2 - vp.view.panX) / vp.view.zoom, cy = (r.height / 2 - vp.view.panY) / vp.view.zoom;
+  const feet = niceRound((r.width * 0.4 / vp.view.zoom) * fpp);
+  const lenPx = feet / fpp;
+  state.scaleBars[page] = { a: { x: cx - lenPx / 2, y: cy }, b: { x: cx + lenPx / 2, y: cy }, feet };
+}
+function drawScaleBar(ctx) {
+  if (tool !== 'calibrate') return;
+  const bar = state.scaleBars[state.page];
+  if (!bar) return;
+  const { a, b, feet } = bar, z = vp.view.zoom;
+  ctx.save();
+  ctx.strokeStyle = '#e0a03f'; ctx.lineWidth = 2.5 / z;
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy) || 1, nx = -dy / L, ny = dx / L, tk = 8 / z;
+  for (const p of [a, b]) { ctx.beginPath(); ctx.moveTo(p.x - nx * tk, p.y - ny * tk); ctx.lineTo(p.x + nx * tk, p.y + ny * tk); ctx.stroke(); }
+  const hh = 5 / z;
+  ctx.fillStyle = '#fff'; ctx.lineWidth = 1.5 / z;
+  for (const p of [a, b]) { ctx.fillRect(p.x - hh, p.y - hh, hh * 2, hh * 2); ctx.strokeRect(p.x - hh, p.y - hh, hh * 2, hh * 2); }
+  const base = pageBase.get(state.page);
+  const fs = Math.max(11, Math.min(28, (base ? base.width : 2800) / 120));
+  ctx.font = `700 ${fs}px "Segoe UI", system-ui, sans-serif`;
+  ctx.textBaseline = 'bottom'; ctx.textAlign = 'center';
+  const txt = `${fmt(feet, feet < 10 ? 1 : 0)} ft`, mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2 - 7 / z;
+  ctx.lineWidth = fs / 4.5; ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.strokeText(txt, mx, my);
+  ctx.fillStyle = '#e0a03f'; ctx.fillText(txt, mx, my);
+  ctx.restore();
+}
 
 function measureValue(m) {
   const s = state.scales[m.page] || 0;
@@ -968,6 +1025,7 @@ function paint(ctx) {
   }
   if (drag && drag.mode === 'draw' && drag.markup) drawMarkup(ctx, drag.markup);
   drawDraft(ctx);
+  drawScaleBar(ctx);
   drawAlignDraft(ctx);
   const sel = selMarkup();
   if (sel && sel.page === state.page) drawSelection(ctx, sel);
@@ -1296,9 +1354,10 @@ async function applySheetPlan(order) {
     order.forEach((oldP, i) => { map[oldP] = i + 1; });
     state.markups = state.markups.filter(m => map[m.page] != null); // drop removed sheets
     for (const m of state.markups) m.page = map[m.page];
-    const ns = {};
+    const ns = {}, nbars = {};
     for (const [p, v] of Object.entries(state.scales)) if (map[p] != null) ns[map[p]] = v;
-    state.scales = ns;
+    for (const [p, v] of Object.entries(state.scaleBars)) if (map[p] != null) nbars[map[p]] = v;
+    state.scales = ns; state.scaleBars = nbars;
     const E = state.earthwork;
     if (E.existingPage != null) E.existingPage = map[E.existingPage] || null;
     if (E.proposedPage != null) E.proposedPage = map[E.proposedPage] || null;
@@ -1331,10 +1390,11 @@ function setTool(t) {
   // per-tool color memory (highlighter yellow, ink red, user overrides stick)
   if (t !== 'pan' && t !== 'select') els.mkColor.value = toolColors[t] || DEFAULT_COLOR;
   if (t === 'calibrate') {
-    const fpp = pageFtPerPx();
-    setMsg(fpp
-      ? `Sheet ${state.page} scale: 1 ft ≈ ${fmt(1 / fpp, 1)} px (${fmt(fpp, 3)} ft/px). Click two points to recalibrate, or pick another tool / Esc to keep it.`
-      : 'Click two points a known distance apart (a dimension line, a scale bar).');
+    if (pageFtPerPx() && !state.scaleBars[state.page]) synthScaleBar(state.page); // legacy scale → editable bar
+    const bar = state.scaleBars[state.page];
+    setMsg(bar
+      ? `Sheet ${state.page} scale: ${fmt(bar.feet, bar.feet < 10 ? 1 : 0)} ft on the bar. Drag its ends to adjust · Alt-click the bar to clear · or click two points to redo.`
+      : 'Click two points a known distance apart (a dimension line, a scale bar), then enter the distance.');
   } else if (NEEDS_SCALE.includes(t) && !pageFtPerPx()) {
     setMsg('This sheet has no scale yet — calibrate first (📏).');
   } else if (t === 'plane') {
@@ -1373,6 +1433,7 @@ function setTool(t) {
       ? 'Designate the Existing and Proposed sheets in the ⛰ Dirt panel first.'
       : `Click a sharp landmark on the Existing sheet (page ${E.existingPage}) — a property corner works well.`);
   }
+  vp.requestDraw(); // the scale bar (and any tool-dependent overlay) shows/hides on tool change
 }
 document.querySelectorAll('.tool').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
 
@@ -1397,8 +1458,14 @@ els.cv.addEventListener('pointerdown', e => {
   }
   if (!state.doc) return;
 
-  // scale calibration: two clicks, then the real-world distance
+  // scale calibration: edit the existing bar, or two clicks + the real distance
   if (tool === 'calibrate') {
+    const bar = state.scaleBars[state.page];
+    if (bar && (!calibPts || !calibPts.length)) {
+      const end = scaleBarHandle(bar, w);
+      if (end) { drag = { mode: 'scalebar', ptr: e.pointerId, end }; return; } // drag an endpoint to adjust
+      if (e.altKey && projOnSeg(bar.a, bar.b, w).d <= Math.max(9 / vp.view.zoom, 4)) { clearScale(state.page); return; } // Alt-click the bar → clear
+    }
     const p = { x: w.x, y: w.y };
     if (!calibPts || !calibPts.length) {
       calibPts = [p];
@@ -1412,9 +1479,10 @@ els.cv.addEventListener('pointerdown', e => {
         "Feet (e.g. 50). Sets this sheet's scale — every measurement on it updates live.", '', null)
         .then(ftv => {
           if (ftv && ftv > 0) {
-            state.scales[state.page] = ftv / px;
-            scheduleSave(); renderMarkupList();
-            setMsg(`Scale set for sheet ${state.page}. Measurements on this sheet are live.`);
+            state.scaleBars[state.page] = { a: { x: a.x, y: a.y }, b: { x: p.x, y: p.y }, feet: ftv };
+            applyScaleBar(state.page);
+            scheduleSave(); markupsChanged();
+            setMsg(`Scale set for sheet ${state.page}: ${fmt(ftv, ftv < 10 ? 1 : 0)} ft. Drag the bar's ends to fine-tune, or Alt-click it to clear.`);
           } else setMsg('Calibration cancelled.');
           vp.requestDraw();
         });
@@ -1570,6 +1638,11 @@ els.cv.addEventListener('pointermove', e => {
   if (!drag || e.pointerId !== drag.ptr) return;
   const s = screenPt(e);
   const w = vp.screenToWorld(s.x, s.y);
+  if (drag.mode === 'scalebar') {
+    const bar = state.scaleBars[state.page];
+    if (bar) { bar[drag.end] = { x: w.x, y: w.y }; applyScaleBar(state.page); vp.requestDraw(); }
+    return;
+  }
   if (drag.mode === 'pan') {
     vp.panPx(e.clientX - drag.last.x, e.clientY - drag.last.y);
     drag.last = { x: e.clientX, y: e.clientY };
@@ -1621,6 +1694,8 @@ function endDrag(e) {
     if (d.deselect && !d.moved && selectedId) { selectedId = null; renderMarkupList(); vp.requestDraw(); }
     return;
   }
+
+  if (d.mode === 'scalebar') { applyScaleBar(state.page); scheduleSave(); markupsChanged(); return; }
 
   if (d.mode === 'draw') {
     const m = d.markup;
@@ -2771,7 +2846,7 @@ document.addEventListener('keydown', e => {
 function projectData() {
   return {
     app: 'plan-room', version: 1, page: state.page,
-    markups: state.markups, scales: state.scales,
+    markups: state.markups, scales: state.scales, scaleBars: state.scaleBars,
     roofPitch: state.roofPitch, roofWaste: state.roofWaste,
     roofPrices: state.roofPrices, roofOP: state.roofOP,
     earthwork: state.earthwork,
@@ -2834,6 +2909,7 @@ async function openProject(rec) {
   resetDocState();
   state.markups = (rec.data && Array.isArray(rec.data.markups)) ? rec.data.markups : [];
   state.scales = (rec.data && rec.data.scales) || {};
+  state.scaleBars = (rec.data && rec.data.scaleBars) || {};
   state.roofPitch = (rec.data && rec.data.roofPitch != null) ? rec.data.roofPitch : 6;
   state.roofWaste = (rec.data && rec.data.roofWaste != null) ? rec.data.roofWaste : 12;
   state.roofPrices = (rec.data && rec.data.roofPrices) || {};
@@ -2872,6 +2948,7 @@ async function newProject(name) {
   resetDocState();
   state.markups = [];
   state.scales = {};
+  state.scaleBars = {};
   state.roofPitch = 6; state.roofWaste = 12; state.roofPrices = {}; state.roofOP = 15;
   state.earthwork = defaultEarthwork();
   state.trade = '';
@@ -3009,6 +3086,7 @@ $('fileImport').addEventListener('change', async e => {
   await newProject(/\(imported\)\s*$/.test(baseName) ? baseName : `${baseName} (imported)`);
   state.markups = Array.isArray(d.markups) ? d.markups : [];
   state.scales = d.scales || {};
+  state.scaleBars = d.scaleBars || {};
   if (d.roofPitch != null) state.roofPitch = d.roofPitch;
   if (d.roofWaste != null) state.roofWaste = d.roofWaste;
   state.roofPrices = d.roofPrices || {};
@@ -3387,6 +3465,7 @@ async function copyCompanyProject(id) {
     state.projectId = keepId;
     state.markups = Array.isArray(t.data.markups) ? t.data.markups : [];
     state.scales = t.data.scales || {};
+    state.scaleBars = t.data.scaleBars || {};
     if (t.data.roofPitch != null) state.roofPitch = t.data.roofPitch;
     if (t.data.roofWaste != null) state.roofWaste = t.data.roofWaste;
     state.roofPrices = t.data.roofPrices || {};
@@ -4127,11 +4206,12 @@ async function apiLive(path, opts = {}) {
 }
 
 function sessionDoc() {
-  return { scales: state.scales, page: state.page, roofPitch: state.roofPitch, roofWaste: state.roofWaste, roofPrices: state.roofPrices, roofOP: state.roofOP, earthwork: state.earthwork, drywall: state.drywall };
+  return { scales: state.scales, scaleBars: state.scaleBars, page: state.page, roofPitch: state.roofPitch, roofWaste: state.roofWaste, roofPrices: state.roofPrices, roofOP: state.roofOP, earthwork: state.earthwork, drywall: state.drywall };
 }
 function applySessionDoc(d) {
   if (!d) return;
   if (d.scales) state.scales = d.scales;
+  if (d.scaleBars) state.scaleBars = d.scaleBars;
   if (d.roofPitch != null) state.roofPitch = d.roofPitch;
   if (d.roofWaste != null) state.roofWaste = d.roofWaste;
   if (d.roofPrices) state.roofPrices = d.roofPrices;
