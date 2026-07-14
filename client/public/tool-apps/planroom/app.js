@@ -57,6 +57,10 @@ const markupLayer = kind => ANNOT_KINDS.includes(kind) ? 'annot' : MEASURE_KINDS
 const layerVisible = m => layers[markupLayer(m.kind)];
 let curSurface = 'existing';                 // which surface new contours/spots/pads belong to
 let dirtSheetsCollapsed = false;             // dirt panel: Sheets section starts collapsed once the two-sheet setup is done
+// In earthwork mode the Existing/Proposed toggle focuses one surface: contours /
+// pads tagged with the other surface are hidden (and non-clickable). Markups with
+// no surface field, and everything outside dirt mode, are unaffected.
+const surfaceVisible = m => state.trade !== 'dirt' || !m.surface || m.surface === curSurface;
 const lastElev = { existing: null, proposed: null };
 
 const store = createStore('planroom');
@@ -776,7 +780,7 @@ function hitMarkup(ctx, w) {
   const tol = Math.max(6 / vp.view.zoom, 3);
   for (let i = state.markups.length - 1; i >= 0; i--) {
     const m = state.markups[i];
-    if (m.page !== state.page || !layerVisible(m)) continue; // hidden layers aren't clickable
+    if (m.page !== state.page || !layerVisible(m) || !surfaceVisible(m)) continue; // hidden layers/surfaces aren't clickable
     const t = tol + (m.width || 4) / 2;
     const [p0, p1] = m.pts;
     switch (m.kind) {
@@ -933,7 +937,7 @@ function paint(ctx) {
     } else if (state.doc) ensurePage(other);
   }
   if (heatGrid && state.page === heatGrid.page && layers.takeoff) drawHeat(ctx);
-  for (const m of state.markups) if (m.page === state.page && layerVisible(m)) drawMarkup(ctx, m);
+  for (const m of state.markups) if (m.page === state.page && layerVisible(m) && surfaceVisible(m)) drawMarkup(ctx, m);
   if (drag && drag.mode === 'draw' && drag.markup) drawMarkup(ctx, drag.markup);
   drawDraft(ctx);
   drawAlignDraft(ctx);
@@ -957,11 +961,22 @@ function updatePageUI() {
 async function setPage(p, { fit = false } = {}) {
   if (!state.doc) return;
   state.page = Math.max(1, Math.min(state.doc.numPages, p));
+  syncSurfaceToPage();
   updatePageUI();
   await ensurePage(state.page);
   if (fit) { const b = await baseSize(state.page); vp.fitTo(b.width, b.height); }
   vp.requestDraw();
   scheduleSave();
+}
+// Landing on a designated sheet syncs the Existing/Proposed toggle (and the
+// surface visibility filter) to it, so navigating by any means keeps them in
+// step. Same-sheet jobs keep the toggle's manual choice.
+function syncSurfaceToPage() {
+  if (state.trade !== 'dirt') return;
+  const E = state.earthwork;
+  if (!E.existingPage || !E.proposedPage || E.existingPage === E.proposedPage) return;
+  const s = state.page === E.existingPage ? 'existing' : state.page === E.proposedPage ? 'proposed' : null;
+  if (s && s !== curSurface) { curSurface = s; renderSurfaceToggle(); }
 }
 
 // Lazy thumbnail strip: placeholders now, rendered when scrolled into view.
@@ -2484,6 +2499,7 @@ function setSurface(s) {
   if (target && target !== state.page) { setPage(target); setMsg(`Switched to the ${curSurface} sheet (page ${target}).`); }
   else if (!target) setMsg(`New traces are now ${curSurface} — set its sheet in the ⛰ Dirt panel (“Set current page as ${curSurface === 'proposed' ? 'Proposed' : 'Existing'}”).`);
   renderDirtPanel();
+  vp.requestDraw(); // re-apply the surface visibility filter (esp. same-sheet, no page change)
 }
 if ($('surfaceToggle')) {
   renderSurfaceToggle();
