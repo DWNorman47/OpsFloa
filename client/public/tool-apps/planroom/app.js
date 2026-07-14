@@ -54,6 +54,12 @@ const layers = { annot: true, measure: true, takeoff: true, labels: true };
 const ANNOT_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout'];
 const MEASURE_KINDS = ['mlength', 'marea', 'mcount'];
 const markupLayer = kind => ANNOT_KINDS.includes(kind) ? 'annot' : MEASURE_KINDS.includes(kind) ? 'measure' : 'takeoff';
+// Vertex editing. Fixed-box shapes, callouts, single-point & count markups get no
+// per-vertex handles; everything else (line/arrow + every polyline/polygon) does.
+const VERTEX_NONEDIT = new Set(['rect', 'ellipse', 'cloud', 'highlight', 'callout', 'text', 'espot', 'mcount', 'ritem', 'qcount', 'dopening']);
+// Insert/delete a vertex applies to the free polylines & polygons — line/arrow
+// stay fixed 2-point shapes (their endpoints are still draggable).
+const RESHAPE_NONEDIT = new Set([...VERTEX_NONEDIT, 'line', 'arrow']);
 const layerVisible = m => layers[markupLayer(m.kind)];
 let curSurface = 'existing';                 // which surface new contours/spots/pads belong to
 let dirtSheetsCollapsed = false;             // dirt panel: Sheets section starts collapsed once the two-sheet setup is done
@@ -749,9 +755,9 @@ function handlePoints(ctx, m) {
     const r = normRect(m.pts[0], m.pts[1]);
     return [{ x: r.x0, y: r.y0 }, { x: r.x1, y: r.y0 }, { x: r.x1, y: r.y1 }, { x: r.x0, y: r.y1 }];
   }
-  if (m.kind === 'line' || m.kind === 'arrow') return [m.pts[0], m.pts[1]];
   if (m.kind === 'callout') return [m.pts[1]]; // move the leader target
-  return [];
+  if (VERTEX_NONEDIT.has(m.kind)) return [];
+  return m.pts; // per-vertex handles: line/arrow endpoints + every polyline/polygon point
 }
 
 function drawSelection(ctx, m) {
@@ -1484,6 +1490,12 @@ els.cv.addEventListener('pointerdown', e => {
     const sel = selMarkup();
     if (sel && sel.page === state.page) {
       const hi = hitHandle(ctx, sel, w);
+      // Alt-click reshapes the vertex set: on a point → remove it; on an edge → add one.
+      if (e.altKey && canReshape(sel)) {
+        if (hi >= 0) { deleteVertexAt(sel, hi); return; }
+        const edge = nearestEdge(sel, w, Math.max(8 / vp.view.zoom, 4));
+        if (edge) { insertVertexAt(sel, edge); return; }
+      }
       if (hi >= 0) {
         undoCapture = snapshot();
         drag = { mode: 'handle', ptr: e.pointerId, id: sel.id, hi, moved: false };
@@ -1495,6 +1507,7 @@ els.cv.addEventListener('pointerdown', e => {
       selectedId = hit.id;
       undoCapture = snapshot();
       drag = { mode: 'move', ptr: e.pointerId, id: hit.id, from: w, orig: JSON.parse(JSON.stringify(hit.pts)), moved: false };
+      if (canReshape(hit)) setMsg('Drag a point to reshape · Alt-click an edge to add a point · Alt-click a point to remove it.');
       renderMarkupList();
       vp.requestDraw();
     } else {
@@ -1558,10 +1571,10 @@ els.cv.addEventListener('pointermove', e => {
         { x: r.x0, y: r.y0 }, { x: r.x1, y: r.y0 }, { x: r.x1, y: r.y1 }, { x: r.x0, y: r.y1 }];
       const opposite = corners[(drag.hi + 2) % 4];
       m.pts = [opposite, { x: w.x, y: w.y }];
-    } else if (m.kind === 'line' || m.kind === 'arrow') {
-      m.pts[drag.hi] = { x: w.x, y: w.y };
     } else if (m.kind === 'callout') {
       m.pts[1] = { x: w.x, y: w.y };
+    } else if (m.pts[drag.hi]) {
+      m.pts[drag.hi] = { x: w.x, y: w.y }; // move a single vertex (line/arrow + any polyline/polygon)
     }
     vp.requestDraw();
   }
@@ -1597,7 +1610,7 @@ function endDrag(e) {
 
   if ((d.mode === 'move' || d.mode === 'handle') && d.moved) {
     const m = selMarkup();
-    if (m) m.modified = Date.now();
+    if (m) { m.modified = Date.now(); invalidateForKind(m); }
     pushUndo(undoCapture); undoCapture = null;
     markupsChanged();
   } else {
@@ -1611,6 +1624,43 @@ els.cv.addEventListener('pointercancel', endDrag);
 
 const CLOSED_KINDS = ['marea', 'plane', 'epad', 'ebound', 'qarea', 'dceiling']; // 3+ pts, closed polygon
 const POINT_KINDS = ['mcount', 'ritem', 'qcount', 'dopening']; // 1+ pts, no rubber band
+
+/* ---- vertex reshaping: drag a point (handled in the pointer flow), Alt-click
+   an edge to insert a point, Alt-click a point to remove it ---- */
+const canReshape = m => !!m && !RESHAPE_NONEDIT.has(m.kind) && Array.isArray(m.pts);
+const minPtsFor = m => (m.kind === 'line' || m.kind === 'arrow') ? 2 : (CLOSED_KINDS.includes(m.kind) ? 3 : 2);
+function projOnSeg(a, b, p) {
+  const vx = b.x - a.x, vy = b.y - a.y, L2 = vx * vx + vy * vy || 1;
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * vx + (p.y - a.y) * vy) / L2));
+  const x = a.x + t * vx, y = a.y + t * vy;
+  return { x, y, d: Math.hypot(p.x - x, p.y - y) };
+}
+// closest polygon/polyline edge to w within tol → { i, p } for splice(i+1), or null
+function nearestEdge(m, w, tol) {
+  if (!m.pts || m.pts.length < 2) return null;
+  const closed = CLOSED_KINDS.includes(m.kind), n = m.pts.length, segs = closed ? n : n - 1;
+  let best = null;
+  for (let i = 0; i < segs; i++) {
+    const pr = projOnSeg(m.pts[i], m.pts[(i + 1) % n], w);
+    if (pr.d <= tol && (!best || pr.d < best.d)) best = { i, p: { x: pr.x, y: pr.y }, d: pr.d };
+  }
+  return best;
+}
+// reshaping an earthwork surface invalidates the last cut/fill result
+function invalidateForKind(m) { if (m && ['contour', 'epad', 'ebound'].includes(m.kind)) state.earthwork.result = null; }
+function insertVertexAt(m, edge) {
+  const prev = snapshot();
+  m.pts.splice(edge.i + 1, 0, edge.p);
+  m.modified = Date.now(); invalidateForKind(m);
+  pushUndo(prev); markupsChanged(); setMsg('Point added.');
+}
+function deleteVertexAt(m, hi) {
+  if (m.pts.length <= minPtsFor(m)) { setMsg(`A ${MK_LABEL[m.kind] || 'shape'} needs at least ${minPtsFor(m)} points.`); return; }
+  const prev = snapshot();
+  m.pts.splice(hi, 1);
+  m.modified = Date.now(); invalidateForKind(m);
+  pushUndo(prev); markupsChanged(); setMsg('Point removed.');
+}
 
 function commitDraft() {
   if (!draft) return;
