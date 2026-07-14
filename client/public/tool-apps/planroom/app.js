@@ -2478,8 +2478,12 @@ function renderSurfaceToggle() {
 function setSurface(s) {
   curSurface = s === 'proposed' ? 'proposed' : 'existing';
   renderSurfaceToggle();
+  // Jump to that surface's designated sheet (they're usually different pages).
+  const E = state.earthwork;
+  const target = curSurface === 'proposed' ? E.proposedPage : E.existingPage;
+  if (target && target !== state.page) { setPage(target); setMsg(`Switched to the ${curSurface} sheet (page ${target}).`); }
+  else if (!target) setMsg(`New traces are now ${curSurface} — set its sheet in the ⛰ Dirt panel (“Set current page as ${curSurface === 'proposed' ? 'Proposed' : 'Existing'}”).`);
   renderDirtPanel();
-  if (['contour', 'espot', 'epad', 'wand'].includes(tool)) setMsg(`Now tracing ${curSurface}.`);
 }
 if ($('surfaceToggle')) {
   renderSurfaceToggle();
