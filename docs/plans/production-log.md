@@ -1,10 +1,10 @@
 # OpsFloa — Production & Haul Log (main app)
 
-Status: **M1 + M2 SHIPPED** (2026-07-13; M1 `a7e3e84`, M2 `38df6e5`).
-**Decisions (locked with user): lives as a Field-module tab; field crews can
-self-log (worker permission).** Migration renumbered **0135 → 0137** (0135/0136
-were taken by the bid-workflow plan). **User to-do: run migration 0137.** M3 is
-optional polish. Brings the standalone sitework
+Status: **M1 + M2 SHIPPED, M3 polish partial** (2026-07-13; M1 `a7e3e84`, M2
+`38df6e5`, M3 `148a28e`). **Decisions (locked with user): lives as a Field-module
+tab; field crews can self-log (worker permission).** Migration renumbered
+**0135 → 0137** (0135/0136 were taken by the bid-workflow plan). **User to-do:
+run migration 0137.** Brings the standalone sitework
 tool's production log into the main OpsFloa app as a proper server-backed,
 per-job, multi-user feature. Relocating this here (not into Plan Room) was a
 deliberate call: it's **field/production tracking, not takeoff** — so it belongs
@@ -137,8 +137,13 @@ Client mirror already reads `user.permissions` via `usePerm.js`.
   `/haul|export|spoil|off-haul/`. `usePlan().hasTakeoff` added. Estimate-vs-actual
   card in the Haul tab (single job + add-on only), names the matched estimate,
   variance over/under. EN/ES i18n.
-- **M3 (optional) — polish:** link a specific takeoff id to a job; CSV/print;
-  per-hauler/-material subtotals; retire the standalone tool's local-only log.
+- **M3 (polish) — PARTIAL DONE (`148a28e`).** Shipped: **edit a ticket** (row ✎
+  → reused form → PATCH) and **per-hauler/-material subtotals** (collapsible
+  net-export breakdown). CSV shipped back in M1. **Deferred:** linking a specific
+  takeoff id to a job (a feature needing a takeoff↔job data-model decision +
+  the per-browser caveat, not polish); retiring the standalone tool's local-only
+  log (must-not-break-sitework constraint); a dedicated print layout (CSV covers
+  export for now).
 
 ## Verification
 Migration idempotent (re-run clean); enum rejection unit-tested; company scoping
