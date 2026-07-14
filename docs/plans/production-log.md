@@ -1,6 +1,9 @@
 # OpsFloa — Production & Haul Log (main app)
 
-Status: **scoped, not started** (2026-07-13). Brings the standalone sitework
+Status: **M1 SHIPPED** (2026-07-13, `a7e3e84`). **Decisions (locked with user):
+lives as a Field-module tab; field crews can self-log (worker permission).**
+Migration renumbered **0135 → 0137** (0135/0136 were taken by the bid-workflow
+plan). M2 (reconciliation) is next. Brings the standalone sitework
 tool's production log into the main OpsFloa app as a proper server-backed,
 per-job, multi-user feature. Relocating this here (not into Plan Room) was a
 deliberate call: it's **field/production tracking, not takeoff** — so it belongs
@@ -118,10 +121,14 @@ Client mirror already reads `user.permissions` via `usePerm.js`.
   (`normalizeProduction`).
 
 ## Milestones (each to `dev`, push after each)
-- **M1 — haul tickets end-to-end:** migration 0135 + haulEnums + db-enums rows;
-  `routes/haulTickets.js` (list/create/patch/delete, audited, enum-validated);
-  `manage_haul_tickets` perm + role migration; Field module Haul tab +
-  `HaulTickets.jsx`; EN/ES i18n. (Base ops — business plan + perm.)
+- **M1 — haul tickets end-to-end: DONE (`a7e3e84`).** Migration **0137** (table +
+  seeds `manage_haul_tickets` into built-in roles) + `haulEnums.js` + db-enums
+  rows; `routes/haulTickets.js` (list with worker/admin narrowing + filters;
+  create/patch/delete, audited, enum-validated, project-ownership checked, perm-
+  gated); `manage_haul_tickets` in the catalog + Worker default (cascades to
+  Admin/Owner); Field module **Haul log** tab (workers + admins) +
+  `HaulTickets.jsx` (add form, project + date-range filters, net-export totals by
+  unit, delete, CSV); EN/ES i18n. **Needs migration 0137 run.**
 - **M2 — reconciliation (takeoff add-on):** `/reconcile` endpoint gated
   `requireTakeoffAddon`; estimate-vs-actual card in the Haul tab shown only for
   `hasTakeoff`.
@@ -135,9 +142,9 @@ Migration idempotent (re-run clean); enum rejection unit-tested; company scoping
 gets `takeoff_required` from `/reconcile`; i18n parity test green; add a haul
 ticket → totals + reconciliation variance match a hand calc.
 
-## Open questions for the user
-- **Home:** Field-module tab with a project dropdown (matches daily_reports), or
-  a per-job "Production" tab in `ProjectsPage` → `ProjectDetail`? Plan assumes
-  the Field tab (least surface area, matches conventions).
-- **Worker self-logging:** can field crews add haul tickets (worker perm), or
-  admin-only?
+## Open questions for the user — RESOLVED (2026-07-13)
+- **Home:** ✅ **Field-module tab** with a project dropdown (matches
+  daily_reports). Shipped as the "Haul log" tab in M1.
+- **Worker self-logging:** ✅ **Yes — field crews can add haul tickets**
+  (`manage_haul_tickets` is a worker-default permission). Reconciliation stays
+  admin/add-on gated.
