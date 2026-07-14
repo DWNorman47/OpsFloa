@@ -1490,11 +1490,20 @@ els.cv.addEventListener('pointerdown', e => {
     const sel = selMarkup();
     if (sel && sel.page === state.page) {
       const hi = hitHandle(ctx, sel, w);
-      // Alt-click reshapes the vertex set: on a point → remove it; on an edge → add one.
+      // Alt-click reshapes the vertex set: on a point → remove it; on an edge →
+      // add one; Shift+Alt-click a segment → cut the line there (split in two).
       if (e.altKey && canReshape(sel)) {
         if (hi >= 0) { deleteVertexAt(sel, hi); return; }
         const edge = nearestEdge(sel, w, Math.max(8 / vp.view.zoom, 4));
-        if (edge) { insertVertexAt(sel, edge); return; }
+        if (edge) {
+          if (e.shiftKey) {
+            if (isOpenPoly(sel)) cutAtEdge(sel, edge.i);
+            else setMsg('Cutting works on open lines (contours), not closed shapes.');
+          } else {
+            insertVertexAt(sel, edge);
+          }
+          return;
+        }
       }
       if (hi >= 0) {
         undoCapture = snapshot();
@@ -1507,7 +1516,9 @@ els.cv.addEventListener('pointerdown', e => {
       selectedId = hit.id;
       undoCapture = snapshot();
       drag = { mode: 'move', ptr: e.pointerId, id: hit.id, from: w, orig: JSON.parse(JSON.stringify(hit.pts)), moved: false };
-      if (canReshape(hit)) setMsg('Drag a point to reshape · Alt-click an edge to add a point · Alt-click a point to remove it.');
+      if (canReshape(hit)) setMsg(isOpenPoly(hit)
+        ? 'Drag a point to reshape · Alt-click: add / remove a point · Shift+Alt-click a segment: cut the line.'
+        : 'Drag a point to reshape · Alt-click an edge to add a point · Alt-click a point to remove it.');
       renderMarkupList();
       vp.requestDraw();
     } else {
@@ -1660,6 +1671,25 @@ function deleteVertexAt(m, hi) {
   m.pts.splice(hi, 1);
   m.modified = Date.now(); invalidateForKind(m);
   pushUndo(prev); markupsChanged(); setMsg('Point removed.');
+}
+// Only open polylines can be cut/split (closed shapes must stay closed).
+const isOpenPoly = m => canReshape(m) && !CLOSED_KINDS.includes(m.kind);
+// Cut an open polyline at segment i → two independent lines that keep the
+// original's kind/elevation/etc. A piece with fewer than 2 points is dropped, so
+// a point is never left stranded on its own.
+function cutAtEdge(m, i) {
+  const pieces = [m.pts.slice(0, i + 1), m.pts.slice(i + 1)].filter(p => p.length >= 2);
+  const idx = state.markups.indexOf(m);
+  if (idx < 0) return;
+  const prev = snapshot();
+  const clones = pieces.map(p => ({ ...JSON.parse(JSON.stringify(m)), id: randId(), pts: p, created: Date.now(), modified: Date.now() }));
+  state.markups.splice(idx, 1, ...clones); // replace the original with the surviving piece(s)
+  selectedId = clones.length ? clones.reduce((a, b) => b.pts.length > a.pts.length ? b : a).id : null;
+  invalidateForKind(m);
+  pushUndo(prev); markupsChanged();
+  setMsg(clones.length === 2 ? 'Line cut in two — select and delete the piece you don’t want.'
+    : clones.length === 1 ? 'Line cut — the stray single point was dropped.'
+    : 'Line removed — nothing long enough was left.');
 }
 
 function commitDraft() {
