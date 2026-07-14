@@ -951,6 +951,21 @@ function paint(ctx) {
   }
   if (heatGrid && state.page === heatGrid.page && layers.takeoff) drawHeat(ctx);
   for (const m of state.markups) if (m.page === state.page && markupShown(m)) drawMarkup(ctx, m);
+  // The disturbance boundary applies to BOTH surfaces — when it lives on the other
+  // earthwork sheet, project it onto this one through the alignment so it shows on
+  // existing AND proposed (always, independent of the Ghost toggle).
+  if (state.doc && EW.existingPage && EW.proposedPage && EW.existingPage !== EW.proposedPage &&
+      (state.page === EW.existingPage || state.page === EW.proposedPage)) {
+    const otherPg = state.page === EW.existingPage ? EW.proposedPage : EW.existingPage;
+    const bound = state.markups.find(m => m.kind === 'ebound' && m.page === otherPg);
+    if (bound && markupShown(bound)) {
+      const M = state.page === EW.existingPage ? EW.align : alignInverse(EW.align);
+      ctx.save();
+      ctx.transform(M.a, M.b, -M.b, M.a, M.e, M.f);
+      drawMarkup(ctx, bound);
+      ctx.restore();
+    }
+  }
   if (drag && drag.mode === 'draw' && drag.markup) drawMarkup(ctx, drag.markup);
   drawDraft(ctx);
   drawAlignDraft(ctx);
