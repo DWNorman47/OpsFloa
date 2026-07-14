@@ -219,6 +219,17 @@ that holds the exhaustive detail.
 ## 📖 Done / shipped log
 *Landed on `dev`, newest first. (What happens past dev is handled outside this doc.)*
 
+- **2026-07-13 — Removed the dynamic work/project label; "Project" is now
+  hardcoded** (`e16d6cf`). Excised `workLabel` / `settings.label_work` /
+  `labelSg(..,'work'|'project')` across ~50 client files and replaced with the
+  literal Project/project/Projects/projects (the entity is just a Project now —
+  explicit Projects + Work Orders tabs exist). Fixes the earlier "+ New Team
+  Member" mislabel at its root (the missing `project` default that fell through
+  to the worker label). Worker/client/field labels stay dynamic. Verified:
+  production build (53 modules), vitest smoke + i18n parity (84 tests), eslint
+  clean, sitework untouched. Closes the deferred "workLabel should no longer be
+  a thing" item.
+
 - **2026-07-13 — Production & Haul Log (main app), M1–M3.** Plan:
   `docs/plans/production-log.md`. The sitework tool's production log, rebuilt
   server-backed + per-job + multi-user in the **Field module → "Haul log" tab**.
