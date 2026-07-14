@@ -2107,6 +2107,9 @@ function openRoofBid() {
   $('bidPrep').value = meta.prep || co.name || '';
   $('bidDate').value = meta.date || new Date().toLocaleDateString();
   $('bidOP').value = state.roofOP;
+  const sendBtn = $('bidSendEstimate');
+  if (state.estimateId) { sendBtn.textContent = `➤ Send pricing to estimate #${state.estimateId}`; sendBtn.classList.remove('hidden'); }
+  else sendBtn.classList.add('hidden');
   renderRoofBid();
   $('roofBid').classList.remove('hidden');
 }
@@ -2138,7 +2141,59 @@ function bidCsv() {
   download(new Blob([rows.join('\r\n')], { type: 'text/csv' }), safeName() + '-takeoff-bid.csv');
 }
 
+// Map a bid line to one of the estimate's MONEY_CATEGORIES
+// (labor|materials|equipment|subs|overhead|contingency|other). Best-effort by
+// keyword — she can recategorize any line in the estimate.
+function estimateCategoryFor(l) {
+  const s = ((l.key || '') + ' ' + (l.label || '')).toLowerCase();
+  if (/haul|excavat|export|import|earthwork|fill|backfill|grad|dozer|loader/.test(s)) return 'equipment';
+  if (/\bhang\b|install|tear-?off|finish|labor|demo|disposal|prep/.test(s)) return 'labor';
+  if (/board|shingle|concrete|mud|paint|sheet|paver|asphalt|compound|underlay|drip|starter|\bice\b|cap|flash|tape|base|crown|chair|trim|material/.test(s)) return 'materials';
+  return 'other';
+}
+
+// Push the takeoff's priced lines back to the linked OpsFloa estimate
+// (PUT /estimates/:id/lines — bulk replace, draft only, admin only). The O&P %
+// rides along as one overhead line so the estimate total matches the bid.
+async function sendPricingToEstimate() {
+  const id = state.estimateId;
+  if (!id) return;
+  if (!toolToken()) { setMsg('Sign in to OpsFloa first (open ☁ Company / join live), then try again.'); return; }
+  const { lines, op } = roofBidLines();
+  const payload = lines.map(l => ({
+    category: estimateCategoryFor(l),
+    description: l.label,
+    qty: Math.round((l.qty || 0) * 100) / 100,
+    unit: (l.unit || '').toString().slice(0, 20) || null,
+    unit_cost_cents: Math.round((l.price || 0) * 100),
+  }));
+  if (Number(state.roofOP) > 0 && op > 0) {
+    payload.push({ category: 'overhead', description: `Overhead & profit (${fmt(state.roofOP)}%)`, qty: 1, unit: 'LS', unit_cost_cents: Math.round(op * 100) });
+  }
+  if (!payload.length) { setMsg('Nothing to send yet — trace a takeoff and price it first.'); return; }
+  if (!window.confirm(`Send ${payload.length} line${payload.length === 1 ? '' : 's'} to estimate #${id}?\n\nThis REPLACES the estimate's current line items.`)) return;
+  const btn = $('bidSendEstimate'); const prev = btn.textContent; btn.disabled = true; btn.textContent = 'Sending…';
+  try {
+    const r = await apiEstimate('/' + encodeURIComponent(id) + '/lines', { method: 'PUT', body: JSON.stringify({ lines: payload }), timeout: 20000 });
+    if (r.ok) {
+      setMsg(`Sent ${payload.length} line${payload.length === 1 ? '' : 's'} to estimate #${id}. Review and send the bid in OpsFloa.`);
+    } else if (r.status === 409) {
+      setMsg(`Estimate #${id} is locked (already sent/accepted). Duplicate it in OpsFloa to revise.`);
+    } else if (r.status === 404) {
+      setMsg(`Estimate #${id} wasn't found — it may have been deleted.`);
+    } else if (r.status === 401 || r.status === 403) {
+      setMsg(`Not allowed to edit estimate #${id} — admin access is required in OpsFloa.`);
+    } else {
+      let msg = ''; try { msg = (await r.json()).error; } catch (_) {}
+      setMsg(`Couldn't send pricing (HTTP ${r.status}${msg ? ': ' + msg : ''}).`);
+    }
+  } catch (_) {
+    setMsg('Couldn’t reach OpsFloa to send pricing. Check your connection and try again.');
+  } finally { btn.disabled = false; btn.textContent = prev; }
+}
+
 $('btnBid').addEventListener('click', openRoofBid);
+$('bidSendEstimate').addEventListener('click', sendPricingToEstimate);
 $('bidClose').addEventListener('click', () => $('roofBid').classList.add('hidden'));
 $('roofBid').addEventListener('click', e => { if (e.target === $('roofBid')) $('roofBid').classList.add('hidden'); });
 $('bidOP').addEventListener('input', e => {
