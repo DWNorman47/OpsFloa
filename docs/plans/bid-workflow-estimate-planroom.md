@@ -1,7 +1,8 @@
 # OpsFloa — Bid workflow: Estimate ⇄ Plan Room
 
-Status: **scoped, not started** (2026-07-13). Makes the **Estimate the hub of a
-bid**: it carries the deadline and the plans, launches the takeoff in one click,
+Status: **ALL FOUR MILESTONES SHIPPED** to `dev` (2026-07-13; M1 f49f373/524ac95,
+M2 019e849, M3 c13d7db, M4 4040252). **User to-do before it works end-to-end:
+run migrations 0135 + 0136 on the DB.** Makes the **Estimate the hub of a bid**: it carries the deadline and the plans, launches the takeoff in one click,
 and pulls the takeoff's pricing back into its line items. Designed around the
 real workflow (a contractor is handed a PDF and a due date, takes off the
 quantities, and sends a priced bid before the clock runs out).
@@ -109,8 +110,12 @@ db-enums.md change. (No CHECK constraints needed.)
   `?estimate=` find-or-create → `bootEstimate()` reopens or creates the linked
   project + pulls the plan via `apiEstimate()`; `estimateId` round-trips through
   `projectData()` + all load paths. Idempotent.
-- **M4 — pricing back:** "Send pricing to estimate" in Plan Room's bid → estimate
-  lines with the category mapping + replace/append behavior.
+- **M4 — pricing back: DONE (4040252).** "➤ Send pricing to estimate #<id>" in
+  the $ Bid modal (shown when the project is estimate-linked) → `PUT
+  /estimates/:id/lines` via `apiEstimate()`. Line mapping + keyword category
+  heuristic (`estimateCategoryFor`); O&P rides along as one `overhead` line so
+  the estimate total matches the bid. Replace-with-confirm; inline
+  locked/404/403/offline handling. No server change (endpoint already existed).
 
 ## Verification
 - Migration idempotent (re-run clean); a starter/no-sales company can't see any
@@ -132,3 +137,9 @@ db-enums.md change. (No CHECK constraints needed.)
 - **Replace vs append** estimate lines on push (recommend replace-with-confirm).
 - **Which PDF** if the estimate has multiple attachments later (MVP: one plan
   PDF).
+- **O&P double-count (M4 shipped behavior):** the push adds the Plan Room O&P %
+  as one `overhead` line so the estimate total matches the bid. If the estimate
+  *also* carries a non-zero `margin_pct`/`overhead_pct`, markup stacks — the line
+  is visible and deletable, and the push always replaces-with-confirm, so she
+  reconciles on review. A future refinement could set the estimate's `margin_pct`
+  from `roofOP` instead of adding a line.
