@@ -19,6 +19,10 @@ const DEFAULTS = {
   // explicit Projects + Work Orders now). settings.label_work is dropped; the
   // first arg to labelSg/labelPl('work', …) stays as a future per-report hook.
   work:   { en: { sg: 'Work', pl: 'Work' },                es: { sg: 'Trabajo', pl: 'Trabajo' } },
+  // 'project' is what the Projects tab / Haul log actually use. It must exist as
+  // its own kind — without it, labelForms falls through to DEFAULTS.worker and
+  // every "Project" label renders as "Team Member".
+  project: { en: { sg: 'Project', pl: 'Projects' },        es: { sg: 'Proyecto', pl: 'Proyectos' } },
   field:  { en: { sg: 'Field Work', pl: 'Field Work' },    es: { sg: 'Trabajo de campo', pl: 'Trabajos de campo' } },
 };
 
