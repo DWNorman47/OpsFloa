@@ -1,9 +1,10 @@
 # OpsFloa — Production & Haul Log (main app)
 
-Status: **M1 SHIPPED** (2026-07-13, `a7e3e84`). **Decisions (locked with user):
-lives as a Field-module tab; field crews can self-log (worker permission).**
-Migration renumbered **0135 → 0137** (0135/0136 were taken by the bid-workflow
-plan). M2 (reconciliation) is next. Brings the standalone sitework
+Status: **M1 + M2 SHIPPED** (2026-07-13; M1 `a7e3e84`, M2 `38df6e5`).
+**Decisions (locked with user): lives as a Field-module tab; field crews can
+self-log (worker permission).** Migration renumbered **0135 → 0137** (0135/0136
+were taken by the bid-workflow plan). **User to-do: run migration 0137.** M3 is
+optional polish. Brings the standalone sitework
 tool's production log into the main OpsFloa app as a proper server-backed,
 per-job, multi-user feature. Relocating this here (not into Plan Room) was a
 deliberate call: it's **field/production tracking, not takeoff** — so it belongs
@@ -129,9 +130,13 @@ Client mirror already reads `user.permissions` via `usePerm.js`.
   Admin/Owner); Field module **Haul log** tab (workers + admins) +
   `HaulTickets.jsx` (add form, project + date-range filters, net-export totals by
   unit, delete, CSV); EN/ES i18n. **Needs migration 0137 run.**
-- **M2 — reconciliation (takeoff add-on):** `/reconcile` endpoint gated
-  `requireTakeoffAddon`; estimate-vs-actual card in the Haul tab shown only for
-  `hasTakeoff`.
+- **M2 — reconciliation (takeoff add-on): DONE (`38df6e5`).** `GET
+  /haul-tickets/reconcile?project_id=` gated `requireTakeoffAddon` — actuals
+  (net export by unit) vs the estimate converted to the job
+  (`converted_project_id`), haul-off quantity from lines matching
+  `/haul|export|spoil|off-haul/`. `usePlan().hasTakeoff` added. Estimate-vs-actual
+  card in the Haul tab (single job + add-on only), names the matched estimate,
+  variance over/under. EN/ES i18n.
 - **M3 (optional) — polish:** link a specific takeoff id to a job; CSV/print;
   per-hauler/-material subtotals; retire the standalone tool's local-only log.
 
