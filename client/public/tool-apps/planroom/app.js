@@ -39,6 +39,7 @@ const state = {
     gridFt: 5, shrink: 15, swell: 25, truckCap: 12, interval: 1, result: null },
   trade: '',        // takeoff trade mode: '' (markup only) | 'roofing' | 'dirt' | 'drywall'
   bidMeta: {},      // per-bid project / prepared-by / date overrides
+  estimateId: null, // OpsFloa estimate this project was launched from (?estimate=), for pushing pricing back
   // drywall & paint pack settings (project-wide)
   drywall: { wallHeight: 9, sheetSF: 32, waste: 10, coverage: 375, coats: 2, finish: 'L4' },
 };
@@ -2454,6 +2455,7 @@ function projectData() {
     trade: state.trade,
     bidMeta: state.bidMeta,
     drywall: state.drywall,
+    estimateId: state.estimateId || null,
   };
 }
 const defaultDrywall = () => ({ wallHeight: 9, sheetSF: 32, waste: 10, coverage: 375, coats: 2, finish: 'L4' });
@@ -2517,6 +2519,7 @@ async function openProject(rec) {
   state.trade = (rec.data && rec.data.trade) || '';
   state.bidMeta = (rec.data && rec.data.bidMeta) || {};
   state.drywall = (rec.data && rec.data.drywall) || defaultDrywall();
+  state.estimateId = (rec.data && rec.data.estimateId) || null;
   renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
   try { localStorage.setItem('planroom-current', rec.id); } catch (_) {}
   updateProjectBtn();
@@ -2551,6 +2554,7 @@ async function newProject(name) {
   state.trade = '';
   state.bidMeta = {};
   state.drywall = defaultDrywall();
+  state.estimateId = null;
   renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
   try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
   updateProjectBtn();
@@ -2690,6 +2694,7 @@ $('fileImport').addEventListener('change', async e => {
   state.trade = d.trade || '';
   state.bidMeta = d.bidMeta || {};
   state.drywall = d.drywall || defaultDrywall();
+  state.estimateId = d.estimateId || null;
   renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
   if (d.docB64) {
     const bytes = base64ToBytes(d.docB64);
@@ -2878,6 +2883,17 @@ async function apiFetch(path, opts = {}) {
     });
   } finally { done(); }
 }
+// /api/estimates/* — the bid-workflow bridge (launch from an estimate, push
+// pricing back). Same auth as the other tool→backend calls.
+async function apiEstimate(path, opts = {}) {
+  const { rest, done } = withTimeout(opts);
+  try {
+    return await fetch(toolApiBase() + '/estimates' + path, {
+      ...rest,
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + toolToken(), ...(rest.headers || {}) },
+    });
+  } finally { done(); }
+}
 
 // Show status inside the Company modal (visible over the dialog) and the HUD.
 function companyMsg(t, isError) {
@@ -3056,6 +3072,7 @@ async function copyCompanyProject(id) {
     state.trade = t.data.trade || '';
     state.bidMeta = t.data.bidMeta || {};
     state.drywall = t.data.drywall || defaultDrywall();
+    state.estimateId = t.data.estimateId || null;
     renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
     try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
     updateProjectBtn();
@@ -3960,7 +3977,46 @@ $('liveEnd').addEventListener('click', () => { if (confirm('End the session for 
 
 /* ============================== Boot ============================== */
 
+// Launched from an OpsFloa estimate (…/planroom/index.html?estimate=<id>).
+// Find-or-create: if this browser already holds the linked project, reopen it;
+// otherwise start one and pull the estimate's attached plan PDF through the API
+// (base64 proxy — no R2 CORS needed). Idempotent: clicking the button again
+// reopens the same takeoff. Plan Room projects are per-browser, so on another
+// device this starts a fresh (still-linked) takeoff.
+async function bootEstimate(id) {
+  vp.attach(paint);
+  applyTakeoffGate();
+  updatePageUI();
+  let existing = null;
+  try { existing = (await store.projAll()).find(p => p.data && String(p.data.estimateId) === String(id)) || null; } catch (_) {}
+  if (existing) { await openProject(existing); setMsg(`Reopened the takeoff linked to estimate #${id}.`); return; }
+  await newProject(`Estimate #${id}`);
+  state.estimateId = String(id);
+  await saveProjectNow();
+  if (!toolToken()) { setMsg(`New takeoff for estimate #${id}. Sign in to OpsFloa, then use 📄 Open plans… to load the estimate's PDF.`); return; }
+  setMsg('Loading the estimate’s plans…');
+  try {
+    const r = await apiEstimate('/' + encodeURIComponent(id) + '/plan-pdf', { timeout: 20000 });
+    if (r.ok) {
+      const j = await r.json();
+      const nm = j.name || 'plans.pdf';
+      const type = /\.png$/i.test(nm) ? 'image/png' : /\.jpe?g$/i.test(nm) ? 'image/jpeg' : /\.webp$/i.test(nm) ? 'image/webp' : 'application/pdf';
+      await openFromBytes(base64ToBytes(j.b64).buffer, nm, type);
+      await saveProjectNow();
+      setMsg(`Loaded the plans for estimate #${id}. Do the takeoff, then send pricing back from $ Bid.`);
+    } else if (r.status === 404) {
+      setMsg(`No plans are attached to estimate #${id} yet — attach a PDF on the estimate, or use 📄 Open plans….`);
+    } else {
+      setMsg(`Couldn't load the estimate's plans (HTTP ${r.status}). Use 📄 Open plans… to load them.`);
+    }
+  } catch (_) {
+    setMsg('Couldn’t reach OpsFloa to load the plans. Use 📄 Open plans… to load them.');
+  }
+}
+
 async function boot() {
+  const estId = new URLSearchParams(location.search).get('estimate');
+  if (estId) { await bootEstimate(estId); return; }
   vp.attach(paint);
   applyTakeoffGate();
   updatePageUI();

@@ -640,6 +640,10 @@ function EstimateDetail({ id, onBack, onEdit }) {
   const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
 
+  // The takeoff add-on lights up the "Take off in Plan Room" launch (same
+  // entitlement gate the Tools page uses; trial/exempt companies get it too).
+  const hasPlanroom = !!(user?.addon_planroom || ['exempt', 'trial'].includes(user?.subscription_status));
+
   // Build the client-facing estimate PDF in the browser. Lazy-imports
   // @react-pdf/renderer (heavy) only when the admin actually downloads,
   // and pulls company letterhead from /company-info — same pattern as
@@ -860,6 +864,17 @@ function EstimateDetail({ id, onBack, onEdit }) {
               {estimate.plan_pdf_name || 'plan.pdf'}
             </a>
             <button onClick={removePlan} disabled={busy} style={{ ...styles.ghostBtn, padding: '4px 10px', fontSize: 12 }}>{t.estPlanRemove}</button>
+            {hasPlanroom && (
+              <a
+                className="ops-button-primary"
+                href={`/tool-apps/planroom/index.html?estimate=${estimate.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ fontSize: 12, padding: '5px 12px', textDecoration: 'none' }}
+              >
+                📐 {t.estTakeoffInPlanRoom}
+              </a>
+            )}
           </>
         ) : (
           <span style={{ fontSize: 13, color: '#6b7280' }}>{t.estPlanNone}</span>

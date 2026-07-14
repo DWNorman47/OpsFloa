@@ -4,7 +4,7 @@ const pool    = require('../db');
 const logger  = require('../logger');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { logAudit } = require('../auditLog');
-const { uploadBase64, deleteByUrl } = require('../r2');
+const { uploadBase64, deleteByUrl, getBytesByUrl } = require('../r2');
 const {
   ESTIMATE_STATUSES,
   ESTIMATE_FROZEN_STATUSES,
@@ -351,6 +351,20 @@ router.post('/:id/plan-pdf', requireAdmin, async (req, res) => {
     await logAudit(companyId, req.user.id, req.user.full_name, 'estimate.plan_attached', 'estimate', req.params.id, planName, null);
     res.json(await loadEstimateFull(companyId, req.params.id));
   } catch (err) { req.log.error({ err }, 'estimate plan-pdf error'); res.status(500).json({ error: 'Server error' }); }
+});
+
+// GET /estimates/:id/plan-pdf — the attached plan proxied from R2 as base64,
+// so Plan Room can open it without R2 CORS on reads (like /api/live/:id/pdf).
+router.get('/:id/plan-pdf', async (req, res) => {
+  const companyId = req.user.company_id;
+  try {
+    const { rows } = await pool.query(
+      'SELECT plan_pdf_url, plan_pdf_name FROM estimates WHERE id = $1 AND company_id = $2',
+      [req.params.id, companyId]);
+    if (!rows.length || !rows[0].plan_pdf_url) return res.status(404).json({ error: 'No plans attached' });
+    const bytes = await getBytesByUrl(rows[0].plan_pdf_url);
+    res.json({ name: rows[0].plan_pdf_name || 'plan.pdf', b64: Buffer.from(bytes).toString('base64') });
+  } catch (err) { req.log.error({ err }, 'estimate plan-pdf get error'); res.status(500).json({ error: 'Server error' }); }
 });
 
 // DELETE /estimates/:id/plan-pdf — remove the attached plan
