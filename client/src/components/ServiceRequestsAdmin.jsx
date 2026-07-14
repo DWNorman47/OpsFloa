@@ -26,9 +26,7 @@ export default function ServiceRequestsAdmin({ settings = null }) {
   const t = useT();
   const { user, updateUser } = useAuth();
   const clientLabel = labelSg(settings?.label_client, 'client', user?.language);
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const clientLabelLower = clientLabel.toLowerCase();
-  const workLabelLower = workLabel.toLowerCase();
   const [accepting, setAccepting] = useState(!!user?.accepts_service_requests);
   const [savingToggle, setSavingToggle] = useState(false);
   const [filter, setFilter] = useState('new');
@@ -103,7 +101,7 @@ export default function ServiceRequestsAdmin({ settings = null }) {
 
   const convert = async (req) => {
     const projectName = window.prompt(
-      `${workLabel} name:`,
+      `Project name:`,
       `${t.srProjectFromRequest || 'Request from'} ${req.requester_name}`,
     );
     if (!projectName) return;
@@ -147,7 +145,7 @@ export default function ServiceRequestsAdmin({ settings = null }) {
           ) : (
             <div style={s.hint}>Your company needs a slug. Contact support to have one assigned.</div>
           )}
-          <div style={s.hint}>Share this link with {clientLabelLower}s so they can submit service, support, or {workLabelLower} requests.</div>
+          <div style={s.hint}>Share this link with {clientLabelLower}s so they can submit service, support, or project requests.</div>
         </div>
         <div style={s.statusGroup}>
           <div style={accepting ? s.statusOn : s.statusOff}>
@@ -247,7 +245,7 @@ export default function ServiceRequestsAdmin({ settings = null }) {
                     <div style={s.descBlock}>{r.description}</div>
                     {r.converted_project_id && (
                       <div style={s.convertedLabel}>
-                        Converted to {workLabelLower}: <strong>{r.converted_project_name || `#${r.converted_project_id}`}</strong>
+                        Converted to project: <strong>{r.converted_project_name || `#${r.converted_project_id}`}</strong>
                       </div>
                     )}
                     {r.converted_work_order_id && (
@@ -277,7 +275,7 @@ export default function ServiceRequestsAdmin({ settings = null }) {
                             disabled={convertingId === r.id}
                             style={s.convertBtn}
                           >
-                            {convertingId === r.id ? 'Converting...' : `Convert to ${workLabelLower}`}
+                            {convertingId === r.id ? 'Converting...' : `Convert to project`}
                           </button>
                           <button
                             onClick={() => convertToWorkOrder(r)}

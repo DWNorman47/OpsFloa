@@ -68,7 +68,6 @@ const styles = StyleSheet.create({
 export default function CertifiedPayrollPDF({ report, settings }) {
   if (!report) return null;
   const { contractor, project, week_start, week_end, workers = [], signature } = report;
-  const workLabel = settings?.label_work || 'Work';
   const workerLabel = settings?.label_worker || 'Team Member';
 
   return (
@@ -83,8 +82,8 @@ export default function CertifiedPayrollPDF({ report, settings }) {
             <Text style={styles.metaValue}>{contractor}</Text>
           </View>
           <View style={styles.metaCell}>
-            <Text style={styles.metaLabel}>{workLabel.toUpperCase()}</Text>
-            <Text style={styles.metaValue}>{project || `All ${workLabel.toLowerCase()}`}</Text>
+            <Text style={styles.metaLabel}>PROJECT</Text>
+            <Text style={styles.metaValue}>{project || 'All projects'}</Text>
           </View>
           <View style={styles.metaCell}>
             <Text style={styles.metaLabel}>WEEK ENDING</Text>

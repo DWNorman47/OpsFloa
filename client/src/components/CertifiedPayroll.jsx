@@ -29,7 +29,6 @@ export default function CertifiedPayroll({ projects, settings, requireSignature 
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
-  const workLabel = settings?.label_work || 'Work';
   const workerLabel = settings?.label_worker || 'Team Member';
   const [showSignModal, setShowSignModal] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
@@ -131,7 +130,7 @@ export default function CertifiedPayroll({ projects, settings, requireSignature 
       <div class="meta">
         <div><strong>Contractor:</strong> ${data.contractor}</div>
         <div><strong>Week ending:</strong> ${fmtDate(data.week_end, locale)}</div>
-        <div><strong>${workLabel}:</strong> ${data.project || `All ${workLabel.toLowerCase()}`}</div>
+        <div><strong>Project:</strong> ${data.project || `All project`}</div>
         <div><strong>Week starting:</strong> ${fmtDate(data.week_start, locale)}</div>
       </div>
       <table>
@@ -157,9 +156,9 @@ export default function CertifiedPayroll({ projects, settings, requireSignature 
           <input id="cp-week-end" style={styles.input} type="date" value={weekEnd} onChange={e => { setWeekEnd(e.target.value); setData(null); }} />
         </div>
         <div style={styles.field}>
-          <label htmlFor="cp-project" style={styles.label}>{workLabel} optional</label>
+          <label htmlFor="cp-project" style={styles.label}>Project optional</label>
           <select id="cp-project" style={styles.input} value={projectId} onChange={e => { setProjectId(e.target.value); setData(null); }}>
-            <option value="">All {workLabel.toLowerCase()}</option>
+            <option value="">All project</option>
             {(projects || []).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </div>
@@ -175,7 +174,7 @@ export default function CertifiedPayroll({ projects, settings, requireSignature 
           <div style={styles.reportHeader}>
             <div>
               <div style={styles.metaLine}><strong>{t.contractorLabel}</strong> {data.contractor}</div>
-              <div style={styles.metaLine}><strong>{workLabel}:</strong> {data.project || `All ${workLabel.toLowerCase()}`}</div>
+              <div style={styles.metaLine}><strong>Project:</strong> {data.project || `All project`}</div>
               <div style={styles.metaLine}><strong>Period:</strong> {fmtDate(data.week_start, locale)} – {fmtDate(data.week_end, locale)}</div>
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

@@ -132,8 +132,6 @@ export default function ReimbursementsAdmin({ settings = null }) {
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
-  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
   const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
   const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
   const [items, setItems] = useState([]);
@@ -327,7 +325,7 @@ export default function ReimbursementsAdmin({ settings = null }) {
         </select>
         {projectsInList.length > 0 && (
           <select style={s.filterInput} value={filterProject} onChange={e => setFilterProject(e.target.value)} aria-label={t.raFilterProjectAria}>
-            <option value="">{`All ${workLabelPlural}`}</option>
+            <option value="">{`All Projects`}</option>
             {projectsInList.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         )}
@@ -393,9 +391,9 @@ export default function ReimbursementsAdmin({ settings = null }) {
             </div>
             {projects.length > 0 && (
               <div style={s.field}>
-                <label style={s.fieldLabel}>{workLabel}</label>
+                <label style={s.fieldLabel}>Project</label>
                 <select style={s.input} value={form.project_id} onChange={e => setForm(f => ({ ...f, project_id: e.target.value }))}>
-                  <option value="">{`No ${workLabel.toLowerCase()}`}</option>
+                  <option value="">{`No project`}</option>
                   {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>

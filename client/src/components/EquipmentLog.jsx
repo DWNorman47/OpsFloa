@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo } from 'react';
 import api from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { langToLocale } from '../utils';
-import { labelSg } from '../companyLabels';
 import { useOffline } from '../contexts/OfflineContext';
 import { useT } from '../hooks/useT';
 import { SkeletonList, SkeletonBlock } from './Skeleton';
@@ -89,7 +88,7 @@ function ItemForm({ initial, onSaved, onCancel }) {
 
 // ── Log Hours Form ─────────────────────────────────────────────────────────────
 
-function LogHoursForm({ item, projects, onLogged, onCancel, workLabel = 'Project' }) {
+function LogHoursForm({ item, projects, onLogged, onCancel }) {
   const t = useT();
   const { user } = useAuth();
   const [form, setForm] = useState({
@@ -135,9 +134,9 @@ function LogHoursForm({ item, projects, onLogged, onCancel, workLabel = 'Project
       <div style={styles.row}>
         {projects.length > 0 && (
           <div style={styles.fieldGroup}>
-            <label htmlFor="eq-project" style={styles.label}>{workLabel}</label>
+            <label htmlFor="eq-project" style={styles.label}>Project</label>
             <select id="eq-project" style={styles.input} value={form.project_id} onChange={e => set('project_id', e.target.value)}>
-              <option value="">{`No ${workLabel.toLowerCase()}`}</option>
+              <option value="">{`No project`}</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
@@ -162,7 +161,7 @@ function LogHoursForm({ item, projects, onLogged, onCancel, workLabel = 'Project
 
 // ── Equipment Card ─────────────────────────────────────────────────────────────
 
-function EquipmentCard({ item, projects, isAdmin, onEdit, onDeleted, onHoursLogged, workLabel = 'Project' }) {
+function EquipmentCard({ item, projects, isAdmin, onEdit, onDeleted, onHoursLogged }) {
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
@@ -259,7 +258,6 @@ function EquipmentCard({ item, projects, isAdmin, onEdit, onDeleted, onHoursLogg
                 setLoggingHours(false);
               }}
               onCancel={() => setLoggingHours(false)}
-              workLabel={workLabel}
             />
           ) : (
             <div style={styles.bodyActions}>
@@ -297,7 +295,7 @@ function EquipmentCard({ item, projects, isAdmin, onEdit, onDeleted, onHoursLogg
                       <th style={styles.hth}>{t.date}</th>
                       <th style={styles.hth}>{t.hours}</th>
                       <th style={styles.hth}>{t.operatorField}</th>
-                      <th style={styles.hth}>{workLabel}</th>
+                      <th style={styles.hth}>Project</th>
                       <th style={styles.hth}>{t.notes}</th>
                       <th style={styles.hth}></th>
                     </tr>
@@ -339,10 +337,9 @@ function EquipmentCard({ item, projects, isAdmin, onEdit, onDeleted, onHoursLogg
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-export default function EquipmentLog({ projects, settings = null }) {
+export default function EquipmentLog({ projects }) {
   const { user } = useAuth();
   const t = useT();
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const { onSync } = useOffline() || {};
 
@@ -421,7 +418,6 @@ export default function EquipmentLog({ projects, settings = null }) {
               onEdit={i => { setEditing(i); setShowForm(false); }}
               onDeleted={id => setItems(prev => prev.filter(i => i.id !== id))}
               onHoursLogged={handleHoursLogged}
-              workLabel={workLabel}
             />
           ))}
         </div>

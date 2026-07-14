@@ -3,7 +3,6 @@ import api from '../api';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
 import { langToLocale } from '../utils';
-import { labelSg } from '../companyLabels';
 
 import { silentError } from '../errorReporter';
 function fmtDate(str, locale = 'en-US') {
@@ -28,11 +27,10 @@ function StatusBadge({ status }) {
   );
 }
 
-export default function ReimbursementsView({ settings = null }) {
+export default function ReimbursementsView() {
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const [items, setItems] = useState([]);
   const [mileageRate, setMileageRate] = useState(0.67);
   const [loading, setLoading] = useState(true);
@@ -167,9 +165,9 @@ export default function ReimbursementsView({ settings = null }) {
             )}
             {projects.length > 0 && (
               <div style={s.field}>
-                <label htmlFor="rv-project" style={s.label}>{workLabel}</label>
+                <label htmlFor="rv-project" style={s.label}>Project</label>
                 <select id="rv-project" style={s.input} value={form.project_id} onChange={e => setForm(f => ({ ...f, project_id: e.target.value }))} disabled={saving}>
-                  <option value="">{`No ${workLabel.toLowerCase()}`}</option>
+                  <option value="">{`No project`}</option>
                   {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>

@@ -71,10 +71,9 @@ const s = StyleSheet.create({
   reimbRow: { flexDirection: 'row', paddingVertical: 5, paddingHorizontal: 4, borderBottomWidth: 0.5, borderBottomColor: '#f3f4f6', borderBottomStyle: 'solid' },
 });
 
-export default function BillPDF({ data, companyInfo = {}, overtimeEnabled = true, showProject = true, showRateType = true, t = {}, language, settings = null }) {
+export default function BillPDF({ data, companyInfo = {}, overtimeEnabled = true, showProject = true, showRateType = true, t = {}, language }) {
   const locale = langToLocale(language);
   const { worker, entries, reimbursements = [], summary, period } = data;
-  const workLabel = settings?.label_work || 'Work';
 
   const periodStr = period.from || period.to
     ? `${period.from ? fmtDateShort(period.from, locale) : (t.pdfBeginning || 'Beginning')} – ${period.to ? fmtDateShort(period.to, locale) : (t.pdfPresent || 'Present')}`
@@ -140,7 +139,7 @@ export default function BillPDF({ data, companyInfo = {}, overtimeEnabled = true
         {/* Entry table */}
         <View style={s.tableHeader}>
           <Text style={[s.th, { width: colDate }]}>{t.pdfDateCol || 'Date'}</Text>
-          {showProject && <Text style={[s.th, { width: colProject }]}>{workLabel}</Text>}
+          {showProject && <Text style={[s.th, { width: colProject }]}>Project</Text>}
           <Text style={[s.th, { width: colDesc }]}>{t.pdfDescCol || 'Description'}</Text>
           <Text style={[s.th, { width: colIn }]}>{t.pdfClockIn || 'Clock In'}</Text>
           <Text style={[s.th, { width: colOut }]}>{t.pdfClockOut || 'Clock Out'}</Text>
@@ -174,7 +173,7 @@ export default function BillPDF({ data, companyInfo = {}, overtimeEnabled = true
               <Text style={[s.th, { width: '18%' }]}>{t.pdfDateCol || 'Date'}</Text>
               <Text style={[s.th, { width: '22%' }]}>{t.pdfCategory || 'Category'}</Text>
               <Text style={[s.th, { flex: 1 }]}>{t.pdfDescCol || 'Description'}</Text>
-              {showProject && <Text style={[s.th, { width: '20%' }]}>{workLabel}</Text>}
+              {showProject && <Text style={[s.th, { width: '20%' }]}>Project</Text>}
               <Text style={[s.th, { width: '16%', textAlign: 'right' }]}>{t.pdfAmount || 'Amount'}</Text>
             </View>
             {reimbursements.map(r => (

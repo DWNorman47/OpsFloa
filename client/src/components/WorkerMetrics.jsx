@@ -4,7 +4,6 @@ import { fmtHours, formatCurrency } from '../utils';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
 import { handlePdfError } from '../pdfError';
-import { labelSg } from '../companyLabels';
 
 function downloadCSV(rows, filename) {
   const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
@@ -31,8 +30,6 @@ function defaultDates() {
 export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = {}, overtimeEnabled = true, projectsEnabled = true, projects = [], settings = null }) {
   const t = useT();
   const { user } = useAuth();
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
-  const workLabelLower = workLabel.toLowerCase();
   const [expanded, setExpanded] = useState(false);
   const [from, setFrom] = useState(defaultDates().from);
   const [to, setTo] = useState(defaultDates().to);
@@ -172,9 +169,9 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
               </div>
               {projectsEnabled && projects.length > 0 && (
                 <div style={styles.addField}>
-                  <label style={styles.label}>{workLabel}</label>
+                  <label style={styles.label}>Project</label>
                   <select style={styles.input} value={addForm.project_id} onChange={e => setAddForm(f => ({ ...f, project_id: e.target.value }))} disabled={addSaving}>
-                    <option value="">{`No ${workLabelLower}`}</option>
+                    <option value="">No project</option>
                     {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                 </div>
@@ -225,7 +222,7 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
                   {pdfGenerating ? t.preparing : showPreview ? t.hideBill : t.previewBill}
                 </button>
                 <button style={styles.csvBtn} onClick={() => {
-                  const headers = ['Date', 'Type', workLabel, 'Category / Wage Type', 'Start', 'End', 'Hours', 'Amount'];
+                  const headers = ['Date', 'Type', 'Project', 'Category / Wage Type', 'Start', 'End', 'Hours', 'Amount'];
                   const timeRows = billData.entries.map(e => {
                     const h = ((new Date(`1970-01-01T${e.end_time}`) - new Date(`1970-01-01T${e.start_time}`)) / 3600000).toFixed(2);
                     return [e.work_date?.toString().substring(0,10), 'Time', e.project_name || '', e.wage_type, e.start_time, e.end_time, h, ''];

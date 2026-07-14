@@ -30,7 +30,7 @@ function isMidnightCross(start, end) {
   return end.substring(0, 5) < start.substring(0, 5);
 }
 
-export default function EntryList({ entries, onDeleted, onUpdated, t, language, currentUserId, projects = [], onRefresh, workLabel = 'Project' }) {
+export default function EntryList({ entries, onDeleted, onUpdated, t, language, currentUserId, projects = [], onRefresh }) {
   const [expandedId, setExpandedId] = useState(null);
   const [openMessageId, setOpenMessageId] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -175,7 +175,6 @@ export default function EntryList({ entries, onDeleted, onUpdated, t, language, 
                       <EntryPanel
                         entry={e}
                         projects={projects}
-                        workLabel={workLabel}
                         onRefresh={onRefresh}
                         onDeleted={id => { onDeleted(id); setExpandedId(null); setSelectedIds(prev => { const s = new Set(prev); s.delete(id); return s; }); }}
                         onClose={() => setExpandedId(null)}

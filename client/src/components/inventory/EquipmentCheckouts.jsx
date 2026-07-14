@@ -37,7 +37,6 @@ export default function EquipmentCheckouts({ projects = [], settings = null, onC
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
   const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
 
   const [checkouts, setCheckouts] = useState([]);
   const [assets, setAssets] = useState([]);
@@ -131,7 +130,7 @@ export default function EquipmentCheckouts({ projects = [], settings = null, onC
       {showForm && (
         <CheckoutForm
           t={t} available={available} team={team} projects={projects}
-          workerLabel={workerLabel} workLabel={workLabel} initialAssetId={scanAssetId}
+          workerLabel={workerLabel} initialAssetId={scanAssetId}
           busy={busy === 'checkout'} onSubmit={doCheckout} onCancel={() => { setShowForm(false); setScanAssetId(''); }}
         />
       )}
@@ -157,7 +156,7 @@ export default function EquipmentCheckouts({ projects = [], settings = null, onC
                   </div>
                   <div style={s.itemMeta}>
                     <span>{t.eqCheckedOutTo}: <b>{c.holder_name || '—'}</b></span>
-                    {c.project_name && <span>· {workLabel}: {c.project_name}</span>}
+                    {c.project_name && <span>· Project: {c.project_name}</span>}
                     {c.due_at && (
                       <span style={over ? s.overdue : undefined}>
                         · {over ? t.eqOverdue : t.eqDueBack}: {fmtDate(c.due_at, locale)}
@@ -190,7 +189,7 @@ export default function EquipmentCheckouts({ projects = [], settings = null, onC
   );
 }
 
-function CheckoutForm({ t, available, team, projects, workerLabel, workLabel, initialAssetId = '', busy, onSubmit, onCancel }) {
+function CheckoutForm({ t, available, team, projects, workerLabel, initialAssetId = '', busy, onSubmit, onCancel }) {
   const [form, setForm] = useState({ asset_id: initialAssetId || '', user_id: '', project_id: '', due_at: '', notes: '', checkout_photo: null });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const submit = e => { e.preventDefault(); if (form.asset_id) onSubmit(form); };
@@ -213,7 +212,7 @@ function CheckoutForm({ t, available, team, projects, workerLabel, workLabel, in
           </select>
         </label>
         <label style={s.field}>
-          <span style={s.label}>{workLabel}</span>
+          <span style={s.label}>Project</span>
           <select style={s.input} value={form.project_id} onChange={e => set('project_id', e.target.value)}>
             <option value="">—</option>
             {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}

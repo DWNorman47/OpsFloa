@@ -33,9 +33,8 @@ const pdf = StyleSheet.create({
   footerText: { fontSize: 7, color: '#6b7280' },
 });
 
-export function PunchlistDocument({ items, companyName, t = {}, language, settings = null }) {
+export function PunchlistDocument({ items, companyName, t = {}, language }) {
   const locale = langToLocale(language);
-  const workLabel = settings?.label_work || 'Work';
   const PRIORITY_LABEL = { high: t.priorityHigh, normal: t.priorityNormal, low: t.priorityLow };
   const STATUS_LABEL = {
     open: t.statusOpen,
@@ -93,7 +92,7 @@ export function PunchlistDocument({ items, companyName, t = {}, language, settin
         <View style={pdf.table}>
           <View style={pdf.tableHeader}>
             <Text style={{ ...pdf.thText, ...pdf.colTitle }}>{t.pdfItemHeader}</Text>
-            <Text style={{ ...pdf.thText, ...pdf.colProject }}>{workLabel}</Text>
+            <Text style={{ ...pdf.thText, ...pdf.colProject }}>Project</Text>
             <Text style={{ ...pdf.thText, ...pdf.colPriority }}>{t.priorityField}</Text>
             <Text style={{ ...pdf.thText, ...pdf.colStatus }}>{t.statusLabel}</Text>
             <Text style={{ ...pdf.thText, ...pdf.colAssigned }}>{t.pdfAssignedTo}</Text>

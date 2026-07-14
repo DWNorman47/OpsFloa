@@ -29,8 +29,6 @@ export default function AuditLog({ timezone = '', settings = null }) {
   const locale = langToLocale(user?.language);
   const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
   const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
-  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
   const [entries, setEntries] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
@@ -60,7 +58,7 @@ export default function AuditLog({ timezone = '', settings = null }) {
   const ACTION_GROUPS = {
     '': t.filterAllActions,
     worker: workerLabelPlural,
-    project: workLabelPlural,
+    project: 'Projects',
     entry: t.filterEntries,
     pay_period: t.filterPayPeriods,
     settings: t.filterSettings,

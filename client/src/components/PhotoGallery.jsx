@@ -6,7 +6,6 @@ import { langToLocale } from '../utils';
 import Pagination from './Pagination';
 import { SkeletonList } from './Skeleton';
 import FieldFilters from './FieldFilters';
-import { labelSg, labelPl } from '../companyLabels';
 
 import { silentError } from '../errorReporter';
 function fmtDate(str, locale = 'en-US') {
@@ -110,13 +109,11 @@ function Lightbox({ items, index, onClose, onDelete, deleting = false, locale = 
   );
 }
 
-export default function PhotoGallery({ projects, settings = null }) {
+export default function PhotoGallery({ projects }) {
   const { user } = useAuth();
   const t = useT();
   const locale = langToLocale(user?.language);
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
-  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
 
   const [media, setMedia] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -183,9 +180,9 @@ export default function PhotoGallery({ projects, settings = null }) {
       <FieldFilters activeCount={Object.values(filters).filter(Boolean).length}>
         {projects.length > 0 && (
           <label style={styles.filterField}>
-            <span style={styles.dateLabel}>{workLabel}</span>
+            <span style={styles.dateLabel}>Project</span>
             <select style={styles.filterSelect} value={filters.project_id || ''} onChange={e => setFilter('project_id', e.target.value)}>
-              <option value="">{`All ${workLabelPlural}`}</option>
+              <option value="">{`All Projects`}</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </label>

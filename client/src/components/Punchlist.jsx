@@ -8,7 +8,7 @@ import { useToast } from '../contexts/ToastContext';
 import { SkeletonList } from './Skeleton';
 import Pagination from './Pagination';
 import FieldFilters from './FieldFilters';
-import { labelSg, labelPl } from '../companyLabels';
+import { labelSg } from '../companyLabels';
 
 const STATUS_COLORS = {
   open: { color: '#92400e', bg: '#fef3c7' },
@@ -32,7 +32,7 @@ function statusLabel(status, t) {
   return t.statusOpen;
 }
 
-function AddItemForm({ projects, workers, onAdded, onCancel, isAdmin, existingPhases, workLabel = 'Project', workerLabel = 'Worker' }) {
+function AddItemForm({ projects, workers, onAdded, onCancel, isAdmin, existingPhases, workerLabel = 'Worker' }) {
   const t = useT();
   const PRIORITIES = [
     { value: 'high', label: `🔴 ${t.priorityHigh}` },
@@ -70,9 +70,9 @@ function AddItemForm({ projects, workers, onAdded, onCancel, isAdmin, existingPh
         </div>
         {projects.length > 0 && (
           <div style={styles.fieldGroup}>
-            <label htmlFor="pl-project" style={styles.label}>{workLabel}</label>
+            <label htmlFor="pl-project" style={styles.label}>Project</label>
             <select id="pl-project" style={styles.input} value={form.project_id} onChange={e => set('project_id', e.target.value)}>
-              <option value="">{`No ${workLabel.toLowerCase()}`}</option>
+              <option value="">{`No project`}</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
@@ -339,8 +339,6 @@ export default function Punchlist({ projects, settings = null }) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const { onSync } = useOffline() || {};
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
-  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
   const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(1);
@@ -444,7 +442,6 @@ export default function Punchlist({ projects, settings = null }) {
             workers={workers}
             isAdmin={isAdmin}
             existingPhases={allPhases}
-            workLabel={workLabel}
             workerLabel={workerLabel}
             onAdded={item => { setItems(prev => [item, ...prev]); setShowForm(false); }}
             onCancel={() => setShowForm(false)}
@@ -454,7 +451,7 @@ export default function Punchlist({ projects, settings = null }) {
 
       <FieldFilters activeCount={activeFilterCount}>
         <select style={styles.filterSelect} value={filterProject} onChange={e => setFilterProject(e.target.value)}>
-          <option value="">{`All ${workLabelPlural}`}</option>
+          <option value="">{`All Projects`}</option>
           {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <select style={styles.filterSelect} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>

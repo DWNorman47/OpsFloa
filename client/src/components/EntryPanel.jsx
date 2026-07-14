@@ -15,12 +15,11 @@ function midTime(start, end) {
   return `${String(Math.floor(mid / 60)).padStart(2, '0')}:${String(mid % 60).padStart(2, '0')}`;
 }
 
-export default function EntryPanel({ entry, projects = [], onRefresh, onDeleted, onClose, workLabel = 'Project' }) {
+export default function EntryPanel({ entry, projects = [], onRefresh, onDeleted, onClose }) {
   const t = useT();
   const toast = useToast();
   const editable = !entry.locked && isEditable(entry.work_date);
   const mid = midTime(entry.start_time, entry.end_time);
-  const workLabelLower = workLabel.toLowerCase();
 
   const [tab, setTab] = useState('edit');
   const [editForm, setEditForm] = useState({
@@ -106,7 +105,7 @@ export default function EntryPanel({ entry, projects = [], onRefresh, onDeleted,
         <div style={s.tabBar}>
           <button style={tab === 'edit' ? s.tabOn : s.tab} onClick={() => switchTab('edit')}>{t.entryPanelEdit}</button>
           <button style={tab === 'break' ? s.tabOn : s.tab} onClick={() => switchTab('break')}>{t.entryPanelInsertBreak}</button>
-          <button style={tab === 'switch' ? s.tabOn : s.tab} onClick={() => switchTab('switch')}>{`${workLabel} switch`}</button>
+          <button style={tab === 'switch' ? s.tabOn : s.tab} onClick={() => switchTab('switch')}>{`Project switch`}</button>
         </div>
       )}
 
@@ -154,7 +153,7 @@ export default function EntryPanel({ entry, projects = [], onRefresh, onDeleted,
           <div style={s.row}>
             <div style={s.field}><label htmlFor="ep-switch-at" style={s.label}>{t.entryPanelSwitchAt}</label><input id="ep-switch-at" type="time" style={s.input} value={switchForm.at} onChange={e => setSwitchForm(f => ({ ...f, at: e.target.value }))} /></div>
             <div style={{ ...s.field, flex: 2 }}>
-              <label htmlFor="ep-switch-project" style={s.label}>{`Switch to ${workLabelLower}`}</label>
+              <label htmlFor="ep-switch-project" style={s.label}>{`Switch to project`}</label>
               <select id="ep-switch-project" style={s.input} value={switchForm.project_id} onChange={e => setSwitchForm(f => ({ ...f, project_id: e.target.value }))}>
                 <option value="">{t.selectPlaceholder}…</option>
                 {projects.filter(p => p.active !== false).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}

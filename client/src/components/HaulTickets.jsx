@@ -4,7 +4,6 @@ import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
 import { usePlan } from '../hooks/usePlan';
 import { langToLocale } from '../utils';
-import { labelSg } from '../companyLabels';
 import { SkeletonList } from './Skeleton';
 
 const UNITS = ['CY', 'tons', 'loads'];
@@ -24,12 +23,11 @@ const fmtQty = n => {
 };
 
 // ── Haul / production log — per-job truck-load tickets ──────────────────────────
-export default function HaulTickets({ projects = [], settings = null }) {
+export default function HaulTickets({ projects = [] }) {
   const t = useT();
   const { user } = useAuth();
   const { hasTakeoff } = usePlan();
   const locale = langToLocale(user?.language);
-  const workLabel = labelSg(settings?.label_work, 'project', user?.language);
   const today = new Date().toLocaleDateString('en-CA');
 
   const [filterProject, setFilterProject] = useState('');
@@ -227,7 +225,7 @@ export default function HaulTickets({ projects = [], settings = null }) {
             <input style={styles.input} type="date" value={form.ticket_date} onChange={e => set('ticket_date', e.target.value)} />
           </label>
           <label style={styles.field}>
-            <span style={styles.lbl}>{workLabel}</span>
+            <span style={styles.lbl}>Project</span>
             <select style={styles.input} value={form.project_id} onChange={e => set('project_id', e.target.value)}>
               <option value="">{t.haulNoProject}</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -393,7 +391,7 @@ export default function HaulTickets({ projects = [], settings = null }) {
             <thead>
               <tr>
                 <th style={styles.th}>{t.haulDate}</th>
-                <th style={styles.th}>{workLabel}</th>
+                <th style={styles.th}>Project</th>
                 <th style={styles.th}>{t.haulTicketNo}</th>
                 <th style={styles.th}>{t.haulHauler}</th>
                 <th style={styles.th}>{t.haulMaterial}</th>

@@ -218,8 +218,6 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
     return new Intl.NumberFormat(locale, { style: 'currency', currency: settings?.currency || 'USD', maximumFractionDigits: 0 }).format(n);
   };
 
-  const workLabel = labelSg(settings?.label_work, 'project', user?.language);
-  const workLabelLower = workLabel.toLowerCase();
   const clientLabel = labelSg(settings?.label_client, 'client', user?.language);
   const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
   const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
@@ -513,7 +511,7 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
       const r = await api.patch(`/admin/projects/${project.id}`, { status: 'completed' });
       onProjectUpdated?.(r.data);
       setEditForm(f => ({ ...f, status: 'completed' }));
-      setEditMsg(`${workLabel} marked as complete`);
+      setEditMsg('Project marked as complete');
       setTimeout(() => setEditMsg(''), 2500);
     } catch {
       setEditMsg('Failed to update');
@@ -527,7 +525,7 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
       onProjectArchived?.(project.id);
       onClose?.();
     } catch (err) {
-      setEditMsg(err.response?.data?.error || `Failed to archive ${workLabelLower}`);
+      setEditMsg(err.response?.data?.error || 'Failed to archive project');
       setConfirmArchive(false);
     } finally { setEditSaving(false); }
   };
@@ -651,7 +649,7 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
               )}
 
               {/* Visibility */}
-              <ProjectVisibility project={project} onProjectUpdated={onProjectUpdated} toggleStyle={styles.activityToggle} countStyle={styles.activityCount} workLabel={workLabel} workerLabel={workerLabel} />
+              <ProjectVisibility project={project} onProjectUpdated={onProjectUpdated} toggleStyle={styles.activityToggle} countStyle={styles.activityCount} workerLabel={workerLabel} />
 
               {/* Punchlist */}
               <div style={{ marginBottom: 16 }}>
@@ -1250,11 +1248,11 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
               {project.active !== false && (
                 <div style={styles.archiveBox}>
                   <div>
-                    <div style={styles.archiveTitle}>Archive {workLabel}</div>
+                    <div style={styles.archiveTitle}>Archive Project</div>
                     <div style={styles.archiveHint}>
                       {settings?.media_delete_on_project_archive
-                        ? `Hide this ${workLabelLower} from active lists and permanently delete its media.`
-                        : `Hide this ${workLabelLower} from active lists without deleting its history.`}
+                        ? 'Hide this project from active lists and permanently delete its media.'
+                        : 'Hide this project from active lists without deleting its history.'}
                     </div>
                   </div>
                   {confirmArchive ? (
@@ -1366,7 +1364,7 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
               <div style={pf.field}>
                 <label style={pf.label}>📍 Geofence (optional)</label>
                 <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8, lineHeight: 1.5 }}>
-                  Require {workerLabelPlural.toLowerCase()} to be physically near the {workLabelLower} location to clock in.
+                  Require {workerLabelPlural.toLowerCase()} to be physically near the project location to clock in.
                   Distance is calculated server-side from their phone&apos;s GPS.
                   Leave all three fields blank to allow clock-in from anywhere.
                 </div>
@@ -1444,10 +1442,9 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
 // match the overview tab's other panels (budgetSection look). Collapsed by
 // default; header is clickable. Empty selection = visible to everyone.
 
-function ProjectVisibility({ project, onProjectUpdated, toggleStyle, countStyle, workLabel = 'Project', workerLabel = 'Worker' }) {
+function ProjectVisibility({ project, onProjectUpdated, toggleStyle, countStyle, workerLabel = 'Worker' }) {
   const t = useT();
   const workerLabelPlural = plural(workerLabel);
-  const workLabelLower = workLabel.toLowerCase();
   const workerLabelLower = workerLabel.toLowerCase();
   const workerLabelPluralLower = workerLabelPlural.toLowerCase();
   const [open, setOpen] = useState(false);
@@ -1525,8 +1522,8 @@ function ProjectVisibility({ project, onProjectUpdated, toggleStyle, countStyle,
       {open && (
         <div style={{ marginTop: 8 }}>
           <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 12px' }}>
-            Choose which {workerLabelPluralLower} see this {workLabelLower} in their Time Clock dropdown. Leave empty to make it visible to
-            everyone. Admins always see every {workLabelLower} regardless of this setting.
+            Choose which {workerLabelPluralLower} see this project in their Time Clock dropdown. Leave empty to make it visible to
+            everyone. Admins always see every project regardless of this setting.
           </p>
           {loading && <p style={{ fontSize: 13, color: '#6b7280' }}>{t.ppLoadingWorkers}</p>}
           {workers && workers.length === 0 && <p style={{ fontSize: 13, color: '#6b7280' }}>{t.ppNoWorkersYet}</p>}
@@ -1665,8 +1662,6 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
   useUnsavedChanges(dirty);
   const set = (k, v) => { setDirty(true); setForm(f => ({ ...f, [k]: v })); };
   const showPrevailing = (settings?.prevailing_wage_rate ?? 0) > 0;
-  const workLabel = labelSg(settings?.label_work, 'project', user?.language);
-  const workLabelLower = workLabel.toLowerCase();
   const clientLabel = labelSg(settings?.label_client, 'client', user?.language);
   const clientLabelLower = clientLabel.toLowerCase();
   const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
@@ -1739,7 +1734,7 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
 
   const handleSubmit = async e => {
     e.preventDefault();
-    if (!form.name.trim()) { setError(`${workLabel} name is required.`); return; }
+    if (!form.name.trim()) { setError('Project name is required.'); return; }
     // Geofence: enforce all-or-none on the client too so the server's
     // friendlier 400 doesn't surprise an admin mid-create.
     const lat = form.geo_lat.trim();
@@ -1769,12 +1764,12 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
 
   return (
     <div style={pf.card} className="project-create-card">
-      <h3 style={pf.title}>New {workLabel}</h3>
+      <h3 style={pf.title}>New Project</h3>
       <form onSubmit={handleSubmit} style={pf.form}>
         <div style={pf.row} className="project-form-grid">
           <div style={pf.field}>
-            <label style={pf.label}>{workLabel} name *</label>
-            <input style={pf.input} value={form.name} onChange={e => set('name', e.target.value)} placeholder={`${workLabel} name`} required autoFocus />
+            <label style={pf.label}>Project name *</label>
+            <input style={pf.input} value={form.name} onChange={e => set('name', e.target.value)} placeholder="Project name" required autoFocus />
           </div>
           <div style={pf.field}>
             <label style={pf.label}>{t.jobNumberLabel}</label>
@@ -1934,13 +1929,13 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
 
         <div style={pf.field}>
           <label style={pf.label}>{t.descriptionLabel} <span style={{ fontWeight: 400, color: '#6b7280' }}>{t.optionalHint}</span></label>
-          <textarea style={pf.textarea} rows={2} value={form.description} onChange={e => set('description', e.target.value)} placeholder={`Notes or scope for this ${workLabelLower}`} />
+          <textarea style={pf.textarea} rows={2} value={form.description} onChange={e => set('description', e.target.value)} placeholder="Notes or scope for this project" />
         </div>
 
         {error && <p style={pf.error}>{error}</p>}
 
         <div style={pf.actions} className="project-form-actions">
-          <button style={pf.saveBtn} type="submit" disabled={saving}>{saving ? t.creating : `Create ${workLabel}`}</button>
+          <button style={pf.saveBtn} type="submit" disabled={saving}>{saving ? t.creating : 'Create Project'}</button>
           <button style={pf.cancelBtn} type="button" onClick={onCancel}>{t.cancel}</button>
         </div>
       </form>
@@ -1955,7 +1950,6 @@ const SALES_TAB_PERMS = ['manage_projects', 'manage_settings'];
 const PROJECT_TAB_IDS = ['projects', 'estimates', 'change_orders', 'pos'];
 
 export default function ProjectsPage() {
-  const { user } = useAuth();
   const t = useT();
   const hasSalesPerm = useHasAnyPerm(SALES_TAB_PERMS);
   // Tab can be deep-linked via the URL hash (e.g. /projects#estimates), which
@@ -2019,9 +2013,6 @@ export default function ProjectsPage() {
 
   const activeProjects = projects.filter(p => p.active).length;
   const totalHours = Object.values(metrics).reduce((s, m) => s + parseFloat(m.total_hours || 0), 0);
-  const workLabel = labelSg(settings?.label_work, 'project', user?.language);
-  const workLabelLower = workLabel.toLowerCase();
-  const workLabelPlural = labelPl(settings?.label_work, 'project', user?.language);
 
   // Estimates/Change Orders and sub Purchase Orders are part of the Projects
   // module — not separately toggleable. They show to admins who can manage
@@ -2097,8 +2088,8 @@ export default function ProjectsPage() {
                 <div style={styles.pageHeaderCopy}>
                   <p style={styles.pageSub}>
                     {loading
-                      ? `${t.prjLoadingPrefix} ${workLabelPlural.toLowerCase()}...`
-                      : `${activeProjects} ${t.prjActiveLabel} ${activeProjects === 1 ? workLabelLower : workLabelPlural.toLowerCase()}${totalHours > 0 ? ` - ${totalHours.toFixed(0)} ${t.prjTotalHoursSuffix}` : ''}`}
+                      ? `${t.prjLoadingPrefix} projects...`
+                      : `${activeProjects} ${t.prjActiveLabel} ${activeProjects === 1 ? 'project' : 'projects'}${totalHours > 0 ? ` - ${totalHours.toFixed(0)} ${t.prjTotalHoursSuffix}` : ''}`}
                   </p>
                 </div>
                 <div style={styles.pageHeaderControls} className="projects-page-header-controls">
@@ -2120,7 +2111,7 @@ export default function ProjectsPage() {
                   </div>
                   {!showCreateForm && (
                     <button style={styles.newProjectBtn} className="projects-new-btn" onClick={() => setShowCreateForm(true)}>
-                      + New {workLabel}
+                      + New Project
                     </button>
                   )}
                 </div>
@@ -2144,22 +2135,22 @@ export default function ProjectsPage() {
 
             {!loading && projects.length >= 500 && (
               <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, padding: '8px 14px', marginBottom: 12, fontSize: 13, color: '#92400e' }}>
-                Showing the first 500 {workLabelPlural.toLowerCase()}. Use search or filters to find others.
+                Showing the first 500 projects. Use search or filters to find others.
               </div>
             )}
             {loading ? (
               <SkeletonList count={5} rows={3} />
             ) : loadError ? (
               <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '16px 20px', color: '#991b1b', fontSize: 14 }}>
-                Failed to load {workLabelPlural.toLowerCase()}.{' '}
+                Failed to load projects.{' '}
                 <button style={{ background: 'none', border: 'none', color: 'var(--ops-page-accent)', fontWeight: 700, cursor: 'pointer', textDecoration: 'underline', padding: 0 }} onClick={() => { setLoadError(false); loadProjects(showArchived); }}>{t.ppTryAgainLink}</button>
               </div>
             ) : projects.length === 0 ? (
               <EmptyState
                 mark="W"
-                title={`No ${workLabelLower} yet`}
-                body={`Create your first ${workLabelLower} so time, notes, billing, and reports have somewhere to land.`}
-                actionLabel={`Add ${workLabel}`}
+                title="No project yet"
+                body="Create your first project so time, notes, billing, and reports have somewhere to land."
+                actionLabel="Add Project"
                 onAction={() => setShowCreateForm(true)}
               />
             ) : viewMode === 'grid' ? (

@@ -9,7 +9,7 @@ import EmptyState from './EmptyState';
 import { silentError } from '../errorReporter';
 import HelpTip from './HelpTip';
 import { useAuth } from '../contexts/AuthContext';
-import { labelSg, labelPl } from '../companyLabels';
+import { labelSg } from '../companyLabels';
 export default function ManageProjects({ projects, onProjectAdded, onProjectDeleted, onProjectUpdated, onProjectRestored, showWageType = true, nameEditable = true, showGeofenceBudget = true, defaultPrevailingRate = '', currency = 'USD', settings = null }) {
   const toast = useToast();
   const t = useT();
@@ -299,15 +299,12 @@ export default function ManageProjects({ projects, onProjectAdded, onProjectDele
     setError('');
   };
 
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
-  const workLabelLower = workLabel.toLowerCase();
-  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
   const clientLabel = labelSg(settings?.label_client, 'client', user?.language);
-  const workNamePlaceholder = `${workLabel} name`;
+  const workNamePlaceholder = 'Project name';
 
   return (
     <div style={s.card}>
-      <h3 style={s.cardTitle}>Manage {workLabel}</h3>
+      <h3 style={s.cardTitle}>Manage Project</h3>
       <form onSubmit={handleAdd} style={s.form} className="manage-projects-form">
         <input
           style={s.input}
@@ -341,8 +338,8 @@ export default function ManageProjects({ projects, onProjectAdded, onProjectDele
       {projects.length === 0 ? (
         <EmptyState
           mark="W"
-          title={`No ${workLabelLower} yet`}
-          body={`Create the ${workLabelLower} your team clocks time against. This can be a project, job, route, case, or any other unit your company uses.`}
+          title="No project yet"
+          body="Create the project your team clocks time against. This can be a project, job, route, case, or any other unit your company uses."
         />
       ) : (
         <div style={s.list}>
@@ -412,7 +409,7 @@ export default function ManageProjects({ projects, onProjectAdded, onProjectDele
 
                     {/* Work Info */}
                     <div style={s.section}>
-                      <div style={s.sectionTitle}>{workLabel} info</div>
+                      <div style={s.sectionTitle}>Project info</div>
                       <div style={s.fieldsGrid}>
                         <div style={s.fieldGroup}>
                           <label htmlFor="mp-status" style={s.fieldLabel}>{t.mpStatus}</label>
@@ -442,11 +439,11 @@ export default function ManageProjects({ projects, onProjectAdded, onProjectDele
                       </div>
                       <div style={{ ...s.fieldGroup, marginTop: 8 }}>
                         <label htmlFor="mp-address" style={s.fieldLabel}>{t.mpAddressLocation}</label>
-                        <input id="mp-address" style={s.editInput} maxLength={255} value={editAddress} onChange={e => setEditAddress(e.target.value)} placeholder={`${workLabel} address or location`} />
+                        <input id="mp-address" style={s.editInput} maxLength={255} value={editAddress} onChange={e => setEditAddress(e.target.value)} placeholder="Project address or location" />
                       </div>
                       <div style={{ ...s.fieldGroup, marginTop: 8 }}>
                         <label htmlFor="mp-description" style={s.fieldLabel}>{t.mpDescription}</label>
-                        <textarea id="mp-description" style={{ ...s.editInput, minHeight: 60, resize: 'vertical' }} maxLength={1000} value={editDescription} onChange={e => setEditDescription(e.target.value)} placeholder={`Notes about this ${workLabelLower}`} />
+                        <textarea id="mp-description" style={{ ...s.editInput, minHeight: 60, resize: 'vertical' }} maxLength={1000} value={editDescription} onChange={e => setEditDescription(e.target.value)} placeholder="Notes about this project" />
                         <div style={{ fontSize: 11, color: '#6b7280', textAlign: 'right', marginTop: 2 }}>{(editDescription || '').length}/1000</div>
                       </div>
                       <div style={{ ...s.fieldGroup, marginTop: 8 }}>
@@ -548,7 +545,7 @@ export default function ManageProjects({ projects, onProjectAdded, onProjectDele
           >
             <div id="mp-merge-title" style={s.modalTitle}>Merge "{mergeSource.name}"</div>
             <p style={s.modalBody}>
-              All time entries, field reports, and other data will be moved to the target {workLabelLower}.
+              All time entries, field reports, and other data will be moved to the target project.
               "{mergeSource.name}" will be permanently deleted. This cannot be undone.
             </p>
             <div style={s.fieldGroup}>
@@ -559,7 +556,7 @@ export default function ManageProjects({ projects, onProjectAdded, onProjectDele
                 value={mergeTargetId}
                 onChange={e => setMergeTargetId(e.target.value)}
               >
-                <option value="">{`Select ${workLabel.toLowerCase()}`}</option>
+                <option value="">Select project</option>
                 {projects.filter(p => p.id !== mergeSource.id).map(p => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
@@ -584,11 +581,11 @@ export default function ManageProjects({ projects, onProjectAdded, onProjectDele
           >
             <div id="mp-archive-title" style={s.modalTitle}>Archive "{archiveTarget.name}"?</div>
             <p style={s.modalBody}>
-              Time entries will be kept and the {workLabelLower} can be restored later from Inactive.
+              Time entries will be kept and the project can be restored later from Inactive.
             </p>
             {settings?.media_delete_on_project_archive && (
               <div style={s.modalWarn}>
-                <strong>Media will be permanently deleted.</strong> The delete media on archive setting is active. All photos and attachments for this {workLabelLower} will be removed from storage and cannot be recovered.
+                <strong>Media will be permanently deleted.</strong> The delete media on archive setting is active. All photos and attachments for this project will be removed from storage and cannot be recovered.
               </div>
             )}
             <div style={s.modalDownload}>
@@ -604,7 +601,7 @@ export default function ManageProjects({ projects, onProjectAdded, onProjectDele
             </div>
             <div style={s.modalActions}>
               <button style={s.cancelBtn} onClick={() => setArchiveTarget(null)}>{t.cancel}</button>
-              <button style={s.archiveBtn} onClick={handleConfirmArchive}>{`Archive ${workLabel}`}</button>
+              <button style={s.archiveBtn} onClick={handleConfirmArchive}>Archive Project</button>
             </div>
           </ModalShell>
         </div>
@@ -619,7 +616,7 @@ export default function ManageProjects({ projects, onProjectAdded, onProjectDele
             {loadingArchived ? (
               <SkeletonList count={3} rows={1} />
             ) : archived.length === 0 ? (
-              <p style={s.empty}>{`No inactive ${workLabelPlural.toLowerCase()}.`}</p>
+              <p style={s.empty}>No inactive projects.</p>
             ) : (
               archived.map(p => (
                 <div key={p.id} style={s.historyItem}>

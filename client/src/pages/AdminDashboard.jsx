@@ -173,8 +173,6 @@ export function WorkforcePanel() {
 
   const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
   const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
-  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
 
   return (
     <>
@@ -276,7 +274,7 @@ export function WorkforcePanel() {
             )}
             {settings?.feature_project_integration !== false && <>
               <button style={styles.sectionToggle} onClick={() => toggleSection('projects')}>
-                <span>{`${workLabelPlural} reports`}</span>
+                <span>{`Projects reports`}</span>
                 <span style={styles.chevron}>{collapsedSections.projects ? '▶' : '▼'}</span>
               </button>
               {!collapsedSections.projects && <ProjectReports currency={settings?.currency ?? 'USD'} settings={settings} />}
