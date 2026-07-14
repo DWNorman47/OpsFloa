@@ -46,6 +46,7 @@ function readHeaderFields(body) {
     contingency_pct:      parsePct(body.contingency_pct),
     tax_pct:              parsePct(body.tax_pct),
     valid_until:          body.valid_until || null,
+    bid_due_at:           body.bid_due_at || null, // when the bid must be submitted
     notes:                body.notes || null,
     exclusions:           body.exclusions || null,
     terms:                body.terms || null,
@@ -173,7 +174,7 @@ router.get('/', requireAuth, async (req, res) => {
       pool.query(`SELECT COUNT(*) FROM estimates WHERE ${where}`, params),
       pool.query(
         `SELECT id, estimate_number, project_name, client_name_snapshot, status,
-                subtotal_cents, total_cents, valid_until, sent_at, responded_at, created_at
+                subtotal_cents, total_cents, valid_until, bid_due_at, sent_at, responded_at, created_at
            FROM estimates WHERE ${where}
           ORDER BY created_at DESC
           LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
@@ -212,7 +213,7 @@ router.post('/', requireAdmin, async (req, res) => {
         (company_id, estimate_number, client_id, client_name_snapshot, client_email,
          project_address, project_name, scope_summary,
          overhead_pct, margin_pct, contingency_pct, tax_pct,
-         valid_until, notes, exclusions, terms, created_by)
+         valid_until, notes, exclusions, terms, bid_due_at, created_by)
        VALUES
         ($1,
          (SELECT 'EST-' ||
@@ -224,12 +225,12 @@ router.post('/', requireAdmin, async (req, res) => {
                         ELSE 0 END
                  ), 0) + 1)::text, 4, '0')
           FROM estimates WHERE company_id = $1),
-         $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+         $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
        RETURNING *`,
       [companyId, fields.client_id, fields.client_name_snapshot, fields.client_email,
        fields.project_address, fields.project_name, fields.scope_summary,
        fields.overhead_pct, fields.margin_pct, fields.contingency_pct, fields.tax_pct,
-       fields.valid_until, fields.notes, fields.exclusions, fields.terms, req.user.id]
+       fields.valid_until, fields.notes, fields.exclusions, fields.terms, fields.bid_due_at, req.user.id]
     );
     const estimateId = headRes.rows[0].id;
     for (const ln of lines) {
@@ -303,13 +304,16 @@ router.patch('/:id', requireAdmin, async (req, res) => {
            client_id=$1, client_name_snapshot=$2, client_email=$3,
            project_address=$4, project_name=$5, scope_summary=$6,
            overhead_pct=$7, margin_pct=$8, contingency_pct=$9, tax_pct=$10,
-           valid_until=$11, notes=$12, exclusions=$13, terms=$14
-         WHERE id = $15`,
+           valid_until=$11, notes=$12, exclusions=$13, terms=$14,
+           bid_reminder_sent_at = CASE WHEN bid_due_at IS DISTINCT FROM $15::timestamptz
+                                       THEN NULL ELSE bid_reminder_sent_at END,
+           bid_due_at=$15
+         WHERE id = $16`,
         [fields.client_id, fields.client_name_snapshot, fields.client_email,
          fields.project_address, fields.project_name, fields.scope_summary,
          fields.overhead_pct, fields.margin_pct, fields.contingency_pct, fields.tax_pct,
          fields.valid_until, fields.notes, fields.exclusions, fields.terms,
-         req.params.id]
+         fields.bid_due_at, req.params.id]
       );
       await recomputeAndStoreTotals(client, req.params.id);
       await client.query('COMMIT');

@@ -62,6 +62,22 @@ const formatCents = (c) => formatMoney(c, { showCents: true });
 
 // ── List view ────────────────────────────────────────────────────────────────
 
+// "Bid due" chip — only while still bidding (draft/sent); red overdue, amber soon
+function BidDueChip({ dueAt, status, language }) {
+  if (!dueAt || !['draft', 'sent'].includes(status)) return null;
+  const days = daysUntil(dueAt);
+  if (days === null) return null;
+  const overdue = days < 0, soon = days >= 0 && days < 2;
+  const color = overdue ? '#dc2626' : soon ? '#b45309' : '#6b7280';
+  const bg = overdue ? '#fee2e2' : soon ? '#fef3c7' : '#eef2f7';
+  const txt = new Date(dueAt).toLocaleString(language || undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return (
+    <span title="Bid due" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11, fontWeight: 700, color, background: bg, padding: '2px 7px', borderRadius: 999, whiteSpace: 'nowrap' }}>
+      ⏰ {txt}
+    </span>
+  );
+}
+
 function EstimatesList({ onOpen, onNew }) {
   const t = useT();
   const { user } = useAuth();
@@ -165,7 +181,7 @@ function EstimatesList({ onOpen, onNew }) {
                     <td style={styles.td}>{e.project_name}</td>
                     <td style={styles.td}>{e.client_name_snapshot}</td>
                     <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(e.total_cents)}</td>
-                    <td style={styles.td}><StatusBadge status={e.status} /></td>
+                    <td style={styles.td}><div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}><StatusBadge status={e.status} /><BidDueChip dueAt={e.bid_due_at} status={e.status} language={user?.language} /></div></td>
                     <td style={styles.td}>{formatDate(e.created_at, user?.language)}</td>
                   </tr>
                 ))}
@@ -184,7 +200,7 @@ function EstimatesList({ onOpen, onNew }) {
               >
                 <div className="admin-card-row">
                   <span className="admin-card-title">{e.estimate_number}</span>
-                  <StatusBadge status={e.status} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}><StatusBadge status={e.status} /><BidDueChip dueAt={e.bid_due_at} status={e.status} language={user?.language} /></div>
                 </div>
                 <div className="admin-card-sub">{e.project_name}</div>
                 <div className="admin-card-sub">{e.client_name_snapshot}</div>
@@ -204,6 +220,21 @@ function EstimatesList({ onOpen, onNew }) {
 }
 
 // ── Create / edit form ────────────────────────────────────────────────────────
+
+// stored UTC timestamp -> local "YYYY-MM-DDTHH:mm" for a datetime-local input
+function toLocalDatetime(iso) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+// days until a due timestamp (negative = overdue); null if unset
+function daysUntil(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  return (d.getTime() - Date.now()) / 86400000;
+}
 
 function EstimateForm({ existing, onSave, onCancel }) {
   const t = useT();
@@ -225,6 +256,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
     contingency_pct: existing?.contingency_pct || 0,
     tax_pct: existing?.tax_pct || 0,
     valid_until: existing?.valid_until ? existing.valid_until.slice(0, 10) : '',
+    bid_due_at: existing?.bid_due_at ? toLocalDatetime(existing.bid_due_at) : '',
     notes: existing?.notes || '',
     exclusions: existing?.exclusions || '',
     terms: existing?.terms || '',
@@ -288,6 +320,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
     try {
       const payload = {
         ...head,
+        bid_due_at: head.bid_due_at ? new Date(head.bid_due_at).toISOString() : null,
         lines: lines
           .filter(l => l.description?.toString().trim())
           .map(l => ({
@@ -349,6 +382,9 @@ function EstimateForm({ existing, onSave, onCancel }) {
           </Field>
           <Field label={t.estValidUntil}>
             <input type="date" value={head.valid_until} onChange={e => updateHead('valid_until', e.target.value)} style={styles.input} />
+          </Field>
+          <Field label={t.estBidDue}>
+            <input type="datetime-local" value={head.bid_due_at} onChange={e => updateHead('bid_due_at', e.target.value)} style={styles.input} title={t.estBidDueHint} />
           </Field>
         </div>
         <Field label={t.estScopeSummary}>
