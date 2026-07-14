@@ -71,6 +71,18 @@ that holds the exhaustive detail.
 ## ✨ Ideas — improvements
 
 
+- **Takeoff ↔ job hard link (cross-device haul reconciliation).** Today the Haul
+  log's estimate-vs-actual card matches an estimate to a job via
+  `converted_project_id` (so it needs the bid converted into a job), and Plan
+  Room takeoffs are per-browser (no server link to a job). A dedicated link —
+  estimate/job ↔ a shared takeoff id — would let reconciliation pull the
+  estimated quantity straight from the takeoff (earthwork export CY) and work
+  across devices. Deferred from the production-log plan's M3 as "a feature, not
+  polish." (2026-07-13)
+- **Haul log: print layout + a specific-takeoff picker.** A print-friendly haul
+  ticket report (CSV already ships); optionally let a job point at a specific
+  takeoff for reconciliation instead of "most recent converted estimate."
+  Deferred M3 items in `docs/plans/production-log.md`. (2026-07-13)
 - **Presigned direct-to-R2 upload for shared-takeoff PDFs.** Replaces the current
   64 MB base64-through-the-API approach; removes the ~48 MB ceiling and cuts server
   memory. Caveats: needs R2 bucket CORS + orphaned-object cleanup.
@@ -129,26 +141,6 @@ that holds the exhaustive detail.
 ## 📌 Planned / ready-to-build
 *Scoped with a plan; just not started.*
 
-- **Bid workflow: Estimate ⇄ Plan Room** — `docs/plans/bid-workflow-estimate-planroom.md`
-  (2026-07-13). Makes the Estimate the hub of a bid: (1) **bid due date/time**
-  (`bid_due_at`) + a "due soon" badge + reminder (cron/push/inbox) so deadlines
-  aren't missed; (2) **attach the plan PDF** to the estimate (R2); (3) **"Take
-  off in Plan Room"** button → auto-opens a linked Plan Room project on that PDF
-  (`?estimate=id`, find-or-create, stores `estimateId`); (4) **push the takeoff's
-  bid pricing back** into the estimate's line items. Base for the deadline/PDF;
-  takeoff add-on for the launch + pricing-back. Migration 0135 (coordinate — the
-  production-log plan also claims 0135). Built around David's wife's bid-a-job
-  flow.
-- **Production & Haul Log (main app)** — `docs/plans/production-log.md`
-  (2026-07-13). Relocates the standalone sitework tool's production log into
-  OpsFloa proper. Key finding: `daily_reports` already covers daily production,
-  so the only new build is **haul tickets** (new `haul_tickets` table, migration
-  0135, Field-module Haul tab) + an **estimate-vs-actual reconciliation**.
-  **Gating decision:** the log is **base ops** (business plan + a
-  `manage_haul_tickets` perm — NOT the takeoff add-on); only the
-  estimate-vs-actual reconciliation is **takeoff-add-on gated**
-  (`requireTakeoffAddon`), since it needs takeoff data. That's the upsell
-  without walling off a base capability.
 - **Plan Room platform (MASTER PLAN)** — `docs/plans/plan-viewer-markup.md`
   (2026-07-11, two tiers, **money-first sequencing**). **Base add-on ~$40/mo**
   (`addon_planroom`): viewer + markup + measure + company library +
@@ -175,6 +167,21 @@ that holds the exhaustive detail.
   flooring/tile, framing, siding, fencing, striping, landscape…)*
 
 ## ✅ Things I need to do (David)
+
+**Bid workflow + Haul log (all shipped to `dev` 2026-07-13 — need these to work):**
+- **Run migrations `0135` + `0136` + `0137`** on the DB. Until then: the bid-due
+  field + reminder (0135), the plan-attach button (0136), and the whole Haul log
+  tab (0137) will error. All three are idempotent.
+- **Test both loops end-to-end:** (1) estimate → set due date → attach PDF →
+  Take off in Plan Room → price in $ Bid → Send pricing → confirm lines + total
+  land on the estimate; (2) log haul tickets on a job → totals/subtotals →
+  (with the takeoff add-on, on a job that came from a converted bid) the
+  estimate-vs-actual reconciliation card.
+- **Reconciliation caveat:** the estimate-vs-actual card keys off the estimate's
+  `converted_project_id`, so it only lights up once you **convert the winning bid
+  into a job**. A haul job created directly (not from a converted estimate) shows
+  "convert the winning bid to this job to compare." A hard takeoff↔job link
+  (cross-device) is deferred — flag if you want it built.
 
 **Plan Room — before the base tier can actually sell (M6 shipped, needs these):**
 - **Stripe:** create the Plan Room product with a monthly (~$40) and an annual
@@ -212,6 +219,41 @@ that holds the exhaustive detail.
 ## 📖 Done / shipped log
 *Landed on `dev`, newest first. (What happens past dev is handled outside this doc.)*
 
+- **2026-07-13 — Production & Haul Log (main app), M1–M3.** Plan:
+  `docs/plans/production-log.md`. The sitework tool's production log, rebuilt
+  server-backed + per-job + multi-user in the **Field module → "Haul log" tab**.
+  **Decisions (locked with David):** lives as a Field tab; **field crews can
+  self-log** (`manage_haul_tickets`, a worker-default perm). **M1** (`a7e3e84`):
+  migration **0137** (`haul_tickets` + seeds the perm into built-in roles) +
+  `haulEnums`/db-enums; audited route (worker/admin narrowing, enum + project-
+  ownership validation); add form, job + date filters, net-export totals by unit,
+  delete, CSV. **M2** (`38df6e5`): `GET /haul-tickets/reconcile` (takeoff add-on,
+  `usePlan().hasTakeoff`) — actuals vs the estimate converted to the job
+  (`converted_project_id`; haul-off qty from `/haul|export|spoil/` lines);
+  estimate-vs-actual card, variance over/under. **M3 polish** (`148a28e`): edit a
+  ticket (row ✎ → reused form → PATCH); collapsible by-hauler/by-material
+  subtotals. Daily-production half already existed (`daily_reports`), so only
+  haul tickets + reconciliation were new. **Deferred:** takeoff↔job hard link
+  (cross-device reconciliation — needs a data-model decision), a print layout,
+  retiring the sitework local log.
+- **2026-07-13 — Bid workflow: Estimate ⇄ Plan Room, M1–M4.** Plan:
+  `docs/plans/bid-workflow-estimate-planroom.md`. Makes the **estimate the hub of
+  a bid** — the win-the-bid loop David's wife runs (handed a PDF + a deadline →
+  price it → send before the clock). **M1** (`f49f373`/`524ac95`): `bid_due_at` +
+  `bid_reminder_sent_at` (migration **0135**); estimate form field, list "due
+  soon/overdue" chip, hourly reminder cron (push + inbox, claim-then-send,
+  re-armed on due-date change). **M2** (`019e849`): attach a plan PDF (migration
+  **0136** `plan_pdf_url`/`_name`); `POST/DELETE /estimates/:id/plan-pdf` base64
+  **through the server** to R2 — **no R2-CORS needed**; Plans card. **M3**
+  (`c13d7db`): `GET /estimates/:id/plan-pdf` base64 proxy; **"📐 Take off in Plan
+  Room"** button (gated on plan-attached + `addon_planroom`); Plan Room
+  `?estimate=` find-or-create → `bootEstimate()`, `estimateId` round-trips through
+  all load paths. **M4** (`4040252`): **"➤ Send pricing to estimate"** in $ Bid →
+  `PUT /estimates/:id/lines` via `apiEstimate()`; keyword category heuristic; O&P
+  rides as one `overhead` line so totals match; replace-with-confirm. Base tier =
+  deadline + PDF; takeoff add-on = launch + pricing-back. **Caveats:** Plan Room
+  projects are per-browser (link is per-device); O&P can double-count if the
+  estimate also carries a margin %.
 - **2026-07-13 — Plan Room: manage sheets (reorder / remove).** 🗂 Manage sheets
   (from 📁 Projects when a set has >1 sheet): reorder ▲▼ or remove ✕ sheets;
   Apply rebuilds the combined PDF (pdf-lib) and remaps every page reference —
