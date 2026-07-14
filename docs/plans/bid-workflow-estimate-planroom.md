@@ -103,8 +103,12 @@ db-enums.md change. (No CHECK constraints needed.)
   (`plan_pdf_url`/`_name`); POST/DELETE `/estimates/:id/plan-pdf` (base64
   through the server → R2, **no R2-CORS needed**); a Plans card on the estimate
   detail (attach/replace/remove/view). **Needs migration 0136 run.**
-- **M3 — launch takeoff:** `/api/estimates/:id/plan-pdf` proxy; the "Take off in
-  Plan Room" button; Plan Room `?estimate=` find-or-create + `estimateId` link.
+- **M3 — launch takeoff: DONE (c13d7db).** GET `/estimates/:id/plan-pdf` base64
+  proxy (no R2-CORS on reads); "📐 Take off in Plan Room" button on the Plans
+  card (gated: plan attached AND `addon_planroom`/trial/exempt); Plan Room
+  `?estimate=` find-or-create → `bootEstimate()` reopens or creates the linked
+  project + pulls the plan via `apiEstimate()`; `estimateId` round-trips through
+  `projectData()` + all load paths. Idempotent.
 - **M4 — pricing back:** "Send pricing to estimate" in Plan Room's bid → estimate
   lines with the category mapping + replace/append behavior.
 
