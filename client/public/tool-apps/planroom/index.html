@@ -79,10 +79,7 @@
       <option value="chimney">Chimney</option>
     </select>
     <div class="tb-sub tb-takeoff tr-dirt">
-      <select id="surfaceSel" class="mini-sel" title="Which surface new contours/pads belong to">
-        <option value="existing">Existing</option>
-        <option value="proposed">Proposed</option>
-      </select>
+      <button id="surfaceToggle" class="mini-sel surf-toggle" title="Which surface new contours/pads belong to — click to switch between Existing and Proposed"><span id="surfaceToggleLabel">Existing</span> ⇄</button>
       <button class="tool" data-tool="align" title="Align the two sheets — click a landmark on the Existing sheet, then the same spot on the Proposed sheet. One pair fixes the shift; a second far-away pair also fixes rotation & scale.">⌖</button>
       <span class="tb-sep" aria-hidden="true"></span>
       <button class="tool" data-tool="wand" title="Auto-trace — click a contour on a vector PDF to pick up the whole line in one click (prefills elevation from the nearest printed number)">🪄</button>

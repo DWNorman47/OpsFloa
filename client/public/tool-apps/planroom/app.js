@@ -56,6 +56,7 @@ const MEASURE_KINDS = ['mlength', 'marea', 'mcount'];
 const markupLayer = kind => ANNOT_KINDS.includes(kind) ? 'annot' : MEASURE_KINDS.includes(kind) ? 'measure' : 'takeoff';
 const layerVisible = m => layers[markupLayer(m.kind)];
 let curSurface = 'existing';                 // which surface new contours/spots/pads belong to
+let dirtSheetsCollapsed = false;             // dirt panel: Sheets section starts collapsed once the two-sheet setup is done
 const lastElev = { existing: null, proposed: null };
 
 const store = createStore('planroom');
@@ -1861,6 +1862,7 @@ function deleteSelected() {
 $('btnList').addEventListener('click', () => {
   els.markupPanel.classList.toggle('hidden');
   if (!els.markupPanel.classList.contains('hidden')) { $('roofPanel').classList.add('hidden'); $('dirtPanel').classList.add('hidden'); $('dwPanel').classList.add('hidden'); renderMarkupList(); }
+  syncPanelButtons();
 });
 els.mkKindFilter.addEventListener('change', renderMarkupList);
 els.mkThisSheet.addEventListener('change', renderMarkupList);
@@ -1953,6 +1955,11 @@ const TRADE_TOOLS = {
 };
 // general redlining + generic measure tools that collapse while a trade is active
 const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
+// Toolbar trade buttons show an 'active' state while their side panel is open.
+function syncPanelButtons() {
+  const mark = (btnId, panelId) => { const b = $(btnId), p = $(panelId); if (b && p) b.classList.toggle('active', !p.classList.contains('hidden')); };
+  mark('btnRoof', 'roofPanel'); mark('btnDirt', 'dirtPanel'); mark('btnDw', 'dwPanel');
+}
 function setTrade(t, { save = true } = {}) {
   state.trade = t || '';
   document.body.classList.toggle('trade-active', !!state.trade);
@@ -1968,6 +1975,15 @@ function setTrade(t, { save = true } = {}) {
   if (state.trade !== 'roofing') $('roofPanel').classList.add('hidden');
   if (state.trade !== 'dirt') $('dirtPanel').classList.add('hidden');
   if (state.trade !== 'drywall') $('dwPanel').classList.add('hidden');
+  // Earthwork: open its side panel by default — on a user switch AND when a
+  // project loads already in dirt mode. Collapse Sheets if the setup is done.
+  if (state.trade === 'dirt') {
+    els.markupPanel.classList.add('hidden'); $('roofPanel').classList.add('hidden'); $('dwPanel').classList.add('hidden');
+    $('dirtPanel').classList.remove('hidden');
+    dirtSheetsCollapsed = dirtSetupComplete();
+    renderDirtPanel();
+  }
+  syncPanelButtons();
   if (save) { // hints only on a user switch — not when a load restores the mode
     if (state.trade === 'roofing') setMsg('Roofing takeoff — trace planes (▰), edges (╱), items (⊕); totals in 🏠 Roof, prices in $ Bid.');
     else if (state.trade === 'dirt') setMsg('Earthwork takeoff — set the sheets in ⛰ Dirt, trace contours (⛰), align (⌖), then ∑ Calculate.');
@@ -2001,6 +2017,7 @@ if ($('roofPitch')) {
 $('btnRoof').addEventListener('click', () => {
   $('roofPanel').classList.toggle('hidden');
   if (!$('roofPanel').classList.contains('hidden')) { els.markupPanel.classList.add('hidden'); $('dirtPanel').classList.add('hidden'); $('dwPanel').classList.add('hidden'); renderRoofPanel(); }
+  syncPanelButtons();
 });
 $('btnUpsell').addEventListener('click', () => {
   setMsg('Takeoff layer ($60/mo add-on): turn your measurements into roofing squares, pitch-corrected edges, materials, and a priced, branded bid. Add it from Billing.');
@@ -2206,6 +2223,14 @@ $('bidCsv').addEventListener('click', bidCsv);
 
 /* ---- earthwork (sitework pack, S1: trace + designate; compute = next slice) ---- */
 const alignIsSet = () => { const a = state.earthwork.align; return !(a.a === 1 && a.b === 0 && a.e === 0 && a.f === 0); };
+// The two-sheet setup is "done" once both sheets are designated and — when they
+// differ — the alignment is solved. Drives collapsing the Sheets section.
+function dirtSetupComplete() {
+  const E = state.earthwork;
+  if (!E.existingPage || !E.proposedPage) return false;
+  if (E.existingPage === E.proposedPage) return true; // single sheet — no alignment needed
+  return alignIsSet();
+}
 
 function renderDirtPanel() {
   const panel = $('dirtPanel');
@@ -2213,13 +2238,22 @@ function renderDirtPanel() {
   const E = state.earthwork;
   const c = earthworkCounts();
   const rows = [];
-  rows.push('<div class="roof-sub">Sheets</div>');
-  rows.push(`<div class="dirt-row"><span>Existing sheet</span><span class="v">${E.existingPage ? 'page ' + E.existingPage : '—'}</span></div>`);
-  rows.push(`<button class="btn tiny dirt-btn" data-act="set-existing">Set current page (${state.page}) as Existing</button>`);
-  rows.push(`<div class="dirt-row"><span>Proposed sheet</span><span class="v">${E.proposedPage ? 'page ' + E.proposedPage : '—'}</span></div>`);
-  rows.push(`<button class="btn tiny dirt-btn" data-act="set-proposed">Set current page (${state.page}) as Proposed</button>`);
-  rows.push(`<div class="dirt-row"><span>Alignment</span><span class="v">${alignIsSet() ? 'set' : 'not set'} · use ⌖</span></div>`);
-  rows.push(`<label class="dirt-row" style="cursor:pointer"><span>Ghost the other sheet</span><input type="checkbox" id="ghostChk" ${ghostOn ? 'checked' : ''}></label>`);
+  // Sheets — collapsible; collapses by default once the setup is complete
+  const setupDone = dirtSetupComplete();
+  rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-sheets"><span>Sheets${setupDone ? ' ✓' : ''}</span><span class="v">${dirtSheetsCollapsed ? '▸' : '▾'}</span></div>`);
+  if (!dirtSheetsCollapsed) {
+    rows.push(`<div class="dirt-row"><span>Existing sheet</span><span class="v">${E.existingPage ? 'page ' + E.existingPage : '—'}</span></div>`);
+    rows.push(`<button class="btn tiny dirt-btn" data-act="set-existing">Set current page (${state.page}) as Existing</button>`);
+    rows.push(`<div class="dirt-row"><span>Proposed sheet</span><span class="v">${E.proposedPage ? 'page ' + E.proposedPage : '—'}</span></div>`);
+    rows.push(`<button class="btn tiny dirt-btn" data-act="set-proposed">Set current page (${state.page}) as Proposed</button>`);
+    const alignVal = (E.existingPage && E.proposedPage && E.existingPage === E.proposedPage)
+      ? 'n/a (same sheet)'
+      : alignIsSet()
+        ? 'set · <a class="dirt-link" data-act="do-align">re-align</a>'
+        : '<a class="dirt-link" data-act="do-align">not set — align</a>';
+    rows.push(`<div class="dirt-row"><span>Alignment</span><span class="v">${alignVal}</span></div>`);
+    rows.push(`<label class="dirt-row" style="cursor:pointer"><span>Ghost the other sheet</span><input type="checkbox" id="ghostChk" ${ghostOn ? 'checked' : ''}></label>`);
+  }
 
   rows.push('<div class="roof-sub">Traced</div>');
   rows.push(`<div class="dirt-row"><span>Existing contours / pads</span><span class="v">${c.existing}</span></div>`);
@@ -2263,8 +2297,14 @@ function renderDirtPanel() {
   numHandler($('ewShrink'), 'shrink', 0, 15);
   numHandler($('ewSwell'), 'swell', 0, 25);
   numHandler($('ewTruck'), 'truckCap', 1, 12);
-  body.querySelector('[data-act="set-existing"]').addEventListener('click', () => { E.existingPage = state.page; scheduleSave(); renderDirtPanel(); });
-  body.querySelector('[data-act="set-proposed"]').addEventListener('click', () => { E.proposedPage = state.page; scheduleSave(); renderDirtPanel(); });
+  const setEx = body.querySelector('[data-act="set-existing"]');
+  if (setEx) setEx.addEventListener('click', () => { E.existingPage = state.page; scheduleSave(); renderDirtPanel(); });
+  const setPr = body.querySelector('[data-act="set-proposed"]');
+  if (setPr) setPr.addEventListener('click', () => { E.proposedPage = state.page; scheduleSave(); renderDirtPanel(); });
+  const toggleSheets = body.querySelector('[data-act="toggle-sheets"]');
+  if (toggleSheets) toggleSheets.addEventListener('click', () => { dirtSheetsCollapsed = !dirtSheetsCollapsed; renderDirtPanel(); });
+  const doAlign = body.querySelector('[data-act="do-align"]');
+  if (doAlign) doAlign.addEventListener('click', () => setTool('align'));
   body.querySelector('[data-act="calc"]').addEventListener('click', calculateCutFill);
   const gk = body.querySelector('#ghostChk');
   if (gk) gk.addEventListener('change', e => { ghostOn = e.target.checked; vp.requestDraw(); });
@@ -2420,13 +2460,31 @@ function drawHeat(ctx) {
 $('btnDirt').addEventListener('click', () => {
   const p = $('dirtPanel');
   p.classList.toggle('hidden');
-  if (!p.classList.contains('hidden')) { els.markupPanel.classList.add('hidden'); $('roofPanel').classList.add('hidden'); $('dwPanel').classList.add('hidden'); renderDirtPanel(); }
+  if (!p.classList.contains('hidden')) {
+    els.markupPanel.classList.add('hidden'); $('roofPanel').classList.add('hidden'); $('dwPanel').classList.add('hidden');
+    dirtSheetsCollapsed = dirtSetupComplete();
+    renderDirtPanel();
+  }
+  syncPanelButtons();
 });
-if ($('surfaceSel')) $('surfaceSel').addEventListener('change', e => {
-  curSurface = e.target.value;
+// Existing ⇄ Proposed is a click-to-toggle (no dropdown): each click flips which
+// surface new contours/spots/pads belong to.
+function renderSurfaceToggle() {
+  const btn = $('surfaceToggle'); if (!btn) return;
+  const lbl = $('surfaceToggleLabel'); if (lbl) lbl.textContent = curSurface === 'proposed' ? 'Proposed' : 'Existing';
+  btn.classList.toggle('surf-existing', curSurface !== 'proposed');
+  btn.classList.toggle('surf-proposed', curSurface === 'proposed');
+}
+function setSurface(s) {
+  curSurface = s === 'proposed' ? 'proposed' : 'existing';
+  renderSurfaceToggle();
   renderDirtPanel();
-  if (tool === 'contour') setMsg(`Tracing ${curSurface} contours.`);
-});
+  if (['contour', 'espot', 'epad', 'wand'].includes(tool)) setMsg(`Now tracing ${curSurface}.`);
+}
+if ($('surfaceToggle')) {
+  renderSurfaceToggle();
+  $('surfaceToggle').addEventListener('click', () => setSurface(curSurface === 'proposed' ? 'existing' : 'proposed'));
+}
 
 /* ============================== Topbar & keyboard ============================== */
 
@@ -3828,6 +3886,7 @@ $('btnDw').addEventListener('click', () => {
   const p = $('dwPanel');
   p.classList.toggle('hidden');
   if (!p.classList.contains('hidden')) { els.markupPanel.classList.add('hidden'); $('roofPanel').classList.add('hidden'); $('dirtPanel').classList.add('hidden'); renderDrywallPanel(); }
+  syncPanelButtons();
 });
 if ($('dwSidesSel')) $('dwSidesSel').addEventListener('change', e => {
   curDwSides = parseInt(e.target.value, 10) || 2;

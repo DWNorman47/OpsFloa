@@ -95,6 +95,12 @@ body { display: flex; flex-direction: column; }
 .tool.active { background: var(--accent); border-color: var(--accent); color: #08243f; font-weight: 700; }
 .tb-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 3px; }
 .mini-sel { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 4px; font-size: 12px; }
+/* a trade toolbar button shows active while its side panel is open */
+.btn.active { background: var(--accent); border-color: var(--accent); color: #08243f; font-weight: 700; }
+/* Existing ⇄ Proposed click-toggle — colored by the current surface */
+.surf-toggle { cursor: pointer; font-weight: 600; min-width: 88px; text-align: center; }
+.surf-toggle.surf-existing { color: var(--warn); border-color: var(--warn); }
+.surf-toggle.surf-proposed { color: var(--good); border-color: var(--good); }
 /* takeoff-layer gating: takeoff controls hidden without the add-on; the upsell
    button shows only for base-tier (no takeoff layer) */
 body:not(.has-takeoff) .tb-takeoff { display: none !important; }
@@ -223,6 +229,12 @@ body.nothumbs #thumbRail { display: none; }
 }
 #markupPanel.hidden, #roofPanel.hidden, #dirtPanel.hidden, #dwPanel.hidden { display: none; }
 .dirt-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 2px; font-size: 12.5px; }
+/* collapsible section header (e.g. Sheets) — click to expand/collapse */
+.dirt-collapse { cursor: pointer; display: flex; align-items: center; justify-content: space-between; user-select: none; }
+.dirt-collapse:hover { color: var(--text); }
+/* inline clickable action inside the panel (e.g. activate alignment) */
+.dirt-link { color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.dirt-link:hover { color: var(--text); }
 .dirt-row .v { color: var(--accent); font-variant-numeric: tabular-nums; }
 .dirt-set { display: flex; align-items: center; gap: 6px; padding: 6px 2px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
 .dirt-set input { width: 54px; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 3px 5px; }
