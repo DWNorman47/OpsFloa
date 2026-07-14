@@ -10,13 +10,16 @@ import { reportClientError } from '../errorReporter';
 import RetryBanner from '../components/RetryBanner';
 import ErrorBoundary from '../components/ErrorBoundary';
 
-const FIELD_TABS = ['notes', 'daily', 'punchlist', 'safety', 'checklists', 'incident', 'gallery', 'subs', 'rfi', 'inspect'];
+const FIELD_TABS = ['notes', 'daily', 'haul', 'punchlist', 'safety', 'checklists', 'incident', 'gallery', 'subs', 'rfi', 'inspect'];
 const FIELD_HASH_ALIASES = {
   today: 'notes',
   'work-notes': 'notes',
   reports: 'daily',
   'daily-reports': 'daily',
   report: 'daily',
+  'haul-tickets': 'haul',
+  hauls: 'haul',
+  production: 'haul',
   punch: 'punchlist',
   incidents: 'incident',
   media: 'gallery',
@@ -39,6 +42,7 @@ function resolveFieldTab(rawHash) {
 
 // Tab components — lazy-loaded on first visit since only one tab is visible at a time
 const DailyReports        = lazy(() => import('../components/DailyReports'));
+const HaulTickets         = lazy(() => import('../components/HaulTickets'));
 const Punchlist           = lazy(() => import('../components/Punchlist'));
 const SafetyTalks         = lazy(() => import('../components/SafetyTalks'));
 const SafetyChecklists    = lazy(() => import('../components/SafetyChecklists'));
@@ -129,6 +133,7 @@ export default function FieldPage() {
       items: [
         { id: 'notes', label: t.fieldTabNotes },
         ...(isAdmin ? [{ id: 'daily', label: t.fieldTabDaily }] : []),
+        { id: 'haul', label: t.fieldTabHaul },
         ...(isAdmin && features.feature_media_gallery ? [{ id: 'gallery', label: t.fieldTabMedia }] : []),
       ],
     },
@@ -208,6 +213,8 @@ export default function FieldPage() {
           <Suspense fallback={<TabLoader />}>
             {activeFieldTab === 'daily' ? (
               <DailyReports projects={projects} settings={features} />
+            ) : activeFieldTab === 'haul' ? (
+              <HaulTickets projects={projects} settings={features} />
             ) : activeFieldTab === 'punchlist' ? (
               <Punchlist projects={projects} settings={features} />
             ) : activeFieldTab === 'safety' ? (

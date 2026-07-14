@@ -116,6 +116,8 @@ For each column we record:
 | `equipment_maintenance_logs.kind` | `service`, `repair`, `inspection`, `other` | **enforced** (CHECK in `0125`) | `server/constants/equipmentEnums.js`, `server/routes/equipment.js` | Type of a discrete maintenance record (distinct from the `equipment_hours` usage log). |
 | `live_sessions.tool` | `planroom`, `sitework`, `roofing` | **enforced** (CHECK in `0134`) | `server/constants/liveSessionEnums.js`, `server/routes/liveSessions.js` | Which plan tool hosts an ephemeral live-collab session. The session layer syncs opaque JSON, so Plan Room ships first; `sitework`/`roofing` are reserved for the "go live on a takeoff" flip. |
 | `live_sessions.status` | `active`, `ended` | **enforced** (CHECK in `0134`) | `server/constants/liveSessionEnums.js`, `server/routes/liveSessions.js` | Session lifecycle. `active` until the host ends it or the idle sweeper closes it; `ended` rows keep their final `state` snapshot for the host to reclaim. |
+| `haul_tickets.unit` | `CY`, `tons`, `loads` | **enforced** (CHECK in `0137`) | `server/constants/haulEnums.js`, `server/routes/haulTickets.js` | How a haul load is measured (production/haul log). NOT NULL DEFAULT `CY`, so plain `IN (...)` CHECK. Reconciliation nets actuals by unit against the takeoff estimate. |
+| `haul_tickets.direction` | `export`, `import` | **enforced** (CHECK in `0137`) | `server/constants/haulEnums.js`, `server/routes/haulTickets.js` | Haul-off leaving the site (`export`) vs material brought in (`import`). NOT NULL DEFAULT `export`. Lets estimate-vs-actual reconciliation net export against import. |
 
 ## Cosmetic / UI columns
 

@@ -68,6 +68,7 @@ const PERMISSIONS = [
   { key: 'manage_safety_checklists', group: 'field', label: 'Safety checklists' },
   { key: 'manage_incidents', group: 'field', label: 'Incident reports' },
   { key: 'manage_inspections', group: 'field', label: 'Inspections' },
+  { key: 'manage_haul_tickets', group: 'field', label: 'Production / haul tickets' },
 
   // Inventory
   { key: 'view_inventory', group: 'inventory', label: 'View inventory' },
@@ -109,6 +110,7 @@ const WORKER_PERMISSIONS = [
   'manage_equipment',
   'manage_incidents',
   'manage_inspections',
+  'manage_haul_tickets',
   'view_inventory',
   'view_company_chat',
   'send_company_chat',
