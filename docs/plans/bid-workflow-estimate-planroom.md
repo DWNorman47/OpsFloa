@@ -99,8 +99,10 @@ db-enums.md change. (No CHECK constraints needed.)
   hourly reminder cron (push + inbox), claim-then-send, re-armed on due-date
   change. (Sort/"Bidding" filter not yet — list badge covers the visibility for
   now.) **Needs migration 0135 run on the DB.**
-- **M2 — attach plans:** `plan_pdf_url`/`_name`; presigned upload from the
-  estimate; show/download the attached PDF.
+- **M2 — attach plans: DONE (019e849).** Migration 0136
+  (`plan_pdf_url`/`_name`); POST/DELETE `/estimates/:id/plan-pdf` (base64
+  through the server → R2, **no R2-CORS needed**); a Plans card on the estimate
+  detail (attach/replace/remove/view). **Needs migration 0136 run.**
 - **M3 — launch takeoff:** `/api/estimates/:id/plan-pdf` proxy; the "Take off in
   Plan Room" button; Plan Room `?estimate=` find-or-create + `estimateId` link.
 - **M4 — pricing back:** "Send pricing to estimate" in Plan Room's bid → estimate
