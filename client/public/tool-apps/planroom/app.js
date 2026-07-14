@@ -1522,8 +1522,10 @@ els.cv.addEventListener('pointerdown', e => {
       renderMarkupList();
       vp.requestDraw();
     } else {
-      if (selectedId) { selectedId = null; renderMarkupList(); vp.requestDraw(); }
-      drag = { mode: 'pan', ptr: e.pointerId, last: { x: e.clientX, y: e.clientY } };
+      // Don't deselect yet — only a click on empty space clears the selection; a
+      // drag here is a pan and must keep you in edit mode. Deselect is decided at
+      // pointerup (endDrag) based on whether the pan actually moved.
+      drag = { mode: 'pan', ptr: e.pointerId, last: { x: e.clientX, y: e.clientY }, from: { x: e.clientX, y: e.clientY }, deselect: !!selectedId, moved: false };
       els.cv.classList.add('grabbing');
     }
     return;
@@ -1555,6 +1557,7 @@ els.cv.addEventListener('pointermove', e => {
   if (drag.mode === 'pan') {
     vp.panPx(e.clientX - drag.last.x, e.clientY - drag.last.y);
     drag.last = { x: e.clientX, y: e.clientY };
+    if (drag.from && Math.hypot(e.clientX - drag.from.x, e.clientY - drag.from.y) > 4) drag.moved = true;
     return;
   }
   if (drag.mode === 'draw') {
@@ -1597,7 +1600,11 @@ function endDrag(e) {
   drag = null;
   els.cv.classList.remove('grabbing');
 
-  if (d.mode === 'pan') return;
+  if (d.mode === 'pan') {
+    // a click on empty space (no pan movement) clears the selection; a real pan keeps it
+    if (d.deselect && !d.moved && selectedId) { selectedId = null; renderMarkupList(); vp.requestDraw(); }
+    return;
+  }
 
   if (d.mode === 'draw') {
     const m = d.markup;
@@ -2448,6 +2455,7 @@ function renderDirtPanel() {
 async function selectContourById(id) {
   const m = state.markups.find(x => x.id === id);
   if (!m) return;
+  setTool('select'); // drop straight into edit mode so points are draggable right away
   selectedId = id;
   await setPage(m.page);
   // center the view on the picked trace (same as the markup-list jump)
@@ -2457,6 +2465,9 @@ async function selectContourById(id) {
   vp.view.panY = r.height / 2 - ((bb.y0 + bb.y1) / 2) * vp.view.zoom;
   renderDirtPanel();
   vp.requestDraw();
+  setMsg(!canReshape(m) ? 'Editing — drag to move it.'
+    : isOpenPoly(m) ? 'Editing — drag a point to reshape · Alt-click: add / remove a point · Shift+Alt-click a segment: cut.'
+    : 'Editing — drag a point to reshape · Alt-click an edge to add a point, a point to remove it.');
 }
 function editContourElev(id) {
   const m = state.markups.find(x => x.id === id);
