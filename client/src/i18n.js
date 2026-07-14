@@ -3916,6 +3916,15 @@ const translations = {
     haulLoadError: 'Could not load haul tickets.',
     haulSaveError: 'Could not save the ticket.',
     haulDateRequired: 'A ticket date is required.',
+    reconTitle: 'Estimate vs. actual (haul-off)',
+    reconNoEstimate: 'No estimate is linked to this job yet. Convert the winning bid to this job to compare hauled quantities.',
+    reconFromEstimate: 'From estimate',
+    reconEstimated: 'Estimated',
+    reconActual: 'Actual (net export)',
+    reconVariance: 'Variance',
+    reconLoadError: 'Could not load the comparison.',
+    reconOver: 'over',
+    reconUnder: 'under',
 
     // ── Administration ────────────────────────────────────────────────────────
     subscriptionLabel: 'Subscription',
@@ -7870,6 +7879,15 @@ const translations = {
     haulLoadError: 'No se pudieron cargar los boletos de acarreo.',
     haulSaveError: 'No se pudo guardar el boleto.',
     haulDateRequired: 'Se requiere la fecha del boleto.',
+    reconTitle: 'Estimado vs. real (retiro)',
+    reconNoEstimate: 'Aún no hay una estimación vinculada a este trabajo. Convierta la oferta ganadora en este trabajo para comparar las cantidades acarreadas.',
+    reconFromEstimate: 'De la estimación',
+    reconEstimated: 'Estimado',
+    reconActual: 'Real (exportación neta)',
+    reconVariance: 'Variación',
+    reconLoadError: 'No se pudo cargar la comparación.',
+    reconOver: 'por encima',
+    reconUnder: 'por debajo',
 
     // ── Administration ────────────────────────────────────────────────────────
     subscriptionLabel: 'Suscripción',

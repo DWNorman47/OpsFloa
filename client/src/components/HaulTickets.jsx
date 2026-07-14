@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
+import { usePlan } from '../hooks/usePlan';
 import { langToLocale } from '../utils';
 import { labelSg } from '../companyLabels';
 import { SkeletonList } from './Skeleton';
@@ -26,6 +27,7 @@ const fmtQty = n => {
 export default function HaulTickets({ projects = [], settings = null }) {
   const t = useT();
   const { user } = useAuth();
+  const { hasTakeoff } = usePlan();
   const locale = langToLocale(user?.language);
   const workLabel = labelSg(settings?.label_work, 'project', user?.language);
   const today = new Date().toLocaleDateString('en-CA');
@@ -44,6 +46,10 @@ export default function HaulTickets({ projects = [], settings = null }) {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [confirmingId, setConfirmingId] = useState(null);
+
+  // Reconciliation (takeoff add-on) — only for a single selected job.
+  const [recon, setRecon] = useState(null);
+  const [reconError, setReconError] = useState('');
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -65,6 +71,22 @@ export default function HaulTickets({ projects = [], settings = null }) {
   }, [filterProject, from, to, t]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Reconcile against the linked estimate whenever a single job is selected
+  // (and re-run after tickets change so the actual side stays live).
+  useEffect(() => {
+    if (!hasTakeoff || !filterProject) { setRecon(null); setReconError(''); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api.get('/haul-tickets/reconcile', { params: { project_id: filterProject } });
+        if (!cancelled) { setRecon(r.data); setReconError(''); }
+      } catch {
+        if (!cancelled) { setRecon(null); setReconError(t.reconLoadError); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [hasTakeoff, filterProject, tickets, t]);
 
   const addTicket = async () => {
     if (!form.ticket_date) { setSaveError(t.haulDateRequired); return; }
@@ -218,6 +240,52 @@ export default function HaulTickets({ projects = [], settings = null }) {
         </div>
       )}
 
+      {/* Reconciliation (takeoff add-on): estimate vs actual for a single job */}
+      {hasTakeoff && filterProject && (
+        <div style={styles.reconCard}>
+          <div style={styles.reconHead}>📐 {t.reconTitle}</div>
+          {reconError ? (
+            <p role="alert" style={styles.error}>{reconError}</p>
+          ) : !recon ? (
+            <SkeletonList count={1} />
+          ) : !recon.estimate ? (
+            <p style={styles.reconHint}>{t.reconNoEstimate}</p>
+          ) : (
+            <>
+              <div style={styles.reconFrom}>{t.reconFromEstimate}: <b>{recon.estimate.name}</b></div>
+              <div style={styles.tableWrap}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={styles.th}>{t.haulUnit}</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>{t.reconEstimated}</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>{t.reconActual}</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>{t.reconVariance}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recon.rows.map(r => {
+                      const over = r.variancePct != null && r.variancePct > 0;
+                      return (
+                        <tr key={r.unit}>
+                          <td style={styles.td}>{r.unit}</td>
+                          <td style={{ ...styles.td, textAlign: 'right' }}>{r.estimated == null ? '—' : `${fmtQty(r.estimated)} ${r.unit}`}</td>
+                          <td style={{ ...styles.td, textAlign: 'right' }}>{fmtQty(r.actual)} {r.unit}</td>
+                          <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: r.variancePct == null ? '#9ca3af' : over ? '#b45309' : '#15803d' }}>
+                            {r.variancePct == null ? '—'
+                              : `${over ? '+' : ''}${r.variancePct.toFixed(1)}% ${over ? t.reconOver : t.reconUnder}`}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {loadError && <p role="alert" style={styles.error}>{loadError}</p>}
 
       {/* List */}
@@ -304,4 +372,8 @@ const styles = {
   cancelDel: { background: '#e5e7eb', color: '#374151', border: 'none', padding: '4px 8px', borderRadius: 6, fontSize: 12, cursor: 'pointer' },
   empty: { fontSize: 14, color: '#9ca3af', textAlign: 'center', padding: '32px 0' },
   error: { color: '#dc2626', fontSize: 13, margin: '8px 0 0' },
+  reconCard: { background: '#fff', border: '1px solid #c7d2fe', borderRadius: 10, padding: 14, marginBottom: 16 },
+  reconHead: { fontSize: 14, fontWeight: 700, color: '#3730a3', marginBottom: 8 },
+  reconHint: { fontSize: 13, color: '#6b7280', margin: 0, lineHeight: 1.5 },
+  reconFrom: { fontSize: 12, color: '#4b5563', marginBottom: 10 },
 };

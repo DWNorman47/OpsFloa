@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const pool = require('../db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireTakeoffAddon } = require('../middleware/auth');
 const { requirePerm } = require('../permissions');
 const { logAudit } = require('../auditLog');
 const { HAUL_UNITS, HAUL_DIRECTIONS } = require('../constants/haulEnums');
@@ -69,6 +69,73 @@ router.get('/', requireAuth, async (req, res) => {
       params
     );
     res.json({ items: rows });
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
+// GET /reconcile?project_id= — estimate-vs-actual for a job (takeoff add-on).
+// Actuals = summed haul tickets by unit, net export (export − import). Estimate
+// = the haul-off quantity from the estimate converted to this job (the
+// bid-workflow push lands it as an "…export haul-off…" line). Registered before
+// any param routes; there is no GET /:id, so no shadowing.
+router.get('/reconcile', requireAuth, requireTakeoffAddon, async (req, res) => {
+  const companyId = req.user.company_id;
+  const projectId = req.query.project_id;
+  if (!projectId) return res.status(400).json({ error: 'project_id is required' });
+  try {
+    const proj = await pool.query('SELECT id, name FROM projects WHERE id = $1 AND company_id = $2', [projectId, companyId]);
+    if (proj.rowCount === 0) return res.status(404).json({ error: 'Project not found' });
+
+    // Actuals: sum by unit + direction, then net.
+    const actualRows = await pool.query(
+      `SELECT unit, direction, COALESCE(SUM(qty), 0)::float AS total
+         FROM haul_tickets
+        WHERE company_id = $1 AND project_id = $2
+        GROUP BY unit, direction`,
+      [companyId, projectId]
+    );
+    const actual = {};
+    for (const r of actualRows.rows) {
+      actual[r.unit] = actual[r.unit] || { export: 0, import: 0, net: 0 };
+      actual[r.unit][r.direction === 'import' ? 'import' : 'export'] = r.total;
+    }
+    for (const u of Object.keys(actual)) actual[u].net = actual[u].export - actual[u].import;
+
+    // The estimate converted to this job (most recent), and its haul-off lines.
+    const est = await pool.query(
+      `SELECT id, project_name, created_at FROM estimates
+        WHERE company_id = $1 AND converted_project_id = $2
+        ORDER BY created_at DESC LIMIT 1`,
+      [companyId, projectId]
+    );
+    let estimate = null;
+    if (est.rowCount) {
+      const e = est.rows[0];
+      const lineRes = await pool.query(
+        'SELECT description, qty, unit FROM estimate_lines WHERE estimate_id = $1 ORDER BY sort_order, id', [e.id]);
+      // Only haul-off / export lines are comparable to what left the site — a
+      // deliberately tight match so cut/fill volumes don't inflate the estimate.
+      const byUnit = {};
+      const lines = [];
+      for (const ln of lineRes.rows) {
+        if (/haul|export|spoil|off-?haul/i.test(ln.description || '')) {
+          const u = HAUL_UNITS.includes(ln.unit) ? ln.unit : (ln.unit || 'CY');
+          byUnit[u] = (byUnit[u] || 0) + (Number(ln.qty) || 0);
+          lines.push({ description: ln.description, qty: Number(ln.qty) || 0, unit: ln.unit });
+        }
+      }
+      estimate = { id: e.id, name: e.project_name || `Estimate #${e.id}`, byUnit, lines };
+    }
+
+    // Per-unit comparison: estimated export vs actual net export + variance %.
+    const units = new Set([...Object.keys(actual), ...(estimate ? Object.keys(estimate.byUnit) : [])]);
+    const rows = [];
+    for (const u of units) {
+      const estimated = estimate && estimate.byUnit[u] != null ? estimate.byUnit[u] : null;
+      const actualNet = actual[u] ? actual[u].net : 0;
+      const variancePct = (estimated && estimated !== 0) ? ((actualNet - estimated) / estimated) * 100 : null;
+      rows.push({ unit: u, estimated, actual: actualNet, variancePct });
+    }
+    res.json({ project: { id: proj.rows[0].id, name: proj.rows[0].name }, actual, estimate, rows });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
