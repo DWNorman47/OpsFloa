@@ -4,6 +4,7 @@ const pool    = require('../db');
 const logger  = require('../logger');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { logAudit } = require('../auditLog');
+const { uploadBase64, deleteByUrl } = require('../r2');
 const {
   ESTIMATE_STATUSES,
   ESTIMATE_FROZEN_STATUSES,
@@ -329,6 +330,39 @@ router.patch('/:id', requireAdmin, async (req, res) => {
     req.log.error({ err }, 'estimate patch error');
     res.status(500).json({ error: 'Server error' });
   }
+});
+
+// POST /estimates/:id/plan-pdf — attach a plan PDF/image (base64 through the
+// server → R2, so no R2-CORS setup is needed). Replaces any existing attachment.
+router.post('/:id/plan-pdf', requireAdmin, async (req, res) => {
+  const companyId = req.user.company_id;
+  const { dataUrl, name } = req.body || {};
+  if (!dataUrl || !/^data:(application\/pdf|image\/(png|jpe?g|webp));base64,/i.test(dataUrl)) {
+    return res.status(400).json({ error: 'Attach a PDF or image' });
+  }
+  try {
+    const own = await pool.query('SELECT plan_pdf_url FROM estimates WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
+    if (own.rowCount === 0) return res.status(404).json({ error: 'Estimate not found' });
+    const { url } = await uploadBase64(dataUrl, 'estimate-plans');
+    const planName = (name || 'plan.pdf').toString().slice(0, 160);
+    await pool.query('UPDATE estimates SET plan_pdf_url = $1, plan_pdf_name = $2 WHERE id = $3 AND company_id = $4',
+      [url, planName, req.params.id, companyId]);
+    if (own.rows[0].plan_pdf_url) deleteByUrl(own.rows[0].plan_pdf_url).catch(() => {}); // clean up the replaced file
+    await logAudit(companyId, req.user.id, req.user.full_name, 'estimate.plan_attached', 'estimate', req.params.id, planName, null);
+    res.json(await loadEstimateFull(companyId, req.params.id));
+  } catch (err) { req.log.error({ err }, 'estimate plan-pdf error'); res.status(500).json({ error: 'Server error' }); }
+});
+
+// DELETE /estimates/:id/plan-pdf — remove the attached plan
+router.delete('/:id/plan-pdf', requireAdmin, async (req, res) => {
+  const companyId = req.user.company_id;
+  try {
+    const own = await pool.query('SELECT plan_pdf_url FROM estimates WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
+    if (own.rowCount === 0) return res.status(404).json({ error: 'Estimate not found' });
+    await pool.query('UPDATE estimates SET plan_pdf_url = NULL, plan_pdf_name = NULL WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
+    if (own.rows[0].plan_pdf_url) deleteByUrl(own.rows[0].plan_pdf_url).catch(() => {});
+    res.json(await loadEstimateFull(companyId, req.params.id));
+  } catch (err) { req.log.error({ err }, 'estimate plan-pdf delete error'); res.status(500).json({ error: 'Server error' }); }
 });
 
 // PUT /estimates/:id/lines — bulk replace; draft only

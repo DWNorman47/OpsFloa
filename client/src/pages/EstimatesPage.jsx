@@ -712,6 +712,40 @@ function EstimateDetail({ id, onBack, onEdit }) {
     }
   }
 
+  async function attachPlan(file) {
+    if (!file) return;
+    setActionError(null);
+    setBusy(true);
+    try {
+      const dataUrl = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.onerror = rej;
+        r.readAsDataURL(file);
+      });
+      const { data } = await api.post(`/estimates/${id}/plan-pdf`, { dataUrl, name: file.name });
+      setEstimate(data);
+      toast(t.estPlanAttached, 'success');
+    } catch (err) {
+      setActionError(err.response?.data?.error || t.estPlanAttachError);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removePlan() {
+    setBusy(true);
+    setActionError(null);
+    try {
+      const { data } = await api.delete(`/estimates/${id}/plan-pdf`);
+      setEstimate(data);
+    } catch (err) {
+      setActionError(err.response?.data?.error || t.estPlanAttachError);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function withdraw() {
     if (!await confirm({
       title: t.estWithdrawConfirmTitle,
@@ -816,6 +850,24 @@ function EstimateDetail({ id, onBack, onEdit }) {
             </span>
           )}
         </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 12px', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, marginBottom: 16 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: '#374151' }}>📐 {t.estPlans}</span>
+        {estimate.plan_pdf_url ? (
+          <>
+            <a href={estimate.plan_pdf_url} target="_blank" rel="noreferrer" style={{ fontSize: 13, color: 'var(--ops-page-accent)', fontWeight: 600, wordBreak: 'break-all' }}>
+              {estimate.plan_pdf_name || 'plan.pdf'}
+            </a>
+            <button onClick={removePlan} disabled={busy} style={{ ...styles.ghostBtn, padding: '4px 10px', fontSize: 12 }}>{t.estPlanRemove}</button>
+          </>
+        ) : (
+          <span style={{ fontSize: 13, color: '#6b7280' }}>{t.estPlanNone}</span>
+        )}
+        <label style={{ ...styles.ghostBtn, padding: '4px 10px', fontSize: 12, cursor: busy ? 'default' : 'pointer', marginLeft: 'auto' }}>
+          {busy ? t.estGenerating : (estimate.plan_pdf_url ? t.estPlanReplace : t.estPlanAttach)}
+          <input type="file" accept="application/pdf,image/*" hidden disabled={busy} onChange={e => { const f = e.target.files[0]; e.target.value = ''; attachPlan(f); }} />
+        </label>
       </div>
 
       {actionError && <div style={styles.errorBox}>{actionError}</div>}
