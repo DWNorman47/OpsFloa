@@ -228,6 +228,10 @@ body.nothumbs #thumbRail { display: none; }
   background: var(--panel); border-left: 1px solid var(--border);
 }
 #markupPanel.hidden, #roofPanel.hidden, #dirtPanel.hidden, #dwPanel.hidden { display: none; }
+/* no document loaded → the toolbar is hidden (progressive disclosure), so hide
+   the side panels too; they reappear once a plan is open. */
+body:not(.has-doc) #markupPanel, body:not(.has-doc) #roofPanel,
+body:not(.has-doc) #dirtPanel, body:not(.has-doc) #dwPanel { display: none !important; }
 .dirt-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 2px; font-size: 12.5px; }
 /* collapsible section header (e.g. Sheets) — click to expand/collapse */
 .dirt-collapse { cursor: pointer; display: flex; align-items: center; justify-content: space-between; user-select: none; }
