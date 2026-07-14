@@ -403,6 +403,8 @@ app.listen(PORT, () => {
   startEquipmentMaintenanceJob();
   const { startRentalReturnRemindersJob } = require('./jobs/rentalReturnReminders');
   startRentalReturnRemindersJob();
+  const { startBidDueReminderJob } = require('./jobs/bidDueReminders');
+  startBidDueReminderJob();
   const { startMediaRetentionJob } = require('./jobs/mediaRetention');
   startMediaRetentionJob();
   const { startScheduledReportsJob } = require('./jobs/scheduledReports');
