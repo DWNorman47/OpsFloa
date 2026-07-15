@@ -63,14 +63,14 @@ that holds the exhaustive detail.
 ## ✨ Ideas — improvements
 
 
-- **Takeoff ↔ job hard link (cross-device haul reconciliation).** Today the Haul
-  log's estimate-vs-actual card matches an estimate to a job via
-  `converted_project_id` (so it needs the bid converted into a job), and Plan
-  Room takeoffs are per-browser (no server link to a job). A dedicated link —
-  estimate/job ↔ a shared takeoff id — would let reconciliation pull the
-  estimated quantity straight from the takeoff (earthwork export CY) and work
-  across devices. Deferred from the production-log plan's M3 as "a feature, not
-  polish." (2026-07-13)
+- ~~**Takeoff ↔ job hard link (cross-device haul reconciliation).**~~ **DROPPED
+  2026-07-14 — solved by the simpler path.** The $ Bid modal now has an estimate
+  dropdown (link + "Send pricing to estimate"), so the priced lines (incl. the
+  export-haul-off qty) land on the estimate; the haul-log reconciliation reads
+  those lines server-side, which is already company-wide/cross-device. Nothing
+  per-browser is in the loop, so no server-side takeoff↔job link is needed. The
+  only remaining (natural) dependency: the bid must be converted into a job for
+  the job's haul tickets to find their estimate.
 - **Haul log: print layout + a specific-takeoff picker.** A print-friendly haul
   ticket report (CSV already ships); optionally let a job point at a specific
   takeoff for reconciliation instead of "most recent converted estimate."
@@ -214,6 +214,13 @@ that holds the exhaustive detail.
 
 ## 📖 Done / shipped log
 *Landed on `dev`, newest first. (What happens past dev is handled outside this doc.)*
+
+- **2026-07-14 — Plan Room $ Bid: estimate dropdown + send pricing.** A "🔗
+  Estimate" dropdown in the $ Bid modal (from your draft estimates) links the
+  takeoff and reveals the existing "Send pricing to estimate" button — no need
+  to launch from the estimate anymore. Makes the "takeoff↔job hard link" idea
+  unnecessary (see Improvements): pricing lands on the estimate, and
+  reconciliation reads it server-side.
 
 - **2026-07-14 — Plan Room share-conflict: 3-way dialog + manual lock.** Company
   library sharing: a stale save now offers **Keep both / Overwrite theirs /
