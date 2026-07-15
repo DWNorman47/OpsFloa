@@ -42,11 +42,11 @@ that holds the exhaustive detail.
 
 ## 🧭 Design flaws — raised, set aside for later
 
-- **Company-share conflict model is fork-only.** When two people edit the same
-  shared takeoff, the second saver can only fork to a new separate copy or back
-  off — there's no "overwrite theirs" option and no merge. Possible fix: an
-  explicit "overwrite theirs" choice and/or a "checked out by X" lock indicator.
-  (2026-07-11)
+- ~~**Company-share conflict model is fork-only.**~~ **RESOLVED 2026-07-14.** The
+  conflict dialog is now 3-way (Keep both / Overwrite theirs / Cancel), and a
+  **manual, admin-releasable lock** (migration 0138) lets a user reserve a shared
+  takeoff so teammates can't save over it (reads/copy still work). Holder or any
+  admin unlocks. See shipped log.
 - **No dedupe when copying a shared takeoff twice.** "Copy to my projects" makes a
   fresh local project each time, so copying the same cloud takeoff twice yields two
   local projects both linked to it. Minor; could reuse the already-linked local
@@ -55,8 +55,6 @@ that holds the exhaustive detail.
 ## ❓ Open questions / decisions for you
 *Blocked on your call before anyone builds.*
 
-- **Share-conflict model** — leave it fork-only, or add an "overwrite theirs"
-  choice and/or a "checked out by X" lock indicator? (see Design flaws) (2026-07-11)
 - **Presigned R2 upload** — pull the trigger now, or stay on the 64 MB base64
   bandaid until plans actually exceed the ceiling? (see Improvements) (2026-07-10)
 - **Wall Dig button** — hidden "for now" in the takeoff tool; bring it back, remove
@@ -168,6 +166,10 @@ that holds the exhaustive detail.
 
 ## ✅ Things I need to do (David)
 
+**Migrations to run (shipped code waiting on these):**
+- **`0138_takeoff_lock.sql`** — the shared-takeoff manual lock (Plan Room company
+  library). Until run, the 🔒 lock button and lock-aware saves error.
+
 **Bid workflow + Haul log (all shipped to `dev` 2026-07-13 — need these to work):**
 - **Run migrations `0135` + `0136` + `0137`** on the DB. Until then: the bid-due
   field + reminder (0135), the plan-attach button (0136), and the whole Haul log
@@ -218,6 +220,27 @@ that holds the exhaustive detail.
 
 ## 📖 Done / shipped log
 *Landed on `dev`, newest first. (What happens past dev is handled outside this doc.)*
+
+- **2026-07-14 — Plan Room share-conflict: 3-way dialog + manual lock.** Company
+  library sharing: a stale save now offers **Keep both / Overwrite theirs /
+  Cancel** (`askChoice` modal; overwrite sends `overwrite:true`, server bypasses
+  the version check). Plus a **manual, admin-releasable lock** (migration
+  **0138**: `locked_by`/`_name`/`_at` on `takeoff_projects`) — 🔒 reserve a
+  takeoff so teammates' in-place saves are refused (423); reads + "Copy to my
+  projects" always work. Holder **or any admin** unlocks (`POST /:id/lock`,
+  `/:id/unlock`) — no heartbeat/TTL needed. Library shows a "🔒 by <name>" badge.
+  A lock beats overwrite. Sitework tool unaffected (never locks). **Needs
+  migration 0138 run.**
+- **2026-07-14 — Plan Room earthwork editing polish (batch).** Vertex editing on
+  every polyline/polygon (drag points, Alt-click add/remove, Shift+Alt-click to
+  cut/split a line — never orphaning a point); a sitework-style **contour list**
+  in the ⛰ Dirt panel (edit elev / delete / select+jump / clear); the
+  Existing↔Proposed **click-toggle** navigates + focuses one surface and hides
+  the other's contours; general markups hide in earthwork mode; the **boundary
+  shows on both sheets**; the trade panel auto-opens (gated on a loaded doc);
+  clicking a contour drops into edit mode; panning keeps the selection; and an
+  **editable on-canvas scale bar** (drag ends to recalibrate, drag middle to
+  move, Alt-click to clear).
 
 - **2026-07-13 — Removed the dynamic work/project label; "Project" is now
   hardcoded** (`e16d6cf`). Excised `workLabel` / `settings.label_work` /
