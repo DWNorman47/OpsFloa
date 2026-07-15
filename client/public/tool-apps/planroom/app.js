@@ -84,7 +84,7 @@ const MEASURE_KINDS = ['mlength', 'marea', 'mcount'];
 const markupLayer = kind => ANNOT_KINDS.includes(kind) ? 'annot' : MEASURE_KINDS.includes(kind) ? 'measure' : 'takeoff';
 // Vertex editing. Fixed-box shapes, callouts, single-point & count markups get no
 // per-vertex handles; everything else (line/arrow + every polyline/polygon) does.
-const VERTEX_NONEDIT = new Set(['rect', 'ellipse', 'cloud', 'highlight', 'callout', 'text', 'espot', 'mcount', 'ritem', 'qcount', 'dopening']);
+const VERTEX_NONEDIT = new Set(['rect', 'ellipse', 'cloud', 'highlight', 'callout', 'text', 'espot', 'mcount', 'ritem', 'qcount', 'dopening', 'dheight']);
 // Insert/delete a vertex applies to the free polylines & polygons — line/arrow
 // stay fixed 2-point shapes (their endpoints are still draggable).
 const RESHAPE_NONEDIT = new Set([...VERTEX_NONEDIT, 'line', 'arrow']);
@@ -176,7 +176,7 @@ els.hud.addEventListener('click', () => { clearTimeout(hudTimer); els.hud.classL
  * Widths/sizes are document-space (base px) so markups print/zoom like ink.
  */
 
-const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim'];
+const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight'];
 const MK_LABEL = {
   cloud: 'Cloud', rect: 'Rectangle', ellipse: 'Ellipse', arrow: 'Arrow', line: 'Line',
   freehand: 'Pen', highlight: 'Highlight', text: 'Text', callout: 'Callout',
@@ -184,7 +184,7 @@ const MK_LABEL = {
   plane: 'Roof plane', redge: 'Roof edge', ritem: 'Roof item',
   contour: 'Contour', espot: 'Spot elev', epad: 'Pad', ebound: 'Earthwork boundary',
   qarea: 'Area takeoff', qline: 'Line takeoff', qcount: 'Count takeoff',
-  dwall: 'Wall run', dceiling: 'Ceiling', dopening: 'Opening', dtrim: 'Trim',
+  dwall: 'Wall run', dceiling: 'Ceiling', dopening: 'Opening', dtrim: 'Trim', dheight: 'Height',
 };
 const MK_ICON = {
   cloud: '☁', rect: '▭', ellipse: '⬭', arrow: '↗', line: '╲',
@@ -193,10 +193,10 @@ const MK_ICON = {
   plane: '▰', redge: '╱', ritem: '⊕',
   contour: '⛰', espot: '◎', epad: '◫', ebound: '⬚',
   qarea: '▨', qline: '⌇', qcount: '⊙',
-  dwall: '▬', dceiling: '⬜', dopening: '🚪', dtrim: '▁',
+  dwall: '▬', dceiling: '⬜', dopening: '🚪', dtrim: '▁', dheight: '↕',
 };
 const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
-const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim']; // click-built (vs drag; espot/align are special-cased)
+const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight']; // click-built (vs drag; espot/align are special-cased)
 const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling', 'dtrim']; // produce ft / SF / squares
 
 /* ---- earthwork (sitework pack) helpers ---- */
@@ -430,6 +430,7 @@ function measureValue(m) {
   if (m.kind === 'dceiling') { const ct = (m.cfg && m.cfg.ctype) || 'drywall'; return `${CEIL_LABEL[ct] || 'Drywall'} ceiling · ${fmt(dceilingSf(m))} SF`; }
   if (m.kind === 'dopening') { const c = m.cfg || {}; const n = m.pts.length; return `${n} ${OPENING_LABEL[c.otype] || 'Opening'}${n === 1 ? '' : 's'} (−${fmt(c.deductSF || 0)} SF ea)`; }
   if (m.kind === 'dtrim') { const c = m.cfg || {}; return `${TRIM_LABEL[c.ttype] || 'Trim'} · ${fmt(polyLengthFt(m.pts, state.scales[m.page] || 0))} ft`; }
+  if (m.kind === 'dheight') return `${m.text || 'Height'} · ${fmt(polyLengthFt(m.pts, s), 1)} ft`;
   return '';
 }
 const LINE_W = { S: 2, M: 4, L: 8 };
@@ -651,6 +652,18 @@ function drawMarkup(ctx, m) {
       ctx.stroke();
       const mid = m.pts[Math.floor((m.pts.length - 1) / 2)];
       labelAt(ctx, m, mid.x, mid.y - (m.width || 4) * 2.5);
+      break;
+    }
+    case 'dheight': {
+      ctx.beginPath();
+      m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.stroke();
+      const a = m.pts[0], b = m.pts[m.pts.length - 1];
+      if (a && b) {
+        const cap = (m.width || 4) * 2.2;
+        for (const p of [a, b]) { ctx.beginPath(); ctx.moveTo(p.x - cap, p.y); ctx.lineTo(p.x + cap, p.y); ctx.stroke(); }
+        labelAt(ctx, m, (a.x + b.x) / 2 + cap + 3, (a.y + b.y) / 2);
+      }
       break;
     }
     case 'plane': {
@@ -1492,6 +1505,10 @@ function setTool(t) {
     setMsg(`Trace a ${CEIL_LABEL[curCeilType]} ceiling outline; Enter/double-click to close.${curCeilType === 'drywall' ? '' : ' Grid, tile & hangers taken off separately. Double-click a ceiling to change its type.'}`);
   } else if (t === 'dopening') {
     setMsg(`Click each ${OPENING_LABEL[curDwOpening].toLowerCase()} (−${OPENING_DEDUCT[curDwOpening]} SF each); Enter/double-click to finish.`);
+  } else if (t === 'dheight') {
+    setMsg((state.scales[state.page] || 0)
+      ? 'On an elevation / section sheet, click the floor then the ceiling (bottom → top); double-click or Enter to finish, then name it. Set it as the default in 🧱 or double-click a wall run to apply it.'
+      : "Set this sheet's scale first (📏 calibrate) — then measure the height off the elevation.");
   } else if (t === 'dtrim') {
     setMsg(`Trace a ${TRIM_LABEL[curDwTrim].toLowerCase()} run; Enter/double-click to finish → LF.`);
   } else if (t === 'align') {
@@ -1951,6 +1968,11 @@ function commitDraft() {
     }
   };
   if (d.kind === 'mcount') modals.askText('What are you counting?', `${pts.length} clicked`, '').then(t => finish(t || 'items'));
+  else if (d.kind === 'dheight') {
+    const ft = polyLengthFt(pts, state.scales[state.page] || 0);
+    modals.askText('Name this height', ft > 0 ? `Measured ${fmt(ft, 1)} ft — e.g. First floor, Great room, Garage` : 'No scale on this sheet — calibrate it with 📏 first', '')
+      .then(t => finish((t && t.trim()) || (ft > 0 ? `${fmt(ft, 1)}′` : 'Height')));
+  }
   else finish(undefined);
 }
 
@@ -1995,12 +2017,28 @@ els.cv.addEventListener('dblclick', e => {
       .then(v => { if (v != null && v >= 0) { const prev = snapshot(); hit.cfg = { ...c, deductSF: v }; pushUndo(prev); markupsChanged(); } });
     return;
   }
-  // double-click a wall run to set its height (this run only)
+  // double-click a wall run to set its height (this run only) — pick a measured
+  // elevation height if any exist, else type one
   if (hit && hit.kind === 'dwall') {
     selectedId = hit.id;
     vp.requestDraw();
-    modals.askNumber('Wall height (ft) — this run', `Sides is ${hit.sides || 2} (toolbar toggle for new runs). Wall SF = length × height × sides.`, dwallHeight(hit), 1)
-      .then(v => { if (v != null && v > 0) { const prev = snapshot(); hit.height = v; pushUndo(prev); markupsChanged(); } });
+    const applyH = v => { if (v != null && v > 0) { const prev = snapshot(); hit.height = v; pushUndo(prev); markupsChanged(); } };
+    const askCustom = () => modals.askNumber('Wall height (ft) — this run', `Sides is ${hit.sides || 2} (toolbar toggle for new runs). Wall SF = length × height × sides.`, dwallHeight(hit), 1).then(applyH);
+    const heights = state.markups.filter(m => m.kind === 'dheight');
+    if (heights.length) {
+      askChoice('Wall height — this run', 'Apply a height measured off an elevation sheet, or type one.', [
+        ...heights.map(h => ({ label: `${h.text || 'Height'} — ${fmt(dheightFt(h), 1)} ft`, value: dheightFt(h) })),
+        { label: 'Type a custom height…', value: '__custom' },
+      ]).then(v => { if (v === '__custom') askCustom(); else if (v != null) applyH(v); });
+    } else askCustom();
+    return;
+  }
+  // double-click a measured height to rename it
+  if (hit && hit.kind === 'dheight') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    modals.askText('Rename height', `${fmt(dheightFt(hit), 1)} ft measured`, hit.text || '')
+      .then(t => { if (t != null && t.trim()) { const prev = snapshot(); hit.text = t.trim(); pushUndo(prev); markupsChanged(); } });
     return;
   }
   // double-click a ceiling to change its type (drywall vs ACT drop-ceiling)
@@ -2248,7 +2286,7 @@ function applyTakeoffGate() {
 const TRADE_TOOLS = {
   roofing: ['plane', 'redge', 'ritem'],
   dirt: ['wand', 'contour', 'espot', 'epad', 'ebound', 'align', 'autoarea', 'qarea', 'qline', 'qcount'],
-  drywall: ['dwall', 'dceiling', 'dopening', 'dtrim'],
+  drywall: ['dwall', 'dceiling', 'dopening', 'dtrim', 'dheight'],
 };
 // general redlining + generic measure tools that collapse while a trade is active
 const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
@@ -4307,6 +4345,7 @@ const dwallLenFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0);
 const dwallHeight = m => (m.height != null ? m.height : state.drywall.wallHeight);
 const dwallSf = m => dwallLenFt(m) * dwallHeight(m) * (m.sides || 2);
 const dceilingSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0);
+const dheightFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0); // measured wall height off an elevation sheet
 const FINISH_MUD = { L3: 0.020, L4: 0.027, L5: 0.036 }; // gal ready-mix / SF by finish level
 // Suspended (ACT) drop-ceiling grid takeoff from area + wall perimeter. Rule-of-thumb
 // counts: mains 4' OC, 4' cross tees 2' OC (both layouts), 2' cross tees only on 2×2;
@@ -4391,6 +4430,15 @@ function renderDrywallPanel() {
   rows.push('<div class="dirt-set">Sheet <select id="dwSheet"><option value="32">4×8 (32)</option><option value="40">4×10 (40)</option><option value="48">4×12 (48)</option></select> SF · Waste <input type="number" id="dwWaste" min="0"> %</div>');
   rows.push('<div class="dirt-set">Paint <input type="number" id="dwCov" min="1"> SF/gal · Coats <input type="number" id="dwCoats" min="1"> · Finish <select id="dwFinish"><option>L3</option><option>L4</option><option>L5</option></select></div>');
   rows.push(`<div class="dirt-set">Texture <select id="dwTexture">${texOpts}</select> · Insulation <select id="dwInsul">${insOpts}</select></div>`);
+  // heights measured off elevation sheets — apply as the new-run default or per-run (double-click a wall)
+  rows.push('<div class="roof-sub">Heights (from elevations)</div>');
+  const heights = state.markups.filter(m => m.kind === 'dheight');
+  for (const h of heights) {
+    const ft = dheightFt(h);
+    const isDef = Math.abs((Number(D.wallHeight) || 0) - ft) < 0.05;
+    rows.push(`<div class="dirt-row"><span>${esc(h.text || 'Height')}</span><span class="v">${fmt(ft, 1)} ft ${isDef ? '<b>· default</b>' : `<a class="dirt-link" data-huse="${ft}">use</a>`} <a class="dirt-link" data-hdel="${h.id}">✕</a></span></div>`);
+  }
+  rows.push(`<div class="dirt-set"><button class="btn" id="dwMeasureH">↕ Measure a height</button> <span class="hint">click floor→ceiling on an elevation sheet</span></div>`);
   rows.push('<div class="roof-sub">Quantities</div>');
   R('Wall SF (gross)', fmt(T.wallSF));
   if (T.openDeductSF > 0) R('− openings', `−${fmt(T.openDeductSF)}`);
@@ -4432,6 +4480,10 @@ function renderDrywallPanel() {
   $('dwFinish').addEventListener('change', e => { D.finish = e.target.value; scheduleSave(); renderDrywallPanel(); });
   $('dwTexture').addEventListener('change', e => { D.texture = e.target.value; scheduleSave(); renderDrywallPanel(); });
   $('dwInsul').addEventListener('change', e => { D.insul = e.target.value; scheduleSave(); renderDrywallPanel(); });
+  // heights: set default / delete / start a measurement (listeners on fresh nodes — replaced each render, no accumulation)
+  body.querySelectorAll('[data-huse]').forEach(el => el.addEventListener('click', () => { D.wallHeight = Math.max(1, parseFloat(el.dataset.huse) || D.wallHeight); scheduleSave(); renderDrywallPanel(); vp.requestDraw(); }));
+  body.querySelectorAll('[data-hdel]').forEach(el => el.addEventListener('click', () => { const prev = snapshot(); state.markups = state.markups.filter(m => m.id !== el.dataset.hdel); pushUndo(prev); markupsChanged(); }));
+  $('dwMeasureH').addEventListener('click', () => { setTool('dheight'); });
 }
 function syncDwInputs() { renderDrywallPanel(); }
 $('btnDw').addEventListener('click', () => {

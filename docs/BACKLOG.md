@@ -154,9 +154,10 @@ that holds the exhaustive detail.
   D1+D2+D3 built inside the Plan Room takeoff layer: wall runs (LF × height ×
   sides), ceilings, opening deducts, trim, board/mud/tape/paint math; **plus
   D3** — texture ($/SF), batt/sound insulation (single-face wall area), and
-  ACT/drop-ceiling grid takeoff (tiles/tees/wall-angle/hangers, installed $/SF).
-  Only remaining "Later": interior-elevation heights (niche). No own SKU —
-  included in the $60 takeoff layer.
+  ACT/drop-ceiling grid takeoff (tiles/tees/wall-angle/hangers, installed $/SF);
+  **D4** — interior-elevation heights (↕ tool measures a named wall height off an
+  elevation sheet → reusable library, applied as default or per run). **Pack is
+  feature-complete.** No own SKU — included in the $60 takeoff layer.
 - *(further trade packs to scope when wanted: see the tools roadmap —
   flooring/tile, framing, siding, fencing, striping, landscape…)*
 
