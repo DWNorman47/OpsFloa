@@ -86,6 +86,7 @@ const layerVisible = m => layers[markupLayer(m.kind)];
 let curSurface = 'existing';                 // which surface new contours/spots/pads belong to
 let dirtSheetsCollapsed = false;             // dirt panel: Sheets section starts collapsed once the two-sheet setup is done
 let dirtContoursCollapsed = false;           // dirt panel: the traced-contours list section
+let dirtEarthworkCollapsed = false;          // dirt panel: the Earthwork (boundary + settings + calculate) section
 // Earthwork mode declutters the canvas: only dirt-trade markups draw, and only
 // the focused surface's contours/pads. General redline + other-trade markups are
 // hidden (they reappear when you leave dirt mode). Layer toggles apply on top.
@@ -2596,12 +2597,16 @@ function renderDirtPanel() {
       }
     }
   }
-  rows.push(`<div class="dirt-row"><span>Boundary</span><span class="v">${c.boundary ? 'set · <a class="dirt-link" data-act="edit-bound">edit</a>' : '—'}</span></div>`);
-
-  rows.push('<div class="roof-sub">Earthwork</div>');
-  rows.push('<div class="dirt-set">Contour interval <input type="number" id="ewInterval" min="0" step="0.5"> ft <span class="hint">— next contour auto-steps by this</span></div>');
-  rows.push('<div class="dirt-set">Grid <input type="number" id="ewGrid" min="0.5" step="0.5"> ft · Shrink <input type="number" id="ewShrink" min="0"> % · Swell <input type="number" id="ewSwell" min="0"> % · Truck <input type="number" id="ewTruck" min="1"> CY</div>');
-  rows.push('<button class="btn go dirt-btn" data-act="calc">∑ Calculate Cut / Fill</button>');
+  // Earthwork (collapsible): boundary + grid settings + calculate
+  rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-earthwork"><span>Earthwork</span><span class="v">${dirtEarthworkCollapsed ? '▸' : '▾'}</span></div>`);
+  if (!dirtEarthworkCollapsed) {
+    const newLink = '<a class="dirt-link" data-act="new-bound">new</a>';
+    const editLink = c.boundary ? ' · <a class="dirt-link" data-act="edit-bound">edit</a>' : '';
+    rows.push(`<div class="dirt-row"><span>Boundary</span><span class="v">${c.boundary ? 'set · ' : ''}${newLink}${editLink}</span></div>`);
+    rows.push('<div class="dirt-set">Contour interval <input type="number" id="ewInterval" min="0" step="0.5"> ft <span class="hint">— next contour auto-steps by this</span></div>');
+    rows.push('<div class="dirt-set">Grid <input type="number" id="ewGrid" min="0.5" step="0.5"> ft · Shrink <input type="number" id="ewShrink" min="0"> % · Swell <input type="number" id="ewSwell" min="0"> % · Truck <input type="number" id="ewTruck" min="1"> CY</div>');
+    rows.push('<button class="btn go dirt-btn" data-act="calc">∑ Calculate Cut / Fill</button>');
+  }
   if (E.result) {
     // same math as the standalone tool: fill needs bank dirt ÷(1−shrink);
     // net = cut − fillBank (+ = surplus leaves site); export hauls loose ×(1+swell)
@@ -2626,22 +2631,29 @@ function renderDirtPanel() {
   }
   const body = $('dirtBody');
   body.innerHTML = rows.join('');
-  $('ewGrid').value = E.gridFt; $('ewShrink').value = E.shrink; $('ewSwell').value = E.swell; $('ewTruck').value = E.truckCap;
-  $('ewInterval').value = E.interval != null ? E.interval : 1;
-  const numHandler = (el, key, min, def) => el.addEventListener('change', e => { E[key] = Math.max(min, parseFloat(e.target.value) || def); e.target.value = E[key]; scheduleSave(); });
-  numHandler($('ewInterval'), 'interval', 0, 1);
-  numHandler($('ewGrid'), 'gridFt', 0.5, 5);
-  numHandler($('ewShrink'), 'shrink', 0, 15);
-  numHandler($('ewSwell'), 'swell', 0, 25);
-  numHandler($('ewTruck'), 'truckCap', 1, 12);
+  if (!dirtEarthworkCollapsed) {
+    $('ewGrid').value = E.gridFt; $('ewShrink').value = E.shrink; $('ewSwell').value = E.swell; $('ewTruck').value = E.truckCap;
+    $('ewInterval').value = E.interval != null ? E.interval : 1;
+    const numHandler = (el, key, min, def) => el.addEventListener('change', e => { E[key] = Math.max(min, parseFloat(e.target.value) || def); e.target.value = E[key]; scheduleSave(); });
+    numHandler($('ewInterval'), 'interval', 0, 1);
+    numHandler($('ewGrid'), 'gridFt', 0.5, 5);
+    numHandler($('ewShrink'), 'shrink', 0, 15);
+    numHandler($('ewSwell'), 'swell', 0, 25);
+    numHandler($('ewTruck'), 'truckCap', 1, 12);
+    body.querySelector('[data-act="calc"]').addEventListener('click', calculateCutFill);
+  }
   const setEx = body.querySelector('[data-act="set-existing"]');
   if (setEx) setEx.addEventListener('click', () => { E.existingPage = state.page; scheduleSave(); renderDirtPanel(); });
   const setPr = body.querySelector('[data-act="set-proposed"]');
   if (setPr) setPr.addEventListener('click', () => { E.proposedPage = state.page; scheduleSave(); renderDirtPanel(); });
   const toggleSheets = body.querySelector('[data-act="toggle-sheets"]');
   if (toggleSheets) toggleSheets.addEventListener('click', () => { dirtSheetsCollapsed = !dirtSheetsCollapsed; renderDirtPanel(); });
+  const newBound = body.querySelector('[data-act="new-bound"]');
+  if (newBound) newBound.addEventListener('click', () => setTool('ebound'));
   const editBound = body.querySelector('[data-act="edit-bound"]');
   if (editBound) editBound.addEventListener('click', () => { const b = state.markups.find(m => m.kind === 'ebound'); if (b) selectContourById(b.id); });
+  const toggleEw = body.querySelector('[data-act="toggle-earthwork"]');
+  if (toggleEw) toggleEw.addEventListener('click', () => { dirtEarthworkCollapsed = !dirtEarthworkCollapsed; renderDirtPanel(); });
   const doAlign = body.querySelector('[data-act="do-align"]');
   if (doAlign) doAlign.addEventListener('click', () => setTool('align'));
   const toggleContours = body.querySelector('[data-act="toggle-contours"]');
@@ -2657,7 +2669,6 @@ function renderDirtPanel() {
       selectContourById(id);
     });
   });
-  body.querySelector('[data-act="calc"]').addEventListener('click', calculateCutFill);
   const gk = body.querySelector('#ghostChk');
   if (gk) gk.addEventListener('change', e => { ghostOn = e.target.checked; vp.requestDraw(); });
 }
