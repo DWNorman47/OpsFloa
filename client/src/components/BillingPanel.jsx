@@ -197,6 +197,27 @@ export default function BillingPanel() {
     { key: 'qbo', title: 'QuickBooks Online', owned: hasQbo, plan: plans?.qbo, desc: 'Push invoices to QuickBooks and keep their payment status in sync.' },
   ];
 
+  // Shown in place of an add-on's buy option when you already have it (in the
+  // plan-selection state) — a Turn-off action so an owned add-on is managed in
+  // its usual spot instead of silently vanishing.
+  const ownedAddonCard = (key, title) => (
+    <div style={s.addonCard}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <span style={s.addonTitle}>{title} add-on <span style={{ color: '#059669', fontWeight: 700 }}>· active</span></span>
+        <button
+          style={{ ...s.removeBtn, ...(redirecting ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
+          onClick={() => removeAddon(key)}
+          disabled={!!redirecting}
+        >
+          {redirecting === 'rmaddon-' + key ? 'Turning off…' : 'Turn off'}
+        </button>
+      </div>
+      <div style={{ paddingLeft: 26, fontSize: 12, color: '#6b7280', lineHeight: 1.5, marginTop: 6 }}>
+        You have this add-on. Turn it off to remove it and stop paying for it — you can add it back anytime.
+      </div>
+    </div>
+  );
+
   const INCLUDED_WORKERS = 15;
   const businessOverage = Math.max(0, workerCount - INCLUDED_WORKERS);
 
@@ -302,32 +323,6 @@ export default function BillingPanel() {
 
       {showPlans && (
         <>
-          {/* Add-ons already switched on (e.g. via superadmin, or kept from a
-              prior plan) — surfaced with a Turn-off action so they're managed
-              here instead of silently vanishing when there's no active plan. */}
-          {addonMeta.some(a => a.owned) && (
-            <div style={{ marginBottom: 14 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: '#374151', margin: '0 0 8px' }}>Your add-ons</div>
-              {addonMeta.filter(a => a.owned).map(a => (
-                <div key={a.key} style={{ ...s.addonCard, marginBottom: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                    <span style={s.addonTitle}>{a.title} add-on <span style={{ color: '#059669', fontWeight: 700 }}>· active</span></span>
-                    <button
-                      style={{ ...s.removeBtn, ...(redirecting ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
-                      onClick={() => removeAddon(a.key)}
-                      disabled={!!redirecting}
-                    >
-                      {redirecting === 'rmaddon-' + a.key ? 'Turning off…' : 'Turn off'}
-                    </button>
-                  </div>
-                  <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.5, marginTop: 6 }}>
-                    You have the {a.title} add-on. Turn it off to remove it and stop paying for it — you can add it back anytime.
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
           <div style={s.toggleRow}>
             <span style={{ fontSize: 14, color: annual ? '#9ca3af' : '#111827', fontWeight: annual ? 400 : 600 }}>{t.planMonthly}</span>
             <button style={{ ...s.toggle, background: annual ? 'var(--ops-page-accent)' : '#d1d5db' }} onClick={() => setAnnual(a => !a)}>
@@ -537,6 +532,7 @@ export default function BillingPanel() {
               </div>
             </div>
           )}
+          {hasQbo && ownedAddonCard('qbo', 'QuickBooks Online')}
 
           {!hasPlanroom && plans?.planroom?.monthly_price_id && (
             <div style={s.addonCard}>
@@ -554,6 +550,7 @@ export default function BillingPanel() {
               </div>
             </div>
           )}
+          {hasPlanroom && ownedAddonCard('planroom', 'Plan Room')}
 
           {!hasTakeoff && plans?.takeoff?.monthly_price_id && (
             <div style={s.addonCard}>
@@ -571,6 +568,7 @@ export default function BillingPanel() {
               </div>
             </div>
           )}
+          {hasTakeoff && ownedAddonCard('takeoff', 'Sitework Takeoff')}
 
           <ClientPortalProPlaceholder />
 
