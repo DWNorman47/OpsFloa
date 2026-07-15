@@ -2356,6 +2356,45 @@ function renderRoofBid() {
   });
 }
 
+// The "Send pricing to estimate" button appears only when a takeoff is linked
+// to an estimate (via the $ Bid dropdown, or a ?estimate= launch).
+function syncBidSendBtn() {
+  const sendBtn = $('bidSendEstimate');
+  if (!sendBtn) return;
+  if (state.estimateId) { sendBtn.textContent = `➤ Send pricing to estimate #${state.estimateId}`; sendBtn.classList.remove('hidden'); }
+  else sendBtn.classList.add('hidden');
+}
+// Populate the $ Bid "Estimate" dropdown from the company's DRAFT estimates
+// (only drafts can receive pricing) and pre-select the current link.
+async function populateBidEstimates() {
+  const sel = $('bidEstimate'), hint = $('bidEstimateHint');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— not linked —</option>';
+  if (!toolToken()) { sel.disabled = true; if (hint) hint.textContent = 'Sign in to OpsFloa to link an estimate.'; return; }
+  sel.disabled = false;
+  try {
+    const r = await apiEstimate('?status=draft&limit=100', { timeout: 12000 });
+    const items = r.ok ? ((await r.json()).items || []) : [];
+    for (const e of items) {
+      const opt = document.createElement('option');
+      opt.value = e.id;
+      const who = e.client_name_snapshot || e.project_name || '';
+      opt.textContent = `#${e.id}${who ? ' · ' + who : ''}`;
+      sel.appendChild(opt);
+    }
+    // keep the current link selectable even if it isn't a draft in the list
+    if (state.estimateId && !items.some(e => String(e.id) === String(state.estimateId))) {
+      const opt = document.createElement('option');
+      opt.value = state.estimateId; opt.textContent = `#${state.estimateId} (linked)`;
+      sel.appendChild(opt);
+    }
+    sel.value = state.estimateId || '';
+    if (hint) hint.textContent = state.estimateId ? 'Send puts this bid’s line items on the estimate.'
+      : items.length ? 'Pick an estimate to send this bid’s pricing to it.'
+      : 'No draft estimates yet — create one in OpsFloa.';
+  } catch (_) { if (hint) hint.textContent = 'Could not load estimates.'; }
+}
+
 function openRoofBid() {
   $('bidTitle').textContent =
     state.trade === 'roofing' ? '🏠 Roofing bid'
@@ -2371,9 +2410,8 @@ function openRoofBid() {
   $('bidPrep').value = meta.prep || co.name || '';
   $('bidDate').value = meta.date || new Date().toLocaleDateString();
   $('bidOP').value = state.roofOP;
-  const sendBtn = $('bidSendEstimate');
-  if (state.estimateId) { sendBtn.textContent = `➤ Send pricing to estimate #${state.estimateId}`; sendBtn.classList.remove('hidden'); }
-  else sendBtn.classList.add('hidden');
+  syncBidSendBtn();
+  populateBidEstimates();
   renderRoofBid();
   $('roofBid').classList.remove('hidden');
 }
@@ -2458,6 +2496,13 @@ async function sendPricingToEstimate() {
 
 $('btnBid').addEventListener('click', openRoofBid);
 $('bidSendEstimate').addEventListener('click', sendPricingToEstimate);
+if ($('bidEstimate')) $('bidEstimate').addEventListener('change', e => {
+  state.estimateId = e.target.value || null;
+  scheduleSave();
+  syncBidSendBtn();
+  const hint = $('bidEstimateHint');
+  if (hint) hint.textContent = state.estimateId ? 'Send puts this bid’s line items on the estimate.' : 'Not linked — pick an estimate to send this bid’s pricing.';
+});
 $('bidClose').addEventListener('click', () => $('roofBid').classList.add('hidden'));
 $('roofBid').addEventListener('click', e => { if (e.target === $('roofBid')) $('roofBid').classList.add('hidden'); });
 $('bidOP').addEventListener('input', e => {
