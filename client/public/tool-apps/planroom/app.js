@@ -3007,12 +3007,16 @@ function scheduleSave(now = false) {
   saveTimer = setTimeout(saveProjectNow, now ? 0 : 600);
   if (typeof sessionSyncSoon === 'function') sessionSyncSoon(); // push live edits (no-op if not in a session / applying incoming)
 }
-// discreet "✓ Saved" flash in the topbar on each autosave write
+// discreet "✓ Saved" flash in the canvas top-left on each autosave write —
+// nudged to the right of the HUD message when one is showing so they don't stack.
 let savedTimer = null;
 function flashSaved() {
   const el = $('saveStatus');
   if (!el) return;
   el.textContent = '✓ Saved';
+  const hud = els.hud;
+  const hudShowing = hud && hud.textContent.trim() && !hud.classList.contains('gone');
+  el.style.left = hudShowing ? (hud.offsetLeft + hud.offsetWidth + 8) + 'px' : '10px';
   el.classList.add('show');
   clearTimeout(savedTimer);
   savedTimer = setTimeout(() => el.classList.remove('show'), 1600);

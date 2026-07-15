@@ -25,7 +25,6 @@
   <div class="tb-group">
     <div class="brand">Plan&nbsp;Room</div>
     <button id="btnProjects" class="btn" title="Open plans, switch projects, or add more sheets">📁 <span id="projName">Project</span></button>
-    <span id="saveStatus" class="save-status" aria-live="polite"></span>
     <button id="btnCompany" class="btn needs-doc" title="Share this project with your company, or copy one a teammate shared">☁<span class="btn-label"> Company</span></button>
     <button id="btnLive" class="btn needs-doc" title="Live co-edit — teammates join and mark up this project with you in real time (nothing is published)">🟢<span class="btn-label"> Live Co-Edit</span></button>
   </div>
@@ -177,6 +176,7 @@
   <div id="canvasWrap">
     <canvas id="cv"></canvas>
     <div id="hud"></div>
+    <div id="saveStatus" aria-live="polite"></div>
     <div id="dropHint"><span>Drop a PDF or image here, or open plans from <b>📁 Project</b></span></div>
     <textarea id="textOverlay" class="hidden" rows="2" spellcheck="false"
       placeholder="Type the note — Enter to place, Esc to cancel"></textarea>
@@ -472,6 +472,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=7"></script>
+<script type="module" src="app.js?v=8"></script>
 </body>
 </html>
