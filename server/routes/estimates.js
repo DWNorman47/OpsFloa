@@ -221,7 +221,7 @@ router.post('/', requireAdmin, async (req, res) => {
                  EXTRACT(YEAR FROM CURRENT_DATE)::int ||
                  '-' ||
                  LPAD((COALESCE(MAX(
-                   CASE WHEN estimate_number ~ '^EST-' || EXTRACT(YEAR FROM CURRENT_DATE)::int || '-[0-9]+$'
+                   CASE WHEN estimate_number ~ ('^EST-' || EXTRACT(YEAR FROM CURRENT_DATE)::int || '-[0-9]+$')
                         THEN SUBSTRING(estimate_number FROM '[0-9]+$')::int
                         ELSE 0 END
                  ), 0) + 1)::text, 4, '0')
