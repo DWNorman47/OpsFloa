@@ -160,14 +160,12 @@ that holds the exhaustive detail.
 
 ## ✅ Things I need to do (David)
 
-**Migrations to run (shipped code waiting on these):**
-- **`0138_takeoff_lock.sql`** — the shared-takeoff manual lock (Plan Room company
-  library). Until run, the 🔒 lock button and lock-aware saves error.
+**Migrations:** *no manual step* — they auto-apply on every deploy (`migrate.js`
+runs on server start, tracked in `schema_migrations`) and ride along to
+stage/prod on those PRs. All shipped migrations through **0138** are already
+applied on dev (verified 2026-07-14). *(Corrects earlier "run migrations X" notes.)*
 
-**Bid workflow + Haul log (all shipped to `dev` 2026-07-13 — need these to work):**
-- **Run migrations `0135` + `0136` + `0137`** on the DB. Until then: the bid-due
-  field + reminder (0135), the plan-attach button (0136), and the whole Haul log
-  tab (0137) will error. All three are idempotent.
+**Bid workflow + Haul log (shipped to `dev`):**
 - **Test both loops end-to-end:** (1) estimate → set due date → attach PDF →
   Take off in Plan Room → price in $ Bid → Send pricing → confirm lines + total
   land on the estimate; (2) log haul tickets on a job → totals/subtotals →
