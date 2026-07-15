@@ -180,12 +180,10 @@ applied on dev (verified 2026-07-14). *(Corrects earlier "run migrations X" note
   "convert the winning bid to this job to compare." A hard takeoff↔job link
   (cross-device) is deferred — flag if you want it built.
 
-**Plan Room — before the base tier can actually sell (M6 shipped, needs these):**
-- **Stripe:** create the Plan Room product with a monthly (~$40) and an annual
-  price, then set `STRIPE_PRICE_PLANROOM` + `STRIPE_PRICE_PLANROOM_ANNUAL` in
-  Render env. (The billing card hides itself until these exist. The **superadmin
-  On/Off toggle already works without Stripe** — flip Plan Room on for your own
-  company to use it now.)
+**Plan Room — before the base tier can actually sell (M6 shipped):**
+- ~~**Stripe (Plan Room $40)**~~ — **DONE** (2026-07-15). `STRIPE_PRICE_PLANROOM`
+  (+`_ANNUAL`) set in Render → `addon_planroom`; billing card + checkout verified.
+  `.env.example` documents the full add-on price set.
 - ~~**R2 bucket CORS**~~ — **DONE** (2026-07-15). CORS policy applied to the
   plan-tools bucket (PUT + `content-type` from the app origins) so the ☁
   share-upload path works. Reads/copy-down never needed it (server-proxied).
@@ -200,10 +198,9 @@ applied on dev (verified 2026-07-14). *(Corrects earlier "run migrations X" note
   and confirm the locked card shows for a company without the add-on.
 
 **Takeoff layer (M7 shipped — roofing pack):**
-- **Stripe:** the $60 takeoff layer reuses the existing `addon_takeoff` product.
-  Decide whether to move its price to ~$60 (new price IDs; existing subscribers
-  keep their legacy price automatically). The superadmin Takeoff toggle already
-  turns the roofing tools on for your own company with no Stripe change.
+- ~~**Stripe (Takeoff $60)**~~ — **DONE** (2026-07-15). `STRIPE_PRICE_TAKEOFF`
+  (+`_ANNUAL`) set to the new $60 price → `addon_takeoff`. Legacy takeoff price
+  moved to `STRIPE_PRICE_SITEWORK` (inert — safe to delete; no legacy subs).
 - **Verify the roofing math** against a hand calc (a plane's squares, a
   hip/valley pitch-corrected LF) before selling it.
 - **Parity test (the S4 cutover gate):** dirt takeoff is now built in Plan Room
