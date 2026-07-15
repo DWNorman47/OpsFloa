@@ -1393,7 +1393,7 @@ function setTool(t) {
     if (pageFtPerPx() && !state.scaleBars[state.page]) synthScaleBar(state.page); // legacy scale → editable bar
     const bar = state.scaleBars[state.page];
     setMsg(bar
-      ? `Sheet ${state.page} scale: ${fmt(bar.feet, bar.feet < 10 ? 1 : 0)} ft on the bar. Drag its ends to adjust · Alt-click the bar to clear · or click two points to redo.`
+      ? `Sheet ${state.page} scale: ${fmt(bar.feet, bar.feet < 10 ? 1 : 0)} ft on the bar. Drag an end to adjust · drag the middle to move it · Alt-click to clear · or click two points to redo.`
       : 'Click two points a known distance apart (a dimension line, a scale bar), then enter the distance.');
   } else if (NEEDS_SCALE.includes(t) && !pageFtPerPx()) {
     setMsg('This sheet has no scale yet — calibrate first (📏).');
@@ -1465,6 +1465,12 @@ els.cv.addEventListener('pointerdown', e => {
       const end = scaleBarHandle(bar, w);
       if (end) { drag = { mode: 'scalebar', ptr: e.pointerId, end }; return; } // drag an endpoint to adjust
       if (e.altKey && projOnSeg(bar.a, bar.b, w).d <= Math.max(9 / vp.view.zoom, 4)) { clearScale(state.page); return; } // Alt-click the bar → clear
+      // drag the middle of the bar to reposition it — feet AND pixel length stay
+      // fixed, so the scale is unchanged (just moved)
+      if (projOnSeg(bar.a, bar.b, w).d <= Math.max(9 / vp.view.zoom, 4)) {
+        drag = { mode: 'scalebarmove', ptr: e.pointerId, from: { x: w.x, y: w.y }, origA: { ...bar.a }, origB: { ...bar.b } };
+        return;
+      }
     }
     const p = { x: w.x, y: w.y };
     if (!calibPts || !calibPts.length) {
@@ -1643,6 +1649,16 @@ els.cv.addEventListener('pointermove', e => {
     if (bar) { bar[drag.end] = { x: w.x, y: w.y }; applyScaleBar(state.page); vp.requestDraw(); }
     return;
   }
+  if (drag.mode === 'scalebarmove') {
+    const bar = state.scaleBars[state.page];
+    if (bar) {
+      const dx = w.x - drag.from.x, dy = w.y - drag.from.y;
+      bar.a = { x: drag.origA.x + dx, y: drag.origA.y + dy };
+      bar.b = { x: drag.origB.x + dx, y: drag.origB.y + dy };
+      vp.requestDraw(); // length unchanged → scale unchanged
+    }
+    return;
+  }
   if (drag.mode === 'pan') {
     vp.panPx(e.clientX - drag.last.x, e.clientY - drag.last.y);
     drag.last = { x: e.clientX, y: e.clientY };
@@ -1696,6 +1712,7 @@ function endDrag(e) {
   }
 
   if (d.mode === 'scalebar') { applyScaleBar(state.page); scheduleSave(); markupsChanged(); return; }
+  if (d.mode === 'scalebarmove') { scheduleSave(); return; } // repositioned only; scale unchanged
 
   if (d.mode === 'draw') {
     const m = d.markup;
