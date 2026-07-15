@@ -188,6 +188,15 @@ export default function BillingPanel() {
   const isTrialExpired = sub === 'trial_expired';
   const trialDays = daysLeft(status?.trial_ends_at);
 
+  // The three à-la-carte add-ons, in one place. Used both by the active-plan
+  // manage list and by the "you already have this" turn-off card shown to
+  // non-active companies (so an owned add-on is never silently invisible).
+  const addonMeta = [
+    { key: 'planroom', title: 'Plan Room', owned: hasPlanroom, plan: plans?.planroom, desc: 'View, mark up, and measure plan sets in the browser, with a company library and live share sessions.' },
+    { key: 'takeoff', title: 'Sitework Takeoff', owned: hasTakeoff, plan: plans?.takeoff, desc: 'Plan takeoffs from civil drawings into a priced, branded bid, with company-shared projects.' },
+    { key: 'qbo', title: 'QuickBooks Online', owned: hasQbo, plan: plans?.qbo, desc: 'Push invoices to QuickBooks and keep their payment status in sync.' },
+  ];
+
   const INCLUDED_WORKERS = 15;
   const businessOverage = Math.max(0, workerCount - INCLUDED_WORKERS);
 
@@ -252,11 +261,7 @@ export default function BillingPanel() {
             {redirecting === 'portal' ? t.billingRedirecting : t.manageSub}
           </button>
 
-          {[
-            { key: 'planroom', title: 'Plan Room', owned: hasPlanroom, plan: plans?.planroom, desc: 'View, mark up, and measure plan sets in the browser, with a company library and live share sessions.' },
-            { key: 'takeoff', title: 'Sitework Takeoff', owned: hasTakeoff, plan: plans?.takeoff, desc: 'Plan takeoffs from civil drawings into a priced, branded bid, with company-shared projects.' },
-            { key: 'qbo', title: 'QuickBooks Online', owned: hasQbo, plan: plans?.qbo, desc: 'Push invoices to QuickBooks and keep their payment status in sync.' },
-          ].map(a => {
+          {addonMeta.map(a => {
             if (a.owned) {
               return (
                 <div key={a.key} style={{ ...s.addonCard, marginTop: 14, marginBottom: 0 }}>
@@ -297,6 +302,32 @@ export default function BillingPanel() {
 
       {showPlans && (
         <>
+          {/* Add-ons already switched on (e.g. via superadmin, or kept from a
+              prior plan) — surfaced with a Turn-off action so they're managed
+              here instead of silently vanishing when there's no active plan. */}
+          {addonMeta.some(a => a.owned) && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#374151', margin: '0 0 8px' }}>Your add-ons</div>
+              {addonMeta.filter(a => a.owned).map(a => (
+                <div key={a.key} style={{ ...s.addonCard, marginBottom: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                    <span style={s.addonTitle}>{a.title} add-on <span style={{ color: '#059669', fontWeight: 700 }}>· active</span></span>
+                    <button
+                      style={{ ...s.removeBtn, ...(redirecting ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
+                      onClick={() => removeAddon(a.key)}
+                      disabled={!!redirecting}
+                    >
+                      {redirecting === 'rmaddon-' + a.key ? 'Turning off…' : 'Turn off'}
+                    </button>
+                  </div>
+                  <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.5, marginTop: 6 }}>
+                    You have the {a.title} add-on. Turn it off to remove it and stop paying for it — you can add it back anytime.
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div style={s.toggleRow}>
             <span style={{ fontSize: 14, color: annual ? '#9ca3af' : '#111827', fontWeight: annual ? 400 : 600 }}>{t.planMonthly}</span>
             <button style={{ ...s.toggle, background: annual ? 'var(--ops-page-accent)' : '#d1d5db' }} onClick={() => setAnnual(a => !a)}>
@@ -490,20 +521,22 @@ export default function BillingPanel() {
             )}
           </div>
 
-          <div style={s.addonCard}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-              <input type="checkbox" checked={addQbo} onChange={e => setAddQbo(e.target.checked)}
-                style={{ accentColor: '#d97706', width: 16, height: 16 }} />
-              <span style={s.addonTitle}>
-                {t.billingQBOAddonTitle} &nbsp;
-                <span style={{ fontSize: 18, fontWeight: 800, color: '#d97706' }}>${plans?.qbo.monthly ?? 25}</span>
-                <span style={{ fontSize: 13, color: '#6b7280' }}>/mo</span>
-              </span>
-            </label>
-            <div style={{ paddingLeft: 26, fontSize: 12, color: '#6b7280', lineHeight: 1.5, marginTop: 6 }}>
-              {t.billingQBODesc}
+          {!hasQbo && (
+            <div style={s.addonCard}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                <input type="checkbox" checked={addQbo} onChange={e => setAddQbo(e.target.checked)}
+                  style={{ accentColor: '#d97706', width: 16, height: 16 }} />
+                <span style={s.addonTitle}>
+                  {t.billingQBOAddonTitle} &nbsp;
+                  <span style={{ fontSize: 18, fontWeight: 800, color: '#d97706' }}>${plans?.qbo.monthly ?? 25}</span>
+                  <span style={{ fontSize: 13, color: '#6b7280' }}>/mo</span>
+                </span>
+              </label>
+              <div style={{ paddingLeft: 26, fontSize: 12, color: '#6b7280', lineHeight: 1.5, marginTop: 6 }}>
+                {t.billingQBODesc}
+              </div>
             </div>
-          </div>
+          )}
 
           {!hasPlanroom && plans?.planroom?.monthly_price_id && (
             <div style={s.addonCard}>
