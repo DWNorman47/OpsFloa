@@ -14,10 +14,13 @@ const SITEWORK_TOOL_URL = '/tool-apps/sitework/index.html';
 const PLANROOM_TOOL_URL = '/tool-apps/planroom/index.html';
 const PDFTOOLS_TOOL_URL = '/tool-apps/pdftools/index.html';
 
-// the old excavation tool was removed; its '#excavation' deep links land on sitework
+// Default to Plan Room (the daily-use base tool, always visible). The old
+// excavation tool was removed; its legacy '#excavation' deep links land on sitework.
 function resolveTab() {
   const h = window.location.hash.replace('#', '');
-  return !h || h === 'excavation' ? 'sitework' : h;
+  if (!h) return 'planroom';
+  if (h === 'excavation') return 'sitework';
+  return h;
 }
 
 export default function ToolsPage() {
