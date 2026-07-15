@@ -51,6 +51,10 @@ body { display: flex; flex-direction: column; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #08243f; font-weight: 600; }
 .btn:disabled { opacity: .45; cursor: default; }
 
+/* discreet auto-save confirmation — fades in on save, fades out shortly after */
+.save-status { align-self: center; font-size: 11px; color: var(--muted); opacity: 0; transition: opacity .3s ease; white-space: nowrap; pointer-events: none; }
+.save-status.show { opacity: .7; }
+
 .tb-menu-toggle { display: none; } /* desktop: the whole toolbar shows, no toggle */
 @media (max-width: 760px) {
   #topbar .btn-label { display: none; }

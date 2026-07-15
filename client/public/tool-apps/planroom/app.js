@@ -3007,6 +3007,16 @@ function scheduleSave(now = false) {
   saveTimer = setTimeout(saveProjectNow, now ? 0 : 600);
   if (typeof sessionSyncSoon === 'function') sessionSyncSoon(); // push live edits (no-op if not in a session / applying incoming)
 }
+// discreet "✓ Saved" flash in the topbar on each autosave write
+let savedTimer = null;
+function flashSaved() {
+  const el = $('saveStatus');
+  if (!el) return;
+  el.textContent = '✓ Saved';
+  el.classList.add('show');
+  clearTimeout(savedTimer);
+  savedTimer = setTimeout(() => el.classList.remove('show'), 1600);
+}
 async function saveProjectNow() {
   clearTimeout(saveTimer); saveTimer = null;
   if (!state.projectId) return;
@@ -3020,6 +3030,7 @@ async function saveProjectNow() {
       docType: state.docType || null,
       data: projectData(),
     });
+    flashSaved();
   } catch (_) { /* IndexedDB unavailable */ }
 }
 
