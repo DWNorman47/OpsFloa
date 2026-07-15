@@ -186,15 +186,14 @@ applied on dev (verified 2026-07-14). *(Corrects earlier "run migrations X" note
   Render env. (The billing card hides itself until these exist. The **superadmin
   On/Off toggle already works without Stripe** — flip Plan Room on for your own
   company to use it now.)
-- **R2 bucket CORS:** allow `PUT` + `content-type` from the app origins
-  (opsfloa.com / www / dev / stage) on the plan-tools bucket — needed for the ☁
-  share-upload path (M4). Reads/copy-down work without it.
+- ~~**R2 bucket CORS**~~ — **DONE** (2026-07-15). CORS policy applied to the
+  plan-tools bucket (PUT + `content-type` from the app origins) so the ☁
+  share-upload path works. Reads/copy-down never needed it (server-proxied).
 
 **Plan Room — optional / later:**
-- **Orphan sweep:** set `R2_ORPHAN_SWEEP=1` in Render — but ONLY on the
-  environment whose DB exclusively owns the bucket (if stage & prod share a
-  bucket, one env's sweep deletes the other's files). Cleans up abandoned
-  presigned uploads.
+- ~~**Orphan sweep**~~ — **DONE** (2026-07-15). `R2_ORPHAN_SWEEP=1` set in
+  Render on the env whose DB owns the bucket. Cleans up abandoned presigned
+  uploads nightly.
 - **Smoke-test Plan Room end-to-end** on dev: open a plan set (PDF + an aerial
   image), mark up, calibrate + measure against a known dimension, share to the
   company + copy it down on another browser profile, export the flattened PDF,

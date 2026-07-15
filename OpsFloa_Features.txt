@@ -5,14 +5,17 @@ For marketing reference
 
 OVERVIEW
 --------
-OpsFloa is a cloud-based time tracking and field management platform built
-for construction contractors and trades businesses. It covers the full workflow
-from workers clocking in on a job site to admin approving hours, running payroll
-reports, and billing clients — all from a phone or desktop, online or offline.
+OpsFloa is a cloud-based operations platform for construction contractors and
+trades businesses. It started as time tracking and field documentation and now
+runs the whole operation — workers clocking in on a job site, admins approving
+hours and running payroll, estimating and bidding work, managing projects and
+subcontractors, taking off quantities from plans, and billing clients — all from
+a phone or desktop, online or offline.
 
-The platform has two connected apps: a Time Clock app for workers and admins,
-and a Field app for job site documentation. Both are accessible from the same
-login, on any device.
+The platform is built as a base of connected modules — Time Clock, Field,
+Projects & Office, Scheduling/Dispatch, and Estimating & Billing — with
+specialized, higher-value tool add-ons (Plan Room and the Takeoff layer) that
+layer on top. Everything is accessible from the same login, on any device.
 
 
 ================================================================================
@@ -83,6 +86,11 @@ TIME OFF REQUESTS
   a date range and adding a note. Admins are notified and can approve or deny
   the request from the admin panel.
 
+EXPENSE / REIMBURSEMENT REQUESTS
+  Workers can submit out-of-pocket expenses for reimbursement — amount, category,
+  and a receipt photo. Admins review and approve, keeping job costs and employee
+  reimbursements on the same platform.
+
 
 ================================================================================
 ADMIN — APPROVAL AND OVERSIGHT
@@ -144,7 +152,7 @@ AUDIT LOG
 
 
 ================================================================================
-SCHEDULING
+SCHEDULING AND DISPATCH
 ================================================================================
 
 SHIFT SCHEDULING
@@ -154,6 +162,19 @@ SHIFT SCHEDULING
 WORKER SHIFT VIEW
   Workers see their upcoming shifts on their dashboard and can tap to auto-fill
   a time entry from any shift.
+
+ONLINE BOOKING
+  Define appointment or shift types and which team members are bookable, then
+  let customers book time online. Bookings flow into the schedule, and customers
+  can view or manage their own appointment.
+
+SERVICE REQUESTS
+  Customers can submit service calls / job requests through a public intake form,
+  so incoming work lands directly in the system instead of a voicemail or inbox.
+
+PUBLIC COMPANY PROFILE
+  Each company gets a public-facing profile page — a simple, shareable presence
+  that ties together the booking and service-request intake.
 
 
 ================================================================================
@@ -177,11 +198,11 @@ PAY PERIODS
   Pay periods appear in workers' pay stub views.
 
 CERTIFIED PAYROLL REPORT
-  Generates a weekly certified payroll report — required by law for contractors
-  on government and public projects paying prevailing wages. Shows hours worked
-  each day of the week (Mon–Sun), total hours, work classification (regular vs.
-  prevailing), pay rate, and gross wages per worker. Printable and saveable
-  as a PDF.
+  Generates a weekly certified payroll report (WH-347 format) — required by law
+  for contractors on Davis-Bacon / public projects paying prevailing wages.
+  Shows hours worked each day of the week (Mon–Sun), total hours, work
+  classification (regular vs. prevailing), pay rate, and gross wages per worker.
+  Printable and saveable as a PDF.
 
 OVERTIME REPORT
   A summary report showing regular hours, overtime hours, prevailing hours,
@@ -200,7 +221,7 @@ TIME ENTRY CSV EXPORT
 QUICKBOOKS ONLINE INTEGRATION
   Connect to QuickBooks Online via OAuth. Push time and payroll data directly
   from OpsFloa into QuickBooks, eliminating double-entry. Supports employee
-  mapping between the two systems.
+  mapping between the two systems. (QBO add-on.)
 
 WORKER PAY STUBS
   Each worker can view a read-only pay stub for each pay period, showing their
@@ -233,6 +254,10 @@ PROJECT REPORTS
 LABOR COST ESTIMATES
   The overtime report and payroll export include estimated labor costs using
   each worker's assigned hourly rate and the company's overtime multiplier.
+
+FINANCIAL REPORTS
+  Company-level financials: a Profit & Loss view and a Work-in-Progress (WIP)
+  report, so owners can see where the business — not just each job — stands.
 
 
 ================================================================================
@@ -275,6 +300,67 @@ DOCUMENT STORAGE
   Upload and manage project documents (plans, permits, contracts, etc.) stored
   securely in the cloud. Documents can be downloaded or deleted at any time.
 
+PROJECT CLOSEOUT
+  A closeout view per project for assembling and tracking the documentation a
+  job needs to be formally closed out and handed over.
+
+
+================================================================================
+ESTIMATING, BIDDING AND CONTRACT DOCUMENTS
+================================================================================
+
+ESTIMATES AND BIDS
+  Build estimates and bids from line items (description, quantity, unit, price),
+  with company branding. Each estimate can carry a bid due date with reminders,
+  so nothing is missed on a deadline.
+
+PRICE CATALOG
+  A reusable catalog of priced items and services, so estimates and bids are
+  built from a consistent cost book instead of re-typing prices every time.
+
+ATTACH THE PLAN SET
+  Attach the plan PDF directly to an estimate, keeping the drawings and the
+  pricing together.
+
+TAKE OFF IN PLAN ROOM
+  Launch an estimate's plan set straight into the Plan Room takeoff tools (see
+  Tools, below). Measured quantities and priced takeoff lines flow back onto the
+  estimate — measure the plans, and the numbers land on the bid.
+
+SEND AND ACCEPT ONLINE
+  Send an estimate to the client, who can review and accept it online through a
+  public link — no account required.
+
+CONVERT BID TO JOB
+  Turn a winning bid into a live job/project in one step, carrying the details
+  across so field work, time, and billing all connect back to the original bid.
+
+CHANGE ORDERS
+  Create change orders against a project with line items, and send them to the
+  client for online review and signature via a public link. Keeps scope changes
+  documented and approved.
+
+SUBMITTALS
+  Track submittals — product data, shop drawings, samples — through their review
+  cycle, so approvals are logged and nothing stalls.
+
+LIEN WAIVERS
+  Generate lien waivers and send them out for online signature through a public
+  link, keeping payment paperwork moving.
+
+
+================================================================================
+SUBCONTRACTORS
+================================================================================
+
+SUBCONTRACTOR DIRECTORY AND POs
+  Maintain a subcontractor directory and issue numbered subcontractor purchase
+  orders (POs) with line items — a clear paper trail for the work you hand off.
+
+SUBCONTRACTOR REPORTS
+  Document subcontractor work on site (in the Field app) — who was on site, what
+  was performed, and any issues noted — for GCs managing multiple subs.
+
 
 ================================================================================
 CLIENTS
@@ -300,9 +386,9 @@ DOCUMENT UPLOAD
 FIELD APP
 ================================================================================
 
-The Field App is a separate but connected app (same login) for job site
-documentation. Workers and admins switch between the Time Clock and Field
-apps from any screen.
+The Field App is a connected app (same login) for job site documentation.
+Workers and admins switch between the Time Clock, Field, and other modules from
+any screen.
 
 FIELD REPORTS
   Workers submit daily field reports — notes, observations, issues — tied to a
@@ -343,20 +429,91 @@ INCIDENT REPORTS
   property damage — with a description, date, and supporting details. Records
   are retained for safety compliance and insurance purposes.
 
-SUBCONTRACTOR REPORTS
-  Track and document subcontractor work on site — who was on site, what work
-  was performed, and any issues noted. Keeps a clear record for general
-  contractors managing multiple subs.
-
-EQUIPMENT LOG
-  Track company equipment: log hours, assign to projects, and maintain a
-  registry of all equipment. Useful for maintenance scheduling and project
-  cost allocation.
-
 RFI TRACKING
   Submit, track, and manage Requests for Information (RFIs) from within the
   Field app or from a project's detail panel. Each RFI has a title, description,
   status, and response field.
+
+HAUL / PRODUCTION LOG
+  Log haul tickets on a job — loads, material, and quantities — with running
+  totals and subtotals. On jobs that came from a bid, an estimate-vs-actual
+  view reconciles what was bid against what was actually hauled.
+
+
+================================================================================
+TOOLS — PLAN ROOM, TAKEOFF, AND OFFICE
+================================================================================
+
+The Tools module is a set of specialized utilities that sit alongside the daily
+workflow. The plan tools are paid add-ons; the office tools ride with the base.
+
+PLAN ROOM (add-on)
+  A browser-based plan viewer, markup, and measure tool.
+    - Open a plan set — PDF or aerial image — with fast, multi-page navigation.
+    - Mark it up: clouds, callouts, highlights, arrows, lines, and text notes.
+    - Measure to scale: lengths, areas, and counts, after calibrating the scale
+      from any known dimension (with an on-canvas, editable scale bar).
+    - Company library: share a plan set to the whole company; copy it down on
+      any device.
+    - Live share sessions: co-edit a plan set with teammates in real time.
+    - Export a flattened PDF of the marked-up set.
+    - Work autosaves as you go.
+
+TAKEOFF LAYER (add-on)
+  Turns Plan Room measurements into priced, branded bids — quantity takeoff by
+  trade, all on the same plan set:
+    - Earthwork / sitework: cut-and-fill from contours, spot elevations, and
+      pads; two-sheet existing/proposed alignment with a ghost overlay; a cut/
+      fill heat overlay; export cubic yards.
+    - Roofing: roof planes with pitch → squares; roof edges (eave, rake, ridge,
+      valley, hip); roof items/accessories; aerial-image input for re-roofs.
+    - Drywall & paint: wall runs (length × height × sides), ceilings, openings
+      (with SF deducts), and trim; board / mud / tape / paint quantities;
+      texture and batt/sound insulation; ACT drop-ceiling grid takeoff (tiles,
+      tees, wall angle, hangers); and wall heights measured directly off
+      elevation sheets.
+    - Priced takeoff lines flow into a shared price library and a bid report,
+      and can be sent straight back onto an estimate.
+
+SITEWORK TAKEOFF ESTIMATOR
+  A dedicated civil takeoff tool for taking off earthwork, paving, concrete,
+  utilities, and site quantities from a plan set into a priced, branded bid.
+
+OFFICE TOOLS (included)
+    - Voice transcription — upload a meeting or call recording and get back a
+      speaker-separated transcript.
+    - Meeting & call summarizer — turn a transcript or notes into a clean
+      summary with key points and action items.
+    - Document Q&A — open a contract, spec, or insurance cert and ask questions
+      answered only from the document.
+    - Email & message drafter — turn a few notes into a polished email or text
+      in the tone you pick.
+    - PDF Toolkit — merge, reorder, rotate, delete, and extract PDF pages,
+      entirely on your device (nothing is uploaded).
+
+
+================================================================================
+INVENTORY AND EQUIPMENT
+================================================================================
+
+INVENTORY
+  Track stock on hand, with item labels / QR codes for quick lookup on site.
+
+EQUIPMENT REGISTRY
+  Maintain a registry of all company equipment, log engine/usage hours, and get
+  maintenance-interval alerts so service isn't missed.
+
+EQUIPMENT CHECK-OUT / RETURN
+  Know who has which tool, on what job, and when — check equipment out to a
+  worker and project and check it back in.
+
+RENTALS
+  Track rental equipment with return-due dates and automatic reminders before a
+  rental is due back, so you're not paying for gear you forgot to return.
+
+MAINTENANCE HISTORY
+  A service and maintenance log per asset — a clear history for cost tracking
+  and resale.
 
 
 ================================================================================
@@ -416,7 +573,8 @@ SELF-SERVICE REGISTRATION
 
 FREE TRIAL
   New companies get a free trial period (configurable, default 14 days) before
-  being prompted to subscribe. All features are available during the trial.
+  being prompted to subscribe. All features — including add-ons — are available
+  during the trial.
 
 WORKER INVITATIONS
   Admins invite workers by name and username. Workers receive an email with a
@@ -438,8 +596,8 @@ ROLE-BASED ACCESS
 
 MODULE TOGGLES
   Admins can enable or disable entire feature modules per company — Time Clock,
-  Field, Projects, Analytics, and Inventory (coming soon) — so the app only
-  shows what each company actually uses.
+  Field, Projects, Analytics, Inventory, and Tools — so the app only shows what
+  each company actually uses.
 
 FEATURE FLAGS
   Within enabled modules, admins can individually toggle specific features:
@@ -447,11 +605,12 @@ FEATURE FLAGS
   integration, overtime calculation, geolocation, media gallery, and more.
 
 SUBSCRIPTION BILLING (STRIPE)
-  Four-tier pricing — Free, Starter, Business, and a Pro add-on — billed via
-  Stripe. Admins manage their subscription and billing details from within the
-  app, including accessing the Stripe customer portal to update payment methods,
-  download invoices, or cancel. Stripe webhooks keep subscription status in sync
-  automatically. Annual billing saves 17% on the base plan price.
+  Base plans (Free, Starter, Business) plus à-la-carte add-ons — QuickBooks
+  Online, Plan Room, and the Takeoff layer — billed via Stripe. Admins manage
+  their subscription and add-ons from within the app, including the Stripe
+  customer portal to update payment methods, download invoices, or cancel.
+  Stripe webhooks keep subscription status in sync automatically. Annual billing
+  saves two months on the base plans.
 
 COMPANY SETTINGS
   Admins configure:
@@ -478,7 +637,7 @@ SECURITY
   - All data scoped to the company — no company can see another company's data
   - Rate limiting on login and sensitive auth endpoints
   - Helmet security headers on all API responses
-  - JWT-based authentication with 8-hour token expiry
+  - JWT-based authentication with token expiry
   - MFA support via TOTP authenticator apps
   - Approved time entries are locked and cannot be modified
   - Username availability is scoped per company
@@ -487,6 +646,9 @@ SECURITY
 ================================================================================
 PRICING
 ================================================================================
+
+Base plans set the number of workers and the core feature set. Add-ons are
+optional and attach to a Starter or Business plan.
 
 FREE — $0/month
   Up to 3 workers. No credit card required.
@@ -517,10 +679,15 @@ BUSINESS — $35/month · 15 workers included · $2/worker after that
     - Safety talks / toolbox talks with sign-off records
     - Safety checklists and inspection checklists
     - Incident reports and subcontractor reports
-    - Equipment log and RFI tracking
+    - Equipment log, RFI tracking, and haul / production log
     - Punchlist management
-    - Projects module (budget tracking, billing, document storage)
+    - Projects module (budget tracking, billing, document storage, closeout)
+    - Estimating & bidding, change orders, submittals, and lien waivers
+    - Subcontractor directory and purchase orders
     - Client management and document tracking
+    - Inventory and equipment tracking
+    - Service requests and online booking
+    - Financial reports (P&L, WIP)
     - Time off requests and approvals
     - Advanced analytics — weekly trends, top projects, top workers
     - Inactive worker alerts (daily admin notification)
@@ -531,6 +698,20 @@ QBO ADD-ON — +$25/month
       into QuickBooks. No manual double-entry. Map workers and projects
       once, then push with one click.
 
+PLAN ROOM ADD-ON — +$40/month
+  Available on Starter or Business plans. Adds the Plan Room:
+    - Browser-based plan viewer, markup, and measure-to-scale
+    - Company plan library and live co-editing share sessions
+    - Flattened-PDF export of a marked-up set
+
+TAKEOFF ADD-ON — +$60/month
+  Adds the quantity-takeoff layer on top of Plan Room:
+    - Earthwork / sitework cut-fill takeoff
+    - Roofing takeoff (pitch-corrected squares, edges, items)
+    - Drywall & paint takeoff (walls, ceilings, texture, insulation, drop
+      ceilings, elevation-measured heights)
+    - Priced takeoff lines into a branded bid, sent back onto the estimate
+
 CERTIFIED PAYROLL
   Certified Payroll Reports (WH-347 format) are available on Business plans.
   Required by law for contractors on Davis-Bacon and prevailing wage
@@ -538,9 +719,8 @@ CERTIFIED PAYROLL
 
 FREE TRIAL
   All new companies get a 14-day free trial with full access to every
-  feature, including Business and Pro add-on features. No credit card
-  required to start. Remaining trial days carry over if you subscribe
-  before the trial ends.
+  feature, including add-ons. No credit card required to start. Remaining trial
+  days carry over if you subscribe before the trial ends.
 
 
 ================================================================================
@@ -550,11 +730,14 @@ SUMMARY: WHO THIS IS FOR
 OpsFloa is designed for:
 
   - General contractors
-  - Specialty trade contractors (electrical, plumbing, HVAC, concrete, etc.)
+  - Specialty trade contractors (electrical, plumbing, HVAC, concrete,
+    drywall, roofing, earthwork/sitework, etc.)
   - Landscaping and grounds maintenance companies
+  - Service and dispatch operations
   - Any construction or field services business with hourly workers
 
-It replaces paper timesheets, spreadsheets, and disconnected tools with a
-single platform that covers time collection, approval, reporting, field
-documentation, project management, and payroll prep — built around how
-construction crews actually work.
+It replaces paper timesheets, spreadsheets, and a pile of disconnected tools
+with a single operations platform — time collection and approval, scheduling and
+dispatch, field documentation, project management, estimating and takeoff,
+subcontractor and contract paperwork, inventory and equipment, reporting, and
+payroll prep — built around how construction crews actually work.
