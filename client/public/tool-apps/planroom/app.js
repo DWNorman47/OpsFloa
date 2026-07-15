@@ -93,6 +93,36 @@ const modals = createModals({
   ok: $('modalOk'), cancel: $('modalCancel'),
 });
 
+// Small N-way choice dialog reusing the modal overlay (createModals only does
+// OK/Cancel). Resolves to the picked value, or null on Escape. choices:
+// [{ label, value, primary?, danger? }].
+function askChoice(title, message, choices) {
+  return new Promise(resolve => {
+    const actions = $('modalOk').parentElement;
+    $('modalTitle').textContent = title;
+    $('modalBody').innerHTML =
+      `<div class="hint" style="margin-bottom:12px;line-height:1.5">${message}</div>` +
+      '<div style="display:flex;flex-direction:column;gap:8px">' +
+      choices.map((c, i) => `<button class="btn ${c.primary ? 'primary' : ''}" data-choice="${i}"${c.danger ? ' style="border-color:#e0533f;color:#e0533f"' : ''}>${esc(c.label)}</button>`).join('') +
+      '</div>';
+    actions.style.display = 'none';
+    $('modal').classList.remove('hidden');
+    const done = val => {
+      $('modalBody').removeEventListener('click', onClick);
+      $('modal').removeEventListener('keydown', onKey);
+      actions.style.display = ''; $('modal').classList.add('hidden');
+      resolve(val);
+    };
+    const onClick = e => { const b = e.target.closest('[data-choice]'); if (b) done(choices[+b.dataset.choice].value); };
+    const onKey = e => {
+      if (e.key === 'Escape') { e.preventDefault(); done(null); }
+      else if (e.key === 'Enter') { e.preventDefault(); const pi = choices.findIndex(c => c.primary); done(choices[pi >= 0 ? pi : 0].value); }
+    };
+    $('modalBody').addEventListener('click', onClick);
+    $('modal').addEventListener('keydown', onKey);
+  });
+}
+
 const vp = createViewport({ canvas: els.cv });
 
 // status toast: shows the message, then fades itself out (and click dismisses)
@@ -3351,7 +3381,7 @@ async function uploadDocToR2() {
   return publicUrl;
 }
 
-async function shareToCompany() {
+async function shareToCompany({ overwrite = false } = {}) {
   if (!state.doc && !state.markups.length) {
     companyMsg('Nothing to share yet — open a plan set first.', true);
     return;
@@ -3361,8 +3391,13 @@ async function shareToCompany() {
   try {
     if (state.serverId) {
       const res = await apiFetch('/' + state.serverId, {
-        method: 'PUT', body: JSON.stringify({ name, data: projectData(), version: state.serverVersion }),
+        method: 'PUT', body: JSON.stringify({ name, data: projectData(), version: state.serverVersion, overwrite }),
       });
+      if (res.status === 423) {
+        const j = await res.json().catch(() => ({}));
+        companyMsg(`🔒 Locked by ${j.lockedByName || 'a teammate'} — ask them or an admin to unlock (in ☁ Company), or use “Copy to my projects” to work separately.`, true);
+        return;
+      }
       if (res.status === 409) { return shareConflict(await res.json()); }
       if (!res.ok) throw new Error('HTTP ' + res.status);
       state.serverVersion = (await res.json()).version;
@@ -3384,10 +3419,18 @@ async function shareToCompany() {
   }
 }
 
-function shareConflict(c) {
-  const who = c.updatedByName || 'A teammate';
-  const ok = confirm(`${who} changed this shared project since you opened it.\n\nOK = save YOURS as a new, separate company copy.\nCancel = leave the shared copy as theirs (keep editing locally).`);
-  if (ok) { state.serverId = null; state.serverVersion = null; return shareToCompany(); }
+async function shareConflict(c) {
+  const who = esc(c.updatedByName || 'A teammate');
+  const choice = await askChoice(
+    'Someone else changed this shared takeoff',
+    `${who} saved changes since you opened it (now v${c.currentVersion}). What do you want to do?`,
+    [
+      { label: '📑 Keep both — save mine as a new, separate copy', value: 'fork', primary: true },
+      { label: '⚠ Overwrite theirs with my version (discards their changes)', value: 'overwrite', danger: true },
+      { label: 'Cancel — leave theirs, keep editing locally', value: null },
+    ]);
+  if (choice === 'fork') { state.serverId = null; state.serverVersion = null; return shareToCompany(); }
+  if (choice === 'overwrite') { return shareToCompany({ overwrite: true }); }
   companyMsg('Left the shared copy as theirs — your work is still saved locally.');
 }
 
@@ -3429,11 +3472,15 @@ async function refreshCompanyList() {
     }
     for (const r of rows) {
       const when = r.updated_at ? new Date(r.updated_at).toLocaleString() : '';
+      const locked = !!r.locked_by;
+      const lockBadge = locked ? ` · <span class="pill" style="background:var(--warn);color:#3a2a00">🔒 ${esc(r.locked_by_name || 'locked')}</span>` : '';
+      const lockBtn = `<button class="btn tiny" data-act="${locked ? 'unlock' : 'lock'}" title="${locked ? 'Release the lock (the holder or any admin can)' : 'Reserve this — teammates can’t save over it while it’s locked'}">${locked ? '🔓' : '🔒'}</button>`;
       const row = document.createElement('div');
       row.className = 'proj-row' + (String(r.id) === String(state.serverId) ? ' current' : '');
       row.innerHTML =
         `<div class="grow"><div class="name"></div>` +
-        `<div class="meta">${r.pdf_name ? esc(r.pdf_name) + ' · ' : ''}v${r.version}${r.updated_by_name ? ' · by ' + esc(r.updated_by_name) : ''} · ${when}</div></div>` +
+        `<div class="meta">${r.pdf_name ? esc(r.pdf_name) + ' · ' : ''}v${r.version}${r.updated_by_name ? ' · by ' + esc(r.updated_by_name) : ''} · ${when}${lockBadge}</div></div>` +
+        lockBtn +
         (String(r.id) === String(state.serverId)
           ? '<span class="pill">current</span>'
           : '<button class="btn tiny" data-act="copy">Copy to my projects</button>') +
@@ -3441,10 +3488,25 @@ async function refreshCompanyList() {
       row.querySelector('.name').textContent = r.name;
       const copyBtn = row.querySelector('[data-act="copy"]');
       if (copyBtn) copyBtn.addEventListener('click', () => copyCompanyProject(r.id));
+      const lkBtn = row.querySelector('[data-act="lock"]');
+      if (lkBtn) lkBtn.addEventListener('click', () => lockShared(r.id, true));
+      const unBtn = row.querySelector('[data-act="unlock"]');
+      if (unBtn) unBtn.addEventListener('click', () => lockShared(r.id, false));
       row.querySelector('[data-act="del"]').addEventListener('click', () => deleteCompanyShared(r.id, r.name));
       list.appendChild(row);
     }
   }
+}
+
+async function lockShared(id, lock) {
+  try {
+    const res = await apiFetch('/' + id + '/' + (lock ? 'lock' : 'unlock'), { method: 'POST' });
+    if (res.status === 409) { const j = await res.json().catch(() => ({})); companyMsg(`Already locked by ${j.lockedByName || 'a teammate'}.`, true); return; }
+    if (res.status === 403) { companyMsg('Only the person who locked it or an admin can unlock it.', true); return; }
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    companyMsg(lock ? 'Locked — teammates can’t save over it until it’s unlocked.' : 'Unlocked.');
+    refreshCompanyList();
+  } catch (e) { companyMsg('Could not change the lock: ' + e.message, true); }
 }
 
 async function copyCompanyProject(id) {

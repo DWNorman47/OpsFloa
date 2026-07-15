@@ -23,6 +23,7 @@ router.get('/', async (req, res) => {
     const app = req.query.app ? String(req.query.app) : null;
     const { rows } = await pool.query(
       `SELECT t.id, t.name, t.pdf_name, t.version, t.updated_at, t.created_by,
+              t.locked_by, t.locked_by_name, t.locked_at,
               u.full_name AS updated_by_name
          FROM takeoff_projects t
          LEFT JOIN users u ON u.id = t.updated_by
@@ -102,17 +103,23 @@ router.post('/', async (req, res) => {
   } catch (err) { req.log && req.log.error({ err }, 'takeoffs create'); res.status(500).json({ error: 'server error' }); }
 });
 
-// PUT /:id  — save changes with optimistic concurrency.  { name?, data?, version }
+// PUT /:id  — save changes with optimistic concurrency.
+// { name?, data?, version, overwrite? }  — overwrite:true bypasses the version
+// check ("Overwrite theirs" from the conflict dialog). A lock held by someone
+// else always blocks the save (overwrite can't defeat a lock).
 router.put('/:id', async (req, res) => {
   try {
-    const { name, data, version } = req.body || {};
+    const { name, data, version, overwrite } = req.body || {};
     const cur = await pool.query(
-      `SELECT t.version, t.updated_at, u.full_name AS updated_by_name
+      `SELECT t.version, t.updated_at, t.locked_by, t.locked_by_name, u.full_name AS updated_by_name
          FROM takeoff_projects t LEFT JOIN users u ON u.id = t.updated_by
         WHERE t.id = $1 AND t.company_id = $2`,
       [req.params.id, req.user.company_id]);
     if (!cur.rows.length) return res.status(404).json({ error: 'not found' });
-    if (version != null && Number(version) !== cur.rows[0].version) {
+    if (cur.rows[0].locked_by && cur.rows[0].locked_by !== req.user.id) {
+      return res.status(423).json({ error: 'locked', lockedByName: cur.rows[0].locked_by_name });
+    }
+    if (!overwrite && version != null && Number(version) !== cur.rows[0].version) {
       return res.status(409).json({
         error: 'conflict', currentVersion: cur.rows[0].version,
         updatedByName: cur.rows[0].updated_by_name, updatedAt: cur.rows[0].updated_at,
@@ -129,6 +136,43 @@ router.put('/:id', async (req, res) => {
        data != null ? JSON.stringify(data) : null, req.user.id]);
     res.json(rows[0]);
   } catch (err) { req.log && req.log.error({ err }, 'takeoffs update'); res.status(500).json({ error: 'server error' }); }
+});
+
+// POST /:id/lock  — reserve the shared takeoff. Fails if a teammate holds it.
+router.post('/:id/lock', async (req, res) => {
+  try {
+    const cur = await pool.query(
+      `SELECT locked_by, locked_by_name FROM takeoff_projects WHERE id = $1 AND company_id = $2`,
+      [req.params.id, req.user.company_id]);
+    if (!cur.rows.length) return res.status(404).json({ error: 'not found' });
+    if (cur.rows[0].locked_by && cur.rows[0].locked_by !== req.user.id) {
+      return res.status(409).json({ error: 'already locked', lockedByName: cur.rows[0].locked_by_name });
+    }
+    const { rows } = await pool.query(
+      `UPDATE takeoff_projects SET locked_by = $3, locked_by_name = $4, locked_at = now()
+        WHERE id = $1 AND company_id = $2
+        RETURNING locked_by, locked_by_name, locked_at`,
+      [req.params.id, req.user.company_id, req.user.id, req.user.full_name || null]);
+    res.json(rows[0]);
+  } catch (err) { req.log && req.log.error({ err }, 'takeoffs lock'); res.status(500).json({ error: 'server error' }); }
+});
+
+// POST /:id/unlock  — release the lock. The holder OR any admin can.
+router.post('/:id/unlock', async (req, res) => {
+  try {
+    const cur = await pool.query(
+      `SELECT locked_by FROM takeoff_projects WHERE id = $1 AND company_id = $2`,
+      [req.params.id, req.user.company_id]);
+    if (!cur.rows.length) return res.status(404).json({ error: 'not found' });
+    if (cur.rows[0].locked_by && cur.rows[0].locked_by !== req.user.id && !isAdmin(req)) {
+      return res.status(403).json({ error: 'only the holder or an admin can unlock' });
+    }
+    await pool.query(
+      `UPDATE takeoff_projects SET locked_by = NULL, locked_by_name = NULL, locked_at = NULL
+        WHERE id = $1 AND company_id = $2`,
+      [req.params.id, req.user.company_id]);
+    res.json({ ok: true });
+  } catch (err) { req.log && req.log.error({ err }, 'takeoffs unlock'); res.status(500).json({ error: 'server error' }); }
 });
 
 // DELETE /:id  — creator or an admin
