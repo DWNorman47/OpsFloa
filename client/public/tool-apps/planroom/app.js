@@ -2596,7 +2596,7 @@ function renderDirtPanel() {
       }
     }
   }
-  rows.push(`<div class="dirt-row"><span>Boundary</span><span class="v">${c.boundary ? 'set' : '—'}</span></div>`);
+  rows.push(`<div class="dirt-row"><span>Boundary</span><span class="v">${c.boundary ? 'set · <a class="dirt-link" data-act="edit-bound">edit</a>' : '—'}</span></div>`);
 
   rows.push('<div class="roof-sub">Earthwork</div>');
   rows.push('<div class="dirt-set">Contour interval <input type="number" id="ewInterval" min="0" step="0.5"> ft <span class="hint">— next contour auto-steps by this</span></div>');
@@ -2640,6 +2640,8 @@ function renderDirtPanel() {
   if (setPr) setPr.addEventListener('click', () => { E.proposedPage = state.page; scheduleSave(); renderDirtPanel(); });
   const toggleSheets = body.querySelector('[data-act="toggle-sheets"]');
   if (toggleSheets) toggleSheets.addEventListener('click', () => { dirtSheetsCollapsed = !dirtSheetsCollapsed; renderDirtPanel(); });
+  const editBound = body.querySelector('[data-act="edit-bound"]');
+  if (editBound) editBound.addEventListener('click', () => { const b = state.markups.find(m => m.kind === 'ebound'); if (b) selectContourById(b.id); });
   const doAlign = body.querySelector('[data-act="do-align"]');
   if (doAlign) doAlign.addEventListener('click', () => setTool('align'));
   const toggleContours = body.querySelector('[data-act="toggle-contours"]');
