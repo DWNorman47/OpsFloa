@@ -2374,7 +2374,12 @@ async function populateBidEstimates() {
   sel.disabled = false;
   try {
     const r = await apiEstimate('?status=draft&limit=100', { timeout: 12000 });
-    const items = r.ok ? ((await r.json()).items || []) : [];
+    if (!r.ok) {
+      sel.disabled = true;
+      if (hint) hint.textContent = r.status === 401 ? 'Session expired — reopen Plan Room from OpsFloa.' : `Couldn’t load estimates (HTTP ${r.status}).`;
+      return;
+    }
+    const items = (await r.json()).items || [];
     for (const e of items) {
       const opt = document.createElement('option');
       opt.value = e.id;
@@ -3357,7 +3362,11 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') layersMenu.c
  */
 
 function toolApiBase() { return (localStorage.getItem('tc_api_base') || '') + '/api'; }
-function toolToken() { return localStorage.getItem('tc_token') || sessionStorage.getItem('tc_token') || ''; }
+// sessionStorage FIRST (matches the main app's api.js): during superadmin
+// login-as, the impersonation token lives in sessionStorage while the admin's
+// own token stays in localStorage — reading localStorage first would hit the
+// wrong company (empty estimates / library).
+function toolToken() { return sessionStorage.getItem('tc_token') || localStorage.getItem('tc_token') || ''; }
 // opts.timeout (ms) aborts a request that never settles — so a hung backend
 // can't freeze the UI waiting on it
 function withTimeout(opts) {
