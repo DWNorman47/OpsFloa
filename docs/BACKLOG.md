@@ -150,11 +150,13 @@ that holds the exhaustive detail.
   sitework port). Pitch → squares, roof lines/counts, materials math,
   aerial-image input for re-roofs, bid defaults. Auto-measure from address
   stays M-later.
-- **Drywall & Paint trade pack** — `docs/plans/drywall-paint-pack.md`
-  (2026-07-11). No own SKU/app; ships M-later after roofing proves the
-  integrated takeoff UX. Height-per-wall-run is the core move (LF × height →
-  SF, 1-or-2 sides), ceilings via room polygons, opening deducts, board/mud/
-  tape/paint-gallon math into the shared bid engine.
+- **Drywall & Paint trade pack** — **SHIPPED** (`docs/plans/drywall-paint-pack.md`).
+  D1+D2+D3 built inside the Plan Room takeoff layer: wall runs (LF × height ×
+  sides), ceilings, opening deducts, trim, board/mud/tape/paint math; **plus
+  D3** — texture ($/SF), batt/sound insulation (single-face wall area), and
+  ACT/drop-ceiling grid takeoff (tiles/tees/wall-angle/hangers, installed $/SF).
+  Only remaining "Later": interior-elevation heights (niche). No own SKU —
+  included in the $60 takeoff layer.
 - *(further trade packs to scope when wanted: see the tools roadmap —
   flooring/tile, framing, siding, fencing, striping, landscape…)*
 

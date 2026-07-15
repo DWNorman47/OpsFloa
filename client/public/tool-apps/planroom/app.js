@@ -63,12 +63,18 @@ const state = {
   bidMeta: {},      // per-bid project / prepared-by / date overrides
   estimateId: null, // OpsFloa estimate this project was launched from (?estimate=), for pushing pricing back
   // drywall & paint pack settings (project-wide)
-  drywall: { wallHeight: 9, sheetSF: 32, waste: 10, coverage: 375, coats: 2, finish: 'L4' },
+  drywall: { wallHeight: 9, sheetSF: 32, waste: 10, coverage: 375, coats: 2, finish: 'L4', texture: 'none', insul: 'none' },
 };
 let curDwSides = 2;  // 1 = perimeter/against structure, 2 = interior partition (both faces)
+let curCeilType = 'drywall';  // ceiling type for new ceilings: drywall | act24 | act22 (ACT = suspended grid)
 const OPENING_DEDUCT = { door: 21, window: 15, opening: 15 }; // SF deducted from wall per opening
 const OPENING_LABEL = { door: 'Door', window: 'Window', opening: 'Opening' };
 const TRIM_LABEL = { base: 'Base', crown: 'Crown', chair: 'Chair rail' };
+const CEIL_LABEL = { drywall: 'Drywall', act24: 'ACT 2×4', act22: 'ACT 2×2' };
+const TEXTURE_LABEL = { none: 'None', smooth: 'Smooth / skim', orange: 'Orange peel', knockdown: 'Knockdown', popcorn: 'Popcorn' };
+const TEXTURE_PRICE = { smooth: 0.30, orange: 0.35, knockdown: 0.40, popcorn: 0.55 }; // $/SF texture (labor+material)
+const INSUL_LABEL = { none: 'None', r11: 'R-11 batt', r13: 'R-13 batt', r15: 'R-15 batt', r19: 'R-19 batt', r21: 'R-21 batt', sound: 'Sound batt' };
+const INSUL_PRICE = { r11: 0.55, r13: 0.60, r15: 0.70, r19: 0.80, r21: 0.90, sound: 0.75 }; // $/SF installed
 let curDwOpening = 'door';
 let curDwTrim = 'base';
 // layer visibility (session view state) — declutter a busy sheet by category
@@ -421,7 +427,7 @@ function measureValue(m) {
   }
   if (m.kind === 'qcount') { const cfg = m.cfg || {}; return `${m.pts.length} ${cfg.unit || 'EA'} · ${cfg.label || 'Item'}`; }
   if (m.kind === 'dwall') return `${fmt(dwallLenFt(m))} ft · ${fmt(dwallSf(m))} SF (${m.sides || 2}s @ ${fmt(dwallHeight(m))}')`;
-  if (m.kind === 'dceiling') return `Ceiling · ${fmt(dceilingSf(m))} SF`;
+  if (m.kind === 'dceiling') { const ct = (m.cfg && m.cfg.ctype) || 'drywall'; return `${CEIL_LABEL[ct] || 'Drywall'} ceiling · ${fmt(dceilingSf(m))} SF`; }
   if (m.kind === 'dopening') { const c = m.cfg || {}; const n = m.pts.length; return `${n} ${OPENING_LABEL[c.otype] || 'Opening'}${n === 1 ? '' : 's'} (−${fmt(c.deductSF || 0)} SF ea)`; }
   if (m.kind === 'dtrim') { const c = m.cfg || {}; return `${TRIM_LABEL[c.ttype] || 'Trim'} · ${fmt(polyLengthFt(m.pts, state.scales[m.page] || 0))} ft`; }
   return '';
@@ -1483,7 +1489,7 @@ function setTool(t) {
   } else if (t === 'dwall') {
     setMsg(`Trace a wall run (${curDwSides}-side @ ${fmt(state.drywall.wallHeight)}'); Enter/double-click to finish. Double-click a run to set its height.`);
   } else if (t === 'dceiling') {
-    setMsg('Trace a room outline for its ceiling SF; Enter/double-click to close.');
+    setMsg(`Trace a ${CEIL_LABEL[curCeilType]} ceiling outline; Enter/double-click to close.${curCeilType === 'drywall' ? '' : ' Grid, tile & hangers taken off separately. Double-click a ceiling to change its type.'}`);
   } else if (t === 'dopening') {
     setMsg(`Click each ${OPENING_LABEL[curDwOpening].toLowerCase()} (−${OPENING_DEDUCT[curDwOpening]} SF each); Enter/double-click to finish.`);
   } else if (t === 'dtrim') {
@@ -1918,6 +1924,7 @@ function commitDraft() {
   else if (d.kind === 'ritem') extra.itype = $('itemType') ? $('itemType').value : 'boot';
   else if (d.kind === 'contour' || d.kind === 'epad') extra.surface = curSurface;
   else if (d.kind === 'dwall') { extra.height = state.drywall.wallHeight; extra.sides = curDwSides; }
+  else if (d.kind === 'dceiling') extra.cfg = { ctype: curCeilType };
   else if (d.kind === 'dopening') extra.cfg = { otype: curDwOpening, deductSF: OPENING_DEDUCT[curDwOpening] };
   else if (d.kind === 'dtrim') extra.cfg = { ttype: curDwTrim };
   if (d.kind === 'ebound') state.markups = state.markups.filter(m => m.kind !== 'ebound'); // one boundary
@@ -1994,6 +2001,18 @@ els.cv.addEventListener('dblclick', e => {
     vp.requestDraw();
     modals.askNumber('Wall height (ft) — this run', `Sides is ${hit.sides || 2} (toolbar toggle for new runs). Wall SF = length × height × sides.`, dwallHeight(hit), 1)
       .then(v => { if (v != null && v > 0) { const prev = snapshot(); hit.height = v; pushUndo(prev); markupsChanged(); } });
+    return;
+  }
+  // double-click a ceiling to change its type (drywall vs ACT drop-ceiling)
+  if (hit && hit.kind === 'dceiling') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    const cur = (hit.cfg && hit.cfg.ctype) || 'drywall';
+    askChoice('Ceiling type', 'Drywall ceilings add to the board & finish SF. ACT drop-ceilings are taken off as a suspended grid — tiles, main & cross tees, wall angle, and hanger wire.', [
+      { label: 'Drywall', value: 'drywall', primary: cur === 'drywall' },
+      { label: 'ACT 2×4 drop-ceiling', value: 'act24', primary: cur === 'act24' },
+      { label: 'ACT 2×2 drop-ceiling', value: 'act22', primary: cur === 'act22' },
+    ]).then(v => { if (v && v !== cur) { const prev = snapshot(); hit.cfg = { ...(hit.cfg || {}), ctype: v }; pushUndo(prev); markupsChanged(); } });
     return;
   }
   // double-click a count takeoff to rename it
@@ -2996,7 +3015,7 @@ function projectData() {
     estimateId: state.estimateId || null,
   };
 }
-const defaultDrywall = () => ({ wallHeight: 9, sheetSF: 32, waste: 10, coverage: 375, coats: 2, finish: 'L4' });
+const defaultDrywall = () => ({ wallHeight: 9, sheetSF: 32, waste: 10, coverage: 375, coats: 2, finish: 'L4', texture: 'none', insul: 'none' });
 const defaultEarthwork = () => ({ existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 }, gridFt: 5, shrink: 15, swell: 25, truckCap: 12, interval: 1, result: null });
 // next contour's default elevation = last + interval (auto-steps up a slope)
 const nextElevDefault = surf => { const iv = Number(state.earthwork.interval) || 0; return lastElev[surf] != null ? lastElev[surf] + iv : ''; };
@@ -4289,26 +4308,56 @@ const dwallHeight = m => (m.height != null ? m.height : state.drywall.wallHeight
 const dwallSf = m => dwallLenFt(m) * dwallHeight(m) * (m.sides || 2);
 const dceilingSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0);
 const FINISH_MUD = { L3: 0.020, L4: 0.027, L5: 0.036 }; // gal ready-mix / SF by finish level
+// Suspended (ACT) drop-ceiling grid takeoff from area + wall perimeter. Rule-of-thumb
+// counts: mains 4' OC, 4' cross tees 2' OC (both layouts), 2' cross tees only on 2×2;
+// wall angle around the room perimeter; hanger wire ~1 per 16 SF.
+function actGrid(sf, perimFt, ctype) {
+  const A = Math.max(0, sf), P = Math.max(0, perimFt);
+  const waste = 1 + (Number(state.drywall.waste) || 0) / 100;
+  const tiles = Math.ceil(A / (ctype === 'act22' ? 4 : 8) * waste);
+  return {
+    sf: A,
+    tiles,
+    mainPc: Math.ceil(A / 4 / 12),               // 12' main tees
+    cross4: Math.ceil(A / 8),                     // 4' cross tees
+    cross2: ctype === 'act22' ? Math.ceil(A / 4) : 0, // 2' cross tees (2×2 only)
+    angleLF: P,
+    anglePc: Math.ceil(P / 10),                   // 10' wall-angle sticks
+    hangers: Math.ceil(A / 16),                   // hanger wires
+  };
+}
 function drywallTotals() {
   const D = state.drywall;
-  let wallSF = 0, ceilSF = 0, wallLF = 0, openDeductSF = 0;
+  let wallSF = 0, ceilSF = 0, wallLF = 0, wallFaceSF = 0, openDeductSF = 0;
+  const act = { act24: { sf: 0, perim: 0 }, act22: { sf: 0, perim: 0 } };
   const openCounts = { door: 0, window: 0, opening: 0 };
   const trimLF = { base: 0, crown: 0, chair: 0 };
   for (const m of state.markups) {
-    if (m.kind === 'dwall') { wallSF += dwallSf(m); wallLF += dwallLenFt(m); }
-    else if (m.kind === 'dceiling') ceilSF += dceilingSf(m);
+    if (m.kind === 'dwall') { wallSF += dwallSf(m); wallLF += dwallLenFt(m); wallFaceSF += dwallLenFt(m) * dwallHeight(m); }
+    else if (m.kind === 'dceiling') {
+      const ct = (m.cfg && m.cfg.ctype) || 'drywall';
+      const sf = dceilingSf(m);
+      if (act[ct]) { act[ct].sf += sf; act[ct].perim += polygonPerimeterFt(m.pts, state.scales[m.page] || 0); }
+      else ceilSF += sf; // drywall ceiling
+    }
     else if (m.kind === 'dopening') { const c = m.cfg || {}; const n = m.pts.length; openDeductSF += n * (Number(c.deductSF) || 0); if (openCounts[c.otype] != null) openCounts[c.otype] += n; }
     else if (m.kind === 'dtrim') { const c = m.cfg || {}; if (trimLF[c.ttype] != null) trimLF[c.ttype] += polyLengthFt(m.pts, state.scales[m.page] || 0); }
   }
   const netWallSF = Math.max(0, wallSF - openDeductSF);
-  const boardSF = Math.max(0, netWallSF + ceilSF);
+  const boardSF = Math.max(0, netWallSF + ceilSF); // drywall board = walls + drywall ceilings (ACT excluded)
   const boards = Math.ceil(boardSF * (1 + (Number(D.waste) || 0) / 100) / (Number(D.sheetSF) || 32));
   const mudGal = boardSF * (FINISH_MUD[D.finish] || 0.027);
   const tapeLF = boardSF * 0.37;
   const paintGal = Number(D.coverage) > 0 ? (boardSF / Number(D.coverage)) * (Number(D.coats) || 1) : 0;
-  return { wallSF, netWallSF, ceilSF, boardSF, wallLF, openDeductSF, openCounts, trimLF, boards, mudGal, tapeLF, paintGal };
+  const texture = D.texture || 'none';
+  const textureSF = texture !== 'none' ? boardSF : 0;       // finished drywall surface gets texture
+  const insul = D.insul || 'none';
+  const insulSF = insul !== 'none' ? wallFaceSF : 0;         // one batt layer per wall cavity (single face, not ×sides)
+  const actQ = {};
+  for (const k of ['act24', 'act22']) if (act[k].sf > 0.5) actQ[k] = actGrid(act[k].sf, act[k].perim, k);
+  return { wallSF, netWallSF, ceilSF, boardSF, wallLF, wallFaceSF, openDeductSF, openCounts, trimLF, boards, mudGal, tapeLF, paintGal, texture, textureSF, insul, insulSF, actQ };
 }
-const DW_DEFAULT_PRICE = { hang: 0.55, finish: 0.65, board: 12, mud: 16, tape: 5, paint: 45, door: 65, window: 45, opening: 30, trim_base: 2.5, trim_crown: 4.5, trim_chair: 3.5 };
+const DW_DEFAULT_PRICE = { hang: 0.55, finish: 0.65, board: 12, mud: 16, tape: 5, paint: 45, door: 65, window: 45, opening: 30, trim_base: 2.5, trim_crown: 4.5, trim_chair: 3.5, act24: 4.75, act22: 5.75 };
 function drywallBidLines() {
   const T = drywallTotals();
   const D = state.drywall;
@@ -4319,8 +4368,11 @@ function drywallBidLines() {
     { key: 'dw_board', label: `Drywall board (${D.sheetSF} SF sheets · ${D.waste}% waste)`, qty: T.boards, unit: 'sheet', q: 0, defPrice: DW_DEFAULT_PRICE.board },
     { key: 'dw_mud', label: 'Joint compound', qty: T.mudGal, unit: 'gal', q: 0, defPrice: DW_DEFAULT_PRICE.mud },
     { key: 'dw_tape', label: 'Joint tape', qty: T.tapeLF, unit: 'LF', q: 0, defPrice: DW_DEFAULT_PRICE.tape },
-    { key: 'dw_paint', label: `Paint (${D.coats} coats)`, qty: T.paintGal, unit: 'gal', q: 0, defPrice: DW_DEFAULT_PRICE.paint },
   );
+  if (T.textureSF >= 0.5) lines.push({ key: 'dw_texture', label: `Texture — ${TEXTURE_LABEL[T.texture]}`, qty: T.textureSF, unit: 'SF', q: 0, defPrice: TEXTURE_PRICE[T.texture] || 0.4 });
+  if (T.boardSF >= 0.5) lines.push({ key: 'dw_paint', label: `Paint (${D.coats} coats)`, qty: T.paintGal, unit: 'gal', q: 0, defPrice: DW_DEFAULT_PRICE.paint });
+  if (T.insulSF >= 0.5) lines.push({ key: 'dw_insul', label: `Insulation — ${INSUL_LABEL[T.insul]}`, qty: T.insulSF, unit: 'SF', q: 0, defPrice: INSUL_PRICE[T.insul] || 0.6 });
+  for (const k of ['act24', 'act22']) if (T.actQ[k]) lines.push({ key: 'dw_' + k, label: `Suspended ceiling — ${CEIL_LABEL[k]} (installed)`, qty: T.actQ[k].sf, unit: 'SF', q: 0, defPrice: DW_DEFAULT_PRICE[k] });
   for (const k of ['door', 'window', 'opening']) if (T.openCounts[k]) lines.push({ key: 'dw_' + k, label: `${OPENING_LABEL[k]} (paint / case)`, qty: T.openCounts[k], unit: 'EA', q: 0, defPrice: DW_DEFAULT_PRICE[k] });
   for (const k of ['base', 'crown', 'chair']) if (T.trimLF[k] > 0.5) lines.push({ key: 'dw_trim_' + k, label: `${TRIM_LABEL[k]} trim`, qty: T.trimLF[k], unit: 'LF', q: 0, defPrice: DW_DEFAULT_PRICE['trim_' + k] });
   return lines;
@@ -4331,28 +4383,46 @@ function renderDrywallPanel() {
   const D = state.drywall;
   const T = drywallTotals();
   const rows = [];
+  const R = (a, b) => rows.push(`<div class="dirt-row"><span>${a}</span><span class="v">${b}</span></div>`);
+  const texOpts = ['none', 'smooth', 'orange', 'knockdown', 'popcorn'].map(k => `<option value="${k}">${TEXTURE_LABEL[k]}</option>`).join('');
+  const insOpts = ['none', 'r11', 'r13', 'r15', 'r19', 'r21', 'sound'].map(k => `<option value="${k}">${INSUL_LABEL[k]}</option>`).join('');
   rows.push('<div class="roof-sub">Settings</div>');
   rows.push(`<div class="dirt-set">Wall height <input type="number" id="dwHeight" min="1" step="0.5"> ft · new runs <b>${curDwSides}-side</b></div>`);
   rows.push('<div class="dirt-set">Sheet <select id="dwSheet"><option value="32">4×8 (32)</option><option value="40">4×10 (40)</option><option value="48">4×12 (48)</option></select> SF · Waste <input type="number" id="dwWaste" min="0"> %</div>');
   rows.push('<div class="dirt-set">Paint <input type="number" id="dwCov" min="1"> SF/gal · Coats <input type="number" id="dwCoats" min="1"> · Finish <select id="dwFinish"><option>L3</option><option>L4</option><option>L5</option></select></div>');
+  rows.push(`<div class="dirt-set">Texture <select id="dwTexture">${texOpts}</select> · Insulation <select id="dwInsul">${insOpts}</select></div>`);
   rows.push('<div class="roof-sub">Quantities</div>');
-  rows.push(`<div class="dirt-row"><span>Wall SF (gross)</span><span class="v">${fmt(T.wallSF)}</span></div>`);
-  if (T.openDeductSF > 0) rows.push(`<div class="dirt-row"><span>− openings</span><span class="v">−${fmt(T.openDeductSF)}</span></div>`);
-  rows.push(`<div class="dirt-row"><span>Ceiling SF</span><span class="v">${fmt(T.ceilSF)}</span></div>`);
+  R('Wall SF (gross)', fmt(T.wallSF));
+  if (T.openDeductSF > 0) R('− openings', `−${fmt(T.openDeductSF)}`);
+  R('Drywall ceiling SF', fmt(T.ceilSF));
   rows.push(`<div class="dirt-row"><b>Board &amp; finish SF</b><span class="v"><b>${fmt(T.boardSF)}</b></span></div>`);
-  rows.push(`<div class="dirt-row"><span>Boards (${D.sheetSF} SF)</span><span class="v">${fmt(T.boards, 0)}</span></div>`);
-  rows.push(`<div class="dirt-row"><span>Joint compound</span><span class="v">${fmt(T.mudGal, 1)} gal</span></div>`);
-  rows.push(`<div class="dirt-row"><span>Tape</span><span class="v">${fmt(T.tapeLF, 0)} LF</span></div>`);
-  rows.push(`<div class="dirt-row"><span>Paint (${D.coats} coats)</span><span class="v">${fmt(T.paintGal, 1)} gal</span></div>`);
+  R(`Boards (${D.sheetSF} SF)`, fmt(T.boards, 0));
+  R('Joint compound', `${fmt(T.mudGal, 1)} gal`);
+  R('Tape', `${fmt(T.tapeLF, 0)} LF`);
+  if (T.textureSF > 0.5) R(`Texture (${TEXTURE_LABEL[T.texture]})`, `${fmt(T.textureSF, 0)} SF`);
+  R(`Paint (${D.coats} coats)`, `${fmt(T.paintGal, 1)} gal`);
+  if (T.insulSF > 0.5) R(`Insulation (${INSUL_LABEL[T.insul]})`, `${fmt(T.insulSF, 0)} SF`);
   const oc = T.openCounts, tl = T.trimLF;
-  if (oc.door || oc.window || oc.opening) rows.push(`<div class="dirt-row"><span>Openings</span><span class="v">${[oc.door && oc.door + ' dr', oc.window && oc.window + ' win', oc.opening && oc.opening + ' op'].filter(Boolean).join(' · ')}</span></div>`);
+  if (oc.door || oc.window || oc.opening) R('Openings', [oc.door && oc.door + ' dr', oc.window && oc.window + ' win', oc.opening && oc.opening + ' op'].filter(Boolean).join(' · '));
   const trimBits = ['base', 'crown', 'chair'].filter(k => tl[k] > 0.5).map(k => `${TRIM_LABEL[k]} ${fmt(tl[k], 0)}`);
-  if (trimBits.length) rows.push(`<div class="dirt-row"><span>Trim LF</span><span class="v">${trimBits.join(' · ')}</span></div>`);
-  rows.push('<div class="hint" style="margin:4px 0">Wall SF = length × height × sides, less opening deducts. Prices in $ Bid.</div>');
+  if (trimBits.length) R('Trim LF', trimBits.join(' · '));
+  for (const k of ['act24', 'act22']) {
+    const a = T.actQ[k]; if (!a) continue;
+    rows.push(`<div class="roof-sub">${CEIL_LABEL[k]} drop-ceiling</div>`);
+    R('Area', `${fmt(a.sf, 0)} SF`);
+    R('Ceiling tiles', fmt(a.tiles, 0));
+    R("Main tees (12')", fmt(a.mainPc, 0));
+    R("4' cross tees", fmt(a.cross4, 0));
+    if (a.cross2) R("2' cross tees", fmt(a.cross2, 0));
+    R('Wall angle', `${fmt(a.anglePc, 0)} × 10' (${fmt(a.angleLF, 0)} LF)`);
+    R('Hanger wire', fmt(a.hangers, 0));
+  }
+  rows.push('<div class="hint" style="margin:4px 0">Wall SF = length × height × sides, less opening deducts. Texture & paint cover the finished drywall; insulation is one batt layer per wall face. Prices in $ Bid.</div>');
   const body = $('dwBody');
   body.innerHTML = rows.join('');
   $('dwHeight').value = D.wallHeight; $('dwSheet').value = String(D.sheetSF); $('dwWaste').value = D.waste;
   $('dwCov').value = D.coverage; $('dwCoats').value = D.coats; $('dwFinish').value = D.finish;
+  $('dwTexture').value = D.texture || 'none'; $('dwInsul').value = D.insul || 'none';
   const num = (el, key, min, def) => el.addEventListener('change', e => { D[key] = Math.max(min, parseFloat(e.target.value) || def); e.target.value = D[key]; scheduleSave(); renderDrywallPanel(); vp.requestDraw(); });
   num($('dwHeight'), 'wallHeight', 1, 9);
   num($('dwWaste'), 'waste', 0, 10);
@@ -4360,6 +4430,8 @@ function renderDrywallPanel() {
   num($('dwCoats'), 'coats', 1, 2);
   $('dwSheet').addEventListener('change', e => { D.sheetSF = parseFloat(e.target.value) || 32; scheduleSave(); renderDrywallPanel(); });
   $('dwFinish').addEventListener('change', e => { D.finish = e.target.value; scheduleSave(); renderDrywallPanel(); });
+  $('dwTexture').addEventListener('change', e => { D.texture = e.target.value; scheduleSave(); renderDrywallPanel(); });
+  $('dwInsul').addEventListener('change', e => { D.insul = e.target.value; scheduleSave(); renderDrywallPanel(); });
 }
 function syncDwInputs() { renderDrywallPanel(); }
 $('btnDw').addEventListener('click', () => {
@@ -4373,6 +4445,7 @@ if ($('dwSidesSel')) $('dwSidesSel').addEventListener('change', e => {
   renderDrywallPanel();
   if (tool === 'dwall') setMsg(`New wall runs are ${curDwSides}-side.`);
 });
+if ($('dwCeilSel')) $('dwCeilSel').addEventListener('change', e => { curCeilType = e.target.value; if (tool === 'dceiling') setTool('dceiling'); });
 if ($('dwOpeningSel')) $('dwOpeningSel').addEventListener('change', e => { curDwOpening = e.target.value; if (tool === 'dopening') setTool('dopening'); });
 if ($('dwTrimSel')) $('dwTrimSel').addEventListener('change', e => { curDwTrim = e.target.value; if (tool === 'dtrim') setTool('dtrim'); });
 

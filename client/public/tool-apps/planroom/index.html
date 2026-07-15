@@ -96,7 +96,12 @@
     </div>
     <div class="tb-sub tb-takeoff tr-dwall">
       <button class="tool" data-tool="dwall" title="Wall run — trace a wall; SF = length × height × sides. Double-click a run to set its own height.">▬</button>
-      <button class="tool" data-tool="dceiling" title="Ceiling — trace a room outline → ceiling SF">⬜</button>
+      <button class="tool" data-tool="dceiling" title="Ceiling — trace a room outline. Drywall ceiling → board/finish SF; ACT drop-ceiling → suspended grid takeoff. Double-click a ceiling to change its type.">⬜</button>
+      <select id="dwCeilSel" class="mini-sel" title="Ceiling type for new ceilings — Drywall adds to board SF; ACT is a suspended grid (tiles, tees, wall angle, hangers)">
+        <option value="drywall">Drywall</option>
+        <option value="act24">ACT 2×4</option>
+        <option value="act22">ACT 2×2</option>
+      </select>
       <select id="dwSidesSel" class="mini-sel" title="Sides for new wall runs — 2 = interior partition (both faces), 1 = perimeter / against structure">
         <option value="2">2 sides</option>
         <option value="1">1 side</option>
@@ -472,6 +477,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=8"></script>
+<script type="module" src="app.js?v=9"></script>
 </body>
 </html>
