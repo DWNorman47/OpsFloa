@@ -6,7 +6,6 @@ import { useT } from '../hooks/useT';
 import Pagination from './Pagination';
 import { SkeletonList } from './Skeleton';
 import FieldFilters from './FieldFilters';
-import { labelSg, labelPl } from '../companyLabels';
 
 const today = () => new Date().toLocaleDateString('en-CA');
 
@@ -188,7 +187,7 @@ function TemplateForm({ initial, onSaved, onCancel }) {
 
 // ── Fill Out Form ─────────────────────────────────────────────────────────────
 
-function FillForm({ templates, projects, onSubmitted, onCancel, workLabel = 'Project' }) {
+function FillForm({ templates, projects, onSubmitted, onCancel }) {
   const t = useT();
   const [templateId, setTemplateId] = useState('');
   const [projectId, setProjectId] = useState('');
@@ -243,9 +242,9 @@ function FillForm({ templates, projects, onSubmitted, onCancel, workLabel = 'Pro
         </div>
         {projects.length > 0 && (
           <div style={styles.fieldGroup}>
-            <label style={styles.label}>{workLabel}</label>
+            <label style={styles.label}>Project</label>
             <select style={styles.input} value={projectId} onChange={e => setProjectId(e.target.value)}>
-              <option value="">{`No ${workLabel.toLowerCase()}`}</option>
+              <option value="">{`No project`}</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
@@ -399,12 +398,10 @@ function SubmissionCard({ sub, isAdmin, onDeleted }) {
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
-export default function SafetyChecklists({ projects, settings = null }) {
+export default function SafetyChecklists({ projects }) {
   const t = useT();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
-  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
   const [view, setView] = useState('list'); // 'list' | 'fill' | 'templates'
   const [templates, setTemplates] = useState([]);
   const [submissions, setSubmissions] = useState([]);
@@ -449,7 +446,6 @@ export default function SafetyChecklists({ projects, settings = null }) {
         <FillForm
           templates={templates}
           projects={projects}
-          workLabel={workLabel}
           onSubmitted={sub => { setSubmissions(prev => [sub, ...prev]); setView('list'); }}
           onCancel={() => setView('list')}
         />
@@ -542,7 +538,7 @@ export default function SafetyChecklists({ projects, settings = null }) {
       {projects.length > 0 && (
         <FieldFilters activeCount={filterProject ? 1 : 0}>
           <select style={styles.filterSelect} value={filterProject} onChange={e => setFilterProject(e.target.value)}>
-            <option value="">{`All ${workLabelPlural}`}</option>
+            <option value="">{`All Projects`}</option>
             {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </FieldFilters>

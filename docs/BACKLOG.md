@@ -42,11 +42,11 @@ that holds the exhaustive detail.
 
 ## 🧭 Design flaws — raised, set aside for later
 
-- **Company-share conflict model is fork-only.** When two people edit the same
-  shared takeoff, the second saver can only fork to a new separate copy or back
-  off — there's no "overwrite theirs" option and no merge. Possible fix: an
-  explicit "overwrite theirs" choice and/or a "checked out by X" lock indicator.
-  (2026-07-11)
+- ~~**Company-share conflict model is fork-only.**~~ **RESOLVED 2026-07-14.** The
+  conflict dialog is now 3-way (Keep both / Overwrite theirs / Cancel), and a
+  **manual, admin-releasable lock** (migration 0138) lets a user reserve a shared
+  takeoff so teammates can't save over it (reads/copy still work). Holder or any
+  admin unlocks. See shipped log.
 - **No dedupe when copying a shared takeoff twice.** "Copy to my projects" makes a
   fresh local project each time, so copying the same cloud takeoff twice yields two
   local projects both linked to it. Minor; could reuse the already-linked local
@@ -55,8 +55,6 @@ that holds the exhaustive detail.
 ## ❓ Open questions / decisions for you
 *Blocked on your call before anyone builds.*
 
-- **Share-conflict model** — leave it fork-only, or add an "overwrite theirs"
-  choice and/or a "checked out by X" lock indicator? (see Design flaws) (2026-07-11)
 - **Presigned R2 upload** — pull the trigger now, or stay on the 64 MB base64
   bandaid until plans actually exceed the ceiling? (see Improvements) (2026-07-10)
 - **Wall Dig button** — hidden "for now" in the takeoff tool; bring it back, remove
@@ -64,12 +62,19 @@ that holds the exhaustive detail.
 
 ## ✨ Ideas — improvements
 
-- **Plan Room: page-level reorder / remove.** Import now appends sheets
-  (page numbers stay stable so markups/earthwork refs survive). A future add
-  is reordering or removing sheets — which renumbers pages, so it needs a
-  page-id remap across markups/scales/earthwork. Deferred until asked.
-  (2026-07-12)
 
+- ~~**Takeoff ↔ job hard link (cross-device haul reconciliation).**~~ **DROPPED
+  2026-07-14 — solved by the simpler path.** The $ Bid modal now has an estimate
+  dropdown (link + "Send pricing to estimate"), so the priced lines (incl. the
+  export-haul-off qty) land on the estimate; the haul-log reconciliation reads
+  those lines server-side, which is already company-wide/cross-device. Nothing
+  per-browser is in the loop, so no server-side takeoff↔job link is needed. The
+  only remaining (natural) dependency: the bid must be converted into a job for
+  the job's haul tickets to find their estimate.
+- **Haul log: print layout + a specific-takeoff picker.** A print-friendly haul
+  ticket report (CSV already ships); optionally let a job point at a specific
+  takeoff for reconciliation instead of "most recent converted estimate."
+  Deferred M3 items in `docs/plans/production-log.md`. (2026-07-13)
 - **Presigned direct-to-R2 upload for shared-takeoff PDFs.** Replaces the current
   64 MB base64-through-the-API approach; removes the ~48 MB ceiling and cuts server
   memory. Caveats: needs R2 bucket CORS + orphaned-object cleanup.
@@ -155,6 +160,25 @@ that holds the exhaustive detail.
 
 ## ✅ Things I need to do (David)
 
+**Migrations to run (shipped code waiting on these):**
+- **`0138_takeoff_lock.sql`** — the shared-takeoff manual lock (Plan Room company
+  library). Until run, the 🔒 lock button and lock-aware saves error.
+
+**Bid workflow + Haul log (all shipped to `dev` 2026-07-13 — need these to work):**
+- **Run migrations `0135` + `0136` + `0137`** on the DB. Until then: the bid-due
+  field + reminder (0135), the plan-attach button (0136), and the whole Haul log
+  tab (0137) will error. All three are idempotent.
+- **Test both loops end-to-end:** (1) estimate → set due date → attach PDF →
+  Take off in Plan Room → price in $ Bid → Send pricing → confirm lines + total
+  land on the estimate; (2) log haul tickets on a job → totals/subtotals →
+  (with the takeoff add-on, on a job that came from a converted bid) the
+  estimate-vs-actual reconciliation card.
+- **Reconciliation caveat:** the estimate-vs-actual card keys off the estimate's
+  `converted_project_id`, so it only lights up once you **convert the winning bid
+  into a job**. A haul job created directly (not from a converted estimate) shows
+  "convert the winning bid to this job to compare." A hard takeoff↔job link
+  (cross-device) is deferred — flag if you want it built.
+
 **Plan Room — before the base tier can actually sell (M6 shipped, needs these):**
 - **Stripe:** create the Plan Room product with a monthly (~$40) and an annual
   price, then set `STRIPE_PRICE_PLANROOM` + `STRIPE_PRICE_PLANROOM_ANNUAL` in
@@ -191,6 +215,85 @@ that holds the exhaustive detail.
 ## 📖 Done / shipped log
 *Landed on `dev`, newest first. (What happens past dev is handled outside this doc.)*
 
+- **2026-07-14 — Plan Room $ Bid: estimate dropdown + send pricing.** A "🔗
+  Estimate" dropdown in the $ Bid modal (from your draft estimates) links the
+  takeoff and reveals the existing "Send pricing to estimate" button — no need
+  to launch from the estimate anymore. Makes the "takeoff↔job hard link" idea
+  unnecessary (see Improvements): pricing lands on the estimate, and
+  reconciliation reads it server-side.
+
+- **2026-07-14 — Plan Room share-conflict: 3-way dialog + manual lock.** Company
+  library sharing: a stale save now offers **Keep both / Overwrite theirs /
+  Cancel** (`askChoice` modal; overwrite sends `overwrite:true`, server bypasses
+  the version check). Plus a **manual, admin-releasable lock** (migration
+  **0138**: `locked_by`/`_name`/`_at` on `takeoff_projects`) — 🔒 reserve a
+  takeoff so teammates' in-place saves are refused (423); reads + "Copy to my
+  projects" always work. Holder **or any admin** unlocks (`POST /:id/lock`,
+  `/:id/unlock`) — no heartbeat/TTL needed. Library shows a "🔒 by <name>" badge.
+  A lock beats overwrite. Sitework tool unaffected (never locks). **Needs
+  migration 0138 run.**
+- **2026-07-14 — Plan Room earthwork editing polish (batch).** Vertex editing on
+  every polyline/polygon (drag points, Alt-click add/remove, Shift+Alt-click to
+  cut/split a line — never orphaning a point); a sitework-style **contour list**
+  in the ⛰ Dirt panel (edit elev / delete / select+jump / clear); the
+  Existing↔Proposed **click-toggle** navigates + focuses one surface and hides
+  the other's contours; general markups hide in earthwork mode; the **boundary
+  shows on both sheets**; the trade panel auto-opens (gated on a loaded doc);
+  clicking a contour drops into edit mode; panning keeps the selection; and an
+  **editable on-canvas scale bar** (drag ends to recalibrate, drag middle to
+  move, Alt-click to clear).
+
+- **2026-07-13 — Removed the dynamic work/project label; "Project" is now
+  hardcoded** (`e16d6cf`). Excised `workLabel` / `settings.label_work` /
+  `labelSg(..,'work'|'project')` across ~50 client files and replaced with the
+  literal Project/project/Projects/projects (the entity is just a Project now —
+  explicit Projects + Work Orders tabs exist). Fixes the earlier "+ New Team
+  Member" mislabel at its root (the missing `project` default that fell through
+  to the worker label). Worker/client/field labels stay dynamic. Verified:
+  production build (53 modules), vitest smoke + i18n parity (84 tests), eslint
+  clean, sitework untouched. Closes the deferred "workLabel should no longer be
+  a thing" item.
+
+- **2026-07-13 — Production & Haul Log (main app), M1–M3.** Plan:
+  `docs/plans/production-log.md`. The sitework tool's production log, rebuilt
+  server-backed + per-job + multi-user in the **Field module → "Haul log" tab**.
+  **Decisions (locked with David):** lives as a Field tab; **field crews can
+  self-log** (`manage_haul_tickets`, a worker-default perm). **M1** (`a7e3e84`):
+  migration **0137** (`haul_tickets` + seeds the perm into built-in roles) +
+  `haulEnums`/db-enums; audited route (worker/admin narrowing, enum + project-
+  ownership validation); add form, job + date filters, net-export totals by unit,
+  delete, CSV. **M2** (`38df6e5`): `GET /haul-tickets/reconcile` (takeoff add-on,
+  `usePlan().hasTakeoff`) — actuals vs the estimate converted to the job
+  (`converted_project_id`; haul-off qty from `/haul|export|spoil/` lines);
+  estimate-vs-actual card, variance over/under. **M3 polish** (`148a28e`): edit a
+  ticket (row ✎ → reused form → PATCH); collapsible by-hauler/by-material
+  subtotals. Daily-production half already existed (`daily_reports`), so only
+  haul tickets + reconciliation were new. **Deferred:** takeoff↔job hard link
+  (cross-device reconciliation — needs a data-model decision), a print layout,
+  retiring the sitework local log.
+- **2026-07-13 — Bid workflow: Estimate ⇄ Plan Room, M1–M4.** Plan:
+  `docs/plans/bid-workflow-estimate-planroom.md`. Makes the **estimate the hub of
+  a bid** — the win-the-bid loop David's wife runs (handed a PDF + a deadline →
+  price it → send before the clock). **M1** (`f49f373`/`524ac95`): `bid_due_at` +
+  `bid_reminder_sent_at` (migration **0135**); estimate form field, list "due
+  soon/overdue" chip, hourly reminder cron (push + inbox, claim-then-send,
+  re-armed on due-date change). **M2** (`019e849`): attach a plan PDF (migration
+  **0136** `plan_pdf_url`/`_name`); `POST/DELETE /estimates/:id/plan-pdf` base64
+  **through the server** to R2 — **no R2-CORS needed**; Plans card. **M3**
+  (`c13d7db`): `GET /estimates/:id/plan-pdf` base64 proxy; **"📐 Take off in Plan
+  Room"** button (gated on plan-attached + `addon_planroom`); Plan Room
+  `?estimate=` find-or-create → `bootEstimate()`, `estimateId` round-trips through
+  all load paths. **M4** (`4040252`): **"➤ Send pricing to estimate"** in $ Bid →
+  `PUT /estimates/:id/lines` via `apiEstimate()`; keyword category heuristic; O&P
+  rides as one `overhead` line so totals match; replace-with-confirm. Base tier =
+  deadline + PDF; takeoff add-on = launch + pricing-back. **Caveats:** Plan Room
+  projects are per-browser (link is per-device); O&P can double-count if the
+  estimate also carries a margin %.
+- **2026-07-13 — Plan Room: manage sheets (reorder / remove).** 🗂 Manage sheets
+  (from 📁 Projects when a set has >1 sheet): reorder ▲▼ or remove ✕ sheets;
+  Apply rebuilds the combined PDF (pdf-lib) and remaps every page reference —
+  markups, per-sheet scales, earthwork existing/proposed assignments — so
+  nothing lands on the wrong sheet; removing a sheet drops its markups.
 - **2026-07-12 — Plan Room: combined-document projects (multi-PDF, page
   selection).** Opening plans moved into the 📁 Projects modal: pick a
   file → a thumbnail page-picker (check/uncheck sheets) → only the chosen

@@ -7,7 +7,6 @@ import { langToLocale } from '../utils';
 import Pagination from './Pagination';
 import { SkeletonList } from './Skeleton';
 import FieldFilters from './FieldFilters';
-import { labelSg, labelPl } from '../companyLabels';
 
 import { silentError } from '../errorReporter';
 function today() { return new Date().toLocaleDateString('en-CA'); }
@@ -28,7 +27,7 @@ const STATUS_STYLES = {
 
 // ── RFI Form ──────────────────────────────────────────────────────────────────
 
-function RFIForm({ initial, projects, onSaved, onCancel, workLabel = 'Project' }) {
+function RFIForm({ initial, projects, onSaved, onCancel }) {
   const t = useT();
   const STATUS_LABELS = useMemo(() => ({ open: t.statusOpen, answered: t.statusAnswered, closed: t.statusClosed }), [t]);
   const isEdit = !!initial?.id;
@@ -75,9 +74,9 @@ function RFIForm({ initial, projects, onSaved, onCancel, workLabel = 'Project' }
       <div style={styles.row}>
         {projects.length > 0 && (
           <div style={styles.fieldGroup}>
-            <label htmlFor="rfi-project" style={styles.label}>{workLabel}</label>
+            <label htmlFor="rfi-project" style={styles.label}>Project</label>
             <select id="rfi-project" style={styles.input} value={form.project_id} onChange={e => set('project_id', e.target.value)}>
-              <option value="">{`No ${workLabel.toLowerCase()}`}</option>
+              <option value="">{`No project`}</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
@@ -267,8 +266,6 @@ export default function RFITracking({ projects, settings = null }) {
   const t = useT();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const { onSync } = useOffline() || {};
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
-  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
 
   const [rfis, setRfis] = useState([]);
   const [page, setPage] = useState(1);
@@ -332,7 +329,6 @@ export default function RFITracking({ projects, settings = null }) {
           <RFIForm
             initial={editing || null}
             projects={projects}
-            workLabel={workLabel}
             onSaved={handleSaved}
             onCancel={() => { setShowForm(false); setEditing(null); }}
           />
@@ -348,7 +344,7 @@ export default function RFITracking({ projects, settings = null }) {
         </select>
         {projects.length > 0 && (
           <select style={styles.filterSelect} value={filters.project_id || ''} onChange={e => setFilter('project_id', e.target.value)}>
-            <option value="">{`All ${workLabelPlural}`}</option>
+            <option value="">{`All Projects`}</option>
             {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         )}

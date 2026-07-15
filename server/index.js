@@ -146,6 +146,7 @@ app.use('/api/public', express.json({ limit: '1mb' }));
 // Company-shared takeoffs embed the whole plan PDF as base64 (≈+33%), so they
 // need a bigger body than the 20 MB app-wide cap. Runs first, so it wins.
 app.use('/api/takeoffs', express.json({ limit: '64mb' }));
+app.use('/api/estimates', express.json({ limit: '48mb' })); // plan-PDF attach via base64
 app.use(express.json({ limit: '20mb' }));
 
 // Health probes must be registered before any catch-all authenticated /api
@@ -228,6 +229,7 @@ app.use('/api/equipment', requireAuth, requirePlan('business'), require('./route
 app.use('/api/inventory', requireAuth, requirePlan('business'), require('./routes/inventory'));
 app.use('/api/rfis', requireAuth, requirePlan('business'), require('./routes/rfis'));
 app.use('/api/daily-reports', requireAuth, requirePlan('business'), require('./routes/dailyReports'));
+app.use('/api/haul-tickets', requireAuth, requirePlan('business'), require('./routes/haulTickets'));
 app.use('/api/punchlist', requireAuth, requirePlan('business'), require('./routes/punchlist'));
 app.use('/api/inspections', requireAuth, requirePlan('business'), require('./routes/inspections'));
 app.use('/api/safety-talks', requireAuth, requirePlan('business'), require('./routes/safetyTalks'));
@@ -403,6 +405,8 @@ app.listen(PORT, () => {
   startEquipmentMaintenanceJob();
   const { startRentalReturnRemindersJob } = require('./jobs/rentalReturnReminders');
   startRentalReturnRemindersJob();
+  const { startBidDueReminderJob } = require('./jobs/bidDueReminders');
+  startBidDueReminderJob();
   const { startMediaRetentionJob } = require('./jobs/mediaRetention');
   startMediaRetentionJob();
   const { startScheduledReportsJob } = require('./jobs/scheduledReports');

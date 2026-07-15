@@ -5,7 +5,6 @@ import { useOffline } from '../contexts/OfflineContext';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
 import { langToLocale } from '../utils';
-import { labelSg, labelPl } from '../companyLabels';
 import { SkeletonList } from './Skeleton';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -119,12 +118,10 @@ export function Lightbox({ photos, startIndex, onClose, onDelete, deleting = fal
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function FieldDayLog({ projects, isAdmin, settings = null }) {
+export default function FieldDayLog({ projects, isAdmin }) {
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
-  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
   const { onSync } = useOffline() || {};
 
   const [project, setProject] = useState('');
@@ -343,9 +340,9 @@ export default function FieldDayLog({ projects, isAdmin, settings = null }) {
       {/* Top bar — project + date nav */}
       <div style={s.topBar} className="field-day-topbar">
         <label style={s.projectField}>
-          <span style={s.projectLabel}>{workLabel}</span>
+          <span style={s.projectLabel}>Project</span>
           <select style={s.projectSelect} value={project} onChange={e => selectProject(e.target.value)}>
-            <option value="">{`All ${workLabelPlural}`}</option>
+            <option value="">{`All Projects`}</option>
             {sorted.map(p => (
               <option key={p.id} value={String(p.id)}>{p.name}</option>
             ))}

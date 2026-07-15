@@ -5,13 +5,34 @@
  * See docs/plans/plan-viewer-markup.md.
  */
 
-import { createViewport } from '../shared/engine-view.js?v=1';
+import { createViewport } from '../shared/engine-view.js?v=2';
 import { createStore, randId, hashBytes } from '../shared/engine-store.js?v=1';
 import { openDoc, bytesToBase64, base64ToBytes, defaultRenderScale } from '../shared/engine-doc.js?v=1';
 import { createModals, esc, fmt, money } from '../shared/engine-ui.js?v=1';
 import { distToPolyline, pointSegDist, simplifyPts, polyLengthFt, polygonAreaFt2, polygonPerimeterFt, pointInPolygon, dist, alignApply } from '../shared/engine-measure.js?v=1';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '../shared/pdf.worker.min.js';
+
+// Token handoff: the main app opens this tool in a noopener tab that can't reach
+// the opener's sessionStorage, so during superadmin login-as it can't see the
+// impersonation token. The opener stashes that token in a one-time localStorage
+// entry keyed by a URL nonce (#h=…); pick it up into OUR tab-scoped
+// sessionStorage, then scrub both the entry and the nonce from the URL. Runs
+// before any authenticated call (toolToken reads sessionStorage first).
+(function pickupTokenHandoff() {
+  const m = /[#&]h=([a-z0-9]+)/i.exec(location.hash || '');
+  if (!m) return;
+  const key = 'tc_handoff_' + m[1];
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const { t, exp } = JSON.parse(raw);
+      if (t && (!exp || Date.now() < exp)) sessionStorage.setItem('tc_token', t);
+    }
+    localStorage.removeItem(key);
+  } catch (_) { /* storage blocked / bad json */ }
+  try { history.replaceState(null, '', location.pathname + location.search); } catch (_) {}
+})();
 
 const $ = id => document.getElementById(id);
 
@@ -27,6 +48,7 @@ const state = {
   page: 1,
   markups: [],      // markup objects; geometry in world/base px (see MK kinds)
   scales: {},       // pageNum -> ftPerPx (per-sheet calibration; measures recompute live)
+  scaleBars: {},    // pageNum -> { a:{x,y}, b:{x,y}, feet } — the editable on-canvas calibration bar (source of ftPerPx)
   serverId: null,     // takeoff_projects id when linked to a company-shared copy
   serverVersion: null, // its optimistic-concurrency version at open/last save
   roofPitch: 6,     // takeoff layer: main roof pitch (rise/12) for edge factors
@@ -36,14 +58,44 @@ const state = {
   // takeoff layer: earthwork/cut-fill (sitework pack). existing & proposed are
   // page numbers; align maps proposed-page px -> existing-page px at compute.
   earthwork: { existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 },
-    gridFt: 5, shrink: 15, swell: 25, truckCap: 12, result: null },
+    gridFt: 5, shrink: 15, swell: 25, truckCap: 12, interval: 1, result: null },
   trade: '',        // takeoff trade mode: '' (markup only) | 'roofing' | 'dirt' | 'drywall'
   bidMeta: {},      // per-bid project / prepared-by / date overrides
+  estimateId: null, // OpsFloa estimate this project was launched from (?estimate=), for pushing pricing back
   // drywall & paint pack settings (project-wide)
   drywall: { wallHeight: 9, sheetSF: 32, waste: 10, coverage: 375, coats: 2, finish: 'L4' },
 };
 let curDwSides = 2;  // 1 = perimeter/against structure, 2 = interior partition (both faces)
+const OPENING_DEDUCT = { door: 21, window: 15, opening: 15 }; // SF deducted from wall per opening
+const OPENING_LABEL = { door: 'Door', window: 'Window', opening: 'Opening' };
+const TRIM_LABEL = { base: 'Base', crown: 'Crown', chair: 'Chair rail' };
+let curDwOpening = 'door';
+let curDwTrim = 'base';
+// layer visibility (session view state) — declutter a busy sheet by category
+const layers = { annot: true, measure: true, takeoff: true, labels: true };
+const ANNOT_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout'];
+const MEASURE_KINDS = ['mlength', 'marea', 'mcount'];
+const markupLayer = kind => ANNOT_KINDS.includes(kind) ? 'annot' : MEASURE_KINDS.includes(kind) ? 'measure' : 'takeoff';
+// Vertex editing. Fixed-box shapes, callouts, single-point & count markups get no
+// per-vertex handles; everything else (line/arrow + every polyline/polygon) does.
+const VERTEX_NONEDIT = new Set(['rect', 'ellipse', 'cloud', 'highlight', 'callout', 'text', 'espot', 'mcount', 'ritem', 'qcount', 'dopening']);
+// Insert/delete a vertex applies to the free polylines & polygons — line/arrow
+// stay fixed 2-point shapes (their endpoints are still draggable).
+const RESHAPE_NONEDIT = new Set([...VERTEX_NONEDIT, 'line', 'arrow']);
+const layerVisible = m => layers[markupLayer(m.kind)];
 let curSurface = 'existing';                 // which surface new contours/spots/pads belong to
+let dirtSheetsCollapsed = false;             // dirt panel: Sheets section starts collapsed once the two-sheet setup is done
+let dirtContoursCollapsed = false;           // dirt panel: the traced-contours list section
+// Earthwork mode declutters the canvas: only dirt-trade markups draw, and only
+// the focused surface's contours/pads. General redline + other-trade markups are
+// hidden (they reappear when you leave dirt mode). Layer toggles apply on top.
+const DIRT_KINDS = new Set(['contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount']);
+function markupShown(m) {
+  if (!layerVisible(m)) return false;
+  if (state.trade !== 'dirt') return true;
+  if (!DIRT_KINDS.has(m.kind)) return false;
+  return !m.surface || m.surface === curSurface;
+}
 const lastElev = { existing: null, proposed: null };
 
 const store = createStore('planroom');
@@ -61,6 +113,36 @@ const modals = createModals({
   overlay: $('modal'), title: $('modalTitle'), body: $('modalBody'),
   ok: $('modalOk'), cancel: $('modalCancel'),
 });
+
+// Small N-way choice dialog reusing the modal overlay (createModals only does
+// OK/Cancel). Resolves to the picked value, or null on Escape. choices:
+// [{ label, value, primary?, danger? }].
+function askChoice(title, message, choices) {
+  return new Promise(resolve => {
+    const actions = $('modalOk').parentElement;
+    $('modalTitle').textContent = title;
+    $('modalBody').innerHTML =
+      `<div class="hint" style="margin-bottom:12px;line-height:1.5">${message}</div>` +
+      '<div style="display:flex;flex-direction:column;gap:8px">' +
+      choices.map((c, i) => `<button class="btn ${c.primary ? 'primary' : ''}" data-choice="${i}"${c.danger ? ' style="border-color:#e0533f;color:#e0533f"' : ''}>${esc(c.label)}</button>`).join('') +
+      '</div>';
+    actions.style.display = 'none';
+    $('modal').classList.remove('hidden');
+    const done = val => {
+      $('modalBody').removeEventListener('click', onClick);
+      $('modal').removeEventListener('keydown', onKey);
+      actions.style.display = ''; $('modal').classList.add('hidden');
+      resolve(val);
+    };
+    const onClick = e => { const b = e.target.closest('[data-choice]'); if (b) done(choices[+b.dataset.choice].value); };
+    const onKey = e => {
+      if (e.key === 'Escape') { e.preventDefault(); done(null); }
+      else if (e.key === 'Enter') { e.preventDefault(); const pi = choices.findIndex(c => c.primary); done(choices[pi >= 0 ? pi : 0].value); }
+    };
+    $('modalBody').addEventListener('click', onClick);
+    $('modal').addEventListener('keydown', onKey);
+  });
+}
 
 const vp = createViewport({ canvas: els.cv });
 
@@ -87,7 +169,7 @@ els.hud.addEventListener('click', () => { clearTimeout(hudTimer); els.hud.classL
  * Widths/sizes are document-space (base px) so markups print/zoom like ink.
  */
 
-const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling'];
+const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim'];
 const MK_LABEL = {
   cloud: 'Cloud', rect: 'Rectangle', ellipse: 'Ellipse', arrow: 'Arrow', line: 'Line',
   freehand: 'Pen', highlight: 'Highlight', text: 'Text', callout: 'Callout',
@@ -95,7 +177,7 @@ const MK_LABEL = {
   plane: 'Roof plane', redge: 'Roof edge', ritem: 'Roof item',
   contour: 'Contour', espot: 'Spot elev', epad: 'Pad', ebound: 'Earthwork boundary',
   qarea: 'Area takeoff', qline: 'Line takeoff', qcount: 'Count takeoff',
-  dwall: 'Wall run', dceiling: 'Ceiling',
+  dwall: 'Wall run', dceiling: 'Ceiling', dopening: 'Opening', dtrim: 'Trim',
 };
 const MK_ICON = {
   cloud: '☁', rect: '▭', ellipse: '⬭', arrow: '↗', line: '╲',
@@ -104,11 +186,11 @@ const MK_ICON = {
   plane: '▰', redge: '╱', ritem: '⊕',
   contour: '⛰', espot: '◎', epad: '◫', ebound: '⬚',
   qarea: '▨', qline: '⌇', qcount: '⊙',
-  dwall: '▬', dceiling: '⬜',
+  dwall: '▬', dceiling: '⬜', dopening: '🚪', dtrim: '▁',
 };
 const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
-const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling']; // click-built (vs drag; espot/align are special-cased)
-const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling']; // produce ft / SF / squares
+const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim']; // click-built (vs drag; espot/align are special-cased)
+const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling', 'dtrim']; // produce ft / SF / squares
 
 /* ---- earthwork (sitework pack) helpers ---- */
 // stable hue per elevation so equal elevations match visually; existing lighter
@@ -245,6 +327,62 @@ function roofingTotals() {
 
 const pageFtPerPx = (p = state.page) => state.scales[p] || 0;
 
+/* ---- editable on-canvas scale bar (per sheet). The bar's geometry + real-world
+   feet are the source of truth; state.scales[page] (ftPerPx) is kept in sync so
+   every measurement keeps reading it unchanged. ---- */
+function applyScaleBar(page) {
+  const bar = state.scaleBars[page];
+  if (!bar) return;
+  const px = Math.hypot(bar.b.x - bar.a.x, bar.b.y - bar.a.y);
+  if (bar.feet > 0 && px > 0.5) state.scales[page] = bar.feet / px;
+}
+function clearScale(page) {
+  delete state.scaleBars[page];
+  delete state.scales[page];
+  scheduleSave(); markupsChanged();
+  setMsg(`Scale cleared for sheet ${page} — recalibrate with 📏 (click two points).`);
+}
+function scaleBarHandle(bar, w) {
+  const h = 9 / vp.view.zoom;
+  if (Math.abs(w.x - bar.a.x) <= h && Math.abs(w.y - bar.a.y) <= h) return 'a';
+  if (Math.abs(w.x - bar.b.x) <= h && Math.abs(w.y - bar.b.y) <= h) return 'b';
+  return null;
+}
+const niceRound = n => { if (!(n > 0)) return 1; const p = Math.pow(10, Math.floor(Math.log10(n))); const f = n / p; return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * p; };
+// Rebuild an editable bar for a sheet that has a scale but no bar (calibrated
+// before bars existed) — a horizontal bar at view center, round-foot label, exact scale.
+function synthScaleBar(page) {
+  const fpp = state.scales[page];
+  if (!fpp) return;
+  const r = els.cv.parentElement.getBoundingClientRect();
+  const cx = (r.width / 2 - vp.view.panX) / vp.view.zoom, cy = (r.height / 2 - vp.view.panY) / vp.view.zoom;
+  const feet = niceRound((r.width * 0.4 / vp.view.zoom) * fpp);
+  const lenPx = feet / fpp;
+  state.scaleBars[page] = { a: { x: cx - lenPx / 2, y: cy }, b: { x: cx + lenPx / 2, y: cy }, feet };
+}
+function drawScaleBar(ctx) {
+  if (tool !== 'calibrate') return;
+  const bar = state.scaleBars[state.page];
+  if (!bar) return;
+  const { a, b, feet } = bar, z = vp.view.zoom;
+  ctx.save();
+  ctx.strokeStyle = '#e0a03f'; ctx.lineWidth = 2.5 / z;
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy) || 1, nx = -dy / L, ny = dx / L, tk = 8 / z;
+  for (const p of [a, b]) { ctx.beginPath(); ctx.moveTo(p.x - nx * tk, p.y - ny * tk); ctx.lineTo(p.x + nx * tk, p.y + ny * tk); ctx.stroke(); }
+  const hh = 5 / z;
+  ctx.fillStyle = '#fff'; ctx.lineWidth = 1.5 / z;
+  for (const p of [a, b]) { ctx.fillRect(p.x - hh, p.y - hh, hh * 2, hh * 2); ctx.strokeRect(p.x - hh, p.y - hh, hh * 2, hh * 2); }
+  const base = pageBase.get(state.page);
+  const fs = Math.max(11, Math.min(28, (base ? base.width : 2800) / 120));
+  ctx.font = `700 ${fs}px "Segoe UI", system-ui, sans-serif`;
+  ctx.textBaseline = 'bottom'; ctx.textAlign = 'center';
+  const txt = `${fmt(feet, feet < 10 ? 1 : 0)} ft`, mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2 - 7 / z;
+  ctx.lineWidth = fs / 4.5; ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.strokeText(txt, mx, my);
+  ctx.fillStyle = '#e0a03f'; ctx.fillText(txt, mx, my);
+  ctx.restore();
+}
+
 function measureValue(m) {
   const s = state.scales[m.page] || 0;
   if (m.kind === 'mcount') return `${m.pts.length} × ${m.text || 'items'}`;
@@ -283,6 +421,8 @@ function measureValue(m) {
   if (m.kind === 'qcount') { const cfg = m.cfg || {}; return `${m.pts.length} ${cfg.unit || 'EA'} · ${cfg.label || 'Item'}`; }
   if (m.kind === 'dwall') return `${fmt(dwallLenFt(m))} ft · ${fmt(dwallSf(m))} SF (${m.sides || 2}s @ ${fmt(dwallHeight(m))}')`;
   if (m.kind === 'dceiling') return `Ceiling · ${fmt(dceilingSf(m))} SF`;
+  if (m.kind === 'dopening') { const c = m.cfg || {}; const n = m.pts.length; return `${n} ${OPENING_LABEL[c.otype] || 'Opening'}${n === 1 ? '' : 's'} (−${fmt(c.deductSF || 0)} SF ea)`; }
+  if (m.kind === 'dtrim') { const c = m.cfg || {}; return `${TRIM_LABEL[c.ttype] || 'Trim'} · ${fmt(polyLengthFt(m.pts, state.scales[m.page] || 0))} ft`; }
   return '';
 }
 const LINE_W = { S: 2, M: 4, L: 8 };
@@ -491,11 +631,19 @@ function drawMarkup(ctx, m) {
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y); }
       break;
     }
-    case 'mcount': case 'ritem': case 'qcount': {
+    case 'mcount': case 'ritem': case 'qcount': case 'dopening': {
       const r = (m.width || 4) * 1.5 + 3;
       for (const p of m.pts) { ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); }
       const c = centroid(m.pts);
       if (m.pts.length) labelAt(ctx, m, c.x, c.y - r * 2.4);
+      break;
+    }
+    case 'dtrim': {
+      ctx.beginPath();
+      m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.stroke();
+      const mid = m.pts[Math.floor((m.pts.length - 1) / 2)];
+      labelAt(ctx, m, mid.x, mid.y - (m.width || 4) * 2.5);
       break;
     }
     case 'plane': {
@@ -601,6 +749,7 @@ function drawMarkup(ctx, m) {
 
 // elevation label (white-haloed, colored by elevation) for earthwork markups
 function elevLabel(ctx, m, x, y, col) {
+  if (!layers.labels) return;
   const base = pageBase.get(m.page);
   const fs = Math.max(11, Math.min(28, (base ? base.width : 2800) / 120));
   ctx.save();
@@ -615,6 +764,7 @@ function elevLabel(ctx, m, x, y, col) {
 
 // Measured-value label: white-haloed bold text, sized to the sheet.
 function labelAt(ctx, m, x, y, color) {
+  if (!layers.labels) return;
   const base = pageBase.get(m.page);
   const fs = Math.max(11, Math.min(30, (base ? base.width : 2800) / 110));
   ctx.save();
@@ -713,9 +863,9 @@ function handlePoints(ctx, m) {
     const r = normRect(m.pts[0], m.pts[1]);
     return [{ x: r.x0, y: r.y0 }, { x: r.x1, y: r.y0 }, { x: r.x1, y: r.y1 }, { x: r.x0, y: r.y1 }];
   }
-  if (m.kind === 'line' || m.kind === 'arrow') return [m.pts[0], m.pts[1]];
   if (m.kind === 'callout') return [m.pts[1]]; // move the leader target
-  return [];
+  if (VERTEX_NONEDIT.has(m.kind)) return [];
+  return m.pts; // per-vertex handles: line/arrow endpoints + every polyline/polygon point
 }
 
 function drawSelection(ctx, m) {
@@ -751,7 +901,7 @@ function hitMarkup(ctx, w) {
   const tol = Math.max(6 / vp.view.zoom, 3);
   for (let i = state.markups.length - 1; i >= 0; i--) {
     const m = state.markups[i];
-    if (m.page !== state.page) continue;
+    if (m.page !== state.page || !markupShown(m)) continue; // hidden layers/surfaces/kinds aren't clickable
     const t = tol + (m.width || 4) / 2;
     const [p0, p1] = m.pts;
     switch (m.kind) {
@@ -780,7 +930,7 @@ function hitMarkup(ctx, w) {
       case 'line': case 'arrow':
         if (pointSegDist(w.x, w.y, p0.x, p0.y, p1.x, p1.y) < t) return m;
         break;
-      case 'freehand': case 'mlength': case 'redge': case 'contour': case 'qline': case 'dwall':
+      case 'freehand': case 'mlength': case 'redge': case 'contour': case 'qline': case 'dwall': case 'dtrim':
         if (distToPolyline(w.x, w.y, m.pts) < t) return m;
         break;
       case 'marea': case 'plane': case 'epad': case 'qarea': case 'dceiling':
@@ -790,7 +940,7 @@ function hitMarkup(ctx, w) {
       case 'ebound':
         if (distToPolyline(w.x, w.y, [...m.pts, m.pts[0]]) < t) return m; // edge only (fill is faint)
         break;
-      case 'mcount': case 'ritem': case 'qcount':
+      case 'mcount': case 'ritem': case 'qcount': case 'dopening':
         if (m.pts.some(p => dist(w.x, w.y, p.x, p.y) < (m.width || 4) * 1.5 + 3 + t)) return m;
         break;
       case 'espot':
@@ -907,10 +1057,26 @@ function paint(ctx) {
       ctx.restore();
     } else if (state.doc) ensurePage(other);
   }
-  if (heatGrid && state.page === heatGrid.page) drawHeat(ctx);
-  for (const m of state.markups) if (m.page === state.page) drawMarkup(ctx, m);
+  if (heatGrid && state.page === heatGrid.page && layers.takeoff) drawHeat(ctx);
+  for (const m of state.markups) if (m.page === state.page && markupShown(m)) drawMarkup(ctx, m);
+  // The disturbance boundary applies to BOTH surfaces — when it lives on the other
+  // earthwork sheet, project it onto this one through the alignment so it shows on
+  // existing AND proposed (always, independent of the Ghost toggle).
+  if (state.doc && EW.existingPage && EW.proposedPage && EW.existingPage !== EW.proposedPage &&
+      (state.page === EW.existingPage || state.page === EW.proposedPage)) {
+    const otherPg = state.page === EW.existingPage ? EW.proposedPage : EW.existingPage;
+    const bound = state.markups.find(m => m.kind === 'ebound' && m.page === otherPg);
+    if (bound && markupShown(bound)) {
+      const M = state.page === EW.existingPage ? EW.align : alignInverse(EW.align);
+      ctx.save();
+      ctx.transform(M.a, M.b, -M.b, M.a, M.e, M.f);
+      drawMarkup(ctx, bound);
+      ctx.restore();
+    }
+  }
   if (drag && drag.mode === 'draw' && drag.markup) drawMarkup(ctx, drag.markup);
   drawDraft(ctx);
+  drawScaleBar(ctx);
   drawAlignDraft(ctx);
   const sel = selMarkup();
   if (sel && sel.page === state.page) drawSelection(ctx, sel);
@@ -932,11 +1098,22 @@ function updatePageUI() {
 async function setPage(p, { fit = false } = {}) {
   if (!state.doc) return;
   state.page = Math.max(1, Math.min(state.doc.numPages, p));
+  syncSurfaceToPage();
   updatePageUI();
   await ensurePage(state.page);
   if (fit) { const b = await baseSize(state.page); vp.fitTo(b.width, b.height); }
   vp.requestDraw();
   scheduleSave();
+}
+// Landing on a designated sheet syncs the Existing/Proposed toggle (and the
+// surface visibility filter) to it, so navigating by any means keeps them in
+// step. Same-sheet jobs keep the toggle's manual choice.
+function syncSurfaceToPage() {
+  if (state.trade !== 'dirt') return;
+  const E = state.earthwork;
+  if (!E.existingPage || !E.proposedPage || E.existingPage === E.proposedPage) return;
+  const s = state.page === E.existingPage ? 'existing' : state.page === E.proposedPage ? 'proposed' : null;
+  if (s && s !== curSurface) { curSurface = s; renderSurfaceToggle(); }
 }
 
 // Lazy thumbnail strip: placeholders now, rendered when scrolled into view.
@@ -1179,6 +1356,78 @@ $('pagePickOk').addEventListener('click', () => {
 // triggered from the Projects modal ("Open / add plans")
 function pickPlans() { $('filePlans').click(); }
 
+/* ---- manage sheets: reorder / remove within the combined document ----
+ * Rebuilds the combined PDF in the new order (pdf-lib) and remaps every
+ * page-number reference — markups, per-sheet scales, and earthwork sheet
+ * assignments — so nothing lands on the wrong sheet. Removing a sheet drops
+ * its markups. */
+let sheetPlan = null; // [{ page, removed }] in display order
+const markupCountOnPage = p => state.markups.filter(m => m.page === p).length;
+function renderSheetMgr() {
+  const list = $('sheetMgrList');
+  list.innerHTML = '';
+  sheetPlan.forEach((s, i) => {
+    const row = document.createElement('div');
+    row.className = 'proj-row' + (s.removed ? ' sheet-removed' : '');
+    const n = markupCountOnPage(s.page);
+    row.innerHTML =
+      '<div class="sheet-thumb"></div>' +
+      `<div class="grow"><div class="name">Sheet ${s.page}</div><div class="meta">${n} markup${n === 1 ? '' : 's'}${s.removed ? ' · will be removed' : ''}</div></div>` +
+      `<button class="btn tiny" data-act="up"${i === 0 ? ' disabled' : ''}>▲</button>` +
+      `<button class="btn tiny" data-act="down"${i === sheetPlan.length - 1 ? ' disabled' : ''}>▼</button>` +
+      `<button class="btn tiny${s.removed ? '' : ' danger'}" data-act="del">${s.removed ? 'Keep' : '✕'}</button>`;
+    row.querySelector('[data-act="up"]').addEventListener('click', () => { if (i > 0) { [sheetPlan[i - 1], sheetPlan[i]] = [sheetPlan[i], sheetPlan[i - 1]]; renderSheetMgr(); } });
+    row.querySelector('[data-act="down"]').addEventListener('click', () => { if (i < sheetPlan.length - 1) { [sheetPlan[i + 1], sheetPlan[i]] = [sheetPlan[i], sheetPlan[i + 1]]; renderSheetMgr(); } });
+    row.querySelector('[data-act="del"]').addEventListener('click', () => { s.removed = !s.removed; renderSheetMgr(); });
+    list.appendChild(row);
+    const th = row.querySelector('.sheet-thumb');
+    state.doc.baseSize(s.page).then(b => state.doc.renderPage(s.page, Math.min(1, 128 / b.width))).then(cv => { th.innerHTML = ''; th.appendChild(cv); }).catch(() => {});
+  });
+}
+function openSheetMgr() {
+  if (!state.doc || state.doc.numPages < 1) return;
+  sheetPlan = [];
+  for (let p = 1; p <= state.doc.numPages; p++) sheetPlan.push({ page: p, removed: false });
+  renderSheetMgr();
+  $('sheetMgr').classList.remove('hidden');
+}
+async function applySheetPlan(order) {
+  const oldBytes = await currentCombinedBytes();
+  if (!oldBytes) { setMsg('Could not read the current set.'); return; }
+  setMsg('Rebuilding the set…');
+  try {
+    const { PDFDocument } = PDFLib;
+    const srcDoc = await PDFDocument.load(oldBytes, { ignoreEncryption: true });
+    const out = await PDFDocument.create();
+    const copied = await out.copyPages(srcDoc, order.map(p => p - 1));
+    for (const pg of copied) out.addPage(pg);
+    const map = {}; // old 1-based page -> new 1-based page
+    order.forEach((oldP, i) => { map[oldP] = i + 1; });
+    state.markups = state.markups.filter(m => map[m.page] != null); // drop removed sheets
+    for (const m of state.markups) m.page = map[m.page];
+    const ns = {}, nbars = {};
+    for (const [p, v] of Object.entries(state.scales)) if (map[p] != null) ns[map[p]] = v;
+    for (const [p, v] of Object.entries(state.scaleBars)) if (map[p] != null) nbars[map[p]] = v;
+    state.scales = ns; state.scaleBars = nbars;
+    const E = state.earthwork;
+    if (E.existingPage != null) E.existingPage = map[E.existingPage] || null;
+    if (E.proposedPage != null) E.proposedPage = map[E.proposedPage] || null;
+    heatGrid = null; // page indices shifted — clear the session overlay
+    await finalizeCombined(out, state.docName || 'plans.pdf');
+    markupsChanged();
+    setMsg('Sheets updated.');
+  } catch (err) { console.error(err); setMsg('Could not rebuild the set: ' + err.message); }
+}
+$('sheetMgrCancel').addEventListener('click', () => $('sheetMgr').classList.add('hidden'));
+$('sheetMgr').addEventListener('click', e => { if (e.target === $('sheetMgr')) $('sheetMgr').classList.add('hidden'); });
+$('sheetMgrApply').addEventListener('click', async () => {
+  const order = sheetPlan.filter(s => !s.removed).map(s => s.page);
+  if (!order.length) { setMsg('Keep at least one sheet.'); return; }
+  const unchanged = order.length === state.doc.numPages && order.every((p, i) => p === i + 1);
+  $('sheetMgr').classList.add('hidden');
+  if (!unchanged) await applySheetPlan(order);
+});
+
 /* ============================== Tools & pointer input ============================== */
 
 function setTool(t) {
@@ -1192,9 +1441,11 @@ function setTool(t) {
   // per-tool color memory (highlighter yellow, ink red, user overrides stick)
   if (t !== 'pan' && t !== 'select') els.mkColor.value = toolColors[t] || DEFAULT_COLOR;
   if (t === 'calibrate') {
-    setMsg(pageFtPerPx()
-      ? `Sheet ${state.page} already has a scale — recalibrating replaces it. Click the first point.`
-      : 'Click two points a known distance apart (a dimension line, a scale bar).');
+    if (pageFtPerPx() && !state.scaleBars[state.page]) synthScaleBar(state.page); // legacy scale → editable bar
+    const bar = state.scaleBars[state.page];
+    setMsg(bar
+      ? `Sheet ${state.page} scale: ${fmt(bar.feet, bar.feet < 10 ? 1 : 0)} ft on the bar. Drag an end to adjust · drag the middle to move it · Alt-click to clear · or click two points to redo.`
+      : 'Click two points a known distance apart (a dimension line, a scale bar), then enter the distance.');
   } else if (NEEDS_SCALE.includes(t) && !pageFtPerPx()) {
     setMsg('This sheet has no scale yet — calibrate first (📏).');
   } else if (t === 'plane') {
@@ -1223,12 +1474,17 @@ function setTool(t) {
     setMsg(`Trace a wall run (${curDwSides}-side @ ${fmt(state.drywall.wallHeight)}'); Enter/double-click to finish. Double-click a run to set its height.`);
   } else if (t === 'dceiling') {
     setMsg('Trace a room outline for its ceiling SF; Enter/double-click to close.');
+  } else if (t === 'dopening') {
+    setMsg(`Click each ${OPENING_LABEL[curDwOpening].toLowerCase()} (−${OPENING_DEDUCT[curDwOpening]} SF each); Enter/double-click to finish.`);
+  } else if (t === 'dtrim') {
+    setMsg(`Trace a ${TRIM_LABEL[curDwTrim].toLowerCase()} run; Enter/double-click to finish → LF.`);
   } else if (t === 'align') {
     const E = state.earthwork;
     setMsg((!E.existingPage || !E.proposedPage)
       ? 'Designate the Existing and Proposed sheets in the ⛰ Dirt panel first.'
       : `Click a sharp landmark on the Existing sheet (page ${E.existingPage}) — a property corner works well.`);
   }
+  vp.requestDraw(); // the scale bar (and any tool-dependent overlay) shows/hides on tool change
 }
 document.querySelectorAll('.tool').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
 
@@ -1253,8 +1509,20 @@ els.cv.addEventListener('pointerdown', e => {
   }
   if (!state.doc) return;
 
-  // scale calibration: two clicks, then the real-world distance
+  // scale calibration: edit the existing bar, or two clicks + the real distance
   if (tool === 'calibrate') {
+    const bar = state.scaleBars[state.page];
+    if (bar && (!calibPts || !calibPts.length)) {
+      const end = scaleBarHandle(bar, w);
+      if (end) { drag = { mode: 'scalebar', ptr: e.pointerId, end }; return; } // drag an endpoint to adjust
+      if (e.altKey && projOnSeg(bar.a, bar.b, w).d <= Math.max(9 / vp.view.zoom, 4)) { clearScale(state.page); return; } // Alt-click the bar → clear
+      // drag the middle of the bar to reposition it — feet AND pixel length stay
+      // fixed, so the scale is unchanged (just moved)
+      if (projOnSeg(bar.a, bar.b, w).d <= Math.max(9 / vp.view.zoom, 4)) {
+        drag = { mode: 'scalebarmove', ptr: e.pointerId, from: { x: w.x, y: w.y }, origA: { ...bar.a }, origB: { ...bar.b } };
+        return;
+      }
+    }
     const p = { x: w.x, y: w.y };
     if (!calibPts || !calibPts.length) {
       calibPts = [p];
@@ -1268,9 +1536,10 @@ els.cv.addEventListener('pointerdown', e => {
         "Feet (e.g. 50). Sets this sheet's scale — every measurement on it updates live.", '', null)
         .then(ftv => {
           if (ftv && ftv > 0) {
-            state.scales[state.page] = ftv / px;
-            scheduleSave(); renderMarkupList();
-            setMsg(`Scale set for sheet ${state.page}. Measurements on this sheet are live.`);
+            state.scaleBars[state.page] = { a: { x: a.x, y: a.y }, b: { x: p.x, y: p.y }, feet: ftv };
+            applyScaleBar(state.page);
+            scheduleSave(); markupsChanged();
+            setMsg(`Scale set for sheet ${state.page}: ${fmt(ftv, ftv < 10 ? 1 : 0)} ft. Drag the bar's ends to fine-tune, or Alt-click it to clear.`);
           } else setMsg('Calibration cancelled.');
           vp.requestDraw();
         });
@@ -1362,6 +1631,21 @@ els.cv.addEventListener('pointerdown', e => {
     const sel = selMarkup();
     if (sel && sel.page === state.page) {
       const hi = hitHandle(ctx, sel, w);
+      // Alt-click reshapes the vertex set: on a point → remove it; on an edge →
+      // add one; Shift+Alt-click a segment → cut the line there (split in two).
+      if (e.altKey && canReshape(sel)) {
+        if (hi >= 0) { deleteVertexAt(sel, hi); return; }
+        const edge = nearestEdge(sel, w, Math.max(8 / vp.view.zoom, 4));
+        if (edge) {
+          if (e.shiftKey) {
+            if (isOpenPoly(sel)) cutAtEdge(sel, edge.i);
+            else setMsg('Cutting works on open lines (contours), not closed shapes.');
+          } else {
+            insertVertexAt(sel, edge);
+          }
+          return;
+        }
+      }
       if (hi >= 0) {
         undoCapture = snapshot();
         drag = { mode: 'handle', ptr: e.pointerId, id: sel.id, hi, moved: false };
@@ -1373,11 +1657,16 @@ els.cv.addEventListener('pointerdown', e => {
       selectedId = hit.id;
       undoCapture = snapshot();
       drag = { mode: 'move', ptr: e.pointerId, id: hit.id, from: w, orig: JSON.parse(JSON.stringify(hit.pts)), moved: false };
+      if (canReshape(hit)) setMsg(isOpenPoly(hit)
+        ? 'Drag a point to reshape · Alt-click: add / remove a point · Shift+Alt-click a segment: cut the line.'
+        : 'Drag a point to reshape · Alt-click an edge to add a point · Alt-click a point to remove it.');
       renderMarkupList();
       vp.requestDraw();
     } else {
-      if (selectedId) { selectedId = null; renderMarkupList(); vp.requestDraw(); }
-      drag = { mode: 'pan', ptr: e.pointerId, last: { x: e.clientX, y: e.clientY } };
+      // Don't deselect yet — only a click on empty space clears the selection; a
+      // drag here is a pan and must keep you in edit mode. Deselect is decided at
+      // pointerup (endDrag) based on whether the pan actually moved.
+      drag = { mode: 'pan', ptr: e.pointerId, last: { x: e.clientX, y: e.clientY }, from: { x: e.clientX, y: e.clientY }, deselect: !!selectedId, moved: false };
       els.cv.classList.add('grabbing');
     }
     return;
@@ -1406,9 +1695,25 @@ els.cv.addEventListener('pointermove', e => {
   if (!drag || e.pointerId !== drag.ptr) return;
   const s = screenPt(e);
   const w = vp.screenToWorld(s.x, s.y);
+  if (drag.mode === 'scalebar') {
+    const bar = state.scaleBars[state.page];
+    if (bar) { bar[drag.end] = { x: w.x, y: w.y }; applyScaleBar(state.page); vp.requestDraw(); }
+    return;
+  }
+  if (drag.mode === 'scalebarmove') {
+    const bar = state.scaleBars[state.page];
+    if (bar) {
+      const dx = w.x - drag.from.x, dy = w.y - drag.from.y;
+      bar.a = { x: drag.origA.x + dx, y: drag.origA.y + dy };
+      bar.b = { x: drag.origB.x + dx, y: drag.origB.y + dy };
+      vp.requestDraw(); // length unchanged → scale unchanged
+    }
+    return;
+  }
   if (drag.mode === 'pan') {
     vp.panPx(e.clientX - drag.last.x, e.clientY - drag.last.y);
     drag.last = { x: e.clientX, y: e.clientY };
+    if (drag.from && Math.hypot(e.clientX - drag.from.x, e.clientY - drag.from.y) > 4) drag.moved = true;
     return;
   }
   if (drag.mode === 'draw') {
@@ -1436,10 +1741,10 @@ els.cv.addEventListener('pointermove', e => {
         { x: r.x0, y: r.y0 }, { x: r.x1, y: r.y0 }, { x: r.x1, y: r.y1 }, { x: r.x0, y: r.y1 }];
       const opposite = corners[(drag.hi + 2) % 4];
       m.pts = [opposite, { x: w.x, y: w.y }];
-    } else if (m.kind === 'line' || m.kind === 'arrow') {
-      m.pts[drag.hi] = { x: w.x, y: w.y };
     } else if (m.kind === 'callout') {
       m.pts[1] = { x: w.x, y: w.y };
+    } else if (m.pts[drag.hi]) {
+      m.pts[drag.hi] = { x: w.x, y: w.y }; // move a single vertex (line/arrow + any polyline/polygon)
     }
     vp.requestDraw();
   }
@@ -1451,7 +1756,14 @@ function endDrag(e) {
   drag = null;
   els.cv.classList.remove('grabbing');
 
-  if (d.mode === 'pan') return;
+  if (d.mode === 'pan') {
+    // a click on empty space (no pan movement) clears the selection; a real pan keeps it
+    if (d.deselect && !d.moved && selectedId) { selectedId = null; renderMarkupList(); vp.requestDraw(); }
+    return;
+  }
+
+  if (d.mode === 'scalebar') { applyScaleBar(state.page); scheduleSave(); markupsChanged(); return; }
+  if (d.mode === 'scalebarmove') { scheduleSave(); return; } // repositioned only; scale unchanged
 
   if (d.mode === 'draw') {
     const m = d.markup;
@@ -1475,7 +1787,7 @@ function endDrag(e) {
 
   if ((d.mode === 'move' || d.mode === 'handle') && d.moved) {
     const m = selMarkup();
-    if (m) m.modified = Date.now();
+    if (m) { m.modified = Date.now(); invalidateForKind(m); }
     pushUndo(undoCapture); undoCapture = null;
     markupsChanged();
   } else {
@@ -1488,7 +1800,63 @@ els.cv.addEventListener('pointercancel', endDrag);
 /* ---- click-built measure drafts: commit / cancel ---- */
 
 const CLOSED_KINDS = ['marea', 'plane', 'epad', 'ebound', 'qarea', 'dceiling']; // 3+ pts, closed polygon
-const POINT_KINDS = ['mcount', 'ritem', 'qcount']; // 1+ pts, no rubber band
+const POINT_KINDS = ['mcount', 'ritem', 'qcount', 'dopening']; // 1+ pts, no rubber band
+
+/* ---- vertex reshaping: drag a point (handled in the pointer flow), Alt-click
+   an edge to insert a point, Alt-click a point to remove it ---- */
+const canReshape = m => !!m && !RESHAPE_NONEDIT.has(m.kind) && Array.isArray(m.pts);
+const minPtsFor = m => (m.kind === 'line' || m.kind === 'arrow') ? 2 : (CLOSED_KINDS.includes(m.kind) ? 3 : 2);
+function projOnSeg(a, b, p) {
+  const vx = b.x - a.x, vy = b.y - a.y, L2 = vx * vx + vy * vy || 1;
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * vx + (p.y - a.y) * vy) / L2));
+  const x = a.x + t * vx, y = a.y + t * vy;
+  return { x, y, d: Math.hypot(p.x - x, p.y - y) };
+}
+// closest polygon/polyline edge to w within tol → { i, p } for splice(i+1), or null
+function nearestEdge(m, w, tol) {
+  if (!m.pts || m.pts.length < 2) return null;
+  const closed = CLOSED_KINDS.includes(m.kind), n = m.pts.length, segs = closed ? n : n - 1;
+  let best = null;
+  for (let i = 0; i < segs; i++) {
+    const pr = projOnSeg(m.pts[i], m.pts[(i + 1) % n], w);
+    if (pr.d <= tol && (!best || pr.d < best.d)) best = { i, p: { x: pr.x, y: pr.y }, d: pr.d };
+  }
+  return best;
+}
+// reshaping an earthwork surface invalidates the last cut/fill result
+function invalidateForKind(m) { if (m && ['contour', 'epad', 'ebound'].includes(m.kind)) state.earthwork.result = null; }
+function insertVertexAt(m, edge) {
+  const prev = snapshot();
+  m.pts.splice(edge.i + 1, 0, edge.p);
+  m.modified = Date.now(); invalidateForKind(m);
+  pushUndo(prev); markupsChanged(); setMsg('Point added.');
+}
+function deleteVertexAt(m, hi) {
+  if (m.pts.length <= minPtsFor(m)) { setMsg(`A ${MK_LABEL[m.kind] || 'shape'} needs at least ${minPtsFor(m)} points.`); return; }
+  const prev = snapshot();
+  m.pts.splice(hi, 1);
+  m.modified = Date.now(); invalidateForKind(m);
+  pushUndo(prev); markupsChanged(); setMsg('Point removed.');
+}
+// Only open polylines can be cut/split (closed shapes must stay closed).
+const isOpenPoly = m => canReshape(m) && !CLOSED_KINDS.includes(m.kind);
+// Cut an open polyline at segment i → two independent lines that keep the
+// original's kind/elevation/etc. A piece with fewer than 2 points is dropped, so
+// a point is never left stranded on its own.
+function cutAtEdge(m, i) {
+  const pieces = [m.pts.slice(0, i + 1), m.pts.slice(i + 1)].filter(p => p.length >= 2);
+  const idx = state.markups.indexOf(m);
+  if (idx < 0) return;
+  const prev = snapshot();
+  const clones = pieces.map(p => ({ ...JSON.parse(JSON.stringify(m)), id: randId(), pts: p, created: Date.now(), modified: Date.now() }));
+  state.markups.splice(idx, 1, ...clones); // replace the original with the surviving piece(s)
+  selectedId = clones.length ? clones.reduce((a, b) => b.pts.length > a.pts.length ? b : a).id : null;
+  invalidateForKind(m);
+  pushUndo(prev); markupsChanged();
+  setMsg(clones.length === 2 ? 'Line cut in two — select and delete the piece you don’t want.'
+    : clones.length === 1 ? 'Line cut — the stray single point was dropped.'
+    : 'Line removed — nothing long enough was left.');
+}
 
 function commitDraft() {
   if (!draft) return;
@@ -1540,6 +1908,8 @@ function commitDraft() {
   else if (d.kind === 'ritem') extra.itype = $('itemType') ? $('itemType').value : 'boot';
   else if (d.kind === 'contour' || d.kind === 'epad') extra.surface = curSurface;
   else if (d.kind === 'dwall') { extra.height = state.drywall.wallHeight; extra.sides = curDwSides; }
+  else if (d.kind === 'dopening') extra.cfg = { otype: curDwOpening, deductSF: OPENING_DEDUCT[curDwOpening] };
+  else if (d.kind === 'dtrim') extra.cfg = { ttype: curDwTrim };
   if (d.kind === 'ebound') state.markups = state.markups.filter(m => m.kind !== 'ebound'); // one boundary
   const finish = text => {
     state.markups.push({
@@ -1559,7 +1929,7 @@ function commitDraft() {
     } else if (d.kind === 'contour' || d.kind === 'epad') {
       const surf = extra.surface;
       modals.askNumber(`${d.kind === 'contour' ? 'Contour' : 'Pad'} elevation (ft) — ${surf === 'existing' ? 'existing' : 'proposed'}`,
-        'e.g. 812.5', lastElev[surf] != null ? lastElev[surf] : '', 1)
+        'e.g. 812.5', d.kind === 'contour' ? nextElevDefault(surf) : (lastElev[surf] != null ? lastElev[surf] : ''), 1)
         .then(v => { if (v != null) { const m = state.markups[state.markups.length - 1]; if (m && (m.kind === 'contour' || m.kind === 'epad')) { m.elev = v; lastElev[surf] = v; markupsChanged(); } } });
     }
   };
@@ -1597,6 +1967,15 @@ els.cv.addEventListener('dblclick', e => {
       pushUndo(prev);
       markupsChanged();
     });
+    return;
+  }
+  // double-click an opening group to set its per-opening deduct SF
+  if (hit && hit.kind === 'dopening') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    const c = hit.cfg || {};
+    modals.askNumber(`${OPENING_LABEL[c.otype] || 'Opening'} deduct (SF each)`, 'SF subtracted from wall area per opening', c.deductSF != null ? c.deductSF : 15, 0)
+      .then(v => { if (v != null && v >= 0) { const prev = snapshot(); hit.cfg = { ...c, deductSF: v }; pushUndo(prev); markupsChanged(); } });
     return;
   }
   // double-click a wall run to set its height (this run only)
@@ -1751,6 +2130,7 @@ function deleteSelected() {
 $('btnList').addEventListener('click', () => {
   els.markupPanel.classList.toggle('hidden');
   if (!els.markupPanel.classList.contains('hidden')) { $('roofPanel').classList.add('hidden'); $('dirtPanel').classList.add('hidden'); $('dwPanel').classList.add('hidden'); renderMarkupList(); }
+  syncPanelButtons();
 });
 els.mkKindFilter.addEventListener('change', renderMarkupList);
 els.mkThisSheet.addEventListener('change', renderMarkupList);
@@ -1839,10 +2219,15 @@ function applyTakeoffGate() {
 const TRADE_TOOLS = {
   roofing: ['plane', 'redge', 'ritem'],
   dirt: ['wand', 'contour', 'espot', 'epad', 'ebound', 'align', 'autoarea', 'qarea', 'qline', 'qcount'],
-  drywall: ['dwall', 'dceiling'],
+  drywall: ['dwall', 'dceiling', 'dopening', 'dtrim'],
 };
 // general redlining + generic measure tools that collapse while a trade is active
 const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
+// Toolbar trade buttons show an 'active' state while their side panel is open.
+function syncPanelButtons() {
+  const mark = (btnId, panelId) => { const b = $(btnId), p = $(panelId); if (b && p) b.classList.toggle('active', !p.classList.contains('hidden')); };
+  mark('btnRoof', 'roofPanel'); mark('btnDirt', 'dirtPanel'); mark('btnDw', 'dwPanel');
+}
 function setTrade(t, { save = true } = {}) {
   state.trade = t || '';
   document.body.classList.toggle('trade-active', !!state.trade);
@@ -1858,6 +2243,15 @@ function setTrade(t, { save = true } = {}) {
   if (state.trade !== 'roofing') $('roofPanel').classList.add('hidden');
   if (state.trade !== 'dirt') $('dirtPanel').classList.add('hidden');
   if (state.trade !== 'drywall') $('dwPanel').classList.add('hidden');
+  // Earthwork: open its side panel by default — on a user switch AND when a
+  // project loads already in dirt mode. Collapse Sheets if the setup is done.
+  if (state.trade === 'dirt') {
+    els.markupPanel.classList.add('hidden'); $('roofPanel').classList.add('hidden'); $('dwPanel').classList.add('hidden');
+    $('dirtPanel').classList.remove('hidden');
+    dirtSheetsCollapsed = dirtSetupComplete();
+    renderDirtPanel();
+  }
+  syncPanelButtons();
   if (save) { // hints only on a user switch — not when a load restores the mode
     if (state.trade === 'roofing') setMsg('Roofing takeoff — trace planes (▰), edges (╱), items (⊕); totals in 🏠 Roof, prices in $ Bid.');
     else if (state.trade === 'dirt') setMsg('Earthwork takeoff — set the sheets in ⛰ Dirt, trace contours (⛰), align (⌖), then ∑ Calculate.');
@@ -1891,6 +2285,7 @@ if ($('roofPitch')) {
 $('btnRoof').addEventListener('click', () => {
   $('roofPanel').classList.toggle('hidden');
   if (!$('roofPanel').classList.contains('hidden')) { els.markupPanel.classList.add('hidden'); $('dirtPanel').classList.add('hidden'); $('dwPanel').classList.add('hidden'); renderRoofPanel(); }
+  syncPanelButtons();
 });
 $('btnUpsell').addEventListener('click', () => {
   setMsg('Takeoff layer ($60/mo add-on): turn your measurements into roofing squares, pitch-corrected edges, materials, and a priced, branded bid. Add it from Billing.');
@@ -1982,6 +2377,50 @@ function renderRoofBid() {
   });
 }
 
+// The "Send pricing to estimate" button appears only when a takeoff is linked
+// to an estimate (via the $ Bid dropdown, or a ?estimate= launch).
+function syncBidSendBtn() {
+  const sendBtn = $('bidSendEstimate');
+  if (!sendBtn) return;
+  if (state.estimateId) { sendBtn.textContent = `➤ Send pricing to estimate #${state.estimateId}`; sendBtn.classList.remove('hidden'); }
+  else sendBtn.classList.add('hidden');
+}
+// Populate the $ Bid "Estimate" dropdown from the company's DRAFT estimates
+// (only drafts can receive pricing) and pre-select the current link.
+async function populateBidEstimates() {
+  const sel = $('bidEstimate'), hint = $('bidEstimateHint');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— not linked —</option>';
+  if (!toolToken()) { sel.disabled = true; if (hint) hint.textContent = 'Sign in to OpsFloa to link an estimate.'; return; }
+  sel.disabled = false;
+  try {
+    const r = await apiEstimate('?status=draft&limit=100', { timeout: 12000 });
+    if (!r.ok) {
+      sel.disabled = true;
+      if (hint) hint.textContent = r.status === 401 ? 'Session expired — reopen Plan Room from OpsFloa.' : `Couldn’t load estimates (HTTP ${r.status}).`;
+      return;
+    }
+    const items = (await r.json()).items || [];
+    for (const e of items) {
+      const opt = document.createElement('option');
+      opt.value = e.id;
+      const who = e.client_name_snapshot || e.project_name || '';
+      opt.textContent = `#${e.id}${who ? ' · ' + who : ''}`;
+      sel.appendChild(opt);
+    }
+    // keep the current link selectable even if it isn't a draft in the list
+    if (state.estimateId && !items.some(e => String(e.id) === String(state.estimateId))) {
+      const opt = document.createElement('option');
+      opt.value = state.estimateId; opt.textContent = `#${state.estimateId} (linked)`;
+      sel.appendChild(opt);
+    }
+    sel.value = state.estimateId || '';
+    if (hint) hint.textContent = state.estimateId ? 'Send puts this bid’s line items on the estimate.'
+      : items.length ? 'Pick an estimate to send this bid’s pricing to it.'
+      : 'No draft estimates yet — create one in OpsFloa.';
+  } catch (_) { if (hint) hint.textContent = 'Could not load estimates.'; }
+}
+
 function openRoofBid() {
   $('bidTitle').textContent =
     state.trade === 'roofing' ? '🏠 Roofing bid'
@@ -1997,6 +2436,8 @@ function openRoofBid() {
   $('bidPrep').value = meta.prep || co.name || '';
   $('bidDate').value = meta.date || new Date().toLocaleDateString();
   $('bidOP').value = state.roofOP;
+  syncBidSendBtn();
+  populateBidEstimates();
   renderRoofBid();
   $('roofBid').classList.remove('hidden');
 }
@@ -2028,7 +2469,66 @@ function bidCsv() {
   download(new Blob([rows.join('\r\n')], { type: 'text/csv' }), safeName() + '-takeoff-bid.csv');
 }
 
+// Map a bid line to one of the estimate's MONEY_CATEGORIES
+// (labor|materials|equipment|subs|overhead|contingency|other). Best-effort by
+// keyword — she can recategorize any line in the estimate.
+function estimateCategoryFor(l) {
+  const s = ((l.key || '') + ' ' + (l.label || '')).toLowerCase();
+  if (/haul|excavat|export|import|earthwork|fill|backfill|grad|dozer|loader/.test(s)) return 'equipment';
+  if (/\bhang\b|install|tear-?off|finish|labor|demo|disposal|prep/.test(s)) return 'labor';
+  if (/board|shingle|concrete|mud|paint|sheet|paver|asphalt|compound|underlay|drip|starter|\bice\b|cap|flash|tape|base|crown|chair|trim|material/.test(s)) return 'materials';
+  return 'other';
+}
+
+// Push the takeoff's priced lines back to the linked OpsFloa estimate
+// (PUT /estimates/:id/lines — bulk replace, draft only, admin only). The O&P %
+// rides along as one overhead line so the estimate total matches the bid.
+async function sendPricingToEstimate() {
+  const id = state.estimateId;
+  if (!id) return;
+  if (!toolToken()) { setMsg('Sign in to OpsFloa first (open ☁ Company / join live), then try again.'); return; }
+  const { lines, op } = roofBidLines();
+  const payload = lines.map(l => ({
+    category: estimateCategoryFor(l),
+    description: l.label,
+    qty: Math.round((l.qty || 0) * 100) / 100,
+    unit: (l.unit || '').toString().slice(0, 20) || null,
+    unit_cost_cents: Math.round((l.price || 0) * 100),
+  }));
+  if (Number(state.roofOP) > 0 && op > 0) {
+    payload.push({ category: 'overhead', description: `Overhead & profit (${fmt(state.roofOP)}%)`, qty: 1, unit: 'LS', unit_cost_cents: Math.round(op * 100) });
+  }
+  if (!payload.length) { setMsg('Nothing to send yet — trace a takeoff and price it first.'); return; }
+  if (!window.confirm(`Send ${payload.length} line${payload.length === 1 ? '' : 's'} to estimate #${id}?\n\nThis REPLACES the estimate's current line items.`)) return;
+  const btn = $('bidSendEstimate'); const prev = btn.textContent; btn.disabled = true; btn.textContent = 'Sending…';
+  try {
+    const r = await apiEstimate('/' + encodeURIComponent(id) + '/lines', { method: 'PUT', body: JSON.stringify({ lines: payload }), timeout: 20000 });
+    if (r.ok) {
+      setMsg(`Sent ${payload.length} line${payload.length === 1 ? '' : 's'} to estimate #${id}. Review and send the bid in OpsFloa.`);
+    } else if (r.status === 409) {
+      setMsg(`Estimate #${id} is locked (already sent/accepted). Duplicate it in OpsFloa to revise.`);
+    } else if (r.status === 404) {
+      setMsg(`Estimate #${id} wasn't found — it may have been deleted.`);
+    } else if (r.status === 401 || r.status === 403) {
+      setMsg(`Not allowed to edit estimate #${id} — admin access is required in OpsFloa.`);
+    } else {
+      let msg = ''; try { msg = (await r.json()).error; } catch (_) {}
+      setMsg(`Couldn't send pricing (HTTP ${r.status}${msg ? ': ' + msg : ''}).`);
+    }
+  } catch (_) {
+    setMsg('Couldn’t reach OpsFloa to send pricing. Check your connection and try again.');
+  } finally { btn.disabled = false; btn.textContent = prev; }
+}
+
 $('btnBid').addEventListener('click', openRoofBid);
+$('bidSendEstimate').addEventListener('click', sendPricingToEstimate);
+if ($('bidEstimate')) $('bidEstimate').addEventListener('change', e => {
+  state.estimateId = e.target.value || null;
+  scheduleSave();
+  syncBidSendBtn();
+  const hint = $('bidEstimateHint');
+  if (hint) hint.textContent = state.estimateId ? 'Send puts this bid’s line items on the estimate.' : 'Not linked — pick an estimate to send this bid’s pricing.';
+});
 $('bidClose').addEventListener('click', () => $('roofBid').classList.add('hidden'));
 $('roofBid').addEventListener('click', e => { if (e.target === $('roofBid')) $('roofBid').classList.add('hidden'); });
 $('bidOP').addEventListener('input', e => {
@@ -2041,6 +2541,14 @@ $('bidCsv').addEventListener('click', bidCsv);
 
 /* ---- earthwork (sitework pack, S1: trace + designate; compute = next slice) ---- */
 const alignIsSet = () => { const a = state.earthwork.align; return !(a.a === 1 && a.b === 0 && a.e === 0 && a.f === 0); };
+// The two-sheet setup is "done" once both sheets are designated and — when they
+// differ — the alignment is solved. Drives collapsing the Sheets section.
+function dirtSetupComplete() {
+  const E = state.earthwork;
+  if (!E.existingPage || !E.proposedPage) return false;
+  if (E.existingPage === E.proposedPage) return true; // single sheet — no alignment needed
+  return alignIsSet();
+}
 
 function renderDirtPanel() {
   const panel = $('dirtPanel');
@@ -2048,21 +2556,50 @@ function renderDirtPanel() {
   const E = state.earthwork;
   const c = earthworkCounts();
   const rows = [];
-  rows.push('<div class="roof-sub">Sheets</div>');
-  rows.push(`<div class="dirt-row"><span>Existing sheet</span><span class="v">${E.existingPage ? 'page ' + E.existingPage : '—'}</span></div>`);
-  rows.push(`<button class="btn tiny dirt-btn" data-act="set-existing">Set current page (${state.page}) as Existing</button>`);
-  rows.push(`<div class="dirt-row"><span>Proposed sheet</span><span class="v">${E.proposedPage ? 'page ' + E.proposedPage : '—'}</span></div>`);
-  rows.push(`<button class="btn tiny dirt-btn" data-act="set-proposed">Set current page (${state.page}) as Proposed</button>`);
-  rows.push(`<div class="dirt-row"><span>Alignment</span><span class="v">${alignIsSet() ? 'set' : 'not set'} · use ⌖</span></div>`);
-  rows.push(`<label class="dirt-row" style="cursor:pointer"><span>Ghost the other sheet</span><input type="checkbox" id="ghostChk" ${ghostOn ? 'checked' : ''}></label>`);
+  // Sheets — collapsible; collapses by default once the setup is complete
+  const setupDone = dirtSetupComplete();
+  rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-sheets"><span>Sheets${setupDone ? ' ✓' : ''}</span><span class="v">${dirtSheetsCollapsed ? '▸' : '▾'}</span></div>`);
+  if (!dirtSheetsCollapsed) {
+    rows.push(`<div class="dirt-row"><span>Existing sheet</span><span class="v">${E.existingPage ? 'page ' + E.existingPage : '—'}</span></div>`);
+    rows.push(`<button class="btn tiny dirt-btn" data-act="set-existing">Set current page (${state.page}) as Existing</button>`);
+    rows.push(`<div class="dirt-row"><span>Proposed sheet</span><span class="v">${E.proposedPage ? 'page ' + E.proposedPage : '—'}</span></div>`);
+    rows.push(`<button class="btn tiny dirt-btn" data-act="set-proposed">Set current page (${state.page}) as Proposed</button>`);
+    const alignVal = (E.existingPage && E.proposedPage && E.existingPage === E.proposedPage)
+      ? 'n/a (same sheet)'
+      : alignIsSet()
+        ? 'set · <a class="dirt-link" data-act="do-align">re-align</a>'
+        : '<a class="dirt-link" data-act="do-align">not set — align</a>';
+    rows.push(`<div class="dirt-row"><span>Alignment</span><span class="v">${alignVal}</span></div>`);
+    rows.push(`<label class="dirt-row" style="cursor:pointer"><span>Ghost the other sheet</span><input type="checkbox" id="ghostChk" ${ghostOn ? 'checked' : ''}></label>`);
+  }
 
-  rows.push('<div class="roof-sub">Traced</div>');
-  rows.push(`<div class="dirt-row"><span>Existing contours / pads</span><span class="v">${c.existing}</span></div>`);
-  rows.push(`<div class="dirt-row"><span>Proposed contours / pads</span><span class="v">${c.proposed}</span></div>`);
+  // Contours — the focused surface's traced lines/spots/pads, sitework-style:
+  // sorted by elevation, color swatch, edit ✎ / delete ✕, click to select & jump.
+  const surfLabel = curSurface === 'proposed' ? 'Proposed' : 'Existing';
+  const surfItems = state.markups
+    .filter(m => (m.kind === 'contour' || m.kind === 'espot' || m.kind === 'epad') && (m.surface || 'existing') === curSurface)
+    .sort((a, b) => (b.elev == null ? -1e9 : b.elev) - (a.elev == null ? -1e9 : a.elev));
+  rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-contours"><span>${surfLabel} contours (${surfItems.length})</span><span class="v">${dirtContoursCollapsed ? '▸' : '▾'}</span></div>`);
+  if (!dirtContoursCollapsed) {
+    rows.push(`<div class="dirt-crow"><span class="hint">New traces are <b>${curSurface}</b> · dashed = existing, solid = proposed</span>${surfItems.length ? '<button class="ctr-clear" data-act="clear-surface" title="Delete all traces on this surface">Clear</button>' : ''}</div>`);
+    if (!surfItems.length) {
+      rows.push('<div class="hint" style="margin:2px 0 8px">No traces on this surface yet — trace a contour (⛰), spot (◎), or pad (◫).</div>');
+    } else {
+      for (const m of surfItems) {
+        const typ = m.kind === 'espot' ? 'spot' : m.kind === 'epad' ? 'flat pad' : `${m.pts.length} pts`;
+        rows.push(`<div class="ctr-row${m.id === selectedId ? ' sel' : ''}" data-id="${m.id}">` +
+          `<span class="ctr-sw" style="background:${elevColor(m.elev || 0, m.surface)}"></span>` +
+          `<span class="ctr-lbl">${m.elev != null ? fmt(m.elev, 1) + ' ft' : 'no elev'} · ${typ}</span>` +
+          `<button class="ctr-btn" data-act="edit-elev" title="Edit elevation">✎</button>` +
+          `<button class="ctr-btn" data-act="del-ctr" title="Delete">✕</button>` +
+          `</div>`);
+      }
+    }
+  }
   rows.push(`<div class="dirt-row"><span>Boundary</span><span class="v">${c.boundary ? 'set' : '—'}</span></div>`);
-  rows.push(`<div class="hint" style="margin:6px 0">New contours are <b>${curSurface}</b> (toolbar toggle). Existing draws dashed, proposed solid; type each elevation.</div>`);
 
   rows.push('<div class="roof-sub">Earthwork</div>');
+  rows.push('<div class="dirt-set">Contour interval <input type="number" id="ewInterval" min="0" step="0.5"> ft <span class="hint">— next contour auto-steps by this</span></div>');
   rows.push('<div class="dirt-set">Grid <input type="number" id="ewGrid" min="0.5" step="0.5"> ft · Shrink <input type="number" id="ewShrink" min="0"> % · Swell <input type="number" id="ewSwell" min="0"> % · Truck <input type="number" id="ewTruck" min="1"> CY</div>');
   rows.push('<button class="btn go dirt-btn" data-act="calc">∑ Calculate Cut / Fill</button>');
   if (E.result) {
@@ -2090,16 +2627,85 @@ function renderDirtPanel() {
   const body = $('dirtBody');
   body.innerHTML = rows.join('');
   $('ewGrid').value = E.gridFt; $('ewShrink').value = E.shrink; $('ewSwell').value = E.swell; $('ewTruck').value = E.truckCap;
+  $('ewInterval').value = E.interval != null ? E.interval : 1;
   const numHandler = (el, key, min, def) => el.addEventListener('change', e => { E[key] = Math.max(min, parseFloat(e.target.value) || def); e.target.value = E[key]; scheduleSave(); });
+  numHandler($('ewInterval'), 'interval', 0, 1);
   numHandler($('ewGrid'), 'gridFt', 0.5, 5);
   numHandler($('ewShrink'), 'shrink', 0, 15);
   numHandler($('ewSwell'), 'swell', 0, 25);
   numHandler($('ewTruck'), 'truckCap', 1, 12);
-  body.querySelector('[data-act="set-existing"]').addEventListener('click', () => { E.existingPage = state.page; scheduleSave(); renderDirtPanel(); });
-  body.querySelector('[data-act="set-proposed"]').addEventListener('click', () => { E.proposedPage = state.page; scheduleSave(); renderDirtPanel(); });
+  const setEx = body.querySelector('[data-act="set-existing"]');
+  if (setEx) setEx.addEventListener('click', () => { E.existingPage = state.page; scheduleSave(); renderDirtPanel(); });
+  const setPr = body.querySelector('[data-act="set-proposed"]');
+  if (setPr) setPr.addEventListener('click', () => { E.proposedPage = state.page; scheduleSave(); renderDirtPanel(); });
+  const toggleSheets = body.querySelector('[data-act="toggle-sheets"]');
+  if (toggleSheets) toggleSheets.addEventListener('click', () => { dirtSheetsCollapsed = !dirtSheetsCollapsed; renderDirtPanel(); });
+  const doAlign = body.querySelector('[data-act="do-align"]');
+  if (doAlign) doAlign.addEventListener('click', () => setTool('align'));
+  const toggleContours = body.querySelector('[data-act="toggle-contours"]');
+  if (toggleContours) toggleContours.addEventListener('click', () => { dirtContoursCollapsed = !dirtContoursCollapsed; renderDirtPanel(); });
+  const clearSurf = body.querySelector('[data-act="clear-surface"]');
+  if (clearSurf) clearSurf.addEventListener('click', clearSurfaceContours);
+  body.querySelectorAll('.ctr-row').forEach(row => {
+    row.addEventListener('click', e => {
+      const btn = e.target.closest('button');
+      const id = row.dataset.id;
+      if (btn && btn.dataset.act === 'edit-elev') { editContourElev(id); return; }
+      if (btn && btn.dataset.act === 'del-ctr') { deleteContourById(id); return; }
+      selectContourById(id);
+    });
+  });
   body.querySelector('[data-act="calc"]').addEventListener('click', calculateCutFill);
   const gk = body.querySelector('#ghostChk');
   if (gk) gk.addEventListener('change', e => { ghostOn = e.target.checked; vp.requestDraw(); });
+}
+
+// Contour-list actions (dirt panel) — mirror the sitework tool's list.
+async function selectContourById(id) {
+  const m = state.markups.find(x => x.id === id);
+  if (!m) return;
+  setTool('select'); // drop straight into edit mode so points are draggable right away
+  selectedId = id;
+  await setPage(m.page);
+  // center the view on the picked trace (same as the markup-list jump)
+  const bb = markupBBox(vp.ctx, m);
+  const r = els.cv.parentElement.getBoundingClientRect();
+  vp.view.panX = r.width / 2 - ((bb.x0 + bb.x1) / 2) * vp.view.zoom;
+  vp.view.panY = r.height / 2 - ((bb.y0 + bb.y1) / 2) * vp.view.zoom;
+  renderDirtPanel();
+  vp.requestDraw();
+  setMsg(!canReshape(m) ? 'Editing — drag to move it.'
+    : isOpenPoly(m) ? 'Editing — drag a point to reshape · Alt-click: add / remove a point · Shift+Alt-click a segment: cut.'
+    : 'Editing — drag a point to reshape · Alt-click an edge to add a point, a point to remove it.');
+}
+function editContourElev(id) {
+  const m = state.markups.find(x => x.id === id);
+  if (!m) return;
+  modals.askNumber(`Edit elevation (ft) — ${m.surface === 'proposed' ? 'proposed' : 'existing'}`, 'e.g. 812.5',
+    m.elev != null ? m.elev : '', 1)
+    .then(v => { if (v != null) { const prev = snapshot(); m.elev = v; lastElev[m.surface] = v; state.earthwork.result = null; pushUndo(prev); markupsChanged(); } });
+}
+function deleteContourById(id) {
+  if (!state.markups.some(x => x.id === id)) return;
+  const prev = snapshot();
+  state.markups = state.markups.filter(x => x.id !== id);
+  if (selectedId === id) selectedId = null;
+  state.earthwork.result = null;
+  pushUndo(prev);
+  markupsChanged();
+}
+function clearSurfaceContours() {
+  const ids = new Set(state.markups
+    .filter(m => (m.kind === 'contour' || m.kind === 'espot' || m.kind === 'epad') && (m.surface || 'existing') === curSurface)
+    .map(m => m.id));
+  if (!ids.size) return;
+  if (!window.confirm(`Delete all ${ids.size} traced ${curSurface} line${ids.size === 1 ? '' : 's'} on this surface? This can be undone.`)) return;
+  const prev = snapshot();
+  state.markups = state.markups.filter(m => !ids.has(m.id));
+  if (selectedId && ids.has(selectedId)) selectedId = null;
+  state.earthwork.result = null;
+  pushUndo(prev);
+  markupsChanged();
 }
 
 function syncDirtInputs() { renderDirtPanel(); }
@@ -2252,21 +2858,52 @@ function drawHeat(ctx) {
 $('btnDirt').addEventListener('click', () => {
   const p = $('dirtPanel');
   p.classList.toggle('hidden');
-  if (!p.classList.contains('hidden')) { els.markupPanel.classList.add('hidden'); $('roofPanel').classList.add('hidden'); $('dwPanel').classList.add('hidden'); renderDirtPanel(); }
+  if (!p.classList.contains('hidden')) {
+    els.markupPanel.classList.add('hidden'); $('roofPanel').classList.add('hidden'); $('dwPanel').classList.add('hidden');
+    dirtSheetsCollapsed = dirtSetupComplete();
+    renderDirtPanel();
+  }
+  syncPanelButtons();
 });
-if ($('surfaceSel')) $('surfaceSel').addEventListener('change', e => {
-  curSurface = e.target.value;
+// Existing ⇄ Proposed is a click-to-toggle (no dropdown): each click flips which
+// surface new contours/spots/pads belong to.
+function renderSurfaceToggle() {
+  const btn = $('surfaceToggle'); if (!btn) return;
+  const lbl = $('surfaceToggleLabel'); if (lbl) lbl.textContent = curSurface === 'proposed' ? 'Proposed' : 'Existing';
+  btn.classList.toggle('surf-existing', curSurface !== 'proposed');
+  btn.classList.toggle('surf-proposed', curSurface === 'proposed');
+}
+function setSurface(s) {
+  curSurface = s === 'proposed' ? 'proposed' : 'existing';
+  renderSurfaceToggle();
+  // Jump to that surface's designated sheet (they're usually different pages).
+  const E = state.earthwork;
+  const target = curSurface === 'proposed' ? E.proposedPage : E.existingPage;
+  if (target && target !== state.page) { setPage(target); setMsg(`Switched to the ${curSurface} sheet (page ${target}).`); }
+  else if (!target) setMsg(`New traces are now ${curSurface} — set its sheet in the ⛰ Dirt panel (“Set current page as ${curSurface === 'proposed' ? 'Proposed' : 'Existing'}”).`);
   renderDirtPanel();
-  if (tool === 'contour') setMsg(`Tracing ${curSurface} contours.`);
-});
+  vp.requestDraw(); // re-apply the surface visibility filter (esp. same-sheet, no page change)
+}
+if ($('surfaceToggle')) {
+  renderSurfaceToggle();
+  $('surfaceToggle').addEventListener('click', () => setSurface(curSurface === 'proposed' ? 'existing' : 'proposed'));
+}
 
 /* ============================== Topbar & keyboard ============================== */
 
 els.btnPrev.addEventListener('click', () => setPage(state.page - 1));
 els.btnNext.addEventListener('click', () => setPage(state.page + 1));
 els.btnFit.addEventListener('click', async () => {
+  if (!state.doc) return;
   const b = await baseSize(state.page);
-  vp.fitTo(b.width, b.height);
+  // already showing the whole sheet? a second Fit fills the black space instead
+  // of doing nothing (usually vertically, for a wide sheet). Fit again → contain.
+  if (vp.isAtFit(b.width, b.height)) {
+    vp.fitTo(b.width, b.height, { cover: true });
+    setMsg('Filled to the view — drag to see the edges. Fit again to show the whole sheet.');
+  } else {
+    vp.fitTo(b.width, b.height);
+  }
 });
 $('btnThumbs').addEventListener('click', () => document.body.classList.toggle('nothumbs'));
 
@@ -2327,17 +2964,20 @@ document.addEventListener('keydown', e => {
 function projectData() {
   return {
     app: 'plan-room', version: 1, page: state.page,
-    markups: state.markups, scales: state.scales,
+    markups: state.markups, scales: state.scales, scaleBars: state.scaleBars,
     roofPitch: state.roofPitch, roofWaste: state.roofWaste,
     roofPrices: state.roofPrices, roofOP: state.roofOP,
     earthwork: state.earthwork,
     trade: state.trade,
     bidMeta: state.bidMeta,
     drywall: state.drywall,
+    estimateId: state.estimateId || null,
   };
 }
 const defaultDrywall = () => ({ wallHeight: 9, sheetSF: 32, waste: 10, coverage: 375, coats: 2, finish: 'L4' });
-const defaultEarthwork = () => ({ existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 }, gridFt: 5, shrink: 15, swell: 25, truckCap: 12, result: null });
+const defaultEarthwork = () => ({ existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 }, gridFt: 5, shrink: 15, swell: 25, truckCap: 12, interval: 1, result: null });
+// next contour's default elevation = last + interval (auto-steps up a slope)
+const nextElevDefault = surf => { const iv = Number(state.earthwork.interval) || 0; return lastElev[surf] != null ? lastElev[surf] + iv : ''; };
 
 let saveTimer = null;
 function scheduleSave(now = false) {
@@ -2387,6 +3027,7 @@ async function openProject(rec) {
   resetDocState();
   state.markups = (rec.data && Array.isArray(rec.data.markups)) ? rec.data.markups : [];
   state.scales = (rec.data && rec.data.scales) || {};
+  state.scaleBars = (rec.data && rec.data.scaleBars) || {};
   state.roofPitch = (rec.data && rec.data.roofPitch != null) ? rec.data.roofPitch : 6;
   state.roofWaste = (rec.data && rec.data.roofWaste != null) ? rec.data.roofWaste : 12;
   state.roofPrices = (rec.data && rec.data.roofPrices) || {};
@@ -2395,6 +3036,7 @@ async function openProject(rec) {
   state.trade = (rec.data && rec.data.trade) || '';
   state.bidMeta = (rec.data && rec.data.bidMeta) || {};
   state.drywall = (rec.data && rec.data.drywall) || defaultDrywall();
+  state.estimateId = (rec.data && rec.data.estimateId) || null;
   renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
   try { localStorage.setItem('planroom-current', rec.id); } catch (_) {}
   updateProjectBtn();
@@ -2424,11 +3066,13 @@ async function newProject(name) {
   resetDocState();
   state.markups = [];
   state.scales = {};
+  state.scaleBars = {};
   state.roofPitch = 6; state.roofWaste = 12; state.roofPrices = {}; state.roofOP = 15;
   state.earthwork = defaultEarthwork();
   state.trade = '';
   state.bidMeta = {};
   state.drywall = defaultDrywall();
+  state.estimateId = null;
   renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
   try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
   updateProjectBtn();
@@ -2447,11 +3091,13 @@ function renderProjCurrent() {
     <div class="pc-meta">${meta}</div>
     <div class="pc-actions">
       <button id="pcOpen" class="btn primary">${hasDoc ? '＋ Add more sheets…' : '📄 Open plans…'}</button>
+      ${hasDoc && n > 1 ? '<button id="pcSheets" class="btn">🗂 Manage sheets</button>' : ''}
       <button id="pcLoad" class="btn">📂 Load saved file</button>
       <button id="pcCompany" class="btn">☁ Company / join live</button>
     </div>`;
   $('projCurrent').querySelector('.pc-name').textContent = state.projectName || 'Project';
   $('pcOpen').addEventListener('click', pickPlans);
+  if ($('pcSheets')) $('pcSheets').addEventListener('click', () => { els.projects.classList.add('hidden'); openSheetMgr(); });
   $('pcLoad').addEventListener('click', () => $('fileImport').click());
   $('pcCompany').addEventListener('click', () => { els.projects.classList.add('hidden'); openCompany(); });
 }
@@ -2558,6 +3204,7 @@ $('fileImport').addEventListener('change', async e => {
   await newProject(/\(imported\)\s*$/.test(baseName) ? baseName : `${baseName} (imported)`);
   state.markups = Array.isArray(d.markups) ? d.markups : [];
   state.scales = d.scales || {};
+  state.scaleBars = d.scaleBars || {};
   if (d.roofPitch != null) state.roofPitch = d.roofPitch;
   if (d.roofWaste != null) state.roofWaste = d.roofWaste;
   state.roofPrices = d.roofPrices || {};
@@ -2566,6 +3213,7 @@ $('fileImport').addEventListener('change', async e => {
   state.trade = d.trade || '';
   state.bidMeta = d.bidMeta || {};
   state.drywall = d.drywall || defaultDrywall();
+  state.estimateId = d.estimateId || null;
   renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
   if (d.docB64) {
     const bytes = base64ToBytes(d.docB64);
@@ -2679,9 +3327,18 @@ function exportCsv() {
   setMsg('Markup summary CSV downloaded.');
 }
 
+// open a dropdown rightward, but flip it leftward if that would run off-screen
+function openMenu(menu) {
+  menu.classList.remove('hidden', 'menu-left');
+  if (menu.getBoundingClientRect().right > window.innerWidth - 8) menu.classList.add('menu-left');
+}
+
 // Export dropdown
 const exportMenu = $('exportMenu');
-$('btnExportMenu').addEventListener('click', e => { e.stopPropagation(); exportMenu.classList.toggle('hidden'); });
+$('btnExportMenu').addEventListener('click', e => {
+  e.stopPropagation();
+  if (exportMenu.classList.contains('hidden')) openMenu(exportMenu); else exportMenu.classList.add('hidden');
+});
 exportMenu.addEventListener('click', e => {
   const item = e.target.closest('[data-act]');
   if (!item) return;
@@ -2694,6 +3351,29 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') exportMenu.classList.add('hidden'); });
 
+// mobile toolbar toggle — show/hide everything after Save
+$('btnMenuToggle').addEventListener('click', () => {
+  const closed = document.body.classList.toggle('tb-menu-closed'); // shown by default
+  $('btnMenuToggle').setAttribute('aria-expanded', closed ? 'false' : 'true');
+  $('btnMenuToggle').classList.toggle('primary', closed); // highlight when the toolbar is hidden
+});
+
+// Layers dropdown — show/hide markup categories
+const layersMenu = $('layersMenu');
+$('btnLayers').addEventListener('click', e => {
+  e.stopPropagation();
+  if (layersMenu.classList.contains('hidden')) openMenu(layersMenu); else layersMenu.classList.add('hidden');
+});
+layersMenu.querySelectorAll('input[data-layer]').forEach(inp => inp.addEventListener('change', () => {
+  layers[inp.dataset.layer] = inp.checked;
+  $('btnLayers').classList.toggle('primary', Object.values(layers).some(v => !v)); // highlight when something's hidden
+  vp.requestDraw();
+}));
+document.addEventListener('click', e => {
+  if (!layersMenu.classList.contains('hidden') && !e.target.closest('.menu-wrap')) layersMenu.classList.add('hidden');
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') layersMenu.classList.add('hidden'); });
+
 /* ===================== Company library (server-backed) =====================
  * Shares this project — plans, markups, measurements — to the company library
  * (the shared /api/takeoffs route, rows marked data.app='plan-room'). Big plan
@@ -2703,7 +3383,11 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') exportMenu.c
  */
 
 function toolApiBase() { return (localStorage.getItem('tc_api_base') || '') + '/api'; }
-function toolToken() { return localStorage.getItem('tc_token') || sessionStorage.getItem('tc_token') || ''; }
+// sessionStorage FIRST (matches the main app's api.js): during superadmin
+// login-as, the impersonation token lives in sessionStorage while the admin's
+// own token stays in localStorage — reading localStorage first would hit the
+// wrong company (empty estimates / library).
+function toolToken() { return sessionStorage.getItem('tc_token') || localStorage.getItem('tc_token') || ''; }
 // opts.timeout (ms) aborts a request that never settles — so a hung backend
 // can't freeze the UI waiting on it
 function withTimeout(opts) {
@@ -2717,6 +3401,17 @@ async function apiFetch(path, opts = {}) {
   const { rest, done } = withTimeout(opts);
   try {
     return await fetch(toolApiBase() + '/takeoffs' + path, {
+      ...rest,
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + toolToken(), ...(rest.headers || {}) },
+    });
+  } finally { done(); }
+}
+// /api/estimates/* — the bid-workflow bridge (launch from an estimate, push
+// pricing back). Same auth as the other tool→backend calls.
+async function apiEstimate(path, opts = {}) {
+  const { rest, done } = withTimeout(opts);
+  try {
+    return await fetch(toolApiBase() + '/estimates' + path, {
       ...rest,
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + toolToken(), ...(rest.headers || {}) },
     });
@@ -2761,7 +3456,7 @@ async function uploadDocToR2() {
   return publicUrl;
 }
 
-async function shareToCompany() {
+async function shareToCompany({ overwrite = false } = {}) {
   if (!state.doc && !state.markups.length) {
     companyMsg('Nothing to share yet — open a plan set first.', true);
     return;
@@ -2771,8 +3466,13 @@ async function shareToCompany() {
   try {
     if (state.serverId) {
       const res = await apiFetch('/' + state.serverId, {
-        method: 'PUT', body: JSON.stringify({ name, data: projectData(), version: state.serverVersion }),
+        method: 'PUT', body: JSON.stringify({ name, data: projectData(), version: state.serverVersion, overwrite }),
       });
+      if (res.status === 423) {
+        const j = await res.json().catch(() => ({}));
+        companyMsg(`🔒 Locked by ${j.lockedByName || 'a teammate'} — ask them or an admin to unlock (in ☁ Company), or use “Copy to my projects” to work separately.`, true);
+        return;
+      }
       if (res.status === 409) { return shareConflict(await res.json()); }
       if (!res.ok) throw new Error('HTTP ' + res.status);
       state.serverVersion = (await res.json()).version;
@@ -2794,10 +3494,18 @@ async function shareToCompany() {
   }
 }
 
-function shareConflict(c) {
-  const who = c.updatedByName || 'A teammate';
-  const ok = confirm(`${who} changed this shared project since you opened it.\n\nOK = save YOURS as a new, separate company copy.\nCancel = leave the shared copy as theirs (keep editing locally).`);
-  if (ok) { state.serverId = null; state.serverVersion = null; return shareToCompany(); }
+async function shareConflict(c) {
+  const who = esc(c.updatedByName || 'A teammate');
+  const choice = await askChoice(
+    'Someone else changed this shared takeoff',
+    `${who} saved changes since you opened it (now v${c.currentVersion}). What do you want to do?`,
+    [
+      { label: '📑 Keep both — save mine as a new, separate copy', value: 'fork', primary: true },
+      { label: '⚠ Overwrite theirs with my version (discards their changes)', value: 'overwrite', danger: true },
+      { label: 'Cancel — leave theirs, keep editing locally', value: null },
+    ]);
+  if (choice === 'fork') { state.serverId = null; state.serverVersion = null; return shareToCompany(); }
+  if (choice === 'overwrite') { return shareToCompany({ overwrite: true }); }
   companyMsg('Left the shared copy as theirs — your work is still saved locally.');
 }
 
@@ -2839,11 +3547,15 @@ async function refreshCompanyList() {
     }
     for (const r of rows) {
       const when = r.updated_at ? new Date(r.updated_at).toLocaleString() : '';
+      const locked = !!r.locked_by;
+      const lockBadge = locked ? ` · <span class="pill" style="background:var(--warn);color:#3a2a00">🔒 ${esc(r.locked_by_name || 'locked')}</span>` : '';
+      const lockBtn = `<button class="btn tiny" data-act="${locked ? 'unlock' : 'lock'}" title="${locked ? 'Release the lock (the holder or any admin can)' : 'Reserve this — teammates can’t save over it while it’s locked'}">${locked ? '🔓' : '🔒'}</button>`;
       const row = document.createElement('div');
       row.className = 'proj-row' + (String(r.id) === String(state.serverId) ? ' current' : '');
       row.innerHTML =
         `<div class="grow"><div class="name"></div>` +
-        `<div class="meta">${r.pdf_name ? esc(r.pdf_name) + ' · ' : ''}v${r.version}${r.updated_by_name ? ' · by ' + esc(r.updated_by_name) : ''} · ${when}</div></div>` +
+        `<div class="meta">${r.pdf_name ? esc(r.pdf_name) + ' · ' : ''}v${r.version}${r.updated_by_name ? ' · by ' + esc(r.updated_by_name) : ''} · ${when}${lockBadge}</div></div>` +
+        lockBtn +
         (String(r.id) === String(state.serverId)
           ? '<span class="pill">current</span>'
           : '<button class="btn tiny" data-act="copy">Copy to my projects</button>') +
@@ -2851,10 +3563,25 @@ async function refreshCompanyList() {
       row.querySelector('.name').textContent = r.name;
       const copyBtn = row.querySelector('[data-act="copy"]');
       if (copyBtn) copyBtn.addEventListener('click', () => copyCompanyProject(r.id));
+      const lkBtn = row.querySelector('[data-act="lock"]');
+      if (lkBtn) lkBtn.addEventListener('click', () => lockShared(r.id, true));
+      const unBtn = row.querySelector('[data-act="unlock"]');
+      if (unBtn) unBtn.addEventListener('click', () => lockShared(r.id, false));
       row.querySelector('[data-act="del"]').addEventListener('click', () => deleteCompanyShared(r.id, r.name));
       list.appendChild(row);
     }
   }
+}
+
+async function lockShared(id, lock) {
+  try {
+    const res = await apiFetch('/' + id + '/' + (lock ? 'lock' : 'unlock'), { method: 'POST' });
+    if (res.status === 409) { const j = await res.json().catch(() => ({})); companyMsg(`Already locked by ${j.lockedByName || 'a teammate'}.`, true); return; }
+    if (res.status === 403) { companyMsg('Only the person who locked it or an admin can unlock it.', true); return; }
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    companyMsg(lock ? 'Locked — teammates can’t save over it until it’s unlocked.' : 'Unlocked.');
+    refreshCompanyList();
+  } catch (e) { companyMsg('Could not change the lock: ' + e.message, true); }
 }
 
 async function copyCompanyProject(id) {
@@ -2892,6 +3619,7 @@ async function copyCompanyProject(id) {
     state.projectId = keepId;
     state.markups = Array.isArray(t.data.markups) ? t.data.markups : [];
     state.scales = t.data.scales || {};
+    state.scaleBars = t.data.scaleBars || {};
     if (t.data.roofPitch != null) state.roofPitch = t.data.roofPitch;
     if (t.data.roofWaste != null) state.roofWaste = t.data.roofWaste;
     state.roofPrices = t.data.roofPrices || {};
@@ -2900,6 +3628,7 @@ async function copyCompanyProject(id) {
     state.trade = t.data.trade || '';
     state.bidMeta = t.data.bidMeta || {};
     state.drywall = t.data.drywall || defaultDrywall();
+    state.estimateId = t.data.estimateId || null;
     renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
     try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
     updateProjectBtn();
@@ -3489,7 +4218,7 @@ async function wandTrace(w) {
   state.markups.push(m);
   pushUndo(prev);
   markupsChanged();
-  modals.askNumber(`Contour elevation (ft) — ${surf}`, 'prefilled from the nearest printed number if one was found', labelVal != null ? labelVal : (lastElev[surf] != null ? lastElev[surf] : ''), 1)
+  modals.askNumber(`Contour elevation (ft) — ${surf}`, 'prefilled from the nearest printed number if one was found', labelVal != null ? labelVal : nextElevDefault(surf), 1)
     .then(v => { if (v != null) { m.elev = v; lastElev[surf] = v; markupsChanged(); } });
 }
 
@@ -3525,31 +4254,39 @@ const dceilingSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0);
 const FINISH_MUD = { L3: 0.020, L4: 0.027, L5: 0.036 }; // gal ready-mix / SF by finish level
 function drywallTotals() {
   const D = state.drywall;
-  let wallSF = 0, ceilSF = 0, wallLF = 0;
+  let wallSF = 0, ceilSF = 0, wallLF = 0, openDeductSF = 0;
+  const openCounts = { door: 0, window: 0, opening: 0 };
+  const trimLF = { base: 0, crown: 0, chair: 0 };
   for (const m of state.markups) {
     if (m.kind === 'dwall') { wallSF += dwallSf(m); wallLF += dwallLenFt(m); }
     else if (m.kind === 'dceiling') ceilSF += dceilingSf(m);
+    else if (m.kind === 'dopening') { const c = m.cfg || {}; const n = m.pts.length; openDeductSF += n * (Number(c.deductSF) || 0); if (openCounts[c.otype] != null) openCounts[c.otype] += n; }
+    else if (m.kind === 'dtrim') { const c = m.cfg || {}; if (trimLF[c.ttype] != null) trimLF[c.ttype] += polyLengthFt(m.pts, state.scales[m.page] || 0); }
   }
-  const boardSF = Math.max(0, wallSF + ceilSF);
+  const netWallSF = Math.max(0, wallSF - openDeductSF);
+  const boardSF = Math.max(0, netWallSF + ceilSF);
   const boards = Math.ceil(boardSF * (1 + (Number(D.waste) || 0) / 100) / (Number(D.sheetSF) || 32));
   const mudGal = boardSF * (FINISH_MUD[D.finish] || 0.027);
   const tapeLF = boardSF * 0.37;
   const paintGal = Number(D.coverage) > 0 ? (boardSF / Number(D.coverage)) * (Number(D.coats) || 1) : 0;
-  return { wallSF, ceilSF, boardSF, wallLF, boards, mudGal, tapeLF, paintGal };
+  return { wallSF, netWallSF, ceilSF, boardSF, wallLF, openDeductSF, openCounts, trimLF, boards, mudGal, tapeLF, paintGal };
 }
-const DW_DEFAULT_PRICE = { hang: 0.55, finish: 0.65, board: 12, mud: 16, tape: 5, paint: 45 };
+const DW_DEFAULT_PRICE = { hang: 0.55, finish: 0.65, board: 12, mud: 16, tape: 5, paint: 45, door: 65, window: 45, opening: 30, trim_base: 2.5, trim_crown: 4.5, trim_chair: 3.5 };
 function drywallBidLines() {
   const T = drywallTotals();
-  if (T.boardSF < 0.5) return [];
   const D = state.drywall;
-  return [
+  const lines = [];
+  if (T.boardSF >= 0.5) lines.push(
     { key: 'dw_hang', label: 'Drywall hang (labor)', qty: T.boardSF, unit: 'SF', q: 0, defPrice: DW_DEFAULT_PRICE.hang },
     { key: 'dw_finish', label: `Drywall finish ${D.finish} (labor)`, qty: T.boardSF, unit: 'SF', q: 0, defPrice: DW_DEFAULT_PRICE.finish },
     { key: 'dw_board', label: `Drywall board (${D.sheetSF} SF sheets · ${D.waste}% waste)`, qty: T.boards, unit: 'sheet', q: 0, defPrice: DW_DEFAULT_PRICE.board },
     { key: 'dw_mud', label: 'Joint compound', qty: T.mudGal, unit: 'gal', q: 0, defPrice: DW_DEFAULT_PRICE.mud },
     { key: 'dw_tape', label: 'Joint tape', qty: T.tapeLF, unit: 'LF', q: 0, defPrice: DW_DEFAULT_PRICE.tape },
     { key: 'dw_paint', label: `Paint (${D.coats} coats)`, qty: T.paintGal, unit: 'gal', q: 0, defPrice: DW_DEFAULT_PRICE.paint },
-  ];
+  );
+  for (const k of ['door', 'window', 'opening']) if (T.openCounts[k]) lines.push({ key: 'dw_' + k, label: `${OPENING_LABEL[k]} (paint / case)`, qty: T.openCounts[k], unit: 'EA', q: 0, defPrice: DW_DEFAULT_PRICE[k] });
+  for (const k of ['base', 'crown', 'chair']) if (T.trimLF[k] > 0.5) lines.push({ key: 'dw_trim_' + k, label: `${TRIM_LABEL[k]} trim`, qty: T.trimLF[k], unit: 'LF', q: 0, defPrice: DW_DEFAULT_PRICE['trim_' + k] });
+  return lines;
 }
 function renderDrywallPanel() {
   const panel = $('dwPanel');
@@ -3562,14 +4299,19 @@ function renderDrywallPanel() {
   rows.push('<div class="dirt-set">Sheet <select id="dwSheet"><option value="32">4×8 (32)</option><option value="40">4×10 (40)</option><option value="48">4×12 (48)</option></select> SF · Waste <input type="number" id="dwWaste" min="0"> %</div>');
   rows.push('<div class="dirt-set">Paint <input type="number" id="dwCov" min="1"> SF/gal · Coats <input type="number" id="dwCoats" min="1"> · Finish <select id="dwFinish"><option>L3</option><option>L4</option><option>L5</option></select></div>');
   rows.push('<div class="roof-sub">Quantities</div>');
-  rows.push(`<div class="dirt-row"><span>Wall SF (net)</span><span class="v">${fmt(T.wallSF)}</span></div>`);
+  rows.push(`<div class="dirt-row"><span>Wall SF (gross)</span><span class="v">${fmt(T.wallSF)}</span></div>`);
+  if (T.openDeductSF > 0) rows.push(`<div class="dirt-row"><span>− openings</span><span class="v">−${fmt(T.openDeductSF)}</span></div>`);
   rows.push(`<div class="dirt-row"><span>Ceiling SF</span><span class="v">${fmt(T.ceilSF)}</span></div>`);
   rows.push(`<div class="dirt-row"><b>Board &amp; finish SF</b><span class="v"><b>${fmt(T.boardSF)}</b></span></div>`);
   rows.push(`<div class="dirt-row"><span>Boards (${D.sheetSF} SF)</span><span class="v">${fmt(T.boards, 0)}</span></div>`);
   rows.push(`<div class="dirt-row"><span>Joint compound</span><span class="v">${fmt(T.mudGal, 1)} gal</span></div>`);
   rows.push(`<div class="dirt-row"><span>Tape</span><span class="v">${fmt(T.tapeLF, 0)} LF</span></div>`);
   rows.push(`<div class="dirt-row"><span>Paint (${D.coats} coats)</span><span class="v">${fmt(T.paintGal, 1)} gal</span></div>`);
-  rows.push('<div class="hint" style="margin:4px 0">Wall SF = length × height × sides. Prices in $ Bid. Openings &amp; trim come next.</div>');
+  const oc = T.openCounts, tl = T.trimLF;
+  if (oc.door || oc.window || oc.opening) rows.push(`<div class="dirt-row"><span>Openings</span><span class="v">${[oc.door && oc.door + ' dr', oc.window && oc.window + ' win', oc.opening && oc.opening + ' op'].filter(Boolean).join(' · ')}</span></div>`);
+  const trimBits = ['base', 'crown', 'chair'].filter(k => tl[k] > 0.5).map(k => `${TRIM_LABEL[k]} ${fmt(tl[k], 0)}`);
+  if (trimBits.length) rows.push(`<div class="dirt-row"><span>Trim LF</span><span class="v">${trimBits.join(' · ')}</span></div>`);
+  rows.push('<div class="hint" style="margin:4px 0">Wall SF = length × height × sides, less opening deducts. Prices in $ Bid.</div>');
   const body = $('dwBody');
   body.innerHTML = rows.join('');
   $('dwHeight').value = D.wallHeight; $('dwSheet').value = String(D.sheetSF); $('dwWaste').value = D.waste;
@@ -3587,12 +4329,15 @@ $('btnDw').addEventListener('click', () => {
   const p = $('dwPanel');
   p.classList.toggle('hidden');
   if (!p.classList.contains('hidden')) { els.markupPanel.classList.add('hidden'); $('roofPanel').classList.add('hidden'); $('dirtPanel').classList.add('hidden'); renderDrywallPanel(); }
+  syncPanelButtons();
 });
 if ($('dwSidesSel')) $('dwSidesSel').addEventListener('change', e => {
   curDwSides = parseInt(e.target.value, 10) || 2;
   renderDrywallPanel();
   if (tool === 'dwall') setMsg(`New wall runs are ${curDwSides}-side.`);
 });
+if ($('dwOpeningSel')) $('dwOpeningSel').addEventListener('change', e => { curDwOpening = e.target.value; if (tool === 'dopening') setTool('dopening'); });
+if ($('dwTrimSel')) $('dwTrimSel').addEventListener('change', e => { curDwTrim = e.target.value; if (tool === 'dtrim') setTool('dtrim'); });
 
 /* ===================== Live sessions (SSE + REST ops) =====================
  * Host "goes live" on the current project; teammates join and co-edit in real
@@ -3615,11 +4360,12 @@ async function apiLive(path, opts = {}) {
 }
 
 function sessionDoc() {
-  return { scales: state.scales, page: state.page, roofPitch: state.roofPitch, roofWaste: state.roofWaste, roofPrices: state.roofPrices, roofOP: state.roofOP, earthwork: state.earthwork, drywall: state.drywall };
+  return { scales: state.scales, scaleBars: state.scaleBars, page: state.page, roofPitch: state.roofPitch, roofWaste: state.roofWaste, roofPrices: state.roofPrices, roofOP: state.roofOP, earthwork: state.earthwork, drywall: state.drywall };
 }
 function applySessionDoc(d) {
   if (!d) return;
   if (d.scales) state.scales = d.scales;
+  if (d.scaleBars) state.scaleBars = d.scaleBars;
   if (d.roofPitch != null) state.roofPitch = d.roofPitch;
   if (d.roofWaste != null) state.roofWaste = d.roofWaste;
   if (d.roofPrices) state.roofPrices = d.roofPrices;
@@ -3789,7 +4535,46 @@ $('liveEnd').addEventListener('click', () => { if (confirm('End the session for 
 
 /* ============================== Boot ============================== */
 
+// Launched from an OpsFloa estimate (…/planroom/index.html?estimate=<id>).
+// Find-or-create: if this browser already holds the linked project, reopen it;
+// otherwise start one and pull the estimate's attached plan PDF through the API
+// (base64 proxy — no R2 CORS needed). Idempotent: clicking the button again
+// reopens the same takeoff. Plan Room projects are per-browser, so on another
+// device this starts a fresh (still-linked) takeoff.
+async function bootEstimate(id) {
+  vp.attach(paint);
+  applyTakeoffGate();
+  updatePageUI();
+  let existing = null;
+  try { existing = (await store.projAll()).find(p => p.data && String(p.data.estimateId) === String(id)) || null; } catch (_) {}
+  if (existing) { await openProject(existing); setMsg(`Reopened the takeoff linked to estimate #${id}.`); return; }
+  await newProject(`Estimate #${id}`);
+  state.estimateId = String(id);
+  await saveProjectNow();
+  if (!toolToken()) { setMsg(`New takeoff for estimate #${id}. Sign in to OpsFloa, then use 📄 Open plans… to load the estimate's PDF.`); return; }
+  setMsg('Loading the estimate’s plans…');
+  try {
+    const r = await apiEstimate('/' + encodeURIComponent(id) + '/plan-pdf', { timeout: 20000 });
+    if (r.ok) {
+      const j = await r.json();
+      const nm = j.name || 'plans.pdf';
+      const type = /\.png$/i.test(nm) ? 'image/png' : /\.jpe?g$/i.test(nm) ? 'image/jpeg' : /\.webp$/i.test(nm) ? 'image/webp' : 'application/pdf';
+      await openFromBytes(base64ToBytes(j.b64).buffer, nm, type);
+      await saveProjectNow();
+      setMsg(`Loaded the plans for estimate #${id}. Do the takeoff, then send pricing back from $ Bid.`);
+    } else if (r.status === 404) {
+      setMsg(`No plans are attached to estimate #${id} yet — attach a PDF on the estimate, or use 📄 Open plans….`);
+    } else {
+      setMsg(`Couldn't load the estimate's plans (HTTP ${r.status}). Use 📄 Open plans… to load them.`);
+    }
+  } catch (_) {
+    setMsg('Couldn’t reach OpsFloa to load the plans. Use 📄 Open plans… to load them.');
+  }
+}
+
 async function boot() {
+  const estId = new URLSearchParams(location.search).get('estimate');
+  if (estId) { await bootEstimate(estId); return; }
   vp.attach(paint);
   applyTakeoffGate();
   updatePageUI();

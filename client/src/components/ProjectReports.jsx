@@ -33,8 +33,6 @@ export default function ProjectReports({ currency = 'USD', settings = null }) {
   const { user } = useAuth();
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
-  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
   const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
   const workerLabelLower = workerLabel.toLowerCase();
   const workerLabelPluralLower = labelPl(settings?.label_worker, 'worker', user?.language).toLowerCase();
@@ -46,7 +44,7 @@ export default function ProjectReports({ currency = 'USD', settings = null }) {
   }, []);
 
   if (loading) return <SkeletonList count={4} rows={3} />;
-  if (projects.length === 0) return <p style={{ color: '#666' }}>{`No ${workLabelPlural.toLowerCase()} yet.`}</p>;
+  if (projects.length === 0) return <p style={{ color: '#666' }}>{`No projects yet.`}</p>;
 
   return (
     <div style={styles.list}>

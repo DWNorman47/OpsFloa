@@ -85,7 +85,6 @@ export default function AnalyticsDashboard({ weekStart = 1, settings = null }) {
   const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
   const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
   const workerLabelPluralLower = workerLabelPlural.toLowerCase();
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const formatDay = dateStr => new Date(dateStr + 'T00:00:00').toLocaleDateString(locale, { month: 'short', day: 'numeric' });
   const formatWeek = dateStr => new Date(dateStr + 'T00:00:00').toLocaleDateString(locale, { month: 'short', day: 'numeric' });
   const [data, setData] = useState(null);
@@ -311,7 +310,7 @@ export default function AnalyticsDashboard({ weekStart = 1, settings = null }) {
       {/* Project and worker breakdown */}
       <div style={styles.twoCol}>
         <div style={styles.card}>
-          <SectionTitle>{`Hours by ${workLabel.toLowerCase()}`} <span style={styles.rangeTag}>{rangeLabel}</span></SectionTitle>
+          <SectionTitle>{`Hours by project`} <span style={styles.rangeTag}>{rangeLabel}</span></SectionTitle>
           <HorizontalBars data={project_hours} color={BLUE} noDataLabel={t.noDataYet} />
         </div>
         <div style={styles.card}>

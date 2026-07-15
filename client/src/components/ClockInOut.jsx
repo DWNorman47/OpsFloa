@@ -122,7 +122,7 @@ function ProjectWheelPicker({
   );
 }
 
-export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geolocationEnabled = true, projectsEnabled = true, workLabel = 'Project' }) {
+export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geolocationEnabled = true, projectsEnabled = true }) {
   // Detect day-mark workers up front — the actual switch to the DayMark
   // UI happens at the return statement (after all hook calls) so React's
   // hook-order rule isn't violated when the same component renders the
@@ -264,7 +264,6 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
     return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   };
 
-  const projectClockLabel = workLabel?.trim().toLowerCase() === 'work' ? 'Project' : (workLabel || 'Project');
   const projectHistoryKey = `opsfloa_project_history_${user?.company_id || 'company'}_${user?.id || 'user'}`;
   const projectHistory = readProjectHistory(projectHistoryKey);
   let lastProjectId = '';
@@ -286,14 +285,13 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
   });
   const selectedProjectData = orderedProjects.find(p => String(p.id) === String(selectedProject));
   const projectHasGeofence = !!(selectedProjectData?.geo_lat && selectedProjectData?.geo_lng && selectedProjectData?.geo_radius_ft);
-  const workLabelLower = projectClockLabel.toLowerCase();
   const switchProjects = orderedProjects.filter(p => String(p.id) !== String(status?.project_id));
   const projectMeta = p => p.wage_type === 'prevailing' ? t.prevailing : t.regular;
 
   const handleClockIn = async () => {
   // When work selection is on but the company has zero active work,
     // fall back to project-less clock-in instead of blocking the worker.
-    if (projectsEnabled && hasProjects && !selectedProject) { setError(`${t.cioSelect} ${workLabelLower} ${t.cioFirst}`); return; }
+    if (projectsEnabled && hasProjects && !selectedProject) { setError(`${t.cioSelect} project ${t.cioFirst}`); return; }
     setError('');
     setLocationDenied(false);
     setLoading(true);
@@ -423,7 +421,7 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
   };
 
   const handleSwitchProject = async () => {
-    if (!switchProject) { setError(`${t.cioSelectNew} ${workLabelLower}.`); return; }
+    if (!switchProject) { setError(`${t.cioSelectNew} project.`); return; }
     setError('');
     setLoading(true);
     const switchInstant = new Date();
@@ -566,8 +564,8 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
             {switchingProject ? (
               <div style={styles.switchBox}>
                 <ProjectWheelPicker
-                  label={`${t.cioSelectNew} ${workLabelLower}`}
-                  placeholder={`${t.cioChoose} ${workLabelLower}`}
+                  label={`${t.cioSelectNew} project`}
+                  placeholder={`${t.cioChoose} project`}
                   value={switchProject}
                   options={switchProjects}
                   onChange={setSwitchProject}
@@ -586,7 +584,7 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
             ) : (
               projectsEnabled && projects?.length > 1 && (
                 <button style={{ ...styles.switchProjectBtn, ...(loading ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={() => setSwitchingProject(true)} disabled={loading}>
-                  {`${t.cioSwitch} ${workLabelLower}`}
+                  {`${t.cioSwitch} project`}
                 </button>
               )
             )}
@@ -647,8 +645,8 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
       <div style={styles.form}>
         {projectsEnabled && hasProjects && (
           <ProjectWheelPicker
-            label={projectClockLabel}
-            placeholder={`${t.cioChoose} ${workLabelLower}`}
+            label="Project"
+            placeholder={`${t.cioChoose} project`}
             value={selectedProject}
             options={orderedProjects}
             onChange={setSelectedProject}

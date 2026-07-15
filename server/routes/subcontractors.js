@@ -318,7 +318,7 @@ router.post('/projects/:projectId/subcontract-pos', requireAdmin, async (req, re
                  EXTRACT(YEAR FROM CURRENT_DATE)::int ||
                  '-' ||
                  LPAD((COALESCE(MAX(
-                   CASE WHEN po_number ~ '^SP-' || EXTRACT(YEAR FROM CURRENT_DATE)::int || '-[0-9]+$'
+                   CASE WHEN po_number ~ ('^SP-' || EXTRACT(YEAR FROM CURRENT_DATE)::int || '-[0-9]+$')
                         THEN SUBSTRING(po_number FROM '[0-9]+$')::int
                         ELSE 0 END
                  ), 0) + 1)::text, 4, '0')

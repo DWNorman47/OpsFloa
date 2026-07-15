@@ -99,8 +99,6 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
   const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
   const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
   const workerLabelPluralLower = workerLabelPlural.toLowerCase();
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
-  const workLabelLower = workLabel.toLowerCase();
   const [entries, setEntries] = useState([]);
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -611,9 +609,9 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                         </div>
                       </div>
                       <div style={{ marginTop: 8 }}>
-                        <div style={styles.editTimesLabel}>{workLabel}</div>
+                        <div style={styles.editTimesLabel}>Project</div>
                         <select style={styles.editProjectSelect} value={editProject} onChange={ev => setEditProject(ev.target.value)}>
-                          <option value="">{`No ${workLabelLower}`}</option>
+                          <option value="">No project</option>
                           {(projects || []).filter(p => p.active !== false).map(p => (
                             <option key={p.id} value={p.id}>{p.name}</option>
                           ))}
@@ -677,10 +675,10 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                                 onChange={ev => setSplitSegments(prev => prev.map((s, j) => j === i ? { ...s, end_time: ev.target.value } : s))} />
                             </div>
                             <div style={{ flex: 1, minWidth: 120 }}>
-                              <div style={styles.editTimesLabel}>{workLabel}</div>
+                              <div style={styles.editTimesLabel}>Project</div>
                               <select style={styles.editProjectSelect} value={seg.project_id}
                                 onChange={ev => setSplitSegments(prev => prev.map((s, j) => j === i ? { ...s, project_id: ev.target.value } : s))}>
-                                <option value="">{`No ${workLabelLower}`}</option>
+                                <option value="">No project</option>
                                 {(projects || []).filter(p => p.active !== false).map(p => (
                                   <option key={p.id} value={p.id}>{p.name}</option>
                                 ))}

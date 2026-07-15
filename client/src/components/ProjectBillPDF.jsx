@@ -73,7 +73,6 @@ function invoiceNumber(projectId, period) {
 export default function ProjectBillPDF({ data, currency = 'USD', companyInfo = {}, project: projectMeta = {}, t = {}, language, settings = null }) {
   const locale = langToLocale(language);
   const { project, entries, summary, period } = data;
-  const workLabel = settings?.label_work || 'Work';
   const workerLabel = settings?.label_worker || t.pdfWorkerCol || 'Team Member';
   const periodStr = period?.from || period?.to
     ? `${period.from ? fmtDate(period.from, locale) : (t.pdfBeginning || 'Beginning')} – ${period.to ? fmtDate(period.to, locale) : (t.pdfPresent || 'Present')}`
@@ -121,7 +120,7 @@ export default function ProjectBillPDF({ data, currency = 'USD', companyInfo = {
             </View>
           )}
           <View style={s.infoBlock}>
-            <Text style={s.infoLabel}>{workLabel}</Text>
+            <Text style={s.infoLabel}>Project</Text>
             <Text style={s.infoValue}>{project?.name || projectMeta?.name || '—'}</Text>
             {(projectMeta?.job_number || project?.job_number) && (
               <Text style={[s.infoValue, { color: '#6b7280' }]}>{t.pdfJobNum || 'Job #'}{projectMeta?.job_number || project?.job_number}</Text>

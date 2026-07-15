@@ -51,8 +51,13 @@ body { display: flex; flex-direction: column; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #08243f; font-weight: 600; }
 .btn:disabled { opacity: .45; cursor: default; }
 
+.tb-menu-toggle { display: none; } /* desktop: the whole toolbar shows, no toggle */
 @media (max-width: 760px) {
   #topbar .btn-label { display: none; }
+  /* mobile: the toolbar shows by default; the ☰ toggle collapses everything
+     after Save to reclaim space */
+  .tb-menu-toggle { display: inline-flex; }
+  body.tb-menu-closed .tb-collapsible { display: none; }
 }
 /* very narrow: drop the project name, leaving just the 📁 icon */
 @media (max-width: 460px) {
@@ -63,10 +68,12 @@ body { display: flex; flex-direction: column; }
 /* dropdown action menu (Print / export) */
 .menu-wrap { position: relative; display: inline-flex; }
 .menu {
-  position: absolute; top: 100%; right: 0; margin-top: 5px;
+  position: absolute; top: 100%; left: 0; margin-top: 5px;
   background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0,0,0,.45); padding: 5px; z-index: 30; min-width: 250px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.45); padding: 5px; z-index: 30;
+  min-width: 230px; max-width: calc(100vw - 20px);
 }
+.menu.menu-left { left: auto; right: 0; } /* flip to open leftward when opening right would overflow */
 .menu button {
   display: block; width: 100%; text-align: left; padding: 8px 10px;
   background: none; border: none; color: var(--text); border-radius: 6px;
@@ -74,6 +81,9 @@ body { display: flex; flex-direction: column; }
 }
 .menu button:hover { background: var(--accent); color: #08243f; }
 .menu .menu-hint { color: var(--muted); font-size: 11px; padding: 0 10px 7px; }
+.menu label { display: flex; align-items: center; gap: 8px; padding: 7px 10px; font-size: 13px; color: var(--text); cursor: pointer; border-radius: 6px; }
+.menu label:hover { background: var(--panel); }
+.menu label input { accent-color: var(--accent); }
 
 /* ---------- markup tools ---------- */
 .tool {
@@ -85,6 +95,12 @@ body { display: flex; flex-direction: column; }
 .tool.active { background: var(--accent); border-color: var(--accent); color: #08243f; font-weight: 700; }
 .tb-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 3px; }
 .mini-sel { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 4px; font-size: 12px; }
+/* a trade toolbar button shows active while its side panel is open */
+.btn.active { background: var(--accent); border-color: var(--accent); color: #08243f; font-weight: 700; }
+/* Existing ⇄ Proposed click-toggle — colored by the current surface */
+.surf-toggle { cursor: pointer; font-weight: 600; min-width: 88px; text-align: center; }
+.surf-toggle.surf-existing { color: var(--warn); border-color: var(--warn); }
+.surf-toggle.surf-proposed { color: var(--good); border-color: var(--good); }
 /* takeoff-layer gating: takeoff controls hidden without the add-on; the upsell
    button shows only for base-tier (no takeoff layer) */
 body:not(.has-takeoff) .tb-takeoff { display: none !important; }
@@ -126,6 +142,10 @@ body:not(.has-doc) .needs-doc { display: none !important; }
 .proj-current .pc-meta { color: var(--muted); font-size: 12.5px; margin: 3px 0 10px; }
 .proj-current .pc-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .proj-list-head { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; margin: 4px 0 6px; }
+.sheet-thumb { flex: 0 0 auto; width: 64px; height: 46px; background: #fff; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.sheet-thumb canvas { max-width: 100%; max-height: 100%; }
+.proj-row.sheet-removed { opacity: 0.5; }
+.proj-row.sheet-removed .name { text-decoration: line-through; }
 #btnUpsell { border-color: var(--warn); color: var(--warn); }
 #mkColor {
   width: 34px; height: 30px; padding: 2px; cursor: pointer;
@@ -208,7 +228,34 @@ body.nothumbs #thumbRail { display: none; }
   background: var(--panel); border-left: 1px solid var(--border);
 }
 #markupPanel.hidden, #roofPanel.hidden, #dirtPanel.hidden, #dwPanel.hidden { display: none; }
+/* no document loaded → the toolbar is hidden (progressive disclosure), so hide
+   the side panels too; they reappear once a plan is open. */
+body:not(.has-doc) #markupPanel, body:not(.has-doc) #roofPanel,
+body:not(.has-doc) #dirtPanel, body:not(.has-doc) #dwPanel { display: none !important; }
 .dirt-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 2px; font-size: 12.5px; }
+/* collapsible section header (e.g. Sheets) — click to expand/collapse */
+.dirt-collapse { cursor: pointer; display: flex; align-items: center; justify-content: space-between; user-select: none; }
+.dirt-collapse:hover { color: var(--text); }
+/* inline clickable action inside the panel (e.g. activate alignment) */
+.dirt-link { color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.dirt-link:hover { color: var(--text); }
+/* $ Bid: link this takeoff's pricing to an OpsFloa estimate (not printed) */
+.bid-linkbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 2px 2px; font-size: 13px; }
+.bid-linkbar label { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.bid-linkbar select { max-width: 260px; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 6px; font-size: 13px; }
+body.printing-bid .bid-linkbar { display: none; }
+/* contour list (dirt panel) — the traced lines/spots/pads for the focused surface */
+.dirt-crow { display: flex; align-items: center; gap: 8px; padding: 2px 2px 6px; }
+.dirt-crow .hint { flex: 1 1 auto; }
+.ctr-row { display: flex; align-items: center; gap: 7px; padding: 4px 5px; border-radius: 5px; cursor: pointer; font-size: 12.5px; }
+.ctr-row:hover { background: var(--panel2); }
+.ctr-row.sel { background: rgba(77,163,255,.16); outline: 1px solid var(--accent); }
+.ctr-sw { width: 13px; height: 13px; border-radius: 3px; flex: 0 0 auto; border: 1px solid rgba(0,0,0,.35); }
+.ctr-lbl { flex: 1 1 auto; font-variant-numeric: tabular-nums; }
+.ctr-btn { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; line-height: 1; padding: 2px 4px; border-radius: 4px; }
+.ctr-btn:hover { color: var(--text); background: var(--border); }
+.ctr-clear { flex: 0 0 auto; background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 5px; font-size: 11px; padding: 2px 8px; cursor: pointer; }
+.ctr-clear:hover { color: var(--warn); border-color: var(--warn); }
 .dirt-row .v { color: var(--accent); font-variant-numeric: tabular-nums; }
 .dirt-set { display: flex; align-items: center; gap: 6px; padding: 6px 2px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
 .dirt-set input { width: 54px; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 3px 5px; }

@@ -2,9 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import api from '../../api';
 import BinLabelModal from './BinLabelModal';
 import { useT } from '../../hooks/useT';
-import { useAuth } from '../../contexts/AuthContext';
 import { SkeletonList } from '../Skeleton';
-import { labelSg } from '../../companyLabels';
 
 import { silentError } from '../../errorReporter';
 function isHttpUrl(url) {
@@ -133,11 +131,9 @@ const pg = {
 
 // ── Entity Edit Form ──────────────────────────────────────────────────────────
 
-function EntityForm({ level, item, parentId, parentOptions, onSave, onCancel, settings }) {
+function EntityForm({ level, item, parentId, parentOptions, onSave, onCancel }) {
   const t = useT();
-  const { user } = useAuth();
   const isLocation = level.key === 'locations';
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
 
   const LEVEL_SGl = {
     locations:    t.invSetupLocationSgl,
@@ -223,7 +219,7 @@ function EntityForm({ level, item, parentId, parentOptions, onSave, onCancel, se
           style={ef.input}
           value={form.name}
           onChange={e => set('name', e.target.value)}
-          placeholder={`${t.invstEgPrefix} ${level.key === 'locations' ? `${workLabel} ${t.invstEgStorage}` : level.key === 'areas' ? t.invstEgZone : level.key === 'racks' ? t.invstEgRack : level.key === 'bays' ? t.invstEgBay : t.invstEgCompartment}`}
+          placeholder={`${t.invstEgPrefix} ${level.key === 'locations' ? `Project ${t.invstEgStorage}` : level.key === 'areas' ? t.invstEgZone : level.key === 'racks' ? t.invstEgRack : level.key === 'bays' ? t.invstEgBay : t.invstEgCompartment}`}
           required
         />
       </div>
@@ -547,7 +543,7 @@ const sp = {
 
 // ── Main Setup Component ───────────────────────────────────────────────────────
 
-export default function InventorySetup({ projects, settings }) {
+export default function InventorySetup({ projects }) {
   const t = useT();
 
   const LEVEL_LABELS = {
@@ -778,7 +774,6 @@ export default function InventorySetup({ projects, settings }) {
           onSave={handleSave}
           onCancel={() => setEditing(null)}
           projects={projects}
-          settings={settings}
         />
       )}
 

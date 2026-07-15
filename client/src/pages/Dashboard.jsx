@@ -18,7 +18,6 @@ import OfflineBanner from '../components/OfflineBanner';
 import SignatureModal from '../components/SignatureModal';
 import { WorkforcePanel } from './AdminDashboard';
 import { userCanSeeModule } from '../modulePermissions';
-import { labelSg } from '../companyLabels';
 
 import { silentError } from '../errorReporter';
 // Secondary tabs — lazy-loaded on first visit
@@ -84,7 +83,6 @@ export default function Dashboard() {
   const [entryView, setEntryView] = useState('list');
   const [shiftPrefill, setShiftPrefill] = useState(null);
   const [chatUnread, setChatUnread] = useState(false);
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
 
   const handleFillFromShift = shift => {
     setShiftPrefill(shift);
@@ -392,7 +390,7 @@ tr:last-child td{border-bottom:none}
 
 <table>
   <thead><tr>
-    <th>${t.date}</th>${showProject ? `<th>${workLabel}</th>` : ''}<th>${t.descriptionLabel}</th><th>${t.clockIn}</th><th>${t.clockOut}</th>${showRateType ? `<th>${t.rateTypeLabel}</th>` : ''}<th style="text-align:right">${t.hours}</th>
+    <th>${t.date}</th>${showProject ? `<th>Project</th>` : ''}<th>${t.descriptionLabel}</th><th>${t.clockIn}</th><th>${t.clockOut}</th>${showRateType ? `<th>${t.rateTypeLabel}</th>` : ''}<th style="text-align:right">${t.hours}</th>
   </tr></thead>
   <tbody>${rows}</tbody>
 </table>
@@ -537,8 +535,8 @@ ${signatureDataUrl ? `
         {tab === 'clock' && (
           loading ? <TabLoader /> : (
             <>
-              <ClockInOut projects={projects} onEntryAdded={handleEntryAdded} onClockedIn={handleClockedIn} t={t} geolocationEnabled={settings?.feature_geolocation ?? false} projectsEnabled={settings?.feature_project_integration !== false} workLabel={workLabel} />
-              <TimeEntryForm projects={projects} onEntryAdded={handleEntryAdded} t={t} prefill={shiftPrefill} projectsEnabled={settings?.feature_project_integration !== false} workLabel={workLabel} />
+              <ClockInOut projects={projects} onEntryAdded={handleEntryAdded} onClockedIn={handleClockedIn} t={t} geolocationEnabled={settings?.feature_geolocation ?? false} projectsEnabled={settings?.feature_project_integration !== false} />
+              <TimeEntryForm projects={projects} onEntryAdded={handleEntryAdded} t={t} prefill={shiftPrefill} projectsEnabled={settings?.feature_project_integration !== false} />
             </>
           )
         )}
@@ -546,7 +544,7 @@ ${signatureDataUrl ? `
         {tab === 'timesheet' && (
           <ErrorBoundary key="timesheet" mode="inline" label="Timesheet">
           <Suspense fallback={<TabLoader />}>
-            <UpcomingShifts onFillEntry={handleFillFromShift} workLabel={workLabel} />
+            <UpcomingShifts onFillEntry={handleFillFromShift} />
             {!loading && <WorkerSummary entries={entries} hourlyRate={user?.hourly_rate} rateType={user?.rate_type ?? 'hourly'} overtimeMultiplier={settings?.overtime_multiplier ?? 1.5} prevailingRate={settings?.prevailing_wage_rate ?? 0} overtimeEnabled={settings?.feature_overtime ?? true} overtimeRule={settings?.overtime_rule ?? 'daily'} overtimeThreshold={settings?.overtime_threshold ?? 8} weekStart={settings?.week_start ?? 1} showWages={settings?.show_worker_wages ?? false} currency={settings?.currency ?? 'USD'} />}
             <TimesheetSignOff t={t} refreshKey={entriesVersion} />
             <div style={styles.timesheetToolbar}>
@@ -565,7 +563,7 @@ ${signatureDataUrl ? `
             {loadError ? <p style={{ color: '#dc2626', padding: '12px' }}>{t.loadError} <button onClick={fetchData} style={{ textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626' }}>{t.retry}</button></p> : loading ? <p>{t.loadingEntries}</p> : entryView === 'timesheet' ? (
               <TimesheetView entries={entries} language={user?.language} projects={projects} onRefresh={refreshEntries} weekStart={settings?.week_start ?? 1} />
             ) : (
-              <EntryList entries={entries} onDeleted={handleEntryDeleted} onUpdated={handleEntryUpdated} t={t} language={user?.language} currentUserId={user?.id} projects={projects} onRefresh={refreshEntries} workLabel={workLabel} />
+              <EntryList entries={entries} onDeleted={handleEntryDeleted} onUpdated={handleEntryUpdated} t={t} language={user?.language} currentUserId={user?.id} projects={projects} onRefresh={refreshEntries} />
             )}
           </Suspense>
           </ErrorBoundary>

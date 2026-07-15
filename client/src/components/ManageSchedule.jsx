@@ -75,8 +75,8 @@ function DroppableDay({ date, isToday, children }) {
   );
 }
 
-function exportCSV(shifts, days, workerLabel = 'Worker', workLabel = 'Project') {
-  const header = ['Date', workerLabel, workLabel, 'Start', 'End', 'Notes', "Can't Make It", 'Reason', 'Series ID'];
+function exportCSV(shifts, days, workerLabel = 'Worker') {
+  const header = ['Date', workerLabel, 'Project', 'Start', 'End', 'Notes', "Can't Make It", 'Reason', 'Series ID'];
   const rows = shifts.map(s => [
     s.shift_date.substring(0, 10),
     s.worker_name,
@@ -191,9 +191,7 @@ export default function ManageSchedule({ workers, projects, weekStart: companyWe
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
   const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const workerLabelLower = workerLabel.toLowerCase();
-  const workLabelLower = workLabel.toLowerCase();
   const [weekStart, setWeekStart] = useState(() => startOfWeekFor(new Date(), companyWeekStart));
   const [shifts, setShifts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -492,9 +490,9 @@ export default function ManageSchedule({ workers, projects, weekStart: companyWe
             </select>
           </div>
           <div style={styles.field}>
-            <label htmlFor="ms-project" style={styles.label}>{workLabel}</label>
+            <label htmlFor="ms-project" style={styles.label}>Project</label>
             <select id="ms-project" style={styles.input} value={form.project_id} onChange={e => set('project_id', e.target.value)}>
-              <option value="">{`No ${workLabelLower}`}</option>
+              <option value="">No project</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
@@ -538,7 +536,7 @@ export default function ManageSchedule({ workers, projects, weekStart: companyWe
         <span style={styles.weekLabel}>{fmtDay(days[0], locale)} – {fmtDay(days[6], locale)}</span>
         <button style={styles.navBtn} onClick={() => setWeekStart(d => addDays(d, 7))}>{t.nextWeek}</button>
         <button style={styles.todayBtn} onClick={() => setWeekStart(startOfWeekFor(new Date(), companyWeekStart))}>{t.today}</button>
-        <button style={styles.exportBtn} onClick={() => exportCSV(shifts, days, workerLabel, workLabel)} title={t.exportWeekCSV}>⬇ CSV</button>
+        <button style={styles.exportBtn} onClick={() => exportCSV(shifts, days, workerLabel)} title={t.exportWeekCSV}>⬇ CSV</button>
         {shifts.length > 0 && (
           <button style={{ ...styles.copyWeekBtn, ...(copyingWeek ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={copyWeek} disabled={copyingWeek} title={t.msCopyWeek}>
             {copyingWeek ? t.msCopying : '⧉ ' + t.msCopyWeek}
@@ -616,9 +614,9 @@ export default function ManageSchedule({ workers, projects, weekStart: companyWe
               <input id="ms-edit-end" style={styles.editInput} type="time" value={editForm.end_time} onChange={ev => setEditForm(f => ({ ...f, end_time: ev.target.value }))} />
             </div>
             <div style={styles.editField}>
-              <label htmlFor="ms-edit-project" style={styles.editLabel}>{workLabel}</label>
+              <label htmlFor="ms-edit-project" style={styles.editLabel}>Project</label>
               <select id="ms-edit-project" style={styles.editInput} value={editForm.project_id} onChange={ev => setEditForm(f => ({ ...f, project_id: ev.target.value }))}>
-                <option value="">{`No ${workLabelLower}`}</option>
+                <option value="">No project</option>
                 {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </div>

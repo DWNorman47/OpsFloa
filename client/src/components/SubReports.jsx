@@ -29,7 +29,7 @@ const BLANK = {
 
 // ── Form (create or edit) ─────────────────────────────────────────────────────
 
-function SubReportForm({ projects, initial = BLANK, onSaved, onCancel, workLabel = 'Project', workerLabelPluralLower = 'workers' }) {
+function SubReportForm({ projects, initial = BLANK, onSaved, onCancel, workerLabelPluralLower = 'workers' }) {
   const t = useT();
   const [form, setForm] = useState(initial);
   const [saving, setSaving] = useState(false);
@@ -66,9 +66,9 @@ function SubReportForm({ projects, initial = BLANK, onSaved, onCancel, workLabel
         </div>
         {projects.length > 0 && (
           <div style={styles.fieldGroup}>
-            <label style={styles.label}>{workLabel}</label>
+            <label style={styles.label}>Project</label>
             <select style={styles.input} value={form.project_id} onChange={e => set('project_id', e.target.value)}>
-              <option value="">{`No ${workLabel.toLowerCase()}`}</option>
+              <option value="">{`No project`}</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
@@ -189,8 +189,6 @@ export default function SubReports({ projects, settings = null }) {
   const t = useT();
   const { user } = useAuth();
   const { onSync } = useOffline() || {};
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
-  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
   const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
   const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
   const workerLabelPluralLower = workerLabelPlural.toLowerCase();
@@ -246,7 +244,6 @@ export default function SubReports({ projects, settings = null }) {
           <SubReportForm
             projects={projects}
             initial={editing || BLANK}
-            workLabel={workLabel}
             workerLabelPluralLower={workerLabelPluralLower}
             onSaved={handleSaved}
             onCancel={() => { setShowForm(false); setEditing(null); }}
@@ -257,7 +254,7 @@ export default function SubReports({ projects, settings = null }) {
       <FieldFilters activeCount={activeFilterCount}>
         {projects.length > 0 && (
           <select style={styles.filterSelect} value={filters.project_id || ''} onChange={e => setFilter('project_id', e.target.value)}>
-            <option value="">{`All ${workLabelPlural}`}</option>
+            <option value="">{`All Projects`}</option>
             {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         )}

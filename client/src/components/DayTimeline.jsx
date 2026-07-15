@@ -2,8 +2,6 @@ import React, { useState, useEffect, useMemo } from 'react';
 import api from '../api';
 import { useToast } from '../contexts/ToastContext';
 import { useT } from '../hooks/useT';
-import { useAuth } from '../contexts/AuthContext';
-import { labelSg } from '../companyLabels';
 
 // ── Time helpers ─────────────────────────────────────────────────────────────
 function strToMin(str) {
@@ -46,13 +44,10 @@ function todayLocal() {
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
-export default function DayTimeline({ entries, projects, settings, onEntryAdded, onEntryUpdated, onRefresh }) {
+export default function DayTimeline({ entries, projects, onEntryAdded, onEntryUpdated, onRefresh }) {
   const t = useT();
   const toast = useToast();
-  const { user } = useAuth();
   const today = todayLocal();
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
-  const workLabelLower = workLabel.toLowerCase();
 
   const [clockStatus, setClockStatus] = useState(undefined); // undefined=loading, null=not clocked in, obj=clocked in
   const [breaks, setBreaks] = useState(new Set()); // gap keys marked as intentional breaks
@@ -279,7 +274,7 @@ export default function DayTimeline({ entries, projects, settings, onEntryAdded,
                     <div style={{ ...s.block, background: '#ecfdf5', borderColor: '#6ee7b7' }}>
                       <div style={s.blockTop}>
                         <div>
-                          <span style={s.blockTitle}>{seg.entry.project_name || `No ${workLabelLower}`}</span>
+                          <span style={s.blockTitle}>{seg.entry.project_name || `No project`}</span>
                           <span style={s.blockMeta}>{minToDisplay(seg.start)} – {minToDisplay(seg.end)} · {dur(seg.start, seg.end)}</span>
                           {seg.entry.status === 'approved' && <span style={s.badgeGreen}>Approved</span>}
                           {seg.entry.status === 'rejected' && <span style={s.badgeRed}>Rejected</span>}
@@ -305,7 +300,7 @@ export default function DayTimeline({ entries, projects, settings, onEntryAdded,
                         <div style={s.splitPanel}>
                           <div style={s.modeBtns}>
                             <button style={splitMode === 'break' ? s.modeBtnOn : s.modeBtn} onClick={() => setSplitMode('break')}>{t.dtInsertBreak}</button>
-                            <button style={splitMode === 'switch' ? s.modeBtnOn : s.modeBtn} onClick={() => setSplitMode('switch')}>{workLabel} switch</button>
+                            <button style={splitMode === 'switch' ? s.modeBtnOn : s.modeBtn} onClick={() => setSplitMode('switch')}>Project switch</button>
                           </div>
 
                           {splitMode === 'break' && (
@@ -337,7 +332,7 @@ export default function DayTimeline({ entries, projects, settings, onEntryAdded,
                               </div>
                               <select style={s.select} value={splitSwitchForm.project_id}
                                 onChange={e => setSplitSwitchForm(f => ({ ...f, project_id: e.target.value }))}>
-                                <option value="">Switch to {workLabelLower}...</option>
+                                <option value="">Switch to project...</option>
                                 {activeProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                               </select>
                               <button style={{ ...s.addBtn, ...(saving ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={() => doSplitSwitch(seg.entry)} disabled={saving}>
@@ -378,14 +373,14 @@ export default function DayTimeline({ entries, projects, settings, onEntryAdded,
                         <div style={s.modeBtns}>
                           <button style={gapMode === 'work' ? s.modeBtnOn : s.modeBtn} onClick={() => setGapMode('work')}>{t.dtWorkPeriod}</button>
                           <button style={gapMode === 'break' ? s.modeBtnOn : s.modeBtn} onClick={() => setGapMode('break')}>{t.dtBreak}</button>
-                          <button style={gapMode === 'switch' ? s.modeBtnOn : s.modeBtn} onClick={() => setGapMode('switch')}>{workLabel} switch</button>
+                          <button style={gapMode === 'switch' ? s.modeBtnOn : s.modeBtn} onClick={() => setGapMode('switch')}>Project switch</button>
                         </div>
 
                         {gapMode === 'work' && (
                           <div style={s.form}>
                             <select style={s.select} value={workForm.project_id}
                               onChange={e => setWorkForm(f => ({ ...f, project_id: e.target.value }))}>
-                              <option value="">Select {workLabelLower}...</option>
+                              <option value="">Select project...</option>
                               {activeProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                             </select>
                             <div style={s.timeRow}>
@@ -412,11 +407,11 @@ export default function DayTimeline({ entries, projects, settings, onEntryAdded,
 
                         {gapMode === 'switch' && (
                           <div style={s.form}>
-                            <p style={s.hint}>Split this gap between two {workLabelLower} entries at a switch time.</p>
+                            <p style={s.hint}>Split this gap between two project entries at a switch time.</p>
                             <div style={s.switchRow}>
                               <select style={{ ...s.select, flex: 1 }} value={switchForm.p1}
                                 onChange={e => setSwitchForm(f => ({ ...f, p1: e.target.value }))}>
-                                <option value="">First {workLabelLower}...</option>
+                                <option value="">First project...</option>
                                 {activeProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                               </select>
                               <span style={s.switchArrow}>{minToDisplay(seg.start)} →</span>
@@ -429,7 +424,7 @@ export default function DayTimeline({ entries, projects, settings, onEntryAdded,
                             <div style={s.switchRow}>
                               <select style={{ ...s.select, flex: 1 }} value={switchForm.p2}
                                 onChange={e => setSwitchForm(f => ({ ...f, p2: e.target.value }))}>
-                                <option value="">Second {workLabelLower}...</option>
+                                <option value="">Second project...</option>
                                 {activeProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                               </select>
                               <span style={s.switchArrow}>→ {minToDisplay(seg.end)}</span>
@@ -460,7 +455,7 @@ export default function DayTimeline({ entries, projects, settings, onEntryAdded,
                     <div style={s.dotBlue} />
                   </div>
                   <div style={{ ...s.block, background: '#eff6ff', borderColor: '#bfdbfe' }}>
-                    <span style={s.blockTitle}>{seg.clockStatus.project_name || `No ${workLabelLower}`}</span>
+                    <span style={s.blockTitle}>{seg.clockStatus.project_name || `No project`}</span>
                     <span style={s.blockMeta}>Clocked in · {dur(seg.start, nowMin)} in progress</span>
                   </div>
                 </div>

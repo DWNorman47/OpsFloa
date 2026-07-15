@@ -72,7 +72,6 @@ function TextBlock({ text, noneLabel }) {
 
 export function DailyReportDocument({ report, companyName, fieldPhotos = [], t = {}, language, settings = null }) {
   const locale = langToLocale(language);
-  const workLabel = labelSg(settings?.label_work, 'work', language);
   const workerLabel = labelSg(settings?.label_worker, 'worker', language);
   const workerLabelPlural = labelPl(settings?.label_worker, 'worker', language);
   const WEATHER_LABELS = {
@@ -98,7 +97,7 @@ export function DailyReportDocument({ report, companyName, fieldPhotos = [], t =
           </View>
           <View style={pdf.headerRight}>
             <Text style={pdf.headerMeta}><Text style={pdf.headerMetaBold}>{t.date}: </Text>{dateStr}</Text>
-            {report.project_name && <Text style={pdf.headerMeta}><Text style={pdf.headerMetaBold}>{workLabel}: </Text>{report.project_name}</Text>}
+            {report.project_name && <Text style={pdf.headerMeta}><Text style={pdf.headerMetaBold}>Project: </Text>{report.project_name}</Text>}
             {report.superintendent && <Text style={pdf.headerMeta}><Text style={pdf.headerMetaBold}>{t.superintendent}: </Text>{report.superintendent}</Text>}
             {weatherStr && <Text style={pdf.headerMeta}><Text style={pdf.headerMetaBold}>{t.weather}: </Text>{weatherStr}</Text>}
             <View style={{ ...pdf.statusBadge, backgroundColor: isReviewed ? '#1a56db' : isSubmitted ? '#d1fae5' : '#fef3c7' }}>

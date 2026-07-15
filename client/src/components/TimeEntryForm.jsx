@@ -2,9 +2,8 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useFormPersist } from '../hooks/useFormPersist';
 
-export default function TimeEntryForm({ projects, onEntryAdded, t, prefill, projectsEnabled = true, workLabel = 'Project' }) {
+export default function TimeEntryForm({ projects, onEntryAdded, t, prefill, projectsEnabled = true }) {
   const today = new Date().toLocaleDateString('en-CA');
-  const workLabelLower = workLabel.toLowerCase();
   const [collapsed, setCollapsed] = useState(true);
   const [form, setForm] = useState({
     project_id: '',
@@ -62,7 +61,7 @@ export default function TimeEntryForm({ projects, onEntryAdded, t, prefill, proj
   const handleSubmit = async e => {
     e.preventDefault();
     setError('');
-    if (projectsEnabled && !form.project_id) { setError(t.tefSelectFirst.replace('{label}', workLabelLower)); return; }
+    if (projectsEnabled && !form.project_id) { setError(t.tefSelectFirst.replace('{label}', 'project')); return; }
     if (!form.start_time || !form.end_time) { setError(t.startEndRequired); return; }
     if (form.start_time >= form.end_time) {
       setError(t.endAfterStart);
@@ -112,9 +111,9 @@ export default function TimeEntryForm({ projects, onEntryAdded, t, prefill, proj
       {!collapsed && <form onSubmit={handleSubmit} style={styles.form}>
         <div style={styles.row} className="form-row">
           {projectsEnabled && <div style={styles.field}>
-            <label htmlFor="tef-project" style={styles.label}>{workLabel}<span style={{ color: '#ef4444', marginLeft: 2 }}>*</span></label>
+            <label htmlFor="tef-project" style={styles.label}>Project<span style={{ color: '#ef4444', marginLeft: 2 }}>*</span></label>
             <select id="tef-project" style={styles.input} value={form.project_id} onChange={e => set('project_id', e.target.value)} required disabled={saving} title={saving ? t.saving : undefined}>
-              <option value="">{t.tefSelectOption.replace('{label}', workLabelLower)}</option>
+              <option value="">{t.tefSelectOption.replace('{label}', 'project')}</option>
               {projects.map(p => (
                 <option key={p.id} value={p.id}>
                   {p.name} ({p.wage_type === 'prevailing' ? t.prevailing : t.regular})

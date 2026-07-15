@@ -7,7 +7,6 @@ import { SkeletonList } from '../Skeleton';
 import ModalShell from '../ModalShell';
 import ColumnHeaderMenu from './ColumnHeaderMenu';
 import InventoryColumnPicker from './InventoryColumnPicker';
-import { labelSg } from '../../companyLabels';
 
 import { silentError } from '../../errorReporter';
 function formatBin(area_name, rack_name, bay_name, compartment_name) {
@@ -286,10 +285,8 @@ const a = {
 
 // Quick Issue Modal (workers)
 
-function IssueModal({ item, projects, settings, onClose, onDone }) {
+function IssueModal({ item, projects, onClose, onDone }) {
   const t = useT();
-  const { user } = useAuth();
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const [qty, setQty]             = useState('');
   const [uomId, setUomId]         = useState(item.uom_id ? String(item.uom_id) : '');
   const [itemUoms, setItemUoms]   = useState([]);
@@ -402,9 +399,9 @@ function IssueModal({ item, projects, settings, onClose, onDone }) {
           )}
           {projects && projects.length > 0 && (
             <>
-              <label htmlFor="is-issue-project" style={a.label}>{workLabel}</label>
+              <label htmlFor="is-issue-project" style={a.label}>Project</label>
               <select id="is-issue-project" value={projectId} onChange={e => setProjectId(e.target.value)} style={a.input}>
-                <option value="">No {workLabel.toLowerCase()}</option>
+                <option value="">No project</option>
                 {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </>
@@ -435,7 +432,7 @@ function IssueModal({ item, projects, settings, onClose, onDone }) {
 
 const STOCK_PAGE_SIZE_OPTIONS = [25, 50, 100, 250];
 
-export default function InventoryStock({ isAdmin, locations, projects, settings, onStockChange, onReorderClick }) {
+export default function InventoryStock({ isAdmin, locations, projects, onStockChange, onReorderClick }) {
   const t = useT();
   const [stock, setStock]           = useState([]);
   const [stockTotal, setStockTotal] = useState(0);
@@ -1165,7 +1162,6 @@ export default function InventoryStock({ isAdmin, locations, projects, settings,
         <IssueModal
           item={issueItem}
           projects={projects || []}
-          settings={settings}
           onClose={() => setIssueItem(null)}
           onDone={handleIssueDone}
         />

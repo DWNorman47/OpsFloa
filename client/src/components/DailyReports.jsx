@@ -47,7 +47,7 @@ function RowInput({ value, onChange, type = 'text', placeholder, style, min, max
 
 // ── Report Editor ──────────────────────────────────────────────────────────────
 
-function ReportEditor({ report: initial, projects, onSaved, onCancel, companyName, fieldPhotos, settings = null, workLabel = 'Project', workerLabelPlural = 'Workers' }) {
+function ReportEditor({ report: initial, projects, onSaved, onCancel, companyName, fieldPhotos, settings = null, workerLabelPlural = 'Workers' }) {
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
@@ -205,9 +205,9 @@ function ReportEditor({ report: initial, projects, onSaved, onCancel, companyNam
           <input style={styles.input} type="date" value={form.report_date} onChange={e => set('report_date', e.target.value)} max={new Date().toLocaleDateString('en-CA')} />
         </div>
         <div style={styles.fieldGroup}>
-          <label style={styles.label}>{workLabel}</label>
+          <label style={styles.label}>Project</label>
           <select style={styles.input} value={form.project_id} onChange={e => set('project_id', e.target.value)}>
-            <option value="">{`No ${workLabel.toLowerCase()}`}</option>
+            <option value="">{`No project`}</option>
             {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </div>
@@ -379,7 +379,7 @@ function ReportEditor({ report: initial, projects, onSaved, onCancel, companyNam
 
 // ── Report list row ────────────────────────────────────────────────────────────
 
-function ReportRow({ report: initialReport, onEdit, onDelete, isAdmin, companyName, fieldPhotos, settings = null, workLabel = 'Project' }) {
+function ReportRow({ report: initialReport, onEdit, onDelete, isAdmin, companyName, fieldPhotos, settings = null }) {
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
@@ -434,7 +434,7 @@ function ReportRow({ report: initialReport, onEdit, onDelete, isAdmin, companyNa
     <div style={styles.reportRow}>
       <div style={styles.rowLeft} onClick={() => !report.pending && onEdit(report)} role="button" tabIndex={0} onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && !report.pending && onEdit(report)}>
         <div style={styles.rowDate}>{fmtDate(report.report_date, locale)}{report.pending && <span style={styles.pendingBadge}>⏳ {t.pendingSync}</span>}</div>
-        <div style={styles.rowProject}>{report.project_name || `No ${workLabel.toLowerCase()}`}</div>
+        <div style={styles.rowProject}>{report.project_name || `No project`}</div>
         {weather && <div style={styles.rowMeta}>{weather}{report.weather_temp != null ? ` · ${report.weather_temp}°F` : ''}</div>}
         {report.manpower_count > 0 && <div style={styles.rowMeta}>{report.manpower_count} {report.manpower_count !== 1 ? t.crewEntries : t.crewEntry}</div>}
         {isReviewed && report.reviewed_by && (
@@ -481,8 +481,6 @@ function ReportRow({ report: initialReport, onEdit, onDelete, isAdmin, companyNa
 export default function DailyReports({ projects, settings = null }) {
   const { user } = useAuth();
   const t = useT();
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
-  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
   const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
   const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
   const locale = langToLocale(user?.language);
@@ -560,7 +558,6 @@ export default function DailyReports({ projects, settings = null }) {
         companyName={user?.company_name}
         fieldPhotos={editing && editing !== 'new' ? getPhotos(editing) : []}
         settings={settings}
-        workLabel={workLabel}
         workerLabelPlural={workerLabelPlural}
       />
     );
@@ -570,7 +567,7 @@ export default function DailyReports({ projects, settings = null }) {
     <div>
       <div className="filter-row" style={styles.listHeader}>
         <select style={styles.filterSelect} value={filterProject} onChange={e => setFilterProject(e.target.value)}>
-          <option value="">{`All ${workLabelPlural}`}</option>
+          <option value="">{`All Projects`}</option>
           {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <button style={styles.newBtn} onClick={() => setEditing('new')}>{t.newReport}</button>
@@ -594,7 +591,6 @@ export default function DailyReports({ projects, settings = null }) {
                   companyName={user?.company_name}
                   fieldPhotos={getPhotos(r)}
                   settings={settings}
-                  workLabel={workLabel}
                 />
               ))}
             </div>

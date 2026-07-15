@@ -5,6 +5,7 @@ import { getOrFetch } from '../offlineDb';
 import { silentError } from '../errorReporter';
 import { PageIntro, PageSection, PageShell } from '../components/PageShell';
 import TabBar from '../components/TabBar';
+import { isImpersonating, openToolTab } from '../openTool';
 import TranscriptionTool from '../components/TranscriptionTool';
 import SummarizerTool from '../components/SummarizerTool';
 import DocQATool from '../components/DocQATool';
@@ -14,10 +15,13 @@ const SITEWORK_TOOL_URL = '/tool-apps/sitework/index.html';
 const PLANROOM_TOOL_URL = '/tool-apps/planroom/index.html';
 const PDFTOOLS_TOOL_URL = '/tool-apps/pdftools/index.html';
 
-// the old excavation tool was removed; its '#excavation' deep links land on sitework
+// Default to Plan Room (the daily-use base tool, always visible). The old
+// excavation tool was removed; its legacy '#excavation' deep links land on sitework.
 function resolveTab() {
   const h = window.location.hash.replace('#', '');
-  return !h || h === 'excavation' ? 'sitework' : h;
+  if (!h) return 'planroom';
+  if (h === 'excavation') return 'sitework';
+  return h;
 }
 
 export default function ToolsPage() {
@@ -63,6 +67,10 @@ export default function ToolsPage() {
     setTab(next);
     history.replaceState(null, '', `#${next}`);
   };
+
+  // While impersonating, hand the active token to the tool tab (see openTool.js).
+  // Direct logins fall through to the normal anchor navigation.
+  const toolClick = url => e => { if (isImpersonating()) { e.preventDefault(); openToolTab(url); } };
 
   if (loading) {
     return (
@@ -116,13 +124,13 @@ export default function ToolsPage() {
           title="Plan viewer, markup & measure"
           description="Open a plan set — PDF or aerial image — mark it up, and measure lengths, areas, and counts to scale. Share to a company library or run a live session."
           actions={hasPlanroom ? (
-            <a className="ops-button-primary" href={PLANROOM_TOOL_URL} target="_blank" rel="noopener noreferrer">
+            <a className="ops-button-primary" href={PLANROOM_TOOL_URL} target="_blank" rel="noopener noreferrer" onClick={toolClick(PLANROOM_TOOL_URL)}>
               Open in new tab
             </a>
           ) : null}
         >
           {hasPlanroom ? (
-            <a className="tools-card" href={PLANROOM_TOOL_URL} target="_blank" rel="noopener noreferrer">
+            <a className="tools-card" href={PLANROOM_TOOL_URL} target="_blank" rel="noopener noreferrer" onClick={toolClick(PLANROOM_TOOL_URL)}>
               <span className="tools-card-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="3" y="4" width="18" height="14" rx="2" />
