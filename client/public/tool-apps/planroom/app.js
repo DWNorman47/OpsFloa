@@ -698,8 +698,12 @@ function drawMarkup(ctx, m) {
       break;
     }
     case 'ebound': {
+      // thin, screen-constant line + dash (like sitework) so it stays crisp when
+      // you zoom in for fine work instead of ballooning with the pen width
+      const z = vp.view.zoom;
       ctx.strokeStyle = '#e0a03f'; ctx.fillStyle = '#e0a03f';
-      ctx.setLineDash([14, 8]);
+      ctx.lineWidth = 2 / z;
+      ctx.setLineDash([12 / z, 7 / z]);
       if (m.pts.length >= 2) {
         ctx.beginPath(); m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath();
         ctx.globalAlpha = 0.06; ctx.fill(); ctx.globalAlpha = 1; ctx.stroke();
@@ -878,11 +882,16 @@ function drawSelection(ctx, m) {
   ctx.setLineDash([6 / vp.view.zoom, 4 / vp.view.zoom]);
   ctx.strokeRect(bb.x0 - s, bb.y0 - s, (bb.x1 - bb.x0) + s * 2, (bb.y1 - bb.y0) + s * 2);
   ctx.setLineDash([]);
-  const h = 5 / vp.view.zoom;
-  ctx.fillStyle = '#fff';
+  // Ring handles (like sitework) — a white halo, an accent ring, and a small
+  // center dot marking the EXACT vertex, so you can place points precisely
+  // against a line instead of a filled square covering the spot.
+  const z = vp.view.zoom;
   for (const p of handlePoints(ctx, m)) {
-    ctx.fillRect(p.x - h, p.y - h, h * 2, h * 2);
-    ctx.strokeRect(p.x - h, p.y - h, h * 2, h * 2);
+    ctx.beginPath(); ctx.arc(p.x, p.y, 6 / z, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.fill();
+    ctx.lineWidth = 1.6 / z; ctx.strokeStyle = '#4da3ff'; ctx.stroke();
+    ctx.beginPath(); ctx.arc(p.x, p.y, 1.7 / z, 0, Math.PI * 2);
+    ctx.fillStyle = '#4da3ff'; ctx.fill();
   }
   ctx.restore();
 }
