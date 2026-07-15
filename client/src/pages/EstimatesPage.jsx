@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import api from '../api';
+import { isImpersonating, openToolTab } from '../openTool';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
 import MoneyInput from '../components/MoneyInput';
@@ -870,6 +871,7 @@ function EstimateDetail({ id, onBack, onEdit }) {
                 href={`/tool-apps/planroom/index.html?estimate=${estimate.id}`}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={e => { if (isImpersonating()) { e.preventDefault(); openToolTab(`/tool-apps/planroom/index.html?estimate=${estimate.id}`); } }}
                 style={{ fontSize: 12, padding: '5px 12px', textDecoration: 'none' }}
               >
                 📐 {t.estTakeoffInPlanRoom}

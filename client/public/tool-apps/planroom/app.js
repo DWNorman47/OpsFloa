@@ -13,6 +13,27 @@ import { distToPolyline, pointSegDist, simplifyPts, polyLengthFt, polygonAreaFt2
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '../shared/pdf.worker.min.js';
 
+// Token handoff: the main app opens this tool in a noopener tab that can't reach
+// the opener's sessionStorage, so during superadmin login-as it can't see the
+// impersonation token. The opener stashes that token in a one-time localStorage
+// entry keyed by a URL nonce (#h=…); pick it up into OUR tab-scoped
+// sessionStorage, then scrub both the entry and the nonce from the URL. Runs
+// before any authenticated call (toolToken reads sessionStorage first).
+(function pickupTokenHandoff() {
+  const m = /[#&]h=([a-z0-9]+)/i.exec(location.hash || '');
+  if (!m) return;
+  const key = 'tc_handoff_' + m[1];
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const { t, exp } = JSON.parse(raw);
+      if (t && (!exp || Date.now() < exp)) sessionStorage.setItem('tc_token', t);
+    }
+    localStorage.removeItem(key);
+  } catch (_) { /* storage blocked / bad json */ }
+  try { history.replaceState(null, '', location.pathname + location.search); } catch (_) {}
+})();
+
 const $ = id => document.getElementById(id);
 
 /* ============================== State ============================== */
