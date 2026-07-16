@@ -91,6 +91,9 @@ const FRAM_SIZE_LABEL = { '2x4': '2×4', '2x6': '2×6', '2x8': '2×8' };
 const FRAM_SIZE_BF = { '2x4': 0.667, '2x6': 1.0, '2x8': 1.333 }; // board-feet per LF (nominal)
 const FRAM_STUD_PRICE = { '2x4': 3.5, '2x6': 5.5, '2x8': 8 }; // $/stud
 const FRAM_PLATE_PRICE = { '2x4': 0.9, '2x6': 1.4, '2x8': 2 }; // $/LF of plate stock
+let curFopenType = 'door'; // opening type for new framed openings
+const FOPEN_LABEL = { door: 'Door', window: 'Window' };
+const FOPEN_W = { door: 3, window: 4 }; // default rough-opening width (ft)
 const TEXTURE_LABEL = { none: 'None', smooth: 'Smooth / skim', orange: 'Orange peel', knockdown: 'Knockdown', popcorn: 'Popcorn' };
 const TEXTURE_PRICE = { smooth: 0.30, orange: 0.35, knockdown: 0.40, popcorn: 0.55 }; // $/SF texture (labor+material)
 const INSUL_LABEL = { none: 'None', r11: 'R-11 batt', r13: 'R-13 batt', r15: 'R-15 batt', r19: 'R-19 batt', r21: 'R-21 batt', sound: 'Sound batt' };
@@ -104,7 +107,7 @@ const MEASURE_KINDS = ['mlength', 'marea', 'mcount'];
 const markupLayer = kind => ANNOT_KINDS.includes(kind) ? 'annot' : MEASURE_KINDS.includes(kind) ? 'measure' : 'takeoff';
 // Vertex editing. Fixed-box shapes, callouts, single-point & count markups get no
 // per-vertex handles; everything else (line/arrow + every polyline/polygon) does.
-const VERTEX_NONEDIT = new Set(['rect', 'ellipse', 'cloud', 'highlight', 'callout', 'text', 'espot', 'mcount', 'ritem', 'qcount', 'dopening', 'dheight']);
+const VERTEX_NONEDIT = new Set(['rect', 'ellipse', 'cloud', 'highlight', 'callout', 'text', 'espot', 'mcount', 'ritem', 'qcount', 'dopening', 'dheight', 'fopening']);
 // Insert/delete a vertex applies to the free polylines & polygons — line/arrow
 // stay fixed 2-point shapes (their endpoints are still draggable).
 const RESHAPE_NONEDIT = new Set([...VERTEX_NONEDIT, 'line', 'arrow']);
@@ -196,7 +199,7 @@ els.hud.addEventListener('click', () => { clearTimeout(hudTimer); els.hud.classL
  * Widths/sizes are document-space (base px) so markups print/zoom like ink.
  */
 
-const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall'];
+const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening'];
 const MK_LABEL = {
   cloud: 'Cloud', rect: 'Rectangle', ellipse: 'Ellipse', arrow: 'Arrow', line: 'Line',
   freehand: 'Pen', highlight: 'Highlight', text: 'Text', callout: 'Callout',
@@ -205,7 +208,7 @@ const MK_LABEL = {
   contour: 'Contour', espot: 'Spot elev', epad: 'Pad', ebound: 'Earthwork boundary',
   qarea: 'Area takeoff', qline: 'Line takeoff', qcount: 'Count takeoff',
   dwall: 'Wall run', dceiling: 'Ceiling', dopening: 'Opening', dtrim: 'Trim', dheight: 'Height',
-  froom: 'Floor room', ftrans: 'Transition', fwall: 'Framed wall',
+  froom: 'Floor room', ftrans: 'Transition', fwall: 'Framed wall', fopening: 'Framed opening',
 };
 const MK_ICON = {
   cloud: '☁', rect: '▭', ellipse: '⬭', arrow: '↗', line: '╲',
@@ -215,10 +218,10 @@ const MK_ICON = {
   contour: '⛰', espot: '◎', epad: '◫', ebound: '⬚',
   qarea: '▨', qline: '⌇', qcount: '⊙',
   dwall: '▬', dceiling: '⬜', dopening: '🚪', dtrim: '▁', dheight: '↕',
-  froom: '▦', ftrans: '▂', fwall: '‖',
+  froom: '▦', ftrans: '▂', fwall: '‖', fopening: '▯',
 };
 const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
-const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall']; // click-built (vs drag; espot/align are special-cased)
+const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening']; // click-built (vs drag; espot/align are special-cased)
 const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling', 'dtrim']; // produce ft / SF / squares
 
 /* ---- earthwork (sitework pack) helpers ---- */
@@ -467,6 +470,7 @@ function measureValue(m) {
   if (m.kind === 'froom') { const cfg = m.cfg || {}; return `${FLOOR_LABEL[cfg.ftype] || 'Floor'} · ${fmt(polygonAreaFt2(m.pts, s), 0)} SF`; }
   if (m.kind === 'ftrans') { const cfg = m.cfg || {}; return `${TRANS_LABEL[cfg.ttype] || 'Transition'} · ${fmt(polyLengthFt(m.pts, s), 0)} ft`; }
   if (m.kind === 'fwall') { const cfg = m.cfg || {}; return `${FRAM_SIZE_LABEL[cfg.size] || '2×4'} wall · ${fmt(polyLengthFt(m.pts, s), 0)} ft`; }
+  if (m.kind === 'fopening') { const cfg = m.cfg || {}; const n = m.pts.length; return `${n} ${FOPEN_LABEL[cfg.otype] || 'Opening'}${n === 1 ? '' : 's'} (${fmt(cfg.width || 0, 1)}' RO)`; }
   return '';
 }
 const LINE_W = { S: 2, M: 4, L: 8 };
@@ -678,7 +682,7 @@ function drawMarkup(ctx, m) {
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y); }
       break;
     }
-    case 'mcount': case 'ritem': case 'qcount': case 'dopening': {
+    case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': {
       const r = (m.width || 4) * 1.5 + 3;
       for (const p of m.pts) { ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); }
       const c = centroid(m.pts);
@@ -1552,6 +1556,8 @@ function setTool(t) {
     setMsg(`Trace a ${TRANS_LABEL[curTransType].toLowerCase()} run; Enter/double-click to finish → LF. Double-click to change its type.`);
   } else if (t === 'fwall') {
     setMsg(`Trace a ${FRAM_SIZE_LABEL[curFramSize]} wall run (${state.framing.spacing}" OC @ ${fmt(state.framing.height)}'); Enter/double-click to finish → studs & plates. Double-click to change size.`);
+  } else if (t === 'fopening') {
+    setMsg(`Click each ${FOPEN_LABEL[curFopenType].toLowerCase()} (${FOPEN_W[curFopenType]}' RO default → header + king/jack/cripple studs); Enter/double-click to finish. Double-click a group to set its width.`);
   } else if (t === 'dheight') {
     setMsg((state.scales[state.page] || 0)
       ? 'On an elevation / section sheet, click the floor then the ceiling (bottom → top); double-click or Enter to finish, then name it. Set it as the default in 🧱 or double-click a wall run to apply it.'
@@ -1990,6 +1996,7 @@ function commitDraft() {
   else if (d.kind === 'froom') extra.cfg = { ftype: curFloorType };
   else if (d.kind === 'ftrans') extra.cfg = { ttype: curTransType };
   else if (d.kind === 'fwall') extra.cfg = { size: curFramSize };
+  else if (d.kind === 'fopening') extra.cfg = { otype: curFopenType, width: FOPEN_W[curFopenType] };
   else if (d.kind === 'dwall') { extra.height = state.drywall.wallHeight; extra.sides = curDwSides; }
   else if (d.kind === 'dceiling') extra.cfg = { ctype: curCeilType };
   else if (d.kind === 'dopening') extra.cfg = { otype: curDwOpening, deductSF: OPENING_DEDUCT[curDwOpening] };
@@ -2089,6 +2096,15 @@ els.cv.addEventListener('dblclick', e => {
     vp.requestDraw();
     modals.askText('Rename height', `${fmt(dheightFt(hit), 1)} ft measured`, hit.text || '')
       .then(t => { if (t != null && t.trim()) { const prev = snapshot(); hit.text = t.trim(); pushUndo(prev); markupsChanged(); } });
+    return;
+  }
+  // double-click a framed opening group to set its rough-opening width
+  if (hit && hit.kind === 'fopening') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    const c = hit.cfg || {};
+    modals.askNumber(`${FOPEN_LABEL[c.otype] || 'Opening'} rough-opening width (ft)`, 'Drives the header LF and cripple count for each opening in this group.', c.width != null ? c.width : 3, 1)
+      .then(v => { if (v != null && v > 0) { const prev = snapshot(); hit.cfg = { ...c, width: v }; pushUndo(prev); markupsChanged(); } });
     return;
   }
   // double-click a framed wall to change its stud size
@@ -2371,7 +2387,7 @@ const TRADE_TOOLS = {
   dirt: ['wand', 'contour', 'espot', 'epad', 'ebound', 'align', 'autoarea', 'qarea', 'qline', 'qcount'],
   drywall: ['dwall', 'dceiling', 'dopening', 'dtrim', 'dheight'],
   flooring: ['froom', 'ftrans'],
-  framing: ['fwall'],
+  framing: ['fwall', 'fopening'],
 };
 // general redlining + generic measure tools that collapse while a trade is active
 const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
@@ -4775,21 +4791,32 @@ function framingTotals() {
   const height = Number(F.height) || 9;
   const plateFactor = 1 + (Number(F.topPlates) || 2); // bottom + top plate(s)
   const bySize = {}; // size -> { lf, studs, plateLF, bf }
+  const openings = { door: 0, window: 0 };
+  let headerLF = 0, kingJack = 0, cripples = 0;
   for (const m of state.markups) {
-    if (m.kind !== 'fwall') continue;
-    const size = (m.cfg && m.cfg.size) || '2x4';
-    const lf = fwallLenFt(m);
-    if (lf < 0.01) continue;
-    const g = bySize[size] || { lf: 0, studs: 0, plateLF: 0, bf: 0 };
-    const studs = Math.ceil(lf * 12 / spacing) + 1;
-    const plateLF = lf * plateFactor;
-    g.lf += lf; g.studs += studs; g.plateLF += plateLF;
-    g.bf += (studs * height + plateLF) * (FRAM_SIZE_BF[size] || 0.667);
-    bySize[size] = g;
+    if (m.kind === 'fwall') {
+      const size = (m.cfg && m.cfg.size) || '2x4';
+      const lf = fwallLenFt(m);
+      if (lf < 0.01) continue;
+      const g = bySize[size] || { lf: 0, studs: 0, plateLF: 0, bf: 0 };
+      const studs = Math.ceil(lf * 12 / spacing) + 1;
+      const plateLF = lf * plateFactor;
+      g.lf += lf; g.studs += studs; g.plateLF += plateLF;
+      g.bf += (studs * height + plateLF) * (FRAM_SIZE_BF[size] || 0.667);
+      bySize[size] = g;
+    } else if (m.kind === 'fopening') {
+      const c = m.cfg || {};
+      const n = m.pts.length;
+      const w = Number(c.width) > 0 ? Number(c.width) : (FOPEN_W[c.otype] || 3);
+      if (openings[c.otype] != null) openings[c.otype] += n;
+      headerLF += n * (w + 0.5);          // + ~6" total bearing
+      kingJack += n * 4;                   // 2 king + 2 jack per opening
+      cripples += n * Math.ceil(w * 12 / spacing) * (c.otype === 'window' ? 2 : 1); // window: over header + under sill
+    }
   }
   let totalLF = 0;
   for (const k in bySize) totalLF += bySize[k].lf;
-  return { bySize, totalLF };
+  return { bySize, totalLF, openings, headerLF, kingJack, cripples };
 }
 function framingBidLines() {
   const T = framingTotals();
@@ -4800,6 +4827,9 @@ function framingBidLines() {
     lines.push({ key: `fr_stud_${k}`, label: `${FRAM_SIZE_LABEL[k]} studs (${state.framing.spacing}" OC)`, qty: g.studs, unit: 'EA', q: 0, defPrice: FRAM_STUD_PRICE[k] || 3.5 });
     lines.push({ key: `fr_plate_${k}`, label: `${FRAM_SIZE_LABEL[k]} plate lumber`, qty: g.plateLF, unit: 'LF', q: 0, defPrice: FRAM_PLATE_PRICE[k] || 0.9 });
   }
+  if (T.headerLF > 0.5) lines.push({ key: 'fr_header', label: 'Header lumber (openings)', qty: T.headerLF, unit: 'LF', q: 0, defPrice: 2.5 });
+  if (T.kingJack > 0) lines.push({ key: 'fr_openstud', label: 'Opening studs (king + jack)', qty: T.kingJack, unit: 'EA', q: 0, defPrice: 3.5 });
+  if (T.cripples > 0) lines.push({ key: 'fr_cripple', label: 'Cripple studs', qty: T.cripples, unit: 'EA', q: 0, defPrice: 2 });
   if (T.totalLF > 0.5) lines.push({ key: 'fr_labor', label: 'Wall framing (labor)', qty: T.totalLF, unit: 'LF', q: 0, defPrice: 8 });
   return lines;
 }
@@ -4825,7 +4855,14 @@ function renderFramingPanel() {
   }
   if (!any) rows.push('<div class="hint" style="margin:4px 0">No walls yet — trace a wall run (‖) and set its stud size.</div>');
   else rows.push(`<div class="dirt-row"><b>Total wall LF</b><span class="v"><b>${fmt(T.totalLF, 0)}</b></span></div>`);
-  rows.push('<div class="hint" style="margin:4px 0">Studs = ⌈LF·12/spacing⌉+1; plates = LF × (1 + top plates). Prices in $ Bid.</div>');
+  if (T.openings.door || T.openings.window) {
+    rows.push('<div class="roof-sub">Openings</div>');
+    R('Doors · windows', `${T.openings.door} · ${T.openings.window}`);
+    R('Header lumber', `${fmt(T.headerLF, 0)} LF`);
+    R('King + jack studs', `${fmt(T.kingJack, 0)} EA`);
+    R('Cripple studs', `${fmt(T.cripples, 0)} EA`);
+  }
+  rows.push('<div class="hint" style="margin:4px 0">Studs = ⌈LF·12/spacing⌉+1; plates = LF × (1 + top plates); openings add header + king/jack/cripple. Prices in $ Bid.</div>');
   const body = $('framBody');
   body.innerHTML = rows.join('');
   $('frSize').value = curFramSize;
@@ -4844,6 +4881,7 @@ $('btnFram').addEventListener('click', () => {
   syncPanelButtons();
 });
 if ($('frSizeTb')) $('frSizeTb').addEventListener('change', e => { curFramSize = e.target.value; if (tool === 'fwall') setTool('fwall'); });
+if ($('frOpenTb')) $('frOpenTb').addEventListener('change', e => { curFopenType = e.target.value; if (tool === 'fopening') setTool('fopening'); });
 
 /* ===================== Live sessions (SSE + REST ops) =====================
  * Host "goes live" on the current project; teammates join and co-edit in real

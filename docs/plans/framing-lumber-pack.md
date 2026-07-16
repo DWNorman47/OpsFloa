@@ -1,6 +1,6 @@
 # OpsFloa — Framing & Lumber takeoff pack (inside the Plan Room Takeoff layer)
 
-Status: **Fr1 shipped** (2026-07-15). A new takeoff **trade** in Plan Room
+Status: **Fr1 + Fr2 shipped** (2026-07-15). A new takeoff **trade** in Plan Room
 (alongside Roofing, Earthwork, Drywall & Paint, Flooring & Tile), included in the
 **$60 Takeoff** add-on — no own SKU.
 
@@ -41,8 +41,11 @@ count drive stud counts, plate lumber, and board-feet. Stud **size** (2×4/2×6/
   wall height, single/double top-plate settings; bid = studs EA + plate LF by
   size + one wall-framing labor LF line; panel shows per-size LF/studs/plates/BF
   + total wall LF. Persists in projectData + all load paths.
-- **Fr2 — openings + headers**: `fopening` count kind → header LF, king/jack/
-  cripple studs by opening size.
+- **Fr2 — openings + headers** ✅ *shipped*: `fopening` count kind (door/window,
+  per-group rough-opening width, double-click to set width). Per opening: header
+  LF = width + 0.5 (bearing); 4 king+jack studs; cripples = ⌈width·12/spacing⌉,
+  ×2 for windows (over header + under sill). Bid adds header LF + opening studs +
+  cripples; panel shows an Openings section.
 - **Fr3 — sheathing**: `fsheath` area kind → sheathing SF → 4×8 sheets + nails.
 
 ## Verification
