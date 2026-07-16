@@ -1,6 +1,6 @@
 # OpsFloa — Flooring & Tile takeoff pack (inside the Plan Room Takeoff layer)
 
-Status: **F1 shipped** (2026-07-15). A new takeoff **trade** in Plan Room
+Status: **F1 + F2 shipped** (2026-07-15). A new takeoff **trade** in Plan Room
 (alongside Roofing, Earthwork, Drywall & Paint), included in the **$60 Takeoff**
 add-on — no own SKU. Completes the interiors story next to Drywall & Paint.
 
@@ -43,8 +43,12 @@ area takeoff.
   per-material floor SF × (1+waste) at seeded $/SF; panel shows SF-by-material +
   total. Persists in projectData + all load paths. *(Install labor is folded into
   the seeded $/SF for now; split into material + labor lines in F3 if wanted.)*
-- **F2 — transitions + underlayment**: `ftrans` line kind (threshold/reducer/
-  T-molding/stair-nose → LF); underlayment SF option.
+- **F2 — transitions + underlayment** ✅ *shipped*: `ftrans` line kind
+  (threshold / reducer / T-molding / stair-nose / transition strip → LF by type,
+  double-click to change type; toolbar tool + type select). Project underlayment
+  setting (foam / cork / cement board / uncoupling membrane) → an underlayment SF
+  line = total floor SF × (1+waste) at seeded $/SF. Panel shows underlayment +
+  transitions LF; bid rolls them up.
 - **F3 — tile materials**: thinset / grout (tile size + joint) / backer board /
   edge trim for tile-type rooms.
 

@@ -65,7 +65,7 @@ const state = {
   // drywall & paint pack settings (project-wide)
   drywall: { wallHeight: 9, sheetSF: 32, waste: 10, coverage: 375, coats: 2, finish: 'L4', texture: 'none', insul: 'none' },
   // flooring & tile pack settings (project-wide)
-  flooring: { waste: 10 },
+  flooring: { waste: 10, underlay: 'none' },
 };
 let curDwSides = 2;  // 1 = perimeter/against structure, 2 = interior partition (both faces)
 let curCeilType = 'drywall';  // ceiling type for new ceilings: drywall | act24 | act22 (ACT = suspended grid)
@@ -76,6 +76,11 @@ const CEIL_LABEL = { drywall: 'Drywall', act24: 'ACT 2×4', act22: 'ACT 2×2' };
 let curFloorType = 'tile'; // material for new flooring rooms
 const FLOOR_LABEL = { tile: 'Tile', lvp: 'LVP / vinyl plank', laminate: 'Laminate', hardwood: 'Hardwood', carpet: 'Carpet', vinyl: 'Sheet vinyl', other: 'Other' };
 const FLOOR_PRICE = { tile: 9, lvp: 5.5, laminate: 4, hardwood: 9, carpet: 3.5, vinyl: 3.5, other: 5 }; // $/SF installed default
+let curTransType = 'reducer'; // type for new flooring transitions
+const TRANS_LABEL = { threshold: 'Threshold', reducer: 'Reducer', tmolding: 'T-molding', stairnose: 'Stair nose', seam: 'Transition strip', other: 'Other' };
+const TRANS_PRICE = { threshold: 8, reducer: 6, tmolding: 5, stairnose: 10, seam: 4, other: 5 }; // $/LF
+const UNDERLAY_LABEL = { none: 'None', foam: 'Foam underlayment', cork: 'Cork underlayment', cement: 'Cement board', ditra: 'Uncoupling membrane' };
+const UNDERLAY_PRICE = { foam: 0.5, cork: 0.9, cement: 1.5, ditra: 2.2 }; // $/SF
 const TEXTURE_LABEL = { none: 'None', smooth: 'Smooth / skim', orange: 'Orange peel', knockdown: 'Knockdown', popcorn: 'Popcorn' };
 const TEXTURE_PRICE = { smooth: 0.30, orange: 0.35, knockdown: 0.40, popcorn: 0.55 }; // $/SF texture (labor+material)
 const INSUL_LABEL = { none: 'None', r11: 'R-11 batt', r13: 'R-13 batt', r15: 'R-15 batt', r19: 'R-19 batt', r21: 'R-21 batt', sound: 'Sound batt' };
@@ -181,7 +186,7 @@ els.hud.addEventListener('click', () => { clearTimeout(hudTimer); els.hud.classL
  * Widths/sizes are document-space (base px) so markups print/zoom like ink.
  */
 
-const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom'];
+const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans'];
 const MK_LABEL = {
   cloud: 'Cloud', rect: 'Rectangle', ellipse: 'Ellipse', arrow: 'Arrow', line: 'Line',
   freehand: 'Pen', highlight: 'Highlight', text: 'Text', callout: 'Callout',
@@ -190,7 +195,7 @@ const MK_LABEL = {
   contour: 'Contour', espot: 'Spot elev', epad: 'Pad', ebound: 'Earthwork boundary',
   qarea: 'Area takeoff', qline: 'Line takeoff', qcount: 'Count takeoff',
   dwall: 'Wall run', dceiling: 'Ceiling', dopening: 'Opening', dtrim: 'Trim', dheight: 'Height',
-  froom: 'Floor room',
+  froom: 'Floor room', ftrans: 'Transition',
 };
 const MK_ICON = {
   cloud: '☁', rect: '▭', ellipse: '⬭', arrow: '↗', line: '╲',
@@ -200,10 +205,10 @@ const MK_ICON = {
   contour: '⛰', espot: '◎', epad: '◫', ebound: '⬚',
   qarea: '▨', qline: '⌇', qcount: '⊙',
   dwall: '▬', dceiling: '⬜', dopening: '🚪', dtrim: '▁', dheight: '↕',
-  froom: '▦',
+  froom: '▦', ftrans: '▂',
 };
 const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
-const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom']; // click-built (vs drag; espot/align are special-cased)
+const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans']; // click-built (vs drag; espot/align are special-cased)
 const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling', 'dtrim']; // produce ft / SF / squares
 
 /* ---- earthwork (sitework pack) helpers ---- */
@@ -449,6 +454,7 @@ function measureValue(m) {
   if (m.kind === 'dtrim') { const c = m.cfg || {}; return `${TRIM_LABEL[c.ttype] || 'Trim'} · ${fmt(polyLengthFt(m.pts, state.scales[m.page] || 0))} ft`; }
   if (m.kind === 'dheight') return `${m.text || 'Height'} · ${fmt(polyLengthFt(m.pts, s), 1)} ft`;
   if (m.kind === 'froom') { const cfg = m.cfg || {}; return `${FLOOR_LABEL[cfg.ftype] || 'Floor'} · ${fmt(polygonAreaFt2(m.pts, s), 0)} SF`; }
+  if (m.kind === 'ftrans') { const cfg = m.cfg || {}; return `${TRANS_LABEL[cfg.ttype] || 'Transition'} · ${fmt(polyLengthFt(m.pts, s), 0)} ft`; }
   return '';
 }
 const LINE_W = { S: 2, M: 4, L: 8 };
@@ -666,6 +672,7 @@ function drawMarkup(ctx, m) {
       if (m.pts.length) labelAt(ctx, m, c.x, c.y - r * 2.4);
       break;
     }
+    case 'ftrans':
     case 'dtrim': {
       ctx.beginPath();
       m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
@@ -1527,6 +1534,8 @@ function setTool(t) {
     setMsg(`Click each ${OPENING_LABEL[curDwOpening].toLowerCase()} (−${OPENING_DEDUCT[curDwOpening]} SF each); Enter/double-click to finish.`);
   } else if (t === 'froom') {
     setMsg(`Trace a ${FLOOR_LABEL[curFloorType]} room outline; Enter/double-click to close → floor SF. Double-click a room to change its material.`);
+  } else if (t === 'ftrans') {
+    setMsg(`Trace a ${TRANS_LABEL[curTransType].toLowerCase()} run; Enter/double-click to finish → LF. Double-click to change its type.`);
   } else if (t === 'dheight') {
     setMsg((state.scales[state.page] || 0)
       ? 'On an elevation / section sheet, click the floor then the ceiling (bottom → top); double-click or Enter to finish, then name it. Set it as the default in 🧱 or double-click a wall run to apply it.'
@@ -1963,6 +1972,7 @@ function commitDraft() {
   else if (d.kind === 'ritem') extra.itype = $('itemType') ? $('itemType').value : 'boot';
   else if (d.kind === 'contour' || d.kind === 'epad') extra.surface = curSurface;
   else if (d.kind === 'froom') extra.cfg = { ftype: curFloorType };
+  else if (d.kind === 'ftrans') extra.cfg = { ttype: curTransType };
   else if (d.kind === 'dwall') { extra.height = state.drywall.wallHeight; extra.sides = curDwSides; }
   else if (d.kind === 'dceiling') extra.cfg = { ctype: curCeilType };
   else if (d.kind === 'dopening') extra.cfg = { otype: curDwOpening, deductSF: OPENING_DEDUCT[curDwOpening] };
@@ -2062,6 +2072,16 @@ els.cv.addEventListener('dblclick', e => {
     vp.requestDraw();
     modals.askText('Rename height', `${fmt(dheightFt(hit), 1)} ft measured`, hit.text || '')
       .then(t => { if (t != null && t.trim()) { const prev = snapshot(); hit.text = t.trim(); pushUndo(prev); markupsChanged(); } });
+    return;
+  }
+  // double-click a flooring transition to change its type
+  if (hit && hit.kind === 'ftrans') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    const cur = (hit.cfg && hit.cfg.ttype) || 'reducer';
+    askChoice('Transition type', 'Transitions roll up on the bid by type → LF.',
+      ['threshold', 'reducer', 'tmolding', 'stairnose', 'seam', 'other'].map(k => ({ label: TRANS_LABEL[k], value: k, primary: k === cur }))
+    ).then(v => { if (v && v !== cur) { const prev = snapshot(); hit.cfg = { ...(hit.cfg || {}), ttype: v }; curTransType = v; pushUndo(prev); markupsChanged(); } });
     return;
   }
   // double-click a floor room to change its material
@@ -2323,7 +2343,7 @@ const TRADE_TOOLS = {
   roofing: ['plane', 'redge', 'ritem'],
   dirt: ['wand', 'contour', 'espot', 'epad', 'ebound', 'align', 'autoarea', 'qarea', 'qline', 'qcount'],
   drywall: ['dwall', 'dceiling', 'dopening', 'dtrim', 'dheight'],
-  flooring: ['froom'],
+  flooring: ['froom', 'ftrans'],
 };
 // general redlining + generic measure tools that collapse while a trade is active
 const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
@@ -3097,7 +3117,7 @@ function projectData() {
   };
 }
 const defaultDrywall = () => ({ wallHeight: 9, sheetSF: 32, waste: 10, coverage: 375, coats: 2, finish: 'L4', texture: 'none', insul: 'none' });
-const defaultFlooring = () => ({ waste: 10 });
+const defaultFlooring = () => ({ waste: 10, underlay: 'none' });
 const defaultEarthwork = () => ({ existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 }, gridFt: 5, shrink: 15, swell: 25, truckCap: 12, interval: 1, result: null });
 // next contour's default elevation = last + interval (auto-steps up a slope)
 const nextElevDefault = surf => { const iv = Number(state.earthwork.interval) || 0; return lastElev[surf] != null ? lastElev[surf] + iv : ''; };
@@ -4446,6 +4466,7 @@ const dwallSf = m => dwallLenFt(m) * dwallHeight(m) * (m.sides || 2);
 const dceilingSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0);
 const dheightFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0); // measured wall height off an elevation sheet
 const froomSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0); // flooring room area
+const ftransLenFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0); // flooring transition run
 const FINISH_MUD = { L3: 0.020, L4: 0.027, L5: 0.036 }; // gal ready-mix / SF by finish level
 // Suspended (ACT) drop-ceiling grid takeoff from area + wall perimeter. Rule-of-thumb
 // counts: mains 4' OC, 4' cross tees 2' OC (both layouts), 2' cross tees only on 2×2;
@@ -4603,25 +4624,34 @@ if ($('dwTrimSel')) $('dwTrimSel').addEventListener('change', e => { curDwTrim =
 
 /* ---- Flooring & Tile pack ---- */
 const FLOOR_KINDS = ['tile', 'lvp', 'laminate', 'hardwood', 'carpet', 'vinyl', 'other'];
+const TRANS_KINDS = ['threshold', 'reducer', 'tmolding', 'stairnose', 'seam', 'other'];
 function flooringTotals() {
-  const byType = {}; // ftype -> gross SF
+  const byType = {};      // ftype -> gross SF
+  const transByType = {}; // ttype -> LF
   for (const m of state.markups) {
-    if (m.kind !== 'froom') continue;
-    const t = (m.cfg && m.cfg.ftype) || 'tile';
-    byType[t] = (byType[t] || 0) + froomSf(m);
+    if (m.kind === 'froom') { const t = (m.cfg && m.cfg.ftype) || 'tile'; byType[t] = (byType[t] || 0) + froomSf(m); }
+    else if (m.kind === 'ftrans') { const t = (m.cfg && m.cfg.ttype) || 'reducer'; transByType[t] = (transByType[t] || 0) + ftransLenFt(m); }
   }
   let totalSF = 0;
   for (const k in byType) totalSF += byType[k];
-  return { byType, totalSF };
+  return { byType, transByType, totalSF };
 }
 function flooringBidLines() {
   const T = flooringTotals();
-  const waste = 1 + (Number(state.flooring.waste) || 0) / 100;
+  const F = state.flooring;
+  const waste = 1 + (Number(F.waste) || 0) / 100;
   const lines = [];
   for (const k of FLOOR_KINDS) {
     const sf = T.byType[k];
     if (!sf || sf < 0.5) continue;
-    lines.push({ key: `fl_${k}`, label: `${FLOOR_LABEL[k]} flooring (${state.flooring.waste}% waste)`, qty: sf * waste, unit: 'SF', q: 0, defPrice: FLOOR_PRICE[k] || 5 });
+    lines.push({ key: `fl_${k}`, label: `${FLOOR_LABEL[k]} flooring (${F.waste}% waste)`, qty: sf * waste, unit: 'SF', q: 0, defPrice: FLOOR_PRICE[k] || 5 });
+  }
+  const underlay = F.underlay || 'none';
+  if (underlay !== 'none' && T.totalSF > 0.5) lines.push({ key: 'fl_underlay', label: UNDERLAY_LABEL[underlay], qty: T.totalSF * waste, unit: 'SF', q: 0, defPrice: UNDERLAY_PRICE[underlay] || 0.5 });
+  for (const k of TRANS_KINDS) {
+    const lf = T.transByType[k];
+    if (!lf || lf < 0.5) continue;
+    lines.push({ key: `fl_trans_${k}`, label: `${TRANS_LABEL[k]} (transition)`, qty: lf, unit: 'LF', q: 0, defPrice: TRANS_PRICE[k] || 5 });
   }
   return lines;
 }
@@ -4633,22 +4663,29 @@ function renderFlooringPanel() {
   const rows = [];
   const R = (a, b) => rows.push(`<div class="dirt-row"><span>${a}</span><span class="v">${b}</span></div>`);
   const opts = FLOOR_KINDS.map(k => `<option value="${k}">${FLOOR_LABEL[k]}</option>`).join('');
+  const uopts = ['none', 'foam', 'cork', 'cement', 'ditra'].map(k => `<option value="${k}">${UNDERLAY_LABEL[k]}</option>`).join('');
   rows.push('<div class="roof-sub">Settings</div>');
   rows.push(`<div class="dirt-set">New rooms <select id="flType">${opts}</select> · Waste <input type="number" id="flWaste" min="0"> %</div>`);
+  rows.push(`<div class="dirt-set">Underlayment <select id="flUnder">${uopts}</select></div>`);
   rows.push('<div class="roof-sub">Floor SF by material</div>');
   let any = false;
   for (const k of FLOOR_KINDS) { const sf = T.byType[k]; if (!sf) continue; any = true; R(FLOOR_LABEL[k], `${fmt(sf, 0)} SF`); }
   if (!any) rows.push('<div class="hint" style="margin:4px 0">No rooms yet — trace a room (▦) and set its material.</div>');
   else {
     rows.push(`<div class="dirt-row"><b>Total floor SF</b><span class="v"><b>${fmt(T.totalSF, 0)}</b></span></div>`);
-    rows.push(`<div class="hint" style="margin:4px 0">Material SF adds ${F.waste}% waste in the bid. Prices in $ Bid.</div>`);
+    if ((F.underlay || 'none') !== 'none') R(`Underlayment (${UNDERLAY_LABEL[F.underlay]})`, `${fmt(T.totalSF, 0)} SF`);
   }
+  const transBits = TRANS_KINDS.filter(k => T.transByType[k] > 0.5);
+  if (transBits.length) { rows.push('<div class="roof-sub">Transitions</div>'); for (const k of transBits) R(TRANS_LABEL[k], `${fmt(T.transByType[k], 0)} LF`); }
+  rows.push('<div class="hint" style="margin:4px 0">Material SF adds waste; underlayment covers total floor SF. Prices in $ Bid.</div>');
   const body = $('floorBody');
   body.innerHTML = rows.join('');
   $('flType').value = curFloorType;
   $('flWaste').value = F.waste;
+  $('flUnder').value = F.underlay || 'none';
   $('flType').addEventListener('change', e => { curFloorType = e.target.value; if (tool === 'froom') setTool('froom'); });
   $('flWaste').addEventListener('change', e => { F.waste = Math.max(0, parseFloat(e.target.value) || 10); e.target.value = F.waste; scheduleSave(); renderFlooringPanel(); vp.requestDraw(); });
+  $('flUnder').addEventListener('change', e => { F.underlay = e.target.value; scheduleSave(); renderFlooringPanel(); });
 }
 $('btnFloor').addEventListener('click', () => {
   const p = $('floorPanel');
@@ -4657,6 +4694,7 @@ $('btnFloor').addEventListener('click', () => {
   syncPanelButtons();
 });
 if ($('flTypeTb')) $('flTypeTb').addEventListener('change', e => { curFloorType = e.target.value; if (tool === 'froom') setTool('froom'); });
+if ($('flTransTb')) $('flTransTb').addEventListener('change', e => { curTransType = e.target.value; if (tool === 'ftrans') setTool('ftrans'); });
 
 /* ===================== Live sessions (SSE + REST ops) =====================
  * Host "goes live" on the current project; teammates join and co-edit in real

@@ -134,6 +134,15 @@
         <option value="vinyl">Sheet vinyl</option>
         <option value="other">Other</option>
       </select>
+      <button class="tool" data-tool="ftrans" title="Transition — trace a threshold / reducer / T-molding / stair-nose run → LF. Double-click to change its type.">▂</button>
+      <select id="flTransTb" class="mini-sel" title="Transition type for new runs">
+        <option value="threshold">Threshold</option>
+        <option value="reducer">Reducer</option>
+        <option value="tmolding">T-molding</option>
+        <option value="stairnose">Stair nose</option>
+        <option value="seam">Transition strip</option>
+        <option value="other">Other</option>
+      </select>
     </div>
     <input type="color" id="mkColor" class="dirt-hide" value="#e05555" title="Markup color (applies to the selected markup too)">
     <select id="mkWidth" class="dirt-hide" title="Line weight / text size (applies to the selected markup too)">
@@ -517,6 +526,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=16"></script>
+<script type="module" src="app.js?v=17"></script>
 </body>
 </html>
