@@ -220,11 +220,12 @@ body.nothumbs #sheetsPanel { display: none; }
   padding: 7px 6px 7px 10px; border-bottom: 1px solid var(--border);
   font-weight: 700; font-size: 13px;
 }
-.sheets-x {
+.sheets-x, .panel-x {
   background: none; border: none; color: var(--muted); cursor: pointer;
   font-size: 14px; line-height: 1; padding: 3px 7px; border-radius: 5px;
 }
-.sheets-x:hover { color: var(--text); background: var(--panel2); }
+.sheets-x:hover, .panel-x:hover { color: var(--text); background: var(--panel2); }
+.panel-x { margin-left: auto; } /* push the ✕ to the right edge of the panel header */
 #thumbRail {
   flex: 1 1 auto; overflow-y: auto;
   padding: 8px; display: flex; flex-direction: column; gap: 8px;
@@ -233,6 +234,10 @@ body.nothumbs #sheetsPanel { display: none; }
 .thumbs-open { position: absolute; top: 10px; left: 10px; z-index: 6; display: none; }
 body.nothumbs .thumbs-open { display: inline-flex; }
 body.nothumbs #hud { left: 48px; } /* make room for the open button */
+/* floating "open the earthwork panel" button — top-right of the canvas, shown
+   only in dirt mode while the panel is closed (JS toggles .shown) */
+.panel-open { position: absolute; top: 10px; right: 10px; z-index: 6; display: none; }
+.panel-open.shown { display: inline-flex; }
 .thumb {
   border: 2px solid var(--border); border-radius: 6px; overflow: hidden;
   background: #fff; cursor: pointer; padding: 0; position: relative;

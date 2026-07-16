@@ -2461,7 +2461,12 @@ const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freeha
 // Toolbar trade buttons show an 'active' state while their side panel is open.
 function syncPanelButtons() {
   const mark = (btnId, panelId) => { const b = $(btnId), p = $(panelId); if (b && p) b.classList.toggle('active', !p.classList.contains('hidden')); };
-  mark('btnRoof', 'roofPanel'); mark('btnDirt', 'dirtPanel'); mark('btnDw', 'dwPanel'); mark('btnFloor', 'floorPanel'); mark('btnFram', 'framPanel');
+  mark('btnRoof', 'roofPanel'); mark('btnDw', 'dwPanel'); mark('btnFloor', 'floorPanel'); mark('btnFram', 'framPanel');
+  // Earthwork has no toolbar button — its panel is closed by the ✕ in its header
+  // and reopened by the floating ⛰ button (top-right of the canvas), shown only
+  // while in dirt mode with the panel closed.
+  const openBtn = $('btnDirtOpen');
+  if (openBtn) openBtn.classList.toggle('shown', state.trade === 'dirt' && $('dirtPanel').classList.contains('hidden'));
 }
 function setTrade(t, { save = true } = {}) {
   state.trade = t || '';
@@ -3113,10 +3118,16 @@ function drawHeat(ctx) {
   ctx.restore();
 }
 
-$('btnDirt').addEventListener('click', () => {
+// Earthwork panel has no toolbar button — it auto-opens on entering dirt mode.
+// The ✕ in its header closes it; the floating ⛰ button (top-right) reopens it.
+if ($('btnDirtClose')) $('btnDirtClose').addEventListener('click', () => {
+  $('dirtPanel').classList.add('hidden');
+  syncPanelButtons();
+});
+if ($('btnDirtOpen')) $('btnDirtOpen').addEventListener('click', () => {
   const p = $('dirtPanel');
-  p.classList.toggle('hidden');
-  if (!p.classList.contains('hidden')) {
+  if (p.classList.contains('hidden')) {
+    p.classList.remove('hidden');
     els.markupPanel.classList.add('hidden'); $('roofPanel').classList.add('hidden'); $('dwPanel').classList.add('hidden');
     dirtSheetsCollapsed = dirtSetupComplete();
     renderDirtPanel();

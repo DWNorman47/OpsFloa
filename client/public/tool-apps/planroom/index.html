@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css?v=28">
+<link rel="stylesheet" href="styles.css?v=29">
 <script>
 (() => {
   try {
@@ -208,7 +208,6 @@
     </div>
     <div class="tb-cluster">
     <button id="btnRoof" class="btn tb-takeoff tr-roof" title="Roofing takeoff — squares, edges, and counts across the set">🏠<span class="btn-label"> Roof</span></button>
-    <button id="btnDirt" class="btn tb-takeoff tr-dirt" title="Earthwork / cut-fill takeoff — designate sheets, trace contours, compute volumes">⛰<span class="btn-label"> Dirt</span></button>
     <button id="btnDw" class="btn tb-takeoff tr-dwall" title="Drywall & Paint — wall height, sheet size, waste, coverage; net SF & materials">🧱<span class="btn-label"> Drywall</span></button>
     <button id="btnFloor" class="btn tb-takeoff tr-floor" title="Flooring & Tile — net floor SF by material with waste; prices in $ Bid">▦<span class="btn-label"> Floor</span></button>
     <button id="btnFram" class="btn tb-takeoff tr-fram" title="Framing & Lumber — studs, plates & board-feet by stud size; prices in $ Bid">🪵<span class="btn-label"> Framing</span></button>
@@ -245,6 +244,7 @@
   <div id="canvasWrap">
     <canvas id="cv"></canvas>
     <button id="btnThumbsOpen" class="btn thumbs-open needs-doc" title="Show the sheet strip">❐</button>
+    <button id="btnDirtOpen" class="btn panel-open needs-doc" title="Open the earthwork panel">⛰</button>
     <div id="hud"></div>
     <div id="saveStatus" aria-live="polite"></div>
     <div id="dropHint"><span>Drop a PDF or image here, or open plans from <b>📁 Project</b></span></div>
@@ -284,7 +284,7 @@
     <div id="roofBody" class="mk-list"></div>
   </aside>
   <aside id="dirtPanel" class="hidden" aria-label="Earthwork takeoff">
-    <div class="mk-head"><b>⛰ Earthwork (cut / fill)</b></div>
+    <div class="mk-head"><b>⛰ Earthwork (cut / fill)</b><button id="btnDirtClose" class="panel-x" title="Close the earthwork panel">✕</button></div>
     <div id="dirtBody" class="mk-list"></div>
   </aside>
   <aside id="dwPanel" class="hidden" aria-label="Drywall &amp; Paint takeoff">
@@ -571,6 +571,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=28"></script>
+<script type="module" src="app.js?v=29"></script>
 </body>
 </html>
