@@ -423,7 +423,8 @@ function measureValue(m) {
   if (m.kind === 'qline') {
     const cfg = m.cfg || {};
     const r = computeLineResult(qlineLenFt(m), cfg);
-    return `${cfg.label || 'Line'} · ${fmt(r.lengthFt)} ft${r.trenchCY ? ` · ${fmt(r.trenchCY, 1)} CY` : ''}`;
+    const head = pipeScheduleLabel(cfg);
+    return `${head} · ${fmt(r.lengthFt)} ft${r.trenchCY ? ` · ${fmt(r.trenchCY, 1)} CY` : ''}`;
   }
   if (m.kind === 'qcount') { const cfg = m.cfg || {}; return `${m.pts.length} ${cfg.unit || 'EA'} · ${cfg.label || 'Item'}`; }
   if (m.kind === 'dwall') return `${fmt(dwallLenFt(m))} ft · ${fmt(dwallSf(m))} SF (${m.sides || 2}s @ ${fmt(dwallHeight(m))}')`;
@@ -3980,10 +3981,10 @@ function wallSectionAreaSf(bottomWidth, depth, slope) {
 const LINE_PRESETS = {
   curb:     { label: 'Curb & gutter', trench: false },
   pipe:     { label: 'Pipe / utility trench', trench: true, width: 3, depth: 5, slope: 0, bedding: 6 },
-  pipe12:   { label: '12" pipe trench', trench: true, width: 3,   depth: 5, slope: 0, bedding: 6 },
-  pipe18:   { label: '18" pipe trench', trench: true, width: 3.5, depth: 5, slope: 0, bedding: 6 },
-  pipe24:   { label: '24" pipe trench', trench: true, width: 4,   depth: 6, slope: 0, bedding: 6 },
-  pipe36:   { label: '36" pipe trench', trench: true, width: 5,   depth: 6, slope: 0, bedding: 6 },
+  pipe12:   { label: '12" pipe trench', trench: true, width: 3,   depth: 5, slope: 0, bedding: 6, dia: 12 },
+  pipe18:   { label: '18" pipe trench', trench: true, width: 3.5, depth: 5, slope: 0, bedding: 6, dia: 18 },
+  pipe24:   { label: '24" pipe trench', trench: true, width: 4,   depth: 6, slope: 0, bedding: 6, dia: 24 },
+  pipe36:   { label: '36" pipe trench', trench: true, width: 5,   depth: 6, slope: 0, bedding: 6, dia: 36 },
   silt:     { label: 'Silt fence', trench: false },
   sawcut:   { label: 'Sawcut', trench: false },
   fence:    { label: 'Fence / guardrail', trench: false },
@@ -4008,8 +4009,15 @@ function defaultNewLineColor() {
   if (sel && sel.kind === 'qline') return lineColorHex(sel.cfg);
   return lastLineColor;
 }
+// Pipe schedule grouping: sized pipe runs roll up by diameter × material
+// (e.g. '24" RCP'); everything else keeps its freetext label. Storm/utility pack.
+function pipeScheduleLabel(cfg) {
+  const dia = parseFloat(cfg && cfg.dia) || 0;
+  if (dia > 0) return `${dia}" ${(cfg.mat || 'pipe')}`;
+  return (cfg && cfg.label) || 'Line';
+}
 function computeLineResult(lengthFt, cfg) {
-  const r = { lengthFt, label: cfg.label, trench: !!cfg.trench, trenchCY: 0, beddingCY: 0 };
+  const r = { lengthFt, label: cfg.label, trench: !!cfg.trench, trenchCY: 0, beddingCY: 0, dia: parseFloat(cfg.dia) || 0, mat: cfg.mat || '' };
   if (cfg.trench) {
     const w = parseFloat(cfg.width) || 0, d = parseFloat(cfg.depth) || 0, s = parseFloat(cfg.slope) || 0;
     r.trenchCY = wallSectionAreaSf(w, d, s) * lengthFt / 27;
@@ -4032,6 +4040,7 @@ function readLineCfg() {
     label: $('ltLabel').value.trim() || 'Line', trench: $('ltTrench').checked,
     width: $('ltWidth').value, depth: $('ltDepth').value, slope: $('ltSlope').value,
     bedding: $('ltBedding').value, color: $('ltColor').value,
+    dia: parseFloat($('ltDia').value) || 0, mat: $('ltMat').value,
   };
 }
 function syncLineTrench() { $('ltTrenchFields').style.display = $('ltTrench').checked ? '' : 'none'; }
@@ -4046,14 +4055,20 @@ function askLineConfig(lengthFt, prefill) {
       if (prefill.depth != null) $('ltDepth').value = prefill.depth;
       if (prefill.slope != null) $('ltSlope').value = prefill.slope;
       if (prefill.bedding != null) $('ltBedding').value = prefill.bedding;
+      if (prefill.dia != null) $('ltDia').value = prefill.dia;
+      if (prefill.mat != null) $('ltMat').value = prefill.mat;
     }
     $('ltColor').value = (prefill && prefill.color) || defaultNewLineColor() || autoLineColor($('ltLabel').value);
     syncLineTrench();
     preview();
     $('lineTakeoff').classList.remove('hidden');
     const onInput = () => { syncLineTrench(); preview(); };
-    const inputs = ['ltLabel', 'ltTrench', 'ltWidth', 'ltDepth', 'ltSlope', 'ltBedding'];
+    const inputs = ['ltLabel', 'ltTrench', 'ltWidth', 'ltDepth', 'ltSlope', 'ltBedding', 'ltMat'];
     inputs.forEach(id => { $(id).addEventListener('input', onInput); $(id).addEventListener('change', onInput); });
+    // typing a diameter suggests a trench bottom width (pipe Ø + ~2 ft working
+    // room, to the nearest half-foot); still editable afterward
+    const onDia = () => { const dia = parseFloat($('ltDia').value) || 0; if (dia > 0) $('ltWidth').value = Math.round((dia / 12 + 2) * 2) / 2; onInput(); };
+    $('ltDia').addEventListener('input', onDia); $('ltDia').addEventListener('change', onDia);
     const presetBtns = [...document.querySelectorAll('#ltPresets [data-preset]')];
     const onPreset = e => {
       const p = LINE_PRESETS[e.target.dataset.preset];
@@ -4063,12 +4078,14 @@ function askLineConfig(lengthFt, prefill) {
       if (p.depth != null) $('ltDepth').value = p.depth;
       if (p.slope != null) $('ltSlope').value = p.slope;
       if (p.bedding != null) $('ltBedding').value = p.bedding;
+      $('ltDia').value = p.dia != null ? p.dia : 0; // non-pipe presets clear the diameter
       $('ltColor').value = autoLineColor(p.label);
       onInput();
     };
     presetBtns.forEach(b => b.addEventListener('click', onPreset));
     const cleanup = () => {
       inputs.forEach(id => { $(id).removeEventListener('input', onInput); $(id).removeEventListener('change', onInput); });
+      $('ltDia').removeEventListener('input', onDia); $('ltDia').removeEventListener('change', onDia);
       presetBtns.forEach(b => b.removeEventListener('click', onPreset));
       $('ltOk').onclick = null; $('ltCancel').onclick = null;
       $('lineTakeoff').classList.add('hidden');
@@ -4085,12 +4102,14 @@ function lineBidLines() {
     if (m.kind !== 'qline') continue;
     const cfg = m.cfg || {};
     const r = computeLineResult(qlineLenFt(m), cfg);
-    const g = groups.get(cfg.label) || { comps: {} };
+    // sized pipe runs roll up by Ø × material (the pipe schedule); other runs by label
+    const groupLabel = pipeScheduleLabel(cfg);
+    const g = groups.get(groupLabel) || { comps: {} };
     const add = (comp, unit, val) => { if (!val) return; (g.comps[comp] = g.comps[comp] || { unit, qty: 0 }).qty += val; };
     add('lf', 'LF', r.lengthFt);
     add('trench', 'CY', r.trenchCY);
     add('bedding', 'CY', r.beddingCY);
-    groups.set(cfg.label, g);
+    groups.set(groupLabel, g);
   }
   const COMP = { lf: '', trench: 'trench excavation', bedding: 'bedding' };
   const lines = [];

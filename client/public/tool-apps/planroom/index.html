@@ -350,6 +350,19 @@
       <input type="checkbox" id="ltTrench"> Trench cross-section (pipe / utility)
     </label>
     <div class="wall-grid" id="ltTrenchFields">
+      <label title="Nominal pipe diameter. Rolls the run up on the pipe schedule by size and suggests a trench width. 0 = generic / non-pipe run.">Pipe &Oslash; (in)<input type="number" id="ltDia" min="0" step="1" value="0"></label>
+      <label title="Pipe material — rolls the run up on the pipe schedule by material.">Material
+        <select id="ltMat">
+          <option value="">&mdash;</option>
+          <option value="RCP">RCP</option>
+          <option value="PVC">PVC</option>
+          <option value="HDPE">HDPE</option>
+          <option value="DIP">DIP</option>
+          <option value="CMP">CMP</option>
+          <option value="VCP">VCP</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
       <label>Trench bottom width (ft)<input type="number" id="ltWidth" min="0" step="0.5" value="3"></label>
       <label>Depth (ft)<input type="number" id="ltDepth" min="0" step="0.5" value="5"></label>
       <label title="Backcut of the trench sides (H per 1 V). 0 = vertical / shored.">Side slope (H:V)
@@ -478,6 +491,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=10"></script>
+<script type="module" src="app.js?v=11"></script>
 </body>
 </html>
