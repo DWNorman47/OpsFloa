@@ -1,107 +1,31 @@
 /**
- * Office AI tools (Tools module): Summarizer, Document Q&A, Email drafter.
+ * Office AI tools (Tools module): Summarizer, Document Q&A, Contract red-flag
+ * scanner, Email drafter.
  *
- * No request content is persisted — only a per-company monthly usage counter
- * (office_ai_usage) that caps the Claude-backed calls so a flat-priced pack
- * can't be run up. Mounted in index.js with requireAuth + requirePlan('business').
- * Needs ANTHROPIC_API_KEY (see services/anthropic.js); returns 503 when absent.
+ * No request content is persisted by THESE routes — they're paste-in, read-out.
+ * (Meeting minutes in routes/recordings.js does persist, because it's attached
+ * to a recording that already stores its transcript.) Metering is shared via
+ * services/aiGate.js. Mounted in index.js with requireAuth +
+ * requirePlan('business'). Needs ANTHROPIC_API_KEY (see services/anthropic.js);
+ * returns 503 when absent.
  */
 
 const router = require('express').Router();
-const pool = require('../db');
 const anthropic = require('../services/anthropic');
 const pdfParse = require('pdf-parse');
 
-// ~120k chars ≈ 30k tokens: bounds the per-call cost so one huge input can't
-// run up a bill. Longer input is clipped (the client warns when it trims).
-const MAX_INPUT = 120000;
+// The AI gate (config check, monthly quota, refund-on-failure, 503/429/502)
+// lives in services/aiGate.js — recordings.js needs the same counter for
+// meeting minutes, and two copies would mean two counters disagreeing about
+// one company's limit. MAX_INPUT (~120k chars ≈ 30k tokens) bounds the
+// per-call cost; longer input is clipped and the client warns.
+const { runAi, usageFor, MAX_INPUT } = require('../services/aiGate');
 
 // base64 of a PDF must stay under the 20mb express.json cap; 15 MB raw is safe
 const MAX_PDF_BYTES = 15 * 1024 * 1024;
 
-// Monthly per-company ceiling on AI calls (summarize / ask / draft). Generous by
-// default; override with OFFICE_AI_MONTHLY_LIMIT. Enforced via office_ai_usage.
-const AI_MONTHLY_LIMIT = Math.max(1, parseInt(process.env.OFFICE_AI_MONTHLY_LIMIT, 10) || 300);
-
-function aiReady(res) {
-  if (anthropic.isConfigured()) return true;
-  res.status(503).json({ error: 'AI features are not configured yet. Ask an admin to add ANTHROPIC_API_KEY.' });
-  return false;
-}
-
-function currentPeriod() {
-  const d = new Date();
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
-}
-
-// Atomically count one AI call for the company this month. Over the cap → rolls
-// the increment back so the counter can't run away. Fails open on a DB hiccup —
-// metering must never take the feature down.
-async function reserveAiCall(companyId) {
-  const period = currentPeriod();
-  try {
-    const { rows } = await pool.query(
-      `INSERT INTO office_ai_usage (company_id, period, count, updated_at)
-         VALUES ($1, $2, 1, now())
-       ON CONFLICT (company_id, period)
-         DO UPDATE SET count = office_ai_usage.count + 1, updated_at = now()
-       RETURNING count`,
-      [companyId, period],
-    );
-    if (rows[0].count > AI_MONTHLY_LIMIT) {
-      await pool.query(
-        'UPDATE office_ai_usage SET count = count - 1 WHERE company_id = $1 AND period = $2',
-        [companyId, period],
-      );
-      return false;
-    }
-    return true;
-  } catch (_) {
-    return true; // don't block the tool if the counter is unavailable
-  }
-}
-
-// Return a reserved slot when the AI call itself fails, so a failed request
-// doesn't count against the customer.
-async function refundAiCall(companyId) {
-  try {
-    await pool.query(
-      'UPDATE office_ai_usage SET count = GREATEST(0, count - 1) WHERE company_id = $1 AND period = $2',
-      [companyId, currentPeriod()],
-    );
-  } catch (_) { /* best effort */ }
-}
-
-function overLimit(res) {
-  res.status(429).json({
-    error: `You've reached this month's AI limit (${AI_MONTHLY_LIMIT} requests). It resets at the start of next month.`,
-  });
-}
-
-// Wrap an AI endpoint with the config check + monthly gate + refund-on-failure.
-// handler() does the work and returns the JSON body to send.
-async function runAi(req, res, handler) {
-  if (!aiReady(res)) return;
-  if (!(await reserveAiCall(req.user.company_id))) return overLimit(res);
-  try {
-    res.json(await handler());
-  } catch (err) {
-    await refundAiCall(req.user.company_id);
-    if (req.log && req.log.error) req.log.error({ err }, 'office AI request failed');
-    res.status(502).json({ error: 'The AI request failed. Please try again in a moment.' });
-  }
-}
-
 router.get('/usage', async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      'SELECT count FROM office_ai_usage WHERE company_id = $1 AND period = $2',
-      [req.user.company_id, currentPeriod()],
-    );
-    res.json({ count: rows[0] ? rows[0].count : 0, limit: AI_MONTHLY_LIMIT });
-  } catch (_) {
-    res.json({ count: 0, limit: AI_MONTHLY_LIMIT });
-  }
+  res.json(await usageFor(req.user.company_id));
 });
 
 // --- Summarizer -----------------------------------------------------------

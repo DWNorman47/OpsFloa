@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import api from '../api';
+import { renderAiMarkdown } from './aiMarkdown';
 
 /**
  * Voice transcription tool (Tools module).
@@ -90,6 +91,9 @@ export default function TranscriptionTool() {
   const [titleEdit, setTitleEdit] = useState('');
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [minutes, setMinutes] = useState('');
+  const [minutesBusy, setMinutesBusy] = useState(false);
+  const [minutesErr, setMinutesErr] = useState('');
   const fileInputRef = useRef(null);
   const audioRef = useRef(null);
 
@@ -125,6 +129,9 @@ export default function TranscriptionTool() {
     try {
       const { data } = await api.get(`/recordings/${id}`);
       setDetail(data);
+      // minutes are stored on the recording, so they survive a reload
+      setMinutes(data.minutes_md || '');
+      setMinutesErr('');
       setNameEdits(data.speaker_names || {});
       setTitleEdit(data.title || '');
     } catch {
@@ -217,6 +224,23 @@ export default function TranscriptionTool() {
     } catch { /* toast via interceptor */ } finally {
       setSaving(false);
     }
+  };
+
+  const makeMinutes = async () => {
+    if (!detail || minutesBusy) return;
+    setMinutesErr(''); setMinutesBusy(true);
+    try {
+      const { data } = await api.post(`/recordings/${detail.id}/minutes`, {}, { suppressToast: true });
+      setMinutes(data.result || '');
+    } catch (e) {
+      setMinutesErr(e?.response?.data?.error || 'Could not write the minutes. Please try again.');
+    } finally {
+      setMinutesBusy(false);
+    }
+  };
+
+  const copyMinutes = async () => {
+    try { await navigator.clipboard.writeText(minutes); } catch { /* clipboard unavailable */ }
   };
 
   const copyTranscript = async () => {
@@ -333,10 +357,38 @@ export default function TranscriptionTool() {
                   <button className="ops-button-primary" onClick={saveDetailEdits} disabled={saving}>
                     {saving ? 'Saving…' : 'Save names & title'}
                   </button>
+                  <button className="ops-button-secondary" onClick={makeMinutes} disabled={minutesBusy}>
+                    {minutesBusy ? 'Writing minutes…' : minutes ? 'Redo minutes' : 'Turn into minutes'}
+                  </button>
                   <button className="ops-button-secondary" onClick={copyTranscript}>{copied ? 'Copied!' : 'Copy transcript'}</button>
                   <button className="ops-button-secondary" onClick={downloadTranscript}>Download .txt</button>
                   <button className="ops-button-secondary" onClick={() => remove(detail.id)} style={{ color: '#b91c1c' }}>Delete</button>
                 </div>
+
+                {minutesErr && <div style={styles.minutesErr}>{minutesErr}</div>}
+
+                {minutes && (
+                  <div style={styles.minutesBox}>
+                    <div style={styles.minutesHead}>
+                      <b>Minutes</b>
+                      {detail.minutes_at && !minutesBusy && (
+                        <span style={styles.minutesAge}>saved {new Date(detail.minutes_at).toLocaleString()}</span>
+                      )}
+                      <span style={styles.minutesAi}>uses 1 AI request</span>
+                      <button className="ops-button-secondary" onClick={copyMinutes} style={{ marginLeft: 'auto' }}>Copy</button>
+                    </div>
+                    {/* Naming speakers is what turns "Speaker A owes the RFI" into
+                        "Mike owes the RFI", so say so rather than letting it be a
+                        mystery why the minutes read oddly. */}
+                    {!Object.values(detail.speaker_names || {}).some(v => (v || '').trim()) && (
+                      <div style={styles.minutesTip}>
+                        Nobody&rsquo;s named yet, so these say &ldquo;Speaker A&rdquo;. Fill in the names above,
+                        save, and redo the minutes to get real ones on the action items.
+                      </div>
+                    )}
+                    <div style={styles.minutesBody}>{renderAiMarkdown(minutes)}</div>
+                  </div>
+                )}
 
                 <div>
                   {(detail.utterances || []).map((u, i) => {
@@ -451,6 +503,13 @@ export default function TranscriptionTool() {
 }
 
 const styles = {
+  minutesBox: { border: '1px solid #c7d2fe', borderRadius: 12, background: '#f5f7ff', padding: '10px 14px 14px', margin: '4px 0 16px' },
+  minutesHead: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, fontSize: 14, color: '#0f172a' },
+  minutesAge: { fontSize: 12, color: '#94a3b8', fontWeight: 400 },
+  minutesAi: { fontSize: 11.5, color: '#6366f1', background: '#eef2ff', border: '1px solid #c7d2fe', borderRadius: 20, padding: '1px 8px' },
+  minutesTip: { fontSize: 12.5, lineHeight: 1.6, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '8px 10px', margin: '6px 0 4px' },
+  minutesBody: { fontSize: 14, lineHeight: 1.6, color: '#0f172a' },
+  minutesErr: { margin: '4px 0 12px', padding: '10px 12px', borderRadius: 8, fontSize: 13.5, background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c' },
   card: {
     background: '#fff',
     border: '1px solid #e2e8f0',
