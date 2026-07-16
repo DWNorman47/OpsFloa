@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css?v=16">
+<link rel="stylesheet" href="styles.css?v=19">
 <script>
 (() => {
   try {
@@ -61,6 +61,7 @@
       <option value="dirt">⛰ Earthwork</option>
       <option value="drywall">🧱 Drywall &amp; Paint</option>
       <option value="flooring">▦ Flooring &amp; Tile</option>
+      <option value="framing">🪵 Framing &amp; Lumber</option>
     </select>
     <button class="tool tb-takeoff tr-roof" data-tool="plane" title="Roof plane — trace a roof face, set its pitch → sloped area + squares">▰</button>
     <button class="tool tb-takeoff tr-roof" data-tool="redge" title="Roof edge — trace eave/rake/ridge/hip/valley/flashing → linear feet (hip/valley/rake pitch-corrected)">╱</button>
@@ -144,6 +145,14 @@
         <option value="other">Other</option>
       </select>
     </div>
+    <div class="tb-sub tb-takeoff tr-fram">
+      <button class="tool" data-tool="fwall" title="Framed wall — trace a wall run → studs, plates & board-feet by stud size. Double-click a wall to change its size.">‖</button>
+      <select id="frSizeTb" class="mini-sel" title="Stud size for new walls">
+        <option value="2x4">2×4</option>
+        <option value="2x6">2×6</option>
+        <option value="2x8">2×8</option>
+      </select>
+    </div>
     <input type="color" id="mkColor" class="dirt-hide" value="#e05555" title="Markup color (applies to the selected markup too)">
     <select id="mkWidth" class="dirt-hide" title="Line weight / text size (applies to the selected markup too)">
       <option value="S">Thin</option>
@@ -170,6 +179,7 @@
     <button id="btnDirt" class="btn tb-takeoff tr-dirt" title="Earthwork / cut-fill takeoff — designate sheets, trace contours, compute volumes">⛰<span class="btn-label"> Dirt</span></button>
     <button id="btnDw" class="btn tb-takeoff tr-dwall" title="Drywall & Paint — wall height, sheet size, waste, coverage; net SF & materials">🧱<span class="btn-label"> Drywall</span></button>
     <button id="btnFloor" class="btn tb-takeoff tr-floor" title="Flooring & Tile — net floor SF by material with waste; prices in $ Bid">▦<span class="btn-label"> Floor</span></button>
+    <button id="btnFram" class="btn tb-takeoff tr-fram" title="Framing & Lumber — studs, plates & board-feet by stud size; prices in $ Bid">🪵<span class="btn-label"> Framing</span></button>
     <button id="btnBid" class="btn tb-takeoff" title="Takeoff bid — roofing materials & labor and earthwork volumes, editable prices, print / CSV">$<span class="btn-label"> Bid</span></button>
     <button id="btnUpsell" class="btn tb-upsell" title="Turn your measurements into a priced takeoff & bid — Takeoff layer add-on">🔒<span class="btn-label"> Takeoff</span></button>
     <div class="menu-wrap">
@@ -253,6 +263,10 @@
   <aside id="floorPanel" class="hidden" aria-label="Flooring &amp; Tile takeoff">
     <div class="mk-head"><b>▦ Flooring &amp; Tile</b></div>
     <div id="floorBody" class="mk-list"></div>
+  </aside>
+  <aside id="framPanel" class="hidden" aria-label="Framing &amp; Lumber takeoff">
+    <div class="mk-head"><b>🪵 Framing &amp; Lumber</b></div>
+    <div id="framBody" class="mk-list"></div>
   </aside>
 </main>
 
@@ -526,6 +540,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=18"></script>
+<script type="module" src="app.js?v=19"></script>
 </body>
 </html>
