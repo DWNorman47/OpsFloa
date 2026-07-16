@@ -157,6 +157,13 @@
         <option value="door">Door</option>
         <option value="window">Window</option>
       </select>
+      <button class="tool" data-tool="fsheath" title="Sheathing — trace a wall/floor area → 4×8 sheets by type. Double-click to change its type.">▤</button>
+      <select id="frSheathTb" class="mini-sel" title="Sheathing type for new areas">
+        <option value="osb716">OSB 7/16"</option>
+        <option value="ply12">Plywood 1/2"</option>
+        <option value="ply58">Plywood 5/8"</option>
+        <option value="zip">ZIP System</option>
+      </select>
     </div>
     <input type="color" id="mkColor" class="dirt-hide" value="#e05555" title="Markup color (applies to the selected markup too)">
     <select id="mkWidth" class="dirt-hide" title="Line weight / text size (applies to the selected markup too)">
@@ -545,6 +552,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=20"></script>
+<script type="module" src="app.js?v=21"></script>
 </body>
 </html>

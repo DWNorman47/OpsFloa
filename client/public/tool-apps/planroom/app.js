@@ -67,7 +67,7 @@ const state = {
   // flooring & tile pack settings (project-wide)
   flooring: { waste: 10, underlay: 'none', tileSize: '12x12', groutJoint: '3/16', thinsetCov: 95 },
   // framing & lumber pack settings (project-wide)
-  framing: { spacing: 16, height: 9, topPlates: 2 },
+  framing: { spacing: 16, height: 9, topPlates: 2, sheathWaste: 10 },
 };
 let curDwSides = 2;  // 1 = perimeter/against structure, 2 = interior partition (both faces)
 let curCeilType = 'drywall';  // ceiling type for new ceilings: drywall | act24 | act22 (ACT = suspended grid)
@@ -94,6 +94,9 @@ const FRAM_PLATE_PRICE = { '2x4': 0.9, '2x6': 1.4, '2x8': 2 }; // $/LF of plate 
 let curFopenType = 'door'; // opening type for new framed openings
 const FOPEN_LABEL = { door: 'Door', window: 'Window' };
 const FOPEN_W = { door: 3, window: 4 }; // default rough-opening width (ft)
+let curSheathType = 'osb716'; // sheathing type for new sheathing areas
+const SHEATH_LABEL = { osb716: 'OSB 7/16"', ply12: 'Plywood 1/2"', ply58: 'Plywood 5/8"', zip: 'ZIP System' };
+const SHEATH_PRICE = { osb716: 15, ply12: 30, ply58: 38, zip: 25 }; // $/sheet (4×8 = 32 SF)
 const TEXTURE_LABEL = { none: 'None', smooth: 'Smooth / skim', orange: 'Orange peel', knockdown: 'Knockdown', popcorn: 'Popcorn' };
 const TEXTURE_PRICE = { smooth: 0.30, orange: 0.35, knockdown: 0.40, popcorn: 0.55 }; // $/SF texture (labor+material)
 const INSUL_LABEL = { none: 'None', r11: 'R-11 batt', r13: 'R-13 batt', r15: 'R-15 batt', r19: 'R-19 batt', r21: 'R-21 batt', sound: 'Sound batt' };
@@ -199,7 +202,7 @@ els.hud.addEventListener('click', () => { clearTimeout(hudTimer); els.hud.classL
  * Widths/sizes are document-space (base px) so markups print/zoom like ink.
  */
 
-const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening'];
+const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath'];
 const MK_LABEL = {
   cloud: 'Cloud', rect: 'Rectangle', ellipse: 'Ellipse', arrow: 'Arrow', line: 'Line',
   freehand: 'Pen', highlight: 'Highlight', text: 'Text', callout: 'Callout',
@@ -208,7 +211,7 @@ const MK_LABEL = {
   contour: 'Contour', espot: 'Spot elev', epad: 'Pad', ebound: 'Earthwork boundary',
   qarea: 'Area takeoff', qline: 'Line takeoff', qcount: 'Count takeoff',
   dwall: 'Wall run', dceiling: 'Ceiling', dopening: 'Opening', dtrim: 'Trim', dheight: 'Height',
-  froom: 'Floor room', ftrans: 'Transition', fwall: 'Framed wall', fopening: 'Framed opening',
+  froom: 'Floor room', ftrans: 'Transition', fwall: 'Framed wall', fopening: 'Framed opening', fsheath: 'Sheathing',
 };
 const MK_ICON = {
   cloud: '☁', rect: '▭', ellipse: '⬭', arrow: '↗', line: '╲',
@@ -218,10 +221,10 @@ const MK_ICON = {
   contour: '⛰', espot: '◎', epad: '◫', ebound: '⬚',
   qarea: '▨', qline: '⌇', qcount: '⊙',
   dwall: '▬', dceiling: '⬜', dopening: '🚪', dtrim: '▁', dheight: '↕',
-  froom: '▦', ftrans: '▂', fwall: '‖', fopening: '▯',
+  froom: '▦', ftrans: '▂', fwall: '‖', fopening: '▯', fsheath: '▤',
 };
 const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
-const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening']; // click-built (vs drag; espot/align are special-cased)
+const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath']; // click-built (vs drag; espot/align are special-cased)
 const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling', 'dtrim']; // produce ft / SF / squares
 
 /* ---- earthwork (sitework pack) helpers ---- */
@@ -471,6 +474,7 @@ function measureValue(m) {
   if (m.kind === 'ftrans') { const cfg = m.cfg || {}; return `${TRANS_LABEL[cfg.ttype] || 'Transition'} · ${fmt(polyLengthFt(m.pts, s), 0)} ft`; }
   if (m.kind === 'fwall') { const cfg = m.cfg || {}; return `${FRAM_SIZE_LABEL[cfg.size] || '2×4'} wall · ${fmt(polyLengthFt(m.pts, s), 0)} ft`; }
   if (m.kind === 'fopening') { const cfg = m.cfg || {}; const n = m.pts.length; return `${n} ${FOPEN_LABEL[cfg.otype] || 'Opening'}${n === 1 ? '' : 's'} (${fmt(cfg.width || 0, 1)}' RO)`; }
+  if (m.kind === 'fsheath') { const cfg = m.cfg || {}; return `${SHEATH_LABEL[cfg.stype] || 'Sheathing'} · ${fmt(polygonAreaFt2(m.pts, s), 0)} SF`; }
   return '';
 }
 const LINE_W = { S: 2, M: 4, L: 8 };
@@ -671,6 +675,7 @@ function drawMarkup(ctx, m) {
       break;
     }
     case 'froom':
+    case 'fsheath':
     case 'marea': {
       if (m.pts.length >= 2) {
         ctx.beginPath();
@@ -1558,6 +1563,8 @@ function setTool(t) {
     setMsg(`Trace a ${FRAM_SIZE_LABEL[curFramSize]} wall run (${state.framing.spacing}" OC @ ${fmt(state.framing.height)}'); Enter/double-click to finish → studs & plates. Double-click to change size.`);
   } else if (t === 'fopening') {
     setMsg(`Click each ${FOPEN_LABEL[curFopenType].toLowerCase()} (${FOPEN_W[curFopenType]}' RO default → header + king/jack/cripple studs); Enter/double-click to finish. Double-click a group to set its width.`);
+  } else if (t === 'fsheath') {
+    setMsg(`Trace a ${SHEATH_LABEL[curSheathType]} sheathing area; Enter/double-click to close → 4×8 sheets. Double-click to change its type.`);
   } else if (t === 'dheight') {
     setMsg((state.scales[state.page] || 0)
       ? 'On an elevation / section sheet, click the floor then the ceiling (bottom → top); double-click or Enter to finish, then name it. Set it as the default in 🧱 or double-click a wall run to apply it.'
@@ -1885,7 +1892,7 @@ els.cv.addEventListener('pointercancel', endDrag);
 
 /* ---- click-built measure drafts: commit / cancel ---- */
 
-const CLOSED_KINDS = ['marea', 'plane', 'epad', 'ebound', 'qarea', 'dceiling', 'froom']; // 3+ pts, closed polygon
+const CLOSED_KINDS = ['marea', 'plane', 'epad', 'ebound', 'qarea', 'dceiling', 'froom', 'fsheath']; // 3+ pts, closed polygon
 const POINT_KINDS = ['mcount', 'ritem', 'qcount', 'dopening']; // 1+ pts, no rubber band
 
 /* ---- vertex reshaping: drag a point (handled in the pointer flow), Alt-click
@@ -1997,6 +2004,7 @@ function commitDraft() {
   else if (d.kind === 'ftrans') extra.cfg = { ttype: curTransType };
   else if (d.kind === 'fwall') extra.cfg = { size: curFramSize };
   else if (d.kind === 'fopening') extra.cfg = { otype: curFopenType, width: FOPEN_W[curFopenType] };
+  else if (d.kind === 'fsheath') extra.cfg = { stype: curSheathType };
   else if (d.kind === 'dwall') { extra.height = state.drywall.wallHeight; extra.sides = curDwSides; }
   else if (d.kind === 'dceiling') extra.cfg = { ctype: curCeilType };
   else if (d.kind === 'dopening') extra.cfg = { otype: curDwOpening, deductSF: OPENING_DEDUCT[curDwOpening] };
@@ -2096,6 +2104,16 @@ els.cv.addEventListener('dblclick', e => {
     vp.requestDraw();
     modals.askText('Rename height', `${fmt(dheightFt(hit), 1)} ft measured`, hit.text || '')
       .then(t => { if (t != null && t.trim()) { const prev = snapshot(); hit.text = t.trim(); pushUndo(prev); markupsChanged(); } });
+    return;
+  }
+  // double-click a sheathing area to change its type
+  if (hit && hit.kind === 'fsheath') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    const cur = (hit.cfg && hit.cfg.stype) || 'osb716';
+    askChoice('Sheathing type', 'Sheathing rolls up on the bid by type → 4×8 sheets.',
+      ['osb716', 'ply12', 'ply58', 'zip'].map(k => ({ label: SHEATH_LABEL[k], value: k, primary: k === cur }))
+    ).then(v => { if (v && v !== cur) { const prev = snapshot(); hit.cfg = { ...(hit.cfg || {}), stype: v }; curSheathType = v; pushUndo(prev); markupsChanged(); } });
     return;
   }
   // double-click a framed opening group to set its rough-opening width
@@ -2387,7 +2405,7 @@ const TRADE_TOOLS = {
   dirt: ['wand', 'contour', 'espot', 'epad', 'ebound', 'align', 'autoarea', 'qarea', 'qline', 'qcount'],
   drywall: ['dwall', 'dceiling', 'dopening', 'dtrim', 'dheight'],
   flooring: ['froom', 'ftrans'],
-  framing: ['fwall', 'fopening'],
+  framing: ['fwall', 'fopening', 'fsheath'],
 };
 // general redlining + generic measure tools that collapse while a trade is active
 const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
@@ -3168,7 +3186,7 @@ function projectData() {
 }
 const defaultDrywall = () => ({ wallHeight: 9, sheetSF: 32, waste: 10, coverage: 375, coats: 2, finish: 'L4', texture: 'none', insul: 'none' });
 const defaultFlooring = () => ({ waste: 10, underlay: 'none', tileSize: '12x12', groutJoint: '3/16', thinsetCov: 95 });
-const defaultFraming = () => ({ spacing: 16, height: 9, topPlates: 2 });
+const defaultFraming = () => ({ spacing: 16, height: 9, topPlates: 2, sheathWaste: 10 });
 const defaultEarthwork = () => ({ existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 }, gridFt: 5, shrink: 15, swell: 25, truckCap: 12, interval: 1, result: null });
 // next contour's default elevation = last + interval (auto-steps up a slope)
 const nextElevDefault = surf => { const iv = Number(state.earthwork.interval) || 0; return lastElev[surf] != null ? lastElev[surf] + iv : ''; };
@@ -4523,6 +4541,7 @@ const dheightFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0); // measur
 const froomSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0); // flooring room area
 const ftransLenFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0); // flooring transition run
 const fwallLenFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0); // framed wall run
+const fsheathSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0); // sheathing area
 const FINISH_MUD = { L3: 0.020, L4: 0.027, L5: 0.036 }; // gal ready-mix / SF by finish level
 // Suspended (ACT) drop-ceiling grid takeoff from area + wall perimeter. Rule-of-thumb
 // counts: mains 4' OC, 4' cross tees 2' OC (both layouts), 2' cross tees only on 2×2;
@@ -4792,8 +4811,10 @@ function framingTotals() {
   const plateFactor = 1 + (Number(F.topPlates) || 2); // bottom + top plate(s)
   const bySize = {}; // size -> { lf, studs, plateLF, bf }
   const openings = { door: 0, window: 0 };
-  let headerLF = 0, kingJack = 0, cripples = 0;
+  const sheathByType = {}; // stype -> SF
+  let headerLF = 0, kingJack = 0, cripples = 0, sheathSF = 0;
   for (const m of state.markups) {
+    if (m.kind === 'fsheath') { const t = (m.cfg && m.cfg.stype) || 'osb716'; const sf = fsheathSf(m); sheathByType[t] = (sheathByType[t] || 0) + sf; sheathSF += sf; continue; }
     if (m.kind === 'fwall') {
       const size = (m.cfg && m.cfg.size) || '2x4';
       const lf = fwallLenFt(m);
@@ -4816,8 +4837,9 @@ function framingTotals() {
   }
   let totalLF = 0;
   for (const k in bySize) totalLF += bySize[k].lf;
-  return { bySize, totalLF, openings, headerLF, kingJack, cripples };
+  return { bySize, totalLF, openings, headerLF, kingJack, cripples, sheathByType, sheathSF };
 }
+const SHEATH_KINDS = ['osb716', 'ply12', 'ply58', 'zip'];
 function framingBidLines() {
   const T = framingTotals();
   const lines = [];
@@ -4830,6 +4852,13 @@ function framingBidLines() {
   if (T.headerLF > 0.5) lines.push({ key: 'fr_header', label: 'Header lumber (openings)', qty: T.headerLF, unit: 'LF', q: 0, defPrice: 2.5 });
   if (T.kingJack > 0) lines.push({ key: 'fr_openstud', label: 'Opening studs (king + jack)', qty: T.kingJack, unit: 'EA', q: 0, defPrice: 3.5 });
   if (T.cripples > 0) lines.push({ key: 'fr_cripple', label: 'Cripple studs', qty: T.cripples, unit: 'EA', q: 0, defPrice: 2 });
+  const sw = 1 + (Number(state.framing.sheathWaste) || 0) / 100;
+  for (const k of SHEATH_KINDS) {
+    const sf = T.sheathByType[k];
+    if (!sf || sf < 0.5) continue;
+    lines.push({ key: `fr_sheath_${k}`, label: `${SHEATH_LABEL[k]} sheathing (4×8 sheets)`, qty: Math.ceil(sf * sw / 32), unit: 'sheet', q: 0, defPrice: SHEATH_PRICE[k] || 15 });
+  }
+  if (T.sheathSF > 0.5) lines.push({ key: 'fr_sheath_nails', label: 'Sheathing nails', qty: Math.max(1, Math.round(T.sheathSF * 0.008)), unit: 'lb', q: 0, defPrice: 2 });
   if (T.totalLF > 0.5) lines.push({ key: 'fr_labor', label: 'Wall framing (labor)', qty: T.totalLF, unit: 'LF', q: 0, defPrice: 8 });
   return lines;
 }
@@ -4844,6 +4873,8 @@ function renderFramingPanel() {
   rows.push('<div class="roof-sub">Settings</div>');
   rows.push(`<div class="dirt-set">New walls <select id="frSize">${szOpts}</select> · Spacing <select id="frSpacing"><option value="16">16" OC</option><option value="24">24" OC</option></select></div>`);
   rows.push('<div class="dirt-set">Wall height <input type="number" id="frHeight" min="1" step="0.5"> ft · Top plates <select id="frTop"><option value="1">Single</option><option value="2">Double</option></select></div>');
+  const shOpts = SHEATH_KINDS.map(k => `<option value="${k}">${SHEATH_LABEL[k]}</option>`).join('');
+  rows.push(`<div class="dirt-set">Sheathing <select id="frSheath">${shOpts}</select> · Waste <input type="number" id="frShWaste" min="0"> %</div>`);
   rows.push('<div class="roof-sub">By stud size</div>');
   let any = false;
   for (const k of FRAM_KINDS) {
@@ -4862,17 +4893,26 @@ function renderFramingPanel() {
     R('King + jack studs', `${fmt(T.kingJack, 0)} EA`);
     R('Cripple studs', `${fmt(T.cripples, 0)} EA`);
   }
-  rows.push('<div class="hint" style="margin:4px 0">Studs = ⌈LF·12/spacing⌉+1; plates = LF × (1 + top plates); openings add header + king/jack/cripple. Prices in $ Bid.</div>');
+  if (T.sheathSF > 0.5) {
+    const shw = 1 + (Number(F.sheathWaste) || 0) / 100;
+    rows.push('<div class="roof-sub">Sheathing</div>');
+    for (const k of SHEATH_KINDS) { const sf = T.sheathByType[k]; if (!sf) continue; R(SHEATH_LABEL[k], `${fmt(sf, 0)} SF · ${fmt(Math.ceil(sf * shw / 32), 0)} sheets`); }
+  }
+  rows.push('<div class="hint" style="margin:4px 0">Studs = ⌈LF·12/spacing⌉+1; plates = LF × (1 + top plates); openings add header + king/jack/cripple; sheathing → 4×8 sheets. Prices in $ Bid.</div>');
   const body = $('framBody');
   body.innerHTML = rows.join('');
   $('frSize').value = curFramSize;
   $('frSpacing').value = String(F.spacing);
   $('frHeight').value = F.height;
   $('frTop').value = String(F.topPlates);
+  $('frSheath').value = curSheathType;
+  $('frShWaste').value = F.sheathWaste != null ? F.sheathWaste : 10;
   $('frSize').addEventListener('change', e => { curFramSize = e.target.value; if (tool === 'fwall') setTool('fwall'); });
   $('frSpacing').addEventListener('change', e => { F.spacing = parseInt(e.target.value, 10) || 16; scheduleSave(); renderFramingPanel(); if (tool === 'fwall') setTool('fwall'); });
   $('frHeight').addEventListener('change', e => { F.height = Math.max(1, parseFloat(e.target.value) || 9); e.target.value = F.height; scheduleSave(); renderFramingPanel(); if (tool === 'fwall') setTool('fwall'); });
   $('frTop').addEventListener('change', e => { F.topPlates = parseInt(e.target.value, 10) || 2; scheduleSave(); renderFramingPanel(); });
+  $('frSheath').addEventListener('change', e => { curSheathType = e.target.value; if (tool === 'fsheath') setTool('fsheath'); });
+  $('frShWaste').addEventListener('change', e => { F.sheathWaste = Math.max(0, parseFloat(e.target.value) || 10); e.target.value = F.sheathWaste; scheduleSave(); renderFramingPanel(); });
 }
 $('btnFram').addEventListener('click', () => {
   const p = $('framPanel');
@@ -4882,6 +4922,7 @@ $('btnFram').addEventListener('click', () => {
 });
 if ($('frSizeTb')) $('frSizeTb').addEventListener('change', e => { curFramSize = e.target.value; if (tool === 'fwall') setTool('fwall'); });
 if ($('frOpenTb')) $('frOpenTb').addEventListener('change', e => { curFopenType = e.target.value; if (tool === 'fopening') setTool('fopening'); });
+if ($('frSheathTb')) $('frSheathTb').addEventListener('change', e => { curSheathType = e.target.value; if (tool === 'fsheath') setTool('fsheath'); });
 
 /* ===================== Live sessions (SSE + REST ops) =====================
  * Host "goes live" on the current project; teammates join and co-edit in real
