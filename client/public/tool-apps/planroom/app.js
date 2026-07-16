@@ -107,6 +107,13 @@ const ESC_LINE_LABEL = {
   treeprot: 'Tree protection fence', berm: 'Diversion berm', curtain: 'Turbidity curtain',
 };
 // $/LF installed — ESC is bid at installed unit prices, so labor is baked in
+let curEscItem = 'inletdrop'; // BMP type for new ESC point controls
+const ESC_ITEM_KINDS = ['inletdrop', 'inletcurb', 'checkdam', 'washout', 'dewater'];
+const ESC_ITEM_LABEL = {
+  inletdrop: 'Inlet protection — drop', inletcurb: 'Inlet protection — curb',
+  checkdam: 'Rock check dam', washout: 'Concrete washout', dewater: 'Dewatering bag',
+};
+const ESC_ITEM_PRICE = { inletdrop: 150, inletcurb: 200, checkdam: 350, washout: 800, dewater: 250 }; // $/EA installed
 const ESC_LINE_PRICE = { silt: 2.5, supersilt: 8, sock: 6, wattle: 4, treeprot: 3.5, berm: 3, curtain: 25 };
 const TEXTURE_LABEL = { none: 'None', smooth: 'Smooth / skim', orange: 'Orange peel', knockdown: 'Knockdown', popcorn: 'Popcorn' };
 const TEXTURE_PRICE = { smooth: 0.30, orange: 0.35, knockdown: 0.40, popcorn: 0.55 }; // $/SF texture (labor+material)
@@ -121,7 +128,7 @@ const MEASURE_KINDS = ['mlength', 'marea', 'mcount'];
 const markupLayer = kind => ANNOT_KINDS.includes(kind) ? 'annot' : MEASURE_KINDS.includes(kind) ? 'measure' : 'takeoff';
 // Vertex editing. Fixed-box shapes, callouts, single-point & count markups get no
 // per-vertex handles; everything else (line/arrow + every polyline/polygon) does.
-const VERTEX_NONEDIT = new Set(['rect', 'ellipse', 'cloud', 'highlight', 'callout', 'text', 'espot', 'mcount', 'ritem', 'qcount', 'dopening', 'dheight', 'fopening']);
+const VERTEX_NONEDIT = new Set(['rect', 'ellipse', 'cloud', 'highlight', 'callout', 'text', 'espot', 'mcount', 'ritem', 'qcount', 'dopening', 'dheight', 'fopening', 'escitem']);
 // Insert/delete a vertex applies to the free polylines & polygons — line/arrow
 // stay fixed 2-point shapes (their endpoints are still draggable).
 const RESHAPE_NONEDIT = new Set([...VERTEX_NONEDIT, 'line', 'arrow']);
@@ -213,7 +220,7 @@ els.hud.addEventListener('click', () => { clearTimeout(hudTimer); els.hud.classL
  * Widths/sizes are document-space (base px) so markups print/zoom like ink.
  */
 
-const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline'];
+const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem'];
 const MK_LABEL = {
   cloud: 'Cloud', rect: 'Rectangle', ellipse: 'Ellipse', arrow: 'Arrow', line: 'Line',
   freehand: 'Pen', highlight: 'Highlight', text: 'Text', callout: 'Callout',
@@ -223,7 +230,7 @@ const MK_LABEL = {
   qarea: 'Area takeoff', qline: 'Line takeoff', qcount: 'Count takeoff',
   dwall: 'Wall run', dceiling: 'Ceiling', dopening: 'Opening', dtrim: 'Trim', dheight: 'Height',
   froom: 'Floor room', ftrans: 'Transition', fwall: 'Framed wall', fopening: 'Framed opening', fsheath: 'Sheathing',
-  escline: 'ESC control',
+  escline: 'ESC control', escitem: 'ESC BMP',
 };
 const MK_ICON = {
   cloud: '☁', rect: '▭', ellipse: '⬭', arrow: '↗', line: '╲',
@@ -234,7 +241,7 @@ const MK_ICON = {
   qarea: '▨', qline: '⌇', qcount: '⊙',
   dwall: '▬', dceiling: '⬜', dopening: '🚪', dtrim: '▁', dheight: '↕',
   froom: '▦', ftrans: '▂', fwall: '‖', fopening: '▯', fsheath: '▤',
-  escline: '〰',
+  escline: '〰', escitem: '⊘',
 };
 // Dirt-trade tool flyout groups (mirrors the sitework tool): each group shows the
 // last-used tool as a one-click face + a ▾ caret revealing the rest.
@@ -248,7 +255,7 @@ const TOOL_FACE = {
 };
 const groupCurrent = { surface: 'contour', takeoff: 'qarea' };
 const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
-const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline']; // click-built (vs drag; espot/align are special-cased)
+const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem']; // click-built (vs drag; espot/align are special-cased)
 const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling', 'dtrim', 'escline']; // produce ft / SF / squares
 
 /* ---- earthwork (sitework pack) helpers ---- */
@@ -501,6 +508,7 @@ function measureValue(m) {
   if (m.kind === 'fopening') { const cfg = m.cfg || {}; const n = m.pts.length; return `${n} ${FOPEN_LABEL[cfg.otype] || 'Opening'}${n === 1 ? '' : 's'} (${fmt(cfg.width || 0, 1)}' RO)`; }
   if (m.kind === 'fsheath') { const cfg = m.cfg || {}; return `${SHEATH_LABEL[cfg.stype] || 'Sheathing'} · ${fmt(polygonAreaFt2(m.pts, s), 0)} SF`; }
   if (m.kind === 'escline') { const cfg = m.cfg || {}; return `${ESC_LINE_LABEL[cfg.ltype] || 'Silt fence'} · ${fmt(polyLengthFt(m.pts, s), 0)} ft`; }
+  if (m.kind === 'escitem') { const cfg = m.cfg || {}; const n = m.pts.length; return `${n} × ${ESC_ITEM_LABEL[cfg.itype] || 'BMP'}`; }
   return '';
 }
 const LINE_W = { S: 2, M: 4, L: 8 };
@@ -714,7 +722,7 @@ function drawMarkup(ctx, m) {
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y); }
       break;
     }
-    case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': {
+    case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': case 'escitem': {
       const r = (m.width || 4) * 1.5 + 3;
       for (const p of m.pts) { ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); }
       const c = centroid(m.pts);
@@ -1054,7 +1062,7 @@ function hitMarkup(ctx, w) {
       case 'ebound':
         if (distToPolyline(w.x, w.y, [...m.pts, m.pts[0]]) < t) return m; // edge only (fill is faint)
         break;
-      case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening':
+      case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': case 'escitem':
         if (m.pts.some(p => dist(w.x, w.y, p.x, p.y) < (m.width || 4) * 1.5 + 3 + t)) return m;
         break;
       case 'espot':
@@ -1605,6 +1613,8 @@ function setTool(t) {
     setMsg(`Trace a ${SHEATH_LABEL[curSheathType]} sheathing area; Enter/double-click to close → 4×8 sheets. Double-click to change its type.`);
   } else if (t === 'escline') {
     setMsg(`Trace a ${ESC_LINE_LABEL[curEscLine].toLowerCase()} run; Enter/double-click to finish → LF. Double-click a run to change its type.`);
+  } else if (t === 'escitem') {
+    setMsg(`Click each ${ESC_ITEM_LABEL[curEscItem].toLowerCase()}; Enter/double-click to finish → counted EA. Double-click a group to change its type.`);
   } else if (t === 'dheight') {
     setMsg((state.scales[state.page] || 0)
       ? 'On an elevation / section sheet, click the floor then the ceiling (bottom → top); double-click or Enter to finish, then name it. Set it as the default in 🧱 or double-click a wall run to apply it.'
@@ -1968,7 +1978,7 @@ els.cv.addEventListener('pointercancel', endDrag);
 /* ---- click-built measure drafts: commit / cancel ---- */
 
 const CLOSED_KINDS = ['marea', 'plane', 'epad', 'ebound', 'qarea', 'dceiling', 'froom', 'fsheath']; // 3+ pts, closed polygon
-const POINT_KINDS = ['mcount', 'ritem', 'qcount', 'dopening']; // 1+ pts, no rubber band
+const POINT_KINDS = ['mcount', 'ritem', 'qcount', 'dopening', 'escitem']; // 1+ pts, no rubber band
 
 /* ---- vertex reshaping: drag a point (handled in the pointer flow), Alt-click
    an edge to insert a point, Alt-click a point to remove it ---- */
@@ -2081,6 +2091,7 @@ function commitDraft() {
   else if (d.kind === 'fopening') extra.cfg = { otype: curFopenType, width: FOPEN_W[curFopenType] };
   else if (d.kind === 'fsheath') extra.cfg = { stype: curSheathType };
   else if (d.kind === 'escline') extra.cfg = { ltype: curEscLine };
+  else if (d.kind === 'escitem') extra.cfg = { itype: curEscItem };
   else if (d.kind === 'dwall') { extra.height = state.drywall.wallHeight; extra.sides = curDwSides; }
   else if (d.kind === 'dceiling') extra.cfg = { ctype: curCeilType };
   else if (d.kind === 'dopening') extra.cfg = { otype: curDwOpening, deductSF: OPENING_DEDUCT[curDwOpening] };
@@ -2199,6 +2210,16 @@ els.cv.addEventListener('dblclick', e => {
     const c = hit.cfg || {};
     modals.askNumber(`${FOPEN_LABEL[c.otype] || 'Opening'} rough-opening width (ft)`, 'Drives the header LF and cripple count for each opening in this group.', c.width != null ? c.width : 3, 1)
       .then(v => { if (v != null && v > 0) { const prev = snapshot(); hit.cfg = { ...c, width: v }; pushUndo(prev); markupsChanged(); } });
+    return;
+  }
+  // double-click an ESC point BMP group to change its type
+  if (hit && hit.kind === 'escitem') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    const cur = (hit.cfg && hit.cfg.itype) || 'inletdrop';
+    askChoice('BMP type', 'Point controls roll up on the bid by type, at each type’s installed $/EA.',
+      ESC_ITEM_KINDS.map(k => ({ label: ESC_ITEM_LABEL[k], value: k, primary: k === cur }))
+    ).then(v => { if (v && v !== cur) { const prev = snapshot(); hit.cfg = { ...(hit.cfg || {}), itype: v }; curEscItem = v; pushUndo(prev); markupsChanged(); } });
     return;
   }
   // double-click an ESC control run to change its BMP type
@@ -2492,7 +2513,7 @@ const TRADE_TOOLS = {
   drywall: ['dwall', 'dceiling', 'dopening', 'dtrim', 'dheight'],
   flooring: ['froom', 'ftrans'],
   framing: ['fwall', 'fopening', 'fsheath'],
-  esc: ['escline'],
+  esc: ['escline', 'escitem'],
 };
 // general redlining + generic measure tools that collapse while a trade is active
 const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
@@ -5070,8 +5091,16 @@ if ($('frSheathTb')) $('frSheathTb').addEventListener('change', e => { curSheath
 /* ---- Erosion & Sediment Control pack ---- */
 function escTotals() {
   const byLine = {}; // ltype -> LF
-  let lineLF = 0;
+  const byItem = {}; // itype -> EA
+  let lineLF = 0, itemEA = 0;
   for (const m of state.markups) {
+    if (m.kind === 'escitem') {
+      const t = (m.cfg && m.cfg.itype) || 'inletdrop';
+      const n = m.pts.length;
+      byItem[t] = (byItem[t] || 0) + n;
+      itemEA += n;
+      continue;
+    }
     if (m.kind !== 'escline') continue;
     const t = (m.cfg && m.cfg.ltype) || 'silt';
     const lf = esclineLenFt(m);
@@ -5079,7 +5108,7 @@ function escTotals() {
     byLine[t] = (byLine[t] || 0) + lf;
     lineLF += lf;
   }
-  return { byLine, lineLF };
+  return { byLine, lineLF, byItem, itemEA };
 }
 function escBidLines() {
   const T = escTotals();
@@ -5090,6 +5119,11 @@ function escBidLines() {
     const lf = T.byLine[k];
     if (!lf || lf < 0.5) continue;
     lines.push({ key: `esc_line_${k}`, label: `${ESC_LINE_LABEL[k]} (installed)`, qty: lf, unit: 'LF', q: 0, defPrice: ESC_LINE_PRICE[k] || 2.5 });
+  }
+  for (const k of ESC_ITEM_KINDS) {
+    const ea = T.byItem[k];
+    if (!ea) continue;
+    lines.push({ key: `esc_item_${k}`, label: `${ESC_ITEM_LABEL[k]} (installed)`, qty: ea, unit: 'EA', q: 0, defPrice: ESC_ITEM_PRICE[k] || 150 });
   }
   return lines;
 }
@@ -5102,6 +5136,8 @@ function renderEscPanel() {
   const lnOpts = ESC_LINE_KINDS.map(k => `<option value="${k}">${ESC_LINE_LABEL[k]}</option>`).join('');
   rows.push('<div class="roof-sub">Settings</div>');
   rows.push(`<div class="dirt-set">New runs <select id="escLine">${lnOpts}</select></div>`);
+  const itOpts = ESC_ITEM_KINDS.map(k => `<option value="${k}">${ESC_ITEM_LABEL[k]}</option>`).join('');
+  rows.push(`<div class="dirt-set">New BMPs <select id="escItem">${itOpts}</select></div>`);
   rows.push('<div class="roof-sub">Perimeter controls</div>');
   let any = false;
   for (const k of ESC_LINE_KINDS) {
@@ -5112,10 +5148,17 @@ function renderEscPanel() {
   }
   if (!any) rows.push('<div class="hint" style="margin:4px 0">No controls yet — trace a run (〰) and set its type.</div>');
   else rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${fmt(T.lineLF, 0)} LF</b></span></div>`);
-  rows.push('<div class="hint" style="margin:4px 0">Each control type rolls up by LF at its installed unit price (labor included). Double-click a run to change its type. Prices in $ Bid.</div>');
+  if (T.itemEA > 0) {
+    rows.push('<div class="roof-sub">Point controls</div>');
+    for (const k of ESC_ITEM_KINDS) { const ea = T.byItem[k]; if (!ea) continue; R(ESC_ITEM_LABEL[k], `${ea} EA`); }
+    rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${T.itemEA} EA</b></span></div>`);
+  }
+  rows.push('<div class="hint" style="margin:4px 0">Each control rolls up by type at its installed unit price (labor included) — runs by LF, BMPs by EA. Double-click one to change its type. Prices in $ Bid.</div>');
   $('escBody').innerHTML = rows.join('');
   $('escLine').value = curEscLine;
+  $('escItem').value = curEscItem;
   $('escLine').addEventListener('change', e => { curEscLine = e.target.value; if (tool === 'escline') setTool('escline'); });
+  $('escItem').addEventListener('change', e => { curEscItem = e.target.value; if (tool === 'escitem') setTool('escitem'); });
 }
 $('btnEsc').addEventListener('click', () => {
   const p = $('escPanel');
@@ -5124,6 +5167,7 @@ $('btnEsc').addEventListener('click', () => {
   syncPanelButtons();
 });
 if ($('escLineTb')) $('escLineTb').addEventListener('change', e => { curEscLine = e.target.value; if (tool === 'escline') setTool('escline'); });
+if ($('escItemTb')) $('escItemTb').addEventListener('change', e => { curEscItem = e.target.value; if (tool === 'escitem') setTool('escitem'); });
 
 /* ===================== Live sessions (SSE + REST ops) =====================
  * Host "goes live" on the current project; teammates join and co-edit in real

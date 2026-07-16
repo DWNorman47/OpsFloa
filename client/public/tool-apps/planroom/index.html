@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css?v=31">
+<link rel="stylesheet" href="styles.css?v=32">
 <script>
 (() => {
   try {
@@ -164,6 +164,14 @@
         <option value="treeprot">Tree protection fence</option>
         <option value="berm">Diversion berm</option>
         <option value="curtain">Turbidity curtain</option>
+      </select>
+      <button class="tool" data-tool="escitem" title="Point BMP — click each inlet protection / check dam / washout / dewatering bag → counted EA by type. Double-click a group to change its type.">&#9216;</button>
+      <select id="escItemTb" class="mini-sel" title="BMP type for new counts">
+        <option value="inletdrop">Inlet protection &mdash; drop</option>
+        <option value="inletcurb">Inlet protection &mdash; curb</option>
+        <option value="checkdam">Rock check dam</option>
+        <option value="washout">Concrete washout</option>
+        <option value="dewater">Dewatering bag</option>
       </select>
     </div>
     <input type="color" id="mkColor" class="dirt-hide" value="#e05555" title="Markup color (applies to the selected markup too)">
@@ -589,6 +597,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=31"></script>
+<script type="module" src="app.js?v=32"></script>
 </body>
 </html>

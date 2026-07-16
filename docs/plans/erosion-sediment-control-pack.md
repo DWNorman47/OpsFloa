@@ -1,6 +1,6 @@
 # OpsFloa — Erosion & Sediment Control takeoff pack (inside the Plan Room Takeoff layer)
 
-Status: **E1 shipped** (2026-07-16). A new takeoff **trade** in Plan Room
+Status: **E1–E2 shipped; E3 remaining** (2026-07-16). A new takeoff **trade** in Plan Room
 (alongside Roofing, Earthwork, Drywall & Paint, Flooring & Tile, Framing &
 Lumber), included in the **$60 Takeoff** add-on — no own SKU.
 
@@ -48,9 +48,12 @@ taxonomy plus the material conversions.
   types, per-run type attribute; double-click a run to change its type); LF by
   type; bid = per-type LF at seeded installed $/LF; panel shows LF-by-type +
   total. Persists in projectData + all 5 load paths.
-- **E2 — point BMPs**: `escitem` count kind (inlet protection drop/curb, rock
-  check dam, concrete washout, dewatering bag) → EA by type; bid EA lines; panel
-  Controls section.
+- **E2 — point BMPs** ✅ *shipped*: `escitem` count kind (inlet protection
+  drop/curb, rock check dam, concrete washout, dewatering bag) → EA by type,
+  double-click a group to change its type; bid EA lines at seeded installed
+  $/EA; panel "Point controls" section. Registered in `POINT_KINDS` (1 click per
+  BMP, no rubber band) — the framing pack's `fopening` was left out, which is
+  why it wrongly needs 2 clicks.
 - **E3 — stabilized areas + materials**: `escarea` area kind (construction
   entrance, erosion blanket, hydroseed, riprap) → SF by type + the tons / SY /
   lbs conversions; project settings UI; panel Areas section.
