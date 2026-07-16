@@ -21,6 +21,27 @@ that holds the exhaustive detail.
 
 ## 🔧 Bugs — set aside for later
 
+- **Email bounce suppression is orphaned by the Resend migration — and it can
+  never let anyone back in.** Found 2026-07-16 while re-surveying the app; not
+  yet triaged, so the impact estimate below is reasoning, not observation.
+  - `email.js:97` calls `isBounced(to)` before every send and **silently skips**
+    the recipient if `users.email_bounced_at` is set.
+  - The **only writer** of that column is `routes/sendgridEvents.js:56` — a
+    **SendGrid**-shaped webhook. Email moved to **Resend**, and there is no
+    Resend bounce webhook anywhere in `server/`. So the column takes no new data.
+  - **Nothing clears `email_bounced_at`.** No route, no admin action, no cron —
+    grep finds exactly three references repo-wide (the read, the write, the
+    migration). **So anyone whose address bounced once during the SendGrid era is
+    permanently suppressed and silently receives no OpsFloa email ever again**,
+    including a worker who has since fixed their mailbox. They get no invite, no
+    reset, no notification, and nothing surfaces it to an admin.
+  - Two failures, opposite directions: **stale suppressions never lift** (real
+    users go dark), and **new bounces never register** (we keep mailing dead
+    addresses, which is what damages sender reputation).
+  - Fix is roughly: a Resend bounce webhook to feed the column, plus a way to
+    clear it (admin action, or auto-clear on a successful send / email change).
+    Worth checking first whether any prod rows are actually set — if the table is
+    empty this is theoretical and only the missing webhook matters.
 - **Stale CSP hash blocks the inline auth-guard script on stage**
   (`client/public/tool-apps/sitework/index.html:9`). The Content-Security-Policy
   is set by the frontend host (Vercel), not the Express server, and it isn't
