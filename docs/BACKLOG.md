@@ -204,7 +204,7 @@ applied on dev (verified 2026-07-14). *(Corrects earlier "run migrations X" note
 - **Verify the roofing math** against a hand calc (a plane's squares, a
   hip/valley pitch-corrected LF) before selling it.
 - **Storm/Utility add-on — verify + flip to sell.** The whole module is built
-  (`addon_storm`, `STRIPE_PRICE_STORM` wired, ~$50) but **the purchase is hidden**
+  (`addon_storm`, `STRIPE_PRICE_STORM` wired, priced $20/mo as a light upsell) but **the purchase is hidden**
   (`STORM_SELLABLE=false` in `BillingPanel.jsx`). Hand-check the utility math —
   pipe-volume displacement, average-end-area CY on a sloped segment, native-vs-
   import net export — then set `STORM_SELLABLE=true` to open sales. Superadmin

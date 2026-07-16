@@ -5,9 +5,12 @@ Status: **M1–M5 all shipped** (2026-07-15) — module complete: full takeoff e
 `BillingPanel.jsx`) until the utility math is hand-verified — flip that one const
 to open sales. The deep, invert-driven version of the
 storm-drain / underground-utility takeoff — a **separate paid add-on** on top of
-the Takeoff layer (target **~$50/mo**, `$500/yr`; anchored far below AGTEK /
-Trimble-class incumbents at $1,500–4,000+/yr). Sold to utility / underground
-contractors who need what generic earthwork can't do.
+the Takeoff layer (**$20/mo**, `$200/yr` — a light upsell, not a standalone
+product; anchored far below AGTEK / Trimble-class incumbents at $1,500–4,000+/yr).
+Sold to utility / underground contractors who need what generic earthwork can't
+do. **Naming:** the product is "Storm/Utility" (encompasses pipe schedule +
+structure depth + invert depth + netting); "invert-driven depth" is the marketing
+hook, not the name.
 
 ## Where it's built
 Inside **Plan Room**, extending the existing line/trench takeoff (`qline`) and
