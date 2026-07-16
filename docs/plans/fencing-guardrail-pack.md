@@ -1,6 +1,6 @@
 # OpsFloa — Fencing & Guardrail takeoff pack (inside the Plan Room Takeoff layer)
 
-Status: **F1–F3 all shipped — pack complete** (2026-07-16). The **11th** takeoff trade in Plan Room,
+Status: **F1–F3 all shipped — pack complete** (2026-07-16). The **10th** takeoff trade in Plan Room,
 included in the **$60 Takeoff** add-on — no own SKU.
 
 ## The buyer

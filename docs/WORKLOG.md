@@ -23,9 +23,51 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-16 — Landscape & Irrigation trade pack (L1–L3, complete)
+
+**Shipped.** The **11th** trade — `landscape` (🌳) — and the **last of the
+takeoff-siblings list** in `project_tool_roadmap`. Four tools: ▢ areas → SF by
+type → CY / SY / tons / lbs · ❋ plants → EA by type · ≀ irrigation runs → LF ·
+⊛ heads, valves, controller, backflow → EA.
+`cbd3f57` · plan: `docs/plans/landscape-irrigation-pack.md`
+
+**Call made — this pack bids in the material's own unit, unlike the last four.**
+Striping, demo and fencing all bid an installed $/unit with materials as a
+panel-only cost basis, because those trades quote that way and billing the
+material again would double-charge. **Landscape doesn't work like that**: mulch is
+bought and sold by the **CY**, rock by the **ton**, sod by the **SY** — quoting
+mulch per SF would be the unnatural choice. So here the materials math *is* the
+bid, and there's no double-count exposure because each area type yields exactly
+one line in exactly one unit (asserted). Seed is the exception — seeding is quoted
+per SF, so it bids by SF with the lbs shown as the buying number.
+
+**Call made — depths are per type.** A 3″ mulch bed and a 6″ soil-prep bed on the
+same plan are normal, so one shared depth would be wrong on any real job. The test
+asserts the bed lands at exactly 2× the mulch CY.
+
+**Verified** against the real functions lifted out of app.js: 1,000 SF mulch @ 3″
+= 9.26 CY · 1,000 SF rock @ 3″/100 lb/ft³ = 12.5 tons · 900 SF sod @ 5% waste =
+105 SY · 5,000 SF seed @ 5 lb/1000 SF = 25 lb with the bid qty staying 5,000 SF ·
+each type one line in its own unit · rolled-up SF flows into the CY · plants and
+heads roll up at their own rates · no phantom lines · empty `state.landscape`
+still computes. 51/51 kinds registered in `hitMarkup`, `MK_LABEL`, `MK_ICON`.
+
+**Correction — I'd been miscounting the trades.** I called this the 12th; it's the
+**11th**. Roofing(1) Earthwork(2) Drywall(3) Flooring(4) Framing(5) ESC(6)
+Striping(7) Siding(8) Demo(9) Fence(10) Landscape(11) — verified against
+`TRADE_TOOLS` and the `#tradeSel` dropdown, both of which say 11. The off-by-one
+started at siding and rode along through demo, fence and landscape. The plan docs
+and this log are corrected; **the commit messages for siding / demo / fence /
+landscape still say 9th / 10th / 11th / 12th** and can't be rewritten now that
+they're pushed — the docs are the source of truth on the count.
+
+⚠️ **Needs David:** hard-refresh — cache-bust **v41**.
+
+---
+
 ## 2026-07-16 — Fencing & Guardrail trade pack (F1–F3, complete)
 
-**Shipped.** The **11th** trade — `fence` (🚧), in the $60 Takeoff add-on, no own
+**Shipped.** The **10th** trade — `fence` (🚧), in the $60 Takeoff add-on, no own
 SKU. Another trade riding the same site plan that already gets an Earthwork / ESC
 / Demo takeoff. Tools: ⌗ runs → LF + posts by type (8 types) · ⊓ gates &
 guardrail end treatments → EA, plus a post-concrete cost basis.
@@ -57,13 +99,13 @@ LF, so those do bid.
 CY → 37 bags · empty `state.fence` defaults hold · a zero-length run yields no
 posts. 47/47 kinds registered in `hitMarkup`, `MK_LABEL`, `MK_ICON`.
 
-⚠️ **Needs David:** hard-refresh — cache-bust **v40**.
+⚠️ **Needs David:** hard-refresh — superseded by **v41** (landscape pack).
 
 ---
 
 ## 2026-07-16 — Demolition trade pack (D1–D3, complete)
 
-**Shipped.** The **10th** trade — `demo` (💥), in the $60 Takeoff add-on, no own
+**Shipped.** The **9th** trade — `demo` (💥), in the $60 Takeoff add-on, no own
 SKU. Finishes the sitework suite: a site contractor now takes off demo, cut/fill
 and the ESC plan for one job in one tool, same buyer and same plan set. Three
 tools: ▣ areas → SF by type → debris CY, tons, truck loads · ⌁ linear removals →
@@ -108,7 +150,7 @@ empty `state.demo` falls back to the documented defaults; concrete uses its own
 
 ## 2026-07-16 — Siding, Gutters & Insulation trade pack (Si1–Si3, complete)
 
-**Shipped.** The **9th** trade — `siding` (▥), in the $60 Takeoff add-on, no own
+**Shipped.** The **8th** trade — `siding` (▥), in the $60 Takeoff add-on, no own
 SKU. Completes the residential shell: with Framing → **Siding** → Roofing →
 Drywall → Flooring, a builder takes off the whole house in one tool. Also reaches
 the roofing buyer, since roofers sell gutters. Four tools: ▥ elevations → gross

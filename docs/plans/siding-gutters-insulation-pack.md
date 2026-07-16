@@ -1,7 +1,7 @@
 # OpsFloa — Siding, Gutters & Insulation takeoff pack (inside the Plan Room Takeoff layer)
 
 Status: **Si1–Si3 all shipped — pack complete** (2026-07-16). A new takeoff **trade** in Plan Room
-(the 9th, alongside Roofing, Earthwork, Drywall & Paint, Flooring & Tile, Framing
+(the 8th, alongside Roofing, Earthwork, Drywall & Paint, Flooring & Tile, Framing
 & Lumber, Erosion & Sediment Control, Striping & Signage), included in the **$60
 Takeoff** add-on — no own SKU.
 

@@ -1,6 +1,6 @@
 # OpsFloa — Landscape & Irrigation takeoff pack (inside the Plan Room Takeoff layer)
 
-Status: **L1–L3 all shipped — pack complete** (2026-07-16). The **12th** takeoff trade in Plan Room
+Status: **L1–L3 all shipped — pack complete** (2026-07-16). The **11th** takeoff trade in Plan Room
 and the **last of the takeoff-siblings list** in `project_tool_roadmap`, included
 in the **$60 Takeoff** add-on — no own SKU.
 
