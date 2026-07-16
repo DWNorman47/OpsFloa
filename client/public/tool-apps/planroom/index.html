@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css?v=30">
+<link rel="stylesheet" href="styles.css?v=31">
 <script>
 (() => {
   try {
@@ -62,6 +62,7 @@
       <option value="drywall">🧱 Drywall &amp; Paint</option>
       <option value="flooring">▦ Flooring &amp; Tile</option>
       <option value="framing">🪵 Framing &amp; Lumber</option>
+      <option value="esc">🌱 Erosion &amp; Sediment Control</option>
     </select>
     <button class="tool tb-takeoff tr-roof" data-tool="plane" title="Roof plane — trace a roof face, set its pitch → sloped area + squares">▰</button>
     <button class="tool tb-takeoff tr-roof" data-tool="redge" title="Roof edge — trace eave/rake/ridge/hip/valley/flashing → linear feet (hip/valley/rake pitch-corrected)">╱</button>
@@ -153,6 +154,18 @@
         <option value="zip">ZIP System</option>
       </select>
     </div>
+    <div class="tb-sub tb-takeoff tr-esc">
+      <button class="tool" data-tool="escline" title="Control run — trace silt fence / wattle / tree protection etc. → LF by type. Double-click a run to change its type.">〰</button>
+      <select id="escLineTb" class="mini-sel" title="Control type for new runs">
+        <option value="silt">Silt fence</option>
+        <option value="supersilt">Super silt fence</option>
+        <option value="sock">Compost sock</option>
+        <option value="wattle">Straw wattle</option>
+        <option value="treeprot">Tree protection fence</option>
+        <option value="berm">Diversion berm</option>
+        <option value="curtain">Turbidity curtain</option>
+      </select>
+    </div>
     <input type="color" id="mkColor" class="dirt-hide" value="#e05555" title="Markup color (applies to the selected markup too)">
     <select id="mkWidth" class="dirt-hide" title="Line weight / text size (applies to the selected markup too)">
       <option value="S">Thin</option>
@@ -211,6 +224,7 @@
     <button id="btnDw" class="btn tb-takeoff tr-dwall" title="Drywall & Paint — wall height, sheet size, waste, coverage; net SF & materials">🧱<span class="btn-label"> Drywall</span></button>
     <button id="btnFloor" class="btn tb-takeoff tr-floor" title="Flooring & Tile — net floor SF by material with waste; prices in $ Bid">▦<span class="btn-label"> Floor</span></button>
     <button id="btnFram" class="btn tb-takeoff tr-fram" title="Framing & Lumber — studs, plates & board-feet by stud size; prices in $ Bid">🪵<span class="btn-label"> Framing</span></button>
+    <button id="btnEsc" class="btn tb-takeoff tr-esc" title="Erosion &amp; Sediment Control — silt fence and perimeter controls by LF; prices in $ Bid">🌱<span class="btn-label"> ESC</span></button>
     <button id="btnBid" class="btn tb-takeoff" title="Takeoff bid — roofing materials & labor and earthwork volumes, editable prices, print / CSV">$<span class="btn-label"> Bid</span></button>
     <button id="btnUpsell" class="btn tb-upsell" title="Turn your measurements into a priced takeoff & bid — Takeoff layer add-on">🔒<span class="btn-label"> Takeoff</span></button>
     <div class="menu-wrap">
@@ -298,6 +312,10 @@
   <aside id="framPanel" class="hidden" aria-label="Framing &amp; Lumber takeoff">
     <div class="mk-head"><b>🪵 Framing &amp; Lumber</b></div>
     <div id="framBody" class="mk-list"></div>
+  </aside>
+  <aside id="escPanel" class="hidden" aria-label="Erosion &amp; Sediment Control takeoff">
+    <div class="mk-head"><b>🌱 Erosion &amp; Sediment Control</b></div>
+    <div id="escBody" class="mk-list"></div>
   </aside>
 </main>
 
@@ -571,6 +589,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=30"></script>
+<script type="module" src="app.js?v=31"></script>
 </body>
 </html>

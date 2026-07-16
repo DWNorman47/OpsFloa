@@ -144,6 +144,7 @@ body:not(.trade-dirt) .tr-dirt { display: none; }
 body:not(.trade-drywall) .tr-dwall { display: none; }
 body:not(.trade-flooring) .tr-floor { display: none; }
 body:not(.trade-framing) .tr-fram { display: none; }
+body:not(.trade-esc) .tr-esc { display: none; }
 /* trade focus: with a trade active, collapse the general redlining + generic
    measure tools so the trade's own tools stand out (base tier keeps them all) */
 body.trade-active .tb-focus-hide { display: none !important; }
@@ -289,7 +290,7 @@ body.nothumbs #hud { left: 48px; } /* make room for the open button */
 }
 
 /* ---------- markup list panel ---------- */
-#markupPanel, #roofPanel, #dirtPanel, #dwPanel {
+#markupPanel, #roofPanel, #dirtPanel, #dwPanel, #floorPanel, #framPanel, #escPanel {
   flex: 0 0 268px; display: flex; flex-direction: column; min-height: 0;
   background: var(--panel); border-left: 1px solid var(--border);
 }
@@ -297,7 +298,9 @@ body.nothumbs #hud { left: 48px; } /* make room for the open button */
 /* no document loaded → the toolbar is hidden (progressive disclosure), so hide
    the side panels too; they reappear once a plan is open. */
 body:not(.has-doc) #markupPanel, body:not(.has-doc) #roofPanel,
-body:not(.has-doc) #dirtPanel, body:not(.has-doc) #dwPanel { display: none !important; }
+body:not(.has-doc) #dirtPanel, body:not(.has-doc) #dwPanel,
+body:not(.has-doc) #floorPanel, body:not(.has-doc) #framPanel,
+body:not(.has-doc) #escPanel { display: none !important; }
 .dirt-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 2px; font-size: 12.5px; }
 /* collapsible section header (e.g. Sheets) — click to expand/collapse */
 .dirt-collapse { cursor: pointer; display: flex; align-items: center; justify-content: space-between; user-select: none; }
