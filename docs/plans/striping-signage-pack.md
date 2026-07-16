@@ -1,6 +1,6 @@
 # OpsFloa — Parking-lot Striping & Signage takeoff pack (inside the Plan Room Takeoff layer)
 
-Status: **S1 shipped; S2–S3 remaining** (2026-07-16). A new takeoff **trade** in Plan Room
+Status: **S1–S3 all shipped — pack complete** (2026-07-16). A new takeoff **trade** in Plan Room
 (alongside Roofing, Earthwork, Drywall & Paint, Flooring & Tile, Framing &
 Lumber, Erosion & Sediment Control), included in the **$60 Takeoff** add-on —
 no own SKU.
@@ -60,17 +60,35 @@ wrong.
   types, double-click to change); bid = stalls EA + stripe LF by type at seeded
   installed prices; panel shows stalls-by-type with an **ADA tally** and
   LF-by-type. Persists in projectData + all 5 load paths.
-- **S2 — markings & signs**: `smark` count kind (arrow, ONLY legend, ADA symbol,
-  sign, wheel stop, bollard) → EA by type; bid EA lines; panel section.
-- **S3 — paint & bead cost basis**: project coverage / bead / coats settings →
-  gallons + bead lbs from the width-weighted stripe LF, shown in the panel.
+- **S2 — markings & signs** ✅ *shipped*: `smark` count kind (arrow, ONLY legend,
+  ADA symbol, sign, wheel stop, bollard) → EA by type, double-click to change;
+  bid EA lines at seeded installed $/EA; panel "Markings & signs" section.
+- **S3 — paint & bead cost basis** ✅ *shipped*: `stripingPaint()` converts every
+  run to **4"-equivalent LF** (a 24" bar is 6× the paint of a 4" line per foot)
+  → gallons ÷ coverage × coats → bead lbs. Coverage / coats / bead-rate inputs
+  render only when there are runs. Panel-only, never a bid line.
 
 ## Verification
-- S1: a 200-ft 4" line = 200 LF at $0.35 → $70; a 24" stop bar prices at its own
-  rate, not the 4" rate; two 4" runs roll up as one line; 40 standard + 2 ADA
-  stalls tally 42 with the ADA count called out separately. `sstripe` is in
-  `NEEDS_SCALE` (it measures LF); `sstall`/`smark` are in `POINT_KINDS` (one
-  click each, no rubber band). Every kind is registered in `hitMarkup` — an
-  unlisted kind is silently unclickable (that bug ate the whole flooring/framing
-  double-click; see `docs/WORKLOG.md` 2026-07-16). `app.js` parses;
-  `git status --porcelain client/public/tool-apps/sitework/` clean.
+`stripingTotals`/`stripingPaint`/`stripingBidLines` are lifted **verbatim out of
+app.js** and run against stubbed state, rather than re-implementing the formulas
+in the test. All pass:
+- 40 standard + 2 ADA + 1 van → **43 stalls, ADA tally 3**
+- 120+80 LF of 4" rolls up to **200 LF → $70** @ $0.35
+- a 24" stop bar prices at its **own $2.25**, not the 4" rate; an ADA stall at
+  **$45**, not the standard $5
+- arrows roll up (6+2 = 8 → $280); a sign prices at its own $165
+- **320 LF of 4" = exactly 1.0 gal** @ 320 LF/gal → 6 lb beads
+- **320 LF of 24" stop bar = 6.0 gal** (6× the 4" line — width weighting works)
+- 100 LF of 12" crosswalk → 300 4"-equivalent LF (3×)
+- mixed 160 LF 4" + 80 LF 8" + 10 LF 24" → **380 4"-equivalent LF**
+- 2 coats doubles the gallons
+- **paint never reaches the bid** (asserted) — the installed rates include it
+- untraced types emit no phantom $0 lines; an empty `state.striping` still
+  computes (defaults hold, beads finite)
+
+Structural: `sstripe` in `NEEDS_SCALE` (measures LF); `sstall`/`smark` in
+`POINT_KINDS` (one click, no rubber band); all **38** kinds present in
+`hitMarkup`, `MK_LABEL` and `MK_ICON` — an unlisted kind is silently unclickable,
+which is what ate the whole flooring/framing double-click (see
+`docs/WORKLOG.md` 2026-07-16). `app.js` parses;
+`git status --porcelain client/public/tool-apps/sitework/` clean.

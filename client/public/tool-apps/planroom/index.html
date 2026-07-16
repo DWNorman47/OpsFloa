@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css?v=34">
+<link rel="stylesheet" href="styles.css?v=35">
 <script>
 (() => {
   try {
@@ -198,6 +198,15 @@
         <option value="xwalk">12&quot; crosswalk</option>
         <option value="stopbar">24&quot; stop bar</option>
         <option value="hatch">Hatching / diagonal</option>
+      </select>
+      <button class="tool" data-tool="smark" title="Marking / sign — click each arrow, ONLY legend, ADA symbol, sign, wheel stop or bollard &rarr; counted EA by type. Double-click a group to change its type.">&#9670;</button>
+      <select id="strpMarkTb" class="mini-sel" title="Marking / sign type for new counts">
+        <option value="arrow">Directional arrow</option>
+        <option value="only">ONLY / word legend</option>
+        <option value="adasym">ADA symbol</option>
+        <option value="sign">Sign (post + panel)</option>
+        <option value="wheelstop">Wheel stop</option>
+        <option value="bollard">Bollard</option>
       </select>
     </div>
     <input type="color" id="mkColor" class="dirt-hide" value="#e05555" title="Markup color (applies to the selected markup too)">
@@ -628,6 +637,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=34"></script>
+<script type="module" src="app.js?v=35"></script>
 </body>
 </html>

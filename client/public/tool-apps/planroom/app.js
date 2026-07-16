@@ -138,6 +138,13 @@ const STRP_STALL_KINDS = ['standard', 'compact', 'ada', 'adavan'];
 const STRP_STALL_LABEL = { standard: 'Standard stall', compact: 'Compact stall', ada: 'ADA accessible stall', adavan: 'ADA van-accessible stall' };
 const STRP_STALL_PRICE = { standard: 5, compact: 5, ada: 45, adavan: 55 }; // $/EA installed (stall price includes painting its own lines)
 const STRP_STALL_ADA = { ada: true, adavan: true }; // counts toward the ADA tally
+let curStrpMark = 'arrow'; // marking/sign type for new counts
+const STRP_MARK_KINDS = ['arrow', 'only', 'adasym', 'sign', 'wheelstop', 'bollard'];
+const STRP_MARK_LABEL = {
+  arrow: 'Directional arrow', only: 'ONLY / word legend', adasym: 'ADA symbol',
+  sign: 'Sign (post + panel)', wheelstop: 'Wheel stop', bollard: 'Bollard',
+};
+const STRP_MARK_PRICE = { arrow: 35, only: 45, adasym: 40, sign: 165, wheelstop: 55, bollard: 240 }; // $/EA installed
 const ESC_LINE_PRICE = { silt: 2.5, supersilt: 8, sock: 6, wattle: 4, treeprot: 3.5, berm: 3, curtain: 25 };
 const TEXTURE_LABEL = { none: 'None', smooth: 'Smooth / skim', orange: 'Orange peel', knockdown: 'Knockdown', popcorn: 'Popcorn' };
 const TEXTURE_PRICE = { smooth: 0.30, orange: 0.35, knockdown: 0.40, popcorn: 0.55 }; // $/SF texture (labor+material)
@@ -152,7 +159,7 @@ const MEASURE_KINDS = ['mlength', 'marea', 'mcount'];
 const markupLayer = kind => ANNOT_KINDS.includes(kind) ? 'annot' : MEASURE_KINDS.includes(kind) ? 'measure' : 'takeoff';
 // Vertex editing. Fixed-box shapes, callouts, single-point & count markups get no
 // per-vertex handles; everything else (line/arrow + every polyline/polygon) does.
-const VERTEX_NONEDIT = new Set(['rect', 'ellipse', 'cloud', 'highlight', 'callout', 'text', 'espot', 'mcount', 'ritem', 'qcount', 'dopening', 'dheight', 'fopening', 'escitem', 'sstall']);
+const VERTEX_NONEDIT = new Set(['rect', 'ellipse', 'cloud', 'highlight', 'callout', 'text', 'espot', 'mcount', 'ritem', 'qcount', 'dopening', 'dheight', 'fopening', 'escitem', 'sstall', 'smark']);
 // Insert/delete a vertex applies to the free polylines & polygons — line/arrow
 // stay fixed 2-point shapes (their endpoints are still draggable).
 const RESHAPE_NONEDIT = new Set([...VERTEX_NONEDIT, 'line', 'arrow']);
@@ -244,7 +251,7 @@ els.hud.addEventListener('click', () => { clearTimeout(hudTimer); els.hud.classL
  * Widths/sizes are document-space (base px) so markups print/zoom like ink.
  */
 
-const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea', 'sstripe', 'sstall'];
+const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea', 'sstripe', 'sstall', 'smark'];
 const MK_LABEL = {
   cloud: 'Cloud', rect: 'Rectangle', ellipse: 'Ellipse', arrow: 'Arrow', line: 'Line',
   freehand: 'Pen', highlight: 'Highlight', text: 'Text', callout: 'Callout',
@@ -255,7 +262,7 @@ const MK_LABEL = {
   dwall: 'Wall run', dceiling: 'Ceiling', dopening: 'Opening', dtrim: 'Trim', dheight: 'Height',
   froom: 'Floor room', ftrans: 'Transition', fwall: 'Framed wall', fopening: 'Framed opening', fsheath: 'Sheathing',
   escline: 'ESC control', escitem: 'ESC BMP', escarea: 'ESC area',
-  sstripe: 'Stripe run', sstall: 'Parking stall',
+  sstripe: 'Stripe run', sstall: 'Parking stall', smark: 'Marking / sign',
 };
 const MK_ICON = {
   cloud: '☁', rect: '▭', ellipse: '⬭', arrow: '↗', line: '╲',
@@ -267,7 +274,7 @@ const MK_ICON = {
   dwall: '▬', dceiling: '⬜', dopening: '🚪', dtrim: '▁', dheight: '↕',
   froom: '▦', ftrans: '▂', fwall: '‖', fopening: '▯', fsheath: '▤',
   escline: '〰', escitem: '⊘', escarea: '▧',
-  sstripe: '≡', sstall: '⊞',
+  sstripe: '≡', sstall: '⊞', smark: '◆',
 };
 // Dirt-trade tool flyout groups (mirrors the sitework tool): each group shows the
 // last-used tool as a one-click face + a ▾ caret revealing the rest.
@@ -281,7 +288,7 @@ const TOOL_FACE = {
 };
 const groupCurrent = { surface: 'contour', takeoff: 'qarea' };
 const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
-const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea', 'sstripe', 'sstall']; // click-built (vs drag; espot/align are special-cased)
+const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea', 'sstripe', 'sstall', 'smark']; // click-built (vs drag; espot/align are special-cased)
 const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling', 'dtrim', 'escline', 'escarea', 'sstripe']; // produce ft / SF / squares
 
 /* ---- earthwork (sitework pack) helpers ---- */
@@ -539,6 +546,7 @@ function measureValue(m) {
   if (m.kind === 'escarea') { const cfg = m.cfg || {}; return `${ESC_AREA_LABEL[cfg.atype] || 'Area'} · ${fmt(polygonAreaFt2(m.pts, s), 0)} SF`; }
   if (m.kind === 'sstripe') { const cfg = m.cfg || {}; return `${STRP_LINE_LABEL[cfg.stype] || '4" line'} · ${fmt(polyLengthFt(m.pts, s), 0)} ft`; }
   if (m.kind === 'sstall') { const cfg = m.cfg || {}; const n = m.pts.length; return `${n} × ${STRP_STALL_LABEL[cfg.ttype] || 'Stall'}`; }
+  if (m.kind === 'smark') { const cfg = m.cfg || {}; const n = m.pts.length; return `${n} × ${STRP_MARK_LABEL[cfg.mtype] || 'Marking'}`; }
   return '';
 }
 const LINE_W = { S: 2, M: 4, L: 8 };
@@ -754,7 +762,7 @@ function drawMarkup(ctx, m) {
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y); }
       break;
     }
-    case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': case 'escitem': case 'sstall': {
+    case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': case 'escitem': case 'sstall': case 'smark': {
       const r = (m.width || 4) * 1.5 + 3;
       for (const p of m.pts) { ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); }
       const c = centroid(m.pts);
@@ -1095,7 +1103,7 @@ function hitMarkup(ctx, w) {
       case 'ebound':
         if (distToPolyline(w.x, w.y, [...m.pts, m.pts[0]]) < t) return m; // edge only (fill is faint)
         break;
-      case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': case 'escitem': case 'sstall':
+      case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': case 'escitem': case 'sstall': case 'smark':
         if (m.pts.some(p => dist(w.x, w.y, p.x, p.y) < (m.width || 4) * 1.5 + 3 + t)) return m;
         break;
       case 'espot':
@@ -1654,6 +1662,8 @@ function setTool(t) {
     setMsg(`Trace a ${STRP_LINE_LABEL[curStrpLine]} run; Enter/double-click to finish → LF. Stall lines are already in the stall price — trace only stop bars, crosswalks, lane lines and hatching.`);
   } else if (t === 'sstall') {
     setMsg(`Click each ${STRP_STALL_LABEL[curStrpStall].toLowerCase()}; Enter/double-click to finish → counted EA (price includes painting its own lines). Double-click a group to change its type.`);
+  } else if (t === 'smark') {
+    setMsg(`Click each ${STRP_MARK_LABEL[curStrpMark].toLowerCase()}; Enter/double-click to finish → counted EA. Double-click a group to change its type.`);
   } else if (t === 'dheight') {
     setMsg((state.scales[state.page] || 0)
       ? 'On an elevation / section sheet, click the floor then the ceiling (bottom → top); double-click or Enter to finish, then name it. Set it as the default in 🧱 or double-click a wall run to apply it.'
@@ -2017,7 +2027,7 @@ els.cv.addEventListener('pointercancel', endDrag);
 /* ---- click-built measure drafts: commit / cancel ---- */
 
 const CLOSED_KINDS = ['marea', 'plane', 'epad', 'ebound', 'qarea', 'dceiling', 'froom', 'fsheath', 'escarea']; // 3+ pts, closed polygon
-const POINT_KINDS = ['mcount', 'ritem', 'qcount', 'dopening', 'escitem', 'sstall']; // 1+ pts, no rubber band
+const POINT_KINDS = ['mcount', 'ritem', 'qcount', 'dopening', 'escitem', 'sstall', 'smark']; // 1+ pts, no rubber band
 
 /* ---- vertex reshaping: drag a point (handled in the pointer flow), Alt-click
    an edge to insert a point, Alt-click a point to remove it ---- */
@@ -2134,6 +2144,7 @@ function commitDraft() {
   else if (d.kind === 'escarea') extra.cfg = { atype: curEscArea };
   else if (d.kind === 'sstripe') extra.cfg = { stype: curStrpLine };
   else if (d.kind === 'sstall') extra.cfg = { ttype: curStrpStall };
+  else if (d.kind === 'smark') extra.cfg = { mtype: curStrpMark };
   else if (d.kind === 'dwall') { extra.height = state.drywall.wallHeight; extra.sides = curDwSides; }
   else if (d.kind === 'dceiling') extra.cfg = { ctype: curCeilType };
   else if (d.kind === 'dopening') extra.cfg = { otype: curDwOpening, deductSF: OPENING_DEDUCT[curDwOpening] };
@@ -2252,6 +2263,16 @@ els.cv.addEventListener('dblclick', e => {
     const c = hit.cfg || {};
     modals.askNumber(`${FOPEN_LABEL[c.otype] || 'Opening'} rough-opening width (ft)`, 'Drives the header LF and cripple count for each opening in this group.', c.width != null ? c.width : 3, 1)
       .then(v => { if (v != null && v > 0) { const prev = snapshot(); hit.cfg = { ...c, width: v }; pushUndo(prev); markupsChanged(); } });
+    return;
+  }
+  // double-click a marking / sign group to change its type
+  if (hit && hit.kind === 'smark') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    const cur = (hit.cfg && hit.cfg.mtype) || 'arrow';
+    askChoice('Marking / sign type', 'Markings and signs roll up on the bid by type, at each type’s installed $/EA.',
+      STRP_MARK_KINDS.map(k => ({ label: STRP_MARK_LABEL[k], value: k, primary: k === cur }))
+    ).then(v => { if (v && v !== cur) { const prev = snapshot(); hit.cfg = { ...(hit.cfg || {}), mtype: v }; curStrpMark = v; pushUndo(prev); markupsChanged(); } });
     return;
   }
   // double-click a stripe run to change its type
@@ -2586,7 +2607,7 @@ const TRADE_TOOLS = {
   flooring: ['froom', 'ftrans'],
   framing: ['fwall', 'fopening', 'fsheath'],
   esc: ['escline', 'escitem', 'escarea'],
-  striping: ['sstripe', 'sstall'],
+  striping: ['sstripe', 'sstall', 'smark'],
 };
 // general redlining + generic measure tools that collapse while a trade is active
 const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
@@ -5335,8 +5356,16 @@ if ($('escAreaTb')) $('escAreaTb').addEventListener('change', e => { curEscArea 
 function stripingTotals() {
   const byLine = {}; // stype -> LF
   const byStall = {}; // ttype -> EA
-  let lineLF = 0, stalls = 0, adaStalls = 0;
+  const byMark = {}; // mtype -> EA
+  let lineLF = 0, stalls = 0, adaStalls = 0, marks = 0;
   for (const m of state.markups) {
+    if (m.kind === 'smark') {
+      const t = (m.cfg && m.cfg.mtype) || 'arrow';
+      const n = m.pts.length;
+      byMark[t] = (byMark[t] || 0) + n;
+      marks += n;
+      continue;
+    }
     if (m.kind === 'sstall') {
       const t = (m.cfg && m.cfg.ttype) || 'standard';
       const n = m.pts.length;
@@ -5352,7 +5381,27 @@ function stripingTotals() {
     byLine[t] = (byLine[t] || 0) + lf;
     lineLF += lf;
   }
-  return { byLine, lineLF, byStall, stalls, adaStalls };
+  return { byLine, lineLF, byStall, stalls, adaStalls, byMark, marks };
+}
+// Paint + glass beads, from the WIDTH-WEIGHTED stripe LF: a 24" stop bar eats
+// six times the paint of a 4" line per foot, so everything is converted to
+// "4-inch-equivalent LF" first.
+//
+// This is a COST BASIS for the panel, deliberately not bid lines — the $/LF and
+// $/EA above are installed prices that already include paint, so adding gallons
+// to the bid would charge for it twice. (Same call as the framing pack's
+// board-feet.)
+function stripingPaint(T) {
+  const S = state.striping || {};
+  const cov = Number(S.coverage4in) > 0 ? Number(S.coverage4in) : 320; // LF of 4" line per gallon
+  const coats = Number(S.coats) > 0 ? Number(S.coats) : 1;
+  let eq4 = 0;
+  for (const k of STRP_LINE_KINDS) {
+    const lf = T.byLine[k] || 0;
+    eq4 += lf * ((STRP_LINE_WIDTH[k] || 4) / 4);
+  }
+  const gallons = cov > 0 ? eq4 / cov * coats : 0;
+  return { eq4, gallons, beadLbs: gallons * (Number(S.beadRate) || 0) };
 }
 function stripingBidLines() {
   const T = stripingTotals();
@@ -5369,6 +5418,11 @@ function stripingBidLines() {
     if (!lf || lf < 0.5) continue;
     lines.push({ key: `strp_line_${k}`, label: `${STRP_LINE_LABEL[k]} (painted)`, qty: lf, unit: 'LF', q: 0, defPrice: STRP_LINE_PRICE[k] || 0.35 });
   }
+  for (const k of STRP_MARK_KINDS) {
+    const ea = T.byMark[k];
+    if (!ea) continue;
+    lines.push({ key: `strp_mark_${k}`, label: `${STRP_MARK_LABEL[k]} (installed)`, qty: ea, unit: 'EA', q: 0, defPrice: STRP_MARK_PRICE[k] || 35 });
+  }
   return lines;
 }
 function renderStripingPanel() {
@@ -5382,6 +5436,8 @@ function renderStripingPanel() {
   rows.push('<div class="roof-sub">Settings</div>');
   rows.push(`<div class="dirt-set">New stalls <select id="strpStall">${stOpts}</select></div>`);
   rows.push(`<div class="dirt-set">New runs <select id="strpLine">${lnOpts}</select></div>`);
+  const mkOpts = STRP_MARK_KINDS.map(k => `<option value="${k}">${STRP_MARK_LABEL[k]}</option>`).join('');
+  rows.push(`<div class="dirt-set">New markings <select id="strpMark">${mkOpts}</select></div>`);
   if (T.stalls > 0) {
     rows.push('<div class="roof-sub">Stalls</div>');
     for (const k of STRP_STALL_KINDS) { const ea = T.byStall[k]; if (!ea) continue; R(STRP_STALL_LABEL[k], `${ea} EA`); }
@@ -5395,13 +5451,45 @@ function renderStripingPanel() {
     for (const k of STRP_LINE_KINDS) { const lf = T.byLine[k]; if (!lf) continue; R(STRP_LINE_LABEL[k], `${fmt(lf, 0)} LF`); }
     rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${fmt(T.lineLF, 0)} LF</b></span></div>`);
   }
-  if (!T.stalls && T.lineLF < 0.5) rows.push('<div class="hint" style="margin:4px 0">Nothing yet — count stalls (⊞) or trace a run (≡).</div>');
+  if (T.marks > 0) {
+    rows.push('<div class="roof-sub">Markings & signs</div>');
+    for (const k of STRP_MARK_KINDS) { const ea = T.byMark[k]; if (!ea) continue; R(STRP_MARK_LABEL[k], `${ea} EA`); }
+    rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${T.marks} EA</b></span></div>`);
+  }
+  if (!T.stalls && !T.marks && T.lineLF < 0.5) rows.push('<div class="hint" style="margin:4px 0">Nothing yet — count stalls (⊞), trace a run (≡), or drop markings (◆).</div>');
+  if (T.lineLF > 0.5) {
+    const P = stripingPaint(T);
+    const S = state.striping;
+    rows.push('<div class="roof-sub">Paint (cost basis)</div>');
+    rows.push('<div class="dirt-set">Coverage <input type="number" id="strpCov" min="1" step="10" style="width:56px"> LF/gal of 4" · Coats <select id="strpCoats"><option value="1">1</option><option value="2">2</option></select></div>');
+    rows.push('<div class="dirt-set">Glass beads <input type="number" id="strpBead" min="0" step="0.5" style="width:46px"> lb/gal</div>');
+    R('4"-equivalent LF', `${fmt(P.eq4, 0)} LF`);
+    R('Paint', `${fmt(P.gallons, 1)} gal`);
+    if (P.beadLbs > 0) R('Glass beads', `${fmt(P.beadLbs, 0)} lb`);
+    rows.push('<div class="hint" style="margin:4px 0">A cost basis only — not on the bid. The $/LF and $/EA rates are installed prices that already include paint, so billing gallons too would charge for it twice.</div>');
+  }
   rows.push('<div class="hint" style="margin:4px 0"><b>Don’t trace stall lines.</b> A stall’s price already includes painting its own lines — trace only the runs that aren’t stall lines (stop bars, crosswalks, lane lines, hatching), or the paint gets charged twice. Prices in $ Bid.</div>');
   $('strpBody').innerHTML = rows.join('');
   $('strpStall').value = curStrpStall;
   $('strpLine').value = curStrpLine;
+  $('strpMark').value = curStrpMark;
   $('strpStall').addEventListener('change', e => { curStrpStall = e.target.value; if (tool === 'sstall') setTool('sstall'); });
   $('strpLine').addEventListener('change', e => { curStrpLine = e.target.value; if (tool === 'sstripe') setTool('sstripe'); });
+  $('strpMark').addEventListener('change', e => { curStrpMark = e.target.value; if (tool === 'smark') setTool('smark'); });
+  // the paint inputs only render when there are runs, so bind defensively
+  const S = state.striping;
+  if ($('strpCov')) {
+    $('strpCov').value = S.coverage4in != null ? S.coverage4in : 320;
+    $('strpCov').addEventListener('change', e => { S.coverage4in = Math.max(1, parseFloat(e.target.value) || 320); e.target.value = S.coverage4in; scheduleSave(); renderStripingPanel(); });
+  }
+  if ($('strpCoats')) {
+    $('strpCoats').value = String(S.coats || 1);
+    $('strpCoats').addEventListener('change', e => { S.coats = parseInt(e.target.value, 10) || 1; scheduleSave(); renderStripingPanel(); });
+  }
+  if ($('strpBead')) {
+    $('strpBead').value = S.beadRate != null ? S.beadRate : 6;
+    $('strpBead').addEventListener('change', e => { S.beadRate = Math.max(0, parseFloat(e.target.value) || 0); e.target.value = S.beadRate; scheduleSave(); renderStripingPanel(); });
+  }
 }
 $('btnStrp').addEventListener('click', () => {
   const p = $('strpPanel');
@@ -5411,6 +5499,7 @@ $('btnStrp').addEventListener('click', () => {
 });
 if ($('strpStallTb')) $('strpStallTb').addEventListener('change', e => { curStrpStall = e.target.value; if (tool === 'sstall') setTool('sstall'); });
 if ($('strpLineTb')) $('strpLineTb').addEventListener('change', e => { curStrpLine = e.target.value; if (tool === 'sstripe') setTool('sstripe'); });
+if ($('strpMarkTb')) $('strpMarkTb').addEventListener('change', e => { curStrpMark = e.target.value; if (tool === 'smark') setTool('smark'); });
 
 /* ===================== Live sessions (SSE + REST ops) =====================
  * Host "goes live" on the current project; teammates join and co-edit in real
