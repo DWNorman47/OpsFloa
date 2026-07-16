@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css?v=37">
+<link rel="stylesheet" href="styles.css?v=38">
 <script>
 (() => {
   try {
@@ -65,6 +65,7 @@
       <option value="esc">🌱 Erosion &amp; Sediment Control</option>
       <option value="striping">🅿 Striping &amp; Signage</option>
       <option value="siding">▥ Siding, Gutters &amp; Insulation</option>
+      <option value="demo">💥 Demolition</option>
     </select>
     <button class="tool tb-takeoff tr-roof" data-tool="plane" title="Roof plane — trace a roof face, set its pitch → sloped area + squares">▰</button>
     <button class="tool tb-takeoff tr-roof" data-tool="redge" title="Roof edge — trace eave/rake/ridge/hip/valley/flashing → linear feet (hip/valley/rake pitch-corrected)">╱</button>
@@ -245,6 +246,18 @@
         <option value="foam">Spray foam</option>
       </select>
     </div>
+    <div class="tb-sub tb-takeoff tr-dem">
+      <button class="tool" data-tool="dmarea" title="Demo area — trace a building footprint or a slab &rarr; SF by type &rarr; debris CY, tons and truck loads. Double-click it to change its type.">&#9635;</button>
+      <select id="dmAreaTb" class="mini-sel" title="Type for new demo areas">
+        <option value="bldgWood">Building &mdash; wood frame</option>
+        <option value="bldgMasonry">Building &mdash; masonry</option>
+        <option value="bldgSteel">Building &mdash; steel</option>
+        <option value="asphalt">Asphalt pavement</option>
+        <option value="concrete">Concrete slab / paving</option>
+        <option value="sidewalk">Sidewalk</option>
+        <option value="gravel">Gravel / base</option>
+      </select>
+    </div>
     <input type="color" id="mkColor" class="dirt-hide" value="#e05555" title="Markup color (applies to the selected markup too)">
     <select id="mkWidth" class="dirt-hide" title="Line weight / text size (applies to the selected markup too)">
       <option value="S">Thin</option>
@@ -306,6 +319,7 @@
     <button id="btnEsc" class="btn tb-takeoff tr-esc" title="Erosion &amp; Sediment Control — silt fence and perimeter controls by LF; prices in $ Bid">🌱<span class="btn-label"> ESC</span></button>
     <button id="btnStrp" class="btn tb-takeoff tr-strp" title="Striping &amp; Signage — stalls, ADA tally, and painted runs by LF; prices in $ Bid">🅿<span class="btn-label"> Striping</span></button>
     <button id="btnSid" class="btn tb-takeoff tr-sid" title="Siding, Gutters &amp; Insulation — net wall SF &amp; squares by material; prices in $ Bid">▥<span class="btn-label"> Siding</span></button>
+    <button id="btnDem" class="btn tb-takeoff tr-dem" title="Demolition — debris CY, tons &amp; truck loads by type; prices in $ Bid">💥<span class="btn-label"> Demo</span></button>
     <button id="btnBid" class="btn tb-takeoff" title="Takeoff bid — roofing materials & labor and earthwork volumes, editable prices, print / CSV">$<span class="btn-label"> Bid</span></button>
     <button id="btnUpsell" class="btn tb-upsell" title="Turn your measurements into a priced takeoff & bid — Takeoff layer add-on">🔒<span class="btn-label"> Takeoff</span></button>
     <div class="menu-wrap">
@@ -405,6 +419,10 @@
   <aside id="sidPanel" class="hidden" aria-label="Siding, Gutters &amp; Insulation takeoff">
     <div class="mk-head"><b>▥ Siding, Gutters &amp; Insulation</b></div>
     <div id="sidBody" class="mk-list"></div>
+  </aside>
+  <aside id="demPanel" class="hidden" aria-label="Demolition takeoff">
+    <div class="mk-head"><b>💥 Demolition</b></div>
+    <div id="demBody" class="mk-list"></div>
   </aside>
 </main>
 
@@ -678,6 +696,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=37"></script>
+<script type="module" src="app.js?v=38"></script>
 </body>
 </html>

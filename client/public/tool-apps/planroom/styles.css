@@ -147,6 +147,7 @@ body:not(.trade-framing) .tr-fram { display: none; }
 body:not(.trade-esc) .tr-esc { display: none; }
 body:not(.trade-striping) .tr-strp { display: none; }
 body:not(.trade-siding) .tr-sid { display: none; }
+body:not(.trade-demo) .tr-dem { display: none; }
 /* trade focus: with a trade active, collapse the general redlining + generic
    measure tools so the trade's own tools stand out (base tier keeps them all) */
 body.trade-active .tb-focus-hide { display: none !important; }
@@ -292,7 +293,7 @@ body.nothumbs #hud { left: 48px; } /* make room for the open button */
 }
 
 /* ---------- markup list panel ---------- */
-#markupPanel, #roofPanel, #dirtPanel, #dwPanel, #floorPanel, #framPanel, #escPanel, #strpPanel, #sidPanel {
+#markupPanel, #roofPanel, #dirtPanel, #dwPanel, #floorPanel, #framPanel, #escPanel, #strpPanel, #sidPanel, #demPanel {
   flex: 0 0 268px; display: flex; flex-direction: column; min-height: 0;
   background: var(--panel); border-left: 1px solid var(--border);
 }
@@ -303,7 +304,7 @@ body:not(.has-doc) #markupPanel, body:not(.has-doc) #roofPanel,
 body:not(.has-doc) #dirtPanel, body:not(.has-doc) #dwPanel,
 body:not(.has-doc) #floorPanel, body:not(.has-doc) #framPanel,
 body:not(.has-doc) #escPanel, body:not(.has-doc) #strpPanel,
-body:not(.has-doc) #sidPanel { display: none !important; }
+body:not(.has-doc) #sidPanel, body:not(.has-doc) #demPanel { display: none !important; }
 .dirt-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 2px; font-size: 12.5px; }
 /* collapsible section header (e.g. Sheets) — click to expand/collapse */
 .dirt-collapse { cursor: pointer; display: flex; align-items: center; justify-content: space-between; user-select: none; }
