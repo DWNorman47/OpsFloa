@@ -1,6 +1,6 @@
 # OpsFloa — Demolition takeoff pack (inside the Plan Room Takeoff layer)
 
-Status: **D1 shipped; D2–D3 remaining** (2026-07-16). The **10th** takeoff trade in Plan Room,
+Status: **D1–D3 all shipped — pack complete** (2026-07-16). The **10th** takeoff trade in Plan Room,
 included in the **$60 Takeoff** add-on — no own SKU.
 
 ## The buyer
@@ -63,8 +63,14 @@ One `dmarea` kind carries the type; the math branches on it — the same shape
   per-type thickness settings; bid = per-type demo SF at seeded $/SF + haul
   loads; panel shows SF by type, debris CY + tons, and the load count.
   Persists in projectData + all 5 load paths.
-- **D2 — linear removals**: `dmline` line kind → LF by type; bid LF lines.
-- **D3 — items & structures**: `dmitem` count kind → EA by type; bid EA lines.
+- **D2 — linear removals** ✅ *shipped*: `dmline` line kind (curb & gutter,
+  sidewalk strip, pipe, fence, guardrail; double-click to change) → LF by type at
+  installed $/LF.
+- **D3 — items & structures** ✅ *shipped*: `dmitem` count kind (tree, light pole,
+  sign, catch basin, manhole, hydrant; double-click to change) → EA by type at
+  installed $/EA. Both carry haul inside the unit price, so neither feeds the CY
+  pile or the load count — asserted in the test, since that would double-bill the
+  hauling.
 
 ## Verification
 - D1: 1,000 SF wood building = 250 CY (0.25 CY/SF); 10,000 SF of 3" asphalt =

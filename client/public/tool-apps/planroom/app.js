@@ -208,6 +208,20 @@ const DM_AREA_PRICE = { // $/SF demo (machine + labor; haul is its own line)
 };
 const DM_HAUL_PRICE = 95; // $/load
 const isDmBuilding = k => DM_AREA_CYSF[k] != null;
+let curDmLine = 'curb'; // type for new linear removals
+const DM_LINE_KINDS = ['curb', 'walkstrip', 'pipe', 'fence', 'guardrail'];
+const DM_LINE_LABEL = {
+  curb: 'Curb & gutter', walkstrip: 'Sidewalk strip', pipe: 'Pipe removal',
+  fence: 'Fence removal', guardrail: 'Guardrail removal',
+};
+const DM_LINE_PRICE = { curb: 6.5, walkstrip: 4.5, pipe: 12, fence: 4, guardrail: 9 }; // $/LF installed (removal + haul)
+let curDmItem = 'tree'; // type for new item removals
+const DM_ITEM_KINDS = ['tree', 'lightpole', 'sign', 'catchbasin', 'manhole', 'hydrant'];
+const DM_ITEM_LABEL = {
+  tree: 'Tree removal', lightpole: 'Light pole', sign: 'Sign',
+  catchbasin: 'Catch basin', manhole: 'Manhole', hydrant: 'Fire hydrant',
+};
+const DM_ITEM_PRICE = { tree: 750, lightpole: 425, sign: 85, catchbasin: 650, manhole: 900, hydrant: 700 }; // $/EA installed
 const ESC_LINE_PRICE = { silt: 2.5, supersilt: 8, sock: 6, wattle: 4, treeprot: 3.5, berm: 3, curtain: 25 };
 const TEXTURE_LABEL = { none: 'None', smooth: 'Smooth / skim', orange: 'Orange peel', knockdown: 'Knockdown', popcorn: 'Popcorn' };
 const TEXTURE_PRICE = { smooth: 0.30, orange: 0.35, knockdown: 0.40, popcorn: 0.55 }; // $/SF texture (labor+material)
@@ -222,7 +236,7 @@ const MEASURE_KINDS = ['mlength', 'marea', 'mcount'];
 const markupLayer = kind => ANNOT_KINDS.includes(kind) ? 'annot' : MEASURE_KINDS.includes(kind) ? 'measure' : 'takeoff';
 // Vertex editing. Fixed-box shapes, callouts, single-point & count markups get no
 // per-vertex handles; everything else (line/arrow + every polyline/polygon) does.
-const VERTEX_NONEDIT = new Set(['rect', 'ellipse', 'cloud', 'highlight', 'callout', 'text', 'espot', 'mcount', 'ritem', 'qcount', 'dopening', 'dheight', 'fopening', 'escitem', 'sstall', 'smark', 'sopening']);
+const VERTEX_NONEDIT = new Set(['rect', 'ellipse', 'cloud', 'highlight', 'callout', 'text', 'espot', 'mcount', 'ritem', 'qcount', 'dopening', 'dheight', 'fopening', 'escitem', 'sstall', 'smark', 'sopening', 'dmitem']);
 // Insert/delete a vertex applies to the free polylines & polygons — line/arrow
 // stay fixed 2-point shapes (their endpoints are still draggable).
 const RESHAPE_NONEDIT = new Set([...VERTEX_NONEDIT, 'line', 'arrow']);
@@ -314,7 +328,7 @@ els.hud.addEventListener('click', () => { clearTimeout(hudTimer); els.hud.classL
  * Widths/sizes are document-space (base px) so markups print/zoom like ink.
  */
 
-const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea', 'sstripe', 'sstall', 'smark', 'swall', 'sopening', 'sgutter', 'sinsul', 'dmarea'];
+const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea', 'sstripe', 'sstall', 'smark', 'swall', 'sopening', 'sgutter', 'sinsul', 'dmarea', 'dmline', 'dmitem'];
 const MK_LABEL = {
   cloud: 'Cloud', rect: 'Rectangle', ellipse: 'Ellipse', arrow: 'Arrow', line: 'Line',
   freehand: 'Pen', highlight: 'Highlight', text: 'Text', callout: 'Callout',
@@ -327,7 +341,7 @@ const MK_LABEL = {
   escline: 'ESC control', escitem: 'ESC BMP', escarea: 'ESC area',
   sstripe: 'Stripe run', sstall: 'Parking stall', smark: 'Marking / sign',
   swall: 'Siding wall', sopening: 'Siding opening', sgutter: 'Gutter run', sinsul: 'Insulation',
-  dmarea: 'Demo area',
+  dmarea: 'Demo area', dmline: 'Demo removal', dmitem: 'Demo item',
 };
 const MK_ICON = {
   cloud: '☁', rect: '▭', ellipse: '⬭', arrow: '↗', line: '╲',
@@ -341,7 +355,7 @@ const MK_ICON = {
   escline: '〰', escitem: '⊘', escarea: '▧',
   sstripe: '≡', sstall: '⊞', smark: '◆',
   swall: '▥', sopening: '⊡', sgutter: '⌐', sinsul: '▩',
-  dmarea: '▣',
+  dmarea: '▣', dmline: '⌁', dmitem: '⊠',
 };
 // Dirt-trade tool flyout groups (mirrors the sitework tool): each group shows the
 // last-used tool as a one-click face + a ▾ caret revealing the rest.
@@ -355,8 +369,8 @@ const TOOL_FACE = {
 };
 const groupCurrent = { surface: 'contour', takeoff: 'qarea' };
 const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
-const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea', 'sstripe', 'sstall', 'smark', 'swall', 'sopening', 'sgutter', 'sinsul', 'dmarea']; // click-built (vs drag; espot/align are special-cased)
-const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling', 'dtrim', 'escline', 'escarea', 'sstripe', 'swall', 'sgutter', 'sinsul', 'dmarea']; // produce ft / SF / squares
+const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea', 'sstripe', 'sstall', 'smark', 'swall', 'sopening', 'sgutter', 'sinsul', 'dmarea', 'dmline', 'dmitem']; // click-built (vs drag; espot/align are special-cased)
+const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling', 'dtrim', 'escline', 'escarea', 'sstripe', 'swall', 'sgutter', 'sinsul', 'dmarea', 'dmline']; // produce ft / SF / squares
 
 /* ---- earthwork (sitework pack) helpers ---- */
 // stable hue per elevation so equal elevations match visually; existing lighter
@@ -621,6 +635,8 @@ function measureValue(m) {
   if (m.kind === 'sgutter') { const cfg = m.cfg || {}; return `${SID_GUT_LABEL[cfg.gtype] || 'Gutter'} · ${fmt(polyLengthFt(m.pts, s), 0)} ft`; }
   if (m.kind === 'sinsul') { const cfg = m.cfg || {}; return `${SID_INS_LABEL[cfg.itype] || 'Insulation'} · ${fmt(polygonAreaFt2(m.pts, s), 0)} SF`; }
   if (m.kind === 'dmarea') { const cfg = m.cfg || {}; return `${DM_AREA_LABEL[cfg.dtype] || 'Demo'} · ${fmt(polygonAreaFt2(m.pts, s), 0)} SF`; }
+  if (m.kind === 'dmline') { const cfg = m.cfg || {}; return `${DM_LINE_LABEL[cfg.ltype] || 'Removal'} · ${fmt(polyLengthFt(m.pts, s), 0)} ft`; }
+  if (m.kind === 'dmitem') { const cfg = m.cfg || {}; const n = m.pts.length; return `${n} × ${DM_ITEM_LABEL[cfg.itype] || 'Item'}`; }
   return '';
 }
 const LINE_W = { S: 2, M: 4, L: 8 };
@@ -841,7 +857,7 @@ function drawMarkup(ctx, m) {
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y); }
       break;
     }
-    case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': case 'escitem': case 'sstall': case 'smark': case 'sopening': {
+    case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': case 'escitem': case 'sstall': case 'smark': case 'sopening': case 'dmitem': {
       const r = (m.width || 4) * 1.5 + 3;
       for (const p of m.pts) { ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); }
       const c = centroid(m.pts);
@@ -853,6 +869,7 @@ function drawMarkup(ctx, m) {
     case 'escline':
     case 'sstripe':
     case 'sgutter':
+    case 'dmline':
     case 'dtrim': {
       ctx.beginPath();
       m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
@@ -1172,7 +1189,7 @@ function hitMarkup(ctx, w) {
         if (pointSegDist(w.x, w.y, p0.x, p0.y, p1.x, p1.y) < t) return m;
         break;
       case 'freehand': case 'mlength': case 'redge': case 'contour': case 'qline': case 'dwall': case 'dtrim':
-      case 'fwall': case 'ftrans': case 'dheight': case 'escline': case 'sstripe': case 'sgutter':
+      case 'fwall': case 'ftrans': case 'dheight': case 'escline': case 'sstripe': case 'sgutter': case 'dmline':
         if (distToPolyline(w.x, w.y, m.pts) < t) return m;
         break;
       case 'marea': case 'plane': case 'epad': case 'qarea': case 'dceiling':
@@ -1183,7 +1200,7 @@ function hitMarkup(ctx, w) {
       case 'ebound':
         if (distToPolyline(w.x, w.y, [...m.pts, m.pts[0]]) < t) return m; // edge only (fill is faint)
         break;
-      case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': case 'escitem': case 'sstall': case 'smark': case 'sopening':
+      case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': case 'escitem': case 'sstall': case 'smark': case 'sopening': case 'dmitem':
         if (m.pts.some(p => dist(w.x, w.y, p.x, p.y) < (m.width || 4) * 1.5 + 3 + t)) return m;
         break;
       case 'espot':
@@ -1754,6 +1771,10 @@ function setTool(t) {
     setMsg(`Trace a ${SID_INS_LABEL[curSidIns].toLowerCase()} area; Enter/double-click to close → SF${SID_INS_BAGGED[curSidIns] ? ' + bags' : ''}. Double-click it to change its type.`);
   } else if (t === 'dmarea') {
     setMsg(`Trace a ${DM_AREA_LABEL[curDmArea].toLowerCase()} area; Enter/double-click to close → SF → debris CY + loads. Double-click it to change its type.`);
+  } else if (t === 'dmline') {
+    setMsg(`Trace a ${DM_LINE_LABEL[curDmLine].toLowerCase()} run; Enter/double-click to finish → LF (removal + haul in the unit price). Double-click a run to change its type.`);
+  } else if (t === 'dmitem') {
+    setMsg(`Click each ${DM_ITEM_LABEL[curDmItem].toLowerCase()}; Enter/double-click to finish → counted EA (removal + haul in the unit price). Double-click a group to change its type.`);
   } else if (t === 'dheight') {
     setMsg((state.scales[state.page] || 0)
       ? 'On an elevation / section sheet, click the floor then the ceiling (bottom → top); double-click or Enter to finish, then name it. Set it as the default in 🧱 or double-click a wall run to apply it.'
@@ -2117,7 +2138,7 @@ els.cv.addEventListener('pointercancel', endDrag);
 /* ---- click-built measure drafts: commit / cancel ---- */
 
 const CLOSED_KINDS = ['marea', 'plane', 'epad', 'ebound', 'qarea', 'dceiling', 'froom', 'fsheath', 'escarea', 'swall', 'sinsul', 'dmarea']; // 3+ pts, closed polygon
-const POINT_KINDS = ['mcount', 'ritem', 'qcount', 'dopening', 'escitem', 'sstall', 'smark', 'sopening']; // 1+ pts, no rubber band
+const POINT_KINDS = ['mcount', 'ritem', 'qcount', 'dopening', 'escitem', 'sstall', 'smark', 'sopening', 'dmitem']; // 1+ pts, no rubber band
 
 /* ---- vertex reshaping: drag a point (handled in the pointer flow), Alt-click
    an edge to insert a point, Alt-click a point to remove it ---- */
@@ -2240,6 +2261,8 @@ function commitDraft() {
   else if (d.kind === 'sgutter') extra.cfg = { gtype: curSidGut };
   else if (d.kind === 'sinsul') extra.cfg = { itype: curSidIns };
   else if (d.kind === 'dmarea') extra.cfg = { dtype: curDmArea };
+  else if (d.kind === 'dmline') extra.cfg = { ltype: curDmLine };
+  else if (d.kind === 'dmitem') extra.cfg = { itype: curDmItem };
   else if (d.kind === 'dwall') { extra.height = state.drywall.wallHeight; extra.sides = curDwSides; }
   else if (d.kind === 'dceiling') extra.cfg = { ctype: curCeilType };
   else if (d.kind === 'dopening') extra.cfg = { otype: curDwOpening, deductSF: OPENING_DEDUCT[curDwOpening] };
@@ -2358,6 +2381,26 @@ els.cv.addEventListener('dblclick', e => {
     const c = hit.cfg || {};
     modals.askNumber(`${FOPEN_LABEL[c.otype] || 'Opening'} rough-opening width (ft)`, 'Drives the header LF and cripple count for each opening in this group.', c.width != null ? c.width : 3, 1)
       .then(v => { if (v != null && v > 0) { const prev = snapshot(); hit.cfg = { ...c, width: v }; pushUndo(prev); markupsChanged(); } });
+    return;
+  }
+  // double-click a linear removal to change its type
+  if (hit && hit.kind === 'dmline') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    const cur = (hit.cfg && hit.cfg.ltype) || 'curb';
+    askChoice('Removal type', 'Runs roll up on the bid by type, at each type’s installed $/LF.',
+      DM_LINE_KINDS.map(k => ({ label: DM_LINE_LABEL[k], value: k, primary: k === cur }))
+    ).then(v => { if (v && v !== cur) { const prev = snapshot(); hit.cfg = { ...(hit.cfg || {}), ltype: v }; curDmLine = v; pushUndo(prev); markupsChanged(); } });
+    return;
+  }
+  // double-click a demo item group to change its type
+  if (hit && hit.kind === 'dmitem') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    const cur = (hit.cfg && hit.cfg.itype) || 'tree';
+    askChoice('Item type', 'Items roll up on the bid by type, at each type’s installed $/EA.',
+      DM_ITEM_KINDS.map(k => ({ label: DM_ITEM_LABEL[k], value: k, primary: k === cur }))
+    ).then(v => { if (v && v !== cur) { const prev = snapshot(); hit.cfg = { ...(hit.cfg || {}), itype: v }; curDmItem = v; pushUndo(prev); markupsChanged(); } });
     return;
   }
   // double-click a demo area to change its type
@@ -2753,7 +2796,7 @@ const TRADE_TOOLS = {
   esc: ['escline', 'escitem', 'escarea'],
   striping: ['sstripe', 'sstall', 'smark'],
   siding: ['swall', 'sopening', 'sgutter', 'sinsul'],
-  demo: ['dmarea'],
+  demo: ['dmarea', 'dmline', 'dmitem'],
 };
 // general redlining + generic measure tools that collapse while a trade is active
 const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
@@ -4982,6 +5025,7 @@ const swallSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0); // siding
 const sgutterLenFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0); // gutter / downspout run
 const sinsulSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0); // insulated area
 const dmareaSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0); // demolition area
+const dmlineLenFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0); // linear removal run
 const FINISH_MUD = { L3: 0.020, L4: 0.027, L5: 0.036 }; // gal ready-mix / SF by finish level
 // Suspended (ACT) drop-ceiling grid takeoff from area + wall perimeter. Rule-of-thumb
 // counts: mains 4' OC, 4' cross tees 2' OC (both layouts), 2' cross tees only on 2×2;
@@ -5840,8 +5884,25 @@ if ($('sidInsTb')) $('sidInsTb').addEventListener('change', e => { curSidIns = e
 /* ---- Demolition pack ---- */
 function demoTotals() {
   const byArea = {}; // dtype -> SF
-  let areaSF = 0;
+  const byLine = {}; // ltype -> LF
+  const byItem = {}; // itype -> EA
+  let areaSF = 0, lineLF = 0, items = 0;
   for (const m of state.markups) {
+    if (m.kind === 'dmline') {
+      const t = (m.cfg && m.cfg.ltype) || 'curb';
+      const lf = dmlineLenFt(m);
+      if (lf < 0.01) continue;
+      byLine[t] = (byLine[t] || 0) + lf;
+      lineLF += lf;
+      continue;
+    }
+    if (m.kind === 'dmitem') {
+      const t = (m.cfg && m.cfg.itype) || 'tree';
+      const n = m.pts.length;
+      byItem[t] = (byItem[t] || 0) + n;
+      items += n;
+      continue;
+    }
     if (m.kind !== 'dmarea') continue;
     const t = (m.cfg && m.cfg.dtype) || 'bldgWood';
     const sf = dmareaSf(m);
@@ -5849,7 +5910,7 @@ function demoTotals() {
     byArea[t] = (byArea[t] || 0) + sf;
     areaSF += sf;
   }
-  return { byArea, areaSF };
+  return { byArea, areaSF, byLine, lineLF, byItem, items };
 }
 // Debris per type, shared by the bid and the panel so the two can't drift.
 //
@@ -5893,6 +5954,19 @@ function demoBidLines() {
     if (!sf || sf < 0.5) continue;
     lines.push({ key: `dm_area_${k}`, label: `${DM_AREA_LABEL[k]} — demo`, qty: sf, unit: 'SF', q: 0, defPrice: DM_AREA_PRICE[k] || 1.5 });
   }
+  // Linear + item removals are quoted with removal AND haul inside the unit
+  // price, so they deliberately do NOT feed the CY pile or the load count —
+  // adding them would bill the same hauling twice.
+  for (const k of DM_LINE_KINDS) {
+    const lf = T.byLine[k];
+    if (!lf || lf < 0.5) continue;
+    lines.push({ key: `dm_line_${k}`, label: `${DM_LINE_LABEL[k]} (removal + haul)`, qty: lf, unit: 'LF', q: 0, defPrice: DM_LINE_PRICE[k] || 6.5 });
+  }
+  for (const k of DM_ITEM_KINDS) {
+    const ea = T.byItem[k];
+    if (!ea) continue;
+    lines.push({ key: `dm_item_${k}`, label: `${DM_ITEM_LABEL[k]} (removal + haul)`, qty: ea, unit: 'EA', q: 0, defPrice: DM_ITEM_PRICE[k] || 500 });
+  }
   const D = demoDebris(T);
   if (D.loads > 0) lines.push({ key: 'dm_haul', label: `Debris haul (${fmt(D.totalCY, 0)} CY @ ${D.cap} CY/truck)`, qty: D.loads, unit: 'load', q: 0, defPrice: DM_HAUL_PRICE });
   return lines;
@@ -5908,6 +5982,10 @@ function renderDemoPanel() {
   const arOpts = DM_AREA_KINDS.map(k => `<option value="${k}">${DM_AREA_LABEL[k]}</option>`).join('');
   rows.push('<div class="roof-sub">Settings</div>');
   rows.push(`<div class="dirt-set">New areas <select id="dmArea">${arOpts}</select></div>`);
+  const lnOpts = DM_LINE_KINDS.map(k => `<option value="${k}">${DM_LINE_LABEL[k]}</option>`).join('');
+  rows.push(`<div class="dirt-set">New removals <select id="dmLine">${lnOpts}</select></div>`);
+  const itOpts = DM_ITEM_KINDS.map(k => `<option value="${k}">${DM_ITEM_LABEL[k]}</option>`).join('');
+  rows.push(`<div class="dirt-set">New items <select id="dmItem">${itOpts}</select></div>`);
   // Only the settings that actually bite the current takeoff are shown: swell
   // and thickness are meaningless with no pavement traced.
   const hasPave = DM_AREA_KINDS.some(k => !isDmBuilding(k) && T.byArea[k]);
@@ -5928,13 +6006,27 @@ function renderDemoPanel() {
     }
     rows.push(`<div class="dirt-row"><b>Total debris</b><span class="v"><b>${fmt(M.totalCY, 1)} CY · ${fmt(M.totalTons, 1)} t</b></span></div>`);
     rows.push(`<div class="dirt-row"><b>Truck loads</b><span class="v"><b>${M.loads}</b></span></div>`);
-  } else {
-    rows.push('<div class="hint" style="margin:4px 0">Nothing yet — trace an area (▣) and set its type.</div>');
   }
+  if (T.lineLF > 0.5) {
+    rows.push('<div class="roof-sub">Linear removals</div>');
+    for (const k of DM_LINE_KINDS) { const lf = T.byLine[k]; if (!lf) continue; R(DM_LINE_LABEL[k], `${fmt(lf, 0)} LF`); }
+    rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${fmt(T.lineLF, 0)} LF</b></span></div>`);
+  }
+  if (T.items > 0) {
+    rows.push('<div class="roof-sub">Items & structures</div>');
+    for (const k of DM_ITEM_KINDS) { const ea = T.byItem[k]; if (!ea) continue; R(DM_ITEM_LABEL[k], `${ea} EA`); }
+    rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${T.items} EA</b></span></div>`);
+  }
+  if (T.lineLF > 0.5 || T.items > 0) rows.push('<div class="hint" style="margin:4px 0">Removals and items carry their haul inside the unit price, so they’re not in the CY or the load count above — counting them there would bill the hauling twice.</div>');
+  if (T.areaSF < 0.5 && T.lineLF < 0.5 && !T.items) rows.push('<div class="hint" style="margin:4px 0">Nothing yet — trace an area (▣), a removal (⌁), or click items (⊠).</div>');
   rows.push('<div class="hint" style="margin:4px 0"><b>Buildings and pavement convert differently.</b> A building is mostly air, so it uses debris CY per SF of footprint (bulking included) — not footprint × height. Pavement uses its thickness, then swells. Prices in $ Bid.</div>');
   $('demBody').innerHTML = rows.join('');
   $('dmArea').value = curDmArea;
   $('dmArea').addEventListener('change', e => { curDmArea = e.target.value; if (tool === 'dmarea') setTool('dmarea'); });
+  $('dmLine').value = curDmLine;
+  $('dmItem').value = curDmItem;
+  $('dmLine').addEventListener('change', e => { curDmLine = e.target.value; if (tool === 'dmline') setTool('dmline'); });
+  $('dmItem').addEventListener('change', e => { curDmItem = e.target.value; if (tool === 'dmitem') setTool('dmitem'); });
   // every rate input is conditional, so bind defensively
   const num = (id, key, def, min) => {
     const el = $(id);
@@ -5960,6 +6052,8 @@ $('btnDem').addEventListener('click', () => {
   syncPanelButtons();
 });
 if ($('dmAreaTb')) $('dmAreaTb').addEventListener('change', e => { curDmArea = e.target.value; if (tool === 'dmarea') setTool('dmarea'); });
+if ($('dmLineTb')) $('dmLineTb').addEventListener('change', e => { curDmLine = e.target.value; if (tool === 'dmline') setTool('dmline'); });
+if ($('dmItemTb')) $('dmItemTb').addEventListener('change', e => { curDmItem = e.target.value; if (tool === 'dmitem') setTool('dmitem'); });
 
 /* ===================== Live sessions (SSE + REST ops) =====================
  * Host "goes live" on the current project; teammates join and co-edit in real

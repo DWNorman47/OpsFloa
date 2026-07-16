@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css?v=38">
+<link rel="stylesheet" href="styles.css?v=39">
 <script>
 (() => {
   try {
@@ -256,6 +256,23 @@
         <option value="concrete">Concrete slab / paving</option>
         <option value="sidewalk">Sidewalk</option>
         <option value="gravel">Gravel / base</option>
+      </select>
+      <button class="tool" data-tool="dmline" title="Linear removal — trace a curb / sidewalk strip / pipe / fence / guardrail run &rarr; LF by type. Double-click a run to change its type.">&#8961;</button>
+      <select id="dmLineTb" class="mini-sel" title="Type for new linear removals">
+        <option value="curb">Curb &amp; gutter</option>
+        <option value="walkstrip">Sidewalk strip</option>
+        <option value="pipe">Pipe removal</option>
+        <option value="fence">Fence removal</option>
+        <option value="guardrail">Guardrail removal</option>
+      </select>
+      <button class="tool" data-tool="dmitem" title="Item removal — click each tree / pole / sign / structure &rarr; counted EA by type. Double-click a group to change its type.">&#8864;</button>
+      <select id="dmItemTb" class="mini-sel" title="Type for new item removals">
+        <option value="tree">Tree removal</option>
+        <option value="lightpole">Light pole</option>
+        <option value="sign">Sign</option>
+        <option value="catchbasin">Catch basin</option>
+        <option value="manhole">Manhole</option>
+        <option value="hydrant">Fire hydrant</option>
       </select>
     </div>
     <input type="color" id="mkColor" class="dirt-hide" value="#e05555" title="Markup color (applies to the selected markup too)">
@@ -696,6 +713,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=38"></script>
+<script type="module" src="app.js?v=39"></script>
 </body>
 </html>
