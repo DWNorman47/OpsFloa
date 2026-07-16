@@ -3,6 +3,7 @@ import api from '../../api';
 import { useT } from '../../hooks/useT';
 import { useAuth } from '../../contexts/AuthContext';
 import { langToLocale } from '../../utils';
+import { useMoney } from '../../hooks/useMoney';
 import { SkeletonList } from '../Skeleton';
 import ModalShell from '../ModalShell';
 import ColumnHeaderMenu from './ColumnHeaderMenu';
@@ -433,6 +434,7 @@ function IssueModal({ item, projects, onClose, onDone }) {
 const STOCK_PAGE_SIZE_OPTIONS = [25, 50, 100, 250];
 
 export default function InventoryStock({ isAdmin, locations, projects, onStockChange, onReorderClick }) {
+  const fmtMoney = useMoney();
   const t = useT();
   const [stock, setStock]           = useState([]);
   const [stockTotal, setStockTotal] = useState(0);
@@ -773,7 +775,7 @@ export default function InventoryStock({ isAdmin, locations, projects, onStockCh
       cellStyle: { ...s.td, textAlign: 'right', color: '#6b7280' },
       getValue: row => {
         const cost = parseFloat(row.unit_cost);
-        return cost ? `$${cost.toFixed(2)}` : null;
+        return cost ? fmtMoney(cost) : null;
       },
     },
     {
@@ -787,7 +789,7 @@ export default function InventoryStock({ isAdmin, locations, projects, onStockCh
       getValue: row => {
         const qty = parseFloat(row.quantity);
         const cost = parseFloat(row.unit_cost);
-        return cost && qty > 0 ? `$${(cost * qty).toFixed(2)}` : null;
+        return cost && qty > 0 ? fmtMoney(cost * qty) : null;
       },
     },
     {
