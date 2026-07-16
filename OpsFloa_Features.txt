@@ -460,20 +460,71 @@ PLAN ROOM (add-on)
     - Work autosaves as you go.
 
 TAKEOFF LAYER (add-on)
-  Turns Plan Room measurements into priced, branded bids — quantity takeoff by
-  trade, all on the same plan set:
+  Turns Plan Room measurements into priced, branded bids. Eleven trades, all on
+  the same plan set, all feeding one bid — pick the trade and its tools appear.
+
+  A general contractor takes off the whole building. A site contractor takes off
+  the whole site. Nobody buys a second seat of anything.
+
+  THE SITE
     - Earthwork / sitework: cut-and-fill from contours, spot elevations, and
       pads; two-sheet existing/proposed alignment with a ghost overlay; a cut/
       fill heat overlay; export cubic yards.
+    - Erosion & sediment control: silt fence and perimeter controls by the foot,
+      inlet protection and other BMPs by the each, and stabilized areas —
+      construction entrance and riprap to stone tonnage, erosion blanket to
+      square yards, hydroseed to seed and mulch. (Every grading permit needs an
+      ESC sheet; it's the same plan set you already have open.)
+    - Demolition: buildings and pavement to debris cubic yards, tons, and truck
+      loads — buildings by construction type, pavement by thickness and swell.
+      Plus curb, pipe, fence and guardrail removals, and trees, poles and
+      structures by the each.
+    - Parking-lot striping & signage: stalls by type with the ADA count called
+      out separately, painted runs by width (4" line through 24" stop bar), and
+      arrows, legends, signs, wheel stops and bollards. Paint and glass beads
+      figured off the width-weighted footage.
+    - Fencing & guardrail: runs by the foot with the post count worked out per
+      run at each type's own spacing — chain link, wood, vinyl, ornamental,
+      farm, W-beam guardrail, cable rail — plus gates and post concrete.
+    - Landscape & irrigation: mulch by the yard, sod by the square, decorative
+      rock by the ton, seed by the pound; trees, shrubs and perennials counted;
+      irrigation mainline, laterals and drip by the foot, with heads, valves,
+      controller and backflow by the each.
+
+  THE BUILDING
     - Roofing: roof planes with pitch → squares; roof edges (eave, rake, ridge,
       valley, hip); roof items/accessories; aerial-image input for re-roofs.
+    - Framing & lumber: wall runs to stud counts, plates and board-feet by stud
+      size; door and window openings to headers and king/jack/cripple studs;
+      sheathing to 4×8 sheets.
+    - Siding, gutters & insulation: elevations to net square feet and squares by
+      material (vinyl, fiber cement, wood, stucco, brick and stone veneer) with
+      window and door openings deducted; gutters and downspouts by the foot;
+      insulation by R-value, with batts to bags.
     - Drywall & paint: wall runs (length × height × sides), ceilings, openings
       (with SF deducts), and trim; board / mud / tape / paint quantities;
       texture and batt/sound insulation; ACT drop-ceiling grid takeoff (tiles,
       tees, wall angle, hangers); and wall heights measured directly off
       elevation sheets.
+    - Flooring & tile: rooms to net floor SF by material with waste; thresholds,
+      reducers and transitions by the foot; underlayment; and tile materials —
+      thinset and grout figured from tile size and joint width.
+
+  EVERY TRADE
+    - Double-click anything to change its type; quantities re-figure instantly.
+    - Same-type work rolls up into one bid line; different types stay separate.
+    - Rates are seeded with sensible defaults and every one is editable.
     - Priced takeoff lines flow into a shared price library and a bid report,
       and can be sent straight back onto an estimate.
+    - The tool refuses to measure an uncalibrated sheet rather than quietly
+      handing you a zero.
+
+STORM / UTILITY (add-on, on top of Takeoff)
+  The deep version of the underground takeoff for utility contractors: a pipe
+  schedule by diameter and material with automatic trench widths, invert-driven
+  trench depth that varies along the run (rather than one flat depth per line),
+  structure depth priced by vertical foot, and spoil-versus-import netting so
+  the export number is the real one.
 
 SITEWORK TAKEOFF ESTIMATOR
   A dedicated civil takeoff tool for taking off earthwork, paving, concrete,
@@ -705,12 +756,15 @@ PLAN ROOM ADD-ON — +$40/month
     - Flattened-PDF export of a marked-up set
 
 TAKEOFF ADD-ON — +$60/month
-  Adds the quantity-takeoff layer on top of Plan Room:
-    - Earthwork / sitework cut-fill takeoff
-    - Roofing takeoff (pitch-corrected squares, edges, items)
-    - Drywall & paint takeoff (walls, ceilings, texture, insulation, drop
-      ceilings, elevation-measured heights)
+  Adds the quantity-takeoff layer on top of Plan Room — eleven trades, one plan
+  set, one bid:
+    - Site: earthwork cut/fill · erosion & sediment control · demolition ·
+      striping & signage · fencing & guardrail · landscape & irrigation
+    - Building: roofing · framing & lumber · siding, gutters & insulation ·
+      drywall & paint · flooring & tile
     - Priced takeoff lines into a branded bid, sent back onto the estimate
+  Dedicated takeoff software runs $1,500–$4,000 per seat per year, and most of
+  it does one trade.
 
 CERTIFIED PAYROLL
   Certified Payroll Reports (WH-347 format) are available on Business plans.
