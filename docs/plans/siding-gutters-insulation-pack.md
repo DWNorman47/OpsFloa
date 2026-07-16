@@ -1,6 +1,6 @@
 # OpsFloa — Siding, Gutters & Insulation takeoff pack (inside the Plan Room Takeoff layer)
 
-Status: **Si1 shipped; Si2–Si3 remaining** (2026-07-16). A new takeoff **trade** in Plan Room
+Status: **Si1–Si3 all shipped — pack complete** (2026-07-16). A new takeoff **trade** in Plan Room
 (the 9th, alongside Roofing, Earthwork, Drywall & Paint, Flooring & Tile, Framing
 & Lumber, Erosion & Sediment Control, Striping & Signage), included in the **$60
 Takeoff** add-on — no own SKU.
@@ -59,10 +59,14 @@ the three is off.
   per-material net SF × (1+waste) at seeded $/SF + opening trim EA; panel shows
   gross / deducts / net, SF + squares by material, and the opening tally.
   Persists in projectData + all 5 load paths.
-- **Si2 — gutters & downspouts**: `sgutter` line kind → LF by type; bid LF lines;
-  panel section.
-- **Si3 — insulation**: `sinsul` area kind → SF by R-value → bags at coverage;
-  waste + coverage settings; panel section.
+- **Si2 — gutters & downspouts** ✅ *shipped*: `sgutter` line kind (5"/6" K-style,
+  half-round, downspout, fascia wrap; double-click to change) → LF by type at
+  seeded installed $/LF; panel section.
+- **Si3 — insulation** ✅ *shipped*: `sinsul` area kind (batt R-13/19/21, blown
+  attic R-38/49, spray foam; double-click to change) → SF × (1+waste) at seeded
+  $/SF. **Only batts convert to bags** (at the coverage setting) — blown and foam
+  are bid straight by SF, so a bag count there would be meaningless. Waste +
+  coverage inputs render only when insulation is traced.
 
 ## Verification
 - Si1: a 1,200 SF elevation with 4 windows (−15 SF ea) and 1 door (−21) = 1,200 −

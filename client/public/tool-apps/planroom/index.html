@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css?v=36">
+<link rel="stylesheet" href="styles.css?v=37">
 <script>
 (() => {
   try {
@@ -226,6 +226,23 @@
         <option value="window">Window (&minus;15)</option>
         <option value="door">Door (&minus;21)</option>
         <option value="garage">Garage door (&minus;112)</option>
+      </select>
+      <button class="tool" data-tool="sgutter" title="Gutter run — trace a gutter / downspout / fascia run &rarr; LF by type. Double-click a run to change its type.">&#8976;</button>
+      <select id="sidGutTb" class="mini-sel" title="Gutter type for new runs">
+        <option value="k5">5&quot; K-style gutter</option>
+        <option value="k6">6&quot; K-style gutter</option>
+        <option value="half">Half-round gutter</option>
+        <option value="downspout">Downspout</option>
+        <option value="fascia">Fascia wrap</option>
+      </select>
+      <button class="tool" data-tool="sinsul" title="Insulation — trace an area &rarr; SF by R-value; batts also convert to bags. Double-click it to change its type.">&#9641;</button>
+      <select id="sidInsTb" class="mini-sel" title="Insulation type for new areas">
+        <option value="battR13">Batt R-13 (2&times;4 wall)</option>
+        <option value="battR19">Batt R-19 (2&times;6 wall)</option>
+        <option value="battR21">Batt R-21 (2&times;6 wall)</option>
+        <option value="blownR38">Blown attic R-38</option>
+        <option value="blownR49">Blown attic R-49</option>
+        <option value="foam">Spray foam</option>
       </select>
     </div>
     <input type="color" id="mkColor" class="dirt-hide" value="#e05555" title="Markup color (applies to the selected markup too)">
@@ -661,6 +678,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=36"></script>
+<script type="module" src="app.js?v=37"></script>
 </body>
 </html>
