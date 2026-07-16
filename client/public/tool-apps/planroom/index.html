@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css?v=26">
+<link rel="stylesheet" href="styles.css?v=27">
 <script>
 (() => {
   try {
@@ -168,8 +168,11 @@
     <button id="btnFit" class="btn" title="Fit the sheet to the window" disabled>⤢ Fit</button>
   </div>
   <div class="tb-group needs-doc tb-collapsible">
-    <button id="btnUndo" class="btn" title="Undo (Ctrl+Z)" disabled>↶</button>
-    <button id="btnRedo" class="btn" title="Redo (Ctrl+Y)" disabled>↷</button>
+    <div class="tb-cluster">
+      <button id="btnUndo" class="btn" title="Undo (Ctrl+Z)" disabled>↶</button>
+      <button id="btnRedo" class="btn" title="Redo (Ctrl+Y)" disabled>↷</button>
+    </div>
+    <div class="tb-cluster tb-takeoff tr-dirt">
     <div class="tool-group tb-takeoff tr-dirt" data-group="surface">
       <button class="tool-group-main" data-group="surface" title="Grade tools — auto-trace, contour, spot, pad. Click for the menu (▾).">⛰ Contour</button>
       <button class="tool-group-caret" data-group="surface" aria-label="More grade tools">▾</button>
@@ -190,6 +193,7 @@
         <button class="tool" data-tool="qcount" title="Count takeoff — drop a point on each item (catch basin, manhole, tree…), name it → counted & priced in the bid">⊙ Count takeoff</button>
       </div>
     </div>
+    </div>
     <button id="btnList" class="btn dirt-hide" title="Markup list — every markup across the set, click to jump">📋</button>
     <div class="menu-wrap">
       <button id="btnLayers" class="btn" title="Show / hide categories of markups to declutter" aria-haspopup="true">◫<span class="btn-label"> Layers</span> ▾</button>
@@ -200,6 +204,7 @@
         <label><input type="checkbox" data-layer="labels" checked> Value labels</label>
       </div>
     </div>
+    <div class="tb-cluster">
     <button id="btnRoof" class="btn tb-takeoff tr-roof" title="Roofing takeoff — squares, edges, and counts across the set">🏠<span class="btn-label"> Roof</span></button>
     <button id="btnDirt" class="btn tb-takeoff tr-dirt" title="Earthwork / cut-fill takeoff — designate sheets, trace contours, compute volumes">⛰<span class="btn-label"> Dirt</span></button>
     <button id="btnDw" class="btn tb-takeoff tr-dwall" title="Drywall & Paint — wall height, sheet size, waste, coverage; net SF & materials">🧱<span class="btn-label"> Drywall</span></button>
@@ -215,6 +220,7 @@
         <button data-act="csv" role="menuitem">📊 CSV — markup &amp; measurement list</button>
         <div class="menu-hint">Sheet, type, note, and measured value per markup.</div>
       </div>
+    </div>
     </div>
   </div>
 </header>
@@ -563,6 +569,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=26"></script>
+<script type="module" src="app.js?v=27"></script>
 </body>
 </html>

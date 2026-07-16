@@ -40,7 +40,7 @@ body { display: flex; flex-direction: column; }
 .page-info { color: var(--muted); font-size: 13px; min-width: 64px; text-align: center; }
 /* keep related controls together — the ◀ 5/9 ▶ page nav and the earthwork
    tool set each wrap to the next line as one unit rather than splitting */
-.tb-nav, .tb-sub { display: inline-flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
+.tb-nav, .tb-sub, .tb-cluster { display: inline-flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
 
 .btn {
   background: var(--panel2); color: var(--text);
@@ -94,11 +94,13 @@ body { display: flex; flex-direction: column; }
 .tool:hover { border-color: var(--accent); }
 .tool.active { background: var(--accent); border-color: var(--accent); color: #08243f; font-weight: 700; }
 .tb-sep { display: none; } /* dividers removed */
-/* the markup-tools group flows its buttons directly into the toolbar's wrap, so
-   Pan/Select only drop to a new line when the width genuinely can't fit them
-   (rather than the whole group wrapping as one block). Collapse + needs-doc
+/* the collapsible tool groups flow their children directly into the toolbar's
+   wrap, so each item / .tb-cluster unit only drops to a new line when the width
+   genuinely can't fit it (rather than the whole group wrapping as one block).
+   Covers the markup-tools group and the undo/dropdowns/actions group; the
+   .tb-cluster wrappers inside keep their members together. Collapse + needs-doc
    still win via their more-specific display:none rules. */
-.tb-group.tb-tools { display: contents; }
+.tb-group.tb-collapsible { display: contents; }
 /* dirt-trade tool flyout groups (ported from the sitework tool) */
 .tool-group { position: relative; display: inline-flex; }
 .tool-group-main, .tool-group-caret {
