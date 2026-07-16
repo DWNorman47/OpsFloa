@@ -1201,9 +1201,11 @@ async function setPage(p, { fit = false } = {}) {
 function syncSurfaceToPage() {
   if (state.trade !== 'dirt') return;
   const E = state.earthwork;
-  if (!E.existingPage || !E.proposedPage || E.existingPage === E.proposedPage) return;
-  const s = state.page === E.existingPage ? 'existing' : state.page === E.proposedPage ? 'proposed' : null;
-  if (s && s !== curSurface) { curSurface = s; renderSurfaceToggle(); }
+  if (E.existingPage && E.proposedPage && E.existingPage !== E.proposedPage) {
+    const s = state.page === E.existingPage ? 'existing' : state.page === E.proposedPage ? 'proposed' : null;
+    if (s && s !== curSurface) curSurface = s;
+  }
+  renderSurfaceToggle(); // keep the toggle's gray/white/align state current on every page change
 }
 
 // Lazy thumbnail strip: placeholders now, rendered when scrolled into view.
@@ -2487,6 +2489,7 @@ function setTrade(t, { save = true } = {}) {
     $('dirtPanel').classList.remove('hidden');
     dirtSheetsCollapsed = dirtSetupComplete();
     renderDirtPanel();
+    syncSurfaceToPage(); // refresh the surface toggle's gray/white/align state on entering dirt
   }
   syncPanelButtons();
   if (save) { // hints only on a user switch — not when a load restores the mode
@@ -2885,9 +2888,9 @@ function renderDirtPanel() {
     body.querySelector('[data-act="calc"]').addEventListener('click', calculateCutFill);
   }
   const setEx = body.querySelector('[data-act="set-existing"]');
-  if (setEx) setEx.addEventListener('click', () => { E.existingPage = state.page; scheduleSave(); renderDirtPanel(); });
+  if (setEx) setEx.addEventListener('click', () => { E.existingPage = state.page; scheduleSave(); renderDirtPanel(); renderSurfaceToggle(); });
   const setPr = body.querySelector('[data-act="set-proposed"]');
-  if (setPr) setPr.addEventListener('click', () => { E.proposedPage = state.page; scheduleSave(); renderDirtPanel(); });
+  if (setPr) setPr.addEventListener('click', () => { E.proposedPage = state.page; scheduleSave(); renderDirtPanel(); renderSurfaceToggle(); });
   const toggleSheets = body.querySelector('[data-act="toggle-sheets"]');
   if (toggleSheets) toggleSheets.addEventListener('click', () => { dirtSheetsCollapsed = !dirtSheetsCollapsed; renderDirtPanel(); });
   const newBound = body.querySelector('[data-act="new-bound"]');
@@ -3124,9 +3127,18 @@ $('btnDirt').addEventListener('click', () => {
 // surface new contours/spots/pads belong to.
 function renderSurfaceToggle() {
   const btn = $('surfaceToggle'); if (!btn) return;
+  const E = state.earthwork;
+  const bothSet = !!(E.existingPage && E.proposedPage);
   const lbl = $('surfaceToggleLabel'); if (lbl) lbl.textContent = curSurface === 'proposed' ? 'Proposed' : 'Existing';
-  btn.classList.toggle('surf-existing', curSurface !== 'proposed');
-  btn.classList.toggle('surf-proposed', curSurface === 'proposed');
+  const curPage = curSurface === 'proposed' ? E.proposedPage : E.existingPage;
+  const away = bothSet && !!curPage && state.page !== curPage; // viewing a different page than this surface's sheet
+  btn.classList.toggle('surf-off', !bothSet);   // grayed until both sheets are designated
+  btn.classList.toggle('surf-away', away);        // white: a click jumps to this surface's sheet
+  btn.classList.toggle('surf-existing', bothSet && !away && curSurface !== 'proposed');
+  btn.classList.toggle('surf-proposed', bothSet && !away && curSurface === 'proposed');
+  // the ⌖ align tool only appears once both sheets are set
+  const align = document.querySelector('.tool[data-tool="align"]');
+  if (align) { align.classList.toggle('hidden', !bothSet); if (!bothSet && tool === 'align') setTool('pan'); }
 }
 function setSurface(s) {
   curSurface = s === 'proposed' ? 'proposed' : 'existing';
@@ -3141,7 +3153,18 @@ function setSurface(s) {
 }
 if ($('surfaceToggle')) {
   renderSurfaceToggle();
-  $('surfaceToggle').addEventListener('click', () => setSurface(curSurface === 'proposed' ? 'existing' : 'proposed'));
+  $('surfaceToggle').addEventListener('click', () => {
+    const E = state.earthwork;
+    if (!E.existingPage || !E.proposedPage) return; // grayed — nothing to toggle until both sheets are set
+    const curPage = curSurface === 'proposed' ? E.proposedPage : E.existingPage;
+    if (curPage && state.page !== curPage) {
+      // "white" — you're on another page; jump to THIS surface's sheet rather than switching surface
+      setPage(curPage);
+      setMsg(`Jumped to the ${curSurface} sheet (page ${curPage}).`);
+    } else {
+      setSurface(curSurface === 'proposed' ? 'existing' : 'proposed'); // on the sheet → toggle to the other surface
+    }
+  });
 }
 
 /* ============================== Topbar & keyboard ============================== */
