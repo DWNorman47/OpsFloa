@@ -3133,9 +3133,9 @@ function renderSurfaceToggle() {
   const curPage = curSurface === 'proposed' ? E.proposedPage : E.existingPage;
   const away = bothSet && !!curPage && state.page !== curPage; // viewing a different page than this surface's sheet
   btn.classList.toggle('surf-off', !bothSet);   // grayed until both sheets are designated
-  btn.classList.toggle('surf-away', away);        // white: a click jumps to this surface's sheet
-  btn.classList.toggle('surf-existing', bothSet && !away && curSurface !== 'proposed');
-  btn.classList.toggle('surf-proposed', bothSet && !away && curSurface === 'proposed');
+  btn.classList.toggle('surf-away', away);        // white outline: a click jumps to this surface's sheet
+  btn.classList.toggle('surf-existing', bothSet && curSurface !== 'proposed');
+  btn.classList.toggle('surf-proposed', bothSet && curSurface === 'proposed');
   // the ⌖ align tool only appears once both sheets are set
   const align = document.querySelector('.tool[data-tool="align"]');
   if (align) { align.classList.toggle('hidden', !bothSet); if (!bothSet && tool === 'align') setTool('pan'); }
