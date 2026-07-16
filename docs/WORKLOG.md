@@ -23,6 +23,53 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-16 — Siding, Gutters & Insulation trade pack (Si1–Si3, complete)
+
+**Shipped.** The **9th** trade — `siding` (▥), in the $60 Takeoff add-on, no own
+SKU. Completes the residential shell: with Framing → **Siding** → Roofing →
+Drywall → Flooring, a builder takes off the whole house in one tool. Also reaches
+the roofing buyer, since roofers sell gutters. Four tools: ▥ elevations → gross
+SF by material (7 materials), ⊡ openings → deduct SF + trim EA, ⌐ gutters →
+LF by type, ▩ insulation → SF by R-value → bags.
+`0a86f9f` (Si1) · `53f23ff` (Si2–Si3) · plan: `docs/plans/siding-gutters-insulation-pack.md`
+
+**Call made — the net-area trap.** Gross elevation area over-bids every house; on
+some elevations the wall is mostly glass. So `swall` traces gross and `sopening`
+deducts, and the bid uses **net**. The panel shows **gross / deduct / net side by
+side** rather than silently folding the deduction in — the deduct is the number
+most likely to be wrong, so it should be inspectable. Openings still bill a trim
+& wrap EA on top: an opening removes SF but *costs* money, because cutting siding
+around one is more work per foot than the field.
+
+**Call made — how the deduct splits across materials.** Openings aren't attached
+to a wall, so the deduction is apportioned by each material's share of gross.
+That's **exact** on a single-material job (the common case) and an honest
+approximation on a mixed one. Flagging it because it's a real modelling choice,
+not a fact: the alternative is making the user assign each opening to a wall,
+which is more clicking for a rounding difference. Asserted that the per-material
+nets sum back to the total.
+
+**Call made — only batts convert to bags.** Blown and spray foam are bid straight
+by SF, so a bag count there would be a meaningless number that looks
+authoritative. Batts get bags at the coverage setting; the others don't.
+
+**Verified** against the real functions lifted out of app.js (same method as ESC
+and Striping). The worked example: 1,200 SF − 4 windows − 1 door = **1,119 net**
+→ 1,230.9 SF at 10% waste → 11.19 squares. Plus the edges that would ship
+silently wrong: over-deduction **floors net at 0** with no negative bid
+quantities; openings traced before any wall don't divide by zero; mixed materials
+split 50/50 and sum back; 1,760 SF R-13 @ 5% = 1,848 SF = **21 bags**; and the
+one that matters most with three kinds sharing a totals loop — **gutters and
+insulation never leak into the wall area** (gross stays 1,200 with 880 SF of
+insulation traced).
+
+**Structural.** 42/42 kinds registered in `hitMarkup`, `MK_LABEL`, `MK_ICON`;
+`swall`/`sinsul` in `NEEDS_SCALE` + `CLOSED_KINDS`, `sopening` in `POINT_KINDS`.
+
+⚠️ **Needs David:** hard-refresh — cache-bust **v37**.
+
+---
+
 ## 2026-07-16 — Parking-lot Striping & Signage trade pack (S1–S3, complete)
 
 **Shipped.** New `striping` trade (🅿) in Plan Room, in the $60 Takeoff add-on,
@@ -64,7 +111,7 @@ emit no phantom $0 lines · empty `state.striping` still computes.
 Re-audited after: **38/38** kinds present in `hitMarkup`, `MK_LABEL` and
 `MK_ICON`.
 
-⚠️ **Needs David:** hard-refresh — cache-bust **v35**.
+⚠️ **Needs David:** hard-refresh — superseded by **v37** (siding pack).
 
 ---
 
