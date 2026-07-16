@@ -40,12 +40,9 @@ body { display: flex; flex-direction: column; }
 .page-info { color: var(--muted); font-size: 13px; min-width: 64px; text-align: center; }
 /* keep related controls together — the ◀ 5/9 ▶ page nav and the earthwork
    tool set each wrap to the next line as one unit rather than splitting */
+/* .tb-cluster units stay together (nowrap) so a group never splits mid-wrap,
+   but flow with the same gap as everything else — no extra between-group space. */
 .tb-nav, .tb-sub, .tb-cluster { display: inline-flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
-/* each .tb-cluster (undo/redo · the grade+area dropdowns · list/layers · the
-   trade/Bid/Export actions) reads as its own group: a wider gap before each one
-   sets it apart from the previous unit, while its own members stay tight at the
-   6px cluster gap. Units still flow up to fill the line above when they fit. */
-.tb-cluster { margin-left: 16px; }
 
 .btn {
   background: var(--panel2); color: var(--text);
