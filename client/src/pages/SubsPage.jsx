@@ -40,6 +40,48 @@ function StatusBadge({ status }) {
 
 // ── Subs directory ───────────────────────────────────────────────────────────
 
+// Documents lapsing or lapsed, across every sub. expires_on was collected from
+// day one and shown only on the sub's own page — so a dead COI was invisible
+// unless you happened to open that sub. This is the thing that makes collecting
+// the date worth anything.
+function ComplianceBanner() {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    api.get('/subcontractors/compliance')
+      .then(r => setData(r.data))
+      .catch(() => {}); // a banner failing must never take the page with it
+  }, []);
+  if (!data || !data.items.length) return null;
+
+  const expired = data.items.filter(i => i.is_expired);
+  const soon = data.items.filter(i => !i.is_expired);
+  const bad = expired.length > 0;
+  const label = { coi: 'insurance', license: 'license', w9: 'W-9', contract: 'contract', other: 'document' };
+
+  return (
+    <div style={{
+      background: bad ? '#fef2f2' : '#fffbeb',
+      border: `1px solid ${bad ? '#fecaca' : '#fde68a'}`,
+      borderRadius: 8, padding: 14, marginBottom: 16,
+    }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: bad ? '#991b1b' : '#92400e', marginBottom: 4 }}>
+        {expired.length > 0 && `${expired.length} expired`}
+        {expired.length > 0 && soon.length > 0 && ' · '}
+        {soon.length > 0 && `${soon.length} expiring within ${data.within_days} days`}
+      </div>
+      <div style={{ fontSize: 12, color: bad ? '#7f1d1d' : '#7c3a00', lineHeight: 1.6 }}>
+        {data.items.slice(0, 4).map(i => (
+          <div key={i.id}>
+            <b>{i.subcontractor_name}</b> — {label[i.doc_type] || 'document'}{' '}
+            {i.is_expired ? 'expired' : 'expires'} {String(i.expires_on).slice(0, 10)}
+          </div>
+        ))}
+        {data.items.length > 4 && <div>+{data.items.length - 4} more</div>}
+      </div>
+    </div>
+  );
+}
+
 function SubsList({ onOpen, onNew }) {
   const t = useT();
   const [subs, setSubs] = useState([]);
@@ -69,6 +111,7 @@ function SubsList({ onOpen, onNew }) {
 
   return (
     <>
+      <ComplianceBanner />
       <div className="admin-page-header">
         <input
           type="search"

@@ -152,7 +152,12 @@ server (probably incomplete):
 `stale_active_clock`, `timeoff_request`, `timeoff_approved`,
 `timeoff_denied`, `shift_assigned`, `shift_updated`, `shift_cancelled`,
 `shift_cantmake`, `signoff`, `location_denied`, `overtime_alert`,
-`service_request`, `low_stock`, `equipment_maintenance`.
+`service_request`, `low_stock`, `equipment_maintenance`,
+`equipment_rental_due`, `bid_due`, `sub_doc_expiring`.
+
+(The last three were already being written and were missing from this list —
+which is the predicted cost of an unconstrained column: the doc drifts silently.
+Verified 2026-07-16 by grepping every `createInboxItem*` call site.)
 
 Before constraining: collect the canonical list into
 `server/constants/inboxTypes.js`, route every existing call through it,

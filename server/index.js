@@ -405,6 +405,8 @@ app.listen(PORT, () => {
   startEquipmentMaintenanceJob();
   const { startRentalReturnRemindersJob } = require('./jobs/rentalReturnReminders');
   startRentalReturnRemindersJob();
+  const { startSubDocExpiryJob } = require('./jobs/subDocExpiry'); // sub COI / license lapse alerts
+  startSubDocExpiryJob();
   const { startBidDueReminderJob } = require('./jobs/bidDueReminders');
   startBidDueReminderJob();
   const { startMediaRetentionJob } = require('./jobs/mediaRetention');
