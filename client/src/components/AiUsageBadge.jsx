@@ -23,7 +23,7 @@ export default function AiUsageBadge({ refreshSignal = 0 }) {
     <div style={styles.wrap}>
       <span
         style={{ ...styles.badge, ...(atLimit ? styles.full : near ? styles.near : null) }}
-        title="Counts summaries, document questions, and drafts. Resets at the start of each month."
+        title="Counts summaries, document questions, contract scans, and drafts. Resets at the start of each month."
       >
         {count.toLocaleString()} / {limit.toLocaleString()} AI requests this month
       </span>

@@ -9,6 +9,7 @@ import { isImpersonating, openToolTab } from '../openTool';
 import TranscriptionTool from '../components/TranscriptionTool';
 import SummarizerTool from '../components/SummarizerTool';
 import DocQATool from '../components/DocQATool';
+import RedFlagScannerTool from '../components/RedFlagScannerTool';
 import EmailDrafterTool from '../components/EmailDrafterTool';
 
 const SITEWORK_TOOL_URL = '/tool-apps/sitework/index.html';
@@ -97,6 +98,7 @@ export default function ToolsPage() {
     { id: 'transcription', label: 'Transcription' },
     { id: 'summarizer', label: 'Summarizer' },
     { id: 'docqa', label: 'Doc Q&A' },
+  { id: 'redflags', label: 'Red-Flag Scanner' },
     { id: 'emaildraft', label: 'Email Drafter' },
     { id: 'pdftools', label: 'PDF Toolkit' },
   ];
@@ -223,6 +225,16 @@ export default function ToolsPage() {
           description="Open a contract, spec, or insurance cert and ask questions about it — answers come only from the document. Great for the dense paperwork you don't have time to read."
         >
           <DocQATool />
+        </PageSection>
+      )}
+
+      {tab === 'redflags' && (
+        <PageSection
+          eyebrow="Office"
+          title="Contract Red-Flag Scanner"
+          description="Upload a subcontract and get back the terms that cost you money — pay-if-paid, short notice windows, liquidated damages, one-sided indemnity — worst first, each with the clause quoted and what to ask for instead."
+        >
+          <RedFlagScannerTool />
         </PageSection>
       )}
 

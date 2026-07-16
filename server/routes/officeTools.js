@@ -177,6 +177,66 @@ router.post('/ask', async (req, res) => {
   }));
 });
 
+// --- Contract red-flag scanner -------------------------------------------
+
+// The value here is knowing WHAT to look for. A sub is handed a 40-page
+// subcontract and signs it because reading it costs a day they don't have; the
+// clauses that actually cost them money are a known, finite list, so the prompt
+// names them rather than asking for "anything concerning" and hoping.
+//
+// Grounding rules mirror ASK_SYSTEM: quote the document, never invent. A
+// hallucinated clause here is worse than a miss — someone would negotiate over
+// language that isn't in their contract.
+const RED_FLAG_SYSTEM =
+  'You review construction contracts (subcontracts, purchase orders, specs) for a ' +
+  'subcontractor or trade contractor and flag the terms that carry real money or ' +
+  'risk. Use ONLY the document text provided. Quote the actual language — never ' +
+  'invent, paraphrase into something stronger than the text, or add outside ' +
+  'knowledge. If a term is absent, its absence can itself be a flag (say so ' +
+  'plainly, e.g. no stated payment window), but never claim the document says ' +
+  'something it does not.\n\n' +
+  'Look specifically for: pay-if-paid / pay-when-paid; retainage amount and ' +
+  'release conditions; payment timing and any missing payment window; notice ' +
+  'windows for claims, delays and changes (short deadlines that waive rights are ' +
+  'the single most common way a sub loses money); no-damage-for-delay; ' +
+  'liquidated damages; broad-form or unlimited indemnity; defense obligations; ' +
+  'termination for convenience; scope language that is open-ended ("as directed", ' +
+  '"means and methods", "reasonably inferable", work implied but not shown); ' +
+  'change-order procedure and whether extra work needs written authorization ' +
+  'first; warranty duration and start; backcharge rights; consequential-damages ' +
+  'waivers that run one way; insurance limits, additional-insured and waiver of ' +
+  'subrogation; lien-waiver conditions and whether waivers are required before ' +
+  'payment; dispute venue, arbitration and attorney-fee shifting; schedule ' +
+  'obligations and float ownership.\n\n' +
+  'Rank by how much it could actually cost, worst first. For each finding use ' +
+  'EXACTLY this shape:\n\n' +
+  '## HIGH — <short name> (<section ref if the document gives one>)\n' +
+  '- **Says:** "<short exact quote from the document>"\n' +
+  '- **Why it matters:** <one or two plain sentences, no legalese>\n' +
+  '- **Ask for:** <the specific edit to negotiate>\n\n' +
+  'Use HIGH, MEDIUM or LOW as the severity word. Open with a one-line ' +
+  '"## Bottom line" paragraph naming the single worst term. If the document is ' +
+  'clean or is not a contract at all, say so plainly rather than inventing ' +
+  'findings. Close with a "## Not legal advice" note saying this is a reading ' +
+  'aid and a lawyer should review anything material. Output only the markdown ' +
+  'shapes above: ## headings, - bullets, **bold**. No tables, no code blocks.';
+
+router.post('/scan-contract', async (req, res) => {
+  const context = String((req.body && req.body.context) || '').trim();
+  if (!context) return res.status(400).json({ error: 'Open a contract PDF first.' });
+  await runAi(req, res, async () => ({
+    result: await anthropic.generate({
+      system: RED_FLAG_SYSTEM,
+      prompt: `Contract:\n"""\n${context.slice(0, MAX_INPUT)}\n"""\n\nReview this contract and flag the terms that carry real money or risk for the subcontractor.`,
+      // Higher than /ask (1000) because this returns many findings rather than
+      // one answer, but held at 2000 to stay clear of the 60s client timeout in
+      // services/anthropic.js on a full-length MAX_INPUT contract.
+      maxTokens: 2000,
+    }),
+    clipped: context.length > MAX_INPUT,
+  }));
+});
+
 // --- Email / message drafter ---------------------------------------------
 
 const DRAFT_SYSTEM =
