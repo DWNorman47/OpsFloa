@@ -11,7 +11,7 @@
 import React from 'react';
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import { computeBreakdown } from '../utils/estimateMath';
-import { langToLocale } from '../utils';
+import { formatCurrency, langToLocale } from '../utils';
 import { getT } from '../i18n';
 
 const CATEGORIES = ['labor', 'materials', 'equipment', 'subs', 'overhead', 'contingency', 'other'];
@@ -62,9 +62,12 @@ const s = StyleSheet.create({
   footerText: { fontSize: 8, color: '#9ca3af' },
 });
 
-function fmtCents(cents, language) {
-  const n = (parseInt(cents, 10) || 0) / 100;
-  return new Intl.NumberFormat(langToLocale(language), { style: 'currency', currency: 'USD' }).format(n);
+// Money renders in the COMPANY's currency, not the recipient's language:
+// Intl reads the symbol off the locale, so formatCurrency pairs the currency
+// with a locale that yields its local symbol (es-HN -> "L"). The rest of the
+// PDF still localizes to `language`.
+function fmtCents(cents, currency) {
+  return formatCurrency((parseInt(cents, 10) || 0) / 100, currency);
 }
 function fmtDate(d, language) {
   if (!d) return '';
@@ -76,7 +79,7 @@ function fmtDate(d, language) {
 // renders outside the React tree, so it resolves its own translation
 // dictionary via getT(language) rather than calling useT. `statusLabel`
 // is the already-translated status string. All fall back to English.
-export default function EstimatePDF({ estimate, companyInfo = {}, language, statusLabel }) {
+export default function EstimatePDF({ estimate, currency = 'USD', companyInfo = {}, language, statusLabel }) {
   const t = getT(language);
   const tr = (k, fallback) => t[k] || fallback;
   const lines = estimate.lines || [];
@@ -148,7 +151,7 @@ export default function EstimatePDF({ estimate, companyInfo = {}, language, stat
                 <View key={l.id || i} style={s.lineRow}>
                   <Text style={s.lineDesc}>{l.description}</Text>
                   <Text style={s.lineQty}>{l.qty} {l.unit || ''}</Text>
-                  <Text style={s.lineAmt}>{fmtCents(l.total_cents, language)}</Text>
+                  <Text style={s.lineAmt}>{fmtCents(l.total_cents, currency)}</Text>
                 </View>
               ))}
             </View>
@@ -158,35 +161,35 @@ export default function EstimatePDF({ estimate, companyInfo = {}, language, stat
           <View style={s.totalsBox}>
             <View style={s.totalRow}>
               <Text style={s.totalLabel}>{tr('pdfSubtotal', 'Subtotal')}</Text>
-              <Text style={s.totalValue}>{fmtCents(b.subtotal, language)}</Text>
+              <Text style={s.totalValue}>{fmtCents(b.subtotal, currency)}</Text>
             </View>
             {estimate.overhead_pct > 0 && (
               <View style={s.totalRow}>
                 <Text style={s.totalLabel}>{tr('pdfOverhead', 'Overhead')} ({estimate.overhead_pct}%)</Text>
-                <Text style={s.totalValue}>{fmtCents(b.overhead, language)}</Text>
+                <Text style={s.totalValue}>{fmtCents(b.overhead, currency)}</Text>
               </View>
             )}
             {estimate.margin_pct > 0 && (
               <View style={s.totalRow}>
                 <Text style={s.totalLabel}>{tr('pdfMargin', 'Margin')} ({estimate.margin_pct}%)</Text>
-                <Text style={s.totalValue}>{fmtCents(b.margin, language)}</Text>
+                <Text style={s.totalValue}>{fmtCents(b.margin, currency)}</Text>
               </View>
             )}
             {estimate.contingency_pct > 0 && (
               <View style={s.totalRow}>
                 <Text style={s.totalLabel}>{tr('pdfContingency', 'Contingency')} ({estimate.contingency_pct}%)</Text>
-                <Text style={s.totalValue}>{fmtCents(b.contingency, language)}</Text>
+                <Text style={s.totalValue}>{fmtCents(b.contingency, currency)}</Text>
               </View>
             )}
             {estimate.tax_pct > 0 && (
               <View style={s.totalRow}>
                 <Text style={s.totalLabel}>{tr('pdfTax', 'Tax')} ({estimate.tax_pct}%)</Text>
-                <Text style={s.totalValue}>{fmtCents(b.tax, language)}</Text>
+                <Text style={s.totalValue}>{fmtCents(b.tax, currency)}</Text>
               </View>
             )}
             <View style={s.grandRow}>
               <Text style={s.grandLabel}>{tr('pdfTotal', 'Total')}</Text>
-              <Text style={s.grandValue}>{fmtCents(b.total, language)}</Text>
+              <Text style={s.grandValue}>{fmtCents(b.total, currency)}</Text>
             </View>
           </View>
         </View>

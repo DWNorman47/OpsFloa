@@ -1,6 +1,21 @@
 import { useCallback } from 'react';
 import { useCurrency } from '../contexts/SettingsContext';
 import { formatMoney } from '../utils/format';
+import { formatCurrency } from '../utils';
+
+/**
+ * formatCurrency bound to the company's currency. Takes DOLLARS (a number) —
+ * the counterpart to useCents(), which takes cents. Replaces the hand-rolled
+ * `` `$${v.toFixed(2)}` `` helpers that several components defined at module
+ * scope, which could never honour a non-USD company.
+ *
+ * Amounts additionally pick up thousands separators ($1,234.50 rather than
+ * $1234.50), matching how the rest of the app already renders money.
+ */
+export function useMoney() {
+  const currency = useCurrency();
+  return useCallback(v => formatCurrency(Number(v) || 0, currency), [currency]);
+}
 
 /**
  * formatMoney bound to the company's configured currency.

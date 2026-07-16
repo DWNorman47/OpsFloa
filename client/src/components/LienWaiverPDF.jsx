@@ -13,7 +13,7 @@
 
 import React from 'react';
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
-import { langToLocale } from '../utils';
+import { formatCurrency, langToLocale } from '../utils';
 
 const TYPE_TITLES = {
   conditional_progress:   'Conditional Waiver and Release on Progress Payment',
@@ -112,9 +112,12 @@ const s = StyleSheet.create({
   smallNote: { fontSize: 8, color: '#9ca3af', marginTop: 24, fontStyle: 'italic' },
 });
 
-function formatCents(cents, language) {
-  const n = (parseInt(cents, 10) || 0) / 100;
-  return new Intl.NumberFormat(langToLocale(language), { style: 'currency', currency: 'USD' }).format(n);
+// Money renders in the COMPANY's currency, not the recipient's language:
+// Intl reads the symbol off the locale, so formatCurrency pairs the currency
+// with a locale that yields its local symbol (es-HN -> "L"). The rest of the
+// PDF still localizes to `language`.
+function formatCents(cents, currency) {
+  return formatCurrency((parseInt(cents, 10) || 0) / 100, currency);
 }
 function fmtDate(d, language) {
   if (!d) return '';
@@ -122,8 +125,8 @@ function fmtDate(d, language) {
     .toLocaleDateString(langToLocale(language), { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
-function bodyTextFor(waiver, language) {
-  const amt = formatCents(waiver.amount_cents, language);
+function bodyTextFor(waiver, language, currency) {
+  const amt = formatCents(waiver.amount_cents, currency);
   const through = fmtDate(waiver.through_date, language);
   const project = waiver.project_name || 'the Project';
   const isConditional = waiver.waiver_type?.startsWith('conditional_');
@@ -135,7 +138,7 @@ function bodyTextFor(waiver, language) {
   return `The undersigned has been paid in full for all labor, services, equipment, or material furnished to or for the benefit of the project located at or known as "${project}" ${isFinal ? 'through completion of the undersigned\'s scope of work' : `through ${through}`}, and does hereby waive and release any mechanic's lien, stop payment notice, or right against any labor and material bond the undersigned has on the project to the extent of the sum of ${amt}.`;
 }
 
-export default function LienWaiverPDF({ waiver, language }) {
+export default function LienWaiverPDF({ waiver, currency = 'USD', language }) {
   const stateConf = getStateConfig(waiver.state, waiver.waiver_type);
   const title = stateConf?.title || TYPE_TITLES[waiver.waiver_type] || 'Lien Waiver';
   return (
@@ -169,7 +172,7 @@ export default function LienWaiverPDF({ waiver, language }) {
           )}
           <View style={s.metaRow}>
             <Text style={s.metaLabel}>Amount</Text>
-            <Text style={s.metaValue}>{formatCents(waiver.amount_cents, language)}</Text>
+            <Text style={s.metaValue}>{formatCents(waiver.amount_cents, currency)}</Text>
           </View>
           <View style={s.metaRow}>
             <Text style={s.metaLabel}>Through Date</Text>
@@ -181,7 +184,7 @@ export default function LienWaiverPDF({ waiver, language }) {
           </View>
         </View>
 
-        <Text style={s.bodyText}>{bodyTextFor(waiver, language)}</Text>
+        <Text style={s.bodyText}>{bodyTextFor(waiver, language, currency)}</Text>
 
         {/* Notice block — uniform language across types */}
         <Text style={s.bodyText}>

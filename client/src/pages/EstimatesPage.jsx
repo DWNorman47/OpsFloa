@@ -11,6 +11,7 @@ import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { useCents } from '../hooks/useMoney';
+import { useCurrency } from '../contexts/SettingsContext';
 import { formatDate, formatDateTime } from '../utils';
 import { computeBreakdown } from '../utils/estimateMath';
 import { silentError } from '../errorReporter';
@@ -634,6 +635,7 @@ function TotalsRow({ label, value, bold }) {
 
 function EstimateDetail({ id, onBack, onEdit }) {
   const formatCents = useCents();
+  const currency = useCurrency();
   const t = useT();
   const { user } = useAuth();
   const [estimate, setEstimate] = useState(null);
@@ -669,7 +671,7 @@ function EstimateDetail({ id, onBack, onEdit }) {
       const pdfLang = estimate.client_language;
       const pdfT = getT(pdfLang);
       const statusLabel = pdfT[STATUS_COLORS[estimate.status]?.labelKey] || estimate.status;
-      const el = React.createElement(EstimatePDF, { estimate, companyInfo: companyRes.data || {}, language: pdfLang, statusLabel });
+      const el = React.createElement(EstimatePDF, { estimate, currency, companyInfo: companyRes.data || {}, language: pdfLang, statusLabel });
       const blob = await pdf(el).toBlob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

@@ -17,6 +17,7 @@ import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { useCents } from '../hooks/useMoney';
+import { useCurrency } from '../contexts/SettingsContext';
 import { formatDate, formatDateTime } from '../utils';
 import { silentError } from '../errorReporter';
 import { useT } from '../hooks/useT';
@@ -378,6 +379,7 @@ function NewLienWaiverForm({ projects, subs, onSave, onCancel }) {
 
 function LienWaiverDetail({ id, onBack }) {
   const formatCents = useCents();
+  const currency = useCurrency();
   const t = useT();
   const { user } = useAuth();
   const toast = useToast();
@@ -397,7 +399,7 @@ function LienWaiverDetail({ id, onBack }) {
         import('@react-pdf/renderer'),
         import('../components/LienWaiverPDF'),
       ]);
-      const el = React.createElement(LienWaiverPDF, { waiver: w, language: user?.language });
+      const el = React.createElement(LienWaiverPDF, { waiver: w, currency, language: user?.language });
       const blob = await pdf(el).toBlob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useT } from '../hooks/useT';
 import { langToLocale } from '../utils';
+import { useMoney } from '../hooks/useMoney';
 
 import { silentError } from '../errorReporter';
 function fmtDate(str, locale = 'en-US') {
@@ -26,10 +27,6 @@ function fmtH(h) {
   return wm > 0 ? `${wh}h ${wm}m` : `${wh}h`;
 }
 
-function fmtMoney(v) {
-  return `$${Number(v).toFixed(2)}`;
-}
-
 function netHours(start, end, brk) {
   let ms = new Date(`1970-01-01T${end}`) - new Date(`1970-01-01T${start}`);
   if (ms < 0) ms += 86400000;
@@ -37,6 +34,7 @@ function netHours(start, end, brk) {
 }
 
 function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
+  const fmtMoney = useMoney();
   const locale = langToLocale(user?.language);
   const [open, setOpen] = useState(defaultOpen);
 

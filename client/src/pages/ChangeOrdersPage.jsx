@@ -18,6 +18,7 @@ import { useT } from '../hooks/useT';
 import { getT } from '../i18n';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { useCents } from '../hooks/useMoney';
+import { useCurrency } from '../contexts/SettingsContext';
 import { formatDate, formatDateTime } from '../utils';
 import { computeBreakdown } from '../utils/estimateMath';
 import { silentError } from '../errorReporter';
@@ -383,6 +384,7 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
 
 function ChangeOrderDetail({ id, onBack }) {
   const formatCents = useCents();
+  const currency = useCurrency();
   const t = useT();
   const { user } = useAuth();
   const toast = useToast();
@@ -412,7 +414,7 @@ function ChangeOrderDetail({ id, onBack }) {
       const pdfLang = co.client_language;
       const pdfT = getT(pdfLang);
       const statusLabel = pdfT[STATUS_COLORS[co.status]?.labelKey] || co.status;
-      const el = React.createElement(ChangeOrderPDF, { changeOrder: co, companyInfo: companyRes.data || {}, language: pdfLang, statusLabel });
+      const el = React.createElement(ChangeOrderPDF, { changeOrder: co, currency, companyInfo: companyRes.data || {}, language: pdfLang, statusLabel });
       const blob = await pdf(el).toBlob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
