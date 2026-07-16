@@ -80,6 +80,7 @@ export function AuthProvider({ children }) {
         localStorage.setItem('tc_addons', JSON.stringify({
           takeoff: !!user.addon_takeoff,
           planroom: !!user.addon_planroom,
+          storm: !!user.addon_storm,
           status: user.subscription_status || null,
         }));
       } else {

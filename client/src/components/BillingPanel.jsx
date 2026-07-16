@@ -73,6 +73,7 @@ export default function BillingPanel() {
   const [addQbo, setAddQbo] = useState(false);
   const [addTakeoff, setAddTakeoff] = useState(false);
   const [addPlanroom, setAddPlanroom] = useState(false);
+  const [addStorm, setAddStorm] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [workerInputMode, setWorkerInputMode] = useState('slider');
   const [workerDraft, setWorkerDraft] = useState('');
@@ -103,6 +104,10 @@ export default function BillingPanel() {
         ...(addPlanroom && plans?.planroom ? {
           add_planroom: true,
           planroom_price_id: annual ? plans.planroom.annual_price_id : plans.planroom.monthly_price_id,
+        } : {}),
+        ...(addStorm && plans?.storm ? {
+          add_storm: true,
+          storm_price_id: annual ? plans.storm.annual_price_id : plans.storm.monthly_price_id,
         } : {}),
       });
       window.location.href = r.data.url;
@@ -136,6 +141,7 @@ export default function BillingPanel() {
       setStatus(r.data);
       if (addon === 'takeoff') updateUser?.({ addon_takeoff: true });
       if (addon === 'planroom') updateUser?.({ addon_planroom: true });
+      if (addon === 'storm') updateUser?.({ addon_storm: true });
       if (addon === 'qbo') updateUser?.({ addon_qbo: true });
     } catch (err) {
       setBillingError(err.response?.data?.error || 'Could not add the add-on.');
@@ -154,6 +160,7 @@ export default function BillingPanel() {
       setStatus(r.data);
       if (addon === 'takeoff') updateUser?.({ addon_takeoff: false });
       if (addon === 'planroom') updateUser?.({ addon_planroom: false });
+      if (addon === 'storm') updateUser?.({ addon_storm: false });
       if (addon === 'qbo') updateUser?.({ addon_qbo: false });
     } catch (err) {
       setBillingError(err.response?.data?.error || 'Could not remove the add-on.');
@@ -183,19 +190,25 @@ export default function BillingPanel() {
   const hasQbo = status?.addon_qbo;
   const hasTakeoff = status?.addon_takeoff;
   const hasPlanroom = status?.addon_planroom;
+  const hasStorm = status?.addon_storm;
   const isActive = sub === 'active';
   const isTrial = sub === 'trial';
   const isTrialExpired = sub === 'trial_expired';
   const trialDays = daysLeft(status?.trial_ends_at);
 
-  // The three à-la-carte add-ons, in one place. Used both by the active-plan
-  // manage list and by the "you already have this" turn-off card shown to
-  // non-active companies (so an owned add-on is never silently invisible).
+  // The à-la-carte add-ons, in one place. Used both by the active-plan manage
+  // list and by the "you already have this" turn-off card shown to non-active
+  // companies (so an owned add-on is never silently invisible).
   const addonMeta = [
     { key: 'planroom', title: 'Plan Room', owned: hasPlanroom, plan: plans?.planroom, desc: 'View, mark up, and measure plan sets in the browser, with a company library and live share sessions.' },
     { key: 'takeoff', title: 'Sitework Takeoff', owned: hasTakeoff, plan: plans?.takeoff, desc: 'Plan takeoffs from civil drawings into a priced, branded bid, with company-shared projects.' },
+    { key: 'storm', title: 'Storm/Utility', owned: hasStorm, plan: plans?.storm, desc: 'Deep underground-utility takeoff — pipe schedule, structure depth, invert-driven trench depth, and spoil/backfill netting.' },
     { key: 'qbo', title: 'QuickBooks Online', owned: hasQbo, plan: plans?.qbo, desc: 'Push invoices to QuickBooks and keep their payment status in sync.' },
   ];
+  // Storm/Utility is built but its math isn't verified yet — keep it OFF the
+  // menu (no buy option) until then; owned companies can still manage/turn it
+  // off. Flip to true to open it for sale.
+  const STORM_SELLABLE = false;
 
   // Shown in place of an add-on's buy option when you already have it (in the
   // plan-selection state) — a Turn-off action so an owned add-on is managed in
@@ -296,6 +309,7 @@ export default function BillingPanel() {
               );
             }
             if (!a.plan?.monthly_price_id) return null;
+            if (a.key === 'storm' && !STORM_SELLABLE) return null; // built, not yet on the menu
             return (
               <div key={a.key} style={{ ...s.addonCard, marginTop: 14, marginBottom: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
@@ -569,6 +583,24 @@ export default function BillingPanel() {
             </div>
           )}
           {hasTakeoff && ownedAddonCard('takeoff', 'Sitework Takeoff')}
+
+          {STORM_SELLABLE && !hasStorm && plans?.storm?.monthly_price_id && (
+            <div style={s.addonCard}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                <input type="checkbox" checked={addStorm} onChange={e => setAddStorm(e.target.checked)}
+                  style={{ accentColor: '#d97706', width: 16, height: 16 }} />
+                <span style={s.addonTitle}>
+                  + Storm/Utility add-on &nbsp;
+                  <span style={{ fontSize: 18, fontWeight: 800, color: '#d97706' }}>${plans?.storm?.monthly ?? '—'}</span>
+                  <span style={{ fontSize: 13, color: '#6b7280' }}>/mo</span>
+                </span>
+              </label>
+              <div style={{ paddingLeft: 26, fontSize: 12, color: '#6b7280', lineHeight: 1.5, marginTop: 6 }}>
+                Deep underground-utility takeoff — pipe schedule, structure depth, invert-driven trench depth, and spoil/backfill netting.
+              </div>
+            </div>
+          )}
+          {hasStorm && ownedAddonCard('storm', 'Storm/Utility')}
 
           <ClientPortalProPlaceholder />
 

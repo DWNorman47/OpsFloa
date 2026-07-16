@@ -315,7 +315,7 @@
     <div class="wall-grid">
       <label>Item / label<input type="text" id="ctLabel" value="Item" maxlength="40"></label>
       <label>Unit<input type="text" id="ctUnit" value="EA" maxlength="8"></label>
-      <label title="Structure depth (rim to invert), ft. Prices the structures by vertical foot and breaks the schedule out by depth. 0 = not tracked (count only).">Depth (ft)<input type="number" id="ctDepth" min="0" step="0.5" value="0"></label>
+      <label class="storm-only" title="Structure depth (rim to invert), ft. Prices the structures by vertical foot and breaks the schedule out by depth. 0 = not tracked (count only).">Depth (ft)<input type="number" id="ctDepth" min="0" step="0.5" value="0"></label>
     </div>
     <div id="ctResult" class="wall-result"></div>
     <div class="modal-actions">
@@ -334,10 +334,10 @@
     <div class="preset-row" id="ltPresets">
       <button type="button" class="btn tiny" data-preset="curb">Curb</button>
       <button type="button" class="btn tiny" data-preset="pipe">Pipe trench</button>
-      <button type="button" class="btn tiny" data-preset="pipe12">12" pipe</button>
-      <button type="button" class="btn tiny" data-preset="pipe18">18" pipe</button>
-      <button type="button" class="btn tiny" data-preset="pipe24">24" pipe</button>
-      <button type="button" class="btn tiny" data-preset="pipe36">36" pipe</button>
+      <button type="button" class="btn tiny storm-only" data-preset="pipe12">12" pipe</button>
+      <button type="button" class="btn tiny storm-only" data-preset="pipe18">18" pipe</button>
+      <button type="button" class="btn tiny storm-only" data-preset="pipe24">24" pipe</button>
+      <button type="button" class="btn tiny storm-only" data-preset="pipe36">36" pipe</button>
       <button type="button" class="btn tiny" data-preset="silt">Silt fence</button>
       <button type="button" class="btn tiny" data-preset="sawcut">Sawcut</button>
       <button type="button" class="btn tiny" data-preset="fence">Fence</button>
@@ -351,8 +351,8 @@
       <input type="checkbox" id="ltTrench"> Trench cross-section (pipe / utility)
     </label>
     <div class="wall-grid" id="ltTrenchFields">
-      <label title="Nominal pipe diameter. Rolls the run up on the pipe schedule by size and suggests a trench width. 0 = generic / non-pipe run.">Pipe &Oslash; (in)<input type="number" id="ltDia" min="0" step="1" value="0"></label>
-      <label title="Pipe material — rolls the run up on the pipe schedule by material.">Material
+      <label class="storm-only" title="Nominal pipe diameter. Rolls the run up on the pipe schedule by size and suggests a trench width. 0 = generic / non-pipe run.">Pipe &Oslash; (in)<input type="number" id="ltDia" min="0" step="1" value="0"></label>
+      <label class="storm-only" title="Pipe material — rolls the run up on the pipe schedule by material.">Material
         <select id="ltMat">
           <option value="">&mdash;</option>
           <option value="RCP">RCP</option>
@@ -366,7 +366,7 @@
       </label>
       <label>Trench bottom width (ft)<input type="number" id="ltWidth" min="0" step="0.5" value="3"></label>
       <label title="Trench depth at the upstream structure (rim − invert), ft. For a constant-depth run, this is the whole depth.">Depth (ft)<input type="number" id="ltDepth" min="0" step="0.5" value="5"></label>
-      <label title="Downstream (end) trench depth for a sloped run, ft. Leave 0 for constant depth. Excavation uses the average of the two ends (average end area).">End depth (ft)<input type="number" id="ltDepth2" min="0" step="0.5" value="0"></label>
+      <label class="storm-only" title="Downstream (end) trench depth for a sloped run, ft. Leave 0 for constant depth. Excavation uses the average of the two ends (average end area).">End depth (ft)<input type="number" id="ltDepth2" min="0" step="0.5" value="0"></label>
       <label title="Backcut of the trench sides (H per 1 V). 0 = vertical / shored.">Side slope (H:V)
         <select id="ltSlope">
           <option value="0">Vertical / shored (0)</option>
@@ -376,7 +376,7 @@
         </select>
       </label>
       <label title="Aggregate bedding under the pipe (import). 0 to skip.">Bedding (in)<input type="number" id="ltBedding" min="0" step="1" value="6"></label>
-      <label title="Backfill source. Native = reuse trench spoil (only the volume displaced by pipe + bedding hauls off). Import = haul all spoil off and bring select backfill in.">Backfill
+      <label class="storm-only" title="Backfill source. Native = reuse trench spoil (only the volume displaced by pipe + bedding hauls off). Import = haul all spoil off and bring select backfill in.">Backfill
         <select id="ltBackfill">
           <option value="native">Native (reuse)</option>
           <option value="import">Import</option>
@@ -499,6 +499,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=14"></script>
+<script type="module" src="app.js?v=15"></script>
 </body>
 </html>

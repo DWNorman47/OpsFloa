@@ -105,6 +105,9 @@ body { display: flex; flex-direction: column; }
    button shows only for base-tier (no takeoff layer) */
 body:not(.has-takeoff) .tb-takeoff { display: none !important; }
 body.has-takeoff .tb-upsell { display: none; }
+/* storm/utility add-on gating: the deep pipe-schedule / structure-depth /
+   invert-depth / netting inputs show only for companies that own addon_storm */
+body:not(.has-storm) .storm-only { display: none !important; }
 /* trade mode: each trade's tools/panels show only when that trade is selected
    in the #tradeSel dropdown (default = plain markup & measure) */
 body:not(.trade-roofing) .tr-roof { display: none; }

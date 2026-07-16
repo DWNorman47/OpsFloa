@@ -243,6 +243,14 @@ function hasTakeoffLayer() {
     return !!(a.takeoff || a.status === 'exempt' || a.status === 'trial');
   } catch (_) { return false; }
 }
+// deep storm/utility takeoff (pipe schedule, structure depth, invert depth,
+// netting) is its own paid add-on layered on the takeoff. Gates the deep fields.
+function hasStormAddon() {
+  try {
+    const a = JSON.parse(localStorage.getItem('tc_addons') || '{}');
+    return !!(a.storm || a.status === 'exempt' || a.status === 'trial');
+  } catch (_) { return false; }
+}
 
 // pitch-correction: sloped length / area factor for a given rise-per-12
 function slopeFactor(pitch) { const p = (pitch || 0) / 12; return Math.sqrt(1 + p * p); }
@@ -426,7 +434,7 @@ function measureValue(m) {
     const head = pipeScheduleLabel(cfg);
     return `${head} · ${fmt(r.lengthFt)} ft${r.trenchCY ? ` · ${fmt(r.trenchCY, 1)} CY` : ''}`;
   }
-  if (m.kind === 'qcount') { const cfg = m.cfg || {}; const d = parseFloat(cfg.depth) || 0; return `${m.pts.length} ${cfg.unit || 'EA'} · ${cfg.label || 'Item'}${d > 0 ? ` @ ${fmt(d, 1)} ft` : ''}`; }
+  if (m.kind === 'qcount') { const cfg = m.cfg || {}; const d = STORM_ON ? (parseFloat(cfg.depth) || 0) : 0; return `${m.pts.length} ${cfg.unit || 'EA'} · ${cfg.label || 'Item'}${d > 0 ? ` @ ${fmt(d, 1)} ft` : ''}`; }
   if (m.kind === 'dwall') return `${fmt(dwallLenFt(m))} ft · ${fmt(dwallSf(m))} SF (${m.sides || 2}s @ ${fmt(dwallHeight(m))}')`;
   if (m.kind === 'dceiling') { const ct = (m.cfg && m.cfg.ctype) || 'drywall'; return `${CEIL_LABEL[ct] || 'Drywall'} ceiling · ${fmt(dceilingSf(m))} SF`; }
   if (m.kind === 'dopening') { const c = m.cfg || {}; const n = m.pts.length; return `${n} ${OPENING_LABEL[c.otype] || 'Opening'}${n === 1 ? '' : 's'} (−${fmt(c.deductSF || 0)} SF ea)`; }
@@ -2281,7 +2289,10 @@ function renderRoofPanel() {
 
 function applyTakeoffGate() {
   document.body.classList.toggle('has-takeoff', hasTakeoffLayer());
+  STORM_ON = hasStormAddon();
+  document.body.classList.toggle('has-storm', STORM_ON); // hides the deep storm/utility fields when absent
 }
+let STORM_ON = false; // cached storm entitlement (refreshed in applyTakeoffGate); gates the M4 netting outputs
 
 /* trade mode: which takeoff trade's tools/panels/bid are in play */
 const TRADE_TOOLS = {
@@ -4013,7 +4024,7 @@ function defaultNewLineColor() {
 // (e.g. '24" RCP'); everything else keeps its freetext label. Storm/utility pack.
 function pipeScheduleLabel(cfg) {
   const dia = parseFloat(cfg && cfg.dia) || 0;
-  if (dia > 0) return `${dia}" ${(cfg.mat || 'pipe')}`;
+  if (STORM_ON && dia > 0) return `${dia}" ${(cfg.mat || 'pipe')}`;
   return (cfg && cfg.label) || 'Line';
 }
 function computeLineResult(lengthFt, cfg) {
@@ -4021,7 +4032,7 @@ function computeLineResult(lengthFt, cfg) {
   if (cfg.trench) {
     const w = parseFloat(cfg.width) || 0, s = parseFloat(cfg.slope) || 0;
     // invert-driven: depth can vary end-to-end; use the average end area for volume
-    const d1 = parseFloat(cfg.depth) || 0, d2 = parseFloat(cfg.depth2) || 0;
+    const d1 = parseFloat(cfg.depth) || 0, d2 = STORM_ON ? (parseFloat(cfg.depth2) || 0) : 0;
     const d = d2 > 0 ? (d1 + d2) / 2 : d1;
     r.d1 = d1; r.d2 = d2; r.avgDepth = d;
     r.trenchCY = wallSectionAreaSf(w, d, s) * lengthFt / 27;
@@ -4044,9 +4055,11 @@ function lineResultRows(lengthFt, cfg) {
     if (r.d2 > 0) rows.push(['Avg depth', `${fmt(r.avgDepth, 1)} ft (${fmt(r.d1, 1)}→${fmt(r.d2, 1)})`]);
     rows.push(['Trench excavation', `${fmt(r.trenchCY, 1)} CY`, 'total']);
     if (r.beddingCY > 0) rows.push(['Bedding (import)', `${fmt(r.beddingCY, 1)} CY`]);
-    if (r.pipeCY > 0) rows.push(['Pipe volume', `${fmt(r.pipeCY, 1)} CY`]);
-    if (r.importBackfillCY > 0) rows.push(['Import backfill', `${fmt(r.importBackfillCY, 1)} CY`]);
-    if (r.exportCY > 0.05) rows.push(['Net export (bank)', `${fmt(r.exportCY, 1)} CY`]);
+    if (STORM_ON) {
+      if (r.pipeCY > 0) rows.push(['Pipe volume', `${fmt(r.pipeCY, 1)} CY`]);
+      if (r.importBackfillCY > 0) rows.push(['Import backfill', `${fmt(r.importBackfillCY, 1)} CY`]);
+      if (r.exportCY > 0.05) rows.push(['Net export (bank)', `${fmt(r.exportCY, 1)} CY`]);
+    }
   }
   return rows.map(([k, v, cls]) => `<div class="res-row ${cls === 'total' ? 'total' : ''}"><span>${k}</span><b>${v}</b></div>`).join('');
 }
@@ -4127,8 +4140,7 @@ function lineBidLines() {
     add('lf', 'LF', r.lengthFt);
     add('trench', 'CY', r.trenchCY);
     add('bedding', 'CY', r.beddingCY);
-    add('backfill_import', 'CY', r.importBackfillCY);
-    add('export', 'CY', r.exportCY);
+    if (STORM_ON) { add('backfill_import', 'CY', r.importBackfillCY); add('export', 'CY', r.exportCY); }
     groups.set(groupLabel, g);
   }
   const COMP = { lf: '', trench: 'trench excavation', bedding: 'bedding', backfill_import: 'import backfill', export: 'export / haul-off' };
@@ -4154,7 +4166,7 @@ const COUNT_PRESETS = {
 };
 const readCountCfg = () => ({ label: $('ctLabel').value.trim() || 'Item', unit: $('ctUnit').value.trim() || 'EA', depth: parseFloat($('ctDepth').value) || 0 });
 const countResultRows = (n, cfg) => {
-  const d = parseFloat(cfg.depth) || 0;
+  const d = STORM_ON ? (parseFloat(cfg.depth) || 0) : 0;
   let html = `<div class="res-row total"><span>${esc(cfg.label)}${d > 0 ? ` @ ${fmt(d, 1)} ft` : ''}</span><b>${n} ${esc(cfg.unit)}</b></div>`;
   if (d > 0) html += `<div class="res-row"><span>Vertical feet</span><b>${fmt(n * d, 1)} VF</b></div>`;
   return html;
@@ -4191,7 +4203,7 @@ function countBidLines() {
   for (const m of state.markups) {
     if (m.kind !== 'qcount') continue;
     const cfg = m.cfg || {};
-    const depth = parseFloat(cfg.depth) || 0;
+    const depth = STORM_ON ? (parseFloat(cfg.depth) || 0) : 0;
     const key = `${cfg.label}|${depth}`;
     const g = groups.get(key) || { label: cfg.label, unit: cfg.unit || 'EA', depth, qty: 0 };
     g.qty += m.pts.length;
