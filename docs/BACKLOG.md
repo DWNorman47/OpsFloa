@@ -203,6 +203,12 @@ applied on dev (verified 2026-07-14). *(Corrects earlier "run migrations X" note
   moved to `STRIPE_PRICE_SITEWORK` (inert — safe to delete; no legacy subs).
 - **Verify the roofing math** against a hand calc (a plane's squares, a
   hip/valley pitch-corrected LF) before selling it.
+- **Storm/Utility add-on — verify + flip to sell.** The whole module is built
+  (`addon_storm`, `STRIPE_PRICE_STORM` wired, ~$50) but **the purchase is hidden**
+  (`STORM_SELLABLE=false` in `BillingPanel.jsx`). Hand-check the utility math —
+  pipe-volume displacement, average-end-area CY on a sloped segment, native-vs-
+  import net export — then set `STORM_SELLABLE=true` to open sales. Superadmin
+  toggle turns it on for your own testing now. (`docs/plans/storm-utility-pack.md`)
 - **Parity test (the S4 cutover gate):** dirt takeoff is now built in Plan Room
   (contours/spots/pads, two-sheet ⌖ alignment + ghost, cut/fill + heat overlay,
   bid lines). Run the SAME job in Plan Room and the standalone Sitework tool and
