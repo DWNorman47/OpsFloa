@@ -1,6 +1,7 @@
 # OpsFloa — Storm / Utility takeoff pack (deep underground-utility module)
 
-Status: **M1 in progress** (2026-07-15). The deep, invert-driven version of the
+Status: **M1–M4 shipped** (2026-07-15) — the full takeoff engine is built.
+**M5 (billing split) remaining**, deliberately last (see below). The deep, invert-driven version of the
 storm-drain / underground-utility takeoff — a **separate paid add-on** on top of
 the Takeoff layer (target **~$50/mo**, `$500/yr`; anchored far below AGTEK /
 Trimble-class incumbents at $1,500–4,000+/yr). Sold to utility / underground
@@ -30,27 +31,38 @@ cutover gate (planroom-sitework-pack S4) still holds. New attributes default off
    − bedding − backfill (today: excavation + bedding only, no net).
 
 ## Milestones (each committable to `dev`, push after each)
-- **M1 — Pipe schedule** *(building now)*: add `dia` (diameter, in) + `mat`
-  (RCP/PVC/HDPE/DIP/CMP/VCP/other) to the trench line config; auto-suggest trench
-  bottom width from diameter (editable); the bid + on-canvas label roll up pipe
+- **M1 — Pipe schedule** ✅ *shipped*: `dia` (diameter) + `mat` on the trench line
+  config; diameter auto-suggests trench width; bid + on-canvas label roll up pipe
   runs by `Ø × material`. Totals unchanged when `dia`=0 (parity).
-- **M2 — Structure depth**: add a `depth` (ft) attribute to `qcount` structures
-  (manhole/inlet/catch basin/etc.); price by vertical foot or depth tier; panel
-  shows a structure schedule (type × depth × count).
-- **M3 — Invert-driven depth**: per-segment trench depth from upstream/downstream
-  rim & invert elevations + slope; average-depth-per-segment CY; reuse the
-  depth-off-contours mechanism. Trace structure-to-structure segments.
-- **M4 — Spoil / backfill netting**: compute pipe volume from `dia`, subtract
-  pipe + bedding + backfill from excavation → net export (haul-off) CY; feed the
-  haul truck-count.
-- **M5 — Billing split**: new `addon_storm` flag — migration + `server/constants`
+- **M2 — Structure depth** ✅ *shipped*: `depth` (ft) on `qcount` structures; bid
+  breaks structures out by type × depth and emits a vertical-feet line (count ×
+  depth) so deep structures aren't priced like shallow ones.
+- **M3 — Invert-driven depth** ✅ *shipped*: optional `depth2` (end depth) → the
+  excavation uses the average end area over a sloped segment; trace structure-to-
+  structure and enter depth (= rim − invert) at each end. Constant when unset.
+  *(Later refinement: enter rim/invert elevations directly and derive the depths.)*
+- **M4 — Spoil / backfill netting** ✅ *shipped*: pipe volume from `dia`; a Native/
+  Import backfill toggle → net export (haul-off) CY (native = displaced pipe +
+  bedding; import = full excavation) + import-backfill CY. Additive; trench/bedding
+  unchanged.
+- **M5 — Billing split** *(remaining — ship when ready to sell)*: new `addon_storm`
+  flag — migration + `server/constants`
   + `stripe.js` `ADDON_PRICES` + `requireStormAddon` gate + `BillingPanel` +
   SuperAdmin toggle + `docs/db-enums.md`; `STRIPE_PRICE_STORM` (+`_ANNUAL`) at
   ~$50. Gate the deep features behind it. **Ship last**, once the module is real
   and ready to sell separately. (Pre-launch there are no paying takeoff subs, so
   moving these features from "included in Takeoff" to "paid" strands no one.)
+  - **Client gate:** the deep fields (pipe Ø/material, End depth, backfill, and
+    structure depth) live in the Plan Room tool-app. When the company lacks
+    `addon_storm`, hide those fields so a plain trench/count works as before; show
+    a small "🔒 Storm/Utility add-on" hint. Read the flag from `tc_addons`/user
+    (same mechanism the tool uses for the takeoff gate).
 
 ## Verification
 - M1: a 100-ft 24" RCP run yields the same trench CY as the old `pipe24` preset;
   two 12" and one 18" run roll up as three schedule lines by Ø; label shows size.
 - Each milestone: `app.js` parses; `git status --porcelain sitework/` clean.
+- **Before M5 (paywalling):** hand-check the utility math on a known run —
+  pipe-volume displacement, average-end-area CY on a sloped segment, and the
+  native-vs-import net export — the same "verify before you sell it" gate the
+  roofing pack has.
