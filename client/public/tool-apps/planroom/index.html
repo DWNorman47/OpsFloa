@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css?v=25">
+<link rel="stylesheet" href="styles.css?v=26">
 <script>
 (() => {
   try {
@@ -162,7 +162,6 @@
   </div>
 
   <div class="tb-group needs-doc tb-collapsible">
-    <button id="btnThumbs" class="btn" title="Show / hide the sheet strip (page menu)">❐</button>
     <div class="tb-nav">
       <button id="btnPrevPage" class="btn" title="Previous sheet" disabled>◀</button>
       <span id="pageInfo" class="page-info">– / –</span>
@@ -231,9 +230,13 @@
 </div>
 
 <main>
-  <aside id="thumbRail" aria-label="Sheets"></aside>
+  <aside id="sheetsPanel" class="needs-doc" aria-label="Sheets">
+    <div class="sheets-head"><b>Sheets</b><button id="btnThumbsClose" class="sheets-x" title="Hide the sheet strip">✕</button></div>
+    <div id="thumbRail"></div>
+  </aside>
   <div id="canvasWrap">
     <canvas id="cv"></canvas>
+    <button id="btnThumbsOpen" class="btn thumbs-open needs-doc" title="Show the sheet strip">❐</button>
     <div id="hud"></div>
     <div id="saveStatus" aria-live="polite"></div>
     <div id="dropHint"><span>Drop a PDF or image here, or open plans from <b>📁 Project</b></span></div>
@@ -560,6 +563,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=25"></script>
+<script type="module" src="app.js?v=26"></script>
 </body>
 </html>

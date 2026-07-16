@@ -3183,7 +3183,8 @@ els.btnFit.addEventListener('click', async () => {
     vp.fitTo(b.width, b.height);
   }
 });
-$('btnThumbs').addEventListener('click', () => document.body.classList.toggle('nothumbs'));
+if ($('btnThumbsClose')) $('btnThumbsClose').addEventListener('click', () => document.body.classList.add('nothumbs'));
+if ($('btnThumbsOpen')) $('btnThumbsOpen').addEventListener('click', () => document.body.classList.remove('nothumbs'));
 
 document.addEventListener('keydown', e => {
   const companyOpen = !$('company').classList.contains('hidden');
@@ -3276,7 +3277,7 @@ function flashSaved() {
   el.textContent = '✓ Saved';
   const hud = els.hud;
   const hudShowing = hud && hud.textContent.trim() && !hud.classList.contains('gone');
-  el.style.left = hudShowing ? (hud.offsetLeft + hud.offsetWidth + 8) + 'px' : '10px';
+  el.style.left = hudShowing ? (hud.offsetLeft + hud.offsetWidth + 8) + 'px' : (document.body.classList.contains('nothumbs') ? '48px' : '10px');
   el.classList.add('show');
   clearTimeout(savedTimer);
   savedTimer = setTimeout(() => el.classList.remove('show'), 1600);
