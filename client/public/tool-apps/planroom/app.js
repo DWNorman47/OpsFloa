@@ -4017,9 +4017,13 @@ function pipeScheduleLabel(cfg) {
   return (cfg && cfg.label) || 'Line';
 }
 function computeLineResult(lengthFt, cfg) {
-  const r = { lengthFt, label: cfg.label, trench: !!cfg.trench, trenchCY: 0, beddingCY: 0, dia: parseFloat(cfg.dia) || 0, mat: cfg.mat || '' };
+  const r = { lengthFt, label: cfg.label, trench: !!cfg.trench, trenchCY: 0, beddingCY: 0, dia: parseFloat(cfg.dia) || 0, mat: cfg.mat || '', d1: 0, d2: 0, avgDepth: 0 };
   if (cfg.trench) {
-    const w = parseFloat(cfg.width) || 0, d = parseFloat(cfg.depth) || 0, s = parseFloat(cfg.slope) || 0;
+    const w = parseFloat(cfg.width) || 0, s = parseFloat(cfg.slope) || 0;
+    // invert-driven: depth can vary end-to-end; use the average end area for volume
+    const d1 = parseFloat(cfg.depth) || 0, d2 = parseFloat(cfg.depth2) || 0;
+    const d = d2 > 0 ? (d1 + d2) / 2 : d1;
+    r.d1 = d1; r.d2 = d2; r.avgDepth = d;
     r.trenchCY = wallSectionAreaSf(w, d, s) * lengthFt / 27;
     const bedIn = parseFloat(cfg.bedding) || 0;
     r.beddingCY = bedIn > 0 ? (w * (bedIn / 12) * lengthFt) / 27 : 0;
@@ -4030,6 +4034,7 @@ function lineResultRows(lengthFt, cfg) {
   const r = computeLineResult(lengthFt, cfg);
   const rows = [['Length', `${fmt(lengthFt)} ft`, r.trench ? '' : 'total']];
   if (r.trench) {
+    if (r.d2 > 0) rows.push(['Avg depth', `${fmt(r.avgDepth, 1)} ft (${fmt(r.d1, 1)}→${fmt(r.d2, 1)})`]);
     rows.push(['Trench excavation', `${fmt(r.trenchCY, 1)} CY`, 'total']);
     if (r.beddingCY > 0) rows.push(['Bedding (import)', `${fmt(r.beddingCY, 1)} CY`]);
   }
@@ -4038,7 +4043,7 @@ function lineResultRows(lengthFt, cfg) {
 function readLineCfg() {
   return {
     label: $('ltLabel').value.trim() || 'Line', trench: $('ltTrench').checked,
-    width: $('ltWidth').value, depth: $('ltDepth').value, slope: $('ltSlope').value,
+    width: $('ltWidth').value, depth: $('ltDepth').value, depth2: $('ltDepth2').value, slope: $('ltSlope').value,
     bedding: $('ltBedding').value, color: $('ltColor').value,
     dia: parseFloat($('ltDia').value) || 0, mat: $('ltMat').value,
   };
@@ -4053,6 +4058,7 @@ function askLineConfig(lengthFt, prefill) {
       $('ltTrench').checked = !!prefill.trench;
       if (prefill.width != null) $('ltWidth').value = prefill.width;
       if (prefill.depth != null) $('ltDepth').value = prefill.depth;
+      if (prefill.depth2 != null) $('ltDepth2').value = prefill.depth2;
       if (prefill.slope != null) $('ltSlope').value = prefill.slope;
       if (prefill.bedding != null) $('ltBedding').value = prefill.bedding;
       if (prefill.dia != null) $('ltDia').value = prefill.dia;
@@ -4063,7 +4069,7 @@ function askLineConfig(lengthFt, prefill) {
     preview();
     $('lineTakeoff').classList.remove('hidden');
     const onInput = () => { syncLineTrench(); preview(); };
-    const inputs = ['ltLabel', 'ltTrench', 'ltWidth', 'ltDepth', 'ltSlope', 'ltBedding', 'ltMat'];
+    const inputs = ['ltLabel', 'ltTrench', 'ltWidth', 'ltDepth', 'ltDepth2', 'ltSlope', 'ltBedding', 'ltMat'];
     inputs.forEach(id => { $(id).addEventListener('input', onInput); $(id).addEventListener('change', onInput); });
     // typing a diameter suggests a trench bottom width (pipe Ø + ~2 ft working
     // room, to the nearest half-foot); still editable afterward
@@ -4076,6 +4082,7 @@ function askLineConfig(lengthFt, prefill) {
       $('ltLabel').value = p.label; $('ltTrench').checked = !!p.trench;
       if (p.width != null) $('ltWidth').value = p.width;
       if (p.depth != null) $('ltDepth').value = p.depth;
+      $('ltDepth2').value = p.depth2 != null ? p.depth2 : 0; // presets are constant-depth
       if (p.slope != null) $('ltSlope').value = p.slope;
       if (p.bedding != null) $('ltBedding').value = p.bedding;
       $('ltDia').value = p.dia != null ? p.dia : 0; // non-pipe presets clear the diameter

@@ -365,7 +365,8 @@
         </select>
       </label>
       <label>Trench bottom width (ft)<input type="number" id="ltWidth" min="0" step="0.5" value="3"></label>
-      <label>Depth (ft)<input type="number" id="ltDepth" min="0" step="0.5" value="5"></label>
+      <label title="Trench depth at the upstream structure (rim − invert), ft. For a constant-depth run, this is the whole depth.">Depth (ft)<input type="number" id="ltDepth" min="0" step="0.5" value="5"></label>
+      <label title="Downstream (end) trench depth for a sloped run, ft. Leave 0 for constant depth. Excavation uses the average of the two ends (average end area).">End depth (ft)<input type="number" id="ltDepth2" min="0" step="0.5" value="0"></label>
       <label title="Backcut of the trench sides (H per 1 V). 0 = vertical / shored.">Side slope (H:V)
         <select id="ltSlope">
           <option value="0">Vertical / shored (0)</option>
@@ -492,6 +493,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=12"></script>
+<script type="module" src="app.js?v=13"></script>
 </body>
 </html>
