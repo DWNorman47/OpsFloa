@@ -381,6 +381,7 @@ body.printing-bid .bid-linkbar { display: none; }
 .modal-box {
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
   padding: 18px 20px; min-width: 320px; max-width: 420px;
+  max-height: 92vh; overflow-y: auto; /* tall forms (e.g. utility trench) scroll instead of overflowing off-screen */
   box-shadow: 0 10px 40px rgba(0,0,0,.5);
 }
 .modal-box.wide { max-width: 560px; }
@@ -391,6 +392,12 @@ body.printing-bid .bid-linkbar { display: none; }
 }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .modal-actions .spacer { flex: 1; }
+/* on the tall sitework takeoff forms, pin the actions to the bottom of the
+   scrolling box so Cancel / Add takeoff stay reachable on short screens */
+#areaTakeoff .modal-actions, #countTakeoff .modal-actions, #lineTakeoff .modal-actions {
+  position: sticky; bottom: 0; margin-top: 0; padding: 12px 0 2px;
+  background: var(--panel); border-top: 1px solid var(--border);
+}
 .hint { color: var(--muted); font-size: 12px; margin: 6px 0; }
 .stepper { display: flex; gap: 6px; margin-top: 8px; }
 
