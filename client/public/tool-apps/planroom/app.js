@@ -59,7 +59,7 @@ const state = {
   // page numbers; align maps proposed-page px -> existing-page px at compute.
   earthwork: { existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 },
     gridFt: 5, shrink: 15, swell: 25, truckCap: 12, interval: 1, result: null },
-  trade: '',        // takeoff trade mode: '' (markup only) | 'roofing' | 'dirt' | 'drywall' | 'flooring' | 'framing' | 'esc' | 'striping' | 'siding' | 'demo'
+  trade: '',        // takeoff trade mode: '' (markup only) | 'roofing' | 'dirt' | 'drywall' | 'flooring' | 'framing' | 'esc' | 'striping' | 'siding' | 'demo' | 'fence'
   bidMeta: {},      // per-bid project / prepared-by / date overrides
   estimateId: null, // OpsFloa estimate this project was launched from (?estimate=), for pushing pricing back
   // drywall & paint pack settings (project-wide)
@@ -81,6 +81,10 @@ const state = {
   // rather than reading state.earthwork.truckCap — coupling them would mean
   // changing the earthwork setting silently re-prices the demo bid.
   demo: { swell: 50, truckCap: 12, thickAsphalt: 3, thickConcrete: 6, thickSidewalk: 4, thickGravel: 6 },
+  // fencing & guardrail pack settings (project-wide). Post SPACING is NOT here —
+  // it belongs to the fence type (chain link 10ft, vinyl 6ft, guardrail 6.25ft),
+  // so one project-wide number would be wrong on every mixed job.
+  fence: { holeDia: 10, holeDepth: 30, bagCF: 0.45 },
 };
 let curDwSides = 2;  // 1 = perimeter/against structure, 2 = interior partition (both faces)
 let curCeilType = 'drywall';  // ceiling type for new ceilings: drywall | act24 | act22 (ACT = suspended grid)
@@ -222,6 +226,21 @@ const DM_ITEM_LABEL = {
   catchbasin: 'Catch basin', manhole: 'Manhole', hydrant: 'Fire hydrant',
 };
 const DM_ITEM_PRICE = { tree: 750, lightpole: 425, sign: 85, catchbasin: 650, manhole: 900, hydrant: 700 }; // $/EA installed
+let curFnLine = 'chain6'; // type for new fence runs
+const FN_LINE_KINDS = ['chain4', 'chain6', 'wood6', 'vinyl6', 'ornamental', 'farm', 'guardrail', 'cable'];
+const FN_LINE_LABEL = {
+  chain4: 'Chain link 4\u2032', chain6: 'Chain link 6\u2032', wood6: 'Wood privacy 6\u2032',
+  vinyl6: 'Vinyl privacy 6\u2032', ornamental: 'Ornamental aluminum', farm: 'Farm / field fence',
+  guardrail: 'Guardrail (W-beam)', cable: 'Cable rail',
+};
+// Post spacing is a property of the TYPE (ft between posts) — 6.25 for W-beam
+// guardrail is the standard post spacing, not a rounded guess.
+const FN_LINE_SPACING = { chain4: 10, chain6: 10, wood6: 8, vinyl6: 6, ornamental: 6, farm: 12, guardrail: 6.25, cable: 8 };
+const FN_LINE_PRICE = { chain4: 18, chain6: 26, wood6: 32, vinyl6: 42, ornamental: 55, farm: 9, guardrail: 38, cable: 48 }; // $/LF INSTALLED (posts, rails, fabric, concrete all inside)
+let curFnGate = 'walk'; // type for new gates
+const FN_GATE_KINDS = ['walk', 'drive', 'slide', 'endtreat'];
+const FN_GATE_LABEL = { walk: 'Walk gate', drive: 'Double drive gate', slide: 'Cantilever slide gate', endtreat: 'Guardrail end treatment' };
+const FN_GATE_PRICE = { walk: 385, drive: 1250, slide: 4200, endtreat: 2600 }; // $/EA installed
 const ESC_LINE_PRICE = { silt: 2.5, supersilt: 8, sock: 6, wattle: 4, treeprot: 3.5, berm: 3, curtain: 25 };
 const TEXTURE_LABEL = { none: 'None', smooth: 'Smooth / skim', orange: 'Orange peel', knockdown: 'Knockdown', popcorn: 'Popcorn' };
 const TEXTURE_PRICE = { smooth: 0.30, orange: 0.35, knockdown: 0.40, popcorn: 0.55 }; // $/SF texture (labor+material)
@@ -236,7 +255,7 @@ const MEASURE_KINDS = ['mlength', 'marea', 'mcount'];
 const markupLayer = kind => ANNOT_KINDS.includes(kind) ? 'annot' : MEASURE_KINDS.includes(kind) ? 'measure' : 'takeoff';
 // Vertex editing. Fixed-box shapes, callouts, single-point & count markups get no
 // per-vertex handles; everything else (line/arrow + every polyline/polygon) does.
-const VERTEX_NONEDIT = new Set(['rect', 'ellipse', 'cloud', 'highlight', 'callout', 'text', 'espot', 'mcount', 'ritem', 'qcount', 'dopening', 'dheight', 'fopening', 'escitem', 'sstall', 'smark', 'sopening', 'dmitem']);
+const VERTEX_NONEDIT = new Set(['rect', 'ellipse', 'cloud', 'highlight', 'callout', 'text', 'espot', 'mcount', 'ritem', 'qcount', 'dopening', 'dheight', 'fopening', 'escitem', 'sstall', 'smark', 'sopening', 'dmitem', 'fngate']);
 // Insert/delete a vertex applies to the free polylines & polygons — line/arrow
 // stay fixed 2-point shapes (their endpoints are still draggable).
 const RESHAPE_NONEDIT = new Set([...VERTEX_NONEDIT, 'line', 'arrow']);
@@ -328,7 +347,7 @@ els.hud.addEventListener('click', () => { clearTimeout(hudTimer); els.hud.classL
  * Widths/sizes are document-space (base px) so markups print/zoom like ink.
  */
 
-const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea', 'sstripe', 'sstall', 'smark', 'swall', 'sopening', 'sgutter', 'sinsul', 'dmarea', 'dmline', 'dmitem'];
+const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea', 'sstripe', 'sstall', 'smark', 'swall', 'sopening', 'sgutter', 'sinsul', 'dmarea', 'dmline', 'dmitem', 'fnline', 'fngate'];
 const MK_LABEL = {
   cloud: 'Cloud', rect: 'Rectangle', ellipse: 'Ellipse', arrow: 'Arrow', line: 'Line',
   freehand: 'Pen', highlight: 'Highlight', text: 'Text', callout: 'Callout',
@@ -342,6 +361,7 @@ const MK_LABEL = {
   sstripe: 'Stripe run', sstall: 'Parking stall', smark: 'Marking / sign',
   swall: 'Siding wall', sopening: 'Siding opening', sgutter: 'Gutter run', sinsul: 'Insulation',
   dmarea: 'Demo area', dmline: 'Demo removal', dmitem: 'Demo item',
+  fnline: 'Fence run', fngate: 'Gate',
 };
 const MK_ICON = {
   cloud: '☁', rect: '▭', ellipse: '⬭', arrow: '↗', line: '╲',
@@ -356,6 +376,7 @@ const MK_ICON = {
   sstripe: '≡', sstall: '⊞', smark: '◆',
   swall: '▥', sopening: '⊡', sgutter: '⌐', sinsul: '▩',
   dmarea: '▣', dmline: '⌁', dmitem: '⊠',
+  fnline: '⌗', fngate: '⊓',
 };
 // Dirt-trade tool flyout groups (mirrors the sitework tool): each group shows the
 // last-used tool as a one-click face + a ▾ caret revealing the rest.
@@ -369,8 +390,8 @@ const TOOL_FACE = {
 };
 const groupCurrent = { surface: 'contour', takeoff: 'qarea' };
 const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
-const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea', 'sstripe', 'sstall', 'smark', 'swall', 'sopening', 'sgutter', 'sinsul', 'dmarea', 'dmline', 'dmitem']; // click-built (vs drag; espot/align are special-cased)
-const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling', 'dtrim', 'escline', 'escarea', 'sstripe', 'swall', 'sgutter', 'sinsul', 'dmarea', 'dmline']; // produce ft / SF / squares
+const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea', 'sstripe', 'sstall', 'smark', 'swall', 'sopening', 'sgutter', 'sinsul', 'dmarea', 'dmline', 'dmitem', 'fnline', 'fngate']; // click-built (vs drag; espot/align are special-cased)
+const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling', 'dtrim', 'escline', 'escarea', 'sstripe', 'swall', 'sgutter', 'sinsul', 'dmarea', 'dmline', 'fnline']; // produce ft / SF / squares
 
 /* ---- earthwork (sitework pack) helpers ---- */
 // stable hue per elevation so equal elevations match visually; existing lighter
@@ -495,6 +516,7 @@ function roofBidLines() {
   if (trade === 'striping' || !trade) lines.push(...stripingBidLines());
   if (trade === 'siding' || !trade) lines.push(...sidingBidLines());
   if (trade === 'demo' || !trade) lines.push(...demoBidLines());
+  if (trade === 'fence' || !trade) lines.push(...fenceBidLines());
   // consolidated view (no trade selected): only rows with real quantities
   const finalLines = trade ? lines.filter(l => Math.abs(l.qty) > 0.001) : lines.filter(l => l.qty > 0);
   for (const l of finalLines) { l.price = priceFor(l.key, l.defPrice || 0); l.ext = l.qty * l.price; }
@@ -637,6 +659,8 @@ function measureValue(m) {
   if (m.kind === 'dmarea') { const cfg = m.cfg || {}; return `${DM_AREA_LABEL[cfg.dtype] || 'Demo'} · ${fmt(polygonAreaFt2(m.pts, s), 0)} SF`; }
   if (m.kind === 'dmline') { const cfg = m.cfg || {}; return `${DM_LINE_LABEL[cfg.ltype] || 'Removal'} · ${fmt(polyLengthFt(m.pts, s), 0)} ft`; }
   if (m.kind === 'dmitem') { const cfg = m.cfg || {}; const n = m.pts.length; return `${n} × ${DM_ITEM_LABEL[cfg.itype] || 'Item'}`; }
+  if (m.kind === 'fnline') { const cfg = m.cfg || {}; const t = cfg.ftype || 'chain6'; const lf = polyLengthFt(m.pts, s); return `${FN_LINE_LABEL[t] || 'Fence'} · ${fmt(lf, 0)} ft · ${fencePostsFor(lf, t)} posts`; }
+  if (m.kind === 'fngate') { const cfg = m.cfg || {}; const n = m.pts.length; return `${n} × ${FN_GATE_LABEL[cfg.gtype] || 'Gate'}`; }
   return '';
 }
 const LINE_W = { S: 2, M: 4, L: 8 };
@@ -701,6 +725,7 @@ function markupsChanged() {
   if (typeof renderStripingPanel === 'function') renderStripingPanel();
   if (typeof renderSidingPanel === 'function') renderSidingPanel();
   if (typeof renderDemoPanel === 'function') renderDemoPanel();
+  if (typeof renderFencePanel === 'function') renderFencePanel();
   scheduleSave();
   vp.requestDraw();
 }
@@ -857,7 +882,7 @@ function drawMarkup(ctx, m) {
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y); }
       break;
     }
-    case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': case 'escitem': case 'sstall': case 'smark': case 'sopening': case 'dmitem': {
+    case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': case 'escitem': case 'sstall': case 'smark': case 'sopening': case 'dmitem': case 'fngate': {
       const r = (m.width || 4) * 1.5 + 3;
       for (const p of m.pts) { ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); }
       const c = centroid(m.pts);
@@ -870,6 +895,7 @@ function drawMarkup(ctx, m) {
     case 'sstripe':
     case 'sgutter':
     case 'dmline':
+    case 'fnline':
     case 'dtrim': {
       ctx.beginPath();
       m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
@@ -1189,7 +1215,7 @@ function hitMarkup(ctx, w) {
         if (pointSegDist(w.x, w.y, p0.x, p0.y, p1.x, p1.y) < t) return m;
         break;
       case 'freehand': case 'mlength': case 'redge': case 'contour': case 'qline': case 'dwall': case 'dtrim':
-      case 'fwall': case 'ftrans': case 'dheight': case 'escline': case 'sstripe': case 'sgutter': case 'dmline':
+      case 'fwall': case 'ftrans': case 'dheight': case 'escline': case 'sstripe': case 'sgutter': case 'dmline': case 'fnline':
         if (distToPolyline(w.x, w.y, m.pts) < t) return m;
         break;
       case 'marea': case 'plane': case 'epad': case 'qarea': case 'dceiling':
@@ -1200,7 +1226,7 @@ function hitMarkup(ctx, w) {
       case 'ebound':
         if (distToPolyline(w.x, w.y, [...m.pts, m.pts[0]]) < t) return m; // edge only (fill is faint)
         break;
-      case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': case 'escitem': case 'sstall': case 'smark': case 'sopening': case 'dmitem':
+      case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': case 'escitem': case 'sstall': case 'smark': case 'sopening': case 'dmitem': case 'fngate':
         if (m.pts.some(p => dist(w.x, w.y, p.x, p.y) < (m.width || 4) * 1.5 + 3 + t)) return m;
         break;
       case 'espot':
@@ -1775,6 +1801,10 @@ function setTool(t) {
     setMsg(`Trace a ${DM_LINE_LABEL[curDmLine].toLowerCase()} run; Enter/double-click to finish → LF (removal + haul in the unit price). Double-click a run to change its type.`);
   } else if (t === 'dmitem') {
     setMsg(`Click each ${DM_ITEM_LABEL[curDmItem].toLowerCase()}; Enter/double-click to finish → counted EA (removal + haul in the unit price). Double-click a group to change its type.`);
+  } else if (t === 'fnline') {
+    setMsg(`Trace a ${FN_LINE_LABEL[curFnLine].toLowerCase()} run (posts every ${FN_LINE_SPACING[curFnLine]}′); Enter/double-click to finish → LF + posts. Double-click a run to change its type.`);
+  } else if (t === 'fngate') {
+    setMsg(`Click each ${FN_GATE_LABEL[curFnGate].toLowerCase()}; Enter/double-click to finish → counted EA. Double-click a group to change its type.`);
   } else if (t === 'dheight') {
     setMsg((state.scales[state.page] || 0)
       ? 'On an elevation / section sheet, click the floor then the ceiling (bottom → top); double-click or Enter to finish, then name it. Set it as the default in 🧱 or double-click a wall run to apply it.'
@@ -2138,7 +2168,7 @@ els.cv.addEventListener('pointercancel', endDrag);
 /* ---- click-built measure drafts: commit / cancel ---- */
 
 const CLOSED_KINDS = ['marea', 'plane', 'epad', 'ebound', 'qarea', 'dceiling', 'froom', 'fsheath', 'escarea', 'swall', 'sinsul', 'dmarea']; // 3+ pts, closed polygon
-const POINT_KINDS = ['mcount', 'ritem', 'qcount', 'dopening', 'escitem', 'sstall', 'smark', 'sopening', 'dmitem']; // 1+ pts, no rubber band
+const POINT_KINDS = ['mcount', 'ritem', 'qcount', 'dopening', 'escitem', 'sstall', 'smark', 'sopening', 'dmitem', 'fngate']; // 1+ pts, no rubber band
 
 /* ---- vertex reshaping: drag a point (handled in the pointer flow), Alt-click
    an edge to insert a point, Alt-click a point to remove it ---- */
@@ -2263,6 +2293,8 @@ function commitDraft() {
   else if (d.kind === 'dmarea') extra.cfg = { dtype: curDmArea };
   else if (d.kind === 'dmline') extra.cfg = { ltype: curDmLine };
   else if (d.kind === 'dmitem') extra.cfg = { itype: curDmItem };
+  else if (d.kind === 'fnline') extra.cfg = { ftype: curFnLine };
+  else if (d.kind === 'fngate') extra.cfg = { gtype: curFnGate };
   else if (d.kind === 'dwall') { extra.height = state.drywall.wallHeight; extra.sides = curDwSides; }
   else if (d.kind === 'dceiling') extra.cfg = { ctype: curCeilType };
   else if (d.kind === 'dopening') extra.cfg = { otype: curDwOpening, deductSF: OPENING_DEDUCT[curDwOpening] };
@@ -2381,6 +2413,26 @@ els.cv.addEventListener('dblclick', e => {
     const c = hit.cfg || {};
     modals.askNumber(`${FOPEN_LABEL[c.otype] || 'Opening'} rough-opening width (ft)`, 'Drives the header LF and cripple count for each opening in this group.', c.width != null ? c.width : 3, 1)
       .then(v => { if (v != null && v > 0) { const prev = snapshot(); hit.cfg = { ...c, width: v }; pushUndo(prev); markupsChanged(); } });
+    return;
+  }
+  // double-click a fence run to change its type
+  if (hit && hit.kind === 'fnline') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    const cur = (hit.cfg && hit.cfg.ftype) || 'chain6';
+    askChoice('Fence type', 'Each type carries its own post spacing, so the post count changes with it.',
+      FN_LINE_KINDS.map(k => ({ label: `${FN_LINE_LABEL[k]} — posts @ ${FN_LINE_SPACING[k]}′`, value: k, primary: k === cur }))
+    ).then(v => { if (v && v !== cur) { const prev = snapshot(); hit.cfg = { ...(hit.cfg || {}), ftype: v }; curFnLine = v; pushUndo(prev); markupsChanged(); } });
+    return;
+  }
+  // double-click a gate group to change its type
+  if (hit && hit.kind === 'fngate') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    const cur = (hit.cfg && hit.cfg.gtype) || 'walk';
+    askChoice('Gate type', 'Gates roll up on the bid by type, at each type’s installed $/EA.',
+      FN_GATE_KINDS.map(k => ({ label: FN_GATE_LABEL[k], value: k, primary: k === cur }))
+    ).then(v => { if (v && v !== cur) { const prev = snapshot(); hit.cfg = { ...(hit.cfg || {}), gtype: v }; curFnGate = v; pushUndo(prev); markupsChanged(); } });
     return;
   }
   // double-click a linear removal to change its type
@@ -2797,6 +2849,7 @@ const TRADE_TOOLS = {
   striping: ['sstripe', 'sstall', 'smark'],
   siding: ['swall', 'sopening', 'sgutter', 'sinsul'],
   demo: ['dmarea', 'dmline', 'dmitem'],
+  fence: ['fnline', 'fngate'],
 };
 // general redlining + generic measure tools that collapse while a trade is active
 const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
@@ -2804,7 +2857,7 @@ const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freeha
 // own list of "the others", and the lists drifted as packs were added (opening
 // Roof left Framing open, because btnRoof predates the framing pack). Derive it
 // from one list so the next pack can't reintroduce that.
-const PANEL_IDS = ['markupPanel', 'roofPanel', 'dirtPanel', 'dwPanel', 'floorPanel', 'framPanel', 'escPanel', 'strpPanel', 'sidPanel', 'demPanel'];
+const PANEL_IDS = ['markupPanel', 'roofPanel', 'dirtPanel', 'dwPanel', 'floorPanel', 'framPanel', 'escPanel', 'strpPanel', 'sidPanel', 'demPanel', 'fncPanel'];
 function closeOtherPanels(keepId) {
   for (const id of PANEL_IDS) {
     if (id === keepId) continue;
@@ -2815,7 +2868,7 @@ function closeOtherPanels(keepId) {
 // Toolbar trade buttons show an 'active' state while their side panel is open.
 function syncPanelButtons() {
   const mark = (btnId, panelId) => { const b = $(btnId), p = $(panelId); if (b && p) b.classList.toggle('active', !p.classList.contains('hidden')); };
-  mark('btnRoof', 'roofPanel'); mark('btnDw', 'dwPanel'); mark('btnFloor', 'floorPanel'); mark('btnFram', 'framPanel'); mark('btnEsc', 'escPanel'); mark('btnStrp', 'strpPanel'); mark('btnSid', 'sidPanel'); mark('btnDem', 'demPanel');
+  mark('btnRoof', 'roofPanel'); mark('btnDw', 'dwPanel'); mark('btnFloor', 'floorPanel'); mark('btnFram', 'framPanel'); mark('btnEsc', 'escPanel'); mark('btnStrp', 'strpPanel'); mark('btnSid', 'sidPanel'); mark('btnDem', 'demPanel'); mark('btnFnc', 'fncPanel');
   // Earthwork has no toolbar button — its panel is closed by the ✕ in its header
   // and reopened by the floating ⛰ button (top-right of the canvas), shown only
   // while in dirt mode with the panel closed.
@@ -2834,6 +2887,7 @@ function setTrade(t, { save = true } = {}) {
   document.body.classList.toggle('trade-striping', state.trade === 'striping');
   document.body.classList.toggle('trade-siding', state.trade === 'siding');
   document.body.classList.toggle('trade-demo', state.trade === 'demo');
+  document.body.classList.toggle('trade-fence', state.trade === 'fence');
   if ($('tradeSel')) $('tradeSel').value = state.trade;
   // drop a now-hidden tool + close the other trade's panel
   for (const [tr, tools] of Object.entries(TRADE_TOOLS)) {
@@ -2841,7 +2895,7 @@ function setTrade(t, { save = true } = {}) {
   }
   if (state.trade && FOCUS_HIDDEN_TOOLS.includes(tool)) setTool('pan'); // annotation/measure collapse in trade focus
   // leaving a trade closes that trade's panel (markupPanel isn't trade-owned)
-  const TRADE_PANEL = { roofing: 'roofPanel', dirt: 'dirtPanel', drywall: 'dwPanel', flooring: 'floorPanel', framing: 'framPanel', esc: 'escPanel', striping: 'strpPanel', siding: 'sidPanel', demo: 'demPanel' };
+  const TRADE_PANEL = { roofing: 'roofPanel', dirt: 'dirtPanel', drywall: 'dwPanel', flooring: 'floorPanel', framing: 'framPanel', esc: 'escPanel', striping: 'strpPanel', siding: 'sidPanel', demo: 'demPanel', fence: 'fncPanel' };
   for (const [tr, panelId] of Object.entries(TRADE_PANEL)) {
     if (state.trade !== tr) { const p = $(panelId); if (p) p.classList.add('hidden'); }
   }
@@ -2865,6 +2919,7 @@ function setTrade(t, { save = true } = {}) {
     else if (state.trade === 'striping') setMsg('Striping & Signage — count stalls (⊞), trace stop bars / crosswalks / lane lines (≡); totals in 🅿, prices in $ Bid.');
     else if (state.trade === 'siding') setMsg('Siding — trace each elevation (▥), click the openings (⊡) to deduct them; net SF & squares in ▥, prices in $ Bid.');
     else if (state.trade === 'demo') setMsg('Demolition — trace what comes out (▣); debris CY, tons & truck loads in 💥, prices in $ Bid.');
+    else if (state.trade === 'fence') setMsg('Fencing — trace each run (⌗); LF + posts by type in 🚧, prices in $ Bid.');
     scheduleSave();
   }
 }
@@ -2976,6 +3031,7 @@ function renderRoofBid() {
     : state.trade === 'striping' ? 'No striping takeoff yet — count stalls (⊞) or trace a stripe run (≡).'
     : state.trade === 'siding' ? 'No siding takeoff yet — trace an elevation (▥) and set its material.'
     : state.trade === 'demo' ? 'No demolition takeoff yet — trace an area (▣) and set its type.'
+    : state.trade === 'fence' ? 'No fencing takeoff yet — trace a run (⌗) and set its type.'
     : 'No takeoff yet — pick a trade in the toolbar dropdown, or trace a takeoff and come back.';
   $('bidTable').innerHTML = head + '<tbody>' + (lines.length ? body : `<tr><td colspan="5" class="mk-empty">${emptyMsg}</td></tr>`) + '</tbody>';
   $('bidTotals').innerHTML =
@@ -3047,6 +3103,7 @@ function openRoofBid() {
     : state.trade === 'striping' ? '🅿 Striping & Signage bid'
     : state.trade === 'siding' ? '▥ Siding, Gutters & Insulation bid'
     : state.trade === 'demo' ? '💥 Demolition bid'
+    : state.trade === 'fence' ? '🚧 Fencing & Guardrail bid'
     : '$ Takeoff bid';
   const co = loadBranding();
   $('bidCompanyName').value = co.name || '';
@@ -3637,6 +3694,7 @@ function projectData() {
     striping: state.striping,
     siding: state.siding,
     demo: state.demo,
+    fence: state.fence,
     estimateId: state.estimateId || null,
   };
 }
@@ -3647,6 +3705,7 @@ const defaultEsc = () => ({ entranceDepth: 6, stoneDensity: 105, seedRate: 200, 
 const defaultStriping = () => ({ coverage4in: 320, beadRate: 6, coats: 1 });
 const defaultSiding = () => ({ waste: 10, insulWaste: 5, battCoverage: 88 });
 const defaultDemo = () => ({ swell: 50, truckCap: 12, thickAsphalt: 3, thickConcrete: 6, thickSidewalk: 4, thickGravel: 6 });
+const defaultFence = () => ({ holeDia: 10, holeDepth: 30, bagCF: 0.45 });
 const defaultEarthwork = () => ({ existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 }, gridFt: 5, shrink: 15, swell: 25, truckCap: 12, interval: 1, result: null });
 // next contour's default elevation = last + interval (auto-steps up a slope)
 const nextElevDefault = surf => { const iv = Number(state.earthwork.interval) || 0; return lastElev[surf] != null ? lastElev[surf] + iv : ''; };
@@ -3729,6 +3788,7 @@ async function openProject(rec) {
   state.striping = (rec.data && rec.data.striping) || defaultStriping();
   state.siding = (rec.data && rec.data.siding) || defaultSiding();
   state.demo = (rec.data && rec.data.demo) || defaultDemo();
+  state.fence = (rec.data && rec.data.fence) || defaultFence();
   state.estimateId = (rec.data && rec.data.estimateId) || null;
   renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
   try { localStorage.setItem('planroom-current', rec.id); } catch (_) {}
@@ -3771,6 +3831,7 @@ async function newProject(name) {
   state.striping = defaultStriping();
   state.siding = defaultSiding();
   state.demo = defaultDemo();
+  state.fence = defaultFence();
   state.estimateId = null;
   renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
   try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
@@ -3918,6 +3979,7 @@ $('fileImport').addEventListener('change', async e => {
   state.striping = d.striping || defaultStriping();
   state.siding = d.siding || defaultSiding();
   state.demo = d.demo || defaultDemo();
+  state.fence = d.fence || defaultFence();
   state.estimateId = d.estimateId || null;
   renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
   if (d.docB64) {
@@ -4339,6 +4401,7 @@ async function copyCompanyProject(id) {
     state.striping = t.data.striping || defaultStriping();
     state.siding = t.data.siding || defaultSiding();
     state.demo = t.data.demo || defaultDemo();
+    state.fence = t.data.fence || defaultFence();
     state.estimateId = t.data.estimateId || null;
     renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
     try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
@@ -5026,6 +5089,15 @@ const sgutterLenFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0); // gut
 const sinsulSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0); // insulated area
 const dmareaSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0); // demolition area
 const dmlineLenFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0); // linear removal run
+const fnlineLenFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0); // fence run
+// Posts for ONE run: a run needs a post at both ends, so this is +1 and MUST be
+// evaluated per run — summing LF first and computing once loses a post per run
+// (two 50ft runs @10ft = 6+6 = 12 posts, not ceil(100/10)+1 = 11).
+function fencePostsFor(lf, ftype) {
+  if (!(lf > 0)) return 0;
+  const sp = FN_LINE_SPACING[ftype] || 8;
+  return Math.ceil(lf / sp) + 1;
+}
 const FINISH_MUD = { L3: 0.020, L4: 0.027, L5: 0.036 }; // gal ready-mix / SF by finish level
 // Suspended (ACT) drop-ceiling grid takeoff from area + wall perimeter. Rule-of-thumb
 // counts: mains 4' OC, 4' cross tees 2' OC (both layouts), 2' cross tees only on 2×2;
@@ -6055,6 +6127,129 @@ if ($('dmAreaTb')) $('dmAreaTb').addEventListener('change', e => { curDmArea = e
 if ($('dmLineTb')) $('dmLineTb').addEventListener('change', e => { curDmLine = e.target.value; if (tool === 'dmline') setTool('dmline'); });
 if ($('dmItemTb')) $('dmItemTb').addEventListener('change', e => { curDmItem = e.target.value; if (tool === 'dmitem') setTool('dmitem'); });
 
+/* ---- Fencing & Guardrail pack ---- */
+function fenceTotals() {
+  const byLine = {}; // ftype -> { lf, posts, runs }
+  let lineLF = 0, posts = 0;
+  const byGate = {}; // gtype -> EA
+  let gates = 0;
+  for (const m of state.markups) {
+    if (m.kind === 'fngate') {
+      const t = (m.cfg && m.cfg.gtype) || 'walk';
+      const n = m.pts.length;
+      byGate[t] = (byGate[t] || 0) + n;
+      gates += n;
+      continue;
+    }
+    if (m.kind !== 'fnline') continue;
+    const t = (m.cfg && m.cfg.ftype) || 'chain6';
+    const lf = fnlineLenFt(m);
+    if (lf < 0.01) continue;
+    // posts are counted PER RUN — see fencePostsFor()
+    const p = fencePostsFor(lf, t);
+    const g = byLine[t] || { lf: 0, posts: 0, runs: 0 };
+    g.lf += lf; g.posts += p; g.runs += 1;
+    byLine[t] = g;
+    lineLF += lf; posts += p;
+  }
+  return { byLine, lineLF, posts, byGate, gates };
+}
+// Post-hole concrete. A cost basis for the panel, NOT bid lines — $/LF for fence
+// is an installed price with posts, rails, fabric and concrete already inside it,
+// so billing the concrete again would charge for it twice. (Same call as the
+// striping pack's paint gallons and demo's haul-in-the-unit-price.)
+function fenceConcrete(T) {
+  const F = state.fence || {};
+  const dia = Number(F.holeDia) > 0 ? Number(F.holeDia) : 10;   // in
+  const depth = Number(F.holeDepth) > 0 ? Number(F.holeDepth) : 30; // in
+  const bagCF = Number(F.bagCF) > 0 ? Number(F.bagCF) : 0.45;
+  const r = dia / 2 / 12; // ft
+  const holeCF = Math.PI * r * r * (depth / 12);
+  const totalCF = T.posts * holeCF;
+  return { holeCF, totalCF, cy: totalCF / CF_PER_CY, bags: Math.ceil(totalCF / bagCF) };
+}
+function fenceBidLines() {
+  const T = fenceTotals();
+  const lines = [];
+  // Only the run LF and the gates are billed. Posts + concrete are inside the
+  // installed $/LF and stay out of the bid on purpose.
+  for (const k of FN_LINE_KINDS) {
+    const g = T.byLine[k];
+    if (!g || g.lf < 0.5) continue;
+    lines.push({ key: `fn_line_${k}`, label: `${FN_LINE_LABEL[k]} (installed)`, qty: g.lf, unit: 'LF', q: 0, defPrice: FN_LINE_PRICE[k] || 26 });
+  }
+  for (const k of FN_GATE_KINDS) {
+    const ea = T.byGate[k];
+    if (!ea) continue;
+    lines.push({ key: `fn_gate_${k}`, label: `${FN_GATE_LABEL[k]} (installed)`, qty: ea, unit: 'EA', q: 0, defPrice: FN_GATE_PRICE[k] || 385 });
+  }
+  return lines;
+}
+function renderFencePanel() {
+  const panel = $('fncPanel');
+  if (!panel || panel.classList.contains('hidden')) return;
+  const F = state.fence;
+  const T = fenceTotals();
+  const rows = [];
+  const R = (a, b) => rows.push(`<div class="dirt-row"><span>${a}</span><span class="v">${b}</span></div>`);
+  const lnOpts = FN_LINE_KINDS.map(k => `<option value="${k}">${FN_LINE_LABEL[k]}</option>`).join('');
+  const gtOpts = FN_GATE_KINDS.map(k => `<option value="${k}">${FN_GATE_LABEL[k]}</option>`).join('');
+  rows.push('<div class="roof-sub">Settings</div>');
+  rows.push(`<div class="dirt-set">New runs <select id="fnLine">${lnOpts}</select></div>`);
+  rows.push(`<div class="dirt-set">New gates <select id="fnGate">${gtOpts}</select></div>`);
+  if (T.lineLF > 0.5) {
+    rows.push('<div class="roof-sub">Runs</div>');
+    for (const k of FN_LINE_KINDS) {
+      const g = T.byLine[k];
+      if (!g) continue;
+      R(`${FN_LINE_LABEL[k]} <span style="opacity:.6">@ ${FN_LINE_SPACING[k]}′</span>`, `${fmt(g.lf, 0)} LF · ${g.posts} posts`);
+    }
+    rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${fmt(T.lineLF, 0)} LF · ${T.posts} posts</b></span></div>`);
+  }
+  if (T.gates > 0) {
+    rows.push('<div class="roof-sub">Gates & end treatments</div>');
+    for (const k of FN_GATE_KINDS) { const ea = T.byGate[k]; if (!ea) continue; R(FN_GATE_LABEL[k], `${ea} EA`); }
+    rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${T.gates} EA</b></span></div>`);
+  }
+  if (T.posts > 0) {
+    const C = fenceConcrete(T);
+    rows.push('<div class="roof-sub">Post concrete (cost basis)</div>');
+    rows.push('<div class="dirt-set">Hole <input type="number" id="fnDia" min="1" step="1" style="width:42px"> in ⌀ × <input type="number" id="fnDepth" min="1" step="1" style="width:42px"> in deep</div>');
+    rows.push('<div class="dirt-set">Bag yield <input type="number" id="fnBag" min="0.05" step="0.05" style="width:48px"> CF/bag</div>');
+    R('Per hole', `${fmt(C.holeCF, 2)} CF`);
+    R(`${T.posts} holes`, `${fmt(C.cy, 2)} CY · ${C.bags} bags`);
+    rows.push('<div class="hint" style="margin:4px 0">A cost basis only — not on the bid. The $/LF is installed, so posts and their concrete are already in it; billing them again would charge twice.</div>');
+  }
+  if (T.lineLF < 0.5 && !T.gates) rows.push('<div class="hint" style="margin:4px 0">Nothing yet — trace a run (⌗) or click gates (⊓).</div>');
+  rows.push('<div class="hint" style="margin:4px 0"><b>Posts count per run</b>, not off the total: every run gets one at each end, so two 50′ runs at 10′ = 12 posts, not 11. Spacing comes from the fence type. Prices in $ Bid.</div>');
+  $('fncBody').innerHTML = rows.join('');
+  $('fnLine').value = curFnLine;
+  $('fnGate').value = curFnGate;
+  $('fnLine').addEventListener('change', e => { curFnLine = e.target.value; if (tool === 'fnline') setTool('fnline'); });
+  $('fnGate').addEventListener('change', e => { curFnGate = e.target.value; if (tool === 'fngate') setTool('fngate'); });
+  const num = (id, key, def, min) => {
+    const el = $(id);
+    if (!el) return;
+    el.value = F[key] != null ? F[key] : def;
+    el.addEventListener('change', ev => {
+      F[key] = Math.max(min, parseFloat(ev.target.value) || def);
+      ev.target.value = F[key];
+      scheduleSave(); renderFencePanel();
+    });
+  };
+  num('fnDia', 'holeDia', 10, 1);
+  num('fnDepth', 'holeDepth', 30, 1);
+  num('fnBag', 'bagCF', 0.45, 0.05);
+}
+$('btnFnc').addEventListener('click', () => {
+  const p = $('fncPanel');
+  p.classList.toggle('hidden');
+  if (!p.classList.contains('hidden')) { closeOtherPanels('fncPanel'); renderFencePanel(); }
+  syncPanelButtons();
+});
+if ($('fnLineTb')) $('fnLineTb').addEventListener('change', e => { curFnLine = e.target.value; if (tool === 'fnline') setTool('fnline'); });
+if ($('fnGateTb')) $('fnGateTb').addEventListener('change', e => { curFnGate = e.target.value; if (tool === 'fngate') setTool('fngate'); });
+
 /* ===================== Live sessions (SSE + REST ops) =====================
  * Host "goes live" on the current project; teammates join and co-edit in real
  * time. Server→client push via EventSource; client→server via REST ops. Every
@@ -6076,7 +6271,7 @@ async function apiLive(path, opts = {}) {
 }
 
 function sessionDoc() {
-  return { scales: state.scales, scaleBars: state.scaleBars, page: state.page, roofPitch: state.roofPitch, roofWaste: state.roofWaste, roofPrices: state.roofPrices, roofOP: state.roofOP, earthwork: state.earthwork, drywall: state.drywall, flooring: state.flooring, framing: state.framing, esc: state.esc, striping: state.striping, siding: state.siding, demo: state.demo };
+  return { scales: state.scales, scaleBars: state.scaleBars, page: state.page, roofPitch: state.roofPitch, roofWaste: state.roofWaste, roofPrices: state.roofPrices, roofOP: state.roofOP, earthwork: state.earthwork, drywall: state.drywall, flooring: state.flooring, framing: state.framing, esc: state.esc, striping: state.striping, siding: state.siding, demo: state.demo, fence: state.fence };
 }
 function applySessionDoc(d) {
   if (!d) return;
@@ -6094,6 +6289,7 @@ function applySessionDoc(d) {
   if (d.striping) state.striping = d.striping;
   if (d.siding) state.siding = d.siding;
   if (d.demo) state.demo = d.demo;
+  if (d.fence) state.fence = d.fence;
   if (d.page && d.page !== state.page && state.doc) setPage(d.page);
 }
 
