@@ -23,6 +23,51 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-16 — Parking-lot Striping & Signage trade pack (S1–S3, complete)
+
+**Shipped.** New `striping` trade (🅿) in Plan Room, in the $60 Takeoff add-on,
+no own SKU. Pairs with the asphalt paving area takeoff already in Earthwork — the
+same site plan that gets a paving takeoff gets a striping plan. Three tools:
+⊞ stalls → EA by type with a **separate ADA tally**, ≡ painted runs → LF by type
+(4"/6"/8" line, 12" crosswalk, 24" stop bar, hatching), ◆ markings & signs → EA
+by type (arrow, ONLY legend, ADA symbol, sign, wheel stop, bollard). Plus a
+paint/bead cost basis in the panel.
+`47ddf6a` (S1) · `4a70108` (S2–S3) · plan: `docs/plans/striping-signage-pack.md`
+
+**Call made — the double-count trap, designed around rather than papered over.**
+Striping is bid **per stall** (the stall price includes painting its own lines)
+**or** per LF, not both — so counting a stall *and* tracing its lines charges the
+paint twice. So `sstall` counts stalls priced per stall, and `sstripe` is only for
+the runs that **aren't** stall lines (stop bars, crosswalks, lane lines,
+hatching). The panel says this in bold, because it's the one thing a new user
+would get wrong. Same reasoning kept the S3 paint gallons **out of the bid** —
+the $/LF and $/EA are installed prices that already include paint. The test now
+*asserts* paint never reaches the bid, so a later change can't quietly
+reintroduce the double-charge.
+
+**Call made — paint is width-weighted, not raw LF.** A 24" stop bar eats **6×**
+the paint of a 4" line per foot, so `stripingPaint()` converts everything to
+"4-inch-equivalent LF" before dividing by coverage. Summing raw LF would have
+under-counted paint badly on any lot with stop bars or crosswalks — and it would
+have looked perfectly reasonable in the panel.
+
+**Verified** the same way as ESC — `stripingTotals`/`stripingPaint`/
+`stripingBidLines` lifted **verbatim out of app.js** and run against stubbed
+state, not re-implemented in the test. 320 LF of 4" = exactly 1.0 gal · 320 LF of
+24" = 6.0 gal · 12" crosswalk = 3× · mixed widths sum to 380 4"-equivalent LF ·
+2 coats doubles · 40 standard + 2 ADA + 1 van = 43 stalls / ADA tally 3 · stop bar
+prices at its own $2.25 not the 4" rate · ADA stall at $45 not $5 · untraced types
+emit no phantom $0 lines · empty `state.striping` still computes.
+
+**Structural.** Registered without repeating the older packs' bugs: `sstripe` in
+`NEEDS_SCALE`, `sstall`/`smark` in `POINT_KINDS`, and all three in `hitMarkup`.
+Re-audited after: **38/38** kinds present in `hitMarkup`, `MK_LABEL` and
+`MK_ICON`.
+
+⚠️ **Needs David:** hard-refresh — cache-bust **v35**.
+
+---
+
 ## 2026-07-16 — Erosion & Sediment Control trade pack (E1–E3, complete)
 
 **Shipped.** New `esc` trade (🌱) in Plan Room, in the $60 Takeoff add-on, no own
@@ -69,7 +114,7 @@ click per BMP, not two); rate inputs render only for the area types actually
 traced, so an empty panel isn't six numeric fields of noise. The older packs'
 equivalents are filed in `BACKLOG.md` rather than fixed in-place.
 
-⚠️ **Needs David:** hard-refresh (Ctrl+Shift+R) — cache-bust **v33**.
+⚠️ **Needs David:** hard-refresh — superseded by **v35** (striping pack).
 
 ---
 
