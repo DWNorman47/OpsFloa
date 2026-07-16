@@ -23,6 +23,51 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-16 — Demolition trade pack (D1–D3, complete)
+
+**Shipped.** The **10th** trade — `demo` (💥), in the $60 Takeoff add-on, no own
+SKU. Finishes the sitework suite: a site contractor now takes off demo, cut/fill
+and the ESC plan for one job in one tool, same buyer and same plan set. Three
+tools: ▣ areas → SF by type → debris CY, tons, truck loads · ⌁ linear removals →
+LF by type · ⊠ items & structures → EA by type.
+`1731a20` (D1) · `a0f2aa2` (D2–D3) · plan: `docs/plans/demolition-pack.md`
+
+**Call made — buildings and pavement convert completely differently, and this is
+the whole pack.** A **building is mostly air**: footprint × height is nonsense —
+a 1,000 SF house is not 444 CY of debris, it's the walls, roof and floor. So
+buildings use an empirical **CY per SF of footprint** (wood ≈ .25, masonry ≈ .45,
+steel ≈ .20 — steel lowest because the frame goes to scrap, not the pile), with
+bulking already in the factor. **Pavement is solid**: thickness → in-place CY →
+*then* swelled, because broken concrete and asphalt bulk ~40–60% once ripped.
+Three consequences worth knowing:
+- Hauling the **un-swelled** volume under-books trucks — 92.6 vs 138.9 CY on the
+  test job, four fewer loads.
+- Swell must **not** touch buildings, or the bulking double-counts. The test
+  asserts building CY is identical at 0% and 100% swell.
+- **Tons come off the in-place volume, not the swelled one** — swell moves air,
+  not weight.
+
+**Call made — removals and items don't feed the CY pile.** Linear removals and
+item removals are quoted with haul *inside* the unit price, so they're excluded
+from the debris CY and the load count; counting them would bill the same hauling
+twice. The test asserts CY and loads are unchanged by adding 500 LF of curb and
+10 trees, so a later change can't quietly reintroduce it.
+
+**Call made — `truckCap` is demo's own setting**, not `state.earthwork.truckCap`.
+Same trucks in real life, but coupling them would mean editing the earthwork
+setting silently re-prices the demo bid. ⚠️ Overrule this if you'd rather have
+one number for the job.
+
+**Verified** against the real functions lifted out of app.js, including the edges
+that ship silently wrong: `truckCap: 0` yields finite loads, not `Infinity`;
+empty `state.demo` falls back to the documented defaults; concrete uses its own
+6" not asphalt's 3"; same-type areas roll up. 45/45 kinds registered in
+`hitMarkup`, `MK_LABEL`, `MK_ICON`.
+
+⚠️ **Needs David:** hard-refresh — cache-bust **v39**.
+
+---
+
 ## 2026-07-16 — Siding, Gutters & Insulation trade pack (Si1–Si3, complete)
 
 **Shipped.** The **9th** trade — `siding` (▥), in the $60 Takeoff add-on, no own
@@ -66,7 +111,7 @@ insulation traced).
 **Structural.** 42/42 kinds registered in `hitMarkup`, `MK_LABEL`, `MK_ICON`;
 `swall`/`sinsul` in `NEEDS_SCALE` + `CLOSED_KINDS`, `sopening` in `POINT_KINDS`.
 
-⚠️ **Needs David:** hard-refresh — cache-bust **v37**.
+⚠️ **Needs David:** hard-refresh — superseded by **v39** (demolition pack).
 
 ---
 
