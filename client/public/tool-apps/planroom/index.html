@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css?v=35">
+<link rel="stylesheet" href="styles.css?v=36">
 <script>
 (() => {
   try {
@@ -64,6 +64,7 @@
       <option value="framing">🪵 Framing &amp; Lumber</option>
       <option value="esc">🌱 Erosion &amp; Sediment Control</option>
       <option value="striping">🅿 Striping &amp; Signage</option>
+      <option value="siding">▥ Siding, Gutters &amp; Insulation</option>
     </select>
     <button class="tool tb-takeoff tr-roof" data-tool="plane" title="Roof plane — trace a roof face, set its pitch → sloped area + squares">▰</button>
     <button class="tool tb-takeoff tr-roof" data-tool="redge" title="Roof edge — trace eave/rake/ridge/hip/valley/flashing → linear feet (hip/valley/rake pitch-corrected)">╱</button>
@@ -209,6 +210,24 @@
         <option value="bollard">Bollard</option>
       </select>
     </div>
+    <div class="tb-sub tb-takeoff tr-sid">
+      <button class="tool" data-tool="swall" title="Siding wall — trace an elevation &rarr; gross SF by material. Openings deduct from it. Double-click a wall to change its material.">&#9637;</button>
+      <select id="sidMatTb" class="mini-sel" title="Material for new siding walls">
+        <option value="vinyl">Vinyl lap</option>
+        <option value="fclap">Fiber cement lap</option>
+        <option value="fcpanel">Fiber cement panel</option>
+        <option value="woodlap">Wood lap</option>
+        <option value="stucco">Stucco</option>
+        <option value="brick">Brick veneer</option>
+        <option value="stone">Stone veneer</option>
+      </select>
+      <button class="tool" data-tool="sopening" title="Siding opening — click each window / door / garage door; each deducts its SF from the wall area and bills a trim &amp; wrap EA. Double-click a group to edit its deduct.">&#8865;</button>
+      <select id="sidOpenTb" class="mini-sel" title="Opening type for new counts">
+        <option value="window">Window (&minus;15)</option>
+        <option value="door">Door (&minus;21)</option>
+        <option value="garage">Garage door (&minus;112)</option>
+      </select>
+    </div>
     <input type="color" id="mkColor" class="dirt-hide" value="#e05555" title="Markup color (applies to the selected markup too)">
     <select id="mkWidth" class="dirt-hide" title="Line weight / text size (applies to the selected markup too)">
       <option value="S">Thin</option>
@@ -269,6 +288,7 @@
     <button id="btnFram" class="btn tb-takeoff tr-fram" title="Framing & Lumber — studs, plates & board-feet by stud size; prices in $ Bid">🪵<span class="btn-label"> Framing</span></button>
     <button id="btnEsc" class="btn tb-takeoff tr-esc" title="Erosion &amp; Sediment Control — silt fence and perimeter controls by LF; prices in $ Bid">🌱<span class="btn-label"> ESC</span></button>
     <button id="btnStrp" class="btn tb-takeoff tr-strp" title="Striping &amp; Signage — stalls, ADA tally, and painted runs by LF; prices in $ Bid">🅿<span class="btn-label"> Striping</span></button>
+    <button id="btnSid" class="btn tb-takeoff tr-sid" title="Siding, Gutters &amp; Insulation — net wall SF &amp; squares by material; prices in $ Bid">▥<span class="btn-label"> Siding</span></button>
     <button id="btnBid" class="btn tb-takeoff" title="Takeoff bid — roofing materials & labor and earthwork volumes, editable prices, print / CSV">$<span class="btn-label"> Bid</span></button>
     <button id="btnUpsell" class="btn tb-upsell" title="Turn your measurements into a priced takeoff & bid — Takeoff layer add-on">🔒<span class="btn-label"> Takeoff</span></button>
     <div class="menu-wrap">
@@ -364,6 +384,10 @@
   <aside id="strpPanel" class="hidden" aria-label="Striping &amp; Signage takeoff">
     <div class="mk-head"><b>🅿 Striping &amp; Signage</b></div>
     <div id="strpBody" class="mk-list"></div>
+  </aside>
+  <aside id="sidPanel" class="hidden" aria-label="Siding, Gutters &amp; Insulation takeoff">
+    <div class="mk-head"><b>▥ Siding, Gutters &amp; Insulation</b></div>
+    <div id="sidBody" class="mk-list"></div>
   </aside>
 </main>
 
@@ -637,6 +661,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=35"></script>
+<script type="module" src="app.js?v=36"></script>
 </body>
 </html>

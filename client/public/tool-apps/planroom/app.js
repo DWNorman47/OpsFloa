@@ -59,7 +59,7 @@ const state = {
   // page numbers; align maps proposed-page px -> existing-page px at compute.
   earthwork: { existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 },
     gridFt: 5, shrink: 15, swell: 25, truckCap: 12, interval: 1, result: null },
-  trade: '',        // takeoff trade mode: '' (markup only) | 'roofing' | 'dirt' | 'drywall' | 'flooring' | 'framing' | 'esc' | 'striping'
+  trade: '',        // takeoff trade mode: '' (markup only) | 'roofing' | 'dirt' | 'drywall' | 'flooring' | 'framing' | 'esc' | 'striping' | 'siding'
   bidMeta: {},      // per-bid project / prepared-by / date overrides
   estimateId: null, // OpsFloa estimate this project was launched from (?estimate=), for pushing pricing back
   // drywall & paint pack settings (project-wide)
@@ -74,6 +74,9 @@ const state = {
   // striping & signage pack settings (project-wide; the paint fields go live in
   // S3 but the shape is fixed here so persistence is wired once)
   striping: { coverage4in: 320, beadRate: 6, coats: 1 },
+  // siding / gutters / insulation pack settings (project-wide; the insulation
+  // fields go live in Si3 but the shape is fixed here so persistence is wired once)
+  siding: { waste: 10, insulWaste: 5, battCoverage: 88 },
 };
 let curDwSides = 2;  // 1 = perimeter/against structure, 2 = interior partition (both faces)
 let curCeilType = 'drywall';  // ceiling type for new ceilings: drywall | act24 | act22 (ACT = suspended grid)
@@ -145,6 +148,21 @@ const STRP_MARK_LABEL = {
   sign: 'Sign (post + panel)', wheelstop: 'Wheel stop', bollard: 'Bollard',
 };
 const STRP_MARK_PRICE = { arrow: 35, only: 45, adasym: 40, sign: 165, wheelstop: 55, bollard: 240 }; // $/EA installed
+let curSidMat = 'vinyl'; // material for new siding walls
+const SID_MAT_KINDS = ['vinyl', 'fclap', 'fcpanel', 'woodlap', 'stucco', 'brick', 'stone'];
+const SID_MAT_LABEL = {
+  vinyl: 'Vinyl lap', fclap: 'Fiber cement lap', fcpanel: 'Fiber cement panel',
+  woodlap: 'Wood lap', stucco: 'Stucco', brick: 'Brick veneer', stone: 'Stone veneer',
+};
+const SID_MAT_PRICE = { vinyl: 4.5, fclap: 8.5, fcpanel: 8, woodlap: 9.5, stucco: 9, brick: 18, stone: 28 }; // $/SF installed
+let curSidOpen = 'window'; // opening type for new counts
+const SID_OPEN_KINDS = ['window', 'door', 'garage'];
+const SID_OPEN_LABEL = { window: 'Window', door: 'Door', garage: 'Garage door' };
+const SID_OPEN_DEDUCT = { window: 15, door: 21, garage: 112 }; // SF removed from the wall per opening
+// An opening deducts SF but still costs money: cutting and wrapping siding around
+// it is more work per foot than the field. Priced EA on top of the deduction.
+const SID_OPEN_PRICE = { window: 65, door: 75, garage: 180 }; // $/EA trim + wrap
+const SF_PER_SQUARE = 100;
 const ESC_LINE_PRICE = { silt: 2.5, supersilt: 8, sock: 6, wattle: 4, treeprot: 3.5, berm: 3, curtain: 25 };
 const TEXTURE_LABEL = { none: 'None', smooth: 'Smooth / skim', orange: 'Orange peel', knockdown: 'Knockdown', popcorn: 'Popcorn' };
 const TEXTURE_PRICE = { smooth: 0.30, orange: 0.35, knockdown: 0.40, popcorn: 0.55 }; // $/SF texture (labor+material)
@@ -159,7 +177,7 @@ const MEASURE_KINDS = ['mlength', 'marea', 'mcount'];
 const markupLayer = kind => ANNOT_KINDS.includes(kind) ? 'annot' : MEASURE_KINDS.includes(kind) ? 'measure' : 'takeoff';
 // Vertex editing. Fixed-box shapes, callouts, single-point & count markups get no
 // per-vertex handles; everything else (line/arrow + every polyline/polygon) does.
-const VERTEX_NONEDIT = new Set(['rect', 'ellipse', 'cloud', 'highlight', 'callout', 'text', 'espot', 'mcount', 'ritem', 'qcount', 'dopening', 'dheight', 'fopening', 'escitem', 'sstall', 'smark']);
+const VERTEX_NONEDIT = new Set(['rect', 'ellipse', 'cloud', 'highlight', 'callout', 'text', 'espot', 'mcount', 'ritem', 'qcount', 'dopening', 'dheight', 'fopening', 'escitem', 'sstall', 'smark', 'sopening']);
 // Insert/delete a vertex applies to the free polylines & polygons — line/arrow
 // stay fixed 2-point shapes (their endpoints are still draggable).
 const RESHAPE_NONEDIT = new Set([...VERTEX_NONEDIT, 'line', 'arrow']);
@@ -251,7 +269,7 @@ els.hud.addEventListener('click', () => { clearTimeout(hudTimer); els.hud.classL
  * Widths/sizes are document-space (base px) so markups print/zoom like ink.
  */
 
-const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea', 'sstripe', 'sstall', 'smark'];
+const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea', 'sstripe', 'sstall', 'smark', 'swall', 'sopening'];
 const MK_LABEL = {
   cloud: 'Cloud', rect: 'Rectangle', ellipse: 'Ellipse', arrow: 'Arrow', line: 'Line',
   freehand: 'Pen', highlight: 'Highlight', text: 'Text', callout: 'Callout',
@@ -263,6 +281,7 @@ const MK_LABEL = {
   froom: 'Floor room', ftrans: 'Transition', fwall: 'Framed wall', fopening: 'Framed opening', fsheath: 'Sheathing',
   escline: 'ESC control', escitem: 'ESC BMP', escarea: 'ESC area',
   sstripe: 'Stripe run', sstall: 'Parking stall', smark: 'Marking / sign',
+  swall: 'Siding wall', sopening: 'Siding opening',
 };
 const MK_ICON = {
   cloud: '☁', rect: '▭', ellipse: '⬭', arrow: '↗', line: '╲',
@@ -275,6 +294,7 @@ const MK_ICON = {
   froom: '▦', ftrans: '▂', fwall: '‖', fopening: '▯', fsheath: '▤',
   escline: '〰', escitem: '⊘', escarea: '▧',
   sstripe: '≡', sstall: '⊞', smark: '◆',
+  swall: '▥', sopening: '⊡',
 };
 // Dirt-trade tool flyout groups (mirrors the sitework tool): each group shows the
 // last-used tool as a one-click face + a ▾ caret revealing the rest.
@@ -288,8 +308,8 @@ const TOOL_FACE = {
 };
 const groupCurrent = { surface: 'contour', takeoff: 'qarea' };
 const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
-const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea', 'sstripe', 'sstall', 'smark']; // click-built (vs drag; espot/align are special-cased)
-const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling', 'dtrim', 'escline', 'escarea', 'sstripe']; // produce ft / SF / squares
+const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea', 'sstripe', 'sstall', 'smark', 'swall', 'sopening']; // click-built (vs drag; espot/align are special-cased)
+const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling', 'dtrim', 'escline', 'escarea', 'sstripe', 'swall']; // produce ft / SF / squares
 
 /* ---- earthwork (sitework pack) helpers ---- */
 // stable hue per elevation so equal elevations match visually; existing lighter
@@ -412,6 +432,7 @@ function roofBidLines() {
   if (trade === 'framing' || !trade) lines.push(...framingBidLines());
   if (trade === 'esc' || !trade) lines.push(...escBidLines());
   if (trade === 'striping' || !trade) lines.push(...stripingBidLines());
+  if (trade === 'siding' || !trade) lines.push(...sidingBidLines());
   // consolidated view (no trade selected): only rows with real quantities
   const finalLines = trade ? lines.filter(l => Math.abs(l.qty) > 0.001) : lines.filter(l => l.qty > 0);
   for (const l of finalLines) { l.price = priceFor(l.key, l.defPrice || 0); l.ext = l.qty * l.price; }
@@ -547,6 +568,8 @@ function measureValue(m) {
   if (m.kind === 'sstripe') { const cfg = m.cfg || {}; return `${STRP_LINE_LABEL[cfg.stype] || '4" line'} · ${fmt(polyLengthFt(m.pts, s), 0)} ft`; }
   if (m.kind === 'sstall') { const cfg = m.cfg || {}; const n = m.pts.length; return `${n} × ${STRP_STALL_LABEL[cfg.ttype] || 'Stall'}`; }
   if (m.kind === 'smark') { const cfg = m.cfg || {}; const n = m.pts.length; return `${n} × ${STRP_MARK_LABEL[cfg.mtype] || 'Marking'}`; }
+  if (m.kind === 'swall') { const cfg = m.cfg || {}; return `${SID_MAT_LABEL[cfg.mat] || 'Siding'} · ${fmt(polygonAreaFt2(m.pts, s), 0)} SF`; }
+  if (m.kind === 'sopening') { const cfg = m.cfg || {}; const n = m.pts.length; return `${n} ${SID_OPEN_LABEL[cfg.otype] || 'Opening'}${n === 1 ? '' : 's'} (−${fmt(cfg.deductSF || 0, 0)} SF ea)`; }
   return '';
 }
 const LINE_W = { S: 2, M: 4, L: 8 };
@@ -609,6 +632,7 @@ function markupsChanged() {
   if (typeof renderFramingPanel === 'function') renderFramingPanel();
   if (typeof renderEscPanel === 'function') renderEscPanel();
   if (typeof renderStripingPanel === 'function') renderStripingPanel();
+  if (typeof renderSidingPanel === 'function') renderSidingPanel();
   scheduleSave();
   vp.requestDraw();
 }
@@ -751,6 +775,7 @@ function drawMarkup(ctx, m) {
     case 'froom':
     case 'fsheath':
     case 'escarea':
+    case 'swall':
     case 'marea': {
       if (m.pts.length >= 2) {
         ctx.beginPath();
@@ -762,7 +787,7 @@ function drawMarkup(ctx, m) {
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y); }
       break;
     }
-    case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': case 'escitem': case 'sstall': case 'smark': {
+    case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': case 'escitem': case 'sstall': case 'smark': case 'sopening': {
       const r = (m.width || 4) * 1.5 + 3;
       for (const p of m.pts) { ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); }
       const c = centroid(m.pts);
@@ -1096,14 +1121,14 @@ function hitMarkup(ctx, w) {
         if (distToPolyline(w.x, w.y, m.pts) < t) return m;
         break;
       case 'marea': case 'plane': case 'epad': case 'qarea': case 'dceiling':
-      case 'froom': case 'fsheath': case 'escarea':
+      case 'froom': case 'fsheath': case 'escarea': case 'swall':
         if (pointInPolygon(w.x, w.y, m.pts) ||
             distToPolyline(w.x, w.y, [...m.pts, m.pts[0]]) < t) return m;
         break;
       case 'ebound':
         if (distToPolyline(w.x, w.y, [...m.pts, m.pts[0]]) < t) return m; // edge only (fill is faint)
         break;
-      case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': case 'escitem': case 'sstall': case 'smark':
+      case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': case 'escitem': case 'sstall': case 'smark': case 'sopening':
         if (m.pts.some(p => dist(w.x, w.y, p.x, p.y) < (m.width || 4) * 1.5 + 3 + t)) return m;
         break;
       case 'espot':
@@ -1664,6 +1689,10 @@ function setTool(t) {
     setMsg(`Click each ${STRP_STALL_LABEL[curStrpStall].toLowerCase()}; Enter/double-click to finish → counted EA (price includes painting its own lines). Double-click a group to change its type.`);
   } else if (t === 'smark') {
     setMsg(`Click each ${STRP_MARK_LABEL[curStrpMark].toLowerCase()}; Enter/double-click to finish → counted EA. Double-click a group to change its type.`);
+  } else if (t === 'swall') {
+    setMsg(`Trace a ${SID_MAT_LABEL[curSidMat].toLowerCase()} elevation; Enter/double-click to close → gross SF. Openings (⊡) deduct from it. Double-click a wall to change its material.`);
+  } else if (t === 'sopening') {
+    setMsg(`Click each ${SID_OPEN_LABEL[curSidOpen].toLowerCase()} (−${SID_OPEN_DEDUCT[curSidOpen]} SF each, plus trim); Enter/double-click to finish. Double-click a group to edit its deduct.`);
   } else if (t === 'dheight') {
     setMsg((state.scales[state.page] || 0)
       ? 'On an elevation / section sheet, click the floor then the ceiling (bottom → top); double-click or Enter to finish, then name it. Set it as the default in 🧱 or double-click a wall run to apply it.'
@@ -2026,8 +2055,8 @@ els.cv.addEventListener('pointercancel', endDrag);
 
 /* ---- click-built measure drafts: commit / cancel ---- */
 
-const CLOSED_KINDS = ['marea', 'plane', 'epad', 'ebound', 'qarea', 'dceiling', 'froom', 'fsheath', 'escarea']; // 3+ pts, closed polygon
-const POINT_KINDS = ['mcount', 'ritem', 'qcount', 'dopening', 'escitem', 'sstall', 'smark']; // 1+ pts, no rubber band
+const CLOSED_KINDS = ['marea', 'plane', 'epad', 'ebound', 'qarea', 'dceiling', 'froom', 'fsheath', 'escarea', 'swall']; // 3+ pts, closed polygon
+const POINT_KINDS = ['mcount', 'ritem', 'qcount', 'dopening', 'escitem', 'sstall', 'smark', 'sopening']; // 1+ pts, no rubber band
 
 /* ---- vertex reshaping: drag a point (handled in the pointer flow), Alt-click
    an edge to insert a point, Alt-click a point to remove it ---- */
@@ -2145,6 +2174,8 @@ function commitDraft() {
   else if (d.kind === 'sstripe') extra.cfg = { stype: curStrpLine };
   else if (d.kind === 'sstall') extra.cfg = { ttype: curStrpStall };
   else if (d.kind === 'smark') extra.cfg = { mtype: curStrpMark };
+  else if (d.kind === 'swall') extra.cfg = { mat: curSidMat };
+  else if (d.kind === 'sopening') extra.cfg = { otype: curSidOpen, deductSF: SID_OPEN_DEDUCT[curSidOpen] };
   else if (d.kind === 'dwall') { extra.height = state.drywall.wallHeight; extra.sides = curDwSides; }
   else if (d.kind === 'dceiling') extra.cfg = { ctype: curCeilType };
   else if (d.kind === 'dopening') extra.cfg = { otype: curDwOpening, deductSF: OPENING_DEDUCT[curDwOpening] };
@@ -2263,6 +2294,25 @@ els.cv.addEventListener('dblclick', e => {
     const c = hit.cfg || {};
     modals.askNumber(`${FOPEN_LABEL[c.otype] || 'Opening'} rough-opening width (ft)`, 'Drives the header LF and cripple count for each opening in this group.', c.width != null ? c.width : 3, 1)
       .then(v => { if (v != null && v > 0) { const prev = snapshot(); hit.cfg = { ...c, width: v }; pushUndo(prev); markupsChanged(); } });
+    return;
+  }
+  // double-click a siding wall to change its material
+  if (hit && hit.kind === 'swall') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    const cur = (hit.cfg && hit.cfg.mat) || 'vinyl';
+    askChoice('Siding material', 'Walls roll up on the bid by material.',
+      SID_MAT_KINDS.map(k => ({ label: SID_MAT_LABEL[k], value: k, primary: k === cur }))
+    ).then(v => { if (v && v !== cur) { const prev = snapshot(); hit.cfg = { ...(hit.cfg || {}), mat: v }; curSidMat = v; pushUndo(prev); markupsChanged(); } });
+    return;
+  }
+  // double-click a siding opening group to edit its deduct
+  if (hit && hit.kind === 'sopening') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    const c = hit.cfg || {};
+    modals.askNumber(`${SID_OPEN_LABEL[c.otype] || 'Opening'} deduct (SF each)`, 'Removed from the wall area for every opening in this group.', c.deductSF != null ? c.deductSF : 15, 0)
+      .then(v => { if (v != null && v >= 0) { const prev = snapshot(); hit.cfg = { ...c, deductSF: v }; pushUndo(prev); markupsChanged(); } });
     return;
   }
   // double-click a marking / sign group to change its type
@@ -2608,6 +2658,7 @@ const TRADE_TOOLS = {
   framing: ['fwall', 'fopening', 'fsheath'],
   esc: ['escline', 'escitem', 'escarea'],
   striping: ['sstripe', 'sstall', 'smark'],
+  siding: ['swall', 'sopening'],
 };
 // general redlining + generic measure tools that collapse while a trade is active
 const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
@@ -2615,7 +2666,7 @@ const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freeha
 // own list of "the others", and the lists drifted as packs were added (opening
 // Roof left Framing open, because btnRoof predates the framing pack). Derive it
 // from one list so the next pack can't reintroduce that.
-const PANEL_IDS = ['markupPanel', 'roofPanel', 'dirtPanel', 'dwPanel', 'floorPanel', 'framPanel', 'escPanel', 'strpPanel'];
+const PANEL_IDS = ['markupPanel', 'roofPanel', 'dirtPanel', 'dwPanel', 'floorPanel', 'framPanel', 'escPanel', 'strpPanel', 'sidPanel'];
 function closeOtherPanels(keepId) {
   for (const id of PANEL_IDS) {
     if (id === keepId) continue;
@@ -2626,7 +2677,7 @@ function closeOtherPanels(keepId) {
 // Toolbar trade buttons show an 'active' state while their side panel is open.
 function syncPanelButtons() {
   const mark = (btnId, panelId) => { const b = $(btnId), p = $(panelId); if (b && p) b.classList.toggle('active', !p.classList.contains('hidden')); };
-  mark('btnRoof', 'roofPanel'); mark('btnDw', 'dwPanel'); mark('btnFloor', 'floorPanel'); mark('btnFram', 'framPanel'); mark('btnEsc', 'escPanel'); mark('btnStrp', 'strpPanel');
+  mark('btnRoof', 'roofPanel'); mark('btnDw', 'dwPanel'); mark('btnFloor', 'floorPanel'); mark('btnFram', 'framPanel'); mark('btnEsc', 'escPanel'); mark('btnStrp', 'strpPanel'); mark('btnSid', 'sidPanel');
   // Earthwork has no toolbar button — its panel is closed by the ✕ in its header
   // and reopened by the floating ⛰ button (top-right of the canvas), shown only
   // while in dirt mode with the panel closed.
@@ -2643,6 +2694,7 @@ function setTrade(t, { save = true } = {}) {
   document.body.classList.toggle('trade-framing', state.trade === 'framing');
   document.body.classList.toggle('trade-esc', state.trade === 'esc');
   document.body.classList.toggle('trade-striping', state.trade === 'striping');
+  document.body.classList.toggle('trade-siding', state.trade === 'siding');
   if ($('tradeSel')) $('tradeSel').value = state.trade;
   // drop a now-hidden tool + close the other trade's panel
   for (const [tr, tools] of Object.entries(TRADE_TOOLS)) {
@@ -2650,7 +2702,7 @@ function setTrade(t, { save = true } = {}) {
   }
   if (state.trade && FOCUS_HIDDEN_TOOLS.includes(tool)) setTool('pan'); // annotation/measure collapse in trade focus
   // leaving a trade closes that trade's panel (markupPanel isn't trade-owned)
-  const TRADE_PANEL = { roofing: 'roofPanel', dirt: 'dirtPanel', drywall: 'dwPanel', flooring: 'floorPanel', framing: 'framPanel', esc: 'escPanel', striping: 'strpPanel' };
+  const TRADE_PANEL = { roofing: 'roofPanel', dirt: 'dirtPanel', drywall: 'dwPanel', flooring: 'floorPanel', framing: 'framPanel', esc: 'escPanel', striping: 'strpPanel', siding: 'sidPanel' };
   for (const [tr, panelId] of Object.entries(TRADE_PANEL)) {
     if (state.trade !== tr) { const p = $(panelId); if (p) p.classList.add('hidden'); }
   }
@@ -2672,6 +2724,7 @@ function setTrade(t, { save = true } = {}) {
     else if (state.trade === 'framing') setMsg('Framing & Lumber — trace wall runs (‖), set stud size; studs / plates / board-feet in 🪵, prices in $ Bid.');
     else if (state.trade === 'esc') setMsg('Erosion & Sediment Control — trace silt fence and the other perimeter controls (〰); LF by type in 🌱, prices in $ Bid.');
     else if (state.trade === 'striping') setMsg('Striping & Signage — count stalls (⊞), trace stop bars / crosswalks / lane lines (≡); totals in 🅿, prices in $ Bid.');
+    else if (state.trade === 'siding') setMsg('Siding — trace each elevation (▥), click the openings (⊡) to deduct them; net SF & squares in ▥, prices in $ Bid.');
     scheduleSave();
   }
 }
@@ -2781,6 +2834,7 @@ function renderRoofBid() {
     : state.trade === 'framing' ? 'No framing takeoff yet — trace wall runs (‖) and set the stud size.'
     : state.trade === 'esc' ? 'No erosion-control takeoff yet — trace a control run (〰) and set its type.'
     : state.trade === 'striping' ? 'No striping takeoff yet — count stalls (⊞) or trace a stripe run (≡).'
+    : state.trade === 'siding' ? 'No siding takeoff yet — trace an elevation (▥) and set its material.'
     : 'No takeoff yet — pick a trade in the toolbar dropdown, or trace a takeoff and come back.';
   $('bidTable').innerHTML = head + '<tbody>' + (lines.length ? body : `<tr><td colspan="5" class="mk-empty">${emptyMsg}</td></tr>`) + '</tbody>';
   $('bidTotals').innerHTML =
@@ -2850,6 +2904,7 @@ function openRoofBid() {
     : state.trade === 'framing' ? '🪵 Framing & Lumber bid'
     : state.trade === 'esc' ? '🌱 Erosion & Sediment Control bid'
     : state.trade === 'striping' ? '🅿 Striping & Signage bid'
+    : state.trade === 'siding' ? '▥ Siding, Gutters & Insulation bid'
     : '$ Takeoff bid';
   const co = loadBranding();
   $('bidCompanyName').value = co.name || '';
@@ -3438,6 +3493,7 @@ function projectData() {
     framing: state.framing,
     esc: state.esc,
     striping: state.striping,
+    siding: state.siding,
     estimateId: state.estimateId || null,
   };
 }
@@ -3446,6 +3502,7 @@ const defaultFlooring = () => ({ waste: 10, underlay: 'none', tileSize: '12x12',
 const defaultFraming = () => ({ spacing: 16, height: 9, topPlates: 2, sheathWaste: 10 });
 const defaultEsc = () => ({ entranceDepth: 6, stoneDensity: 105, seedRate: 200, mulchRate: 2, blanketWaste: 10, riprapDepth: 12 });
 const defaultStriping = () => ({ coverage4in: 320, beadRate: 6, coats: 1 });
+const defaultSiding = () => ({ waste: 10, insulWaste: 5, battCoverage: 88 });
 const defaultEarthwork = () => ({ existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 }, gridFt: 5, shrink: 15, swell: 25, truckCap: 12, interval: 1, result: null });
 // next contour's default elevation = last + interval (auto-steps up a slope)
 const nextElevDefault = surf => { const iv = Number(state.earthwork.interval) || 0; return lastElev[surf] != null ? lastElev[surf] + iv : ''; };
@@ -3526,6 +3583,7 @@ async function openProject(rec) {
   state.framing = (rec.data && rec.data.framing) || defaultFraming();
   state.esc = (rec.data && rec.data.esc) || defaultEsc();
   state.striping = (rec.data && rec.data.striping) || defaultStriping();
+  state.siding = (rec.data && rec.data.siding) || defaultSiding();
   state.estimateId = (rec.data && rec.data.estimateId) || null;
   renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
   try { localStorage.setItem('planroom-current', rec.id); } catch (_) {}
@@ -3566,6 +3624,7 @@ async function newProject(name) {
   state.framing = defaultFraming();
   state.esc = defaultEsc();
   state.striping = defaultStriping();
+  state.siding = defaultSiding();
   state.estimateId = null;
   renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
   try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
@@ -3711,6 +3770,7 @@ $('fileImport').addEventListener('change', async e => {
   state.framing = d.framing || defaultFraming();
   state.esc = d.esc || defaultEsc();
   state.striping = d.striping || defaultStriping();
+  state.siding = d.siding || defaultSiding();
   state.estimateId = d.estimateId || null;
   renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
   if (d.docB64) {
@@ -4130,6 +4190,7 @@ async function copyCompanyProject(id) {
     state.framing = t.data.framing || defaultFraming();
     state.esc = t.data.esc || defaultEsc();
     state.striping = t.data.striping || defaultStriping();
+    state.siding = t.data.siding || defaultSiding();
     state.estimateId = t.data.estimateId || null;
     renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
     try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
@@ -4812,6 +4873,7 @@ const fsheathSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0); // shea
 const esclineLenFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0); // ESC linear control run
 const escareaSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0); // ESC stabilized area
 const sstripeLenFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0); // painted stripe run
+const swallSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0); // siding elevation (gross)
 const FINISH_MUD = { L3: 0.020, L4: 0.027, L5: 0.036 }; // gal ready-mix / SF by finish level
 // Suspended (ACT) drop-ceiling grid takeoff from area + wall perimeter. Rule-of-thumb
 // counts: mains 4' OC, 4' cross tees 2' OC (both layouts), 2' cross tees only on 2×2;
@@ -5501,6 +5563,105 @@ if ($('strpStallTb')) $('strpStallTb').addEventListener('change', e => { curStrp
 if ($('strpLineTb')) $('strpLineTb').addEventListener('change', e => { curStrpLine = e.target.value; if (tool === 'sstripe') setTool('sstripe'); });
 if ($('strpMarkTb')) $('strpMarkTb').addEventListener('change', e => { curStrpMark = e.target.value; if (tool === 'smark') setTool('smark'); });
 
+/* ---- Siding, Gutters & Insulation pack ---- */
+function sidingTotals() {
+  const byMat = {}; // mat -> gross SF
+  const openCounts = {}; // otype -> EA
+  let grossSF = 0, deductSF = 0, openings = 0;
+  for (const m of state.markups) {
+    if (m.kind === 'sopening') {
+      const c = m.cfg || {};
+      const n = m.pts.length;
+      openCounts[c.otype] = (openCounts[c.otype] || 0) + n;
+      openings += n;
+      deductSF += n * (Number(c.deductSF) || 0);
+      continue;
+    }
+    if (m.kind !== 'swall') continue;
+    const mat = (m.cfg && m.cfg.mat) || 'vinyl';
+    const sf = swallSf(m);
+    if (sf < 0.01) continue;
+    byMat[mat] = (byMat[mat] || 0) + sf;
+    grossSF += sf;
+  }
+  // Openings aren't tied to a wall, so the deduction is applied to the whole
+  // elevation set and split across materials by their share of gross. On a
+  // single-material job (the common case) that's exact; on a mixed one it's the
+  // honest approximation, and the panel shows gross/deduct/net so it's visible.
+  const netSF = Math.max(0, grossSF - deductSF);
+  const netByMat = {};
+  for (const k in byMat) {
+    netByMat[k] = grossSF > 0 ? byMat[k] / grossSF * netSF : 0;
+  }
+  return { byMat, netByMat, grossSF, deductSF, netSF, openCounts, openings };
+}
+function sidingBidLines() {
+  const T = sidingTotals();
+  const lines = [];
+  const waste = 1 + (Number(state.siding.waste) || 0) / 100;
+  for (const k of SID_MAT_KINDS) {
+    const sf = T.netByMat[k];
+    if (!sf || sf < 0.5) continue;
+    lines.push({ key: `sid_mat_${k}`, label: `${SID_MAT_LABEL[k]} (net + ${fmt(state.siding.waste || 0, 0)}% waste)`, qty: sf * waste, unit: 'SF', q: 0, defPrice: SID_MAT_PRICE[k] || 4.5 });
+  }
+  for (const k of SID_OPEN_KINDS) {
+    const ea = T.openCounts[k];
+    if (!ea) continue;
+    lines.push({ key: `sid_open_${k}`, label: `${SID_OPEN_LABEL[k]} trim & wrap`, qty: ea, unit: 'EA', q: 0, defPrice: SID_OPEN_PRICE[k] || 65 });
+  }
+  return lines;
+}
+function renderSidingPanel() {
+  const panel = $('sidPanel');
+  if (!panel || panel.classList.contains('hidden')) return;
+  const S = state.siding;
+  const T = sidingTotals();
+  const rows = [];
+  const R = (a, b) => rows.push(`<div class="dirt-row"><span>${a}</span><span class="v">${b}</span></div>`);
+  const matOpts = SID_MAT_KINDS.map(k => `<option value="${k}">${SID_MAT_LABEL[k]}</option>`).join('');
+  const opOpts = SID_OPEN_KINDS.map(k => `<option value="${k}">${SID_OPEN_LABEL[k]}</option>`).join('');
+  rows.push('<div class="roof-sub">Settings</div>');
+  rows.push(`<div class="dirt-set">New walls <select id="sidMat">${matOpts}</select> · Waste <input type="number" id="sidWaste" min="0" step="1" style="width:44px"> %</div>`);
+  rows.push(`<div class="dirt-set">New openings <select id="sidOpen">${opOpts}</select></div>`);
+  if (T.grossSF > 0.5) {
+    // Gross / deduct / net side by side: the deduction is the thing most likely
+    // to be wrong, so it's shown rather than silently folded into the total.
+    rows.push('<div class="roof-sub">Wall area</div>');
+    R('Gross', `${fmt(T.grossSF, 0)} SF`);
+    R('Openings deduct', `−${fmt(T.deductSF, 0)} SF`);
+    rows.push(`<div class="dirt-row"><b>Net</b><span class="v"><b>${fmt(T.netSF, 0)} SF · ${fmt(T.netSF / SF_PER_SQUARE, 1)} sq</b></span></div>`);
+    const waste = 1 + (Number(S.waste) || 0) / 100;
+    rows.push('<div class="roof-sub">By material (net + waste)</div>');
+    for (const k of SID_MAT_KINDS) {
+      const sf = T.netByMat[k];
+      if (!sf || sf < 0.5) continue;
+      R(SID_MAT_LABEL[k], `${fmt(sf * waste, 0)} SF · ${fmt(sf * waste / SF_PER_SQUARE, 1)} sq`);
+    }
+  }
+  if (T.openings > 0) {
+    rows.push('<div class="roof-sub">Openings</div>');
+    for (const k of SID_OPEN_KINDS) { const ea = T.openCounts[k]; if (!ea) continue; R(SID_OPEN_LABEL[k], `${ea} EA`); }
+    rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${T.openings} EA</b></span></div>`);
+  }
+  if (T.grossSF < 0.5 && !T.openings) rows.push('<div class="hint" style="margin:4px 0">Nothing yet — trace an elevation (▥) and set its material.</div>');
+  rows.push('<div class="hint" style="margin:4px 0">Trace elevations gross; openings (⊡) deduct from the total, so the bid uses <b>net</b>. Openings still bill a trim &amp; wrap EA — cutting siding around one costs more than the SF it removes. Squares = net ÷ 100. Prices in $ Bid.</div>');
+  $('sidBody').innerHTML = rows.join('');
+  $('sidMat').value = curSidMat;
+  $('sidOpen').value = curSidOpen;
+  $('sidWaste').value = S.waste != null ? S.waste : 10;
+  $('sidMat').addEventListener('change', e => { curSidMat = e.target.value; if (tool === 'swall') setTool('swall'); });
+  $('sidOpen').addEventListener('change', e => { curSidOpen = e.target.value; if (tool === 'sopening') setTool('sopening'); });
+  $('sidWaste').addEventListener('change', e => { S.waste = Math.max(0, parseFloat(e.target.value) || 0); e.target.value = S.waste; scheduleSave(); renderSidingPanel(); });
+}
+$('btnSid').addEventListener('click', () => {
+  const p = $('sidPanel');
+  p.classList.toggle('hidden');
+  if (!p.classList.contains('hidden')) { closeOtherPanels('sidPanel'); renderSidingPanel(); }
+  syncPanelButtons();
+});
+if ($('sidMatTb')) $('sidMatTb').addEventListener('change', e => { curSidMat = e.target.value; if (tool === 'swall') setTool('swall'); });
+if ($('sidOpenTb')) $('sidOpenTb').addEventListener('change', e => { curSidOpen = e.target.value; if (tool === 'sopening') setTool('sopening'); });
+
 /* ===================== Live sessions (SSE + REST ops) =====================
  * Host "goes live" on the current project; teammates join and co-edit in real
  * time. Server→client push via EventSource; client→server via REST ops. Every
@@ -5522,7 +5683,7 @@ async function apiLive(path, opts = {}) {
 }
 
 function sessionDoc() {
-  return { scales: state.scales, scaleBars: state.scaleBars, page: state.page, roofPitch: state.roofPitch, roofWaste: state.roofWaste, roofPrices: state.roofPrices, roofOP: state.roofOP, earthwork: state.earthwork, drywall: state.drywall, flooring: state.flooring, framing: state.framing, esc: state.esc, striping: state.striping };
+  return { scales: state.scales, scaleBars: state.scaleBars, page: state.page, roofPitch: state.roofPitch, roofWaste: state.roofWaste, roofPrices: state.roofPrices, roofOP: state.roofOP, earthwork: state.earthwork, drywall: state.drywall, flooring: state.flooring, framing: state.framing, esc: state.esc, striping: state.striping, siding: state.siding };
 }
 function applySessionDoc(d) {
   if (!d) return;
@@ -5538,6 +5699,7 @@ function applySessionDoc(d) {
   if (d.framing) state.framing = d.framing;
   if (d.esc) state.esc = d.esc;
   if (d.striping) state.striping = d.striping;
+  if (d.siding) state.siding = d.siding;
   if (d.page && d.page !== state.page && state.doc) setPage(d.page);
 }
 
