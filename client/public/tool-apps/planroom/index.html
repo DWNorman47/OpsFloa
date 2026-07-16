@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css?v=33">
+<link rel="stylesheet" href="styles.css?v=34">
 <script>
 (() => {
   try {
@@ -63,6 +63,7 @@
       <option value="flooring">▦ Flooring &amp; Tile</option>
       <option value="framing">🪵 Framing &amp; Lumber</option>
       <option value="esc">🌱 Erosion &amp; Sediment Control</option>
+      <option value="striping">🅿 Striping &amp; Signage</option>
     </select>
     <button class="tool tb-takeoff tr-roof" data-tool="plane" title="Roof plane — trace a roof face, set its pitch → sloped area + squares">▰</button>
     <button class="tool tb-takeoff tr-roof" data-tool="redge" title="Roof edge — trace eave/rake/ridge/hip/valley/flashing → linear feet (hip/valley/rake pitch-corrected)">╱</button>
@@ -181,6 +182,24 @@
         <option value="riprap">Riprap / outlet protection</option>
       </select>
     </div>
+    <div class="tb-sub tb-takeoff tr-strp">
+      <button class="tool" data-tool="sstall" title="Parking stall — click each stall &rarr; counted EA by type. The stall price includes painting its own lines. Double-click a group to change its type.">&#8862;</button>
+      <select id="strpStallTb" class="mini-sel" title="Stall type for new counts">
+        <option value="standard">Standard stall</option>
+        <option value="compact">Compact stall</option>
+        <option value="ada">ADA accessible</option>
+        <option value="adavan">ADA van-accessible</option>
+      </select>
+      <button class="tool" data-tool="sstripe" title="Stripe run — trace a stop bar / crosswalk / lane line / hatching &rarr; LF by type. Don't trace stall lines; they're already in the stall price.">&#8801;</button>
+      <select id="strpLineTb" class="mini-sel" title="Stripe type for new runs">
+        <option value="line4">4&quot; line</option>
+        <option value="line6">6&quot; line</option>
+        <option value="line8">8&quot; line</option>
+        <option value="xwalk">12&quot; crosswalk</option>
+        <option value="stopbar">24&quot; stop bar</option>
+        <option value="hatch">Hatching / diagonal</option>
+      </select>
+    </div>
     <input type="color" id="mkColor" class="dirt-hide" value="#e05555" title="Markup color (applies to the selected markup too)">
     <select id="mkWidth" class="dirt-hide" title="Line weight / text size (applies to the selected markup too)">
       <option value="S">Thin</option>
@@ -240,6 +259,7 @@
     <button id="btnFloor" class="btn tb-takeoff tr-floor" title="Flooring & Tile — net floor SF by material with waste; prices in $ Bid">▦<span class="btn-label"> Floor</span></button>
     <button id="btnFram" class="btn tb-takeoff tr-fram" title="Framing & Lumber — studs, plates & board-feet by stud size; prices in $ Bid">🪵<span class="btn-label"> Framing</span></button>
     <button id="btnEsc" class="btn tb-takeoff tr-esc" title="Erosion &amp; Sediment Control — silt fence and perimeter controls by LF; prices in $ Bid">🌱<span class="btn-label"> ESC</span></button>
+    <button id="btnStrp" class="btn tb-takeoff tr-strp" title="Striping &amp; Signage — stalls, ADA tally, and painted runs by LF; prices in $ Bid">🅿<span class="btn-label"> Striping</span></button>
     <button id="btnBid" class="btn tb-takeoff" title="Takeoff bid — roofing materials & labor and earthwork volumes, editable prices, print / CSV">$<span class="btn-label"> Bid</span></button>
     <button id="btnUpsell" class="btn tb-upsell" title="Turn your measurements into a priced takeoff & bid — Takeoff layer add-on">🔒<span class="btn-label"> Takeoff</span></button>
     <div class="menu-wrap">
@@ -331,6 +351,10 @@
   <aside id="escPanel" class="hidden" aria-label="Erosion &amp; Sediment Control takeoff">
     <div class="mk-head"><b>🌱 Erosion &amp; Sediment Control</b></div>
     <div id="escBody" class="mk-list"></div>
+  </aside>
+  <aside id="strpPanel" class="hidden" aria-label="Striping &amp; Signage takeoff">
+    <div class="mk-head"><b>🅿 Striping &amp; Signage</b></div>
+    <div id="strpBody" class="mk-list"></div>
   </aside>
 </main>
 
@@ -604,6 +628,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=33"></script>
+<script type="module" src="app.js?v=34"></script>
 </body>
 </html>
