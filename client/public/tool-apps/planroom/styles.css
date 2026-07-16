@@ -113,6 +113,7 @@ body:not(.has-storm) .storm-only { display: none !important; }
 body:not(.trade-roofing) .tr-roof { display: none; }
 body:not(.trade-dirt) .tr-dirt { display: none; }
 body:not(.trade-drywall) .tr-dwall { display: none; }
+body:not(.trade-flooring) .tr-floor { display: none; }
 /* trade focus: with a trade active, collapse the general redlining + generic
    measure tools so the trade's own tools stand out (base tier keeps them all) */
 body.trade-active .tb-focus-hide { display: none !important; }

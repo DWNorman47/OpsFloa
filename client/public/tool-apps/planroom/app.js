@@ -59,11 +59,13 @@ const state = {
   // page numbers; align maps proposed-page px -> existing-page px at compute.
   earthwork: { existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 },
     gridFt: 5, shrink: 15, swell: 25, truckCap: 12, interval: 1, result: null },
-  trade: '',        // takeoff trade mode: '' (markup only) | 'roofing' | 'dirt' | 'drywall'
+  trade: '',        // takeoff trade mode: '' (markup only) | 'roofing' | 'dirt' | 'drywall' | 'flooring'
   bidMeta: {},      // per-bid project / prepared-by / date overrides
   estimateId: null, // OpsFloa estimate this project was launched from (?estimate=), for pushing pricing back
   // drywall & paint pack settings (project-wide)
   drywall: { wallHeight: 9, sheetSF: 32, waste: 10, coverage: 375, coats: 2, finish: 'L4', texture: 'none', insul: 'none' },
+  // flooring & tile pack settings (project-wide)
+  flooring: { waste: 10 },
 };
 let curDwSides = 2;  // 1 = perimeter/against structure, 2 = interior partition (both faces)
 let curCeilType = 'drywall';  // ceiling type for new ceilings: drywall | act24 | act22 (ACT = suspended grid)
@@ -71,6 +73,9 @@ const OPENING_DEDUCT = { door: 21, window: 15, opening: 15 }; // SF deducted fro
 const OPENING_LABEL = { door: 'Door', window: 'Window', opening: 'Opening' };
 const TRIM_LABEL = { base: 'Base', crown: 'Crown', chair: 'Chair rail' };
 const CEIL_LABEL = { drywall: 'Drywall', act24: 'ACT 2×4', act22: 'ACT 2×2' };
+let curFloorType = 'tile'; // material for new flooring rooms
+const FLOOR_LABEL = { tile: 'Tile', lvp: 'LVP / vinyl plank', laminate: 'Laminate', hardwood: 'Hardwood', carpet: 'Carpet', vinyl: 'Sheet vinyl', other: 'Other' };
+const FLOOR_PRICE = { tile: 9, lvp: 5.5, laminate: 4, hardwood: 9, carpet: 3.5, vinyl: 3.5, other: 5 }; // $/SF installed default
 const TEXTURE_LABEL = { none: 'None', smooth: 'Smooth / skim', orange: 'Orange peel', knockdown: 'Knockdown', popcorn: 'Popcorn' };
 const TEXTURE_PRICE = { smooth: 0.30, orange: 0.35, knockdown: 0.40, popcorn: 0.55 }; // $/SF texture (labor+material)
 const INSUL_LABEL = { none: 'None', r11: 'R-11 batt', r13: 'R-13 batt', r15: 'R-15 batt', r19: 'R-19 batt', r21: 'R-21 batt', sound: 'Sound batt' };
@@ -176,7 +181,7 @@ els.hud.addEventListener('click', () => { clearTimeout(hudTimer); els.hud.classL
  * Widths/sizes are document-space (base px) so markups print/zoom like ink.
  */
 
-const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight'];
+const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom'];
 const MK_LABEL = {
   cloud: 'Cloud', rect: 'Rectangle', ellipse: 'Ellipse', arrow: 'Arrow', line: 'Line',
   freehand: 'Pen', highlight: 'Highlight', text: 'Text', callout: 'Callout',
@@ -185,6 +190,7 @@ const MK_LABEL = {
   contour: 'Contour', espot: 'Spot elev', epad: 'Pad', ebound: 'Earthwork boundary',
   qarea: 'Area takeoff', qline: 'Line takeoff', qcount: 'Count takeoff',
   dwall: 'Wall run', dceiling: 'Ceiling', dopening: 'Opening', dtrim: 'Trim', dheight: 'Height',
+  froom: 'Floor room',
 };
 const MK_ICON = {
   cloud: '☁', rect: '▭', ellipse: '⬭', arrow: '↗', line: '╲',
@@ -194,9 +200,10 @@ const MK_ICON = {
   contour: '⛰', espot: '◎', epad: '◫', ebound: '⬚',
   qarea: '▨', qline: '⌇', qcount: '⊙',
   dwall: '▬', dceiling: '⬜', dopening: '🚪', dtrim: '▁', dheight: '↕',
+  froom: '▦',
 };
 const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
-const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight']; // click-built (vs drag; espot/align are special-cased)
+const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom']; // click-built (vs drag; espot/align are special-cased)
 const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling', 'dtrim']; // produce ft / SF / squares
 
 /* ---- earthwork (sitework pack) helpers ---- */
@@ -316,6 +323,7 @@ function roofBidLines() {
   // quantity takeoffs (area/line/count/wall) belong to the sitework trade
   if (trade === 'dirt' || !trade) { lines.push(...areaBidLines()); lines.push(...lineBidLines()); lines.push(...countBidLines()); }
   if (trade === 'drywall' || !trade) lines.push(...drywallBidLines());
+  if (trade === 'flooring' || !trade) lines.push(...flooringBidLines());
   // consolidated view (no trade selected): only rows with real quantities
   const finalLines = trade ? lines.filter(l => Math.abs(l.qty) > 0.001) : lines.filter(l => l.qty > 0);
   for (const l of finalLines) { l.price = priceFor(l.key, l.defPrice || 0); l.ext = l.qty * l.price; }
@@ -440,6 +448,7 @@ function measureValue(m) {
   if (m.kind === 'dopening') { const c = m.cfg || {}; const n = m.pts.length; return `${n} ${OPENING_LABEL[c.otype] || 'Opening'}${n === 1 ? '' : 's'} (−${fmt(c.deductSF || 0)} SF ea)`; }
   if (m.kind === 'dtrim') { const c = m.cfg || {}; return `${TRIM_LABEL[c.ttype] || 'Trim'} · ${fmt(polyLengthFt(m.pts, state.scales[m.page] || 0))} ft`; }
   if (m.kind === 'dheight') return `${m.text || 'Height'} · ${fmt(polyLengthFt(m.pts, s), 1)} ft`;
+  if (m.kind === 'froom') { const cfg = m.cfg || {}; return `${FLOOR_LABEL[cfg.ftype] || 'Floor'} · ${fmt(polygonAreaFt2(m.pts, s), 0)} SF`; }
   return '';
 }
 const LINE_W = { S: 2, M: 4, L: 8 };
@@ -498,6 +507,7 @@ function markupsChanged() {
   if (typeof renderRoofPanel === 'function') renderRoofPanel();
   if (typeof renderDirtPanel === 'function') renderDirtPanel();
   if (typeof renderDrywallPanel === 'function') renderDrywallPanel();
+  if (typeof renderFlooringPanel === 'function') renderFlooringPanel();
   scheduleSave();
   vp.requestDraw();
 }
@@ -637,6 +647,7 @@ function drawMarkup(ctx, m) {
       labelAt(ctx, m, mid.x, mid.y - (m.width || 4) * 2.5);
       break;
     }
+    case 'froom':
     case 'marea': {
       if (m.pts.length >= 2) {
         ctx.beginPath();
@@ -1514,6 +1525,8 @@ function setTool(t) {
     setMsg(`Trace a ${CEIL_LABEL[curCeilType]} ceiling outline; Enter/double-click to close.${curCeilType === 'drywall' ? '' : ' Grid, tile & hangers taken off separately. Double-click a ceiling to change its type.'}`);
   } else if (t === 'dopening') {
     setMsg(`Click each ${OPENING_LABEL[curDwOpening].toLowerCase()} (−${OPENING_DEDUCT[curDwOpening]} SF each); Enter/double-click to finish.`);
+  } else if (t === 'froom') {
+    setMsg(`Trace a ${FLOOR_LABEL[curFloorType]} room outline; Enter/double-click to close → floor SF. Double-click a room to change its material.`);
   } else if (t === 'dheight') {
     setMsg((state.scales[state.page] || 0)
       ? 'On an elevation / section sheet, click the floor then the ceiling (bottom → top); double-click or Enter to finish, then name it. Set it as the default in 🧱 or double-click a wall run to apply it.'
@@ -1841,7 +1854,7 @@ els.cv.addEventListener('pointercancel', endDrag);
 
 /* ---- click-built measure drafts: commit / cancel ---- */
 
-const CLOSED_KINDS = ['marea', 'plane', 'epad', 'ebound', 'qarea', 'dceiling']; // 3+ pts, closed polygon
+const CLOSED_KINDS = ['marea', 'plane', 'epad', 'ebound', 'qarea', 'dceiling', 'froom']; // 3+ pts, closed polygon
 const POINT_KINDS = ['mcount', 'ritem', 'qcount', 'dopening']; // 1+ pts, no rubber band
 
 /* ---- vertex reshaping: drag a point (handled in the pointer flow), Alt-click
@@ -1949,6 +1962,7 @@ function commitDraft() {
   else if (d.kind === 'redge') extra.etype = $('edgeType') ? $('edgeType').value : 'eave';
   else if (d.kind === 'ritem') extra.itype = $('itemType') ? $('itemType').value : 'boot';
   else if (d.kind === 'contour' || d.kind === 'epad') extra.surface = curSurface;
+  else if (d.kind === 'froom') extra.cfg = { ftype: curFloorType };
   else if (d.kind === 'dwall') { extra.height = state.drywall.wallHeight; extra.sides = curDwSides; }
   else if (d.kind === 'dceiling') extra.cfg = { ctype: curCeilType };
   else if (d.kind === 'dopening') extra.cfg = { otype: curDwOpening, deductSF: OPENING_DEDUCT[curDwOpening] };
@@ -2048,6 +2062,16 @@ els.cv.addEventListener('dblclick', e => {
     vp.requestDraw();
     modals.askText('Rename height', `${fmt(dheightFt(hit), 1)} ft measured`, hit.text || '')
       .then(t => { if (t != null && t.trim()) { const prev = snapshot(); hit.text = t.trim(); pushUndo(prev); markupsChanged(); } });
+    return;
+  }
+  // double-click a floor room to change its material
+  if (hit && hit.kind === 'froom') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    const cur = (hit.cfg && hit.cfg.ftype) || 'tile';
+    askChoice('Floor material', 'Rooms roll up on the bid by material.',
+      ['tile', 'lvp', 'laminate', 'hardwood', 'carpet', 'vinyl', 'other'].map(k => ({ label: FLOOR_LABEL[k], value: k, primary: k === cur }))
+    ).then(v => { if (v && v !== cur) { const prev = snapshot(); hit.cfg = { ...(hit.cfg || {}), ftype: v }; curFloorType = v; pushUndo(prev); markupsChanged(); } });
     return;
   }
   // double-click a ceiling to change its type (drywall vs ACT drop-ceiling)
@@ -2205,7 +2229,7 @@ function deleteSelected() {
 
 $('btnList').addEventListener('click', () => {
   els.markupPanel.classList.toggle('hidden');
-  if (!els.markupPanel.classList.contains('hidden')) { $('roofPanel').classList.add('hidden'); $('dirtPanel').classList.add('hidden'); $('dwPanel').classList.add('hidden'); renderMarkupList(); }
+  if (!els.markupPanel.classList.contains('hidden')) { $('roofPanel').classList.add('hidden'); $('dirtPanel').classList.add('hidden'); $('dwPanel').classList.add('hidden'); $('floorPanel').classList.add('hidden'); renderMarkupList(); }
   syncPanelButtons();
 });
 els.mkKindFilter.addEventListener('change', renderMarkupList);
@@ -2299,13 +2323,14 @@ const TRADE_TOOLS = {
   roofing: ['plane', 'redge', 'ritem'],
   dirt: ['wand', 'contour', 'espot', 'epad', 'ebound', 'align', 'autoarea', 'qarea', 'qline', 'qcount'],
   drywall: ['dwall', 'dceiling', 'dopening', 'dtrim', 'dheight'],
+  flooring: ['froom'],
 };
 // general redlining + generic measure tools that collapse while a trade is active
 const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
 // Toolbar trade buttons show an 'active' state while their side panel is open.
 function syncPanelButtons() {
   const mark = (btnId, panelId) => { const b = $(btnId), p = $(panelId); if (b && p) b.classList.toggle('active', !p.classList.contains('hidden')); };
-  mark('btnRoof', 'roofPanel'); mark('btnDirt', 'dirtPanel'); mark('btnDw', 'dwPanel');
+  mark('btnRoof', 'roofPanel'); mark('btnDirt', 'dirtPanel'); mark('btnDw', 'dwPanel'); mark('btnFloor', 'floorPanel');
 }
 function setTrade(t, { save = true } = {}) {
   state.trade = t || '';
@@ -2313,6 +2338,7 @@ function setTrade(t, { save = true } = {}) {
   document.body.classList.toggle('trade-roofing', state.trade === 'roofing');
   document.body.classList.toggle('trade-dirt', state.trade === 'dirt');
   document.body.classList.toggle('trade-drywall', state.trade === 'drywall');
+  document.body.classList.toggle('trade-flooring', state.trade === 'flooring');
   if ($('tradeSel')) $('tradeSel').value = state.trade;
   // drop a now-hidden tool + close the other trade's panel
   for (const [tr, tools] of Object.entries(TRADE_TOOLS)) {
@@ -2322,6 +2348,7 @@ function setTrade(t, { save = true } = {}) {
   if (state.trade !== 'roofing') $('roofPanel').classList.add('hidden');
   if (state.trade !== 'dirt') $('dirtPanel').classList.add('hidden');
   if (state.trade !== 'drywall') $('dwPanel').classList.add('hidden');
+  if (state.trade !== 'flooring') $('floorPanel').classList.add('hidden');
   // Earthwork: open its side panel by default — on a user switch AND when a
   // project loads already in dirt mode. Collapse Sheets if the setup is done.
   if (state.trade === 'dirt') {
@@ -2335,6 +2362,7 @@ function setTrade(t, { save = true } = {}) {
     if (state.trade === 'roofing') setMsg('Roofing takeoff — trace planes (▰), edges (╱), items (⊕); totals in 🏠 Roof, prices in $ Bid.');
     else if (state.trade === 'dirt') setMsg('Earthwork takeoff — set the sheets in ⛰ Dirt, trace contours (⛰), align (⌖), then ∑ Calculate.');
     else if (state.trade === 'drywall') setMsg('Drywall & Paint — trace wall runs (▬) and ceilings (⬜); set the wall height in 🧱; prices in $ Bid.');
+    else if (state.trade === 'flooring') setMsg('Flooring & Tile — trace each room (▦), set its material; net SF by material in 🟫, prices in $ Bid.');
     scheduleSave();
   }
 }
@@ -2440,6 +2468,7 @@ function renderRoofBid() {
     state.trade === 'dirt' ? 'No earthwork volumes yet — run ∑ Calculate in the ⛰ Dirt panel first.'
     : state.trade === 'roofing' ? 'No roofing takeoff yet — trace planes (▰), edges (╱), and items (⊕).'
     : state.trade === 'drywall' ? 'No drywall takeoff yet — trace wall runs (▬) and ceilings (⬜).'
+    : state.trade === 'flooring' ? 'No flooring takeoff yet — trace each room (▦) and set its material.'
     : 'No takeoff yet — pick a trade in the toolbar dropdown, or trace a takeoff and come back.';
   $('bidTable').innerHTML = head + '<tbody>' + (lines.length ? body : `<tr><td colspan="5" class="mk-empty">${emptyMsg}</td></tr>`) + '</tbody>';
   $('bidTotals').innerHTML =
@@ -2505,6 +2534,7 @@ function openRoofBid() {
     state.trade === 'roofing' ? '🏠 Roofing bid'
     : state.trade === 'dirt' ? '⛰ Earthwork bid'
     : state.trade === 'drywall' ? '🧱 Drywall & Paint bid'
+    : state.trade === 'flooring' ? '▦ Flooring & Tile bid'
     : '$ Takeoff bid';
   const co = loadBranding();
   $('bidCompanyName').value = co.name || '';
@@ -3062,10 +3092,12 @@ function projectData() {
     trade: state.trade,
     bidMeta: state.bidMeta,
     drywall: state.drywall,
+    flooring: state.flooring,
     estimateId: state.estimateId || null,
   };
 }
 const defaultDrywall = () => ({ wallHeight: 9, sheetSF: 32, waste: 10, coverage: 375, coats: 2, finish: 'L4', texture: 'none', insul: 'none' });
+const defaultFlooring = () => ({ waste: 10 });
 const defaultEarthwork = () => ({ existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 }, gridFt: 5, shrink: 15, swell: 25, truckCap: 12, interval: 1, result: null });
 // next contour's default elevation = last + interval (auto-steps up a slope)
 const nextElevDefault = surf => { const iv = Number(state.earthwork.interval) || 0; return lastElev[surf] != null ? lastElev[surf] + iv : ''; };
@@ -3142,6 +3174,7 @@ async function openProject(rec) {
   state.trade = (rec.data && rec.data.trade) || '';
   state.bidMeta = (rec.data && rec.data.bidMeta) || {};
   state.drywall = (rec.data && rec.data.drywall) || defaultDrywall();
+  state.flooring = (rec.data && rec.data.flooring) || defaultFlooring();
   state.estimateId = (rec.data && rec.data.estimateId) || null;
   renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
   try { localStorage.setItem('planroom-current', rec.id); } catch (_) {}
@@ -3178,6 +3211,7 @@ async function newProject(name) {
   state.trade = '';
   state.bidMeta = {};
   state.drywall = defaultDrywall();
+  state.flooring = defaultFlooring();
   state.estimateId = null;
   renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
   try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
@@ -3319,6 +3353,7 @@ $('fileImport').addEventListener('change', async e => {
   state.trade = d.trade || '';
   state.bidMeta = d.bidMeta || {};
   state.drywall = d.drywall || defaultDrywall();
+  state.flooring = d.flooring || defaultFlooring();
   state.estimateId = d.estimateId || null;
   renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
   if (d.docB64) {
@@ -3734,6 +3769,7 @@ async function copyCompanyProject(id) {
     state.trade = t.data.trade || '';
     state.bidMeta = t.data.bidMeta || {};
     state.drywall = t.data.drywall || defaultDrywall();
+    state.flooring = t.data.flooring || defaultFlooring();
     state.estimateId = t.data.estimateId || null;
     renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
     try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
@@ -4409,6 +4445,7 @@ const dwallHeight = m => (m.height != null ? m.height : state.drywall.wallHeight
 const dwallSf = m => dwallLenFt(m) * dwallHeight(m) * (m.sides || 2);
 const dceilingSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0);
 const dheightFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0); // measured wall height off an elevation sheet
+const froomSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0); // flooring room area
 const FINISH_MUD = { L3: 0.020, L4: 0.027, L5: 0.036 }; // gal ready-mix / SF by finish level
 // Suspended (ACT) drop-ceiling grid takeoff from area + wall perimeter. Rule-of-thumb
 // counts: mains 4' OC, 4' cross tees 2' OC (both layouts), 2' cross tees only on 2×2;
@@ -4564,6 +4601,63 @@ if ($('dwCeilSel')) $('dwCeilSel').addEventListener('change', e => { curCeilType
 if ($('dwOpeningSel')) $('dwOpeningSel').addEventListener('change', e => { curDwOpening = e.target.value; if (tool === 'dopening') setTool('dopening'); });
 if ($('dwTrimSel')) $('dwTrimSel').addEventListener('change', e => { curDwTrim = e.target.value; if (tool === 'dtrim') setTool('dtrim'); });
 
+/* ---- Flooring & Tile pack ---- */
+const FLOOR_KINDS = ['tile', 'lvp', 'laminate', 'hardwood', 'carpet', 'vinyl', 'other'];
+function flooringTotals() {
+  const byType = {}; // ftype -> gross SF
+  for (const m of state.markups) {
+    if (m.kind !== 'froom') continue;
+    const t = (m.cfg && m.cfg.ftype) || 'tile';
+    byType[t] = (byType[t] || 0) + froomSf(m);
+  }
+  let totalSF = 0;
+  for (const k in byType) totalSF += byType[k];
+  return { byType, totalSF };
+}
+function flooringBidLines() {
+  const T = flooringTotals();
+  const waste = 1 + (Number(state.flooring.waste) || 0) / 100;
+  const lines = [];
+  for (const k of FLOOR_KINDS) {
+    const sf = T.byType[k];
+    if (!sf || sf < 0.5) continue;
+    lines.push({ key: `fl_${k}`, label: `${FLOOR_LABEL[k]} flooring (${state.flooring.waste}% waste)`, qty: sf * waste, unit: 'SF', q: 0, defPrice: FLOOR_PRICE[k] || 5 });
+  }
+  return lines;
+}
+function renderFlooringPanel() {
+  const panel = $('floorPanel');
+  if (!panel || panel.classList.contains('hidden')) return;
+  const F = state.flooring;
+  const T = flooringTotals();
+  const rows = [];
+  const R = (a, b) => rows.push(`<div class="dirt-row"><span>${a}</span><span class="v">${b}</span></div>`);
+  const opts = FLOOR_KINDS.map(k => `<option value="${k}">${FLOOR_LABEL[k]}</option>`).join('');
+  rows.push('<div class="roof-sub">Settings</div>');
+  rows.push(`<div class="dirt-set">New rooms <select id="flType">${opts}</select> · Waste <input type="number" id="flWaste" min="0"> %</div>`);
+  rows.push('<div class="roof-sub">Floor SF by material</div>');
+  let any = false;
+  for (const k of FLOOR_KINDS) { const sf = T.byType[k]; if (!sf) continue; any = true; R(FLOOR_LABEL[k], `${fmt(sf, 0)} SF`); }
+  if (!any) rows.push('<div class="hint" style="margin:4px 0">No rooms yet — trace a room (▦) and set its material.</div>');
+  else {
+    rows.push(`<div class="dirt-row"><b>Total floor SF</b><span class="v"><b>${fmt(T.totalSF, 0)}</b></span></div>`);
+    rows.push(`<div class="hint" style="margin:4px 0">Material SF adds ${F.waste}% waste in the bid. Prices in $ Bid.</div>`);
+  }
+  const body = $('floorBody');
+  body.innerHTML = rows.join('');
+  $('flType').value = curFloorType;
+  $('flWaste').value = F.waste;
+  $('flType').addEventListener('change', e => { curFloorType = e.target.value; if (tool === 'froom') setTool('froom'); });
+  $('flWaste').addEventListener('change', e => { F.waste = Math.max(0, parseFloat(e.target.value) || 10); e.target.value = F.waste; scheduleSave(); renderFlooringPanel(); vp.requestDraw(); });
+}
+$('btnFloor').addEventListener('click', () => {
+  const p = $('floorPanel');
+  p.classList.toggle('hidden');
+  if (!p.classList.contains('hidden')) { els.markupPanel.classList.add('hidden'); $('roofPanel').classList.add('hidden'); $('dirtPanel').classList.add('hidden'); $('dwPanel').classList.add('hidden'); renderFlooringPanel(); }
+  syncPanelButtons();
+});
+if ($('flTypeTb')) $('flTypeTb').addEventListener('change', e => { curFloorType = e.target.value; if (tool === 'froom') setTool('froom'); });
+
 /* ===================== Live sessions (SSE + REST ops) =====================
  * Host "goes live" on the current project; teammates join and co-edit in real
  * time. Server→client push via EventSource; client→server via REST ops. Every
@@ -4585,7 +4679,7 @@ async function apiLive(path, opts = {}) {
 }
 
 function sessionDoc() {
-  return { scales: state.scales, scaleBars: state.scaleBars, page: state.page, roofPitch: state.roofPitch, roofWaste: state.roofWaste, roofPrices: state.roofPrices, roofOP: state.roofOP, earthwork: state.earthwork, drywall: state.drywall };
+  return { scales: state.scales, scaleBars: state.scaleBars, page: state.page, roofPitch: state.roofPitch, roofWaste: state.roofWaste, roofPrices: state.roofPrices, roofOP: state.roofOP, earthwork: state.earthwork, drywall: state.drywall, flooring: state.flooring };
 }
 function applySessionDoc(d) {
   if (!d) return;
@@ -4597,6 +4691,7 @@ function applySessionDoc(d) {
   if (d.roofOP != null) state.roofOP = d.roofOP;
   if (d.earthwork) state.earthwork = d.earthwork;
   if (d.drywall) state.drywall = d.drywall;
+  if (d.flooring) state.flooring = d.flooring;
   if (d.page && d.page !== state.page && state.doc) setPage(d.page);
 }
 
