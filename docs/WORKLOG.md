@@ -23,6 +23,44 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-16 — Fencing & Guardrail trade pack (F1–F3, complete)
+
+**Shipped.** The **11th** trade — `fence` (🚧), in the $60 Takeoff add-on, no own
+SKU. Another trade riding the same site plan that already gets an Earthwork / ESC
+/ Demo takeoff. Tools: ⌗ runs → LF + posts by type (8 types) · ⊓ gates &
+guardrail end treatments → EA, plus a post-concrete cost basis.
+`e815bc9` · plan: `docs/plans/fencing-guardrail-pack.md`
+
+**Call made — posts count per run, and this is the entire pack.** Every run needs
+a post at **both** ends, so it's ⌈LF ÷ spacing⌉ + 1 evaluated **per run**.
+Summing the LF first and computing once is the obvious shortcut and it's wrong:
+two 50-ft runs at 10 ft are 6 + 6 = **12** posts, not ⌈100/10⌉+1 = **11**. The
+error compounds — a 20-run job comes out **19 posts short**, plus their concrete,
+and nothing about the number would look wrong. The test asserts 12 and explicitly
+fails on 11.
+
+**Call made — spacing belongs to the fence type, not the project.** Chain link
+runs at 10 ft, vinyl privacy at 6, W-beam guardrail at 6.25 (the standard). A
+single project-wide spacing setting would be wrong on every mixed job.
+
+**Pattern worth naming — the installed-price trap, now the third time.** `$/LF`
+for fence already includes posts, rails, fabric and concrete, so the post count
+and its concrete are a **panel cost basis and never bid lines**. Same call as the
+striping pack's paint gallons and demo's haul-inside-the-unit-price. All three
+are now *asserted* in tests rather than just commented, so a later change can't
+quietly re-introduce a double-charge. Gates genuinely are quoted on top of the
+LF, so those do bid.
+
+**Verified** against the real functions lifted out of app.js: 12 posts not 11 ·
+20 × 50 ft = 120 posts · vinyl at 6 ft = 18 posts and $42/LF not chain link's $18
+· guardrail at 6.25 ft = 17 posts · 12 holes at 10″ × 30″ = 1.36 CF each → 0.61
+CY → 37 bags · empty `state.fence` defaults hold · a zero-length run yields no
+posts. 47/47 kinds registered in `hitMarkup`, `MK_LABEL`, `MK_ICON`.
+
+⚠️ **Needs David:** hard-refresh — cache-bust **v40**.
+
+---
+
 ## 2026-07-16 — Demolition trade pack (D1–D3, complete)
 
 **Shipped.** The **10th** trade — `demo` (💥), in the $60 Takeoff add-on, no own
@@ -64,7 +102,7 @@ empty `state.demo` falls back to the documented defaults; concrete uses its own
 6" not asphalt's 3"; same-type areas roll up. 45/45 kinds registered in
 `hitMarkup`, `MK_LABEL`, `MK_ICON`.
 
-⚠️ **Needs David:** hard-refresh — cache-bust **v39**.
+⚠️ **Needs David:** hard-refresh — superseded by **v40** (fencing pack).
 
 ---
 
