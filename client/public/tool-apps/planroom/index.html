@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css?v=40">
+<link rel="stylesheet" href="styles.css?v=41">
 <script>
 (() => {
   try {
@@ -67,6 +67,7 @@
       <option value="siding">▥ Siding, Gutters &amp; Insulation</option>
       <option value="demo">💥 Demolition</option>
       <option value="fence">🚧 Fencing &amp; Guardrail</option>
+      <option value="landscape">🌳 Landscape &amp; Irrigation</option>
     </select>
     <button class="tool tb-takeoff tr-roof" data-tool="plane" title="Roof plane — trace a roof face, set its pitch → sloped area + squares">▰</button>
     <button class="tool tb-takeoff tr-roof" data-tool="redge" title="Roof edge — trace eave/rake/ridge/hip/valley/flashing → linear feet (hip/valley/rake pitch-corrected)">╱</button>
@@ -296,6 +297,42 @@
         <option value="endtreat">Guardrail end treatment</option>
       </select>
     </div>
+    <div class="tb-sub tb-takeoff tr-lsc">
+      <button class="tool" data-tool="lsarea" title="Landscape area — trace a mulch bed / sod / seed / rock / planting bed &rarr; SF &rarr; CY, SY or tons. Double-click it to change its type.">&#9634;</button>
+      <select id="lsAreaTb" class="mini-sel" title="Type for new landscape areas">
+        <option value="mulch">Mulch bed</option>
+        <option value="sod">Sod</option>
+        <option value="seed">Lawn seed</option>
+        <option value="rock">Decorative rock</option>
+        <option value="bed">Planting bed (soil prep)</option>
+      </select>
+      <button class="tool" data-tool="lsplant" title="Plant — click each tree / shrub / perennial &rarr; counted EA by type. Double-click a group to change its type.">&#10059;</button>
+      <select id="lsPlantTb" class="mini-sel" title="Type for new plant counts">
+        <option value="tree2">Tree &mdash; 2&Prime; cal.</option>
+        <option value="tree3">Tree &mdash; 3&Prime; cal.</option>
+        <option value="shrub5">Shrub &mdash; 5 gal</option>
+        <option value="shrub3">Shrub &mdash; 3 gal</option>
+        <option value="perennial">Perennial &mdash; 1 gal</option>
+        <option value="grass">Ornamental grass</option>
+      </select>
+      <button class="tool" data-tool="lsline" title="Irrigation run — trace a mainline / lateral / drip / sleeve / edging run &rarr; LF by type. Double-click a run to change its type.">&#8768;</button>
+      <select id="lsLineTb" class="mini-sel" title="Type for new irrigation runs">
+        <option value="main">Mainline 1&Prime;</option>
+        <option value="lateral">Lateral 3/4&Prime;</option>
+        <option value="drip">Drip tubing</option>
+        <option value="sleeve">Sleeve under paving</option>
+        <option value="edging">Steel edging</option>
+      </select>
+      <button class="tool" data-tool="lshead" title="Irrigation head — click each head / emitter / valve / controller &rarr; counted EA by type. Double-click a group to change its type.">&#8859;</button>
+      <select id="lsHeadTb" class="mini-sel" title="Type for new heads">
+        <option value="spray">Spray head</option>
+        <option value="rotor">Rotor head</option>
+        <option value="emitter">Drip emitter</option>
+        <option value="valve">Zone valve</option>
+        <option value="controller">Controller</option>
+        <option value="backflow">Backflow preventer</option>
+      </select>
+    </div>
     <input type="color" id="mkColor" class="dirt-hide" value="#e05555" title="Markup color (applies to the selected markup too)">
     <select id="mkWidth" class="dirt-hide" title="Line weight / text size (applies to the selected markup too)">
       <option value="S">Thin</option>
@@ -359,6 +396,7 @@
     <button id="btnSid" class="btn tb-takeoff tr-sid" title="Siding, Gutters &amp; Insulation — net wall SF &amp; squares by material; prices in $ Bid">▥<span class="btn-label"> Siding</span></button>
     <button id="btnDem" class="btn tb-takeoff tr-dem" title="Demolition — debris CY, tons &amp; truck loads by type; prices in $ Bid">💥<span class="btn-label"> Demo</span></button>
     <button id="btnFnc" class="btn tb-takeoff tr-fnc" title="Fencing &amp; Guardrail — LF + posts by type; prices in $ Bid">🚧<span class="btn-label"> Fence</span></button>
+    <button id="btnLsc" class="btn tb-takeoff tr-lsc" title="Landscape &amp; Irrigation — mulch CY, sod SY, rock tons, plants &amp; heads; prices in $ Bid">🌳<span class="btn-label"> Landscape</span></button>
     <button id="btnBid" class="btn tb-takeoff" title="Takeoff bid — roofing materials & labor and earthwork volumes, editable prices, print / CSV">$<span class="btn-label"> Bid</span></button>
     <button id="btnUpsell" class="btn tb-upsell" title="Turn your measurements into a priced takeoff & bid — Takeoff layer add-on">🔒<span class="btn-label"> Takeoff</span></button>
     <div class="menu-wrap">
@@ -466,6 +504,10 @@
   <aside id="fncPanel" class="hidden" aria-label="Fencing &amp; Guardrail takeoff">
     <div class="mk-head"><b>🚧 Fencing &amp; Guardrail</b></div>
     <div id="fncBody" class="mk-list"></div>
+  </aside>
+  <aside id="lscPanel" class="hidden" aria-label="Landscape &amp; Irrigation takeoff">
+    <div class="mk-head"><b>🌳 Landscape &amp; Irrigation</b></div>
+    <div id="lscBody" class="mk-list"></div>
   </aside>
 </main>
 
@@ -739,6 +781,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=40"></script>
+<script type="module" src="app.js?v=41"></script>
 </body>
 </html>

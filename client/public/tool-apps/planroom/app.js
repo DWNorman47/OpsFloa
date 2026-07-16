@@ -59,7 +59,7 @@ const state = {
   // page numbers; align maps proposed-page px -> existing-page px at compute.
   earthwork: { existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 },
     gridFt: 5, shrink: 15, swell: 25, truckCap: 12, interval: 1, result: null },
-  trade: '',        // takeoff trade mode: '' (markup only) | 'roofing' | 'dirt' | 'drywall' | 'flooring' | 'framing' | 'esc' | 'striping' | 'siding' | 'demo' | 'fence'
+  trade: '',        // takeoff trade mode: '' (markup only) | 'roofing' | 'dirt' | 'drywall' | 'flooring' | 'framing' | 'esc' | 'striping' | 'siding' | 'demo' | 'fence' | 'landscape'
   bidMeta: {},      // per-bid project / prepared-by / date overrides
   estimateId: null, // OpsFloa estimate this project was launched from (?estimate=), for pushing pricing back
   // drywall & paint pack settings (project-wide)
@@ -85,6 +85,9 @@ const state = {
   // it belongs to the fence type (chain link 10ft, vinyl 6ft, guardrail 6.25ft),
   // so one project-wide number would be wrong on every mixed job.
   fence: { holeDia: 10, holeDepth: 30, bagCF: 0.45 },
+  // landscape & irrigation pack settings (project-wide). Depths are PER TYPE —
+  // a 3" mulch bed and a 6" soil-prep bed on the same plan are normal.
+  landscape: { mulchDepth: 3, rockDepth: 3, bedDepth: 6, rockDensity: 100, sodWaste: 5, seedRate: 5 },
 };
 let curDwSides = 2;  // 1 = perimeter/against structure, 2 = interior partition (both faces)
 let curCeilType = 'drywall';  // ceiling type for new ceilings: drywall | act24 | act22 (ACT = suspended grid)
@@ -241,6 +244,38 @@ let curFnGate = 'walk'; // type for new gates
 const FN_GATE_KINDS = ['walk', 'drive', 'slide', 'endtreat'];
 const FN_GATE_LABEL = { walk: 'Walk gate', drive: 'Double drive gate', slide: 'Cantilever slide gate', endtreat: 'Guardrail end treatment' };
 const FN_GATE_PRICE = { walk: 385, drive: 1250, slide: 4200, endtreat: 2600 }; // $/EA installed
+let curLsArea = 'mulch'; // type for new landscape areas
+const LS_AREA_KINDS = ['mulch', 'sod', 'seed', 'rock', 'bed'];
+const LS_AREA_LABEL = {
+  mulch: 'Mulch bed', sod: 'Sod', seed: 'Lawn seed',
+  rock: 'Decorative rock', bed: 'Planting bed (soil prep)',
+};
+// Unlike the last four packs, landscape bids in the MATERIAL's own unit — mulch
+// is bought by the CY, rock by the ton, sod by the SY. Quoting mulch per SF
+// would be the unnatural choice here, so the materials math IS the bid.
+const LS_AREA_UNIT = { mulch: 'CY', sod: 'SY', seed: 'SF', rock: 'ton', bed: 'CY' };
+const LS_AREA_PRICE = { mulch: 55, sod: 6, seed: 0.12, rock: 95, bed: 45 }; // $ per the unit above, installed
+let curLsPlant = 'shrub5'; // type for new plant counts
+const LS_PLANT_KINDS = ['tree2', 'tree3', 'shrub5', 'shrub3', 'perennial', 'grass'];
+const LS_PLANT_LABEL = {
+  tree2: 'Tree — 2″ cal.', tree3: 'Tree — 3″ cal.', shrub5: 'Shrub — 5 gal',
+  shrub3: 'Shrub — 3 gal', perennial: 'Perennial — 1 gal', grass: 'Ornamental grass',
+};
+const LS_PLANT_PRICE = { tree2: 450, tree3: 750, shrub5: 65, shrub3: 42, perennial: 18, grass: 16 }; // $/EA installed
+let curLsLine = 'lateral'; // type for new irrigation runs
+const LS_LINE_KINDS = ['main', 'lateral', 'drip', 'sleeve', 'edging'];
+const LS_LINE_LABEL = {
+  main: 'Mainline 1″', lateral: 'Lateral 3/4″', drip: 'Drip tubing',
+  sleeve: 'Sleeve under paving', edging: 'Steel edging',
+};
+const LS_LINE_PRICE = { main: 4.5, lateral: 2.25, drip: 1.6, sleeve: 9, edging: 6 }; // $/LF installed
+let curLsHead = 'spray'; // type for new irrigation heads
+const LS_HEAD_KINDS = ['spray', 'rotor', 'emitter', 'valve', 'controller', 'backflow'];
+const LS_HEAD_LABEL = {
+  spray: 'Spray head', rotor: 'Rotor head', emitter: 'Drip emitter',
+  valve: 'Zone valve', controller: 'Controller', backflow: 'Backflow preventer',
+};
+const LS_HEAD_PRICE = { spray: 28, rotor: 52, emitter: 6, valve: 185, controller: 650, backflow: 850 }; // $/EA installed
 const ESC_LINE_PRICE = { silt: 2.5, supersilt: 8, sock: 6, wattle: 4, treeprot: 3.5, berm: 3, curtain: 25 };
 const TEXTURE_LABEL = { none: 'None', smooth: 'Smooth / skim', orange: 'Orange peel', knockdown: 'Knockdown', popcorn: 'Popcorn' };
 const TEXTURE_PRICE = { smooth: 0.30, orange: 0.35, knockdown: 0.40, popcorn: 0.55 }; // $/SF texture (labor+material)
@@ -255,7 +290,7 @@ const MEASURE_KINDS = ['mlength', 'marea', 'mcount'];
 const markupLayer = kind => ANNOT_KINDS.includes(kind) ? 'annot' : MEASURE_KINDS.includes(kind) ? 'measure' : 'takeoff';
 // Vertex editing. Fixed-box shapes, callouts, single-point & count markups get no
 // per-vertex handles; everything else (line/arrow + every polyline/polygon) does.
-const VERTEX_NONEDIT = new Set(['rect', 'ellipse', 'cloud', 'highlight', 'callout', 'text', 'espot', 'mcount', 'ritem', 'qcount', 'dopening', 'dheight', 'fopening', 'escitem', 'sstall', 'smark', 'sopening', 'dmitem', 'fngate']);
+const VERTEX_NONEDIT = new Set(['rect', 'ellipse', 'cloud', 'highlight', 'callout', 'text', 'espot', 'mcount', 'ritem', 'qcount', 'dopening', 'dheight', 'fopening', 'escitem', 'sstall', 'smark', 'sopening', 'dmitem', 'fngate', 'lsplant', 'lshead']);
 // Insert/delete a vertex applies to the free polylines & polygons — line/arrow
 // stay fixed 2-point shapes (their endpoints are still draggable).
 const RESHAPE_NONEDIT = new Set([...VERTEX_NONEDIT, 'line', 'arrow']);
@@ -347,7 +382,7 @@ els.hud.addEventListener('click', () => { clearTimeout(hudTimer); els.hud.classL
  * Widths/sizes are document-space (base px) so markups print/zoom like ink.
  */
 
-const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea', 'sstripe', 'sstall', 'smark', 'swall', 'sopening', 'sgutter', 'sinsul', 'dmarea', 'dmline', 'dmitem', 'fnline', 'fngate'];
+const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea', 'sstripe', 'sstall', 'smark', 'swall', 'sopening', 'sgutter', 'sinsul', 'dmarea', 'dmline', 'dmitem', 'fnline', 'fngate', 'lsarea', 'lsplant', 'lsline', 'lshead'];
 const MK_LABEL = {
   cloud: 'Cloud', rect: 'Rectangle', ellipse: 'Ellipse', arrow: 'Arrow', line: 'Line',
   freehand: 'Pen', highlight: 'Highlight', text: 'Text', callout: 'Callout',
@@ -362,6 +397,7 @@ const MK_LABEL = {
   swall: 'Siding wall', sopening: 'Siding opening', sgutter: 'Gutter run', sinsul: 'Insulation',
   dmarea: 'Demo area', dmline: 'Demo removal', dmitem: 'Demo item',
   fnline: 'Fence run', fngate: 'Gate',
+  lsarea: 'Landscape area', lsplant: 'Plant', lsline: 'Irrigation run', lshead: 'Irrigation head',
 };
 const MK_ICON = {
   cloud: '☁', rect: '▭', ellipse: '⬭', arrow: '↗', line: '╲',
@@ -377,6 +413,7 @@ const MK_ICON = {
   swall: '▥', sopening: '⊡', sgutter: '⌐', sinsul: '▩',
   dmarea: '▣', dmline: '⌁', dmitem: '⊠',
   fnline: '⌗', fngate: '⊓',
+  lsarea: '▢', lsplant: '❋', lsline: '≀', lshead: '⊛',
 };
 // Dirt-trade tool flyout groups (mirrors the sitework tool): each group shows the
 // last-used tool as a one-click face + a ▾ caret revealing the rest.
@@ -390,8 +427,8 @@ const TOOL_FACE = {
 };
 const groupCurrent = { surface: 'contour', takeoff: 'qarea' };
 const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
-const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea', 'sstripe', 'sstall', 'smark', 'swall', 'sopening', 'sgutter', 'sinsul', 'dmarea', 'dmline', 'dmitem', 'fnline', 'fngate']; // click-built (vs drag; espot/align are special-cased)
-const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling', 'dtrim', 'escline', 'escarea', 'sstripe', 'swall', 'sgutter', 'sinsul', 'dmarea', 'dmline', 'fnline']; // produce ft / SF / squares
+const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea', 'sstripe', 'sstall', 'smark', 'swall', 'sopening', 'sgutter', 'sinsul', 'dmarea', 'dmline', 'dmitem', 'fnline', 'fngate', 'lsarea', 'lsplant', 'lsline', 'lshead']; // click-built (vs drag; espot/align are special-cased)
+const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling', 'dtrim', 'escline', 'escarea', 'sstripe', 'swall', 'sgutter', 'sinsul', 'dmarea', 'dmline', 'fnline', 'lsarea', 'lsline']; // produce ft / SF / squares
 
 /* ---- earthwork (sitework pack) helpers ---- */
 // stable hue per elevation so equal elevations match visually; existing lighter
@@ -517,6 +554,7 @@ function roofBidLines() {
   if (trade === 'siding' || !trade) lines.push(...sidingBidLines());
   if (trade === 'demo' || !trade) lines.push(...demoBidLines());
   if (trade === 'fence' || !trade) lines.push(...fenceBidLines());
+  if (trade === 'landscape' || !trade) lines.push(...landscapeBidLines());
   // consolidated view (no trade selected): only rows with real quantities
   const finalLines = trade ? lines.filter(l => Math.abs(l.qty) > 0.001) : lines.filter(l => l.qty > 0);
   for (const l of finalLines) { l.price = priceFor(l.key, l.defPrice || 0); l.ext = l.qty * l.price; }
@@ -661,6 +699,10 @@ function measureValue(m) {
   if (m.kind === 'dmitem') { const cfg = m.cfg || {}; const n = m.pts.length; return `${n} × ${DM_ITEM_LABEL[cfg.itype] || 'Item'}`; }
   if (m.kind === 'fnline') { const cfg = m.cfg || {}; const t = cfg.ftype || 'chain6'; const lf = polyLengthFt(m.pts, s); return `${FN_LINE_LABEL[t] || 'Fence'} · ${fmt(lf, 0)} ft · ${fencePostsFor(lf, t)} posts`; }
   if (m.kind === 'fngate') { const cfg = m.cfg || {}; const n = m.pts.length; return `${n} × ${FN_GATE_LABEL[cfg.gtype] || 'Gate'}`; }
+  if (m.kind === 'lsarea') { const cfg = m.cfg || {}; return `${LS_AREA_LABEL[cfg.atype] || 'Landscape'} · ${fmt(polygonAreaFt2(m.pts, s), 0)} SF`; }
+  if (m.kind === 'lsplant') { const cfg = m.cfg || {}; const n = m.pts.length; return `${n} × ${LS_PLANT_LABEL[cfg.ptype] || 'Plant'}`; }
+  if (m.kind === 'lsline') { const cfg = m.cfg || {}; return `${LS_LINE_LABEL[cfg.ltype] || 'Irrigation'} · ${fmt(polyLengthFt(m.pts, s), 0)} ft`; }
+  if (m.kind === 'lshead') { const cfg = m.cfg || {}; const n = m.pts.length; return `${n} × ${LS_HEAD_LABEL[cfg.htype] || 'Head'}`; }
   return '';
 }
 const LINE_W = { S: 2, M: 4, L: 8 };
@@ -726,6 +768,7 @@ function markupsChanged() {
   if (typeof renderSidingPanel === 'function') renderSidingPanel();
   if (typeof renderDemoPanel === 'function') renderDemoPanel();
   if (typeof renderFencePanel === 'function') renderFencePanel();
+  if (typeof renderLandscapePanel === 'function') renderLandscapePanel();
   scheduleSave();
   vp.requestDraw();
 }
@@ -871,6 +914,7 @@ function drawMarkup(ctx, m) {
     case 'swall':
     case 'sinsul':
     case 'dmarea':
+    case 'lsarea':
     case 'marea': {
       if (m.pts.length >= 2) {
         ctx.beginPath();
@@ -882,7 +926,7 @@ function drawMarkup(ctx, m) {
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y); }
       break;
     }
-    case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': case 'escitem': case 'sstall': case 'smark': case 'sopening': case 'dmitem': case 'fngate': {
+    case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': case 'escitem': case 'sstall': case 'smark': case 'sopening': case 'dmitem': case 'fngate': case 'lsplant': case 'lshead': {
       const r = (m.width || 4) * 1.5 + 3;
       for (const p of m.pts) { ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); }
       const c = centroid(m.pts);
@@ -896,6 +940,7 @@ function drawMarkup(ctx, m) {
     case 'sgutter':
     case 'dmline':
     case 'fnline':
+    case 'lsline':
     case 'dtrim': {
       ctx.beginPath();
       m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
@@ -1215,18 +1260,18 @@ function hitMarkup(ctx, w) {
         if (pointSegDist(w.x, w.y, p0.x, p0.y, p1.x, p1.y) < t) return m;
         break;
       case 'freehand': case 'mlength': case 'redge': case 'contour': case 'qline': case 'dwall': case 'dtrim':
-      case 'fwall': case 'ftrans': case 'dheight': case 'escline': case 'sstripe': case 'sgutter': case 'dmline': case 'fnline':
+      case 'fwall': case 'ftrans': case 'dheight': case 'escline': case 'sstripe': case 'sgutter': case 'dmline': case 'fnline': case 'lsline':
         if (distToPolyline(w.x, w.y, m.pts) < t) return m;
         break;
       case 'marea': case 'plane': case 'epad': case 'qarea': case 'dceiling':
-      case 'froom': case 'fsheath': case 'escarea': case 'swall': case 'sinsul': case 'dmarea':
+      case 'froom': case 'fsheath': case 'escarea': case 'swall': case 'sinsul': case 'dmarea': case 'lsarea':
         if (pointInPolygon(w.x, w.y, m.pts) ||
             distToPolyline(w.x, w.y, [...m.pts, m.pts[0]]) < t) return m;
         break;
       case 'ebound':
         if (distToPolyline(w.x, w.y, [...m.pts, m.pts[0]]) < t) return m; // edge only (fill is faint)
         break;
-      case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': case 'escitem': case 'sstall': case 'smark': case 'sopening': case 'dmitem': case 'fngate':
+      case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening': case 'escitem': case 'sstall': case 'smark': case 'sopening': case 'dmitem': case 'fngate': case 'lsplant': case 'lshead':
         if (m.pts.some(p => dist(w.x, w.y, p.x, p.y) < (m.width || 4) * 1.5 + 3 + t)) return m;
         break;
       case 'espot':
@@ -1805,6 +1850,14 @@ function setTool(t) {
     setMsg(`Trace a ${FN_LINE_LABEL[curFnLine].toLowerCase()} run (posts every ${FN_LINE_SPACING[curFnLine]}′); Enter/double-click to finish → LF + posts. Double-click a run to change its type.`);
   } else if (t === 'fngate') {
     setMsg(`Click each ${FN_GATE_LABEL[curFnGate].toLowerCase()}; Enter/double-click to finish → counted EA. Double-click a group to change its type.`);
+  } else if (t === 'lsarea') {
+    setMsg(`Trace a ${LS_AREA_LABEL[curLsArea].toLowerCase()} area; Enter/double-click to close → SF → ${LS_AREA_UNIT[curLsArea]}. Double-click it to change its type.`);
+  } else if (t === 'lsplant') {
+    setMsg(`Click each ${LS_PLANT_LABEL[curLsPlant].toLowerCase()}; Enter/double-click to finish → counted EA. Double-click a group to change its type.`);
+  } else if (t === 'lsline') {
+    setMsg(`Trace a ${LS_LINE_LABEL[curLsLine].toLowerCase()} run; Enter/double-click to finish → LF. Double-click a run to change its type.`);
+  } else if (t === 'lshead') {
+    setMsg(`Click each ${LS_HEAD_LABEL[curLsHead].toLowerCase()}; Enter/double-click to finish → counted EA. Double-click a group to change its type.`);
   } else if (t === 'dheight') {
     setMsg((state.scales[state.page] || 0)
       ? 'On an elevation / section sheet, click the floor then the ceiling (bottom → top); double-click or Enter to finish, then name it. Set it as the default in 🧱 or double-click a wall run to apply it.'
@@ -2167,8 +2220,8 @@ els.cv.addEventListener('pointercancel', endDrag);
 
 /* ---- click-built measure drafts: commit / cancel ---- */
 
-const CLOSED_KINDS = ['marea', 'plane', 'epad', 'ebound', 'qarea', 'dceiling', 'froom', 'fsheath', 'escarea', 'swall', 'sinsul', 'dmarea']; // 3+ pts, closed polygon
-const POINT_KINDS = ['mcount', 'ritem', 'qcount', 'dopening', 'escitem', 'sstall', 'smark', 'sopening', 'dmitem', 'fngate']; // 1+ pts, no rubber band
+const CLOSED_KINDS = ['marea', 'plane', 'epad', 'ebound', 'qarea', 'dceiling', 'froom', 'fsheath', 'escarea', 'swall', 'sinsul', 'dmarea', 'lsarea']; // 3+ pts, closed polygon
+const POINT_KINDS = ['mcount', 'ritem', 'qcount', 'dopening', 'escitem', 'sstall', 'smark', 'sopening', 'dmitem', 'fngate', 'lsplant', 'lshead']; // 1+ pts, no rubber band
 
 /* ---- vertex reshaping: drag a point (handled in the pointer flow), Alt-click
    an edge to insert a point, Alt-click a point to remove it ---- */
@@ -2295,6 +2348,10 @@ function commitDraft() {
   else if (d.kind === 'dmitem') extra.cfg = { itype: curDmItem };
   else if (d.kind === 'fnline') extra.cfg = { ftype: curFnLine };
   else if (d.kind === 'fngate') extra.cfg = { gtype: curFnGate };
+  else if (d.kind === 'lsarea') extra.cfg = { atype: curLsArea };
+  else if (d.kind === 'lsplant') extra.cfg = { ptype: curLsPlant };
+  else if (d.kind === 'lsline') extra.cfg = { ltype: curLsLine };
+  else if (d.kind === 'lshead') extra.cfg = { htype: curLsHead };
   else if (d.kind === 'dwall') { extra.height = state.drywall.wallHeight; extra.sides = curDwSides; }
   else if (d.kind === 'dceiling') extra.cfg = { ctype: curCeilType };
   else if (d.kind === 'dopening') extra.cfg = { otype: curDwOpening, deductSF: OPENING_DEDUCT[curDwOpening] };
@@ -2413,6 +2470,46 @@ els.cv.addEventListener('dblclick', e => {
     const c = hit.cfg || {};
     modals.askNumber(`${FOPEN_LABEL[c.otype] || 'Opening'} rough-opening width (ft)`, 'Drives the header LF and cripple count for each opening in this group.', c.width != null ? c.width : 3, 1)
       .then(v => { if (v != null && v > 0) { const prev = snapshot(); hit.cfg = { ...c, width: v }; pushUndo(prev); markupsChanged(); } });
+    return;
+  }
+  // double-click a landscape area to change its type
+  if (hit && hit.kind === 'lsarea') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    const cur = (hit.cfg && hit.cfg.atype) || 'mulch';
+    askChoice('Landscape type', 'Each type bids in its own material unit (CY, SY, ton, SF).',
+      LS_AREA_KINDS.map(k => ({ label: `${LS_AREA_LABEL[k]} — by ${LS_AREA_UNIT[k]}`, value: k, primary: k === cur }))
+    ).then(v => { if (v && v !== cur) { const prev = snapshot(); hit.cfg = { ...(hit.cfg || {}), atype: v }; curLsArea = v; pushUndo(prev); markupsChanged(); } });
+    return;
+  }
+  // double-click a plant group to change its type
+  if (hit && hit.kind === 'lsplant') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    const cur = (hit.cfg && hit.cfg.ptype) || 'shrub5';
+    askChoice('Plant type', 'Plants roll up on the bid by type, at each type’s installed $/EA.',
+      LS_PLANT_KINDS.map(k => ({ label: LS_PLANT_LABEL[k], value: k, primary: k === cur }))
+    ).then(v => { if (v && v !== cur) { const prev = snapshot(); hit.cfg = { ...(hit.cfg || {}), ptype: v }; curLsPlant = v; pushUndo(prev); markupsChanged(); } });
+    return;
+  }
+  // double-click an irrigation run to change its type
+  if (hit && hit.kind === 'lsline') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    const cur = (hit.cfg && hit.cfg.ltype) || 'lateral';
+    askChoice('Irrigation run type', 'Runs roll up on the bid by type, at each type’s installed $/LF.',
+      LS_LINE_KINDS.map(k => ({ label: LS_LINE_LABEL[k], value: k, primary: k === cur }))
+    ).then(v => { if (v && v !== cur) { const prev = snapshot(); hit.cfg = { ...(hit.cfg || {}), ltype: v }; curLsLine = v; pushUndo(prev); markupsChanged(); } });
+    return;
+  }
+  // double-click an irrigation head group to change its type
+  if (hit && hit.kind === 'lshead') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    const cur = (hit.cfg && hit.cfg.htype) || 'spray';
+    askChoice('Head / device type', 'Devices roll up on the bid by type, at each type’s installed $/EA.',
+      LS_HEAD_KINDS.map(k => ({ label: LS_HEAD_LABEL[k], value: k, primary: k === cur }))
+    ).then(v => { if (v && v !== cur) { const prev = snapshot(); hit.cfg = { ...(hit.cfg || {}), htype: v }; curLsHead = v; pushUndo(prev); markupsChanged(); } });
     return;
   }
   // double-click a fence run to change its type
@@ -2850,6 +2947,7 @@ const TRADE_TOOLS = {
   siding: ['swall', 'sopening', 'sgutter', 'sinsul'],
   demo: ['dmarea', 'dmline', 'dmitem'],
   fence: ['fnline', 'fngate'],
+  landscape: ['lsarea', 'lsplant', 'lsline', 'lshead'],
 };
 // general redlining + generic measure tools that collapse while a trade is active
 const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
@@ -2857,7 +2955,7 @@ const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freeha
 // own list of "the others", and the lists drifted as packs were added (opening
 // Roof left Framing open, because btnRoof predates the framing pack). Derive it
 // from one list so the next pack can't reintroduce that.
-const PANEL_IDS = ['markupPanel', 'roofPanel', 'dirtPanel', 'dwPanel', 'floorPanel', 'framPanel', 'escPanel', 'strpPanel', 'sidPanel', 'demPanel', 'fncPanel'];
+const PANEL_IDS = ['markupPanel', 'roofPanel', 'dirtPanel', 'dwPanel', 'floorPanel', 'framPanel', 'escPanel', 'strpPanel', 'sidPanel', 'demPanel', 'fncPanel', 'lscPanel'];
 function closeOtherPanels(keepId) {
   for (const id of PANEL_IDS) {
     if (id === keepId) continue;
@@ -2868,7 +2966,7 @@ function closeOtherPanels(keepId) {
 // Toolbar trade buttons show an 'active' state while their side panel is open.
 function syncPanelButtons() {
   const mark = (btnId, panelId) => { const b = $(btnId), p = $(panelId); if (b && p) b.classList.toggle('active', !p.classList.contains('hidden')); };
-  mark('btnRoof', 'roofPanel'); mark('btnDw', 'dwPanel'); mark('btnFloor', 'floorPanel'); mark('btnFram', 'framPanel'); mark('btnEsc', 'escPanel'); mark('btnStrp', 'strpPanel'); mark('btnSid', 'sidPanel'); mark('btnDem', 'demPanel'); mark('btnFnc', 'fncPanel');
+  mark('btnRoof', 'roofPanel'); mark('btnDw', 'dwPanel'); mark('btnFloor', 'floorPanel'); mark('btnFram', 'framPanel'); mark('btnEsc', 'escPanel'); mark('btnStrp', 'strpPanel'); mark('btnSid', 'sidPanel'); mark('btnDem', 'demPanel'); mark('btnFnc', 'fncPanel'); mark('btnLsc', 'lscPanel');
   // Earthwork has no toolbar button — its panel is closed by the ✕ in its header
   // and reopened by the floating ⛰ button (top-right of the canvas), shown only
   // while in dirt mode with the panel closed.
@@ -2888,6 +2986,7 @@ function setTrade(t, { save = true } = {}) {
   document.body.classList.toggle('trade-siding', state.trade === 'siding');
   document.body.classList.toggle('trade-demo', state.trade === 'demo');
   document.body.classList.toggle('trade-fence', state.trade === 'fence');
+  document.body.classList.toggle('trade-landscape', state.trade === 'landscape');
   if ($('tradeSel')) $('tradeSel').value = state.trade;
   // drop a now-hidden tool + close the other trade's panel
   for (const [tr, tools] of Object.entries(TRADE_TOOLS)) {
@@ -2895,7 +2994,7 @@ function setTrade(t, { save = true } = {}) {
   }
   if (state.trade && FOCUS_HIDDEN_TOOLS.includes(tool)) setTool('pan'); // annotation/measure collapse in trade focus
   // leaving a trade closes that trade's panel (markupPanel isn't trade-owned)
-  const TRADE_PANEL = { roofing: 'roofPanel', dirt: 'dirtPanel', drywall: 'dwPanel', flooring: 'floorPanel', framing: 'framPanel', esc: 'escPanel', striping: 'strpPanel', siding: 'sidPanel', demo: 'demPanel', fence: 'fncPanel' };
+  const TRADE_PANEL = { roofing: 'roofPanel', dirt: 'dirtPanel', drywall: 'dwPanel', flooring: 'floorPanel', framing: 'framPanel', esc: 'escPanel', striping: 'strpPanel', siding: 'sidPanel', demo: 'demPanel', fence: 'fncPanel', landscape: 'lscPanel' };
   for (const [tr, panelId] of Object.entries(TRADE_PANEL)) {
     if (state.trade !== tr) { const p = $(panelId); if (p) p.classList.add('hidden'); }
   }
@@ -2920,6 +3019,7 @@ function setTrade(t, { save = true } = {}) {
     else if (state.trade === 'siding') setMsg('Siding — trace each elevation (▥), click the openings (⊡) to deduct them; net SF & squares in ▥, prices in $ Bid.');
     else if (state.trade === 'demo') setMsg('Demolition — trace what comes out (▣); debris CY, tons & truck loads in 💥, prices in $ Bid.');
     else if (state.trade === 'fence') setMsg('Fencing — trace each run (⌗); LF + posts by type in 🚧, prices in $ Bid.');
+    else if (state.trade === 'landscape') setMsg('Landscape — trace beds & sod (▢), count plants (❋), trace irrigation (≀) and drop heads (⊛); totals in 🌳, prices in $ Bid.');
     scheduleSave();
   }
 }
@@ -3032,6 +3132,7 @@ function renderRoofBid() {
     : state.trade === 'siding' ? 'No siding takeoff yet — trace an elevation (▥) and set its material.'
     : state.trade === 'demo' ? 'No demolition takeoff yet — trace an area (▣) and set its type.'
     : state.trade === 'fence' ? 'No fencing takeoff yet — trace a run (⌗) and set its type.'
+    : state.trade === 'landscape' ? 'No landscape takeoff yet — trace an area (▢) or count plants (❋).'
     : 'No takeoff yet — pick a trade in the toolbar dropdown, or trace a takeoff and come back.';
   $('bidTable').innerHTML = head + '<tbody>' + (lines.length ? body : `<tr><td colspan="5" class="mk-empty">${emptyMsg}</td></tr>`) + '</tbody>';
   $('bidTotals').innerHTML =
@@ -3104,6 +3205,7 @@ function openRoofBid() {
     : state.trade === 'siding' ? '▥ Siding, Gutters & Insulation bid'
     : state.trade === 'demo' ? '💥 Demolition bid'
     : state.trade === 'fence' ? '🚧 Fencing & Guardrail bid'
+    : state.trade === 'landscape' ? '🌳 Landscape & Irrigation bid'
     : '$ Takeoff bid';
   const co = loadBranding();
   $('bidCompanyName').value = co.name || '';
@@ -3695,6 +3797,7 @@ function projectData() {
     siding: state.siding,
     demo: state.demo,
     fence: state.fence,
+    landscape: state.landscape,
     estimateId: state.estimateId || null,
   };
 }
@@ -3706,6 +3809,7 @@ const defaultStriping = () => ({ coverage4in: 320, beadRate: 6, coats: 1 });
 const defaultSiding = () => ({ waste: 10, insulWaste: 5, battCoverage: 88 });
 const defaultDemo = () => ({ swell: 50, truckCap: 12, thickAsphalt: 3, thickConcrete: 6, thickSidewalk: 4, thickGravel: 6 });
 const defaultFence = () => ({ holeDia: 10, holeDepth: 30, bagCF: 0.45 });
+const defaultLandscape = () => ({ mulchDepth: 3, rockDepth: 3, bedDepth: 6, rockDensity: 100, sodWaste: 5, seedRate: 5 });
 const defaultEarthwork = () => ({ existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 }, gridFt: 5, shrink: 15, swell: 25, truckCap: 12, interval: 1, result: null });
 // next contour's default elevation = last + interval (auto-steps up a slope)
 const nextElevDefault = surf => { const iv = Number(state.earthwork.interval) || 0; return lastElev[surf] != null ? lastElev[surf] + iv : ''; };
@@ -3789,6 +3893,7 @@ async function openProject(rec) {
   state.siding = (rec.data && rec.data.siding) || defaultSiding();
   state.demo = (rec.data && rec.data.demo) || defaultDemo();
   state.fence = (rec.data && rec.data.fence) || defaultFence();
+  state.landscape = (rec.data && rec.data.landscape) || defaultLandscape();
   state.estimateId = (rec.data && rec.data.estimateId) || null;
   renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
   try { localStorage.setItem('planroom-current', rec.id); } catch (_) {}
@@ -3832,6 +3937,7 @@ async function newProject(name) {
   state.siding = defaultSiding();
   state.demo = defaultDemo();
   state.fence = defaultFence();
+  state.landscape = defaultLandscape();
   state.estimateId = null;
   renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
   try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
@@ -3980,6 +4086,7 @@ $('fileImport').addEventListener('change', async e => {
   state.siding = d.siding || defaultSiding();
   state.demo = d.demo || defaultDemo();
   state.fence = d.fence || defaultFence();
+  state.landscape = d.landscape || defaultLandscape();
   state.estimateId = d.estimateId || null;
   renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
   if (d.docB64) {
@@ -4402,6 +4509,7 @@ async function copyCompanyProject(id) {
     state.siding = t.data.siding || defaultSiding();
     state.demo = t.data.demo || defaultDemo();
     state.fence = t.data.fence || defaultFence();
+    state.landscape = t.data.landscape || defaultLandscape();
     state.estimateId = t.data.estimateId || null;
     renderMarkupList(); syncRoofInputs(); syncDirtInputs(); syncDwInputs(); syncTradeUI();
     try { localStorage.setItem('planroom-current', state.projectId); } catch (_) {}
@@ -5090,6 +5198,8 @@ const sinsulSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0); // insul
 const dmareaSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0); // demolition area
 const dmlineLenFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0); // linear removal run
 const fnlineLenFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0); // fence run
+const lsareaSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0); // landscape area
+const lslineLenFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0); // irrigation run
 // Posts for ONE run: a run needs a post at both ends, so this is +1 and MUST be
 // evaluated per run — summing LF first and computing once loses a post per run
 // (two 50ft runs @10ft = 6+6 = 12 posts, not ceil(100/10)+1 = 11).
@@ -6250,6 +6360,160 @@ $('btnFnc').addEventListener('click', () => {
 if ($('fnLineTb')) $('fnLineTb').addEventListener('change', e => { curFnLine = e.target.value; if (tool === 'fnline') setTool('fnline'); });
 if ($('fnGateTb')) $('fnGateTb').addEventListener('change', e => { curFnGate = e.target.value; if (tool === 'fngate') setTool('fngate'); });
 
+/* ---- Landscape & Irrigation pack ---- */
+function landscapeTotals() {
+  const byArea = {}, byPlant = {}, byLine = {}, byHead = {};
+  let areaSF = 0, plants = 0, lineLF = 0, heads = 0;
+  for (const m of state.markups) {
+    if (m.kind === 'lsplant') {
+      const t = (m.cfg && m.cfg.ptype) || 'shrub5';
+      const n = m.pts.length;
+      byPlant[t] = (byPlant[t] || 0) + n; plants += n; continue;
+    }
+    if (m.kind === 'lshead') {
+      const t = (m.cfg && m.cfg.htype) || 'spray';
+      const n = m.pts.length;
+      byHead[t] = (byHead[t] || 0) + n; heads += n; continue;
+    }
+    if (m.kind === 'lsline') {
+      const t = (m.cfg && m.cfg.ltype) || 'lateral';
+      const lf = lslineLenFt(m);
+      if (lf < 0.01) continue;
+      byLine[t] = (byLine[t] || 0) + lf; lineLF += lf; continue;
+    }
+    if (m.kind !== 'lsarea') continue;
+    const t = (m.cfg && m.cfg.atype) || 'mulch';
+    const sf = lsareaSf(m);
+    if (sf < 0.01) continue;
+    byArea[t] = (byArea[t] || 0) + sf; areaSF += sf;
+  }
+  return { byArea, areaSF, byPlant, plants, byLine, lineLF, byHead, heads };
+}
+// SF -> the material's own unit, per type. Depths are per type (a 3" mulch bed
+// and a 6" soil-prep bed on the same plan are normal), so this can't collapse
+// into one shared number.
+//
+// Unlike striping/demo/fencing, these ARE the bid quantities rather than a cost
+// basis: landscape material is bought by the CY / ton / SY, so quoting mulch per
+// SF would be the unnatural choice. Each type yields exactly one line in exactly
+// one unit, so there's no double-count to guard against.
+function landscapeQty(T) {
+  const L = state.landscape || {};
+  const num = (v, def) => (Number(v) > 0 ? Number(v) : def);
+  const sf = k => T.byArea[k] || 0;
+  const rockCF = sf('rock') * (num(L.rockDepth, 3) / 12);
+  return {
+    mulch: sf('mulch') * (num(L.mulchDepth, 3) / 12) / CF_PER_CY,                 // CY
+    bed: sf('bed') * (num(L.bedDepth, 6) / 12) / CF_PER_CY,                       // CY
+    rock: rockCF * num(L.rockDensity, 100) / LB_PER_TON,                          // tons
+    rockCY: rockCF / CF_PER_CY,
+    sod: sf('sod') * (1 + (Number(L.sodWaste) || 0) / 100) / SF_PER_SY,           // SY
+    seed: sf('seed'),                                                             // SF (bid unit)
+    seedLbs: sf('seed') / 1000 * (Number(L.seedRate) || 0),                       // lbs (buying number)
+  };
+}
+function landscapeBidLines() {
+  const T = landscapeTotals();
+  const Q = landscapeQty(T);
+  const lines = [];
+  const push = (k, qty) => {
+    if (!(qty > 0.005)) return;
+    lines.push({ key: `ls_area_${k}`, label: `${LS_AREA_LABEL[k]} (installed)`, qty, unit: LS_AREA_UNIT[k], q: 0, defPrice: LS_AREA_PRICE[k] });
+  };
+  push('mulch', Q.mulch); push('sod', Q.sod); push('seed', Q.seed); push('rock', Q.rock); push('bed', Q.bed);
+  for (const k of LS_PLANT_KINDS) {
+    const ea = T.byPlant[k];
+    if (!ea) continue;
+    lines.push({ key: `ls_plant_${k}`, label: `${LS_PLANT_LABEL[k]} (installed)`, qty: ea, unit: 'EA', q: 0, defPrice: LS_PLANT_PRICE[k] || 65 });
+  }
+  for (const k of LS_LINE_KINDS) {
+    const lf = T.byLine[k];
+    if (!lf || lf < 0.5) continue;
+    lines.push({ key: `ls_line_${k}`, label: `${LS_LINE_LABEL[k]} (installed)`, qty: lf, unit: 'LF', q: 0, defPrice: LS_LINE_PRICE[k] || 2.25 });
+  }
+  for (const k of LS_HEAD_KINDS) {
+    const ea = T.byHead[k];
+    if (!ea) continue;
+    lines.push({ key: `ls_head_${k}`, label: `${LS_HEAD_LABEL[k]} (installed)`, qty: ea, unit: 'EA', q: 0, defPrice: LS_HEAD_PRICE[k] || 28 });
+  }
+  return lines;
+}
+function renderLandscapePanel() {
+  const panel = $('lscPanel');
+  if (!panel || panel.classList.contains('hidden')) return;
+  const L = state.landscape;
+  const T = landscapeTotals();
+  const Q = landscapeQty(T);
+  const rows = [];
+  const R = (a, b) => rows.push(`<div class="dirt-row"><span>${a}</span><span class="v">${b}</span></div>`);
+  const opts = (arr, lab) => arr.map(k => `<option value="${k}">${lab[k]}</option>`).join('');
+  rows.push('<div class="roof-sub">Settings</div>');
+  rows.push(`<div class="dirt-set">New areas <select id="lsArea">${opts(LS_AREA_KINDS, LS_AREA_LABEL)}</select></div>`);
+  rows.push(`<div class="dirt-set">New plants <select id="lsPlant">${opts(LS_PLANT_KINDS, LS_PLANT_LABEL)}</select></div>`);
+  rows.push(`<div class="dirt-set">New runs <select id="lsLine">${opts(LS_LINE_KINDS, LS_LINE_LABEL)}</select></div>`);
+  rows.push(`<div class="dirt-set">New heads <select id="lsHead">${opts(LS_HEAD_KINDS, LS_HEAD_LABEL)}</select></div>`);
+  // rate inputs only for the area types actually traced
+  if (T.byArea.mulch) rows.push('<div class="dirt-set">Mulch <input type="number" id="lsMulchD" min="0.5" step="0.5" style="width:44px"> in deep</div>');
+  if (T.byArea.rock) rows.push('<div class="dirt-set">Rock <input type="number" id="lsRockD" min="0.5" step="0.5" style="width:44px"> in deep · <input type="number" id="lsRockDen" min="1" step="1" style="width:48px"> lb/ft³</div>');
+  if (T.byArea.bed) rows.push('<div class="dirt-set">Bed soil <input type="number" id="lsBedD" min="0.5" step="0.5" style="width:44px"> in deep</div>');
+  if (T.byArea.sod) rows.push('<div class="dirt-set">Sod waste <input type="number" id="lsSodW" min="0" step="1" style="width:44px"> %</div>');
+  if (T.byArea.seed) rows.push('<div class="dirt-set">Seed <input type="number" id="lsSeedR" min="0" step="0.5" style="width:44px"> lb / 1000 SF</div>');
+  if (T.areaSF > 0.5) {
+    rows.push('<div class="roof-sub">Areas</div>');
+    for (const k of LS_AREA_KINDS) { const sf = T.byArea[k]; if (!sf) continue; R(LS_AREA_LABEL[k], `${fmt(sf, 0)} SF`); }
+    rows.push('<div class="roof-sub">Materials</div>');
+    if (T.byArea.mulch) R('Mulch', `${fmt(Q.mulch, 1)} CY`);
+    if (T.byArea.rock) R('Rock', `${fmt(Q.rockCY, 1)} CY · ${fmt(Q.rock, 1)} t`);
+    if (T.byArea.bed) R('Bed soil', `${fmt(Q.bed, 1)} CY`);
+    if (T.byArea.sod) R('Sod', `${fmt(Q.sod, 0)} SY`);
+    if (T.byArea.seed) R('Seed', `${fmt(Q.seedLbs, 1)} lb`);
+  }
+  if (T.plants > 0) {
+    rows.push('<div class="roof-sub">Plants</div>');
+    for (const k of LS_PLANT_KINDS) { const ea = T.byPlant[k]; if (!ea) continue; R(LS_PLANT_LABEL[k], `${ea} EA`); }
+    rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${T.plants} EA</b></span></div>`);
+  }
+  if (T.lineLF > 0.5 || T.heads > 0) {
+    rows.push('<div class="roof-sub">Irrigation</div>');
+    for (const k of LS_LINE_KINDS) { const lf = T.byLine[k]; if (!lf) continue; R(LS_LINE_LABEL[k], `${fmt(lf, 0)} LF`); }
+    for (const k of LS_HEAD_KINDS) { const ea = T.byHead[k]; if (!ea) continue; R(LS_HEAD_LABEL[k], `${ea} EA`); }
+  }
+  if (T.areaSF < 0.5 && !T.plants && T.lineLF < 0.5 && !T.heads) rows.push('<div class="hint" style="margin:4px 0">Nothing yet — trace an area (▢), count plants (❋), or lay out irrigation (≀ ⊛).</div>');
+  rows.push('<div class="hint" style="margin:4px 0">Each area bids in the unit its material is actually bought in — mulch by the CY, rock by the ton, sod by the SY. Seed bids by SF; the lbs above is the buying number. Prices in $ Bid.</div>');
+  $('lscBody').innerHTML = rows.join('');
+  const sel = (id, cur, set) => { const el = $(id); if (!el) return; el.value = cur(); el.addEventListener('change', e => set(e.target.value)); };
+  sel('lsArea', () => curLsArea, v => { curLsArea = v; if (tool === 'lsarea') setTool('lsarea'); });
+  sel('lsPlant', () => curLsPlant, v => { curLsPlant = v; if (tool === 'lsplant') setTool('lsplant'); });
+  sel('lsLine', () => curLsLine, v => { curLsLine = v; if (tool === 'lsline') setTool('lsline'); });
+  sel('lsHead', () => curLsHead, v => { curLsHead = v; if (tool === 'lshead') setTool('lshead'); });
+  const num = (id, key, def, min) => {
+    const el = $(id);
+    if (!el) return;
+    el.value = L[key] != null ? L[key] : def;
+    el.addEventListener('change', ev => {
+      L[key] = Math.max(min, parseFloat(ev.target.value) || def);
+      ev.target.value = L[key];
+      scheduleSave(); renderLandscapePanel();
+    });
+  };
+  num('lsMulchD', 'mulchDepth', 3, 0.5);
+  num('lsRockD', 'rockDepth', 3, 0.5);
+  num('lsRockDen', 'rockDensity', 100, 1);
+  num('lsBedD', 'bedDepth', 6, 0.5);
+  num('lsSodW', 'sodWaste', 5, 0);
+  num('lsSeedR', 'seedRate', 5, 0);
+}
+$('btnLsc').addEventListener('click', () => {
+  const p = $('lscPanel');
+  p.classList.toggle('hidden');
+  if (!p.classList.contains('hidden')) { closeOtherPanels('lscPanel'); renderLandscapePanel(); }
+  syncPanelButtons();
+});
+if ($('lsAreaTb')) $('lsAreaTb').addEventListener('change', e => { curLsArea = e.target.value; if (tool === 'lsarea') setTool('lsarea'); });
+if ($('lsPlantTb')) $('lsPlantTb').addEventListener('change', e => { curLsPlant = e.target.value; if (tool === 'lsplant') setTool('lsplant'); });
+if ($('lsLineTb')) $('lsLineTb').addEventListener('change', e => { curLsLine = e.target.value; if (tool === 'lsline') setTool('lsline'); });
+if ($('lsHeadTb')) $('lsHeadTb').addEventListener('change', e => { curLsHead = e.target.value; if (tool === 'lshead') setTool('lshead'); });
+
 /* ===================== Live sessions (SSE + REST ops) =====================
  * Host "goes live" on the current project; teammates join and co-edit in real
  * time. Server→client push via EventSource; client→server via REST ops. Every
@@ -6271,7 +6535,7 @@ async function apiLive(path, opts = {}) {
 }
 
 function sessionDoc() {
-  return { scales: state.scales, scaleBars: state.scaleBars, page: state.page, roofPitch: state.roofPitch, roofWaste: state.roofWaste, roofPrices: state.roofPrices, roofOP: state.roofOP, earthwork: state.earthwork, drywall: state.drywall, flooring: state.flooring, framing: state.framing, esc: state.esc, striping: state.striping, siding: state.siding, demo: state.demo, fence: state.fence };
+  return { scales: state.scales, scaleBars: state.scaleBars, page: state.page, roofPitch: state.roofPitch, roofWaste: state.roofWaste, roofPrices: state.roofPrices, roofOP: state.roofOP, earthwork: state.earthwork, drywall: state.drywall, flooring: state.flooring, framing: state.framing, esc: state.esc, striping: state.striping, siding: state.siding, demo: state.demo, fence: state.fence, landscape: state.landscape };
 }
 function applySessionDoc(d) {
   if (!d) return;
@@ -6290,6 +6554,7 @@ function applySessionDoc(d) {
   if (d.siding) state.siding = d.siding;
   if (d.demo) state.demo = d.demo;
   if (d.fence) state.fence = d.fence;
+  if (d.landscape) state.landscape = d.landscape;
   if (d.page && d.page !== state.page && state.doc) setPage(d.page);
 }
 
