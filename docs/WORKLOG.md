@@ -611,24 +611,19 @@ large release. Everything below matters less than getting this out.
 
 ### Decisions only you can make
 
-⚠️ **Is $60/mo still right for Takeoff?** It was priced when Takeoff did 3 trades.
-It does **11**. Dedicated takeoff software is $1,500–4,000/seat/yr and usually
-covers one trade. Left alone on purpose — land-grab pricing is defensible and
-raising later beats lowering — but it should be a decision, not an oversight.
+**These live in `docs/BACKLOG.md` → "Open questions / decisions for you", with the
+full context. That doc is the one to actually work from — this is just the
+headline.** (Keeping two full copies is how the roadmap went stale in the first
+place, so there's one copy and a pointer.)
 
-⚠️ **Do you want GC customers at all?** A GC coordinates subs; everything else
-OpsFloa does assumes a contractor who self-performs. The alternative — keep
-deepening the trade product that now has 11 takeoff trades — is legitimate and
-cheaper. See `docs/plans/gc-tools.md`.
-
-⚠️ **Native invoices, or QuickBooks forever?** `project_invoices` is a QBO mirror,
-so a company without QBO has zero rows. This **blocks** sub pay-apps and is
-**already breaking closeout today** (see BACKLOG). The single biggest
-architectural call on the board.
-
-⚠️ **Should an expired COI block, or just warn?** It currently warns. Blocking a
-PO to an uninsured sub is arguably the whole point, but it's a hard gate on a
-working flow, so I didn't add it unasked.
+1. ⚠️ **Native invoices, or QuickBooks forever?** — the biggest call on the board.
+   Blocks sub pay-apps, and is already breaking closeout today.
+2. ⚠️ **Do you want GC customers at all?** — deepening the 11-trade contractor
+   product instead is a legitimate, cheaper answer.
+3. ⚠️ **Is $60/mo still right for Takeoff?** — priced at 3 trades; it does 11.
+4. ⚠️ **Should an expired COI block, or just warn?** — it warns today.
+5. ⚠️ **Closeout deliverable: PDF or ZIP?** — moot until closeout items can hold
+   documents at all.
 
 ### Verification you owe
 

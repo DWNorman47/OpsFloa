@@ -108,6 +108,38 @@ that holds the exhaustive detail.
 - **Wall Dig button** — hidden "for now" in the takeoff tool; bring it back, remove
   it, or leave it hidden? (2026-07-10)
 
+- **Native invoices, or QuickBooks forever?** ⚠️ **The biggest one on this list.**
+  `project_invoices` is a QBO *mirror* — only `routes/qbo.js` ever writes it, so a
+  company without QBO connected has **zero rows**. This blocks sub pay-apps
+  entirely, and it is **already breaking closeout today** (see the two closeout
+  bugs above). Either invent a native invoice/AR concept, or make QBO a hard
+  dependency of project billing and say so out loud. Nothing in the money category
+  should be built before this is decided. See `docs/plans/gc-tools.md`.
+  (2026-07-16)
+- **Do you want GC customers at all?** Everything OpsFloa does today assumes a
+  contractor who **self-performs**. A GC coordinates *other people* — different
+  buyer, different anxiety, the one who pays Procore ($10k+/yr). Worth entering
+  only *deliberately*: a half-built GC story is worse than none. The alternative —
+  keep deepening the trade product that now has **11 takeoff trades** — is a
+  legitimate and cheaper answer. Two of the six GC standouts shipped 2026-07-16
+  (COI tracker, OAC minutes) because both were nearly free on existing pipelines;
+  the rest are real builds. See `docs/plans/gc-tools.md`. (2026-07-16)
+- **Is $60/mo still right for Takeoff?** It was priced when Takeoff did **3
+  trades**. It now does **11** (roofing, dirt, drywall/paint, flooring, framing,
+  ESC, striping, siding, demo, fencing, landscape). Dedicated takeoff software
+  runs $1,500–4,000/seat/yr and usually covers *one* trade. Left alone on purpose
+  — land-grab pricing is defensible, and raising later beats lowering — but it
+  should be a decision rather than an oversight. (2026-07-16)
+- **Should an expired COI block, or just warn?** It currently **warns**: the
+  tracker alerts at 30 days and again on expiry, but nothing stops a PO being
+  issued to a sub whose insurance has lapsed. Blocking is arguably the whole value
+  ("he can't be on site"), but it's a hard gate on a flow that already works, so
+  it wasn't added unasked. (2026-07-16)
+- **Is the closeout deliverable a PDF or a ZIP?** ZIP is cheaper and arguably more
+  useful (as-builts are big CAD files); `archiver` is already a server dep. Note
+  this is downstream of a prerequisite: `project_closeout_items` has **no document
+  columns**, so there is currently nothing to assemble. (2026-07-16)
+
 ## ✨ Ideas — improvements
 
 
