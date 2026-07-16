@@ -537,6 +537,11 @@ OFFICE TOOLS (included)
       summary with key points and action items.
     - Document Q&A — open a contract, spec, or insurance cert and ask questions
       answered only from the document.
+    - Contract red-flag scanner — upload a subcontract and get back the terms
+      that carry real money: pay-if-paid, retainage, the short notice windows
+      that quietly waive your right to claim, liquidated damages, one-sided
+      indemnity, open-ended scope. Ranked worst first, each with the actual
+      clause quoted and the edit to ask for. A reading aid, not legal advice.
     - Email & message drafter — turn a few notes into a polished email or text
       in the tone you pick.
     - PDF Toolkit — merge, reorder, rotate, delete, and extract PDF pages,

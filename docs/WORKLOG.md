@@ -23,6 +23,59 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-16 — Marketing doc rewrite + Contract Red-Flag Scanner
+
+**Found — the marketing doc understated the product by 8 of its 11 trades.**
+`OpsFloa_Features.txt` still described Takeoff as Earthwork + Roofing + Drywall;
+it was written the day before Framing, Flooring, ESC, Striping, Siding, Demo,
+Fence and Landscape all landed. Rewrote it around the real pitch — a GC takes off
+the whole building, a site contractor takes off the whole site, nobody buys a
+second seat — split THE SITE / THE BUILDING so a reader finds their trade fast,
+and put the $60 add-on next to the $1,500–4,000/seat/yr the incumbents charge for
+usually one trade. Also documents Storm/Utility, which the doc had never
+mentioned. `e629cc0`
+
+⚠️ **Pricing is now a live question.** $60/mo was set when Takeoff was 3 trades.
+It's 11. Left as-is (land-grab pricing is defensible and raising later beats
+lowering), but it should be a decision rather than an oversight.
+
+**Shipped — Contract Red-Flag Scanner** (`8ed2520`), one of the two ad standouts
+in the roadmap. Upload a subcontract → the terms that carry real money, worst
+first, each with the clause quoted and the edit to negotiate.
+
+**The prompt is the product.** It *names* the clauses that cost subs money —
+pay-if-paid, notice windows, no-damage-for-delay, LDs, broad-form indemnity,
+retainage release, termination for convenience, open-ended scope, written-CO
+requirements, backcharges, one-way consequential waivers, venue/fee-shifting —
+rather than asking for "anything concerning" and hoping. Grounding mirrors the
+Doc Q&A prompt: quote the document, never invent. **A hallucinated clause is
+worse than a miss** — someone would go negotiate over language that isn't in
+their contract.
+
+**Built on the existing engine, not beside it.** `/office/extract` is reused
+unchanged (unmetered, no API key needed), and the new route goes through the same
+`runAi()` wrapper as `/ask` — so auth, the business-plan gate, the monthly meter,
+refund-on-failure and the 503/429/502 contract all came free. No migration, no
+env var, no client gating. It draws on the same 300/month per-company AI budget.
+
+**Calls made:**
+- **Scanning is a separate click from upload.** The ad line is "upload it and
+  we read it", but scanning spends a metered call — the doc bar lets you confirm
+  you grabbed the right file first. One extra click beats burning quota on a
+  misclick.
+- **A truncated read says so loudly.** The server clips at 120k chars; a scanner
+  that quietly reviewed half a contract and reported it clean would be worse than
+  no scanner, so the clipped case gets a warning banner, not a footnote.
+
+**Found — two things fixed in passing.** DocQA and Summarizer had *byte-identical*
+markdown renderers; the scanner would have made three, so it's extracted to
+`aiMarkdown.jsx` (Summarizer's heading margin normalises 14px → 12px). And
+DocQA's drop zone claimed **"the file stays in your browser"** — it doesn't, the
+bytes are POSTed to `/office/extract`. What's true is that nothing is *stored*,
+so it says that now. That's a privacy claim, so it shouldn't have been loose.
+
+---
+
 ## 2026-07-16 — Landscape & Irrigation trade pack (L1–L3, complete)
 
 **Shipped.** The **11th** trade — `landscape` (🌳) — and the **last of the
