@@ -1,7 +1,9 @@
 # OpsFloa — Storm / Utility takeoff pack (deep underground-utility module)
 
-Status: **M1–M4 shipped** (2026-07-15) — the full takeoff engine is built.
-**M5 (billing split) remaining**, deliberately last (see below). The deep, invert-driven version of the
+Status: **M1–M5 all shipped** (2026-07-15) — module complete: full takeoff engine
++ its own `addon_storm` billing. **Purchase is hidden** (`STORM_SELLABLE=false` in
+`BillingPanel.jsx`) until the utility math is hand-verified — flip that one const
+to open sales. The deep, invert-driven version of the
 storm-drain / underground-utility takeoff — a **separate paid add-on** on top of
 the Takeoff layer (target **~$50/mo**, `$500/yr`; anchored far below AGTEK /
 Trimble-class incumbents at $1,500–4,000+/yr). Sold to utility / underground
@@ -45,18 +47,20 @@ cutover gate (planroom-sitework-pack S4) still holds. New attributes default off
   Import backfill toggle → net export (haul-off) CY (native = displaced pipe +
   bedding; import = full excavation) + import-backfill CY. Additive; trench/bedding
   unchanged.
-- **M5 — Billing split** *(remaining — ship when ready to sell)*: new `addon_storm`
-  flag — migration + `server/constants`
-  + `stripe.js` `ADDON_PRICES` + `requireStormAddon` gate + `BillingPanel` +
-  SuperAdmin toggle + `docs/db-enums.md`; `STRIPE_PRICE_STORM` (+`_ANNUAL`) at
-  ~$50. Gate the deep features behind it. **Ship last**, once the module is real
-  and ready to sell separately. (Pre-launch there are no paying takeoff subs, so
-  moving these features from "included in Takeoff" to "paid" strands no one.)
-  - **Client gate:** the deep fields (pipe Ø/material, End depth, backfill, and
-    structure depth) live in the Plan Room tool-app. When the company lacks
-    `addon_storm`, hide those fields so a plain trench/count works as before; show
-    a small "🔒 Storm/Utility add-on" hint. Read the flag from `tc_addons`/user
-    (same mechanism the tool uses for the takeoff gate).
+- **M5 — Billing split** ✅ *shipped (purchase hidden)*: migration `0139` adds
+  `addon_storm`; `stripe.js` (`ADDON_PRICES`, `/plans`, `/status`, checkout, and
+  the webhook create/update/delete) maps `STRIPE_PRICE_STORM`(+`_ANNUAL`) → the
+  flag; `auth.js` exposes it; SuperAdmin has a toggle. No server middleware gate
+  is needed (the deep data rides through the existing takeoff routes), and no
+  `db-enums.md` row (addon booleans aren't tracked there).
+  - **Client gate:** the deep fields (pipe Ø/material, End depth, backfill,
+    structure depth) + pipe-size presets are `.storm-only`, hidden without the
+    add-on via `body.has-storm`; the deep *outputs* are gated on a cached
+    `STORM_ON` so a company without it gets the plain base takeoff even on data
+    created with the add-on. Reads `tc_addons`, same as the takeoff gate.
+  - **Purchase hidden:** `STORM_SELLABLE=false` in `BillingPanel.jsx` suppresses
+    every buy path; owned companies can still see/turn it off. Flip to `true` to
+    open sales (after verifying the math).
 
 ## Verification
 - M1: a 100-ft 24" RCP run yields the same trench CY as the old `pipe24` preset;
