@@ -94,6 +94,24 @@ body { display: flex; flex-direction: column; }
 .tool:hover { border-color: var(--accent); }
 .tool.active { background: var(--accent); border-color: var(--accent); color: #08243f; font-weight: 700; }
 .tb-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 3px; }
+/* dirt-trade tool flyout groups (ported from the sitework tool) */
+.tool-group { position: relative; display: inline-flex; }
+.tool-group-main, .tool-group-caret {
+  background: var(--panel2); color: var(--text);
+  border: 1px solid var(--border); cursor: pointer; font-size: 13px; line-height: 1;
+}
+.tool-group-main { padding: 6px 10px; border-radius: 6px 0 0 6px; border-right: none; white-space: nowrap; }
+.tool-group-caret { padding: 6px 7px; border-radius: 0 6px 6px 0; font-size: 10px; color: var(--muted); }
+.tool-group-main.active { background: var(--accent); border-color: var(--accent); color: #08243f; font-weight: 700; }
+.tool-group-main.active + .tool-group-caret { border-color: var(--accent); }
+.tool-group:hover .tool-group-caret { color: var(--text); }
+.tool-flyout {
+  position: fixed; z-index: 60; /* top/left set in JS from the group's rect */
+  display: flex; flex-direction: column; gap: 3px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 5px; box-shadow: 0 10px 28px rgba(0,0,0,.45); min-width: 165px;
+}
+.tool-flyout .tool { text-align: left; width: 100%; }
 .mini-sel { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 4px; font-size: 12px; }
 /* a trade toolbar button shows active while its side panel is open */
 .btn.active { background: var(--accent); border-color: var(--accent); color: #08243f; font-weight: 700; }

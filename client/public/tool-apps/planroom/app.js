@@ -223,6 +223,17 @@ const MK_ICON = {
   dwall: '▬', dceiling: '⬜', dopening: '🚪', dtrim: '▁', dheight: '↕',
   froom: '▦', ftrans: '▂', fwall: '‖', fopening: '▯', fsheath: '▤',
 };
+// Dirt-trade tool flyout groups (mirrors the sitework tool): each group shows the
+// last-used tool as a one-click face + a ▾ caret revealing the rest.
+const TOOL_GROUPS = {
+  surface: ['wand', 'contour', 'espot', 'epad'],
+  takeoff: ['autoarea', 'qarea', 'qline', 'qcount'],
+};
+const TOOL_FACE = {
+  wand: '🪄 Auto-trace', contour: '⛰ Contour', espot: '◎ Spot', epad: '◫ Pad',
+  autoarea: '▩ Auto-area', qarea: '▨ Area', qline: '⌇ Line', qcount: '⊙ Count',
+};
+const groupCurrent = { surface: 'contour', takeoff: 'qarea' };
 const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
 const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath']; // click-built (vs drag; espot/align are special-cased)
 const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling', 'dtrim']; // produce ft / SF / squares
@@ -1516,6 +1527,7 @@ function setTool(t) {
   if (alignDraft && t !== 'align') alignDraft = null; // keep any applied shift; drop the in-progress pair
   drag = null;
   document.querySelectorAll('.tool').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
+  syncToolGroups(); // reflect the active tool on the dirt-trade group faces
   els.cv.classList.toggle('crosshair', t !== 'pan' && t !== 'select');
   // per-tool color memory (highlighter yellow, ink red, user overrides stick)
   if (t !== 'pan' && t !== 'select') els.mkColor.value = toolColors[t] || DEFAULT_COLOR;
@@ -1579,7 +1591,42 @@ function setTool(t) {
   }
   vp.requestDraw(); // the scale bar (and any tool-dependent overlay) shows/hides on tool change
 }
-document.querySelectorAll('.tool').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
+document.querySelectorAll('.tool').forEach(b => b.addEventListener('click', () => { closeToolFlyouts(); setTool(b.dataset.tool); }));
+
+/* ---- Tool-group flyouts (dirt trade) — mirrors the sitework tool ---- */
+function toolGroupOf(t) { for (const g in TOOL_GROUPS) if (TOOL_GROUPS[g].includes(t)) return g; return null; }
+function syncToolGroups() {
+  const g = toolGroupOf(tool);
+  if (g) groupCurrent[g] = tool; // remember the last-used tool per group
+  for (const grp in TOOL_GROUPS) {
+    const main = document.querySelector(`.tool-group-main[data-group="${grp}"]`);
+    if (!main) continue;
+    const face = TOOL_FACE[groupCurrent[grp]] || grp;
+    const sp = face.indexOf(' ');
+    const icon = sp > 0 ? face.slice(0, sp) : face;
+    const name = sp > 0 ? face.slice(sp) : '';
+    main.innerHTML = `${icon}<span class="btn-label">${name}</span>`; // name hides at narrow widths
+    main.classList.toggle('active', TOOL_GROUPS[grp].includes(tool));
+  }
+}
+function closeToolFlyouts() { document.querySelectorAll('.tool-flyout').forEach(f => f.classList.add('hidden')); }
+// flyout is position:fixed, placed under its group so no ancestor overflow clips it
+function toggleFlyout(grp, anchor) {
+  const fly = document.querySelector(`.tool-flyout[data-flyout="${grp}"]`);
+  if (!fly) return;
+  const willOpen = fly.classList.contains('hidden');
+  closeToolFlyouts();
+  if (willOpen) {
+    const r = anchor.closest('.tool-group').getBoundingClientRect();
+    fly.style.top = `${r.bottom + 4}px`;
+    fly.style.left = `${r.left}px`;
+    fly.classList.remove('hidden');
+  }
+}
+document.querySelectorAll('.tool-group-main, .tool-group-caret').forEach(el =>
+  el.addEventListener('click', e => { e.stopPropagation(); toggleFlyout(el.dataset.group, el); }));
+document.addEventListener('click', e => { if (!e.target.closest('.tool-group')) closeToolFlyouts(); });
+syncToolGroups(); // initial faces
 
 const screenPt = e => {
   const r = els.cv.getBoundingClientRect();

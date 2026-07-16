@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css?v=19">
+<link rel="stylesheet" href="styles.css?v=22">
 <script>
 (() => {
   try {
@@ -84,17 +84,26 @@
       <button id="surfaceToggle" class="mini-sel surf-toggle" title="Which surface new contours/pads belong to — click to switch between Existing and Proposed"><span id="surfaceToggleLabel">Existing</span> ⇄</button>
       <button class="tool" data-tool="align" title="Align the two sheets — click a landmark on the Existing sheet, then the same spot on the Proposed sheet. One pair fixes the shift; a second far-away pair also fixes rotation & scale.">⌖</button>
       <span class="tb-sep" aria-hidden="true"></span>
-      <button class="tool" data-tool="wand" title="Auto-trace — click a contour on a vector PDF to pick up the whole line in one click (prefills elevation from the nearest printed number)">🪄</button>
-      <button class="tool" data-tool="contour" title="Contour — trace a contour line, then type its elevation. Tagged existing or proposed per the surface toggle →">⛰</button>
-      <button class="tool" data-tool="espot" title="Spot elevation — click a single grade point (FG spot, high/low) and type its elevation">◎</button>
-      <button class="tool" data-tool="epad" title="Building pad — trace a polygon held flat at one elevation (FF/FP pads)">◫</button>
-    </div>
-    <div class="tb-sub tb-takeoff tr-dirt">
-      <span class="tb-sep" aria-hidden="true"></span>
-      <button class="tool" data-tool="autoarea" title="Auto-area — click a closed outline on a vector PDF (building, paving edge) to pick up the whole shape as an area takeoff in one click">▩</button>
-      <button class="tool" data-tool="qarea" title="Area takeoff — trace a paved / graded area, pick a material (concrete, asphalt, base, topsoil…) → priced quantities in the bid">▨</button>
-      <button class="tool" data-tool="qline" title="Line takeoff — trace a run (curb, pipe, silt fence…); add a trench cross-section for excavation & bedding CY">⌇</button>
-      <button class="tool" data-tool="qcount" title="Count takeoff — drop a point on each item (catch basin, manhole, tree…), name it → counted & priced in the bid">⊙</button>
+      <div class="tool-group" data-group="surface">
+        <button class="tool-group-main" data-group="surface" title="Grade tools — auto-trace, contour, spot, pad. Click for the menu (▾).">⛰ Contour</button>
+        <button class="tool-group-caret" data-group="surface" aria-label="More grade tools">▾</button>
+        <div class="tool-flyout hidden" data-flyout="surface">
+          <button class="tool" data-tool="wand" title="Auto-trace — click a contour on a vector PDF to pick up the whole line in one click (prefills elevation from the nearest printed number)">🪄 Auto-trace</button>
+          <button class="tool" data-tool="contour" title="Contour — trace a contour line, then type its elevation. Tagged existing or proposed per the surface toggle.">⛰ Contour</button>
+          <button class="tool" data-tool="espot" title="Spot elevation — click a single grade point (FG spot, high/low) and type its elevation">◎ Spot elevation</button>
+          <button class="tool" data-tool="epad" title="Building pad — trace a polygon held flat at one elevation (FF/FP pads)">◫ Building pad</button>
+        </div>
+      </div>
+      <div class="tool-group" data-group="takeoff">
+        <button class="tool-group-main" data-group="takeoff" title="Takeoff tools — auto-area, area, line, count. Click for the menu (▾).">▨ Area</button>
+        <button class="tool-group-caret" data-group="takeoff" aria-label="More takeoff tools">▾</button>
+        <div class="tool-flyout hidden" data-flyout="takeoff">
+          <button class="tool" data-tool="autoarea" title="Auto-area — click a closed outline on a vector PDF (building, paving edge) to pick up the whole shape as an area takeoff in one click">▩ Auto-area</button>
+          <button class="tool" data-tool="qarea" title="Area takeoff — trace a paved / graded area, pick a material (concrete, asphalt, base, topsoil…) → priced quantities in the bid">▨ Area takeoff</button>
+          <button class="tool" data-tool="qline" title="Line takeoff — trace a run (curb, pipe, silt fence…); add a trench cross-section for excavation & bedding CY">⌇ Line takeoff</button>
+          <button class="tool" data-tool="qcount" title="Count takeoff — drop a point on each item (catch basin, manhole, tree…), name it → counted & priced in the bid">⊙ Count takeoff</button>
+        </div>
+      </div>
     </div>
     <div class="tb-sub tb-takeoff tr-dwall">
       <button class="tool" data-tool="dwall" title="Wall run — trace a wall; SF = length × height × sides. Double-click a run to set its own height.">▬</button>
@@ -552,6 +561,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=21"></script>
+<script type="module" src="app.js?v=22"></script>
 </body>
 </html>
