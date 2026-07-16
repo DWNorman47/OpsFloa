@@ -1,6 +1,6 @@
 import React from 'react';
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
-import { langToLocale } from '../utils';
+import { formatCurrency, langToLocale } from '../utils';
 
 function fmtDate(str, locale = 'en-US') {
   const d = new Date(String(str).substring(0, 10) + 'T00:00:00');
@@ -28,10 +28,6 @@ function fmtH(h) {
   const wh = Math.floor(h);
   const wm = Math.round((h - wh) * 60);
   return wm > 0 ? `${wh}h ${wm}m` : `${wh}h`;
-}
-
-function fmtMoney(v) {
-  return `$${Number(v).toFixed(2)}`;
 }
 
 const s = StyleSheet.create({
@@ -71,8 +67,12 @@ const s = StyleSheet.create({
   reimbRow: { flexDirection: 'row', paddingVertical: 5, paddingHorizontal: 4, borderBottomWidth: 0.5, borderBottomColor: '#f3f4f6', borderBottomStyle: 'solid' },
 });
 
-export default function BillPDF({ data, companyInfo = {}, overtimeEnabled = true, showProject = true, showRateType = true, t = {}, language }) {
+export default function BillPDF({ data, currency = 'USD', companyInfo = {}, overtimeEnabled = true, showProject = true, showRateType = true, t = {}, language }) {
   const locale = langToLocale(language);
+  // Render money in the company's configured currency (e.g. "L" for HNL), the
+  // same way the on-screen figures do — this used to hardcode "$", so the PDF
+  // disagreed with the screen it was printed from.
+  const fmtMoney = v => formatCurrency(v, currency);
   const { worker, entries, reimbursements = [], summary, period } = data;
 
   const periodStr = period.from || period.to
