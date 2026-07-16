@@ -13,6 +13,7 @@ import axios from 'axios';
 import { getT } from '../i18n';
 import { detectLanguage } from '../languageDetect';
 import { publicLinkError } from '../utils/publicErrors';
+import { formatCurrency } from '../utils';
 
 const baseURL = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api';
 const publicApi = axios.create({ baseURL });
@@ -26,9 +27,11 @@ const TYPE_KEY = {
   unconditional_final:    'lwTypeUncondFinal',
 };
 
-function formatCents(cents) {
-  const n = (parseInt(cents, 10) || 0) / 100;
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
+// This page is unauthenticated, so it can't read GET /api/settings — the
+// contractor's currency rides along in the public payload instead. Falls back
+// to USD only if the server omitted it.
+function formatCents(cents, currency = 'USD') {
+  return formatCurrency((parseInt(cents, 10) || 0) / 100, currency);
 }
 
 export default function PublicLienWaiverSignPage() {
@@ -90,7 +93,7 @@ export default function PublicLienWaiverSignPage() {
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 24 }}>
           <Block label={t.lwAmount}>
-            <div style={{ fontSize: 20, fontWeight: 700 }}>{formatCents(waiver.amount_cents)}</div>
+            <div style={{ fontSize: 20, fontWeight: 700 }}>{formatCents(waiver.amount_cents, waiver?.currency)}</div>
           </Block>
           <Block label={t.lwThroughDate}>
             <div style={{ fontSize: 16, fontWeight: 600 }}>
@@ -111,7 +114,7 @@ export default function PublicLienWaiverSignPage() {
             <>
               <p style={{ margin: '0 0 8px', fontWeight: 600 }}>{t.lwCondHeading}</p>
               <p style={{ margin: 0 }}>
-                {t.lwCondPre} {formatCents(waiver.amount_cents)}{' '}
+                {t.lwCondPre} {formatCents(waiver.amount_cents, waiver?.currency)}{' '}
                 {t.lwCondMid} {new Date(waiver.through_date).toLocaleDateString()}{t.lwCondPost}
               </p>
             </>
@@ -119,7 +122,7 @@ export default function PublicLienWaiverSignPage() {
             <>
               <p style={{ margin: '0 0 8px', fontWeight: 600 }}>{t.lwUncondHeading}</p>
               <p style={{ margin: 0 }}>
-                {t.lwUncondPre} {formatCents(waiver.amount_cents)}{' '}
+                {t.lwUncondPre} {formatCents(waiver.amount_cents, waiver?.currency)}{' '}
                 {t.lwUncondMid} {new Date(waiver.through_date).toLocaleDateString()}{t.lwUncondPost}
               </p>
             </>
