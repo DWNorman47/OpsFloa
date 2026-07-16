@@ -114,6 +114,14 @@ const ESC_ITEM_LABEL = {
   checkdam: 'Rock check dam', washout: 'Concrete washout', dewater: 'Dewatering bag',
 };
 const ESC_ITEM_PRICE = { inletdrop: 150, inletcurb: 200, checkdam: 350, washout: 800, dewater: 250 }; // $/EA installed
+let curEscArea = 'entrance'; // type for new ESC stabilized areas
+const ESC_AREA_KINDS = ['entrance', 'blanket', 'seed', 'riprap'];
+const ESC_AREA_LABEL = {
+  entrance: 'Construction entrance', blanket: 'Erosion blanket',
+  seed: 'Hydroseed / seed & mulch', riprap: 'Riprap / outlet protection',
+};
+// unit conversions for the area material math
+const SF_PER_SY = 9, CF_PER_CY = 27, SF_PER_ACRE = 43560, LB_PER_TON = 2000;
 const ESC_LINE_PRICE = { silt: 2.5, supersilt: 8, sock: 6, wattle: 4, treeprot: 3.5, berm: 3, curtain: 25 };
 const TEXTURE_LABEL = { none: 'None', smooth: 'Smooth / skim', orange: 'Orange peel', knockdown: 'Knockdown', popcorn: 'Popcorn' };
 const TEXTURE_PRICE = { smooth: 0.30, orange: 0.35, knockdown: 0.40, popcorn: 0.55 }; // $/SF texture (labor+material)
@@ -220,7 +228,7 @@ els.hud.addEventListener('click', () => { clearTimeout(hudTimer); els.hud.classL
  * Widths/sizes are document-space (base px) so markups print/zoom like ink.
  */
 
-const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem'];
+const MK_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'espot', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea'];
 const MK_LABEL = {
   cloud: 'Cloud', rect: 'Rectangle', ellipse: 'Ellipse', arrow: 'Arrow', line: 'Line',
   freehand: 'Pen', highlight: 'Highlight', text: 'Text', callout: 'Callout',
@@ -230,7 +238,7 @@ const MK_LABEL = {
   qarea: 'Area takeoff', qline: 'Line takeoff', qcount: 'Count takeoff',
   dwall: 'Wall run', dceiling: 'Ceiling', dopening: 'Opening', dtrim: 'Trim', dheight: 'Height',
   froom: 'Floor room', ftrans: 'Transition', fwall: 'Framed wall', fopening: 'Framed opening', fsheath: 'Sheathing',
-  escline: 'ESC control', escitem: 'ESC BMP',
+  escline: 'ESC control', escitem: 'ESC BMP', escarea: 'ESC area',
 };
 const MK_ICON = {
   cloud: '☁', rect: '▭', ellipse: '⬭', arrow: '↗', line: '╲',
@@ -241,7 +249,7 @@ const MK_ICON = {
   qarea: '▨', qline: '⌇', qcount: '⊙',
   dwall: '▬', dceiling: '⬜', dopening: '🚪', dtrim: '▁', dheight: '↕',
   froom: '▦', ftrans: '▂', fwall: '‖', fopening: '▯', fsheath: '▤',
-  escline: '〰', escitem: '⊘',
+  escline: '〰', escitem: '⊘', escarea: '▧',
 };
 // Dirt-trade tool flyout groups (mirrors the sitework tool): each group shows the
 // last-used tool as a one-click face + a ▾ caret revealing the rest.
@@ -255,8 +263,8 @@ const TOOL_FACE = {
 };
 const groupCurrent = { surface: 'contour', takeoff: 'qarea' };
 const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
-const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem']; // click-built (vs drag; espot/align are special-cased)
-const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling', 'dtrim', 'escline']; // produce ft / SF / squares
+const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea']; // click-built (vs drag; espot/align are special-cased)
+const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling', 'dtrim', 'escline', 'escarea']; // produce ft / SF / squares
 
 /* ---- earthwork (sitework pack) helpers ---- */
 // stable hue per elevation so equal elevations match visually; existing lighter
@@ -509,6 +517,7 @@ function measureValue(m) {
   if (m.kind === 'fsheath') { const cfg = m.cfg || {}; return `${SHEATH_LABEL[cfg.stype] || 'Sheathing'} · ${fmt(polygonAreaFt2(m.pts, s), 0)} SF`; }
   if (m.kind === 'escline') { const cfg = m.cfg || {}; return `${ESC_LINE_LABEL[cfg.ltype] || 'Silt fence'} · ${fmt(polyLengthFt(m.pts, s), 0)} ft`; }
   if (m.kind === 'escitem') { const cfg = m.cfg || {}; const n = m.pts.length; return `${n} × ${ESC_ITEM_LABEL[cfg.itype] || 'BMP'}`; }
+  if (m.kind === 'escarea') { const cfg = m.cfg || {}; return `${ESC_AREA_LABEL[cfg.atype] || 'Area'} · ${fmt(polygonAreaFt2(m.pts, s), 0)} SF`; }
   return '';
 }
 const LINE_W = { S: 2, M: 4, L: 8 };
@@ -711,6 +720,7 @@ function drawMarkup(ctx, m) {
     }
     case 'froom':
     case 'fsheath':
+    case 'escarea':
     case 'marea': {
       if (m.pts.length >= 2) {
         ctx.beginPath();
@@ -1055,7 +1065,7 @@ function hitMarkup(ctx, w) {
         if (distToPolyline(w.x, w.y, m.pts) < t) return m;
         break;
       case 'marea': case 'plane': case 'epad': case 'qarea': case 'dceiling':
-      case 'froom': case 'fsheath':
+      case 'froom': case 'fsheath': case 'escarea':
         if (pointInPolygon(w.x, w.y, m.pts) ||
             distToPolyline(w.x, w.y, [...m.pts, m.pts[0]]) < t) return m;
         break;
@@ -1615,6 +1625,8 @@ function setTool(t) {
     setMsg(`Trace a ${ESC_LINE_LABEL[curEscLine].toLowerCase()} run; Enter/double-click to finish → LF. Double-click a run to change its type.`);
   } else if (t === 'escitem') {
     setMsg(`Click each ${ESC_ITEM_LABEL[curEscItem].toLowerCase()}; Enter/double-click to finish → counted EA. Double-click a group to change its type.`);
+  } else if (t === 'escarea') {
+    setMsg(`Trace a ${ESC_AREA_LABEL[curEscArea].toLowerCase()} area; Enter/double-click to close → SF + materials. Double-click it to change its type.`);
   } else if (t === 'dheight') {
     setMsg((state.scales[state.page] || 0)
       ? 'On an elevation / section sheet, click the floor then the ceiling (bottom → top); double-click or Enter to finish, then name it. Set it as the default in 🧱 or double-click a wall run to apply it.'
@@ -1977,7 +1989,7 @@ els.cv.addEventListener('pointercancel', endDrag);
 
 /* ---- click-built measure drafts: commit / cancel ---- */
 
-const CLOSED_KINDS = ['marea', 'plane', 'epad', 'ebound', 'qarea', 'dceiling', 'froom', 'fsheath']; // 3+ pts, closed polygon
+const CLOSED_KINDS = ['marea', 'plane', 'epad', 'ebound', 'qarea', 'dceiling', 'froom', 'fsheath', 'escarea']; // 3+ pts, closed polygon
 const POINT_KINDS = ['mcount', 'ritem', 'qcount', 'dopening', 'escitem']; // 1+ pts, no rubber band
 
 /* ---- vertex reshaping: drag a point (handled in the pointer flow), Alt-click
@@ -2092,6 +2104,7 @@ function commitDraft() {
   else if (d.kind === 'fsheath') extra.cfg = { stype: curSheathType };
   else if (d.kind === 'escline') extra.cfg = { ltype: curEscLine };
   else if (d.kind === 'escitem') extra.cfg = { itype: curEscItem };
+  else if (d.kind === 'escarea') extra.cfg = { atype: curEscArea };
   else if (d.kind === 'dwall') { extra.height = state.drywall.wallHeight; extra.sides = curDwSides; }
   else if (d.kind === 'dceiling') extra.cfg = { ctype: curCeilType };
   else if (d.kind === 'dopening') extra.cfg = { otype: curDwOpening, deductSF: OPENING_DEDUCT[curDwOpening] };
@@ -2210,6 +2223,16 @@ els.cv.addEventListener('dblclick', e => {
     const c = hit.cfg || {};
     modals.askNumber(`${FOPEN_LABEL[c.otype] || 'Opening'} rough-opening width (ft)`, 'Drives the header LF and cripple count for each opening in this group.', c.width != null ? c.width : 3, 1)
       .then(v => { if (v != null && v > 0) { const prev = snapshot(); hit.cfg = { ...c, width: v }; pushUndo(prev); markupsChanged(); } });
+    return;
+  }
+  // double-click an ESC stabilized area to change its type
+  if (hit && hit.kind === 'escarea') {
+    selectedId = hit.id;
+    vp.requestDraw();
+    const cur = (hit.cfg && hit.cfg.atype) || 'entrance';
+    askChoice('Area type', 'Each type drives its own material math (stone tons, SY, seed & mulch).',
+      ESC_AREA_KINDS.map(k => ({ label: ESC_AREA_LABEL[k], value: k, primary: k === cur }))
+    ).then(v => { if (v && v !== cur) { const prev = snapshot(); hit.cfg = { ...(hit.cfg || {}), atype: v }; curEscArea = v; pushUndo(prev); markupsChanged(); } });
     return;
   }
   // double-click an ESC point BMP group to change its type
@@ -2513,7 +2536,7 @@ const TRADE_TOOLS = {
   drywall: ['dwall', 'dceiling', 'dopening', 'dtrim', 'dheight'],
   flooring: ['froom', 'ftrans'],
   framing: ['fwall', 'fopening', 'fsheath'],
-  esc: ['escline', 'escitem'],
+  esc: ['escline', 'escitem', 'escarea'],
 };
 // general redlining + generic measure tools that collapse while a trade is active
 const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout', 'mlength', 'marea', 'mcount'];
@@ -4706,6 +4729,7 @@ const ftransLenFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0); // floo
 const fwallLenFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0); // framed wall run
 const fsheathSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0); // sheathing area
 const esclineLenFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0); // ESC linear control run
+const escareaSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0); // ESC stabilized area
 const FINISH_MUD = { L3: 0.020, L4: 0.027, L5: 0.036 }; // gal ready-mix / SF by finish level
 // Suspended (ACT) drop-ceiling grid takeoff from area + wall perimeter. Rule-of-thumb
 // counts: mains 4' OC, 4' cross tees 2' OC (both layouts), 2' cross tees only on 2×2;
@@ -5092,8 +5116,17 @@ if ($('frSheathTb')) $('frSheathTb').addEventListener('change', e => { curSheath
 function escTotals() {
   const byLine = {}; // ltype -> LF
   const byItem = {}; // itype -> EA
-  let lineLF = 0, itemEA = 0;
+  const byArea = {}; // atype -> SF
+  let lineLF = 0, itemEA = 0, areaSF = 0;
   for (const m of state.markups) {
+    if (m.kind === 'escarea') {
+      const t = (m.cfg && m.cfg.atype) || 'entrance';
+      const sf = escareaSf(m);
+      if (sf < 0.01) continue;
+      byArea[t] = (byArea[t] || 0) + sf;
+      areaSF += sf;
+      continue;
+    }
     if (m.kind === 'escitem') {
       const t = (m.cfg && m.cfg.itype) || 'inletdrop';
       const n = m.pts.length;
@@ -5108,7 +5141,28 @@ function escTotals() {
     byLine[t] = (byLine[t] || 0) + lf;
     lineLF += lf;
   }
-  return { byLine, lineLF, byItem, itemEA };
+  return { byLine, lineLF, byItem, itemEA, byArea, areaSF };
+}
+// Area material math, shared by the bid and the panel so they can't drift.
+// Intl of the numbers aside, the conversions are the standard ones: stone by
+// depth x density, blanket by SY with overlap waste, seed/mulch by acre.
+function escMaterials(T) {
+  const E = state.esc || {};
+  const sf = t => T.byArea[t] || 0;
+  const density = Number(E.stoneDensity) > 0 ? Number(E.stoneDensity) : 105; // lb/ft³
+  const entCF = sf('entrance') * ((Number(E.entranceDepth) || 6) / 12);
+  const ripCF = sf('riprap') * ((Number(E.riprapDepth) || 12) / 12);
+  const acres = sf('seed') / SF_PER_ACRE;
+  return {
+    entranceCY: entCF / CF_PER_CY,
+    entranceTons: entCF * density / LB_PER_TON,
+    riprapCY: ripCF / CF_PER_CY,
+    riprapTons: ripCF * density / LB_PER_TON,
+    blanketSY: sf('blanket') * (1 + (Number(E.blanketWaste) || 0) / 100) / SF_PER_SY,
+    acres,
+    seedLbs: acres * (Number(E.seedRate) || 0),
+    mulchTons: acres * (Number(E.mulchRate) || 0),
+  };
 }
 function escBidLines() {
   const T = escTotals();
@@ -5125,6 +5179,12 @@ function escBidLines() {
     if (!ea) continue;
     lines.push({ key: `esc_item_${k}`, label: `${ESC_ITEM_LABEL[k]} (installed)`, qty: ea, unit: 'EA', q: 0, defPrice: ESC_ITEM_PRICE[k] || 150 });
   }
+  const M = escMaterials(T);
+  if (M.entranceTons > 0.01) lines.push({ key: 'esc_entrance_stone', label: `Construction entrance stone (${fmt(state.esc.entranceDepth || 6, 0)}" deep)`, qty: M.entranceTons, unit: 'ton', q: 0, defPrice: 35 });
+  if (M.blanketSY > 0.5) lines.push({ key: 'esc_blanket', label: 'Erosion blanket (incl. staples)', qty: M.blanketSY, unit: 'SY', q: 0, defPrice: 1.75 });
+  if (M.seedLbs > 0.01) lines.push({ key: 'esc_seed', label: `Seed (${fmt(state.esc.seedRate || 0, 0)} lb/ac)`, qty: M.seedLbs, unit: 'lb', q: 0, defPrice: 4 });
+  if (M.mulchTons > 0.01) lines.push({ key: 'esc_mulch', label: `Mulch (${fmt(state.esc.mulchRate || 0, 1)} ton/ac)`, qty: M.mulchTons, unit: 'ton', q: 0, defPrice: 200 });
+  if (M.riprapTons > 0.01) lines.push({ key: 'esc_riprap', label: `Riprap / outlet protection (${fmt(state.esc.riprapDepth || 12, 0)}" deep)`, qty: M.riprapTons, unit: 'ton', q: 0, defPrice: 55 });
   return lines;
 }
 function renderEscPanel() {
@@ -5138,6 +5198,16 @@ function renderEscPanel() {
   rows.push(`<div class="dirt-set">New runs <select id="escLine">${lnOpts}</select></div>`);
   const itOpts = ESC_ITEM_KINDS.map(k => `<option value="${k}">${ESC_ITEM_LABEL[k]}</option>`).join('');
   rows.push(`<div class="dirt-set">New BMPs <select id="escItem">${itOpts}</select></div>`);
+  const arOpts = ESC_AREA_KINDS.map(k => `<option value="${k}">${ESC_AREA_LABEL[k]}</option>`).join('');
+  rows.push(`<div class="dirt-set">New areas <select id="escArea">${arOpts}</select></div>`);
+  // Rate inputs appear only for the area types actually traced — six numeric
+  // fields on a panel with no areas is just noise.
+  const A = T.byArea;
+  if (A.entrance) rows.push('<div class="dirt-set">Entrance stone <input type="number" id="escEntDepth" min="1" step="1" style="width:46px"> in deep</div>');
+  if (A.riprap) rows.push('<div class="dirt-set">Riprap <input type="number" id="escRipDepth" min="1" step="1" style="width:46px"> in deep</div>');
+  if (A.entrance || A.riprap) rows.push('<div class="dirt-set">Stone density <input type="number" id="escDensity" min="1" step="1" style="width:52px"> lb/ft³</div>');
+  if (A.blanket) rows.push('<div class="dirt-set">Blanket overlap waste <input type="number" id="escBlWaste" min="0" step="1" style="width:46px"> %</div>');
+  if (A.seed) rows.push('<div class="dirt-set">Seed <input type="number" id="escSeedRate" min="0" step="1" style="width:52px"> lb/ac · Mulch <input type="number" id="escMulchRate" min="0" step="0.1" style="width:46px"> ton/ac</div>');
   rows.push('<div class="roof-sub">Perimeter controls</div>');
   let any = false;
   for (const k of ESC_LINE_KINDS) {
@@ -5153,12 +5223,42 @@ function renderEscPanel() {
     for (const k of ESC_ITEM_KINDS) { const ea = T.byItem[k]; if (!ea) continue; R(ESC_ITEM_LABEL[k], `${ea} EA`); }
     rows.push(`<div class="dirt-row"><b>Total</b><span class="v"><b>${T.itemEA} EA</b></span></div>`);
   }
-  rows.push('<div class="hint" style="margin:4px 0">Each control rolls up by type at its installed unit price (labor included) — runs by LF, BMPs by EA. Double-click one to change its type. Prices in $ Bid.</div>');
+  if (T.areaSF > 0.5) {
+    const M = escMaterials(T);
+    rows.push('<div class="roof-sub">Stabilized areas</div>');
+    for (const k of ESC_AREA_KINDS) { const sf = T.byArea[k]; if (!sf) continue; R(ESC_AREA_LABEL[k], `${fmt(sf, 0)} SF`); }
+    rows.push('<div class="roof-sub" style="opacity:.8">Materials</div>');
+    if (T.byArea.entrance) R('Entrance stone', `${fmt(M.entranceCY, 1)} CY · ${fmt(M.entranceTons, 1)} tons`);
+    if (T.byArea.riprap) R('Riprap', `${fmt(M.riprapCY, 1)} CY · ${fmt(M.riprapTons, 1)} tons`);
+    if (T.byArea.blanket) R('Erosion blanket', `${fmt(M.blanketSY, 0)} SY`);
+    if (T.byArea.seed) { R('Seeded area', `${fmt(M.acres, 2)} ac`); R('Seed · mulch', `${fmt(M.seedLbs, 0)} lb · ${fmt(M.mulchTons, 1)} ton`); }
+  }
+  rows.push('<div class="hint" style="margin:4px 0">Each control rolls up by type at its installed unit price (labor included) — runs by LF, BMPs by EA, areas by SF into stone tons / SY / seed & mulch. Double-click one to change its type. Prices in $ Bid.</div>');
   $('escBody').innerHTML = rows.join('');
+  const E = state.esc;
   $('escLine').value = curEscLine;
   $('escItem').value = curEscItem;
+  $('escArea').value = curEscArea;
   $('escLine').addEventListener('change', e => { curEscLine = e.target.value; if (tool === 'escline') setTool('escline'); });
   $('escItem').addEventListener('change', e => { curEscItem = e.target.value; if (tool === 'escitem') setTool('escitem'); });
+  $('escArea').addEventListener('change', e => { curEscArea = e.target.value; if (tool === 'escarea') setTool('escarea'); });
+  // the rate inputs are conditional, so bind defensively
+  const num = (id, key, def, min) => {
+    const el = $(id);
+    if (!el) return;
+    el.value = E[key] != null ? E[key] : def;
+    el.addEventListener('change', ev => {
+      E[key] = Math.max(min, parseFloat(ev.target.value) || def);
+      ev.target.value = E[key];
+      scheduleSave(); renderEscPanel();
+    });
+  };
+  num('escEntDepth', 'entranceDepth', 6, 1);
+  num('escRipDepth', 'riprapDepth', 12, 1);
+  num('escDensity', 'stoneDensity', 105, 1);
+  num('escBlWaste', 'blanketWaste', 10, 0);
+  num('escSeedRate', 'seedRate', 200, 0);
+  num('escMulchRate', 'mulchRate', 2, 0);
 }
 $('btnEsc').addEventListener('click', () => {
   const p = $('escPanel');
@@ -5168,6 +5268,7 @@ $('btnEsc').addEventListener('click', () => {
 });
 if ($('escLineTb')) $('escLineTb').addEventListener('change', e => { curEscLine = e.target.value; if (tool === 'escline') setTool('escline'); });
 if ($('escItemTb')) $('escItemTb').addEventListener('change', e => { curEscItem = e.target.value; if (tool === 'escitem') setTool('escitem'); });
+if ($('escAreaTb')) $('escAreaTb').addEventListener('change', e => { curEscArea = e.target.value; if (tool === 'escarea') setTool('escarea'); });
 
 /* ===================== Live sessions (SSE + REST ops) =====================
  * Host "goes live" on the current project; teammates join and co-edit in real

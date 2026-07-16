@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css?v=32">
+<link rel="stylesheet" href="styles.css?v=33">
 <script>
 (() => {
   try {
@@ -172,6 +172,13 @@
         <option value="checkdam">Rock check dam</option>
         <option value="washout">Concrete washout</option>
         <option value="dewater">Dewatering bag</option>
+      </select>
+      <button class="tool" data-tool="escarea" title="Stabilized area — trace a construction entrance / erosion blanket / hydroseed / riprap area &rarr; SF + materials (stone tons, SY, seed &amp; mulch). Double-click it to change its type.">&#9639;</button>
+      <select id="escAreaTb" class="mini-sel" title="Area type for new areas">
+        <option value="entrance">Construction entrance</option>
+        <option value="blanket">Erosion blanket</option>
+        <option value="seed">Hydroseed / seed &amp; mulch</option>
+        <option value="riprap">Riprap / outlet protection</option>
       </select>
     </div>
     <input type="color" id="mkColor" class="dirt-hide" value="#e05555" title="Markup color (applies to the selected markup too)">
@@ -597,6 +604,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=32"></script>
+<script type="module" src="app.js?v=33"></script>
 </body>
 </html>

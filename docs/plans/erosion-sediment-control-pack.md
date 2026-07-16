@@ -1,6 +1,6 @@
 # OpsFloa — Erosion & Sediment Control takeoff pack (inside the Plan Room Takeoff layer)
 
-Status: **E1–E2 shipped; E3 remaining** (2026-07-16). A new takeoff **trade** in Plan Room
+Status: **E1–E3 all shipped — pack complete** (2026-07-16). A new takeoff **trade** in Plan Room
 (alongside Roofing, Earthwork, Drywall & Paint, Flooring & Tile, Framing &
 Lumber), included in the **$60 Takeoff** add-on — no own SKU.
 
@@ -54,15 +54,29 @@ taxonomy plus the material conversions.
   $/EA; panel "Point controls" section. Registered in `POINT_KINDS` (1 click per
   BMP, no rubber band) — the framing pack's `fopening` was left out, which is
   why it wrongly needs 2 clicks.
-- **E3 — stabilized areas + materials**: `escarea` area kind (construction
-  entrance, erosion blanket, hydroseed, riprap) → SF by type + the tons / SY /
-  lbs conversions; project settings UI; panel Areas section.
+- **E3 — stabilized areas + materials** ✅ *shipped*: `escarea` closed-polygon
+  kind (construction entrance / erosion blanket / hydroseed / riprap, per-area
+  type, double-click to change) → SF by type, converted to stone tons, SY, and
+  seed/mulch by `escMaterials()` — shared by the bid and the panel so the two
+  can't drift. Registered in `NEEDS_SCALE` + `CLOSED_KINDS`. The `state.esc`
+  rate settings (defined back in E1) are now live and editable, and the rate
+  inputs render only for the area types actually traced, so an empty panel
+  isn't six numeric fields of noise.
 
 ## Verification
-- E1: a 400-ft silt fence run = 400 LF at $2.50 → $1,000; two silt-fence runs
-  roll up as one line; a tree-protection run shows separately; an uncalibrated
-  sheet refuses the tool and sends you to 📏. `app.js` parses;
-  `git status --porcelain client/public/tool-apps/sitework/` clean.
+The material math is checked by lifting `escTotals`/`escMaterials`/`escBidLines`
+**verbatim out of app.js** and running them against stubbed state, rather than
+re-implementing the formulas in the test (which would only re-derive the same
+mistakes). All pass:
+- 5,000 SF entrance @ 6" / 105 lb/ft³ → 92.59 CY, **131.25 tons** → $4,593.75
+- 10,000 SF blanket @ 10% overlap → **1,222.2 SY**
+- 43,560 SF hydroseed = **1.00 acre** → 200 lb seed, 2.0 ton mulch
+- 500 SF riprap @ 12" → **26.25 tons**
+- 400 LF silt fence @ $2.50 → **$1,000**; 4+3 drop inlets → **7 EA / $1,050**
+- same-type runs/groups roll up; different types stay separate lines
+- an empty `state.esc` still yields 131.25 tons (defaults hold)
+- an uncalibrated sheet refuses `escline`/`escarea` and sends you to 📏
+- `app.js` parses; `git status --porcelain client/public/tool-apps/sitework/` clean.
 
 ## Two pattern deviations (deliberate — the earlier packs got these wrong)
 - **`NEEDS_SCALE`**: `escline` (and `escarea` in E3) are registered, because they
