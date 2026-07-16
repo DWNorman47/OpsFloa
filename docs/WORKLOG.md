@@ -23,6 +23,134 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-16 — GC: COI / document expiry tracker
+
+**Shipped.** `9ee0a2f`. Sub documents now alert before they lapse (30 days) and
+again, louder, once they have. Daily job + a banner on the Subs page.
+
+**Found — the data was already there and doing nothing.**
+`subcontractor_documents.expires_on` has existed since migration `0107`. It
+appeared in exactly four places: the migration, the destructure, the INSERT, and
+one label on the sub's own page. **No index, no query, no cron.** Every
+customer's COI expiry dates have been collected and never read — a sub's
+insurance lapsed silently and you found out when something went wrong. The
+tracker isn't new capability so much as making collected data do its job.
+
+**Found — I shipped a route-shadowing bug and caught it.** `/subcontractors/
+compliance` was declared *after* `/subcontractors/:id`. Express matches in
+declaration order, so `:id` swallowed it and tried to load a subcontractor whose
+id was the string `'compliance'` — a Postgres error on an INTEGER column, a
+**500 not a 404**, and invisible until someone opened the page. Moved above
+`:id`, commented so it can't drift back, and pinned with a test asserting `:id`
+never sees it.
+
+**Found — `db-enums.md`'s inbox-type list had drifted.** It was missing
+`equipment_rental_due` and `bid_due`, both already in use. Verified by grepping
+every `createInboxItem` call site. Exactly the drift that doc predicts for an
+unconstrained column.
+
+**Call made — it warns, it doesn't block.** An expired COI does **not** stop a PO
+being issued to that sub. Blocking is arguably the real value ("he can't be on
+site") but it's a hard gate on a flow that already works. ⚠️ Your call.
+
+---
+
+## 2026-07-16 — Meeting minutes from a recording
+
+**Shipped.** `d8b8553`. A "Turn into minutes" button on a finished transcript →
+Summary / Decisions / Action items with owners / Open questions, saved on the
+recording. Migration `0140`.
+
+**The point: it connects two things that already existed but had never been
+introduced.** Transcription (diarized, with editable speaker names) and the
+Claude backend. You could already do this by hand — copy the transcript, paste
+into the Summarizer. **And that paste is exactly what breaks it.** The transcript
+*knows* Mike said it; flattening to text throws that away and the model guesses.
+Building the prompt server-side from the utterances + speaker names is the whole
+edge: "**Mike:** order rebar — by Monday" instead of a vague bullet.
+
+**Calls made:**
+- **Un-named speakers fall back to "Speaker A"** (David's suggestion — it was
+  already the behaviour, but his question surfaced that blank-but-present names
+  weren't handled, and made me tell the prompt to *keep* those labels rather than
+  invent a name. A wrong name on an action item is worse than no name.)
+- **Extracted the AI meter to `services/aiGate.js`.** It was private to
+  officeTools, but the monthly quota is per *company* across every AI feature —
+  a second copy would mean two counters disagreeing about one limit.
+- **This is the first AI output OpsFloa persists.** The office tools are
+  deliberately paste-in-read-out. Minutes are different in kind: a recap you
+  can't find next week isn't minutes. The recording already stores its transcript
+  anyway.
+- **No usage badge on the Transcription tool** — transcription runs on
+  AssemblyAI, not the AI budget, so a badge there would imply transcribing burns
+  AI calls. The minutes panel states the cost at the point of decision instead.
+
+⚠️ **Untested against a real meeting.** The prompt's quality is unknown until one
+runs through it. Needs `ANTHROPIC_API_KEY`.
+
+---
+
+## 2026-07-16 — GC tools: planned, not built
+
+**Why nothing shipped.** "GC tools" is a heading in the roadmap brainstorm, not a
+feature — **~30 ideas across 7 categories**. So: surveyed the codebase, wrote
+`docs/plans/gc-tools.md`. `c2e6a42`
+
+**Found — three of the six "standouts" are already substantially built.** Lien
+waivers (~90%: both directions, public sign flow, PDF), the closeout checklist
+(fully built; the *assembler* isn't), and budget-vs-actual. The roadmap still
+lists them as to-build — nobody updated it after building them. **Planning without
+surveying would have wasted real work.**
+
+**Found — closeout is broken for non-QBO companies, in both directions.**
+`project_invoices` is a QuickBooks *mirror*: only `routes/qbo.js` writes it, so a
+company without QBO has zero rows. Two checklist items read it —
+`final_invoice` counts *paid* invoices → 0 → stuck at `in_progress` forever, so
+**those projects can never be closed out**; `retainage_release` sums `balance` →
+`SUM` over zero rows is **0** → `0 === 0` → reports **done**, certifying retainage
+released on a project with no invoices. **A false negative that blocks and a false
+positive that lies.** Filed — it needs the invoice decision first.
+
+**Found — the closeout assembler has nothing to assemble.**
+`project_closeout_items` has no document columns at all, despite `0111`'s header
+claiming items are "checked off with notes + attached doc". So "as-builts
+delivered" is a checkbox with no as-built behind it. Item-level document storage
+is prerequisite work, not part of the assembler.
+
+**Fixed in passing:** deleting a recording whose media was already swept threw a
+`ReferenceError` **after** the row was deleted — a 500 and no audit row. Two lines.
+
+**Recommendation in the plan — GC is probably not a module.** `module_sales` and
+`module_subs` were backfilled by `0118`, never wired, and `db-enums` records them
+as orphaned. **The codebase already ran this experiment**: both became tabs. If
+GC is monetized it's `addon_gc`, not `module_gc`.
+
+---
+
+## 2026-07-16 — Calculators hub
+
+**Shipped.** `72b4e74`. 12 field calculators, one tab — concrete (slab/footing/
+column/wall), rebar grid, asphalt, base, slope, rafter, stairs with IRC checks,
+board feet, paint, tile+thinset+grout, ft-in ↔ decimal, area/volume. Pure
+client-side: no network, no AI, nothing to meter or gate. Works offline. This was
+the roadmap's own idea ("a shared Calculators hub instead of a tab per calc").
+
+**Found — a real float bug, caught by the tests.** `Math.ceil` over a float
+product rounds up on **drift**, not quantity: `200 SF × 1.1 waste` is
+`220.00000000000003`, so it ordered **221 tiles for an exact 220-tile job** — on
+the most ordinary input the tool has. Every bag / tile / pail / riser count was a
+`ceil` of a float, so all of them were exposed. Fixed via `ceilQty()`, locked by a
+regression test.
+
+**Call made — the math is data, not components.** `calculators.js` is a plain
+`.js` file with no React import, so it's testable without rendering; the UI just
+renders whatever it's given. Adding a calculator is one array entry. That
+separation is the only reason the 40-test suite exists — including totality checks
+that **no** calculator returns NaN/Infinity for empty, garbage, zero or negative
+input. A field tool that prints "NaN CY" is worse than no tool.
+
+---
+
 ## 2026-07-16 — Marketing doc rewrite + Contract Red-Flag Scanner
 
 **Found — the marketing doc understated the product by 8 of its 11 trades.**
@@ -470,17 +598,58 @@ only separate when the row wraps (`05fe3f1` → `73e78ee`).
 
 ## Standing items waiting on David
 
+*Everything here is blocked on a decision or an action of yours, not on more code.*
+
+### The big one
+
+⚠️ **133 commits sit on `dev` and have never gone to production.** That's
+six trade packs, the storm module, the currency sweep, four new tools and the AI
+gate. **None of it has been through stage**, and the trade packs were verified by
+unit-testing the *math*, not by driving the UI with a real plan set. It is a very
+large release. Everything below matters less than getting this out.
+(The bill-PDF currency hotfix is the one exception — merged to `main` 2026-07-16.)
+
+### Decisions only you can make
+
+⚠️ **Is $60/mo still right for Takeoff?** It was priced when Takeoff did 3 trades.
+It does **11**. Dedicated takeoff software is $1,500–4,000/seat/yr and usually
+covers one trade. Left alone on purpose — land-grab pricing is defensible and
+raising later beats lowering — but it should be a decision, not an oversight.
+
+⚠️ **Do you want GC customers at all?** A GC coordinates subs; everything else
+OpsFloa does assumes a contractor who self-performs. The alternative — keep
+deepening the trade product that now has 11 takeoff trades — is legitimate and
+cheaper. See `docs/plans/gc-tools.md`.
+
+⚠️ **Native invoices, or QuickBooks forever?** `project_invoices` is a QBO mirror,
+so a company without QBO has zero rows. This **blocks** sub pay-apps and is
+**already breaking closeout today** (see BACKLOG). The single biggest
+architectural call on the board.
+
+⚠️ **Should an expired COI block, or just warn?** It currently warns. Blocking a
+PO to an uninsured sub is arguably the whole point, but it's a hard gate on a
+working flow, so I didn't add it unasked.
+
+### Verification you owe
+
 ⚠️ **Storm/Utility is built but unsellable.** `STORM_SELLABLE=false` in
 `BillingPanel.jsx` hides every buy path until the utility math is hand-verified.
-To sell: verify the math → flip to `true` → set `STRIPE_PRICE_STORM` to **$20**
-in the Stripe dashboard. (The ESC pack's verification approach — lifting the real
-functions out of app.js and running them against stubbed state — would work here
-too.) See `docs/plans/storm-utility-pack.md`.
+To sell: verify → flip to `true` → set `STRIPE_PRICE_STORM` to **$20** in Stripe.
+(The approach used from the ESC pack onward — lifting the real functions out of
+app.js and running them against stubbed state — would work here.) See
+`docs/plans/storm-utility-pack.md`.
 
 ⚠️ **Roofing math** still wants a hand-verification pass.
 
 ⚠️ **Sitework ↔ Plan Room parity test** still outstanding.
 
-⚠️ **Three open backlog items** from the currency sweep — tool-apps `'$'`,
-flooring/framing missing from `NEEDS_SCALE`, `fopening` missing from
-`POINT_KINDS`. See `docs/BACKLOG.md`.
+⚠️ **The Red-Flag Scanner and Meeting Minutes prompts have never seen real
+input.** Both are wired and verified structurally; their *output quality* is
+unknown until you run a real subcontract and a real meeting through them. Both
+need `ANTHROPIC_API_KEY`.
+
+### Filed, not forgotten
+
+⚠️ **Five open items in `docs/BACKLOG.md`** — the two closeout/QBO bugs above,
+tool-apps still hardcoding `'$'`, flooring/framing missing from `NEEDS_SCALE`,
+and `fopening` missing from `POINT_KINDS`.

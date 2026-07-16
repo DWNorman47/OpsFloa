@@ -1,8 +1,12 @@
 # OpsFloa — GC tools: plan
 
-Status: **plan only — nothing built** (2026-07-16). Written after a full survey of
-what already exists, because the roadmap entry (`docs/BACKLOG.md:131-133`) names
-six "standouts" and **three of them are already substantially built**.
+Status: **2 of 6 standouts shipped; the rest planned** (2026-07-16). COI tracker
+and OAC meeting minutes are done — see the sequence at the bottom.
+
+Written after a full survey of what already exists, because the roadmap entry
+(`docs/BACKLOG.md:131-133`) names six "standouts" and **three of them were
+already substantially built**. Planning without checking would have wasted real
+work.
 
 ## The buyer, and why this is a real fork
 
@@ -81,37 +85,38 @@ computed.
 
 ## The six standouts, re-scoped against reality
 
-### 1. COI tracker + expiry alerts — **cheapest real win** 🟢
-**State:** storage exists; **`expires_on` is a write-only field.** It appears in
-exactly 5 places repo-wide — the migration, the INSERT, the destructure, one
-display label, and the enum doc. **Nothing queries it. No cron. No index.** So
-the data has been collected and never used.
+### 1. COI tracker + expiry alerts — ✅ **SHIPPED** (2026-07-16)
+**What it was:** storage existed but `expires_on` was a **write-only field** —
+present in exactly 5 places repo-wide and queried by nothing. No cron, no index.
+The data had been collected since `0107` and never once read.
 
-**Build:** an expiring/expired query + index, `ADD COLUMN coi_reminder_sent_at`
-for dedup, a daily cron cloned from `jobs/rentalReturnReminders.js` (the
-claim-then-send pattern), push + inbox alerts, and a compliance view on the sub.
+**Shipped:** migration `0141` (two alert stamps + a partial index),
+`jobs/subDocExpiry.js` (daily 08:00, claim-then-send per stage, push + inbox),
+`GET /subcontractors/compliance`, and a banner on the Subs page. Two stamps
+rather than one because "expires in 30 days" and "expired" are different events
+and the second must fire even if the first already did. No re-arm logic needed —
+documents have no PATCH route, so a replacement is a new row.
 
-**Decide:** does an expired COI *block* issuing a PO, or just warn? Blocking is
-the actual value ("we can't let him on site") but it's a hard gate on an existing
-flow.
+⚠️ **Still open:** it **warns, it does not block**. An expired COI will not stop
+a PO being issued to that sub. Blocking is arguably the real value; it's a hard
+gate on a working flow, so it wasn't added unasked.
 
-**Effort:** small. One migration, one job, one query, one badge.
+### 2. OAC meeting minutes — ✅ **SHIPPED** (2026-07-16)
+**What it was:** ~80% of the infrastructure already existed and the two halves
+had never been introduced. `TranscriptionTool` offered only copy/download; the
+user pasted into `SummarizerTool` by hand — and that paste is precisely what
+broke it, flattening away the speaker structure the model needs.
 
-### 2. OAC meeting minutes — **best leverage per line** 🟢
-**State:** ~80% of the infrastructure is shipped, and the two halves are **not
-connected**: `TranscriptionTool` only offers copy/download, and the user pastes
-into `SummarizerTool` by hand. No `recording_id → summarize` path exists, and no
-AI output is persisted anywhere (`officeTools.js:4-5`).
+**Shipped:** migration `0140` (minutes on the recording),
+`POST /recordings/:id/minutes` building the prompt server-side from
+`recording_utterances` + `speaker_names`, a `MINUTES_SYSTEM` prompt (Summary /
+Decisions / Action items with owners / Open questions), and a "Turn into minutes"
+button. Un-named speakers keep their `Speaker A` label and the prompt is told
+never to invent a name for them. The AI meter moved to `services/aiGate.js` so
+recordings and officeTools share one per-company counter.
 
-**Build:** a third system prompt beside `SUMMARIZE_SYSTEM`/`ASK_SYSTEM`/
-`RED_FLAG_SYSTEM` that emits decisions / action items with owners / open
-questions; a route that feeds **diarized utterances with speaker names applied**
-rather than pasted text (that's the whole edge — "Mike owes the RFI answer by
-Friday" needs to know who Mike is); and a table to persist minutes.
-`recordings.project_id` already exists, so minutes are project-scopable for free.
-Metering/gating comes free via `runAi()`.
-
-**Effort:** small-to-medium. Mostly a prompt and a join.
+⚠️ **Still open:** the prompt has never seen a real meeting. Structurally
+verified; output quality unknown.
 
 ### 3. Bid leveling — **the GC-defining one** 🟡
 **State:** genuinely missing. "Bid" in this codebase means *our outbound bid*;
@@ -172,18 +177,25 @@ may be the honest answer over an indexed PDF.
 
 ## Recommended sequence
 
-1. **COI tracker** — smallest, uses data already being collected, and the
-   compliance win is legible in one sentence.
-2. **OAC minutes** — connects two shipped tools that don't talk to each other;
-   mostly a prompt.
+1. ~~**COI tracker**~~ — ✅ shipped 2026-07-16 (migration `0141`,
+   `jobs/subDocExpiry.js`, `GET /subcontractors/compliance`, Subs-page banner).
+   Warns; does **not** block a PO to an uninsured sub — open decision.
+2. ~~**OAC minutes**~~ — ✅ shipped 2026-07-16 (migration `0140`,
+   `POST /recordings/:id/minutes`). Prompt quality untested against a real
+   meeting.
 3. **Bid leveling** — the GC-defining feature; no dependency on the invoice
-   question.
+   question. **Next, if GC is wanted at all.**
 4. **Selections/allowances** — self-contained.
 5. *(Decide the invoice question)* → **sub pay-app intake**.
 6. *(Add item-level docs first)* → **closeout assembler**.
 
-1–3 are each roughly a day and together make a credible "this is for GCs" story.
-5–6 are where the real weight is and both are gated on decisions above.
+The two shipped ones took about half a day each — both were mostly a matter of
+using data and pipelines that already existed. 3–4 are real builds. 5–6 are where
+the weight is, and both are gated on decisions above.
+
+**Cost-to-complete** (the other half of the "budget vs actual + cost-to-complete"
+standout) is still outstanding and is roughly one subtraction from data
+`projectSpend.js` already computes — the cheapest thing left on this list.
 
 ## Open decisions for David
 1. **Module, tabs, or add-on?** Recommendation: tabs + Tools entries (the
