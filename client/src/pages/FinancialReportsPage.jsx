@@ -15,11 +15,8 @@ import EmptyState from '../components/EmptyState';
 import TabBar from '../components/TabBar';
 import { AnalyticsPanel } from './AnalyticsPage';
 import { silentError } from '../errorReporter';
+import { useCents } from '../hooks/useMoney';
 
-function formatCents(cents, locale = 'en-US') {
-  const n = (parseInt(cents, 10) || 0) / 100;
-  return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
-}
 function marginColor(pct) {
   if (pct == null) return '#6b7280';
   if (pct >= 25)  return '#059669';
@@ -48,6 +45,7 @@ function normalizeReportHash(rawHash) {
 // ── P&L portfolio ────────────────────────────────────────────────────────────
 
 function PnLTab() {
+  const formatCents = useCents({ showCents: false });
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
@@ -98,11 +96,11 @@ function PnLTab() {
           {rows.map(r => (
             <tr key={r.project_id} style={{ borderBottom: '1px solid #f3f4f6' }}>
               <td style={styles.td}><strong>{r.name}</strong></td>
-              <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(r.contract_value_cents, locale)}</td>
-              <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(r.revenue_billed_cents, locale)}</td>
-              <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(r.cost_spent_cents, locale)}</td>
-              <td style={{ ...styles.td, textAlign: 'right', color: '#6b7280' }}>{formatCents(r.cost_committed_cents, locale)}</td>
-              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 600, color: r.gross_profit_cents < 0 ? '#dc2626' : '#111827' }}>{formatCents(r.gross_profit_cents, locale)}</td>
+              <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(r.contract_value_cents)}</td>
+              <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(r.revenue_billed_cents)}</td>
+              <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(r.cost_spent_cents)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', color: '#6b7280' }}>{formatCents(r.cost_committed_cents)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 600, color: r.gross_profit_cents < 0 ? '#dc2626' : '#111827' }}>{formatCents(r.gross_profit_cents)}</td>
               <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: marginColor(r.projected_margin_pct) }}>
                 {r.projected_margin_pct == null ? '—' : `${r.projected_margin_pct.toFixed(1)}%`}
               </td>
@@ -110,11 +108,11 @@ function PnLTab() {
           ))}
           <tr style={{ background: '#f9fafb', borderTop: '2px solid #111827' }}>
             <td style={{ ...styles.td, fontWeight: 700 }}>{t.frTotal}</td>
-            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(totals.contract, locale)}</td>
-            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(totals.billed, locale)}</td>
-            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(totals.spent, locale)}</td>
-            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(totals.committed, locale)}</td>
-            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(totals.gross, locale)}</td>
+            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(totals.contract)}</td>
+            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(totals.billed)}</td>
+            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(totals.spent)}</td>
+            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(totals.committed)}</td>
+            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(totals.gross)}</td>
             <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>—</td>
           </tr>
         </tbody>
@@ -126,6 +124,7 @@ function PnLTab() {
 // ── WIP report ───────────────────────────────────────────────────────────────
 
 function WipTab() {
+  const formatCents = useCents({ showCents: false });
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
@@ -190,13 +189,13 @@ function WipTab() {
             {report.projects.map(p => (
               <tr key={p.project_id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                 <td style={styles.td}><strong>{p.name}</strong></td>
-                <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(p.contract_value_cents, locale)}</td>
-                <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(p.cost_to_date_cents, locale)}</td>
+                <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(p.contract_value_cents)}</td>
+                <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(p.cost_to_date_cents)}</td>
                 <td style={{ ...styles.td, textAlign: 'right' }}>{p.pct_complete == null ? '—' : `${p.pct_complete.toFixed(1)}%`}</td>
-                <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(p.earned_revenue_cents, locale)}</td>
-                <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(p.billed_to_date_cents, locale)}</td>
+                <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(p.earned_revenue_cents)}</td>
+                <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(p.billed_to_date_cents)}</td>
                 <td style={{ ...styles.td, textAlign: 'right', fontWeight: 600, color: deltaColor(p.over_under_billed_cents) }}>
-                  {formatCents(p.over_under_billed_cents, locale)}
+                  {formatCents(p.over_under_billed_cents)}
                 </td>
                 <td style={styles.td}>
                   {p.status === 'over_billed'  && <span style={{ ...styles.chip, background: '#fef3c7', color: '#92400e' }}>{t.frStatusOverBilled}</span>}
@@ -207,13 +206,13 @@ function WipTab() {
             ))}
             <tr style={{ background: '#f9fafb', borderTop: '2px solid #111827' }}>
               <td style={{ ...styles.td, fontWeight: 700 }}>{t.frTotal}</td>
-              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(report.totals.contract_value_cents, locale)}</td>
-              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(report.totals.cost_to_date_cents, locale)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(report.totals.contract_value_cents)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(report.totals.cost_to_date_cents)}</td>
               <td style={{ ...styles.td, textAlign: 'right' }}>—</td>
-              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(report.totals.earned_revenue_cents, locale)}</td>
-              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(report.totals.billed_to_date_cents, locale)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(report.totals.earned_revenue_cents)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(report.totals.billed_to_date_cents)}</td>
               <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: deltaColor(report.totals.over_under_billed_cents) }}>
-                {formatCents(report.totals.over_under_billed_cents, locale)}
+                {formatCents(report.totals.over_under_billed_cents)}
               </td>
               <td style={styles.td}></td>
             </tr>

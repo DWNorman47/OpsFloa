@@ -14,11 +14,20 @@ const CURRENCY_LOCALES = {
 };
 
 /**
+ * The locale that renders a currency's LOCAL symbol. Intl takes the symbol from
+ * the locale, not the currency code: en-US + HNL gives "HNL 1,234.50", while
+ * es-HN + HNL gives "L 1,234.50". Any money formatter must pair the two.
+ */
+export function localeForCurrency(currency = 'USD') {
+  return CURRENCY_LOCALES[currency] ?? 'en-US';
+}
+
+/**
  * Format a monetary amount using the given ISO 4217 currency code.
  * Uses a locale that produces the local symbol (e.g. "L" for HNL, "Q" for GTQ).
  */
 export function formatCurrency(amount, currency = 'USD') {
-  const locale = CURRENCY_LOCALES[currency] ?? 'en-US';
+  const locale = localeForCurrency(currency);
   try {
     return new Intl.NumberFormat(locale, { style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount);
   } catch {
@@ -30,7 +39,7 @@ export function formatCurrency(amount, currency = 'USD') {
  * Returns just the currency symbol for the given ISO 4217 code (e.g. "$", "L", "€").
  */
 export function currencySymbol(currency = 'USD') {
-  const locale = CURRENCY_LOCALES[currency] ?? 'en-US';
+  const locale = localeForCurrency(currency);
   try {
     const parts = new Intl.NumberFormat(locale, { style: 'currency', currency }).formatToParts(0);
     return parts.find(p => p.type === 'currency')?.value ?? currency;

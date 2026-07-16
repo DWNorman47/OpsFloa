@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../api';
 import { useT } from '../../hooks/useT';
 import { useAuth } from '../../contexts/AuthContext';
-import { langToLocale } from '../../utils';
+import { formatCurrency, langToLocale } from '../../utils';
+import { useCurrency } from '../../contexts/SettingsContext';
 import { SkeletonList } from '../Skeleton';
 import ColumnHeaderMenu from './ColumnHeaderMenu';
 
@@ -21,6 +22,7 @@ export default function InventoryValuation({ locations }) {
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
+  const currency = useCurrency();
   const [data, setData] = useState(null);
   const [valTotal, setValTotal] = useState(0);
   const [valOffset, setValOffset] = useState(0);
@@ -124,10 +126,7 @@ export default function InventoryValuation({ locations }) {
     categories: visibleItems.map(item => item.category),
   };
 
-  const fmt = (n) => {
-    const v = parseFloat(n || 0);
-    return v.toLocaleString(locale, { style: 'currency', currency: 'USD' });
-  };
+  const fmt = (n) => formatCurrency(parseFloat(n || 0), currency);
 
   const fmtQty = (n) => {
     const v = parseFloat(n || 0);
