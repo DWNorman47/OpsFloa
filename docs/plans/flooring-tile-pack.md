@@ -1,6 +1,6 @@
 # OpsFloa — Flooring & Tile takeoff pack (inside the Plan Room Takeoff layer)
 
-Status: **F1 + F2 shipped** (2026-07-15). A new takeoff **trade** in Plan Room
+Status: **F1–F3 all shipped — pack complete** (2026-07-15). A new takeoff **trade** in Plan Room
 (alongside Roofing, Earthwork, Drywall & Paint), included in the **$60 Takeoff**
 add-on — no own SKU. Completes the interiors story next to Drywall & Paint.
 
@@ -49,8 +49,12 @@ area takeoff.
   setting (foam / cork / cement board / uncoupling membrane) → an underlayment SF
   line = total floor SF × (1+waste) at seeded $/SF. Panel shows underlayment +
   transitions LF; bid rolls them up.
-- **F3 — tile materials**: thinset / grout (tile size + joint) / backer board /
-  edge trim for tile-type rooms.
+- **F3 — tile materials** ✅ *shipped*: project **tile size** + **grout joint**
+  settings → **thinset** (bags by coverage, default 95 SF/bag) and **grout**
+  (lbs & 25-lb bags via the (L+W)/(L·W) × joint × thickness × 14.5 lbs/SF formula,
+  0.375" assumed thickness) for the tile rooms' SF. Panel "Tile materials" section
+  + bid lines. *(Backer board is the F2 cement-board underlayment; edge trim is an
+  F2 transition — not duplicated here.)*
 
 ## Verification
 - F1: a 12×15 room as tile = 180 SF gross → material SF = 180 × 1.10 (10% waste);

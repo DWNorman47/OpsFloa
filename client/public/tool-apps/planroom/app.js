@@ -65,7 +65,7 @@ const state = {
   // drywall & paint pack settings (project-wide)
   drywall: { wallHeight: 9, sheetSF: 32, waste: 10, coverage: 375, coats: 2, finish: 'L4', texture: 'none', insul: 'none' },
   // flooring & tile pack settings (project-wide)
-  flooring: { waste: 10, underlay: 'none' },
+  flooring: { waste: 10, underlay: 'none', tileSize: '12x12', groutJoint: '3/16', thinsetCov: 95 },
 };
 let curDwSides = 2;  // 1 = perimeter/against structure, 2 = interior partition (both faces)
 let curCeilType = 'drywall';  // ceiling type for new ceilings: drywall | act24 | act22 (ACT = suspended grid)
@@ -81,6 +81,9 @@ const TRANS_LABEL = { threshold: 'Threshold', reducer: 'Reducer', tmolding: 'T-m
 const TRANS_PRICE = { threshold: 8, reducer: 6, tmolding: 5, stairnose: 10, seam: 4, other: 5 }; // $/LF
 const UNDERLAY_LABEL = { none: 'None', foam: 'Foam underlayment', cork: 'Cork underlayment', cement: 'Cement board', ditra: 'Uncoupling membrane' };
 const UNDERLAY_PRICE = { foam: 0.5, cork: 0.9, cement: 1.5, ditra: 2.2 }; // $/SF
+const TILE_SIZE = { '6x6': [6, 6], '12x12': [12, 12], '12x24': [12, 24], '18x18': [18, 18], '24x24': [24, 24], '6x24': [6, 24] }; // inches [L,W]
+const GROUT_JOINT = { '1/16': 0.0625, '1/8': 0.125, '3/16': 0.1875, '1/4': 0.25, '3/8': 0.375 }; // inches
+const TILE_THICK_IN = 0.375; // assumed floor-tile thickness for grout coverage
 const TEXTURE_LABEL = { none: 'None', smooth: 'Smooth / skim', orange: 'Orange peel', knockdown: 'Knockdown', popcorn: 'Popcorn' };
 const TEXTURE_PRICE = { smooth: 0.30, orange: 0.35, knockdown: 0.40, popcorn: 0.55 }; // $/SF texture (labor+material)
 const INSUL_LABEL = { none: 'None', r11: 'R-11 batt', r13: 'R-13 batt', r15: 'R-15 batt', r19: 'R-19 batt', r21: 'R-21 batt', sound: 'Sound batt' };
@@ -3117,7 +3120,7 @@ function projectData() {
   };
 }
 const defaultDrywall = () => ({ wallHeight: 9, sheetSF: 32, waste: 10, coverage: 375, coats: 2, finish: 'L4', texture: 'none', insul: 'none' });
-const defaultFlooring = () => ({ waste: 10, underlay: 'none' });
+const defaultFlooring = () => ({ waste: 10, underlay: 'none', tileSize: '12x12', groutJoint: '3/16', thinsetCov: 95 });
 const defaultEarthwork = () => ({ existingPage: null, proposedPage: null, align: { a: 1, b: 0, e: 0, f: 0 }, gridFt: 5, shrink: 15, swell: 25, truckCap: 12, interval: 1, result: null });
 // next contour's default elevation = last + interval (auto-steps up a slope)
 const nextElevDefault = surf => { const iv = Number(state.earthwork.interval) || 0; return lastElev[surf] != null ? lastElev[surf] + iv : ''; };
@@ -4636,6 +4639,17 @@ function flooringTotals() {
   for (const k in byType) totalSF += byType[k];
   return { byType, transByType, totalSF };
 }
+// tile-setting materials from the tile floor SF (net of waste already applied):
+// thinset by coverage; grout lbs by the tile size / joint / thickness formula
+function tileMaterials(tileSF) {
+  const F = state.flooring;
+  const [L, W] = TILE_SIZE[F.tileSize] || [12, 12];
+  const jw = GROUT_JOINT[F.groutJoint] != null ? GROUT_JOINT[F.groutJoint] : 0.1875;
+  const cov = Number(F.thinsetCov) > 0 ? Number(F.thinsetCov) : 95;
+  const groutRate = ((L + W) / (L * W)) * jw * TILE_THICK_IN * 14.5; // lbs / SF
+  const groutLbs = tileSF * groutRate;
+  return { thinsetBags: Math.ceil(tileSF / cov), groutLbs, groutBags: Math.ceil(groutLbs / 25) };
+}
 function flooringBidLines() {
   const T = flooringTotals();
   const F = state.flooring;
@@ -4645,6 +4659,13 @@ function flooringBidLines() {
     const sf = T.byType[k];
     if (!sf || sf < 0.5) continue;
     lines.push({ key: `fl_${k}`, label: `${FLOOR_LABEL[k]} flooring (${F.waste}% waste)`, qty: sf * waste, unit: 'SF', q: 0, defPrice: FLOOR_PRICE[k] || 5 });
+  }
+  // tile-setting materials for the tile rooms
+  const tileSF = (T.byType.tile || 0) * waste;
+  if (tileSF > 0.5) {
+    const tm = tileMaterials(tileSF);
+    if (tm.thinsetBags > 0) lines.push({ key: 'fl_thinset', label: 'Thinset mortar', qty: tm.thinsetBags, unit: 'bag', q: 0, defPrice: 18 });
+    if (tm.groutBags > 0) lines.push({ key: 'fl_grout', label: `Grout (${F.tileSize} tile, ${F.groutJoint}" joint)`, qty: tm.groutBags, unit: 'bag', q: 0, defPrice: 22 });
   }
   const underlay = F.underlay || 'none';
   if (underlay !== 'none' && T.totalSF > 0.5) lines.push({ key: 'fl_underlay', label: UNDERLAY_LABEL[underlay], qty: T.totalSF * waste, unit: 'SF', q: 0, defPrice: UNDERLAY_PRICE[underlay] || 0.5 });
@@ -4664,9 +4685,12 @@ function renderFlooringPanel() {
   const R = (a, b) => rows.push(`<div class="dirt-row"><span>${a}</span><span class="v">${b}</span></div>`);
   const opts = FLOOR_KINDS.map(k => `<option value="${k}">${FLOOR_LABEL[k]}</option>`).join('');
   const uopts = ['none', 'foam', 'cork', 'cement', 'ditra'].map(k => `<option value="${k}">${UNDERLAY_LABEL[k]}</option>`).join('');
+  const tsopts = Object.keys(TILE_SIZE).map(k => `<option value="${k}">${k}</option>`).join('');
+  const gjopts = Object.keys(GROUT_JOINT).map(k => `<option value="${k}">${k}"</option>`).join('');
   rows.push('<div class="roof-sub">Settings</div>');
   rows.push(`<div class="dirt-set">New rooms <select id="flType">${opts}</select> · Waste <input type="number" id="flWaste" min="0"> %</div>`);
   rows.push(`<div class="dirt-set">Underlayment <select id="flUnder">${uopts}</select></div>`);
+  rows.push(`<div class="dirt-set">Tile <select id="flTileSize">${tsopts}</select> · Grout joint <select id="flGrout">${gjopts}</select></div>`);
   rows.push('<div class="roof-sub">Floor SF by material</div>');
   let any = false;
   for (const k of FLOOR_KINDS) { const sf = T.byType[k]; if (!sf) continue; any = true; R(FLOOR_LABEL[k], `${fmt(sf, 0)} SF`); }
@@ -4675,17 +4699,27 @@ function renderFlooringPanel() {
     rows.push(`<div class="dirt-row"><b>Total floor SF</b><span class="v"><b>${fmt(T.totalSF, 0)}</b></span></div>`);
     if ((F.underlay || 'none') !== 'none') R(`Underlayment (${UNDERLAY_LABEL[F.underlay]})`, `${fmt(T.totalSF, 0)} SF`);
   }
+  if (T.byType.tile) {
+    const tm = tileMaterials((T.byType.tile) * (1 + (Number(F.waste) || 0) / 100));
+    rows.push('<div class="roof-sub">Tile materials</div>');
+    R('Thinset', `${fmt(tm.thinsetBags, 0)} bags`);
+    R('Grout', `${fmt(tm.groutLbs, 0)} lb · ${fmt(tm.groutBags, 0)} bags`);
+  }
   const transBits = TRANS_KINDS.filter(k => T.transByType[k] > 0.5);
   if (transBits.length) { rows.push('<div class="roof-sub">Transitions</div>'); for (const k of transBits) R(TRANS_LABEL[k], `${fmt(T.transByType[k], 0)} LF`); }
-  rows.push('<div class="hint" style="margin:4px 0">Material SF adds waste; underlayment covers total floor SF. Prices in $ Bid.</div>');
+  rows.push('<div class="hint" style="margin:4px 0">Material SF adds waste; underlayment covers total floor SF. Thinset/grout for tile rooms. Prices in $ Bid.</div>');
   const body = $('floorBody');
   body.innerHTML = rows.join('');
   $('flType').value = curFloorType;
   $('flWaste').value = F.waste;
   $('flUnder').value = F.underlay || 'none';
+  $('flTileSize').value = F.tileSize || '12x12';
+  $('flGrout').value = F.groutJoint || '3/16';
   $('flType').addEventListener('change', e => { curFloorType = e.target.value; if (tool === 'froom') setTool('froom'); });
   $('flWaste').addEventListener('change', e => { F.waste = Math.max(0, parseFloat(e.target.value) || 10); e.target.value = F.waste; scheduleSave(); renderFlooringPanel(); vp.requestDraw(); });
   $('flUnder').addEventListener('change', e => { F.underlay = e.target.value; scheduleSave(); renderFlooringPanel(); });
+  $('flTileSize').addEventListener('change', e => { F.tileSize = e.target.value; scheduleSave(); renderFlooringPanel(); });
+  $('flGrout').addEventListener('change', e => { F.groutJoint = e.target.value; scheduleSave(); renderFlooringPanel(); });
 }
 $('btnFloor').addEventListener('click', () => {
   const p = $('floorPanel');
