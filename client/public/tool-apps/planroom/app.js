@@ -1004,6 +1004,11 @@ function hitHandle(ctx, m, w) {
   return -1;
 }
 
+// Selection + double-click both resolve through here, so EVERY kind in MK_KINDS
+// needs a case: there's no default, and an unlisted kind silently can't be
+// clicked — not selectable, not movable, not deletable, and its double-click
+// config never fires. The flooring/framing packs each shipped without one, so
+// their documented "double-click to change material / size" did nothing.
 function hitMarkup(ctx, w) {
   const tol = Math.max(6 / vp.view.zoom, 3);
   for (let i = state.markups.length - 1; i >= 0; i--) {
@@ -1038,16 +1043,18 @@ function hitMarkup(ctx, w) {
         if (pointSegDist(w.x, w.y, p0.x, p0.y, p1.x, p1.y) < t) return m;
         break;
       case 'freehand': case 'mlength': case 'redge': case 'contour': case 'qline': case 'dwall': case 'dtrim':
+      case 'fwall': case 'ftrans': case 'dheight': case 'escline':
         if (distToPolyline(w.x, w.y, m.pts) < t) return m;
         break;
       case 'marea': case 'plane': case 'epad': case 'qarea': case 'dceiling':
+      case 'froom': case 'fsheath':
         if (pointInPolygon(w.x, w.y, m.pts) ||
             distToPolyline(w.x, w.y, [...m.pts, m.pts[0]]) < t) return m;
         break;
       case 'ebound':
         if (distToPolyline(w.x, w.y, [...m.pts, m.pts[0]]) < t) return m; // edge only (fill is faint)
         break;
-      case 'mcount': case 'ritem': case 'qcount': case 'dopening':
+      case 'mcount': case 'ritem': case 'qcount': case 'dopening': case 'fopening':
         if (m.pts.some(p => dist(w.x, w.y, p.x, p.y) < (m.width || 4) * 1.5 + 3 + t)) return m;
         break;
       case 'espot':
