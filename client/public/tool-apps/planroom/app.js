@@ -426,7 +426,7 @@ function measureValue(m) {
     const head = pipeScheduleLabel(cfg);
     return `${head} · ${fmt(r.lengthFt)} ft${r.trenchCY ? ` · ${fmt(r.trenchCY, 1)} CY` : ''}`;
   }
-  if (m.kind === 'qcount') { const cfg = m.cfg || {}; return `${m.pts.length} ${cfg.unit || 'EA'} · ${cfg.label || 'Item'}`; }
+  if (m.kind === 'qcount') { const cfg = m.cfg || {}; const d = parseFloat(cfg.depth) || 0; return `${m.pts.length} ${cfg.unit || 'EA'} · ${cfg.label || 'Item'}${d > 0 ? ` @ ${fmt(d, 1)} ft` : ''}`; }
   if (m.kind === 'dwall') return `${fmt(dwallLenFt(m))} ft · ${fmt(dwallSf(m))} SF (${m.sides || 2}s @ ${fmt(dwallHeight(m))}')`;
   if (m.kind === 'dceiling') { const ct = (m.cfg && m.cfg.ctype) || 'drywall'; return `${CEIL_LABEL[ct] || 'Drywall'} ceiling · ${fmt(dceilingSf(m))} SF`; }
   if (m.kind === 'dopening') { const c = m.cfg || {}; const n = m.pts.length; return `${n} ${OPENING_LABEL[c.otype] || 'Opening'}${n === 1 ? '' : 's'} (−${fmt(c.deductSF || 0)} SF ea)`; }
@@ -4132,17 +4132,22 @@ const COUNT_PRESETS = {
   sign: { label: 'Sign', unit: 'EA' }, light: { label: 'Light pole', unit: 'EA' },
   bollard: { label: 'Bollard', unit: 'EA' }, itemonly: { label: 'Item', unit: 'EA' },
 };
-const readCountCfg = () => ({ label: $('ctLabel').value.trim() || 'Item', unit: $('ctUnit').value.trim() || 'EA' });
-const countResultRows = (n, cfg) => `<div class="res-row total"><span>${esc(cfg.label)}</span><b>${n} ${esc(cfg.unit)}</b></div>`;
+const readCountCfg = () => ({ label: $('ctLabel').value.trim() || 'Item', unit: $('ctUnit').value.trim() || 'EA', depth: parseFloat($('ctDepth').value) || 0 });
+const countResultRows = (n, cfg) => {
+  const d = parseFloat(cfg.depth) || 0;
+  let html = `<div class="res-row total"><span>${esc(cfg.label)}${d > 0 ? ` @ ${fmt(d, 1)} ft` : ''}</span><b>${n} ${esc(cfg.unit)}</b></div>`;
+  if (d > 0) html += `<div class="res-row"><span>Vertical feet</span><b>${fmt(n * d, 1)} VF</b></div>`;
+  return html;
+};
 function askCountConfig(n, prefill) {
   return new Promise(resolve => {
     const preview = () => { $('ctResult').innerHTML = countResultRows(n, readCountCfg()); };
     $('ctN').textContent = `${n} point${n === 1 ? '' : 's'}`;
-    if (prefill) { $('ctLabel').value = prefill.label != null ? prefill.label : 'Item'; $('ctUnit').value = prefill.unit || 'EA'; }
+    if (prefill) { $('ctLabel').value = prefill.label != null ? prefill.label : 'Item'; $('ctUnit').value = prefill.unit || 'EA'; $('ctDepth').value = prefill.depth != null ? prefill.depth : 0; }
     preview();
     $('countTakeoff').classList.remove('hidden');
     const onInput = () => preview();
-    const inputs = ['ctLabel', 'ctUnit'];
+    const inputs = ['ctLabel', 'ctUnit', 'ctDepth'];
     inputs.forEach(id => $(id).addEventListener('input', onInput));
     const presetBtns = [...document.querySelectorAll('#ctPresets [data-preset]')];
     const onPreset = e => {
@@ -4162,18 +4167,25 @@ function askCountConfig(n, prefill) {
   });
 }
 function countBidLines() {
-  const groups = new Map(); // label -> { unit, qty }
+  const groups = new Map(); // "label|depth" -> { label, unit, depth, qty } — structure schedule by type × depth
   for (const m of state.markups) {
     if (m.kind !== 'qcount') continue;
     const cfg = m.cfg || {};
-    const g = groups.get(cfg.label) || { unit: cfg.unit || 'EA', qty: 0 };
+    const depth = parseFloat(cfg.depth) || 0;
+    const key = `${cfg.label}|${depth}`;
+    const g = groups.get(key) || { label: cfg.label, unit: cfg.unit || 'EA', depth, qty: 0 };
     g.qty += m.pts.length;
-    groups.set(cfg.label, g);
+    groups.set(key, g);
   }
   const lines = [];
-  for (const [label, g] of groups) {
+  for (const g of groups.values()) {
     if (!g.qty) continue;
-    lines.push({ key: `qc_${String(label).replace(/[^a-z0-9]+/gi, '_')}`, label, qty: g.qty, unit: g.unit, q: 0, defPrice: 0 });
+    const slug = String(g.label).replace(/[^a-z0-9]+/gi, '_');
+    const tag = g.depth > 0 ? `_${g.depth}ft` : '';
+    const dispLabel = g.depth > 0 ? `${g.label} @ ${fmt(g.depth, 1)} ft` : g.label;
+    lines.push({ key: `qc_${slug}${tag}`, label: dispLabel, qty: g.qty, unit: g.unit, q: 0, defPrice: 0 });
+    // depth → price the risers by vertical foot too (structures get deeper = costlier)
+    if (g.depth > 0) lines.push({ key: `qc_${slug}${tag}_vf`, label: `${g.label} — vertical feet`, qty: g.qty * g.depth, unit: 'VF', q: 0, defPrice: 0 });
   }
   return lines;
 }
