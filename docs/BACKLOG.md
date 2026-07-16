@@ -39,6 +39,32 @@ that holds the exhaustive detail.
   - Slow initial loads (Time Clock / Inventory / Team) that look stuck.
   - A11y: tab/shell controls lack accessible names; invalid public links mix
     "Not Found / Unauthorized" wording. (filed 2026-07-11)
+- **Tool-apps still print `$` regardless of the company currency**
+  (`client/public/tool-apps/shared/engine-ui.js:18` `money()`, and the sitework
+  tool's own copy). Everything else — app, PDFs, public client pages, report
+  emails — was fixed in the 2026-07-16 currency sweep, but the static tool-apps
+  are sandboxed: they're plain HTML served from `public/`, outside React, with no
+  access to `SettingsContext` or `GET /api/settings`. The Plan Room bid tables
+  consume the shared `money()`, so Plan Room + sitework both show dollars to an
+  HNL company. Fix needs a delivery mechanism — most likely piggyback the
+  existing `tc_addons` localStorage bridge that `AuthContext` already writes for
+  add-on gating, and have `engine-ui.money()` read the code from there. Note
+  Intl reads the symbol off the LOCALE, not the currency code, so it needs the
+  locale map too (`server/currency.js` / `client/src/utils.js`). **Sitework is
+  off-limits** — do Plan Room + the shared engine only, or the sitework copy
+  diverges. (2026-07-16)
+- **Newer takeoff kinds skip the `NEEDS_SCALE` guard** (`planroom/app.js:239`).
+  `NEEDS_SCALE` blocks a tool on an uncalibrated sheet and sends you to 📏.
+  Roofing/earthwork/drywall kinds are registered, but the flooring and framing
+  packs never added theirs: `froom`, `ftrans`, `fwall`, `fsheath` all produce
+  LF/SF, so on an uncalibrated sheet they trace happily and silently return 0 —
+  a wrong bid rather than an error. (ESC's `escline`/`escarea` are registered
+  correctly.) One-line fix, but verify no flow depends on tracing pre-scale.
+  (2026-07-16)
+- **`fopening` missing from `POINT_KINDS`** (`planroom/app.js:1945`). It's a
+  count kind drawn as dots, but `POINT_KINDS` drives rubber-band suppression,
+  the draft label, and the minimum-point count — so unlike its twin `dopening`
+  it wrongly rubber-bands and needs 2 clicks instead of 1. (2026-07-16)
 
 ## 🧭 Design flaws — raised, set aside for later
 
