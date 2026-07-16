@@ -376,6 +376,12 @@
         </select>
       </label>
       <label title="Aggregate bedding under the pipe (import). 0 to skip.">Bedding (in)<input type="number" id="ltBedding" min="0" step="1" value="6"></label>
+      <label title="Backfill source. Native = reuse trench spoil (only the volume displaced by pipe + bedding hauls off). Import = haul all spoil off and bring select backfill in.">Backfill
+        <select id="ltBackfill">
+          <option value="native">Native (reuse)</option>
+          <option value="import">Import</option>
+        </select>
+      </label>
     </div>
     <div id="ltResult" class="wall-result"></div>
     <div class="modal-actions">
@@ -493,6 +499,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=13"></script>
+<script type="module" src="app.js?v=14"></script>
 </body>
 </html>

@@ -4017,7 +4017,7 @@ function pipeScheduleLabel(cfg) {
   return (cfg && cfg.label) || 'Line';
 }
 function computeLineResult(lengthFt, cfg) {
-  const r = { lengthFt, label: cfg.label, trench: !!cfg.trench, trenchCY: 0, beddingCY: 0, dia: parseFloat(cfg.dia) || 0, mat: cfg.mat || '', d1: 0, d2: 0, avgDepth: 0 };
+  const r = { lengthFt, label: cfg.label, trench: !!cfg.trench, trenchCY: 0, beddingCY: 0, dia: parseFloat(cfg.dia) || 0, mat: cfg.mat || '', d1: 0, d2: 0, avgDepth: 0, pipeCY: 0, backfillCY: 0, exportCY: 0, importBackfillCY: 0 };
   if (cfg.trench) {
     const w = parseFloat(cfg.width) || 0, s = parseFloat(cfg.slope) || 0;
     // invert-driven: depth can vary end-to-end; use the average end area for volume
@@ -4027,6 +4027,13 @@ function computeLineResult(lengthFt, cfg) {
     r.trenchCY = wallSectionAreaSf(w, d, s) * lengthFt / 27;
     const bedIn = parseFloat(cfg.bedding) || 0;
     r.beddingCY = bedIn > 0 ? (w * (bedIn / 12) * lengthFt) / 27 : 0;
+    // spoil / backfill netting: pipe displaces backfill; native reuse hauls only
+    // the displaced volume (pipe + bedding), import hauls all spoil off
+    r.pipeCY = r.dia > 0 ? (Math.PI / 4) * Math.pow(r.dia / 12, 2) * lengthFt / 27 : 0;
+    r.backfillCY = Math.max(0, r.trenchCY - r.beddingCY - r.pipeCY);
+    const importBf = cfg.backfill === 'import';
+    r.exportCY = importBf ? r.trenchCY : (r.beddingCY + r.pipeCY);
+    r.importBackfillCY = importBf ? r.backfillCY : 0;
   }
   return r;
 }
@@ -4037,6 +4044,9 @@ function lineResultRows(lengthFt, cfg) {
     if (r.d2 > 0) rows.push(['Avg depth', `${fmt(r.avgDepth, 1)} ft (${fmt(r.d1, 1)}→${fmt(r.d2, 1)})`]);
     rows.push(['Trench excavation', `${fmt(r.trenchCY, 1)} CY`, 'total']);
     if (r.beddingCY > 0) rows.push(['Bedding (import)', `${fmt(r.beddingCY, 1)} CY`]);
+    if (r.pipeCY > 0) rows.push(['Pipe volume', `${fmt(r.pipeCY, 1)} CY`]);
+    if (r.importBackfillCY > 0) rows.push(['Import backfill', `${fmt(r.importBackfillCY, 1)} CY`]);
+    if (r.exportCY > 0.05) rows.push(['Net export (bank)', `${fmt(r.exportCY, 1)} CY`]);
   }
   return rows.map(([k, v, cls]) => `<div class="res-row ${cls === 'total' ? 'total' : ''}"><span>${k}</span><b>${v}</b></div>`).join('');
 }
@@ -4044,7 +4054,7 @@ function readLineCfg() {
   return {
     label: $('ltLabel').value.trim() || 'Line', trench: $('ltTrench').checked,
     width: $('ltWidth').value, depth: $('ltDepth').value, depth2: $('ltDepth2').value, slope: $('ltSlope').value,
-    bedding: $('ltBedding').value, color: $('ltColor').value,
+    bedding: $('ltBedding').value, backfill: $('ltBackfill').value, color: $('ltColor').value,
     dia: parseFloat($('ltDia').value) || 0, mat: $('ltMat').value,
   };
 }
@@ -4061,6 +4071,7 @@ function askLineConfig(lengthFt, prefill) {
       if (prefill.depth2 != null) $('ltDepth2').value = prefill.depth2;
       if (prefill.slope != null) $('ltSlope').value = prefill.slope;
       if (prefill.bedding != null) $('ltBedding').value = prefill.bedding;
+      if (prefill.backfill != null) $('ltBackfill').value = prefill.backfill;
       if (prefill.dia != null) $('ltDia').value = prefill.dia;
       if (prefill.mat != null) $('ltMat').value = prefill.mat;
     }
@@ -4069,7 +4080,7 @@ function askLineConfig(lengthFt, prefill) {
     preview();
     $('lineTakeoff').classList.remove('hidden');
     const onInput = () => { syncLineTrench(); preview(); };
-    const inputs = ['ltLabel', 'ltTrench', 'ltWidth', 'ltDepth', 'ltDepth2', 'ltSlope', 'ltBedding', 'ltMat'];
+    const inputs = ['ltLabel', 'ltTrench', 'ltWidth', 'ltDepth', 'ltDepth2', 'ltSlope', 'ltBedding', 'ltBackfill', 'ltMat'];
     inputs.forEach(id => { $(id).addEventListener('input', onInput); $(id).addEventListener('change', onInput); });
     // typing a diameter suggests a trench bottom width (pipe Ø + ~2 ft working
     // room, to the nearest half-foot); still editable afterward
@@ -4102,7 +4113,7 @@ function askLineConfig(lengthFt, prefill) {
   });
 }
 const qlineLenFt = m => polyLengthFt(m.pts, state.scales[m.page] || 0);
-const QL_DEFAULT_PRICE = { lf: 0, trench: 6, bedding: 32 };
+const QL_DEFAULT_PRICE = { lf: 0, trench: 6, bedding: 32, export: 8, backfill_import: 18 };
 function lineBidLines() {
   const groups = new Map();
   for (const m of state.markups) {
@@ -4116,9 +4127,11 @@ function lineBidLines() {
     add('lf', 'LF', r.lengthFt);
     add('trench', 'CY', r.trenchCY);
     add('bedding', 'CY', r.beddingCY);
+    add('backfill_import', 'CY', r.importBackfillCY);
+    add('export', 'CY', r.exportCY);
     groups.set(groupLabel, g);
   }
-  const COMP = { lf: '', trench: 'trench excavation', bedding: 'bedding' };
+  const COMP = { lf: '', trench: 'trench excavation', bedding: 'bedding', backfill_import: 'import backfill', export: 'export / haul-off' };
   const lines = [];
   for (const [label, g] of groups) {
     const slug = String(label).replace(/[^a-z0-9]+/gi, '_');
