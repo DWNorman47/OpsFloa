@@ -449,11 +449,14 @@ router.delete('/:id', async (req, res) => {
 
     await pool.query('DELETE FROM recordings WHERE id = $1 AND company_id = $2', [recording.id, companyId]);
 
+    // Read outside the branch: the audit line below logs it either way, and
+    // scoping it to the if meant deleting an already-swept recording threw a
+    // ReferenceError *after* the row was gone — a 500 and no audit trail.
+    const sizeBytes = parseInt(recording.size_bytes || 0);
     // Staged video is already gone from R2 (and refunded) once the poller
     // has set media_deleted_at — don't delete or refund twice.
     if (!recording.media_deleted_at) {
       deleteByUrl(recording.audio_url).catch(() => {});
-      const sizeBytes = parseInt(recording.size_bytes || 0);
       if (sizeBytes > 0) decrementStorage(companyId, sizeBytes).catch(() => {});
     }
 

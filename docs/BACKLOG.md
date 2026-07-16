@@ -65,6 +65,28 @@ that holds the exhaustive detail.
   count kind drawn as dots, but `POINT_KINDS` drives rubber-band suppression,
   the draft label, and the minimum-point count — so unlike its twin `dopening`
   it wrongly rubber-bands and needs 2 clicks instead of 1. (2026-07-16)
+- **Closeout is broken for companies without QuickBooks, in both directions.**
+  `project_invoices` is a **QBO mirror** — only `server/routes/qbo.js` ever
+  writes it — so a company without QBO connected has **zero rows**. Both
+  invoice-backed auto-status items in `computeAutoStatus()`
+  (`server/routes/closeout.js:181-201`) then misread that emptiness:
+  - `final_invoice` counts *paid* invoices → 0 → stays `in_progress` forever.
+    Since `final_complete` requires every required item done
+    (`closeout.js:370-383`), **those projects can never be closed out.**
+  - `retainage_release` sums `balance` → `SUM` over zero rows is **0** → `0 === 0`
+    → reports **`done`**. It cheerfully certifies retainage released on a project
+    with no invoices at all. A false negative blocks; a false positive lies.
+  Fix needs the architectural call first: does owner-side billing get a native
+  invoice concept, or is QBO a hard dependency? Both items should at minimum
+  distinguish "no invoices exist" from "invoices exist and are settled". See
+  `docs/plans/gc-tools.md` → Decision 2. (2026-07-16)
+- **Closeout transition gate reads stored status, not computed** — and its
+  comment says otherwise. `server/routes/closeout.js:361` reads *"Evaluate items
+  with auto-source via the same compute path"*, but the loop below tests
+  `item.status` (the stored column) rather than calling `computeAutoStatus()`.
+  So a punchlist that is genuinely clear can still block
+  `substantially_complete` when the stored row is stale. Also `const byCat` on
+  the line above is assigned and never read — dead. (2026-07-16)
 
 ## 🧭 Design flaws — raised, set aside for later
 
