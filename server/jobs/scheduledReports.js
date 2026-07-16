@@ -5,6 +5,7 @@ const { sendEmail } = require('../email');
 const { runJob } = require('./runJob');
 const { weekRange } = require('../utils/weekBounds');
 const { computeOT, hoursWorked } = require('../utils/payCalculations');
+const { formatCurrency, companyCurrency } = require('../currency');
 
 const APP_URL = process.env.APP_URL || 'https://app.opsfloa.com';
 
@@ -251,7 +252,8 @@ async function sendMonthlyValuationReport(companyId, companyName) {
   const admin      = await getAdminEmail(companyId);
   if (!admin) return;
 
-  const fmt = n => parseFloat(n || 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+  const currency = await companyCurrency(companyId);
+  const fmt = n => formatCurrency(n, currency);
   const month = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
   const rows = r.rows.map(row => {

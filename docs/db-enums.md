@@ -60,6 +60,18 @@ For each column we record:
 | `reimbursements.status` | `pending`, `approved`, `rejected` | **enforced** (CHECK in `0071`) | `server/routes/reimbursements.js` | Financial workflow. |
 | `settings.value` (key=`overtime_rule`) | `daily`, `weekly` | **app-only** | `server/routes/admin.js` PATCH validation | Company-wide overtime calc. |
 | `settings.value` (key=`invoice_signature`) | `none`, `optional`, `required` | **app-only** | `server/routes/admin.js` PATCH validation | Whether workers must sign invoices before exporting. |
+| `settings.value` (key=`currency`) | ISO 4217: `USD`, `CAD`, `EUR`, `GBP`, `MXN`, `HNL`, `GTQ`, `NIO`, `BZD`, `CRC`, `PAB` | **app-only** (shape only — see note) | `server/routes/admin.js:200` PATCH regex; dropdown `client/src/components/ManageRates.jsx`; locale maps `client/src/utils.js` + `server/currency.js` | Display currency for every money figure: app, PDFs, public client pages, report emails. |
+
+> **`currency` is validated by shape, not membership.** The PATCH check is only
+> `/^[A-Z]{3}$/`, so any 3-letter string is accepted. The list above is the set
+> the **dropdown offers** and the locale maps know. An unmapped-but-well-formed
+> code (e.g. `XYZ`) is stored happily and then falls back to the `en-US` locale,
+> which renders the bare code (`XYZ 1,234.50`) instead of a symbol. Adding a
+> currency means updating **three** places: the `ManageRates` dropdown,
+> `CURRENCY_LOCALES` in `client/src/utils.js`, and the mirrored map in
+> `server/currency.js`. Intl takes the symbol from the *locale*, not the
+> currency code — `en-US` + `HNL` gives `HNL 1,234.50`, `es-HN` + `HNL` gives
+> `L 1,234.50` — which is why the locale map exists at all.
 
 ## Medium-stakes columns (workflow / business logic)
 
@@ -166,7 +178,6 @@ got bit twice by this: `shift_reminder_hour`, `pto_annual_days`,
 
 ### Recently-added string settings (no DB CHECK; free-form)
 
-- `label_work`     (default `'Project'`) — what the company calls a project / job / engagement.
 - `label_client`   (default `'Customer'`) — what the company calls a client.
 - `label_worker`   (default `'Team Member'`) — what the company calls a worker.
 - `label_field`    (default `'Field Work'`) — what the company calls the field-work module.
