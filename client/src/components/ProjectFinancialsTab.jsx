@@ -12,7 +12,7 @@ import MoneyInput from './MoneyInput';
 import { useConfirm } from './ConfirmDialog';
 import { useToast } from '../contexts/ToastContext';
 import { useT } from '../hooks/useT';
-import { formatMoney } from '../utils/format';
+import { useCents } from '../hooks/useMoney';
 import { silentError } from '../errorReporter';
 
 const CATEGORIES = ['labor', 'materials', 'equipment', 'subs', 'overhead', 'contingency', 'other'];
@@ -27,12 +27,11 @@ const CATEGORY_COLORS = {
   other:       '#9ca3af',
 };
 
-// formatCents kept as a local alias so existing call sites don't need
-// edits. The big P&L numbers want whole-dollar rounding (no $0.00 noise
-// on a $250k contract), so showCents=false.
-const formatCents = (c) => formatMoney(c);
-
 export default function ProjectFinancialsTab({ projectId }) {
+  // formatCents kept as a local alias so existing call sites don't need edits.
+  // The big P&L numbers want whole-dollar rounding (no $0.00 noise on a $250k
+  // contract), so showCents=false. Bound to the company currency by the hook.
+  const formatCents = useCents({ showCents: false });
   const toast = useToast();
   const t = useT();
   const { confirm, dialog: confirmDialog } = useConfirm();

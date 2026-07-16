@@ -17,7 +17,7 @@ import { useConfirm } from '../components/ConfirmDialog';
 import { useT } from '../hooks/useT';
 import { getT } from '../i18n';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
-import { formatMoney } from '../utils/format';
+import { useCents } from '../hooks/useMoney';
 import { formatDate, formatDateTime } from '../utils';
 import { computeBreakdown } from '../utils/estimateMath';
 import { silentError } from '../errorReporter';
@@ -54,11 +54,11 @@ function StatusBadge({ status }) {
   );
 }
 
-const formatCents = (c) => formatMoney(c, { showCents: true });
 
 // ── List view ────────────────────────────────────────────────────────────────
 
 function ChangeOrdersList({ onOpen, onNew }) {
+  const formatCents = useCents();
   const t = useT();
   const { user } = useAuth();
   const [items, setItems] = useState([]);
@@ -185,6 +185,7 @@ function ChangeOrdersList({ onOpen, onNew }) {
 // ── Create form ──────────────────────────────────────────────────────────────
 
 function NewChangeOrderForm({ projects, onSave, onCancel }) {
+  const formatCents = useCents();
   const t = useT();
   const [projectId, setProjectId] = useState(projects[0]?.id || '');
   const [head, setHead] = useState({
@@ -381,6 +382,7 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
 // ── Detail ───────────────────────────────────────────────────────────────────
 
 function ChangeOrderDetail({ id, onBack }) {
+  const formatCents = useCents();
   const t = useT();
   const { user } = useAuth();
   const toast = useToast();
@@ -626,6 +628,7 @@ function Field({ label, required, error, children }) {
   );
 }
 function TotalsRow({ label, value, bold }) {
+  const formatCents = useCents();
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: bold ? '2px solid #111827' : '1px solid #f3f4f6', fontWeight: bold ? 700 : 400, fontSize: bold ? 16 : 14 }}>
       <span>{label}</span>

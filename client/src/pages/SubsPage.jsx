@@ -9,7 +9,7 @@ import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { useAuth } from '../contexts/AuthContext';
-import { formatMoney } from '../utils/format';
+import { useCents } from '../hooks/useMoney';
 import { formatDate } from '../utils';
 import { silentError } from '../errorReporter';
 import { useT } from '../hooks/useT';
@@ -37,7 +37,6 @@ function StatusBadge({ status }) {
   );
 }
 
-const formatCents = (c) => formatMoney(c, { showCents: true });
 
 // ── Subs directory ───────────────────────────────────────────────────────────
 
@@ -213,6 +212,7 @@ function SubForm({ existing, onSave, onCancel }) {
 }
 
 function SubDetail({ id, onBack, onEdit }) {
+  const formatCents = useCents();
   const t = useT();
   const { user } = useAuth();
   const [sub, setSub] = useState(null);
@@ -305,6 +305,7 @@ function SubDetail({ id, onBack, onEdit }) {
 // ── Sub POs portfolio ────────────────────────────────────────────────────────
 
 function SubPOsList({ onOpen, onNew }) {
+  const formatCents = useCents();
   const t = useT();
   const [pos, setPos] = useState([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
@@ -555,6 +556,7 @@ function SubPOForm({ onSave, onCancel }) {
 }
 
 function SubPODetail({ id, onBack }) {
+  const formatCents = useCents();
   const t = useT();
   const { user } = useAuth();
   const toast = useToast();

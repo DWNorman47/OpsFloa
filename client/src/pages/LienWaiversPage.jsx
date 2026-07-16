@@ -16,7 +16,7 @@ import Pagination from '../components/Pagination';
 import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
-import { formatMoney } from '../utils/format';
+import { useCents } from '../hooks/useMoney';
 import { formatDate, formatDateTime } from '../utils';
 import { silentError } from '../errorReporter';
 import { useT } from '../hooks/useT';
@@ -61,11 +61,11 @@ function DirectionBadge({ direction }) {
   );
 }
 
-const formatCents = (c) => formatMoney(c, { showCents: true });
 
 // ── List ─────────────────────────────────────────────────────────────────────
 
 function LienWaiversList({ onOpen, onNew }) {
+  const formatCents = useCents();
   const t = useT();
   const { user } = useAuth();
   const [items, setItems] = useState([]);
@@ -377,6 +377,7 @@ function NewLienWaiverForm({ projects, subs, onSave, onCancel }) {
 // ── Detail ───────────────────────────────────────────────────────────────────
 
 function LienWaiverDetail({ id, onBack }) {
+  const formatCents = useCents();
   const t = useT();
   const { user } = useAuth();
   const toast = useToast();
