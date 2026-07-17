@@ -635,6 +635,17 @@ function scaleFeetStr(v) {
   return fmt(r, d);
 }
 
+// Show an elevation as entered — 197.85 stays 197.85, 812 stays 812 — instead of
+// rounding a fractional value to a single decimal. Survey elevations run to
+// hundredths; keep 3 dp of headroom and trim trailing zeros.
+function elevStr(v) {
+  const r = Math.round(v * 1000) / 1000;             // trim float noise, cap at 3 dp
+  const d = Number.isInteger(r) ? 0
+    : Math.round(r * 10) / 10 === r ? 1
+    : Math.round(r * 100) / 100 === r ? 2 : 3;
+  return fmt(r, d);
+}
+
 function drawScaleBar(ctx) {
   if (tool !== 'calibrate') return;
   const bar = state.scaleBars[state.page];
@@ -677,7 +688,7 @@ function measureValue(m) {
     return `${EDGE_LABEL[m.etype] || 'Edge'} · ${fmt(ft, ft < 100 ? 1 : 0)} ft`;
   }
   if (m.kind === 'contour' || m.kind === 'espot' || m.kind === 'epad') {
-    return `${m.surface === 'existing' ? 'EG' : 'FG'} ${m.elev != null ? fmt(m.elev, Number.isInteger(m.elev) ? 0 : 1) : '?'}`;
+    return `${m.surface === 'existing' ? 'EG' : 'FG'} ${m.elev != null ? elevStr(m.elev) : '?'}`;
   }
   if (m.kind === 'ebound') return 'Limits of disturbance';
   if (m.kind === 'qarea') {
@@ -1122,7 +1133,7 @@ function elevLabel(ctx, m, x, y, col) {
   // the "?" placeholder — you're mid-edit and haven't typed the elevation yet.
   // Once it's a settled, unselected markup the "?" returns as a "needs elevation" flag.
   const editing = previewing || (m.id && m.id === selectedId);
-  const txt = m.elev != null ? fmt(m.elev, Number.isInteger(m.elev) ? 0 : 1) : (editing ? '' : '?');
+  const txt = m.elev != null ? elevStr(m.elev) : (editing ? '' : '?');
   if (!txt) return;
   const base = pageBase.get(m.page);
   const fs = Math.max(11, Math.min(28, (base ? base.width : 2800) / 120));
@@ -3495,7 +3506,7 @@ function renderDirtPanel() {
         const typ = m.kind === 'espot' ? 'spot' : m.kind === 'epad' ? 'flat pad' : `${m.pts.length} pts`;
         rows.push(`<div class="ctr-row${m.id === selectedId ? ' sel' : ''}" data-id="${m.id}">` +
           `<span class="ctr-sw" style="background:${elevColor(m.elev || 0, m.surface)}"></span>` +
-          `<span class="ctr-lbl">${m.elev != null ? fmt(m.elev, 1) + ' ft' : 'no elev'} · ${typ}</span>` +
+          `<span class="ctr-lbl">${m.elev != null ? elevStr(m.elev) + ' ft' : 'no elev'} · ${typ}</span>` +
           `<button class="ctr-btn" data-act="edit-elev" title="Edit elevation">✎</button>` +
           `<button class="ctr-btn" data-act="del-ctr" title="Delete">✕</button>` +
           `</div>`);

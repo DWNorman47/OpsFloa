@@ -733,6 +733,24 @@ real click-through on stage: grab-a-vertex-mid-draw and Ctrl+Z during a polygon.
 
 ---
 
+## 2026-07-17 — Plan Room: contour elevations keep their precision
+
+**Shipped** (`app.js`, cache-bust → **v46**). Same class of bug as the earlier
+scale fix (207.9 → 208): a contour/pad/spot elevation of **197.85 displayed as
+197.9** because every elevation label forced a single decimal
+(`fmt(m.elev, …? 0 : 1)`).
+
+- The **input** was never the problem — `askNumber` is `step="any"` + `parseFloat`,
+  so 197.85 was stored intact; the loss was purely on display.
+- Added `elevStr(v)` (mirrors `scaleFeetStr`): shows the value as entered, 3 dp of
+  headroom, trailing zeros trimmed, float noise rounded off. Routed all three
+  elevation renders through it — the canvas label (`elevLabel`), the markup-list /
+  measure text (`measureValue`), and the earthwork panel's contour list.
+- Lift-test `server/tests/planroomElevFormat.test.js` guards it (197.85, 812,
+  812.5, 812.125, below-datum, float noise).
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*
