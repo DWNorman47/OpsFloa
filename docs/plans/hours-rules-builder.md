@@ -20,27 +20,44 @@ and fall out of memory. What was missing is that its vocabulary is *closed*.
 
 ## The one idea the design rests on
 
-**Rules compose. A ladder is not a feature.**
+**Added time is PAID time, not clock time.**
 
-The 5:25 ladder looked like it needed a new rule type — a threshold table, or a
-repeating "every N minutes" form. It needs neither. It's four ordinary rules
-that all fire at once:
+David's table, which is the spec:
 
-| clock out | rules matching | credit |
-|---|---|---|
-| 5:24 | — | 0 |
-| 5:35 | 5:25 | +0.5 |
-| 5:50 | 5:25, 5:50 | +1.0 |
-| 6:25 | 5:25, 5:50, 6:25 | +1.5 |
+| still clocked in at | pays to |
+|---|---|
+| 5:24 | 5:00 |
+| 5:25 | 5:30 |
+| 5:50 | 5:30 |
+| 5:51 | 6:00 |
 
-The step function *emerges from summing*. That's why there is **no repeating
-form**: it looks more powerful and is strictly less, because real negotiated
-ladders aren't evenly spaced (this one alternates 25- and 35-minute gaps, so
-"every N minutes" cannot express it).
+The credit lands on the **scheduled end** (5:00). The punch only decides *which
+rung* was reached — it is not the thing added to. 5:00+0, 5:00+30, 5:00+60.
 
-The same trick does breaks: **one `auto_break` rule per expected break**, and
-"three expected, two taken → one auto break" falls out of comparing totals
+The first cut of this got it backwards and added the credit to the punch, making
+5:51 pay to 6:51. David: *"that's nonsense"* — and he's right, because it pays a
+worker **more for clocking out later inside the same rung**, which is the one
+thing a rung exists to prevent.
+
+**Rungs do not accumulate.** Each names the TOTAL credit at that point, so the
+largest rung reached wins. Read David's original words that way and they line up
+exactly: *"past 5:25 add a half hour; past 5:50 add an hour"* — an hour, not
+another half hour. He was giving totals all along.
+
+Two corollaries fall out for free:
+- **No runaway.** A rung is a destination, so no rung can push a punch into the
+  next one.
+- **Leaving early is not a ladder case.** The schedule base engages only when the
+  punch is *past* the scheduled end — otherwise going home at 3pm would pay to
+  5:00.
+
+Breaks work on the same principle: **one `auto_break` rule per expected break**,
+and "three expected, two taken → one auto break" falls out of comparing totals
 without counting anything.
+
+**The numbers belong to the company.** 5:25, 5:51, 30, 60 are that customer's to
+choose; the engine's job is that any numbers run. That is the whole reason this
+is a rule list and not four hardcoded rules.
 
 ## Stage order is fixed, not authorable
 
@@ -56,19 +73,22 @@ raw punch
 ```
 
 **Adjust before classify is David's decision, and it moves money**: added time
-counts toward the overtime threshold. A 9.5h day + 0.5h credit = 10h → under an
-8h threshold that's **2h of OT**, not 1.5h OT + 0.5h regular.
+counts toward the overtime threshold. A 5:51 punch on a 7:00–5:00 schedule pays
+to 6:00 = 11h − 1h lunch = 10h → under an 8h threshold that's **2h of OT**. With
+the credit applied after classification it would be 1.85h OT plus a bolted-on
+0.15h, and a different invoice.
 
 Letting an admin drag rules into an order is a trap — there's no feedback when
 they get it wrong, only a wrong invoice.
 
-## The trap that nearly ate the ladder
+## Why there is no runaway to guard against
 
-Every `add_time`/`remove_time` rule is evaluated against **the same snapshot**,
-and the deltas are summed and applied once. Applying rungs one at a time would
-let the first credit push the clock-out past the next rung's threshold: 5:30
-+30 → 6:00, which satisfies "after 5:50" → +30 → 6:30, which satisfies "after
-6:25"… one late punch runs away to the end of the day. Pinned by a test.
+An earlier cut had a real hazard — rungs adding to the punch could push it into
+the next rung and cascade to the end of the day off one late punch — and an
+elaborate snapshot mechanism to prevent it. Paid-time semantics deleted the
+hazard rather than defending against it: a rung is a **destination**, so there is
+nothing to cascade. Worth remembering as the shape of the mistake — the clever
+guard was evidence the model was wrong, not that the guard was good.
 
 ## What shipped (M4a) — `server/utils/hoursRules.js`
 
@@ -80,13 +100,25 @@ already use the engine got rules for free.
 |---|---|---|
 | `clip_start` | `at` | paid start = `max(start, at)` — ignore the early clock-in |
 | `clip_end` | `at` | paid end = `min(end, at)` |
-| `add_time` | `edge`, `at`, `minutes` | credit when the punch passes a threshold |
-| `remove_time` | `edge`, `at`, `minutes` | the inverse |
+| `add_time` | `edge`, `base`, `mode`, `at`/`from`+`everyMin`, `minutes` | paid end = **scheduled** end + the largest rung reached |
+| `remove_time` | same | the inverse |
 | `auto_break` | `minutes`, `trigger` | break = `max(total expected, total logged)` |
 
+`base`: `schedule` (default) or `punch` (a flat bonus on the actual punch —
+available for whoever wants it, not the default, because it's the 6:51 above).
+With no schedule for that day a schedule-based rule falls back to the punch
+rather than silently paying nothing.
+
+`mode`: `at` (one threshold, one credit) or `every` (`from` + `everyMin` — a
+repeating ladder, each step another `minutes`). Uneven ladders still want one
+`at` rule per rung; `every` is there because evenly-spaced ones are common and
+nobody should type ten rules for them.
+
 Selectors (`when.kind`): `every_day`, `weekdays`, `month_days`,
-`month_weekdays` (incl. `week: -1` = **last** — "last Friday" isn't a fixed nth,
-a month has four or five).
+`month_weekdays` (incl. `week: -1` = **last**, for **any** weekday — not a fixed
+nth, since a month has four or five), `months`, `nth_days`, `nth_months`.
+An nth pattern without an anchor date is dropped — "every 3rd day" isn't a rule
+until you say which day was the first — and never fires before its anchor.
 
 **`clip_start` is a clamp, not a rounding.** It ignores an early clock-in but
 does not dock a late arrival — 07:20 still pays from 07:20. That distinguishes
@@ -103,15 +135,20 @@ reference, byte-identical behaviour. Every existing company is untouched.
 ### The customer's four rules, as data
 
 ```json
-{ "enabled": true, "rules": [
-  { "id":"lunch", "type":"auto_break", "when":{"kind":"every_day"}, "minutes":60, "trigger":{"kind":"always"} },
-  { "id":"in7",   "type":"clip_start", "when":{"kind":"weekdays","days":[1,2,3,4,5]}, "at":"07:00" },
-  { "id":"l1",    "type":"add_time",   "when":{"kind":"weekdays","days":[1,2,3,4,5]}, "edge":"after", "at":"17:25", "minutes":30 },
-  { "id":"l2",    "type":"add_time",   "when":{"kind":"weekdays","days":[1,2,3,4,5]}, "edge":"after", "at":"17:50", "minutes":30 },
-  { "id":"l3",    "type":"add_time",   "when":{"kind":"weekdays","days":[1,2,3,4,5]}, "edge":"after", "at":"18:25", "minutes":30 },
-  { "id":"l4",    "type":"add_time",   "when":{"kind":"weekdays","days":[1,2,3,4,5]}, "edge":"after", "at":"18:50", "minutes":30 }
-]}
+{ "enabled": true,
+  "standardHours": { "1": {"start":"07:00","end":"17:00"}, "...": "…Mon–Fri" },
+  "rules": [
+    { "id":"lunch", "type":"auto_break", "when":{"kind":"every_day"}, "minutes":60, "trigger":{"kind":"always"} },
+    { "id":"in7",   "type":"clip_start", "when":{"kind":"weekdays","days":[1,2,3,4,5]}, "at":"07:00" },
+    { "id":"l1",    "type":"add_time",   "when":{"kind":"weekdays","days":[1,2,3,4,5]}, "edge":"after", "at":"17:25", "minutes":30 },
+    { "id":"l2",    "type":"add_time",   "when":{"kind":"weekdays","days":[1,2,3,4,5]}, "edge":"after", "at":"17:51", "minutes":60 },
+    { "id":"l3",    "type":"add_time",   "when":{"kind":"weekdays","days":[1,2,3,4,5]}, "edge":"after", "at":"18:25", "minutes":90 }
+  ]}
 ```
+
+**`standardHours` is load-bearing here, not decoration** — it is the 17:00 the
+ladder measures from. `minutes` are cumulative totals (30, 60, 90), not
+increments, because the largest rung wins.
 
 Saturday-all-overtime is **not** in this list — it already works via the
 existing rest-day premium (`premiums.restDayMult`, with no `standardHours` on
@@ -178,20 +215,28 @@ right. This outranks every feature below.
 4. **Stage order fixed in the engine**, not authorable.
 5. **No repeating/every-N form** — can't express the customer's own ladder.
 
-## Parked — bring back if it comes up
+## Parked
 
-- **Nth Days / Nth Months** (cut on David's call, noted here on his call).
-  "Every 3rd day starting from date X" / "every 2nd month". Genuinely more work
-  than the rest of the selectors combined — an anchored recurrence needs a start
-  date, a period, and a rule for what happens across month/year boundaries and
-  DST. No construction rule has asked for it yet. `month_weekdays` with
-  `week: -1` covers the "last Friday" case that usually motivates it.
-- **The Monthly scope.** David's sketch lists monthly *selectors* but no monthly
-  *rule types*, so a monthly rule can't currently do anything. Left out until
-  there's a rule to put in it.
-- **A repeating add_time** (`every N minutes from T`). Cut — see above. Would be
-  cheap to add later as an optional field on `add_time` if a company ever has an
-  evenly-spaced ladder.
+- **The Monthly scope's rule types.** The sketch lists monthly *selectors* (now
+  built, as `months` / `nth_months`) but no monthly *rule types*, so there is
+  nothing yet a monthly-scoped rule would do. The selectors work on any rule; the
+  scope waits for a rule worth putting in it.
+- **Weekly scope**: `Total hours allowed` and `Total hours before overtime`, per
+  the sketch. Needs `computeOT` to accept per-bucket bands — the same
+  prerequisite as M4c.
+
+### What got cut, and un-cut
+
+I cut nth-days, nth-months and the repeating `every` form after deciding the
+first customer's ladder didn't need them. David put them back:
+
+> "the whole point of doing things this way and not just hardcoding some rules
+> is that anyone can use whatever rules they like"
+
+He's right, and the reasoning is worth keeping: **this feature exists precisely
+because the rules nobody has imagined yet are the ones that matter.** Cutting an
+option because the first customer doesn't need it is the same instinct as
+hardcoding their rules, one step removed. Availability is the product.
 
 ## Open questions
 

@@ -60,19 +60,36 @@ const ROUNDING_REFERENCES = ['schedule', 'clock'];
 // rule list is the open-ended half — a company writes as many small rules as it
 // needs and they compose.
 //
-// COMPOSITION IS THE WHOLE DESIGN. A rung-by-rung ladder ("stay to 5:25 → +30
-// min; to 5:50 → another 30; to 6:25 → another 30") is not a rule type. It's
-// three `add_time` rules that all fire, and their sum is the ladder. That's why
-// there's no repeating/every-N-minutes form: it looks more powerful and is
-// actually less, because real negotiated ladders don't have even spacing.
-// The same trick covers breaks — one `auto_break` per expected break.
+// ADDED TIME IS PAID TIME, NOT CLOCK TIME. This is the rule that governs
+// `add_time`, and getting it backwards produces nonsense. The credit is added to
+// the SCHEDULED end, not to the punch. The punch only decides *which* rung the
+// worker reached:
+//
+//   scheduled end 5:00pm; rungs "at 5:25 → +30" and "at 5:51 → +60"
+//     still on at 5:24  → no rung   → 5:00 + 0  = 5:00
+//     still on at 5:25  → rung 1    → 5:00 + 30 = 5:30
+//     still on at 5:50  → rung 1    → 5:00 + 30 = 5:30
+//     still on at 5:51  → rung 2    → 5:00 + 60 = 6:00
+//
+// Adding to the punch instead would make 5:51 + 60 = 6:51, which is nonsense —
+// it pays a worker more for clocking out later within the same rung, which is
+// the exact thing a rung exists to stop.
+//
+// RUNGS DO NOT ACCUMULATE. Each rung names the TOTAL credit at that point, so
+// the largest rung reached wins. 5:51 has passed both rungs; it earns 60, not
+// 90. (Read the customer's own words that way and they line up: "past 5:25 add
+// a half hour; past 5:50 add an hour" — an hour, not another half hour.)
+//
+// `base: 'punch'` is available for the company that genuinely wants a flat
+// bonus on top of the actual punch. It is not the default, because it is the
+// nonsense above.
 //
 // STAGE ORDER IS FIXED, NOT AUTHORABLE. Rules are a set; the pipeline is a
 // sequence. Two rules in a different order produce a different invoice, so the
 // order is a property of the engine and an admin can't get it wrong:
 //
 //   1. clip      — clip_start / clip_end bound the paid punch
-//   2. adjust    — add_time / remove_time shift the paid end
+//   2. adjust    — add_time / remove_time set the paid end from the schedule
 //   3. break     — auto_break sets the deducted break
 //   4. classify  — overtime, downstream in computeOT
 //
@@ -81,8 +98,23 @@ const ROUNDING_REFERENCES = ['schedule', 'clock'];
 // is 10h, which under an 8h threshold is 2h of overtime — not 1.5h of overtime
 // and 0.5h of regular.
 const RULE_TYPES = ['clip_start', 'clip_end', 'add_time', 'remove_time', 'auto_break'];
-const RULE_WHEN_KINDS = ['every_day', 'weekdays', 'month_days', 'month_weekdays'];
+const RULE_WHEN_KINDS = [
+  'every_day', 'weekdays', 'month_days', 'month_weekdays',
+  'nth_days',      // every Nth calendar day from an anchor date
+  'months',        // only in these calendar months
+  'nth_months',    // every Nth month from an anchor month
+];
 const RULE_EDGES = ['before', 'after'];
+// Where the credit is measured from. 'schedule' = the scheduled start/end (the
+// default, and the only one that behaves sensibly for a ladder); 'punch' = the
+// worker's actual punch, for a flat bonus.
+const RULE_BASES = ['schedule', 'punch'];
+// 'at'    — one threshold, one credit.
+// 'every' — a repeating ladder: from T, every N minutes, another `minutes` of
+//           credit. Cheap to author when the rungs happen to be evenly spaced;
+//           uneven ladders (like the 25/26-minute one above) still need one
+//           'at' rule per rung.
+const RULE_MODES = ['at', 'every'];
 const BREAK_TRIGGERS = ['always', 'after_hours'];
 
 // ── Time helpers (minutes-since-midnight ↔ "HH:MM[:SS]") ─────────────────────
@@ -131,9 +163,9 @@ function nthWeekdayOfMonth(workDate) {
 }
 
 /**
- * Is this date the LAST occurrence of its weekday in the month? "Last Friday"
- * is a real payroll rule and can't be written as a fixed nth — a month has four
- * or five Fridays depending on the month.
+ * Is this date the LAST occurrence of its weekday in the month? Works for any
+ * weekday — "last Friday" is just the common example. It can't be written as a
+ * fixed nth because a month has four or five of each weekday.
  */
 function isLastWeekdayOfMonth(workDate) {
   const s = String(workDate).substring(0, 10);
@@ -141,6 +173,38 @@ function isLastWeekdayOfMonth(workDate) {
   if (!m) return false;
   const daysInMonth = new Date(Date.UTC(+m[1], +m[2], 0)).getUTCDate();
   return +m[3] + 7 > daysInMonth;
+}
+
+/** Calendar month (1-12) for "YYYY-MM-DD". null when unparseable. */
+function monthOf(workDate) {
+  const m = String(workDate).substring(0, 10).match(/^\d{4}-(\d{2})-\d{2}$/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+/** UTC midnight for "YYYY-MM-DD", or null. */
+function dateUTC(s) {
+  const m = String(s).substring(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : null;
+}
+
+/**
+ * Whole days from `from` to `to` (negative if `to` is earlier). Both are parsed
+ * as UTC midnight, so this is a pure calendar-day count with no DST drift —
+ * which is the whole reason the engine keeps dates as bare strings.
+ */
+function daysBetween(from, to) {
+  const a = dateUTC(from);
+  const b = dateUTC(to);
+  if (a == null || b == null) return null;
+  return Math.round((b - a) / 86400000);
+}
+
+/** Whole months from "YYYY-MM[-DD]" to "YYYY-MM-DD" (negative if earlier). */
+function monthsBetween(from, to) {
+  const a = String(from).match(/^(\d{4})-(\d{2})/);
+  const b = String(to).match(/^(\d{4})-(\d{2})/);
+  if (!a || !b) return null;
+  return (+b[1] - +a[1]) * 12 + (+b[2] - +a[2]);
 }
 
 // ── Policy parsing ───────────────────────────────────────────────────────────
@@ -165,6 +229,25 @@ function parseWhen(raw) {
   if (w.kind === 'month_days') {
     const days = (Array.isArray(w.days) ? w.days : []).map(d => intIn(d, 1, 31)).filter(d => d != null);
     return days.length ? { kind: 'month_days', days: [...new Set(days)] } : null;
+  }
+  if (w.kind === 'months') {
+    const months = (Array.isArray(w.months) ? w.months : []).map(m => intIn(m, 1, 12)).filter(m => m != null);
+    return months.length ? { kind: 'months', months: [...new Set(months)] } : null;
+  }
+  // An "every Nth" pattern is meaningless without an anchor to count from —
+  // "every 3rd day" is only a rule once you say which day was the first.
+  if (w.kind === 'nth_days') {
+    const every = intIn(w.every, 1, 3650);
+    const start = dateUTC(w.start) != null ? String(w.start).substring(0, 10) : null;
+    return every && start ? { kind: 'nth_days', start, every } : null;
+  }
+  if (w.kind === 'nth_months') {
+    const every = intIn(w.every, 1, 120);
+    const start = /^\d{4}-\d{2}/.test(String(w.start || '')) ? String(w.start).substring(0, 7) : null;
+    if (!every || !start) return null;
+    // Optional: restrict to given days of the month within each Nth month.
+    const days = (Array.isArray(w.days) ? w.days : []).map(d => intIn(d, 1, 31)).filter(d => d != null);
+    return { kind: 'nth_months', start, every, days: days.length ? [...new Set(days)] : null };
   }
   // month_weekdays: [{week, weekday}] — week 1-5, or -1 meaning "last".
   const patterns = (Array.isArray(w.patterns) ? w.patterns : [])
@@ -192,9 +275,17 @@ function parseRule(raw, index) {
     case 'add_time':
     case 'remove_time': {
       const minutes = Number(raw.minutes);
-      if (at == null || !Number.isFinite(minutes) || minutes <= 0) return null;
+      if (!Number.isFinite(minutes) || minutes <= 0) return null;
       const edge = RULE_EDGES.includes(raw.edge) ? raw.edge : 'after';
-      return { ...base, edge, at, minutes };
+      const ref = RULE_BASES.includes(raw.base) ? raw.base : 'schedule';
+      const mode = RULE_MODES.includes(raw.mode) ? raw.mode : 'at';
+      if (mode === 'every') {
+        const from = toMin(raw.from);
+        const everyMin = Number(raw.everyMin);
+        if (from == null || !Number.isFinite(everyMin) || everyMin <= 0) return null;
+        return { ...base, edge, base: ref, mode, from, everyMin, minutes };
+      }
+      return at == null ? null : { ...base, edge, base: ref, mode: 'at', at, minutes };
     }
 
     case 'auto_break': {
@@ -222,20 +313,51 @@ function parseRules(raw) {
 /** Does this rule apply to this calendar date? */
 function ruleMatchesDate(rule, workDate) {
   const w = rule.when;
-  if (w.kind === 'every_day') return true;
-  if (w.kind === 'weekdays') {
-    const wd = weekdayOf(workDate);
-    return wd != null && w.days.includes(wd);
+  switch (w.kind) {
+    case 'every_day':
+      return true;
+
+    case 'weekdays': {
+      const wd = weekdayOf(workDate);
+      return wd != null && w.days.includes(wd);
+    }
+
+    case 'month_days': {
+      const dom = dayOfMonth(workDate);
+      return dom != null && w.days.includes(dom);
+    }
+
+    case 'months': {
+      const mo = monthOf(workDate);
+      return mo != null && w.months.includes(mo);
+    }
+
+    case 'nth_days': {
+      // Never fires before its anchor — an every-Nth pattern counted backwards
+      // from the anchor would silently cover dates the author never meant.
+      const d = daysBetween(w.start, workDate);
+      return d != null && d >= 0 && d % w.every === 0;
+    }
+
+    case 'nth_months': {
+      const m = monthsBetween(w.start, workDate);
+      if (m == null || m < 0 || m % w.every !== 0) return false;
+      if (!w.days) return true;
+      const dom = dayOfMonth(workDate);
+      return dom != null && w.days.includes(dom);
+    }
+
+    case 'month_weekdays': {
+      const wd = weekdayOf(workDate);
+      if (wd == null) return false;
+      const nth = nthWeekdayOfMonth(workDate);
+      return w.patterns.some(p => p.weekday === wd
+        && (p.week === -1 ? isLastWeekdayOfMonth(workDate) : p.week === nth));
+    }
+
+    default:
+      return false;
   }
-  if (w.kind === 'month_days') {
-    const dom = dayOfMonth(workDate);
-    return dom != null && w.days.includes(dom);
-  }
-  const wd = weekdayOf(workDate);
-  if (wd == null) return false;
-  const nth = nthWeekdayOfMonth(workDate);
-  return w.patterns.some(p => p.weekday === wd
-    && (p.week === -1 ? isLastWeekdayOfMonth(workDate) : p.week === nth));
 }
 
 /**
@@ -460,14 +582,45 @@ function applyRounding(rawStart, rawEnd, expected, rounding) {
 // ── Rule pipeline ────────────────────────────────────────────────────────────
 
 /**
+ * How much credit one add_time/remove_time rule grants for a given punch, in
+ * minutes. 0 when the punch hasn't reached the rule's threshold.
+ *
+ * A rung names the TOTAL credit at that point, not an increment — see the
+ * header. `every` mode is the one exception: each repetition is another
+ * `minutes`, because that's what "every N minutes, add M" means.
+ */
+function ruleCredit(rule, punchMin) {
+  // 'after' measures a late clock-out; 'before' measures an early clock-in.
+  const past = rule.edge === 'after' ? punchMin - (rule.mode === 'every' ? rule.from : rule.at)
+                                     : (rule.mode === 'every' ? rule.from : rule.at) - punchMin;
+  // Inclusive: the customer's rule reads "clocked in TO or past 5:25", so 5:25
+  // exactly must earn the rung.
+  if (past < 0) return 0;
+  if (rule.mode === 'every') return (Math.floor(past / rule.everyMin) + 1) * rule.minutes;
+  return rule.minutes;
+}
+
+/** The winning credit for one edge: the largest rung reached, not their sum. */
+function bestCredit(rules, type, edge, punchMin) {
+  let best = 0;
+  for (const r of rules) {
+    if (r.type !== type || r.edge !== edge) continue;
+    const c = ruleCredit(r, punchMin);
+    if (c > best) best = c;
+  }
+  return best;
+}
+
+/**
  * Run the rule list against one already-rounded punch.
  *
  * @param startMin,endMin  paid punch after rounding, minutes since midnight
  * @param loggedBreakMin   what the worker typed at clock-out
  * @param rules            parsed, already filtered to this date
+ * @param expected         {startMin, endMin} scheduled day, or null
  * @returns {{startMin, endMin, breakMin}}
  */
-function applyRules(startMin, endMin, loggedBreakMin, rules) {
+function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null) {
   let s = startMin;
   let e = endMin;
 
@@ -481,27 +634,51 @@ function applyRules(startMin, endMin, loggedBreakMin, rules) {
   }
   if (e < s) e = s;
 
-  // ── 2. Adjust ── every add_time/remove_time rule is evaluated against the
-  // SAME snapshot (sc/ec) and the deltas are summed, then applied once.
+  // ── 2. Adjust ── the credit lands on the SCHEDULED end, not on the punch.
+  // The punch decides which rung was reached; it is not the thing added to.
   //
-  // This is the trap the whole ladder depends on. Applying each rule in turn
-  // would let the first credit push the clock-out past the next rule's
-  // threshold: a 5:30 punch gets +30 → 6:00, which now satisfies "after 5:50"
-  // → +30 → 6:30, which satisfies "after 6:25"… A rung ladder would run away
-  // to the end of the day off one late punch.
-  const sc = s;
-  const ec = e;
-  let delta = 0;
-  for (const r of rules) {
-    if (r.type !== 'add_time' && r.type !== 'remove_time') continue;
-    // 'after' tests the clock-out against the threshold; 'before' tests the
-    // clock-in. Both are inclusive — the customer's rule reads "clocked in TO
-    // or past 5:25", so 5:25:00 exactly must earn the credit.
-    const hit = r.edge === 'after' ? ec >= r.at : sc <= r.at;
-    if (!hit) continue;
-    delta += r.type === 'add_time' ? r.minutes : -r.minutes;
+  // Every rung is judged against the same pre-adjust punch, so no rung can
+  // push the clock-out into the next one.
+  const expEnd = expected ? expected.endMin : null;
+  const expStart = expected ? expected.startMin : null;
+
+  const hasAfter = rules.some(r => (r.type === 'add_time' || r.type === 'remove_time') && r.edge === 'after');
+  if (hasAfter) {
+    const punch = e;
+    const net = bestCredit(rules, 'add_time', 'after', punch)
+              - bestCredit(rules, 'remove_time', 'after', punch);
+    const scheduleBased = rules.some(r => r.edge === 'after' && r.base === 'schedule'
+      && (r.type === 'add_time' || r.type === 'remove_time'));
+
+    if (scheduleBased && expEnd != null) {
+      // Only staying LATE is governed by the ladder. Leaving early is just a
+      // short day — paying someone to the scheduled end because they left at
+      // 3pm would invent hours nobody worked.
+      if (punch > expEnd) e = expEnd + net;
+    } else {
+      // base 'punch' (or no schedule to measure against): a flat bonus on the
+      // actual punch.
+      e = punch + net;
+    }
   }
-  e += delta;
+
+  // Same for the clock-in edge, mirrored: credit moves the paid start EARLIER
+  // off the scheduled start.
+  const hasBefore = rules.some(r => (r.type === 'add_time' || r.type === 'remove_time') && r.edge === 'before');
+  if (hasBefore) {
+    const punch = s;
+    const net = bestCredit(rules, 'add_time', 'before', punch)
+              - bestCredit(rules, 'remove_time', 'before', punch);
+    const scheduleBased = rules.some(r => r.edge === 'before' && r.base === 'schedule'
+      && (r.type === 'add_time' || r.type === 'remove_time'));
+
+    if (scheduleBased && expStart != null) {
+      if (punch < expStart) s = expStart - net;
+    } else {
+      s = punch - net;
+    }
+  }
+
   if (e < s) e = s;
 
   // ── 3. Break ── one auto_break rule per EXPECTED break; a rule fires only if
@@ -575,7 +752,7 @@ function roundEntriesForPay(entries, policy, ctx = {}) {
     let breakMin = e.break_minutes;
 
     if (dayRules.length) {
-      const out = applyRules(toMin(start), toMin(end), e.break_minutes, dayRules);
+      const out = applyRules(toMin(start), toMin(end), e.break_minutes, dayRules, expected);
       finalStart = toHHMMSS(out.startMin);
       finalEnd = toHHMMSS(out.endMin);
       breakMin = out.breakMin;
@@ -614,6 +791,8 @@ module.exports = {
   RULE_TYPES,
   RULE_WHEN_KINDS,
   RULE_EDGES,
+  RULE_BASES,
+  RULE_MODES,
   BREAK_TRIGGERS,
   parsePolicy,
   parseRules,
@@ -621,6 +800,7 @@ module.exports = {
   roundEdge,
   applyRounding,
   applyRules,
+  ruleCredit,
   ruleMatchesDate,
   roundEntriesForPay,
   // exported for tests
@@ -628,6 +808,9 @@ module.exports = {
   toHHMMSS,
   weekdayOf,
   dayOfMonth,
+  monthOf,
   nthWeekdayOfMonth,
   isLastWeekdayOfMonth,
+  daysBetween,
+  monthsBetween,
 };

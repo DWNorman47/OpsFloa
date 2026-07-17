@@ -218,17 +218,30 @@ that had the previous default.
 
   **`rules[]` — the open-ended half (M4).** Everything above is fixed-slot: one
   clock-in edge, one clock-out edge, a closed vocabulary. `rules` is a list a
-  company writes freely, and the rules compose — a stay-late ladder is four
-  `add_time` rules that all fire, not a feature. Each entry is
-  `{id, type, when, ...params}`. Fixed-value sub-fields, all **enforced
+  company writes freely — the numbers in it are the company's, not ours. Each
+  entry is `{id, type, when, ...params}`. Fixed-value sub-fields, all **enforced
   app-side** by `parseRules` in `server/utils/hoursRules.js`:
 
   | Field | Allowed values |
   |---|---|
   | `rules[].type` | `clip_start` \| `clip_end` \| `add_time` \| `remove_time` \| `auto_break` |
-  | `rules[].when.kind` | `every_day` \| `weekdays` \| `month_days` \| `month_weekdays` |
+  | `rules[].when.kind` | `every_day` \| `weekdays` \| `month_days` \| `month_weekdays` \| `nth_days` \| `months` \| `nth_months` |
   | `rules[].edge` (add/remove) | `before` \| `after` |
+  | `rules[].base` (add/remove) | `schedule` (default) \| `punch` |
+  | `rules[].mode` (add/remove) | `at` (default) \| `every` |
   | `rules[].trigger.kind` (auto_break) | `always` \| `after_hours` |
+
+  ⚠️ **`add_time` adds PAID time, not clock time.** The credit lands on the
+  **scheduled** end (`base: 'schedule'`, the default); the punch only decides
+  which rung was reached. With a 5:00pm scheduled end and rungs "at 5:25 → +30",
+  "at 5:51 → +60": 5:24 pays to 5:00, 5:25 → 5:30, 5:50 → 5:30, 5:51 → 6:00.
+  Adding to the *punch* instead (`base: 'punch'` — available, not the default)
+  makes 5:51 pay to 6:51, which pays a worker more for clocking out later inside
+  the same rung, i.e. the exact thing a rung exists to prevent.
+  **Rungs do not accumulate** — each names the TOTAL credit at that point, so
+  the largest rung reached wins. Leaving *early* is never a ladder case: the
+  schedule base only engages when the punch is past the scheduled end, or a
+  short day would be paid to 5:00.
 
   ⚠️ **`parseRules` DROPS a malformed rule rather than repairing it** — the
   opposite of the fall-back-to-default posture used everywhere else in
@@ -240,10 +253,15 @@ that had the previous default.
   `parseRules` silently discards every rule using it.
 
   Numeric sub-fields (range-checked, not enum): `when.days` (0-6 for `weekdays`,
-  1-31 for `month_days`), `when.patterns[].week` (1-5, or **-1 = "the last one"**
-  — "last Friday" isn't a fixed nth, since a month has four or five),
-  `when.patterns[].weekday` (0-6), `at` (HH:MM), `minutes` (>0),
-  `trigger.hours` (>0).
+  1-31 for `month_days`/`nth_months`), `when.months` (1-12),
+  `when.patterns[].week` (1-5, or **-1 = "the last one"** — not a fixed nth,
+  since a month has four or five of any given weekday; works for **any** day,
+  not just Friday), `when.patterns[].weekday` (0-6), `at`/`from` (HH:MM),
+  `minutes` (>0), `everyMin` (>0), `trigger.hours` (>0).
+  `nth_days` needs `{start:'YYYY-MM-DD', every:1-3650}`; `nth_months` needs
+  `{start:'YYYY-MM', every:1-120, days?:[1-31]}`. **An nth pattern without an
+  anchor is dropped** — "every 3rd day" isn't a rule until you say which day was
+  the first — and never fires before its anchor.
 
   **Stage order is a property of the engine, not authorable**: clip → adjust →
   break → classify. Rules are a set; the pipeline is a sequence, and two orders

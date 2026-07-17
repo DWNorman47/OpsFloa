@@ -153,26 +153,6 @@ that holds the exhaustive detail.
 
 ## ✨ Ideas — improvements
 
-- **Hours rules: Nth Days / Nth Months selectors** (cut 2026-07-16, David's
-  call, noted at his request). "Every 3rd day from date X", "every 2nd month".
-  Cut because an anchored recurrence needs a start date, a period, and a policy
-  for month/year boundaries — more work than every other selector combined —
-  and no construction rule has asked for it. `month_weekdays` with `week: -1`
-  ("last Friday") already covers the case that usually motivates it. Also
-  parked: the **Monthly scope** (the sketch has monthly selectors but no monthly
-  rule types, so it can't do anything yet) and a **repeating `add_time`**
-  (`every N min from T` — can't express the customer's own ladder, whose gaps
-  alternate 25 and 35 minutes). See `docs/plans/hours-rules-builder.md`.
-
-
-- ~~**Takeoff ↔ job hard link (cross-device haul reconciliation).**~~ **DROPPED
-  2026-07-14 — solved by the simpler path.** The $ Bid modal now has an estimate
-  dropdown (link + "Send pricing to estimate"), so the priced lines (incl. the
-  export-haul-off qty) land on the estimate; the haul-log reconciliation reads
-  those lines server-side, which is already company-wide/cross-device. Nothing
-  per-browser is in the loop, so no server-side takeoff↔job link is needed. The
-  only remaining (natural) dependency: the bid must be converted into a job for
-  the job's haul tickets to find their estimate.
 - **Haul log: print layout + a specific-takeoff picker.** A print-friendly haul
   ticket report (CSV already ships); optionally let a job point at a specific
   takeoff for reconciliation instead of "most recent converted estimate."
