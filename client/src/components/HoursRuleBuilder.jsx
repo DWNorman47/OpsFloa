@@ -20,7 +20,7 @@ const WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
 // Mirrors the engine's RULE_TYPES / RULE_WHEN_KINDS. A value that isn't in the
 // engine's list is dropped on parse, so these must stay in step.
-const WHEN_KINDS = ['every_day', 'weekdays', 'month_days', 'month_weekdays', 'nth_days', 'months', 'nth_months'];
+const WHEN_KINDS = ['every_day', 'weekdays', 'month_days', 'month_weekdays', 'nth_days', 'months', 'nth_months', 'month_weeks', 'nth_weeks'];
 
 function blankRule() {
   return {
@@ -65,6 +65,10 @@ function describeWhen(when, t) {
       return `${t.hrEvery} ${w.every} ${t.hrDaysFrom} ${w.start}`;
     case 'nth_months':
       return `${t.hrEvery} ${w.every} ${t.hrMonthsFrom} ${w.start}`;
+    case 'month_weeks':
+      return `${t.hrWhenMonthWeeks}: ${(w.weeks || []).map(x => x === -1 ? t.hrWeekLast : `#${x}`).join(', ')}`;
+    case 'nth_weeks':
+      return `${t.hrEvery} ${w.every} ${t.hrWeeksFrom} ${w.start}`;
     default:
       return t.hrWhenEveryDay;
   }
@@ -203,19 +207,43 @@ export default function HoursRuleBuilder({ rules, onChange }) {
             </>
           )}
 
-          {(w.kind === 'nth_days' || w.kind === 'nth_months') && (
+          {w.kind === 'month_weeks' && (
+            <Field label={t.hrSelectWeeks}>
+              <div style={s.chips}>
+                {[1, 2, 3, 4, 5].map(n => {
+                  const on = (w.weeks || []).includes(n);
+                  return (
+                    <button key={n} type="button" style={{ ...s.chip, ...(on ? s.chipOn : {}) }}
+                      onClick={() => setWhen('weeks', on ? (w.weeks || []).filter(x => x !== n) : [...(w.weeks || []), n])}
+                    >{`#${n}`}</button>
+                  );
+                })}
+                {(() => {
+                  const on = (w.weeks || []).includes(-1);
+                  return (
+                    <button type="button" style={{ ...s.chip, ...(on ? s.chipOn : {}) }}
+                      onClick={() => setWhen('weeks', on ? (w.weeks || []).filter(x => x !== -1) : [...(w.weeks || []), -1])}
+                    >{t.hrWeekLast}</button>
+                  );
+                })()}
+              </div>
+            </Field>
+          )}
+
+          {(w.kind === 'nth_days' || w.kind === 'nth_months' || w.kind === 'nth_weeks') && (
             <>
               {/* An every-Nth pattern is meaningless without an anchor: "every
                   3rd day" isn't a rule until you say which day was the first.
                   The engine drops the rule outright if this is missing. */}
-              <Field label={w.kind === 'nth_days' ? t.hrStartDay : t.hrStartMonth}>
-                <input style={s.input} type={w.kind === 'nth_days' ? 'date' : 'month'}
+              <Field label={w.kind === 'nth_months' ? t.hrStartMonth : (w.kind === 'nth_weeks' ? t.hrStartWeek : t.hrStartDay)}>
+                <input style={s.input} type={w.kind === 'nth_months' ? 'month' : 'date'}
                   value={w.start || ''} onChange={e => setWhen('start', e.target.value)} />
               </Field>
-              <Field label={w.kind === 'nth_days' ? t.hrEveryNDays : t.hrEveryNMonths}>
+              <Field label={w.kind === 'nth_months' ? t.hrEveryNMonths : (w.kind === 'nth_weeks' ? t.hrEveryNWeeks : t.hrEveryNDays)}>
                 <input style={s.input} type="number" min="1" value={w.every || ''}
                   onChange={e => setWhen('every', parseInt(e.target.value, 10) || '')} />
               </Field>
+              {w.kind === 'nth_weeks' && <p style={s.hint}>{t.hrNthWeeksHint}</p>}
             </>
           )}
 

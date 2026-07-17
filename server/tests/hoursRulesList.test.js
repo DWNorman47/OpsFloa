@@ -341,6 +341,39 @@ describe('day selectors', () => {
     expect(matches(w, '2026-08-15')).toBe(false); // right day, wrong month
   });
 
+  test('month_weeks selects whole weeks by 7-day block from day 1', () => {
+    const w = { kind: 'month_weeks', weeks: [1, 3] };
+    expect(matches(w, '2026-07-01')).toBe(true);  // day 1 → week 1
+    expect(matches(w, '2026-07-07')).toBe(true);  // day 7 → week 1
+    expect(matches(w, '2026-07-08')).toBe(false); // day 8 → week 2
+    expect(matches(w, '2026-07-15')).toBe(true);  // day 15 → week 3
+    expect(matches(w, '2026-07-21')).toBe(true);  // day 21 → week 3
+    expect(matches(w, '2026-07-22')).toBe(false); // day 22 → week 4
+  });
+
+  test('month_weeks -1 is the last block, which is 5 in a 31-day month and 4 in a 28-day one', () => {
+    const w = { kind: 'month_weeks', weeks: [-1] };
+    expect(matches(w, '2026-07-29')).toBe(true);  // July: 31 days → week 5 = 29-31
+    expect(matches(w, '2026-07-28')).toBe(false); // day 28 → week 4, not last
+    expect(matches(w, '2026-02-22')).toBe(true);  // Feb 2026: 28 days → week 4 = 22-28
+    expect(matches(w, '2026-02-21')).toBe(false); // day 21 → week 3
+  });
+
+  test('nth_weeks is biweekly when every=2 — all 7 days of the on-weeks', () => {
+    // Anchor Monday 2026-07-06. Weeks are 7-day blocks from there.
+    const w = { kind: 'nth_weeks', start: '2026-07-06', every: 2 };
+    expect(matches(w, '2026-07-06')).toBe(true);  // block 0, day 0
+    expect(matches(w, '2026-07-12')).toBe(true);  // block 0, day 6
+    expect(matches(w, '2026-07-13')).toBe(false); // block 1 — off week
+    expect(matches(w, '2026-07-19')).toBe(false); // block 1
+    expect(matches(w, '2026-07-20')).toBe(true);  // block 2 — on again
+  });
+
+  test('nth_weeks never fires before its anchor', () => {
+    const w = { kind: 'nth_weeks', start: '2026-07-06', every: 2 };
+    expect(matches(w, '2026-06-29')).toBe(false); // one week before the anchor
+  });
+
   test('date arithmetic helpers', () => {
     expect(daysBetween('2026-07-06', '2026-08-05')).toBe(30);
     expect(daysBetween('2026-07-06', '2026-07-03')).toBe(-3);

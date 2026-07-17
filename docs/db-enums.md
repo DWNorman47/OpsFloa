@@ -225,7 +225,7 @@ that had the previous default.
   | Field | Allowed values |
   |---|---|
   | `rules[].type` | `clip_start` \| `clip_end` \| `add_time` \| `remove_time` \| `auto_break` |
-  | `rules[].when.kind` | `every_day` \| `weekdays` \| `month_days` \| `month_weekdays` \| `nth_days` \| `months` \| `nth_months` |
+  | `rules[].when.kind` | `every_day` \| `weekdays` \| `month_days` \| `month_weekdays` \| `nth_days` \| `months` \| `nth_months` \| `month_weeks` \| `nth_weeks` |
   | `rules[].edge` (add/remove) | `before` \| `after` |
   | `rules[].base` (add/remove) | `schedule` (default) \| `punch` |
   | `rules[].mode` (add/remove) | `at` (default) \| `every` |
@@ -256,10 +256,14 @@ that had the previous default.
   1-31 for `month_days`/`nth_months`), `when.months` (1-12),
   `when.patterns[].week` (1-5, or **-1 = "the last one"** — not a fixed nth,
   since a month has four or five of any given weekday; works for **any** day,
-  not just Friday), `when.patterns[].weekday` (0-6), `at`/`from` (HH:MM),
+  not just Friday), `when.patterns[].weekday` (0-6),
+  `when.weeks` (1-5 or -1=last, for `month_weeks` — weeks are 7-day blocks from
+  day 1, **not** calendar weeks), `at`/`from` (HH:MM),
   `minutes` (>0), `everyMin` (>0), `trigger.hours` (>0).
   `nth_days` needs `{start:'YYYY-MM-DD', every:1-3650}`; `nth_months` needs
-  `{start:'YYYY-MM', every:1-120, days?:[1-31]}`. **An nth pattern without an
+  `{start:'YYYY-MM', every:1-120, days?:[1-31]}`; `nth_weeks` needs
+  `{start:'YYYY-MM-DD', every:1-520}` and counts 7-day blocks from the anchor
+  (anchor at a pay-week start + `every:2` = biweekly). **An nth pattern without an
   anchor is dropped** — "every 3rd day" isn't a rule until you say which day was
   the first — and never fires before its anchor.
 

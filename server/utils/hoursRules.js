@@ -103,6 +103,8 @@ const RULE_WHEN_KINDS = [
   'nth_days',      // every Nth calendar day from an anchor date
   'months',        // only in these calendar months
   'nth_months',    // every Nth month from an anchor month
+  'month_weeks',   // days in the Nth week of the month (day 1-7 = week 1)
+  'nth_weeks',     // days in every Nth week from an anchor (e.g. biweekly)
 ];
 const RULE_EDGES = ['before', 'after'];
 // Where the credit is measured from. 'schedule' = the scheduled start/end (the
@@ -173,6 +175,27 @@ function isLastWeekdayOfMonth(workDate) {
   if (!m) return false;
   const daysInMonth = new Date(Date.UTC(+m[1], +m[2], 0)).getUTCDate();
   return +m[3] + 7 > daysInMonth;
+}
+
+/**
+ * Which week of the month a date falls in, defined as 7-day blocks counted
+ * from day 1: days 1-7 → week 1, 8-14 → 2, … 29-31 → 5. This is a deliberate,
+ * unambiguous definition and NOT calendar weeks — "the first week" doesn't
+ * depend on which weekday the 1st happens to be. (It equals nthWeekdayOfMonth,
+ * because the 15th is both the 3rd of its weekday and in the 3rd block.)
+ */
+function weekOfMonth(workDate) {
+  const dom = dayOfMonth(workDate);
+  return dom == null ? null : Math.floor((dom - 1) / 7) + 1;
+}
+
+/** The highest week block present in a date's month (4 or 5). */
+function lastWeekOfMonth(workDate) {
+  const s = String(workDate).substring(0, 10);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const daysInMonth = new Date(Date.UTC(+m[1], +m[2], 0)).getUTCDate();
+  return Math.floor((daysInMonth - 1) / 7) + 1;
 }
 
 /** Calendar month (1-12) for "YYYY-MM-DD". null when unparseable. */
@@ -248,6 +271,21 @@ function parseWhen(raw) {
     // Optional: restrict to given days of the month within each Nth month.
     const days = (Array.isArray(w.days) ? w.days : []).map(d => intIn(d, 1, 31)).filter(d => d != null);
     return { kind: 'nth_months', start, every, days: days.length ? [...new Set(days)] : null };
+  }
+  if (w.kind === 'month_weeks') {
+    // Week values 1-5, or -1 for the last week of the month.
+    const weeks = (Array.isArray(w.weeks) ? w.weeks : [])
+      .map(x => (x === -1 ? -1 : intIn(x, 1, 5)))
+      .filter(x => x != null);
+    return weeks.length ? { kind: 'month_weeks', weeks: [...new Set(weeks)] } : null;
+  }
+  if (w.kind === 'nth_weeks') {
+    // Same shape as nth_days but counted in 7-day blocks from the anchor — the
+    // anchor sets both the phase and the block boundary, which is exactly what
+    // a biweekly pay cycle needs.
+    const every = intIn(w.every, 1, 520);
+    const start = dateUTC(w.start) != null ? String(w.start).substring(0, 10) : null;
+    return every && start ? { kind: 'nth_weeks', start, every } : null;
   }
   // month_weekdays: [{week, weekday}] — week 1-5, or -1 meaning "last".
   const patterns = (Array.isArray(w.patterns) ? w.patterns : [])
@@ -345,6 +383,19 @@ function ruleMatchesDate(rule, workDate) {
       if (!w.days) return true;
       const dom = dayOfMonth(workDate);
       return dom != null && w.days.includes(dom);
+    }
+
+    case 'month_weeks': {
+      const wk = weekOfMonth(workDate);
+      if (wk == null) return false;
+      if (w.weeks.includes(wk)) return true;
+      return w.weeks.includes(-1) && wk === lastWeekOfMonth(workDate);
+    }
+
+    case 'nth_weeks': {
+      // Never before the anchor, same as nth_days.
+      const d = daysBetween(w.start, workDate);
+      return d != null && d >= 0 && Math.floor(d / 7) % w.every === 0;
     }
 
     case 'month_weekdays': {
@@ -871,6 +922,8 @@ module.exports = {
   monthOf,
   nthWeekdayOfMonth,
   isLastWeekdayOfMonth,
+  weekOfMonth,
+  lastWeekOfMonth,
   daysBetween,
   monthsBetween,
 };
