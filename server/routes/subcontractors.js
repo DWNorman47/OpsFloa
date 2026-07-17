@@ -109,6 +109,45 @@ router.post('/subcontractors', requireAdmin, async (req, res) => {
   }
 });
 
+// NOTE: must stay ABOVE '/subcontractors/:id' — Express matches in order,
+// and :id would otherwise swallow this and query an INTEGER id column
+// with the string 'compliance' (a 500, not a 404).
+// GET /subcontractors/compliance — documents lapsing or already lapsed.
+//
+// expires_on has been collected since 0107 and read by nothing; this is what
+// makes it worth collecting. Mirrors /lien-waivers/outstanding: a small feed the
+// page can show as a banner rather than making someone open every sub to find
+// the one whose COI died.
+router.get('/subcontractors/compliance', requireAuth, async (req, res) => {
+  const companyId = req.user.company_id;
+  const days = Math.min(365, Math.max(1, parseInt(req.query.within_days, 10) || 30));
+  try {
+    const r = await pool.query(
+      `SELECT d.id, d.subcontractor_id, d.doc_type, d.name, d.expires_on,
+              s.name AS subcontractor_name,
+              (d.expires_on < CURRENT_DATE) AS is_expired
+         FROM subcontractor_documents d
+         JOIN subcontractors s ON s.id = d.subcontractor_id
+        WHERE s.company_id = $1
+          AND s.active = true
+          AND d.expires_on IS NOT NULL
+          AND d.expires_on <= CURRENT_DATE + ($2 || ' days')::interval
+        ORDER BY d.expires_on ASC
+        LIMIT 200`,
+      [companyId, days]
+    );
+    res.json({
+      items: r.rows,
+      expired: r.rows.filter(x => x.is_expired).length,
+      expiring: r.rows.filter(x => !x.is_expired).length,
+      within_days: days,
+    });
+  } catch (err) {
+    req.log.error({ err }, 'route error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 router.get('/subcontractors/:id', requireAuth, async (req, res) => {
   const companyId = req.user.company_id;
   try {

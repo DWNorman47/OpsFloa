@@ -1,27 +1,7 @@
+import { renderAiMarkdown } from './aiMarkdown';
 import React, { useState } from 'react';
 import api from '../api';
 import AiUsageBadge from './AiUsageBadge';
-
-// small, safe markdown-lite renderer (React escapes text, so no injection)
-function inline(text, k) {
-  return text.split(/(\*\*[^*]+\*\*)/g).map((p, i) =>
-    /^\*\*[^*]+\*\*$/.test(p) ? <strong key={`${k}-${i}`}>{p.slice(2, -2)}</strong> : p);
-}
-function renderAnswer(md) {
-  const lines = String(md).split('\n');
-  const out = [];
-  let bullets = null;
-  const flush = () => { if (bullets) { out.push(<ul key={`ul-${out.length}`} style={styles.ul}>{bullets}</ul>); bullets = null; } };
-  lines.forEach((raw, i) => {
-    const line = raw.trim();
-    if (/^#{1,6}\s/.test(line)) { flush(); out.push(<div key={i} style={styles.h}>{line.replace(/^#{1,6}\s/, '')}</div>); }
-    else if (/^[-*]\s+/.test(line)) { (bullets = bullets || []).push(<li key={i}>{inline(line.replace(/^[-*]\s+/, ''), i)}</li>); }
-    else if (line === '') { flush(); }
-    else { flush(); out.push(<p key={i} style={styles.p}>{inline(line, i)}</p>); }
-  });
-  flush();
-  return out;
-}
 
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
@@ -87,7 +67,7 @@ export default function DocQATool() {
           <input type="file" accept="application/pdf" style={{ display: 'none' }}
             onChange={e => { openFile(e.target.files[0]); e.target.value = ''; }} disabled={loadingDoc} />
           <span style={styles.dropTitle}>{loadingDoc ? 'Reading PDF…' : 'Choose a PDF'}</span>
-          <span style={styles.dropSub}>Only the text is read; the file stays in your browser.</span>
+          <span style={styles.dropSub}>The PDF is read for its text and isn&rsquo;t saved.</span>
         </label>
       )}
 
@@ -126,7 +106,7 @@ export default function DocQATool() {
             {thread.map((turn, i) => (
               <div key={i} style={styles.turn}>
                 <div style={styles.q}>{turn.q}</div>
-                <div style={styles.a}>{renderAnswer(turn.a)}</div>
+                <div style={styles.a}>{renderAiMarkdown(turn.a)}</div>
               </div>
             ))}
             {asking && <div style={styles.thinking}>Thinking…</div>}
@@ -169,7 +149,4 @@ const styles = {
   q: { padding: '10px 14px', background: '#eff6ff', borderBottom: '1px solid #dbeafe', fontWeight: 600, color: '#0f172a' },
   a: { padding: '4px 16px 12px', fontSize: 14, lineHeight: 1.6, color: '#0f172a' },
   thinking: { color: '#94a3b8', fontSize: 13.5, fontStyle: 'italic' },
-  h: { fontWeight: 700, fontSize: 14.5, margin: '12px 0 4px', color: '#0f172a' },
-  p: { margin: '6px 0' },
-  ul: { margin: '4px 0', paddingLeft: 20, lineHeight: 1.7 },
 };

@@ -7,6 +7,7 @@ import axios from 'axios';
 import { getT } from '../i18n';
 import { detectLanguage } from '../languageDetect';
 import { publicLinkError } from '../utils/publicErrors';
+import { formatCurrency } from '../utils';
 
 const baseURL = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api';
 const publicApi = axios.create({ baseURL });
@@ -17,9 +18,11 @@ const PCAT_KEY = {
   overhead: 'pcatOverhead', contingency: 'pcatContingency', other: 'pcatOther',
 };
 
-function formatCents(cents) {
-  const n = (parseInt(cents, 10) || 0) / 100;
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
+// This page is unauthenticated, so it can't read GET /api/settings — the
+// contractor's currency rides along in the public payload instead. Falls back
+// to USD only if the server omitted it.
+function formatCents(cents, currency = 'USD') {
+  return formatCurrency((parseInt(cents, 10) || 0) / 100, currency);
 }
 
 export default function PublicChangeOrderPage() {
@@ -106,7 +109,7 @@ export default function PublicChangeOrderPage() {
                     <tr key={i}>
                       <td style={{ padding: '5px 0' }}>{l.description}</td>
                       <td style={{ padding: '5px 8px', textAlign: 'right', color: '#6b7280', width: 90 }}>{l.qty} {l.unit || ''}</td>
-                      <td style={{ padding: '5px 0', textAlign: 'right', width: 100 }}>{formatCents(l.total_cents)}</td>
+                      <td style={{ padding: '5px 0', textAlign: 'right', width: 100 }}>{formatCents(l.total_cents, co?.currency)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -116,11 +119,11 @@ export default function PublicChangeOrderPage() {
         </div>
 
         <div style={styles.totalsBox}>
-          <Row label={t.pubSubtotal} value={co.subtotal_cents} />
+          <Row label={t.pubSubtotal} value={co.subtotal_cents} currency={co.currency} />
           {parseFloat(co.overhead_pct) > 0 && (
-            <Row label={`${t.pubOverhead} (${co.overhead_pct}%)`} value={Math.round(co.subtotal_cents * co.overhead_pct / 100)} />
+            <Row label={`${t.pubOverhead} (${co.overhead_pct}%)`} value={Math.round(co.subtotal_cents * co.overhead_pct / 100)} currency={co.currency} />
           )}
-          <Row label={t.pubTotal} value={co.total_cents} bold />
+          <Row label={t.pubTotal} value={co.total_cents} bold currency={co.currency} />
         </div>
 
         {error && <div style={styles.errorBox}>{error}</div>}
@@ -175,11 +178,11 @@ function Block({ label, children }) {
     </div>
   );
 }
-function Row({ label, value, bold }) {
+function Row({ label, value, bold, currency }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: bold ? '2px solid #111827' : '1px solid #e5e7eb', fontWeight: bold ? 700 : 400, fontSize: bold ? 18 : 14 }}>
       <span>{label}</span>
-      <span>{formatCents(value)}</span>
+      <span>{formatCents(value, currency)}</span>
     </div>
   );
 }

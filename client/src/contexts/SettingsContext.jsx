@@ -44,3 +44,15 @@ export function SettingsProvider({ children }) {
 }
 
 export const useSettings = () => useContext(SettingsContext);
+
+/**
+ * The company's ISO 4217 currency code (e.g. 'USD', 'HNL'). Pair it with
+ * formatCurrency()/currencySymbol() from '../utils' — never hardcode '$' or
+ * `currency: 'USD'`, or non-USD companies silently get dollar signs.
+ *
+ * Falls back to 'USD' while settings load or if the fetch failed. Components
+ * rendered OUTSIDE the provider tree — notably the @react-pdf documents, which
+ * are mounted via pdf(createElement(...)) — can't use this; they must take
+ * `currency` as a prop from the page that renders them.
+ */
+export const useCurrency = () => useContext(SettingsContext).settings?.currency ?? 'USD';

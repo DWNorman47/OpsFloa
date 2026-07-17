@@ -10,7 +10,7 @@ import AppHeader from '../components/AppHeader';
 import { PageIntro } from '../components/PageShell';
 import TabBar from '../components/TabBar';
 import { getT } from '../i18n';
-import { langToLocale } from '../utils';
+import { formatCurrency, langToLocale } from '../utils';
 import api from '../api';
 import { getOrFetch, setCached } from '../offlineDb';
 import { useOffline } from '../contexts/OfflineContext';
@@ -220,7 +220,7 @@ export default function Dashboard() {
     const fmtDate = d => new Date(d.substring(0, 10) + 'T00:00:00').toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
     const fmtDateShort = d => new Date(d.substring(0, 10) + 'T00:00:00').toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' });
     const fmtH = h => { const wh = Math.floor(h); const wm = Math.round((h - wh) * 60); return wm > 0 ? `${wh}h ${wm}m` : `${wh}h`; };
-    const fmtMoney = v => `$${v.toFixed(2)}`;
+    const fmtMoney = v => formatCurrency(v, settings?.currency ?? 'USD');
 
     // Pay period
     const dates = sorted.map(e => e.work_date);

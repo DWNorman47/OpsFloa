@@ -1,10 +1,17 @@
 # OpsFloa — Drywall & Paint trade pack (inside the Plan Room takeoff layer)
 
-Status: **D1 + D2 built** (2026-07-12). D1: 🧱 trade, wall-run + ceiling tools,
-height/sides, board/mud/tape/paint into the bid, panel. D2: openings (🚪 count
-by type, deduct SF from wall + door/window/opening EA in the bid) and trim (▁
-base/crown/chair → LF). Later: interior-elevation heights, texture, insulation
-in the wall pass, ACT/drop-ceiling grid (see "Later"). A trade pack under the master plan
+Status: **D1 + D2 + D3 built** (D3 2026-07-14). D1: 🧱 trade, wall-run + ceiling
+tools, height/sides, board/mud/tape/paint into the bid, panel. D2: openings (🚪
+count by type, deduct SF from wall + door/window/opening EA in the bid) and trim
+(▁ base/crown/chair → LF). **D3:** texture (smooth/orange/knockdown/popcorn →
+$/SF on the finished drywall surface), batt/sound insulation in the wall pass
+(single-face wall area × R-type → $/SF), and ACT/drop-ceiling grid takeoff
+(per-ceiling type toggle: Drywall vs ACT 2×4 / 2×2 → tiles, main & cross tees,
+wall angle, hanger wire, installed $/SF). **D4 (2026-07-14):** interior-elevation
+heights — a ↕ measure tool captures a named wall height off an elevation/section
+sheet (uses that sheet's own scale); the set of height markers is the reusable
+library, applied as the new-run default (🧱 panel) or per-run (double-click a
+wall). **The pack is now feature-complete.** A trade pack under the master plan
 (`docs/plans/plan-viewer-markup.md`) — no own SKU, no own tool-app; included in
 the $60 takeoff layer. Ships **M-later, after the roofing pack (M7)** proves the
 integrated takeoff UX. This doc owns the drywall/paint **domain spec** only.
@@ -57,6 +64,12 @@ attribute per wall run** (and per-room ceiling height), so LF × height → SF.
   match manual pricing.
 
 ## Later
-- Interior-elevation takeoff (measuring heights off elevation sheets instead
-  of assuming them), texture/specialty finishes, batt/sound insulation in the
-  same wall pass (natural adjacency), act/drop-ceiling grid takeoff.
+- ~~texture/specialty finishes~~ — **built D3** (global texture setting, $/SF).
+- ~~batt/sound insulation in the same wall pass~~ — **built D3** (single-face
+  wall area × R-type, global setting; per-run include is a future refinement).
+- ~~act/drop-ceiling grid takeoff~~ — **built D3** (per-ceiling type; grid
+  material counts by rule-of-thumb, installed $/SF in the bid).
+- ~~interior-elevation takeoff~~ — **built D4** (2026-07-14). The ↕ height tool
+  measures a named height off an elevation/section sheet using that sheet's own
+  calibrated scale; heights become a reusable library (the markers themselves),
+  applied as the new-run default or per wall run. Nothing left deferred.

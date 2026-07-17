@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=41">
 <script>
 (() => {
   try {
@@ -60,6 +60,14 @@
       <option value="roofing">🏠 Roofing</option>
       <option value="dirt">⛰ Earthwork</option>
       <option value="drywall">🧱 Drywall &amp; Paint</option>
+      <option value="flooring">▦ Flooring &amp; Tile</option>
+      <option value="framing">🪵 Framing &amp; Lumber</option>
+      <option value="esc">🌱 Erosion &amp; Sediment Control</option>
+      <option value="striping">🅿 Striping &amp; Signage</option>
+      <option value="siding">▥ Siding, Gutters &amp; Insulation</option>
+      <option value="demo">💥 Demolition</option>
+      <option value="fence">🚧 Fencing &amp; Guardrail</option>
+      <option value="landscape">🌳 Landscape &amp; Irrigation</option>
     </select>
     <button class="tool tb-takeoff tr-roof" data-tool="plane" title="Roof plane — trace a roof face, set its pitch → sloped area + squares">▰</button>
     <button class="tool tb-takeoff tr-roof" data-tool="redge" title="Roof edge — trace eave/rake/ridge/hip/valley/flashing → linear feet (hip/valley/rake pitch-corrected)">╱</button>
@@ -81,27 +89,20 @@
     <div class="tb-sub tb-takeoff tr-dirt">
       <button id="surfaceToggle" class="mini-sel surf-toggle" title="Which surface new contours/pads belong to — click to switch between Existing and Proposed"><span id="surfaceToggleLabel">Existing</span> ⇄</button>
       <button class="tool" data-tool="align" title="Align the two sheets — click a landmark on the Existing sheet, then the same spot on the Proposed sheet. One pair fixes the shift; a second far-away pair also fixes rotation & scale.">⌖</button>
-      <span class="tb-sep" aria-hidden="true"></span>
-      <button class="tool" data-tool="wand" title="Auto-trace — click a contour on a vector PDF to pick up the whole line in one click (prefills elevation from the nearest printed number)">🪄</button>
-      <button class="tool" data-tool="contour" title="Contour — trace a contour line, then type its elevation. Tagged existing or proposed per the surface toggle →">⛰</button>
-      <button class="tool" data-tool="espot" title="Spot elevation — click a single grade point (FG spot, high/low) and type its elevation">◎</button>
-      <button class="tool" data-tool="epad" title="Building pad — trace a polygon held flat at one elevation (FF/FP pads)">◫</button>
-      <button class="tool" data-tool="ebound" title="Earthwork boundary — the limits of disturbance that get gridded for cut/fill (one per project)">⬚</button>
-    </div>
-    <div class="tb-sub tb-takeoff tr-dirt">
-      <span class="tb-sep" aria-hidden="true"></span>
-      <button class="tool" data-tool="autoarea" title="Auto-area — click a closed outline on a vector PDF (building, paving edge) to pick up the whole shape as an area takeoff in one click">▩</button>
-      <button class="tool" data-tool="qarea" title="Area takeoff — trace a paved / graded area, pick a material (concrete, asphalt, base, topsoil…) → priced quantities in the bid">▨</button>
-      <button class="tool" data-tool="qline" title="Line takeoff — trace a run (curb, pipe, silt fence…); add a trench cross-section for excavation & bedding CY">⌇</button>
-      <button class="tool" data-tool="qcount" title="Count takeoff — drop a point on each item (catch basin, manhole, tree…), name it → counted & priced in the bid">⊙</button>
     </div>
     <div class="tb-sub tb-takeoff tr-dwall">
       <button class="tool" data-tool="dwall" title="Wall run — trace a wall; SF = length × height × sides. Double-click a run to set its own height.">▬</button>
-      <button class="tool" data-tool="dceiling" title="Ceiling — trace a room outline → ceiling SF">⬜</button>
+      <button class="tool" data-tool="dceiling" title="Ceiling — trace a room outline. Drywall ceiling → board/finish SF; ACT drop-ceiling → suspended grid takeoff. Double-click a ceiling to change its type.">⬜</button>
+      <select id="dwCeilSel" class="mini-sel" title="Ceiling type for new ceilings — Drywall adds to board SF; ACT is a suspended grid (tiles, tees, wall angle, hangers)">
+        <option value="drywall">Drywall</option>
+        <option value="act24">ACT 2×4</option>
+        <option value="act22">ACT 2×2</option>
+      </select>
       <select id="dwSidesSel" class="mini-sel" title="Sides for new wall runs — 2 = interior partition (both faces), 1 = perimeter / against structure">
         <option value="2">2 sides</option>
         <option value="1">1 side</option>
       </select>
+      <button class="tool" data-tool="dheight" title="Height from elevation — on an elevation / section sheet, measure floor→ceiling to capture a named wall height. Set it as the default in the 🧱 panel, or double-click a wall run to apply it.">↕</button>
     </div>
     <div class="tb-sub tb-takeoff tr-dwall">
       <button class="tool" data-tool="dopening" title="Opening — click each door / window / opening; each deducts SF from wall area and counts for the bid. Double-click a group to edit its deduct.">🚪</button>
@@ -117,6 +118,221 @@
         <option value="chair">Chair rail</option>
       </select>
     </div>
+    <div class="tb-sub tb-takeoff tr-floor">
+      <button class="tool" data-tool="froom" title="Floor room — trace a room outline → floor SF by material. Double-click a room to change its material.">▦</button>
+      <select id="flTypeTb" class="mini-sel" title="Material for new floor rooms">
+        <option value="tile">Tile</option>
+        <option value="lvp">LVP / vinyl plank</option>
+        <option value="laminate">Laminate</option>
+        <option value="hardwood">Hardwood</option>
+        <option value="carpet">Carpet</option>
+        <option value="vinyl">Sheet vinyl</option>
+        <option value="other">Other</option>
+      </select>
+      <button class="tool" data-tool="ftrans" title="Transition — trace a threshold / reducer / T-molding / stair-nose run → LF. Double-click to change its type.">▂</button>
+      <select id="flTransTb" class="mini-sel" title="Transition type for new runs">
+        <option value="threshold">Threshold</option>
+        <option value="reducer">Reducer</option>
+        <option value="tmolding">T-molding</option>
+        <option value="stairnose">Stair nose</option>
+        <option value="seam">Transition strip</option>
+        <option value="other">Other</option>
+      </select>
+    </div>
+    <div class="tb-sub tb-takeoff tr-fram">
+      <button class="tool" data-tool="fwall" title="Framed wall — trace a wall run → studs, plates & board-feet by stud size. Double-click a wall to change its size.">‖</button>
+      <select id="frSizeTb" class="mini-sel" title="Stud size for new walls">
+        <option value="2x4">2×4</option>
+        <option value="2x6">2×6</option>
+        <option value="2x8">2×8</option>
+      </select>
+      <button class="tool" data-tool="fopening" title="Framed opening — click each door / window → header + king/jack/cripple studs. Double-click a group to set its rough-opening width.">▯</button>
+      <select id="frOpenTb" class="mini-sel" title="Opening type for new counts">
+        <option value="door">Door</option>
+        <option value="window">Window</option>
+      </select>
+      <button class="tool" data-tool="fsheath" title="Sheathing — trace a wall/floor area → 4×8 sheets by type. Double-click to change its type.">▤</button>
+      <select id="frSheathTb" class="mini-sel" title="Sheathing type for new areas">
+        <option value="osb716">OSB 7/16"</option>
+        <option value="ply12">Plywood 1/2"</option>
+        <option value="ply58">Plywood 5/8"</option>
+        <option value="zip">ZIP System</option>
+      </select>
+    </div>
+    <div class="tb-sub tb-takeoff tr-esc">
+      <button class="tool" data-tool="escline" title="Control run — trace silt fence / wattle / tree protection etc. → LF by type. Double-click a run to change its type.">〰</button>
+      <select id="escLineTb" class="mini-sel" title="Control type for new runs">
+        <option value="silt">Silt fence</option>
+        <option value="supersilt">Super silt fence</option>
+        <option value="sock">Compost sock</option>
+        <option value="wattle">Straw wattle</option>
+        <option value="treeprot">Tree protection fence</option>
+        <option value="berm">Diversion berm</option>
+        <option value="curtain">Turbidity curtain</option>
+      </select>
+      <button class="tool" data-tool="escitem" title="Point BMP — click each inlet protection / check dam / washout / dewatering bag → counted EA by type. Double-click a group to change its type.">&#9216;</button>
+      <select id="escItemTb" class="mini-sel" title="BMP type for new counts">
+        <option value="inletdrop">Inlet protection &mdash; drop</option>
+        <option value="inletcurb">Inlet protection &mdash; curb</option>
+        <option value="checkdam">Rock check dam</option>
+        <option value="washout">Concrete washout</option>
+        <option value="dewater">Dewatering bag</option>
+      </select>
+      <button class="tool" data-tool="escarea" title="Stabilized area — trace a construction entrance / erosion blanket / hydroseed / riprap area &rarr; SF + materials (stone tons, SY, seed &amp; mulch). Double-click it to change its type.">&#9639;</button>
+      <select id="escAreaTb" class="mini-sel" title="Area type for new areas">
+        <option value="entrance">Construction entrance</option>
+        <option value="blanket">Erosion blanket</option>
+        <option value="seed">Hydroseed / seed &amp; mulch</option>
+        <option value="riprap">Riprap / outlet protection</option>
+      </select>
+    </div>
+    <div class="tb-sub tb-takeoff tr-strp">
+      <button class="tool" data-tool="sstall" title="Parking stall — click each stall &rarr; counted EA by type. The stall price includes painting its own lines. Double-click a group to change its type.">&#8862;</button>
+      <select id="strpStallTb" class="mini-sel" title="Stall type for new counts">
+        <option value="standard">Standard stall</option>
+        <option value="compact">Compact stall</option>
+        <option value="ada">ADA accessible</option>
+        <option value="adavan">ADA van-accessible</option>
+      </select>
+      <button class="tool" data-tool="sstripe" title="Stripe run — trace a stop bar / crosswalk / lane line / hatching &rarr; LF by type. Don't trace stall lines; they're already in the stall price.">&#8801;</button>
+      <select id="strpLineTb" class="mini-sel" title="Stripe type for new runs">
+        <option value="line4">4&quot; line</option>
+        <option value="line6">6&quot; line</option>
+        <option value="line8">8&quot; line</option>
+        <option value="xwalk">12&quot; crosswalk</option>
+        <option value="stopbar">24&quot; stop bar</option>
+        <option value="hatch">Hatching / diagonal</option>
+      </select>
+      <button class="tool" data-tool="smark" title="Marking / sign — click each arrow, ONLY legend, ADA symbol, sign, wheel stop or bollard &rarr; counted EA by type. Double-click a group to change its type.">&#9670;</button>
+      <select id="strpMarkTb" class="mini-sel" title="Marking / sign type for new counts">
+        <option value="arrow">Directional arrow</option>
+        <option value="only">ONLY / word legend</option>
+        <option value="adasym">ADA symbol</option>
+        <option value="sign">Sign (post + panel)</option>
+        <option value="wheelstop">Wheel stop</option>
+        <option value="bollard">Bollard</option>
+      </select>
+    </div>
+    <div class="tb-sub tb-takeoff tr-sid">
+      <button class="tool" data-tool="swall" title="Siding wall — trace an elevation &rarr; gross SF by material. Openings deduct from it. Double-click a wall to change its material.">&#9637;</button>
+      <select id="sidMatTb" class="mini-sel" title="Material for new siding walls">
+        <option value="vinyl">Vinyl lap</option>
+        <option value="fclap">Fiber cement lap</option>
+        <option value="fcpanel">Fiber cement panel</option>
+        <option value="woodlap">Wood lap</option>
+        <option value="stucco">Stucco</option>
+        <option value="brick">Brick veneer</option>
+        <option value="stone">Stone veneer</option>
+      </select>
+      <button class="tool" data-tool="sopening" title="Siding opening — click each window / door / garage door; each deducts its SF from the wall area and bills a trim &amp; wrap EA. Double-click a group to edit its deduct.">&#8865;</button>
+      <select id="sidOpenTb" class="mini-sel" title="Opening type for new counts">
+        <option value="window">Window (&minus;15)</option>
+        <option value="door">Door (&minus;21)</option>
+        <option value="garage">Garage door (&minus;112)</option>
+      </select>
+      <button class="tool" data-tool="sgutter" title="Gutter run — trace a gutter / downspout / fascia run &rarr; LF by type. Double-click a run to change its type.">&#8976;</button>
+      <select id="sidGutTb" class="mini-sel" title="Gutter type for new runs">
+        <option value="k5">5&quot; K-style gutter</option>
+        <option value="k6">6&quot; K-style gutter</option>
+        <option value="half">Half-round gutter</option>
+        <option value="downspout">Downspout</option>
+        <option value="fascia">Fascia wrap</option>
+      </select>
+      <button class="tool" data-tool="sinsul" title="Insulation — trace an area &rarr; SF by R-value; batts also convert to bags. Double-click it to change its type.">&#9641;</button>
+      <select id="sidInsTb" class="mini-sel" title="Insulation type for new areas">
+        <option value="battR13">Batt R-13 (2&times;4 wall)</option>
+        <option value="battR19">Batt R-19 (2&times;6 wall)</option>
+        <option value="battR21">Batt R-21 (2&times;6 wall)</option>
+        <option value="blownR38">Blown attic R-38</option>
+        <option value="blownR49">Blown attic R-49</option>
+        <option value="foam">Spray foam</option>
+      </select>
+    </div>
+    <div class="tb-sub tb-takeoff tr-dem">
+      <button class="tool" data-tool="dmarea" title="Demo area — trace a building footprint or a slab &rarr; SF by type &rarr; debris CY, tons and truck loads. Double-click it to change its type.">&#9635;</button>
+      <select id="dmAreaTb" class="mini-sel" title="Type for new demo areas">
+        <option value="bldgWood">Building &mdash; wood frame</option>
+        <option value="bldgMasonry">Building &mdash; masonry</option>
+        <option value="bldgSteel">Building &mdash; steel</option>
+        <option value="asphalt">Asphalt pavement</option>
+        <option value="concrete">Concrete slab / paving</option>
+        <option value="sidewalk">Sidewalk</option>
+        <option value="gravel">Gravel / base</option>
+      </select>
+      <button class="tool" data-tool="dmline" title="Linear removal — trace a curb / sidewalk strip / pipe / fence / guardrail run &rarr; LF by type. Double-click a run to change its type.">&#8961;</button>
+      <select id="dmLineTb" class="mini-sel" title="Type for new linear removals">
+        <option value="curb">Curb &amp; gutter</option>
+        <option value="walkstrip">Sidewalk strip</option>
+        <option value="pipe">Pipe removal</option>
+        <option value="fence">Fence removal</option>
+        <option value="guardrail">Guardrail removal</option>
+      </select>
+      <button class="tool" data-tool="dmitem" title="Item removal — click each tree / pole / sign / structure &rarr; counted EA by type. Double-click a group to change its type.">&#8864;</button>
+      <select id="dmItemTb" class="mini-sel" title="Type for new item removals">
+        <option value="tree">Tree removal</option>
+        <option value="lightpole">Light pole</option>
+        <option value="sign">Sign</option>
+        <option value="catchbasin">Catch basin</option>
+        <option value="manhole">Manhole</option>
+        <option value="hydrant">Fire hydrant</option>
+      </select>
+    </div>
+    <div class="tb-sub tb-takeoff tr-fnc">
+      <button class="tool" data-tool="fnline" title="Fence run — trace a run &rarr; LF + posts by type. Each type carries its own post spacing. Double-click a run to change its type.">&#8983;</button>
+      <select id="fnLineTb" class="mini-sel" title="Type for new fence runs">
+        <option value="chain4">Chain link 4&prime;</option>
+        <option value="chain6">Chain link 6&prime;</option>
+        <option value="wood6">Wood privacy 6&prime;</option>
+        <option value="vinyl6">Vinyl privacy 6&prime;</option>
+        <option value="ornamental">Ornamental aluminum</option>
+        <option value="farm">Farm / field fence</option>
+        <option value="guardrail">Guardrail (W-beam)</option>
+        <option value="cable">Cable rail</option>
+      </select>
+      <button class="tool" data-tool="fngate" title="Gate — click each gate or guardrail end treatment &rarr; counted EA by type. Double-click a group to change its type.">&#8851;</button>
+      <select id="fnGateTb" class="mini-sel" title="Type for new gates">
+        <option value="walk">Walk gate</option>
+        <option value="drive">Double drive gate</option>
+        <option value="slide">Cantilever slide gate</option>
+        <option value="endtreat">Guardrail end treatment</option>
+      </select>
+    </div>
+    <div class="tb-sub tb-takeoff tr-lsc">
+      <button class="tool" data-tool="lsarea" title="Landscape area — trace a mulch bed / sod / seed / rock / planting bed &rarr; SF &rarr; CY, SY or tons. Double-click it to change its type.">&#9634;</button>
+      <select id="lsAreaTb" class="mini-sel" title="Type for new landscape areas">
+        <option value="mulch">Mulch bed</option>
+        <option value="sod">Sod</option>
+        <option value="seed">Lawn seed</option>
+        <option value="rock">Decorative rock</option>
+        <option value="bed">Planting bed (soil prep)</option>
+      </select>
+      <button class="tool" data-tool="lsplant" title="Plant — click each tree / shrub / perennial &rarr; counted EA by type. Double-click a group to change its type.">&#10059;</button>
+      <select id="lsPlantTb" class="mini-sel" title="Type for new plant counts">
+        <option value="tree2">Tree &mdash; 2&Prime; cal.</option>
+        <option value="tree3">Tree &mdash; 3&Prime; cal.</option>
+        <option value="shrub5">Shrub &mdash; 5 gal</option>
+        <option value="shrub3">Shrub &mdash; 3 gal</option>
+        <option value="perennial">Perennial &mdash; 1 gal</option>
+        <option value="grass">Ornamental grass</option>
+      </select>
+      <button class="tool" data-tool="lsline" title="Irrigation run — trace a mainline / lateral / drip / sleeve / edging run &rarr; LF by type. Double-click a run to change its type.">&#8768;</button>
+      <select id="lsLineTb" class="mini-sel" title="Type for new irrigation runs">
+        <option value="main">Mainline 1&Prime;</option>
+        <option value="lateral">Lateral 3/4&Prime;</option>
+        <option value="drip">Drip tubing</option>
+        <option value="sleeve">Sleeve under paving</option>
+        <option value="edging">Steel edging</option>
+      </select>
+      <button class="tool" data-tool="lshead" title="Irrigation head — click each head / emitter / valve / controller &rarr; counted EA by type. Double-click a group to change its type.">&#8859;</button>
+      <select id="lsHeadTb" class="mini-sel" title="Type for new heads">
+        <option value="spray">Spray head</option>
+        <option value="rotor">Rotor head</option>
+        <option value="emitter">Drip emitter</option>
+        <option value="valve">Zone valve</option>
+        <option value="controller">Controller</option>
+        <option value="backflow">Backflow preventer</option>
+      </select>
+    </div>
     <input type="color" id="mkColor" class="dirt-hide" value="#e05555" title="Markup color (applies to the selected markup too)">
     <select id="mkWidth" class="dirt-hide" title="Line weight / text size (applies to the selected markup too)">
       <option value="S">Thin</option>
@@ -125,11 +341,41 @@
     </select>
   </div>
 
+  <div class="tb-nav needs-doc tb-collapsible">
+    <button id="btnPrevPage" class="btn" title="Previous sheet" disabled>◀</button>
+    <span id="pageInfo" class="page-info">– / –</span>
+    <button id="btnNextPage" class="btn" title="Next sheet" disabled>▶</button>
+    <button id="btnFit" class="btn" title="Fit the sheet to the window" disabled>⤢ Fit</button>
+  </div>
   <div class="tb-group needs-doc tb-collapsible">
-    <button id="btnThumbs" class="btn" title="Show / hide the sheet strip (page menu)">❐</button>
-    <button id="btnUndo" class="btn" title="Undo (Ctrl+Z)" disabled>↶</button>
-    <button id="btnRedo" class="btn" title="Redo (Ctrl+Y)" disabled>↷</button>
-    <button id="btnList" class="btn" title="Markup list — every markup across the set, click to jump">📋</button>
+    <div class="tb-cluster">
+      <button id="btnUndo" class="btn" title="Undo (Ctrl+Z)" disabled>↶</button>
+      <button id="btnRedo" class="btn" title="Redo (Ctrl+Y)" disabled>↷</button>
+    </div>
+    <div class="tb-cluster tb-takeoff tr-dirt">
+    <div class="tool-group tb-takeoff tr-dirt" data-group="surface">
+      <button class="tool-group-main" data-group="surface" title="Grade tools — auto-trace, contour, spot, pad. Click for the menu (▾).">⛰ Contour</button>
+      <button class="tool-group-caret" data-group="surface" aria-label="More grade tools">▾</button>
+      <div class="tool-flyout hidden" data-flyout="surface">
+        <button class="tool" data-tool="wand" title="Auto-trace — click a contour on a vector PDF to pick up the whole line in one click (prefills elevation from the nearest printed number)">🪄 Auto-trace</button>
+        <button class="tool" data-tool="contour" title="Contour — trace a contour line, then type its elevation. Tagged existing or proposed per the surface toggle.">⛰ Contour</button>
+        <button class="tool" data-tool="espot" title="Spot elevation — click a single grade point (FG spot, high/low) and type its elevation">◎ Spot elevation</button>
+        <button class="tool" data-tool="epad" title="Building pad — trace a polygon held flat at one elevation (FF/FP pads)">◫ Building pad</button>
+      </div>
+    </div>
+    <div class="tool-group tb-takeoff tr-dirt" data-group="takeoff">
+      <button class="tool-group-main" data-group="takeoff" title="Takeoff tools — auto-area, area, line, count. Click for the menu (▾).">▨ Area</button>
+      <button class="tool-group-caret" data-group="takeoff" aria-label="More takeoff tools">▾</button>
+      <div class="tool-flyout hidden" data-flyout="takeoff">
+        <button class="tool" data-tool="autoarea" title="Auto-area — click a closed outline on a vector PDF (building, paving edge) to pick up the whole shape as an area takeoff in one click">▩ Auto-area</button>
+        <button class="tool" data-tool="qarea" title="Area takeoff — trace a paved / graded area, pick a material (concrete, asphalt, base, topsoil…) → priced quantities in the bid">▨ Area takeoff</button>
+        <button class="tool" data-tool="qline" title="Line takeoff — trace a run (curb, pipe, silt fence…); add a trench cross-section for excavation & bedding CY">⌇ Line takeoff</button>
+        <button class="tool" data-tool="qcount" title="Count takeoff — drop a point on each item (catch basin, manhole, tree…), name it → counted & priced in the bid">⊙ Count takeoff</button>
+      </div>
+    </div>
+    </div>
+    <div class="tb-cluster">
+    <button id="btnList" class="btn dirt-hide" title="Markup list — every markup across the set, click to jump">📋</button>
     <div class="menu-wrap">
       <button id="btnLayers" class="btn" title="Show / hide categories of markups to declutter" aria-haspopup="true">◫<span class="btn-label"> Layers</span> ▾</button>
       <div id="layersMenu" class="menu hidden" role="menu">
@@ -139,9 +385,18 @@
         <label><input type="checkbox" data-layer="labels" checked> Value labels</label>
       </div>
     </div>
+    </div>
+    <div class="tb-cluster">
     <button id="btnRoof" class="btn tb-takeoff tr-roof" title="Roofing takeoff — squares, edges, and counts across the set">🏠<span class="btn-label"> Roof</span></button>
-    <button id="btnDirt" class="btn tb-takeoff tr-dirt" title="Earthwork / cut-fill takeoff — designate sheets, trace contours, compute volumes">⛰<span class="btn-label"> Dirt</span></button>
     <button id="btnDw" class="btn tb-takeoff tr-dwall" title="Drywall & Paint — wall height, sheet size, waste, coverage; net SF & materials">🧱<span class="btn-label"> Drywall</span></button>
+    <button id="btnFloor" class="btn tb-takeoff tr-floor" title="Flooring & Tile — net floor SF by material with waste; prices in $ Bid">▦<span class="btn-label"> Floor</span></button>
+    <button id="btnFram" class="btn tb-takeoff tr-fram" title="Framing & Lumber — studs, plates & board-feet by stud size; prices in $ Bid">🪵<span class="btn-label"> Framing</span></button>
+    <button id="btnEsc" class="btn tb-takeoff tr-esc" title="Erosion &amp; Sediment Control — silt fence and perimeter controls by LF; prices in $ Bid">🌱<span class="btn-label"> ESC</span></button>
+    <button id="btnStrp" class="btn tb-takeoff tr-strp" title="Striping &amp; Signage — stalls, ADA tally, and painted runs by LF; prices in $ Bid">🅿<span class="btn-label"> Striping</span></button>
+    <button id="btnSid" class="btn tb-takeoff tr-sid" title="Siding, Gutters &amp; Insulation — net wall SF &amp; squares by material; prices in $ Bid">▥<span class="btn-label"> Siding</span></button>
+    <button id="btnDem" class="btn tb-takeoff tr-dem" title="Demolition — debris CY, tons &amp; truck loads by type; prices in $ Bid">💥<span class="btn-label"> Demo</span></button>
+    <button id="btnFnc" class="btn tb-takeoff tr-fnc" title="Fencing &amp; Guardrail — LF + posts by type; prices in $ Bid">🚧<span class="btn-label"> Fence</span></button>
+    <button id="btnLsc" class="btn tb-takeoff tr-lsc" title="Landscape &amp; Irrigation — mulch CY, sod SY, rock tons, plants &amp; heads; prices in $ Bid">🌳<span class="btn-label"> Landscape</span></button>
     <button id="btnBid" class="btn tb-takeoff" title="Takeoff bid — roofing materials & labor and earthwork volumes, editable prices, print / CSV">$<span class="btn-label"> Bid</span></button>
     <button id="btnUpsell" class="btn tb-upsell" title="Turn your measurements into a priced takeoff & bid — Takeoff layer add-on">🔒<span class="btn-label"> Takeoff</span></button>
     <div class="menu-wrap">
@@ -153,12 +408,7 @@
         <div class="menu-hint">Sheet, type, note, and measured value per markup.</div>
       </div>
     </div>
-    <div class="tb-nav">
-      <button id="btnPrevPage" class="btn" title="Previous sheet" disabled>◀</button>
-      <span id="pageInfo" class="page-info">– / –</span>
-      <button id="btnNextPage" class="btn" title="Next sheet" disabled>▶</button>
     </div>
-    <button id="btnFit" class="btn" title="Fit the sheet to the window" disabled>⤢ Fit</button>
   </div>
 </header>
 
@@ -173,10 +423,16 @@
 </div>
 
 <main>
-  <aside id="thumbRail" aria-label="Sheets"></aside>
+  <aside id="sheetsPanel" class="needs-doc" aria-label="Sheets">
+    <div class="sheets-head"><b>Sheets</b><button id="btnThumbsClose" class="sheets-x" title="Hide the sheet strip">✕</button></div>
+    <div id="thumbRail"></div>
+  </aside>
   <div id="canvasWrap">
     <canvas id="cv"></canvas>
+    <button id="btnThumbsOpen" class="btn thumbs-open needs-doc" title="Show the sheet strip">❐</button>
+    <button id="btnDirtOpen" class="btn panel-open needs-doc" title="Open the earthwork panel">⛰</button>
     <div id="hud"></div>
+    <div id="saveStatus" aria-live="polite"></div>
     <div id="dropHint"><span>Drop a PDF or image here, or open plans from <b>📁 Project</b></span></div>
     <textarea id="textOverlay" class="hidden" rows="2" spellcheck="false"
       placeholder="Type the note — Enter to place, Esc to cancel"></textarea>
@@ -214,12 +470,44 @@
     <div id="roofBody" class="mk-list"></div>
   </aside>
   <aside id="dirtPanel" class="hidden" aria-label="Earthwork takeoff">
-    <div class="mk-head"><b>⛰ Earthwork (cut / fill)</b></div>
+    <div class="mk-head"><b>⛰ Earthwork (cut / fill)</b><button id="btnDirtClose" class="panel-x" title="Close the earthwork panel">✕</button></div>
     <div id="dirtBody" class="mk-list"></div>
   </aside>
   <aside id="dwPanel" class="hidden" aria-label="Drywall &amp; Paint takeoff">
     <div class="mk-head"><b>🧱 Drywall &amp; Paint</b></div>
     <div id="dwBody" class="mk-list"></div>
+  </aside>
+  <aside id="floorPanel" class="hidden" aria-label="Flooring &amp; Tile takeoff">
+    <div class="mk-head"><b>▦ Flooring &amp; Tile</b></div>
+    <div id="floorBody" class="mk-list"></div>
+  </aside>
+  <aside id="framPanel" class="hidden" aria-label="Framing &amp; Lumber takeoff">
+    <div class="mk-head"><b>🪵 Framing &amp; Lumber</b></div>
+    <div id="framBody" class="mk-list"></div>
+  </aside>
+  <aside id="escPanel" class="hidden" aria-label="Erosion &amp; Sediment Control takeoff">
+    <div class="mk-head"><b>🌱 Erosion &amp; Sediment Control</b></div>
+    <div id="escBody" class="mk-list"></div>
+  </aside>
+  <aside id="strpPanel" class="hidden" aria-label="Striping &amp; Signage takeoff">
+    <div class="mk-head"><b>🅿 Striping &amp; Signage</b></div>
+    <div id="strpBody" class="mk-list"></div>
+  </aside>
+  <aside id="sidPanel" class="hidden" aria-label="Siding, Gutters &amp; Insulation takeoff">
+    <div class="mk-head"><b>▥ Siding, Gutters &amp; Insulation</b></div>
+    <div id="sidBody" class="mk-list"></div>
+  </aside>
+  <aside id="demPanel" class="hidden" aria-label="Demolition takeoff">
+    <div class="mk-head"><b>💥 Demolition</b></div>
+    <div id="demBody" class="mk-list"></div>
+  </aside>
+  <aside id="fncPanel" class="hidden" aria-label="Fencing &amp; Guardrail takeoff">
+    <div class="mk-head"><b>🚧 Fencing &amp; Guardrail</b></div>
+    <div id="fncBody" class="mk-list"></div>
+  </aside>
+  <aside id="lscPanel" class="hidden" aria-label="Landscape &amp; Irrigation takeoff">
+    <div class="mk-head"><b>🌳 Landscape &amp; Irrigation</b></div>
+    <div id="lscBody" class="mk-list"></div>
   </aside>
 </main>
 
@@ -309,6 +597,7 @@
     <div class="wall-grid">
       <label>Item / label<input type="text" id="ctLabel" value="Item" maxlength="40"></label>
       <label>Unit<input type="text" id="ctUnit" value="EA" maxlength="8"></label>
+      <label class="storm-only" title="Structure depth (rim to invert), ft. Prices the structures by vertical foot and breaks the schedule out by depth. 0 = not tracked (count only).">Depth (ft)<input type="number" id="ctDepth" min="0" step="0.5" value="0"></label>
     </div>
     <div id="ctResult" class="wall-result"></div>
     <div class="modal-actions">
@@ -327,10 +616,10 @@
     <div class="preset-row" id="ltPresets">
       <button type="button" class="btn tiny" data-preset="curb">Curb</button>
       <button type="button" class="btn tiny" data-preset="pipe">Pipe trench</button>
-      <button type="button" class="btn tiny" data-preset="pipe12">12" pipe</button>
-      <button type="button" class="btn tiny" data-preset="pipe18">18" pipe</button>
-      <button type="button" class="btn tiny" data-preset="pipe24">24" pipe</button>
-      <button type="button" class="btn tiny" data-preset="pipe36">36" pipe</button>
+      <button type="button" class="btn tiny storm-only" data-preset="pipe12">12" pipe</button>
+      <button type="button" class="btn tiny storm-only" data-preset="pipe18">18" pipe</button>
+      <button type="button" class="btn tiny storm-only" data-preset="pipe24">24" pipe</button>
+      <button type="button" class="btn tiny storm-only" data-preset="pipe36">36" pipe</button>
       <button type="button" class="btn tiny" data-preset="silt">Silt fence</button>
       <button type="button" class="btn tiny" data-preset="sawcut">Sawcut</button>
       <button type="button" class="btn tiny" data-preset="fence">Fence</button>
@@ -344,8 +633,22 @@
       <input type="checkbox" id="ltTrench"> Trench cross-section (pipe / utility)
     </label>
     <div class="wall-grid" id="ltTrenchFields">
+      <label class="storm-only" title="Nominal pipe diameter. Rolls the run up on the pipe schedule by size and suggests a trench width. 0 = generic / non-pipe run.">Pipe &Oslash; (in)<input type="number" id="ltDia" min="0" step="1" value="0"></label>
+      <label class="storm-only" title="Pipe material — rolls the run up on the pipe schedule by material.">Material
+        <select id="ltMat">
+          <option value="">&mdash;</option>
+          <option value="RCP">RCP</option>
+          <option value="PVC">PVC</option>
+          <option value="HDPE">HDPE</option>
+          <option value="DIP">DIP</option>
+          <option value="CMP">CMP</option>
+          <option value="VCP">VCP</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
       <label>Trench bottom width (ft)<input type="number" id="ltWidth" min="0" step="0.5" value="3"></label>
-      <label>Depth (ft)<input type="number" id="ltDepth" min="0" step="0.5" value="5"></label>
+      <label title="Trench depth at the upstream structure (rim − invert), ft. For a constant-depth run, this is the whole depth.">Depth (ft)<input type="number" id="ltDepth" min="0" step="0.5" value="5"></label>
+      <label class="storm-only" title="Downstream (end) trench depth for a sloped run, ft. Leave 0 for constant depth. Excavation uses the average of the two ends (average end area).">End depth (ft)<input type="number" id="ltDepth2" min="0" step="0.5" value="0"></label>
       <label title="Backcut of the trench sides (H per 1 V). 0 = vertical / shored.">Side slope (H:V)
         <select id="ltSlope">
           <option value="0">Vertical / shored (0)</option>
@@ -355,6 +658,12 @@
         </select>
       </label>
       <label title="Aggregate bedding under the pipe (import). 0 to skip.">Bedding (in)<input type="number" id="ltBedding" min="0" step="1" value="6"></label>
+      <label class="storm-only" title="Backfill source. Native = reuse trench spoil (only the volume displaced by pipe + bedding hauls off). Import = haul all spoil off and bring select backfill in.">Backfill
+        <select id="ltBackfill">
+          <option value="native">Native (reuse)</option>
+          <option value="import">Import</option>
+        </select>
+      </label>
     </div>
     <div id="ltResult" class="wall-result"></div>
     <div class="modal-actions">
@@ -472,6 +781,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=3"></script>
+<script type="module" src="app.js?v=41"></script>
 </body>
 </html>

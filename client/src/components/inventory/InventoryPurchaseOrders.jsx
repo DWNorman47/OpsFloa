@@ -3,6 +3,7 @@ import api from '../../api';
 import { useT } from '../../hooks/useT';
 import { useAuth } from '../../contexts/AuthContext';
 import { langToLocale } from '../../utils';
+import { useMoney } from '../../hooks/useMoney';
 import { SkeletonList } from '../Skeleton';
 import ModalShell from '../ModalShell';
 
@@ -151,6 +152,7 @@ function ReceiveModal({ po, locations, onDone, onClose }) {
 // ── PO Detail ──────────────────────────────────────────────────────────────────
 
 function PODetail({ po: initialPo, locations, suppliers, onBack, onUpdate }) {
+  const fmtMoney = useMoney();
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
@@ -462,7 +464,7 @@ function PODetail({ po: initialPo, locations, suppliers, onBack, onUpdate }) {
                       {remaining > 0 ? remaining : t.invpoDone}
                     </td>
                     <td style={{ ...d.td, textAlign: 'right', color: '#6b7280' }}>
-                      {line.unit_cost != null ? `$${parseFloat(line.unit_cost).toFixed(2)}` : '—'}
+                      {line.unit_cost != null ? fmtMoney(line.unit_cost) : '—'}
                     </td>
                     {isDraft && (
                       <td style={d.td}>
@@ -491,7 +493,7 @@ function PODetail({ po: initialPo, locations, suppliers, onBack, onUpdate }) {
                   </td>
                   <td style={{ ...d.td, textAlign: 'right', fontWeight: 700 }}>
                     {lines.some(l => l.unit_cost != null)
-                      ? `$${lines.reduce((s, l) => s + (l.unit_cost ? parseFloat(l.unit_cost) * parseFloat(l.qty_ordered) : 0), 0).toFixed(2)}`
+                      ? fmtMoney(lines.reduce((s, l) => s + (l.unit_cost ? parseFloat(l.unit_cost) * parseFloat(l.qty_ordered) : 0), 0))
                       : '—'}
                   </td>
                   {isDraft && <td style={d.td} />}
@@ -523,7 +525,7 @@ function PODetail({ po: initialPo, locations, suppliers, onBack, onUpdate }) {
                 <div style={d.mobileMetrics}>
                   <div><span style={d.mobileLabel}>{t.invPOColQtyOrdered}</span><span style={d.mobileMetric}>{ordered}</span></div>
                   <div><span style={d.mobileLabel}>{t.invPOColQtyReceived}</span><span style={d.mobileMetric}>{received}</span></div>
-                  <div><span style={d.mobileLabel}>{t.invPOColUnitCost}</span><span style={d.mobileMetric}>{line.unit_cost != null ? `$${parseFloat(line.unit_cost).toFixed(2)}` : '-'}</span></div>
+                  <div><span style={d.mobileLabel}>{t.invPOColUnitCost}</span><span style={d.mobileMetric}>{line.unit_cost != null ? fmtMoney(line.unit_cost) : '-'}</span></div>
                 </div>
               </article>
             );

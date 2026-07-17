@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import api from '../../api';
 import ItemLabelModal from './ItemLabelModal';
 import { useT } from '../../hooks/useT';
+import { useMoney } from '../../hooks/useMoney';
 import ColumnHeaderMenu from './ColumnHeaderMenu';
 import InventoryColumnPicker from './InventoryColumnPicker';
 
@@ -388,6 +389,7 @@ const u = {
 const ITEM_PAGE_SIZE_OPTIONS = [25, 50, 100, 250];
 
 export default function InventoryItems({ onItemChange }) {
+  const fmtMoney = useMoney();
   const t = useT();
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
@@ -560,7 +562,7 @@ export default function InventoryItems({ onItemChange }) {
       sortKey: 'unit_cost',
       headerStyle: { ...s.th, textAlign: 'right' },
       cellStyle: { ...s.td, textAlign: 'right' },
-      getValue: item => item.unit_cost != null ? `$${parseFloat(item.unit_cost).toFixed(2)}` : null,
+      getValue: item => item.unit_cost != null ? fmtMoney(item.unit_cost) : null,
     },
     {
       key: 'reorder_point',
@@ -903,7 +905,7 @@ export default function InventoryItems({ onItemChange }) {
                       </div>
                       <div>
                         <span style={s.mobileLabel}>{t.invitCostLabel}</span>
-                        <strong style={s.mobileValue}>{item.unit_cost != null ? `$${parseFloat(item.unit_cost).toFixed(2)}` : '-'}</strong>
+                        <strong style={s.mobileValue}>{item.unit_cost != null ? fmtMoney(item.unit_cost) : '-'}</strong>
                       </div>
                     </div>
                     <div style={s.mobileDetailGrid}>

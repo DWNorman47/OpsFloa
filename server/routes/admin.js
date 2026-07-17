@@ -8,6 +8,7 @@ const rateLimit = require('express-rate-limit');
 const { userOrIpKey } = require('../middleware/rateLimitKey');
 const { entryInstants, validLocalDate, wallClockInTZ } = require('../utils/timeFormat');
 const { PROJECT_STATUSES } = require('../constants/projectEnums');
+const { clearSuppression } = require('../services/emailSuppression');
 const pool = require('../db');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -19,7 +20,8 @@ const { logFailure } = require('../failureLog');
 const { sendPushToUser, sendPushToAllWorkers } = require('../push');
 const { sendEmail } = require('../email');
 const { hoursWorked, computeOT, computeDailyPayCosts, otBandsCost, nightPremiumCost } = require('../utils/payCalculations');
-const { roundEntriesFromSettings, otConfigFromSettings } = require('../utils/hoursRules');
+const { roundEntriesFromSettings, otConfigFromSettings, validatePolicyRaw } = require('../utils/hoursRules');
+const { computePaid } = require('../utils/paidHours');
 const { weekRange, weekBucketKey } = require('../utils/weekBounds');
 const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const qbo = require('../services/qbo');
@@ -214,6 +216,17 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
             try { parsed = JSON.parse(val); } catch { return res.status(400).json({ error: 'hours_rules must be valid JSON' }); }
             if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
               return res.status(400).json({ error: 'hours_rules must be a JSON object' });
+            // Beyond shape: refuse a rule list that can't mean anything. An
+            // Add Time rule with no End Time to measure from would fall back to
+            // adding onto the punch and quietly bill the wrong number, so it is
+            // rejected here rather than surprising someone on an invoice.
+            const problems = validatePolicyRaw(val);
+            if (problems.length) {
+              return res.status(400).json({
+                error: problems[0].message,
+                rule_errors: problems,
+              });
+            }
           }
           if (key === 'global_required_checklist_template_id' && val !== '') {
             const id = parseInt(val);
@@ -842,7 +855,7 @@ router.get('/workers', requireAdmin, async (req, res) => {
         FROM daily_regular
         GROUP BY user_id, ${weekBucketSql}
       )
-      SELECT u.id, u.full_name, u.invoice_name, u.username, u.role, u.role_id, u.language, u.hourly_rate, u.rate_type, u.day_mark_mode, u.overtime_rule, u.email, u.admin_permissions, u.worker_access_ids, u.worker_type, u.must_change_password, u.qbo_employee_id, u.qbo_vendor_id, u.classification,
+      SELECT u.id, u.full_name, u.invoice_name, u.username, u.role, u.role_id, u.language, u.hourly_rate, u.rate_type, u.day_mark_mode, u.overtime_rule, u.email, u.admin_permissions, u.worker_access_ids, u.worker_type, u.must_change_password, u.qbo_employee_id, u.qbo_vendor_id, u.classification, u.email_bounced_at, u.email_bounce_reason,
         COUNT(te.id) as total_entries,
         COALESCE(SUM(EXTRACT(EPOCH FROM (CASE WHEN te.end_time < te.start_time THEN te.end_time + INTERVAL '1 day' - te.start_time ELSE te.end_time - te.start_time END)) / 3600), 0) as total_hours,
         COALESCE(
@@ -865,7 +878,7 @@ router.get('/workers', requireAdmin, async (req, res) => {
       LEFT JOIN time_entries te ON te.user_id = u.id
         AND te.work_date >= CURRENT_DATE - INTERVAL '365 days'
       WHERE ${roleFilter} AND u.active = true AND u.company_id = $1 ${accessParamSql}
-      GROUP BY u.id, u.full_name, u.invoice_name, u.username, u.role, u.role_id, u.language, u.hourly_rate, u.rate_type, u.day_mark_mode, u.overtime_rule, u.email, u.admin_permissions, u.worker_access_ids, u.worker_type, u.must_change_password, u.qbo_employee_id, u.qbo_vendor_id, u.classification
+      GROUP BY u.id, u.full_name, u.invoice_name, u.username, u.role, u.role_id, u.language, u.hourly_rate, u.rate_type, u.day_mark_mode, u.overtime_rule, u.email, u.admin_permissions, u.worker_access_ids, u.worker_type, u.must_change_password, u.qbo_employee_id, u.qbo_vendor_id, u.classification, u.email_bounced_at, u.email_bounce_reason
       ORDER BY u.role DESC, u.full_name
       LIMIT 500`,
       queryParams
@@ -1435,7 +1448,23 @@ router.patch('/workers/:id', requireAdmin, requirePerm('manage_workers'),
     if (rate_type !== undefined) { fields.push(`rate_type = $${idx++}`); values.push(rate_type); }
     if (day_mark_mode !== undefined) { fields.push(`day_mark_mode = $${idx++}`); values.push(!!day_mark_mode); }
     if (overtime_rule !== undefined) { fields.push(`overtime_rule = $${idx++}`); values.push(overtime_rule); }
-    if (email !== undefined) { fields.push(`email = $${idx++}`); values.push(email || null); }
+    if (email !== undefined) {
+      // Correcting a typo'd address is the obvious fix for a bounce, and it
+      // used not to work: the suppression flag stayed on the row, so the NEW
+      // address was skipped too and the worker still got nothing.
+      //
+      // Only clear on an actual change — this PATCH carries the whole form, so
+      // `email !== undefined` fires on every worker edit, and clearing
+      // unconditionally would lift every suppression the moment anyone touched
+      // a rate. Postgres evaluates all SET expressions against the pre-update
+      // row, so bare `email` below is the OLD address despite being assigned in
+      // the same statement.
+      const p = idx++;
+      values.push(email || null);
+      fields.push(`email = $${p}`);
+      fields.push(`email_bounced_at    = CASE WHEN LOWER(email) IS DISTINCT FROM LOWER($${p}) THEN NULL ELSE email_bounced_at    END`);
+      fields.push(`email_bounce_reason = CASE WHEN LOWER(email) IS DISTINCT FROM LOWER($${p}) THEN NULL ELSE email_bounce_reason END`);
+    }
     if (worker_type !== undefined) { fields.push(`worker_type = $${idx++}`); values.push(worker_type); }
     if (req.body.classification !== undefined) {
       const cls = req.body.classification?.trim() || null;
@@ -1469,7 +1498,7 @@ router.patch('/workers/:id', requireAdmin, requirePerm('manage_workers'),
     values.push(req.params.id);
     values.push(companyId);
     const result = await pool.query(
-      `UPDATE users SET ${fields.join(', ')} WHERE id = $${idx} AND company_id = $${idx + 1} RETURNING id, username, full_name, invoice_name, role, language, hourly_rate, rate_type, day_mark_mode, overtime_rule, email, worker_type, classification, guaranteed_weekly_hours, updated_at`,
+      `UPDATE users SET ${fields.join(', ')} WHERE id = $${idx} AND company_id = $${idx + 1} RETURNING id, username, full_name, invoice_name, role, language, hourly_rate, rate_type, day_mark_mode, overtime_rule, email, worker_type, classification, guaranteed_weekly_hours, email_bounced_at, email_bounce_reason, updated_at`,
       values
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Worker not found' });
@@ -1477,6 +1506,30 @@ router.patch('/workers/:id', requireAdmin, requirePerm('manage_workers'),
     res.json(result.rows[0]);
   } catch (err) {
     logger.error({ err }, 'catch block error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Lift an email suppression without changing the address.
+//
+// Needed because a suppression is otherwise a one-way door: the flag stops all
+// mail to that worker — invites and password resets included — and nothing in
+// the app ever cleared it. A mailbox that was full, or a spam-flag the worker
+// has since sorted out with their IT, left them permanently unreachable with no
+// way back. Use when the address is right and the problem is fixed; if the
+// address itself is wrong, just correct it (PATCH clears the flag on a change).
+router.post('/workers/:id/clear-email-bounce', requireAdmin, requirePerm('manage_workers'), async (req, res) => {
+  try {
+    const cleared = await clearSuppression(req.params.id, req.user.company_id);
+    if (!cleared) {
+      // Either no such worker in this company, or they weren't suppressed.
+      // Both are "nothing to do" from the caller's point of view.
+      return res.status(404).json({ error: 'Worker not found or not suppressed' });
+    }
+    await logAudit(req.user.company_id, req.user.id, req.user.full_name, 'worker.email_bounce_cleared', 'worker', cleared.id, cleared.email);
+    res.json({ ok: true, id: cleared.id, email: cleared.email });
+  } catch (err) {
+    logger.error({ err }, 'failed to clear email bounce');
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -1649,7 +1702,8 @@ router.get('/projects/metrics', requireAdmin, async (req, res) => {
       pool.query(
         `SELECT te.project_id, te.user_id, te.work_date, te.start_time, te.end_time,
                 te.break_minutes, te.wage_type, te.overtime_hours_override,
-                COALESCE(u.hourly_rate, $2) AS rate
+                COALESCE(u.hourly_rate, $2) AS rate,
+                COALESCE(u.overtime_rule, 'daily') AS ot_rule
            FROM time_entries te
            JOIN users u ON te.user_id = u.id
           WHERE te.company_id = $1 AND te.status != 'rejected'`,
@@ -1665,7 +1719,22 @@ router.get('/projects/metrics', requireAdmin, async (req, res) => {
 
     const rows = projectsRes.rows.map(p => {
       const pe = byProject.get(p.id) || [];
-      const { regularHours, overtimeHours } = computeOT(pe, 'daily', otThreshold, weekStart);
+      // Overtime is a per-WORKER concept: the rule is the worker's
+      // (users.overtime_rule) and so is the rate. This used to hardcode 'daily'
+      // for the whole project and pass no tiered config, so a project staffed by
+      // weekly-rule workers reported overtime none of them had actually earned.
+      // Split by worker, then sum.
+      let regularHours = 0, overtimeHours = 0;
+      const byWorker = new Map();
+      for (const e of pe) {
+        if (!byWorker.has(e.user_id)) byWorker.set(e.user_id, []);
+        byWorker.get(e.user_id).push(e);
+      }
+      for (const rows_ of byWorker.values()) {
+        const r = computePaid(rows_, metricsSettings, { rule: rows_[0].ot_rule || 'daily' });
+        regularHours += r.regularHours;
+        overtimeHours += r.overtimeHours;
+      }
       let totalHours = 0, prevailingHours = 0, estimatedCost = 0;
       const workerIds = new Set();
       for (const e of pe) {

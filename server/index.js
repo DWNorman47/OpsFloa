@@ -133,6 +133,11 @@ app.use('/api', (req, res, next) => {
 // Stripe webhook needs raw body before express.json parses it
 app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
 
+// Same for the Resend event webhook: its signature is over the exact bytes
+// sent, so it must see them before any json parser reformats them. Small cap —
+// it's an unauthenticated endpoint and the payloads are a few hundred bytes.
+app.use('/api/resend-events', express.raw({ type: 'application/json', limit: '256kb' }));
+
 // Unauthenticated endpoints never need large bodies — cap them tightly so
 // they can't be abused for memory amplification. The first json parser to
 // run wins (express.json no-ops once req.body is set), so these tight
@@ -271,6 +276,8 @@ app.use('/api/public/change-orders', changeOrderRoutes.publicRouter);
 const lienWaiverRoutes = require('./routes/lienWaivers');
 app.use('/api/public/lien-waivers', lienWaiverRoutes.publicRouter);
 app.use('/api/client-errors', require('./routes/clientErrors'));
+app.use('/api/resend-events', require('./routes/resendEvents'));
+// Deprecated — superseded by /api/resend-events. See routes/sendgridEvents.js.
 app.use('/api/sendgrid-events', require('./routes/sendgridEvents'));
 
 // Per-project budget category CRUD — feeds the spend rollup + budget bar.
@@ -405,6 +412,8 @@ app.listen(PORT, () => {
   startEquipmentMaintenanceJob();
   const { startRentalReturnRemindersJob } = require('./jobs/rentalReturnReminders');
   startRentalReturnRemindersJob();
+  const { startSubDocExpiryJob } = require('./jobs/subDocExpiry'); // sub COI / license lapse alerts
+  startSubDocExpiryJob();
   const { startBidDueReminderJob } = require('./jobs/bidDueReminders');
   startBidDueReminderJob();
   const { startMediaRetentionJob } = require('./jobs/mediaRetention');

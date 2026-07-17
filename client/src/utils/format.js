@@ -4,6 +4,8 @@
 // slightly — some showed $0, some $0.00, some dropped seconds, some
 // kept them, etc. One place to change them now.
 
+import { localeForCurrency } from '../utils';
+
 const DEFAULT_LOCALE = 'en-US';
 const DEFAULT_CURRENCY = 'USD';
 
@@ -11,8 +13,14 @@ const DEFAULT_CURRENCY = 'USD';
 // "$X" with no fractional digits — the right call for big-dollar
 // project totals on a portfolio table. Pass { showCents: true } for
 // line-item displays where the decimals matter.
+//
+// `locale` defaults to the one that renders `currency`'s LOCAL symbol, because
+// Intl reads the symbol off the locale rather than the currency code — pinning
+// en-US would print "HNL 1,234.50" where the rest of the app shows "L 1,234.50".
+// Callers should pass the company currency (see the useCents hook); it is not
+// read from a global, so a caller that forgets it still gets USD.
 export function formatMoney(cents, opts = {}) {
-  const { showCents = false, locale = DEFAULT_LOCALE, currency = DEFAULT_CURRENCY } = opts;
+  const { showCents = false, currency = DEFAULT_CURRENCY, locale = localeForCurrency(currency) } = opts;
   const n = (parseInt(cents, 10) || 0) / 100;
   return new Intl.NumberFormat(locale, {
     style: 'currency',

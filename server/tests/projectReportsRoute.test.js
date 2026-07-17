@@ -55,9 +55,10 @@ describe('GET /api/projects/:id/pnl', () => {
         // billed $180k, collected $150k
         return Promise.resolve({ rows: [{ billed_dollars: '180000.00', collected_dollars: '150000.00' }] });
       }
+      if (/FROM settings/.test(sql)) return Promise.resolve({ rows: [] });
       if (/FROM time_entries/.test(sql)) {
-        // $68,000 labor
-        return Promise.resolve({ rows: [{ dollars: '68000.00' }] });
+        // 8h @ $8,500 = $68,000 labor
+        return Promise.resolve({ rows: [{ user_id: 1, work_date: '2026-04-01', start_time: '08:00:00', end_time: '16:00:00', break_minutes: 0, wage_type: 'regular', overtime_hours_override: null, rate: '8500', ot_rule: 'none' }] });
       }
       if (/FROM project_expenses/.test(sql)) {
         // $2,000 misc
@@ -91,6 +92,8 @@ describe('GET /api/projects/:id/pnl', () => {
       if (/FROM estimates/.test(sql)) return Promise.resolve({ rows: [] });
       if (/FROM project_budget_categories/.test(sql)) return Promise.resolve({ rows: [{ sum: '0' }] });
       if (/FROM project_invoices/.test(sql)) return Promise.resolve({ rows: [{ billed_dollars: '0', collected_dollars: '0' }] });
+      if (/FROM settings/.test(sql)) return Promise.resolve({ rows: [] });
+      if (/FROM time_entries/.test(sql)) return Promise.resolve({ rows: [] });
       return Promise.resolve({ rows: [{ dollars: '0', cents: '0' }] });
     });
     const res = await request(makeApp()).get('/api/projects/42/pnl');
@@ -132,7 +135,7 @@ describe('GET /api/wip-report', () => {
         return Promise.resolve({ rows: [{ billed_dollars: '180000.00', collected_dollars: '180000.00' }] });
       }
       if (/FROM time_entries/.test(sql)) {
-        return Promise.resolve({ rows: [{ dollars: '14200.00' }] });  // labor $14,200
+        return Promise.resolve({ rows: [{ user_id: 1, work_date: '2026-04-01', start_time: '08:00:00', end_time: '16:00:00', break_minutes: 0, wage_type: 'regular', overtime_hours_override: null, rate: '1775', ot_rule: 'none' }] });  // 8h @ $1,775 = $14,200
       }
       if (/FROM project_expenses/.test(sql)) return Promise.resolve({ rows: [{ cents: '0' }] });
       if (/FROM subcontract_po_payments/.test(sql)) return Promise.resolve({ rows: [{ cents: '0' }] });

@@ -104,9 +104,9 @@ describe('POST /api/qbo/push-bills-preview', () => {
 
   test('groups time + reimbursements per vendor and sums labor correctly', async () => {
     pool.query
+      .mockResolvedValueOnce(otOff())   // settings — the route loads these first now
       .mockResolvedValueOnce({ rows: [timeRow({ id: 1 }), timeRow({ id: 2, start_time: '09:00:00', end_time: '12:30:00' })] })
-      .mockResolvedValueOnce({ rows: [reimbRow()] })
-      .mockResolvedValueOnce(otOff());
+      .mockResolvedValueOnce({ rows: [reimbRow()] });
 
     const res = await request(makeApp())
       .post('/api/qbo/push-bills-preview')
@@ -128,9 +128,9 @@ describe('POST /api/qbo/push-bills-preview', () => {
 
   test('excludes already-pushed rows unless force is set', async () => {
     pool.query
+      .mockResolvedValueOnce(otOff())   // settings — the route loads these first now
       .mockResolvedValueOnce({ rows: [timeRow({ id: 1, qbo_bill_id: 'BILL-1' }), timeRow({ id: 2 })] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce(otOff());
+      .mockResolvedValueOnce({ rows: [] });
 
     const res = await request(makeApp())
       .post('/api/qbo/push-bills-preview')
@@ -141,9 +141,9 @@ describe('POST /api/qbo/push-bills-preview', () => {
 
   test('includes already-pushed rows when force=true', async () => {
     pool.query
+      .mockResolvedValueOnce(otOff())   // settings — the route loads these first now
       .mockResolvedValueOnce({ rows: [timeRow({ id: 1, qbo_bill_id: 'BILL-1' }), timeRow({ id: 2 })] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce(otOff());
+      .mockResolvedValueOnce({ rows: [] });
 
     const res = await request(makeApp())
       .post('/api/qbo/push-bills-preview')
@@ -154,9 +154,9 @@ describe('POST /api/qbo/push-bills-preview', () => {
 
   test('returns empty groups array when nothing matches', async () => {
     pool.query
+      .mockResolvedValueOnce(otOff())   // settings — the route loads these first now
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce(otOff());
+      .mockResolvedValueOnce({ rows: [] });
 
     const res = await request(makeApp())
       .post('/api/qbo/push-bills-preview')
@@ -170,9 +170,9 @@ describe('POST /api/qbo/push-bills-preview', () => {
     // One 10h shift with daily threshold 8 and 1.5× multiplier:
     //   2h OT × $45 × 0.5 = $45 premium on top of 10h × $45 = $450 base.
     pool.query
+      .mockResolvedValueOnce(otDaily({ threshold: 8, multiplier: 1.5 }))   // settings — the route loads these first now
       .mockResolvedValueOnce({ rows: [timeRow({ id: 1, start_time: '08:00:00', end_time: '18:00:00' })] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce(otDaily({ threshold: 8, multiplier: 1.5 }));
+      .mockResolvedValueOnce({ rows: [] });
 
     const res = await request(makeApp())
       .post('/api/qbo/push-bills-preview')
@@ -189,9 +189,9 @@ describe('POST /api/qbo/push-bills-preview', () => {
 
   test('no overtime premium when rule is none', async () => {
     pool.query
+      .mockResolvedValueOnce(otOff())   // settings — the route loads these first now
       .mockResolvedValueOnce({ rows: [timeRow({ start_time: '08:00:00', end_time: '20:00:00' })] }) // 12h
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce(otOff());
+      .mockResolvedValueOnce({ rows: [] });
 
     const res = await request(makeApp())
       .post('/api/qbo/push-bills-preview')
@@ -235,9 +235,9 @@ describe('POST /api/qbo/push-bills', () => {
     pool.query
       .mockResolvedValueOnce(mockSettings({ expenseAcct: '' }))
       .mockResolvedValueOnce({ rows: [{ qbo_realm_id: 'realm-1' }] })
+      .mockResolvedValueOnce(otOff())   // settings — the route loads these first now
       .mockResolvedValueOnce({ rows: [timeRow()] })
-      .mockResolvedValueOnce({ rows: [reimbRow()] })  // has a reimb → requires expense acct
-      .mockResolvedValueOnce(otOff());
+      .mockResolvedValueOnce({ rows: [reimbRow()] })  // has a reimb → requires expense acct;
 
     const res = await request(makeApp())
       .post('/api/qbo/push-bills')
@@ -251,9 +251,9 @@ describe('POST /api/qbo/push-bills', () => {
     pool.query
       .mockResolvedValueOnce(mockSettings({ expenseAcct: '' }))  // no expense acct
       .mockResolvedValueOnce({ rows: [{ qbo_realm_id: 'realm-1' }] })
+      .mockResolvedValueOnce(otOff())   // settings — the route loads these first now
       .mockResolvedValueOnce({ rows: [timeRow()] })
       .mockResolvedValueOnce({ rows: [] })                        // no reimbs
-      .mockResolvedValueOnce(otOff())
       .mockResolvedValueOnce({ rowCount: 1 });
 
     qbo.createBill.mockResolvedValueOnce({ Id: 'BILL-NO-REIMB' });
@@ -283,9 +283,9 @@ describe('POST /api/qbo/push-bills', () => {
     pool.query
       .mockResolvedValueOnce(mockSettings({ terms: 15 }))
       .mockResolvedValueOnce({ rows: [{ qbo_realm_id: 'realm-1' }] })
+      .mockResolvedValueOnce(otOff())   // settings — the route loads these first now
       .mockResolvedValueOnce({ rows: [timeRow()] })
       .mockResolvedValueOnce({ rows: [reimbRow()] })
-      .mockResolvedValueOnce(otOff())
       .mockResolvedValueOnce({ rowCount: 1 })
       .mockResolvedValueOnce({ rowCount: 1 });
 
@@ -315,9 +315,9 @@ describe('POST /api/qbo/push-bills', () => {
     pool.query
       .mockResolvedValueOnce(mockSettings())
       .mockResolvedValueOnce({ rows: [{ qbo_realm_id: 'realm-1' }] })
+      .mockResolvedValueOnce(otOff())   // settings — the route loads these first now
       .mockResolvedValueOnce({ rows: [timeRow()] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce(otOff());
+      .mockResolvedValueOnce({ rows: [] });
 
     qbo.createBill.mockRejectedValueOnce(new Error('QBO validation failed: Item inactive'));
 
@@ -338,9 +338,9 @@ describe('POST /api/qbo/push-bills', () => {
     pool.query
       .mockResolvedValueOnce(mockSettings())
       .mockResolvedValueOnce({ rows: [{ qbo_realm_id: 'realm-1' }] })
+      .mockResolvedValueOnce(otDaily({ threshold: 8, multiplier: 1.5 }))   // settings — the route loads these first now
       .mockResolvedValueOnce({ rows: [timeRow({ start_time: '08:00:00', end_time: '18:00:00' })] })
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce(otDaily({ threshold: 8, multiplier: 1.5 }))
       .mockResolvedValueOnce({ rowCount: 1 });
 
     qbo.createBill.mockResolvedValueOnce({ Id: 'BILL-OT-1' });

@@ -44,9 +44,15 @@ router.get('/plans', requireAdmin, async (req, res) => {
     monthly: null,
     annual: null,
   };
+  const storm = {
+    monthly_price_id: process.env.STRIPE_PRICE_STORM || null,
+    annual_price_id: process.env.STRIPE_PRICE_STORM_ANNUAL || null,
+    monthly: null,
+    annual: null,
+  };
   try {
     const stripe = getStripe();
-    for (const addon of [takeoff, planroom]) {
+    for (const addon of [takeoff, planroom, storm]) {
       if (addon.monthly_price_id) {
         const p = await stripe.prices.retrieve(addon.monthly_price_id);
         if (p.unit_amount != null) addon.monthly = p.unit_amount / 100;
@@ -83,6 +89,7 @@ router.get('/plans', requireAdmin, async (req, res) => {
     },
     takeoff,
     planroom,
+    storm,
   });
 });
 
@@ -93,7 +100,7 @@ router.get('/plans', requireAdmin, async (req, res) => {
 router.get('/status', requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT subscription_status, trial_ends_at, plan, addon_qbo, addon_takeoff, addon_planroom, billing_cycle, stripe_customer_id, stripe_subscription_id FROM companies WHERE id = $1',
+      'SELECT subscription_status, trial_ends_at, plan, addon_qbo, addon_takeoff, addon_planroom, addon_storm, billing_cycle, stripe_customer_id, stripe_subscription_id FROM companies WHERE id = $1',
       [req.user.company_id]
     );
     res.json(result.rows[0] || {});
@@ -102,7 +109,7 @@ router.get('/status', requireAdmin, async (req, res) => {
 
 // POST /stripe/checkout — create Stripe Checkout session
 router.post('/checkout', requireAdmin, requirePerm('manage_billing'), async (req, res) => {
-  const { price_id, worker_price_id, worker_count, add_qbo, qbo_price_id, add_takeoff, takeoff_price_id, add_planroom, planroom_price_id } = req.body;
+  const { price_id, worker_price_id, worker_count, add_qbo, qbo_price_id, add_takeoff, takeoff_price_id, add_planroom, planroom_price_id, add_storm, storm_price_id } = req.body;
   if (!price_id) return res.status(400).json({ error: 'price_id required' });
   try {
     const stripe = getStripe();
@@ -112,6 +119,12 @@ router.post('/checkout', requireAdmin, requirePerm('manage_billing'), async (req
     );
     const c = company.rows[0];
     if (!c) return res.status(404).json({ error: 'Company not found' });
+
+    // Takeoff is a layer on top of Plan Room — it can't be bought without it.
+    // Allowed only if Plan Room is already owned or is in this same checkout.
+    if (add_takeoff && !add_planroom && !c.addon_planroom) {
+      return res.status(400).json({ error: 'Takeoff requires Plan Room — add Plan Room too.', code: 'planroom_required' });
+    }
 
     let customerId = c.stripe_customer_id;
     if (!customerId) {
@@ -141,6 +154,9 @@ router.post('/checkout', requireAdmin, requirePerm('manage_billing'), async (req
     }
     if (add_planroom && planroom_price_id) {
       lineItems.push({ price: planroom_price_id, quantity: 1 });
+    }
+    if (add_storm && storm_price_id) {
+      lineItems.push({ price: storm_price_id, quantity: 1 });
     }
 
     const session = await stripe.checkout.sessions.create({
@@ -181,6 +197,7 @@ const ADDON_PRICES = {
   qbo:      { monthly: () => process.env.STRIPE_PRICE_QBO,      annual: () => process.env.STRIPE_PRICE_QBO_ANNUAL,      col: 'addon_qbo' },
   takeoff:  { monthly: () => process.env.STRIPE_PRICE_TAKEOFF,  annual: () => process.env.STRIPE_PRICE_TAKEOFF_ANNUAL,  col: 'addon_takeoff' },
   planroom: { monthly: () => process.env.STRIPE_PRICE_PLANROOM, annual: () => process.env.STRIPE_PRICE_PLANROOM_ANNUAL, col: 'addon_planroom' },
+  storm:    { monthly: () => process.env.STRIPE_PRICE_STORM,    annual: () => process.env.STRIPE_PRICE_STORM_ANNUAL,    col: 'addon_storm' },
 };
 
 // POST /stripe/addon — add a paid add-on to the company's EXISTING subscription
@@ -190,9 +207,15 @@ router.post('/addon', requireAdmin, requirePerm('manage_billing'), async (req, r
   const cfg = ADDON_PRICES[req.body && req.body.addon];
   if (!cfg) return res.status(400).json({ error: 'Unknown add-on' });
   try {
-    const r = await pool.query('SELECT stripe_subscription_id FROM companies WHERE id = $1', [req.user.company_id]);
+    const r = await pool.query('SELECT stripe_subscription_id, addon_planroom FROM companies WHERE id = $1', [req.user.company_id]);
     const subId = r.rows[0] && r.rows[0].stripe_subscription_id;
     if (!subId) return res.status(400).json({ error: 'No active subscription — subscribe to a plan first.', code: 'no_subscription' });
+
+    // Takeoff is a layer on top of Plan Room — it can't be added on its own.
+    // One-click adds a single item, so Plan Room must already be owned.
+    if (req.body.addon === 'takeoff' && !r.rows[0].addon_planroom) {
+      return res.status(400).json({ error: 'Takeoff requires Plan Room — add Plan Room first.', code: 'planroom_required' });
+    }
 
     const stripe = getStripe();
     const sub = await stripe.subscriptions.retrieve(subId);
@@ -244,6 +267,94 @@ router.post('/addon/remove', requireAdmin, requirePerm('manage_billing'), async 
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Failed to remove the add-on' }); }
 });
 
+// POST /stripe/checkout-addon — buy one or more add-ons with NO base plan.
+//
+// For a company that wants just Plan Room and/or Sitework Takeoff without
+// subscribing to a regular plan. Creates ONE Stripe subscription whose line
+// items are the chosen add-ons — so a company buying both gets a single
+// subscription and a single invoice, not two. The rest of the system already
+// supports this shape:
+//   - planFromPrice() returns 'free' for an add-on price, so the webhook writes
+//     plan='free' + the entitlement flags (no mis-mapping);
+//   - requirePlanToolsAddon / requireTakeoffAddon grant tool access on the
+//     add-on flag alone — they never require a base plan.
+// So this endpoint is the whole gap: the bundled /checkout hard-requires a base
+// price, and /addon needs an already-existing subscription.
+const STANDALONE_ADDONS = new Set(['takeoff', 'planroom']); // NOT qbo (needs a plan to be useful), NOT storm (not for sale)
+
+router.post('/checkout-addon', requireAdmin, requirePerm('manage_billing'), async (req, res) => {
+  const annual = !!(req.body && req.body.annual);
+  // Accept a single `addon` or an array `addons`; keep only the sellable ones,
+  // de-duped. Silently dropping qbo/storm here is the same allowlist the UI
+  // enforces — the endpoint just doesn't trust the client.
+  const requested = Array.isArray(req.body && req.body.addons)
+    ? req.body.addons
+    : [req.body && req.body.addon];
+  const addons = [...new Set(requested.filter(a => STANDALONE_ADDONS.has(a)))];
+  if (!addons.length) return res.status(400).json({ error: 'Unknown add-on' });
+
+  const lineItems = [];
+  for (const a of addons) {
+    const cfg = ADDON_PRICES[a];
+    const priceId = annual ? cfg.annual() : cfg.monthly();
+    if (!priceId) return res.status(400).json({ error: 'Add-on price is not configured.' });
+    lineItems.push({ price: priceId, quantity: 1 });
+  }
+
+  try {
+    const stripe = getStripe();
+    const company = await pool.query(
+      'SELECT c.*, u.email FROM companies c JOIN users u ON u.company_id = c.id WHERE c.id = $1 AND u.role = $2 AND u.active = true LIMIT 1',
+      [req.user.company_id, 'admin']
+    );
+    const c = company.rows[0];
+    if (!c) return res.status(404).json({ error: 'Company not found' });
+
+    // Takeoff is a layer on top of Plan Room — reject it unless Plan Room is
+    // already owned or is being bought in this same checkout.
+    if (addons.includes('takeoff') && !addons.includes('planroom') && !c.addon_planroom) {
+      return res.status(400).json({ error: 'Takeoff requires Plan Room — add Plan Room too.', code: 'planroom_required' });
+    }
+
+    // If they already have a LIVE subscription, adding an add-on there is the
+    // right path (one prorated line item, one invoice) — a second subscription
+    // would double the billing relationship. Route them to /addon. A stale
+    // subscription_id from a canceled sub is fine: only active/past_due block.
+    if (c.stripe_subscription_id && ['active', 'past_due'].includes(c.subscription_status)) {
+      return res.status(400).json({ error: 'You already have a subscription — add this from your plan instead.', code: 'has_subscription' });
+    }
+
+    let customerId = c.stripe_customer_id;
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        email: c.email, name: c.name,
+        metadata: { company_id: String(req.user.company_id) },
+      });
+      customerId = customer.id;
+      await pool.query('UPDATE companies SET stripe_customer_id = $1 WHERE id = $2', [customerId, req.user.company_id]);
+    }
+
+    // A trial company can pre-buy without being charged until the trial ends —
+    // same courtesy the bundled checkout extends.
+    const trialEnd = c.trial_ends_at && new Date(c.trial_ends_at) > new Date()
+      ? Math.floor(new Date(c.trial_ends_at).getTime() / 1000)
+      : undefined;
+
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      customer: customerId,
+      line_items: lineItems,
+      success_url: `${process.env.APP_URL}/administration#billing`,
+      cancel_url: `${process.env.APP_URL}/administration#billing`,
+      subscription_data: {
+        metadata: { company_id: String(req.user.company_id) },
+        ...(trialEnd ? { trial_end: trialEnd } : {}),
+      },
+    });
+    res.json({ url: session.url });
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Failed to create checkout session' }); }
+});
+
 // POST /stripe/webhook
 router.post('/webhook', async (req, res) => {
   const sig = req.headers['stripe-signature'];
@@ -272,10 +383,12 @@ router.post('/webhook', async (req, res) => {
         const hasTakeoff = items.some(i => takeoffIds.includes(i.price.id));
         const planroomIds = [process.env.STRIPE_PRICE_PLANROOM, process.env.STRIPE_PRICE_PLANROOM_ANNUAL].filter(Boolean);
         const hasPlanroom = items.some(i => planroomIds.includes(i.price.id));
+        const stormIds = [process.env.STRIPE_PRICE_STORM, process.env.STRIPE_PRICE_STORM_ANNUAL].filter(Boolean);
+        const hasStorm = items.some(i => stormIds.includes(i.price.id));
         const mrrCents = calcMrrCents(items);
         await pool.query(
-          'UPDATE companies SET stripe_subscription_id = $1, subscription_status = $2, plan = $3, addon_qbo = $4, addon_takeoff = $5, addon_planroom = $6, mrr_cents = $7 WHERE id = $8',
-          [obj.subscription, 'active', plan, hasProAddon, hasTakeoff, hasPlanroom, mrrCents, companyId]
+          'UPDATE companies SET stripe_subscription_id = $1, subscription_status = $2, plan = $3, addon_qbo = $4, addon_takeoff = $5, addon_planroom = $6, addon_storm = $7, mrr_cents = $8 WHERE id = $9',
+          [obj.subscription, 'active', plan, hasProAddon, hasTakeoff, hasPlanroom, hasStorm, mrrCents, companyId]
         );
       }
     } else if (event.type === 'customer.subscription.updated') {
@@ -289,21 +402,23 @@ router.post('/webhook', async (req, res) => {
         const hasTakeoff = items.some(i => takeoffIds.includes(i.price.id));
         const planroomIds = [process.env.STRIPE_PRICE_PLANROOM, process.env.STRIPE_PRICE_PLANROOM_ANNUAL].filter(Boolean);
         const hasPlanroom = items.some(i => planroomIds.includes(i.price.id));
+        const stormIds = [process.env.STRIPE_PRICE_STORM, process.env.STRIPE_PRICE_STORM_ANNUAL].filter(Boolean);
+        const hasStorm = items.some(i => stormIds.includes(i.price.id));
         const mrrCents = calcMrrCents(items);
         // Map Stripe's subscription status (`trialing`, `incomplete`,
         // `unpaid`, etc.) onto our internal set before writing — the
         // companies.subscription_status column is CHECK-constrained and
         // a raw Stripe value would fail the constraint.
         await pool.query(
-          'UPDATE companies SET subscription_status = $1, plan = $2, addon_qbo = $3, addon_takeoff = $4, addon_planroom = $5, mrr_cents = $6 WHERE id = $7',
-          [mapStripeStatus(obj.status), plan, hasProAddon, hasTakeoff, hasPlanroom, mrrCents, companyId]
+          'UPDATE companies SET subscription_status = $1, plan = $2, addon_qbo = $3, addon_takeoff = $4, addon_planroom = $5, addon_storm = $6, mrr_cents = $7 WHERE id = $8',
+          [mapStripeStatus(obj.status), plan, hasProAddon, hasTakeoff, hasPlanroom, hasStorm, mrrCents, companyId]
         );
       }
     } else if (event.type === 'customer.subscription.deleted') {
       const companyId = obj.metadata?.company_id;
       if (companyId) {
         await pool.query(
-          'UPDATE companies SET subscription_status = $1, addon_qbo = false, addon_takeoff = false, addon_planroom = false WHERE id = $2',
+          'UPDATE companies SET subscription_status = $1, addon_qbo = false, addon_takeoff = false, addon_planroom = false, addon_storm = false WHERE id = $2',
           ['canceled', companyId]
         );
       }

@@ -10,7 +10,8 @@ import Pagination from '../components/Pagination';
 import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
-import { formatMoney } from '../utils/format';
+import { useCents } from '../hooks/useMoney';
+import { useCurrency } from '../contexts/SettingsContext';
 import { formatDate, formatDateTime } from '../utils';
 import { computeBreakdown } from '../utils/estimateMath';
 import { silentError } from '../errorReporter';
@@ -59,7 +60,6 @@ function StatusBadge({ status }) {
 // Module-local shorthand kept for the few places the previous code path
 // used `formatCents`. The shared formatMoney from utils/format is now
 // the canonical helper; alias preserved to keep the diff small.
-const formatCents = (c) => formatMoney(c, { showCents: true });
 
 // ── List view ────────────────────────────────────────────────────────────────
 
@@ -80,6 +80,7 @@ function BidDueChip({ dueAt, status, language }) {
 }
 
 function EstimatesList({ onOpen, onNew }) {
+  const formatCents = useCents();
   const t = useT();
   const { user } = useAuth();
   const [estimates, setEstimates] = useState([]);
@@ -238,6 +239,7 @@ function daysUntil(iso) {
 }
 
 function EstimateForm({ existing, onSave, onCancel }) {
+  const formatCents = useCents();
   const t = useT();
   const toast = useToast();
   // Track whether the form has unsaved edits so the tab-close /
@@ -537,6 +539,7 @@ function Field({ label, required, error, children }) {
 // shape up. Lightweight; opens inline rather than a true modal so it
 // doesn't fight with the rest of the form.
 function CatalogPicker({ onPick }) {
+  const formatCents = useCents();
   const t = useT();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
@@ -619,6 +622,7 @@ function CatalogPicker({ onPick }) {
 }
 
 function TotalsRow({ label, value, bold }) {
+  const formatCents = useCents();
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: bold ? '2px solid #111827' : '1px solid #f3f4f6', fontWeight: bold ? 700 : 400, fontSize: bold ? 16 : 14 }}>
       <span>{label}</span>
@@ -630,6 +634,8 @@ function TotalsRow({ label, value, bold }) {
 // ── Detail view ──────────────────────────────────────────────────────────────
 
 function EstimateDetail({ id, onBack, onEdit }) {
+  const formatCents = useCents();
+  const currency = useCurrency();
   const t = useT();
   const { user } = useAuth();
   const [estimate, setEstimate] = useState(null);
@@ -665,7 +671,7 @@ function EstimateDetail({ id, onBack, onEdit }) {
       const pdfLang = estimate.client_language;
       const pdfT = getT(pdfLang);
       const statusLabel = pdfT[STATUS_COLORS[estimate.status]?.labelKey] || estimate.status;
-      const el = React.createElement(EstimatePDF, { estimate, companyInfo: companyRes.data || {}, language: pdfLang, statusLabel });
+      const el = React.createElement(EstimatePDF, { estimate, currency, companyInfo: companyRes.data || {}, language: pdfLang, statusLabel });
       const blob = await pdf(el).toBlob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

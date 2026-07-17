@@ -3,6 +3,7 @@ import api from '../api';
 import { useT } from '../hooks/useT';
 import { invalidateCache } from '../offlineDb';
 import { silentError } from '../errorReporter';
+import HoursRuleBuilder from './HoursRuleBuilder';
 
 /**
  * Admin UI for the configurable work-hour / pay rules (Milestone 1: company
@@ -60,6 +61,10 @@ function blankForm() {
     restDayMult: '', minDailyHours: '',
     nightEnabled: false, nightFrom: '19', nightTo: '5', nightPct: '25',
     showActualAndPaid: true,
+    // The open-ended half of the policy. Everything above is a fixed slot; this
+    // is a list the company writes itself. Kept in policy shape so saving is a
+    // pass-through — a second form shape would be one more thing to drift.
+    rules: [],
   };
 }
 
@@ -71,6 +76,9 @@ function policyToForm(raw) {
   if (!p || typeof p !== 'object') return blankForm();
   const f = blankForm();
   f.enabled = p.enabled === true;
+  // Rules round-trip untouched. The server's parseRules drops anything it can't
+  // read, so a rule that survived a save is already a shape this can hand back.
+  f.rules = Array.isArray(p.rules) ? p.rules : [];
   const sh = p.standardHours || {};
   const days = Object.keys(sh).filter(k => sh[k] && sh[k].start);
   if (days.length) {
@@ -152,6 +160,7 @@ function formToPolicy(f) {
   return {
     version: 1,
     enabled: !!f.enabled,
+    rules: Array.isArray(f.rules) ? f.rules : [],
     standardHours,
     rounding: {
       clockIn:  { reference: f.inRef,  intervalMin: parseInt(f.inInterval, 10) || 15,  graceMin: parseInt(f.inGrace, 10) || 0,  direction: f.inDir },
@@ -320,6 +329,8 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
             </label>
             <p style={s.hint}>{t.hrTransparencyHint}</p>
           </section>
+
+          <HoursRuleBuilder rules={form.rules} onChange={rs => set('rules', rs)} />
         </>
       )}
 

@@ -10,6 +10,7 @@ import { silentError } from '../errorReporter';
 import HelpTip from './HelpTip';
 import { useAuth } from '../contexts/AuthContext';
 import { labelSg } from '../companyLabels';
+import { formatCurrency } from '../utils';
 export default function ManageProjects({ projects, onProjectAdded, onProjectDeleted, onProjectUpdated, onProjectRestored, showWageType = true, nameEditable = true, showGeofenceBudget = true, defaultPrevailingRate = '', currency = 'USD', settings = null }) {
   const toast = useToast();
   const t = useT();
@@ -355,7 +356,7 @@ export default function ManageProjects({ projects, onProjectAdded, onProjectDele
                     )}
                     {p.client_name && <span style={s.clientTag}>{p.client_name}</span>}
                     {p.geo_radius_ft && <span style={s.indicatorBadge} title={`Geofence: ${p.geo_radius_ft.toLocaleString()} ft radius`}>📍</span>}
-                    {hasBudget(p) && <span style={s.indicatorBadge} title={[parseFloat(p.budget_hours) > 0 && `${p.budget_hours} hrs`, parseFloat(p.budget_dollars) > 0 && `$${Number(p.budget_dollars).toLocaleString()}`].filter(Boolean).join(' / ')}>💰</span>}
+                    {hasBudget(p) && <span style={s.indicatorBadge} title={[parseFloat(p.budget_hours) > 0 && `${p.budget_hours} hrs`, parseFloat(p.budget_dollars) > 0 && formatCurrency(Number(p.budget_dollars), currency)].filter(Boolean).join(' / ')}>💰</span>}
                     {p.required_checklist_template_id && <span style={s.indicatorBadge} title={t.checklistRequiredBadge}>☑</span>}
                     {showWageType && (
                       <span style={{ ...s.wageBadge, background: p.wage_type === 'prevailing' ? '#d97706' : '#2563eb' }}>

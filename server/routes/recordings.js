@@ -12,6 +12,8 @@
  */
 
 const router = require('express').Router();
+const anthropic = require('../services/anthropic');
+const { runAi, MAX_INPUT } = require('../services/aiGate');
 const pool = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { getPresignedUploadUrl, getObjectMetadataByUrl, deleteByUrl } = require('../r2');
@@ -153,7 +155,7 @@ router.get('/', async (req, res) => {
       pool.query(
         `SELECT r.id, r.title, r.audio_url, r.size_bytes, r.duration_seconds, r.status,
                 r.error_message, r.speaker_names, r.language_code, r.project_id,
-                r.media_kind, r.media_deleted_at,
+                r.media_kind, r.media_deleted_at, r.minutes_md, r.minutes_at,
                 r.created_at, r.completed_at, r.user_id,
                 u.full_name AS uploader_name, p.name AS project_name
          FROM recordings r
@@ -356,6 +358,97 @@ router.get('/:id', async (req, res) => {
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
+// --- Meeting minutes ------------------------------------------------------
+
+// Why this lives here and not in officeTools: the whole point of minutes over a
+// generic summary is that it knows WHO said what. The transcript is diarized and
+// speaker_names maps the provider's letters to real people, so the prompt can be
+// told "Mike owes the RFI answer" instead of guessing from flat text. Copying the
+// transcript into the Summarizer by hand throws exactly that away.
+const MINUTES_SYSTEM =
+  'You turn a transcript of a construction meeting (owner/architect/contractor, ' +
+  'coordination, pre-con, subcontractor) into minutes. The transcript is labelled ' +
+  'with who spoke. Use ONLY what is in it — never invent decisions, names, dates, ' +
+  'numbers or commitments. Speech is messy: ignore small talk and false starts, ' +
+  'and do not turn thinking-out-loud into a decision.\n\n' +
+  'Output GitHub-flavored markdown with these sections, omitting any that do not ' +
+  'apply:\n' +
+  '"## Summary" — 2-4 sentences on what the meeting was about and what came of it.\n' +
+  '"## Decisions" — bullets. Only things actually settled. If a decision has a ' +
+  'condition ("if the slab passes Friday"), keep the condition.\n' +
+  '"## Action items" — bullets, each starting with the owner in bold and ending ' +
+  'with a due date when one was said, e.g. "**Mike:** order rebar — by Monday". ' +
+  'Use the speaker labels exactly as the transcript gives them. Some speakers ' +
+  'may be un-named and appear as "Speaker A" - keep that label as-is; never ' +
+  'invent a name for them, and never guess which real person they are, even if ' +
+  'the conversation hints at it. If nobody was named for an item at all, write ' +
+  '"**Unassigned:**".\n' +
+  '"## Open questions" — bullets. Things raised and left unresolved; this is the ' +
+  'section that stops an item quietly dying between meetings.\n\n' +
+  'If the recording is not a meeting (a voice memo, a phone call, one person ' +
+  'talking) say so in one line and give just a Summary. Output only the markdown ' +
+  'shapes above: ## headings, - bullets, **bold**.';
+
+// POST /recordings/:id/minutes — generate + store minutes for a recording
+router.post('/:id/minutes', async (req, res) => {
+  const companyId = req.user.company_id;
+  let recording;
+  try {
+    recording = await loadRecording(req.params.id, companyId);
+    if (!recording) return res.status(404).json({ error: 'Recording not found' });
+    if (!isAdmin(req.user) && recording.user_id !== req.user.id) return res.status(403).json({ error: 'Not your recording' });
+    if (recording.status !== 'completed') {
+      return res.status(409).json({ error: 'That recording is still transcribing — minutes need a finished transcript.' });
+    }
+  } catch (err) {
+    req.log.error({ err }, 'route error');
+    return res.status(500).json({ error: 'Server error' });
+  }
+
+  let transcript, clipped;
+  try {
+    const { rows } = await pool.query(
+      `SELECT speaker, text FROM recording_utterances WHERE recording_id = $1 ORDER BY start_ms, id`,
+      [recording.id]
+    );
+    if (!rows.length) return res.status(409).json({ error: 'That recording has no transcript to work from.' });
+    // Resolve the provider's letter labels to real names where they've been set;
+    // that mapping is the entire edge minutes have over a pasted transcript.
+    const names = recording.speaker_names || {};
+    // Same rule as speakerLabel() in TranscriptionTool: a missing OR blank name
+    // falls back to the provider's letter, so an un-named meeting still yields
+    // usable minutes ("Speaker A owes the RFI") rather than nothing.
+    const label = sp => (names[sp] || '').trim() || `Speaker ${sp}`;
+    const line = u => `${label(u.speaker)}: ${u.text}`;
+    const full = rows.map(line).join('\n');
+    transcript = full.slice(0, MAX_INPUT);
+    clipped = full.length > MAX_INPUT;
+  } catch (err) {
+    req.log.error({ err }, 'minutes transcript build failed');
+    return res.status(500).json({ error: 'Server error' });
+  }
+
+  await runAi(req, res, async () => {
+    const result = await anthropic.generate({
+      system: MINUTES_SYSTEM,
+      prompt: `Meeting transcript:\n"""\n${transcript}\n"""\n\nWrite the minutes.`,
+      maxTokens: 2000,
+    });
+    // Persist so minutes survive the tab. Best-effort: if the write fails the
+    // user still gets the minutes back rather than a 502 on a call they paid for.
+    try {
+      await pool.query(
+        'UPDATE recordings SET minutes_md = $1, minutes_at = now() WHERE id = $2 AND company_id = $3',
+        [result, recording.id, companyId]
+      );
+    } catch (err) {
+      if (req.log && req.log.error) req.log.error({ err }, 'minutes save failed');
+    }
+    logAudit(companyId, req.user.id, req.user.full_name, 'recording.minutes_generated', 'recording', recording.id, recording.title, {});
+    return { result, clipped, minutes_at: new Date().toISOString() };
+  });
+});
+
 // PATCH /recordings/:id — rename title, assign project, set speaker names
 router.patch('/:id', async (req, res) => {
   const companyId = req.user.company_id;
@@ -449,11 +542,14 @@ router.delete('/:id', async (req, res) => {
 
     await pool.query('DELETE FROM recordings WHERE id = $1 AND company_id = $2', [recording.id, companyId]);
 
+    // Read outside the branch: the audit line below logs it either way, and
+    // scoping it to the if meant deleting an already-swept recording threw a
+    // ReferenceError *after* the row was gone — a 500 and no audit trail.
+    const sizeBytes = parseInt(recording.size_bytes || 0);
     // Staged video is already gone from R2 (and refunded) once the poller
     // has set media_deleted_at — don't delete or refund twice.
     if (!recording.media_deleted_at) {
       deleteByUrl(recording.audio_url).catch(() => {});
-      const sizeBytes = parseInt(recording.size_bytes || 0);
       if (sizeBytes > 0) decrementStorage(companyId, sizeBytes).catch(() => {});
     }
 
