@@ -1525,7 +1525,14 @@ async function openFromBytes(buf, name, type, { persist = true } = {}) {
       const key = await hashBytes(keep);
       await store.filesPut(key, { name, type: type || null, bytes: keep });
       state.docKey = key;
-    } catch (_) { /* private mode / quota — session still works */ }
+    } catch (err) {
+      // It opened and works this session, but couldn't be written to local
+      // storage — so it won't survive a reload. Show the persistent NOT SAVED
+      // banner (separate from the HUD) instead of pretending it saved; let the
+      // doc render so it's at least usable now.
+      console.error('openFromBytes: could not store plan', err);
+      flashSaveError();
+    }
   }
   state.docName = name;
   state.docType = type || null;
@@ -1554,18 +1561,30 @@ async function currentCombinedBytes() {
 async function finalizeCombined(combined, name) {
   const bytes = await combined.save(); // Uint8Array
   const oldKey = state.docKey;
+  // Store the merged PDF FIRST and confirm it landed. If this fails (browser
+  // storage full is the usual cause), do NOT repoint the project at a blob that
+  // isn't there and do NOT delete the old one — that exact combination is how
+  // adding a second PDF used to silently wipe the whole project.
   let key = null;
-  try { key = await hashBytes(bytes); await store.filesPut(key, { name, type: 'application/pdf', bytes }); } catch (_) {}
+  try {
+    key = await hashBytes(bytes);
+    await store.filesPut(key, { name, type: 'application/pdf', bytes });
+  } catch (err) {
+    console.error('finalizeCombined: could not store merged PDF', err);
+    saveError('Could not save the added pages — your browser’s storage may be full. Nothing was changed; free up space (or add fewer sheets) and try again.');
+    return false; // project untouched: old docKey, old blob, and existing markups all intact
+  }
   // openFromBytes copies internally (pdf.js detaches its copy, not `bytes`), so
   // the just-stored bytes stay intact
   const ok = await openFromBytes(bytes, name, 'application/pdf', { persist: false });
   if (!ok) { state.docKey = oldKey; return false; }
-  state.docKey = key || oldKey;
+  state.docKey = key;
   state.docName = name;
   scheduleSave(true);
   if (!$('projects').classList.contains('hidden')) renderProjCurrent(); // reflect the new sheet count
-  // drop the previous combined blob if nothing else references it
-  if (oldKey && key && oldKey !== key) {
+  // Only now that the new blob is safely stored, drop the previous one if
+  // nothing else references it.
+  if (oldKey && oldKey !== key) {
     try { const all = await store.projAll(); if (!all.some(p => p.docKey === oldKey && p.id !== state.projectId)) await store.filesDelete(oldKey); } catch (_) {}
   }
   return true;
@@ -3845,16 +3864,38 @@ function scheduleSave(now = false) {
 // discreet "✓ Saved" flash in the canvas top-left on each autosave write —
 // nudged to the right of the HUD message when one is showing so they don't stack.
 let savedTimer = null;
-function flashSaved() {
-  const el = $('saveStatus');
-  if (!el) return;
-  el.textContent = '✓ Saved';
+function positionSaveStatus(el) {
   const hud = els.hud;
   const hudShowing = hud && hud.textContent.trim() && !hud.classList.contains('gone');
   el.style.left = hudShowing ? (hud.offsetLeft + hud.offsetWidth + 8) + 'px' : (document.body.classList.contains('nothumbs') ? '48px' : '10px');
+}
+function flashSaved() {
+  const el = $('saveStatus');
+  if (!el) return;
+  el.classList.remove('save-error');   // a successful save clears any prior warning
+  el.textContent = '✓ Saved';
+  positionSaveStatus(el);
   el.classList.add('show');
   clearTimeout(savedTimer);
   savedTimer = setTimeout(() => el.classList.remove('show'), 1600);
+}
+// A save FAILED. Unlike the "✓ Saved" flash, this stays put (no auto-hide) until
+// a later save succeeds — a silently-dropped save is exactly how work gets lost,
+// so it must stay visible until it's resolved.
+function flashSaveError() {
+  const el = $('saveStatus');
+  if (!el) return;
+  clearTimeout(savedTimer);
+  el.textContent = '⚠ NOT SAVED — browser storage may be full';
+  positionSaveStatus(el);
+  el.classList.add('show', 'save-error');
+}
+// A save failed during a deliberate action (adding pages) where losing it would
+// wipe real work — make it impossible to miss.
+function saveError(msg) {
+  flashSaveError();
+  setMsg(msg);
+  alert('⚠ Could not save\n\n' + msg);
 }
 async function saveProjectNow() {
   clearTimeout(saveTimer); saveTimer = null;
@@ -3870,7 +3911,13 @@ async function saveProjectNow() {
       data: projectData(),
     });
     flashSaved();
-  } catch (_) { /* IndexedDB unavailable */ }
+  } catch (err) {
+    // Don't swallow it — a silently-dropped autosave is how a whole session's
+    // work vanishes on the next reload. Leave the NOT SAVED banner up until a
+    // later autosave succeeds.
+    console.error('autosave failed', err);
+    flashSaveError();
+  }
 }
 
 function updateProjectBtn() { els.projName.textContent = state.projectName || 'Project'; }
