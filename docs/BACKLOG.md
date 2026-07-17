@@ -21,27 +21,6 @@ that holds the exhaustive detail.
 
 ## 🔧 Bugs — set aside for later
 
-- **Email bounce suppression is orphaned by the Resend migration — and it can
-  never let anyone back in.** Found 2026-07-16 while re-surveying the app; not
-  yet triaged, so the impact estimate below is reasoning, not observation.
-  - `email.js:97` calls `isBounced(to)` before every send and **silently skips**
-    the recipient if `users.email_bounced_at` is set.
-  - The **only writer** of that column is `routes/sendgridEvents.js:56` — a
-    **SendGrid**-shaped webhook. Email moved to **Resend**, and there is no
-    Resend bounce webhook anywhere in `server/`. So the column takes no new data.
-  - **Nothing clears `email_bounced_at`.** No route, no admin action, no cron —
-    grep finds exactly three references repo-wide (the read, the write, the
-    migration). **So anyone whose address bounced once during the SendGrid era is
-    permanently suppressed and silently receives no OpsFloa email ever again**,
-    including a worker who has since fixed their mailbox. They get no invite, no
-    reset, no notification, and nothing surfaces it to an admin.
-  - Two failures, opposite directions: **stale suppressions never lift** (real
-    users go dark), and **new bounces never register** (we keep mailing dead
-    addresses, which is what damages sender reputation).
-  - Fix is roughly: a Resend bounce webhook to feed the column, plus a way to
-    clear it (admin action, or auto-clear on a successful send / email change).
-    Worth checking first whether any prod rows are actually set — if the table is
-    empty this is theoretical and only the missing webhook matters.
 - **Stale CSP hash blocks the inline auth-guard script on stage**
   (`client/public/tool-apps/sitework/index.html:9`). The Content-Security-Policy
   is set by the frontend host (Vercel), not the Express server, and it isn't
@@ -317,6 +296,41 @@ applied on dev (verified 2026-07-14). *(Corrects earlier "run migrations X" note
   standalone tool redirect (`docs/plans/planroom-sitework-pack.md` S4).
 
 ## 📖 Done / shipped log
+
+- **Email bounce suppression — reconnected and made reversible** (2026-07-16).
+  Found while re-surveying the app to fix a stale doc; filed and fixed the same
+  day, so it never sat in the bug list long.
+  - **What was wrong, twice over.** `email.js` skips any recipient whose
+    `users.email_bounced_at` is set. The only writer was a **SendGrid** webhook,
+    and email had moved to **Resend** — so the column took no new data and the
+    app happily kept mailing addresses it had already been told were dead.
+    Meanwhile **nothing anywhere cleared the column**: anyone flagged during the
+    SendGrid era was suppressed permanently, invites and password resets
+    included, with no symptom an admin could see.
+  - **Fixed:** `POST /api/resend-events` (signature-verified via the Resend SDK,
+    raw body, `email.bounced` + `email.complained`), and two ways back out — an
+    address change now clears the flag, and there's an explicit "Retry email"
+    action. The Subs/Team worker card shows a red banner when an address is
+    suppressed, which is the visibility migration `0075` said it was for and
+    never got.
+  - **Judgment calls:** only a **Permanent** bounce suppresses — Resend also
+    reports Transient (full mailbox) and Undetermined, and treating those as
+    fatal is how a real person gets silenced for an afternoon's outage.
+    `services/emailSuppression.js` now owns every read and write of the column,
+    because the read and the write living in two files that didn't know about
+    each other is what let this drift for months.
+  - ⚠️ **Needs an action from you: set `RESEND_WEBHOOK_SECRET`.** Create the
+    webhook in Resend → Webhooks pointed at
+    `https://<server>/api/resend-events`, subscribed to `email.bounced` and
+    `email.complained`, and paste its signing secret into the Render env. Until
+    then the route 503s and nothing is recorded — the code is live but deaf.
+  - ⚠️ **Worth checking:** whether any prod rows have `email_bounced_at` set
+    from the SendGrid era. Those people have been unreachable this whole time
+    and can now be freed with the Retry button.
+  - **Left alone:** `/api/sendgrid-events` still exists, marked deprecated. It
+    can't be proven dead from the repo (its secret isn't in `.env.example`, so
+    it almost certainly 503s), and it isn't mine to delete on a guess. Remove it
+    once you've confirmed nothing posts to it in Render.
 *Landed on `dev`, newest first. (What happens past dev is handled outside this doc.)*
 
 - **2026-07-14 — Plan Room $ Bid: estimate dropdown + send pricing.** A "🔗

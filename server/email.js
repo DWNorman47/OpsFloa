@@ -1,7 +1,7 @@
 const { Resend } = require('resend');
-const pool = require('./db');
 const logger = require('./logger');
 const { getStore } = require('./demoMode');
+const { isSuppressed } = require('./services/emailSuppression');
 
 // Single place that talks to the email provider. Every send path in the app
 // routes through sendEmail() below so there is one transport, one from-address,
@@ -15,20 +15,8 @@ const FROM_ADDRESS = process.env.EMAIL_FROM || 'info@opsfloa.com';
 const FROM = FROM_ADDRESS.includes('<') ? FROM_ADDRESS : `OpsFloa <${FROM_ADDRESS}>`;
 const REDIRECT_TO = process.env.EMAIL_REDIRECT_TO || 'info@opsfloa.com';
 
-// Skip addresses we know bounce — avoids burning sender reputation on
-// a recipient who's already hard-bounced. Returns true if the email is flagged.
-async function isBounced(email) {
-  if (!email) return false;
-  try {
-    const { rows } = await pool.query(
-      'SELECT email_bounced_at FROM users WHERE LOWER(email) = LOWER($1) AND email_bounced_at IS NOT NULL LIMIT 1',
-      [email]
-    );
-    return rows.length > 0;
-  } catch {
-    return false; // DB hiccup — err on the side of attempting send
-  }
-}
+// The bounce-skip lives in services/emailSuppression.js, alongside the writes
+// that set the flag — read and write have to agree on the matching rule.
 
 // EMAIL_MODE controls non-production behaviour:
 //   real     — send to the real recipient (used in production automatically)
@@ -94,7 +82,7 @@ async function sendEmail(to, subject, html, attachments) {
 
   // Short-circuit if this recipient is already known-bad from the provider's
   // bounce webhook. Prevents re-sending to invalid addresses.
-  if (await isBounced(to)) {
+  if (await isSuppressed(to)) {
     logger.debug({ to, subject }, 'email skipped — recipient previously bounced');
     return { skipped: 'bounced' };
   }

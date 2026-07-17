@@ -23,6 +23,74 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-16 — Email bounce suppression: reconnected, and made reversible
+
+**Fixed.** Resend bounce webhook + two ways to undo a suppression + a banner so
+it's visible at all. Found while re-surveying the app to fix a stale memory doc,
+not from a report — nobody reported it, which is the whole problem.
+
+**The bug was two bugs pointing opposite ways.** `email.js` skips any recipient
+whose `users.email_bounced_at` is set — sensible, that's how you avoid burning
+sender reputation on dead addresses.
+
+1. **The column's only writer was a SendGrid webhook, and email moved to
+   Resend.** So it took no new data. Every bounce since the migration went
+   unrecorded and the app kept mailing addresses it had already been told were
+   dead. The route didn't break — it just never heard from anyone again, and
+   nothing was watching for silence.
+2. **Nothing anywhere cleared the column.** Three references existed repo-wide:
+   the read, the write, the migration. **So anyone flagged during the SendGrid
+   era was suppressed forever** — no invite, no password reset, no notification,
+   no symptom an admin could see. Their mail simply stopped. A worker whose
+   mailbox was full for one afternoon in the SendGrid era is, today, still
+   unreachable and there was no way to fix it short of editing the database.
+
+The second is the one that actually hurts people, and it's the one that reads as
+a smaller bug.
+
+**Found — the migration promised the visibility and it was never built.**
+`0075_email_bounce_tracking.sql` says its *"primary use is visibility: admins can
+see which worker emails are broken."* The columns were never returned by any
+endpoint or rendered by any component. That's why this was invisible for months:
+the feature that would have surfaced it was the half nobody finished.
+
+**Calls made:**
+- **Only a `Permanent` bounce suppresses.** Resend also reports `Transient` (full
+  mailbox, greylisting) and `Undetermined`. Treating those as fatal would silence
+  a real person because their mail server had a bad afternoon — and, before the
+  clear paths, would have done it permanently. Asserted in the tests.
+- **`services/emailSuppression.js` now owns every read and write of the column.**
+  The read and the write living in separate files that knew nothing about each
+  other is precisely how the matching rule drifted out of sync for months. One
+  owner, one rule: by address, case-insensitive (`users.email` is UNIQUE, so an
+  address is exactly one row).
+- **Changing the address clears the flag; an unrelated edit doesn't.** The
+  obvious fix for a bounce is to correct the typo, and that silently didn't work
+  — the flag rode along and the new address was skipped too. But the worker PATCH
+  carries the whole form, so clearing whenever `email !== undefined` would lift
+  every suppression the moment someone edited a pay rate. It clears only on an
+  actual change, via a `CASE ... IS DISTINCT FROM` against the pre-update row.
+- **Kept `/api/sendgrid-events`, marked deprecated.** It can't be proven dead
+  from the repo, and it isn't mine to delete on a guess. It now shares the same
+  marking helper. Delete once Render confirms nothing posts to it.
+- **Verified the signature check against the real SDK rather than stubbing it.**
+  Worth it: `resend.webhooks.verify()` takes its own `{id, timestamp, signature}`
+  object, **not** the `Headers` global its type name implies. Getting that wrong
+  fails closed — every bounce silently rejected, which is the exact bug being
+  fixed here, wearing a different hat. The tests sign real payloads and cover
+  tampering and replay.
+
+⚠️ **Not done until you set `RESEND_WEBHOOK_SECRET`.** Create the webhook in
+Resend → Webhooks → `https://<server>/api/resend-events`, events `email.bounced`
++ `email.complained`, then paste the signing secret into Render. Until then the
+route 503s: the code is live but deaf.
+
+⚠️ **Worth checking:** whether any prod rows have `email_bounced_at` set. Anyone
+who does has been unreachable this entire time, and the Retry button now frees
+them.
+
+---
+
 ## 2026-07-16 — GC: COI / document expiry tracker
 
 **Shipped.** `9ee0a2f`. Sub documents now alert before they lapse (30 days) and
