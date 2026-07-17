@@ -675,6 +675,47 @@ only separate when the row wraps (`05fe3f1` → `73e78ee`).
 
 ---
 
+## 2026-07-17 — Plan Room: elegant dirt markups, no mid-edit "?", movable draft points, draft undo/redo
+
+**Shipped** (`app.js`/`index.html`, cache-bust → **v44**). Four asks off a
+screenshot where the boundary (`ebound`) looked crisp but the other earthwork
+markups looked heavy.
+
+- **Root of "why isn't it elegant like the boundary":** `ebound` drew with a
+  **screen-constant** thin dashed stroke (`lineWidth = 2/zoom`, dash `[12/z,7/z]`),
+  so it stays 2px on screen at any zoom. The rest used pen-width (`m.width`, world
+  px) that balloons as you zoom in. Pulled the boundary recipe into one helper,
+  `dirtOutline(ctx, m, col, {closed, dash, fillAlpha})`, and routed **contour,
+  espot, epad, qarea, qline** (and `ebound` itself) through it. Spot elevation is
+  now a screen-constant bullseye; contour keeps its existing=dashed / proposed=solid
+  semantic, just thin. Fills dialed back to subtle (`0.10–0.18`). **Left qcount
+  alone** — it shares one `drawMarkup` case with 11 other point kinds across
+  every trade, so making it elegant means splitting that case; deferred as its
+  own small task rather than touching a dozen unrelated markers.
+- **The "?" clutter:** it's the elevation placeholder from `elevLabel` — a
+  contour/pad/spot shows `?` until you type the elevation. Now suppressed while
+  **placing** (draft preview, via a `previewing` flag) or **editing** (the markup
+  is selected). It returns on a settled, *unselected* markup as a "still needs
+  elevation" flag — which is the one time it's actually useful.
+- **Movable points while placing a line:** during a click-built draft you can now
+  grab any already-placed vertex and drag it (forgiving zoom-aware grab radius);
+  vertices render as ring handles so they read as grabbable. Point-count kinds
+  (mcount/qcount/…) opt out — each click there is its own marker.
+- **Draft point ops in undo/redo:** while a draft is open, Ctrl+Z / Ctrl+Y (and
+  the toolbar buttons) step through the draft's **own** point history — add, move,
+  Backspace-remove — instead of the committed-markup stack, so you can't
+  accidentally unwind a finished markup mid-draw. On commit it collapses to the
+  usual single main-stack undo entry.
+
+**Judgment calls:** scoped the elegance pass to the dirt/earthwork + quantity
+family (the tool the screenshot was taken in) rather than sweeping all ~45 markup
+kinds — annotation tools (arrow/rect/cloud) are *meant* to be bold pen strokes the
+user sizes. Canvas render + pointer code has no test harness here, so verified by
+reading + `node --check`; the two app.js-lifting jest suites still pass. Worth a
+real click-through on stage: grab-a-vertex-mid-draw and Ctrl+Z during a polygon.
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*
