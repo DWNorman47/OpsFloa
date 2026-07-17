@@ -716,6 +716,23 @@ real click-through on stage: grab-a-vertex-mid-draw and Ctrl+Z during a polygon.
 
 ---
 
+## 2026-07-17 — Plan Room: hide AI Jump Start, show Company on first open
+
+**Shipped** (`index.html`, cache-bust → **v45**).
+
+- **AI Jump Start button hidden for now** — added `hidden` to `#btnJumpStart`
+  rather than deleting it, so its click wiring (`app.js:4177`) still binds and
+  it's a one-attribute re-enable when we want it back. All the server/vision
+  plumbing stays in place, just no entry point.
+- **Company (☁) button now shows before a project is open.** It carried
+  `needs-doc`, so first-run showed only 📁 Projects — a brand-new user couldn't
+  reach the company library to **copy a set a teammate shared**. Dropped
+  `needs-doc`; the library list and copy flow don't need an open doc, and
+  "Share current project" already guards the empty case ("Nothing to share yet —
+  open a plan set first"). Live Co-Edit keeps `needs-doc` (it does need a doc).
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*
