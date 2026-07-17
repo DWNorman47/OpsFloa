@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css?v=41">
+<link rel="stylesheet" href="styles.css?v=42">
 <script>
 (() => {
   try {
@@ -39,22 +39,22 @@
 
   <!-- markup tools -->
   <div class="tb-group tb-tools needs-doc tb-collapsible">
-    <button class="tool active" data-tool="pan" title="Pan / zoom (middle-drag pans in any tool)">✋</button>
-    <button class="tool" data-tool="select" title="Select / move / reshape markups. Drag a point to reshape; Alt-click an edge to add a point, a point to remove it; Shift+Alt-click a segment to cut a line in two. Delete removes the whole markup; double-click a note to edit it">➤</button>
-    <button class="tool tb-focus-hide" data-tool="cloud" title="Revision cloud — drag a box">☁</button>
-    <button class="tool tb-focus-hide" data-tool="rect" title="Rectangle — drag">▭</button>
-    <button class="tool tb-focus-hide" data-tool="ellipse" title="Ellipse — drag">⬭</button>
-    <button class="tool tb-focus-hide" data-tool="arrow" title="Arrow — drag from tail to head">↗</button>
-    <button class="tool tb-focus-hide" data-tool="line" title="Line — drag">╲</button>
-    <button class="tool tb-focus-hide" data-tool="freehand" title="Pen — draw freehand">✏</button>
-    <button class="tool tb-focus-hide" data-tool="highlight" title="Highlighter — drag a box">🖍</button>
-    <button class="tool tb-focus-hide" data-tool="text" title="Text note — click where it goes, type, Enter">T</button>
-    <button class="tool tb-focus-hide" data-tool="callout" title="Callout — drag from the thing you're flagging to where the note goes">🏷</button>
+    <button class="tool active" data-tool="pan" title="Pan / zoom (middle-drag pans in any tool)">✋<span class="tool-label"> Pan</span></button>
+    <button class="tool" data-tool="select" title="Select / move / reshape markups. Drag a point to reshape; Alt-click an edge to add a point, a point to remove it; Shift+Alt-click a segment to cut a line in two. Delete removes the whole markup; double-click a note to edit it">➤<span class="tool-label"> Select</span></button>
+    <button class="tool tb-focus-hide" data-tool="cloud" title="Revision cloud — drag a box">☁<span class="tool-label"> Cloud</span></button>
+    <button class="tool tb-focus-hide" data-tool="rect" title="Rectangle — drag">▭<span class="tool-label"> Rect</span></button>
+    <button class="tool tb-focus-hide" data-tool="ellipse" title="Ellipse — drag">⬭<span class="tool-label"> Ellipse</span></button>
+    <button class="tool tb-focus-hide" data-tool="arrow" title="Arrow — drag from tail to head">↗<span class="tool-label"> Arrow</span></button>
+    <button class="tool tb-focus-hide" data-tool="line" title="Line — drag">╲<span class="tool-label"> Line</span></button>
+    <button class="tool tb-focus-hide" data-tool="freehand" title="Pen — draw freehand">✏<span class="tool-label"> Pen</span></button>
+    <button class="tool tb-focus-hide" data-tool="highlight" title="Highlighter — drag a box">🖍<span class="tool-label"> Marker</span></button>
+    <button class="tool tb-focus-hide" data-tool="text" title="Text note — click where it goes, type, Enter">T<span class="tool-label"> Text</span></button>
+    <button class="tool tb-focus-hide" data-tool="callout" title="Callout — drag from the thing you're flagging to where the note goes">🏷<span class="tool-label"> Callout</span></button>
     <span class="tb-sep" aria-hidden="true"></span>
-    <button class="tool" data-tool="calibrate" title="Calibrate this sheet's scale — click two points a known distance apart, then enter the distance in feet. Measurements need this once per sheet.">📏</button>
-    <button class="tool tb-focus-hide" data-tool="mlength" title="Measure length — click along the run, double-click or Enter to finish (Backspace removes the last point)">↔</button>
-    <button class="tool tb-focus-hide" data-tool="marea" title="Measure area — click around the region, double-click or Enter to close">⬠</button>
-    <button class="tool tb-focus-hide" data-tool="mcount" title="Count — click each item, double-click or Enter to finish and name the group">🔢</button>
+    <button class="tool" data-tool="calibrate" title="Calibrate this sheet's scale — click two points a known distance apart, then enter the distance in feet. Measurements need this once per sheet.">📏<span class="tool-label"> Scale</span></button>
+    <button class="tool tb-focus-hide" data-tool="mlength" title="Measure length — click along the run, double-click or Enter to finish (Backspace removes the last point)">↔<span class="tool-label"> Length</span></button>
+    <button class="tool tb-focus-hide" data-tool="marea" title="Measure area — click around the region, double-click or Enter to close">⬠<span class="tool-label"> Area</span></button>
+    <button class="tool tb-focus-hide" data-tool="mcount" title="Count — click each item, double-click or Enter to finish and name the group">🔢<span class="tool-label"> Count</span></button>
     <span class="tb-sep tb-takeoff" aria-hidden="true"></span>
     <select id="tradeSel" class="mini-sel tb-takeoff" title="Takeoff trade — pick one to show its tools and bid; leave off for plain markup & measure">
       <option value="">Takeoff: off</option>
@@ -430,6 +430,18 @@
   </aside>
   <div id="canvasWrap">
     <canvas id="cv"></canvas>
+    <!-- Edge/corner jump pads (ported from the sitework tool): appear when zoomed
+         in past ~70% and pan a third of a screen in that direction. -->
+    <div id="navPads" class="hidden" aria-hidden="true">
+      <button class="nav-pad n"  data-dx="0"  data-dy="-1" title="Pan up (⅓ screen)" aria-label="Pan up">▲</button>
+      <button class="nav-pad s"  data-dx="0"  data-dy="1"  title="Pan down (⅓ screen)" aria-label="Pan down">▼</button>
+      <button class="nav-pad w"  data-dx="-1" data-dy="0"  title="Pan left (⅓ screen)" aria-label="Pan left">◀</button>
+      <button class="nav-pad e"  data-dx="1"  data-dy="0"  title="Pan right (⅓ screen)" aria-label="Pan right">▶</button>
+      <button class="nav-pad nw" data-dx="-1" data-dy="-1" title="Pan up &amp; left" aria-label="Pan up and left">↖</button>
+      <button class="nav-pad ne" data-dx="1"  data-dy="-1" title="Pan up &amp; right" aria-label="Pan up and right">↗</button>
+      <button class="nav-pad sw" data-dx="-1" data-dy="1"  title="Pan down &amp; left" aria-label="Pan down and left">↙</button>
+      <button class="nav-pad se" data-dx="1"  data-dy="1"  title="Pan down &amp; right" aria-label="Pan down and right">↘</button>
+    </div>
     <button id="btnThumbsOpen" class="btn thumbs-open needs-doc" title="Show the sheet strip">❐</button>
     <button id="btnDirtOpen" class="btn panel-open needs-doc" title="Open the earthwork panel">⛰</button>
     <div id="hud"></div>
@@ -782,6 +794,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=41"></script>
+<script type="module" src="app.js?v=42"></script>
 </body>
 </html>
