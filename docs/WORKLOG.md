@@ -25,9 +25,20 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ## 2026-07-16 — Email bounce suppression: reconnected, and made reversible
 
-**Fixed.** Resend bounce webhook + two ways to undo a suppression + a banner so
-it's visible at all. Found while re-surveying the app to fix a stale memory doc,
-not from a report — nobody reported it, which is the whole problem.
+**Fixed.** `458d920`. Resend bounce webhook + two ways to undo a suppression + a
+banner so it's visible at all.
+
+**Correction to how I reported this to you:** I called it a fresh find. Half of
+it wasn't. My own note from **2026-07-02** — the day of the Resend migration —
+read *"Follow-up not yet done: sendgridEvents.js is now inert; wire Resend
+webhooks to restore bounce tracking."* **It sat for 14 days** while the app kept
+mailing dead addresses. Nothing resurfaced it, because a follow-up recorded only
+in a private note has no owner and no date — it isn't tracked, it's just
+remembered. That's what `docs/BACKLOG.md` is for, and it should have gone there
+on 2026-07-02. It has now.
+
+The note also only caught half. It knew the webhook was inert. It did **not**
+know that nothing ever cleared the flag — the half that strands real people.
 
 **The bug was two bugs pointing opposite ways.** `email.js` skips any recipient
 whose `users.email_bounced_at` is set — sensible, that's how you avoid burning
