@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css?v=44">
+<link rel="stylesheet" href="styles.css?v=46">
 <script>
 (() => {
   try {
@@ -25,13 +25,14 @@
   <div class="tb-group">
     <div class="brand">Plan&nbsp;Room</div>
     <button id="btnProjects" class="btn" title="Open plans, switch projects, or add more sheets">📁 <span id="projName">Project</span></button>
-    <button id="btnCompany" class="btn needs-doc" title="Share this project with your company, or copy one a teammate shared">☁<span class="btn-label"> Company</span></button>
+    <button id="btnCompany" class="btn" title="Share this project with your company, or copy one a teammate shared">☁<span class="btn-label"> Company</span></button>
     <button id="btnLive" class="btn needs-doc" title="Live co-edit — teammates join and mark up this project with you in real time (nothing is published)">🟢<span class="btn-label"> Live Co-Edit</span></button>
   </div>
 
   <div class="tb-group needs-doc">
     <button id="btnExport" class="btn" title="Download this project as one self-contained file — plans and markups embedded — so you can hand it to anyone">💾<span class="btn-label"> Save</span></button>
-    <button id="btnJumpStart" class="btn" title="AI Jump Start — draft this page's takeoff with AI (counts, rough regions, reads the scale &amp; labels). A first draft to review, not final.">✨<span class="btn-label"> AI Jump Start</span></button>
+    <!-- AI Jump Start hidden for now — kept in the DOM so its click wiring binds; re-enable by removing `hidden`. -->
+    <button id="btnJumpStart" class="btn" hidden title="AI Jump Start — draft this page's takeoff with AI (counts, rough regions, reads the scale &amp; labels). A first draft to review, not final.">✨<span class="btn-label"> AI Jump Start</span></button>
     <button id="btnMenuToggle" class="btn tb-menu-toggle" title="Show / hide the rest of the toolbar" aria-expanded="true">☰</button>
   </div>
   <input type="file" id="fileImport" accept="application/json" hidden>
@@ -794,6 +795,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=44"></script>
+<script type="module" src="app.js?v=46"></script>
 </body>
 </html>
