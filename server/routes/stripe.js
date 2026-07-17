@@ -255,13 +255,15 @@ router.post('/addon/remove', requireAdmin, requirePerm('manage_billing'), async 
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Failed to remove the add-on' }); }
 });
 
-// POST /stripe/checkout-addon — buy a single add-on with NO base plan.
+// POST /stripe/checkout-addon — buy one or more add-ons with NO base plan.
 //
-// For a company that wants just Plan Room or Sitework Takeoff without
-// subscribing to a regular plan. Creates a Stripe subscription whose only line
-// item is the add-on price. The rest of the system already supports this shape:
+// For a company that wants just Plan Room and/or Sitework Takeoff without
+// subscribing to a regular plan. Creates ONE Stripe subscription whose line
+// items are the chosen add-ons — so a company buying both gets a single
+// subscription and a single invoice, not two. The rest of the system already
+// supports this shape:
 //   - planFromPrice() returns 'free' for an add-on price, so the webhook writes
-//     plan='free' + the entitlement flag (no mis-mapping);
+//     plan='free' + the entitlement flags (no mis-mapping);
 //   - requirePlanToolsAddon / requireTakeoffAddon grant tool access on the
 //     add-on flag alone — they never require a base plan.
 // So this endpoint is the whole gap: the bundled /checkout hard-requires a base
@@ -269,13 +271,23 @@ router.post('/addon/remove', requireAdmin, requirePerm('manage_billing'), async 
 const STANDALONE_ADDONS = new Set(['takeoff', 'planroom']); // NOT qbo (needs a plan to be useful), NOT storm (not for sale)
 
 router.post('/checkout-addon', requireAdmin, requirePerm('manage_billing'), async (req, res) => {
-  const addon = req.body && req.body.addon;
   const annual = !!(req.body && req.body.annual);
-  const cfg = ADDON_PRICES[addon];
-  if (!cfg || !STANDALONE_ADDONS.has(addon)) return res.status(400).json({ error: 'Unknown add-on' });
+  // Accept a single `addon` or an array `addons`; keep only the sellable ones,
+  // de-duped. Silently dropping qbo/storm here is the same allowlist the UI
+  // enforces — the endpoint just doesn't trust the client.
+  const requested = Array.isArray(req.body && req.body.addons)
+    ? req.body.addons
+    : [req.body && req.body.addon];
+  const addons = [...new Set(requested.filter(a => STANDALONE_ADDONS.has(a)))];
+  if (!addons.length) return res.status(400).json({ error: 'Unknown add-on' });
 
-  const priceId = annual ? cfg.annual() : cfg.monthly();
-  if (!priceId) return res.status(400).json({ error: 'Add-on price is not configured.' });
+  const lineItems = [];
+  for (const a of addons) {
+    const cfg = ADDON_PRICES[a];
+    const priceId = annual ? cfg.annual() : cfg.monthly();
+    if (!priceId) return res.status(400).json({ error: 'Add-on price is not configured.' });
+    lineItems.push({ price: priceId, quantity: 1 });
+  }
 
   try {
     const stripe = getStripe();
@@ -313,7 +325,7 @@ router.post('/checkout-addon', requireAdmin, requirePerm('manage_billing'), asyn
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       customer: customerId,
-      line_items: [{ price: priceId, quantity: 1 }],
+      line_items: lineItems,
       success_url: `${process.env.APP_URL}/administration#billing`,
       cancel_url: `${process.env.APP_URL}/administration#billing`,
       subscription_data: {

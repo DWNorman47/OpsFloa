@@ -84,7 +84,7 @@ describe('the add-on allowlist', () => {
 });
 
 describe('happy path', () => {
-  test('creates a subscription with exactly one line item = the add-on price', async () => {
+  test('single add-on → subscription with exactly that one line item', async () => {
     pool.query.mockResolvedValue({ rows: [companyRow()] });
     await post({ addon: 'planroom' });
 
@@ -93,6 +93,30 @@ describe('happy path', () => {
     expect(arg.line_items).toEqual([{ price: 'price_planroom_m', quantity: 1 }]);
     expect(arg.customer).toBe('cus_1');
     expect(arg.subscription_data.metadata.company_id).toBe('co-1');
+  });
+
+  test('both add-ons → ONE subscription with two line items, not two subscriptions', async () => {
+    pool.query.mockResolvedValue({ rows: [companyRow()] });
+    await post({ addons: ['planroom', 'takeoff'] });
+
+    expect(mockSessionCreate).toHaveBeenCalledTimes(1);
+    expect(mockSessionCreate.mock.calls[0][0].line_items).toEqual([
+      { price: 'price_planroom_m', quantity: 1 },
+      { price: 'price_takeoff_m', quantity: 1 },
+    ]);
+  });
+
+  test('non-sellable picks are dropped from the array, sellable ones kept', async () => {
+    pool.query.mockResolvedValue({ rows: [companyRow()] });
+    await post({ addons: ['qbo', 'storm', 'planroom'] });
+    expect(mockSessionCreate.mock.calls[0][0].line_items).toEqual([{ price: 'price_planroom_m', quantity: 1 }]);
+  });
+
+  test('an array of only non-sellable add-ons is rejected', async () => {
+    const res = await post({ addons: ['qbo', 'storm'] });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Unknown add-on');
+    expect(mockSessionCreate).not.toHaveBeenCalled();
   });
 
   test('annual uses the annual price', async () => {
