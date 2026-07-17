@@ -255,6 +255,76 @@ router.post('/addon/remove', requireAdmin, requirePerm('manage_billing'), async 
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Failed to remove the add-on' }); }
 });
 
+// POST /stripe/checkout-addon — buy a single add-on with NO base plan.
+//
+// For a company that wants just Plan Room or Sitework Takeoff without
+// subscribing to a regular plan. Creates a Stripe subscription whose only line
+// item is the add-on price. The rest of the system already supports this shape:
+//   - planFromPrice() returns 'free' for an add-on price, so the webhook writes
+//     plan='free' + the entitlement flag (no mis-mapping);
+//   - requirePlanToolsAddon / requireTakeoffAddon grant tool access on the
+//     add-on flag alone — they never require a base plan.
+// So this endpoint is the whole gap: the bundled /checkout hard-requires a base
+// price, and /addon needs an already-existing subscription.
+const STANDALONE_ADDONS = new Set(['takeoff', 'planroom']); // NOT qbo (needs a plan to be useful), NOT storm (not for sale)
+
+router.post('/checkout-addon', requireAdmin, requirePerm('manage_billing'), async (req, res) => {
+  const addon = req.body && req.body.addon;
+  const annual = !!(req.body && req.body.annual);
+  const cfg = ADDON_PRICES[addon];
+  if (!cfg || !STANDALONE_ADDONS.has(addon)) return res.status(400).json({ error: 'Unknown add-on' });
+
+  const priceId = annual ? cfg.annual() : cfg.monthly();
+  if (!priceId) return res.status(400).json({ error: 'Add-on price is not configured.' });
+
+  try {
+    const stripe = getStripe();
+    const company = await pool.query(
+      'SELECT c.*, u.email FROM companies c JOIN users u ON u.company_id = c.id WHERE c.id = $1 AND u.role = $2 AND u.active = true LIMIT 1',
+      [req.user.company_id, 'admin']
+    );
+    const c = company.rows[0];
+    if (!c) return res.status(404).json({ error: 'Company not found' });
+
+    // If they already have a LIVE subscription, adding an add-on there is the
+    // right path (one prorated line item, one invoice) — a second subscription
+    // would double the billing relationship. Route them to /addon. A stale
+    // subscription_id from a canceled sub is fine: only active/past_due block.
+    if (c.stripe_subscription_id && ['active', 'past_due'].includes(c.subscription_status)) {
+      return res.status(400).json({ error: 'You already have a subscription — add this from your plan instead.', code: 'has_subscription' });
+    }
+
+    let customerId = c.stripe_customer_id;
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        email: c.email, name: c.name,
+        metadata: { company_id: String(req.user.company_id) },
+      });
+      customerId = customer.id;
+      await pool.query('UPDATE companies SET stripe_customer_id = $1 WHERE id = $2', [customerId, req.user.company_id]);
+    }
+
+    // A trial company can pre-buy without being charged until the trial ends —
+    // same courtesy the bundled checkout extends.
+    const trialEnd = c.trial_ends_at && new Date(c.trial_ends_at) > new Date()
+      ? Math.floor(new Date(c.trial_ends_at).getTime() / 1000)
+      : undefined;
+
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      customer: customerId,
+      line_items: [{ price: priceId, quantity: 1 }],
+      success_url: `${process.env.APP_URL}/administration#billing`,
+      cancel_url: `${process.env.APP_URL}/administration#billing`,
+      subscription_data: {
+        metadata: { company_id: String(req.user.company_id) },
+        ...(trialEnd ? { trial_end: trialEnd } : {}),
+      },
+    });
+    res.json({ url: session.url });
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Failed to create checkout session' }); }
+});
+
 // POST /stripe/webhook
 router.post('/webhook', async (req, res) => {
   const sig = req.headers['stripe-signature'];
