@@ -4,7 +4,8 @@ const logger = require('../logger');
 const { sendEmail } = require('../email');
 const { runJob } = require('./runJob');
 const { weekRange } = require('../utils/weekBounds');
-const { computeOT, hoursWorked } = require('../utils/payCalculations');
+const { hoursWorked } = require('../utils/payCalculations');
+const { loadSettings, computePaid } = require('../utils/paidHours');
 const { formatCurrency, companyCurrency } = require('../currency');
 
 const APP_URL = process.env.APP_URL || 'https://app.opsfloa.com';
@@ -96,10 +97,12 @@ async function sendWeeklyPayrollReport(companyId, companyName) {
   // if they were stored columns — they're not, so that query errored silently
   // every Monday. Now we load approved entries and use computeOT so reg/OT
   // split honors the per-entry overtime_hours_override column as well.
-  const otRuleRow = await pool.query("SELECT value FROM settings WHERE company_id = $1 AND key = 'overtime_rule'", [companyId]);
-  const otThRow   = await pool.query("SELECT value FROM settings WHERE company_id = $1 AND key = 'overtime_threshold'", [companyId]);
-  const otRule    = otRuleRow.rows[0]?.value || 'daily';
-  const otThresh  = parseFloat(otThRow.rows[0]?.value) || (otRule === 'weekly' ? 40 : 8);
+  // One load of the whole settings object, not two cherry-picked keys. Picking
+  // out `overtime_rule` and `overtime_threshold` by name is exactly how this job
+  // ended up never seeing `hours_rules`: the policy wasn't on the list, so it
+  // could never apply, and this email quietly disagreed with the invoice.
+  const settings = await loadSettings(companyId);
+  const otRule = settings.overtime_rule || 'daily';
 
   const entRes = await pool.query(
     `SELECT te.user_id, te.work_date, te.start_time, te.end_time, te.break_minutes,
@@ -121,9 +124,13 @@ async function sendWeeklyPayrollReport(companyId, companyName) {
     if (row.work_date) byUser.get(key).entries.push(row);
   }
 
+  // Through the shared pipeline, so the weekly payroll email agrees with the
+  // invoice. This job used to call computeOT directly and never touched
+  // hours_rules, so a company with a policy would have been emailed one set of
+  // numbers and billed another.
   const workerRows = [...byUser.values()].map(u => {
-    const { regularHours, overtimeHours } = computeOT(u.entries, otRule, otThresh, ws);
-    const totalH = u.entries.reduce((s, e) => s + hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60, 0);
+    const { paid, regularHours, overtimeHours } = computePaid(u.entries, settings, { rule: otRule });
+    const totalH = paid.reduce((s, e) => s + hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60, 0);
     return { full_name: u.full_name, entry_count: u.entries.length, total_hours: totalH, overtime_hours: overtimeHours, regular_hours: regularHours };
   }).sort((a, b) => b.total_hours - a.total_hours);
 

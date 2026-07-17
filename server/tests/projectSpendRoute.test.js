@@ -61,8 +61,11 @@ describe('GET /api/projects/:id/spend', () => {
       if (/FROM projects WHERE id/i.test(sql) && /AND company_id/i.test(sql)) {
         return Promise.resolve({ rowCount: 1, rows: [{ id: 42, name: 'Test Project' }] });
       }
+      if (/FROM settings/i.test(sql)) return Promise.resolve({ rows: [] });
       if (/FROM time_entries/i.test(sql)) {
-        return Promise.resolve({ rows: [{ dollars: '6000.00' }] });
+        // 8h @ $750 = $6,000, ot_rule 'none' so the total is a clean
+        // hours × rate and this test stays about the rollup.
+        return Promise.resolve({ rows: [{ user_id: 1, work_date: '2026-04-01', start_time: '08:00:00', end_time: '16:00:00', break_minutes: 0, wage_type: 'regular', overtime_hours_override: null, rate: '750', ot_rule: 'none' }] });
       }
       if (/information_schema\.tables/i.test(sql)) {
         // Only project_expenses exists in this test scenario.
@@ -133,7 +136,7 @@ describe('GET /api/projects/:id/spend', () => {
         return Promise.resolve({ rowCount: 1, rows: [{ id: 42, name: 'Test' }] });
       }
       if (/FROM time_entries/i.test(sql)) {
-        return Promise.resolve({ rows: [{ dollars: '0' }] });
+        return Promise.resolve({ rows: [] });
       }
       // Pretend none of the optional tables exist.
       if (/information_schema/i.test(sql)) {

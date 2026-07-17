@@ -444,13 +444,36 @@ describe('clip_end and remove_time', () => {
 describe('applyRules directly — stage order', () => {
   const exp = { startMin: toMin('07:00'), endMin: toMin('17:00') };
 
-  test('clip runs before adjust: the rung is judged on the clipped punch', () => {
+  test('the End Time rule is the ladder baseline, and rungs read the RAW punch', () => {
+    // An End Time rule at 17:00 says "the day is not paid past 5:00 on its
+    // own". It does NOT hide the punch from the rungs: an 18:00 clock-out has
+    // still passed 17:25, so it earns the rung — measured off the 17:00
+    // baseline the End Time rule established.
+    //
+    // Judging rungs on the clipped value instead would pull every punch back to
+    // 17:00 and no rung could ever fire, which would make the two rule types
+    // mutually exclusive.
     const rules = parseRules([
       { type: 'clip_end', when: { kind: 'every_day' }, at: '17:00' },
       { type: 'add_time', when: { kind: 'every_day' }, edge: 'after', at: '17:25', minutes: 30 },
     ]);
-    // Clipped to 17:00, the punch never reaches the 17:25 rung.
+    expect(toHHMMSS(applyRules(toMin('07:00'), toMin('18:00'), 0, rules, exp).endMin)).toBe('17:30:00');
+  });
+
+  test('an End Time rule alone still caps the day', () => {
+    const rules = parseRules([{ type: 'clip_end', when: { kind: 'every_day' }, at: '17:00' }]);
     expect(toHHMMSS(applyRules(toMin('07:00'), toMin('18:00'), 0, rules, exp).endMin)).toBe('17:00:00');
+  });
+
+  test('the End Time rule beats standardHours as the baseline', () => {
+    // exp says the scheduled end is 17:00; the rule says 16:00. The rule wins,
+    // so the rung lands on 16:30 rather than 17:30 — otherwise an admin could
+    // set an End Time rule and watch the ladder ignore it.
+    const rules = parseRules([
+      { type: 'clip_end', when: { kind: 'every_day' }, at: '16:00' },
+      { type: 'add_time', when: { kind: 'every_day' }, edge: 'after', at: '17:25', minutes: 30 },
+    ]);
+    expect(toHHMMSS(applyRules(toMin('07:00'), toMin('18:00'), 0, rules, exp).endMin)).toBe('16:30:00');
   });
 
   test('adjust runs before break: the break trigger sees the credited day', () => {

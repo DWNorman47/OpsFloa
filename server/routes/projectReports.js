@@ -6,6 +6,7 @@ const router = require('express').Router();
 const pool   = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { csvCell } = require('../utils/csv');
+const { loadSettings, laborCostCents, LABOR_ENTRY_COLUMNS } = require('../utils/paidHours');
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -72,21 +73,19 @@ async function contractValueCents(projectId) {
 // Spend / committed roll-up — same logic as routes/projectSpend.js but
 // collapsed to a single number (no category split). Reused by both
 // P&L and WIP.
-async function spendTotals(projectId) {
+async function spendTotals(projectId, settings) {
   let labor = 0;
   let materials = 0;
   let subsSpent = 0;
   let subsCommitted = 0;
   let manualExpenses = 0;
-  // Labor
+  // Labor — same pipeline as project spend, so the WIP report and the spend
+  // snapshot can't disagree about one project's labor. This was a duplicate of
+  // that query, carrying the same two bugs (no overtime, and overnight shifts
+  // silently costing $0).
   try {
     const r = await pool.query(
-      `SELECT COALESCE(SUM(
-         GREATEST(0,
-           (EXTRACT(EPOCH FROM (te.end_time - te.start_time)) / 3600.0)
-           - COALESCE(te.break_minutes, 0) / 60.0
-         ) * COALESCE(u.hourly_rate, 0)
-       ), 0) AS dollars
+      `SELECT ${LABOR_ENTRY_COLUMNS}
          FROM time_entries te
          JOIN users u ON te.user_id = u.id
         WHERE te.project_id = $1
@@ -95,7 +94,7 @@ async function spendTotals(projectId) {
           AND te.end_time IS NOT NULL`,
       [projectId]
     );
-    labor = Math.round(parseFloat(r.rows[0].dollars) * 100);
+    labor = laborCostCents(r.rows, settings);
   } catch { /* time_entries shape may differ */ }
   // Manual expenses
   try {
@@ -151,9 +150,10 @@ router.get('/projects/:id/pnl', requireAuth, async (req, res) => {
     const project = await assertProjectInCompany(companyId, req.params.id);
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
+    const settings = await loadSettings(companyId);
     const [contractValue, spend, invoices] = await Promise.all([
       contractValueCents(req.params.id),
-      spendTotals(req.params.id),
+      spendTotals(req.params.id, settings),
       invoiceTotals(req.params.id),
     ]);
 
@@ -192,11 +192,12 @@ router.get('/projects/pnl-summary', requireAuth, async (req, res) => {
     );
     // For each project, run the same lookups. Sequential keeps the SQL
     // load reasonable (portfolio is dozens of projects max for most companies).
+    const settings = await loadSettings(companyId);
     const rows = [];
     for (const p of projRes.rows) {
       const [contractValue, spend, invoices] = await Promise.all([
         contractValueCents(p.id),
-        spendTotals(p.id),
+        spendTotals(p.id, settings),
         invoiceTotals(p.id),
       ]);
       const gross_profit_cents     = invoices.billed_cents - spend.spent_cents;
@@ -237,12 +238,13 @@ router.get('/wip-report', requireAuth, async (req, res) => {
       `SELECT id, name FROM projects WHERE company_id = $1 ${whereActive} ORDER BY name`,
       [companyId]
     );
+    const settings = await loadSettings(companyId);
     const rows = [];
     let totalContract = 0, totalCost = 0, totalEarned = 0, totalBilled = 0;
     for (const p of projRes.rows) {
       const [contractValue, spend, invoices, budgetSum] = await Promise.all([
         contractValueCents(p.id),
-        spendTotals(p.id),
+        spendTotals(p.id, settings),
         invoiceTotals(p.id),
         (async () => {
           try {
@@ -312,6 +314,7 @@ router.get('/wip-report/export', requireAuth, async (req, res) => {
       'Project', 'Contract Value', 'Budgeted Cost', 'Cost to Date',
       '% Complete', 'Earned Revenue', 'Billed to Date', 'Over/Under Billed',
     ];
+    const csvSettings = await loadSettings(companyId);
     const dollars = c => (c / 100).toFixed(2);
     const escape = csvCell; // RFC-4180 quoting + spreadsheet formula-injection guard
     res.setHeader('Content-Type', 'text/csv');
@@ -319,7 +322,7 @@ router.get('/wip-report/export', requireAuth, async (req, res) => {
     res.write(headers.join(',') + '\n');
     for (const p of projRes.rows) {
       const [contractValue, spend, invoices, budgetSum] = await Promise.all([
-        contractValueCents(p.id), spendTotals(p.id), invoiceTotals(p.id),
+        contractValueCents(p.id), spendTotals(p.id, csvSettings), invoiceTotals(p.id),
         (async () => {
           try {
             const r = await pool.query(

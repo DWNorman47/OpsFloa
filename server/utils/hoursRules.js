@@ -579,6 +579,51 @@ function applyRounding(rawStart, rawEnd, expected, rounding) {
   return { start: toHHMMSS(ps), end: toHHMMSS(pe) };
 }
 
+// ── Policy validation ────────────────────────────────────────────────────────
+
+/**
+ * Problems that make a rule list incoherent rather than merely malformed.
+ * `parseRules` drops a rule it can't read; this catches rules that read fine on
+ * their own but don't mean anything together.
+ *
+ * The rule it enforces: **Add/Remove Time need a Start/End Time rule to measure
+ * from.** "Past 5:25pm, add 30 minutes" is not a rule on its own — 30 minutes
+ * past *what*? Without an End Time the credit has no baseline, and the engine
+ * would quietly fall back to adding onto the punch, which is the 5:51→6:51
+ * nonsense. Better to refuse the policy than to bill something surprising.
+ *
+ * @returns {Array<{id, code, message}>} empty when the policy is coherent
+ */
+function validatePolicy(policy) {
+  const errors = [];
+  const rules = (policy && policy.rules) || [];
+  const hasEnd = rules.some(r => r.type === 'clip_end');
+  const hasStart = rules.some(r => r.type === 'clip_start');
+
+  for (const r of rules) {
+    if (r.type !== 'add_time' && r.type !== 'remove_time') continue;
+    if (r.base !== 'schedule') continue; // base:'punch' measures from the punch by design
+    if (r.edge === 'after' && !hasEnd) {
+      errors.push({
+        id: r.id, code: 'needs_end_time_rule',
+        message: 'Add/Remove Time after a threshold needs an End Time rule to measure from.',
+      });
+    }
+    if (r.edge === 'before' && !hasStart) {
+      errors.push({
+        id: r.id, code: 'needs_start_time_rule',
+        message: 'Add/Remove Time before a threshold needs a Start Time rule to measure from.',
+      });
+    }
+  }
+  return errors;
+}
+
+/** Same, straight off the raw `hours_rules` string. */
+function validatePolicyRaw(raw) {
+  return validatePolicy(parsePolicy(raw));
+}
+
 // ── Rule pipeline ────────────────────────────────────────────────────────────
 
 /**
@@ -621,61 +666,74 @@ function bestCredit(rules, type, edge, punchMin) {
  * @returns {{startMin, endMin, breakMin}}
  */
 function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null) {
+  // The punch as it arrived. Rung thresholds are ALWAYS judged against this,
+  // never against the clipped value — an End Time rule at 5:00 would otherwise
+  // pull every punch back to 5:00 and no rung could ever fire.
+  const punchStart = startMin;
+  const punchEnd = endMin;
+
   let s = startMin;
   let e = endMin;
 
-  // ── 1. Clip ── bound the paid punch. clip_start is "ignore anything before
-  // this" (a worker may clock in at 6:30, but the day is not paid before 7:00);
+  // ── 1. Clip ── bound the paid punch, and establish the baseline the ladder
+  // measures from. clip_start ("Start Time") is "ignore anything before this";
   // it deliberately does NOT dock a late arrival — clocking in at 7:20 still
   // pays from 7:20, because max() only ever moves the start forward.
+  //
+  // The tightest rule wins when several match: the latest Start Time, the
+  // earliest End Time. Two rules that both bound a day can only be read one way
+  // without asking an admin to think about precedence.
+  let baseStart = null;
+  let baseEnd = null;
   for (const r of rules) {
-    if (r.type === 'clip_start') s = Math.max(s, r.at);
-    else if (r.type === 'clip_end') e = Math.min(e, r.at);
+    if (r.type === 'clip_start') {
+      s = Math.max(s, r.at);
+      baseStart = baseStart == null ? r.at : Math.max(baseStart, r.at);
+    } else if (r.type === 'clip_end') {
+      e = Math.min(e, r.at);
+      baseEnd = baseEnd == null ? r.at : Math.min(baseEnd, r.at);
+    }
   }
+  // No End Time rule for this day → fall back to the scheduled day. Validation
+  // requires the rule (see validatePolicy), so this only catches a policy
+  // written straight into the DB.
+  if (baseEnd == null && expected) baseEnd = expected.endMin;
+  if (baseStart == null && expected) baseStart = expected.startMin;
   if (e < s) e = s;
 
-  // ── 2. Adjust ── the credit lands on the SCHEDULED end, not on the punch.
-  // The punch decides which rung was reached; it is not the thing added to.
-  //
-  // Every rung is judged against the same pre-adjust punch, so no rung can
-  // push the clock-out into the next one.
-  const expEnd = expected ? expected.endMin : null;
-  const expStart = expected ? expected.startMin : null;
-
+  // ── 2. Adjust ── the credit lands on the BASELINE, not on the punch. The
+  // punch decides which rung was reached; it is not the thing added to.
   const hasAfter = rules.some(r => (r.type === 'add_time' || r.type === 'remove_time') && r.edge === 'after');
   if (hasAfter) {
-    const punch = e;
-    const net = bestCredit(rules, 'add_time', 'after', punch)
-              - bestCredit(rules, 'remove_time', 'after', punch);
+    const net = bestCredit(rules, 'add_time', 'after', punchEnd)
+              - bestCredit(rules, 'remove_time', 'after', punchEnd);
     const scheduleBased = rules.some(r => r.edge === 'after' && r.base === 'schedule'
       && (r.type === 'add_time' || r.type === 'remove_time'));
 
-    if (scheduleBased && expEnd != null) {
+    if (scheduleBased && baseEnd != null) {
       // Only staying LATE is governed by the ladder. Leaving early is just a
-      // short day — paying someone to the scheduled end because they left at
+      // short day — paying someone to the baseline because they went home at
       // 3pm would invent hours nobody worked.
-      if (punch > expEnd) e = expEnd + net;
+      if (punchEnd > baseEnd) e = baseEnd + net;
     } else {
-      // base 'punch' (or no schedule to measure against): a flat bonus on the
-      // actual punch.
-      e = punch + net;
+      // base 'punch': a flat bonus on the actual punch.
+      e = e + net;
     }
   }
 
-  // Same for the clock-in edge, mirrored: credit moves the paid start EARLIER
-  // off the scheduled start.
+  // The clock-in edge, mirrored: credit moves the paid start EARLIER off the
+  // baseline.
   const hasBefore = rules.some(r => (r.type === 'add_time' || r.type === 'remove_time') && r.edge === 'before');
   if (hasBefore) {
-    const punch = s;
-    const net = bestCredit(rules, 'add_time', 'before', punch)
-              - bestCredit(rules, 'remove_time', 'before', punch);
+    const net = bestCredit(rules, 'add_time', 'before', punchStart)
+              - bestCredit(rules, 'remove_time', 'before', punchStart);
     const scheduleBased = rules.some(r => r.edge === 'before' && r.base === 'schedule'
       && (r.type === 'add_time' || r.type === 'remove_time'));
 
-    if (scheduleBased && expStart != null) {
-      if (punch < expStart) s = expStart - net;
+    if (scheduleBased && baseStart != null) {
+      if (punchStart < baseStart) s = baseStart - net;
     } else {
-      s = punch - net;
+      s = s - net;
     }
   }
 
@@ -796,6 +854,8 @@ module.exports = {
   BREAK_TRIGGERS,
   parsePolicy,
   parseRules,
+  validatePolicy,
+  validatePolicyRaw,
   resolveExpected,
   roundEdge,
   applyRounding,

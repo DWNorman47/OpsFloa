@@ -308,7 +308,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
 });
 
 const { hoursWorked, computeOT } = require('../utils/payCalculations');
-const { roundEntriesFromSettings } = require('../utils/hoursRules');
+const { computePaid } = require('../utils/paidHours');
 const { weekRange } = require('../utils/weekBounds');
 
 // GET /time-entries/pay-stubs — worker's pay periods with aggregated hours
@@ -350,10 +350,13 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
         const entries = allEntries.rows.filter(e => e.work_date_str >= ps && e.work_date_str <= pe);
         if (entries.length === 0) continue;
 
-        // Apply the company's hours rules (grace/rounding) to the raw punches
-        // before computing hours; paid entries carry raw_* fields for display.
-        const paidEntries = roundEntriesFromSettings(entries, s);
-        const { regularHours, overtimeHours } = computeOT(paidEntries, workerOTRule, s.overtime_threshold, s.week_start);
+        // Apply the company's hours rules to the raw punches before computing
+        // hours; paid entries carry raw_* fields for display. Through the
+        // shared pipeline so the worker's own screen can't disagree with the
+        // invoice — this used to round but drop the tiered-overtime config, so
+        // a company on CA-style tiers saw one number here and another on a bill.
+        const { paid: paidEntries, regularHours, overtimeHours } =
+          computePaid(entries, s, { rule: workerOTRule });
         let prevailingHours = 0, totalMileage = 0;
         for (const e of paidEntries) {
           if (e.wage_type === 'prevailing') {

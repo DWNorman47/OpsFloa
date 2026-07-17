@@ -20,7 +20,8 @@ const { logFailure } = require('../failureLog');
 const { sendPushToUser, sendPushToAllWorkers } = require('../push');
 const { sendEmail } = require('../email');
 const { hoursWorked, computeOT, computeDailyPayCosts, otBandsCost, nightPremiumCost } = require('../utils/payCalculations');
-const { roundEntriesFromSettings, otConfigFromSettings } = require('../utils/hoursRules');
+const { roundEntriesFromSettings, otConfigFromSettings, validatePolicyRaw } = require('../utils/hoursRules');
+const { computePaid } = require('../utils/paidHours');
 const { weekRange, weekBucketKey } = require('../utils/weekBounds');
 const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const qbo = require('../services/qbo');
@@ -215,6 +216,17 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
             try { parsed = JSON.parse(val); } catch { return res.status(400).json({ error: 'hours_rules must be valid JSON' }); }
             if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
               return res.status(400).json({ error: 'hours_rules must be a JSON object' });
+            // Beyond shape: refuse a rule list that can't mean anything. An
+            // Add Time rule with no End Time to measure from would fall back to
+            // adding onto the punch and quietly bill the wrong number, so it is
+            // rejected here rather than surprising someone on an invoice.
+            const problems = validatePolicyRaw(val);
+            if (problems.length) {
+              return res.status(400).json({
+                error: problems[0].message,
+                rule_errors: problems,
+              });
+            }
           }
           if (key === 'global_required_checklist_template_id' && val !== '') {
             const id = parseInt(val);
@@ -1690,7 +1702,8 @@ router.get('/projects/metrics', requireAdmin, async (req, res) => {
       pool.query(
         `SELECT te.project_id, te.user_id, te.work_date, te.start_time, te.end_time,
                 te.break_minutes, te.wage_type, te.overtime_hours_override,
-                COALESCE(u.hourly_rate, $2) AS rate
+                COALESCE(u.hourly_rate, $2) AS rate,
+                COALESCE(u.overtime_rule, 'daily') AS ot_rule
            FROM time_entries te
            JOIN users u ON te.user_id = u.id
           WHERE te.company_id = $1 AND te.status != 'rejected'`,
@@ -1706,7 +1719,22 @@ router.get('/projects/metrics', requireAdmin, async (req, res) => {
 
     const rows = projectsRes.rows.map(p => {
       const pe = byProject.get(p.id) || [];
-      const { regularHours, overtimeHours } = computeOT(pe, 'daily', otThreshold, weekStart);
+      // Overtime is a per-WORKER concept: the rule is the worker's
+      // (users.overtime_rule) and so is the rate. This used to hardcode 'daily'
+      // for the whole project and pass no tiered config, so a project staffed by
+      // weekly-rule workers reported overtime none of them had actually earned.
+      // Split by worker, then sum.
+      let regularHours = 0, overtimeHours = 0;
+      const byWorker = new Map();
+      for (const e of pe) {
+        if (!byWorker.has(e.user_id)) byWorker.set(e.user_id, []);
+        byWorker.get(e.user_id).push(e);
+      }
+      for (const rows_ of byWorker.values()) {
+        const r = computePaid(rows_, metricsSettings, { rule: rows_[0].ot_rule || 'daily' });
+        regularHours += r.regularHours;
+        overtimeHours += r.overtimeHours;
+      }
       let totalHours = 0, prevailingHours = 0, estimatedCost = 0;
       const workerIds = new Set();
       for (const e of pe) {
