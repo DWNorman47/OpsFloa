@@ -181,6 +181,38 @@ describe("edge: before — the clock-in side, mirrored", () => {
   });
 });
 
+describe('clip behavior — ignore is enforced; prevent/auto are carried for later', () => {
+  const one = (raw) => parseRules([raw])[0];
+
+  test('behavior defaults to ignore when omitted', () => {
+    expect(one({ type: 'clip_start', when: { kind: 'every_day' }, at: '07:00' }).behavior).toBe('ignore');
+    expect(one({ type: 'clip_end', when: { kind: 'every_day' }, at: '17:00' }).behavior).toBe('ignore');
+  });
+
+  test('clip_start accepts ignore/prevent/auto; clip_end has no prevent', () => {
+    expect(one({ type: 'clip_start', when: { kind: 'every_day' }, at: '07:00', behavior: 'prevent' }).behavior).toBe('prevent');
+    expect(one({ type: 'clip_start', when: { kind: 'every_day' }, at: '07:00', behavior: 'auto' }).behavior).toBe('auto');
+    // "prevent a clock-out" is meaningless — it falls back to ignore.
+    expect(one({ type: 'clip_end', when: { kind: 'every_day' }, at: '17:00', behavior: 'prevent' }).behavior).toBe('ignore');
+    // Junk falls back to ignore, never drops the rule.
+    expect(one({ type: 'clip_start', when: { kind: 'every_day' }, at: '07:00', behavior: 'teleport' }).behavior).toBe('ignore');
+  });
+
+  test('ignore and prevent both clamp the paid punch; auto does not (not built yet)', () => {
+    const early = { user_id: 1, work_date: MON, wage_type: 'regular', start_time: '06:30:00', end_time: '17:00:00', break_minutes: 0 };
+    const mk = (behavior) => parsePolicy(JSON.stringify({
+      enabled: true,
+      rules: [{ type: 'clip_start', when: { kind: 'every_day' }, at: '07:00', behavior }],
+    }));
+    // ignore: not paid before 07:00
+    expect(roundEntriesForPay([early], mk('ignore'))[0].start_time).toBe('07:00:00');
+    // prevent: same pay-side clamp (its live effect is at the clock, this is the backstop)
+    expect(roundEntriesForPay([early], mk('prevent'))[0].start_time).toBe('07:00:00');
+    // auto: no pay effect yet — the early punch is left alone, we never invent paid time
+    expect(roundEntriesForPay([early], mk('auto'))[0].start_time).toBe('06:30:00');
+  });
+});
+
 describe('clip_start — ignore the early clock-in', () => {
   test('clocking in before 7 is not paid', () => {
     expect(paidHours(entry({ start_time: '06:30:00' }))).toBeCloseTo(9, 5);

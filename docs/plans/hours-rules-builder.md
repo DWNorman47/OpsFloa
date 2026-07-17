@@ -194,7 +194,10 @@ right. This outranks every feature below.
   Monday pays 10h: 8 regular + 2 OT") — rules that compose are rules you cannot
   read off the list, and the preview is how an admin checks their work.
   EN/ES keys required (the i18n parity test fails the build).
-- **M4e — enforcement rules.** `prevent` pre-clock-in, `auto_clockin`,
+- **M4e — enforcement rules.** The clip `behavior` field now exists
+  (`ignore` shipped; `prevent`/`auto` parsed, stored, shown disabled in the UI,
+  not yet enforced). What remains is wiring `prevent` into `clock.js` (block an
+  early clock-in) and `auto` into a clock job (clock in/out for the worker). `prevent` pre-clock-in, `auto_clockin`,
   `auto_clockout`, weekly `Total hours allowed → auto-clockout`. **Separate
   milestone on purpose**: these are not pay math. They write data — auto-clockin
   invents a time entry for someone who never clocked in. Different subsystem,

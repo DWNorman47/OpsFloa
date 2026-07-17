@@ -118,6 +118,14 @@ const RULE_BASES = ['schedule', 'punch'];
 //           'at' rule per rung.
 const RULE_MODES = ['at', 'every'];
 const BREAK_TRIGGERS = ['always', 'after_hours'];
+// What a Start/End Time rule DOES about a punch outside the boundary. Only
+// 'ignore' is enforced today — it's pure pay math (don't pay time outside the
+// boundary) and fully reversible. 'prevent' (block the clock-in) and 'auto'
+// (clock them in/out for them) are enforcement behaviors that live in the live
+// clock, not the pay transform; the field is carried now so wiring them later
+// needs no migration, exactly as `premiums: {}` was carried before it was live.
+const CLIP_START_BEHAVIORS = ['ignore', 'prevent', 'auto'];  // early clock-in
+const CLIP_END_BEHAVIORS   = ['ignore', 'auto'];             // late clock-out (can't "prevent" a clock-out)
 
 // ── Time helpers (minutes-since-midnight ↔ "HH:MM[:SS]") ─────────────────────
 
@@ -306,9 +314,13 @@ function parseRule(raw, index) {
 
   switch (raw.type) {
     case 'clip_start':
-    case 'clip_end':
+    case 'clip_end': {
       // No time = nothing to clip to.
-      return at == null ? null : { ...base, at };
+      if (at == null) return null;
+      const allowed = raw.type === 'clip_start' ? CLIP_START_BEHAVIORS : CLIP_END_BEHAVIORS;
+      const behavior = allowed.includes(raw.behavior) ? raw.behavior : 'ignore';
+      return { ...base, at, behavior };
+    }
 
     case 'add_time':
     case 'remove_time': {
@@ -734,15 +746,24 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null) {
   // The tightest rule wins when several match: the latest Start Time, the
   // earliest End Time. Two rules that both bound a day can only be read one way
   // without asking an admin to think about precedence.
+  //
+  // Behavior: 'ignore' and 'prevent' both mean "don't pay outside the
+  // boundary", so both clamp the paid punch here. ('prevent' also blocks the
+  // clock-in live, but if an early punch slips through — offline, an admin edit
+  // — clamping is the right pay-side backstop.) 'auto' means "pay from the
+  // boundary regardless" and is NOT enforced yet; it's not selectable in the
+  // UI, so this only skips a hand-written policy, and doing nothing is the safe
+  // choice — we never invent paid time a worker didn't clock.
   let baseStart = null;
   let baseEnd = null;
   for (const r of rules) {
     if (r.type === 'clip_start') {
-      s = Math.max(s, r.at);
+      // The boundary is the ladder baseline no matter the behavior.
       baseStart = baseStart == null ? r.at : Math.max(baseStart, r.at);
+      if (r.behavior !== 'auto') s = Math.max(s, r.at);
     } else if (r.type === 'clip_end') {
-      e = Math.min(e, r.at);
       baseEnd = baseEnd == null ? r.at : Math.min(baseEnd, r.at);
+      if (r.behavior !== 'auto') e = Math.min(e, r.at);
     }
   }
   // No End Time rule for this day → fall back to the scheduled day. Validation
@@ -903,6 +924,8 @@ module.exports = {
   RULE_BASES,
   RULE_MODES,
   BREAK_TRIGGERS,
+  CLIP_START_BEHAVIORS,
+  CLIP_END_BEHAVIORS,
   parsePolicy,
   parseRules,
   validatePolicy,

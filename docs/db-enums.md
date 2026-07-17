@@ -230,6 +230,16 @@ that had the previous default.
   | `rules[].base` (add/remove) | `schedule` (default) \| `punch` |
   | `rules[].mode` (add/remove) | `at` (default) \| `every` |
   | `rules[].trigger.kind` (auto_break) | `always` \| `after_hours` |
+  | `rules[].behavior` (clip_start) | `ignore` \| `prevent` \| `auto` |
+  | `rules[].behavior` (clip_end) | `ignore` \| `auto` |
+
+  ⚠️ **Only `behavior: 'ignore'` is enforced** (default). It's pure pay math —
+  don't pay time outside the boundary. `prevent` (block the clock-in) and `auto`
+  (clock the worker in/out) are **parsed and stored but not yet acted on**: they
+  belong to the live clock, not the pay transform. `parseRules` keeps them (they
+  don't drop the rule) so the field is ready when that milestone lands, the same
+  way `premiums: {}` was carried before it was live. `'prevent'` on a `clip_end`
+  falls back to `ignore` — you can't prevent a clock-out.
 
   ⚠️ **`add_time` adds PAID time, not clock time.** The credit lands on the
   **scheduled** end (`base: 'schedule'`, the default); the punch only decides

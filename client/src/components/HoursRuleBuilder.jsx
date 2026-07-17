@@ -28,6 +28,7 @@ function blankRule() {
     type: 'clip_start',
     when: { kind: 'every_day' },
     at: '07:00',
+    behavior: 'ignore',
     minutes: '30',
     edge: 'after',
     base: 'schedule',
@@ -78,8 +79,16 @@ export function describeRule(r, t) {
   const when = describeWhen(r.when, t);
   const mins = r.minutes;
   switch (r.type) {
-    case 'clip_start': return `${when} — ${t.hrSumStart.replace('{time}', r.at)}`;
-    case 'clip_end':   return `${when} — ${t.hrSumEnd.replace('{time}', r.at)}`;
+    case 'clip_start': {
+      const b = r.behavior || 'ignore';
+      const key = b === 'prevent' ? 'hrSumStartPrevent' : b === 'auto' ? 'hrSumStartAuto' : 'hrSumStartIgnore';
+      return `${when} — ${t[key].replace('{time}', r.at)}`;
+    }
+    case 'clip_end': {
+      const b = r.behavior || 'ignore';
+      const key = b === 'auto' ? 'hrSumEndAuto' : 'hrSumEndIgnore';
+      return `${when} — ${t[key].replace('{time}', r.at)}`;
+    }
     case 'add_time':
     case 'remove_time': {
       const verb = r.type === 'add_time' ? t.hrSumAdd : t.hrSumRemove;
@@ -259,9 +268,28 @@ export default function HoursRuleBuilder({ rules, onChange }) {
           </Field>
 
           {(draft.type === 'clip_start' || draft.type === 'clip_end') && (
-            <Field label={t.hrTime}>
-              <input style={s.input} type="time" value={draft.at} onChange={e => setD('at', e.target.value)} />
-            </Field>
+            <>
+              <Field label={t.hrTime}>
+                <input style={s.input} type="time" value={draft.at} onChange={e => setD('at', e.target.value)} />
+              </Field>
+              {/* David's original three-way choice. Only "ignore" is built —
+                  it's pure pay math. Prevent (block the clock-in) and auto
+                  (clock them in/out) live in the live clock, not here, so they
+                  are shown but disabled rather than silently dropped: the whole
+                  point of the question was "what happened to those options". */}
+              <Field label={draft.type === 'clip_start' ? t.hrStartBehavior : t.hrEndBehavior}>
+                <select style={s.input} value={draft.behavior} onChange={e => setD('behavior', e.target.value)}>
+                  <option value="ignore">
+                    {draft.type === 'clip_start' ? t.hrBehaviorIgnoreIn : t.hrBehaviorIgnoreOut}
+                  </option>
+                  {draft.type === 'clip_start' && <option value="prevent" disabled>{t.hrBehaviorPrevent}</option>}
+                  <option value={draft.type === 'clip_start' ? 'auto' : 'auto'} disabled>
+                    {draft.type === 'clip_start' ? t.hrBehaviorAutoIn : t.hrBehaviorAutoOut}
+                  </option>
+                </select>
+              </Field>
+              <p style={s.hint}>{draft.type === 'clip_start' ? t.hrStartVsWorkday : t.hrEndVsWorkday}</p>
+            </>
           )}
 
           {adjust && (
@@ -348,6 +376,7 @@ function coerceDraft(d) {
     case 'clip_start':
     case 'clip_end':
       out.at = d.at;
+      out.behavior = d.behavior || 'ignore';
       break;
     case 'add_time':
     case 'remove_time':
