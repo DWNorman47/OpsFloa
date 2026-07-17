@@ -1,7 +1,8 @@
 # OpsFloa — Hours rules builder: plan
 
-Status: **M4a shipped (the engine); the builder UI and the consistency fix are
-the work that remains** (2026-07-16).
+Status: **M4a/M4b/M4d shipped — engine, consistency fix, and the builder UI**
+(2026-07-17). Remaining: M4c (Saturday under a weekly rule), M4e (enforcement
+rules that write data), M4f (per-role scoping).
 
 ## Where this came from
 
@@ -179,14 +180,16 @@ right. This outranks every feature below.
 ## Milestones
 
 - **M4a — the rule engine** ✅ shipped. Types, selectors, pipeline, 49 tests.
-- **M4b — consistency (the blocker above).** One helper every money path calls;
+- **M4b — consistency** ✅ shipped. `utils/paidHours.js` is the one pipeline; all ten paths call it. Two live bugs fell out: overnight labor costing $0 in the SQL paths, and WorkerMetrics pooling different workers' hours into one overtime bucket. ~~The blocker above.~~
+- *(original scope)* One helper every money path calls;
   delete the client mirrors or generate them; fix the two SQL paths. Do this
   before the UI, or the UI ships a footgun.
 - **M4c — Saturday either way.** `restDay` only fires under `rule === 'daily'`
   (`payCalculations.js:141`). David wants Saturday-OT to work with a weekly rule
   too. Probably a per-day OT threshold rule type (`Total hours before overtime`
   = 0 on Saturday), which needs `computeOT` to take per-day bands.
-- **M4d — the builder UI.** Extend `HoursRulesSettings.jsx`: scope → selector →
+- **M4d — the builder UI** ✅ shipped. `client/src/components/HoursRuleBuilder.jsx`, scope → selector → type → params. Every row carries a plain-English summary, because rules that compose can't be read off the raw fields. Add/Remove Time is gated on a Start/End rule existing, matching the server's `validatePolicy`. `server/tests/hoursRulesBuilderContract.test.js` pins the UI→engine contract — nothing in the type system connects a JSON writer to a JSON reader, so a renamed field would be silently dropped on parse.
+- *(original scope)* Extend `HoursRulesSettings.jsx`: scope → selector →
   type → params, matching David's sketch. Needs a **preview** ("a 7:00–5:30
   Monday pays 10h: 8 regular + 2 OT") — rules that compose are rules you cannot
   read off the list, and the preview is how an admin checks their work.
