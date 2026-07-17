@@ -737,9 +737,11 @@ let tool = 'pan';
 let selectedId = null;
 let drag = null;      // {mode:'pan'|'draw'|'move'|'handle', ...}
 let undoCapture = null;
-let draft = null;     // click-built measure in progress {kind, pts, prev}
+let draft = null;     // click-built measure in progress {kind, pts, prev, past, future}
+let draftDrag = null; // dragging an already-placed draft vertex {i, ptr, prev, moved}
 let calibPts = null;  // [firstPoint] while calibrating
 let hoverW = null;    // cursor world pos while drafting (rubber band)
+let previewing = false; // true while drawMarkup renders the in-progress draft
 
 const centroid = pts => ({
   x: pts.reduce((a, p) => a + p.x, 0) / pts.length,
@@ -757,8 +759,10 @@ const undoStack = [], redoStack = [];
 const snapshot = () => JSON.stringify(state.markups);
 
 function updateUndoButtons() {
-  els.btnUndo.disabled = !undoStack.length;
-  els.btnRedo.disabled = !redoStack.length;
+  const dU = draft && draft.past && draft.past.length;
+  const dR = draft && draft.future && draft.future.length;
+  els.btnUndo.disabled = !(undoStack.length || dU);
+  els.btnRedo.disabled = !(redoStack.length || dR);
 }
 function pushUndo(prevJson) {
   undoStack.push(prevJson);
@@ -771,8 +775,37 @@ function restoreMarkups(json) {
   if (selectedId && !selMarkup()) selectedId = null;
   markupsChanged();
 }
-function undo() { if (undoStack.length) { redoStack.push(snapshot()); restoreMarkups(undoStack.pop()); updateUndoButtons(); } }
-function redo() { if (redoStack.length) { undoStack.push(snapshot()); restoreMarkups(redoStack.pop()); updateUndoButtons(); } }
+// While a click-built draft is open, undo/redo step through its OWN point history
+// (each add / move / remove) instead of the committed-markup stack — so you can't
+// accidentally unwind a finished markup mid-draw, and every point edit is reversible.
+function draftRecord(prevPtsJson) {
+  if (!draft) return;
+  draft.past = draft.past || [];
+  draft.past.push(prevPtsJson);
+  if (draft.past.length > 400) draft.past.shift();
+  draft.future = [];
+  updateUndoButtons();
+}
+function draftStepBack() {
+  draft.future = draft.future || [];
+  draft.future.push(JSON.stringify(draft.pts));
+  draft.pts = JSON.parse(draft.past.pop());
+  updateUndoButtons(); vp.requestDraw();
+}
+function draftStepFwd() {
+  draft.past = draft.past || [];
+  draft.past.push(JSON.stringify(draft.pts));
+  draft.pts = JSON.parse(draft.future.pop());
+  updateUndoButtons(); vp.requestDraw();
+}
+function undo() {
+  if (draft) { if (draft.past && draft.past.length) draftStepBack(); return; }
+  if (undoStack.length) { redoStack.push(snapshot()); restoreMarkups(undoStack.pop()); updateUndoButtons(); }
+}
+function redo() {
+  if (draft) { if (draft.future && draft.future.length) draftStepFwd(); return; }
+  if (redoStack.length) { undoStack.push(snapshot()); restoreMarkups(redoStack.pop()); updateUndoButtons(); }
+}
 els.btnUndo.addEventListener('click', undo);
 els.btnRedo.addEventListener('click', redo);
 
@@ -1003,67 +1036,43 @@ function drawMarkup(ctx, m) {
     }
     case 'contour': {
       const col = elevColor(m.elev || 0, m.surface);
-      ctx.strokeStyle = col;
-      if (m.surface === 'existing') ctx.setLineDash([11, 6]); // existing dashed, proposed solid
-      ctx.beginPath();
-      m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
-      ctx.stroke();
-      ctx.setLineDash([]);
+      // existing dashed, proposed solid — kept, but thin & screen-constant like the boundary
+      dirtOutline(ctx, m, col, { dash: m.surface === 'existing' ? [11, 6] : null });
       const e = m.pts[m.pts.length - 1];
-      elevLabel(ctx, m, e.x, e.y, col);
+      if (e) elevLabel(ctx, m, e.x, e.y, col);
       break;
     }
     case 'espot': {
       const col = elevColor(m.elev || 0, m.surface);
-      const p = m.pts[0]; const r = (m.width || 4) * 1.4 + 2;
-      ctx.strokeStyle = col; ctx.fillStyle = col;
+      const p = m.pts[0]; if (!p) break;
+      const z = vp.view.zoom, r = 7 / z; // screen-constant bullseye, crisp at any zoom
+      ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 2 / z;
       ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(1.5, r / 4), 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(p.x, p.y, 1.8 / z, 0, Math.PI * 2); ctx.fill();
       elevLabel(ctx, m, p.x + r * 1.8, p.y, col);
       break;
     }
     case 'epad': {
       const col = elevColor(m.elev || 0, m.surface);
-      ctx.strokeStyle = col; ctx.fillStyle = col;
-      if (m.pts.length >= 2) {
-        ctx.beginPath(); m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath();
-        ctx.globalAlpha = 0.18; ctx.fill(); ctx.globalAlpha = 1; ctx.stroke();
-      }
+      dirtOutline(ctx, m, col, { closed: true, dash: [12, 7], fillAlpha: 0.10 });
       if (m.pts.length >= 3) { const c = centroid(m.pts); elevLabel(ctx, m, c.x, c.y, col); }
       break;
     }
     case 'ebound': {
-      // thin, screen-constant line + dash (like sitework) so it stays crisp when
-      // you zoom in for fine work instead of ballooning with the pen width
-      const z = vp.view.zoom;
-      ctx.strokeStyle = '#e0a03f'; ctx.fillStyle = '#e0a03f';
-      ctx.lineWidth = 2 / z;
-      ctx.setLineDash([12 / z, 7 / z]);
-      if (m.pts.length >= 2) {
-        ctx.beginPath(); m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath();
-        ctx.globalAlpha = 0.06; ctx.fill(); ctx.globalAlpha = 1; ctx.stroke();
-      }
-      ctx.setLineDash([]);
+      dirtOutline(ctx, m, '#e0a03f', { closed: true, dash: [12, 7], fillAlpha: 0.06 });
       break;
     }
     case 'qarea': {
       const col = areaColorHex(m.cfg || {});
-      ctx.strokeStyle = col; ctx.fillStyle = col;
-      if (m.pts.length >= 2) {
-        ctx.beginPath(); m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath();
-        ctx.globalAlpha = m.cfg && m.cfg.deduct ? 0.28 : 0.2; ctx.fill(); ctx.globalAlpha = 1; ctx.stroke();
-      }
+      dirtOutline(ctx, m, col, { closed: true, dash: [12, 7], fillAlpha: (m.cfg && m.cfg.deduct) ? 0.18 : 0.12 });
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y, col); }
       break;
     }
     case 'qline': {
       const col = lineColorHex(m.cfg || {});
-      ctx.strokeStyle = col;
-      ctx.beginPath();
-      m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
-      ctx.stroke();
+      dirtOutline(ctx, m, col, {});
       const mid = m.pts[Math.floor((m.pts.length - 1) / 2)];
-      labelAt(ctx, m, mid.x, mid.y - (m.width || 4) * 2.5, col);
+      if (mid) labelAt(ctx, m, mid.x, mid.y - 8 / vp.view.zoom, col);
       break;
     }
     case 'dwall': {
@@ -1087,15 +1096,39 @@ function drawMarkup(ctx, m) {
   ctx.restore();
 }
 
+// The "elegant" earthwork/takeoff outline: thin and SCREEN-CONSTANT (width & dash
+// divided by zoom) so it stays crisp when you zoom in for fine work instead of
+// ballooning with the pen width — the boundary (ebound) look, shared by the rest
+// of the dirt family.
+function dirtOutline(ctx, m, col, opts) {
+  if (!m.pts || m.pts.length < 2) return;
+  const o = opts || {};
+  const z = vp.view.zoom;
+  ctx.strokeStyle = col; ctx.fillStyle = col;
+  ctx.lineWidth = (o.screenWidth || 2) / z;
+  ctx.setLineDash(o.dash ? [o.dash[0] / z, o.dash[1] / z] : []);
+  ctx.beginPath();
+  m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+  if (o.closed) ctx.closePath();
+  if (o.fillAlpha && o.closed && m.pts.length >= 3) { ctx.globalAlpha = o.fillAlpha; ctx.fill(); ctx.globalAlpha = 1; }
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
 // elevation label (white-haloed, colored by elevation) for earthwork markups
 function elevLabel(ctx, m, x, y, col) {
   if (!layers.labels) return;
+  // While placing (draft preview) or editing (this markup is selected), suppress
+  // the "?" placeholder — you're mid-edit and haven't typed the elevation yet.
+  // Once it's a settled, unselected markup the "?" returns as a "needs elevation" flag.
+  const editing = previewing || (m.id && m.id === selectedId);
+  const txt = m.elev != null ? fmt(m.elev, Number.isInteger(m.elev) ? 0 : 1) : (editing ? '' : '?');
+  if (!txt) return;
   const base = pageBase.get(m.page);
   const fs = Math.max(11, Math.min(28, (base ? base.width : 2800) / 120));
   ctx.save();
   ctx.font = `700 ${fs}px "Segoe UI", system-ui, sans-serif`;
   ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
-  const txt = m.elev != null ? fmt(m.elev, Number.isInteger(m.elev) ? 0 : 1) : '?';
   ctx.lineWidth = fs / 4.5; ctx.strokeStyle = 'rgba(255,255,255,.92)';
   ctx.strokeText(txt, x, y);
   ctx.fillStyle = col; ctx.fillText(txt, x, y);
@@ -1167,18 +1200,49 @@ function drawDraft(ctx) {
     ctx.restore();
   }
   if (draft && draft.pts.length) {
-    const pts = (hoverW && !POINT_KINDS.includes(draft.kind)) ? [...draft.pts, hoverW] : draft.pts;
+    // no rubber-band tail while dragging an existing vertex — show the real shape
+    const pts = (hoverW && !draftDrag && !POINT_KINDS.includes(draft.kind)) ? [...draft.pts, hoverW] : draft.pts;
     const previewExtra =
       draft.kind === 'plane' ? { pitch: state.roofPitch } :
       draft.kind === 'redge' ? { etype: ($('edgeType') || {}).value || 'eave' } :
       draft.kind === 'ritem' ? { itype: ($('itemType') || {}).value || 'boot' } : {};
-    drawMarkup(ctx, {
-      kind: draft.kind, pts, page: state.page,
-      color: curColor(), width: curWidth(),
-      text: POINT_KINDS.includes(draft.kind) ? '…' : undefined,
-      ...previewExtra,
-    });
+    previewing = true;
+    try {
+      drawMarkup(ctx, {
+        kind: draft.kind, pts, page: state.page,
+        color: curColor(), width: curWidth(),
+        text: POINT_KINDS.includes(draft.kind) ? '…' : undefined,
+        ...previewExtra,
+      });
+    } finally { previewing = false; }
+    drawDraftHandles(ctx);
   }
+}
+
+// Draggable vertex handles for a line/polygon draft, so previously-placed points
+// read as grabbable (point-count kinds skip this — each click is its own marker).
+function drawDraftHandles(ctx) {
+  if (!draft || !draft.pts.length || POINT_KINDS.includes(draft.kind)) return;
+  const z = vp.view.zoom;
+  ctx.save();
+  draft.pts.forEach((p, i) => {
+    const active = draftDrag && draftDrag.i === i;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 6 / z, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.fill();
+    ctx.lineWidth = 1.6 / z; ctx.strokeStyle = active ? '#e0a03f' : '#4da3ff'; ctx.stroke();
+    ctx.beginPath(); ctx.arc(p.x, p.y, 1.8 / z, 0, Math.PI * 2);
+    ctx.fillStyle = active ? '#e0a03f' : '#4da3ff'; ctx.fill();
+  });
+  ctx.restore();
+}
+
+// Nearest draft vertex to w within a forgiving, zoom-aware grab radius (or -1).
+function draftGrabIndex(w) {
+  if (!draft || !draft.pts.length) return -1;
+  const tol = Math.max(9 / vp.view.zoom, 5);
+  let best = -1, bd = tol;
+  draft.pts.forEach((p, i) => { const d = Math.hypot(p.x - w.x, p.y - w.y); if (d <= bd) { bd = d; best = i; } });
+  return best;
 }
 
 // Bounding box in world px (for selection, centering, hit slop).
@@ -1525,7 +1589,14 @@ async function openFromBytes(buf, name, type, { persist = true } = {}) {
       const key = await hashBytes(keep);
       await store.filesPut(key, { name, type: type || null, bytes: keep });
       state.docKey = key;
-    } catch (_) { /* private mode / quota — session still works */ }
+    } catch (err) {
+      // It opened and works this session, but couldn't be written to local
+      // storage — so it won't survive a reload. Show the persistent NOT SAVED
+      // banner (separate from the HUD) instead of pretending it saved; let the
+      // doc render so it's at least usable now.
+      console.error('openFromBytes: could not store plan', err);
+      flashSaveError();
+    }
   }
   state.docName = name;
   state.docType = type || null;
@@ -1554,18 +1625,30 @@ async function currentCombinedBytes() {
 async function finalizeCombined(combined, name) {
   const bytes = await combined.save(); // Uint8Array
   const oldKey = state.docKey;
+  // Store the merged PDF FIRST and confirm it landed. If this fails (browser
+  // storage full is the usual cause), do NOT repoint the project at a blob that
+  // isn't there and do NOT delete the old one — that exact combination is how
+  // adding a second PDF used to silently wipe the whole project.
   let key = null;
-  try { key = await hashBytes(bytes); await store.filesPut(key, { name, type: 'application/pdf', bytes }); } catch (_) {}
+  try {
+    key = await hashBytes(bytes);
+    await store.filesPut(key, { name, type: 'application/pdf', bytes });
+  } catch (err) {
+    console.error('finalizeCombined: could not store merged PDF', err);
+    saveError('Could not save the added pages — your browser’s storage may be full. Nothing was changed; free up space (or add fewer sheets) and try again.');
+    return false; // project untouched: old docKey, old blob, and existing markups all intact
+  }
   // openFromBytes copies internally (pdf.js detaches its copy, not `bytes`), so
   // the just-stored bytes stay intact
   const ok = await openFromBytes(bytes, name, 'application/pdf', { persist: false });
   if (!ok) { state.docKey = oldKey; return false; }
-  state.docKey = key || oldKey;
+  state.docKey = key;
   state.docName = name;
   scheduleSave(true);
   if (!$('projects').classList.contains('hidden')) renderProjCurrent(); // reflect the new sheet count
-  // drop the previous combined blob if nothing else references it
-  if (oldKey && key && oldKey !== key) {
+  // Only now that the new blob is safely stored, drop the previous one if
+  // nothing else references it.
+  if (oldKey && oldKey !== key) {
     try { const all = await store.projAll(); if (!all.some(p => p.docKey === oldKey && p.id !== state.projectId)) await store.filesDelete(oldKey); } catch (_) {}
   }
   return true;
@@ -2062,8 +2145,15 @@ els.cv.addEventListener('pointerdown', e => {
       setTool('calibrate');
       return;
     }
-    if (!draft) draft = { kind: tool, pts: [], prev: snapshot() };
+    // grab an already-placed vertex to reposition it, instead of adding a new one
+    if (draft && !POINT_KINDS.includes(draft.kind)) {
+      const gi = draftGrabIndex(w);
+      if (gi >= 0) { draftDrag = { i: gi, ptr: e.pointerId, prev: JSON.stringify(draft.pts), moved: false }; return; }
+    }
+    if (!draft) draft = { kind: tool, pts: [], prev: snapshot(), past: [], future: [] };
+    const prevPts = JSON.stringify(draft.pts);
     draft.pts.push({ x: w.x, y: w.y });
+    draftRecord(prevPts);
     if (draft.kind === 'mcount' || draft.kind === 'ritem') setMsg(`${draft.pts.length} clicked — Enter or double-click to finish.`);
     vp.requestDraw();
     return;
@@ -2130,7 +2220,14 @@ els.cv.addEventListener('pointerdown', e => {
 });
 
 els.cv.addEventListener('pointermove', e => {
-  if (draft || calibPts) { // rubber-band the in-progress measure/calibration
+  if (draftDrag && e.pointerId === draftDrag.ptr) { // reposition an existing draft vertex
+    const s = screenPt(e);
+    const w = vp.screenToWorld(s.x, s.y);
+    if (draft && draft.pts[draftDrag.i]) { draft.pts[draftDrag.i] = { x: w.x, y: w.y }; draftDrag.moved = true; }
+    vp.requestDraw();
+    return;
+  }
+  if ((draft || calibPts) && !draftDrag) { // rubber-band the in-progress measure/calibration
     const sp = screenPt(e);
     hoverW = vp.screenToWorld(sp.x, sp.y);
     vp.requestDraw();
@@ -2194,6 +2291,12 @@ els.cv.addEventListener('pointermove', e => {
 });
 
 function endDrag(e) {
+  if (draftDrag && e.pointerId === draftDrag.ptr) { // finished repositioning a draft vertex
+    const dd = draftDrag; draftDrag = null;
+    if (dd.moved && draft) draftRecord(dd.prev); // one undo step for the whole move
+    vp.requestDraw();
+    return;
+  }
   if (!drag || e.pointerId !== drag.ptr) return;
   const d = drag;
   drag = null;
@@ -2304,13 +2407,13 @@ function cutAtEdge(m, i) {
 function commitDraft() {
   if (!draft) return;
   const d = draft;
-  draft = null; hoverW = null;
+  draft = null; hoverW = null; draftDrag = null;
   const pts = d.pts;
   // double-click leaves two points on top of each other — drop the duplicate
   if (pts.length >= 2 &&
       dist(pts[pts.length - 1].x, pts[pts.length - 1].y, pts[pts.length - 2].x, pts[pts.length - 2].y) < 3 / vp.view.zoom) pts.pop();
   const min = CLOSED_KINDS.includes(d.kind) ? 3 : POINT_KINDS.includes(d.kind) ? 1 : 2;
-  if (pts.length < min) { vp.requestDraw(); return; }
+  if (pts.length < min) { updateUndoButtons(); vp.requestDraw(); return; }
   // area takeoff: show the material form; create the markup only if confirmed
   if (d.kind === 'qarea') {
     const s = pageFtPerPx();
@@ -2411,7 +2514,8 @@ function commitDraft() {
 }
 
 function cancelDraft() {
-  draft = null; calibPts = null; hoverW = null;
+  draft = null; draftDrag = null; calibPts = null; hoverW = null;
+  updateUndoButtons();
   vp.requestDraw();
 }
 
@@ -3780,7 +3884,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && draft) { e.preventDefault(); commitDraft(); return; }
   if (e.key === 'Backspace' && draft) {
     e.preventDefault();
-    draft.pts.pop();
+    if (draft.pts.length) { const prev = JSON.stringify(draft.pts); draft.pts.pop(); draftRecord(prev); }
     if (!draft.pts.length) cancelDraft(); else vp.requestDraw();
     return;
   }
@@ -3845,16 +3949,38 @@ function scheduleSave(now = false) {
 // discreet "✓ Saved" flash in the canvas top-left on each autosave write —
 // nudged to the right of the HUD message when one is showing so they don't stack.
 let savedTimer = null;
-function flashSaved() {
-  const el = $('saveStatus');
-  if (!el) return;
-  el.textContent = '✓ Saved';
+function positionSaveStatus(el) {
   const hud = els.hud;
   const hudShowing = hud && hud.textContent.trim() && !hud.classList.contains('gone');
   el.style.left = hudShowing ? (hud.offsetLeft + hud.offsetWidth + 8) + 'px' : (document.body.classList.contains('nothumbs') ? '48px' : '10px');
+}
+function flashSaved() {
+  const el = $('saveStatus');
+  if (!el) return;
+  el.classList.remove('save-error');   // a successful save clears any prior warning
+  el.textContent = '✓ Saved';
+  positionSaveStatus(el);
   el.classList.add('show');
   clearTimeout(savedTimer);
   savedTimer = setTimeout(() => el.classList.remove('show'), 1600);
+}
+// A save FAILED. Unlike the "✓ Saved" flash, this stays put (no auto-hide) until
+// a later save succeeds — a silently-dropped save is exactly how work gets lost,
+// so it must stay visible until it's resolved.
+function flashSaveError() {
+  const el = $('saveStatus');
+  if (!el) return;
+  clearTimeout(savedTimer);
+  el.textContent = '⚠ NOT SAVED — browser storage may be full';
+  positionSaveStatus(el);
+  el.classList.add('show', 'save-error');
+}
+// A save failed during a deliberate action (adding pages) where losing it would
+// wipe real work — make it impossible to miss.
+function saveError(msg) {
+  flashSaveError();
+  setMsg(msg);
+  alert('⚠ Could not save\n\n' + msg);
 }
 async function saveProjectNow() {
   clearTimeout(saveTimer); saveTimer = null;
@@ -3870,7 +3996,13 @@ async function saveProjectNow() {
       data: projectData(),
     });
     flashSaved();
-  } catch (_) { /* IndexedDB unavailable */ }
+  } catch (err) {
+    // Don't swallow it — a silently-dropped autosave is how a whole session's
+    // work vanishes on the next reload. Leave the NOT SAVED banner up until a
+    // later autosave succeeds.
+    console.error('autosave failed', err);
+    flashSaveError();
+  }
 }
 
 function updateProjectBtn() { els.projName.textContent = state.projectName || 'Project'; }

@@ -304,6 +304,8 @@ body.nothumbs #hud { left: 48px; } /* make room for the open button */
   opacity: 0; transition: opacity .3s ease; pointer-events: none; white-space: nowrap;
 }
 #saveStatus.show { opacity: .85; }
+/* a failed save must be unmissable and stay until it's resolved */
+#saveStatus.save-error { opacity: 1; background: #b91c1c; border-color: #ef4444; color: #fff; font-weight: 700; }
 
 #dropHint {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
