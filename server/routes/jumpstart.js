@@ -18,8 +18,8 @@
 const express = require('express');
 const router = express.Router();
 const { requireAuth } = require('../middleware/auth');
-const anthropic = require('../services/anthropic');
-const { runAi } = require('../services/aiGate');
+const { pickProvider, visionConfigured, visionModel, visionGenerate } = require('../services/vision');
+const { reserveAiCall, refundAiCall, overLimit } = require('../services/aiGate');
 
 // Coordinates the model returns are normalized [0,1] of the image, so the client
 // maps them to its own base-px page — stable across render scales.
@@ -134,9 +134,13 @@ function parseJumpstart(text) {
   };
 }
 
-// POST /api/jumpstart/page  — { imageBase64, mediaType? }
+// POST /api/jumpstart/page  — { imageBase64, mediaType?, provider? }
+//
+// Metering is composed by hand (reserve/refund) rather than runAi, because
+// runAi's config check is Anthropic-specific and Jump Start is provider-pluggable
+// — a Gemini request must check Gemini's key, not Anthropic's.
 router.post('/page', requireAuth, async (req, res) => {
-  const { imageBase64, mediaType } = req.body || {};
+  const { imageBase64, mediaType, provider: requestedProvider } = req.body || {};
   if (!imageBase64 || typeof imageBase64 !== 'string') {
     return res.status(400).json({ error: 'imageBase64 required' });
   }
@@ -145,15 +149,27 @@ router.post('/page', requireAuth, async (req, res) => {
   if (imageBase64.length > 14_000_000) {
     return res.status(413).json({ error: 'Page image is too large. Try a lower render resolution.' });
   }
-  await runAi(req, res, async () => {
-    const text = await anthropic.generateVision({
+
+  const provider = pickProvider(requestedProvider);
+  if (!visionConfigured(provider)) {
+    return res.status(503).json({ error: `AI Jump Start isn't configured for ${provider}. Ask an admin to set the API key.` });
+  }
+
+  if (!(await reserveAiCall(req.user.company_id))) return overLimit(res);
+  try {
+    const text = await visionGenerate({
+      provider,
       system: SYSTEM,
       prompt: USER_PROMPT,
       image: { base64: imageBase64, mediaType: mediaType === 'image/jpeg' ? 'image/jpeg' : 'image/png' },
       maxTokens: 4096,
     });
-    return { result: parseJumpstart(text) };
-  });
+    res.json({ result: parseJumpstart(text), provider, model: visionModel(provider) });
+  } catch (err) {
+    await refundAiCall(req.user.company_id); // a failed call shouldn't cost them
+    if (req.log && req.log.error) req.log.error({ err, provider }, 'jumpstart failed');
+    res.status(502).json({ error: 'The AI request failed. Please try again in a moment.' });
+  }
 });
 
 module.exports = router;

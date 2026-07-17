@@ -1,6 +1,6 @@
 # OpsFloa — AI Jump Start (Plan Room): plan
 
-Status: **building the engine** (2026-07-17). A vision-model layer in Plan Room
+Status: **M1 + M2 shipped** (2026-07-17) — engine, provider A/B (Opus + Gemini), and the Plan Room button. Next: a proper review panel, then the credit wallet (M3), accuracy (M4), vector fast-path (M5), auto-contours (M6). A vision-model layer in Plan Room
 that reads the current page and lays down a reviewable *first draft* of markups.
 Named to set the expectation honestly: a **jump start you finish**, never an
 authoritative takeoff.
@@ -86,11 +86,11 @@ place as reviewable AI layer ◄──JSON── {counts,regions,scale,labels}
 
 ## Milestones
 
-- **M1 — engine** (this change): `anthropic.generateVision`, `POST
+- **M1 — engine** ✅ shipped: `anthropic.generateVision`, `POST
   /api/jumpstart/page` metered via `runAi`, the Jump Start prompt (counts +
   scale/legend/labels + rough regions, conservative, strict-JSON), robust
   `parseJumpstart`, tests. Server-only; no UI yet.
-- **M2 — Plan Room trigger:** an "AI Jump Start" button that renders the page,
+- **M2 — Plan Room trigger** ✅ shipped: an ✨ AI Jump Start toolbar button renders the page, POSTs it, and drops the result as ai:true markups (purple), with a summary + the read scale surfaced as a suggestion. Provider A/B is live — `services/vision.js` dispatches Anthropic|Gemini, `localStorage.jumpstart_provider='gemini'` flips it per sheet. **Original scope:** an "AI Jump Start" button that renders the page,
   POSTs it, and drops the result as a reviewable AI layer (accept/edit/reject),
   surfacing the read scale/labels. The slice that lets David test vision quality
   on a real sheet — the critical unknown.
