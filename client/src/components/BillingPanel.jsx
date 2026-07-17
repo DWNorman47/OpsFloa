@@ -144,6 +144,22 @@ export default function BillingPanel() {
     }
   };
 
+  // Buy the checked add-ons with NO base plan — one Stripe Checkout for a
+  // subscription whose line items are those add-ons (so buying both puts them
+  // on one subscription/one invoice). Server: /stripe/checkout-addon.
+  const checkoutAddons = async (addons) => {
+    if (!addons.length) return;
+    setBillingError('');
+    setRedirecting('buy-addons');
+    try {
+      const r = await api.post('/stripe/checkout-addon', { addons, annual });
+      window.location.href = r.data.url;
+    } catch (err) {
+      setBillingError(err.response?.data?.error || t.checkoutFailed);
+      setRedirecting(null);
+    }
+  };
+
   const removeAddon = async (addon) => {
     if (!window.confirm('Remove this add-on from your subscription? Your bill is prorated and you can add it back anytime.')) return;
     setBillingError('');
@@ -539,6 +555,29 @@ export default function BillingPanel() {
             </div>
           )}
 
+          {/* Buy the checked add-ons without a plan — one subscription for
+              whichever of Plan Room / Takeoff are ticked above. The same
+              checkboxes still bundle into a plan if one is chosen. */}
+          {((!hasPlanroom && plans?.planroom?.monthly_price_id) || (!hasTakeoff && plans?.takeoff?.monthly_price_id)) && (() => {
+            const picks = [
+              addPlanroom && !hasPlanroom && plans?.planroom?.monthly_price_id && 'planroom',
+              addTakeoff && !hasTakeoff && plans?.takeoff?.monthly_price_id && 'takeoff',
+            ].filter(Boolean);
+            const busy = redirecting === 'buy-addons';
+            return (
+              <div style={s.buyAloneRow}>
+                <button
+                  style={{ ...s.buyAloneBtn, ...(picks.length && !busy ? {} : { opacity: 0.5, cursor: 'not-allowed' }) }}
+                  onClick={() => checkoutAddons(picks)}
+                  disabled={!picks.length || busy}
+                >
+                  {busy ? t.billingRedirecting : t.billingBuyAlone}
+                </button>
+                <span style={s.buyAloneHint}>{t.billingBuyAloneHint}</span>
+              </div>
+            );
+          })()}
+
           <ClientPortalProPlaceholder />
 
           {isTrial && selectedPlan && selectedPlan !== 'free' && (
@@ -664,6 +703,9 @@ const s = {
   workerUpdateBtn: { padding: '7px 14px', background: '#8b5cf6', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: 'pointer', flexShrink: 0 },
   addonCard: { border: '2px solid #fde68a', borderRadius: 10, padding: '14px 16px', background: '#fffbeb', marginBottom: 16 },
   addonTitle: { fontSize: 15, fontWeight: 700, color: '#92400e' },
+  buyAloneRow: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 16 },
+  buyAloneBtn: { padding: '9px 18px', background: '#d97706', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: 'pointer' },
+  buyAloneHint: { fontSize: 12, color: '#6b7280' },
   trialCta: { background: '#f0fdf4', border: '2px solid #bbf7d0', borderRadius: 10, padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 },
   ctaBtn: { background: '#059669', color: '#fff', border: 'none', padding: '12px', borderRadius: 8, fontSize: 15, fontWeight: 700, cursor: 'pointer' },
   removeBtn: { background: '#fff', color: '#b91c1c', border: '1px solid #fca5a5', padding: '8px 16px', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
