@@ -42,12 +42,13 @@ function app() {
   return a;
 }
 
-// A free company with a Stripe customer already but no subscription.
+// A free company with a Stripe customer already but no subscription, and no
+// Plan Room (so Takeoff-alone is the blocked case unless stated otherwise).
 function companyRow(over = {}) {
   return {
     id: 'co-1', name: 'Acme', email: 'a@acme.test',
     stripe_customer_id: 'cus_1', stripe_subscription_id: null,
-    subscription_status: 'free', trial_ends_at: null, ...over,
+    subscription_status: 'free', trial_ends_at: null, addon_planroom: false, ...over,
   };
 }
 
@@ -75,12 +76,14 @@ describe('the add-on allowlist', () => {
     expect(mockSessionCreate).not.toHaveBeenCalled();
   });
 
-  test.each(['planroom', 'takeoff'])('accepts %s', async (addon) => {
+  test('accepts planroom', async () => {
     pool.query.mockResolvedValue({ rows: [companyRow()] });
-    const res = await post({ addon });
+    const res = await post({ addon: 'planroom' });
     expect(res.status).toBe(200);
     expect(res.body.url).toBe('https://checkout.test/session');
   });
+  // Takeoff on its own is covered by the "requires Plan Room" block below —
+  // it's only accepted alongside Plan Room or when Plan Room is already owned.
 });
 
 describe('happy path', () => {
@@ -120,7 +123,8 @@ describe('happy path', () => {
   });
 
   test('annual uses the annual price', async () => {
-    pool.query.mockResolvedValue({ rows: [companyRow()] });
+    // Owns Plan Room, so Takeoff-alone is allowed — isolates the annual pick.
+    pool.query.mockResolvedValue({ rows: [companyRow({ addon_planroom: true })] });
     await post({ addon: 'takeoff', annual: true });
     expect(mockSessionCreate.mock.calls[0][0].line_items).toEqual([{ price: 'price_takeoff_y', quantity: 1 }]);
   });
@@ -143,6 +147,33 @@ describe('happy path', () => {
     pool.query.mockResolvedValue({ rows: [companyRow({ subscription_status: 'trial', trial_ends_at: future })] });
     await post({ addon: 'planroom' });
     expect(mockSessionCreate.mock.calls[0][0].subscription_data.trial_end).toEqual(expect.any(Number));
+  });
+});
+
+describe('Takeoff requires Plan Room', () => {
+  test('Takeoff alone, Plan Room not owned → rejected', async () => {
+    pool.query.mockResolvedValue({ rows: [companyRow()] }); // addon_planroom: false
+    const res = await post({ addons: ['takeoff'] });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('planroom_required');
+    expect(mockSessionCreate).not.toHaveBeenCalled();
+  });
+
+  test('Takeoff + Plan Room together → allowed, one subscription', async () => {
+    pool.query.mockResolvedValue({ rows: [companyRow()] });
+    const res = await post({ addons: ['takeoff', 'planroom'] });
+    expect(res.status).toBe(200);
+    expect(mockSessionCreate.mock.calls[0][0].line_items).toEqual([
+      { price: 'price_takeoff_m', quantity: 1 },
+      { price: 'price_planroom_m', quantity: 1 },
+    ]);
+  });
+
+  test('Takeoff alone but Plan Room already owned → allowed', async () => {
+    pool.query.mockResolvedValue({ rows: [companyRow({ addon_planroom: true })] });
+    const res = await post({ addons: ['takeoff'] });
+    expect(res.status).toBe(200);
+    expect(mockSessionCreate.mock.calls[0][0].line_items).toEqual([{ price: 'price_takeoff_m', quantity: 1 }]);
   });
 });
 

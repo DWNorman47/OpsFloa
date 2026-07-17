@@ -217,7 +217,7 @@ export default function BillingPanel() {
   // companies (so an owned add-on is never silently invisible).
   const addonMeta = [
     { key: 'planroom', title: 'Plan Room', owned: hasPlanroom, plan: plans?.planroom, desc: 'View, mark up, and measure plan sets in the browser, with a company library and live share sessions.' },
-    { key: 'takeoff', title: 'Sitework Takeoff', owned: hasTakeoff, plan: plans?.takeoff, desc: 'Plan takeoffs from civil drawings into a priced, branded bid, with company-shared projects.' },
+    { key: 'takeoff', title: 'Takeoff', owned: hasTakeoff, plan: plans?.takeoff, desc: 'Turn Plan Room measurements into priced, branded trade takeoffs and bids — earthwork, drywall, roofing, and more. Requires Plan Room.' },
     { key: 'storm', title: 'Storm/Utility', owned: hasStorm, plan: plans?.storm, desc: 'Deep underground-utility takeoff — pipe schedule, structure depth, invert-driven trench depth, and spoil/backfill netting.' },
     { key: 'qbo', title: 'QuickBooks Online', owned: hasQbo, plan: plans?.qbo, desc: 'Push invoices to QuickBooks and keep their payment status in sync.' },
   ];
@@ -326,6 +326,10 @@ export default function BillingPanel() {
             }
             if (!a.plan?.monthly_price_id) return null;
             if (a.key === 'storm' && !STORM_SELLABLE) return null; // built, not yet on the menu
+            // Takeoff is a layer on Plan Room. One-click adds a single item, so
+            // it can't add Plan Room in the same step — require it first.
+            const needsPlanroom = a.key === 'takeoff' && !hasPlanroom;
+            const blocked = !!redirecting || needsPlanroom;
             return (
               <div key={a.key} style={{ ...s.addonCard, marginTop: 14, marginBottom: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
@@ -335,15 +339,15 @@ export default function BillingPanel() {
                     <span style={{ fontSize: 13, color: '#6b7280' }}>/mo</span>
                   </span>
                   <button
-                    style={{ ...s.ctaBtn, ...(redirecting ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
+                    style={{ ...s.ctaBtn, ...(blocked ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
                     onClick={() => addAddon(a.key)}
-                    disabled={!!redirecting}
+                    disabled={blocked}
                   >
                     {redirecting === 'addon-' + a.key ? 'Adding…' : 'Add to my subscription'}
                   </button>
                 </div>
                 <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.5, marginTop: 6 }}>
-                  {a.desc} Prorated onto your current subscription — no re-checkout.
+                  {a.desc} {needsPlanroom ? t.billingTakeoffNeedsPlanroom : 'Prorated onto your current subscription — no re-checkout.'}
                 </div>
               </div>
             );
@@ -567,7 +571,8 @@ export default function BillingPanel() {
           {!hasPlanroom && plans?.planroom?.monthly_price_id && (
             <div style={s.addonCard}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                <input type="checkbox" checked={addPlanroom} onChange={e => setAddPlanroom(e.target.checked)}
+                {/* Dropping Plan Room drops Takeoff, which rides on top of it. */}
+                <input type="checkbox" checked={addPlanroom} onChange={e => { const v = e.target.checked; setAddPlanroom(v); if (!v && !hasPlanroom) setAddTakeoff(false); }}
                   style={{ accentColor: '#d97706', width: 16, height: 16 }} />
                 <span style={s.addonTitle}>
                   + Plan Room add-on &nbsp;
@@ -585,16 +590,18 @@ export default function BillingPanel() {
           {!hasTakeoff && plans?.takeoff?.monthly_price_id && (
             <div style={s.addonCard}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                <input type="checkbox" checked={addTakeoff} onChange={e => setAddTakeoff(e.target.checked)}
+                {/* Takeoff rides on Plan Room — checking it pulls Plan Room in. */}
+                <input type="checkbox" checked={addTakeoff} onChange={e => { const v = e.target.checked; setAddTakeoff(v); if (v && !hasPlanroom) setAddPlanroom(true); }}
                   style={{ accentColor: '#d97706', width: 16, height: 16 }} />
                 <span style={s.addonTitle}>
-                  + Sitework Takeoff add-on &nbsp;
+                  + Takeoff add-on &nbsp;
                   <span style={{ fontSize: 18, fontWeight: 800, color: '#d97706' }}>${plans?.takeoff?.monthly ?? '—'}</span>
                   <span style={{ fontSize: 13, color: '#6b7280' }}>/mo</span>
                 </span>
               </label>
               <div style={{ paddingLeft: 26, fontSize: 12, color: '#6b7280', lineHeight: 1.5, marginTop: 6 }}>
-                Plan takeoffs from civil drawings — earthwork cut/fill, paving, concrete, and utilities — into a priced, branded bid, with company-shared projects.
+                Turn Plan Room measurements into priced, branded trade takeoffs and bids — earthwork, drywall, roofing, framing, siding, and more.
+                {!hasPlanroom && <span style={{ display: 'block', marginTop: 4, color: '#92400e', fontWeight: 600 }}>{t.billingTakeoffIncludesPlanroom}</span>}
               </div>
             </div>
           )}
@@ -621,7 +628,7 @@ export default function BillingPanel() {
               </div>
             );
           })()}
-          {hasTakeoff && ownedAddonCard('takeoff', 'Sitework Takeoff')}
+          {hasTakeoff && ownedAddonCard('takeoff', 'Takeoff')}
 
           {STORM_SELLABLE && !hasStorm && plans?.storm?.monthly_price_id && (
             <div style={s.addonCard}>

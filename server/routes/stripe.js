@@ -120,6 +120,12 @@ router.post('/checkout', requireAdmin, requirePerm('manage_billing'), async (req
     const c = company.rows[0];
     if (!c) return res.status(404).json({ error: 'Company not found' });
 
+    // Takeoff is a layer on top of Plan Room — it can't be bought without it.
+    // Allowed only if Plan Room is already owned or is in this same checkout.
+    if (add_takeoff && !add_planroom && !c.addon_planroom) {
+      return res.status(400).json({ error: 'Takeoff requires Plan Room — add Plan Room too.', code: 'planroom_required' });
+    }
+
     let customerId = c.stripe_customer_id;
     if (!customerId) {
       const customer = await stripe.customers.create({
@@ -201,9 +207,15 @@ router.post('/addon', requireAdmin, requirePerm('manage_billing'), async (req, r
   const cfg = ADDON_PRICES[req.body && req.body.addon];
   if (!cfg) return res.status(400).json({ error: 'Unknown add-on' });
   try {
-    const r = await pool.query('SELECT stripe_subscription_id FROM companies WHERE id = $1', [req.user.company_id]);
+    const r = await pool.query('SELECT stripe_subscription_id, addon_planroom FROM companies WHERE id = $1', [req.user.company_id]);
     const subId = r.rows[0] && r.rows[0].stripe_subscription_id;
     if (!subId) return res.status(400).json({ error: 'No active subscription — subscribe to a plan first.', code: 'no_subscription' });
+
+    // Takeoff is a layer on top of Plan Room — it can't be added on its own.
+    // One-click adds a single item, so Plan Room must already be owned.
+    if (req.body.addon === 'takeoff' && !r.rows[0].addon_planroom) {
+      return res.status(400).json({ error: 'Takeoff requires Plan Room — add Plan Room first.', code: 'planroom_required' });
+    }
 
     const stripe = getStripe();
     const sub = await stripe.subscriptions.retrieve(subId);
@@ -297,6 +309,12 @@ router.post('/checkout-addon', requireAdmin, requirePerm('manage_billing'), asyn
     );
     const c = company.rows[0];
     if (!c) return res.status(404).json({ error: 'Company not found' });
+
+    // Takeoff is a layer on top of Plan Room — reject it unless Plan Room is
+    // already owned or is being bought in this same checkout.
+    if (addons.includes('takeoff') && !addons.includes('planroom') && !c.addon_planroom) {
+      return res.status(400).json({ error: 'Takeoff requires Plan Room — add Plan Room too.', code: 'planroom_required' });
+    }
 
     // If they already have a LIVE subscription, adding an add-on there is the
     // right path (one prorated line item, one invoice) — a second subscription
