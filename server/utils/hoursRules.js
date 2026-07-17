@@ -52,6 +52,39 @@ const DEFAULT_POLICY = {
 const ROUNDING_DIRECTIONS = ['against_worker', 'toward_worker', 'nearest', 'off'];
 const ROUNDING_REFERENCES = ['schedule', 'clock'];
 
+// ── The rule list (Milestone 4) ──────────────────────────────────────────────
+//
+// `rounding` above is a fixed-slot policy: one clock-in edge, one clock-out
+// edge, a closed vocabulary of interval/grace/direction. It covers a large
+// class of real rules and cannot express the ones it wasn't designed for. The
+// rule list is the open-ended half — a company writes as many small rules as it
+// needs and they compose.
+//
+// COMPOSITION IS THE WHOLE DESIGN. A rung-by-rung ladder ("stay to 5:25 → +30
+// min; to 5:50 → another 30; to 6:25 → another 30") is not a rule type. It's
+// three `add_time` rules that all fire, and their sum is the ladder. That's why
+// there's no repeating/every-N-minutes form: it looks more powerful and is
+// actually less, because real negotiated ladders don't have even spacing.
+// The same trick covers breaks — one `auto_break` per expected break.
+//
+// STAGE ORDER IS FIXED, NOT AUTHORABLE. Rules are a set; the pipeline is a
+// sequence. Two rules in a different order produce a different invoice, so the
+// order is a property of the engine and an admin can't get it wrong:
+//
+//   1. clip      — clip_start / clip_end bound the paid punch
+//   2. adjust    — add_time / remove_time shift the paid end
+//   3. break     — auto_break sets the deducted break
+//   4. classify  — overtime, downstream in computeOT
+//
+// Adjust before classify is a decision, not an accident: it means added time
+// COUNTS toward the overtime threshold. A 9.5h day plus a 0.5h late-stay credit
+// is 10h, which under an 8h threshold is 2h of overtime — not 1.5h of overtime
+// and 0.5h of regular.
+const RULE_TYPES = ['clip_start', 'clip_end', 'add_time', 'remove_time', 'auto_break'];
+const RULE_WHEN_KINDS = ['every_day', 'weekdays', 'month_days', 'month_weekdays'];
+const RULE_EDGES = ['before', 'after'];
+const BREAK_TRIGGERS = ['always', 'after_hours'];
+
 // ── Time helpers (minutes-since-midnight ↔ "HH:MM[:SS]") ─────────────────────
 
 /** "HH:MM[:SS]" → integer minutes since midnight (seconds truncated). null-safe. */
@@ -82,7 +115,128 @@ function weekdayOf(workDate) {
   return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay();
 }
 
+/** Day of month (1-31) for "YYYY-MM-DD". null when unparseable. */
+function dayOfMonth(workDate) {
+  const m = String(workDate).substring(0, 10).match(/^\d{4}-\d{2}-(\d{2})$/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+/**
+ * Which occurrence of its own weekday this date is within its month — the "2"
+ * in "second Tuesday". Days 1-7 are the 1st occurrence, 8-14 the 2nd, and so on.
+ */
+function nthWeekdayOfMonth(workDate) {
+  const dom = dayOfMonth(workDate);
+  return dom == null ? null : Math.floor((dom - 1) / 7) + 1;
+}
+
+/**
+ * Is this date the LAST occurrence of its weekday in the month? "Last Friday"
+ * is a real payroll rule and can't be written as a fixed nth — a month has four
+ * or five Fridays depending on the month.
+ */
+function isLastWeekdayOfMonth(workDate) {
+  const s = String(workDate).substring(0, 10);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return false;
+  const daysInMonth = new Date(Date.UTC(+m[1], +m[2], 0)).getUTCDate();
+  return +m[3] + 7 > daysInMonth;
+}
+
 // ── Policy parsing ───────────────────────────────────────────────────────────
+
+// ── Rule parsing ─────────────────────────────────────────────────────────────
+
+const intIn = (v, lo, hi) => {
+  const n = Number(v);
+  return Number.isInteger(n) && n >= lo && n <= hi ? n : null;
+};
+
+/** Normalize a rule's day selector, or null if it can never match anything. */
+function parseWhen(raw) {
+  const w = (raw && typeof raw === 'object') ? raw : {};
+  if (!RULE_WHEN_KINDS.includes(w.kind)) return null;
+  if (w.kind === 'every_day') return { kind: 'every_day' };
+
+  if (w.kind === 'weekdays') {
+    const days = (Array.isArray(w.days) ? w.days : []).map(d => intIn(d, 0, 6)).filter(d => d != null);
+    return days.length ? { kind: 'weekdays', days: [...new Set(days)] } : null;
+  }
+  if (w.kind === 'month_days') {
+    const days = (Array.isArray(w.days) ? w.days : []).map(d => intIn(d, 1, 31)).filter(d => d != null);
+    return days.length ? { kind: 'month_days', days: [...new Set(days)] } : null;
+  }
+  // month_weekdays: [{week, weekday}] — week 1-5, or -1 meaning "last".
+  const patterns = (Array.isArray(w.patterns) ? w.patterns : [])
+    .map(p => ({ week: intIn(p?.week, -1, 5), weekday: intIn(p?.weekday, 0, 6) }))
+    .filter(p => p.week != null && p.weekday != null && p.week !== 0);
+  return patterns.length ? { kind: 'month_weekdays', patterns } : null;
+}
+
+/** Normalize one rule, or null to drop it. */
+function parseRule(raw, index) {
+  if (!raw || typeof raw !== 'object') return null;
+  if (!RULE_TYPES.includes(raw.type)) return null;
+  const when = parseWhen(raw.when);
+  if (!when) return null;
+
+  const base = { id: String(raw.id || `r${index}`), type: raw.type, when };
+  const at = toMin(raw.at);
+
+  switch (raw.type) {
+    case 'clip_start':
+    case 'clip_end':
+      // No time = nothing to clip to.
+      return at == null ? null : { ...base, at };
+
+    case 'add_time':
+    case 'remove_time': {
+      const minutes = Number(raw.minutes);
+      if (at == null || !Number.isFinite(minutes) || minutes <= 0) return null;
+      const edge = RULE_EDGES.includes(raw.edge) ? raw.edge : 'after';
+      return { ...base, edge, at, minutes };
+    }
+
+    case 'auto_break': {
+      const minutes = Number(raw.minutes);
+      if (!Number.isFinite(minutes) || minutes <= 0) return null;
+      const t = (raw.trigger && typeof raw.trigger === 'object') ? raw.trigger : {};
+      const kind = BREAK_TRIGGERS.includes(t.kind) ? t.kind : 'always';
+      const hours = Number(t.hours);
+      // after_hours without a usable threshold would silently behave as
+      // 'always' and deduct from every short day. Drop it instead.
+      if (kind === 'after_hours' && !(Number.isFinite(hours) && hours > 0)) return null;
+      return { ...base, minutes, trigger: kind === 'after_hours' ? { kind, hours } : { kind: 'always' } };
+    }
+
+    default:
+      return null;
+  }
+}
+
+function parseRules(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map(parseRule).filter(Boolean);
+}
+
+/** Does this rule apply to this calendar date? */
+function ruleMatchesDate(rule, workDate) {
+  const w = rule.when;
+  if (w.kind === 'every_day') return true;
+  if (w.kind === 'weekdays') {
+    const wd = weekdayOf(workDate);
+    return wd != null && w.days.includes(wd);
+  }
+  if (w.kind === 'month_days') {
+    const dom = dayOfMonth(workDate);
+    return dom != null && w.days.includes(dom);
+  }
+  const wd = weekdayOf(workDate);
+  if (wd == null) return false;
+  const nth = nthWeekdayOfMonth(workDate);
+  return w.patterns.some(p => p.weekday === wd
+    && (p.week === -1 ? isLastWeekdayOfMonth(workDate) : p.week === nth));
+}
 
 /**
  * Parse the stored `hours_rules` setting (a JSON string) into a normalized
@@ -115,6 +269,11 @@ function parsePolicy(raw) {
       clockIn:  edge(rounding.clockIn,  DEFAULT_POLICY.rounding.clockIn),
       clockOut: edge(rounding.clockOut, DEFAULT_POLICY.rounding.clockOut),
     },
+    // The rule list. Anything that doesn't parse cleanly is DROPPED, not
+    // repaired — same posture as the rest of parsePolicy, but the choice is
+    // sharper here: a half-understood rule that still fires would quietly bill
+    // the wrong number, and a wrong invoice is worse than a missing rule.
+    rules: parseRules(obj.rules),
     // Tiered overtime + 7th-consecutive-day config (Milestone 2). Passed
     // through with light normalization; the pay calculator (resolveBands)
     // validates individual bands.
@@ -298,6 +457,77 @@ function applyRounding(rawStart, rawEnd, expected, rounding) {
   return { start: toHHMMSS(ps), end: toHHMMSS(pe) };
 }
 
+// ── Rule pipeline ────────────────────────────────────────────────────────────
+
+/**
+ * Run the rule list against one already-rounded punch.
+ *
+ * @param startMin,endMin  paid punch after rounding, minutes since midnight
+ * @param loggedBreakMin   what the worker typed at clock-out
+ * @param rules            parsed, already filtered to this date
+ * @returns {{startMin, endMin, breakMin}}
+ */
+function applyRules(startMin, endMin, loggedBreakMin, rules) {
+  let s = startMin;
+  let e = endMin;
+
+  // ── 1. Clip ── bound the paid punch. clip_start is "ignore anything before
+  // this" (a worker may clock in at 6:30, but the day is not paid before 7:00);
+  // it deliberately does NOT dock a late arrival — clocking in at 7:20 still
+  // pays from 7:20, because max() only ever moves the start forward.
+  for (const r of rules) {
+    if (r.type === 'clip_start') s = Math.max(s, r.at);
+    else if (r.type === 'clip_end') e = Math.min(e, r.at);
+  }
+  if (e < s) e = s;
+
+  // ── 2. Adjust ── every add_time/remove_time rule is evaluated against the
+  // SAME snapshot (sc/ec) and the deltas are summed, then applied once.
+  //
+  // This is the trap the whole ladder depends on. Applying each rule in turn
+  // would let the first credit push the clock-out past the next rule's
+  // threshold: a 5:30 punch gets +30 → 6:00, which now satisfies "after 5:50"
+  // → +30 → 6:30, which satisfies "after 6:25"… A rung ladder would run away
+  // to the end of the day off one late punch.
+  const sc = s;
+  const ec = e;
+  let delta = 0;
+  for (const r of rules) {
+    if (r.type !== 'add_time' && r.type !== 'remove_time') continue;
+    // 'after' tests the clock-out against the threshold; 'before' tests the
+    // clock-in. Both are inclusive — the customer's rule reads "clocked in TO
+    // or past 5:25", so 5:25:00 exactly must earn the credit.
+    const hit = r.edge === 'after' ? ec >= r.at : sc <= r.at;
+    if (!hit) continue;
+    delta += r.type === 'add_time' ? r.minutes : -r.minutes;
+  }
+  e += delta;
+  if (e < s) e = s;
+
+  // ── 3. Break ── one auto_break rule per EXPECTED break; a rule fires only if
+  // its trigger is satisfied by the hours actually on the clock.
+  //
+  // Compare TOTALS, take the larger, and never sum the two. The worker's
+  // break_minutes is already deducted everywhere in the app, so adding an
+  // automatic hour on top of it would deduct the lunch twice.
+  //
+  // Totals rather than per-break matching is also the only thing the data
+  // supports: break_minutes is a single integer, so "they took three breaks"
+  // is not knowable. It gives the right answer anyway — two of three expected
+  // 30-min breaks logged is 60 against 90 expected, so max() supplies the
+  // missing 30 without needing to count anything.
+  const workedHours = (e - s) / 60;
+  let expectedBreak = 0;
+  for (const r of rules) {
+    if (r.type !== 'auto_break') continue;
+    if (r.trigger.kind === 'after_hours' && workedHours < r.trigger.hours) continue;
+    expectedBreak += r.minutes;
+  }
+  const breakMin = Math.max(expectedBreak, Number(loggedBreakMin) || 0);
+
+  return { startMin: s, endMin: e, breakMin };
+}
+
 // ── Batch transform (the single insertion point for pay-calc sites) ──────────
 
 /**
@@ -321,7 +551,9 @@ function roundEntriesForPay(entries, policy, ctx = {}) {
   if (!policy || !policy.enabled) return entries;
   const inOff = policy.rounding.clockIn.direction === 'off';
   const outOff = policy.rounding.clockOut.direction === 'off';
-  if (inOff && outOff) return entries;
+  const rules = policy.rules || [];
+  // Nothing configured on either mechanism → same array reference, as before.
+  if (inOff && outOff && rules.length === 0) return entries;
 
   const { shiftMap, workerStandardById } = ctx;
   // Whether to surface the original punch alongside the paid time. When a company
@@ -334,13 +566,29 @@ function roundEntriesForPay(entries, policy, ctx = {}) {
     const workerStandard = workerStandardById ? workerStandardById[e.user_id] : null;
     const expected = resolveExpected(policy, e.work_date, { shift, workerStandard });
 
+    // Rounding first: the rule list operates on the paid punch, not the raw one.
     const { start, end } = applyRounding(e.start_time, e.end_time, expected, policy.rounding);
-    if (start === e.start_time && end === e.end_time) return e;
+
+    const dayRules = rules.filter(r => ruleMatchesDate(r, e.work_date));
+    let finalStart = start;
+    let finalEnd = end;
+    let breakMin = e.break_minutes;
+
+    if (dayRules.length) {
+      const out = applyRules(toMin(start), toMin(end), e.break_minutes, dayRules);
+      finalStart = toHHMMSS(out.startMin);
+      finalEnd = toHHMMSS(out.endMin);
+      breakMin = out.breakMin;
+    }
+
+    const breakChanged = breakMin !== e.break_minutes;
+    if (finalStart === e.start_time && finalEnd === e.end_time && !breakChanged) return e;
 
     return {
       ...e,
-      start_time: start,
-      end_time: end,
+      start_time: finalStart,
+      end_time: finalEnd,
+      ...(breakChanged ? { break_minutes: breakMin, raw_break_minutes: e.break_minutes } : {}),
       ...(showRaw ? { raw_start_time: e.start_time, raw_end_time: e.end_time } : {}),
       rounding_adjusted: true,
     };
@@ -363,13 +611,23 @@ module.exports = {
   otConfigFromSettings,
   ROUNDING_DIRECTIONS,
   ROUNDING_REFERENCES,
+  RULE_TYPES,
+  RULE_WHEN_KINDS,
+  RULE_EDGES,
+  BREAK_TRIGGERS,
   parsePolicy,
+  parseRules,
   resolveExpected,
   roundEdge,
   applyRounding,
+  applyRules,
+  ruleMatchesDate,
   roundEntriesForPay,
   // exported for tests
   toMin,
   toHHMMSS,
   weekdayOf,
+  dayOfMonth,
+  nthWeekdayOfMonth,
+  isLastWeekdayOfMonth,
 };

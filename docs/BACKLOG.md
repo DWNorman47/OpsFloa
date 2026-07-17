@@ -21,6 +21,17 @@ that holds the exhaustive detail.
 
 ## 🔧 Bugs — set aside for later
 
+- **The hours-rules engine reaches 4 of the 10 paths that turn hours into
+  money** (2026-07-16). Verified while building the rule builder; table of all
+  ten in `docs/plans/hours-rules-builder.md`. `qbo.js:727` and
+  `jobs/scheduledReports.js:125` don't import `hoursRules` at all;
+  `admin.js:1709` hardcodes `'daily'` and ignores the worker's own overtime
+  rule; `projectSpend.js`/`projectReports.js` are raw SQL that bypasses the
+  engine; `WorkerSummary.jsx` and `Tests.jsx` are hand-copied client mirrors.
+  **Turn a policy on today and the invoice, the worker's screen and what lands
+  in QuickBooks disagree.** Harmless while no company has a policy enabled —
+  which is why it hasn't bitten — and a blocker the moment one does. This is
+  M4b in the plan.
 - **Stale CSP hash blocks the inline auth-guard script on stage**
   (`client/public/tool-apps/sitework/index.html:9`). The Content-Security-Policy
   is set by the frontend host (Vercel), not the Express server, and it isn't
@@ -141,6 +152,17 @@ that holds the exhaustive detail.
   columns**, so there is currently nothing to assemble. (2026-07-16)
 
 ## ✨ Ideas — improvements
+
+- **Hours rules: Nth Days / Nth Months selectors** (cut 2026-07-16, David's
+  call, noted at his request). "Every 3rd day from date X", "every 2nd month".
+  Cut because an anchored recurrence needs a start date, a period, and a policy
+  for month/year boundaries — more work than every other selector combined —
+  and no construction rule has asked for it. `month_weekdays` with `week: -1`
+  ("last Friday") already covers the case that usually motivates it. Also
+  parked: the **Monthly scope** (the sketch has monthly selectors but no monthly
+  rule types, so it can't do anything yet) and a **repeating `add_time`**
+  (`every N min from T` — can't express the customer's own ladder, whose gaps
+  alternate 25 and 35 minutes). See `docs/plans/hours-rules-builder.md`.
 
 
 - ~~**Takeoff ↔ job hard link (cross-device haul reconciliation).**~~ **DROPPED

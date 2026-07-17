@@ -216,6 +216,44 @@ that had the previous default.
   `nightDifferential {fromHour,toHour,pct}`). All consumed by
   `computeOT` / `otConfigFromSettings`; each defaults to a no-op when absent.
 
+  **`rules[]` — the open-ended half (M4).** Everything above is fixed-slot: one
+  clock-in edge, one clock-out edge, a closed vocabulary. `rules` is a list a
+  company writes freely, and the rules compose — a stay-late ladder is four
+  `add_time` rules that all fire, not a feature. Each entry is
+  `{id, type, when, ...params}`. Fixed-value sub-fields, all **enforced
+  app-side** by `parseRules` in `server/utils/hoursRules.js`:
+
+  | Field | Allowed values |
+  |---|---|
+  | `rules[].type` | `clip_start` \| `clip_end` \| `add_time` \| `remove_time` \| `auto_break` |
+  | `rules[].when.kind` | `every_day` \| `weekdays` \| `month_days` \| `month_weekdays` |
+  | `rules[].edge` (add/remove) | `before` \| `after` |
+  | `rules[].trigger.kind` (auto_break) | `always` \| `after_hours` |
+
+  ⚠️ **`parseRules` DROPS a malformed rule rather than repairing it** — the
+  opposite of the fall-back-to-default posture used everywhere else in
+  `parsePolicy`, and deliberately so. A default edge that isn't what you meant
+  rounds a punch slightly wrong; a half-understood *rule* that still fires bills
+  a wrong number and nobody notices. A dropped rule is visibly absent. Constants
+  are exported as `RULE_TYPES` / `RULE_WHEN_KINDS` / `RULE_EDGES` /
+  `BREAK_TRIGGERS` — **a new value must be added there, not just handled**, or
+  `parseRules` silently discards every rule using it.
+
+  Numeric sub-fields (range-checked, not enum): `when.days` (0-6 for `weekdays`,
+  1-31 for `month_days`), `when.patterns[].week` (1-5, or **-1 = "the last one"**
+  — "last Friday" isn't a fixed nth, since a month has four or five),
+  `when.patterns[].weekday` (0-6), `at` (HH:MM), `minutes` (>0),
+  `trigger.hours` (>0).
+
+  **Stage order is a property of the engine, not authorable**: clip → adjust →
+  break → classify. Rules are a set; the pipeline is a sequence, and two orders
+  give two different invoices, so an admin can't get it wrong. Adjust before
+  classify means **added time counts toward the overtime threshold** (a 9.5h day
+  + 0.5h credit = 2h OT under an 8h threshold, not 1.5h OT + 0.5h regular).
+  `auto_break` sets `time_entries.break_minutes` to
+  `max(total expected, total logged)` — **never the sum**, because the logged
+  value is already deducted everywhere downstream.
+
 ### Module visibility flags (`module_*`, boolean, in `FEATURE_KEYS`)
 
 Admin-controlled module toggles: `module_timeclock`, `module_team` (Directory),
