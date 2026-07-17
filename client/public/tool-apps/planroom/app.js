@@ -614,6 +614,27 @@ function synthScaleBar(page) {
   const lenPx = feet / fpp;
   state.scaleBars[page] = { a: { x: cx - lenPx / 2, y: cy }, b: { x: cx + lenPx / 2, y: cy }, feet };
 }
+// ── Edge/corner jump pads (ported from sitework) ──────────────────────────────
+// Shown only when zoomed in past ~70% of fit, where drag-navigation gets tedious.
+// The shared viewport already provides panByFraction + zoomedPastFit; this just
+// toggles the pads' visibility each paint (the clicks are wired at the bottom).
+function updateNavPads() {
+  const nav = $('navPads');
+  if (!nav) return;
+  const base = state.doc ? pageBase.get(state.page) : null;
+  const show = !!(base && base.width > 0 && vp.zoomedPastFit(base.width, base.height));
+  nav.classList.toggle('hidden', !show);
+  els.cv.parentElement.classList.toggle('nav-active', show);
+}
+
+// Show a calibration distance as entered — 207.9 stays 207.9, 208 stays 208 —
+// instead of rounding a fractional value up to a whole number.
+function scaleFeetStr(v) {
+  const r = Math.round(v * 100) / 100;               // trim float noise, cap at 2 dp
+  const d = Number.isInteger(r) ? 0 : (Math.round(r * 10) / 10 === r ? 1 : 2);
+  return fmt(r, d);
+}
+
 function drawScaleBar(ctx) {
   if (tool !== 'calibrate') return;
   const bar = state.scaleBars[state.page];
@@ -631,7 +652,7 @@ function drawScaleBar(ctx) {
   const fs = Math.max(11, Math.min(28, (base ? base.width : 2800) / 120));
   ctx.font = `700 ${fs}px "Segoe UI", system-ui, sans-serif`;
   ctx.textBaseline = 'bottom'; ctx.textAlign = 'center';
-  const txt = `${fmt(feet, feet < 10 ? 1 : 0)} ft`, mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2 - 7 / z;
+  const txt = `${scaleFeetStr(feet)} ft`, mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2 - 7 / z;
   ctx.lineWidth = fs / 4.5; ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.strokeText(txt, mx, my);
   ctx.fillStyle = '#e0a03f'; ctx.fillText(txt, mx, my);
   ctx.restore();
@@ -1412,6 +1433,7 @@ function paint(ctx) {
   const sel = selMarkup();
   if (sel && sel.page === state.page) drawSelection(ctx, sel);
   ctx.restore();
+  updateNavPads(); // DOM overlay, not canvas — safe after restore; runs each paint
 }
 
 /* ============================== Pages & thumbnails ============================== */
@@ -1778,7 +1800,7 @@ function setTool(t) {
     if (pageFtPerPx() && !state.scaleBars[state.page]) synthScaleBar(state.page); // legacy scale → editable bar
     const bar = state.scaleBars[state.page];
     setMsg(bar
-      ? `Sheet ${state.page} scale: ${fmt(bar.feet, bar.feet < 10 ? 1 : 0)} ft on the bar. Drag an end to adjust · drag the middle to move it · Alt-click to clear · or click two points to redo.`
+      ? `Sheet ${state.page} scale: ${scaleFeetStr(bar.feet)} ft on the bar. Drag an end to adjust · drag the middle to move it · Alt-click to clear · or click two points to redo.`
       : 'Click two points a known distance apart (a dimension line, a scale bar), then enter the distance.');
   } else if (NEEDS_SCALE.includes(t) && !pageFtPerPx()) {
     setMsg('This sheet has no scale yet — calibrate first (📏).');
@@ -4020,6 +4042,10 @@ async function showProjects() {
 }
 
 $('btnProjects').addEventListener('click', showProjects);
+$('btnJumpStart').addEventListener('click', runJumpStart);
+document.querySelectorAll('#navPads .nav-pad').forEach(b => b.addEventListener('click', () => {
+  vp.panByFraction(parseInt(b.dataset.dx, 10) / 3, parseInt(b.dataset.dy, 10) / 3);
+}));
 $('projClose').addEventListener('click', () => els.projects.classList.add('hidden'));
 els.projects.addEventListener('click', e => { if (e.target === els.projects) els.projects.classList.add('hidden'); });
 $('btnProjNew').addEventListener('click', async () => {
@@ -4290,6 +4316,110 @@ async function apiEstimate(path, opts = {}) {
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + toolToken(), ...(rest.headers || {}) },
     });
   } finally { done(); }
+}
+
+// ── AI Jump Start ─────────────────────────────────────────────────────────────
+// Render the current page, send it to the vision model, and drop its structured
+// draft (counts, rough regions) as markups the estimator reviews. Everything
+// lands flagged ai:true in a distinct colour — a jump start, never authoritative.
+
+// Structured model result → Plan Room markups. Coordinates arrive NORMALIZED
+// [0,1] of the page image; dims is the page's base-px size, so normalized × dims
+// = base px (the markup coordinate space). Pure, so it's unit-tested by lifting.
+function jumpstartToMarkups(result, page, dims) {
+  const r = result || {};
+  const w = dims && dims.w, h = dims && dims.h;
+  if (!(w > 0 && h > 0)) return [];
+  const rid = () => 'ai' + Math.random().toString(36).slice(2, 10);
+  const now = Date.now();
+  const den = p => ({ x: p.x * w, y: p.y * h });
+  const out = [];
+
+  for (const c of Array.isArray(r.counts) ? r.counts : []) {
+    const pts = (Array.isArray(c.points) ? c.points : []).map(den);
+    if (!pts.length) continue;
+    out.push({
+      id: rid(), page, kind: 'qcount', color: '#9333ea', width: 2, pts,
+      cfg: { label: c.label || 'Item', unit: c.unit || 'EA' },
+      ai: true, aiConfidence: c.confidence || 'low', created: now,
+    });
+  }
+  for (const rg of Array.isArray(r.regions) ? r.regions : []) {
+    const pts = (Array.isArray(rg.polygon) ? rg.polygon : []).map(den);
+    if (pts.length < 3) continue;
+    out.push({
+      id: rid(), page, kind: 'qarea', pts,
+      cfg: { label: rg.label || 'Area' },
+      ai: true, aiConfidence: rg.confidence || 'low', created: now,
+    });
+  }
+  return out;
+}
+
+// Vision is slow (30–120s) so this uses a plain fetch, no short timeout wrapper.
+async function apiJump(path, opts = {}) {
+  return fetch(toolApiBase() + '/jumpstart' + path, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + toolToken(), ...(opts.headers || {}) },
+  });
+}
+
+async function runJumpStart() {
+  if (!state.doc || !state.page) { setMsg('Open a plan first.'); return; }
+  const btn = $('btnJumpStart');
+  // A/B knob: set localStorage.jumpstart_provider = 'gemini' to compare providers
+  // on the same sheet. Absent → the server default (Anthropic/Opus).
+  const provider = localStorage.getItem('jumpstart_provider') || undefined;
+  try {
+    if (btn) btn.disabled = true;
+    setMsg('AI Jump Start — reading this page…');
+    const base = pageBase.get(state.page) || await state.doc.baseSize(state.page);
+    // Cap the long edge ~1600px: detail enough for the model, not wasteful — the
+    // provider downscales anyway, and bigger just burns tokens.
+    const scale = Math.min(2, 1600 / Math.max(base.width, base.height));
+    const canvas = await state.doc.renderPage(state.page, scale);
+    const dataUrl = canvas.toDataURL('image/png');
+    const imageBase64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+
+    const res = await apiJump('/page', { method: 'POST', body: JSON.stringify({ imageBase64, mediaType: 'image/png', provider }) });
+    if (res.status === 429) { setMsg('AI limit reached for this month.'); return; }
+    if (res.status === 503) { setMsg('AI Jump Start isn’t configured yet (missing API key).'); return; }
+    if (res.status === 413) { setMsg('This page is too large to send. Try a smaller sheet.'); return; }
+    if (!res.ok) { setMsg('AI Jump Start failed — please try again.'); return; }
+    const { result } = await res.json();
+
+    const markups = jumpstartToMarkups(result, state.page, { w: base.width, h: base.height });
+    if (markups.length) {
+      const prev = snapshot();
+      state.markups.push(...markups);
+      pushUndo(prev);
+      markupsChanged();
+    }
+    jumpStartSummary(result, markups.length);
+  } catch (e) {
+    setMsg('AI Jump Start error: ' + (e && e.message ? e.message : e));
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function jumpStartSummary(result, placed) {
+  const r = result || {};
+  const counts = (r.counts || []).map(c => `${c.points.length} ${c.label}`).join(', ');
+  const scaleLine = r.scale && r.scale.found
+    ? `Scale read: ${r.scale.text || (r.scale.feetPerInch + ' ft/in')} — this is a suggestion; confirm it by drawing your scale bar.`
+    : 'No scale found on this sheet — set it manually.';
+  const lines = [
+    placed
+      ? `Drafted ${placed} AI markup${placed === 1 ? '' : 's'} (shown in purple). These are a first draft — review, edit, and delete what's wrong before trusting the quantities.`
+      : 'Nothing confidently markable on this page.',
+    counts && `Counts: ${counts}.`,
+    (r.regions || []).length ? `${(r.regions || []).length} rough region(s) — reshape the vertices.` : '',
+    scaleLine,
+    r.notes ? `AI notes: ${r.notes}` : '',
+  ].filter(Boolean);
+  setMsg(lines[0]);
+  alert('AI Jump Start\n\n' + lines.join('\n\n'));
 }
 
 // Show status inside the Company modal (visible over the dialog) and the HUD.
