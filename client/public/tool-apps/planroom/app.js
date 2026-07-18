@@ -4730,13 +4730,18 @@ async function refreshCompanyList() {
       const mine = session && String(session.id) === String(s.id);
       const row = document.createElement('div');
       row.className = 'proj-row';
+      // host/admin can close any lingering session straight from the list
+      const endBtn = s.can_end ? '<button class="btn tiny" data-act="end-live" title="Close this session for everyone">End</button>' : '';
       row.innerHTML =
         `<div class="grow"><div class="name"></div>` +
         `<div class="meta"><span class="pill" style="background:var(--good);color:#062915">LIVE</span> ${s.host_name ? 'by ' + esc(s.host_name) + ' · ' : ''}${s.participants || 0} here</div></div>` +
+        endBtn +
         (mine ? '<span class="pill">in this</span>' : '<button class="btn tiny primary" data-act="join">Join live</button>');
       row.querySelector('.name').textContent = s.name || 'Live session';
       const jb = row.querySelector('[data-act="join"]');
       if (jb) jb.addEventListener('click', () => joinSession(s.id));
+      const eb = row.querySelector('[data-act="end-live"]');
+      if (eb) eb.addEventListener('click', () => endSessionFromList(s.id));
       list.appendChild(row);
     }
     if (!rows.length && !live.length) {
@@ -7088,8 +7093,12 @@ async function joinSession(id) {
   if (session) endSessionLocal(false);
   setMsg('Joining the live session…');
   let t;
-  try { const res = await apiLive('/' + id); if (!res.ok) throw new Error('HTTP ' + res.status); t = await res.json(); }
-  catch (e) { setMsg('Could not join: ' + e.message); return; }
+  try {
+    const res = await apiLive('/' + id);
+    if (res.status === 404) { setMsg('That session has already ended.'); if (!$('company').classList.contains('hidden')) refreshCompanyList(); return; }
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    t = await res.json();
+  } catch (e) { setMsg('Could not join: ' + e.message); return; }
   // land the shared doc in a FRESH local project — never overwrite the open one
   await saveProjectNow();
   state.projectId = randId();
@@ -7132,8 +7141,31 @@ function endSessionLocal(remote) {
 async function endOrLeave(endForAll) {
   if (!session) return;
   const id = session.id;
-  if (endForAll && session.isHost) { try { await apiLive('/' + id + '/end', { method: 'POST' }); } catch (_) {} }
+  const wasHost = session.isHost;
+  let closed = true;
+  if (endForAll && wasHost) {
+    // Verify the server actually closed it — a swallowed failure here is how a
+    // session lingers as joinable after "End for all."
+    try { const res = await apiLive('/' + id + '/end', { method: 'POST' }); closed = res.ok; }
+    catch (_) { closed = false; }
+  }
   endSessionLocal(false);
+  if (endForAll && wasHost && !closed) setMsg('You left, but the session may still be open on the server — reopen ☁ Company and hit End on it if it still shows LIVE.');
+  if (!$('company').classList.contains('hidden')) refreshCompanyList();
+}
+
+// End a live session from the ☁ Company list (host/admin), incl. a lingering one
+// whose host closed their tab. Tears down our own session too if we're in it.
+async function endSessionFromList(id) {
+  if (!window.confirm('Close this live session for everyone? Each person keeps their own copy.')) return;
+  companyMsg('Closing the session…');
+  try {
+    const res = await apiLive('/' + id + '/end', { method: 'POST' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    if (session && String(session.id) === String(id)) endSessionLocal(false);
+    companyMsg('Session closed.');
+  } catch (e) { companyMsg('Could not close it (are you the host or an admin?): ' + e.message, true); }
+  refreshCompanyList();
 }
 
 $('btnLive').addEventListener('click', async () => {

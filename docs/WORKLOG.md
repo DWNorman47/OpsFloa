@@ -880,6 +880,33 @@ built: cursor/presence beyond the name roster.
 
 ---
 
+## 2026-07-17 — Live Co-Edit: "End for all" actually closes it now
+
+**Shipped** (`liveSessions.js` server + `app.js` client, cache-bust → **v52**).
+
+- **Root cause of "End for all doesn't close it":** the end handler's host check
+  was `room.meta.hostUserId !== req.user.id` with **no `String()` cast** (the
+  company check right above it *does* cast). For a room rehydrated from the DB
+  after any Render restart/deploy, `hostUserId` is the DB type and `req.user.id`
+  is the JWT type — bare `!==` 403s the **real host**, and the client swallowed
+  the failure, so the session stayed `active` and joinable. Fixed to
+  `String(...) !== String(...)`.
+- **Client no longer swallows the failure:** `endOrLeave` checks `res.ok`; if the
+  close didn't confirm, it says so ("may still be open — reopen ☁ Company and hit
+  End"). Refreshes the company list after ending.
+- **End from the list:** `GET /live` now returns `can_end` (host or admin), and
+  live rows in ☁ Company show an **End** button — so a lingering/abandoned session
+  (host closed their tab; the sweep only reaps after 2 h idle) can be closed
+  straight from the list. `endSessionFromList` tears down the local session too if
+  you're in it.
+- **Joining an ended session** (`404`) now says "That session has already ended"
+  and refreshes the list instead of a raw HTTP error.
+
+Note: abandoned-session sweep is still 2 h (`liveSessionSweep`, `*/15`); the End
+button is the manual remedy rather than making the sweep more aggressive.
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*
