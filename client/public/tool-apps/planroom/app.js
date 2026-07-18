@@ -284,7 +284,7 @@ const INSUL_PRICE = { r11: 0.55, r13: 0.60, r15: 0.70, r19: 0.80, r21: 0.90, sou
 let curDwOpening = 'door';
 let curDwTrim = 'base';
 // layer visibility (session view state) — declutter a busy sheet by category
-const layers = { annot: true, measure: true, takeoff: true, labels: true };
+const layers = { annot: true, measure: true, takeoff: true, labels: true, fills: true };
 const ANNOT_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout'];
 const MEASURE_KINDS = ['mlength', 'marea', 'mcount'];
 const markupLayer = kind => ANNOT_KINDS.includes(kind) ? 'annot' : MEASURE_KINDS.includes(kind) ? 'measure' : 'takeoff';
@@ -298,6 +298,7 @@ const layerVisible = m => layers[markupLayer(m.kind)];
 let curSurface = 'existing';                 // which surface new contours/spots/pads belong to
 let dirtSheetsCollapsed = false;             // dirt panel: Sheets section starts collapsed once the two-sheet setup is done
 let dirtContoursCollapsed = false;           // dirt panel: the traced-contours list section
+let dirtTakeoffCollapsed = false;            // dirt panel: the area/line/count takeoff-quantities list section
 let dirtEarthworkCollapsed = false;          // dirt panel: the Earthwork (boundary + settings + calculate) section
 // Earthwork mode declutters the canvas: only dirt-trade markups draw, and only
 // the focused surface's contours/pads. General redline + other-trade markups are
@@ -985,8 +986,8 @@ function drawMarkup(ctx, m) {
         ctx.beginPath();
         m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
         ctx.closePath();
-        ctx.globalAlpha = 0.12; ctx.fill();
-        ctx.globalAlpha = 1; ctx.stroke();
+        if (layers.fills) { ctx.globalAlpha = 0.12; ctx.fill(); ctx.globalAlpha = 1; }
+        ctx.stroke();
       }
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y); }
       break;
@@ -1031,8 +1032,8 @@ function drawMarkup(ctx, m) {
         ctx.beginPath();
         m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
         ctx.closePath();
-        ctx.globalAlpha = 0.14; ctx.fill();
-        ctx.globalAlpha = 1; ctx.stroke();
+        if (layers.fills) { ctx.globalAlpha = 0.14; ctx.fill(); ctx.globalAlpha = 1; }
+        ctx.stroke();
       }
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y); }
       break;
@@ -1075,7 +1076,9 @@ function drawMarkup(ctx, m) {
     }
     case 'qarea': {
       const col = areaColorHex(m.cfg || {});
-      dirtOutline(ctx, m, col, { closed: true, dash: [12, 7], fillAlpha: (m.cfg && m.cfg.deduct) ? 0.18 : 0.12 });
+      // Deduct areas draw hollow (outline only) so they read as holes cut out of
+      // the filled additive areas around them — no colored inside.
+      dirtOutline(ctx, m, col, { closed: true, dash: [12, 7], fillAlpha: (m.cfg && m.cfg.deduct) ? 0 : 0.12 });
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y, col); }
       break;
     }
@@ -1098,7 +1101,8 @@ function drawMarkup(ctx, m) {
     case 'dceiling': {
       if (m.pts.length >= 2) {
         ctx.beginPath(); m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath();
-        ctx.globalAlpha = 0.14; ctx.fill(); ctx.globalAlpha = 1; ctx.stroke();
+        if (layers.fills) { ctx.globalAlpha = 0.14; ctx.fill(); ctx.globalAlpha = 1; }
+        ctx.stroke();
       }
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y); }
       break;
@@ -1121,7 +1125,7 @@ function dirtOutline(ctx, m, col, opts) {
   ctx.beginPath();
   m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
   if (o.closed) ctx.closePath();
-  if (o.fillAlpha && o.closed && m.pts.length >= 3) { ctx.globalAlpha = o.fillAlpha; ctx.fill(); ctx.globalAlpha = 1; }
+  if (o.fillAlpha && o.closed && m.pts.length >= 3 && layers.fills) { ctx.globalAlpha = o.fillAlpha; ctx.fill(); ctx.globalAlpha = 1; }
   ctx.stroke();
   ctx.setLineDash([]);
 }
@@ -3513,6 +3517,39 @@ function renderDirtPanel() {
       }
     }
   }
+  // Takeoff quantities — area / line / count. These price into the $ Bid and are
+  // SEPARATE from the cut/fill grade surface above: they carry no existing/proposed
+  // surface, so a surfacing/paving job lives entirely here (not under Contours).
+  const qk = { qarea: [], qline: [], qcount: [] };
+  for (const m of state.markups) if (qk[m.kind]) qk[m.kind].push(m);
+  const qTotal = qk.qarea.length + qk.qline.length + qk.qcount.length;
+  rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-takeoff"><span>Takeoffs (${qTotal})</span><span class="v">${dirtTakeoffCollapsed ? '▸' : '▾'}</span></div>`);
+  if (!dirtTakeoffCollapsed) {
+    if (!qTotal) {
+      rows.push('<div class="hint" style="margin:2px 0 8px">No area / line / count takeoffs yet. Trace one with the <b>▨ Area</b> / <b>⌇ Line</b> / <b>⊙ Count</b> tools — these price into the <b>$ Bid</b> and are separate from the cut/fill contours above.</div>');
+    } else {
+      const icon = { qarea: '▨', qline: '⌇', qcount: '⊙' };
+      const groupLabel = { qarea: 'Areas', qline: 'Lines', qcount: 'Counts' };
+      for (const kind of ['qarea', 'qline', 'qcount']) {
+        const items = qk[kind];
+        if (!items.length) continue;
+        rows.push(`<div class="dirt-crow"><span class="hint"><b>${groupLabel[kind]}</b> (${items.length})</span></div>`);
+        for (const m of items) {
+          const sw = kind === 'qline' ? lineColorHex(m.cfg || {}) : kind === 'qarea' ? areaColorHex(m.cfg || {}) : (m.color || '#e0533f');
+          rows.push(`<div class="ctr-row${m.id === selectedId ? ' sel' : ''}" data-id="${m.id}">` +
+            `<span class="ctr-sw" style="background:${sw}"></span>` +
+            `<span class="ctr-lbl">${icon[kind]} ${esc(measureValue(m))}</span>` +
+            `<button class="ctr-btn" data-act="edit-takeoff" title="Edit / reconfigure">✎</button>` +
+            `<button class="ctr-btn" data-act="del-ctr" title="Delete">✕</button>` +
+            `</div>`);
+        }
+        // per-material / per-type subtotal(s) for this group
+        for (const s of takeoffSubtotals(kind, items)) {
+          rows.push(`<div class="dirt-row"><span>Σ ${esc(s.label)}</span><span class="v"><b>${esc(s.text)}</b></span></div>`);
+        }
+      }
+    }
+  }
   // Earthwork (collapsible): boundary + grid settings + calculate
   rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-earthwork"><span>Earthwork</span><span class="v">${dirtEarthworkCollapsed ? '▸' : '▾'}</span></div>`);
   if (!dirtEarthworkCollapsed) {
@@ -3574,6 +3611,8 @@ function renderDirtPanel() {
   if (doAlign) doAlign.addEventListener('click', () => setTool('align'));
   const toggleContours = body.querySelector('[data-act="toggle-contours"]');
   if (toggleContours) toggleContours.addEventListener('click', () => { dirtContoursCollapsed = !dirtContoursCollapsed; renderDirtPanel(); });
+  const toggleTakeoff = body.querySelector('[data-act="toggle-takeoff"]');
+  if (toggleTakeoff) toggleTakeoff.addEventListener('click', () => { dirtTakeoffCollapsed = !dirtTakeoffCollapsed; renderDirtPanel(); });
   const clearSurf = body.querySelector('[data-act="clear-surface"]');
   if (clearSurf) clearSurf.addEventListener('click', clearSurfaceContours);
   body.querySelectorAll('.ctr-row').forEach(row => {
@@ -3581,6 +3620,7 @@ function renderDirtPanel() {
       const btn = e.target.closest('button');
       const id = row.dataset.id;
       if (btn && btn.dataset.act === 'edit-elev') { editContourElev(id); return; }
+      if (btn && btn.dataset.act === 'edit-takeoff') { reconfigureTakeoff(state.markups.find(x => x.id === id)); return; }
       if (btn && btn.dataset.act === 'del-ctr') { deleteContourById(id); return; }
       selectContourById(id);
     });
@@ -3622,6 +3662,17 @@ function deleteContourById(id) {
   state.earthwork.result = null;
   pushUndo(prev);
   markupsChanged();
+}
+// Re-open the config form for an area/line/count takeoff (from the side-menu ✎ or
+// a double-click) and apply the new cfg as one undo step. Same forms as drawing.
+function reconfigureTakeoff(m) {
+  if (!m) return;
+  selectedId = m.id; vp.requestDraw();
+  const s = state.scales[m.page] || 0;
+  const apply = cfg => { if (!cfg) return; const prev = snapshot(); m.cfg = cfg; pushUndo(prev); markupsChanged(); };
+  if (m.kind === 'qarea') askAreaConfig(polygonAreaFt2(m.pts, s), polygonPerimeterFt(m.pts, s), m.cfg).then(cfg => { if (cfg) lastAreaCfg = cfg; apply(cfg); });
+  else if (m.kind === 'qline') askLineConfig(polyLengthFt(m.pts, s), m.cfg).then(cfg => { if (cfg) { lastLineCfg = cfg; lastLineColor = cfg.color; } apply(cfg); });
+  else if (m.kind === 'qcount') askCountConfig(m.pts.length, m.cfg).then(cfg => { if (cfg) lastCountCfg = cfg; apply(cfg); });
 }
 function clearSurfaceContours() {
   const ids = new Set(state.markups
@@ -4992,6 +5043,46 @@ function askAreaConfig(areaSf, perimFt, prefill) {
 // live area/perimeter (feet) for a stored qarea markup, from its sheet's scale
 const qareaSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0);
 const qareaPerimFt = m => polygonPerimeterFt(m.pts, state.scales[m.page] || 0);
+
+// Side-menu subtotals: roll up a takeoff group by material/type. Areas net out
+// deducts within the same material+unit; lines sum length (+trench CY); counts
+// sum items. Returns [{ label, text }] ready to render as subtotal rows.
+function takeoffSubtotals(kind, items) {
+  const map = new Map();
+  if (kind === 'qarea') {
+    for (const m of items) {
+      const cfg = m.cfg || {};
+      const r = computeAreaResult(qareaSf(m), cfg, qareaPerimFt(m));
+      const unit = r.unit || 'SF';
+      const label = cfg.label || 'Area';
+      const key = `${label} ${unit}`;
+      const g = map.get(key) || { label, unit, total: 0 };
+      g.total += (cfg.deduct ? -1 : 1) * (r.quantity || 0);
+      map.set(key, g);
+    }
+    return [...map.values()].map(g => ({ label: g.label, text: `${fmt(g.total, g.unit === 'SF' ? 0 : 1)} ${g.unit}` }));
+  }
+  if (kind === 'qline') {
+    for (const m of items) {
+      const cfg = m.cfg || {};
+      const r = computeLineResult(qlineLenFt(m), cfg);
+      const label = pipeScheduleLabel(cfg);
+      const g = map.get(label) || { label, lengthFt: 0, trenchCY: 0 };
+      g.lengthFt += r.lengthFt || 0; g.trenchCY += r.trenchCY || 0;
+      map.set(label, g);
+    }
+    return [...map.values()].map(g => ({ label: g.label, text: `${fmt(g.lengthFt)} ft${g.trenchCY ? ` · ${fmt(g.trenchCY, 1)} CY` : ''}` }));
+  }
+  for (const m of items) { // qcount
+    const cfg = m.cfg || {};
+    const label = cfg.label || 'Item', unit = cfg.unit || 'EA';
+    const key = `${label} ${unit}`;
+    const g = map.get(key) || { label, unit, count: 0 };
+    g.count += m.pts.length;
+    map.set(key, g);
+  }
+  return [...map.values()].map(g => ({ label: g.label, text: `${g.count} ${g.unit}` }));
+}
 
 // rough $/unit starting points per material component (user edits in the bid)
 const QA_COMP_LABEL = { concrete: 'concrete', forms: 'edge forms', rebar: 'rebar', mesh: 'wire mesh', asphalt: 'asphalt', tack: 'tack coat', base: 'agg. base', gravel: 'gravel / fill', strip: 'topsoil haul-off', area: 'area' };
@@ -6909,14 +7000,28 @@ function openStream() {
   es.onerror = () => setLiveState('reconnecting…'); // EventSource auto-reconnects; the server resends init
 }
 
+// Base64 of the open plan doc — the CORS-free path when a direct-to-R2 PUT is blocked.
+async function docBytesBase64() {
+  if (!state.docKey) return null;
+  const f = await store.filesGet(state.docKey);
+  if (!f || !f.bytes) return null;
+  return bytesToBase64(f.bytes);
+}
+
 async function goLive() {
   if (session) return;
   if (!state.doc) { setMsg('Open a plan set before going live.'); return; }
   setMsg('Starting the live session…');
   try {
-    const pdfUrl = await uploadDocToR2(); // presigned upload — needs R2 CORS
+    // Try the fast direct-to-R2 upload; if the bucket has no CORS for a browser
+    // PUT it throws, so fall back to handing the PDF up as base64 (the server
+    // stores it) — the same fallback shared takeoffs use. Joiners read via base64
+    // already, so this makes going live work with or without R2 CORS.
+    let pdfUrl = null, pdfBase64 = null;
+    try { pdfUrl = await uploadDocToR2(); }
+    catch (_) { setMsg('Uploading the plans…'); pdfBase64 = await docBytesBase64(); }
     const res = await apiLive('/', { method: 'POST', body: JSON.stringify({
-      tool: 'planroom', name: state.projectName || 'Live session', pdfUrl, pdfName: state.docName,
+      tool: 'planroom', name: state.projectName || 'Live session', pdfUrl, pdfBase64, pdfName: state.docName,
       objects: state.markups, doc: sessionDoc(),
     }) });
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -6928,7 +7033,7 @@ async function goLive() {
     openStream();
     updateLiveBar();
     setMsg('Live co-edit started. Teammates can join from ☁ Company (it shows a LIVE badge).');
-  } catch (e) { setMsg('Could not start the session (signed in? is R2 CORS configured?): ' + e.message); }
+  } catch (e) { setMsg('Could not start the session (are you signed in to OpsFloa?): ' + e.message); }
 }
 
 async function joinSession(id) {

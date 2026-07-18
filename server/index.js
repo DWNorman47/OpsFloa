@@ -152,6 +152,9 @@ app.use('/api/public', express.json({ limit: '1mb' }));
 // need a bigger body than the 20 MB app-wide cap. Runs first, so it wins.
 app.use('/api/takeoffs', express.json({ limit: '64mb' }));
 app.use('/api/estimates', express.json({ limit: '48mb' })); // plan-PDF attach via base64
+// Going live can hand the plan PDF up as base64 when R2 CORS isn't set for a
+// direct browser PUT (same fallback as takeoffs), so /api/live needs the bigger cap too.
+app.use('/api/live', express.json({ limit: '64mb' }));
 app.use(express.json({ limit: '20mb' }));
 
 // Health probes must be registered before any catch-all authenticated /api

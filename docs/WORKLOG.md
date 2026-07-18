@@ -751,6 +751,102 @@ scale fix (207.9 → 208): a contour/pad/spot elevation of **197.85 displayed as
 
 ---
 
+## 2026-07-17 — Live Co-Edit: start-without-R2-CORS fallback (investigation paused)
+
+**Shipped one resilience fix; investigation paused mid-stream at David's request.**
+
+- **Going live no longer hard-depends on R2 bucket CORS.** `uploadDocToR2` does a
+  direct browser→R2 presigned PUT, which throws if the bucket has no CORS for a
+  browser PUT — and unlike shared takeoffs, the live-session create had **no
+  base64 fallback**, so a CORS gap meant no session could start at all. Now
+  `goLive` tries the presigned PUT and, on failure, hands the PDF up as base64;
+  the server (`liveSessions` POST, new `pdfBase64` branch → `uploadBase64`) stores
+  it. Added a `/api/live` 64 MB body cap (matches `/api/takeoffs`) so the base64
+  body isn't rejected by the 20 MB global. Joiners already read the PDF via base64,
+  so live now works with or without R2 CORS. Safe either way — the fallback only
+  fires when the fast path fails. Cache-bust → **v47**.
+
+**Investigation state (for when we resume).** David's clarified symptom: a host
+starts a session, teammates **see** it in ☁ Company, but clicking to join
+"starts a session for them — doesn't look like the same session." Ruled out:
+response compression (none), CORS origin allow-list (frontend origins are
+listed), multi-instance room-sharing (no scaling config → single Render
+instance, so the in-memory `rooms` map should be shared). Leading hypotheses,
+untested: **(a)** teammates click the ✨ Live Co-Edit toolbar button (which always
+*starts* a new session) instead of ☁ Company → "Join live", spawning a parallel
+room — the button has no join affordance; **(b)** the join connects but the
+live-bar roster/state gives no visible proof, so a working session *looks*
+separate; **(c)** a silent SSE failure on the cross-origin EventSource leaves the
+joiner with only a static local copy. Next step when resumed: make the connection
+state visible + offer "join the running session" when one exists before starting a
+new one. Also noted but not applied: the shared `doc` includes `page`, so any
+participant's page-flip yanks everyone (bidirectional) — a separate bug.
+
+---
+
+## 2026-07-17 — Plan Room: side-menu section for area/line/count takeoffs
+
+**Shipped** (`app.js`, cache-bust → **v48**). Root of David's "proposed areas
+don't show anywhere / should they not be contours?": he was doing a **surfacing
+takeoff** (paving areas by type) with the **▨ Area takeoff** tool. Those areas
+*do* render on the sheet, but the Earthwork panel only had a **Contours** section
+(the cut/fill grade surface) — there was **no list for the takeoff quantities**,
+so they looked missing. Area/line/count takeoffs (`qarea`/`qline`/`qcount`) carry
+no existing/proposed surface by design; they're bid quantities, not grade.
+
+- New collapsible **Takeoffs (N)** section in the earthwork panel, between
+  Contours and Earthwork. Groups items by type (**Areas / Lines / Counts**), each
+  row = color swatch + the item's measured value (e.g. "▨ Concrete · 1,704 SF") +
+  ✎ reconfigure + ✕ delete; click a row to select & jump to it. Empty-state hint
+  explains these price into the **$ Bid** and are separate from the cut/fill
+  contours.
+- `reconfigureTakeoff(m)` re-opens the same area/line/count config form used when
+  drawing (and when double-clicking on the canvas); applied as one undo step.
+  Reuses the generic `selectContourById`/`deleteContourById`.
+
+Did **not** add per-material SF subtotals yet (mixing area modes/units + deducts
+makes a single total misleading) — offered as a follow-up. Also reverted an
+earlier exploratory change (dual existing+proposed surface sections) at David's
+request: the page/side-menu still follow the surface toggle.
+
+---
+
+## 2026-07-17 — Plan Room: hollow deduct areas + per-material takeoff subtotals
+
+**Shipped** (`app.js`, cache-bust → **v49**).
+
+- **Deduct areas draw hollow** — a `qarea` with `cfg.deduct` now renders outline-only
+  (fillAlpha 0) instead of a heavier fill, so it reads as a hole cut out of the
+  filled additive areas around it. Additive areas keep their subtle 0.12 fill.
+- **Per-material subtotals in the Takeoffs section** — `takeoffSubtotals(kind, items)`
+  rolls each group up by material/type: **Areas** net out deducts within the same
+  material+unit (uses `computeAreaResult().quantity/unit`, matching the per-item
+  labels), **Lines** sum length (+trench CY) per pipe/line type, **Counts** sum
+  items per type. Rendered as `Σ <material> · <total>` rows under each group. So a
+  surfacing job now shows total SF per pavement type once materials are assigned
+  (all-default areas roll into one "Σ Area" line).
+
+The broader "global toggle to turn off all colored fills (Layers)" David floated
+earlier is still open — not built; the deduct-hollow change covered the immediate
+need.
+
+---
+
+## 2026-07-17 — Plan Room: Layers → "Shape fills" toggle (outline-only mode)
+
+**Shipped** (`app.js` + `index.html`, cache-bust → **v50**). New **Shape fills**
+checkbox in the ◫ Layers menu (default on) — uncheck it and every filled area
+shape draws outline-only, no colored inside. Follows the same pattern as the
+existing "Value labels" toggle: a `layers.fills` flag checked at draw time.
+
+Gated fill sites: `dirtOutline` (qarea / pad / boundary), the shared area case
+(measure area + froom/fsheath/escarea/swall/sinsul/dmarea/lsarea), roof `plane`,
+and `dceiling`. Strokes/labels always stay — only the translucent interior is
+dropped. Left **un**gated on purpose: the highlighter (an annotation with no
+outline — hide it via the Annotations layer) and the ghost-sheet overlay.
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*
