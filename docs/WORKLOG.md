@@ -811,6 +811,27 @@ request: the page/side-menu still follow the surface toggle.
 
 ---
 
+## 2026-07-17 — Plan Room: hollow deduct areas + per-material takeoff subtotals
+
+**Shipped** (`app.js`, cache-bust → **v49**).
+
+- **Deduct areas draw hollow** — a `qarea` with `cfg.deduct` now renders outline-only
+  (fillAlpha 0) instead of a heavier fill, so it reads as a hole cut out of the
+  filled additive areas around it. Additive areas keep their subtle 0.12 fill.
+- **Per-material subtotals in the Takeoffs section** — `takeoffSubtotals(kind, items)`
+  rolls each group up by material/type: **Areas** net out deducts within the same
+  material+unit (uses `computeAreaResult().quantity/unit`, matching the per-item
+  labels), **Lines** sum length (+trench CY) per pipe/line type, **Counts** sum
+  items per type. Rendered as `Σ <material> · <total>` rows under each group. So a
+  surfacing job now shows total SF per pavement type once materials are assigned
+  (all-default areas roll into one "Σ Area" line).
+
+The broader "global toggle to turn off all colored fills (Layers)" David floated
+earlier is still open — not built; the deduct-hollow change covered the immediate
+need.
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*

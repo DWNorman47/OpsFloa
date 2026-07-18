@@ -1076,7 +1076,9 @@ function drawMarkup(ctx, m) {
     }
     case 'qarea': {
       const col = areaColorHex(m.cfg || {});
-      dirtOutline(ctx, m, col, { closed: true, dash: [12, 7], fillAlpha: (m.cfg && m.cfg.deduct) ? 0.18 : 0.12 });
+      // Deduct areas draw hollow (outline only) so they read as holes cut out of
+      // the filled additive areas around them — no colored inside.
+      dirtOutline(ctx, m, col, { closed: true, dash: [12, 7], fillAlpha: (m.cfg && m.cfg.deduct) ? 0 : 0.12 });
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y, col); }
       break;
     }
@@ -3540,6 +3542,10 @@ function renderDirtPanel() {
             `<button class="ctr-btn" data-act="del-ctr" title="Delete">✕</button>` +
             `</div>`);
         }
+        // per-material / per-type subtotal(s) for this group
+        for (const s of takeoffSubtotals(kind, items)) {
+          rows.push(`<div class="dirt-row"><span>Σ ${esc(s.label)}</span><span class="v"><b>${esc(s.text)}</b></span></div>`);
+        }
       }
     }
   }
@@ -5036,6 +5042,46 @@ function askAreaConfig(areaSf, perimFt, prefill) {
 // live area/perimeter (feet) for a stored qarea markup, from its sheet's scale
 const qareaSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0);
 const qareaPerimFt = m => polygonPerimeterFt(m.pts, state.scales[m.page] || 0);
+
+// Side-menu subtotals: roll up a takeoff group by material/type. Areas net out
+// deducts within the same material+unit; lines sum length (+trench CY); counts
+// sum items. Returns [{ label, text }] ready to render as subtotal rows.
+function takeoffSubtotals(kind, items) {
+  const map = new Map();
+  if (kind === 'qarea') {
+    for (const m of items) {
+      const cfg = m.cfg || {};
+      const r = computeAreaResult(qareaSf(m), cfg, qareaPerimFt(m));
+      const unit = r.unit || 'SF';
+      const label = cfg.label || 'Area';
+      const key = `${label} ${unit}`;
+      const g = map.get(key) || { label, unit, total: 0 };
+      g.total += (cfg.deduct ? -1 : 1) * (r.quantity || 0);
+      map.set(key, g);
+    }
+    return [...map.values()].map(g => ({ label: g.label, text: `${fmt(g.total, g.unit === 'SF' ? 0 : 1)} ${g.unit}` }));
+  }
+  if (kind === 'qline') {
+    for (const m of items) {
+      const cfg = m.cfg || {};
+      const r = computeLineResult(qlineLenFt(m), cfg);
+      const label = pipeScheduleLabel(cfg);
+      const g = map.get(label) || { label, lengthFt: 0, trenchCY: 0 };
+      g.lengthFt += r.lengthFt || 0; g.trenchCY += r.trenchCY || 0;
+      map.set(label, g);
+    }
+    return [...map.values()].map(g => ({ label: g.label, text: `${fmt(g.lengthFt)} ft${g.trenchCY ? ` · ${fmt(g.trenchCY, 1)} CY` : ''}` }));
+  }
+  for (const m of items) { // qcount
+    const cfg = m.cfg || {};
+    const label = cfg.label || 'Item', unit = cfg.unit || 'EA';
+    const key = `${label} ${unit}`;
+    const g = map.get(key) || { label, unit, count: 0 };
+    g.count += m.pts.length;
+    map.set(key, g);
+  }
+  return [...map.values()].map(g => ({ label: g.label, text: `${g.count} ${g.unit}` }));
+}
 
 // rough $/unit starting points per material component (user edits in the bid)
 const QA_COMP_LABEL = { concrete: 'concrete', forms: 'edge forms', rebar: 'rebar', mesh: 'wire mesh', asphalt: 'asphalt', tack: 'tack coat', base: 'agg. base', gravel: 'gravel / fill', strip: 'topsoil haul-off', area: 'area' };
