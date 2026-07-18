@@ -6909,14 +6909,28 @@ function openStream() {
   es.onerror = () => setLiveState('reconnecting…'); // EventSource auto-reconnects; the server resends init
 }
 
+// Base64 of the open plan doc — the CORS-free path when a direct-to-R2 PUT is blocked.
+async function docBytesBase64() {
+  if (!state.docKey) return null;
+  const f = await store.filesGet(state.docKey);
+  if (!f || !f.bytes) return null;
+  return bytesToBase64(f.bytes);
+}
+
 async function goLive() {
   if (session) return;
   if (!state.doc) { setMsg('Open a plan set before going live.'); return; }
   setMsg('Starting the live session…');
   try {
-    const pdfUrl = await uploadDocToR2(); // presigned upload — needs R2 CORS
+    // Try the fast direct-to-R2 upload; if the bucket has no CORS for a browser
+    // PUT it throws, so fall back to handing the PDF up as base64 (the server
+    // stores it) — the same fallback shared takeoffs use. Joiners read via base64
+    // already, so this makes going live work with or without R2 CORS.
+    let pdfUrl = null, pdfBase64 = null;
+    try { pdfUrl = await uploadDocToR2(); }
+    catch (_) { setMsg('Uploading the plans…'); pdfBase64 = await docBytesBase64(); }
     const res = await apiLive('/', { method: 'POST', body: JSON.stringify({
-      tool: 'planroom', name: state.projectName || 'Live session', pdfUrl, pdfName: state.docName,
+      tool: 'planroom', name: state.projectName || 'Live session', pdfUrl, pdfBase64, pdfName: state.docName,
       objects: state.markups, doc: sessionDoc(),
     }) });
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -6928,7 +6942,7 @@ async function goLive() {
     openStream();
     updateLiveBar();
     setMsg('Live co-edit started. Teammates can join from ☁ Company (it shows a LIVE badge).');
-  } catch (e) { setMsg('Could not start the session (signed in? is R2 CORS configured?): ' + e.message); }
+  } catch (e) { setMsg('Could not start the session (are you signed in to OpsFloa?): ' + e.message); }
 }
 
 async function joinSession(id) {

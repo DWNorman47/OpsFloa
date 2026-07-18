@@ -751,6 +751,39 @@ scale fix (207.9 → 208): a contour/pad/spot elevation of **197.85 displayed as
 
 ---
 
+## 2026-07-17 — Live Co-Edit: start-without-R2-CORS fallback (investigation paused)
+
+**Shipped one resilience fix; investigation paused mid-stream at David's request.**
+
+- **Going live no longer hard-depends on R2 bucket CORS.** `uploadDocToR2` does a
+  direct browser→R2 presigned PUT, which throws if the bucket has no CORS for a
+  browser PUT — and unlike shared takeoffs, the live-session create had **no
+  base64 fallback**, so a CORS gap meant no session could start at all. Now
+  `goLive` tries the presigned PUT and, on failure, hands the PDF up as base64;
+  the server (`liveSessions` POST, new `pdfBase64` branch → `uploadBase64`) stores
+  it. Added a `/api/live` 64 MB body cap (matches `/api/takeoffs`) so the base64
+  body isn't rejected by the 20 MB global. Joiners already read the PDF via base64,
+  so live now works with or without R2 CORS. Safe either way — the fallback only
+  fires when the fast path fails. Cache-bust → **v47**.
+
+**Investigation state (for when we resume).** David's clarified symptom: a host
+starts a session, teammates **see** it in ☁ Company, but clicking to join
+"starts a session for them — doesn't look like the same session." Ruled out:
+response compression (none), CORS origin allow-list (frontend origins are
+listed), multi-instance room-sharing (no scaling config → single Render
+instance, so the in-memory `rooms` map should be shared). Leading hypotheses,
+untested: **(a)** teammates click the ✨ Live Co-Edit toolbar button (which always
+*starts* a new session) instead of ☁ Company → "Join live", spawning a parallel
+room — the button has no join affordance; **(b)** the join connects but the
+live-bar roster/state gives no visible proof, so a working session *looks*
+separate; **(c)** a silent SSE failure on the cross-origin EventSource leaves the
+joiner with only a static local copy. Next step when resumed: make the connection
+state visible + offer "join the running session" when one exists before starting a
+new one. Also noted but not applied: the shared `doc` includes `page`, so any
+participant's page-flip yanks everyone (bidirectional) — a separate bug.
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*

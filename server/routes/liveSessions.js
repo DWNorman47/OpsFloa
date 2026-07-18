@@ -20,7 +20,7 @@
 const jwt = require('jsonwebtoken');
 const router = require('express').Router();
 const pool = require('../db');
-const { keyFromPublicUrl, getBytesByUrl } = require('../r2');
+const { keyFromPublicUrl, getBytesByUrl, uploadBase64 } = require('../r2');
 const { LIVE_SESSION_TOOLS, LIVE_SESSION_TOOL_DEFAULT } = require('../constants/liveSessionEnums');
 
 const rooms = new Map();        // sessionId(string) -> Room
@@ -107,6 +107,9 @@ router.post('/', async (req, res) => {
     const tool = LIVE_SESSION_TOOLS.includes(b.tool) ? b.tool : LIVE_SESSION_TOOL_DEFAULT;
     let pdfUrl = null;
     if (b.pdfUrl) { if (!keyFromPublicUrl(String(b.pdfUrl))) return res.status(400).json({ error: 'bad pdfUrl' }); pdfUrl = String(b.pdfUrl); }
+    // CORS-free fallback: the host couldn't PUT straight to R2, so it sent the
+    // plan PDF as base64 — store it server-side (same path as shared takeoffs).
+    else if (b.pdfBase64) { const up = await uploadBase64(`data:application/pdf;base64,${b.pdfBase64}`, 'live-sessions'); pdfUrl = up.url; }
     const objects = Array.isArray(b.objects) ? b.objects.filter(o => o && o.id) : [];
     const doc = (b.doc && typeof b.doc === 'object') ? b.doc : {};
     const state = { objects: objects.map(o => ({ o, ts: Date.now() })), doc };
