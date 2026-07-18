@@ -847,6 +847,39 @@ outline — hide it via the Annotations layer) and the ghost-sheet overlay.
 
 ---
 
+## 2026-07-17 — Live Co-Edit: join-aware button, backup poll, visible status, page fix
+
+**Shipped** (`app.js`, cache-bust → **v51**) — the resume of the "join lands in a
+separate session" investigation. Four changes, targeting all three standing
+hypotheses at once so the next test is conclusive:
+
+1. **✨ button is join-aware.** Clicking Live Co-Edit with no active session now
+   first checks for a session already running for the company and offers **Join it
+   / Start a separate one** (via `askChoice`). The old button *always* started a
+   new room, so a teammate who clicked it spun up a parallel session — the most
+   likely "we're not in the same session." Joining otherwise lived buried in
+   ☁ Company.
+2. **REST backup poll.** The SSE stream is a cross-origin `EventSource` (Vercel →
+   Render); if a proxy buffers/blocks it the joiner silently gets no pushes. New
+   `livePollTick`/`livePollPull` pull `GET /live/:id` every 4 s **only while the
+   stream isn't delivering** (`!session.connected`), flushing local edits first,
+   so co-edit stays in sync even with a dead stream. ~free when SSE is healthy.
+3. **Visible connection status.** Live bar now shows 🟢 Live / 🟡 Live · backup
+   sync / 🔴 Reconnecting… (`refreshLiveStatus`, driven by `session.connected` +
+   `syncedAt`). Turns a silent failure into a visible one — and tells us on the
+   next test whether SSE is actually the culprit.
+4. **Push retry + page fix.** `sessionPush` now commits its `lastSync`/`docHash`
+   baseline **only on a confirmed push**, so an edit made during a blip re-pushes
+   instead of being lost (and then clobbered by the poll). And `applySessionDoc`
+   no longer applies `d.page` — participants scroll independently; the join still
+   lands you on the host's page once. (Bidirectional page-yank was a real bug and
+   would have been amplified by the poll.)
+
+Base64 start fallback from the earlier session is already in (v47). Still not
+built: cursor/presence beyond the name roster.
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*
