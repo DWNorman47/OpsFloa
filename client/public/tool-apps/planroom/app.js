@@ -298,6 +298,7 @@ const layerVisible = m => layers[markupLayer(m.kind)];
 let curSurface = 'existing';                 // which surface new contours/spots/pads belong to
 let dirtSheetsCollapsed = false;             // dirt panel: Sheets section starts collapsed once the two-sheet setup is done
 let dirtContoursCollapsed = false;           // dirt panel: the traced-contours list section
+let dirtTakeoffCollapsed = false;            // dirt panel: the area/line/count takeoff-quantities list section
 let dirtEarthworkCollapsed = false;          // dirt panel: the Earthwork (boundary + settings + calculate) section
 // Earthwork mode declutters the canvas: only dirt-trade markups draw, and only
 // the focused surface's contours/pads. General redline + other-trade markups are
@@ -3513,6 +3514,35 @@ function renderDirtPanel() {
       }
     }
   }
+  // Takeoff quantities — area / line / count. These price into the $ Bid and are
+  // SEPARATE from the cut/fill grade surface above: they carry no existing/proposed
+  // surface, so a surfacing/paving job lives entirely here (not under Contours).
+  const qk = { qarea: [], qline: [], qcount: [] };
+  for (const m of state.markups) if (qk[m.kind]) qk[m.kind].push(m);
+  const qTotal = qk.qarea.length + qk.qline.length + qk.qcount.length;
+  rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-takeoff"><span>Takeoffs (${qTotal})</span><span class="v">${dirtTakeoffCollapsed ? '▸' : '▾'}</span></div>`);
+  if (!dirtTakeoffCollapsed) {
+    if (!qTotal) {
+      rows.push('<div class="hint" style="margin:2px 0 8px">No area / line / count takeoffs yet. Trace one with the <b>▨ Area</b> / <b>⌇ Line</b> / <b>⊙ Count</b> tools — these price into the <b>$ Bid</b> and are separate from the cut/fill contours above.</div>');
+    } else {
+      const icon = { qarea: '▨', qline: '⌇', qcount: '⊙' };
+      const groupLabel = { qarea: 'Areas', qline: 'Lines', qcount: 'Counts' };
+      for (const kind of ['qarea', 'qline', 'qcount']) {
+        const items = qk[kind];
+        if (!items.length) continue;
+        rows.push(`<div class="dirt-crow"><span class="hint"><b>${groupLabel[kind]}</b> (${items.length})</span></div>`);
+        for (const m of items) {
+          const sw = kind === 'qline' ? lineColorHex(m.cfg || {}) : kind === 'qarea' ? areaColorHex(m.cfg || {}) : (m.color || '#e0533f');
+          rows.push(`<div class="ctr-row${m.id === selectedId ? ' sel' : ''}" data-id="${m.id}">` +
+            `<span class="ctr-sw" style="background:${sw}"></span>` +
+            `<span class="ctr-lbl">${icon[kind]} ${esc(measureValue(m))}</span>` +
+            `<button class="ctr-btn" data-act="edit-takeoff" title="Edit / reconfigure">✎</button>` +
+            `<button class="ctr-btn" data-act="del-ctr" title="Delete">✕</button>` +
+            `</div>`);
+        }
+      }
+    }
+  }
   // Earthwork (collapsible): boundary + grid settings + calculate
   rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-earthwork"><span>Earthwork</span><span class="v">${dirtEarthworkCollapsed ? '▸' : '▾'}</span></div>`);
   if (!dirtEarthworkCollapsed) {
@@ -3574,6 +3604,8 @@ function renderDirtPanel() {
   if (doAlign) doAlign.addEventListener('click', () => setTool('align'));
   const toggleContours = body.querySelector('[data-act="toggle-contours"]');
   if (toggleContours) toggleContours.addEventListener('click', () => { dirtContoursCollapsed = !dirtContoursCollapsed; renderDirtPanel(); });
+  const toggleTakeoff = body.querySelector('[data-act="toggle-takeoff"]');
+  if (toggleTakeoff) toggleTakeoff.addEventListener('click', () => { dirtTakeoffCollapsed = !dirtTakeoffCollapsed; renderDirtPanel(); });
   const clearSurf = body.querySelector('[data-act="clear-surface"]');
   if (clearSurf) clearSurf.addEventListener('click', clearSurfaceContours);
   body.querySelectorAll('.ctr-row').forEach(row => {
@@ -3581,6 +3613,7 @@ function renderDirtPanel() {
       const btn = e.target.closest('button');
       const id = row.dataset.id;
       if (btn && btn.dataset.act === 'edit-elev') { editContourElev(id); return; }
+      if (btn && btn.dataset.act === 'edit-takeoff') { reconfigureTakeoff(state.markups.find(x => x.id === id)); return; }
       if (btn && btn.dataset.act === 'del-ctr') { deleteContourById(id); return; }
       selectContourById(id);
     });
@@ -3622,6 +3655,17 @@ function deleteContourById(id) {
   state.earthwork.result = null;
   pushUndo(prev);
   markupsChanged();
+}
+// Re-open the config form for an area/line/count takeoff (from the side-menu ✎ or
+// a double-click) and apply the new cfg as one undo step. Same forms as drawing.
+function reconfigureTakeoff(m) {
+  if (!m) return;
+  selectedId = m.id; vp.requestDraw();
+  const s = state.scales[m.page] || 0;
+  const apply = cfg => { if (!cfg) return; const prev = snapshot(); m.cfg = cfg; pushUndo(prev); markupsChanged(); };
+  if (m.kind === 'qarea') askAreaConfig(polygonAreaFt2(m.pts, s), polygonPerimeterFt(m.pts, s), m.cfg).then(cfg => { if (cfg) lastAreaCfg = cfg; apply(cfg); });
+  else if (m.kind === 'qline') askLineConfig(polyLengthFt(m.pts, s), m.cfg).then(cfg => { if (cfg) { lastLineCfg = cfg; lastLineColor = cfg.color; } apply(cfg); });
+  else if (m.kind === 'qcount') askCountConfig(m.pts.length, m.cfg).then(cfg => { if (cfg) lastCountCfg = cfg; apply(cfg); });
 }
 function clearSurfaceContours() {
   const ids = new Set(state.markups

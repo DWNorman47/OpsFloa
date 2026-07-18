@@ -784,6 +784,33 @@ participant's page-flip yanks everyone (bidirectional) — a separate bug.
 
 ---
 
+## 2026-07-17 — Plan Room: side-menu section for area/line/count takeoffs
+
+**Shipped** (`app.js`, cache-bust → **v48**). Root of David's "proposed areas
+don't show anywhere / should they not be contours?": he was doing a **surfacing
+takeoff** (paving areas by type) with the **▨ Area takeoff** tool. Those areas
+*do* render on the sheet, but the Earthwork panel only had a **Contours** section
+(the cut/fill grade surface) — there was **no list for the takeoff quantities**,
+so they looked missing. Area/line/count takeoffs (`qarea`/`qline`/`qcount`) carry
+no existing/proposed surface by design; they're bid quantities, not grade.
+
+- New collapsible **Takeoffs (N)** section in the earthwork panel, between
+  Contours and Earthwork. Groups items by type (**Areas / Lines / Counts**), each
+  row = color swatch + the item's measured value (e.g. "▨ Concrete · 1,704 SF") +
+  ✎ reconfigure + ✕ delete; click a row to select & jump to it. Empty-state hint
+  explains these price into the **$ Bid** and are separate from the cut/fill
+  contours.
+- `reconfigureTakeoff(m)` re-opens the same area/line/count config form used when
+  drawing (and when double-clicking on the canvas); applied as one undo step.
+  Reuses the generic `selectContourById`/`deleteContourById`.
+
+Did **not** add per-material SF subtotals yet (mixing area modes/units + deducts
+makes a single total misleading) — offered as a follow-up. Also reverted an
+earlier exploratory change (dual existing+proposed surface sections) at David's
+request: the page/side-menu still follow the surface toggle.
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*
