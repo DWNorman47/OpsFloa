@@ -284,7 +284,7 @@ const INSUL_PRICE = { r11: 0.55, r13: 0.60, r15: 0.70, r19: 0.80, r21: 0.90, sou
 let curDwOpening = 'door';
 let curDwTrim = 'base';
 // layer visibility (session view state) — declutter a busy sheet by category
-const layers = { annot: true, measure: true, takeoff: true, labels: true };
+const layers = { annot: true, measure: true, takeoff: true, labels: true, fills: true };
 const ANNOT_KINDS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freehand', 'highlight', 'text', 'callout'];
 const MEASURE_KINDS = ['mlength', 'marea', 'mcount'];
 const markupLayer = kind => ANNOT_KINDS.includes(kind) ? 'annot' : MEASURE_KINDS.includes(kind) ? 'measure' : 'takeoff';
@@ -986,8 +986,8 @@ function drawMarkup(ctx, m) {
         ctx.beginPath();
         m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
         ctx.closePath();
-        ctx.globalAlpha = 0.12; ctx.fill();
-        ctx.globalAlpha = 1; ctx.stroke();
+        if (layers.fills) { ctx.globalAlpha = 0.12; ctx.fill(); ctx.globalAlpha = 1; }
+        ctx.stroke();
       }
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y); }
       break;
@@ -1032,8 +1032,8 @@ function drawMarkup(ctx, m) {
         ctx.beginPath();
         m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
         ctx.closePath();
-        ctx.globalAlpha = 0.14; ctx.fill();
-        ctx.globalAlpha = 1; ctx.stroke();
+        if (layers.fills) { ctx.globalAlpha = 0.14; ctx.fill(); ctx.globalAlpha = 1; }
+        ctx.stroke();
       }
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y); }
       break;
@@ -1101,7 +1101,8 @@ function drawMarkup(ctx, m) {
     case 'dceiling': {
       if (m.pts.length >= 2) {
         ctx.beginPath(); m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath();
-        ctx.globalAlpha = 0.14; ctx.fill(); ctx.globalAlpha = 1; ctx.stroke();
+        if (layers.fills) { ctx.globalAlpha = 0.14; ctx.fill(); ctx.globalAlpha = 1; }
+        ctx.stroke();
       }
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y); }
       break;
@@ -1124,7 +1125,7 @@ function dirtOutline(ctx, m, col, opts) {
   ctx.beginPath();
   m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
   if (o.closed) ctx.closePath();
-  if (o.fillAlpha && o.closed && m.pts.length >= 3) { ctx.globalAlpha = o.fillAlpha; ctx.fill(); ctx.globalAlpha = 1; }
+  if (o.fillAlpha && o.closed && m.pts.length >= 3 && layers.fills) { ctx.globalAlpha = o.fillAlpha; ctx.fill(); ctx.globalAlpha = 1; }
   ctx.stroke();
   ctx.setLineDash([]);
 }

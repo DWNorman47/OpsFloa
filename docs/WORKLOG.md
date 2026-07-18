@@ -832,6 +832,21 @@ need.
 
 ---
 
+## 2026-07-17 — Plan Room: Layers → "Shape fills" toggle (outline-only mode)
+
+**Shipped** (`app.js` + `index.html`, cache-bust → **v50**). New **Shape fills**
+checkbox in the ◫ Layers menu (default on) — uncheck it and every filled area
+shape draws outline-only, no colored inside. Follows the same pattern as the
+existing "Value labels" toggle: a `layers.fills` flag checked at draw time.
+
+Gated fill sites: `dirtOutline` (qarea / pad / boundary), the shared area case
+(measure area + froom/fsheath/escarea/swall/sinsul/dmarea/lsarea), roof `plane`,
+and `dceiling`. Strokes/labels always stay — only the translucent interior is
+dropped. Left **un**gated on purpose: the highlighter (an annotation with no
+outline — hide it via the Annotations layer) and the ghost-sheet overlay.
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*
