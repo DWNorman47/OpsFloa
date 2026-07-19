@@ -19,7 +19,7 @@ const { coerceBody } = require('../middleware/coerce');
 const { logFailure } = require('../failureLog');
 const { sendPushToUser, sendPushToAllWorkers } = require('../push');
 const { sendEmail } = require('../email');
-const { hoursWorked, computeOT, computeDailyPayCosts, otBandsCost, nightPremiumCost } = require('../utils/payCalculations');
+const { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, nightPremiumCost } = require('../utils/payCalculations');
 const { roundEntriesFromSettings, otConfigFromSettings, validatePolicyRaw } = require('../utils/hoursRules');
 const { computePaid } = require('../utils/paidHours');
 const { weekRange, weekBucketKey } = require('../utils/weekBounds');
@@ -1014,6 +1014,8 @@ router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
     const workerOTRule = worker.overtime_rule || 'daily';
     const otConfig = otConfigFromSettings(settings);
     const { regularHours, overtimeHours, otBands } = computeOT(entries, workerOTRule, settings.overtime_threshold, settings.week_start, otConfig);
+    // Per-entry OT for the invoice's daily line-item column (sums to overtimeHours above)
+    annotateEntryOvertime(entries, workerOTRule, settings.overtime_threshold, settings.week_start, otConfig);
     const prevailingHours = entries.filter(e => e.wage_type === 'prevailing').reduce((sum, e) => {
       const h = hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60;
       return sum + h;
@@ -1645,6 +1647,8 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
     const otConfig = otConfigFromSettings(settings);
     Object.values(workerEntries).forEach(({ items, rate, rate_type, overtime_rule }) => {
       const { regularHours: reg, overtimeHours: ot, otBands } = computeOT(items, overtime_rule, settings.overtime_threshold, settings.week_start, otConfig);
+      // Per-entry OT for the project bill's daily line-item column (each worker uses their own rule)
+      annotateEntryOvertime(items, overtime_rule, settings.overtime_threshold, settings.week_start, otConfig);
       regularHours += reg; overtimeHours += ot;
       if (rate_type === 'daily') {
         const dc = computeDailyPayCosts(items, overtime_rule, settings.overtime_threshold, rate, settings.overtime_multiplier, otConfig);

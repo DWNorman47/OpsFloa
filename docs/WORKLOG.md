@@ -907,6 +907,37 @@ button is the manual remedy rather than making the sweep more aggressive.
 
 ---
 
+## 2026-07-19 — Reports: per-day Overtime column, admin-toggleable (default on)
+
+**Shipped** (server + client). New company setting **`report_daily_ot_column`**
+(default ON) controls whether the daily line items on reports carry an Overtime
+column. Toggle lives in **Administration Workspace → Company Settings → Overtime**
+(only shown when overtime is enabled — the column is meaningless otherwise).
+
+- **Setting:** added to `FEATURE_KEYS` + `SETTINGS_DEFAULTS` (`true`). A brand-new
+  key with no stored rows, so it defaults ON for every company with **no backfill
+  migration**, and the existing `/admin/settings` PATCH allowlist picks it up via
+  `FEATURE_KEYS` automatically.
+- **Per-entry OT:** the reports listed *total* hours per line but split reg/OT
+  only in the summary. New `annotateEntryOvertime()` in `payCalculations.js`
+  mirrors `computeOT`'s day/week bucketing and fills regular chronologically, so
+  **the line-item OT column always sums to the summary OT** (override / rest-day /
+  7th-day / min-daily / prevailing all handled). Lift-tested against `computeOT`
+  across daily/weekly/override/prevailing — 18 assertions. The two data endpoints
+  (`GET /admin/workers/:id/entries`, project bill) annotate their entries.
+- **Reports wired:** `BillPDF` (Employee Time Invoice) + `ProjectBillPDF` (Project
+  Bill) render the OT column gated on the setting × overtime-enabled; the
+  WorkerMetrics **CSV export** got the column too, for consistency. i18n:
+  `ratesOTColumn`/`Desc` + `pdfOvertimeCol` (EN/ES, parity test green).
+
+**Judgment calls:** scoped "reports" to the two bill/invoice PDFs with daily line
+items (+ the CSV) — deliberately did **not** touch `CertifiedPayrollPDF` (a
+regulated WH-347 layout). Setting is a `settings` key/value row, not a fixed-value
+DB column, so `docs/db-enums.md` doesn't apply. Verified: client build, 161 server
+tests (admin+pay+settings), i18n parity.
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*

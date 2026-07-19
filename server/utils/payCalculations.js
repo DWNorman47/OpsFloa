@@ -205,6 +205,76 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null) {
 }
 
 /**
+ * Per-entry overtime allocation for report line items. Sets `overtime_hours` on
+ * each entry (the OT portion; the rest of the entry is regular) and returns the
+ * entries. Mirrors computeOT's day/week bucketing exactly, so the sum of the
+ * per-entry OT equals computeOT(...).overtimeHours for the same inputs — a
+ * report's line-item OT column always reconciles with its summary total.
+ *
+ * Within a bucket, regular hours are filled chronologically (earliest entries
+ * first) up to the OT boundary; the remainder is overtime — the standard "hours
+ * after the threshold are the overtime" reading. Non-'regular' wage types, and
+ * short days topped up by a minimum-daily floor, get 0.
+ */
+function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig = null) {
+  for (const e of entries) e.overtime_hours = 0; // default for prevailing / non-regular
+  const regular = entries.filter(e => e.wage_type === 'regular');
+
+  // Per-entry admin override: OT = clamped override, carved out of the auto calc.
+  const auto = [];
+  for (const e of regular) {
+    if (e.overtime_hours_override != null) {
+      const total = entryDuration(e);
+      e.overtime_hours = Math.max(0, Math.min(total, parseFloat(e.overtime_hours_override)));
+    } else {
+      auto.push(e);
+    }
+  }
+  if (rule === 'none' || !auto.length) return entries;
+
+  const bands = resolveBands(rule, threshold, otConfig);
+  const boundary = bands[0].afterHours; // regular/OT split point (tiers only re-price above it)
+
+  const sd = (otConfig && otConfig.seventhDay && otConfig.seventhDay.enabled && rule === 'daily') ? otConfig.seventhDay : null;
+  const restDay = (otConfig && otConfig.restDay && rule === 'daily') ? otConfig.restDay : null;
+  const restDays = restDay ? new Set((restDay.days || []).map(Number)) : null;
+  const minDaily = (otConfig && rule === 'daily') ? (parseFloat(otConfig.minDailyHours) || 0) : 0;
+
+  // bucket by day (daily) or workweek (weekly); entries stay in chronological order
+  const buckets = new Map();
+  for (const e of auto) {
+    const key = rule === 'weekly' ? weekBucketKey(e.work_date, weekStart) : String(e.work_date).substring(0, 10);
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(e);
+  }
+
+  // a workweek with all 7 days worked pays its last day entirely as OT
+  const seventhKeys = new Set();
+  if (sd) {
+    const byWeek = {};
+    for (const dk of buckets.keys()) { const wk = weekBucketKey(dk, weekStart); (byWeek[wk] = byWeek[wk] || []).push(dk); }
+    Object.values(byWeek).forEach(days => { if (days.length >= 7) seventhKeys.add(days.slice().sort().pop()); });
+  }
+
+  for (const [dk, es] of buckets) {
+    const total = es.reduce((s, e) => s + entryDuration(e), 0);
+    if ((restDays && restDays.has(weekdayOfDate(dk))) || (sd && seventhKeys.has(dk))) {
+      for (const e of es) e.overtime_hours = entryDuration(e); // whole day is OT
+      continue;
+    }
+    if (minDaily > 0 && total < minDaily) continue; // short day topped up to floor → all regular
+    let regLeft = boundary;
+    for (const e of es) {
+      const d = entryDuration(e);
+      const r = Math.max(0, Math.min(d, regLeft));
+      e.overtime_hours = d - r;
+      regLeft -= r;
+    }
+  }
+  return entries;
+}
+
+/**
  * Cost of the overtime portion given an `otBands` breakdown and a base hourly
  * rate. Each band is priced at its own multiplier, falling back to
  * `defaultMult` for single-tier / override bands (mult: null).
@@ -239,4 +309,4 @@ function computeDailyPayCosts(entries, overtimeRule, threshold, dailyRate, overt
   };
 }
 
-module.exports = { hoursWorked, computeOT, computeDailyPayCosts, otBandsCost, resolveBands, nightHoursForEntry, nightPremiumCost };
+module.exports = { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, resolveBands, nightHoursForEntry, nightPremiumCost };

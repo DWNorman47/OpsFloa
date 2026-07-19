@@ -67,7 +67,7 @@ const s = StyleSheet.create({
   reimbRow: { flexDirection: 'row', paddingVertical: 5, paddingHorizontal: 4, borderBottomWidth: 0.5, borderBottomColor: '#f3f4f6', borderBottomStyle: 'solid' },
 });
 
-export default function BillPDF({ data, currency = 'USD', companyInfo = {}, overtimeEnabled = true, showProject = true, showRateType = true, t = {}, language }) {
+export default function BillPDF({ data, currency = 'USD', companyInfo = {}, overtimeEnabled = true, showProject = true, showRateType = true, t = {}, language, settings = null }) {
   const locale = langToLocale(language);
   // Render money in the company's configured currency (e.g. "L" for HNL), the
   // same way the on-screen figures do — this used to hardcode "$", so the PDF
@@ -87,14 +87,19 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
 
   // Build column widths dynamically based on what's shown
   // Base: Date 13%, Desc 20%, In 11%, Out 11%, Hours 13% = 68% used
+  // Show a per-day OT column when overtime is on AND the company setting is on
+  // (default on — undefined settings still shows it).
+  const showOtCol = overtimeEnabled && settings?.report_daily_ot_column !== false;
   // Project: 18%, RateType: 14%
   const extraPct = (!showProject ? 18 : 0) + (!showRateType ? 14 : 0);
-  // Distribute extra space to Description
-  const colDesc  = `${20 + extraPct}%`;
+  const otPct = showOtCol ? 10 : 0;
+  // Distribute extra space to Description; the OT column comes out of Description too
+  const colDesc  = `${20 + extraPct - otPct}%`;
   const colDate  = '13%';
   const colIn    = '11%';
   const colOut   = '11%';
   const colHours = '13%';
+  const colOt    = `${otPct}%`;
   const colProject = '18%';
   const colType  = '14%';
 
@@ -144,6 +149,7 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
           <Text style={[s.th, { width: colIn }]}>{t.pdfClockIn || 'Clock In'}</Text>
           <Text style={[s.th, { width: colOut }]}>{t.pdfClockOut || 'Clock Out'}</Text>
           {showRateType && <Text style={[s.th, { width: colType }]}>{t.pdfRateType || 'Rate Type'}</Text>}
+          {showOtCol && <Text style={[s.th, { width: colOt, textAlign: 'right' }]}>{t.pdfOvertimeCol || 'OT'}</Text>}
           <Text style={[s.th, { width: colHours, textAlign: 'right' }]}>{t.pdfHoursCol || 'Hours'}</Text>
         </View>
         {entries.map(e => {
@@ -159,6 +165,11 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
               {showRateType && (
                 <Text style={[s.td, { width: colType, color: isPrev ? '#d97706' : '#2563eb', fontWeight: 'bold' }]}>
                   {isPrev ? (t.prevailingLabel || 'Prevailing') : (t.regularLabel || 'Regular')}
+                </Text>
+              )}
+              {showOtCol && (
+                <Text style={[s.td, { width: colOt, textAlign: 'right', color: e.overtime_hours > 0 ? '#dc2626' : '#9ca3af' }]}>
+                  {e.overtime_hours > 0 ? fmtH(e.overtime_hours) : '—'}
                 </Text>
               )}
               <Text style={[s.td, { width: colHours, textAlign: 'right', fontWeight: 'bold' }]}>{fmtH(h)}</Text>
