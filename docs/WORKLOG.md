@@ -938,6 +938,25 @@ tests (admin+pay+settings), i18n parity.
 
 ---
 
+## 2026-07-19 — Hours & Rules: edit an existing rule (was add/delete only)
+
+**Shipped** (client). The rule list in `HoursRuleBuilder` only had a delete (×)
+per row — to change a rule you had to delete and rebuild it. Added an **Edit**
+button per row that loads the rule back into the draft editor; the save button
+then reads **Save changes** and commits in place (replace-by-id) instead of
+appending a copy.
+
+- A stored rule only carries the fields its type uses, so `edit()` merges it onto
+  a `blankRule()` (filling the rest, keeping its id + `when`/`trigger`). `commit()`
+  now replaces when the id exists, appends otherwise — one path for both flows.
+- Row Edit/Delete buttons hide while a draft is open (no editing/deleting
+  mid-draft). No engine change — `coerceDraft` is reused verbatim, so the
+  builder↔engine contract test still passes (124 hours-rules tests green).
+- i18n `hrEdit` / `hrSaveRule` (EN/ES, parity green). Also: report OT column now
+  uses normal text color, not red (per feedback).
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*

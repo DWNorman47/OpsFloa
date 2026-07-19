@@ -124,8 +124,24 @@ export default function HoursRuleBuilder({ rules, onChange }) {
   // you typed); only the ones this type actually uses are committed. Stored
   // rules are already in policy shape, so saving is a pass-through and there's
   // no second shape to keep in sync.
-  const commit = () => { onChange([...rules, coerceDraft(draft)]); setDraft(null); };
+  // Commit replaces the rule in place when its id already exists (editing) and
+  // appends otherwise (adding a new one) — same button, both flows.
+  const commit = () => {
+    const rule = coerceDraft(draft);
+    onChange(rules.some(r => r.id === rule.id) ? rules.map(r => (r.id === rule.id ? rule : r)) : [...rules, rule]);
+    setDraft(null);
+  };
   const remove = (id) => onChange(rules.filter(r => r.id !== id));
+  // Load an existing rule into the draft. A stored rule only carries the fields
+  // its type uses, so merge it onto a blank draft to fill the rest (keeping its
+  // id so commit replaces it, not appends a copy).
+  const edit = (rule) => setDraft({
+    ...blankRule(),
+    ...rule,
+    when: { ...(rule.when || { kind: 'every_day' }) },
+    trigger: { ...blankRule().trigger, ...(rule.trigger || {}) },
+  });
+  const editing = !!draft && rules.some(r => r.id === draft.id);
 
   const w = draft?.when || {};
   const adjust = draft?.type === 'add_time' || draft?.type === 'remove_time';
@@ -147,7 +163,8 @@ export default function HoursRuleBuilder({ rules, onChange }) {
           {rules.map(r => (
             <div key={r.id} style={s.row}>
               <span style={s.rowText}>{describeRule(r, t)}</span>
-              <button style={s.delBtn} onClick={() => remove(r.id)} aria-label={t.hrRemoveRule}>×</button>
+              {!draft && <button style={s.editBtn} onClick={() => edit(r)}>{t.hrEdit}</button>}
+              {!draft && <button style={s.delBtn} onClick={() => remove(r.id)} aria-label={t.hrRemoveRule}>×</button>}
             </div>
           ))}
         </div>
@@ -359,7 +376,7 @@ export default function HoursRuleBuilder({ rules, onChange }) {
           <div style={s.preview}>{describeRule(draft, t)}</div>
 
           <div style={s.actions}>
-            <button style={s.saveBtn} onClick={commit} disabled={needsBaseline}>{t.hrAddThisRule}</button>
+            <button style={s.saveBtn} onClick={commit} disabled={needsBaseline}>{editing ? t.hrSaveRule : t.hrAddThisRule}</button>
             <button style={s.cancelBtn} onClick={() => setDraft(null)}>{t.hrCancel}</button>
           </div>
         </div>
@@ -425,6 +442,7 @@ const s = {
   list: { display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 },
   row: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: '#f9fafb', border: '1px solid #eef0f2', borderRadius: 7 },
   rowText: { flex: 1, fontSize: 13, color: '#374151' },
+  editBtn: { background: 'none', border: '1px solid #d1d5db', color: '#374151', fontSize: 12, fontWeight: 600, lineHeight: 1, cursor: 'pointer', padding: '4px 10px', borderRadius: 6, flexShrink: 0 },
   delBtn: { background: 'none', border: 'none', color: '#9ca3af', fontSize: 18, lineHeight: 1, cursor: 'pointer', padding: '0 4px', flexShrink: 0 },
   note: { fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '6px 9px', margin: '0 0 12px' },
   draft: { display: 'flex', flexDirection: 'column', gap: 10, padding: 14, background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 9 },
