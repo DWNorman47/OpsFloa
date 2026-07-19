@@ -168,7 +168,7 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
                 </Text>
               )}
               {showOtCol && (
-                <Text style={[s.td, { width: colOt, textAlign: 'right', color: e.overtime_hours > 0 ? '#dc2626' : '#9ca3af' }]}>
+                <Text style={[s.td, { width: colOt, textAlign: 'right' }, e.overtime_hours > 0 ? {} : { color: '#9ca3af' }]}>
                   {e.overtime_hours > 0 ? fmtH(e.overtime_hours) : '—'}
                 </Text>
               )}

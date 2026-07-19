@@ -211,7 +211,7 @@ export default function ProjectBillPDF({ data, currency = 'USD', companyInfo = {
                 <Text style={s.colDate}>{fmtDate(e.work_date, locale)}</Text>
                 <Text style={s.colTime}>{fmtTime(e.start_time)}</Text>
                 <Text style={s.colTime}>{fmtTime(e.end_time)}</Text>
-                {showOtCol && <Text style={[s.colOt, { color: e.overtime_hours > 0 ? '#dc2626' : '#9ca3af' }]}>{e.overtime_hours > 0 ? Number(e.overtime_hours).toFixed(2) : '—'}</Text>}
+                {showOtCol && <Text style={[s.colOt, e.overtime_hours > 0 ? {} : { color: '#9ca3af' }]}>{e.overtime_hours > 0 ? Number(e.overtime_hours).toFixed(2) : '—'}</Text>}
                 <Text style={s.colHours}>{calcHours(e.start_time, e.end_time)}</Text>
                 <Text style={s.colType}>{e.wage_type}</Text>
               </View>
