@@ -754,8 +754,9 @@ let draftDrag = null; // dragging an already-placed draft vertex {i, ptr, prev, 
 let calibPts = null;  // [firstPoint] while calibrating
 let hoverW = null;    // cursor world pos while drafting (rubber band)
 let previewing = false; // true while drawMarkup renders the in-progress draft
-let editOp = 'move';  // active edit-points operation while a reshapeable shape is selected: move|add|remove|cut
+let editOp = 'move';  // active edit-points operation while a reshapeable shape is selected: move|add|remove|cut|join
 let _editbarOn = null; // cache so refreshEditbar only writes the DOM when it changes
+let joinPick = null;  // {id, vi} — the first endpoint picked in Join mode, between the two clicks
 
 const centroid = pts => ({
   x: pts.reduce((a, p) => a + p.x, 0) / pts.length,
@@ -779,6 +780,7 @@ function refreshEditbar() {
 }
 function setEditOp(op) {
   editOp = op;
+  joinPick = null; // any pending Join pick is abandoned when the op changes
   const sel = document.getElementById('prEditOp');
   if (sel && sel.value !== op) sel.value = op;
 }
@@ -1328,6 +1330,18 @@ function drawSelection(ctx, m) {
   ctx.restore();
 }
 
+// Green ring on the first endpoint picked in Join mode (world coords; drawn
+// inside the page transform, before ctx.restore()).
+function drawJoinPick(ctx) {
+  const m = state.markups.find(x => x.id === joinPick.id);
+  if (!m || m.page !== state.page || !m.pts || !m.pts[joinPick.vi]) return;
+  const p = m.pts[joinPick.vi], z = vp.view.zoom;
+  ctx.save();
+  ctx.beginPath(); ctx.arc(p.x, p.y, 8 / z, 0, Math.PI * 2);
+  ctx.lineWidth = 2.4 / z; ctx.strokeStyle = '#22c55e'; ctx.stroke();
+  ctx.restore();
+}
+
 /* ---- hit testing (world coords; tolerances shrink with zoom) ---- */
 
 function hitHandle(ctx, m, w) {
@@ -1529,6 +1543,7 @@ function paint(ctx) {
   drawAlignDraft(ctx);
   const sel = selMarkup();
   if (sel && sel.page === state.page) drawSelection(ctx, sel);
+  if (joinPick) drawJoinPick(ctx);
   ctx.restore();
   refreshEditbar();  // show/hide the Edit-points toolbar to match the selection
   updateNavPads(); // DOM overlay, not canvas — safe after restore; runs each paint
@@ -1908,6 +1923,7 @@ function setTool(t) {
   cancelDraft();
   if (alignDraft && t !== 'align') alignDraft = null; // keep any applied shift; drop the in-progress pair
   drag = null;
+  joinPick = null; // abandon any half-finished Join when switching tools
   document.querySelectorAll('.tool').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
   syncToolGroups(); // reflect the active tool on the dirt-trade group faces
   els.cv.classList.toggle('crosshair', t !== 'pan' && t !== 'select');
@@ -2014,7 +2030,7 @@ function setTool(t) {
 document.querySelectorAll('.tool').forEach(b => b.addEventListener('click', () => { closeToolFlyouts(); setTool(b.dataset.tool); }));
 {
   const prEditOpSel = document.getElementById('prEditOp');
-  if (prEditOpSel) prEditOpSel.addEventListener('change', () => { editOp = prEditOpSel.value; });
+  if (prEditOpSel) prEditOpSel.addEventListener('change', () => setEditOp(prEditOpSel.value));
 }
 
 /* ---- Tool-group flyouts (dirt trade) — mirrors the sitework tool ---- */
@@ -2222,6 +2238,7 @@ els.cv.addEventListener('pointerdown', e => {
       // held; a click that hits nothing falls through to Move / reselect below.
       if (canReshape(sel) && !e.altKey) {
         const tol = Math.max(8 / vp.view.zoom, 4);
+        if (editOp === 'join') { if (handleJoin(sel, w)) return; }
         if (editOp === 'remove' && hi >= 0) { deleteVertexAt(sel, hi); return; }
         if (editOp === 'add') { const edge = nearestEdge(sel, w, tol); if (edge) { insertVertexAt(sel, edge); return; } }
         if (editOp === 'cut') {
@@ -2457,6 +2474,61 @@ function cutAtEdge(m, i) {
   setMsg(clones.length === 2 ? 'Line cut in two — select and delete the piece you don’t want.'
     : clones.length === 1 ? 'Line cut — the stray single point was dropped.'
     : 'Line removed — nothing long enough was left.');
+}
+
+// ---- Join: weld two open-line endpoints (two-click). Merges two separate lines
+// into one, or closes a single line's two ends into a loop. `joinPick` holds the
+// first-picked end between the two clicks. Returns true when the click was
+// consumed (so the caller doesn't also select/pan); false lets it fall through.
+const endpointsOf = m => { const n = m.pts.length; return [[0, m.pts[0]], [n - 1, m.pts[n - 1]]]; };
+function selEndpointNear(m, w, tol) {
+  let best = -1, bd = tol;
+  for (const [vi, p] of endpointsOf(m)) { const d = Math.hypot(w.x - p.x, w.y - p.y); if (d <= bd) { bd = d; best = vi; } }
+  return best;
+}
+function endpointNear(w, tol) {
+  let best = null;
+  for (const m of state.markups) {
+    if (m.page !== state.page || !isOpenPoly(m) || !markupShown(m)) continue;
+    for (const [vi, p] of endpointsOf(m)) {
+      const d = Math.hypot(w.x - p.x, w.y - p.y);
+      if (d <= tol && (!best || d < best.d)) best = { m, vi, d };
+    }
+  }
+  return best;
+}
+function handleJoin(sel, w) {
+  if (!isOpenPoly(sel)) { setMsg('Join connects open lines (contours), not closed shapes.'); return true; }
+  const tol = Math.max(11 / vp.view.zoom, 7);
+  if (!joinPick) {
+    const vi = selEndpointNear(sel, w, tol);
+    if (vi < 0) return false; // not on a loose end → let the click select / pan
+    joinPick = { id: sel.id, vi };
+    setMsg('Join: click another loose end — this line’s other end to close it, or another line of the same type to merge.');
+    vp.requestDraw();
+    return true;
+  }
+  const target = endpointNear(w, tol);
+  if (!target) { joinPick = null; setMsg('Join canceled — pick a loose end to try again.'); vp.requestDraw(); return true; }
+  const a = state.markups.find(m => m.id === joinPick.id);
+  if (!a) { joinPick = null; return true; }
+  const b = target.m, aVi = joinPick.vi, bVi = target.vi;
+  if (a.id === b.id && aVi === bVi) { setMsg('Join: pick the other end.'); return true; }
+  if (a.kind !== b.kind) { setMsg('Join: the two lines must be the same type.'); return true; }
+  const prev = snapshot();
+  if (a.id === b.id) {
+    if (a.pts.length < 3) { setMsg('Join: a loop needs at least 3 points.'); joinPick = null; return true; }
+    a.pts.push({ x: a.pts[0].x, y: a.pts[0].y }); // close the loop with a real closing segment
+  } else {
+    const aPts = aVi === 0 ? a.pts.slice().reverse() : a.pts.slice(); // picked end becomes last
+    const bPts = bVi === 0 ? b.pts.slice() : b.pts.slice().reverse(); // picked end becomes first
+    a.pts = aPts.concat(bPts);
+    const bi = state.markups.indexOf(b); if (bi >= 0) state.markups.splice(bi, 1);
+  }
+  a.modified = Date.now(); invalidateForKind(a);
+  selectedId = a.id; joinPick = null;
+  pushUndo(prev); markupsChanged(); setMsg('Joined.'); vp.requestDraw();
+  return true;
 }
 
 function commitDraft() {
