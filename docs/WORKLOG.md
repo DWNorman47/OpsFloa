@@ -1034,10 +1034,27 @@ type/summary/hint keys EN/ES. `hoursRulesPremiumRules.test.js` (rest-day Sat @2�
 scoped min-daily floor, 7-day OT, night-diff pricing, parse, no-op). 240 pay/hours
 + 38 admin tests green; client build + i18n parity green.
 
-**Migration status:** all three baked-in sections (rounding, tiered OT, premiums)
-are now creatable as `when`-scoped custom rules; the fixed-slot UI still works
-untouched. **Phase 4** (retire the fixed slots, migrate-on-load) is the only
-piece left — held for a checkpoint since it's the one that *removes* UI.
+**Phase 4 shipped — fixed slots retired; rules are the single source of truth.**
+- `migrateFixedSlots(raw)` + `hasFixedSlots()` convert a legacy policy's fixed-slot
+  config (rounding / OT bands + 7th-day / premiums) into the equivalent rules and
+  clear the slots. **Proven** by `hoursRulesMigrate.test.js`: same entries →
+  identical rounding, regular/OT hours, and OT cost.
+- **Wiring:** `GET /admin/settings` migrates `hours_rules` in the response
+  (display-only) so the builder shows rules; the stored value the pay engine reads
+  is untouched until the admin re-saves, and the equivalents are identical either
+  way — so no big-bang data migration, no un-migrated policy breaks.
+- **UI:** removed the Rounding / Overtime-tiers / Premiums fixed-slot sections
+  (and the now-dead `EdgeEditor` + band helpers). Kept Standard Hours,
+  Transparency, presets, and the rule builder.
+- **Presets** (Honduras / US quarter / California) now emit the matching custom
+  rules instead of filling slots (`hoursRulesPresets.test.js` proves California ≡
+  old fixed-slot California + every preset rule parses). Round-rule summary now
+  shows grace + reference (schedule vs clock).
+
+**Done.** The whole Hours & Rules policy — rounding, overtime, premiums — is now
+one `when`-scoped rule list, backward-compatible (no rules → normal pay + OT;
+legacy configs migrate on load, identical pay). 286 admin/hours/pay tests + i18n
+parity + client build green across the four phases.
 
 ---
 

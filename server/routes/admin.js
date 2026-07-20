@@ -20,7 +20,7 @@ const { logFailure } = require('../failureLog');
 const { sendPushToUser, sendPushToAllWorkers } = require('../push');
 const { sendEmail } = require('../email');
 const { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, nightPremiumCost } = require('../utils/payCalculations');
-const { roundEntriesFromSettings, otConfigFromSettings, validatePolicyRaw } = require('../utils/hoursRules');
+const { roundEntriesFromSettings, otConfigFromSettings, validatePolicyRaw, migrateFixedSlots, hasFixedSlots } = require('../utils/hoursRules');
 const { computePaid } = require('../utils/paidHours');
 const { weekRange, weekBucketKey } = require('../utils/weekBounds');
 const { createInboxItem, createInboxItemBatch } = require('./inbox');
@@ -163,6 +163,17 @@ router.get('/kpis', requireAdmin, async (req, res) => {
 router.get('/settings', requireAdmin, async (req, res) => {
   try {
     const s = await getSettings(req.user.company_id);
+    // Present the hours-rules policy as custom rules: convert any legacy fixed-slot
+    // config (rounding / OT bands / premiums) into the equivalent rules for the
+    // builder. Display-only — the stored value (which the pay engine reads) is
+    // untouched until the admin saves; the rule equivalents are proven identical
+    // (hoursRulesMigrate.test.js), so nothing changes either way.
+    if (s && typeof s.hours_rules === 'string' && s.hours_rules) {
+      try {
+        const raw = JSON.parse(s.hours_rules);
+        if (hasFixedSlots(raw)) s.hours_rules = JSON.stringify(migrateFixedSlots(raw));
+      } catch (_) { /* leave as-is if it doesn't parse */ }
+    }
     res.json(s);
   } catch (err) {
     logger.error({ err }, 'catch block error');
