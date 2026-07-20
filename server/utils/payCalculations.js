@@ -114,6 +114,19 @@ function bandsForBucket(rule, threshold, otConfig, dk) {
 }
 
 /**
+ * Minimum-daily-hours floor for one day bucket: a matching `min_daily` rule wins
+ * (largest, if several), else the fixed-slot global floor. Daily rule only. With
+ * no min_daily rules this is just the global value, so behavior is unchanged.
+ */
+function minDailyForBucket(otConfig, rule, dk) {
+  if (rule !== 'daily' || !otConfig) return 0;
+  const rules = Array.isArray(otConfig.minDailyRules) ? otConfig.minDailyRules : [];
+  const matched = rules.filter(r => ruleMatchesDate(r, dk)).map(r => parseFloat(r.hours) || 0);
+  if (matched.length) return Math.max(...matched);
+  return parseFloat(otConfig.minDailyHours) || 0;
+}
+
+/**
  * Split an array of time entries into regularHours and overtimeHours, plus a
  * per-tier `otBands` breakdown for cost.
  *
@@ -167,7 +180,6 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null) {
   // guaranteed a floor of paid regular hours ("reporting time pay").
   const restDay  = (otConfig && otConfig.restDay && rule === 'daily') ? otConfig.restDay : null;
   const restDays = restDay ? new Set((restDay.days || []).map(Number)) : null;
-  const minDaily = (otConfig && rule === 'daily') ? (parseFloat(otConfig.minDailyHours) || 0) : 0;
   let seventhFirst = 0, seventhRest = 0, restDayHours = 0;
 
   if (rule === 'none') {
@@ -202,15 +214,18 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null) {
       } else if (sd && seventhKeys.has(dk)) {
         seventhFirst += Math.min(h, firstT);
         seventhRest  += Math.max(0, h - firstT);
-      } else if (minDaily > 0 && h < minDaily) {
-        autoReg += minDaily;                      // short day topped up to the floor
       } else {
-        const bb = bandsForBucket(rule, threshold, otConfig, dk);
-        autoReg += Math.min(h, bb[0].afterHours);
-        bb.forEach((b, i) => {
-          const upper = i + 1 < bb.length ? bb[i + 1].afterHours : Infinity;
-          addOt(Math.max(0, Math.min(h, upper) - b.afterHours), b.mult);
-        });
+        const minD = minDailyForBucket(otConfig, rule, dk);
+        if (minD > 0 && h < minD) {
+          autoReg += minD;                        // short day topped up to the floor
+        } else {
+          const bb = bandsForBucket(rule, threshold, otConfig, dk);
+          autoReg += Math.min(h, bb[0].afterHours);
+          bb.forEach((b, i) => {
+            const upper = i + 1 < bb.length ? bb[i + 1].afterHours : Infinity;
+            addOt(Math.max(0, Math.min(h, upper) - b.afterHours), b.mult);
+          });
+        }
       }
     });
   }
@@ -264,7 +279,6 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
   const sd = (otConfig && otConfig.seventhDay && otConfig.seventhDay.enabled && rule === 'daily') ? otConfig.seventhDay : null;
   const restDay = (otConfig && otConfig.restDay && rule === 'daily') ? otConfig.restDay : null;
   const restDays = restDay ? new Set((restDay.days || []).map(Number)) : null;
-  const minDaily = (otConfig && rule === 'daily') ? (parseFloat(otConfig.minDailyHours) || 0) : 0;
 
   // bucket by day (daily) or workweek (weekly); entries stay in chronological order
   const buckets = new Map();
@@ -288,7 +302,8 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
       for (const e of es) e.overtime_hours = entryDuration(e); // whole day is OT
       continue;
     }
-    if (minDaily > 0 && total < minDaily) continue; // short day topped up to floor → all regular
+    const minD = minDailyForBucket(otConfig, rule, dk);
+    if (minD > 0 && total < minD) continue; // short day topped up to floor → all regular
     // regular/OT split point for THIS bucket (tiers only re-price above it) — per
     // bucket so a date-scoped ot_tier rule moves the boundary on its days.
     let regLeft = bandsForBucket(rule, threshold, otConfig, dk)[0].afterHours;

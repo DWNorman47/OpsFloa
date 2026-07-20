@@ -46,6 +46,14 @@ function blankRule() {
     basis: 'day',
     afterHours: '8',
     mult: '1.5',
+    // premium fields (rest_day reuses mult; others below)
+    minHours: '4',
+    firstHours: '8',
+    firstMult: '1.5',
+    afterMult: '2',
+    fromHour: '22',
+    toHour: '5',
+    pct: '10',
   };
 }
 
@@ -122,6 +130,10 @@ export function describeRule(r, t) {
       const per = r.basis === 'week' ? t.hrOtPerWeekShort : t.hrOtPerDayShort;
       return `${when} — ${t.hrSumOtTier.replace('{n}', r.afterHours).replace('{per}', per).replace('{mult}', r.mult)}`;
     }
+    case 'rest_day': return `${when} — ${t.hrSumRestDay.replace('{mult}', r.mult)}`;
+    case 'min_daily': return `${when} — ${t.hrSumMinDaily.replace('{n}', r.hours)}`;
+    case 'seventh_day': return `${when} — ${t.hrSumSeventh.replace('{a}', r.firstMult).replace('{b}', r.afterMult)}`;
+    case 'night_diff': return `${when} — ${t.hrSumNight.replace('{pct}', r.pct).replace('{from}', r.fromHour).replace('{to}', r.toHour)}`;
     default: return when;
   }
 }
@@ -310,6 +322,10 @@ export default function HoursRuleBuilder({ rules, onChange }) {
               <option value="auto_break">{t.hrType_auto_break}</option>
               <option value="round">{t.hrType_round}</option>
               <option value="ot_tier">{t.hrType_ot_tier}</option>
+              <option value="rest_day">{t.hrType_rest_day}</option>
+              <option value="min_daily">{t.hrType_min_daily}</option>
+              <option value="seventh_day">{t.hrType_seventh_day}</option>
+              <option value="night_diff">{t.hrType_night_diff}</option>
             </select>
           </Field>
 
@@ -459,6 +475,54 @@ export default function HoursRuleBuilder({ rules, onChange }) {
             </>
           )}
 
+          {draft.type === 'rest_day' && (
+            <>
+              <Field label={t.hrRestDayMult}>
+                <input style={s.input} type="number" min="1" step="0.05" value={draft.mult} onChange={e => setD('mult', e.target.value)} />
+              </Field>
+              <p style={s.hint}>{t.hrRestRuleHint}</p>
+            </>
+          )}
+
+          {draft.type === 'min_daily' && (
+            <>
+              <Field label={t.hrMinDaily}>
+                <input style={s.input} type="number" min="0.5" step="0.5" value={draft.minHours} onChange={e => setD('minHours', e.target.value)} />
+              </Field>
+              <p style={s.hint}>{t.hrMinRuleHint}</p>
+            </>
+          )}
+
+          {draft.type === 'seventh_day' && (
+            <>
+              <Field label={t.hrSdFirst}>
+                <input style={s.input} type="number" min="0" step="0.5" value={draft.firstHours} onChange={e => setD('firstHours', e.target.value)} />
+              </Field>
+              <Field label={t.hrSdFirstMult}>
+                <input style={s.input} type="number" min="1" step="0.05" value={draft.firstMult} onChange={e => setD('firstMult', e.target.value)} />
+              </Field>
+              <Field label={t.hrSdAfterMult}>
+                <input style={s.input} type="number" min="1" step="0.05" value={draft.afterMult} onChange={e => setD('afterMult', e.target.value)} />
+              </Field>
+              <p style={s.hint}>{t.hrSeventhDayHint}</p>
+            </>
+          )}
+
+          {draft.type === 'night_diff' && (
+            <>
+              <Field label={t.hrNightFrom}>
+                <input style={s.input} type="number" min="0" max="24" value={draft.fromHour} onChange={e => setD('fromHour', e.target.value)} />
+              </Field>
+              <Field label={t.hrNightTo}>
+                <input style={s.input} type="number" min="0" max="24" value={draft.toHour} onChange={e => setD('toHour', e.target.value)} />
+              </Field>
+              <Field label={t.hrNightPct}>
+                <input style={s.input} type="number" min="1" step="1" value={draft.pct} onChange={e => setD('pct', e.target.value)} />
+              </Field>
+              <p style={s.hint}>{t.hrNightDiffHint}</p>
+            </>
+          )}
+
           <div style={s.preview}>{describeRule(draft, t)}</div>
 
           <div style={s.actions}>
@@ -507,6 +571,22 @@ function coerceDraft(d) {
       out.basis = d.basis;                          // 'day' | 'week'
       out.afterHours = parseFloat(d.afterHours) || 0;
       out.mult = parseFloat(d.mult) || 1.5;
+      break;
+    case 'rest_day':
+      out.mult = parseFloat(d.mult) || 1.5;
+      break;
+    case 'min_daily':
+      out.hours = parseFloat(d.minHours) || 0;
+      break;
+    case 'seventh_day':
+      out.firstHours = parseFloat(d.firstHours) || 0;
+      out.firstMult = parseFloat(d.firstMult) || 1.5;
+      out.afterMult = parseFloat(d.afterMult) || 2;
+      break;
+    case 'night_diff':
+      out.fromHour = parseFloat(d.fromHour) || 0;
+      out.toHour = parseFloat(d.toHour) || 0;
+      out.pct = parseFloat(d.pct) || 0;
       break;
     default:
       break;

@@ -1020,9 +1020,24 @@ i18n EN/ES. `hoursRulesOtTier.test.js` (single/tiered/CA-style, Saturday-scoped,
 parse, report reconciliation, backward-compat). 234 pay/hours + 38 admin tests
 green; client build + i18n parity green.
 
-**Next:** Phase 3 = premiums (night/rest-day/7th-day/min-daily) as custom rules
-(same computeOT surface). Phase 4 = retire the fixed-slot UI (migrate-on-load).
-Fixed slots still work throughout — nothing removed yet.
+**Phase 3 shipped — premiums as custom rules.** Four new rule types:
+`rest_day {mult}` (whole day OT on the days `when` selects), `min_daily {hours}`
+(reporting-time floor), `seventh_day {firstHours, firstMult, afterMult}`, and
+`night_diff {fromHour, toHour, pct}`. Design kept the OT accumulator untouched
+for safety: rest_day / seventh_day / night_diff **feed the existing otConfig**
+(`otConfigFromSettings` overrides the fixed slots when a rule is present, incl.
+`daysFromWhen` to turn a rest_day's weekday `when` into rest days), so
+`computeOT` + `nightPremiumCost` are unchanged; only **min_daily** got a small
+per-bucket resolve (`minDailyForBucket`, autoReg-only, no OT-band restructuring)
+so its `when` scopes per day. Builder reuses the fixed-slot field labels; new
+type/summary/hint keys EN/ES. `hoursRulesPremiumRules.test.js` (rest-day Sat @2×,
+scoped min-daily floor, 7-day OT, night-diff pricing, parse, no-op). 240 pay/hours
++ 38 admin tests green; client build + i18n parity green.
+
+**Migration status:** all three baked-in sections (rounding, tiered OT, premiums)
+are now creatable as `when`-scoped custom rules; the fixed-slot UI still works
+untouched. **Phase 4** (retire the fixed slots, migrate-on-load) is the only
+piece left — held for a checkpoint since it's the one that *removes* UI.
 
 ---
 

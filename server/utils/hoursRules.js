@@ -97,7 +97,8 @@ const ROUNDING_REFERENCES = ['schedule', 'clock'];
 // COUNTS toward the overtime threshold. A 9.5h day plus a 0.5h late-stay credit
 // is 10h, which under an 8h threshold is 2h of overtime — not 1.5h of overtime
 // and 0.5h of regular.
-const RULE_TYPES = ['clip_start', 'clip_end', 'add_time', 'remove_time', 'auto_break', 'round', 'ot_tier'];
+const RULE_TYPES = ['clip_start', 'clip_end', 'add_time', 'remove_time', 'auto_break', 'round', 'ot_tier',
+  'rest_day', 'min_daily', 'seventh_day', 'night_diff'];
 const ROUND_EDGES = ['in', 'out', 'both']; // which punch edge a `round` rule rounds
 const OT_TIER_BASES = ['day', 'week'];     // an ot_tier rule counts hours per day or per week
 const RULE_WHEN_KINDS = [
@@ -379,6 +380,40 @@ function parseRule(raw, index) {
       return { ...base, basis, afterHours, mult };
     }
 
+    case 'rest_day': {
+      // Whole day at `mult`× on the days `when` selects (the rest days).
+      const mult = Number(raw.mult);
+      if (!Number.isFinite(mult) || mult <= 0) return null;
+      return { ...base, mult };
+    }
+
+    case 'min_daily': {
+      // Reporting-time pay: a floor of paid regular hours on a matching short day.
+      const hours = Number(raw.hours);
+      if (!Number.isFinite(hours) || hours <= 0) return null;
+      return { ...base, hours };
+    }
+
+    case 'seventh_day': {
+      // 7th consecutive worked day of a workweek → whole day OT (first N hours at
+      // one mult, the rest at a higher one). Workweek-detected, so `when` is not
+      // used for scoping — carried for schema uniformity.
+      const firstHours = Number(raw.firstHours);
+      const firstMult = Number(raw.firstMult);
+      const afterMult = Number(raw.afterMult);
+      if (!Number.isFinite(firstMult) || firstMult <= 0) return null;
+      if (!Number.isFinite(afterMult) || afterMult <= 0) return null;
+      return { ...base, firstHours: Number.isFinite(firstHours) && firstHours >= 0 ? firstHours : 0, firstMult, afterMult };
+    }
+
+    case 'night_diff': {
+      // Additive % premium on hours inside a nightly window [fromHour, toHour).
+      const fromHour = Number(raw.fromHour), toHour = Number(raw.toHour), pct = Number(raw.pct);
+      if (![fromHour, toHour].every(x => Number.isFinite(x) && x >= 0 && x <= 24)) return null;
+      if (!Number.isFinite(pct) || pct <= 0) return null;
+      return { ...base, fromHour, toHour, pct };
+    }
+
     default:
       return null;
   }
@@ -527,23 +562,53 @@ function otConfigFromSettings(settings) {
     const days = [0, 1, 2, 3, 4, 5, 6].filter(d => !workDays.includes(d));
     if (days.length) restDay = { mult: restMult, days };
   }
-  const minDailyHours = parseFloat(prem.minDailyHours) || 0;
-  const nightDifferential = (prem.nightDifferential && parseFloat(prem.nightDifferential.pct) > 0)
+  let minDailyHours = parseFloat(prem.minDailyHours) || 0;
+  let nightDifferential = (prem.nightDifferential && parseFloat(prem.nightDifferential.pct) > 0)
     ? prem.nightDifferential : null;
-  // ot_tier rules from the custom-rule builder — resolved per bucket in computeOT,
-  // where a matching rule's bands override the fixed-slot config for its days.
-  const tierRules = (p.rules || []).filter(r => r.type === 'ot_tier');
+  let seventhDay = has7th ? o.seventhDay : null;
 
-  if (!hasDaily && !hasWeekly && !has7th && !restDay && !minDailyHours && !nightDifferential && tierRules.length === 0) return null;
+  // ── Custom-rule builder equivalents (override the fixed slots when present) ──
+  const rules = p.rules || [];
+  // ot_tier rules — resolved per bucket in computeOT (a matching rule's bands
+  // override the fixed-slot config for its days).
+  const tierRules = rules.filter(r => r.type === 'ot_tier');
+  // min_daily rules — resolved per bucket in computeOT (per-day floor).
+  const minDailyRules = rules.filter(r => r.type === 'min_daily');
+  // rest_day rule: `when` selects the rest days; the whole day pays at `mult`×.
+  const restRule = rules.find(r => r.type === 'rest_day');
+  if (restRule) {
+    const days = daysFromWhen(restRule.when);
+    if (days.length) restDay = { mult: restRule.mult, days };
+  }
+  // seventh_day rule: overrides the fixed-slot 7th-day config (workweek-detected).
+  const sevenRule = rules.find(r => r.type === 'seventh_day');
+  if (sevenRule) seventhDay = { enabled: true, firstHoursThreshold: sevenRule.firstHours, firstMult: sevenRule.firstMult, afterMult: sevenRule.afterMult };
+  // night_diff rule: overrides the fixed-slot night differential.
+  const nightRule = rules.find(r => r.type === 'night_diff');
+  if (nightRule) nightDifferential = { fromHour: nightRule.fromHour, toHour: nightRule.toHour, pct: nightRule.pct };
+
+  const has7thFinal = !!seventhDay;
+  if (!hasDaily && !hasWeekly && !has7thFinal && !restDay && !minDailyHours && !nightDifferential
+      && tierRules.length === 0 && minDailyRules.length === 0) return null;
   return {
     dailyBands:  hasDaily  ? o.dailyBands  : [],
     weeklyBands: hasWeekly ? o.weeklyBands : [],
-    seventhDay:  has7th    ? o.seventhDay  : null,
+    seventhDay,
     restDay,
     minDailyHours,
     nightDifferential,
     tierRules,
+    minDailyRules,
   };
+}
+
+// The weekday set a `when` selects, for turning a rest_day rule into rest days.
+// Only weekday-shaped patterns map cleanly; a specific-date pattern yields none.
+function daysFromWhen(when) {
+  if (!when) return [];
+  if (when.kind === 'weekdays') return [...new Set((when.days || []).map(Number))].filter(d => d >= 0 && d <= 6);
+  if (when.kind === 'every_day') return [0, 1, 2, 3, 4, 5, 6];
+  return [];
 }
 
 // ── Reference cascade ────────────────────────────────────────────────────────
