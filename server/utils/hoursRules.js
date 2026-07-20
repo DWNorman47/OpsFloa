@@ -120,6 +120,14 @@ const RULE_BASES = ['schedule', 'punch'];
 //           uneven ladders (like the 25/26-minute one above) still need one
 //           'at' rule per rung.
 const RULE_MODES = ['at', 'every'];
+// Where an add/remove-time TRIGGER is measured from. 'clock' = a fixed wall-clock
+// time (`at`/`from`) — the only sensible option when everyone finishes at the same
+// hour. 'schedule' = an OFFSET (`offsetMin`) off the worker's scheduled edge — the
+// End Time rule if one is set, else their own scheduled end/start — so "25 min past
+// quitting time" fires no matter what hour each worker actually finishes. This is
+// the TRIGGER anchor and is independent of `base` ('schedule'|'punch'), which only
+// decides where the credit LANDS.
+const RULE_ANCHORS = ['clock', 'schedule'];
 const BREAK_TRIGGERS = ['always', 'after_hours'];
 // What a Start/End Time rule DOES about a punch outside the boundary. Only
 // 'ignore' is enforced today — it's pure pay math (don't pay time outside the
@@ -332,13 +340,37 @@ function parseRule(raw, index) {
       const edge = RULE_EDGES.includes(raw.edge) ? raw.edge : 'after';
       const ref = RULE_BASES.includes(raw.base) ? raw.base : 'schedule';
       const mode = RULE_MODES.includes(raw.mode) ? raw.mode : 'at';
+      const anchor = RULE_ANCHORS.includes(raw.anchor) ? raw.anchor : 'clock';
+      // Additive stacking. Default (absent/false) = 'replacing': among the set-time
+      // rules that fired on this edge, the largest wins ("+30 at 5:25" and "+60 at
+      // 5:50" pay 60). stack:true = 'additive': this rule's minutes pile ON TOP of
+      // the others (mark both and they pay 90). See edgeCredit. Carried on every
+      // shape but only meaningful once >1 rule fires.
+      const stack = raw.stack === true ? { stack: true } : {};
+      const everyOf = () => {
+        const everyMin = Number(raw.everyMin);
+        return Number.isFinite(everyMin) && everyMin > 0 ? everyMin : null;
+      };
+      if (anchor === 'schedule') {
+        // Trigger is measured from the scheduled edge: `offsetMin` minutes past it
+        // ('after') or before it ('before'). No absolute time is stored — the edge
+        // is resolved per worker at pay time (see ruleCredit's anchorBase).
+        const offsetMin = Number(raw.offsetMin);
+        if (!Number.isFinite(offsetMin) || offsetMin < 0) return null;
+        if (mode === 'every') {
+          const everyMin = everyOf();
+          return everyMin == null ? null
+            : { ...base, edge, base: ref, mode, anchor, offsetMin, everyMin, minutes, ...stack };
+        }
+        return { ...base, edge, base: ref, mode: 'at', anchor, offsetMin, minutes, ...stack };
+      }
       if (mode === 'every') {
         const from = toMin(raw.from);
-        const everyMin = Number(raw.everyMin);
-        if (from == null || !Number.isFinite(everyMin) || everyMin <= 0) return null;
-        return { ...base, edge, base: ref, mode, from, everyMin, minutes };
+        const everyMin = everyOf();
+        if (from == null || everyMin == null) return null;
+        return { ...base, edge, base: ref, mode, anchor, from, everyMin, minutes, ...stack };
       }
-      return at == null ? null : { ...base, edge, base: ref, mode: 'at', at, minutes };
+      return at == null ? null : { ...base, edge, base: ref, mode: 'at', anchor, at, minutes, ...stack };
     }
 
     case 'auto_break': {
@@ -868,10 +900,21 @@ function validatePolicyRaw(raw) {
  * header. `every` mode is the one exception: each repetition is another
  * `minutes`, because that's what "every N minutes, add M" means.
  */
-function ruleCredit(rule, punchMin) {
+function ruleCredit(rule, punchMin, anchorBase = null) {
+  // The trigger threshold. 'clock' anchor: a fixed wall-clock time (`at`/`from`).
+  // 'schedule' anchor: an offset off the scheduled edge — `anchorBase` is that edge
+  // (baseEnd for 'after', baseStart for 'before'), already resolved by applyRules.
+  // With no schedule to resolve, a schedule-anchored rule can't know when to fire,
+  // so it doesn't (0) — mirroring how a schedule-BASED credit no-ops with no baseline.
+  let threshold;
+  if (rule.anchor === 'schedule') {
+    if (anchorBase == null) return 0;
+    threshold = rule.edge === 'after' ? anchorBase + rule.offsetMin : anchorBase - rule.offsetMin;
+  } else {
+    threshold = rule.mode === 'every' ? rule.from : rule.at;
+  }
   // 'after' measures a late clock-out; 'before' measures an early clock-in.
-  const past = rule.edge === 'after' ? punchMin - (rule.mode === 'every' ? rule.from : rule.at)
-                                     : (rule.mode === 'every' ? rule.from : rule.at) - punchMin;
+  const past = rule.edge === 'after' ? punchMin - threshold : threshold - punchMin;
   // Inclusive: the customer's rule reads "clocked in TO or past 5:25", so 5:25
   // exactly must earn the rung.
   if (past < 0) return 0;
@@ -879,15 +922,26 @@ function ruleCredit(rule, punchMin) {
   return rule.minutes;
 }
 
-/** The winning credit for one edge: the largest rung reached, not their sum. */
-function bestCredit(rules, type, edge, punchMin) {
-  let best = 0;
+/**
+ * The effective credit for one edge across all its rules, in minutes.
+ *
+ * 'replacing' rules (the default, stack falsy) are alternatives: the largest one
+ * that fired wins, so "+30 at 5:25" and "+60 at 5:50" pay 60, not 90. 'additive'
+ * rules (stack:true) each pile on — mark both and they sum to 90. Mixed: the
+ * additive ones sum on top of the biggest replacing one. Within a single rule the
+ * credit is still whatever ruleCredit returns (an 'every' ladder is cumulative on
+ * its own); stacking only governs how SEPARATE rules combine.
+ */
+function edgeCredit(rules, type, edge, punchMin, anchorBase = null) {
+  let maxReplace = 0;
+  let sumStack = 0;
   for (const r of rules) {
     if (r.type !== type || r.edge !== edge) continue;
-    const c = ruleCredit(r, punchMin);
-    if (c > best) best = c;
+    const c = ruleCredit(r, punchMin, anchorBase);
+    if (r.stack) sumStack += c;
+    else if (c > maxReplace) maxReplace = c;
   }
-  return best;
+  return maxReplace + sumStack;
 }
 
 /**
@@ -948,8 +1002,8 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null) {
   // punch decides which rung was reached; it is not the thing added to.
   const hasAfter = rules.some(r => (r.type === 'add_time' || r.type === 'remove_time') && r.edge === 'after');
   if (hasAfter) {
-    const net = bestCredit(rules, 'add_time', 'after', punchEnd)
-              - bestCredit(rules, 'remove_time', 'after', punchEnd);
+    const net = edgeCredit(rules, 'add_time', 'after', punchEnd, baseEnd)
+              - edgeCredit(rules, 'remove_time', 'after', punchEnd, baseEnd);
     const scheduleBased = rules.some(r => r.edge === 'after' && r.base === 'schedule'
       && (r.type === 'add_time' || r.type === 'remove_time'));
 
@@ -971,8 +1025,8 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null) {
   // baseline.
   const hasBefore = rules.some(r => (r.type === 'add_time' || r.type === 'remove_time') && r.edge === 'before');
   if (hasBefore) {
-    const net = bestCredit(rules, 'add_time', 'before', punchStart)
-              - bestCredit(rules, 'remove_time', 'before', punchStart);
+    const net = edgeCredit(rules, 'add_time', 'before', punchStart, baseStart)
+              - edgeCredit(rules, 'remove_time', 'before', punchStart, baseStart);
     const scheduleBased = rules.some(r => r.edge === 'before' && r.base === 'schedule'
       && (r.type === 'add_time' || r.type === 'remove_time'));
 
@@ -1111,6 +1165,7 @@ module.exports = {
   RULE_EDGES,
   RULE_BASES,
   RULE_MODES,
+  RULE_ANCHORS,
   BREAK_TRIGGERS,
   CLIP_START_BEHAVIORS,
   CLIP_END_BEHAVIORS,
