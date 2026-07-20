@@ -1058,6 +1058,67 @@ parity + client build green across the four phases.
 
 ---
 
+## 2026-07-19 — Hours & Rules: schedule-relative trigger for Add/Remove Time
+
+David asked, in the Add-Time builder: add a step asking whether the trigger is a
+*set time* or the *end of schedule* — so "+30 at :25 past quitting time" fires no
+matter what hour a worker actually finishes (variable shifts, not just a fixed
+5:25).
+
+**The gap it closes.** The trigger (`at`/`from`) was a fixed wall-clock time; it
+only makes sense when everyone quits at the same hour. `base` ("Added to") already
+adapts where the credit *lands*, but nothing adapted where the trigger *fires*.
+
+- **New rule field `anchor`** on add_time/remove_time (`RULE_ANCHORS =
+  ['clock','schedule']`, default `clock`). `schedule` measures the trigger as an
+  **offset** (`offsetMin`) off the scheduled edge instead of a clock time. It is
+  independent of `base` — trigger anchor vs. credit landing are orthogonal.
+- **Engine:** `ruleCredit(rule, punchMin, anchorBase)` gained a 3rd arg — the
+  resolved baseline (`baseEnd` for 'after', `baseStart` for 'before'), which is the
+  End Time rule if one is set, else the worker's own scheduled end. So the anchor is
+  the *same* baseline the credit already lands on. No schedule to resolve → the rule
+  no-ops (0), exactly like a schedule-*based* credit with no baseline. Clock anchor
+  is byte-for-byte unchanged.
+- **Builder:** a "Set time, or relative to their shift?" select between Mode and the
+  threshold; when *schedule*, the time picker swaps for a "Minutes past scheduled
+  end" number + a hint. Summaries read "…once 25 min past their scheduled end".
+- **Judgment call:** the anchor follows the resolved baseline (End Time rule ⇒
+  scheduled end), not raw `expected` — so a company End Time rule and a per-worker
+  schedule both behave the way the admin already expects for the credit side.
+
+New `hoursRulesAnchor.test.js` proves it adapts (17:00 shift fires 17:25, a 14:00
+shift fires 14:25 from the *same* rule), the ladder mode, offset 0, no-schedule
+no-op, End-Time-rule override, and clock-anchor regression. **276 server
+hours/pay tests + i18n parity + client build green.** No DB column (lives in the
+`hours_rules` JSON), so no `db-enums.md` change.
+
+---
+
+## 2026-07-19 — Hours & Rules: additive stacking for set-time rules
+
+David: "if I set 5:25 → +30 and 5:50 → +60, does it end in an hour or 90 minutes?"
+Today it's an hour — `edgeCredit` (was `bestCredit`) takes the largest rung that
+fired, never the sum. He wanted the *option* to stack.
+
+- **New per-rule flag `stack`** on add_time/remove_time (default absent = false).
+  `false` = **replacing**: largest fired rule wins (unchanged, so 60). `true` =
+  **additive**: that rule's minutes pile on top. Formula:
+  `max(replacing rules) + sum(additive rules)` — mark both and the pair pays 90.
+- **Only 'at' rules** get the toggle (an 'every' ladder is already cumulative on
+  its own). Shown as an "If two set-time rules both apply" select right under
+  "Added to"; `coerceDraft` only writes `stack:true` for 'at' rules, and only
+  when true, so nothing else changes shape.
+- **Backward compatible by construction:** default preserves the max-wins math —
+  every existing policy and all 282 tests unchanged. The flag round-trips only
+  when true (absent stays absent, verified).
+
+New `hoursRulesStack.test.js` covers both-additive (90), mixed (90), replacing
+(60), the single-rule case (agree), and round-trip. **282 server hours/pay tests
++ i18n parity + client build green.** No DB column (hours_rules JSON), no
+db-enums change.
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*
