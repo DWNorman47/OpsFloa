@@ -1136,6 +1136,22 @@ prior entry; that diagnosis stands if it recurs).
 
 ---
 
+## 2026-07-20 — Hours & Rules: "Schedule Time" → "Schedule/Pay Time"
+
+David wanted the "Added to" pay-basis option to carry a "pay" framing. Flagged
+that plain **"Pay Time"** is the worse of his two ideas — "Punch Time" also drives
+pay, so "Pay Time vs Punch Time" blurs the only real distinction (scheduled end vs
+actual punch) — and went with his fallback **"Schedule/Pay Time"**, which keeps the
+accurate meaning. Renamed the term in all four user-facing spots: the dropdown
+option (`hrBaseSchedule`), the rule summary token (`hrSumOnBaseline`), the hint
+(`hrBaseScheduleHint`), and the glossary (`hrGlossary`), EN + ES. Left the round
+rule's own "Scheduled time" vocabulary alone, and lowercased `hrRoundHint`'s stray
+"Schedule Time" → "their scheduled time" so it no longer reads as the same term.
+i18n-only; parity + build green. Trivial to swap to plain "Pay Time" if he changes
+his mind.
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*
