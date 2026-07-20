@@ -986,6 +986,33 @@ Start/End Time rule, for "add time" to actually apply.
 
 ---
 
+## 2026-07-19 — Hours & Rules: migrate fixed slots into custom rules — Phase 1 (Punch Rounding)
+
+**In progress** (David chose the full phased migration of the baked-in sections —
+rounding, tiered OT, premiums — into the custom-rule builder). Phase 1 shipped:
+**Punch Rounding is now a when-scoped custom rule.**
+
+- **Engine** (`hoursRules.js`): new `round` rule type `{edge:in|out|both,
+  reference, direction, intervalMin, graceMin}` + `when`. In `roundEntriesForPay`
+  the per-edge rounding config is resolved from matching `round` rules (later wins)
+  and falls back to the global `policy.rounding` — so existing policies are
+  byte-identical, and a `round` rule can target one edge / certain days, incl.
+  `direction:'off'` to *turn rounding off* on some days. The rounding math
+  (`roundEdge`) is untouched.
+- **Builder**: `round` type with edge / how-to-round (nearest, worker-favor,
+  company-favor, off) / interval / grace / measure-against (Schedule Time vs wall
+  clock); plain-English summary; coerce. i18n EN/ES (~26 keys).
+- **Tests**: `hoursRulesRound.test.js` (both edges, edge-scoped, off-override,
+  backward-compat, parse/defaults) + contract type-parity updated. 133
+  hours-rules tests green, client build + i18n parity green.
+
+**Next:** Phase 2 = tiered OT as when-scoped rules (the harder one — lives in the
+separate `computeOT` cost engine, not the rounding pipeline). Phase 3 = premiums.
+Phase 4 = retire the fixed-slot UI (migrate-on-load). Fixed slots still work
+throughout — nothing removed yet.
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*

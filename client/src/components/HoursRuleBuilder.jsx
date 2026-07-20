@@ -36,6 +36,12 @@ function blankRule() {
     from: '17:25',
     everyMin: '30',
     trigger: { kind: 'always', hours: '6' },
+    // round-rule fields
+    roundEdge: 'both',
+    reference: 'schedule',
+    direction: 'nearest',
+    intervalMin: '15',
+    graceMin: '0',
   };
 }
 
@@ -101,6 +107,13 @@ export function describeRule(r, t) {
     case 'auto_break':
       return `${when} — ${t.hrSumBreak.replace('{n}', mins)}${
         r.trigger?.kind === 'after_hours' ? ` ${t.hrSumAfterHours.replace('{n}', r.trigger.hours)}` : ''}`;
+    case 'round': {
+      const edge = r.edge === 'in' ? t.hrRoundInShort : r.edge === 'out' ? t.hrRoundOutShort : t.hrRoundBothShort;
+      if (r.direction === 'off') return `${when} — ${t.hrSumRoundOff.replace('{edge}', edge)}`;
+      const dir = r.direction === 'toward_worker' ? t.hrDirTowardShort
+        : r.direction === 'against_worker' ? t.hrDirAgainstShort : t.hrDirNearestShort;
+      return `${when} — ${t.hrSumRound.replace('{edge}', edge).replace('{n}', r.intervalMin).replace('{dir}', dir)}`;
+    }
     default: return when;
   }
 }
@@ -287,6 +300,7 @@ export default function HoursRuleBuilder({ rules, onChange }) {
               <option value="add_time">{t.hrType_add_time}</option>
               <option value="remove_time">{t.hrType_remove_time}</option>
               <option value="auto_break">{t.hrType_auto_break}</option>
+              <option value="round">{t.hrType_round}</option>
             </select>
           </Field>
 
@@ -379,6 +393,45 @@ export default function HoursRuleBuilder({ rules, onChange }) {
             </>
           )}
 
+          {draft.type === 'round' && (
+            <>
+              <Field label={t.hrRoundEdge}>
+                <select style={s.input} value={draft.roundEdge} onChange={e => setD('roundEdge', e.target.value)}>
+                  <option value="both">{t.hrRoundBoth}</option>
+                  <option value="in">{t.hrRoundIn}</option>
+                  <option value="out">{t.hrRoundOut}</option>
+                </select>
+              </Field>
+              <Field label={t.hrDirection}>
+                <select style={s.input} value={draft.direction} onChange={e => setD('direction', e.target.value)}>
+                  <option value="nearest">{t.hrDirNearest}</option>
+                  <option value="toward_worker">{t.hrDirToward}</option>
+                  <option value="against_worker">{t.hrDirAgainst}</option>
+                  <option value="off">{t.hrDirOff}</option>
+                </select>
+              </Field>
+              {draft.direction !== 'off' && (
+                <Field label={t.hrInterval}>
+                  <input style={s.input} type="number" min="1" value={draft.intervalMin} onChange={e => setD('intervalMin', e.target.value)} />
+                </Field>
+              )}
+              {(draft.direction === 'toward_worker' || draft.direction === 'against_worker') && (
+                <Field label={t.hrGrace}>
+                  <input style={s.input} type="number" min="0" value={draft.graceMin} onChange={e => setD('graceMin', e.target.value)} />
+                </Field>
+              )}
+              {draft.direction !== 'off' && (
+                <Field label={t.hrReference}>
+                  <select style={s.input} value={draft.reference} onChange={e => setD('reference', e.target.value)}>
+                    <option value="schedule">{t.hrRefSchedule}</option>
+                    <option value="clock">{t.hrRefClock}</option>
+                  </select>
+                </Field>
+              )}
+              <p style={s.hint}>{draft.direction === 'off' ? t.hrRoundOffHint : t.hrRoundHint}</p>
+            </>
+          )}
+
           <div style={s.preview}>{describeRule(draft, t)}</div>
 
           <div style={s.actions}>
@@ -415,6 +468,13 @@ function coerceDraft(d) {
       out.trigger = d.trigger?.kind === 'after_hours'
         ? { kind: 'after_hours', hours: parseFloat(d.trigger.hours) || 0 }
         : { kind: 'always' };
+      break;
+    case 'round':
+      out.edge = d.roundEdge;                       // 'in' | 'out' | 'both'
+      out.direction = d.direction;                  // nearest | toward_worker | against_worker | off
+      out.reference = d.reference;                  // schedule | clock
+      out.intervalMin = parseInt(d.intervalMin, 10) || 15;
+      out.graceMin = parseInt(d.graceMin, 10) || 0;
       break;
     default:
       break;

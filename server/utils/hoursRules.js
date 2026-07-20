@@ -97,7 +97,8 @@ const ROUNDING_REFERENCES = ['schedule', 'clock'];
 // COUNTS toward the overtime threshold. A 9.5h day plus a 0.5h late-stay credit
 // is 10h, which under an 8h threshold is 2h of overtime — not 1.5h of overtime
 // and 0.5h of regular.
-const RULE_TYPES = ['clip_start', 'clip_end', 'add_time', 'remove_time', 'auto_break'];
+const RULE_TYPES = ['clip_start', 'clip_end', 'add_time', 'remove_time', 'auto_break', 'round'];
+const ROUND_EDGES = ['in', 'out', 'both']; // which punch edge a `round` rule rounds
 const RULE_WHEN_KINDS = [
   'every_day', 'weekdays', 'month_days', 'month_weekdays',
   'nth_days',      // every Nth calendar day from an anchor date
@@ -348,6 +349,20 @@ function parseRule(raw, index) {
       // 'always' and deduct from every short day. Drop it instead.
       if (kind === 'after_hours' && !(Number.isFinite(hours) && hours > 0)) return null;
       return { ...base, minutes, trigger: kind === 'after_hours' ? { kind, hours } : { kind: 'always' } };
+    }
+
+    case 'round': {
+      // A when-scoped override of the fixed-slot rounding: same math (roundEdge),
+      // but it can target one edge and only fire on certain days. direction 'off'
+      // is a valid rule ("don't round on Saturday").
+      const edge = ROUND_EDGES.includes(raw.edge) ? raw.edge : 'both';
+      const reference = ROUNDING_REFERENCES.includes(raw.reference) ? raw.reference : 'schedule';
+      const direction = ROUNDING_DIRECTIONS.includes(raw.direction) ? raw.direction : 'nearest';
+      const intervalMin = Number(raw.intervalMin);
+      if (!Number.isFinite(intervalMin) || intervalMin <= 0) return null;
+      const g = Number(raw.graceMin);
+      const graceMin = Number.isFinite(g) && g >= 0 ? g : 0;
+      return { ...base, edge, reference, direction, intervalMin, graceMin };
     }
 
     default:
@@ -861,10 +876,20 @@ function roundEntriesForPay(entries, policy, ctx = {}) {
     const workerStandard = workerStandardById ? workerStandardById[e.user_id] : null;
     const expected = resolveExpected(policy, e.work_date, { shift, workerStandard });
 
-    // Rounding first: the rule list operates on the paid punch, not the raw one.
-    const { start, end } = applyRounding(e.start_time, e.end_time, expected, policy.rounding);
-
     const dayRules = rules.filter(r => ruleMatchesDate(r, e.work_date));
+
+    // Rounding first: the rule list operates on the paid punch, not the raw one.
+    // A `round` rule is a when-scoped override of the fixed-slot rounding config
+    // for its edge(s) — later matching rules win; with none, the global config
+    // applies exactly as before.
+    let cfgIn = policy.rounding.clockIn, cfgOut = policy.rounding.clockOut;
+    for (const r of dayRules) {
+      if (r.type !== 'round') continue;
+      const cfg = { reference: r.reference, intervalMin: r.intervalMin, graceMin: r.graceMin, direction: r.direction };
+      if (r.edge === 'in' || r.edge === 'both') cfgIn = cfg;
+      if (r.edge === 'out' || r.edge === 'both') cfgOut = cfg;
+    }
+    const { start, end } = applyRounding(e.start_time, e.end_time, expected, { clockIn: cfgIn, clockOut: cfgOut });
     let finalStart = start;
     let finalEnd = end;
     let breakMin = e.break_minutes;
