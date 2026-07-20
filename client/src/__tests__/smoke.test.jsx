@@ -253,7 +253,6 @@ describe('smoke: FieldPage hash routes', () => {
     ...DEFAULT_SETTINGS,
     feature_media_gallery: true,
     module_inventory: true,
-    label_work: 'Project',
     label_worker: 'Team Member',
   };
   const projects = [{ id: 1, name: 'Demo Work', job_number: 'DW-1' }];

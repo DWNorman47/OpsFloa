@@ -7,13 +7,16 @@ import axios from 'axios';
 import { getT } from '../i18n';
 import { detectLanguage } from '../languageDetect';
 import { publicLinkError } from '../utils/publicErrors';
+import { formatCurrency } from '../utils';
 
 const baseURL = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api';
 const publicApi = axios.create({ baseURL });
 
-function formatCents(cents) {
-  const n = (parseInt(cents, 10) || 0) / 100;
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
+// This page is unauthenticated, so it can't read GET /api/settings — the
+// contractor's currency rides along in the public payload instead. Falls back
+// to USD only if the server omitted it.
+function formatCents(cents, currency = 'USD') {
+  return formatCurrency((parseInt(cents, 10) || 0) / 100, currency);
 }
 
 const CATEGORIES = ['labor', 'materials', 'equipment', 'subs', 'overhead', 'contingency', 'other'];
@@ -148,7 +151,7 @@ export default function PublicEstimatePage() {
                         {l.qty} {l.unit || ''}
                       </td>
                       <td style={{ padding: '5px 0', textAlign: 'right', width: 100 }}>
-                        {formatCents(l.total_cents)}
+                        {formatCents(l.total_cents, estimate?.currency)}
                       </td>
                     </tr>
                   ))}
@@ -159,11 +162,11 @@ export default function PublicEstimatePage() {
         </div>
 
         <div style={styles.totalsBox}>
-          <Row label={t.pubSubtotal} value={estimate.subtotal_cents} />
+          <Row label={t.pubSubtotal} value={estimate.subtotal_cents} currency={estimate.currency} />
           {parseFloat(estimate.overhead_pct) > 0 && (
-            <Row label={`${t.pubOverhead} (${estimate.overhead_pct}%)`} value={Math.round(estimate.subtotal_cents * estimate.overhead_pct / 100)} />
+            <Row label={`${t.pubOverhead} (${estimate.overhead_pct}%)`} value={Math.round(estimate.subtotal_cents * estimate.overhead_pct / 100)} currency={estimate.currency} />
           )}
-          <Row label={t.pubTotal} value={estimate.total_cents} bold />
+          <Row label={t.pubTotal} value={estimate.total_cents} bold currency={estimate.currency} />
         </div>
 
         {estimate.exclusions && (
@@ -254,11 +257,11 @@ function Block({ label, children }) {
   );
 }
 
-function Row({ label, value, bold }) {
+function Row({ label, value, bold, currency }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: bold ? '2px solid #111827' : '1px solid #e5e7eb', fontWeight: bold ? 700 : 400, fontSize: bold ? 18 : 14 }}>
       <span>{label}</span>
-      <span>{formatCents(value)}</span>
+      <span>{formatCents(value, currency)}</span>
     </div>
   );
 }

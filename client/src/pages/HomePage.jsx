@@ -50,7 +50,6 @@ export default function HomePage() {
   const [showPlaces, setShowPlaces] = useState(false);
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const terms = useMemo(() => ({
-    work: labelSg(settings?.label_work, 'work', user?.language),
     client: labelSg(settings?.label_client, 'client', user?.language),
     worker: labelSg(settings?.label_worker, 'worker', user?.language),
     workerPlural: labelPl(settings?.label_worker, 'worker', user?.language),
@@ -94,7 +93,7 @@ export default function HomePage() {
         list.push({ title: t.hpActionWhosWorkingTitle, detail: t.hpActionWhosWorkingDetail, to: '/timeclock#wf-live', icon: 'L', primary: !list.length });
       }
       if (enabled(settings, 'module_work') && can('projects')) {
-        list.push({ title: `${t.hpActionAddWork} ${terms.work.toLowerCase()}`, detail: `${t.hpActionAddWorkDetailCreate} ${terms.work.toLowerCase()} ${t.hpActionAddWorkDetailManage} ${terms.client.toLowerCase()} ${t.hpActionAddWorkDetailRecords}`, to: '/work', icon: 'W' });
+        list.push({ title: `${t.hpActionAddWork} project`, detail: `${t.hpActionAddWorkDetailCreate} project ${t.hpActionAddWorkDetailManage} ${terms.client.toLowerCase()} ${t.hpActionAddWorkDetailRecords}`, to: '/work', icon: 'W' });
       }
       if (enabled(settings, 'module_team') && can('team')) {
         list.push({ title: t.hpActionInviteTeamTitle, detail: `${t.hpActionInviteTeamDetailAdd} ${terms.workerPlural.toLowerCase()} ${t.hpActionInviteTeamDetailAccess}`, to: '/team', icon: 'T' });
@@ -129,7 +128,7 @@ export default function HomePage() {
     const all = [
       ['timeclock', t.hpPlaceTimeClockName, '/timeclock', t.hpPlaceTimeClockDetail],
       ['field', terms.field, '/field', t.hpPlaceFieldDetail],
-      ['projects', terms.work, '/work', `${terms.work}, ${t.hpPlaceProjectsDetail}`],
+      ['projects', 'Project', '/work', `Project, ${t.hpPlaceProjectsDetail}`],
       ['team', t.hpPlaceDirectoryName, '/team', `${terms.workerPlural}, ${t.hpPlaceDirectoryDetail}`],
       ['inventory', t.hpPlaceInventoryName, '/inventory', t.hpPlaceInventoryDetail],
       ['financial_reports', t.hpPlaceReportsName, '/financial-reports', t.hpPlaceReportsDetail],

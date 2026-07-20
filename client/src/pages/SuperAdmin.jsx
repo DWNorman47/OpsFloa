@@ -722,6 +722,18 @@ export default function SuperAdmin() {
                           </label>
                         </div>
                         <div style={styles.controlGroup}>
+                          <span style={styles.controlLabel}>Storm/Utility add-on</span>
+                          <label style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+                            <input
+                              type="checkbox"
+                              checked={!!c.addon_storm}
+                              onChange={e => patchCompany(c.id, { addon_storm: e.target.checked })}
+                              disabled={working === c.id}
+                            />
+                            {c.addon_storm ? 'On' : 'Off'}
+                          </label>
+                        </div>
+                        <div style={styles.controlGroup}>
                           <span style={styles.controlLabel}>Affiliate</span>
                           <select
                             style={styles.controlSelect}

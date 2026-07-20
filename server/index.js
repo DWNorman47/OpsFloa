@@ -133,6 +133,11 @@ app.use('/api', (req, res, next) => {
 // Stripe webhook needs raw body before express.json parses it
 app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
 
+// Same for the Resend event webhook: its signature is over the exact bytes
+// sent, so it must see them before any json parser reformats them. Small cap —
+// it's an unauthenticated endpoint and the payloads are a few hundred bytes.
+app.use('/api/resend-events', express.raw({ type: 'application/json', limit: '256kb' }));
+
 // Unauthenticated endpoints never need large bodies — cap them tightly so
 // they can't be abused for memory amplification. The first json parser to
 // run wins (express.json no-ops once req.body is set), so these tight
@@ -146,6 +151,10 @@ app.use('/api/public', express.json({ limit: '1mb' }));
 // Company-shared takeoffs embed the whole plan PDF as base64 (≈+33%), so they
 // need a bigger body than the 20 MB app-wide cap. Runs first, so it wins.
 app.use('/api/takeoffs', express.json({ limit: '64mb' }));
+app.use('/api/estimates', express.json({ limit: '48mb' })); // plan-PDF attach via base64
+// Going live can hand the plan PDF up as base64 when R2 CORS isn't set for a
+// direct browser PUT (same fallback as takeoffs), so /api/live needs the bigger cap too.
+app.use('/api/live', express.json({ limit: '64mb' }));
 app.use(express.json({ limit: '20mb' }));
 
 // Health probes must be registered before any catch-all authenticated /api
@@ -228,6 +237,7 @@ app.use('/api/equipment', requireAuth, requirePlan('business'), require('./route
 app.use('/api/inventory', requireAuth, requirePlan('business'), require('./routes/inventory'));
 app.use('/api/rfis', requireAuth, requirePlan('business'), require('./routes/rfis'));
 app.use('/api/daily-reports', requireAuth, requirePlan('business'), require('./routes/dailyReports'));
+app.use('/api/haul-tickets', requireAuth, requirePlan('business'), require('./routes/haulTickets'));
 app.use('/api/punchlist', requireAuth, requirePlan('business'), require('./routes/punchlist'));
 app.use('/api/inspections', requireAuth, requirePlan('business'), require('./routes/inspections'));
 app.use('/api/safety-talks', requireAuth, requirePlan('business'), require('./routes/safetyTalks'));
@@ -235,6 +245,9 @@ app.use('/api/safety-checklists', requireAuth, requirePlan('business'), require(
 // Voice transcription tool (Tools module) — upload audio, diarized transcript
 app.use('/api/recordings', requireAuth, requirePlan('business'), require('./routes/recordings'));
 app.use('/api/office', requireAuth, requirePlan('business'), require('./routes/officeTools'));
+// AI Jump Start — vision-model first-draft takeoff for Plan Room. Gated to the
+// plan-tools add-on (same as the takeoff layer it drafts into), metered by runAi.
+app.use('/api/jumpstart', requireAuth, requirePlan('business'), requirePlanToolsAddon, require('./routes/jumpstart'));
 app.use('/api/inbox', require('./routes/inbox'));
 app.use('/api/time-off', requireAuth, require('./routes/timeOff'));
 app.use('/api/reimbursements', requireAuth, require('./routes/reimbursements'));
@@ -269,6 +282,8 @@ app.use('/api/public/change-orders', changeOrderRoutes.publicRouter);
 const lienWaiverRoutes = require('./routes/lienWaivers');
 app.use('/api/public/lien-waivers', lienWaiverRoutes.publicRouter);
 app.use('/api/client-errors', require('./routes/clientErrors'));
+app.use('/api/resend-events', require('./routes/resendEvents'));
+// Deprecated — superseded by /api/resend-events. See routes/sendgridEvents.js.
 app.use('/api/sendgrid-events', require('./routes/sendgridEvents'));
 
 // Per-project budget category CRUD — feeds the spend rollup + budget bar.
@@ -403,6 +418,10 @@ app.listen(PORT, () => {
   startEquipmentMaintenanceJob();
   const { startRentalReturnRemindersJob } = require('./jobs/rentalReturnReminders');
   startRentalReturnRemindersJob();
+  const { startSubDocExpiryJob } = require('./jobs/subDocExpiry'); // sub COI / license lapse alerts
+  startSubDocExpiryJob();
+  const { startBidDueReminderJob } = require('./jobs/bidDueReminders');
+  startBidDueReminderJob();
   const { startMediaRetentionJob } = require('./jobs/mediaRetention');
   startMediaRetentionJob();
   const { startScheduledReportsJob } = require('./jobs/scheduledReports');

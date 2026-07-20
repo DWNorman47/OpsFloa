@@ -9,7 +9,6 @@ import { SkeletonList } from './Skeleton';
 import FieldFilters from './FieldFilters';
 
 import { silentError } from '../errorReporter';
-import { labelSg } from '../companyLabels';
 function today() {
   return new Date().toLocaleDateString('en-CA');
 }
@@ -24,7 +23,7 @@ function fmtIncidentDate(value, locale = 'en-US') {
 
 // ── Incident Form ─────────────────────────────────────────────────────────────
 
-function IncidentForm({ projects, onSubmitted, onCancel, workLabel = 'Project' }) {
+function IncidentForm({ projects, onSubmitted, onCancel }) {
   const t = useT();
   const TYPE_LABELS = useMemo(() => ({
     'injury': `🤕 ${t.typeInjury}`,
@@ -102,9 +101,9 @@ function IncidentForm({ projects, onSubmitted, onCancel, workLabel = 'Project' }
         </div>
         {projects.length > 0 && (
           <div style={styles.fieldGroup}>
-            <label htmlFor="ir-project" style={styles.label}>{workLabel} <span style={styles.optional}>{t.quizOptional}</span></label>
+            <label htmlFor="ir-project" style={styles.label}>Project <span style={styles.optional}>{t.quizOptional}</span></label>
             <select id="ir-project" style={styles.input} value={form.project_id} onChange={e => set('project_id', e.target.value)}>
-              <option value="">{`No ${workLabel.toLowerCase()}`}</option>
+              <option value="">{`No project`}</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
@@ -290,10 +289,9 @@ function IncidentCard({ incident, isAdmin, onClosed, onDeleted }) {
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
-export default function IncidentReports({ projects, settings = null }) {
+export default function IncidentReports({ projects }) {
   const { user } = useAuth();
   const t = useT();
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const { onSync } = useOffline() || {};
   const TYPE_LABELS = useMemo(() => ({
@@ -365,7 +363,6 @@ export default function IncidentReports({ projects, settings = null }) {
         <div style={styles.formCard}>
           <IncidentForm
             projects={projects}
-            workLabel={workLabel}
             onSubmitted={r => { setIncidents(prev => [r, ...prev]); setShowForm(false); }}
             onCancel={() => setShowForm(false)}
           />

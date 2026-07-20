@@ -6,8 +6,16 @@ const bcrypt = require('bcryptjs');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const qbo = require('../services/qbo');
 const { encrypt } = require('../services/encryption');
+// Every punch this file bills from must be the PAID punch, not the raw one.
+// qbo.js never imported the hours-rules engine, so a company with a policy
+// enabled would have had OpsFloa's own invoice and its QuickBooks bill disagree
+// about the same day. Rounding is applied at each point entries are fetched, so
+// the four separate hour calculations below can't drift apart again.
+const { loadSettings, computePaid } = require('../utils/paidHours');
+const { roundEntriesFromSettings } = require('../utils/hoursRules');
+const { otBandsCost } = require('../utils/payCalculations');
 const { applySettingsRows, ADMIN_SETTINGS_DEFAULTS } = require('../settingsDefaults');
-const { computeOT } = require('../utils/payCalculations');
+
 const { logAudit } = require('../auditLog');
 
 // GET /api/qbo/status — connection status for this company
@@ -336,7 +344,7 @@ router.post('/push', requireAdmin, async (req, res) => {
       [companyId, from || null, to || null]
     );
 
-    const entries = result.rows;
+    const entries = roundEntriesFromSettings(result.rows, await loadSettings(companyId));
     const skipped = [];
     const pushed = [];
     let alreadySynced = 0;
@@ -594,7 +602,7 @@ router.post('/push-expenses', requireAdmin, async (req, res) => {
 // QBO Bill per vendor. Labor lines are item-based (hours × rate on an Item),
 // reimbursement lines are account-based (against qbo_expense_account_id).
 
-async function gatherBillData(companyId, { from, to, workerIds, force }) {
+async function gatherBillData(companyId, { from, to, workerIds, force }, settings) {
   const ids = Array.isArray(workerIds) && workerIds.length ? workerIds : null;
   const [timeRows, reimbRows] = await Promise.all([
     pool.query(
@@ -631,13 +639,15 @@ async function gatherBillData(companyId, { from, to, workerIds, force }) {
     ),
   ]);
 
+  const paidTimeRows = roundEntriesFromSettings(timeRows.rows, settings);
+
   // Group per worker (vendor)
   const byUser = new Map();
   const get = (uid) => {
     if (!byUser.has(uid)) byUser.set(uid, { userId: uid, fullName: '', vendorId: '', hourlyRate: 0, overtimeRule: null, timeEntries: [], reimbursements: [] });
     return byUser.get(uid);
   };
-  for (const te of timeRows.rows) {
+  for (const te of paidTimeRows) {
     if (te.qbo_bill_id && !force) continue;
     const hours = hoursBetween(te.start_time, te.end_time);
     if (hours <= 0) continue;
@@ -694,16 +704,15 @@ function isoDate(d) {
  * inside computeOT / computeGroupOvertime.
  */
 async function getOvertimeSettings(companyId) {
-  const { rows } = await pool.query(
-    "SELECT key, value FROM settings WHERE company_id = $1 AND key IN ('overtime_rule','overtime_threshold','overtime_multiplier','week_start')",
-    [companyId]
-  );
-  const pick = k => rows.find(r => r.key === k)?.value;
-  const rule = pick('overtime_rule') || 'daily';
-  const threshold = parseFloat(pick('overtime_threshold')) || (rule === 'weekly' ? 40 : 8);
-  const multiplier = parseFloat(pick('overtime_multiplier')) || 1.5;
-  const weekStart = parseInt(pick('week_start') ?? '1', 10);
-  return { rule, threshold, multiplier, weekStart };
+  // Loads the WHOLE settings object, not the four overtime keys it used to
+  // cherry-pick. That narrow SELECT is exactly why QuickBooks never saw
+  // `hours_rules`: the policy wasn't in the list, so it couldn't be applied.
+  const settings = await loadSettings(companyId);
+  const rule = settings.overtime_rule || 'daily';
+  const threshold = parseFloat(settings.overtime_threshold) || (rule === 'weekly' ? 40 : 8);
+  const multiplier = parseFloat(settings.overtime_multiplier) || 1.5;
+  const weekStart = parseInt(settings.week_start ?? 1, 10);
+  return { rule, threshold, multiplier, weekStart, settings };
 }
 
 /**
@@ -712,11 +721,12 @@ async function getOvertimeSettings(companyId) {
  * Premium = ot_hours × base_rate × (multiplier - 1), which is what needs to
  * be added on top of the straight hours × base_rate already billed per entry.
  */
-function computeGroupOvertime(group, companyRule, threshold, multiplier, weekStart = 1) {
-  const rule = group.overtimeRule || companyRule;
+function computeGroupOvertime(group, ot) {
+  const rule = group.overtimeRule || ot.rule;
   if (rule === 'none' || !group.timeEntries.length) {
     return { overtimeHours: 0, overtimePremium: 0, rule };
   }
+  // These punches are already the paid ones — gatherBillData rounds at fetch.
   const entries = group.timeEntries.map(te => ({
     work_date:     te.workDate,
     start_time:    te.startTime,
@@ -724,8 +734,13 @@ function computeGroupOvertime(group, companyRule, threshold, multiplier, weekSta
     wage_type:     te.wageType,
     break_minutes: te.breakMinutes,
   }));
-  const { overtimeHours } = computeOT(entries, rule, threshold, weekStart);
-  const premium = overtimeHours * group.hourlyRate * (multiplier - 1);
+  const { overtimeHours, otBands } = computePaid(entries, ot.settings, { rule });
+  // Premium = what the OT hours cost at their own multipliers, minus the
+  // straight time already billed per entry. Priced off otBands rather than one
+  // flat multiplier, so a tiered policy (8h @1.5×, 12h @2×) bills its tiers
+  // instead of flattening them to the company default.
+  const premium = otBandsCost(otBands, group.hourlyRate, ot.multiplier)
+                - overtimeHours * group.hourlyRate;
   return { overtimeHours, overtimePremium: premium, rule };
 }
 
@@ -734,15 +749,15 @@ function computeGroupOvertime(group, companyRule, threshold, multiplier, weekSta
 router.post('/push-bills-preview', requireAdmin, async (req, res) => {
   const { from, to, worker_ids, force } = req.body;
   try {
-    const [groups, ot] = await Promise.all([
-      gatherBillData(req.user.company_id, { from, to, workerIds: worker_ids, force }),
-      getOvertimeSettings(req.user.company_id),
-    ]);
+    // Settings first: gatherBillData needs the policy to compute the PAID punch.
+    const ot = await getOvertimeSettings(req.user.company_id);
+    const groups = await gatherBillData(
+      req.user.company_id, { from, to, workerIds: worker_ids, force }, ot.settings);
     const result = groups.map(g => {
       const laborHours = g.timeEntries.reduce((s, t) => s + t.hours, 0);
       const laborAmount = laborHours * g.hourlyRate;
       const reimbAmount = g.reimbursements.reduce((s, r) => s + r.amount, 0);
-      const { overtimeHours, overtimePremium } = computeGroupOvertime(g, ot.rule, ot.threshold, ot.multiplier, ot.weekStart);
+      const { overtimeHours, overtimePremium } = computeGroupOvertime(g, ot);
       return {
         user_id: g.userId,
         full_name: g.fullName,
@@ -798,10 +813,9 @@ router.post('/push-bills', requireAdmin, async (req, res) => {
     const company = await pool.query('SELECT qbo_realm_id FROM companies WHERE id = $1', [companyId]);
     if (!company.rows[0]?.qbo_realm_id) return res.status(400).json({ error: 'QuickBooks not connected' });
 
-    const [groups, ot] = await Promise.all([
-      gatherBillData(companyId, { from, to, workerIds: worker_ids, force }),
-      getOvertimeSettings(companyId),
-    ]);
+    const ot = await getOvertimeSettings(companyId);
+    const groups = await gatherBillData(
+      companyId, { from, to, workerIds: worker_ids, force }, ot.settings);
 
     // Only require the expense account when we actually need it (any reimbursement
     // line in this push). Contractors paid for time only don't need it.
@@ -847,7 +861,7 @@ router.post('/push-bills', requireAdmin, async (req, res) => {
       // Overtime premium: an extra item-based line that covers the (multiplier-1)
       // uplift on OT hours. The per-entry lines above price straight hours at
       // the base rate; this line makes the contractor whole for their OT shifts.
-      const { overtimeHours, overtimePremium } = computeGroupOvertime(g, ot.rule, ot.threshold, ot.multiplier, ot.weekStart);
+      const { overtimeHours, overtimePremium } = computeGroupOvertime(g, ot);
       if (overtimeHours > 0 && overtimePremium > 0) {
         lines.push({
           type: 'item',
@@ -920,8 +934,9 @@ router.post('/push-payroll', requireAdmin, async (req, res) => {
     const defaultRate = parseFloat(settings.rows.find(r => r.key === 'default_hourly_rate')?.value || 30);
     const prevRate = parseFloat(settings.rows.find(r => r.key === 'prevailing_wage_rate')?.value || 45);
 
-    const entries = await pool.query(
-      `SELECT te.start_time, te.end_time, te.break_minutes, te.wage_type, u.default_hourly_rate
+    const entriesRes = await pool.query(
+      `SELECT te.work_date, te.start_time, te.end_time, te.break_minutes, te.wage_type,
+              te.user_id, u.default_hourly_rate
        FROM time_entries te
        JOIN users u ON te.user_id = u.id
        WHERE te.company_id = $1
@@ -930,6 +945,7 @@ router.post('/push-payroll', requireAdmin, async (req, res) => {
          AND te.work_date <= $3::date`,
       [companyId, from, to]
     );
+    const entries = { rows: roundEntriesFromSettings(entriesRes.rows, await loadSettings(companyId)) };
 
     let totalCost = 0;
     for (const e of entries.rows) {
@@ -1009,7 +1025,7 @@ router.post('/retry-error/:id', requireAdmin, async (req, res) => {
         [entity_id, companyId]
       );
       if (!entry.rows.length) return res.status(404).json({ error: 'Time entry not found' });
-      const e = entry.rows[0];
+      const [e] = roundEntriesFromSettings(entry.rows, await loadSettings(companyId));
       const usesVendor = e.worker_type === 'contractor' || e.worker_type === 'subcontractor';
       const mappedId = usesVendor ? e.qbo_vendor_id : e.qbo_employee_id;
       if (!mappedId) return res.status(400).json({ error: 'Worker has no QBO mapping — set it in QuickBooks settings first' });

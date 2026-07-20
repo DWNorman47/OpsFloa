@@ -6,7 +6,6 @@ import { useOffline } from '../contexts/OfflineContext';
 import { useT } from '../hooks/useT';
 import Pagination from './Pagination';
 import FieldFilters from './FieldFilters';
-import { labelSg, labelPl } from '../companyLabels';
 
 function today() { return new Date().toLocaleDateString('en-CA'); }
 
@@ -180,7 +179,7 @@ function TemplateBuilder({ initial, onSaved, onCancel }) {
 
 // ── Inspection Form (fill out an inspection) ──────────────────────────────────
 
-function InspectionForm({ templates, projects, initial, onSaved, onCancel, workLabel = 'Project' }) {
+function InspectionForm({ templates, projects, initial, onSaved, onCancel }) {
   const t = useT();
   const isEdit = !!initial?.id;
   const [form, setForm] = useState({
@@ -281,9 +280,9 @@ function InspectionForm({ templates, projects, initial, onSaved, onCancel, workL
 
       {projects.length > 0 && (
         <div style={styles.fieldGroup}>
-          <label style={styles.label}>{workLabel} <span style={styles.optional}>{t.inspOptional}</span></label>
+          <label style={styles.label}>Project <span style={styles.optional}>{t.inspOptional}</span></label>
           <select style={styles.input} value={form.project_id} onChange={e => set('project_id', e.target.value)}>
-            <option value="">{`No ${workLabel.toLowerCase()}`}</option>
+            <option value="">{`No project`}</option>
             {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </div>
@@ -483,13 +482,11 @@ function InspectionCard({ ins, isAdmin, templates, onEdit, onDeleted }) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-export default function InspectionChecklists({ projects, settings = null }) {
+export default function InspectionChecklists({ projects }) {
   const t = useT();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const { onSync } = useOffline() || {};
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
-  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
 
   const [inspections, setInspections] = useState([]);
   const [templates, setTemplates] = useState([]);
@@ -576,7 +573,6 @@ export default function InspectionChecklists({ projects, settings = null }) {
             <InspectionForm
               templates={templates}
               projects={projects}
-              workLabel={workLabel}
               initial={editing || null}
               onSaved={handleSaved}
               onCancel={() => { setShowForm(false); setEditing(null); }}
@@ -595,7 +591,7 @@ export default function InspectionChecklists({ projects, settings = null }) {
           </select>
           {projects.length > 0 && (
             <select style={styles.filterSelect} value={filters.project_id || ''} onChange={e => setFilter('project_id', e.target.value)}>
-              <option value="">{`All ${workLabelPlural}`}</option>
+              <option value="">{`All Projects`}</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           )}

@@ -60,6 +60,18 @@ For each column we record:
 | `reimbursements.status` | `pending`, `approved`, `rejected` | **enforced** (CHECK in `0071`) | `server/routes/reimbursements.js` | Financial workflow. |
 | `settings.value` (key=`overtime_rule`) | `daily`, `weekly` | **app-only** | `server/routes/admin.js` PATCH validation | Company-wide overtime calc. |
 | `settings.value` (key=`invoice_signature`) | `none`, `optional`, `required` | **app-only** | `server/routes/admin.js` PATCH validation | Whether workers must sign invoices before exporting. |
+| `settings.value` (key=`currency`) | ISO 4217: `USD`, `CAD`, `EUR`, `GBP`, `MXN`, `HNL`, `GTQ`, `NIO`, `BZD`, `CRC`, `PAB` | **app-only** (shape only — see note) | `server/routes/admin.js:200` PATCH regex; dropdown `client/src/components/ManageRates.jsx`; locale maps `client/src/utils.js` + `server/currency.js` | Display currency for every money figure: app, PDFs, public client pages, report emails. |
+
+> **`currency` is validated by shape, not membership.** The PATCH check is only
+> `/^[A-Z]{3}$/`, so any 3-letter string is accepted. The list above is the set
+> the **dropdown offers** and the locale maps know. An unmapped-but-well-formed
+> code (e.g. `XYZ`) is stored happily and then falls back to the `en-US` locale,
+> which renders the bare code (`XYZ 1,234.50`) instead of a symbol. Adding a
+> currency means updating **three** places: the `ManageRates` dropdown,
+> `CURRENCY_LOCALES` in `client/src/utils.js`, and the mirrored map in
+> `server/currency.js`. Intl takes the symbol from the *locale*, not the
+> currency code — `en-US` + `HNL` gives `HNL 1,234.50`, `es-HN` + `HNL` gives
+> `L 1,234.50` — which is why the locale map exists at all.
 
 ## Medium-stakes columns (workflow / business logic)
 
@@ -116,6 +128,8 @@ For each column we record:
 | `equipment_maintenance_logs.kind` | `service`, `repair`, `inspection`, `other` | **enforced** (CHECK in `0125`) | `server/constants/equipmentEnums.js`, `server/routes/equipment.js` | Type of a discrete maintenance record (distinct from the `equipment_hours` usage log). |
 | `live_sessions.tool` | `planroom`, `sitework`, `roofing` | **enforced** (CHECK in `0134`) | `server/constants/liveSessionEnums.js`, `server/routes/liveSessions.js` | Which plan tool hosts an ephemeral live-collab session. The session layer syncs opaque JSON, so Plan Room ships first; `sitework`/`roofing` are reserved for the "go live on a takeoff" flip. |
 | `live_sessions.status` | `active`, `ended` | **enforced** (CHECK in `0134`) | `server/constants/liveSessionEnums.js`, `server/routes/liveSessions.js` | Session lifecycle. `active` until the host ends it or the idle sweeper closes it; `ended` rows keep their final `state` snapshot for the host to reclaim. |
+| `haul_tickets.unit` | `CY`, `tons`, `loads` | **enforced** (CHECK in `0137`) | `server/constants/haulEnums.js`, `server/routes/haulTickets.js` | How a haul load is measured (production/haul log). NOT NULL DEFAULT `CY`, so plain `IN (...)` CHECK. Reconciliation nets actuals by unit against the takeoff estimate. |
+| `haul_tickets.direction` | `export`, `import` | **enforced** (CHECK in `0137`) | `server/constants/haulEnums.js`, `server/routes/haulTickets.js` | Haul-off leaving the site (`export`) vs material brought in (`import`). NOT NULL DEFAULT `export`. Lets estimate-vs-actual reconciliation net export against import. |
 
 ## Cosmetic / UI columns
 
@@ -138,7 +152,12 @@ server (probably incomplete):
 `stale_active_clock`, `timeoff_request`, `timeoff_approved`,
 `timeoff_denied`, `shift_assigned`, `shift_updated`, `shift_cancelled`,
 `shift_cantmake`, `signoff`, `location_denied`, `overtime_alert`,
-`service_request`, `low_stock`, `equipment_maintenance`.
+`service_request`, `low_stock`, `equipment_maintenance`,
+`equipment_rental_due`, `bid_due`, `sub_doc_expiring`.
+
+(The last three were already being written and were missing from this list —
+which is the predicted cost of an unconstrained column: the doc drifts silently.
+Verified 2026-07-16 by grepping every `createInboxItem*` call site.)
 
 Before constraining: collect the canonical list into
 `server/constants/inboxTypes.js`, route every existing call through it,
@@ -164,7 +183,6 @@ got bit twice by this: `shift_reminder_hour`, `pto_annual_days`,
 
 ### Recently-added string settings (no DB CHECK; free-form)
 
-- `label_work`     (default `'Project'`) — what the company calls a project / job / engagement.
 - `label_client`   (default `'Customer'`) — what the company calls a client.
 - `label_worker`   (default `'Team Member'`) — what the company calls a worker.
 - `label_field`    (default `'Field Work'`) — what the company calls the field-work module.
@@ -197,6 +215,76 @@ that had the previous default.
   `premiums` (`restDayMult`, `minDailyHours`,
   `nightDifferential {fromHour,toHour,pct}`). All consumed by
   `computeOT` / `otConfigFromSettings`; each defaults to a no-op when absent.
+
+  **`rules[]` — the open-ended half (M4).** Everything above is fixed-slot: one
+  clock-in edge, one clock-out edge, a closed vocabulary. `rules` is a list a
+  company writes freely — the numbers in it are the company's, not ours. Each
+  entry is `{id, type, when, ...params}`. Fixed-value sub-fields, all **enforced
+  app-side** by `parseRules` in `server/utils/hoursRules.js`:
+
+  | Field | Allowed values |
+  |---|---|
+  | `rules[].type` | `clip_start` \| `clip_end` \| `add_time` \| `remove_time` \| `auto_break` |
+  | `rules[].when.kind` | `every_day` \| `weekdays` \| `month_days` \| `month_weekdays` \| `nth_days` \| `months` \| `nth_months` \| `month_weeks` \| `nth_weeks` |
+  | `rules[].edge` (add/remove) | `before` \| `after` |
+  | `rules[].base` (add/remove) | `schedule` (default) \| `punch` |
+  | `rules[].mode` (add/remove) | `at` (default) \| `every` |
+  | `rules[].trigger.kind` (auto_break) | `always` \| `after_hours` |
+  | `rules[].behavior` (clip_start) | `ignore` \| `prevent` \| `auto` |
+  | `rules[].behavior` (clip_end) | `ignore` \| `auto` |
+
+  ⚠️ **Only `behavior: 'ignore'` is enforced** (default). It's pure pay math —
+  don't pay time outside the boundary. `prevent` (block the clock-in) and `auto`
+  (clock the worker in/out) are **parsed and stored but not yet acted on**: they
+  belong to the live clock, not the pay transform. `parseRules` keeps them (they
+  don't drop the rule) so the field is ready when that milestone lands, the same
+  way `premiums: {}` was carried before it was live. `'prevent'` on a `clip_end`
+  falls back to `ignore` — you can't prevent a clock-out.
+
+  ⚠️ **`add_time` adds PAID time, not clock time.** The credit lands on the
+  **scheduled** end (`base: 'schedule'`, the default); the punch only decides
+  which rung was reached. With a 5:00pm scheduled end and rungs "at 5:25 → +30",
+  "at 5:51 → +60": 5:24 pays to 5:00, 5:25 → 5:30, 5:50 → 5:30, 5:51 → 6:00.
+  Adding to the *punch* instead (`base: 'punch'` — available, not the default)
+  makes 5:51 pay to 6:51, which pays a worker more for clocking out later inside
+  the same rung, i.e. the exact thing a rung exists to prevent.
+  **Rungs do not accumulate** — each names the TOTAL credit at that point, so
+  the largest rung reached wins. Leaving *early* is never a ladder case: the
+  schedule base only engages when the punch is past the scheduled end, or a
+  short day would be paid to 5:00.
+
+  ⚠️ **`parseRules` DROPS a malformed rule rather than repairing it** — the
+  opposite of the fall-back-to-default posture used everywhere else in
+  `parsePolicy`, and deliberately so. A default edge that isn't what you meant
+  rounds a punch slightly wrong; a half-understood *rule* that still fires bills
+  a wrong number and nobody notices. A dropped rule is visibly absent. Constants
+  are exported as `RULE_TYPES` / `RULE_WHEN_KINDS` / `RULE_EDGES` /
+  `BREAK_TRIGGERS` — **a new value must be added there, not just handled**, or
+  `parseRules` silently discards every rule using it.
+
+  Numeric sub-fields (range-checked, not enum): `when.days` (0-6 for `weekdays`,
+  1-31 for `month_days`/`nth_months`), `when.months` (1-12),
+  `when.patterns[].week` (1-5, or **-1 = "the last one"** — not a fixed nth,
+  since a month has four or five of any given weekday; works for **any** day,
+  not just Friday), `when.patterns[].weekday` (0-6),
+  `when.weeks` (1-5 or -1=last, for `month_weeks` — weeks are 7-day blocks from
+  day 1, **not** calendar weeks), `at`/`from` (HH:MM),
+  `minutes` (>0), `everyMin` (>0), `trigger.hours` (>0).
+  `nth_days` needs `{start:'YYYY-MM-DD', every:1-3650}`; `nth_months` needs
+  `{start:'YYYY-MM', every:1-120, days?:[1-31]}`; `nth_weeks` needs
+  `{start:'YYYY-MM-DD', every:1-520}` and counts 7-day blocks from the anchor
+  (anchor at a pay-week start + `every:2` = biweekly). **An nth pattern without an
+  anchor is dropped** — "every 3rd day" isn't a rule until you say which day was
+  the first — and never fires before its anchor.
+
+  **Stage order is a property of the engine, not authorable**: clip → adjust →
+  break → classify. Rules are a set; the pipeline is a sequence, and two orders
+  give two different invoices, so an admin can't get it wrong. Adjust before
+  classify means **added time counts toward the overtime threshold** (a 9.5h day
+  + 0.5h credit = 2h OT under an 8h threshold, not 1.5h OT + 0.5h regular).
+  `auto_break` sets `time_entries.break_minutes` to
+  `max(total expected, total logged)` — **never the sum**, because the logged
+  value is already deducted everywhere downstream.
 
 ### Module visibility flags (`module_*`, boolean, in `FEATURE_KEYS`)
 

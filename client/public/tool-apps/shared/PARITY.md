@@ -18,7 +18,7 @@ places.** Keep this ledger current when copying more code.
 | engine-store.js | `randId`, `hashBytes` | Utilities/IndexedDB sections | verbatim |
 | engine-doc.js | `bytesToBase64`, `base64ToBytes` | PDF-loading section | verbatim |
 | engine-doc.js | pdf.js open/render pattern (`openDoc`/`renderPage`) | `openPdfBytes`/`renderSheet` | generalized to a uniform doc handle; raster-image support is NEW (no sitework counterpart) |
-| engine-view.js | `resizeCanvas`, `fitView`, `panBy`, wheel zoom-at-cursor, rAF-coalesced `draw`, `paint` transform setup, nav-pads zoom heuristic | View/canvas + Tools&input sections | reworked into `createViewport(...)` factory (originals read `state.view`/`cv`/`els`); the math is verbatim |
+| engine-view.js | `resizeCanvas`, `fitView`, `panBy`, wheel zoom-at-cursor, rAF-coalesced `draw`, `paint` transform setup, nav-pads zoom heuristic | View/canvas + Tools&input sections | reworked into `createViewport(...)` factory (originals read `state.view`/`cv`/`els`); the math is verbatim. **Plan-Room-only additions (no sitework counterpart):** `fitTo({cover})` fill mode + `isAtFit()` (second-Fit-toggles-to-fill) |
 | engine-ui.js | `fmt`, `money`, `esc` | Utilities section | verbatim |
 | engine-ui.js | `askModal`, `closeModal`, `readModalValue`, `askNumber`, `askText`, stepper + Enter/Escape wiring | Modal section | reworked into `createModals(...)` factory taking the modal DOM nodes; logic verbatim |
 | planroom/app.js | `makeInterpolator` | Surface-interpolation section | verbatim |

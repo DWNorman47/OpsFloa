@@ -2,17 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import api from '../api';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
-import { langToLocale } from '../utils';
-import { labelSg } from '../companyLabels';
+import { currencySymbol, langToLocale } from '../utils';
+import { useCurrency } from '../contexts/SettingsContext';
+import { useMoney } from '../hooks/useMoney';
 
 import { silentError } from '../errorReporter';
 function fmtDate(str, locale = 'en-US') {
   const d = new Date(String(str).substring(0, 10) + 'T00:00:00');
   return d.toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function fmtMoney(v) {
-  return `$${Number(v).toFixed(2)}`;
 }
 
 function StatusBadge({ status }) {
@@ -28,11 +25,12 @@ function StatusBadge({ status }) {
   );
 }
 
-export default function ReimbursementsView({ settings = null }) {
+export default function ReimbursementsView() {
+  const fmtMoney = useMoney();
+  const currency = useCurrency();
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const [items, setItems] = useState([]);
   const [mileageRate, setMileageRate] = useState(0.67);
   const [loading, setLoading] = useState(true);
@@ -155,7 +153,7 @@ export default function ReimbursementsView({ settings = null }) {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <input id="rv-miles" style={{ ...s.input, width: 100 }} type="number" min="0.1" step="0.1" placeholder="0.0" value={form.miles} onChange={e => setForm(f => ({ ...f, miles: e.target.value }))} required disabled={saving} />
                   {form.miles > 0 && (
-                    <span style={s.mileageCalc}>= ${(parseFloat(form.miles) * mileageRate).toFixed(2)} @ ${mileageRate}/mi</span>
+                    <span style={s.mileageCalc}>= {fmtMoney(parseFloat(form.miles) * mileageRate)} @ {currencySymbol(currency)}{mileageRate}/mi</span>
                   )}
                 </div>
               </div>
@@ -167,9 +165,9 @@ export default function ReimbursementsView({ settings = null }) {
             )}
             {projects.length > 0 && (
               <div style={s.field}>
-                <label htmlFor="rv-project" style={s.label}>{workLabel}</label>
+                <label htmlFor="rv-project" style={s.label}>Project</label>
                 <select id="rv-project" style={s.input} value={form.project_id} onChange={e => setForm(f => ({ ...f, project_id: e.target.value }))} disabled={saving}>
-                  <option value="">{`No ${workLabel.toLowerCase()}`}</option>
+                  <option value="">{`No project`}</option>
                   {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
@@ -241,7 +239,7 @@ export default function ReimbursementsView({ settings = null }) {
               <div style={s.desc}>{item.description}</div>
               {item.miles && (
                 <div style={s.milesMeta}>
-                  {parseFloat(item.miles).toFixed(1)} mi × ${parseFloat(item.mileage_rate).toFixed(4)}/mi
+                  {parseFloat(item.miles).toFixed(1)} mi × {currencySymbol(currency)}{parseFloat(item.mileage_rate).toFixed(4)}/mi
                 </div>
               )}
               <div style={s.meta}>

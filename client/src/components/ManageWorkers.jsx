@@ -263,6 +263,7 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
   // Invite
   const [inviteSending, setInviteSending] = useState(new Set());
   const [invitedIds, setInvitedIds] = useState(new Set());
+  const [clearingBounce, setClearingBounce] = useState(new Set());
 
   // History
   const [archived, setArchived] = useState([]);
@@ -564,6 +565,26 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
       toast(err.response?.data?.error || t.failedSendInvite, 'error');
     } finally {
       setInviteSending(s => { const n = new Set(s); n.delete(id); return n; });
+    }
+  };
+
+  // Lift an email suppression. A suppressed worker receives nothing at all —
+  // no invite, no password reset — and until this existed there was no way back
+  // short of editing the database. Use when the address is right and whatever
+  // was wrong at their end is fixed; if the address itself is wrong, just edit
+  // it (saving a new address clears the flag on its own).
+  const clearBounce = async (id) => {
+    setClearingBounce(s => new Set(s).add(id));
+    try {
+      await api.post(`/admin/workers/${id}/clear-email-bounce`);
+      // `workers` is a prop — report up. The parent merges by id, so a partial
+      // is enough and avoids refetching the list to drop one flag.
+      onWorkerUpdated({ id, email_bounced_at: null, email_bounce_reason: null });
+      toast(t.mwEmailBounceCleared, 'success');
+    } catch (err) {
+      toast(err.response?.data?.error || t.mwEmailBounceClearFailed, 'error');
+    } finally {
+      setClearingBounce(s => { const n = new Set(s); n.delete(id); return n; });
     }
   };
 
@@ -967,6 +988,25 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
                                 </>
                               )}
                             </div>
+                            {/* A suppressed address gets NO mail — not the invite
+                                below, not a password reset. Show it first: it's
+                                the reason the invite never arrives, and without
+                                this banner the whole thing is invisible. */}
+                            {w.email_bounced_at && (
+                              <div style={s.bounceBanner}>
+                                <span style={s.bounceBannerText}>
+                                  {t.mwEmailBouncing}
+                                  {w.email_bounce_reason && <span style={s.bounceReason}>{w.email_bounce_reason}</span>}
+                                </span>
+                                <button
+                                  style={{ ...s.bounceBtn, ...(clearingBounce.has(w.id) ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
+                                  onClick={() => clearBounce(w.id)}
+                                  disabled={clearingBounce.has(w.id)}
+                                >
+                                  {clearingBounce.has(w.id) ? t.mwSendingEllipsis : t.mwEmailBounceRetry}
+                                </button>
+                              </div>
+                            )}
                             {w.must_change_password && w.email && (
                               <div style={s.inviteBanner}>
                                 <span style={s.inviteBannerText}>{t.mwHasNotSignedIn}</span>
@@ -1378,6 +1418,12 @@ const s = {
   inviteBannerText: { fontSize: 12, color: '#92400e', flex: 1 },
   inviteBtn: { padding: '4px 12px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', flexShrink: 0 },
   inviteSentLabel: { fontSize: 12, color: '#059669', fontWeight: 600, flexShrink: 0 },
+  // Red, not the invite banner's amber: this isn't "waiting on them", it's
+  // "we are dropping their mail right now".
+  bounceBanner: { display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, padding: '8px 10px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 7 },
+  bounceBannerText: { fontSize: 12, color: '#991b1b', flex: 1 },
+  bounceReason: { display: 'block', marginTop: 2, fontSize: 11, color: '#b91c1c', opacity: 0.85, wordBreak: 'break-word' },
+  bounceBtn: { padding: '4px 12px', background: 'none', border: '1px solid #fca5a5', color: '#b91c1c', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', flexShrink: 0 },
   historyFooter: { marginTop: 16, borderTop: '1px solid #f0f0f0', paddingTop: 12 },
   historyToggle: { background: 'none', border: 'none', color: '#6b7280', fontSize: 13, fontWeight: 600, cursor: 'pointer', padding: '2px 0' },
   historyList: { marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 },

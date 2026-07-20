@@ -62,7 +62,7 @@ function fileIcon(contentType) {
   return '📎';
 }
 
-function NewTalkForm({ projects, onAdded, onCancel, workLabel = 'Project' }) {
+function NewTalkForm({ projects, onAdded, onCancel }) {
   const t = useT();
   const today = new Date().toLocaleDateString('en-CA');
   const [form, setForm] = useState({ title: '', content: '', given_by: '', talk_date: today, project_id: '' });
@@ -144,9 +144,9 @@ function NewTalkForm({ projects, onAdded, onCancel, workLabel = 'Project' }) {
         </div>
         {projects.length > 0 && (
           <div style={styles.fieldGroup}>
-            <label htmlFor="st-project" style={styles.label}>{workLabel}</label>
+            <label htmlFor="st-project" style={styles.label}>Project</label>
             <select id="st-project" style={styles.input} value={form.project_id} onChange={e => set('project_id', e.target.value)}>
-              <option value="">{`No ${workLabel.toLowerCase()}`}</option>
+              <option value="">{`No project`}</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
@@ -518,8 +518,6 @@ export default function SafetyTalks({ projects, settings = null }) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const { onSync } = useOffline() || {};
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
-  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
   const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
   const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
   const [talks, setTalks] = useState([]);
@@ -581,7 +579,6 @@ export default function SafetyTalks({ projects, settings = null }) {
         <div style={styles.formCard}>
           <NewTalkForm
             projects={projects}
-            workLabel={workLabel}
             onAdded={talk => { setTalks(prev => [talk, ...prev]); setShowForm(false); }}
             onCancel={() => setShowForm(false)}
           />
@@ -591,7 +588,7 @@ export default function SafetyTalks({ projects, settings = null }) {
       {projects.length > 0 && (
         <FieldFilters activeCount={filterProject ? 1 : 0}>
           <select style={styles.filterSelect} value={filterProject} onChange={e => setFilterProject(e.target.value)}>
-            <option value="">{`All ${workLabelPlural}`}</option>
+            <option value="">{`All Projects`}</option>
             {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </FieldFilters>

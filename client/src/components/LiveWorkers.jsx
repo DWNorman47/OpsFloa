@@ -54,9 +54,6 @@ export default function LiveWorkers({ timezone = '', showInactiveAlerts = true, 
   const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
   const workerLabelLower = workerLabel.toLowerCase();
   const workerLabelPluralLower = workerLabelPlural.toLowerCase();
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
-  const workLabelLower = workLabel.toLowerCase();
-  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
   const [workers, setWorkers] = useState([]);
   const [inactiveWorkers, setInactiveWorkers] = useState([]);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -328,7 +325,7 @@ export default function LiveWorkers({ timezone = '', showInactiveAlerts = true, 
       {workers.length > 0 && (
         <div style={styles.filters} className="live-worker-filters">
           <select style={styles.filterSelect} value={selectedProject} onChange={handleProjectSelect}>
-            <option value="">All {workLabelPlural} ({workers.length})</option>
+            <option value="">All Projects ({workers.length})</option>
             {activeProjects.map(p => (
               <option key={p} value={p}>
                 {p} ({workers.filter(w => w.project_name === p).length})
@@ -347,7 +344,7 @@ export default function LiveWorkers({ timezone = '', showInactiveAlerts = true, 
       {workers.length === 0 ? (
         <EmptyState mark="L" title={`No ${workerLabelPluralLower} currently clocked in`} body={`Active ${workerLabelPluralLower} will appear here as they start their day.`} tone="good" />
       ) : filtered.length === 0 ? (
-        <EmptyState mark="L" title={`No ${workerLabelPluralLower} on this ${workLabelLower} right now`} body={`Try another ${workLabelLower} or clear the filter.`} />
+        <EmptyState mark="L" title={`No ${workerLabelPluralLower} on this project right now`} body="Try another project or clear the filter." />
       ) : (
         <>
           {(() => {
@@ -479,19 +476,19 @@ export default function LiveWorkers({ timezone = '', showInactiveAlerts = true, 
                   {t.lwDayMarkInfoTitle ? t.lwDayMarkInfoTitle.replace(/worker/gi, workerLabelLower) : `This ${workerLabelLower} uses Mark Day mode`}
                 </div>
                 <div style={{ fontSize: 12, color: '#166534' }}>
-                  {t.lwDayMarkInfoBody ? t.lwDayMarkInfoBody.replace(/project/gi, workLabelLower) : `Marking will create a pending day entry — no clock-out, no ${workLabelLower} required.`}
+                  {t.lwDayMarkInfoBody ? t.lwDayMarkInfoBody : 'Marking will create a pending day entry — no clock-out, no project required.'}
                 </div>
               </div>
             ) : (
               <>
                 <div style={styles.modalField}>
-                  <label style={styles.modalLabel}>{workLabel} (optional)</label>
+                  <label style={styles.modalLabel}>Project (optional)</label>
                   <select
                     style={styles.modalSelect}
                     value={clockInProjectId}
                     onChange={e => setClockInProjectId(e.target.value)}
                   >
-                    <option value="">No {workLabelLower}</option>
+                    <option value="">No project</option>
                     {projects.map(p => (
                       <option key={p.id} value={p.id}>{p.name}</option>
                     ))}

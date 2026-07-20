@@ -3,6 +3,7 @@ import api from '../api';
 import { useT } from '../hooks/useT';
 import { invalidateCache } from '../offlineDb';
 import { silentError } from '../errorReporter';
+import HoursRuleBuilder from './HoursRuleBuilder';
 
 /**
  * Admin UI for the configurable work-hour / pay rules (Milestone 1: company
@@ -14,8 +15,10 @@ import { silentError } from '../errorReporter';
 
 const DOW = [1, 2, 3, 4, 5, 6, 0]; // Mon…Sat, Sun last (display order)
 
-// Presets fill the whole form. A country is just a saved policy — adding one is
-// authoring a preset here, not writing code.
+// Presets now emit the equivalent CUSTOM RULES (the fixed slots stay off), so
+// clicking one builds a matching rule list you can then tweak. A country is just
+// a saved policy — adding one is authoring rules here, not writing code.
+const EVERY = { kind: 'every_day' };
 const PRESETS = {
   off: () => ({ ...blankForm(), enabled: false }),
   honduras: () => ({
@@ -23,28 +26,32 @@ const PRESETS = {
     enabled: true,
     stdStart: '07:00', stdEnd: '16:00', stdBreak: '60',
     workDays: { 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 0: false },
-    inRef: 'schedule', inInterval: '60', inGrace: '15', inDir: 'against_worker',
-    outRef: 'schedule', outInterval: '60', outGrace: '30', outDir: 'toward_worker',
-    restDayMult: '2',
-    nightEnabled: true, nightFrom: '19', nightTo: '5', nightPct: '25',
     showActualAndPaid: true,
+    rules: [
+      { id: 'p1', type: 'round', when: EVERY, edge: 'in',  reference: 'schedule', direction: 'against_worker', intervalMin: 60, graceMin: 15 },
+      { id: 'p2', type: 'round', when: EVERY, edge: 'out', reference: 'schedule', direction: 'toward_worker',  intervalMin: 60, graceMin: 30 },
+      { id: 'p3', type: 'rest_day', when: { kind: 'weekdays', days: [0] }, mult: 2 },
+      { id: 'p4', type: 'night_diff', when: EVERY, fromHour: 19, toHour: 5, pct: 25 },
+    ],
   }),
   us_quarter: () => ({
     ...blankForm(),
     enabled: true,
-    inRef: 'clock', inInterval: '15', inGrace: '0', inDir: 'nearest',
-    outRef: 'clock', outInterval: '15', outGrace: '0', outDir: 'nearest',
     showActualAndPaid: true,
+    rules: [
+      { id: 'p1', type: 'round', when: EVERY, edge: 'both', reference: 'clock', direction: 'nearest', intervalMin: 15, graceMin: 0 },
+    ],
   }),
   california: () => ({
     ...blankForm(),
     enabled: true,
-    inRef: 'clock', inInterval: '15', inGrace: '0', inDir: 'nearest',
-    outRef: 'clock', outInterval: '15', outGrace: '0', outDir: 'nearest',
-    otMode: 'day',
-    otBands: [{ afterHours: '8', mult: '1.5' }, { afterHours: '12', mult: '2' }],
-    sd7Enabled: true, sd7First: '8', sd7FirstMult: '1.5', sd7AfterMult: '2',
     showActualAndPaid: true,
+    rules: [
+      { id: 'p1', type: 'round', when: EVERY, edge: 'both', reference: 'clock', direction: 'nearest', intervalMin: 15, graceMin: 0 },
+      { id: 'p2', type: 'ot_tier', when: EVERY, basis: 'day', afterHours: 8,  mult: 1.5 },
+      { id: 'p3', type: 'ot_tier', when: EVERY, basis: 'day', afterHours: 12, mult: 2 },
+      { id: 'p4', type: 'seventh_day', when: EVERY, firstHours: 8, firstMult: 1.5, afterMult: 2 },
+    ],
   }),
 };
 
@@ -60,6 +67,10 @@ function blankForm() {
     restDayMult: '', minDailyHours: '',
     nightEnabled: false, nightFrom: '19', nightTo: '5', nightPct: '25',
     showActualAndPaid: true,
+    // The open-ended half of the policy. Everything above is a fixed slot; this
+    // is a list the company writes itself. Kept in policy shape so saving is a
+    // pass-through — a second form shape would be one more thing to drift.
+    rules: [],
   };
 }
 
@@ -71,6 +82,9 @@ function policyToForm(raw) {
   if (!p || typeof p !== 'object') return blankForm();
   const f = blankForm();
   f.enabled = p.enabled === true;
+  // Rules round-trip untouched. The server's parseRules drops anything it can't
+  // read, so a rule that survived a save is already a shape this can hand back.
+  f.rules = Array.isArray(p.rules) ? p.rules : [];
   const sh = p.standardHours || {};
   const days = Object.keys(sh).filter(k => sh[k] && sh[k].start);
   if (days.length) {
@@ -152,6 +166,7 @@ function formToPolicy(f) {
   return {
     version: 1,
     enabled: !!f.enabled,
+    rules: Array.isArray(f.rules) ? f.rules : [],
     standardHours,
     rounding: {
       clockIn:  { reference: f.inRef,  intervalMin: parseInt(f.inInterval, 10) || 15,  graceMin: parseInt(f.inGrace, 10) || 0,  direction: f.inDir },
@@ -173,9 +188,6 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
   const set = (k, v) => { setForm(f => ({ ...f, [k]: v })); setSaved(false); };
   const toggleDay = (d) => { setForm(f => ({ ...f, workDays: { ...f.workDays, [d]: !f.workDays[d] } })); setSaved(false); };
   const applyPreset = (key) => { if (PRESETS[key]) { setForm(PRESETS[key]()); setSaved(false); } };
-  const setBand = (i, k, v) => { setForm(f => ({ ...f, otBands: f.otBands.map((b, j) => j === i ? { ...b, [k]: v } : b) })); setSaved(false); };
-  const addBand = () => { setForm(f => ({ ...f, otBands: [...f.otBands, { afterHours: '', mult: '1.5' }] })); setSaved(false); };
-  const removeBand = (i) => { setForm(f => ({ ...f, otBands: f.otBands.filter((_, j) => j !== i) })); setSaved(false); };
 
   const save = async () => {
     setSaving(true); setError('');
@@ -201,6 +213,7 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
         <div>
           <h3 style={s.title}>{t.hrTitle}</h3>
           <p style={s.sub}>{t.hrDesc}</p>
+          <p style={s.glossary}>{t.hrGlossary}</p>
         </div>
         <label style={s.switchWrap}>
           <input type="checkbox" checked={form.enabled} onChange={e => set('enabled', e.target.checked)} style={{ display: 'none' }} />
@@ -241,77 +254,10 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
             </section>
           )}
 
-          <section style={s.section}>
-            <h4 style={s.h4}>{t.hrRounding}</h4>
-            <EdgeEditor t={t} title={t.hrClockIn} prefix="in" form={form} set={set} />
-            <EdgeEditor t={t} title={t.hrClockOut} prefix="out" form={form} set={set} />
-          </section>
-
-          <section style={s.section}>
-            <h4 style={s.h4}>{t.hrOtTiers}</h4>
-            <p style={s.hint}>{t.hrOtTiersHint}</p>
-            <div style={s.grid}>
-              <Field label={t.hrOtMode}>
-                <select style={s.input} value={form.otMode} onChange={e => set('otMode', e.target.value)}>
-                  <option value="off">{t.hrOtOff}</option>
-                  <option value="day">{t.hrOtPerDay}</option>
-                  <option value="week">{t.hrOtPerWeek}</option>
-                </select>
-              </Field>
-            </div>
-            {form.otMode !== 'off' && (
-              <div style={{ marginTop: 12 }}>
-                {form.otBands.map((b, i) => (
-                  <div key={i} style={s.tierRow}>
-                    <span style={s.tierLabel}>{t.hrOtAfter}</span>
-                    <input type="number" min="0" step="0.5" style={{ ...s.input, minWidth: 68 }} value={b.afterHours} onChange={e => setBand(i, 'afterHours', e.target.value)} />
-                    <span style={s.tierLabel}>{t.hrOtHoursPay}</span>
-                    <input type="number" min="1" step="0.05" style={{ ...s.input, minWidth: 68 }} value={b.mult} onChange={e => setBand(i, 'mult', e.target.value)} />
-                    <span style={s.tierLabel}>×</span>
-                    <button type="button" style={s.tierRemove} onClick={() => removeBand(i)} aria-label={t.hrOtRemove}>×</button>
-                  </div>
-                ))}
-                <button type="button" style={s.addTier} onClick={addBand}>{t.hrOtAddTier}</button>
-              </div>
-            )}
-            <div style={{ marginTop: 18 }}>
-              <label style={s.checkRow}>
-                <input type="checkbox" checked={form.sd7Enabled} onChange={e => set('sd7Enabled', e.target.checked)} />
-                <span>{t.hrSeventhDay}</span>
-              </label>
-              <p style={s.hint}>{t.hrSeventhDayHint}</p>
-              {form.sd7Enabled && (
-                <div style={s.grid}>
-                  <Field label={t.hrSdFirst}><input type="number" min="0" step="0.5" style={s.input} value={form.sd7First} onChange={e => set('sd7First', e.target.value)} /></Field>
-                  <Field label={t.hrSdFirstMult}><input type="number" min="1" step="0.05" style={s.input} value={form.sd7FirstMult} onChange={e => set('sd7FirstMult', e.target.value)} /></Field>
-                  <Field label={t.hrSdAfterMult}><input type="number" min="1" step="0.05" style={s.input} value={form.sd7AfterMult} onChange={e => set('sd7AfterMult', e.target.value)} /></Field>
-                </div>
-              )}
-            </div>
-          </section>
-
-          <section style={s.section}>
-            <h4 style={s.h4}>{t.hrPremiums}</h4>
-            <p style={s.hint}>{t.hrPremiumsHint}</p>
-            <div style={s.grid}>
-              <Field label={t.hrRestDayMult}><input type="number" min="0" step="0.05" placeholder="—" style={s.input} value={form.restDayMult} onChange={e => set('restDayMult', e.target.value)} /></Field>
-              <Field label={t.hrMinDaily}><input type="number" min="0" step="0.5" placeholder="0" style={s.input} value={form.minDailyHours} onChange={e => set('minDailyHours', e.target.value)} /></Field>
-            </div>
-            <div style={{ marginTop: 14 }}>
-              <label style={s.checkRow}>
-                <input type="checkbox" checked={form.nightEnabled} onChange={e => set('nightEnabled', e.target.checked)} />
-                <span>{t.hrNightDiff}</span>
-              </label>
-              <p style={s.hint}>{t.hrNightDiffHint}</p>
-              {form.nightEnabled && (
-                <div style={s.grid}>
-                  <Field label={t.hrNightFrom}><input type="number" min="0" max="23" style={s.input} value={form.nightFrom} onChange={e => set('nightFrom', e.target.value)} /></Field>
-                  <Field label={t.hrNightTo}><input type="number" min="0" max="23" style={s.input} value={form.nightTo} onChange={e => set('nightTo', e.target.value)} /></Field>
-                  <Field label={t.hrNightPct}><input type="number" min="0" step="1" style={s.input} value={form.nightPct} onChange={e => set('nightPct', e.target.value)} /></Field>
-                </div>
-              )}
-            </div>
-          </section>
+          {/* Rounding, Overtime tiers, and Premiums used to live here as fixed
+              slots. They're now custom rules in the builder below (a legacy
+              policy is migrated to rules on load). The presets and the rule list
+              are the single source of truth. */}
 
           <section style={s.section}>
             <label style={s.checkRow}>
@@ -320,6 +266,8 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
             </label>
             <p style={s.hint}>{t.hrTransparencyHint}</p>
           </section>
+
+          <HoursRuleBuilder rules={form.rules} onChange={rs => set('rules', rs)} />
         </>
       )}
 
@@ -343,49 +291,12 @@ function Field({ label, children }) {
   );
 }
 
-function EdgeEditor({ t, title, prefix, form, set }) {
-  const dir = form[`${prefix}Dir`];
-  const ref = form[`${prefix}Ref`];
-  return (
-    <div style={s.edge}>
-      <div style={s.edgeTitle}>{title}</div>
-      <div style={s.grid}>
-        <Field label={t.hrDirection}>
-          <select style={s.input} value={dir} onChange={e => set(`${prefix}Dir`, e.target.value)}>
-            <option value="off">{t.hrDirOff}</option>
-            <option value="against_worker">{t.hrDirAgainst}</option>
-            <option value="toward_worker">{t.hrDirToward}</option>
-            <option value="nearest">{t.hrDirNearest}</option>
-          </select>
-        </Field>
-        {dir !== 'off' && (
-          <>
-            <Field label={t.hrReference}>
-              <select style={s.input} value={ref} onChange={e => set(`${prefix}Ref`, e.target.value)}>
-                <option value="schedule">{t.hrRefSchedule}</option>
-                <option value="clock">{t.hrRefClock}</option>
-              </select>
-            </Field>
-            <Field label={t.hrInterval}>
-              <input type="number" min="1" step="1" style={s.input} value={form[`${prefix}Interval`]} onChange={e => set(`${prefix}Interval`, e.target.value)} />
-            </Field>
-            {ref === 'schedule' && (
-              <Field label={t.hrGrace}>
-                <input type="number" min="0" step="1" style={s.input} value={form[`${prefix}Grace`]} onChange={e => set(`${prefix}Grace`, e.target.value)} />
-              </Field>
-            )}
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
 const s = {
   card: { background: '#fff', borderRadius: 12, padding: 24, boxShadow: '0 2px 12px rgba(0,0,0,0.06)', marginBottom: 24 },
   headRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' },
   title: { fontSize: 17, fontWeight: 700, margin: 0 },
   sub: { fontSize: 13, color: '#6b7280', margin: '6px 0 0', lineHeight: 1.5, maxWidth: 560 },
+  glossary: { fontSize: 12, color: '#475569', margin: '8px 0 0', lineHeight: 1.5, maxWidth: 620, background: '#f8fafc', border: '1px solid #eef0f2', borderRadius: 6, padding: '7px 11px' },
   switchWrap: { display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', whiteSpace: 'nowrap' },
   switch: { position: 'relative', width: 44, height: 24, borderRadius: 999, transition: 'background 0.15s', display: 'inline-block', flexShrink: 0 },
   knob: { position: 'absolute', top: 2, left: 2, width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'transform 0.15s', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' },

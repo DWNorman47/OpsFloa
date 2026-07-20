@@ -415,6 +415,11 @@ publicRouter.get('/sign/:token', async (req, res) => {
   try {
     const r = await pool.query(
       `SELECT lw.id, lw.direction, lw.waiver_type, lw.amount_cents, lw.through_date,
+              -- the company's display currency: these pages are unauthenticated,
+              -- so they can't read GET /api/settings. Without it the client sees
+              -- dollars regardless of the contractor's setting. Default mirrors
+              -- settingsDefaults.js (currency: 'USD').
+              COALESCE((SELECT value FROM settings s WHERE s.company_id = lw.company_id AND s.key = 'currency'), 'USD') AS currency,
               lw.state, lw.signer_name, lw.signer_title, lw.signer_company, lw.status,
               p.name AS project_name
          FROM lien_waivers lw

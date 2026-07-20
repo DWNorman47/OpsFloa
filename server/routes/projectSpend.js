@@ -14,6 +14,7 @@ const pool   = require('../db');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { logAudit } = require('../auditLog');
 const { MONEY_CATEGORIES } = require('../constants/projectMoneyEnums');
+const { loadSettings, laborCostCents, LABOR_ENTRY_COLUMNS } = require('../utils/paidHours');
 
 async function assertProjectInCompany(companyId, projectId) {
   const r = await pool.query(
@@ -37,27 +38,28 @@ async function tableExists(name) {
   }
 }
 
-// Compute labor spent in cents for a project by joining time_entries to
-// users for the rate. Approved + pending entries both count toward spend
-// (pending is a real labor liability even if it hasn't cleared payroll).
-// Rejected entries don't count.
-async function laborSpent(projectId) {
+// Compute labor spent in cents for a project. Approved + pending entries both
+// count toward spend (pending is a real labor liability even if it hasn't
+// cleared payroll). Rejected entries don't count.
+//
+// This used to be a single SUM in SQL, and it was wrong twice over: it billed
+// flat hours × rate with **no overtime at all** and no hours-rules policy, and
+// its `end_time - start_time` had no midnight-crossing CASE, so an overnight
+// shift produced a negative interval that `GREATEST(0, …)` clamped to zero —
+// overnight labor silently cost nothing. Both are fixed by doing the sum in JS
+// through the one pay pipeline.
+async function laborSpent(projectId, settings) {
   const r = await pool.query(
-    `SELECT COALESCE(SUM(
-       GREATEST(0,
-         (EXTRACT(EPOCH FROM (te.end_time - te.start_time)) / 3600.0)
-         - COALESCE(te.break_minutes, 0) / 60.0
-       ) * COALESCE(u.hourly_rate, 0)
-     ), 0) AS dollars
-     FROM time_entries te
-     JOIN users u ON te.user_id = u.id
-     WHERE te.project_id = $1
-       AND te.status != 'rejected'
-       AND te.start_time IS NOT NULL
-       AND te.end_time IS NOT NULL`,
+    `SELECT ${LABOR_ENTRY_COLUMNS}
+       FROM time_entries te
+       JOIN users u ON te.user_id = u.id
+      WHERE te.project_id = $1
+        AND te.status != 'rejected'
+        AND te.start_time IS NOT NULL
+        AND te.end_time IS NOT NULL`,
     [projectId]
   );
-  return Math.round(parseFloat(r.rows[0].dollars) * 100);
+  return laborCostCents(r.rows, settings);
 }
 
 // Sum project_expenses by category. Returns a Map.
@@ -132,8 +134,9 @@ router.get('/projects/:id/spend', requireAuth, async (req, res) => {
     const project = await assertProjectInCompany(companyId, req.params.id);
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
+    const settings = await loadSettings(companyId);
     const [labor, expenses, subs, mats, budgetRes] = await Promise.all([
-      laborSpent(req.params.id),
+      laborSpent(req.params.id, settings),
       expensesByCategory(req.params.id),
       subsSpentAndCommitted(req.params.id),
       materialsSpentAndCommitted(req.params.id),

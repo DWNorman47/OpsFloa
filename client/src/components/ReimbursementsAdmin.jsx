@@ -2,17 +2,15 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import api from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
-import { langToLocale } from '../utils';
+import { currencySymbol, langToLocale } from '../utils';
+import { useCurrency } from '../contexts/SettingsContext';
+import { useMoney } from '../hooks/useMoney';
 import { labelSg, labelPl } from '../companyLabels';
 
 import { silentError } from '../errorReporter';
 function fmtDate(str, locale = 'en-US') {
   const d = new Date(String(str).substring(0, 10) + 'T00:00:00');
   return d.toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function fmtMoney(v) {
-  return `$${Number(v).toFixed(2)}`;
 }
 
 function StatusBadge({ status }) {
@@ -31,6 +29,8 @@ function StatusBadge({ status }) {
 const DEFAULT_CATEGORIES = ['Fuel', 'Tools & Equipment', 'Supplies', 'Meals', 'Travel', 'Lodging', 'Parking', 'Other'];
 
 export function ReimbursementRow({ item, onUpdate, knownCategories = DEFAULT_CATEGORIES, locale = 'en-US' }) {
+  const fmtMoney = useMoney();
+  const currency = useCurrency();
   const t = useT();
   const resolveCategory = cat => cat && knownCategories.includes(cat) ? cat : cat ? 'Other' : null;
   const [expanded, setExpanded] = useState(false);
@@ -82,7 +82,7 @@ export function ReimbursementRow({ item, onUpdate, knownCategories = DEFAULT_CAT
           <div style={s.desc}>{item.description}</div>
           {item.miles && (
             <div style={s.milesMeta}>
-              🚗 {parseFloat(item.miles).toFixed(1)} miles × ${parseFloat(item.mileage_rate).toFixed(4)}/mi = {fmtMoney(item.amount)}
+              🚗 {parseFloat(item.miles).toFixed(1)} miles × {currencySymbol(currency)}{parseFloat(item.mileage_rate).toFixed(4)}/mi = {fmtMoney(item.amount)}
             </div>
           )}
           {item.receipt_url && (
@@ -129,11 +129,10 @@ export function ReimbursementRow({ item, onUpdate, knownCategories = DEFAULT_CAT
 }
 
 export default function ReimbursementsAdmin({ settings = null }) {
+  const fmtMoney = useMoney();
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
-  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
   const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
   const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
   const [items, setItems] = useState([]);
@@ -327,7 +326,7 @@ export default function ReimbursementsAdmin({ settings = null }) {
         </select>
         {projectsInList.length > 0 && (
           <select style={s.filterInput} value={filterProject} onChange={e => setFilterProject(e.target.value)} aria-label={t.raFilterProjectAria}>
-            <option value="">{`All ${workLabelPlural}`}</option>
+            <option value="">{`All Projects`}</option>
             {projectsInList.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         )}
@@ -393,9 +392,9 @@ export default function ReimbursementsAdmin({ settings = null }) {
             </div>
             {projects.length > 0 && (
               <div style={s.field}>
-                <label style={s.fieldLabel}>{workLabel}</label>
+                <label style={s.fieldLabel}>Project</label>
                 <select style={s.input} value={form.project_id} onChange={e => setForm(f => ({ ...f, project_id: e.target.value }))}>
-                  <option value="">{`No ${workLabel.toLowerCase()}`}</option>
+                  <option value="">{`No project`}</option>
                   {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>

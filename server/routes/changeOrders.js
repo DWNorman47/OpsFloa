@@ -465,6 +465,11 @@ publicRouter.get('/view/:token', async (req, res) => {
       // client_language (via the linked project's client) lets the public page
       // render in the recipient's preferred language; NULL → browser fallback.
       `SELECT co.id, co.company_id, co.project_id, co.co_number, co.description, co.status,
+              -- the company's display currency: these pages are unauthenticated,
+              -- so they can't read GET /api/settings. Without it the client sees
+              -- dollars regardless of the contractor's setting. Default mirrors
+              -- settingsDefaults.js (currency: 'USD').
+              COALESCE((SELECT value FROM settings s WHERE s.company_id = co.company_id AND s.key = 'currency'), 'USD') AS currency,
               co.subtotal_cents, co.tax_pct, co.total_cents,
               co.sent_at, co.responded_at, co.accepted_signer_name,
               c.language AS client_language

@@ -74,7 +74,6 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
   // disagreed with the screen it was printed from.
   const fmtMoney = v => formatCurrency(v, currency);
   const { worker, entries, reimbursements = [], summary, period } = data;
-  const workLabel = settings?.label_work || 'Work';
 
   const periodStr = period.from || period.to
     ? `${period.from ? fmtDateShort(period.from, locale) : (t.pdfBeginning || 'Beginning')} – ${period.to ? fmtDateShort(period.to, locale) : (t.pdfPresent || 'Present')}`
@@ -88,14 +87,19 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
 
   // Build column widths dynamically based on what's shown
   // Base: Date 13%, Desc 20%, In 11%, Out 11%, Hours 13% = 68% used
+  // Show a per-day OT column when overtime is on AND the company setting is on
+  // (default on — undefined settings still shows it).
+  const showOtCol = overtimeEnabled && settings?.report_daily_ot_column !== false;
   // Project: 18%, RateType: 14%
   const extraPct = (!showProject ? 18 : 0) + (!showRateType ? 14 : 0);
-  // Distribute extra space to Description
-  const colDesc  = `${20 + extraPct}%`;
+  const otPct = showOtCol ? 10 : 0;
+  // Distribute extra space to Description; the OT column comes out of Description too
+  const colDesc  = `${20 + extraPct - otPct}%`;
   const colDate  = '13%';
   const colIn    = '11%';
   const colOut   = '11%';
   const colHours = '13%';
+  const colOt    = `${otPct}%`;
   const colProject = '18%';
   const colType  = '14%';
 
@@ -140,11 +144,12 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
         {/* Entry table */}
         <View style={s.tableHeader}>
           <Text style={[s.th, { width: colDate }]}>{t.pdfDateCol || 'Date'}</Text>
-          {showProject && <Text style={[s.th, { width: colProject }]}>{workLabel}</Text>}
+          {showProject && <Text style={[s.th, { width: colProject }]}>Project</Text>}
           <Text style={[s.th, { width: colDesc }]}>{t.pdfDescCol || 'Description'}</Text>
           <Text style={[s.th, { width: colIn }]}>{t.pdfClockIn || 'Clock In'}</Text>
           <Text style={[s.th, { width: colOut }]}>{t.pdfClockOut || 'Clock Out'}</Text>
           {showRateType && <Text style={[s.th, { width: colType }]}>{t.pdfRateType || 'Rate Type'}</Text>}
+          {showOtCol && <Text style={[s.th, { width: colOt, textAlign: 'right' }]}>{t.pdfOvertimeCol || 'OT'}</Text>}
           <Text style={[s.th, { width: colHours, textAlign: 'right' }]}>{t.pdfHoursCol || 'Hours'}</Text>
         </View>
         {entries.map(e => {
@@ -162,6 +167,11 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
                   {isPrev ? (t.prevailingLabel || 'Prevailing') : (t.regularLabel || 'Regular')}
                 </Text>
               )}
+              {showOtCol && (
+                <Text style={[s.td, { width: colOt, textAlign: 'right' }, e.overtime_hours > 0 ? {} : { color: '#9ca3af' }]}>
+                  {e.overtime_hours > 0 ? fmtH(e.overtime_hours) : '—'}
+                </Text>
+              )}
               <Text style={[s.td, { width: colHours, textAlign: 'right', fontWeight: 'bold' }]}>{fmtH(h)}</Text>
             </View>
           );
@@ -174,7 +184,7 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
               <Text style={[s.th, { width: '18%' }]}>{t.pdfDateCol || 'Date'}</Text>
               <Text style={[s.th, { width: '22%' }]}>{t.pdfCategory || 'Category'}</Text>
               <Text style={[s.th, { flex: 1 }]}>{t.pdfDescCol || 'Description'}</Text>
-              {showProject && <Text style={[s.th, { width: '20%' }]}>{workLabel}</Text>}
+              {showProject && <Text style={[s.th, { width: '20%' }]}>Project</Text>}
               <Text style={[s.th, { width: '16%', textAlign: 'right' }]}>{t.pdfAmount || 'Amount'}</Text>
             </View>
             {reimbursements.map(r => (

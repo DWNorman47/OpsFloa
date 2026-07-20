@@ -68,14 +68,29 @@ export function createViewport({ canvas, getZoomSpeed } = {}) {
     return Math.min(r.width / w, r.height / h);
   }
 
-  // Center a w×h (world px) document with a small margin.
-  function fitTo(w, h, margin = 0.97) {
+  const FIT_MARGIN = 0.97;
+  // Center a w×h (world px) document. Default = "contain" (whole doc visible,
+  // small margin). { cover: true } = "fill" — no black bars; the long side
+  // overflows the box (usually the sides, for a wide sheet → fills vertically).
+  function fitTo(w, h, opts = {}) {
+    const o = typeof opts === 'number' ? { margin: opts } : opts;
+    const margin = o.margin != null ? o.margin : FIT_MARGIN;
     const r = canvas.parentElement.getBoundingClientRect();
-    const z = fitZoomFor(w, h) * margin;
+    const z = o.cover ? Math.max(r.width / w, r.height / h) : Math.min(r.width / w, r.height / h) * margin;
     view.zoom = z;
     view.panX = (r.width - w * z) / 2;
     view.panY = (r.height - h * z) / 2;
     requestDraw();
+  }
+
+  // True when the current view already matches the default contain-fit — used
+  // to make a second "Fit" click toggle to cover instead of being a no-op.
+  function isAtFit(w, h, tol = 0.02) {
+    const r = canvas.parentElement.getBoundingClientRect();
+    const z = Math.min(r.width / w, r.height / h) * FIT_MARGIN;
+    if (!(z > 0)) return false;
+    const px = (r.width - w * z) / 2, py = (r.height - h * z) / 2;
+    return Math.abs(view.zoom - z) / z < tol && Math.abs(view.panX - px) < 3 && Math.abs(view.panY - py) < 3;
   }
 
   // Pan by a fraction of the viewport (+dx reveals content to the right).
@@ -139,7 +154,7 @@ export function createViewport({ canvas, getZoomSpeed } = {}) {
   return {
     view, ctx, attach, resize, requestDraw, beginPaint,
     screenToWorld, worldToScreen,
-    fitTo, fitZoomFor, zoomedPastFit,
+    fitTo, isAtFit, fitZoomFor, zoomedPastFit,
     panByFraction, panPx, zoomAt, wheelZoom,
   };
 }

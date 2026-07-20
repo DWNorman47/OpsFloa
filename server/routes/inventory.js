@@ -3,6 +3,7 @@ const pool = require('../db');
 const logger = require('../logger');
 const { requireAuth, requirePerm } = require('../middleware/auth');
 const { escapeHtml } = require('../utils/htmlEscape');
+const { formatCurrency, companyCurrency } = require('../currency');
 const { uploadBase64 } = require('../r2');
 const { checkStorageLimit, incrementStorage } = require('../storage');
 const { sendPushToCompanyAdmins } = require('../push');
@@ -2600,7 +2601,8 @@ router.post('/purchase-orders/:id/email', requireAuth, requirePerm('manage_inven
     const lines = linesResult.rows;
     if (lines.length === 0) return res.status(400).json({ error: 'Cannot email a PO with no line items.' });
 
-    const fmt = n => n != null ? parseFloat(n).toLocaleString('en-US', { style: 'currency', currency: 'USD' }) : '—';
+    const currency = await companyCurrency(req.user.company_id);
+    const fmt = n => n != null ? formatCurrency(n, currency) : '—';
     const fmtDate = d => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
 
     const lineTotal = lines.reduce((s, l) => s + (l.unit_cost != null ? parseFloat(l.unit_cost) * parseFloat(l.qty_ordered) : 0), 0);

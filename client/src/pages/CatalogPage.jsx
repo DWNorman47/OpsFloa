@@ -5,6 +5,9 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useCurrency } from '../contexts/SettingsContext';
+import { useCents } from '../hooks/useMoney';
+import { formatCurrency } from '../utils';
 import { useT } from '../hooks/useT';
 import api from '../api';
 import { PageShell } from '../components/PageShell';
@@ -13,16 +16,6 @@ import EmptyState from '../components/EmptyState';
 import { silentError } from '../errorReporter';
 
 const CATEGORIES = ['labor', 'materials', 'equipment', 'subs', 'overhead', 'contingency', 'other'];
-
-function formatCents(cents) {
-  const n = (parseInt(cents, 10) || 0) / 100;
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
-}
-
-function formatDollars(dollars) {
-  const n = parseFloat(dollars) || 0;
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
-}
 
 export default function CatalogPage() {
   const { user } = useAuth();
@@ -112,6 +105,9 @@ export default function CatalogPage() {
 }
 
 function CatalogRow({ item, onChanged }) {
+  const formatCents = useCents();
+  const currency = useCurrency();
+  const formatDollars = dollars => formatCurrency(parseFloat(dollars) || 0, currency);
   const t = useT();
   const [showPreview, setShowPreview] = useState(false);
   const [preview, setPreview] = useState(null);

@@ -17,8 +17,6 @@ export default function ExportPanel({ workers, projects, settings = null }) {
   const { user } = useAuth();
   const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
   const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
-  const workLabelPlural = labelPl(settings?.label_work, 'work', user?.language);
   const [from, setFrom] = useState(monthStart());
   const [to, setTo] = useState(today());
   const [workerId, setWorkerId] = useState('');
@@ -93,9 +91,9 @@ export default function ExportPanel({ workers, projects, settings = null }) {
           </select>
         </div>
         <div style={styles.filterGroup}>
-          <label htmlFor="exp-project" style={styles.label}>{workLabel}</label>
+          <label htmlFor="exp-project" style={styles.label}>Project</label>
           <select id="exp-project" style={styles.input} value={projectId} onChange={e => setProjectId(e.target.value)}>
-            <option value="">{`All ${workLabelPlural}`}</option>
+            <option value="">{`All Projects`}</option>
             {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </div>

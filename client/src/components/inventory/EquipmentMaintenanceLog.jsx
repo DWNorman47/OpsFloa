@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../api';
 import { useAuth } from '../../contexts/AuthContext';
 import { useT } from '../../hooks/useT';
-import { langToLocale } from '../../utils';
+import { formatCurrency, langToLocale } from '../../utils';
+import { useCurrency } from '../../contexts/SettingsContext';
 import { silentError } from '../../errorReporter';
 
 function today() { return new Date().toLocaleDateString('en-CA'); }
@@ -22,6 +23,7 @@ export default function EquipmentMaintenanceLog() {
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
+  const currency = useCurrency();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
 
   const [assets, setAssets] = useState([]);
@@ -117,7 +119,7 @@ export default function EquipmentMaintenanceLog() {
                 <td style={s.td}>{fmtDate(m.log_date, locale)}</td>
                 <td style={s.td}><span style={s.kindTag}>{kindLabel(m.kind)}</span></td>
                 <td style={{ ...s.td, color: '#6b7280' }}>{m.notes || ''}{m.performed_by ? ` — ${m.performed_by}` : ''}</td>
-                <td style={{ ...s.td, textAlign: 'right' }}>{m.cost != null ? Number(m.cost).toLocaleString(locale, { style: 'currency', currency: 'USD' }) : ''}</td>
+                <td style={{ ...s.td, textAlign: 'right' }}>{m.cost != null ? formatCurrency(Number(m.cost), currency) : ''}</td>
                 <td style={{ ...s.td, textAlign: 'right' }}>
                   {(isAdmin || m.created_by === user?.id) && (
                     confirmDel === m.id ? (

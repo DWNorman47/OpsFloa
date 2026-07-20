@@ -20,7 +20,7 @@
 const jwt = require('jsonwebtoken');
 const router = require('express').Router();
 const pool = require('../db');
-const { keyFromPublicUrl, getBytesByUrl } = require('../r2');
+const { keyFromPublicUrl, getBytesByUrl, uploadBase64 } = require('../r2');
 const { LIVE_SESSION_TOOLS, LIVE_SESSION_TOOL_DEFAULT } = require('../constants/liveSessionEnums');
 
 const rooms = new Map();        // sessionId(string) -> Room
@@ -107,6 +107,9 @@ router.post('/', async (req, res) => {
     const tool = LIVE_SESSION_TOOLS.includes(b.tool) ? b.tool : LIVE_SESSION_TOOL_DEFAULT;
     let pdfUrl = null;
     if (b.pdfUrl) { if (!keyFromPublicUrl(String(b.pdfUrl))) return res.status(400).json({ error: 'bad pdfUrl' }); pdfUrl = String(b.pdfUrl); }
+    // CORS-free fallback: the host couldn't PUT straight to R2, so it sent the
+    // plan PDF as base64 — store it server-side (same path as shared takeoffs).
+    else if (b.pdfBase64) { const up = await uploadBase64(`data:application/pdf;base64,${b.pdfBase64}`, 'live-sessions'); pdfUrl = up.url; }
     const objects = Array.isArray(b.objects) ? b.objects.filter(o => o && o.id) : [];
     const doc = (b.doc && typeof b.doc === 'object') ? b.doc : {};
     const state = { objects: objects.map(o => ({ o, ts: Date.now() })), doc };
@@ -136,7 +139,13 @@ router.get('/', async (req, res) => {
         WHERE s.company_id = $1 AND s.status = 'active' ${tool ? 'AND s.tool = $2' : ''}
         ORDER BY s.created_at DESC`,
       tool ? [req.user.company_id, tool] : [req.user.company_id]);
-    res.json(rows.map(r => ({ ...r, participants: rooms.get(String(r.id)) ? rooms.get(String(r.id)).clients.size : 0 })));
+    res.json(rows.map(r => ({
+      ...r,
+      participants: rooms.get(String(r.id)) ? rooms.get(String(r.id)).clients.size : 0,
+      // lets the client offer an "End" control so a lingering/abandoned session can
+      // be closed straight from the list (same authority as POST /:id/end)
+      can_end: String(r.host_user_id) === String(req.user.id) || isAdmin(req),
+    })));
   } catch (err) { req.log && req.log.error({ err }, 'live list'); res.status(500).json({ error: 'server error' }); }
 });
 
@@ -190,7 +199,11 @@ router.post('/:id/end', async (req, res) => {
     const id = String(req.params.id);
     const room = await loadRoom(id);
     if (!room || room.companyId !== String(req.user.company_id)) return res.status(404).json({ error: 'not found' });
-    if (room.meta.hostUserId !== req.user.id && !isAdmin(req)) return res.status(403).json({ error: 'only the host or an admin can end it' });
+    // String-coerce both sides: a rehydrated room's hostUserId comes from the DB
+    // (may be a number) while req.user.id comes from the JWT (may be a string), and
+    // a bare !== there 403s the real host — so "End for all" silently fails and the
+    // session lingers as joinable. (Matches the String() cast used for company_id.)
+    if (String(room.meta.hostUserId) !== String(req.user.id) && !isAdmin(req)) return res.status(403).json({ error: 'only the host or an admin can end it' });
     await snapshot(room);
     await pool.query(`UPDATE live_sessions SET status = 'ended', ended_at = now() WHERE id = $1`, [id]);
     broadcast(room, { type: 'ended' });

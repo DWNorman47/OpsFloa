@@ -7,7 +7,6 @@ import { langToLocale } from '../../utils';
 import { SkeletonList } from '../Skeleton';
 import ModalShell from '../ModalShell';
 import ColumnHeaderMenu from './ColumnHeaderMenu';
-import { labelSg } from '../../companyLabels';
 import { silentError } from '../../errorReporter';
 const TYPE_COLORS = {
   receive:  { color: '#059669', bg: '#d1fae5' },
@@ -43,10 +42,8 @@ function formatQty(value) {
   return qty % 1 === 0 ? String(parseInt(qty, 10)) : qty.toFixed(2);
 }
 
-function TransactionForm({ isAdmin, locations, projects, settings, onSave, onCancel, onConversionSaved }) {
+function TransactionForm({ isAdmin, locations, projects, onSave, onCancel, onConversionSaved }) {
   const t = useT();
-  const { user } = useAuth();
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const TYPE_LABELS = {
     receive:  t.invTxTypeReceive,
     issue:    t.invTxTypeIssue,
@@ -399,7 +396,7 @@ function TransactionForm({ isAdmin, locations, projects, settings, onSave, onCan
 
       {(form.type === 'issue' || form.type === 'receive') && (
         <div style={f.field}>
-          <label htmlFor="itx-project" style={f.label}>{workLabel}</label>
+          <label htmlFor="itx-project" style={f.label}>Project</label>
           <select id="itx-project" style={f.input} value={form.project_id} onChange={e => set('project_id', e.target.value)}>
             <option value="">{t.none}</option>
             {projects.filter(p => p.active !== false).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -467,11 +464,10 @@ function TransactionForm({ isAdmin, locations, projects, settings, onSave, onCan
   );
 }
 
-export default function InventoryTransactions({ isAdmin, locations, projects, settings, onTransaction, onConversionSaved }) {
+export default function InventoryTransactions({ isAdmin, locations, projects, onTransaction, onConversionSaved }) {
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
-  const workLabel = labelSg(settings?.label_work, 'work', user?.language);
   const TYPE_LABELS = {
     receive:  t.invTxTypeReceive,
     issue:    t.invTxTypeIssue,
@@ -619,7 +615,6 @@ export default function InventoryTransactions({ isAdmin, locations, projects, se
               isAdmin={isAdmin}
               locations={locations}
               projects={projects}
-              settings={settings}
               onSave={handleSave}
               onCancel={() => setShowForm(false)}
               onConversionSaved={onConversionSaved}
@@ -707,7 +702,7 @@ export default function InventoryTransactions({ isAdmin, locations, projects, se
                         <ColumnHeaderMenu label={t.invTxColTo} sortKey="to" activeSort={sortBy} sortDir={sortDir} onSort={setColumnSort} filterType="select" filterValue={filters.to_location_id} onFilter={v => setFilter('to_location_id', v)} options={[{ value: '', label: t.invCycAllLocations }, ...activeLocations.map(l => ({ value: String(l.id), label: l.name }))]} />
                       </th>
                       <th style={s.th}>
-                        <ColumnHeaderMenu label={workLabel} sortKey="project" activeSort={sortBy} sortDir={sortDir} onSort={setColumnSort} filterType={projects?.length > 0 ? 'select' : null} filterValue={filters.project_id} onFilter={v => setFilter('project_id', v)} options={[{ value: '', label: `${t.invtxAllPrefix} ${workLabel.toLowerCase()}` }, ...(projects || []).filter(p => p.active !== false).map(p => ({ value: String(p.id), label: p.name }))]} />
+                        <ColumnHeaderMenu label="Project" sortKey="project" activeSort={sortBy} sortDir={sortDir} onSort={setColumnSort} filterType={projects?.length > 0 ? 'select' : null} filterValue={filters.project_id} onFilter={v => setFilter('project_id', v)} options={[{ value: '', label: `${t.invtxAllPrefix} project` }, ...(projects || []).filter(p => p.active !== false).map(p => ({ value: String(p.id), label: p.name }))]} />
                       </th>
                       {isAdmin && <th style={s.th}>
                         <ColumnHeaderMenu label={t.invTxColSupplier} sortKey="supplier" activeSort={sortBy} sortDir={sortDir} onSort={setColumnSort} filterType={suppliers.length > 0 ? 'select' : null} filterValue={filters.supplier_id} onFilter={v => setFilter('supplier_id', v)} options={[{ value: '', label: t.invTxAllSuppliers }, ...suppliers.map(sup => ({ value: String(sup.id), label: sup.name }))]} />
@@ -778,7 +773,7 @@ export default function InventoryTransactions({ isAdmin, locations, projects, se
                         </div>
                         {tx.project_name && (
                           <div>
-                            <span style={s.mobileLabel}>{workLabel}</span>
+                            <span style={s.mobileLabel}>Project</span>
                             <span style={s.mobileText}>{tx.project_name}</span>
                           </div>
                         )}

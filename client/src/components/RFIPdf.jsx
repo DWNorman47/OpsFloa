@@ -47,9 +47,8 @@ function SectionHeader({ title }) {
   );
 }
 
-export function RFIDocument({ rfi, companyName, t = {}, language, settings = null }) {
+export function RFIDocument({ rfi, companyName, t = {}, language }) {
   const locale = langToLocale(language);
-  const workLabel = settings?.label_work || 'Work';
   const statusColors = STATUS_COLORS[rfi.status] || STATUS_COLORS.open;
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
 
@@ -64,7 +63,7 @@ export function RFIDocument({ rfi, companyName, t = {}, language, settings = nul
           </View>
           <View style={pdf.headerRight}>
             <Text style={pdf.rfiNumber}>RFI #{rfi.rfi_number}</Text>
-            <Text style={pdf.headerMeta}>{rfi.project_name || `No ${workLabel.toLowerCase()}`}</Text>
+            <Text style={pdf.headerMeta}>{rfi.project_name || 'No project'}</Text>
             <View style={[pdf.statusBadge, { backgroundColor: statusColors.bg }]}>
               <Text style={[pdf.statusText, { color: statusColors.text }]}>
                 {rfi.status.toUpperCase()}

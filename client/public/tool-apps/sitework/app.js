@@ -4221,6 +4221,128 @@ async function shareToCompany() {
   }
 }
 
+// ── Export to Plan Room ──────────────────────────────────────────────────────
+// Convert this sitework project into a Plan Room project blob.
+//
+// The two tools take off in DIFFERENT pixel spaces: sitework points live in
+// rendered-image px at state.renderScale (= min(3, 2800/pageWidth), never saved),
+// Plan Room in PDF base px (viewport scale 1). So base = image / renderScale.
+// renderScale only exists while this tool is open, which is exactly why the
+// conversion happens here and not as a Plan Room-side importer.
+//
+// Carries the DRAWINGS + scale so nothing is re-traced. The priced bid, the
+// retaining-wall dig VOLUMES (the line survives, the cross-section doesn't), and
+// the production log have no Plan Room equivalent and are intentionally dropped —
+// you re-price in Plan Room's trades. Kept pure (state + settings in, blob out)
+// so it can be unit-tested by lifting it out of this file.
+function convertToPlanRoom(state, settings) {
+  const rs = state.renderScale;
+  if (!rs) return null; // no PDF open → geometry can't be placed
+
+  const rid = () => 'sw' + Math.random().toString(36).slice(2, 10);
+  const now = Date.now();
+  const toBase = p => ({ x: p.x / rs, y: p.y / rs });   // image px → base px
+  const conv = pts => (pts || []).map(toBase);
+  const num = (v, d) => { const n = parseFloat(v); return Number.isFinite(n) ? n : d; };
+
+  const exPage = state.sheets.existing.pageNum;
+  const prPage = state.sheets.proposed.pageNum;
+  const markups = [];
+
+  // Site boundary → earthwork boundary.
+  if (Array.isArray(state.boundary) && state.boundary.length >= 3) {
+    markups.push({ id: rid(), page: exPage, kind: 'ebound', color: '#f59e0b', width: 2, pts: conv(state.boundary), created: now });
+  }
+
+  // Contours → contour / espot (single grade) / epad (flat pad), tagged by surface.
+  for (const surf of ['existing', 'proposed']) {
+    const page = surf === 'existing' ? exPage : prPage;
+    for (const c of (state.contours && state.contours[surf]) || []) {
+      const kind = c.spot ? 'espot' : (c.pad ? 'epad' : 'contour');
+      markups.push({
+        id: rid(), page, kind, surface: surf, color: '#22c55e', width: 2,
+        pts: conv(c.pts), elev: (c.elev != null ? c.elev : null), created: now,
+      });
+    }
+  }
+
+  // Quantity takeoffs → qarea / qline / qcount. Label carried; pricing dropped.
+  const KIND = { area: 'qarea', line: 'qline', count: 'qcount' };
+  for (const t of state.takeoffs || []) {
+    const kind = KIND[t.kind];
+    if (!kind) continue;
+    const cfg = { label: (t.cfg && (t.cfg.label || t.cfg.name)) || 'From Sitework' };
+    if (t.cfg && t.cfg.unit) cfg.unit = t.cfg.unit;
+    const m = { id: rid(), page: exPage, kind, pts: conv(t.pts), cfg, created: now };
+    if (kind === 'qcount') { m.color = '#3b82f6'; m.width = 2; }
+    markups.push(m);
+  }
+
+  // Retaining-wall digs → qline. The traced line survives; the swept cross-section
+  // volume has no Plan Room counterpart, so only the geometry comes across.
+  for (const w of state.walls || []) {
+    markups.push({ id: rid(), page: exPage, kind: 'qline', pts: conv(w.pts), cfg: { label: 'Wall dig (from Sitework)' }, created: now });
+  }
+
+  // Scale: sitework has one project-wide calibration in image px; Plan Room wants
+  // a per-page scale bar. Divide the endpoints by renderScale and let Plan Room
+  // recompute ftPerPx from the bar. Same bar on both pages (calibration is shared).
+  const scales = {}, scaleBars = {};
+  const cal = state.calibration;
+  if (cal && num(cal.feet, 0) > 0) {
+    const a = toBase({ x: cal.ax, y: cal.ay });
+    const b = toBase({ x: cal.bx, y: cal.by });
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    for (const p of new Set([exPage, prPage])) {
+      scaleBars[p] = { a: { ...a }, b: { ...b }, feet: num(cal.feet, 0) };
+      if (len > 0) scales[p] = num(cal.feet, 0) / len;
+    }
+  }
+
+  // Earthwork settings + the proposed-sheet alignment. align maps proposed→existing:
+  // rotation/scale (a,b) are scale-free, but the translation (e,f) is in px so it
+  // divides by renderScale like every other coordinate.
+  const al = state.align || { a: 1, b: 0, e: 0, f: 0 };
+  const earthwork = {
+    existingPage: exPage, proposedPage: prPage,
+    align: { a: num(al.a, 1), b: num(al.b, 0), e: num(al.e, 0) / rs, f: num(al.f, 0) / rs },
+    gridFt: num(settings.gridFt, 5), shrink: num(settings.shrink, 15),
+    swell: num(settings.swell, 25), truckCap: num(settings.truckCap, 12),
+    interval: num(settings.interval, 1), result: null,
+  };
+
+  return { app: 'plan-room', version: 1, page: exPage, markups, scales, scaleBars, earthwork, trade: 'dirt' };
+}
+
+// Push the converted project to the company library as a NEW Plan Room project
+// (with a fresh PDF copy — never a shared pdf_url, since deleting the sitework
+// project would delete the shared R2 object). It then shows up in Plan Room.
+async function sendToPlanRoom() {
+  if (!state.renderScale || !state.pdf) { companyMsg('Open a plan first, then take off some quantities.', true); return; }
+  const settings = {
+    gridFt: els.inpGrid.value, shrink: els.inpShrink.value, swell: els.inpSwell.value,
+    truckCap: els.inpTruck.value, interval: els.inpInterval.value,
+  };
+  const data = convertToPlanRoom(state, settings);
+  if (!data || !data.markups.length) { companyMsg('Nothing to send yet — take off some quantities first.', true); return; }
+  const base = state.projectName || (state.pdfName ? state.pdfName.replace(/\.pdf$/i, '') : 'Takeoff');
+  const name = base + ' (from Sitework)';
+  companyMsg('Sending to Plan Room…');
+  try {
+    let pdfBase64 = null;
+    if (state.pdfKey) { try { const rec = await idbFilesGet(state.pdfKey); if (rec && rec.bytes) pdfBase64 = bytesToBase64(rec.bytes); } catch (_) {} }
+    const res = await apiFetch('', { method: 'POST', body: JSON.stringify({ name, data, pdfBase64, pdfName: state.pdfName }) });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    await res.json();
+    companyMsg(`Sent to Plan Room. Open Plan Room to find “${name}” — re-price it there.`);
+  } catch (e) {
+    const msg = /HTTP 413/.test(e.message)
+      ? 'The plan PDF is too large to copy to Plan Room. Try a smaller / more compressed PDF.'
+      : 'Could not send to Plan Room (are you signed in?): ' + e.message;
+    companyMsg(msg, true);
+  }
+}
+
 async function shareConflict(c) {
   const who = c.updatedByName || 'A teammate';
   const ok = confirm(`${who} changed this shared takeoff since you opened it.\n\nOK = save YOURS as a new, separate company copy.\nCancel = leave the shared copy as theirs (keep editing locally).`);
@@ -4319,6 +4441,7 @@ async function deleteCompanyTakeoff(id, name) {
 $('btnCompany').addEventListener('click', () => { $('company').classList.remove('hidden'); companyMsg(''); refreshCompanyList(); });
 $('companyClose').addEventListener('click', () => $('company').classList.add('hidden'));
 $('companyShareBtn').addEventListener('click', shareToCompany);
+$('companyToPlanRoomBtn').addEventListener('click', sendToPlanRoom);
 
 $('btnExport').addEventListener('click', async () => {
   const data = projectData();

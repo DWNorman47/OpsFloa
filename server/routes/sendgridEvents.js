@@ -1,8 +1,20 @@
 const express = require('express');
-const pool = require('../db');
 const logger = require('../logger');
+const { markSuppressed } = require('../services/emailSuppression');
 
 const router = express.Router();
+
+// ─── DEPRECATED ──────────────────────────────────────────────────────────────
+// Email moved to Resend; the live bounce feed is routes/resendEvents.js. This
+// route only still exists because it cannot be proven from the repo whether a
+// SendGrid account is still posting here — SENDGRID_WEBHOOK_SECRET isn't in
+// .env.example, and without it every request 503s, so it is almost certainly
+// inert. Delete it once that's confirmed in the Render env.
+//
+// It kept working, in a sense, for months after the migration: it just never
+// heard from anyone again, and nothing noticed that bounce tracking had gone
+// quiet. That's the failure mode worth remembering here.
+// ─────────────────────────────────────────────────────────────────────────────
 
 // SendGrid event types we care about (email is likely broken after these)
 // See https://docs.sendgrid.com/for-developers/tracking-events/event
@@ -52,15 +64,10 @@ router.post('/:secret', async (req, res) => {
     if (!email) continue;
     try {
       const reason = `${e.event}${e.reason ? ': ' + e.reason : ''}`.slice(0, 255);
-      const result = await pool.query(
-        `UPDATE users SET email_bounced_at = NOW(), email_bounce_reason = $1
-         WHERE LOWER(email) = $2 AND email_bounced_at IS NULL
-         RETURNING id, company_id`,
-        [reason, email]
-      );
-      if (result.rowCount > 0) {
+      const user = await markSuppressed(email, reason);
+      if (user) {
         marked++;
-        logger.info({ email, event: e.event, userId: result.rows[0].id }, 'user email marked as bounced');
+        logger.info({ event: e.event, userId: user.id }, 'user email marked as bounced');
       }
     } catch (err) {
       logger.error({ err, email, event: e.event }, 'failed to process sendgrid event');

@@ -1,32 +1,9 @@
+import { renderAiMarkdown } from './aiMarkdown';
 import React, { useState } from 'react';
 import api from '../api';
 import AiUsageBadge from './AiUsageBadge';
 
 // render **bold** spans safely (React escapes the text, so no injection risk)
-function inline(text, keyBase) {
-  return text.split(/(\*\*[^*]+\*\*)/g).map((p, i) =>
-    /^\*\*[^*]+\*\*$/.test(p) ? <strong key={`${keyBase}-${i}`}>{p.slice(2, -2)}</strong> : p);
-}
-
-// minimal, safe markdown: ## headings, - bullets, **bold**, paragraphs
-function renderResult(md) {
-  const lines = md.split('\n');
-  const out = [];
-  let bullets = null;
-  const flush = () => {
-    if (bullets) { out.push(<ul key={`ul-${out.length}`} style={styles.ul}>{bullets}</ul>); bullets = null; }
-  };
-  lines.forEach((raw, i) => {
-    const line = raw.trim();
-    if (/^#{1,6}\s/.test(line)) { flush(); out.push(<div key={i} style={styles.h}>{line.replace(/^#{1,6}\s/, '')}</div>); }
-    else if (/^[-*]\s+/.test(line)) { (bullets = bullets || []).push(<li key={i}>{inline(line.replace(/^[-*]\s+/, ''), i)}</li>); }
-    else if (line === '') { flush(); }
-    else { flush(); out.push(<p key={i} style={styles.p}>{inline(line, i)}</p>); }
-  });
-  flush();
-  return out;
-}
-
 export default function SummarizerTool() {
   const [text, setText] = useState('');
   const [result, setResult] = useState('');
@@ -90,7 +67,7 @@ export default function SummarizerTool() {
             <button className="ops-button" onClick={copy}>{copied ? 'Copied' : 'Copy'}</button>
           </div>
           {clipped && <div style={styles.clip}>Note: the input was long and was trimmed before summarizing.</div>}
-          <div style={styles.output}>{renderResult(result)}</div>
+          <div style={styles.output}>{renderAiMarkdown(result)}</div>
         </div>
       )}
     </div>
@@ -117,7 +94,4 @@ const styles = {
   },
   clip: { padding: '8px 14px', fontSize: 12.5, color: '#92400e', background: '#fffbeb', borderBottom: '1px solid #fef3c7' },
   output: { padding: '4px 16px 14px', fontSize: 14, lineHeight: 1.6, color: '#0f172a' },
-  h: { fontWeight: 700, fontSize: 14.5, margin: '14px 0 4px', color: '#0f172a' },
-  p: { margin: '6px 0' },
-  ul: { margin: '4px 0', paddingLeft: 20, lineHeight: 1.7 },
 };

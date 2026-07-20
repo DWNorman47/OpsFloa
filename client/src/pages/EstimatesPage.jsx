@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import api from '../api';
+import { isImpersonating, openToolTab } from '../openTool';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
 import MoneyInput from '../components/MoneyInput';
@@ -9,7 +10,8 @@ import Pagination from '../components/Pagination';
 import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
-import { formatMoney } from '../utils/format';
+import { useCents } from '../hooks/useMoney';
+import { useCurrency } from '../contexts/SettingsContext';
 import { formatDate, formatDateTime } from '../utils';
 import { computeBreakdown } from '../utils/estimateMath';
 import { silentError } from '../errorReporter';
@@ -58,11 +60,27 @@ function StatusBadge({ status }) {
 // Module-local shorthand kept for the few places the previous code path
 // used `formatCents`. The shared formatMoney from utils/format is now
 // the canonical helper; alias preserved to keep the diff small.
-const formatCents = (c) => formatMoney(c, { showCents: true });
 
 // ── List view ────────────────────────────────────────────────────────────────
 
+// "Bid due" chip — only while still bidding (draft/sent); red overdue, amber soon
+function BidDueChip({ dueAt, status, language }) {
+  if (!dueAt || !['draft', 'sent'].includes(status)) return null;
+  const days = daysUntil(dueAt);
+  if (days === null) return null;
+  const overdue = days < 0, soon = days >= 0 && days < 2;
+  const color = overdue ? '#dc2626' : soon ? '#b45309' : '#6b7280';
+  const bg = overdue ? '#fee2e2' : soon ? '#fef3c7' : '#eef2f7';
+  const txt = new Date(dueAt).toLocaleString(language || undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return (
+    <span title="Bid due" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11, fontWeight: 700, color, background: bg, padding: '2px 7px', borderRadius: 999, whiteSpace: 'nowrap' }}>
+      ⏰ {txt}
+    </span>
+  );
+}
+
 function EstimatesList({ onOpen, onNew }) {
+  const formatCents = useCents();
   const t = useT();
   const { user } = useAuth();
   const [estimates, setEstimates] = useState([]);
@@ -165,7 +183,7 @@ function EstimatesList({ onOpen, onNew }) {
                     <td style={styles.td}>{e.project_name}</td>
                     <td style={styles.td}>{e.client_name_snapshot}</td>
                     <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(e.total_cents)}</td>
-                    <td style={styles.td}><StatusBadge status={e.status} /></td>
+                    <td style={styles.td}><div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}><StatusBadge status={e.status} /><BidDueChip dueAt={e.bid_due_at} status={e.status} language={user?.language} /></div></td>
                     <td style={styles.td}>{formatDate(e.created_at, user?.language)}</td>
                   </tr>
                 ))}
@@ -184,7 +202,7 @@ function EstimatesList({ onOpen, onNew }) {
               >
                 <div className="admin-card-row">
                   <span className="admin-card-title">{e.estimate_number}</span>
-                  <StatusBadge status={e.status} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}><StatusBadge status={e.status} /><BidDueChip dueAt={e.bid_due_at} status={e.status} language={user?.language} /></div>
                 </div>
                 <div className="admin-card-sub">{e.project_name}</div>
                 <div className="admin-card-sub">{e.client_name_snapshot}</div>
@@ -205,7 +223,23 @@ function EstimatesList({ onOpen, onNew }) {
 
 // ── Create / edit form ────────────────────────────────────────────────────────
 
+// stored UTC timestamp -> local "YYYY-MM-DDTHH:mm" for a datetime-local input
+function toLocalDatetime(iso) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+// days until a due timestamp (negative = overdue); null if unset
+function daysUntil(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  return (d.getTime() - Date.now()) / 86400000;
+}
+
 function EstimateForm({ existing, onSave, onCancel }) {
+  const formatCents = useCents();
   const t = useT();
   const toast = useToast();
   // Track whether the form has unsaved edits so the tab-close /
@@ -225,6 +259,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
     contingency_pct: existing?.contingency_pct || 0,
     tax_pct: existing?.tax_pct || 0,
     valid_until: existing?.valid_until ? existing.valid_until.slice(0, 10) : '',
+    bid_due_at: existing?.bid_due_at ? toLocalDatetime(existing.bid_due_at) : '',
     notes: existing?.notes || '',
     exclusions: existing?.exclusions || '',
     terms: existing?.terms || '',
@@ -288,6 +323,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
     try {
       const payload = {
         ...head,
+        bid_due_at: head.bid_due_at ? new Date(head.bid_due_at).toISOString() : null,
         lines: lines
           .filter(l => l.description?.toString().trim())
           .map(l => ({
@@ -349,6 +385,9 @@ function EstimateForm({ existing, onSave, onCancel }) {
           </Field>
           <Field label={t.estValidUntil}>
             <input type="date" value={head.valid_until} onChange={e => updateHead('valid_until', e.target.value)} style={styles.input} />
+          </Field>
+          <Field label={t.estBidDue}>
+            <input type="datetime-local" value={head.bid_due_at} onChange={e => updateHead('bid_due_at', e.target.value)} style={styles.input} title={t.estBidDueHint} />
           </Field>
         </div>
         <Field label={t.estScopeSummary}>
@@ -500,6 +539,7 @@ function Field({ label, required, error, children }) {
 // shape up. Lightweight; opens inline rather than a true modal so it
 // doesn't fight with the rest of the form.
 function CatalogPicker({ onPick }) {
+  const formatCents = useCents();
   const t = useT();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
@@ -582,6 +622,7 @@ function CatalogPicker({ onPick }) {
 }
 
 function TotalsRow({ label, value, bold }) {
+  const formatCents = useCents();
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: bold ? '2px solid #111827' : '1px solid #f3f4f6', fontWeight: bold ? 700 : 400, fontSize: bold ? 16 : 14 }}>
       <span>{label}</span>
@@ -593,6 +634,8 @@ function TotalsRow({ label, value, bold }) {
 // ── Detail view ──────────────────────────────────────────────────────────────
 
 function EstimateDetail({ id, onBack, onEdit }) {
+  const formatCents = useCents();
+  const currency = useCurrency();
   const t = useT();
   const { user } = useAuth();
   const [estimate, setEstimate] = useState(null);
@@ -603,6 +646,10 @@ function EstimateDetail({ id, onBack, onEdit }) {
   const [pdfGenerating, setPdfGenerating] = useState(false);
   const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
+
+  // The takeoff add-on lights up the "Take off in Plan Room" launch (same
+  // entitlement gate the Tools page uses; trial/exempt companies get it too).
+  const hasPlanroom = !!(user?.addon_planroom || ['exempt', 'trial'].includes(user?.subscription_status));
 
   // Build the client-facing estimate PDF in the browser. Lazy-imports
   // @react-pdf/renderer (heavy) only when the admin actually downloads,
@@ -624,7 +671,7 @@ function EstimateDetail({ id, onBack, onEdit }) {
       const pdfLang = estimate.client_language;
       const pdfT = getT(pdfLang);
       const statusLabel = pdfT[STATUS_COLORS[estimate.status]?.labelKey] || estimate.status;
-      const el = React.createElement(EstimatePDF, { estimate, companyInfo: companyRes.data || {}, language: pdfLang, statusLabel });
+      const el = React.createElement(EstimatePDF, { estimate, currency, companyInfo: companyRes.data || {}, language: pdfLang, statusLabel });
       const blob = await pdf(el).toBlob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -671,6 +718,40 @@ function EstimateDetail({ id, onBack, onEdit }) {
       toast(t.estToastSent, 'success');
     } catch (err) {
       setActionError(err.response?.data?.error || t.estErrSend);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function attachPlan(file) {
+    if (!file) return;
+    setActionError(null);
+    setBusy(true);
+    try {
+      const dataUrl = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.onerror = rej;
+        r.readAsDataURL(file);
+      });
+      const { data } = await api.post(`/estimates/${id}/plan-pdf`, { dataUrl, name: file.name });
+      setEstimate(data);
+      toast(t.estPlanAttached, 'success');
+    } catch (err) {
+      setActionError(err.response?.data?.error || t.estPlanAttachError);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removePlan() {
+    setBusy(true);
+    setActionError(null);
+    try {
+      const { data } = await api.delete(`/estimates/${id}/plan-pdf`);
+      setEstimate(data);
+    } catch (err) {
+      setActionError(err.response?.data?.error || t.estPlanAttachError);
     } finally {
       setBusy(false);
     }
@@ -780,6 +861,36 @@ function EstimateDetail({ id, onBack, onEdit }) {
             </span>
           )}
         </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 12px', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, marginBottom: 16 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: '#374151' }}>📐 {t.estPlans}</span>
+        {estimate.plan_pdf_url ? (
+          <>
+            <a href={estimate.plan_pdf_url} target="_blank" rel="noreferrer" style={{ fontSize: 13, color: 'var(--ops-page-accent)', fontWeight: 600, wordBreak: 'break-all' }}>
+              {estimate.plan_pdf_name || 'plan.pdf'}
+            </a>
+            <button onClick={removePlan} disabled={busy} style={{ ...styles.ghostBtn, padding: '4px 10px', fontSize: 12 }}>{t.estPlanRemove}</button>
+            {hasPlanroom && (
+              <a
+                className="ops-button-primary"
+                href={`/tool-apps/planroom/index.html?estimate=${estimate.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={e => { if (isImpersonating()) { e.preventDefault(); openToolTab(`/tool-apps/planroom/index.html?estimate=${estimate.id}`); } }}
+                style={{ fontSize: 12, padding: '5px 12px', textDecoration: 'none' }}
+              >
+                📐 {t.estTakeoffInPlanRoom}
+              </a>
+            )}
+          </>
+        ) : (
+          <span style={{ fontSize: 13, color: '#6b7280' }}>{t.estPlanNone}</span>
+        )}
+        <label style={{ ...styles.ghostBtn, padding: '4px 10px', fontSize: 12, cursor: busy ? 'default' : 'pointer', marginLeft: 'auto' }}>
+          {busy ? t.estGenerating : (estimate.plan_pdf_url ? t.estPlanReplace : t.estPlanAttach)}
+          <input type="file" accept="application/pdf,image/*" hidden disabled={busy} onChange={e => { const f = e.target.files[0]; e.target.value = ''; attachPlan(f); }} />
+        </label>
       </div>
 
       {actionError && <div style={styles.errorBox}>{actionError}</div>}
