@@ -1006,10 +1006,23 @@ rounding, tiered OT, premiums — into the custom-rule builder). Phase 1 shipped
   backward-compat, parse/defaults) + contract type-parity updated. 133
   hours-rules tests green, client build + i18n parity green.
 
-**Next:** Phase 2 = tiered OT as when-scoped rules (the harder one — lives in the
-separate `computeOT` cost engine, not the rounding pipeline). Phase 3 = premiums.
-Phase 4 = retire the fixed-slot UI (migrate-on-load). Fixed slots still work
-throughout — nothing removed yet.
+**Phase 2 shipped — tiered Overtime as when-scoped rules** (the deep one, in the
+`computeOT` cost engine). New `ot_tier` rule `{basis:day|week, afterHours, mult}` +
+`when`. `computeOT` reformulated: bands resolved **per bucket** (a date-scoped
+ot_tier rule sets that day's tiers; else the fixed-slot config) and OT accumulated
+by multiplier instead of a fixed band array. **Behavior-preserving** — all 95
+payCalculations tests pass unchanged; the reformulation only diverges when an
+ot_tier rule exists. `annotateEntryOvertime` resolves its boundary per bucket too,
+so the report OT column still reconciles. `otConfigFromSettings` carries the
+tierRules; `payCalculations` imports `ruleMatchesDate` (one-way, no cycle).
+Builder: `ot_tier` type (basis / after-hours / multiplier) + summary + coerce;
+i18n EN/ES. `hoursRulesOtTier.test.js` (single/tiered/CA-style, Saturday-scoped,
+parse, report reconciliation, backward-compat). 234 pay/hours + 38 admin tests
+green; client build + i18n parity green.
+
+**Next:** Phase 3 = premiums (night/rest-day/7th-day/min-daily) as custom rules
+(same computeOT surface). Phase 4 = retire the fixed-slot UI (migrate-on-load).
+Fixed slots still work throughout — nothing removed yet.
 
 ---
 

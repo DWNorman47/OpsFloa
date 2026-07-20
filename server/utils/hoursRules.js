@@ -97,8 +97,9 @@ const ROUNDING_REFERENCES = ['schedule', 'clock'];
 // COUNTS toward the overtime threshold. A 9.5h day plus a 0.5h late-stay credit
 // is 10h, which under an 8h threshold is 2h of overtime — not 1.5h of overtime
 // and 0.5h of regular.
-const RULE_TYPES = ['clip_start', 'clip_end', 'add_time', 'remove_time', 'auto_break', 'round'];
+const RULE_TYPES = ['clip_start', 'clip_end', 'add_time', 'remove_time', 'auto_break', 'round', 'ot_tier'];
 const ROUND_EDGES = ['in', 'out', 'both']; // which punch edge a `round` rule rounds
+const OT_TIER_BASES = ['day', 'week'];     // an ot_tier rule counts hours per day or per week
 const RULE_WHEN_KINDS = [
   'every_day', 'weekdays', 'month_days', 'month_weekdays',
   'nth_days',      // every Nth calendar day from an anchor date
@@ -365,6 +366,19 @@ function parseRule(raw, index) {
       return { ...base, edge, reference, direction, intervalMin, graceMin };
     }
 
+    case 'ot_tier': {
+      // One overtime tier: hours past `afterHours` in the bucket (day or week) are
+      // paid at `mult`× base. Several ot_tier rules compose into a band list. When
+      // scoped by `when`, they define the tiers for those days only (else the
+      // fixed-slot OT config applies) — resolved per bucket in computeOT.
+      const afterHours = Number(raw.afterHours);
+      const mult = Number(raw.mult);
+      if (!Number.isFinite(afterHours) || afterHours < 0) return null;
+      if (!Number.isFinite(mult) || mult <= 0) return null;
+      const basis = OT_TIER_BASES.includes(raw.basis) ? raw.basis : 'day';
+      return { ...base, basis, afterHours, mult };
+    }
+
     default:
       return null;
   }
@@ -516,8 +530,11 @@ function otConfigFromSettings(settings) {
   const minDailyHours = parseFloat(prem.minDailyHours) || 0;
   const nightDifferential = (prem.nightDifferential && parseFloat(prem.nightDifferential.pct) > 0)
     ? prem.nightDifferential : null;
+  // ot_tier rules from the custom-rule builder — resolved per bucket in computeOT,
+  // where a matching rule's bands override the fixed-slot config for its days.
+  const tierRules = (p.rules || []).filter(r => r.type === 'ot_tier');
 
-  if (!hasDaily && !hasWeekly && !has7th && !restDay && !minDailyHours && !nightDifferential) return null;
+  if (!hasDaily && !hasWeekly && !has7th && !restDay && !minDailyHours && !nightDifferential && tierRules.length === 0) return null;
   return {
     dailyBands:  hasDaily  ? o.dailyBands  : [],
     weeklyBands: hasWeekly ? o.weeklyBands : [],
@@ -525,6 +542,7 @@ function otConfigFromSettings(settings) {
     restDay,
     minDailyHours,
     nightDifferential,
+    tierRules,
   };
 }
 

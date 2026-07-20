@@ -4,6 +4,9 @@
  */
 
 const { weekBucketKey } = require('./weekBounds');
+// One-way dependency (hoursRules has no requires, so no cycle): ot_tier rules are
+// `when`-scoped, so a bucket's bands can depend on its date.
+const { ruleMatchesDate } = require('./hoursRules');
 
 /** Decimal hours between two HH:MM[:SS] strings. Handles midnight-crossing shifts. */
 function hoursWorked(start, end) {
@@ -90,6 +93,27 @@ function resolveBands(rule, threshold, otConfig) {
 }
 
 /**
+ * Bands for one bucket. If any `when`-scoped ot_tier rule matches this bucket
+ * (a date, for the daily rule; any week-basis rule, for the weekly rule), those
+ * rules define the tiers for the bucket; otherwise the fixed-slot config applies
+ * (resolveBands). With no ot_tier rules this is exactly resolveBands, so
+ * computeOT is unchanged for every existing policy.
+ */
+function bandsForBucket(rule, threshold, otConfig, dk) {
+  const tiers = otConfig && Array.isArray(otConfig.tierRules) ? otConfig.tierRules : [];
+  if (tiers.length) {
+    const basis = rule === 'weekly' ? 'week' : 'day';
+    const applic = tiers.filter(r => r.basis === basis && (rule === 'weekly' || ruleMatchesDate(r, dk)));
+    const bands = applic
+      .map(r => ({ afterHours: parseFloat(r.afterHours), mult: parseFloat(r.mult) }))
+      .filter(b => Number.isFinite(b.afterHours) && b.afterHours >= 0 && Number.isFinite(b.mult) && b.mult > 0)
+      .sort((a, b) => a.afterHours - b.afterHours);
+    if (bands.length) return bands;
+  }
+  return resolveBands(rule, threshold, otConfig);
+}
+
+/**
  * Split an array of time entries into regularHours and overtimeHours, plus a
  * per-tier `otBands` breakdown for cost.
  *
@@ -124,8 +148,11 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null) {
     overrideOt  += ot;
   }
 
-  const bands = resolveBands(rule, threshold, otConfig);
-  const bandTotals = bands.map(() => 0);
+  // OT hours accumulate by multiplier — bands can vary per bucket (ot_tier rules),
+  // so we can't index a fixed bandTotals array. For a uniform policy this yields
+  // the same {hours, mult} entries as before.
+  const otByMult = new Map();
+  const addOt = (hours, mult) => { if (hours > 0) otByMult.set(mult, (otByMult.get(mult) || 0) + hours); };
   let autoReg = 0;
 
   // 7th-consecutive-day premium (daily rule only): when a worker worked all 7
@@ -178,24 +205,26 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null) {
       } else if (minDaily > 0 && h < minDaily) {
         autoReg += minDaily;                      // short day topped up to the floor
       } else {
-        autoReg += Math.min(h, bands[0].afterHours);
-        bands.forEach((b, i) => {
-          const upper = i + 1 < bands.length ? bands[i + 1].afterHours : Infinity;
-          bandTotals[i] += Math.max(0, Math.min(h, upper) - b.afterHours);
+        const bb = bandsForBucket(rule, threshold, otConfig, dk);
+        autoReg += Math.min(h, bb[0].afterHours);
+        bb.forEach((b, i) => {
+          const upper = i + 1 < bb.length ? bb[i + 1].afterHours : Infinity;
+          addOt(Math.max(0, Math.min(h, upper) - b.afterHours), b.mult);
         });
       }
     });
   }
 
-  const otBands = bands
-    .map((b, i) => ({ hours: bandTotals[i], mult: b.mult }))
+  const otBands = [...otByMult.entries()]
+    .map(([mult, hours]) => ({ hours, mult }))
     .filter(b => b.hours > 0);
   if (restDay && restDayHours > 0) otBands.push({ hours: restDayHours, mult: parseFloat(restDay.mult) || 2 });
   if (sd && seventhFirst > 0) otBands.push({ hours: seventhFirst, mult: parseFloat(sd.firstMult) || 1.5 });
   if (sd && seventhRest > 0)  otBands.push({ hours: seventhRest,  mult: parseFloat(sd.afterMult)  || 2 });
   if (overrideOt > 0) otBands.push({ hours: overrideOt, mult: null });
 
-  const overtimeHours = bandTotals.reduce((s, h) => s + h, 0) + restDayHours + seventhFirst + seventhRest + overrideOt;
+  const tierOt = [...otByMult.values()].reduce((s, h) => s + h, 0);
+  const overtimeHours = tierOt + restDayHours + seventhFirst + seventhRest + overrideOt;
 
   return {
     regularHours:  overrideReg + autoReg,
@@ -232,9 +261,6 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
   }
   if (rule === 'none' || !auto.length) return entries;
 
-  const bands = resolveBands(rule, threshold, otConfig);
-  const boundary = bands[0].afterHours; // regular/OT split point (tiers only re-price above it)
-
   const sd = (otConfig && otConfig.seventhDay && otConfig.seventhDay.enabled && rule === 'daily') ? otConfig.seventhDay : null;
   const restDay = (otConfig && otConfig.restDay && rule === 'daily') ? otConfig.restDay : null;
   const restDays = restDay ? new Set((restDay.days || []).map(Number)) : null;
@@ -263,7 +289,9 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
       continue;
     }
     if (minDaily > 0 && total < minDaily) continue; // short day topped up to floor → all regular
-    let regLeft = boundary;
+    // regular/OT split point for THIS bucket (tiers only re-price above it) — per
+    // bucket so a date-scoped ot_tier rule moves the boundary on its days.
+    let regLeft = bandsForBucket(rule, threshold, otConfig, dk)[0].afterHours;
     for (const e of es) {
       const d = entryDuration(e);
       const r = Math.max(0, Math.min(d, regLeft));

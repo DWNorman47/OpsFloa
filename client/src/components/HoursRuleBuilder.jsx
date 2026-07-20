@@ -42,6 +42,10 @@ function blankRule() {
     direction: 'nearest',
     intervalMin: '15',
     graceMin: '0',
+    // ot_tier fields
+    basis: 'day',
+    afterHours: '8',
+    mult: '1.5',
   };
 }
 
@@ -113,6 +117,10 @@ export function describeRule(r, t) {
       const dir = r.direction === 'toward_worker' ? t.hrDirTowardShort
         : r.direction === 'against_worker' ? t.hrDirAgainstShort : t.hrDirNearestShort;
       return `${when} — ${t.hrSumRound.replace('{edge}', edge).replace('{n}', r.intervalMin).replace('{dir}', dir)}`;
+    }
+    case 'ot_tier': {
+      const per = r.basis === 'week' ? t.hrOtPerWeekShort : t.hrOtPerDayShort;
+      return `${when} — ${t.hrSumOtTier.replace('{n}', r.afterHours).replace('{per}', per).replace('{mult}', r.mult)}`;
     }
     default: return when;
   }
@@ -301,6 +309,7 @@ export default function HoursRuleBuilder({ rules, onChange }) {
               <option value="remove_time">{t.hrType_remove_time}</option>
               <option value="auto_break">{t.hrType_auto_break}</option>
               <option value="round">{t.hrType_round}</option>
+              <option value="ot_tier">{t.hrType_ot_tier}</option>
             </select>
           </Field>
 
@@ -432,6 +441,24 @@ export default function HoursRuleBuilder({ rules, onChange }) {
             </>
           )}
 
+          {draft.type === 'ot_tier' && (
+            <>
+              <Field label={t.hrOtBasis}>
+                <select style={s.input} value={draft.basis} onChange={e => setD('basis', e.target.value)}>
+                  <option value="day">{t.hrOtPerDayBasis}</option>
+                  <option value="week">{t.hrOtPerWeekBasis}</option>
+                </select>
+              </Field>
+              <Field label={t.hrOtAfterHours}>
+                <input style={s.input} type="number" min="0" step="0.5" value={draft.afterHours} onChange={e => setD('afterHours', e.target.value)} />
+              </Field>
+              <Field label={t.hrOtMult}>
+                <input style={s.input} type="number" min="1" step="0.05" value={draft.mult} onChange={e => setD('mult', e.target.value)} />
+              </Field>
+              <p style={s.hint}>{t.hrOtTierHint}</p>
+            </>
+          )}
+
           <div style={s.preview}>{describeRule(draft, t)}</div>
 
           <div style={s.actions}>
@@ -475,6 +502,11 @@ function coerceDraft(d) {
       out.reference = d.reference;                  // schedule | clock
       out.intervalMin = parseInt(d.intervalMin, 10) || 15;
       out.graceMin = parseInt(d.graceMin, 10) || 0;
+      break;
+    case 'ot_tier':
+      out.basis = d.basis;                          // 'day' | 'week'
+      out.afterHours = parseFloat(d.afterHours) || 0;
+      out.mult = parseFloat(d.mult) || 1.5;
       break;
     default:
       break;
