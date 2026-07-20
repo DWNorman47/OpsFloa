@@ -1227,6 +1227,35 @@ still trip the global error boundary in a storage-blocked browser.
 
 ---
 
+## 2026-07-20 — Plan Room: edit-mode reshape toolbar (feature Phase 1 of 3)
+
+Big multi-phase Plan Room feature (plan: `plans/mossy-launching-mist.md`, approved).
+Phase 1 shipped in two committable slices:
+- **1a** — an "Edit" dropdown appears next to Select whenever a reshapeable markup
+  is selected (`body.pr-editing`, driven from the render loop). Move/Add/Remove/Cut
+  become explicit click modes reusing `insertVertexAt`/`deleteVertexAt`/`cutAtEdge`;
+  Alt-click shortcuts still work. Fresh selection resets to Move.
+- **1b** — Join: two-click endpoint weld. Close one open line's ends into a loop, or
+  merge two same-type lines (inverse of Cut). Green ring on the first pick.
+
+**Judgment call / open item:** the spec's *active-endpoint* Join ("connected to the
+last point waiting for the next → one click to an existing vertex, finishes the
+shape") is a **drawing-flow** interaction distinct from edit mode — not built. Phase
+1 implements the edit-mode "click two points to join" case. Confirm if the
+draw-time close-to-vertex variant is wanted.
+
+**Deferred (next phases):** Phase 2 — the Mode dropdown (Points/Box/Circle) + Box/
+Circle marquee + Delete Points. Phase 3 — Delete Area (keyhole holes: `m.pts` stays
+the single ring everything reads, `m.outer`/`m.holes` metadata keep perimeter honest;
+the geometry agents confirmed area/hit-test/fill/earthwork all net out for free given
+opposite winding). Shared `engine-measure.js` and sitework stay untouched throughout.
+
+Static tool-app, no test harness — syntax-checked (`node --check`); `?v` 52→53. To
+verify: load a PDF, set scale, trace an area/contour, pick Select → the Edit dropdown
+appears; exercise each op + undo/redo.
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*
