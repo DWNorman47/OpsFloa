@@ -1177,6 +1177,33 @@ blank still 400). Full server suite green (975).
 
 ---
 
+## 2026-07-20 — Login crash: SecurityError reading sessionStorage
+
+A user hit the global error boundary at `/login` — `SecurityError: Failed to read
+the 'sessionStorage' property from 'Window': access denied` — then it worked on a
+later retry. Cause: in storage-blocked browser states (cookies/storage off,
+partitioned/in-app-webview, strict privacy) the storage **property getter itself
+throws**, and we read it unguarded during bootstrap, so the whole app white-screened
+to the boundary. Not related to the impersonation change (that was server-only).
+
+- New `client/src/utils/safeStorage.js` — `safeSession` / `safeLocal` wrappers:
+  reads return null, writes/removes are best-effort no-ops, and even accessing
+  `window[kind]` is inside try. The app degrades to "no persisted session" instead
+  of crashing.
+- Routed every **bootstrap / auth / API** path through it: `api.js` (request-
+  interceptor token read + 401 cleanup), `AuthContext` (mount read + all
+  login/logout token writes), `App.jsx` (the module-load impersonation IIFE — a
+  throw there white-screens before React even mounts), `OfflineContext` (SW auth
+  reply). ErrorBoundary, openTool, pdfError, tc_addons were already try-guarded.
+- **Scope call:** fixed the paths that run on every page (incl. login). ~140 raw
+  accesses remain in post-login feature components — filed in BACKLOG (boundary-
+  caught, lower urgency) rather than sweeping 146 sites in one risky pass.
+
+New `safeStorage.test.js` (getter-denied → null / no-op, normal path still works).
+Client build + i18n parity green.
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*

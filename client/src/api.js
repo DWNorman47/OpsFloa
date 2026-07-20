@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { safeSession, safeLocal } from './utils/safeStorage';
 
 const baseURL = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api';
 const api = axios.create({ baseURL });
@@ -31,7 +32,7 @@ api.interceptors.request.use(config => {
   // sessionStorage takes precedence so an impersonation tab uses its own
   // tab-scoped token instead of the super admin's localStorage token.
   // Real login tabs only have localStorage set; the fallthrough is normal.
-  const token = sessionStorage.getItem('tc_token') || localStorage.getItem('tc_token');
+  const token = safeSession.getItem('tc_token') || safeLocal.getItem('tc_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
@@ -71,8 +72,8 @@ api.interceptors.response.use(
     if (status === 401 && !window.location.pathname.startsWith('/login')) {
       // Clear both stores — the bad token might be the impersonation one
       // (sessionStorage) or the persistent one (localStorage).
-      sessionStorage.removeItem('tc_token');
-      localStorage.removeItem('tc_token');
+      safeSession.removeItem('tc_token');
+      safeLocal.removeItem('tc_token');
       window.location.href = '/login?session=expired';
     } else if (status === 429) {
       const retryAfter = err.response?.headers?.['retry-after'];
