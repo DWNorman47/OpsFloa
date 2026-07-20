@@ -611,6 +611,96 @@ function daysFromWhen(when) {
   return [];
 }
 
+/**
+ * Migrate a policy's fixed-slot config (rounding / overtime bands + 7th-day /
+ * premiums) into the equivalent custom rules, and clear the slots. Pure: takes
+ * a RAW policy object (JSON.parse of hours_rules) and returns a new raw object
+ * with migrated rules appended and the fixed slots emptied — serialize + re-parse
+ * for use. `standardHours`, `display`, and `enabled` are preserved.
+ *
+ * The rule equivalents are proven behavior-identical to the slots
+ * (payCalculations + hoursRules*.test.js), so re-running the same entries through
+ * the migrated policy yields the same pay — see hoursRulesMigrate.test.js.
+ */
+function migrateFixedSlots(raw) {
+  const p = (raw && typeof raw === 'object') ? raw : {};
+  let n = 0;
+  const nextId = () => `m${++n}`;
+  const every = { kind: 'every_day' };
+  const rules = Array.isArray(p.rules) ? [...p.rules] : [];
+
+  // Rounding → a round rule per edge that actually rounds.
+  const rnd = p.rounding || {};
+  for (const [key, edge] of [['clockIn', 'in'], ['clockOut', 'out']]) {
+    const c = rnd[key];
+    if (c && c.direction && c.direction !== 'off') {
+      rules.push({ id: nextId(), type: 'round', when: every, edge,
+        reference: c.reference || 'schedule', direction: c.direction,
+        intervalMin: c.intervalMin, graceMin: c.graceMin || 0 });
+    }
+  }
+
+  // Overtime bands → ot_tier rules; 7th-day → seventh_day.
+  const o = p.overtime || {};
+  for (const [list, basis] of [[o.dailyBands, 'day'], [o.weeklyBands, 'week']]) {
+    if (Array.isArray(list)) for (const b of list) {
+      const afterHours = parseFloat(b.afterHours), mult = parseFloat(b.mult);
+      if (Number.isFinite(afterHours) && afterHours >= 0 && Number.isFinite(mult) && mult > 0) {
+        rules.push({ id: nextId(), type: 'ot_tier', when: every, basis, afterHours, mult });
+      }
+    }
+  }
+  if (o.seventhDay && o.seventhDay.enabled === true) {
+    rules.push({ id: nextId(), type: 'seventh_day', when: every,
+      firstHours: parseFloat(o.seventhDay.firstHoursThreshold) || 0,
+      firstMult: parseFloat(o.seventhDay.firstMult) || 1.5,
+      afterMult: parseFloat(o.seventhDay.afterMult) || 2 });
+  }
+
+  // Premiums → rest_day / min_daily / night_diff.
+  const prem = p.premiums || {};
+  const restMult = parseFloat(prem.restDayMult);
+  const workDays = Object.keys(p.standardHours || {})
+    .filter(k => p.standardHours[k] && p.standardHours[k].start).map(Number);
+  if (Number.isFinite(restMult) && restMult > 0 && workDays.length > 0) {
+    const days = [0, 1, 2, 3, 4, 5, 6].filter(d => !workDays.includes(d));
+    if (days.length) rules.push({ id: nextId(), type: 'rest_day', when: { kind: 'weekdays', days }, mult: restMult });
+  }
+  const minH = parseFloat(prem.minDailyHours);
+  if (Number.isFinite(minH) && minH > 0) rules.push({ id: nextId(), type: 'min_daily', when: every, hours: minH });
+  const nd = prem.nightDifferential;
+  if (nd && parseFloat(nd.pct) > 0) {
+    rules.push({ id: nextId(), type: 'night_diff', when: every,
+      fromHour: parseFloat(nd.fromHour) || 0, toHour: parseFloat(nd.toHour) || 0, pct: parseFloat(nd.pct) });
+  }
+
+  return {
+    ...p,
+    rules,
+    rounding: {
+      clockIn:  { reference: 'schedule', intervalMin: 15, graceMin: 0, direction: 'off' },
+      clockOut: { reference: 'schedule', intervalMin: 15, graceMin: 0, direction: 'off' },
+    },
+    overtime: {},
+    premiums: {},
+  };
+}
+
+/** True when a raw policy still carries any fixed-slot config worth migrating. */
+function hasFixedSlots(raw) {
+  const p = (raw && typeof raw === 'object') ? raw : {};
+  const rnd = p.rounding || {};
+  if ((rnd.clockIn && rnd.clockIn.direction && rnd.clockIn.direction !== 'off')
+    || (rnd.clockOut && rnd.clockOut.direction && rnd.clockOut.direction !== 'off')) return true;
+  const o = p.overtime || {};
+  if ((Array.isArray(o.dailyBands) && o.dailyBands.length) || (Array.isArray(o.weeklyBands) && o.weeklyBands.length)) return true;
+  if (o.seventhDay && o.seventhDay.enabled === true) return true;
+  const prem = p.premiums || {};
+  if (parseFloat(prem.restDayMult) > 0 || parseFloat(prem.minDailyHours) > 0
+    || (prem.nightDifferential && parseFloat(prem.nightDifferential.pct) > 0)) return true;
+  return false;
+}
+
 // ── Reference cascade ────────────────────────────────────────────────────────
 
 /**
@@ -1012,6 +1102,8 @@ module.exports = {
   DEFAULT_POLICY,
   roundEntriesFromSettings,
   otConfigFromSettings,
+  migrateFixedSlots,
+  hasFixedSlots,
   ROUNDING_DIRECTIONS,
   ROUNDING_REFERENCES,
   RULE_TYPES,
