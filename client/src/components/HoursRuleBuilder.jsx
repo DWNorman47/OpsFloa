@@ -33,8 +33,10 @@ function blankRule() {
     edge: 'after',
     base: 'schedule',
     mode: 'at',
+    anchor: 'clock',
     from: '17:25',
     everyMin: '30',
+    offsetMin: '25',
     trigger: { kind: 'always', hours: '6' },
     // round-rule fields
     roundEdge: 'both',
@@ -111,9 +113,18 @@ export function describeRule(r, t) {
     case 'remove_time': {
       const verb = r.type === 'add_time' ? t.hrSumAdd : t.hrSumRemove;
       const where = r.base === 'punch' ? t.hrSumOnPunch : t.hrSumOnBaseline;
-      const trigger = r.mode === 'every'
-        ? t.hrSumEvery.replace('{n}', r.everyMin).replace('{time}', r.from)
-        : (r.edge === 'after' ? t.hrSumAfter : t.hrSumBefore).replace('{time}', r.at);
+      let trigger;
+      if (r.anchor === 'schedule') {
+        const rel = r.edge === 'after' ? t.hrSumPast : t.hrSumBeforeRel;
+        const anchorTxt = r.edge === 'after' ? t.hrSumSchedEnd : t.hrSumSchedStart;
+        trigger = (r.mode === 'every' ? t.hrSumEverySched : t.hrSumAtSched)
+          .replace('{n}', r.everyMin).replace('{m}', r.offsetMin)
+          .replace('{rel}', rel).replace('{anchor}', anchorTxt);
+      } else {
+        trigger = r.mode === 'every'
+          ? t.hrSumEvery.replace('{n}', r.everyMin).replace('{time}', r.from)
+          : (r.edge === 'after' ? t.hrSumAfter : t.hrSumBefore).replace('{time}', r.at);
+      }
       return `${when} — ${verb.replace('{n}', mins)} ${trigger} (${where})`;
     }
     case 'auto_break':
@@ -370,7 +381,27 @@ export default function HoursRuleBuilder({ rules, onChange }) {
                   <option value="every">{t.hrModeEvery}</option>
                 </select>
               </Field>
-              {draft.mode === 'at' ? (
+              {/* The trigger anchor: a set clock time, or an offset off each
+                  worker's own scheduled end/start (so it adapts to any shift). */}
+              <Field label={t.hrAnchor}>
+                <select style={s.input} value={draft.anchor} onChange={e => setD('anchor', e.target.value)}>
+                  <option value="clock">{t.hrAnchorClock}</option>
+                  <option value="schedule">{draft.edge === 'after' ? t.hrAnchorSchedEnd : t.hrAnchorSchedStart}</option>
+                </select>
+              </Field>
+              {draft.anchor === 'schedule' ? (
+                <>
+                  <Field label={draft.edge === 'after' ? t.hrOffsetAfter : t.hrOffsetBefore}>
+                    <input style={s.input} type="number" min="0" value={draft.offsetMin} onChange={e => setD('offsetMin', e.target.value)} />
+                  </Field>
+                  {draft.mode === 'every' && (
+                    <Field label={t.hrEveryMin}>
+                      <input style={s.input} type="number" min="1" value={draft.everyMin} onChange={e => setD('everyMin', e.target.value)} />
+                    </Field>
+                  )}
+                  <p style={s.hint}>{t.hrAnchorSchedHint}</p>
+                </>
+              ) : draft.mode === 'at' ? (
                 <Field label={t.hrThreshold}>
                   <input style={s.input} type="time" value={draft.at} onChange={e => setD('at', e.target.value)} />
                 </Field>
@@ -552,9 +583,16 @@ function coerceDraft(d) {
       out.edge = d.edge;
       out.base = d.base;
       out.mode = d.mode;
+      out.anchor = d.anchor;
       out.minutes = mins;
-      if (d.mode === 'every') { out.from = d.from; out.everyMin = parseInt(d.everyMin, 10) || 0; }
-      else out.at = d.at;
+      if (d.anchor === 'schedule') {
+        out.offsetMin = parseInt(d.offsetMin, 10) || 0;
+        if (d.mode === 'every') out.everyMin = parseInt(d.everyMin, 10) || 0;
+      } else if (d.mode === 'every') {
+        out.from = d.from; out.everyMin = parseInt(d.everyMin, 10) || 0;
+      } else {
+        out.at = d.at;
+      }
       break;
     case 'auto_break':
       out.minutes = mins;
