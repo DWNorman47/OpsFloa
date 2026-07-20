@@ -16,7 +16,14 @@ import { useT } from '../hooks/useT';
  * you can read off the raw fields.
  */
 
+// Indexed by the engine's weekday number (JS getDay: Sunday=0). This stays in
+// this order — the index IS the stored day value, so reordering it would
+// silently remap every rule.
 const WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+// Display order only: Monday first, Sunday last. Buttons/options and the summary
+// iterate this; the values they carry are still the WEEKDAY_KEYS index.
+const WEEKDAY_DISPLAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
+const dayRank = d => WEEKDAY_DISPLAY_ORDER.indexOf(d);
 
 // Mirrors the engine's RULE_TYPES / RULE_WHEN_KINDS. A value that isn't in the
 // engine's list is dropped on parse, so these must stay in step.
@@ -70,9 +77,10 @@ function describeWhen(when, t) {
   switch (w.kind) {
     case 'weekdays': {
       if (days.length === 7) return t.hrWhenEveryDay;
-      // Contract a run of consecutive days: "Mon–Fri" beats "Mon, Tue, Wed…".
-      const sorted = [...days].sort((a, b) => a - b);
-      const consecutive = sorted.length > 2 && sorted.every((d, i) => i === 0 || d === sorted[i - 1] + 1);
+      // Sort and contract in DISPLAY order (Mon→Sun), so "Mon–Fri" beats
+      // "Mon, Tue, Wed…" and Sat+Sun reads "Sat, Sun".
+      const sorted = [...days].sort((a, b) => dayRank(a) - dayRank(b));
+      const consecutive = sorted.length > 2 && sorted.every((d, i) => i === 0 || dayRank(d) === dayRank(sorted[i - 1]) + 1);
       if (consecutive) return `${t[`hrDay_${WEEKDAY_KEYS[sorted[0]]}`]}–${t[`hrDay_${WEEKDAY_KEYS[sorted[sorted.length - 1]]}`]}`;
       return sorted.map(d => t[`hrDay_${WEEKDAY_KEYS[d]}`]).join(', ');
     }
@@ -240,7 +248,8 @@ export default function HoursRuleBuilder({ rules, onChange }) {
           {w.kind === 'weekdays' && (
             <Field label={t.hrSelectDays}>
               <div style={s.chips}>
-                {WEEKDAY_KEYS.map((k, i) => {
+                {WEEKDAY_DISPLAY_ORDER.map(i => {
+                  const k = WEEKDAY_KEYS[i];
                   const on = (w.days || []).includes(i);
                   return (
                     <button
@@ -281,7 +290,7 @@ export default function HoursRuleBuilder({ rules, onChange }) {
               <Field label={t.hrWeekday}>
                 <select style={s.input} value={w.patterns?.[0]?.weekday ?? 1}
                   onChange={e => setWhen('patterns', [{ week: w.patterns?.[0]?.week ?? 1, weekday: parseInt(e.target.value, 10) }])}>
-                  {WEEKDAY_KEYS.map((k, i) => <option key={k} value={i}>{t[`hrDay_${k}`]}</option>)}
+                  {WEEKDAY_DISPLAY_ORDER.map(i => <option key={WEEKDAY_KEYS[i]} value={i}>{t[`hrDay_${WEEKDAY_KEYS[i]}`]}</option>)}
                 </select>
               </Field>
             </>
