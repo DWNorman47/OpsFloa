@@ -346,7 +346,7 @@ export default function HoursRuleBuilder({ rules, onChange }) {
               <Field label={draft.type === 'add_time' ? t.hrMinutesAdd : t.hrMinutesRemove}>
                 <input style={s.input} type="number" min="1" value={draft.minutes} onChange={e => setD('minutes', e.target.value)} />
               </Field>
-              <Field label={t.hrBase}>
+              <Field label={draft.type === 'remove_time' ? t.hrBaseRemove : t.hrBase}>
                 <select style={s.input} value={draft.base} onChange={e => setD('base', e.target.value)}>
                   <option value="schedule">{t.hrBaseSchedule}</option>
                   <option value="punch">{t.hrBasePunch}</option>
