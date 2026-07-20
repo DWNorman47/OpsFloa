@@ -15,8 +15,10 @@ import HoursRuleBuilder from './HoursRuleBuilder';
 
 const DOW = [1, 2, 3, 4, 5, 6, 0]; // Mon…Sat, Sun last (display order)
 
-// Presets fill the whole form. A country is just a saved policy — adding one is
-// authoring a preset here, not writing code.
+// Presets now emit the equivalent CUSTOM RULES (the fixed slots stay off), so
+// clicking one builds a matching rule list you can then tweak. A country is just
+// a saved policy — adding one is authoring rules here, not writing code.
+const EVERY = { kind: 'every_day' };
 const PRESETS = {
   off: () => ({ ...blankForm(), enabled: false }),
   honduras: () => ({
@@ -24,28 +26,32 @@ const PRESETS = {
     enabled: true,
     stdStart: '07:00', stdEnd: '16:00', stdBreak: '60',
     workDays: { 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 0: false },
-    inRef: 'schedule', inInterval: '60', inGrace: '15', inDir: 'against_worker',
-    outRef: 'schedule', outInterval: '60', outGrace: '30', outDir: 'toward_worker',
-    restDayMult: '2',
-    nightEnabled: true, nightFrom: '19', nightTo: '5', nightPct: '25',
     showActualAndPaid: true,
+    rules: [
+      { id: 'p1', type: 'round', when: EVERY, edge: 'in',  reference: 'schedule', direction: 'against_worker', intervalMin: 60, graceMin: 15 },
+      { id: 'p2', type: 'round', when: EVERY, edge: 'out', reference: 'schedule', direction: 'toward_worker',  intervalMin: 60, graceMin: 30 },
+      { id: 'p3', type: 'rest_day', when: { kind: 'weekdays', days: [0] }, mult: 2 },
+      { id: 'p4', type: 'night_diff', when: EVERY, fromHour: 19, toHour: 5, pct: 25 },
+    ],
   }),
   us_quarter: () => ({
     ...blankForm(),
     enabled: true,
-    inRef: 'clock', inInterval: '15', inGrace: '0', inDir: 'nearest',
-    outRef: 'clock', outInterval: '15', outGrace: '0', outDir: 'nearest',
     showActualAndPaid: true,
+    rules: [
+      { id: 'p1', type: 'round', when: EVERY, edge: 'both', reference: 'clock', direction: 'nearest', intervalMin: 15, graceMin: 0 },
+    ],
   }),
   california: () => ({
     ...blankForm(),
     enabled: true,
-    inRef: 'clock', inInterval: '15', inGrace: '0', inDir: 'nearest',
-    outRef: 'clock', outInterval: '15', outGrace: '0', outDir: 'nearest',
-    otMode: 'day',
-    otBands: [{ afterHours: '8', mult: '1.5' }, { afterHours: '12', mult: '2' }],
-    sd7Enabled: true, sd7First: '8', sd7FirstMult: '1.5', sd7AfterMult: '2',
     showActualAndPaid: true,
+    rules: [
+      { id: 'p1', type: 'round', when: EVERY, edge: 'both', reference: 'clock', direction: 'nearest', intervalMin: 15, graceMin: 0 },
+      { id: 'p2', type: 'ot_tier', when: EVERY, basis: 'day', afterHours: 8,  mult: 1.5 },
+      { id: 'p3', type: 'ot_tier', when: EVERY, basis: 'day', afterHours: 12, mult: 2 },
+      { id: 'p4', type: 'seventh_day', when: EVERY, firstHours: 8, firstMult: 1.5, afterMult: 2 },
+    ],
   }),
 };
 
