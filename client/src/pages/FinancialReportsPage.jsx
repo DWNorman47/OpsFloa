@@ -16,6 +16,7 @@ import TabBar from '../components/TabBar';
 import { AnalyticsPanel } from './AnalyticsPage';
 import { silentError } from '../errorReporter';
 import { useCents } from '../hooks/useMoney';
+import { safeLocal, safeSession } from '../utils/safeStorage';
 
 function marginColor(pct) {
   if (pct == null) return '#6b7280';
@@ -142,7 +143,7 @@ function WipTab() {
     const url = `${api.defaults.baseURL}/wip-report/export`;
     // Authenticated download — open via fetch with header so the API
     // Authorization cookie isn't required.
-    const token = sessionStorage.getItem('tc_token') || localStorage.getItem('tc_token');
+    const token = safeSession.getItem('tc_token') || safeLocal.getItem('tc_token');
     fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
       .then(r => r.blob())
       .then(blob => {

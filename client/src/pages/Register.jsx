@@ -4,6 +4,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
 import api from '../api';
+import { safeLocal } from '../utils/safeStorage';
 
 export default function Register() {
   const { loginWithToken } = useAuth();
@@ -41,7 +42,7 @@ export default function Register() {
       const r = await api.post('/auth/register', { ...form, full_name, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }, { suppressToast: true });
       if (r.data.pending_confirmation) { setConfirming(r.data.email); return; }
       await loginWithToken(r.data.token);
-      try { const saved = JSON.parse(localStorage.getItem('tc_companies') || '[]'); localStorage.setItem('tc_companies', JSON.stringify([form.company_name.trim(), ...saved.filter(c => c.toLowerCase() !== form.company_name.trim().toLowerCase())])); } catch {}
+      try { const saved = JSON.parse(safeLocal.getItem('tc_companies') || '[]'); safeLocal.setItem('tc_companies', JSON.stringify([form.company_name.trim(), ...saved.filter(c => c.toLowerCase() !== form.company_name.trim().toLowerCase())])); } catch {}
       navigate('/timeclock#wf-live');
     } catch (err) {
       setError(err.response?.data?.error || t.registerFailed);

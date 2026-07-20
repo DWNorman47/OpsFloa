@@ -10,6 +10,7 @@ import ColumnHeaderMenu from './ColumnHeaderMenu';
 import InventoryColumnPicker from './InventoryColumnPicker';
 
 import { silentError } from '../../errorReporter';
+import { safeLocal } from '../../utils/safeStorage';
 function formatBin(area_name, rack_name, bay_name, compartment_name) {
   return [area_name, rack_name, bay_name, compartment_name]
     .filter(Boolean).join(' > ') || null;
@@ -43,7 +44,7 @@ const DEFAULT_STOCK_COLUMNS = {
 
 function readJsonPref(key, fallback) {
   try {
-    return { ...fallback, ...(JSON.parse(localStorage.getItem(key) || '{}') || {}) };
+    return { ...fallback, ...(JSON.parse(safeLocal.getItem(key) || '{}') || {}) };
   } catch {
     return fallback;
   }
@@ -51,7 +52,7 @@ function readJsonPref(key, fallback) {
 
 function readNumberPref(key, fallback, allowed) {
   try {
-    const value = parseInt(localStorage.getItem(key), 10);
+    const value = parseInt(safeLocal.getItem(key), 10);
     return allowed.includes(value) ? value : fallback;
   } catch {
     return fallback;
@@ -457,7 +458,7 @@ export default function InventoryStock({ isAdmin, locations, projects, onStockCh
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [mobileView, setMobileView] = useState(() => {
     try {
-      return localStorage.getItem('inventory_stock_mobile_view') === 'list' ? 'list' : 'card';
+      return safeLocal.getItem('inventory_stock_mobile_view') === 'list' ? 'list' : 'card';
     } catch {
       return 'card';
     }
@@ -516,7 +517,7 @@ export default function InventoryStock({ isAdmin, locations, projects, onStockCh
 
   useEffect(() => {
     try {
-      localStorage.setItem('inventory_stock_mobile_view', mobileView);
+      safeLocal.setItem('inventory_stock_mobile_view', mobileView);
     } catch {
       // Storage is best-effort only.
     }
@@ -524,7 +525,7 @@ export default function InventoryStock({ isAdmin, locations, projects, onStockCh
 
   useEffect(() => {
     try {
-      localStorage.setItem(STOCK_PAGE_SIZE_PREF_KEY, String(stockPageSize));
+      safeLocal.setItem(STOCK_PAGE_SIZE_PREF_KEY, String(stockPageSize));
     } catch {
       // Storage is best-effort only.
     }
@@ -532,7 +533,7 @@ export default function InventoryStock({ isAdmin, locations, projects, onStockCh
 
   useEffect(() => {
     try {
-      localStorage.setItem(STOCK_COLUMN_PREF_KEY, JSON.stringify(selectedColumns));
+      safeLocal.setItem(STOCK_COLUMN_PREF_KEY, JSON.stringify(selectedColumns));
     } catch {
       // Storage is best-effort only.
     }

@@ -8,6 +8,7 @@ import { SkeletonList } from '../Skeleton';
 import ModalShell from '../ModalShell';
 import ColumnHeaderMenu from './ColumnHeaderMenu';
 import { silentError } from '../../errorReporter';
+import { safeLocal } from '../../utils/safeStorage';
 const TYPE_COLORS = {
   receive:  { color: '#059669', bg: '#d1fae5' },
   issue:    { color: '#d97706', bg: '#fef3c7' },
@@ -21,7 +22,7 @@ const TX_PAGE_SIZE_OPTIONS = [25, 50, 100, 250];
 
 function readNumberPref(key, fallback, allowed) {
   try {
-    const value = parseInt(localStorage.getItem(key), 10);
+    const value = parseInt(safeLocal.getItem(key), 10);
     return allowed.includes(value) ? value : fallback;
   } catch {
     return fallback;
@@ -30,7 +31,7 @@ function readNumberPref(key, fallback, allowed) {
 
 function readMobileViewPref(key) {
   try {
-    return localStorage.getItem(key) === 'list' ? 'list' : 'card';
+    return safeLocal.getItem(key) === 'list' ? 'list' : 'card';
   } catch {
     return 'card';
   }
@@ -506,7 +507,7 @@ export default function InventoryTransactions({ isAdmin, locations, projects, on
 
   useEffect(() => {
     try {
-      localStorage.setItem(TX_PAGE_SIZE_PREF_KEY, String(pageSize));
+      safeLocal.setItem(TX_PAGE_SIZE_PREF_KEY, String(pageSize));
     } catch {
       // Storage is best-effort only.
     }
@@ -514,7 +515,7 @@ export default function InventoryTransactions({ isAdmin, locations, projects, on
 
   useEffect(() => {
     try {
-      localStorage.setItem(TX_MOBILE_VIEW_PREF_KEY, mobileView);
+      safeLocal.setItem(TX_MOBILE_VIEW_PREF_KEY, mobileView);
     } catch {
       // Storage is best-effort only.
     }

@@ -110,12 +110,12 @@ that holds the exhaustive detail.
   fresh local project each time, so copying the same cloud takeoff twice yields two
   local projects both linked to it. Minor; could reuse the already-linked local
   project instead. (2026-07-11)
-- **Raw `localStorage`/`sessionStorage` still used in feature components.** The
-  login-crash path (api/auth/app-bootstrap) now routes through `utils/safeStorage`
-  (2026-07-20 SecurityError fix), but ~140 raw accesses remain in post-login pages.
-  Any of those can still throw a SecurityError and trip the global error boundary
-  when a browser blocks storage. Low urgency (post-login, boundary-caught, transient
-  state) — roll `safeSession`/`safeLocal` out to those files when convenient. (2026-07-20)
+- ~~**Raw `localStorage`/`sessionStorage` still used in feature components.**~~
+  **RESOLVED 2026-07-20.** Swept 72 calls across 23 post-login files onto
+  `safeSession`/`safeLocal`; `debugBundle` reads storage inside its try now. Every
+  remaining raw access is inside an existing try/catch (openTool, pdfError,
+  ErrorBoundary, useFormPersist, the tc_addons effect, api.js bootstrap) — all
+  crash-safe. No unguarded `window.*Storage` access remains in `client/src`.
 
 ## ❓ Open questions / decisions for you
 *Blocked on your call before anyone builds.*

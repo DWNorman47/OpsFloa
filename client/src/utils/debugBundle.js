@@ -31,9 +31,13 @@ async function readIndexedDB() {
   }
 }
 
-function readStorage(storage) {
+function readStorage(kind) {
   const out = {};
   try {
+    // Access the property inside the try — reading window.sessionStorage can
+    // itself throw a SecurityError in storage-blocked/partitioned contexts.
+    const storage = typeof window !== 'undefined' ? window[kind] : null;
+    if (!storage) return out;
     for (let i = 0; i < storage.length; i++) {
       const key = storage.key(i);
       if (!key) continue;
@@ -56,8 +60,8 @@ export async function downloadDebugBundle() {
     url:             window.location.href,
     user_agent:      navigator.userAgent,
     online:          navigator.onLine,
-    localStorage:    readStorage(window.localStorage),
-    sessionStorage:  readStorage(window.sessionStorage),
+    localStorage:    readStorage('localStorage'),
+    sessionStorage:  readStorage('sessionStorage'),
     indexedDB:       await readIndexedDB(),
     service_worker:  await describeServiceWorker(),
   };

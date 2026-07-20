@@ -1204,6 +1204,29 @@ Client build + i18n parity green.
 
 ---
 
+## 2026-07-20 — SecurityError hardening: finish the safeStorage rollout
+
+Followed the login-crash fix through the rest of the app (David: "go for it").
+Every unguarded `localStorage`/`sessionStorage` access in a post-login page could
+still trip the global error boundary in a storage-blocked browser.
+
+- Swept **72 calls across 23 files** onto `safeSession`/`safeLocal` via a codemod
+  that only rewrites `(session|local)Storage.(get|set|remove)Item(` (negative
+  lookbehind so `window.localStorage` and comments are never touched) and inserts
+  an import for exactly the symbols each file uses.
+- `debugBundle.js`: `readStorage` now takes a kind and reads `window[kind]` inside
+  its try — the property access was previously evaluated as the call argument,
+  outside the guard.
+- **Deliberately left raw** (all already inside try/catch, so crash-safe): `openTool`,
+  `pdfError`, `ErrorBoundary`, `useFormPersist` (its setItem catch intentionally
+  reports quota/SecurityError to Sentry — routing it through the swallowing helper
+  would kill that signal), the `tc_addons` effect, and `api.js`'s `tc_api_base`
+  bootstrap line.
+- Verified: no unguarded `window.*Storage` access remains in `client/src`; client
+  build + `safeStorage`/i18n tests green. BACKLOG item marked resolved.
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*

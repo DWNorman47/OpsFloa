@@ -20,6 +20,7 @@ import { usePlan } from '../hooks/usePlan';
 import { labelSg } from '../companyLabels';
 
 import { silentError } from '../errorReporter';
+import { safeLocal, safeSession } from '../utils/safeStorage';
 function RoleBadge({ role }) {
   const t = useT();
   const isAdmin = role === 'admin' || role === 'super_admin';
@@ -544,7 +545,7 @@ export default function AdministrationPage() {
   useEffect(() => {
     if (user?.role === 'admin' && user?.id) {
       const key = `admin_welcomed_${user.id}`;
-      if (!localStorage.getItem(key)) localStorage.setItem(key, '1');
+      if (!safeLocal.getItem(key)) safeLocal.setItem(key, '1');
     }
   }, [user?.id, user?.role]);
 
@@ -574,9 +575,9 @@ export default function AdministrationPage() {
   const [showSetup, setShowSetup] = useState(false);
 
   // Integrations sub-view: 'list' or 'quickbooks' — persists for the session
-  const [integrationView, setIntegrationView] = useState(() => sessionStorage.getItem('admin_integration_view') || 'list');
-  const openIntegration = (id) => { sessionStorage.setItem('admin_integration_view', id); setIntegrationView(id); };
-  const backToIntegrations = () => { sessionStorage.setItem('admin_integration_view', 'list'); setIntegrationView('list'); };
+  const [integrationView, setIntegrationView] = useState(() => safeSession.getItem('admin_integration_view') || 'list');
+  const openIntegration = (id) => { safeSession.setItem('admin_integration_view', id); setIntegrationView(id); };
+  const backToIntegrations = () => { safeSession.setItem('admin_integration_view', 'list'); setIntegrationView('list'); };
 
   // Build the tab list filtered by permission. Each tab is included only
   // if the user can see it. Company + Account stay always-on; the others

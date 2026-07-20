@@ -9,6 +9,7 @@ import { silentError } from '../errorReporter';
 import HelpTip from './HelpTip';
 import MileageRateEditor from './MileageRateEditor';
 import { EXPERIMENTAL_SETTINGS_ENABLED } from '../experimentalSettings';
+import { safeLocal } from '../utils/safeStorage';
 const TIMEZONES = [
   { value: 'America/New_York',    label: 'Eastern Time (ET)' },
   { value: 'America/Chicago',     label: 'Central Time (CT)' },
@@ -146,13 +147,13 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
   const DEFAULT_COLLAPSED = { wages: true, overtime: true, pto: true, reimbursements: true, inventoryCount: true, notifications: true, reports: true, access: true, standards: true, modules: true, features: true, storage: true, certifiedPayroll: true, experimental: true };
   const [collapsed, setCollapsed] = useState(() => {
     try {
-      const stored = localStorage.getItem('opsfloa_company_sections');
+      const stored = safeLocal.getItem('opsfloa_company_sections');
       return stored ? JSON.parse(stored) : DEFAULT_COLLAPSED;
     } catch { return DEFAULT_COLLAPSED; }
   });
   const toggleCollapse = key => setCollapsed(c => {
     const next = { ...c, [key]: !c[key] };
-    localStorage.setItem('opsfloa_company_sections', JSON.stringify(next));
+    safeLocal.setItem('opsfloa_company_sections', JSON.stringify(next));
     return next;
   });
   const [saving, setSaving] = useState(null); // section key or null
