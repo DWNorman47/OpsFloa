@@ -754,6 +754,8 @@ let draftDrag = null; // dragging an already-placed draft vertex {i, ptr, prev, 
 let calibPts = null;  // [firstPoint] while calibrating
 let hoverW = null;    // cursor world pos while drafting (rubber band)
 let previewing = false; // true while drawMarkup renders the in-progress draft
+let editOp = 'move';  // active edit-points operation while a reshapeable shape is selected: move|add|remove|cut
+let _editbarOn = null; // cache so refreshEditbar only writes the DOM when it changes
 
 const centroid = pts => ({
   x: pts.reduce((a, p) => a + p.x, 0) / pts.length,
@@ -764,6 +766,22 @@ const curColor = () => els.mkColor.value;
 const curWidth = () => LINE_W[els.mkWidth.value] || LINE_W.M;
 const curFont = () => FONT_S[els.mkWidth.value] || FONT_S.M;
 const selMarkup = () => state.markups.find(m => m.id === selectedId) || null;
+
+// "Edit mode" = the Select tool with a reshapeable markup selected. Drives the
+// visibility of the Edit-points toolbar. refreshEditbar() is called from the
+// render loop and only touches the DOM when the state flips.
+function editModeActive() { return tool === 'select' && !!selectedId && canReshape(selMarkup()); }
+function refreshEditbar() {
+  const on = editModeActive();
+  if (on === _editbarOn) return;
+  _editbarOn = on;
+  document.body.classList.toggle('pr-editing', on);
+}
+function setEditOp(op) {
+  editOp = op;
+  const sel = document.getElementById('prEditOp');
+  if (sel && sel.value !== op) sel.value = op;
+}
 
 /* ============================== Undo / redo ============================== */
 
@@ -1512,6 +1530,7 @@ function paint(ctx) {
   const sel = selMarkup();
   if (sel && sel.page === state.page) drawSelection(ctx, sel);
   ctx.restore();
+  refreshEditbar();  // show/hide the Edit-points toolbar to match the selection
   updateNavPads(); // DOM overlay, not canvas — safe after restore; runs each paint
 }
 
@@ -1993,6 +2012,10 @@ function setTool(t) {
   vp.requestDraw(); // the scale bar (and any tool-dependent overlay) shows/hides on tool change
 }
 document.querySelectorAll('.tool').forEach(b => b.addEventListener('click', () => { closeToolFlyouts(); setTool(b.dataset.tool); }));
+{
+  const prEditOpSel = document.getElementById('prEditOp');
+  if (prEditOpSel) prEditOpSel.addEventListener('change', () => { editOp = prEditOpSel.value; });
+}
 
 /* ---- Tool-group flyouts (dirt trade) — mirrors the sitework tool ---- */
 function toolGroupOf(t) { for (const g in TOOL_GROUPS) if (TOOL_GROUPS[g].includes(t)) return g; return null; }
@@ -2194,6 +2217,22 @@ els.cv.addEventListener('pointerdown', e => {
           return;
         }
       }
+      // Explicit edit-mode ops (Edit-points dropdown) — the click-free equivalent
+      // of the Alt-click shortcuts above. Only when reshapeable and no modifier is
+      // held; a click that hits nothing falls through to Move / reselect below.
+      if (canReshape(sel) && !e.altKey) {
+        const tol = Math.max(8 / vp.view.zoom, 4);
+        if (editOp === 'remove' && hi >= 0) { deleteVertexAt(sel, hi); return; }
+        if (editOp === 'add') { const edge = nearestEdge(sel, w, tol); if (edge) { insertVertexAt(sel, edge); return; } }
+        if (editOp === 'cut') {
+          const edge = nearestEdge(sel, w, tol);
+          if (edge) {
+            if (isOpenPoly(sel)) cutAtEdge(sel, edge.i);
+            else setMsg('Cutting works on open lines (contours), not closed shapes.');
+            return;
+          }
+        }
+      }
       if (hi >= 0) {
         undoCapture = snapshot();
         drag = { mode: 'handle', ptr: e.pointerId, id: sel.id, hi, moved: false };
@@ -2202,6 +2241,7 @@ els.cv.addEventListener('pointerdown', e => {
     }
     const hit = hitMarkup(ctx, w);
     if (hit) {
+      if (hit.id !== selectedId) setEditOp('move'); // a fresh selection starts in Move (no surprise deletes)
       selectedId = hit.id;
       undoCapture = snapshot();
       drag = { mode: 'move', ptr: e.pointerId, id: hit.id, from: w, orig: JSON.parse(JSON.stringify(hit.pts)), moved: false };

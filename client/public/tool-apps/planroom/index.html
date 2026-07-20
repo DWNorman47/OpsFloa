@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css?v=52">
+<link rel="stylesheet" href="styles.css?v=53">
 <script>
 (() => {
   try {
@@ -42,6 +42,15 @@
   <div class="tb-group tb-tools needs-doc tb-collapsible">
     <button class="tool active" data-tool="pan" title="Pan / zoom (middle-drag pans in any tool)">✋<span class="tool-label"> Pan</span></button>
     <button class="tool" data-tool="select" title="Select / move / reshape markups. Drag a point to reshape; Alt-click an edge to add a point, a point to remove it; Shift+Alt-click a segment to cut a line in two. Delete removes the whole markup; double-click a note to edit it">➤<span class="tool-label"> Select</span></button>
+    <span class="tb-sub pr-editbar" role="group" aria-label="Edit points">
+      <label class="pr-editlabel" for="prEditOp">Edit</label>
+      <select id="prEditOp" class="mini-sel" title="What a click does to this shape's points while editing">
+        <option value="move">Move</option>
+        <option value="add">Add</option>
+        <option value="remove">Remove</option>
+        <option value="cut">Cut</option>
+      </select>
+    </span>
     <button class="tool tb-focus-hide" data-tool="cloud" title="Revision cloud — drag a box">☁<span class="tool-label"> Cloud</span></button>
     <button class="tool tb-focus-hide" data-tool="rect" title="Rectangle — drag">▭<span class="tool-label"> Rect</span></button>
     <button class="tool tb-focus-hide" data-tool="ellipse" title="Ellipse — drag">⬭<span class="tool-label"> Ellipse</span></button>
@@ -796,6 +805,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=52"></script>
+<script type="module" src="app.js?v=53"></script>
 </body>
 </html>
