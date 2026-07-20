@@ -1094,6 +1094,31 @@ hours/pay tests + i18n parity + client build green.** No DB column (lives in the
 
 ---
 
+## 2026-07-19 — Hours & Rules: additive stacking for set-time rules
+
+David: "if I set 5:25 → +30 and 5:50 → +60, does it end in an hour or 90 minutes?"
+Today it's an hour — `edgeCredit` (was `bestCredit`) takes the largest rung that
+fired, never the sum. He wanted the *option* to stack.
+
+- **New per-rule flag `stack`** on add_time/remove_time (default absent = false).
+  `false` = **replacing**: largest fired rule wins (unchanged, so 60). `true` =
+  **additive**: that rule's minutes pile on top. Formula:
+  `max(replacing rules) + sum(additive rules)` — mark both and the pair pays 90.
+- **Only 'at' rules** get the toggle (an 'every' ladder is already cumulative on
+  its own). Shown as an "If two set-time rules both apply" select right under
+  "Added to"; `coerceDraft` only writes `stack:true` for 'at' rules, and only
+  when true, so nothing else changes shape.
+- **Backward compatible by construction:** default preserves the max-wins math —
+  every existing policy and all 282 tests unchanged. The flag round-trips only
+  when true (absent stays absent, verified).
+
+New `hoursRulesStack.test.js` covers both-additive (90), mixed (90), replacing
+(60), the single-rule case (agree), and round-trip. **282 server hours/pay tests
++ i18n parity + client build green.** No DB column (hours_rules JSON), no
+db-enums change.
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*

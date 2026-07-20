@@ -34,6 +34,7 @@ function blankRule() {
     base: 'schedule',
     mode: 'at',
     anchor: 'clock',
+    stack: false,
     from: '17:25',
     everyMin: '30',
     offsetMin: '25',
@@ -112,7 +113,8 @@ export function describeRule(r, t) {
     case 'add_time':
     case 'remove_time': {
       const verb = r.type === 'add_time' ? t.hrSumAdd : t.hrSumRemove;
-      const where = r.base === 'punch' ? t.hrSumOnPunch : t.hrSumOnBaseline;
+      const where = (r.base === 'punch' ? t.hrSumOnPunch : t.hrSumOnBaseline)
+        + (r.stack ? `, ${t.hrSumStacks}` : '');
       let trigger;
       if (r.anchor === 'schedule') {
         const rel = r.edge === 'after' ? t.hrSumPast : t.hrSumBeforeRel;
@@ -425,6 +427,19 @@ export default function HoursRuleBuilder({ rules, onChange }) {
                 </select>
               </Field>
               <p style={s.hint}>{draft.base === 'schedule' ? t.hrBaseScheduleHint : t.hrBasePunchHint}</p>
+              {/* Only 'at' rules combine into a stack; how they combine when more
+                  than one fires — biggest wins vs. add on top — is asked here. */}
+              {draft.mode === 'at' && (
+                <>
+                  <Field label={t.hrStack}>
+                    <select style={s.input} value={draft.stack ? 'add' : 'replace'} onChange={e => setD('stack', e.target.value === 'add')}>
+                      <option value="replace">{t.hrStackReplace}</option>
+                      <option value="add">{t.hrStackAdd}</option>
+                    </select>
+                  </Field>
+                  <p style={s.hint}>{t.hrStackHint}</p>
+                </>
+              )}
               {usesSchedule && <p style={s.hint}>{t.hrNeedsBaseline}</p>}
             </>
           )}
@@ -593,6 +608,8 @@ function coerceDraft(d) {
       } else {
         out.at = d.at;
       }
+      // Stacking is only offered for (and only means anything for) 'at' rules.
+      if (d.mode === 'at' && d.stack) out.stack = true;
       break;
     case 'auto_break':
       out.minutes = mins;
