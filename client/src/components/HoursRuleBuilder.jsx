@@ -124,7 +124,9 @@ export function describeRule(r, t) {
       if (r.direction === 'off') return `${when} — ${t.hrSumRoundOff.replace('{edge}', edge)}`;
       const dir = r.direction === 'toward_worker' ? t.hrDirTowardShort
         : r.direction === 'against_worker' ? t.hrDirAgainstShort : t.hrDirNearestShort;
-      return `${when} — ${t.hrSumRound.replace('{edge}', edge).replace('{n}', r.intervalMin).replace('{dir}', dir)}`;
+      const ref = r.reference === 'clock' ? t.hrRefClockShort : t.hrRefScheduleShort;
+      const grace = (r.direction !== 'nearest' && Number(r.graceMin) > 0) ? `, ${r.graceMin} ${t.hrGraceShort}` : '';
+      return `${when} — ${t.hrSumRound.replace('{edge}', edge).replace('{n}', r.intervalMin).replace('{dir}', dir).replace('{ref}', ref).replace('{grace}', grace)}`;
     }
     case 'ot_tier': {
       const per = r.basis === 'week' ? t.hrOtPerWeekShort : t.hrOtPerDayShort;
