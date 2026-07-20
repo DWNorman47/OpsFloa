@@ -957,6 +957,35 @@ appending a copy.
 
 ---
 
+## 2026-07-19 — Hours & Rules: clearer Add-Time labels + schedule fallback
+
+**Shipped** (server + client). David couldn't read the Add-Time controls, and the
+rule was blocked without a Start/End Time rule. Fixed both.
+
+- **Labels** (i18n EN/ES): "How often" → **"Add it once, or repeatedly?"** (options
+  *Once, at a set time* / *Repeatedly (a ladder)*); "Measured from" first option
+  "The start/end time rule" → **"Their pay schedule"**; hint reworded.
+- **Schedule fallback (behavior).** Add/Remove Time with base=schedule no longer
+  *requires* a Start/End Time rule. The engine already fell back to the worker's
+  scheduled hours (`resolveExpected`: shift → worker → company standard hours) —
+  the block was purely `validatePolicy`, which is now a no-op. So a bare
+  "add 30 min past 5:25" measures from the **scheduled end**. **Safety:** with no
+  Start/End rule AND no schedule for the day, the rule is now a **no-op** (was a
+  flat add onto the raw punch — the 5:51→6:51 nonsense David flagged). Below-rung
+  late punches clip to the scheduled end, same as an End-Time-rule baseline.
+- **UI de-blocked:** the red "needs a baseline" error → a soft FYI hint, Save no
+  longer disabled, Add/Remove Time type options no longer disabled, top banner
+  reworded to informational.
+- Tests: updated `hoursRulesList` (no-op, not punch-add) + the builder contract
+  (allowed + measures-from-schedule + no-op); 141 hours/pay tests green, 274
+  admin+hours+pay green, i18n parity green.
+
+**Note for David:** for a scheduleless day the rule intentionally does nothing —
+workers need scheduled hours (company/worker standard hours or a shift), or a
+Start/End Time rule, for "add time" to actually apply.
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*

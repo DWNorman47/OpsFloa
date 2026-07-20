@@ -645,41 +645,24 @@ function applyRounding(rawStart, rawEnd, expected, rounding) {
 // ── Policy validation ────────────────────────────────────────────────────────
 
 /**
- * Problems that make a rule list incoherent rather than merely malformed.
- * `parseRules` drops a rule it can't read; this catches rules that read fine on
- * their own but don't mean anything together.
- *
- * The rule it enforces: **Add/Remove Time need a Start/End Time rule to measure
- * from.** "Past 5:25pm, add 30 minutes" is not a rule on its own — 30 minutes
- * past *what*? Without an End Time the credit has no baseline, and the engine
- * would quietly fall back to adding onto the punch, which is the 5:51→6:51
- * nonsense. Better to refuse the policy than to bill something surprising.
+ * Coherence check for a rule list beyond "can each rule be parsed". Currently a
+ * no-op: the one rule it used to enforce — Add/Remove Time needs a Start/End Time
+ * rule to measure from — was relaxed so that Add/Remove Time falls back to the
+ * worker's scheduled hours when there's no such rule (and no-ops when there's no
+ * schedule either), so it's no longer incoherent on its own.
  *
  * @returns {Array<{id, code, message}>} empty when the policy is coherent
  */
 function validatePolicy(policy) {
-  const errors = [];
-  const rules = (policy && policy.rules) || [];
-  const hasEnd = rules.some(r => r.type === 'clip_end');
-  const hasStart = rules.some(r => r.type === 'clip_start');
-
-  for (const r of rules) {
-    if (r.type !== 'add_time' && r.type !== 'remove_time') continue;
-    if (r.base !== 'schedule') continue; // base:'punch' measures from the punch by design
-    if (r.edge === 'after' && !hasEnd) {
-      errors.push({
-        id: r.id, code: 'needs_end_time_rule',
-        message: 'Add/Remove Time after a threshold needs an End Time rule to measure from.',
-      });
-    }
-    if (r.edge === 'before' && !hasStart) {
-      errors.push({
-        id: r.id, code: 'needs_start_time_rule',
-        message: 'Add/Remove Time before a threshold needs a Start Time rule to measure from.',
-      });
-    }
-  }
-  return errors;
+  // Add/Remove Time used to be REFUSED when there was no Start/End Time rule to
+  // measure from. It no longer is: with no such rule the credit measures from the
+  // worker's scheduled hours (shift → worker → company standard hours, via
+  // `expected` in applyRules), and with no schedule for the day either the rule is
+  // a no-op — applyRules never adds onto the raw punch. So there's nothing
+  // incoherent left to catch here. Kept as the validation seam (and to preserve
+  // the export/contract) in case future rule combinations need guarding.
+  void policy;
+  return [];
 }
 
 /** Same, straight off the raw `hours_rules` string. */
@@ -782,13 +765,16 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null) {
     const scheduleBased = rules.some(r => r.edge === 'after' && r.base === 'schedule'
       && (r.type === 'add_time' || r.type === 'remove_time'));
 
-    if (scheduleBased && baseEnd != null) {
-      // Only staying LATE is governed by the ladder. Leaving early is just a
-      // short day — paying someone to the baseline because they went home at
-      // 3pm would invent hours nobody worked.
-      if (punchEnd > baseEnd) e = baseEnd + net;
+    if (scheduleBased) {
+      // The credit lands on the baseline — an End Time rule if one is set, else
+      // the scheduled end (shift / worker or company standard hours, via
+      // `expected`). With NO baseline at all there's nothing to measure from, so
+      // the rule simply doesn't fire — we never add onto the raw punch (the
+      // 5:51→6:51 nonsense). Only staying LATE is governed by the ladder; leaving
+      // early is just a short day, not a reason to invent hours to the baseline.
+      if (baseEnd != null && punchEnd > baseEnd) e = baseEnd + net;
     } else {
-      // base 'punch': a flat bonus on the actual punch.
+      // base 'punch': a flat bonus on the actual punch, by design.
       e = e + net;
     }
   }
@@ -802,8 +788,10 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null) {
     const scheduleBased = rules.some(r => r.edge === 'before' && r.base === 'schedule'
       && (r.type === 'add_time' || r.type === 'remove_time'));
 
-    if (scheduleBased && baseStart != null) {
-      if (punchStart < baseStart) s = baseStart - net;
+    if (scheduleBased) {
+      // Same as the end edge: measure from the Start Time rule or the scheduled
+      // start; no baseline → no-op, never off the raw punch.
+      if (baseStart != null && punchStart < baseStart) s = baseStart - net;
     } else {
       s = s - net;
     }

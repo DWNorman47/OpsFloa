@@ -145,8 +145,14 @@ export default function HoursRuleBuilder({ rules, onChange }) {
 
   const w = draft?.when || {};
   const adjust = draft?.type === 'add_time' || draft?.type === 'remove_time';
-  const needsBaseline = adjust && draft?.base === 'schedule'
+  // Schedule-based, but no Start/End Time rule to measure from → the credit falls
+  // back to the worker's scheduled hours. Informational now, never a blocker.
+  const usesSchedule = adjust && draft?.base === 'schedule'
     && ((draft.edge === 'after' && !hasEnd) || (draft.edge === 'before' && !hasStart));
+  // Any SAVED adjust rule that will lean on that fallback (drives the FYI banner).
+  const scheduleFallbackInUse = rules.some(r =>
+    (r.type === 'add_time' || r.type === 'remove_time') && r.base === 'schedule'
+    && ((r.edge === 'after' && !hasEnd) || (r.edge === 'before' && !hasStart)));
 
   return (
     <div style={s.wrap}>
@@ -170,7 +176,7 @@ export default function HoursRuleBuilder({ rules, onChange }) {
         </div>
       )}
 
-      {(!hasStart || !hasEnd) && rules.length > 0 && (
+      {scheduleFallbackInUse && (
         <p style={s.note}>{t.hrNeedsBaselineNote}</p>
       )}
 
@@ -278,8 +284,8 @@ export default function HoursRuleBuilder({ rules, onChange }) {
             <select style={s.input} value={draft.type} onChange={e => setD('type', e.target.value)}>
               <option value="clip_start">{t.hrType_clip_start}</option>
               <option value="clip_end">{t.hrType_clip_end}</option>
-              <option value="add_time" disabled={!hasStart && !hasEnd}>{t.hrType_add_time}</option>
-              <option value="remove_time" disabled={!hasStart && !hasEnd}>{t.hrType_remove_time}</option>
+              <option value="add_time">{t.hrType_add_time}</option>
+              <option value="remove_time">{t.hrType_remove_time}</option>
               <option value="auto_break">{t.hrType_auto_break}</option>
             </select>
           </Field>
@@ -347,7 +353,7 @@ export default function HoursRuleBuilder({ rules, onChange }) {
                 </select>
               </Field>
               <p style={s.hint}>{draft.base === 'schedule' ? t.hrBaseScheduleHint : t.hrBasePunchHint}</p>
-              {needsBaseline && <p style={s.err}>{t.hrNeedsBaseline}</p>}
+              {usesSchedule && <p style={s.hint}>{t.hrNeedsBaseline}</p>}
             </>
           )}
 
@@ -376,7 +382,7 @@ export default function HoursRuleBuilder({ rules, onChange }) {
           <div style={s.preview}>{describeRule(draft, t)}</div>
 
           <div style={s.actions}>
-            <button style={s.saveBtn} onClick={commit} disabled={needsBaseline}>{editing ? t.hrSaveRule : t.hrAddThisRule}</button>
+            <button style={s.saveBtn} onClick={commit}>{editing ? t.hrSaveRule : t.hrAddThisRule}</button>
             <button style={s.cancelBtn} onClick={() => setDraft(null)}>{t.hrCancel}</button>
           </div>
         </div>
