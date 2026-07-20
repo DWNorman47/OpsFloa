@@ -121,15 +121,16 @@ describe('base: punch — the flat bonus, for a company that wants it', () => {
       .toBe('schedule');
   });
 
-  test('a schedule-based rule with no schedule for the day falls back to the punch', () => {
-    // Saturday has no standardHours here, so there is no scheduled end to
-    // measure from. Silently paying nothing would be worse than a flat add.
+  test('a schedule-based rule with no schedule for the day is a no-op — never a flat punch add', () => {
+    // Saturday has no standardHours here, so there is no scheduled end to measure
+    // from. The rule simply doesn't fire — we never add onto the raw punch (the
+    // 5:51→6:51 nonsense). Add a Start/End Time rule or Saturday hours to apply it.
     const p = parsePolicy(JSON.stringify({
       enabled: true,
       standardHours: stdHours(),
       rules: [{ type: 'add_time', when: { kind: 'every_day' }, edge: 'after', at: '17:25', minutes: 30 }],
     }));
-    expect(paidEnd(entry({ work_date: SAT, end_time: '17:51:00' }), p)).toBe('18:21:00');
+    expect(paidEnd(entry({ work_date: SAT, end_time: '17:51:00' }), p)).toBe('17:51:00');
   });
 });
 

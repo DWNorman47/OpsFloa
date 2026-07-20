@@ -847,6 +847,217 @@ outline — hide it via the Annotations layer) and the ghost-sheet overlay.
 
 ---
 
+## 2026-07-17 — Live Co-Edit: join-aware button, backup poll, visible status, page fix
+
+**Shipped** (`app.js`, cache-bust → **v51**) — the resume of the "join lands in a
+separate session" investigation. Four changes, targeting all three standing
+hypotheses at once so the next test is conclusive:
+
+1. **✨ button is join-aware.** Clicking Live Co-Edit with no active session now
+   first checks for a session already running for the company and offers **Join it
+   / Start a separate one** (via `askChoice`). The old button *always* started a
+   new room, so a teammate who clicked it spun up a parallel session — the most
+   likely "we're not in the same session." Joining otherwise lived buried in
+   ☁ Company.
+2. **REST backup poll.** The SSE stream is a cross-origin `EventSource` (Vercel →
+   Render); if a proxy buffers/blocks it the joiner silently gets no pushes. New
+   `livePollTick`/`livePollPull` pull `GET /live/:id` every 4 s **only while the
+   stream isn't delivering** (`!session.connected`), flushing local edits first,
+   so co-edit stays in sync even with a dead stream. ~free when SSE is healthy.
+3. **Visible connection status.** Live bar now shows 🟢 Live / 🟡 Live · backup
+   sync / 🔴 Reconnecting… (`refreshLiveStatus`, driven by `session.connected` +
+   `syncedAt`). Turns a silent failure into a visible one — and tells us on the
+   next test whether SSE is actually the culprit.
+4. **Push retry + page fix.** `sessionPush` now commits its `lastSync`/`docHash`
+   baseline **only on a confirmed push**, so an edit made during a blip re-pushes
+   instead of being lost (and then clobbered by the poll). And `applySessionDoc`
+   no longer applies `d.page` — participants scroll independently; the join still
+   lands you on the host's page once. (Bidirectional page-yank was a real bug and
+   would have been amplified by the poll.)
+
+Base64 start fallback from the earlier session is already in (v47). Still not
+built: cursor/presence beyond the name roster.
+
+---
+
+## 2026-07-17 — Live Co-Edit: "End for all" actually closes it now
+
+**Shipped** (`liveSessions.js` server + `app.js` client, cache-bust → **v52**).
+
+- **Root cause of "End for all doesn't close it":** the end handler's host check
+  was `room.meta.hostUserId !== req.user.id` with **no `String()` cast** (the
+  company check right above it *does* cast). For a room rehydrated from the DB
+  after any Render restart/deploy, `hostUserId` is the DB type and `req.user.id`
+  is the JWT type — bare `!==` 403s the **real host**, and the client swallowed
+  the failure, so the session stayed `active` and joinable. Fixed to
+  `String(...) !== String(...)`.
+- **Client no longer swallows the failure:** `endOrLeave` checks `res.ok`; if the
+  close didn't confirm, it says so ("may still be open — reopen ☁ Company and hit
+  End"). Refreshes the company list after ending.
+- **End from the list:** `GET /live` now returns `can_end` (host or admin), and
+  live rows in ☁ Company show an **End** button — so a lingering/abandoned session
+  (host closed their tab; the sweep only reaps after 2 h idle) can be closed
+  straight from the list. `endSessionFromList` tears down the local session too if
+  you're in it.
+- **Joining an ended session** (`404`) now says "That session has already ended"
+  and refreshes the list instead of a raw HTTP error.
+
+Note: abandoned-session sweep is still 2 h (`liveSessionSweep`, `*/15`); the End
+button is the manual remedy rather than making the sweep more aggressive.
+
+---
+
+## 2026-07-19 — Reports: per-day Overtime column, admin-toggleable (default on)
+
+**Shipped** (server + client). New company setting **`report_daily_ot_column`**
+(default ON) controls whether the daily line items on reports carry an Overtime
+column. Toggle lives in **Administration Workspace → Company Settings → Overtime**
+(only shown when overtime is enabled — the column is meaningless otherwise).
+
+- **Setting:** added to `FEATURE_KEYS` + `SETTINGS_DEFAULTS` (`true`). A brand-new
+  key with no stored rows, so it defaults ON for every company with **no backfill
+  migration**, and the existing `/admin/settings` PATCH allowlist picks it up via
+  `FEATURE_KEYS` automatically.
+- **Per-entry OT:** the reports listed *total* hours per line but split reg/OT
+  only in the summary. New `annotateEntryOvertime()` in `payCalculations.js`
+  mirrors `computeOT`'s day/week bucketing and fills regular chronologically, so
+  **the line-item OT column always sums to the summary OT** (override / rest-day /
+  7th-day / min-daily / prevailing all handled). Lift-tested against `computeOT`
+  across daily/weekly/override/prevailing — 18 assertions. The two data endpoints
+  (`GET /admin/workers/:id/entries`, project bill) annotate their entries.
+- **Reports wired:** `BillPDF` (Employee Time Invoice) + `ProjectBillPDF` (Project
+  Bill) render the OT column gated on the setting × overtime-enabled; the
+  WorkerMetrics **CSV export** got the column too, for consistency. i18n:
+  `ratesOTColumn`/`Desc` + `pdfOvertimeCol` (EN/ES, parity test green).
+
+**Judgment calls:** scoped "reports" to the two bill/invoice PDFs with daily line
+items (+ the CSV) — deliberately did **not** touch `CertifiedPayrollPDF` (a
+regulated WH-347 layout). Setting is a `settings` key/value row, not a fixed-value
+DB column, so `docs/db-enums.md` doesn't apply. Verified: client build, 161 server
+tests (admin+pay+settings), i18n parity.
+
+---
+
+## 2026-07-19 — Hours & Rules: edit an existing rule (was add/delete only)
+
+**Shipped** (client). The rule list in `HoursRuleBuilder` only had a delete (×)
+per row — to change a rule you had to delete and rebuild it. Added an **Edit**
+button per row that loads the rule back into the draft editor; the save button
+then reads **Save changes** and commits in place (replace-by-id) instead of
+appending a copy.
+
+- A stored rule only carries the fields its type uses, so `edit()` merges it onto
+  a `blankRule()` (filling the rest, keeping its id + `when`/`trigger`). `commit()`
+  now replaces when the id exists, appends otherwise — one path for both flows.
+- Row Edit/Delete buttons hide while a draft is open (no editing/deleting
+  mid-draft). No engine change — `coerceDraft` is reused verbatim, so the
+  builder↔engine contract test still passes (124 hours-rules tests green).
+- i18n `hrEdit` / `hrSaveRule` (EN/ES, parity green). Also: report OT column now
+  uses normal text color, not red (per feedback).
+
+---
+
+## 2026-07-19 — Hours & Rules: clearer Add-Time labels + schedule fallback
+
+**Shipped** (server + client). David couldn't read the Add-Time controls, and the
+rule was blocked without a Start/End Time rule. Fixed both.
+
+- **Labels** (i18n EN/ES): "How often" → **"Add it once, or repeatedly?"** (options
+  *Once, at a set time* / *Repeatedly (a ladder)*); "Measured from" first option
+  "The start/end time rule" → **"Their pay schedule"**; hint reworded.
+- **Schedule fallback (behavior).** Add/Remove Time with base=schedule no longer
+  *requires* a Start/End Time rule. The engine already fell back to the worker's
+  scheduled hours (`resolveExpected`: shift → worker → company standard hours) —
+  the block was purely `validatePolicy`, which is now a no-op. So a bare
+  "add 30 min past 5:25" measures from the **scheduled end**. **Safety:** with no
+  Start/End rule AND no schedule for the day, the rule is now a **no-op** (was a
+  flat add onto the raw punch — the 5:51→6:51 nonsense David flagged). Below-rung
+  late punches clip to the scheduled end, same as an End-Time-rule baseline.
+- **UI de-blocked:** the red "needs a baseline" error → a soft FYI hint, Save no
+  longer disabled, Add/Remove Time type options no longer disabled, top banner
+  reworded to informational.
+- Tests: updated `hoursRulesList` (no-op, not punch-add) + the builder contract
+  (allowed + measures-from-schedule + no-op); 141 hours/pay tests green, 274
+  admin+hours+pay green, i18n parity green.
+
+**Note for David:** for a scheduleless day the rule intentionally does nothing —
+workers need scheduled hours (company/worker standard hours or a shift), or a
+Start/End Time rule, for "add time" to actually apply.
+
+---
+
+## 2026-07-19 — Hours & Rules: migrate fixed slots into custom rules — Phase 1 (Punch Rounding)
+
+**In progress** (David chose the full phased migration of the baked-in sections —
+rounding, tiered OT, premiums — into the custom-rule builder). Phase 1 shipped:
+**Punch Rounding is now a when-scoped custom rule.**
+
+- **Engine** (`hoursRules.js`): new `round` rule type `{edge:in|out|both,
+  reference, direction, intervalMin, graceMin}` + `when`. In `roundEntriesForPay`
+  the per-edge rounding config is resolved from matching `round` rules (later wins)
+  and falls back to the global `policy.rounding` — so existing policies are
+  byte-identical, and a `round` rule can target one edge / certain days, incl.
+  `direction:'off'` to *turn rounding off* on some days. The rounding math
+  (`roundEdge`) is untouched.
+- **Builder**: `round` type with edge / how-to-round (nearest, worker-favor,
+  company-favor, off) / interval / grace / measure-against (Schedule Time vs wall
+  clock); plain-English summary; coerce. i18n EN/ES (~26 keys).
+- **Tests**: `hoursRulesRound.test.js` (both edges, edge-scoped, off-override,
+  backward-compat, parse/defaults) + contract type-parity updated. 133
+  hours-rules tests green, client build + i18n parity green.
+
+**Phase 2 shipped — tiered Overtime as when-scoped rules** (the deep one, in the
+`computeOT` cost engine). New `ot_tier` rule `{basis:day|week, afterHours, mult}` +
+`when`. `computeOT` reformulated: bands resolved **per bucket** (a date-scoped
+ot_tier rule sets that day's tiers; else the fixed-slot config) and OT accumulated
+by multiplier instead of a fixed band array. **Behavior-preserving** — all 95
+payCalculations tests pass unchanged; the reformulation only diverges when an
+ot_tier rule exists. `annotateEntryOvertime` resolves its boundary per bucket too,
+so the report OT column still reconciles. `otConfigFromSettings` carries the
+tierRules; `payCalculations` imports `ruleMatchesDate` (one-way, no cycle).
+Builder: `ot_tier` type (basis / after-hours / multiplier) + summary + coerce;
+i18n EN/ES. `hoursRulesOtTier.test.js` (single/tiered/CA-style, Saturday-scoped,
+parse, report reconciliation, backward-compat). 234 pay/hours + 38 admin tests
+green; client build + i18n parity green.
+
+**Phase 3 shipped — premiums as custom rules.** Four new rule types:
+`rest_day {mult}` (whole day OT on the days `when` selects), `min_daily {hours}`
+(reporting-time floor), `seventh_day {firstHours, firstMult, afterMult}`, and
+`night_diff {fromHour, toHour, pct}`. Design kept the OT accumulator untouched
+for safety: rest_day / seventh_day / night_diff **feed the existing otConfig**
+(`otConfigFromSettings` overrides the fixed slots when a rule is present, incl.
+`daysFromWhen` to turn a rest_day's weekday `when` into rest days), so
+`computeOT` + `nightPremiumCost` are unchanged; only **min_daily** got a small
+per-bucket resolve (`minDailyForBucket`, autoReg-only, no OT-band restructuring)
+so its `when` scopes per day. Builder reuses the fixed-slot field labels; new
+type/summary/hint keys EN/ES. `hoursRulesPremiumRules.test.js` (rest-day Sat @2×,
+scoped min-daily floor, 7-day OT, night-diff pricing, parse, no-op). 240 pay/hours
++ 38 admin tests green; client build + i18n parity green.
+
+**Phase 4 shipped — fixed slots retired; rules are the single source of truth.**
+- `migrateFixedSlots(raw)` + `hasFixedSlots()` convert a legacy policy's fixed-slot
+  config (rounding / OT bands + 7th-day / premiums) into the equivalent rules and
+  clear the slots. **Proven** by `hoursRulesMigrate.test.js`: same entries →
+  identical rounding, regular/OT hours, and OT cost.
+- **Wiring:** `GET /admin/settings` migrates `hours_rules` in the response
+  (display-only) so the builder shows rules; the stored value the pay engine reads
+  is untouched until the admin re-saves, and the equivalents are identical either
+  way — so no big-bang data migration, no un-migrated policy breaks.
+- **UI:** removed the Rounding / Overtime-tiers / Premiums fixed-slot sections
+  (and the now-dead `EdgeEditor` + band helpers). Kept Standard Hours,
+  Transparency, presets, and the rule builder.
+- **Presets** (Honduras / US quarter / California) now emit the matching custom
+  rules instead of filling slots (`hoursRulesPresets.test.js` proves California ≡
+  old fixed-slot California + every preset rule parses). Round-rule summary now
+  shows grace + reference (schedule vs clock).
+
+**Done.** The whole Hours & Rules policy — rounding, overtime, premiums — is now
+one `when`-scoped rule list, backward-compatible (no rules → normal pay + OT;
+legacy configs migrate on load, identical pay). 286 admin/hours/pay tests + i18n
+parity + client build green across the four phases.
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*

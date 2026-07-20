@@ -37,6 +37,7 @@ const s = StyleSheet.create({
   colWorker: { flex: 2.2, fontSize: 9 },
   colDate: { flex: 1.2, fontSize: 9 },
   colTime: { flex: 1, fontSize: 9 },
+  colOt: { flex: 0.6, fontSize: 9, textAlign: 'right' },
   colHours: { flex: 0.7, fontSize: 9, textAlign: 'right' },
   colType: { flex: 0.8, fontSize: 9, textAlign: 'right' },
   headerText: { fontSize: 8, fontWeight: 'bold', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.4 },
@@ -73,6 +74,9 @@ function invoiceNumber(projectId, period) {
 export default function ProjectBillPDF({ data, currency = 'USD', companyInfo = {}, project: projectMeta = {}, t = {}, language, settings = null }) {
   const locale = langToLocale(language);
   const { project, entries, summary, period } = data;
+  // Per-day OT column: on when overtime is enabled and the company setting is on
+  // (default on — undefined settings still shows it).
+  const showOtCol = settings?.feature_overtime !== false && settings?.report_daily_ot_column !== false;
   const workerLabel = settings?.label_worker || t.pdfWorkerCol || 'Team Member';
   const periodStr = period?.from || period?.to
     ? `${period.from ? fmtDate(period.from, locale) : (t.pdfBeginning || 'Beginning')} – ${period.to ? fmtDate(period.to, locale) : (t.pdfPresent || 'Present')}`
@@ -197,6 +201,7 @@ export default function ProjectBillPDF({ data, currency = 'USD', companyInfo = {
               <Text style={[s.colDate, s.headerText]}>{t.pdfDateCol || 'Date'}</Text>
               <Text style={[s.colTime, s.headerText]}>{t.pdfStartCol || 'Start'}</Text>
               <Text style={[s.colTime, s.headerText]}>{t.pdfEndCol || 'End'}</Text>
+              {showOtCol && <Text style={[s.colOt, s.headerText]}>{t.pdfOvertimeCol || 'OT'}</Text>}
               <Text style={[s.colHours, s.headerText]}>{t.pdfHoursCol || 'Hours'}</Text>
               <Text style={[s.colType, s.headerText]}>{t.pdfTypeCol || 'Type'}</Text>
             </View>
@@ -206,6 +211,7 @@ export default function ProjectBillPDF({ data, currency = 'USD', companyInfo = {
                 <Text style={s.colDate}>{fmtDate(e.work_date, locale)}</Text>
                 <Text style={s.colTime}>{fmtTime(e.start_time)}</Text>
                 <Text style={s.colTime}>{fmtTime(e.end_time)}</Text>
+                {showOtCol && <Text style={[s.colOt, e.overtime_hours > 0 ? {} : { color: '#9ca3af' }]}>{e.overtime_hours > 0 ? Number(e.overtime_hours).toFixed(2) : '—'}</Text>}
                 <Text style={s.colHours}>{calcHours(e.start_time, e.end_time)}</Text>
                 <Text style={s.colType}>{e.wage_type}</Text>
               </View>

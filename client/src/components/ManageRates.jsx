@@ -85,6 +85,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
     chat_retention_days: String(settings?.chat_retention_days ?? 3),
     pto_annual_days: String(settings?.pto_annual_days ?? 0),
     feature_overtime: settings?.feature_overtime ?? true,
+    report_daily_ot_column: settings?.report_daily_ot_column ?? true,
     module_field: settings?.module_field ?? false,
     feature_scheduling: settings?.feature_scheduling ?? true,
     feature_analytics: settings?.feature_analytics ?? true,
@@ -175,6 +176,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
       chat_retention_days: String(settings.chat_retention_days ?? 3),
       pto_annual_days: String(settings.pto_annual_days ?? 0),
       feature_overtime: settings.feature_overtime ?? true,
+      report_daily_ot_column: settings.report_daily_ot_column ?? true,
       module_field: settings.module_field ?? false,
       feature_scheduling: settings.feature_scheduling ?? true,
       feature_analytics: settings.feature_analytics ?? true,
@@ -244,6 +246,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
         chat_retention_days: parseFloat(form.chat_retention_days),
         pto_annual_days: parseFloat(form.pto_annual_days) || 0,
         feature_overtime: form.feature_overtime,
+        report_daily_ot_column: form.report_daily_ot_column,
         module_field: form.module_field,
         feature_scheduling: form.feature_scheduling,
         feature_analytics: form.module_analytics,
@@ -830,6 +833,16 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
               <input style={styles.input} type="number" min="1" step="0.5" value={form.overtime_threshold} onChange={e => set('overtime_threshold', e.target.value)} required />
               <span style={styles.suffix}>{t.ratesHrs}</span>
             </div>
+          </div>
+          <div style={styles.row}>
+            <div>
+              <div style={styles.label}>{t.ratesOTColumn}</div>
+              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.ratesOTColumnDesc}</div>
+            </div>
+            <label style={{ ...styles.toggle, background: form.report_daily_ot_column ? 'var(--ops-page-accent)' : '#d1d5db' }}>
+              <input type="checkbox" checked={form.report_daily_ot_column} onChange={e => set('report_daily_ot_column', e.target.checked)} style={{ display: 'none' }} />
+              <span style={{ ...styles.toggleKnob, transform: form.report_daily_ot_column ? 'translateX(46px)' : 'translateX(0)' }} />
+            </label>
           </div>
         </div>}
         {!collapsed.overtime && <SectionFooter section="overtime" />}

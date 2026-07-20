@@ -44,7 +44,8 @@ describe('every rule the builder can emit survives the engine', () => {
   test('every rule type the builder offers is one the engine knows', () => {
     const { RULE_TYPES, RULE_WHEN_KINDS } = require('../utils/hoursRules');
     // Mirrors the <option> values in the builder's type + when selects.
-    const uiTypes = ['clip_start', 'clip_end', 'add_time', 'remove_time', 'auto_break'];
+    const uiTypes = ['clip_start', 'clip_end', 'add_time', 'remove_time', 'auto_break', 'round', 'ot_tier',
+      'rest_day', 'min_daily', 'seventh_day', 'night_diff'];
     const uiWhen = ['every_day', 'weekdays', 'month_days', 'month_weekdays', 'nth_days', 'months', 'nth_months', 'month_weeks', 'nth_weeks'];
     expect(uiTypes.every(x => RULE_TYPES.includes(x))).toBe(true);
     expect(uiWhen.every(x => RULE_WHEN_KINDS.includes(x))).toBe(true);
@@ -61,20 +62,45 @@ describe('every rule the builder can emit survives the engine', () => {
   });
 });
 
-describe('the builder cannot construct a policy the save will reject', () => {
+describe('add/remove time: schedule fallback (no Start/End rule required)', () => {
   test('the customer ladder as the builder would emit it is valid', () => {
     const policy = parsePolicy(JSON.stringify({ enabled: true, rules: BUILDER_OUTPUT }));
     expect(validatePolicy(policy)).toEqual([]);
   });
 
-  test('add_time without a Start/End rule is refused — which is why the UI gates it', () => {
+  test('add_time without a Start/End rule is now ALLOWED — it falls back to the schedule', () => {
     const policy = parsePolicy(JSON.stringify({
       enabled: true,
       rules: [{ id: 'x', type: 'add_time', when: { kind: 'every_day' }, edge: 'after', base: 'schedule', mode: 'at', minutes: 30, at: '17:25' }],
     }));
-    const errs = validatePolicy(policy);
-    expect(errs).toHaveLength(1);
-    expect(errs[0].code).toBe('needs_end_time_rule');
+    expect(validatePolicy(policy)).toEqual([]);
+  });
+
+  test('with no Start/End rule, add_time measures from the scheduled hours', () => {
+    const policy = parsePolicy(JSON.stringify({
+      enabled: true,
+      // company standard hours give the baseline (keyed every weekday: 07:00–17:00)
+      standardHours: Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map(d => [String(d), { start: '07:00', end: '17:00' }])),
+      rules: [{ id: 'x', type: 'add_time', when: { kind: 'every_day' }, edge: 'after', base: 'schedule', mode: 'at', minutes: 30, at: '17:25' }],
+    }));
+    const paidEnd = (end_time) => roundEntriesForPay(
+      [{ user_id: 1, work_date: '2026-07-06', wage_type: 'regular', start_time: '07:00:00', end_time, break_minutes: 0 }],
+      policy,
+    )[0].end_time;
+    expect(paidEnd('17:25:00')).toBe('17:30:00'); // scheduled end 17:00 + 30
+    expect(paidEnd('17:24:00')).toBe('17:00:00'); // below the rung → paid to the scheduled end, same as an End Time rule
+  });
+
+  test('with no rule AND no schedule, add_time is a no-op — never adds onto the raw punch', () => {
+    const policy = parsePolicy(JSON.stringify({
+      enabled: true,
+      rules: [{ id: 'x', type: 'add_time', when: { kind: 'every_day' }, edge: 'after', base: 'schedule', mode: 'at', minutes: 30, at: '17:25' }],
+    }));
+    const out = roundEntriesForPay(
+      [{ user_id: 1, work_date: '2026-07-06', wage_type: 'regular', start_time: '07:00:00', end_time: '17:51:00', break_minutes: 0 }],
+      policy,
+    )[0];
+    expect(out.end_time).toBe('17:51:00'); // no baseline → no credit (not 18:51)
   });
 
   test('base:punch needs no baseline, so it is not gated', () => {

@@ -19,8 +19,8 @@ const { coerceBody } = require('../middleware/coerce');
 const { logFailure } = require('../failureLog');
 const { sendPushToUser, sendPushToAllWorkers } = require('../push');
 const { sendEmail } = require('../email');
-const { hoursWorked, computeOT, computeDailyPayCosts, otBandsCost, nightPremiumCost } = require('../utils/payCalculations');
-const { roundEntriesFromSettings, otConfigFromSettings, validatePolicyRaw } = require('../utils/hoursRules');
+const { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, nightPremiumCost } = require('../utils/payCalculations');
+const { roundEntriesFromSettings, otConfigFromSettings, validatePolicyRaw, migrateFixedSlots, hasFixedSlots } = require('../utils/hoursRules');
 const { computePaid } = require('../utils/paidHours');
 const { weekRange, weekBucketKey } = require('../utils/weekBounds');
 const { createInboxItem, createInboxItemBatch } = require('./inbox');
@@ -163,6 +163,17 @@ router.get('/kpis', requireAdmin, async (req, res) => {
 router.get('/settings', requireAdmin, async (req, res) => {
   try {
     const s = await getSettings(req.user.company_id);
+    // Present the hours-rules policy as custom rules: convert any legacy fixed-slot
+    // config (rounding / OT bands / premiums) into the equivalent rules for the
+    // builder. Display-only — the stored value (which the pay engine reads) is
+    // untouched until the admin saves; the rule equivalents are proven identical
+    // (hoursRulesMigrate.test.js), so nothing changes either way.
+    if (s && typeof s.hours_rules === 'string' && s.hours_rules) {
+      try {
+        const raw = JSON.parse(s.hours_rules);
+        if (hasFixedSlots(raw)) s.hours_rules = JSON.stringify(migrateFixedSlots(raw));
+      } catch (_) { /* leave as-is if it doesn't parse */ }
+    }
     res.json(s);
   } catch (err) {
     logger.error({ err }, 'catch block error');
@@ -1014,6 +1025,8 @@ router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
     const workerOTRule = worker.overtime_rule || 'daily';
     const otConfig = otConfigFromSettings(settings);
     const { regularHours, overtimeHours, otBands } = computeOT(entries, workerOTRule, settings.overtime_threshold, settings.week_start, otConfig);
+    // Per-entry OT for the invoice's daily line-item column (sums to overtimeHours above)
+    annotateEntryOvertime(entries, workerOTRule, settings.overtime_threshold, settings.week_start, otConfig);
     const prevailingHours = entries.filter(e => e.wage_type === 'prevailing').reduce((sum, e) => {
       const h = hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60;
       return sum + h;
@@ -1645,6 +1658,8 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
     const otConfig = otConfigFromSettings(settings);
     Object.values(workerEntries).forEach(({ items, rate, rate_type, overtime_rule }) => {
       const { regularHours: reg, overtimeHours: ot, otBands } = computeOT(items, overtime_rule, settings.overtime_threshold, settings.week_start, otConfig);
+      // Per-entry OT for the project bill's daily line-item column (each worker uses their own rule)
+      annotateEntryOvertime(items, overtime_rule, settings.overtime_threshold, settings.week_start, otConfig);
       regularHours += reg; overtimeHours += ot;
       if (rate_type === 'daily') {
         const dc = computeDailyPayCosts(items, overtime_rule, settings.overtime_threshold, rate, settings.overtime_multiplier, otConfig);

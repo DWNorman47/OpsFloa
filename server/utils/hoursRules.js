@@ -97,7 +97,10 @@ const ROUNDING_REFERENCES = ['schedule', 'clock'];
 // COUNTS toward the overtime threshold. A 9.5h day plus a 0.5h late-stay credit
 // is 10h, which under an 8h threshold is 2h of overtime — not 1.5h of overtime
 // and 0.5h of regular.
-const RULE_TYPES = ['clip_start', 'clip_end', 'add_time', 'remove_time', 'auto_break'];
+const RULE_TYPES = ['clip_start', 'clip_end', 'add_time', 'remove_time', 'auto_break', 'round', 'ot_tier',
+  'rest_day', 'min_daily', 'seventh_day', 'night_diff'];
+const ROUND_EDGES = ['in', 'out', 'both']; // which punch edge a `round` rule rounds
+const OT_TIER_BASES = ['day', 'week'];     // an ot_tier rule counts hours per day or per week
 const RULE_WHEN_KINDS = [
   'every_day', 'weekdays', 'month_days', 'month_weekdays',
   'nth_days',      // every Nth calendar day from an anchor date
@@ -350,6 +353,67 @@ function parseRule(raw, index) {
       return { ...base, minutes, trigger: kind === 'after_hours' ? { kind, hours } : { kind: 'always' } };
     }
 
+    case 'round': {
+      // A when-scoped override of the fixed-slot rounding: same math (roundEdge),
+      // but it can target one edge and only fire on certain days. direction 'off'
+      // is a valid rule ("don't round on Saturday").
+      const edge = ROUND_EDGES.includes(raw.edge) ? raw.edge : 'both';
+      const reference = ROUNDING_REFERENCES.includes(raw.reference) ? raw.reference : 'schedule';
+      const direction = ROUNDING_DIRECTIONS.includes(raw.direction) ? raw.direction : 'nearest';
+      const intervalMin = Number(raw.intervalMin);
+      if (!Number.isFinite(intervalMin) || intervalMin <= 0) return null;
+      const g = Number(raw.graceMin);
+      const graceMin = Number.isFinite(g) && g >= 0 ? g : 0;
+      return { ...base, edge, reference, direction, intervalMin, graceMin };
+    }
+
+    case 'ot_tier': {
+      // One overtime tier: hours past `afterHours` in the bucket (day or week) are
+      // paid at `mult`× base. Several ot_tier rules compose into a band list. When
+      // scoped by `when`, they define the tiers for those days only (else the
+      // fixed-slot OT config applies) — resolved per bucket in computeOT.
+      const afterHours = Number(raw.afterHours);
+      const mult = Number(raw.mult);
+      if (!Number.isFinite(afterHours) || afterHours < 0) return null;
+      if (!Number.isFinite(mult) || mult <= 0) return null;
+      const basis = OT_TIER_BASES.includes(raw.basis) ? raw.basis : 'day';
+      return { ...base, basis, afterHours, mult };
+    }
+
+    case 'rest_day': {
+      // Whole day at `mult`× on the days `when` selects (the rest days).
+      const mult = Number(raw.mult);
+      if (!Number.isFinite(mult) || mult <= 0) return null;
+      return { ...base, mult };
+    }
+
+    case 'min_daily': {
+      // Reporting-time pay: a floor of paid regular hours on a matching short day.
+      const hours = Number(raw.hours);
+      if (!Number.isFinite(hours) || hours <= 0) return null;
+      return { ...base, hours };
+    }
+
+    case 'seventh_day': {
+      // 7th consecutive worked day of a workweek → whole day OT (first N hours at
+      // one mult, the rest at a higher one). Workweek-detected, so `when` is not
+      // used for scoping — carried for schema uniformity.
+      const firstHours = Number(raw.firstHours);
+      const firstMult = Number(raw.firstMult);
+      const afterMult = Number(raw.afterMult);
+      if (!Number.isFinite(firstMult) || firstMult <= 0) return null;
+      if (!Number.isFinite(afterMult) || afterMult <= 0) return null;
+      return { ...base, firstHours: Number.isFinite(firstHours) && firstHours >= 0 ? firstHours : 0, firstMult, afterMult };
+    }
+
+    case 'night_diff': {
+      // Additive % premium on hours inside a nightly window [fromHour, toHour).
+      const fromHour = Number(raw.fromHour), toHour = Number(raw.toHour), pct = Number(raw.pct);
+      if (![fromHour, toHour].every(x => Number.isFinite(x) && x >= 0 && x <= 24)) return null;
+      if (!Number.isFinite(pct) || pct <= 0) return null;
+      return { ...base, fromHour, toHour, pct };
+    }
+
     default:
       return null;
   }
@@ -498,19 +562,143 @@ function otConfigFromSettings(settings) {
     const days = [0, 1, 2, 3, 4, 5, 6].filter(d => !workDays.includes(d));
     if (days.length) restDay = { mult: restMult, days };
   }
-  const minDailyHours = parseFloat(prem.minDailyHours) || 0;
-  const nightDifferential = (prem.nightDifferential && parseFloat(prem.nightDifferential.pct) > 0)
+  let minDailyHours = parseFloat(prem.minDailyHours) || 0;
+  let nightDifferential = (prem.nightDifferential && parseFloat(prem.nightDifferential.pct) > 0)
     ? prem.nightDifferential : null;
+  let seventhDay = has7th ? o.seventhDay : null;
 
-  if (!hasDaily && !hasWeekly && !has7th && !restDay && !minDailyHours && !nightDifferential) return null;
+  // ── Custom-rule builder equivalents (override the fixed slots when present) ──
+  const rules = p.rules || [];
+  // ot_tier rules — resolved per bucket in computeOT (a matching rule's bands
+  // override the fixed-slot config for its days).
+  const tierRules = rules.filter(r => r.type === 'ot_tier');
+  // min_daily rules — resolved per bucket in computeOT (per-day floor).
+  const minDailyRules = rules.filter(r => r.type === 'min_daily');
+  // rest_day rule: `when` selects the rest days; the whole day pays at `mult`×.
+  const restRule = rules.find(r => r.type === 'rest_day');
+  if (restRule) {
+    const days = daysFromWhen(restRule.when);
+    if (days.length) restDay = { mult: restRule.mult, days };
+  }
+  // seventh_day rule: overrides the fixed-slot 7th-day config (workweek-detected).
+  const sevenRule = rules.find(r => r.type === 'seventh_day');
+  if (sevenRule) seventhDay = { enabled: true, firstHoursThreshold: sevenRule.firstHours, firstMult: sevenRule.firstMult, afterMult: sevenRule.afterMult };
+  // night_diff rule: overrides the fixed-slot night differential.
+  const nightRule = rules.find(r => r.type === 'night_diff');
+  if (nightRule) nightDifferential = { fromHour: nightRule.fromHour, toHour: nightRule.toHour, pct: nightRule.pct };
+
+  const has7thFinal = !!seventhDay;
+  if (!hasDaily && !hasWeekly && !has7thFinal && !restDay && !minDailyHours && !nightDifferential
+      && tierRules.length === 0 && minDailyRules.length === 0) return null;
   return {
     dailyBands:  hasDaily  ? o.dailyBands  : [],
     weeklyBands: hasWeekly ? o.weeklyBands : [],
-    seventhDay:  has7th    ? o.seventhDay  : null,
+    seventhDay,
     restDay,
     minDailyHours,
     nightDifferential,
+    tierRules,
+    minDailyRules,
   };
+}
+
+// The weekday set a `when` selects, for turning a rest_day rule into rest days.
+// Only weekday-shaped patterns map cleanly; a specific-date pattern yields none.
+function daysFromWhen(when) {
+  if (!when) return [];
+  if (when.kind === 'weekdays') return [...new Set((when.days || []).map(Number))].filter(d => d >= 0 && d <= 6);
+  if (when.kind === 'every_day') return [0, 1, 2, 3, 4, 5, 6];
+  return [];
+}
+
+/**
+ * Migrate a policy's fixed-slot config (rounding / overtime bands + 7th-day /
+ * premiums) into the equivalent custom rules, and clear the slots. Pure: takes
+ * a RAW policy object (JSON.parse of hours_rules) and returns a new raw object
+ * with migrated rules appended and the fixed slots emptied — serialize + re-parse
+ * for use. `standardHours`, `display`, and `enabled` are preserved.
+ *
+ * The rule equivalents are proven behavior-identical to the slots
+ * (payCalculations + hoursRules*.test.js), so re-running the same entries through
+ * the migrated policy yields the same pay — see hoursRulesMigrate.test.js.
+ */
+function migrateFixedSlots(raw) {
+  const p = (raw && typeof raw === 'object') ? raw : {};
+  let n = 0;
+  const nextId = () => `m${++n}`;
+  const every = { kind: 'every_day' };
+  const rules = Array.isArray(p.rules) ? [...p.rules] : [];
+
+  // Rounding → a round rule per edge that actually rounds.
+  const rnd = p.rounding || {};
+  for (const [key, edge] of [['clockIn', 'in'], ['clockOut', 'out']]) {
+    const c = rnd[key];
+    if (c && c.direction && c.direction !== 'off') {
+      rules.push({ id: nextId(), type: 'round', when: every, edge,
+        reference: c.reference || 'schedule', direction: c.direction,
+        intervalMin: c.intervalMin, graceMin: c.graceMin || 0 });
+    }
+  }
+
+  // Overtime bands → ot_tier rules; 7th-day → seventh_day.
+  const o = p.overtime || {};
+  for (const [list, basis] of [[o.dailyBands, 'day'], [o.weeklyBands, 'week']]) {
+    if (Array.isArray(list)) for (const b of list) {
+      const afterHours = parseFloat(b.afterHours), mult = parseFloat(b.mult);
+      if (Number.isFinite(afterHours) && afterHours >= 0 && Number.isFinite(mult) && mult > 0) {
+        rules.push({ id: nextId(), type: 'ot_tier', when: every, basis, afterHours, mult });
+      }
+    }
+  }
+  if (o.seventhDay && o.seventhDay.enabled === true) {
+    rules.push({ id: nextId(), type: 'seventh_day', when: every,
+      firstHours: parseFloat(o.seventhDay.firstHoursThreshold) || 0,
+      firstMult: parseFloat(o.seventhDay.firstMult) || 1.5,
+      afterMult: parseFloat(o.seventhDay.afterMult) || 2 });
+  }
+
+  // Premiums → rest_day / min_daily / night_diff.
+  const prem = p.premiums || {};
+  const restMult = parseFloat(prem.restDayMult);
+  const workDays = Object.keys(p.standardHours || {})
+    .filter(k => p.standardHours[k] && p.standardHours[k].start).map(Number);
+  if (Number.isFinite(restMult) && restMult > 0 && workDays.length > 0) {
+    const days = [0, 1, 2, 3, 4, 5, 6].filter(d => !workDays.includes(d));
+    if (days.length) rules.push({ id: nextId(), type: 'rest_day', when: { kind: 'weekdays', days }, mult: restMult });
+  }
+  const minH = parseFloat(prem.minDailyHours);
+  if (Number.isFinite(minH) && minH > 0) rules.push({ id: nextId(), type: 'min_daily', when: every, hours: minH });
+  const nd = prem.nightDifferential;
+  if (nd && parseFloat(nd.pct) > 0) {
+    rules.push({ id: nextId(), type: 'night_diff', when: every,
+      fromHour: parseFloat(nd.fromHour) || 0, toHour: parseFloat(nd.toHour) || 0, pct: parseFloat(nd.pct) });
+  }
+
+  return {
+    ...p,
+    rules,
+    rounding: {
+      clockIn:  { reference: 'schedule', intervalMin: 15, graceMin: 0, direction: 'off' },
+      clockOut: { reference: 'schedule', intervalMin: 15, graceMin: 0, direction: 'off' },
+    },
+    overtime: {},
+    premiums: {},
+  };
+}
+
+/** True when a raw policy still carries any fixed-slot config worth migrating. */
+function hasFixedSlots(raw) {
+  const p = (raw && typeof raw === 'object') ? raw : {};
+  const rnd = p.rounding || {};
+  if ((rnd.clockIn && rnd.clockIn.direction && rnd.clockIn.direction !== 'off')
+    || (rnd.clockOut && rnd.clockOut.direction && rnd.clockOut.direction !== 'off')) return true;
+  const o = p.overtime || {};
+  if ((Array.isArray(o.dailyBands) && o.dailyBands.length) || (Array.isArray(o.weeklyBands) && o.weeklyBands.length)) return true;
+  if (o.seventhDay && o.seventhDay.enabled === true) return true;
+  const prem = p.premiums || {};
+  if (parseFloat(prem.restDayMult) > 0 || parseFloat(prem.minDailyHours) > 0
+    || (prem.nightDifferential && parseFloat(prem.nightDifferential.pct) > 0)) return true;
+  return false;
 }
 
 // ── Reference cascade ────────────────────────────────────────────────────────
@@ -645,41 +833,24 @@ function applyRounding(rawStart, rawEnd, expected, rounding) {
 // ── Policy validation ────────────────────────────────────────────────────────
 
 /**
- * Problems that make a rule list incoherent rather than merely malformed.
- * `parseRules` drops a rule it can't read; this catches rules that read fine on
- * their own but don't mean anything together.
- *
- * The rule it enforces: **Add/Remove Time need a Start/End Time rule to measure
- * from.** "Past 5:25pm, add 30 minutes" is not a rule on its own — 30 minutes
- * past *what*? Without an End Time the credit has no baseline, and the engine
- * would quietly fall back to adding onto the punch, which is the 5:51→6:51
- * nonsense. Better to refuse the policy than to bill something surprising.
+ * Coherence check for a rule list beyond "can each rule be parsed". Currently a
+ * no-op: the one rule it used to enforce — Add/Remove Time needs a Start/End Time
+ * rule to measure from — was relaxed so that Add/Remove Time falls back to the
+ * worker's scheduled hours when there's no such rule (and no-ops when there's no
+ * schedule either), so it's no longer incoherent on its own.
  *
  * @returns {Array<{id, code, message}>} empty when the policy is coherent
  */
 function validatePolicy(policy) {
-  const errors = [];
-  const rules = (policy && policy.rules) || [];
-  const hasEnd = rules.some(r => r.type === 'clip_end');
-  const hasStart = rules.some(r => r.type === 'clip_start');
-
-  for (const r of rules) {
-    if (r.type !== 'add_time' && r.type !== 'remove_time') continue;
-    if (r.base !== 'schedule') continue; // base:'punch' measures from the punch by design
-    if (r.edge === 'after' && !hasEnd) {
-      errors.push({
-        id: r.id, code: 'needs_end_time_rule',
-        message: 'Add/Remove Time after a threshold needs an End Time rule to measure from.',
-      });
-    }
-    if (r.edge === 'before' && !hasStart) {
-      errors.push({
-        id: r.id, code: 'needs_start_time_rule',
-        message: 'Add/Remove Time before a threshold needs a Start Time rule to measure from.',
-      });
-    }
-  }
-  return errors;
+  // Add/Remove Time used to be REFUSED when there was no Start/End Time rule to
+  // measure from. It no longer is: with no such rule the credit measures from the
+  // worker's scheduled hours (shift → worker → company standard hours, via
+  // `expected` in applyRules), and with no schedule for the day either the rule is
+  // a no-op — applyRules never adds onto the raw punch. So there's nothing
+  // incoherent left to catch here. Kept as the validation seam (and to preserve
+  // the export/contract) in case future rule combinations need guarding.
+  void policy;
+  return [];
 }
 
 /** Same, straight off the raw `hours_rules` string. */
@@ -782,13 +953,16 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null) {
     const scheduleBased = rules.some(r => r.edge === 'after' && r.base === 'schedule'
       && (r.type === 'add_time' || r.type === 'remove_time'));
 
-    if (scheduleBased && baseEnd != null) {
-      // Only staying LATE is governed by the ladder. Leaving early is just a
-      // short day — paying someone to the baseline because they went home at
-      // 3pm would invent hours nobody worked.
-      if (punchEnd > baseEnd) e = baseEnd + net;
+    if (scheduleBased) {
+      // The credit lands on the baseline — an End Time rule if one is set, else
+      // the scheduled end (shift / worker or company standard hours, via
+      // `expected`). With NO baseline at all there's nothing to measure from, so
+      // the rule simply doesn't fire — we never add onto the raw punch (the
+      // 5:51→6:51 nonsense). Only staying LATE is governed by the ladder; leaving
+      // early is just a short day, not a reason to invent hours to the baseline.
+      if (baseEnd != null && punchEnd > baseEnd) e = baseEnd + net;
     } else {
-      // base 'punch': a flat bonus on the actual punch.
+      // base 'punch': a flat bonus on the actual punch, by design.
       e = e + net;
     }
   }
@@ -802,8 +976,10 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null) {
     const scheduleBased = rules.some(r => r.edge === 'before' && r.base === 'schedule'
       && (r.type === 'add_time' || r.type === 'remove_time'));
 
-    if (scheduleBased && baseStart != null) {
-      if (punchStart < baseStart) s = baseStart - net;
+    if (scheduleBased) {
+      // Same as the end edge: measure from the Start Time rule or the scheduled
+      // start; no baseline → no-op, never off the raw punch.
+      if (baseStart != null && punchStart < baseStart) s = baseStart - net;
     } else {
       s = s - net;
     }
@@ -873,10 +1049,20 @@ function roundEntriesForPay(entries, policy, ctx = {}) {
     const workerStandard = workerStandardById ? workerStandardById[e.user_id] : null;
     const expected = resolveExpected(policy, e.work_date, { shift, workerStandard });
 
-    // Rounding first: the rule list operates on the paid punch, not the raw one.
-    const { start, end } = applyRounding(e.start_time, e.end_time, expected, policy.rounding);
-
     const dayRules = rules.filter(r => ruleMatchesDate(r, e.work_date));
+
+    // Rounding first: the rule list operates on the paid punch, not the raw one.
+    // A `round` rule is a when-scoped override of the fixed-slot rounding config
+    // for its edge(s) — later matching rules win; with none, the global config
+    // applies exactly as before.
+    let cfgIn = policy.rounding.clockIn, cfgOut = policy.rounding.clockOut;
+    for (const r of dayRules) {
+      if (r.type !== 'round') continue;
+      const cfg = { reference: r.reference, intervalMin: r.intervalMin, graceMin: r.graceMin, direction: r.direction };
+      if (r.edge === 'in' || r.edge === 'both') cfgIn = cfg;
+      if (r.edge === 'out' || r.edge === 'both') cfgOut = cfg;
+    }
+    const { start, end } = applyRounding(e.start_time, e.end_time, expected, { clockIn: cfgIn, clockOut: cfgOut });
     let finalStart = start;
     let finalEnd = end;
     let breakMin = e.break_minutes;
@@ -916,6 +1102,8 @@ module.exports = {
   DEFAULT_POLICY,
   roundEntriesFromSettings,
   otConfigFromSettings,
+  migrateFixedSlots,
+  hasFixedSlots,
   ROUNDING_DIRECTIONS,
   ROUNDING_REFERENCES,
   RULE_TYPES,
