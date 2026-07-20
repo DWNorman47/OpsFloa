@@ -579,6 +579,11 @@ router.post('/companies/:id/impersonate', requireSuperAdmin, async (req, res) =>
         // Without this the server falls back to the legacy role-based
         // check and misses any custom-role-only perms the user has.
         role_id: user.role_id ?? null,
+        // Marks this as a "Login as" session. Consumed by routes that would
+        // otherwise write to the impersonated user's own profile (e.g. the
+        // language switcher) so a super-admin's view changes never persist to
+        // the real user's saved preferences.
+        imp: true,
       },
       process.env.JWT_SECRET,
       { expiresIn: '4h' }

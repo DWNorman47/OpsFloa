@@ -1152,6 +1152,31 @@ his mind.
 
 ---
 
+## 2026-07-20 — Impersonation: language switch is view-only
+
+David: while impersonating ("Login as") a Spanish user, switching the header
+language to English was overwriting *their* saved profile language. Fixed so the
+switch is view-only during impersonation.
+
+- The impersonation JWT (`superadmin.js`) now carries an explicit **`imp: true`**
+  claim. Previously nothing distinguished an impersonation token except the
+  absent `tv` claim, which is too implicit to gate on.
+- `POST /auth/update-language` (`auth.js`) short-circuits when `req.user.imp`:
+  it echoes `{ success, language, persisted:false }` so the client still flips
+  its own display, but skips the `UPDATE users SET language`. The target's
+  preference is untouched.
+- **Judgment call:** kept it to the one self-serve endpoint the header switcher
+  hits. The Team-management "edit user" endpoints that set language are a
+  deliberate profile edit, not a view toggle, so they're left alone.
+- **Known limit:** the English view is in-memory for the session — a full reload
+  re-reads the token and reverts to the profile's Spanish. That's consistent with
+  "not saved"; can make it session-sticky (sessionStorage override) if wanted.
+
+New `updateLanguageImpersonation.test.js` (normal persists, impersonation skips,
+blank still 400). Full server suite green (975).
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*
