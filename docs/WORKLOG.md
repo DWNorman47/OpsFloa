@@ -1119,6 +1119,23 @@ db-enums change.
 
 ---
 
+## 2026-07-20 — Hours & Rules: weekday selector starts on Monday
+
+David asked to move Sunday to the end of the "Select days" buttons. Reordering
+`WEEKDAY_KEYS` would have been a trap — its **index is the stored day value**
+(Sunday=0, the engine's numbering), so shuffling it silently remaps every saved
+rule. Instead added a display-only `WEEKDAY_DISPLAY_ORDER = [1,2,3,4,5,6,0]` that
+the day buttons, the nth-weekday dropdown, and the summary iterate; the values
+they carry are unchanged. The summary now sorts/contracts by display rank too, so
+Sat+Sun reads "Sat, Sun" and Fri–Sun contracts to a clean "Fri–Sun". Client build
+green; no server/i18n change (labels already existed).
+
+Also: David reported the stage migration failure self-resolved — it was the
+nightly job briefly holding things up, not the `users`-PK issue I'd diagnosed (see
+prior entry; that diagnosis stands if it recurs).
+
+---
+
 ## Standing items waiting on David
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*
