@@ -210,6 +210,7 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
         <div>
           <h3 style={s.title}>{t.hrTitle}</h3>
           <p style={s.sub}>{t.hrDesc}</p>
+          <p style={s.glossary}>{t.hrGlossary}</p>
         </div>
         <label style={s.switchWrap}>
           <input type="checkbox" checked={form.enabled} onChange={e => set('enabled', e.target.checked)} style={{ display: 'none' }} />
@@ -397,6 +398,7 @@ const s = {
   headRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' },
   title: { fontSize: 17, fontWeight: 700, margin: 0 },
   sub: { fontSize: 13, color: '#6b7280', margin: '6px 0 0', lineHeight: 1.5, maxWidth: 560 },
+  glossary: { fontSize: 12, color: '#475569', margin: '8px 0 0', lineHeight: 1.5, maxWidth: 620, background: '#f8fafc', border: '1px solid #eef0f2', borderRadius: 6, padding: '7px 11px' },
   switchWrap: { display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', whiteSpace: 'nowrap' },
   switch: { position: 'relative', width: 44, height: 24, borderRadius: 999, transition: 'background 0.15s', display: 'inline-block', flexShrink: 0 },
   knob: { position: 'absolute', top: 2, left: 2, width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'transform 0.15s', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' },
