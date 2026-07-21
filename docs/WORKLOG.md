@@ -23,6 +23,34 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-21 — Plan Room: earthwork side menu — current page only, grouped/collapsible
+
+**Done.** Plan Room `v59 → v60`. The dirt/earthwork side menu's shape lists
+(Contours + Takeoffs) now (1) show only shapes **on the current page** — the
+contour list was surface-scoped but pulled every page; takeoffs weren't filtered
+at all — and (2) organize shapes into **collapsible per-type/color subgroups**,
+each with its own ▾/▸ header, swatch, and count.
+
+**Calls I made on the grouping:**
+- **Contours / Spots / Pads** group by *type* (a contour's color is its elevation,
+  so the swatch stays per-row; grouping by color there would fragment into one
+  group per elevation).
+- **Takeoffs** group by *type + material/color* — so gravel areas and asphalt
+  areas (different colors) are separate collapsible groups, each keeping its Σ
+  subtotal. This is the "/color" half of the request where color actually maps to
+  a material.
+- Groups default **expanded**; a `Set` of collapsed keys remembers folds for the
+  session (not persisted to the file — cheap, and avoids schema churn).
+
+Gotcha handled: storm-pipe labels contain a double-quote (`18" hdpe`), which would
+break a `data-` attribute — group keys are URI-encoded in the DOM and decoded on
+click.
+
+Client-only, planroom files only (`git status` clean on `sitework/`). `node
+--check` passes; there's no automated test for the tool-app UI, so this wants a
+quick manual look: open a multi-page set, confirm the menu only lists the current
+page's shapes and that each type/material subheader folds.
+
 ## 2026-07-21 — Pay stubs: deductions (gross → net), Social Security & anything else
 
 **Shipped.** Server `e29027a`, client `a814fcc`. Employees' pay output can now
