@@ -23,6 +23,58 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-21 — Pay stubs: deductions (gross → net), Social Security & anything else
+
+**Shipped.** Server `e29027a`, client `a814fcc`. Employees' pay output can now
+show deductions and a **Net Pay** figure. There was **nothing** for this before —
+every pay surface was gross-only (`hours × rate`), and the one `cp_compute_
+deductions` toggle was a dead experimental stub.
+
+**What I built, and the call behind it.** You picked a **configurable %/fixed
+list**, not an auto tax engine — so a deduction is just a name + either a percent
+of gross wages (optional cap) or a flat amount. That's deliberately **not** a tax
+calculator: it applies the rates you enter, your accountant reconciles the exact
+figures. It's the right call for a shop in Honduras (IHSS/RAP as flat %, plus
+whatever else) and it's why that old auto-deductions toggle was never finished —
+real bracket math is a payroll-processor job.
+
+Two sources, both live:
+- **Company-wide list** — Administration → Company Settings → **Payroll
+  Deductions**. Applies to everyone. Stored as a JSON setting exactly like the
+  hours-rules policy; empty = no deductions, so nothing changes for a company that
+  never touches it.
+- **Per-employee extras** — on each worker's card in Team (the same place you
+  generate their bill), a **Deductions** section for loans, advances, garnishments.
+  New `worker_deductions` table (migration **0143**), applied on top of the
+  company list.
+
+The per-worker **pay PDF** (the "Employee Time Invoice" you already download per
+worker) now reads **Gross Wages → each deduction (−) → reimbursements (+) → Net
+Pay** whenever deductions exist. Reimbursements are added back to net, not
+deducted from — they're expense repayments, not wages. Currency follows the
+company setting, so a Honduras stub prints "L" with no extra work.
+
+**Judgment calls worth knowing:**
+- **It lives on the existing per-worker pay PDF**, not a brand-new document — you
+  said "put it wherever you like," and that PDF was already the de-facto pay stub.
+- **Per-worker deductions are additive** (extras on top of the company list). True
+  per-worker *exemption* from a company deduction isn't in v1 — say the word if a
+  worker needs to be carved out of, say, the company SS line.
+- The worker's **on-screen** pay view (`PayStubView`) still shows gross only — I
+  focused on the printable stub you asked for. Adding net there is a fast follow
+  if you want it.
+
+⚠️ **Migration 0143 must run on stage/prod before this works there** — the
+per-worker table. (Given the earlier stage hiccup, worth a glance that the
+nightly migrate ran clean.) The company-wide list works off settings alone and
+needs no table.
+
+⚠️ **Not yet run through a real payslip.** The gross→net math is unit-tested
+(11 cases: percent/cap/fixed, per-worker merge, net = gross − deductions +
+reimbursements, empty = no-op). Full server suite **1016 green**, client build +
+i18n parity + smoke green. Before it promotes, generate one real stub with a
+couple of deductions and confirm the net matches by hand.
+
 ## 2026-07-21 — Hours & Rules: time-window multiplier (weekend-premium schedules)
 
 **Shipped.** `320174e`. New rule type **Time-window multiplier** (`window_mult`):
