@@ -598,6 +598,11 @@ export default function HoursRuleBuilder({ rules, onChange, title, help }) {
                 <input style={s.input} type="number" min="1" step="0.05" value={draft.mult} onChange={e => setD('mult', e.target.value)} />
               </Field>
               <p style={s.hint}>{t.hrWindowHint}</p>
+              {/* End ≤ start means the window wraps past midnight — surface it so
+                  it's never a surprise. Zero-padded HH:MM compares lexically. */}
+              {draft.from && draft.to && draft.to <= draft.from && (
+                <p style={s.note}>{t.hrWindowWrapWarn.replace('{to}', draft.to)}</p>
+              )}
             </>
           )}
 
