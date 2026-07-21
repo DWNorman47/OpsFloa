@@ -333,7 +333,7 @@ router.post('/push', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const result = await pool.query(
-      `SELECT te.*, u.qbo_employee_id, u.qbo_vendor_id, u.worker_type, p.qbo_customer_id, p.qbo_class_id,
+      `SELECT te.*, u.qbo_employee_id, u.qbo_vendor_id, u.worker_type, u.role_id, p.qbo_customer_id, p.qbo_class_id,
               u.full_name as worker_name, p.name as project_name
        FROM time_entries te
        JOIN users u ON te.user_id = u.id
@@ -344,7 +344,9 @@ router.post('/push', requireAdmin, async (req, res) => {
       [companyId, from || null, to || null]
     );
 
-    const entries = roundEntriesFromSettings(result.rows, await loadSettings(companyId));
+    const pushRoleById = {};
+    result.rows.forEach(e => { pushRoleById[e.user_id] = e.role_id; });
+    const entries = roundEntriesFromSettings(result.rows, await loadSettings(companyId), { workerRoleById: pushRoleById });
     const skipped = [];
     const pushed = [];
     let alreadySynced = 0;
@@ -608,7 +610,7 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
     pool.query(
       `SELECT te.id, te.user_id, te.project_id, te.work_date, te.start_time, te.end_time,
               te.notes, te.qbo_bill_id, te.qbo_activity_id, te.wage_type, te.break_minutes,
-              u.full_name, u.qbo_vendor_id, u.hourly_rate, u.worker_type, u.overtime_rule,
+              u.full_name, u.qbo_vendor_id, u.hourly_rate, u.worker_type, u.overtime_rule, u.role_id,
               p.qbo_class_id, p.qbo_customer_id, p.name AS project_name
          FROM time_entries te
          JOIN users u    ON te.user_id = u.id
@@ -639,12 +641,14 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
     ),
   ]);
 
-  const paidTimeRows = roundEntriesFromSettings(timeRows.rows, settings);
+  const billRoleById = {};
+  timeRows.rows.forEach(e => { billRoleById[e.user_id] = e.role_id; });
+  const paidTimeRows = roundEntriesFromSettings(timeRows.rows, settings, { workerRoleById: billRoleById });
 
   // Group per worker (vendor)
   const byUser = new Map();
   const get = (uid) => {
-    if (!byUser.has(uid)) byUser.set(uid, { userId: uid, fullName: '', vendorId: '', hourlyRate: 0, overtimeRule: null, timeEntries: [], reimbursements: [] });
+    if (!byUser.has(uid)) byUser.set(uid, { userId: uid, fullName: '', vendorId: '', hourlyRate: 0, overtimeRule: null, roleId: null, timeEntries: [], reimbursements: [] });
     return byUser.get(uid);
   };
   for (const te of paidTimeRows) {
@@ -656,6 +660,7 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
     g.vendorId = te.qbo_vendor_id;
     g.hourlyRate = parseFloat(te.hourly_rate) || 0;
     g.overtimeRule = te.overtime_rule || g.overtimeRule;
+    g.roleId = te.role_id ?? g.roleId;
     g.timeEntries.push({
       id: te.id, workDate: te.work_date, hours,
       wageType: te.wage_type || 'regular',
@@ -734,7 +739,7 @@ function computeGroupOvertime(group, ot) {
     wage_type:     te.wageType,
     break_minutes: te.breakMinutes,
   }));
-  const { overtimeHours, otBands } = computePaid(entries, ot.settings, { rule });
+  const { overtimeHours, otBands } = computePaid(entries, ot.settings, { rule, roleId: group.roleId ?? null });
   // Premium = what the OT hours cost at their own multipliers, minus the
   // straight time already billed per entry. Priced off otBands rather than one
   // flat multiplier, so a tiered policy (8h @1.5×, 12h @2×) bills its tiers
@@ -936,7 +941,7 @@ router.post('/push-payroll', requireAdmin, async (req, res) => {
 
     const entriesRes = await pool.query(
       `SELECT te.work_date, te.start_time, te.end_time, te.break_minutes, te.wage_type,
-              te.user_id, u.default_hourly_rate
+              te.user_id, u.default_hourly_rate, u.role_id
        FROM time_entries te
        JOIN users u ON te.user_id = u.id
        WHERE te.company_id = $1
@@ -945,7 +950,9 @@ router.post('/push-payroll', requireAdmin, async (req, res) => {
          AND te.work_date <= $3::date`,
       [companyId, from, to]
     );
-    const entries = { rows: roundEntriesFromSettings(entriesRes.rows, await loadSettings(companyId)) };
+    const payrollRoleById = {};
+    entriesRes.rows.forEach(e => { payrollRoleById[e.user_id] = e.role_id; });
+    const entries = { rows: roundEntriesFromSettings(entriesRes.rows, await loadSettings(companyId), { workerRoleById: payrollRoleById }) };
 
     let totalCost = 0;
     for (const e of entries.rows) {
@@ -1019,13 +1026,14 @@ router.post('/retry-error/:id', requireAdmin, async (req, res) => {
       );
     } else if (entity_type === 'time_entry') {
       const entry = await pool.query(
-        `SELECT te.*, u.qbo_employee_id, u.qbo_vendor_id, u.worker_type, p.qbo_customer_id, p.qbo_class_id
+        `SELECT te.*, u.qbo_employee_id, u.qbo_vendor_id, u.worker_type, u.role_id, p.qbo_customer_id, p.qbo_class_id
          FROM time_entries te JOIN users u ON te.user_id = u.id LEFT JOIN projects p ON te.project_id = p.id
          WHERE te.id = $1 AND te.company_id = $2`,
         [entity_id, companyId]
       );
       if (!entry.rows.length) return res.status(404).json({ error: 'Time entry not found' });
-      const [e] = roundEntriesFromSettings(entry.rows, await loadSettings(companyId));
+      const retryRow = entry.rows[0];
+      const [e] = roundEntriesFromSettings(entry.rows, await loadSettings(companyId), { workerRoleById: { [retryRow.user_id]: retryRow.role_id } });
       const usesVendor = e.worker_type === 'contractor' || e.worker_type === 'subcontractor';
       const mappedId = usesVendor ? e.qbo_vendor_id : e.qbo_employee_id;
       if (!mappedId) return res.status(400).json({ error: 'Worker has no QBO mapping — set it in QuickBooks settings first' });

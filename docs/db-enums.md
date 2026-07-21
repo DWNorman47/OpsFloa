@@ -201,7 +201,8 @@ that had the previous default.
   existing companies are unaffected until they opt in. **Not enum-constrained
   at the DB level** (it's a config document, same posture as the JSON
   `inventory_items.locations[]` column). Validated on write only for shape
-  (must parse as a JSON object) and size (≤ 8 KB) in the `PATCH /admin/settings`
+  (must parse as a JSON object) and size (≤ 40 KB — raised from 8 KB when per-role rule lists
+  landed) in the `PATCH /admin/settings`
   handler; the canonical schema + normalization live in
   `server/utils/hoursRules.js` (`parsePolicy`, which never throws and degrades
   any malformed field to a safe default). Sub-fields that are themselves
@@ -285,6 +286,21 @@ that had the previous default.
   `auto_break` sets `time_entries.break_minutes` to
   `max(total expected, total logged)` — **never the sum**, because the logged
   value is already deducted everywhere downstream.
+
+  **`roleRules[]` — per-role overrides.** `rules[]` above is the *standard* list,
+  applied to every worker. `roleRules` attaches an independent rule list to a
+  worker **role** (`users.role_id`): `[{roleId:<int>, addToStandard:<bool>,
+  rules:[…same rule shape…]}]`. A worker's effective list is
+  `addToStandard ? standard.concat(role.rules) : role.rules`; a worker whose
+  `role_id` has no section (or is null, or points at a deleted role) uses the
+  standard list. Absent/empty → today's behavior exactly. Normalized by
+  `parseRoleRules` (drops entries without an integer `roleId`; `addToStandard`
+  defaults true; each list runs through `parseRules`). The effective list feeds
+  BOTH the rounding transform and the OT config, so a role's `ot_tier`/premium
+  rules take effect — resolved per worker via `effectiveRulesForRole` /
+  `otConfigByRoleFactory` and carried to every pay site by threading each
+  worker's `role_id` (see `paidHours.computePaid`'s `roleId`). Not
+  DB-enum-constrained (nested JSON, same posture as `rules[]`).
 
 ### Module visibility flags (`module_*`, boolean, in `FEATURE_KEYS`)
 
