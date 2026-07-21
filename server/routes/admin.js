@@ -222,7 +222,10 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
             // Stored as a JSON policy document; the engine (hoursRules.parsePolicy)
             // normalizes on read, so we only guard shape + size here. A too-large
             // or non-object value is rejected outright.
-            if (String(val).length > 8000) return res.status(400).json({ error: 'hours_rules is too large' });
+            // Per-role rule lists multiply the document size (one rule set per
+            // role on top of the standard list), so the cap is generous but still
+            // bounded to keep a runaway payload out of the settings row.
+            if (String(val).length > 40000) return res.status(400).json({ error: 'hours_rules is too large' });
             let parsed;
             try { parsed = JSON.parse(val); } catch { return res.status(400).json({ error: 'hours_rules must be valid JSON' }); }
             if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))

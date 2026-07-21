@@ -163,7 +163,7 @@ export function describeRule(r, t) {
 
 // ── Editor ───────────────────────────────────────────────────────────────────
 
-export default function HoursRuleBuilder({ rules, onChange }) {
+export default function HoursRuleBuilder({ rules, onChange, title, help }) {
   const t = useT();
   const [draft, setDraft] = useState(null);
 
@@ -213,10 +213,10 @@ export default function HoursRuleBuilder({ rules, onChange }) {
   return (
     <div style={s.wrap}>
       <div style={s.head}>
-        <span style={s.title}>{t.hrRulesTitle}</span>
+        <span style={s.title}>{title || t.hrRulesTitle}</span>
         {!draft && <button style={s.addBtn} onClick={() => setDraft(blankRule())}>{t.hrAddRule}</button>}
       </div>
-      <p style={s.help}>{t.hrRulesHelp}</p>
+      <p style={s.help}>{help || t.hrRulesHelp}</p>
 
       {rules.length === 0 && !draft && <p style={s.empty}>{t.hrNoRules}</p>}
 

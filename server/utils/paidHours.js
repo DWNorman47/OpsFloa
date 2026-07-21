@@ -46,12 +46,28 @@ async function loadSettings(companyId) {
  *
  * @param entries  rows with {start_time,end_time,work_date,wage_type,break_minutes,...}
  * @param settings company settings (must include hours_rules to honour a policy)
- * @param opts     { rule: 'daily'|'weekly'|'none', ctx: {shiftMap, workerStandardById} }
+ * @param opts     { rule: 'daily'|'weekly'|'none', ctx: {shiftMap, workerStandardById}, roleId }
  * @returns {{paid, regularHours, overtimeHours, otBands, otConfig}}
+ *
+ * `roleId` is this worker's `users.role_id`; when the policy carries role rules it
+ * selects both the effective rule list (via the rounding engine) and the OT config.
+ * Null/absent → the standard rules, identical to the company-wide behaviour.
  */
-function computePaid(entries, settings, { rule = 'daily', ctx = {} } = {}) {
-  const paid = roundEntriesFromSettings(entries || [], settings, ctx);
-  const otConfig = otConfigFromSettings(settings);
+function computePaid(entries, settings, { rule = 'daily', ctx = {}, roleId = null } = {}) {
+  // These entries are one worker's. When a role is supplied, tell the rounding
+  // engine which role applies (workerRoleById) and select that role's OT config.
+  let effCtx = ctx;
+  if (roleId != null) {
+    const workerRoleById = { ...(ctx.workerRoleById || {}) };
+    for (const e of entries || []) {
+      if (e && e.user_id != null && workerRoleById[e.user_id] === undefined) {
+        workerRoleById[e.user_id] = roleId;
+      }
+    }
+    effCtx = { ...ctx, workerRoleById };
+  }
+  const paid = roundEntriesFromSettings(entries || [], settings, effCtx);
+  const otConfig = otConfigFromSettings(settings, roleId);
   const { threshold, weekStart } = payNumbers(settings);
   const { regularHours, overtimeHours, otBands } = computeOT(paid, rule, threshold, weekStart, otConfig);
   return { paid, regularHours, overtimeHours, otBands, otConfig };
@@ -79,7 +95,7 @@ function laborCostCents(entries, settings) {
     const rate = parseFloat(rows[0].rate) || 0;
     if (!rate) continue;
     const rule = rows[0].ot_rule || 'daily';
-    const { paid, regularHours, otBands, otConfig } = computePaid(rows, settings, { rule });
+    const { paid, regularHours, otBands, otConfig } = computePaid(rows, settings, { rule, roleId: rows[0].role_id ?? null });
     dollars += regularHours * rate;
     dollars += otBandsCost(otBands, rate, multiplier);
     if (otConfig && otConfig.nightDifferential) {
@@ -101,7 +117,8 @@ const LABOR_ENTRY_COLUMNS = `
   te.user_id, te.work_date, te.start_time, te.end_time, te.break_minutes,
   te.wage_type, te.overtime_hours_override,
   COALESCE(u.hourly_rate, 0) AS rate,
-  COALESCE(u.overtime_rule, 'daily') AS ot_rule`;
+  COALESCE(u.overtime_rule, 'daily') AS ot_rule,
+  u.role_id AS role_id`;
 
 module.exports = {
   loadSettings,
