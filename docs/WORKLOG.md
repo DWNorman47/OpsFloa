@@ -1244,15 +1244,34 @@ shape") is a **drawing-flow** interaction distinct from edit mode — not built.
 1 implements the edit-mode "click two points to join" case. Confirm if the
 draw-time close-to-vertex variant is wanted.
 
-**Deferred (next phases):** Phase 2 — the Mode dropdown (Points/Box/Circle) + Box/
-Circle marquee + Delete Points. Phase 3 — Delete Area (keyhole holes: `m.pts` stays
-the single ring everything reads, `m.outer`/`m.holes` metadata keep perimeter honest;
-the geometry agents confirmed area/hit-test/fill/earthwork all net out for free given
-opposite winding). Shared `engine-measure.js` and sitework stay untouched throughout.
+**Phase 2 (shipped)** — Mode dropdown (Points/Box/Circle); in Box/Circle the op
+dropdown swaps to a region-op. Box = drag a rect, Circle = click center then radius
+(live preview). Delete Points removes captured vertices (floored at the min; whole
+capture deletes the shape). New `drag.mode='marquee-box'`, `circleRegion`/`boxRegion`,
+`applyRegionOp`.
 
-Static tool-app, no test harness — syntax-checked (`node --check`); `?v` 52→53. To
-verify: load a PDF, set scale, trace an area/contour, pick Select → the Edit dropdown
-appears; exercise each op + undo/redo.
+**Phase 3 (shipped)** — Delete Area cuts a **keyhole hole** in a closed area. `m.pts`
+stays the single ring every consumer reads (area shoelace nets `outer − Σholes` for
+free, fill renders the hole empty under nonzero winding, hit-test + earthwork gate off
+the same `pointInPolygon`); `m.outer`/`m.holes` metadata added only for a holes-aware
+`areaPerimeterFt` (routed the qarea bid/edge-form + config-reopen sites through it —
+shared `engine-measure.js` untouched). **Winding is load-bearing** — `orientOpposite`
+forces the hole opposite the outer; a standalone test confirms 9600 (100×100 − 20×20)
+for both windings, 9500 for two holes, perimeter 480 vs raw-keyhole 593, hole points
+excluded from hit-test. Holed shapes expose no vertex handles and skip point-ops (would
+corrupt the keyhole); whole-shape move keeps `m.outer`/`m.holes` in sync; undo removes a
+hole. **v1 limit:** the region must sit fully inside the outline — edge-crossing
+*notches* (general polygon difference / Greiner–Hormann) are deferred with a clear
+message.
+
+Static tool-app, no test harness — `node --check` each slice; `?v` 52→55 across the
+five commits (1a/1b/2/3). Sitework verified clean at every commit. To verify: load a
+PDF, set scale, trace an area, Select → Edit dropdown appears; exercise the point ops,
+then Box/Circle marquee → Delete Points / Delete Area; check the SF read-out + undo.
+
+**Open follow-ups (confirm/deferred):** the draw-time active-endpoint Join
+(close-to-vertex mid-trace); edge-crossing Delete-Area notches; a dedicated
+remove-a-hole affordance (undo works today); graying out point-ops on holed shapes.
 
 ---
 
