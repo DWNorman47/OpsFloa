@@ -5,6 +5,7 @@ import api from '../api';
 import ModalShell from '../components/ModalShell';
 
 import { silentError } from '../errorReporter';
+import { safeSession } from '../utils/safeStorage';
 function formatDate(str, locale = 'en-US') {
   return new Date(str).toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' });
 }
@@ -252,7 +253,7 @@ export default function SuperAdmin() {
       );
       // Store token in sessionStorage under a known key, then open a new tab
       // The new tab reads it once via ?impersonate=1 and clears it
-      sessionStorage.setItem('impersonate_token', r.data.token);
+      safeSession.setItem('impersonate_token', r.data.token);
       window.open('/?impersonate=1', '_blank');
     } catch (err) {
       setImpersonateError({ id: company.id, msg: err.response?.data?.error || 'Could not impersonate' });

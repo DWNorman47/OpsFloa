@@ -6,6 +6,7 @@ import { langToLocale } from '../utils';
 import { labelSg } from '../companyLabels';
 
 import { silentError } from '../errorReporter';
+import { safeLocal } from '../utils/safeStorage';
 function formatTime(str, locale = 'en-US') {
   return new Date(str).toLocaleString(locale, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
@@ -99,7 +100,7 @@ function AdminChat({ workers, settings }) {
       const unread = {};
       r.data.forEach(thread => {
         const key = `chatLastRead_admin_${thread.worker_id}`;
-        const lastRead = localStorage.getItem(key);
+        const lastRead = safeLocal.getItem(key);
         if (!lastRead || new Date(thread.last_at) > new Date(lastRead)) {
           unread[thread.worker_id] = true;
         }
@@ -133,7 +134,7 @@ function AdminChat({ workers, settings }) {
       return api.get(`/chat?worker_id=${selectedId}`).then(r => {
         setMessages(r.data);
         // Mark as read
-        localStorage.setItem(`chatLastRead_admin_${selectedId}`, new Date().toISOString());
+        safeLocal.setItem(`chatLastRead_admin_${selectedId}`, new Date().toISOString());
         setUnreadByWorker(prev => { const n = { ...prev }; delete n[selectedId]; return n; });
       }).catch(silentError('companychat')).finally(() => setLoading(false));
     };

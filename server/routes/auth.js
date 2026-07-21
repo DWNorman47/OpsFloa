@@ -733,9 +733,13 @@ router.post('/mfa/disable', requireAuth, async (req, res) => {
 router.post('/update-language', requireAuth, async (req, res) => {
   const language = req.body.language?.trim();
   if (!language) return res.status(400).json({ error: 'language required' });
+  // During a super-admin "Login as" session the language switch is view-only: it
+  // must not overwrite the impersonated user's saved preference. The client still
+  // flips its own display off this success response — we just skip the write.
+  if (req.user.imp) return res.json({ success: true, language, persisted: false });
   try {
     await pool.query('UPDATE users SET language = $1 WHERE id = $2', [language, req.user.id]);
-    res.json({ success: true, language });
+    res.json({ success: true, language, persisted: true });
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });

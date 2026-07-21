@@ -5,14 +5,15 @@ import { useT } from '../hooks/useT';
 import api from '../api';
 import PasswordInput from '../components/PasswordInput';
 import { pickLandingPath } from '../modulePermissions';
+import { safeLocal } from '../utils/safeStorage';
 
 function getSavedCompanies() {
-  try { return JSON.parse(localStorage.getItem('tc_companies') || '[]'); } catch { return []; }
+  try { return JSON.parse(safeLocal.getItem('tc_companies') || '[]'); } catch { return []; }
 }
 
 function saveCompany(name) {
   const list = getSavedCompanies().filter(c => c.toLowerCase() !== name.toLowerCase());
-  localStorage.setItem('tc_companies', JSON.stringify([name, ...list]));
+  safeLocal.setItem('tc_companies', JSON.stringify([name, ...list]));
 }
 
 const OTHER = '__other__';
@@ -72,8 +73,8 @@ export default function Login() {
     // their permissions unlock; falls back to /account if they have none).
     if (isAdmin) {
       const key = `tc_visited_${user.id}`;
-      const firstTime = !localStorage.getItem(key);
-      localStorage.setItem(key, '1');
+      const firstTime = !safeLocal.getItem(key);
+      safeLocal.setItem(key, '1');
       if (firstTime) { navigate('/administration'); return; }
     }
     navigate(pickLandingPath(user));

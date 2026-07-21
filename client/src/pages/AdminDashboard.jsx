@@ -14,6 +14,7 @@ import api from '../api';
 import { labelSg, labelPl } from '../companyLabels';
 
 import { silentError } from '../errorReporter';
+import { safeLocal } from '../utils/safeStorage';
 // Heavy components — lazy-loaded on first render to reduce initial bundle size
 // LiveWorkers pulls in leaflet + react-leaflet (~200 kB), so lazy-load it
 const LiveWorkers = lazy(() => import('../components/LiveWorkers'));
@@ -69,7 +70,7 @@ export function WorkforcePanel() {
   const [pendingReimbursements, setPendingReimbursements] = useState(0);
   const [chatUnread, setChatUnread] = useState(false);
   const [collapsedSections, setCollapsedSections] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('opsfloa_report_sections') || '{}'); } catch { return {}; }
+    try { return JSON.parse(safeLocal.getItem('opsfloa_report_sections') || '{}'); } catch { return {}; }
   });
 
   // tab must be declared before any useEffect that references it (avoids TDZ in minified output)
@@ -84,7 +85,7 @@ export function WorkforcePanel() {
 
   const toggleSection = key => setCollapsedSections(s => {
     const next = { ...s, [key]: !s[key] };
-    localStorage.setItem('opsfloa_report_sections', JSON.stringify(next));
+    safeLocal.setItem('opsfloa_report_sections', JSON.stringify(next));
     return next;
   });
 
@@ -120,7 +121,7 @@ export function WorkforcePanel() {
       api.get('/chat').then(r => {
         const hasUnread = r.data.some(thread => {
           const key = `chatLastRead_admin_${thread.worker_id}`;
-          const lastRead = localStorage.getItem(key);
+          const lastRead = safeLocal.getItem(key);
           return !lastRead || new Date(thread.last_at) > new Date(lastRead);
         });
         setChatUnread(hasUnread);

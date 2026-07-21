@@ -9,6 +9,7 @@ import InventoryColumnPicker from './InventoryColumnPicker';
 const ImportItemsModal = lazy(() => import('./ImportItemsModal'));
 
 import { silentError } from '../../errorReporter';
+import { safeLocal } from '../../utils/safeStorage';
 const DEFAULT_UNITS = ['each', 'box', 'bag', 'bundle', 'pallet', 'lb', 'kg', 'ft', 'm', 'sq ft', 'gal', 'L', 'roll', 'sheet', 'piece', 'other'];
 // Maps known internal unit VALUES to their translation key (prefix `invit`). Custom/unknown units render as-is.
 const UNIT_LABELS = {
@@ -38,7 +39,7 @@ const DEFAULT_ITEM_COLUMNS = {
 
 function readJsonPref(key, fallback) {
   try {
-    return { ...fallback, ...(JSON.parse(localStorage.getItem(key) || '{}') || {}) };
+    return { ...fallback, ...(JSON.parse(safeLocal.getItem(key) || '{}') || {}) };
   } catch {
     return fallback;
   }
@@ -46,7 +47,7 @@ function readJsonPref(key, fallback) {
 
 function readNumberPref(key, fallback, allowed) {
   try {
-    const value = parseInt(localStorage.getItem(key), 10);
+    const value = parseInt(safeLocal.getItem(key), 10);
     return allowed.includes(value) ? value : fallback;
   } catch {
     return fallback;
@@ -417,7 +418,7 @@ export default function InventoryItems({ onItemChange }) {
   const [exportingCsv, setExportingCsv] = useState(false);
   const [mobileView, setMobileView] = useState(() => {
     try {
-      return localStorage.getItem('inventory_items_mobile_view') === 'list' ? 'list' : 'card';
+      return safeLocal.getItem('inventory_items_mobile_view') === 'list' ? 'list' : 'card';
     } catch {
       return 'card';
     }
@@ -457,7 +458,7 @@ export default function InventoryItems({ onItemChange }) {
 
   useEffect(() => {
     try {
-      localStorage.setItem('inventory_items_mobile_view', mobileView);
+      safeLocal.setItem('inventory_items_mobile_view', mobileView);
     } catch {
       // Storage is best-effort only.
     }
@@ -465,7 +466,7 @@ export default function InventoryItems({ onItemChange }) {
 
   useEffect(() => {
     try {
-      localStorage.setItem(ITEM_PAGE_SIZE_PREF_KEY, String(pageSize));
+      safeLocal.setItem(ITEM_PAGE_SIZE_PREF_KEY, String(pageSize));
     } catch {
       // Storage is best-effort only.
     }
@@ -473,7 +474,7 @@ export default function InventoryItems({ onItemChange }) {
 
   useEffect(() => {
     try {
-      localStorage.setItem(ITEM_COLUMN_PREF_KEY, JSON.stringify(selectedColumns));
+      safeLocal.setItem(ITEM_COLUMN_PREF_KEY, JSON.stringify(selectedColumns));
     } catch {
       // Storage is best-effort only.
     }

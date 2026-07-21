@@ -10,6 +10,7 @@ import { createStore, randId, hashBytes } from '../shared/engine-store.js?v=1';
 import { openDoc, bytesToBase64, base64ToBytes, defaultRenderScale } from '../shared/engine-doc.js?v=1';
 import { createModals, esc, fmt, money } from '../shared/engine-ui.js?v=1';
 import { distToPolyline, pointSegDist, simplifyPts, polyLengthFt, polygonAreaFt2, polygonPerimeterFt, pointInPolygon, dist, alignApply } from '../shared/engine-measure.js?v=1';
+import polygonClipping from '../shared/polygon-clipping.js?v=1';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '../shared/pdf.worker.min.js';
 
@@ -754,6 +755,12 @@ let draftDrag = null; // dragging an already-placed draft vertex {i, ptr, prev, 
 let calibPts = null;  // [firstPoint] while calibrating
 let hoverW = null;    // cursor world pos while drafting (rubber band)
 let previewing = false; // true while drawMarkup renders the in-progress draft
+let editOp = 'move';  // active edit-points operation while a reshapeable shape is selected: move|add|remove|cut|join
+let editMode = 'points'; // how the Select tool edits a reshapeable shape: points | box | circle (marquee)
+let editRegionOp = 'delpoints'; // what a Box/Circle marquee does: delpoints | delarea
+let _editbarOn = null; // cache so refreshEditbar only writes the DOM when it changes
+let joinPick = null;  // {id, vi} — the first endpoint picked in Join mode, between the two clicks
+let circleCenter = null; // world point after the first click of a Circle marquee (awaiting the radius click)
 
 const centroid = pts => ({
   x: pts.reduce((a, p) => a + p.x, 0) / pts.length,
@@ -764,6 +771,34 @@ const curColor = () => els.mkColor.value;
 const curWidth = () => LINE_W[els.mkWidth.value] || LINE_W.M;
 const curFont = () => FONT_S[els.mkWidth.value] || FONT_S.M;
 const selMarkup = () => state.markups.find(m => m.id === selectedId) || null;
+
+// "Edit mode" = the Select tool with a reshapeable markup selected. Drives the
+// visibility of the Edit-points toolbar. refreshEditbar() is called from the
+// render loop and only touches the DOM when the state flips.
+function editModeActive() { return tool === 'select' && !!selectedId && canReshape(selMarkup()); }
+function refreshEditbar() {
+  const on = editModeActive();
+  if (on === _editbarOn) return;
+  _editbarOn = on;
+  if (on) { setEditMode('points'); setEditOp('move'); } // (re)entering edit mode always starts at Points / Move
+  document.body.classList.toggle('pr-editing', on);
+}
+function setEditOp(op) {
+  editOp = op;
+  joinPick = null; // any pending Join pick is abandoned when the op changes
+  const sel = document.getElementById('prEditOp');
+  if (sel && sel.value !== op) sel.value = op;
+}
+function setEditMode(mode) {
+  editMode = mode;
+  circleCenter = null; joinPick = null; hoverW = null;
+  document.body.classList.toggle('pr-region', mode !== 'points');
+  const sel = document.getElementById('prEditMode');
+  if (sel && sel.value !== mode) sel.value = mode;
+  // a marquee mode wants a crosshair; point editing keeps the arrow
+  els.cv.classList.toggle('crosshair', tool === 'select' && mode !== 'points');
+  vp.requestDraw();
+}
 
 /* ============================== Undo / redo ============================== */
 
@@ -1284,6 +1319,7 @@ function handlePoints(ctx, m) {
   }
   if (m.kind === 'callout') return [m.pts[1]]; // move the leader target
   if (VERTEX_NONEDIT.has(m.kind)) return [];
+  if (hasHoles(m)) return [m.outer, ...m.holes].flat(); // handles on the real outer + hole rings, not the keyhole
   return m.pts; // per-vertex handles: line/arrow endpoints + every polyline/polygon point
 }
 
@@ -1307,6 +1343,18 @@ function drawSelection(ctx, m) {
     ctx.beginPath(); ctx.arc(p.x, p.y, 1.7 / z, 0, Math.PI * 2);
     ctx.fillStyle = '#4da3ff'; ctx.fill();
   }
+  ctx.restore();
+}
+
+// Green ring on the first endpoint picked in Join mode (world coords; drawn
+// inside the page transform, before ctx.restore()).
+function drawJoinPick(ctx) {
+  const m = state.markups.find(x => x.id === joinPick.id);
+  if (!m || m.page !== state.page || !m.pts || !m.pts[joinPick.vi]) return;
+  const p = m.pts[joinPick.vi], z = vp.view.zoom;
+  ctx.save();
+  ctx.beginPath(); ctx.arc(p.x, p.y, 8 / z, 0, Math.PI * 2);
+  ctx.lineWidth = 2.4 / z; ctx.strokeStyle = '#22c55e'; ctx.stroke();
   ctx.restore();
 }
 
@@ -1511,7 +1559,10 @@ function paint(ctx) {
   drawAlignDraft(ctx);
   const sel = selMarkup();
   if (sel && sel.page === state.page) drawSelection(ctx, sel);
+  if (joinPick) drawJoinPick(ctx);
+  if ((drag && drag.mode === 'marquee-box') || circleCenter) drawMarquee(ctx);
   ctx.restore();
+  refreshEditbar();  // show/hide the Edit-points toolbar to match the selection
   updateNavPads(); // DOM overlay, not canvas — safe after restore; runs each paint
 }
 
@@ -1889,6 +1940,7 @@ function setTool(t) {
   cancelDraft();
   if (alignDraft && t !== 'align') alignDraft = null; // keep any applied shift; drop the in-progress pair
   drag = null;
+  joinPick = null; circleCenter = null; // abandon any half-finished Join / Circle marquee when switching tools
   document.querySelectorAll('.tool').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
   syncToolGroups(); // reflect the active tool on the dirt-trade group faces
   els.cv.classList.toggle('crosshair', t !== 'pan' && t !== 'select');
@@ -1993,6 +2045,14 @@ function setTool(t) {
   vp.requestDraw(); // the scale bar (and any tool-dependent overlay) shows/hides on tool change
 }
 document.querySelectorAll('.tool').forEach(b => b.addEventListener('click', () => { closeToolFlyouts(); setTool(b.dataset.tool); }));
+{
+  const prEditOpSel = document.getElementById('prEditOp');
+  if (prEditOpSel) prEditOpSel.addEventListener('change', () => setEditOp(prEditOpSel.value));
+  const prEditModeSel = document.getElementById('prEditMode');
+  if (prEditModeSel) prEditModeSel.addEventListener('change', () => setEditMode(prEditModeSel.value));
+  const prEditRegionSel = document.getElementById('prEditRegionOp');
+  if (prEditRegionSel) prEditRegionSel.addEventListener('change', () => { editRegionOp = prEditRegionSel.value; });
+}
 
 /* ---- Tool-group flyouts (dirt trade) — mirrors the sitework tool ---- */
 function toolGroupOf(t) { for (const g in TOOL_GROUPS) if (TOOL_GROUPS[g].includes(t)) return g; return null; }
@@ -2177,21 +2237,44 @@ els.cv.addEventListener('pointerdown', e => {
   if (tool === 'select') {
     const ctx = vp.ctx;
     const sel = selMarkup();
+    // Box / Circle marquee edit modes act on the selected reshapeable shape.
+    if (editMode !== 'points' && sel && sel.page === state.page && canReshape(sel)) {
+      if (editMode === 'box') { undoCapture = null; drag = { mode: 'marquee-box', ptr: e.pointerId, from: w, cur: w, moved: false }; vp.requestDraw(); return; }
+      if (editMode === 'circle') { handleCircleClick(sel, w); return; }
+    }
     if (sel && sel.page === state.page) {
       const hi = hitHandle(ctx, sel, w);
       // Alt-click reshapes the vertex set: on a point → remove it; on an edge →
       // add one; Shift+Alt-click a segment → cut the line there (split in two).
       if (e.altKey && canReshape(sel)) {
-        if (hi >= 0) { deleteVertexAt(sel, hi); return; }
-        const edge = nearestEdge(sel, w, Math.max(8 / vp.view.zoom, 4));
-        if (edge) {
-          if (e.shiftKey) {
+        if (hi >= 0) { deleteHandle(sel, hi); return; }
+        const tol = Math.max(8 / vp.view.zoom, 4);
+        if (e.shiftKey) {
+          const edge = nearestEdge(sel, w, tol);
+          if (edge) {
             if (isOpenPoly(sel)) cutAtEdge(sel, edge.i);
             else setMsg('Cutting works on open lines (contours), not closed shapes.');
-          } else {
-            insertVertexAt(sel, edge);
+            return;
           }
+        } else if (insertHandle(sel, w, tol)) {
           return;
+        }
+      }
+      // Explicit edit-mode ops (Edit-points dropdown) — the click-free equivalent
+      // of the Alt-click shortcuts above. Only when reshapeable and no modifier is
+      // held; a click that hits nothing falls through to Move / reselect below.
+      if (canReshape(sel) && !e.altKey) {
+        const tol = Math.max(8 / vp.view.zoom, 4);
+        if (editOp === 'join') { if (handleJoin(sel, w)) return; }
+        if (editOp === 'remove' && hi >= 0) { deleteHandle(sel, hi); return; }
+        if (editOp === 'add') { if (insertHandle(sel, w, tol)) return; }
+        if (editOp === 'cut') {
+          const edge = nearestEdge(sel, w, tol);
+          if (edge) {
+            if (isOpenPoly(sel)) cutAtEdge(sel, edge.i);
+            else setMsg('Cutting works on open lines (contours), not closed shapes.');
+            return;
+          }
         }
       }
       if (hi >= 0) {
@@ -2202,6 +2285,7 @@ els.cv.addEventListener('pointerdown', e => {
     }
     const hit = hitMarkup(ctx, w);
     if (hit) {
+      if (hit.id !== selectedId) setEditOp('move'); // a fresh selection starts in Move (no surprise deletes)
       selectedId = hit.id;
       undoCapture = snapshot();
       drag = { mode: 'move', ptr: e.pointerId, id: hit.id, from: w, orig: JSON.parse(JSON.stringify(hit.pts)), moved: false };
@@ -2247,7 +2331,18 @@ els.cv.addEventListener('pointermove', e => {
     hoverW = vp.screenToWorld(sp.x, sp.y);
     vp.requestDraw();
   }
+  if (circleCenter && !drag) { // preview the Circle marquee radius between its two clicks
+    const sp = screenPt(e);
+    hoverW = vp.screenToWorld(sp.x, sp.y);
+    vp.requestDraw();
+  }
   if (!drag || e.pointerId !== drag.ptr) return;
+  if (drag.mode === 'marquee-box') {
+    const sp2 = screenPt(e);
+    drag.cur = vp.screenToWorld(sp2.x, sp2.y);
+    vp.requestDraw();
+    return;
+  }
   const s = screenPt(e);
   const w = vp.screenToWorld(s.x, s.y);
   if (drag.mode === 'scalebar') {
@@ -2298,6 +2393,9 @@ els.cv.addEventListener('pointermove', e => {
       m.pts = [opposite, { x: w.x, y: w.y }];
     } else if (m.kind === 'callout') {
       m.pts[1] = { x: w.x, y: w.y };
+    } else if (hasHoles(m)) {
+      const ref = handleRef(m, drag.hi); // drag an outer / hole vertex, then rebuild the keyhole
+      if (ref) { ref.ring[ref.vi] = { x: w.x, y: w.y }; m.pts = buildKeyhole(m.outer, m.holes); }
     } else if (m.pts[drag.hi]) {
       m.pts[drag.hi] = { x: w.x, y: w.y }; // move a single vertex (line/arrow + any polyline/polygon)
     }
@@ -2309,6 +2407,7 @@ function endDrag(e) {
   if (draftDrag && e.pointerId === draftDrag.ptr) { // finished repositioning a draft vertex
     const dd = draftDrag; draftDrag = null;
     if (dd.moved && draft) draftRecord(dd.prev); // one undo step for the whole move
+    else if (draft) tryDraftJoin(dd.i);          // a click (no drag) on a vertex → close the shape to it
     vp.requestDraw();
     return;
   }
@@ -2316,6 +2415,15 @@ function endDrag(e) {
   const d = drag;
   drag = null;
   els.cv.classList.remove('grabbing');
+
+  if (d.mode === 'marquee-box') {
+    const m = selMarkup();
+    // require a real drag, not a click: the box must span a few screen pixels
+    const spanPx = Math.max(Math.abs(d.cur.x - d.from.x), Math.abs(d.cur.y - d.from.y)) * vp.view.zoom;
+    if (m && spanPx >= 3) applyRegionOp(m, boxRegion(d.from, d.cur));
+    vp.requestDraw();
+    return;
+  }
 
   if (d.mode === 'pan') {
     // a click on empty space (no pan movement) clears the selection; a real pan keeps it
@@ -2349,6 +2457,14 @@ function endDrag(e) {
   if ((d.mode === 'move' || d.mode === 'handle') && d.moved) {
     const m = selMarkup();
     if (m) { m.modified = Date.now(); invalidateForKind(m); }
+    // A holed area was dragged as its keyhole m.pts — carry m.outer/m.holes the
+    // same delta so the metadata (perimeter, future holes) stays in sync.
+    if (m && d.mode === 'move' && hasHoles(m) && d.orig && d.orig[0] && m.pts[0]) {
+      const dx = m.pts[0].x - d.orig[0].x, dy = m.pts[0].y - d.orig[0].y;
+      const shift = ring => ring.map(p => ({ x: p.x + dx, y: p.y + dy }));
+      m.outer = shift(m.outer); m.holes = m.holes.map(shift);
+      m.pts = buildKeyhole(m.outer, m.holes);
+    }
     pushUndo(undoCapture); undoCapture = null;
     markupsChanged();
   } else {
@@ -2417,6 +2533,303 @@ function cutAtEdge(m, i) {
   setMsg(clones.length === 2 ? 'Line cut in two — select and delete the piece you don’t want.'
     : clones.length === 1 ? 'Line cut — the stray single point was dropped.'
     : 'Line removed — nothing long enough was left.');
+}
+
+// ---- Join: weld two open-line endpoints (two-click). Merges two separate lines
+// into one, or closes a single line's two ends into a loop. `joinPick` holds the
+// first-picked end between the two clicks. Returns true when the click was
+// consumed (so the caller doesn't also select/pan); false lets it fall through.
+const endpointsOf = m => { const n = m.pts.length; return [[0, m.pts[0]], [n - 1, m.pts[n - 1]]]; };
+function selEndpointNear(m, w, tol) {
+  let best = -1, bd = tol;
+  for (const [vi, p] of endpointsOf(m)) { const d = Math.hypot(w.x - p.x, w.y - p.y); if (d <= bd) { bd = d; best = vi; } }
+  return best;
+}
+function endpointNear(w, tol) {
+  let best = null;
+  for (const m of state.markups) {
+    if (m.page !== state.page || !isOpenPoly(m) || !markupShown(m)) continue;
+    for (const [vi, p] of endpointsOf(m)) {
+      const d = Math.hypot(w.x - p.x, w.y - p.y);
+      if (d <= tol && (!best || d < best.d)) best = { m, vi, d };
+    }
+  }
+  return best;
+}
+function handleJoin(sel, w) {
+  if (!isOpenPoly(sel)) { setMsg('Join connects open lines (contours), not closed shapes.'); return true; }
+  const tol = Math.max(11 / vp.view.zoom, 7);
+  if (!joinPick) {
+    const vi = selEndpointNear(sel, w, tol);
+    if (vi < 0) return false; // not on a loose end → let the click select / pan
+    joinPick = { id: sel.id, vi };
+    setMsg('Join: click another loose end — this line’s other end to close it, or another line of the same type to merge.');
+    vp.requestDraw();
+    return true;
+  }
+  const target = endpointNear(w, tol);
+  if (!target) { joinPick = null; setMsg('Join canceled — pick a loose end to try again.'); vp.requestDraw(); return true; }
+  const a = state.markups.find(m => m.id === joinPick.id);
+  if (!a) { joinPick = null; return true; }
+  const b = target.m, aVi = joinPick.vi, bVi = target.vi;
+  if (a.id === b.id && aVi === bVi) { setMsg('Join: pick the other end.'); return true; }
+  if (a.kind !== b.kind) { setMsg('Join: the two lines must be the same type.'); return true; }
+  const prev = snapshot();
+  if (a.id === b.id) {
+    if (a.pts.length < 3) { setMsg('Join: a loop needs at least 3 points.'); joinPick = null; return true; }
+    a.pts.push({ x: a.pts[0].x, y: a.pts[0].y }); // close the loop with a real closing segment
+  } else {
+    const aPts = aVi === 0 ? a.pts.slice().reverse() : a.pts.slice(); // picked end becomes last
+    const bPts = bVi === 0 ? b.pts.slice() : b.pts.slice().reverse(); // picked end becomes first
+    a.pts = aPts.concat(bPts);
+    const bi = state.markups.indexOf(b); if (bi >= 0) state.markups.splice(bi, 1);
+  }
+  a.modified = Date.now(); invalidateForKind(a);
+  selectedId = a.id; joinPick = null;
+  pushUndo(prev); markupsChanged(); setMsg('Joined.'); vp.requestDraw();
+  return true;
+}
+
+// ---- Holes (keyhole model) ----------------------------------------------------
+// A holed area keeps the outer ring in m.outer and hole rings in m.holes; m.pts is
+// the derived "keyhole" ring (outer + a zero-width bridge into each hole, wound
+// opposite) that every existing consumer already reads — so area (shoelace nets
+// out), fill (nonzero winding), hit-test and earthwork all stay correct with no
+// engine changes. Plain areas carry neither field and m.pts is just the ring.
+const hasHoles = m => Array.isArray(m.holes) && m.holes.length > 0;
+function ringSignedArea(poly) {
+  let a = 0;
+  for (let i = 0, n = poly.length; i < n; i++) { const j = (i + 1) % n; a += poly[i].x * poly[j].y - poly[j].x * poly[i].y; }
+  return a / 2;
+}
+// return `ring` wound OPPOSITE to `outer` (required for the hole to subtract)
+function orientOpposite(ring, outer) {
+  return Math.sign(ringSignedArea(ring)) === Math.sign(ringSignedArea(outer)) ? ring.slice().reverse() : ring.slice();
+}
+// Stitch outer + each hole into one self-touching ring via the nearest vertex pair.
+function buildKeyhole(outer, holes) {
+  let ring = outer.slice();
+  for (const hole of (holes || [])) {
+    let bi = 0, bj = 0, bd = Infinity;
+    for (let i = 0; i < ring.length; i++) for (let j = 0; j < hole.length; j++) {
+      const d = Math.hypot(ring[i].x - hole[j].x, ring[i].y - hole[j].y);
+      if (d < bd) { bd = d; bi = i; bj = j; }
+    }
+    // after outer vertex bi: enter the hole at bj, traverse it, close back to bj,
+    // bridge back to bi, then resume the outer ring.
+    const loop = hole.slice(bj).concat(hole.slice(0, bj));
+    loop.push({ x: hole[bj].x, y: hole[bj].y }, { x: ring[bi].x, y: ring[bi].y });
+    ring = ring.slice(0, bi + 1).concat(loop, ring.slice(bi + 1));
+  }
+  return ring;
+}
+// Perimeter that skips the zero-width bridges: outer + each hole ring on its own.
+function areaPerimeterFt(m) {
+  const s = state.scales[m.page] || 0;
+  if (hasHoles(m)) return [m.outer, ...m.holes].reduce((sum, r) => sum + polygonPerimeterFt(r, s), 0);
+  return polygonPerimeterFt(m.pts, s);
+}
+// The rings a user actually edits: the outer + each hole for a holed area, else the
+// single ring. Handle indices (from handlePoints) map back through handleRef.
+const editRings = m => hasHoles(m) ? [m.outer, ...m.holes] : [m.pts];
+function handleRef(m, i) {
+  for (const ring of editRings(m)) { if (i < ring.length) return { ring, vi: i, isHole: ring !== m.outer && ring !== m.pts }; i -= ring.length; }
+  return null;
+}
+function nearestEdgeInRings(m, w, tol) {
+  let best = null;
+  for (const ring of editRings(m)) {
+    const n = ring.length;
+    for (let i = 0; i < n; i++) {
+      const pr = projOnSeg(ring[i], ring[(i + 1) % n], w);
+      if (pr.d <= tol && (!best || pr.d < best.d)) best = { ring, i, p: { x: pr.x, y: pr.y }, d: pr.d };
+    }
+  }
+  return best;
+}
+// Add / remove a vertex on the correct ring, then rebuild the keyhole. Both fall
+// back to the plain-ring primitives when the shape has no holes.
+function insertHandle(m, w, tol) {
+  if (!hasHoles(m)) { const e = nearestEdge(m, w, tol); if (e) { insertVertexAt(m, e); return true; } return false; }
+  const e = nearestEdgeInRings(m, w, tol); if (!e) return false;
+  const prev = snapshot();
+  e.ring.splice(e.i + 1, 0, e.p);
+  m.pts = buildKeyhole(m.outer, m.holes); m.modified = Date.now(); invalidateForKind(m);
+  pushUndo(prev); markupsChanged(); setMsg('Point added.');
+  return true;
+}
+function deleteHandle(m, hi) {
+  if (!hasHoles(m)) { deleteVertexAt(m, hi); return; }
+  const ref = handleRef(m, hi); if (!ref) return;
+  const prev = snapshot();
+  if (!ref.isHole) {
+    if (m.outer.length <= 3) { setMsg('The outline needs at least 3 points.'); return; }
+    m.outer.splice(ref.vi, 1);
+  } else if (ref.ring.length <= 3) {
+    m.holes = m.holes.filter(h => h !== ref.ring); // last removable vertex → drop the whole hole
+  } else {
+    ref.ring.splice(ref.vi, 1);
+  }
+  m.pts = buildKeyhole(m.outer, m.holes);
+  const droppedHole = !hasHoles(m); // the last hole just collapsed
+  normalizeHoles(m);
+  m.modified = Date.now(); invalidateForKind(m);
+  pushUndo(prev); markupsChanged(); setMsg(droppedHole ? 'Hole removed.' : 'Point removed.');
+}
+
+// ---- Box / Circle marquee regions. A region is { test(point)->bool, poly } so it
+// can both catch vertices (Delete Points) and cut a hole (Delete Area).
+function boxRegion(a, b) {
+  const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+  return {
+    test: p => p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1,
+    poly: [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }],
+  };
+}
+function circleRegion(c, r, seg = 16) {
+  const poly = [];
+  for (let i = 0; i < seg; i++) { const a = (i / seg) * Math.PI * 2; poly.push({ x: c.x + r * Math.cos(a), y: c.y + r * Math.sin(a) }); }
+  return { test: p => Math.hypot(p.x - c.x, p.y - c.y) <= r, poly };
+}
+// Circle marquee: first click sets the center, second sets the radius.
+function handleCircleClick(sel, w) {
+  if (!circleCenter) {
+    circleCenter = { x: w.x, y: w.y }; hoverW = { x: w.x, y: w.y };
+    setMsg('Circle: click again to set the radius.'); vp.requestDraw(); return;
+  }
+  const c = circleCenter, r = Math.hypot(w.x - c.x, w.y - c.y);
+  circleCenter = null; hoverW = null;
+  if (r < 1e-6) { setMsg('Circle canceled.'); vp.requestDraw(); return; }
+  applyRegionOp(sel, circleRegion(c, r));
+  vp.requestDraw();
+}
+// Delete Area: cut the region out of a closed area as a keyhole hole. v1 requires
+// the region to sit fully inside the outer ring (edge-crossing notches come later).
+// When the last hole is gone, drop the metadata so the shape is a plain ring again
+// (and a later hole cut reads the current outline, not a stale m.outer).
+function normalizeHoles(m) { if (m.holes && m.holes.length === 0) { delete m.holes; delete m.outer; } }
+// Markup/region → polygon-clipping geometry (Polygon = [outerRing, ...holeRings],
+// each ring a closed array of [x,y]). Input winding doesn't matter to the library.
+const ringXY = r => { const a = r.map(p => [p.x, p.y]); if (a.length) a.push([r[0].x, r[0].y]); return a; };
+const markupPolygon = m => hasHoles(m) ? [ringXY(m.outer), ...m.holes.map(ringXY)] : [ringXY(m.pts)];
+function ringToPts(ring) {
+  const pts = ring.map(c => ({ x: c[0], y: c[1] }));
+  if (pts.length > 1) { const f = pts[0], l = pts[pts.length - 1]; if (f.x === l.x && f.y === l.y) pts.pop(); }
+  return pts;
+}
+const ringAreaPx = r => Math.abs(ringSignedArea(r));
+const markupNetPx = m => hasHoles(m) ? ringAreaPx(m.outer) - m.holes.reduce((s, h) => s + ringAreaPx(h), 0) : ringAreaPx(m.pts);
+// Write one result polygon ([outerPts, ...holePts]) onto a markup, keeping m.pts as
+// the single keyhole ring every consumer reads.
+function setMarkupGeom(target, poly) {
+  const outer = poly[0], holes = poly.slice(1);
+  if (holes.length) { target.outer = outer; target.holes = holes.map(h => orientOpposite(h, outer)); target.pts = buildKeyhole(target.outer, target.holes); }
+  else { delete target.outer; delete target.holes; target.pts = outer; }
+  target.modified = Date.now();
+}
+// Delete Area: subtract the Box/Circle region from a closed area via a robust
+// polygon difference. Handles hole (region inside), notch (region crossing the
+// edge), split (region slicing across → multiple pieces) and full removal alike.
+function cutHole(m, region) {
+  if (!CLOSED_KINDS.includes(m.kind)) { setMsg('Delete Area cuts from a closed area — not available on this shape.'); return; }
+  let result;
+  try { result = polygonClipping.difference(markupPolygon(m), [ringXY(region.poly)]); }
+  catch (err) { setMsg('Couldn’t compute that cut — try a different box / circle.'); return; }
+  const polys = (result || [])
+    .map(poly => poly.map(ringToPts).filter(r => r.length >= 3))
+    .filter(poly => poly.length && poly[0].length >= 3);
+  const before = markupNetPx(m);
+  const after = polys.reduce((s, poly) => s + ringAreaPx(poly[0]) - poly.slice(1).reduce((h, r) => h + ringAreaPx(r), 0), 0);
+  if (polys.length && before - after < 1) { setMsg('The Box / Circle didn’t overlap this area.'); return; }
+  const prev = snapshot();
+  if (polys.length === 0) {
+    const idx = state.markups.indexOf(m); if (idx >= 0) state.markups.splice(idx, 1);
+    if (selectedId === m.id) selectedId = null;
+    invalidateForKind(m); pushUndo(prev); markupsChanged(); setMsg('The whole area was removed.'); vp.requestDraw(); return;
+  }
+  setMarkupGeom(m, polys[0]);
+  const clones = [];
+  for (let i = 1; i < polys.length; i++) {
+    const c = { ...JSON.parse(JSON.stringify(m)), id: randId(), created: Date.now() };
+    delete c.outer; delete c.holes;
+    setMarkupGeom(c, polys[i]);
+    clones.push(c);
+  }
+  if (clones.length) { const idx = state.markups.indexOf(m); state.markups.splice(idx + 1, 0, ...clones); }
+  invalidateForKind(m);
+  pushUndo(prev); markupsChanged();
+  const s = state.scales[m.page] || 0;
+  const totalSf = s ? [m, ...clones].reduce((sum, x) => sum + polygonAreaFt2(x.pts, s), 0) : 0;
+  setMsg(clones.length ? `Cut — area split into ${clones.length + 1} pieces${s ? ` (${fmt(totalSf, 0)} SF total)` : ''}.`
+    : (s ? `Cut — area now ${fmt(polygonAreaFt2(m.pts, s), 0)} SF.` : 'Cut.'));
+  vp.requestDraw();
+}
+function applyRegionOp(m, region) {
+  if (editRegionOp === 'delarea') { cutHole(m, region); return; }
+  const delWholeShape = () => {
+    const prev = snapshot();
+    const idx = state.markups.indexOf(m);
+    if (idx >= 0) state.markups.splice(idx, 1);
+    if (selectedId === m.id) selectedId = null;
+    invalidateForKind(m);
+    pushUndo(prev); markupsChanged(); setMsg('Whole shape was inside the selection — deleted.');
+  };
+  if (hasHoles(m)) {
+    const outer = m.outer.filter(p => !region.test(p));
+    if (outer.length < 3) { delWholeShape(); return; }
+    const holes = m.holes.map(h => h.filter(p => !region.test(p))).filter(h => h.length >= 3);
+    const removed = (m.outer.length - outer.length)
+      + (m.holes.reduce((s, h) => s + h.length, 0) - holes.reduce((s, h) => s + h.length, 0));
+    if (removed === 0) { setMsg('No points fell inside the selection.'); return; }
+    const prev = snapshot();
+    m.outer = outer; m.holes = holes; m.pts = buildKeyhole(m.outer, m.holes);
+    normalizeHoles(m);
+    m.modified = Date.now(); invalidateForKind(m);
+    pushUndo(prev); markupsChanged(); setMsg(`Removed ${removed} point${removed === 1 ? '' : 's'}.`);
+    return;
+  }
+  const keep = m.pts.filter(p => !region.test(p));
+  const removed = m.pts.length - keep.length;
+  if (removed === 0) { setMsg('No points fell inside the selection.'); return; }
+  if (keep.length >= minPtsFor(m)) {
+    const prev = snapshot();
+    m.pts = keep; m.modified = Date.now(); invalidateForKind(m);
+    pushUndo(prev); markupsChanged(); setMsg(`Removed ${removed} point${removed === 1 ? '' : 's'}.`);
+  } else {
+    delWholeShape();
+  }
+}
+// Marquee overlay (world coords; drawn inside the page transform).
+function drawMarquee(ctx) {
+  const z = vp.view.zoom;
+  ctx.save();
+  ctx.strokeStyle = '#4da3ff'; ctx.setLineDash([5 / z, 4 / z]); ctx.lineWidth = 1.4 / z;
+  ctx.fillStyle = 'rgba(77,163,255,.10)';
+  if (drag && drag.mode === 'marquee-box') {
+    const a = drag.from, b = drag.cur;
+    ctx.beginPath();
+    ctx.rect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+    ctx.fill(); ctx.stroke();
+  } else if (circleCenter && hoverW) {
+    const r = Math.hypot(hoverW.x - circleCenter.x, hoverW.y - circleCenter.y);
+    ctx.beginPath(); ctx.arc(circleCenter.x, circleCenter.y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// Draw-time Join: a click (not a drag) on an earlier vertex of the live trace —
+// not the start, the current end, or the point adjacent to the end — closes the
+// shape with an edge to that vertex, keeping every point placed so far, then
+// finishes. (Reposition still works: press-drag a vertex instead of clicking it.)
+function tryDraftJoin(k) {
+  if (!draft || POINT_KINDS.includes(draft.kind)) return;
+  const last = draft.pts.length - 1;
+  if (last < 3) return;                 // need enough points to make a loop
+  if (k <= 0 || k >= last - 1) return;  // exclude the start, the end, and the point next to the end
+  const prev = JSON.stringify(draft.pts);
+  draft.pts.push({ x: draft.pts[k].x, y: draft.pts[k].y }); // closing edge to the clicked vertex
+  draftRecord(prev);
+  commitDraft();
 }
 
 function commitDraft() {
@@ -2551,7 +2964,7 @@ els.cv.addEventListener('dblclick', e => {
     selectedId = hit.id;
     vp.requestDraw();
     const s = state.scales[hit.page] || 0;
-    askAreaConfig(polygonAreaFt2(hit.pts, s), polygonPerimeterFt(hit.pts, s), hit.cfg).then(cfg => {
+    askAreaConfig(polygonAreaFt2(hit.pts, s), areaPerimeterFt(hit), hit.cfg).then(cfg => {
       if (!cfg) return;
       const prev = snapshot();
       hit.cfg = cfg;
@@ -3670,7 +4083,7 @@ function reconfigureTakeoff(m) {
   selectedId = m.id; vp.requestDraw();
   const s = state.scales[m.page] || 0;
   const apply = cfg => { if (!cfg) return; const prev = snapshot(); m.cfg = cfg; pushUndo(prev); markupsChanged(); };
-  if (m.kind === 'qarea') askAreaConfig(polygonAreaFt2(m.pts, s), polygonPerimeterFt(m.pts, s), m.cfg).then(cfg => { if (cfg) lastAreaCfg = cfg; apply(cfg); });
+  if (m.kind === 'qarea') askAreaConfig(polygonAreaFt2(m.pts, s), areaPerimeterFt(m), m.cfg).then(cfg => { if (cfg) lastAreaCfg = cfg; apply(cfg); });
   else if (m.kind === 'qline') askLineConfig(polyLengthFt(m.pts, s), m.cfg).then(cfg => { if (cfg) { lastLineCfg = cfg; lastLineColor = cfg.color; } apply(cfg); });
   else if (m.kind === 'qcount') askCountConfig(m.pts.length, m.cfg).then(cfg => { if (cfg) lastCountCfg = cfg; apply(cfg); });
 }
@@ -3915,6 +4328,14 @@ if ($('btnThumbsClose')) $('btnThumbsClose').addEventListener('click', () => doc
 if ($('btnThumbsOpen')) $('btnThumbsOpen').addEventListener('click', () => document.body.classList.remove('nothumbs'));
 
 document.addEventListener('keydown', e => {
+  // Undo / redo FIRST, so an open Projects / Company / Bid panel can't swallow the
+  // shortcut. Only a modal dialog (mid-edit) or typing in a field suppresses it.
+  const typing = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable);
+  if (!typing && (e.ctrlKey || e.metaKey) && !modals.isOpen()) {
+    const k = e.key.toLowerCase();
+    if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
+    if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); return; }
+  }
   const companyOpen = !$('company').classList.contains('hidden');
   const bidOpen = !$('roofBid').classList.contains('hidden');
   if (modals.isOpen() || companyOpen || bidOpen || !els.projects.classList.contains('hidden')) {
@@ -3926,8 +4347,6 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
-  if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
   if (e.key === 'Enter' && alignDraft) { // accept the shift-only alignment
     e.preventDefault();
     alignDraft = null;
@@ -5047,7 +5466,7 @@ function askAreaConfig(areaSf, perimFt, prefill) {
 
 // live area/perimeter (feet) for a stored qarea markup, from its sheet's scale
 const qareaSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0);
-const qareaPerimFt = m => polygonPerimeterFt(m.pts, state.scales[m.page] || 0);
+const qareaPerimFt = m => areaPerimeterFt(m); // holes-aware: outer + hole rings, no bridge double-count
 
 // Side-menu subtotals: roll up a takeoff group by material/type. Areas net out
 // deducts within the same material+unit; lines sum length (+trench CY); counts
@@ -5607,7 +6026,7 @@ function drywallTotals() {
     else if (m.kind === 'dceiling') {
       const ct = (m.cfg && m.cfg.ctype) || 'drywall';
       const sf = dceilingSf(m);
-      if (act[ct]) { act[ct].sf += sf; act[ct].perim += polygonPerimeterFt(m.pts, state.scales[m.page] || 0); }
+      if (act[ct]) { act[ct].sf += sf; act[ct].perim += areaPerimeterFt(m); }
       else ceilSF += sf; // drywall ceiling
     }
     else if (m.kind === 'dopening') { const c = m.cfg || {}; const n = m.pts.length; openDeductSF += n * (Number(c.deductSF) || 0); if (openCounts[c.otype] != null) openCounts[c.otype] += n; }

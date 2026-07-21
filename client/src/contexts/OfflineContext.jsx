@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, useCallback, useRef } f
 import { useToast } from './ToastContext';
 
 import { silentError } from '../errorReporter';
+import { safeSession, safeLocal } from '../utils/safeStorage';
 export const OfflineContext = createContext(null);
 
 export function OfflineProvider({ children }) {
@@ -52,7 +53,7 @@ export function OfflineProvider({ children }) {
       // reaches the right replay attempt. Reading from sessionStorage first
       // matches api.js so an impersonation tab's token is preferred.
       if (type === 'GET_AUTH' && event.ports && event.ports[0]) {
-        const token = sessionStorage.getItem('tc_token') || localStorage.getItem('tc_token');
+        const token = safeSession.getItem('tc_token') || safeLocal.getItem('tc_token');
         event.ports[0].postMessage({ auth: token ? `Bearer ${token}` : null });
         return;
       }

@@ -18,6 +18,7 @@ import { SubPOsPanel } from './SubsPage';
 import WorkOrdersPanel from '../components/WorkOrdersPanel';
 import { useHasAnyPerm } from '../hooks/usePerm';
 import { labelSg, labelPl } from '../companyLabels';
+import { safeLocal } from '../utils/safeStorage';
 
 function punchColor(status) {
   return { open: '#f59e0b', in_progress: '#3b82f6', resolved: '#059669', closed: '#9ca3af' }[status] || '#9ca3af';
@@ -1981,7 +1982,7 @@ export default function ProjectsPage() {
   const [companyInfo, setCompanyInfo] = useState({});
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [clients, setClients] = useState([]);
-  const [viewMode, setViewMode] = useState(() => localStorage.getItem('opsfloa_projects_view') || 'grid');
+  const [viewMode, setViewMode] = useState(() => safeLocal.getItem('opsfloa_projects_view') || 'grid');
 
   const loadProjects = (archived) => {
     setLoading(true);
@@ -2101,12 +2102,12 @@ export default function ProjectsPage() {
                     <button
                       style={{ ...styles.viewToggleBtn, ...(viewMode === 'grid' ? styles.viewToggleBtnActive : {}) }}
                       title={t.ppGridViewTitle}
-                      onClick={() => { setViewMode('grid'); localStorage.setItem('opsfloa_projects_view', 'grid'); }}
+                      onClick={() => { setViewMode('grid'); safeLocal.setItem('opsfloa_projects_view', 'grid'); }}
                     >⊞</button>
                     <button
                       style={{ ...styles.viewToggleBtn, ...(viewMode === 'list' ? styles.viewToggleBtnActive : {}) }}
                       title={t.ppListViewTitle}
-                      onClick={() => { setViewMode('list'); localStorage.setItem('opsfloa_projects_view', 'list'); }}
+                      onClick={() => { setViewMode('list'); safeLocal.setItem('opsfloa_projects_view', 'list'); }}
                     >☰</button>
                   </div>
                   {!showCreateForm && (

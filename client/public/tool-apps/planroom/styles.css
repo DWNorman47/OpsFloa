@@ -125,6 +125,14 @@ body { display: flex; flex-direction: column; }
 }
 .tool-flyout .tool { text-align: left; width: 100%; }
 .mini-sel { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 4px; font-size: 12px; }
+/* Edit-points toolbar — appears only while a reshapeable markup is selected */
+.pr-editbar { display: none; }
+body.pr-editing .pr-editbar { display: inline-flex; }
+.pr-editlabel { font-size: 12px; font-weight: 600; color: var(--text); opacity: .72; }
+/* In Box / Circle mode the point-op dropdown is swapped for the region-op one */
+.pr-region-op { display: none; }
+body.pr-region .pr-points-op { display: none; }
+body.pr-region .pr-region-op { display: inline-block; }
 /* a trade toolbar button shows active while its side panel is open */
 .btn.active { background: var(--accent); border-color: var(--accent); color: #08243f; font-weight: 700; }
 /* Existing ⇄ Proposed click-toggle — colored by the current surface */

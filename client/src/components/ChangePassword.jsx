@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import api from '../api';
 import PasswordInput from './PasswordInput';
 import { useModalA11y } from '../hooks/useModalA11y';
+import { safeLocal } from '../utils/safeStorage';
 
 export default function ChangePassword({ onClose, t }) {
   const [form, setForm] = useState({ current_password: '', new_password: '', confirm_password: '' });
@@ -29,7 +30,7 @@ export default function ChangePassword({ onClose, t }) {
       // every outstanding token. It returns a fresh one for the current
       // device so the user doesn't get kicked out here.
       if (r.data?.token) {
-        try { localStorage.setItem('tc_token', r.data.token); } catch { /* quota */ }
+        try { safeLocal.setItem('tc_token', r.data.token); } catch { /* quota */ }
       }
       setSuccess(true);
       setTimeout(() => { setSuccess(false); onClose(); }, 1500);

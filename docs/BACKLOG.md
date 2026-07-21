@@ -110,6 +110,12 @@ that holds the exhaustive detail.
   fresh local project each time, so copying the same cloud takeoff twice yields two
   local projects both linked to it. Minor; could reuse the already-linked local
   project instead. (2026-07-11)
+- ~~**Raw `localStorage`/`sessionStorage` still used in feature components.**~~
+  **RESOLVED 2026-07-20.** Swept 72 calls across 23 post-login files onto
+  `safeSession`/`safeLocal`; `debugBundle` reads storage inside its try now. Every
+  remaining raw access is inside an existing try/catch (openTool, pdfError,
+  ErrorBoundary, useFormPersist, the tc_addons effect, api.js bootstrap) — all
+  crash-safe. No unguarded `window.*Storage` access remains in `client/src`.
 
 ## ❓ Open questions / decisions for you
 *Blocked on your call before anyone builds.*
