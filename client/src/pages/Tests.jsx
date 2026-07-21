@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { localDateStr, formatCurrency, currencySymbol, fmtHours, formatInTz } from '../utils';
+import { safeLocal } from '../utils/safeStorage';
 
 // Raw fetch helpers — bypass the axios 401 interceptor which would log the user out
 const BASE = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api';
@@ -7,7 +8,7 @@ const get    = (path, token) => fetch(`${BASE}${path}`, { headers: token ? { Aut
 const post   = (path, body, token) => fetch(`${BASE}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) });
 const patch  = (path, body, token) => fetch(`${BASE}${path}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) });
 const del    = (path, token) => fetch(`${BASE}${path}`, { method: 'DELETE', headers: token ? { Authorization: `Bearer ${token}` } : {} });
-const TOKEN  = () => localStorage.getItem('tc_token');
+const TOKEN  = () => safeLocal.getItem('tc_token');
 
 // ── Assertions ───────────────────────────────────────────────────────────────────
 

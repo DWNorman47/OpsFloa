@@ -6,6 +6,7 @@ import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
 import { langToLocale } from '../utils';
 import { SkeletonList } from './Skeleton';
+import { safeLocal } from '../utils/safeStorage';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -29,13 +30,13 @@ function dayLabel(dateStr, t, locale = 'en-US') {
 }
 
 function getRecentProjects() {
-  try { return JSON.parse(localStorage.getItem('field-recent-projects') || '[]'); } catch { return []; }
+  try { return JSON.parse(safeLocal.getItem('field-recent-projects') || '[]'); } catch { return []; }
 }
 
 function markProjectUsed(id) {
   if (!id) return;
   const recent = getRecentProjects().filter(x => x !== String(id));
-  localStorage.setItem('field-recent-projects', JSON.stringify([String(id), ...recent].slice(0, 30)));
+  safeLocal.setItem('field-recent-projects', JSON.stringify([String(id), ...recent].slice(0, 30)));
 }
 
 function sortProjects(projects) {
@@ -158,7 +159,7 @@ export default function FieldDayLog({ projects, isAdmin }) {
       setProject('');
       return;
     }
-    const last = localStorage.getItem('field-last-project');
+    const last = safeLocal.getItem('field-last-project');
     if (last !== null && projects.some(p => String(p.id) === last)) {
       setProject(last);
     } else {
@@ -191,7 +192,7 @@ export default function FieldDayLog({ projects, isAdmin }) {
   const selectProject = id => {
     setProject(id);
     if (!isAdmin) {
-      localStorage.setItem('field-last-project', id);
+      safeLocal.setItem('field-last-project', id);
       markProjectUsed(id);
     }
     closeAll();

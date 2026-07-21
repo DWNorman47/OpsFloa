@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import api from '../api';
 import { clearCache } from '../offlineDb';
+import { safeSession, safeLocal } from '../utils/safeStorage';
 
 export const AuthContext = createContext(null);
 
@@ -45,8 +46,8 @@ export function AuthProvider({ children }) {
     // sessionStorage takes precedence: impersonation tabs have their own
     // tab-scoped token + user cache so they don't pollute the super admin's
     // localStorage in the original tab.
-    const isImpersonation = !!sessionStorage.getItem('tc_token');
-    const tokenStore = isImpersonation ? sessionStorage : localStorage;
+    const isImpersonation = !!safeSession.getItem('tc_token');
+    const tokenStore = isImpersonation ? safeSession : safeLocal;
     const token = tokenStore.getItem('tc_token');
     if (!token) { setLoading(false); return; }
 
@@ -99,7 +100,7 @@ export function AuthProvider({ children }) {
     if (r.data.must_change_password) {
       return { must_change_password: true, setup_token: r.data.setup_token };
     }
-    storeSession(localStorage, r.data.token, r.data.user);
+    storeSession(safeLocal, r.data.token, r.data.user);
     setUser(r.data.user);
     if (r.data.first_login) setFirstLogin(true);
     return r.data.user;
@@ -108,9 +109,9 @@ export function AuthProvider({ children }) {
   const loginWithToken = async token => {
     await clearCache();
     clearOfflineQueue();
-    localStorage.setItem('tc_token', token);
+    safeLocal.setItem('tc_token', token);
     const me = await api.get('/auth/me');
-    localStorage.setItem('tc_user', JSON.stringify(me.data.user));
+    safeLocal.setItem('tc_user', JSON.stringify(me.data.user));
     setUser(me.data.user);
     setFirstLogin(true); // registration always counts as first login
     return me.data.user;
@@ -120,7 +121,7 @@ export function AuthProvider({ children }) {
     await clearCache();
     clearOfflineQueue();
     const r = await api.post('/auth/mfa/confirm', { mfa_token, code });
-    storeSession(localStorage, r.data.token, r.data.user);
+    storeSession(safeLocal, r.data.token, r.data.user);
     setUser(r.data.user);
     return r.data.user;
   };
@@ -131,10 +132,10 @@ export function AuthProvider({ children }) {
     // Clear both stores so an impersonation tab logging out doesn't leave
     // the super admin's localStorage token alive for a future page load,
     // and a normal logout clears any stray sessionStorage too.
-    localStorage.removeItem('tc_token');
-    localStorage.removeItem('tc_user');
-    sessionStorage.removeItem('tc_token');
-    sessionStorage.removeItem('tc_user');
+    safeLocal.removeItem('tc_token');
+    safeLocal.removeItem('tc_user');
+    safeSession.removeItem('tc_token');
+    safeSession.removeItem('tc_user');
     setUser(null);
     setFirstLogin(false);
   };

@@ -20,6 +20,7 @@ import { usePlan } from '../hooks/usePlan';
 import { labelSg } from '../companyLabels';
 
 import { silentError } from '../errorReporter';
+import { safeLocal, safeSession } from '../utils/safeStorage';
 function RoleBadge({ role }) {
   const t = useT();
   const isAdmin = role === 'admin' || role === 'super_admin';
@@ -43,6 +44,7 @@ function CompanyTab() {
   const [contactEmail, setContactEmail] = useState('');
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
+  const [logoBusy, setLogoBusy] = useState(false);
 
   useEffect(() => {
     api.get('/admin/company').then(r => {
@@ -87,6 +89,36 @@ function CompanyTab() {
     } catch (err) {
       setMsg(err.response?.data?.error || t.failedSave);
     } finally { setSaving(false); }
+  };
+
+  const fileToDataUrl = file => new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file);
+  });
+  const uploadLogo = async e => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // let the same file be re-picked after a failure
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { setMsg(t.logoMustBeImage); return; }
+    setLogoBusy(true); setMsg('');
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      const r = await api.post('/admin/company/logo', { dataUrl });
+      setCompany(c => ({ ...c, logo_url: r.data.logo_url }));
+      setMsg(t.logoUpdated);
+    } catch (err) {
+      setMsg(err.response?.data?.error || t.failedSave);
+    } finally { setLogoBusy(false); }
+  };
+  const removeLogo = async () => {
+    setLogoBusy(true); setMsg('');
+    try {
+      await api.delete('/admin/company/logo');
+      setCompany(c => ({ ...c, logo_url: null }));
+      setMsg(t.logoRemoved);
+    } catch (err) {
+      setMsg(err.response?.data?.error || t.failedSave);
+    } finally { setLogoBusy(false); }
   };
 
   const statusInfo = {
@@ -179,6 +211,24 @@ function CompanyTab() {
               </div>
             )}
           </div>
+        </div>
+
+        {/* Logo — shown at the top-left of report / invoice / estimate PDFs */}
+        <div style={styles.companyField}>
+          <div style={styles.companyFieldLabel}>{t.logoLabel}</div>
+          <div style={styles.logoRow}>
+            {company?.logo_url
+              ? <img src={company.logo_url} alt={t.logoLabel} style={styles.logoPreview} />
+              : <div style={styles.logoPlaceholder}>{t.logoNone}</div>}
+            <div style={styles.logoButtons}>
+              <label style={{ ...styles.saveBtn, ...(logoBusy ? { opacity: 0.6, cursor: 'default' } : { cursor: 'pointer' }) }}>
+                {logoBusy ? '…' : (company?.logo_url ? t.logoReplace : t.logoUpload)}
+                <input type="file" accept="image/*" onChange={uploadLogo} disabled={logoBusy} style={{ display: 'none' }} />
+              </label>
+              {company?.logo_url && <button style={styles.ghostBtn} onClick={removeLogo} disabled={logoBusy}>{t.remove}</button>}
+            </div>
+          </div>
+          <div style={styles.logoHint}>{t.logoHint}</div>
         </div>
 
         {editing && (
@@ -544,7 +594,7 @@ export default function AdministrationPage() {
   useEffect(() => {
     if (user?.role === 'admin' && user?.id) {
       const key = `admin_welcomed_${user.id}`;
-      if (!localStorage.getItem(key)) localStorage.setItem(key, '1');
+      if (!safeLocal.getItem(key)) safeLocal.setItem(key, '1');
     }
   }, [user?.id, user?.role]);
 
@@ -574,9 +624,9 @@ export default function AdministrationPage() {
   const [showSetup, setShowSetup] = useState(false);
 
   // Integrations sub-view: 'list' or 'quickbooks' — persists for the session
-  const [integrationView, setIntegrationView] = useState(() => sessionStorage.getItem('admin_integration_view') || 'list');
-  const openIntegration = (id) => { sessionStorage.setItem('admin_integration_view', id); setIntegrationView(id); };
-  const backToIntegrations = () => { sessionStorage.setItem('admin_integration_view', 'list'); setIntegrationView('list'); };
+  const [integrationView, setIntegrationView] = useState(() => safeSession.getItem('admin_integration_view') || 'list');
+  const openIntegration = (id) => { safeSession.setItem('admin_integration_view', id); setIntegrationView(id); };
+  const backToIntegrations = () => { safeSession.setItem('admin_integration_view', 'list'); setIntegrationView('list'); };
 
   // Build the tab list filtered by permission. Each tab is included only
   // if the user can see it. Company + Account stay always-on; the others
@@ -910,6 +960,11 @@ const styles = {
   companyNameValue: { fontSize: 22, fontWeight: 800, color: '#111827' },
   companyFieldValue: { fontSize: 14, color: '#374151' },
   companyFieldEmpty: { fontSize: 14, color: '#d1d5db', fontStyle: 'italic' },
+  logoRow: { display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' },
+  logoPreview: { height: 56, maxWidth: 200, objectFit: 'contain', borderRadius: 6, border: '1px solid #e5e7eb', background: '#fff', padding: 4 },
+  logoPlaceholder: { height: 56, width: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, border: '1px dashed #d1d5db', color: '#9ca3af', fontSize: 12, fontStyle: 'italic' },
+  logoButtons: { display: 'flex', alignItems: 'center', gap: 8 },
+  logoHint: { fontSize: 12, color: '#9ca3af', marginTop: 6 },
   companyEditActions: { display: 'flex', gap: 8, marginTop: 4 },
   companySubscriptionSection: {
     padding: '14px 20px', borderTop: '1px solid #f3f4f6',

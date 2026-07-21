@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { useT } from '../hooks/useT';
+import { safeLocal } from '../utils/safeStorage';
 
 const DISMISS_KEY = 'opsfloa_onboarding_dismissed';
 
 export default function OnboardingChecklist({ workers, projects, settings }) {
   const t = useT();
-  const [dismissed, setDismissed] = useState(() => !!localStorage.getItem(DISMISS_KEY));
+  const [dismissed, setDismissed] = useState(() => !!safeLocal.getItem(DISMISS_KEY));
 
   if (dismissed) return null;
 
@@ -64,7 +65,7 @@ export default function OnboardingChecklist({ workers, projects, settings }) {
   const allDone = doneCount === steps.length;
 
   const dismiss = () => {
-    localStorage.setItem(DISMISS_KEY, '1');
+    safeLocal.setItem(DISMISS_KEY, '1');
     setDismissed(true);
   };
 

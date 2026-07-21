@@ -5,6 +5,7 @@ import { useOffline } from '../contexts/OfflineContext';
 import { useFormPersist } from '../hooks/useFormPersist';
 
 import { silentError } from '../errorReporter';
+import { safeLocal } from '../utils/safeStorage';
 function getLocation(options = {}) {
   const {
     timeout = 2500,
@@ -33,7 +34,7 @@ const HINT_DISMISSED_KEY = 'opsfloa_clockin_hint_dismissed';
 
 function readProjectHistory(key) {
   try {
-    return JSON.parse(localStorage.getItem(key) || '{}') || {};
+    return JSON.parse(safeLocal.getItem(key) || '{}') || {};
   } catch {
     return {};
   }
@@ -49,8 +50,8 @@ function rememberProjectChoice(key, projectId) {
       count: (parseInt(current.count, 10) || 0) + 1,
       lastUsed: Date.now(),
     };
-    localStorage.setItem(key, JSON.stringify(history));
-    localStorage.setItem('lastProjectId', id);
+    safeLocal.setItem(key, JSON.stringify(history));
+    safeLocal.setItem('lastProjectId', id);
   } catch {
     // Browser storage can be unavailable in private/restricted modes.
   }
@@ -135,10 +136,10 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
   // entries, so we can trust the 'status === null && no past successful use'
   // heuristic via the dismissed flag alone.
   const [hintDismissed, setHintDismissed] = useState(() => {
-    try { return !!localStorage.getItem(HINT_DISMISSED_KEY); } catch { return false; }
+    try { return !!safeLocal.getItem(HINT_DISMISSED_KEY); } catch { return false; }
   });
   const dismissHint = () => {
-    try { localStorage.setItem(HINT_DISMISSED_KEY, '1'); } catch { /* quota */ }
+    try { safeLocal.setItem(HINT_DISMISSED_KEY, '1'); } catch { /* quota */ }
     setHintDismissed(true);
   };
   const { isOffline, queueCount, onSync, sendToSW } = useOffline() || {};
@@ -190,7 +191,7 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
       if (!stillValid) setSelectedProject('');
       return;
     }
-    const last = localStorage.getItem('lastProjectId');
+    const last = safeLocal.getItem('lastProjectId');
     if (last && projects.find(p => String(p.id) === last)) {
       setSelectedProject(last);
     }
@@ -267,7 +268,7 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
   const projectHistoryKey = `opsfloa_project_history_${user?.company_id || 'company'}_${user?.id || 'user'}`;
   const projectHistory = readProjectHistory(projectHistoryKey);
   let lastProjectId = '';
-  try { lastProjectId = localStorage.getItem('lastProjectId') || ''; } catch {}
+  try { lastProjectId = safeLocal.getItem('lastProjectId') || ''; } catch {}
   const orderedProjects = [...(projects || [])].sort((a, b) => {
     const ah = projectHistory[String(a.id)] || {};
     const bh = projectHistory[String(b.id)] || {};
@@ -321,7 +322,7 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
         setStatus(r.data);
         rememberProjectChoice(projectHistoryKey, selectedProject);
         // Auto-dismiss the first-clock-in hint — they've figured it out.
-        try { localStorage.setItem(HINT_DISMISSED_KEY, '1'); } catch {}
+        try { safeLocal.setItem(HINT_DISMISSED_KEY, '1'); } catch {}
         onClockedIn?.(r.data);
         setNotes('');
         clearClockInPersisted();

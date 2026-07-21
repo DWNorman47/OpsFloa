@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useT } from '../hooks/useT';
+import { safeLocal } from '../utils/safeStorage';
 
 function getPlatform() {
   if (typeof window === 'undefined') return null;
@@ -11,7 +12,7 @@ function getPlatform() {
   ) return 'installed';
 
   // User already dismissed
-  if (localStorage.getItem('install_prompt_dismissed') === '1') return 'dismissed';
+  if (safeLocal.getItem('install_prompt_dismissed') === '1') return 'dismissed';
 
   const ua = navigator.userAgent;
   const isIOS = /iphone|ipad|ipod/i.test(ua);
@@ -67,7 +68,7 @@ export default function InstallPrompt() {
   }, []);
 
   const dismiss = () => {
-    localStorage.setItem('install_prompt_dismissed', '1');
+    safeLocal.setItem('install_prompt_dismissed', '1');
     setPlatform('dismissed');
   };
 

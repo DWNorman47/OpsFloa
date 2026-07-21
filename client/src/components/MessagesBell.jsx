@@ -4,6 +4,7 @@ import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
 import { playMessageChime } from '../chime';
 import { silentError } from '../errorReporter';
+import { safeLocal } from '../utils/safeStorage';
 
 /**
  * Speech-bubble bell that sits to the LEFT of the notifications bell. Its badge
@@ -38,7 +39,7 @@ export default function MessagesBell() {
         // message is newer than the last time this admin opened it.
         unread = data
           .filter(thread => {
-            const lr = localStorage.getItem(`chatLastRead_admin_${thread.worker_id}`);
+            const lr = safeLocal.getItem(`chatLastRead_admin_${thread.worker_id}`);
             return !lr || new Date(thread.last_at) > new Date(lr);
           })
           .map(thread => ({
@@ -51,7 +52,7 @@ export default function MessagesBell() {
       } else {
         // Worker has a single thread; unread = messages from someone else newer
         // than their last read timestamp.
-        const lastRead = localStorage.getItem('chatLastRead');
+        const lastRead = safeLocal.getItem('chatLastRead');
         unread = data
           .filter(m => m.sender_id !== user?.id && (!lastRead || new Date(m.created_at) > new Date(lastRead)))
           .map(m => ({
@@ -102,13 +103,13 @@ export default function MessagesBell() {
     // Set every relevant read key to now so the badge, the tab dots, and
     // CompanyChat all agree the thread(s) have been seen.
     const keys = new Set(items.map(i => i.readKey));
-    keys.forEach(k => localStorage.setItem(k, now));
+    keys.forEach(k => safeLocal.setItem(k, now));
     prevKeysRef.current = new Set();
     setItems([]);
   };
 
   const handleItemClick = (item) => {
-    localStorage.setItem(item.readKey, new Date().toISOString());
+    safeLocal.setItem(item.readKey, new Date().toISOString());
     setItems(prev => prev.filter(i => i.readKey !== item.readKey));
     setOpen(false);
     // Both worker messages and admin workforce chat live under /timeclock. Using

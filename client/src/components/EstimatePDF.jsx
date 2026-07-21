@@ -10,6 +10,7 @@
 
 import React from 'react';
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
+import CompanyLogoPdf from './CompanyLogoPdf';
 import { computeBreakdown } from '../utils/estimateMath';
 import { formatCurrency, langToLocale } from '../utils';
 import { getT } from '../i18n';
@@ -26,6 +27,7 @@ const s = StyleSheet.create({
   page: { padding: '40 48', fontSize: 10, fontFamily: 'Helvetica', color: '#1a1a1a' },
   header: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 28 },
   companyBlock: { flex: 1 },
+  companyLogo: { height: 44, maxWidth: 180, objectFit: 'contain', marginBottom: 8 },
   companyName: { fontSize: 20, fontFamily: 'Helvetica-Bold', color: '#1a56db', marginBottom: 4 },
   companyMeta: { fontSize: 9, color: '#555', lineHeight: 1.5 },
   docBlock: { alignItems: 'flex-end' },
@@ -106,6 +108,7 @@ export default function EstimatePDF({ estimate, currency = 'USD', companyInfo = 
         {/* Letterhead */}
         <View style={s.header}>
           <View style={s.companyBlock}>
+            <CompanyLogoPdf src={companyInfo.logo_url} style={s.companyLogo} />
             <Text style={s.companyName}>{companyInfo.name || 'OpsFloa'}</Text>
             {companyInfo.address && <Text style={s.companyMeta}>{companyInfo.address}</Text>}
             {companyInfo.phone && <Text style={s.companyMeta}>{companyInfo.phone}</Text>}

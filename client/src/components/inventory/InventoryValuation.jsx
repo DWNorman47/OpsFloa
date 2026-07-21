@@ -6,13 +6,14 @@ import { formatCurrency, langToLocale } from '../../utils';
 import { useCurrency } from '../../contexts/SettingsContext';
 import { SkeletonList } from '../Skeleton';
 import ColumnHeaderMenu from './ColumnHeaderMenu';
+import { safeLocal } from '../../utils/safeStorage';
 
 const VAL_PAGE = 200;
 const VAL_MOBILE_VIEW_PREF_KEY = 'inventory_valuation_mobile_view';
 
 function readMobileViewPref() {
   try {
-    return localStorage.getItem(VAL_MOBILE_VIEW_PREF_KEY) === 'list' ? 'list' : 'card';
+    return safeLocal.getItem(VAL_MOBILE_VIEW_PREF_KEY) === 'list' ? 'list' : 'card';
   } catch {
     return 'card';
   }
@@ -83,7 +84,7 @@ export default function InventoryValuation({ locations }) {
 
   useEffect(() => {
     try {
-      localStorage.setItem(VAL_MOBILE_VIEW_PREF_KEY, mobileView);
+      safeLocal.setItem(VAL_MOBILE_VIEW_PREF_KEY, mobileView);
     } catch {
       // Storage is best-effort only.
     }

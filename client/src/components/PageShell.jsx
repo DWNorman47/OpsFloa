@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import AppHeader from './AppHeader';
 import { useAuth } from '../contexts/AuthContext';
+import { safeLocal } from '../utils/safeStorage';
 
 const APP_ACCENTS = {
   home: '#0f766e',
@@ -53,16 +54,16 @@ export function PageIntro({ introId, kicker, title, description, actions, meta }
     return `opsfloa_intro_seen_${userKey}_${pageKey}`;
   }, [introId, kicker, title, user?.email, user?.id, user?.username]);
   const [seen, setSeen] = useState(() => {
-    try { return localStorage.getItem(storageKey) === '1'; } catch { return false; }
+    try { return safeLocal.getItem(storageKey) === '1'; } catch { return false; }
   });
 
   useEffect(() => {
-    try { setSeen(localStorage.getItem(storageKey) === '1'); } catch { setSeen(false); }
+    try { setSeen(safeLocal.getItem(storageKey) === '1'); } catch { setSeen(false); }
   }, [storageKey]);
 
   useEffect(() => {
     if (seen) return;
-    try { localStorage.setItem(storageKey, '1'); } catch {}
+    try { safeLocal.setItem(storageKey, '1'); } catch {}
   }, [seen, storageKey]);
 
   if (seen) return null;

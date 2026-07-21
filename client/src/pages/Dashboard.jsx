@@ -20,6 +20,7 @@ import { WorkforcePanel } from './AdminDashboard';
 import { userCanSeeModule } from '../modulePermissions';
 
 import { silentError } from '../errorReporter';
+import { safeLocal } from '../utils/safeStorage';
 // Secondary tabs — lazy-loaded on first visit
 const TimesheetView    = lazy(() => import('../components/TimesheetView'));
 const WorkerSummary    = lazy(() => import('../components/WorkerSummary'));
@@ -162,7 +163,7 @@ export default function Dashboard() {
     const check = () => {
       if (document.visibilityState !== 'visible' || !navigator.onLine) return;
       api.get('/chat').then(r => {
-        const lastRead = localStorage.getItem('chatLastRead');
+        const lastRead = safeLocal.getItem('chatLastRead');
         const hasUnread = r.data.some(
           m => m.sender_id !== user?.id && (!lastRead || new Date(m.created_at) > new Date(lastRead))
         );
@@ -438,7 +439,7 @@ ${signatureDataUrl ? `
     history.replaceState(null, '', `#${nextTab}`);
     if (nextTab === 'messages') {
       setChatUnread(false);
-      localStorage.setItem('chatLastRead', new Date().toISOString());
+      safeLocal.setItem('chatLastRead', new Date().toISOString());
     }
   };
 
@@ -530,7 +531,7 @@ ${signatureDataUrl ? `
         />
         <TabBar active={tab} onChange={switchTab} tabs={timeTabs} breakpoint={720} ariaLabel="Time Clock tabs" />
 
-        {tab === 'messages' && <CompanyChat settings={settings} onRead={() => { setChatUnread(false); localStorage.setItem('chatLastRead', new Date().toISOString()); }} />}
+        {tab === 'messages' && <CompanyChat settings={settings} onRead={() => { setChatUnread(false); safeLocal.setItem('chatLastRead', new Date().toISOString()); }} />}
 
         {tab === 'clock' && (
           loading ? <TabLoader /> : (

@@ -85,6 +85,7 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
           {/* Invoice header */}
           <div style={s.invHeader}>
             <div>
+              {ci?.logo_url && <img src={ci.logo_url} alt="" style={s.companyLogo} />}
               {ci?.name && <div style={s.brand}>{ci.name}</div>}
               <div style={s.brandSub}>{t.employeeTimeInvoice}</div>
             </div>
@@ -293,6 +294,7 @@ const s = {
 
   // Invoice header
   invHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 },
+  companyLogo: { height: 44, maxWidth: 180, objectFit: 'contain', display: 'block', marginBottom: 8 },
   brand: { fontSize: 20, fontWeight: 800, color: 'var(--ops-page-accent)' },
   brandSub: { fontSize: 11, color: '#6b7280', marginTop: 2 },
   invRight: { textAlign: 'right' },

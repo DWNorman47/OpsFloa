@@ -6,6 +6,7 @@ import { SkeletonList } from './Skeleton';
 import { weekRange } from '../utils/weekBounds';
 
 import { silentError } from '../errorReporter';
+import { safeLocal } from '../utils/safeStorage';
 const VENDOR_TYPES = ['contractor', 'subcontractor'];
 const EMPLOYEE_TYPES = ['employee', 'owner'];
 const IMPORT_PAGE_SIZE = 15;
@@ -21,7 +22,7 @@ function CollapsibleSection({ title, badge, defaultOpen = false, storageKey, chi
   const [open, setOpen] = useState(() => {
     if (!storageFullKey) return defaultOpen;
     try {
-      const saved = localStorage.getItem(storageFullKey);
+      const saved = safeLocal.getItem(storageFullKey);
       if (saved === '1') return true;
       if (saved === '0') return false;
     } catch { /* localStorage disabled */ }
@@ -31,7 +32,7 @@ function CollapsibleSection({ title, badge, defaultOpen = false, storageKey, chi
     setOpen(prev => {
       const next = !prev;
       if (storageFullKey) {
-        try { localStorage.setItem(storageFullKey, next ? '1' : '0'); } catch { /* no-op */ }
+        try { safeLocal.setItem(storageFullKey, next ? '1' : '0'); } catch { /* no-op */ }
       }
       return next;
     });

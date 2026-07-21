@@ -1152,7 +1152,176 @@ his mind.
 
 ---
 
-## Standing items waiting on David
+## 2026-07-20 — Impersonation: language switch is view-only
+
+David: while impersonating ("Login as") a Spanish user, switching the header
+language to English was overwriting *their* saved profile language. Fixed so the
+switch is view-only during impersonation.
+
+- The impersonation JWT (`superadmin.js`) now carries an explicit **`imp: true`**
+  claim. Previously nothing distinguished an impersonation token except the
+  absent `tv` claim, which is too implicit to gate on.
+- `POST /auth/update-language` (`auth.js`) short-circuits when `req.user.imp`:
+  it echoes `{ success, language, persisted:false }` so the client still flips
+  its own display, but skips the `UPDATE users SET language`. The target's
+  preference is untouched.
+- **Judgment call:** kept it to the one self-serve endpoint the header switcher
+  hits. The Team-management "edit user" endpoints that set language are a
+  deliberate profile edit, not a view toggle, so they're left alone.
+- **Known limit:** the English view is in-memory for the session — a full reload
+  re-reads the token and reverts to the profile's Spanish. That's consistent with
+  "not saved"; can make it session-sticky (sessionStorage override) if wanted.
+
+New `updateLanguageImpersonation.test.js` (normal persists, impersonation skips,
+blank still 400). Full server suite green (975).
+
+---
+
+## 2026-07-20 — Login crash: SecurityError reading sessionStorage
+
+A user hit the global error boundary at `/login` — `SecurityError: Failed to read
+the 'sessionStorage' property from 'Window': access denied` — then it worked on a
+later retry. Cause: in storage-blocked browser states (cookies/storage off,
+partitioned/in-app-webview, strict privacy) the storage **property getter itself
+throws**, and we read it unguarded during bootstrap, so the whole app white-screened
+to the boundary. Not related to the impersonation change (that was server-only).
+
+- New `client/src/utils/safeStorage.js` — `safeSession` / `safeLocal` wrappers:
+  reads return null, writes/removes are best-effort no-ops, and even accessing
+  `window[kind]` is inside try. The app degrades to "no persisted session" instead
+  of crashing.
+- Routed every **bootstrap / auth / API** path through it: `api.js` (request-
+  interceptor token read + 401 cleanup), `AuthContext` (mount read + all
+  login/logout token writes), `App.jsx` (the module-load impersonation IIFE — a
+  throw there white-screens before React even mounts), `OfflineContext` (SW auth
+  reply). ErrorBoundary, openTool, pdfError, tc_addons were already try-guarded.
+- **Scope call:** fixed the paths that run on every page (incl. login). ~140 raw
+  accesses remain in post-login feature components — filed in BACKLOG (boundary-
+  caught, lower urgency) rather than sweeping 146 sites in one risky pass.
+
+New `safeStorage.test.js` (getter-denied → null / no-op, normal path still works).
+Client build + i18n parity green.
+
+---
+
+## 2026-07-20 — SecurityError hardening: finish the safeStorage rollout
+
+Followed the login-crash fix through the rest of the app (David: "go for it").
+Every unguarded `localStorage`/`sessionStorage` access in a post-login page could
+still trip the global error boundary in a storage-blocked browser.
+
+- Swept **72 calls across 23 files** onto `safeSession`/`safeLocal` via a codemod
+  that only rewrites `(session|local)Storage.(get|set|remove)Item(` (negative
+  lookbehind so `window.localStorage` and comments are never touched) and inserts
+  an import for exactly the symbols each file uses.
+- `debugBundle.js`: `readStorage` now takes a kind and reads `window[kind]` inside
+  its try — the property access was previously evaluated as the call argument,
+  outside the guard.
+- **Deliberately left raw** (all already inside try/catch, so crash-safe): `openTool`,
+  `pdfError`, `ErrorBoundary`, `useFormPersist` (its setItem catch intentionally
+  reports quota/SecurityError to Sentry — routing it through the swallowing helper
+  would kill that signal), the `tc_addons` effect, and `api.js`'s `tc_api_base`
+  bootstrap line.
+- Verified: no unguarded `window.*Storage` access remains in `client/src`; client
+  build + `safeStorage`/i18n tests green. BACKLOG item marked resolved.
+
+---
+
+## 2026-07-20 — Plan Room: edit-mode reshape toolbar (feature Phase 1 of 3)
+
+Big multi-phase Plan Room feature (plan: `plans/mossy-launching-mist.md`, approved).
+Phase 1 shipped in two committable slices:
+- **1a** — an "Edit" dropdown appears next to Select whenever a reshapeable markup
+  is selected (`body.pr-editing`, driven from the render loop). Move/Add/Remove/Cut
+  become explicit click modes reusing `insertVertexAt`/`deleteVertexAt`/`cutAtEdge`;
+  Alt-click shortcuts still work. Fresh selection resets to Move.
+- **1b** — Join: two-click endpoint weld. Close one open line's ends into a loop, or
+  merge two same-type lines (inverse of Cut). Green ring on the first pick.
+
+**Judgment call / open item:** the spec's *active-endpoint* Join ("connected to the
+last point waiting for the next → one click to an existing vertex, finishes the
+shape") is a **drawing-flow** interaction distinct from edit mode — not built. Phase
+1 implements the edit-mode "click two points to join" case. Confirm if the
+draw-time close-to-vertex variant is wanted.
+
+**Phase 2 (shipped)** — Mode dropdown (Points/Box/Circle); in Box/Circle the op
+dropdown swaps to a region-op. Box = drag a rect, Circle = click center then radius
+(live preview). Delete Points removes captured vertices (floored at the min; whole
+capture deletes the shape). New `drag.mode='marquee-box'`, `circleRegion`/`boxRegion`,
+`applyRegionOp`.
+
+**Phase 3 (shipped)** — Delete Area cuts a **keyhole hole** in a closed area. `m.pts`
+stays the single ring every consumer reads (area shoelace nets `outer − Σholes` for
+free, fill renders the hole empty under nonzero winding, hit-test + earthwork gate off
+the same `pointInPolygon`); `m.outer`/`m.holes` metadata added only for a holes-aware
+`areaPerimeterFt` (routed the qarea bid/edge-form + config-reopen sites through it —
+shared `engine-measure.js` untouched). **Winding is load-bearing** — `orientOpposite`
+forces the hole opposite the outer; a standalone test confirms 9600 (100×100 − 20×20)
+for both windings, 9500 for two holes, perimeter 480 vs raw-keyhole 593, hole points
+excluded from hit-test. Holed shapes expose no vertex handles and skip point-ops (would
+corrupt the keyhole); whole-shape move keeps `m.outer`/`m.holes` in sync; undo removes a
+hole. **v1 limit:** the region must sit fully inside the outline — edge-crossing
+*notches* (general polygon difference / Greiner–Hormann) are deferred with a clear
+message.
+
+Static tool-app, no test harness — `node --check` each slice; `?v` 52→55 across the
+five commits (1a/1b/2/3). Sitework verified clean at every commit. To verify: load a
+PDF, set scale, trace an area, Select → Edit dropdown appears; exercise the point ops,
+then Box/Circle marquee → Delete Points / Delete Area; check the SF read-out + undo.
+
+**Follow-up shipped 2026-07-20:** holed shapes are now fully editable (was a v1
+shortcut). Reshape routes to `m.outer`/`m.holes` rings and rebuilds the keyhole —
+`editRings`/`handleRef`/`nearestEdgeInRings`/`insertHandle`/`deleteHandle`; Move/
+Add/Remove (dropdown + Alt-click) and marquee Delete Points all work per-ring;
+`normalizeHoles` reverts to a plain ring when the last hole goes. `?v` →56.
+
+**Draw-time Join (shipped 2026-07-20):** click (not drag) an earlier vertex of the
+live trace to close the shape to it, keeping all points (`tryDraftJoin`).
+
+**Edge-crossing Delete-Area notches (shipped 2026-07-20 — via a vendored library):**
+Hand-rolling a clean polygon difference was a dead end — I built three versions
+(Greiner–Hormann boundary-walk, convex decomposition, decomposition+edge-merge) and
+**test-first caught that every one silently returns the wrong area on degenerate
+cases** common in real drawings (a box flush against an area edge; any circle, whose
+many-edged seams never merge). A silently-wrong quantity in a bid tool is the one
+thing not to ship. So, with David's OK, I vendored **`polygon-clipping` v0.15.7**
+(Martinez–Rueda, MIT) — `npm i --no-save` → esbuild-bundled to a self-contained ESM
+at `tool-apps/shared/polygon-clipping.js` (splaytree + robust-predicates inlined;
+the two `process.env` refs are `typeof`-guarded, browser-safe). Imported **only** by
+`planroom/app.js` (shared engine + sitework untouched, no package.json change, not in
+the Vite bundle). `cutHole` now calls `polygonClipping.difference` and maps the
+multipolygon result to the model: inside → keyhole hole, crossing → notch, slice →
+split into clones, contained → delete. **Verified both layers standalone:** the
+library nails all degenerate cases (collinear/flush edges, identical polys, circles),
+and the app's mapping glue nets correct SF for notch/hole/slice/2nd-hole-in-holed/
+remove. `?v` →59.
+
+To update the lib: see the header in `polygon-clipping.js`.
+
+---
+
+## 2026-07-21 — Company logo on reports
+
+Companies can now upload a logo that renders at the top-left of report PDFs.
+
+- **DB:** migration `0142_company_logo.sql` — `companies.logo_url TEXT` (nullable
+  URL, not a fixed-value column → no db-enums entry).
+- **Server (`admin.js`):** `GET /admin/company` (+ the profile PATCH `RETURNING`)
+  now include `logo_url`; new `POST /admin/company/logo` (base64 → `uploadBase64`
+  → `company-logos/` on R2, replaces + best-effort deletes the old file, ~2 MB cap,
+  audited) and `DELETE /admin/company/logo`.
+- **Client:** logo upload / preview / replace / remove in the company card
+  (`AdministrationPage`). New shared `CompanyLogoPdf` (renders nothing when unset;
+  react-pdf loads the R2 URL directly, same as report photos). Wired into the five
+  views with a company header: `BillPDF`, `ProjectBillPDF`, `EstimatePDF`,
+  `ChangeOrderPDF`, and the on-screen `PayStubView` (HTML `<img>`). The logo rides
+  in on the `companyInfo` prop every one already receives, so no caller plumbing.
+- **Judgment call / scope:** covered the docs that already carry a `companyInfo`
+  header (invoices, estimates, change orders, pay stubs). Daily/incident/certified-
+  payroll PDFs don't currently receive `companyInfo`, so adding the logo there would
+  mean plumbing it through — left for a follow-up if David wants those too.
+
+975 server tests + i18n parity + client build green. Sitework untouched.
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*
 
