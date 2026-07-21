@@ -723,6 +723,25 @@ function EstimateDetail({ id, onBack, onEdit }) {
     }
   }
 
+  // Get the client-facing link again for an already-sent estimate. The raw token
+  // isn't in the estimate payload (server keeps it out), so fetch it, reveal the
+  // link card, and auto-copy — same end state as right after sending.
+  async function copyLink() {
+    setActionError(null);
+    setBusy(true);
+    try {
+      const { data } = await api.post(`/estimates/${id}/link`);
+      setSendToken(data.response_token);
+      const url = `${window.location.origin}/e/${data.response_token}`;
+      try { await navigator.clipboard?.writeText(url); } catch {}
+      toast(t.estToastLinkCopied, 'success');
+    } catch (err) {
+      setActionError(err.response?.data?.error || t.estErrLink);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function attachPlan(file) {
     if (!file) return;
     setActionError(null);
@@ -846,6 +865,9 @@ function EstimateDetail({ id, onBack, onEdit }) {
                 {busy ? t.estSending : t.estSendToClient}
               </button>
             </>
+          )}
+          {!isDraft && (
+            <button onClick={copyLink} disabled={busy} style={styles.ghostBtn}>🔗 {t.estCopyLink}</button>
           )}
           {isSent && (
             <button onClick={withdraw} disabled={busy} style={styles.ghostBtn}>{t.estWithdraw}</button>

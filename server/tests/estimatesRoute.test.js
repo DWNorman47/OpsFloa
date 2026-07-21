@@ -167,6 +167,51 @@ describe('POST /api/estimates/:id/send', () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
+// POST /estimates/:id/link — retrieve the share link again for a sent estimate
+// ───────────────────────────────────────────────────────────────────────────
+
+describe('POST /api/estimates/:id/link', () => {
+  test('404 when the estimate is not in this company', async () => {
+    pool.query
+      .mockResolvedValueOnce(undefined) // BEGIN
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // SELECT ... FOR UPDATE
+      .mockResolvedValueOnce(undefined); // ROLLBACK
+    const res = await request(makeApp()).post('/api/estimates/42/link');
+    expect(res.status).toBe(404);
+  });
+
+  test('400 when the estimate is still a draft (no link yet)', async () => {
+    pool.query
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, status: 'draft', response_token: null }] })
+      .mockResolvedValueOnce(undefined);
+    const res = await request(makeApp()).post('/api/estimates/42/link');
+    expect(res.status).toBe(400);
+  });
+
+  test('returns the stored token for a sent estimate (no rotation)', async () => {
+    pool.query
+      .mockResolvedValueOnce(undefined) // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, status: 'sent', response_token: 'stored-token-abc' }] })
+      .mockResolvedValueOnce(undefined); // COMMIT
+    const res = await request(makeApp()).post('/api/estimates/42/link');
+    expect(res.status).toBe(200);
+    expect(res.body.response_token).toBe('stored-token-abc');
+  });
+
+  test('mints a fresh token for a legacy sent estimate that has none', async () => {
+    pool.query
+      .mockResolvedValueOnce(undefined) // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, status: 'sent', response_token: null }] })
+      .mockResolvedValueOnce(undefined) // UPDATE (mint)
+      .mockResolvedValueOnce(undefined); // COMMIT
+    const res = await request(makeApp()).post('/api/estimates/42/link');
+    expect(res.status).toBe(200);
+    expect(res.body.response_token).toMatch(/^[0-9a-f]{64}$/); // 32 random bytes, hex
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
 // POST /estimates/:id/convert — only from accepted, once
 // ───────────────────────────────────────────────────────────────────────────
 
