@@ -1269,9 +1269,20 @@ five commits (1a/1b/2/3). Sitework verified clean at every commit. To verify: lo
 PDF, set scale, trace an area, Select → Edit dropdown appears; exercise the point ops,
 then Box/Circle marquee → Delete Points / Delete Area; check the SF read-out + undo.
 
-**Open follow-ups (confirm/deferred):** the draw-time active-endpoint Join
-(close-to-vertex mid-trace); edge-crossing Delete-Area notches; a dedicated
-remove-a-hole affordance (undo works today); graying out point-ops on holed shapes.
+**Follow-up shipped 2026-07-20:** holed shapes are now fully editable (was a v1
+shortcut). Reshape routes to `m.outer`/`m.holes` rings and rebuilds the keyhole —
+`editRings`/`handleRef`/`nearestEdgeInRings`/`insertHandle`/`deleteHandle`; Move/
+Add/Remove (dropdown + Alt-click) and marquee Delete Points all work per-ring;
+`normalizeHoles` reverts to a plain ring when the last hole goes. `?v` →56.
+
+**Still open (David said yes to both, wrinkles to settle):**
+- **Edge-crossing Delete-Area notches** — needs a real polygon-difference (a simple
+  polygon minus a convex box/circle can be non-convex; Sutherland–Hodgman only does
+  intersection). Will inline + heavily unit-test a boolean-difference routine as its
+  own pass — the one money-critical bit I won't rush.
+- **Draw-time Join** — ambiguous: closing a live trace to a *middle* vertex (not the
+  start, per the spec) leaves the pre-join points as a tail, which is odd for an
+  area. Need to confirm the intended result before building.
 
 ---
 
