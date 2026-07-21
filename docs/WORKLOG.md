@@ -1300,7 +1300,28 @@ To update the lib: see the header in `polygon-clipping.js`.
 
 ---
 
-## Standing items waiting on David
+## 2026-07-21 — Company logo on reports
+
+Companies can now upload a logo that renders at the top-left of report PDFs.
+
+- **DB:** migration `0142_company_logo.sql` — `companies.logo_url TEXT` (nullable
+  URL, not a fixed-value column → no db-enums entry).
+- **Server (`admin.js`):** `GET /admin/company` (+ the profile PATCH `RETURNING`)
+  now include `logo_url`; new `POST /admin/company/logo` (base64 → `uploadBase64`
+  → `company-logos/` on R2, replaces + best-effort deletes the old file, ~2 MB cap,
+  audited) and `DELETE /admin/company/logo`.
+- **Client:** logo upload / preview / replace / remove in the company card
+  (`AdministrationPage`). New shared `CompanyLogoPdf` (renders nothing when unset;
+  react-pdf loads the R2 URL directly, same as report photos). Wired into the five
+  views with a company header: `BillPDF`, `ProjectBillPDF`, `EstimatePDF`,
+  `ChangeOrderPDF`, and the on-screen `PayStubView` (HTML `<img>`). The logo rides
+  in on the `companyInfo` prop every one already receives, so no caller plumbing.
+- **Judgment call / scope:** covered the docs that already carry a `companyInfo`
+  header (invoices, estimates, change orders, pay stubs). Daily/incident/certified-
+  payroll PDFs don't currently receive `companyInfo`, so adding the logo there would
+  mean plumbing it through — left for a follow-up if David wants those too.
+
+975 server tests + i18n parity + client build green. Sitework untouched.
 
 *Everything here is blocked on a decision or an action of yours, not on more code.*
 

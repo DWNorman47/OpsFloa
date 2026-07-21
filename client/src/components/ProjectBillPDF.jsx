@@ -1,5 +1,6 @@
 import React from 'react';
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
+import CompanyLogoPdf from './CompanyLogoPdf';
 import { formatCurrency, langToLocale } from '../utils';
 
 const s = StyleSheet.create({
@@ -7,6 +8,7 @@ const s = StyleSheet.create({
   // Header
   header: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 32 },
   companyBlock: { flex: 1 },
+  companyLogo: { height: 44, maxWidth: 180, objectFit: 'contain', marginBottom: 8 },
   companyName: { fontSize: 20, fontWeight: 'bold', color: '#1a56db', marginBottom: 4 },
   companyMeta: { fontSize: 9, color: '#555', lineHeight: 1.5 },
   invoiceBlock: { alignItems: 'flex-end' },
@@ -101,6 +103,7 @@ export default function ProjectBillPDF({ data, currency = 'USD', companyInfo = {
         {/* Header */}
         <View style={s.header}>
           <View style={s.companyBlock}>
+            <CompanyLogoPdf src={companyInfo.logo_url} style={s.companyLogo} />
             <Text style={s.companyName}>{companyInfo.name || 'OpsFloa'}</Text>
             {companyInfo.address && <Text style={s.companyMeta}>{companyInfo.address}</Text>}
             {companyInfo.phone && <Text style={s.companyMeta}>{companyInfo.phone}</Text>}

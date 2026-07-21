@@ -3330,7 +3330,7 @@ router.get('/export/worker-hours', requireAdmin, requirePerm('view_reports'), re
 router.get('/company', requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, name, subscription_status, trial_ends_at, plan, address, phone, contact_email FROM companies WHERE id = $1',
+      'SELECT id, name, subscription_status, trial_ends_at, plan, address, phone, contact_email, logo_url FROM companies WHERE id = $1',
       [req.user.company_id]
     );
     res.json(result.rows[0] || {});
@@ -3356,11 +3356,44 @@ router.patch('/company', requireAdmin, async (req, res) => {
     if (fields.length === 0) return res.status(400).json({ error: 'Nothing to update' });
     values.push(req.user.company_id);
     const result = await pool.query(
-      `UPDATE companies SET ${fields.join(', ')} WHERE id = $${idx} RETURNING id, name, address, phone, contact_email`,
+      `UPDATE companies SET ${fields.join(', ')} WHERE id = $${idx} RETURNING id, name, address, phone, contact_email, logo_url`,
       values
     );
     await logAudit(req.user.company_id, req.user.id, req.user.full_name, 'company.updated', 'company', req.user.company_id, result.rows[0].name);
     res.json(result.rows[0]);
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
+// POST /admin/company/logo — upload/replace the company logo (base64 → R2)
+router.post('/company/logo', requireAdmin, async (req, res) => {
+  const { dataUrl } = req.body;
+  if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
+    return res.status(400).json({ error: 'An image file is required' });
+  }
+  // logos are small; cap the raw base64 string (~2MB of image)
+  if (dataUrl.length > 2_800_000) return res.status(413).json({ error: 'Logo is too large (max ~2 MB)' });
+  try {
+    const { uploadBase64, deleteByUrl } = require('../r2');
+    const prev = await pool.query('SELECT logo_url FROM companies WHERE id = $1', [req.user.company_id]);
+    const { url } = await uploadBase64(dataUrl, 'company-logos');
+    await pool.query('UPDATE companies SET logo_url = $1 WHERE id = $2', [url, req.user.company_id]);
+    const old = prev.rows[0]?.logo_url;
+    if (old && old !== url) deleteByUrl(old).catch(() => {}); // best-effort cleanup of the replaced file
+    await logAudit(req.user.company_id, req.user.id, req.user.full_name, 'company.logo_updated', 'company', req.user.company_id, null);
+    res.json({ logo_url: url });
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Upload failed' }); }
+});
+
+// DELETE /admin/company/logo — remove the company logo
+router.delete('/company/logo', requireAdmin, async (req, res) => {
+  try {
+    const { deleteByUrl } = require('../r2');
+    const prev = await pool.query('SELECT logo_url FROM companies WHERE id = $1', [req.user.company_id]);
+    await pool.query('UPDATE companies SET logo_url = NULL WHERE id = $1', [req.user.company_id]);
+    const old = prev.rows[0]?.logo_url;
+    if (old) deleteByUrl(old).catch(() => {});
+    await logAudit(req.user.company_id, req.user.id, req.user.full_name, 'company.logo_removed', 'company', req.user.company_id, null);
+    res.json({ ok: true });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
