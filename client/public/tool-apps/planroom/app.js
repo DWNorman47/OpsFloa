@@ -305,6 +305,15 @@ let dirtEarthworkCollapsed = false;          // dirt panel: the Earthwork (bound
 // by a stable group key (see dirtGroupHeader). A Set of the COLLAPSED keys, so a
 // group defaults to expanded until the user folds it.
 const dirtGroupsCollapsed = new Set();
+// Per-group MAP visibility: the eye icon on a header/subheader toggles whether
+// that group's shapes draw on the plan. A Set of the HIDDEN vis keys (section or
+// group), so everything is visible until the user clicks an eye off. Keyed the
+// same way as shapeVisKeys / the panel groups.
+const dirtHidden = new Set();
+// Side-menu list scope: off = only the current page's shapes; on = every page's
+// (the "Show markups from all pages" checkbox). This is a LIST filter only — the
+// plan/canvas still draws the current page.
+let dirtShowAllPages = false;
 // Earthwork mode declutters the canvas: only dirt-trade markups draw, and only
 // the focused surface's contours/pads. General redline + other-trade markups are
 // hidden (they reappear when you leave dirt mode). Layer toggles apply on top.
@@ -312,6 +321,9 @@ const DIRT_KINDS = new Set(['contour', 'espot', 'epad', 'ebound', 'qarea', 'qlin
 function markupShown(m) {
   if (!layerVisible(m)) return false;
   if (state.trade !== 'dirt') return true;
+  // A group hidden by its eye (section- or subgroup-level) doesn't draw.
+  const vk = shapeVisKeys(m);
+  if (vk && (dirtHidden.has(vk.section) || dirtHidden.has(vk.group))) return false;
   if (!DIRT_KINDS.has(m.kind)) return false;
   return !m.surface || m.surface === curSurface;
 }
@@ -3888,16 +3900,40 @@ function dirtSetupComplete() {
   return alignIsSet();
 }
 
-// A collapsible subgroup header for the dirt panel's shape lists — a color swatch
-// (optional), a bold label + count, and a ▾/▸ chevron. `gkey` is a stable key
-// tracked in dirtGroupsCollapsed, so each type/color group folds independently.
+// The section- and subgroup-visibility keys a listable shape belongs to, matching
+// the panel's grouping. Used by both markupShown (what draws) and the eye icons
+// (what the header toggles). Returns null for anything that isn't a dirt shape.
+function shapeVisKeys(m) {
+  if (m.kind === 'contour' || m.kind === 'espot' || m.kind === 'epad') {
+    return { section: `sec:contours:${m.surface || 'existing'}`, group: `c:${m.surface || 'existing'}:${m.kind}` };
+  }
+  if (m.kind === 'qarea' || m.kind === 'qline' || m.kind === 'qcount') {
+    const color = m.kind === 'qline' ? lineColorHex(m.cfg || {}) : m.kind === 'qarea' ? areaColorHex(m.cfg || {}) : (m.color || '#e0533f');
+    return { section: 'sec:takeoffs', group: `t:${m.kind}:${takeoffGroupLabel(m.kind, m)}:${color}` };
+  }
+  return null;
+}
+
+// The map-visibility eye for a header/subheader. Shown (white) = draws on the
+// plan; hidden (dark gray) = doesn't. Its own clickable element so it doesn't
+// also toggle the header's collapse (the handler stops propagation).
+const EYE_SVG = '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path fill="currentColor" d="M12 5C6.5 5 2.7 8.6 1 12c1.7 3.4 5.5 7 11 7s9.3-3.6 11-7c-1.7-3.4-5.5-7-11-7zm0 11.5A4.5 4.5 0 1 1 12 7a4.5 4.5 0 0 1 0 9.5zM12 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>';
+function dirtEye(vkey) {
+  const hidden = dirtHidden.has(vkey);
+  return `<span class="dirt-eye${hidden ? ' off' : ''}" data-act="toggle-vis" data-vkey="${encodeURIComponent(vkey)}" ` +
+    `title="${hidden ? 'Hidden on the plan — click to show' : 'Shown on the plan — click to hide'}">${EYE_SVG}</span>`;
+}
+
+// A collapsible subgroup header for the dirt panel's shape lists — an eye, a color
+// swatch (optional), a bold label + count, and a ▾/▸ chevron. `gkey` is a stable
+// key tracked in dirtGroupsCollapsed (fold) and dirtHidden (map visibility).
 function dirtGroupHeader(gkey, label, count, color) {
   const collapsed = dirtGroupsCollapsed.has(gkey);
   const sw = color ? `<span class="ctr-sw" style="background:${color}"></span>` : '';
   // gkey can carry material names with quotes (e.g. `18" hdpe`); URI-encode it so
   // it's always attribute-safe (decoded back in the toggle handler).
   return `<div class="dirt-grp" data-act="toggle-group" data-gkey="${encodeURIComponent(gkey)}">` +
-    `${sw}<span class="dirt-grp-lbl"><b>${esc(label)}</b> (${count})</span>` +
+    `${dirtEye(gkey)}${sw}<span class="dirt-grp-lbl"><b>${esc(label)}</b> (${count})</span>` +
     `<span class="v">${collapsed ? '▸' : '▾'}</span></div>`;
 }
 // The type/material label a takeoff groups under (mirrors takeoffSubtotals so the
@@ -3931,16 +3967,24 @@ function renderDirtPanel() {
     rows.push(`<label class="dirt-row" style="cursor:pointer"><span>Ghost the other sheet</span><input type="checkbox" id="ghostChk" ${ghostOn ? 'checked' : ''}></label>`);
   }
 
-  // Contours — the focused surface's traced lines/spots/pads ON THE CURRENT PAGE,
-  // split into collapsible Contours / Spots / Pads subgroups (sorted by elevation),
-  // color swatch, edit ✎ / delete ✕, click to select & jump.
+  // Controls whether the shape lists below list every page's markups or just this
+  // page's (a LIST filter — the plan still draws the current page). The eye on each
+  // header/subheader is separate: it hides that group on the plan itself.
+  const onPage = m => dirtShowAllPages || m.page === state.page;
+  const pageTag = m => (dirtShowAllPages && m.page !== state.page) ? ` · p${m.page}` : '';
+  rows.push(`<label class="dirt-row dirt-allpages" style="cursor:pointer"><span>Show markups from all pages</span><input type="checkbox" id="showAllPagesChk" ${dirtShowAllPages ? 'checked' : ''}></label>`);
+
+  // Contours — the focused surface's traced lines/spots/pads (current page, or all
+  // pages when the checkbox is on), split into collapsible Contours / Spots / Pads
+  // subgroups (sorted by elevation), color swatch, edit ✎ / delete ✕, eye = hide
+  // on plan, click a row to select & jump.
   const surfLabel = curSurface === 'proposed' ? 'Proposed' : 'Existing';
   const surfItems = state.markups
-    .filter(m => (m.kind === 'contour' || m.kind === 'espot' || m.kind === 'epad') && (m.surface || 'existing') === curSurface && m.page === state.page)
+    .filter(m => (m.kind === 'contour' || m.kind === 'espot' || m.kind === 'epad') && (m.surface || 'existing') === curSurface && onPage(m))
     .sort((a, b) => (b.elev == null ? -1e9 : b.elev) - (a.elev == null ? -1e9 : a.elev));
-  rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-contours"><span>${surfLabel} contours (${surfItems.length})</span><span class="v">${dirtContoursCollapsed ? '▸' : '▾'}</span></div>`);
+  rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-contours"><span class="dirt-hd">${dirtEye('sec:contours:' + curSurface)}<span>${surfLabel} contours (${surfItems.length})</span></span><span class="v">${dirtContoursCollapsed ? '▸' : '▾'}</span></div>`);
   if (!dirtContoursCollapsed) {
-    rows.push(`<div class="dirt-crow"><span class="hint">New traces are <b>${curSurface}</b> · dashed = existing, solid = proposed · this page only</span>${surfItems.length ? '<button class="ctr-clear" data-act="clear-surface" title="Delete all traces on this surface">Clear</button>' : ''}</div>`);
+    rows.push(`<div class="dirt-crow"><span class="hint">New traces are <b>${curSurface}</b> · dashed = existing, solid = proposed${dirtShowAllPages ? '' : ' · this page only'}</span>${surfItems.length ? '<button class="ctr-clear" data-act="clear-surface" title="Delete all traces on this surface">Clear</button>' : ''}</div>`);
     if (!surfItems.length) {
       rows.push('<div class="hint" style="margin:2px 0 8px">No traces on this page yet — trace a contour (⛰), spot (◎), or pad (◫).</div>');
     } else {
@@ -3950,6 +3994,9 @@ function renderDirtPanel() {
       // Only one type present → skip the subheader (it would just echo the
       // section header above). Two+ types → collapsible per-type subgroups.
       const flat = ctrGroups.length <= 1;
+      // Flat = no subgroup eye, so the section eye governs; drop any stale hidden
+      // key for the lone group (else it could be stuck hidden with no way back).
+      if (flat && ctrGroups[0]) dirtHidden.delete(`c:${curSurface}:${ctrGroups[0].kind}`);
       for (const g of ctrGroups) {
         const gkey = `c:${curSurface}:${g.kind}`;
         if (!flat) {
@@ -3960,7 +4007,7 @@ function renderDirtPanel() {
           const typ = m.kind === 'espot' ? 'spot' : m.kind === 'epad' ? 'flat pad' : `${m.pts.length} pts`;
           rows.push(`<div class="ctr-row${m.id === selectedId ? ' sel' : ''}" data-id="${m.id}">` +
             `<span class="ctr-sw" style="background:${elevColor(m.elev || 0, m.surface)}"></span>` +
-            `<span class="ctr-lbl">${m.elev != null ? elevStr(m.elev) + ' ft' : 'no elev'} · ${typ}</span>` +
+            `<span class="ctr-lbl">${m.elev != null ? elevStr(m.elev) + ' ft' : 'no elev'} · ${typ}${pageTag(m)}</span>` +
             `<button class="ctr-btn" data-act="edit-elev" title="Edit elevation">✎</button>` +
             `<button class="ctr-btn" data-act="del-ctr" title="Delete">✕</button>` +
             `</div>`);
@@ -3972,12 +4019,12 @@ function renderDirtPanel() {
   // SEPARATE from the cut/fill grade surface above: they carry no existing/proposed
   // surface, so a surfacing/paving job lives entirely here (not under Contours).
   const qk = { qarea: [], qline: [], qcount: [] };
-  for (const m of state.markups) if (qk[m.kind] && m.page === state.page) qk[m.kind].push(m);
+  for (const m of state.markups) if (qk[m.kind] && onPage(m)) qk[m.kind].push(m);
   const qTotal = qk.qarea.length + qk.qline.length + qk.qcount.length;
-  rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-takeoff"><span>Takeoffs (${qTotal})</span><span class="v">${dirtTakeoffCollapsed ? '▸' : '▾'}</span></div>`);
+  rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-takeoff"><span class="dirt-hd">${dirtEye('sec:takeoffs')}<span>Takeoffs (${qTotal})</span></span><span class="v">${dirtTakeoffCollapsed ? '▸' : '▾'}</span></div>`);
   if (!dirtTakeoffCollapsed) {
     if (!qTotal) {
-      rows.push('<div class="hint" style="margin:2px 0 8px">No area / line / count takeoffs on this page. Trace one with the <b>▨ Area</b> / <b>⌇ Line</b> / <b>⊙ Count</b> tools — these price into the <b>$ Bid</b> and are separate from the cut/fill contours above.</div>');
+      rows.push(`<div class="hint" style="margin:2px 0 8px">No area / line / count takeoffs ${dirtShowAllPages ? 'yet' : 'on this page'}. Trace one with the <b>▨ Area</b> / <b>⌇ Line</b> / <b>⊙ Count</b> tools — these price into the <b>$ Bid</b> and are separate from the cut/fill contours above.</div>`);
     } else {
       const icon = { qarea: '▨', qline: '⌇', qcount: '⊙' };
       // Build every (kind → material/type + color) group first, so e.g. gravel and
@@ -3999,6 +4046,9 @@ function renderDirtPanel() {
       // Only one group across all takeoffs → skip the subheader (it would just
       // echo the section header). Two+ → collapsible per-material subgroups.
       const flat = allGroups.length <= 1;
+      // Flat = no subgroup eye, so the section eye governs; clear any stale hidden
+      // key for the lone group so it can't be stuck hidden with no eye to fix it.
+      if (flat && allGroups[0]) dirtHidden.delete(allGroups[0].gkey);
       for (const g of allGroups) {
         if (!flat) {
           rows.push(dirtGroupHeader(g.gkey, `${icon[g.kind]} ${g.label}`, g.items.length, g.color));
@@ -4007,7 +4057,7 @@ function renderDirtPanel() {
         for (const m of g.items) {
           rows.push(`<div class="ctr-row${m.id === selectedId ? ' sel' : ''}" data-id="${m.id}">` +
             `<span class="ctr-sw" style="background:${g.color}"></span>` +
-            `<span class="ctr-lbl">${icon[g.kind]} ${esc(measureValue(m))}</span>` +
+            `<span class="ctr-lbl">${icon[g.kind]} ${esc(measureValue(m))}${pageTag(m)}</span>` +
             `<button class="ctr-btn" data-act="edit-takeoff" title="Edit / reconfigure">✎</button>` +
             `<button class="ctr-btn" data-act="del-ctr" title="Delete">✕</button>` +
             `</div>`);
@@ -4089,6 +4139,19 @@ function renderDirtPanel() {
       renderDirtPanel();
     });
   });
+  // Eye = hide/show that group on the PLAN. stopPropagation so clicking it doesn't
+  // also fold the header it sits in. Redraw the canvas since visibility changed.
+  body.querySelectorAll('[data-act="toggle-vis"]').forEach(el => {
+    el.addEventListener('click', e => {
+      e.stopPropagation();
+      const k = decodeURIComponent(el.dataset.vkey);
+      if (dirtHidden.has(k)) dirtHidden.delete(k); else dirtHidden.add(k);
+      renderDirtPanel();
+      vp.requestDraw();
+    });
+  });
+  const allPagesChk = body.querySelector('#showAllPagesChk');
+  if (allPagesChk) allPagesChk.addEventListener('change', e => { dirtShowAllPages = e.target.checked; renderDirtPanel(); });
   const clearSurf = body.querySelector('[data-act="clear-surface"]');
   if (clearSurf) clearSurf.addEventListener('click', clearSurfaceContours);
   body.querySelectorAll('.ctr-row').forEach(row => {

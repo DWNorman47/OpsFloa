@@ -23,6 +23,41 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-21 — Plan Room: earthwork side menu — visibility eyes + all-pages toggle
+
+**Done.** Plan Room `v61 → v62`. Two additions to the dirt/earthwork side menu:
+
+- **Eye icon on every header + subheader** (Contours, Takeoffs, and each type/
+  material subgroup) that toggles whether that group draws **on the plan**. White
+  eye = shown, dark gray = hidden. Hooks the existing `markupShown` via a new
+  `dirtHidden` set keyed the same way as the panel groups (`shapeVisKeys`), so
+  hiding "Gravel areas" or "Existing contours" declutters the canvas without
+  deleting anything. The eye stops propagation so clicking it doesn't also fold
+  the header it sits in.
+- **"Show markups from all pages" checkbox** above the lists. Off (default) = only
+  the current page's shapes, as before; on = every page's, each off-page row
+  tagged `· p<N>`. It's a **list** filter only — the plan still draws the current
+  page (this is the replacement for the scrapped "red eye / cross-page" idea).
+
+**Scrapped from the original ask:** the red/cross-page eye state — the checkbox
+covers that need for the list instead.
+
+**Edge case handled:** if you hid a subgroup while 2+ types existed, then deleted
+the others (making it flat, so its subheader disappears), the hidden key would
+otherwise be stuck with no eye to undo it — the flat branch now clears that key so
+the section eye stays authoritative.
+
+**Call:** visibility is keyed by group, not by page, so hiding "Gravel areas"
+hides them on whatever page you're viewing (they're the same group). And the
+alignment **Ghost** overlay still shows the other sheet's contours even when
+hidden — it's a deliberate alignment-preview, left as-is. Say the word if either
+should change.
+
+planroom files only (sitework untouched); `node --check` clean. No automated test
+for the tool-app UI — worth a manual pass: toggle an eye and confirm the group
+vanishes from the plan; check the all-pages box and confirm off-page shapes list
+with a `· p<N>` tag.
+
 ## 2026-07-21 — Tools: retired the Sitework Takeoff tab (hidden, not deleted)
 
 **Done.** `ecf816b`. Plan Room replaces the Sitework Takeoff tool, so its tab +
