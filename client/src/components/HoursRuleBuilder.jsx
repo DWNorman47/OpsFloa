@@ -43,6 +43,7 @@ function blankRule() {
     anchor: 'clock',
     stack: false,
     from: '17:25',
+    to: '19:00',       // window_mult end time (from doubles as its start)
     everyMin: '30',
     offsetMin: '25',
     trigger: { kind: 'always', hours: '6' },
@@ -157,13 +158,17 @@ export function describeRule(r, t) {
     case 'min_daily': return `${when} — ${t.hrSumMinDaily.replace('{n}', r.hours)}`;
     case 'seventh_day': return `${when} — ${t.hrSumSeventh.replace('{a}', r.firstMult).replace('{b}', r.afterMult)}`;
     case 'night_diff': return `${when} — ${t.hrSumNight.replace('{pct}', r.pct).replace('{from}', r.fromHour).replace('{to}', r.toHour)}`;
+    case 'window_mult': {
+      const wraps = r.to <= r.from ? ` ${t.hrWindowNextDay}` : '';
+      return `${when} — ${t.hrSumWindow.replace('{from}', r.from).replace('{to}', r.to).replace('{mult}', r.mult)}${wraps}`;
+    }
     default: return when;
   }
 }
 
 // ── Editor ───────────────────────────────────────────────────────────────────
 
-export default function HoursRuleBuilder({ rules, onChange }) {
+export default function HoursRuleBuilder({ rules, onChange, title, help }) {
   const t = useT();
   const [draft, setDraft] = useState(null);
 
@@ -213,10 +218,10 @@ export default function HoursRuleBuilder({ rules, onChange }) {
   return (
     <div style={s.wrap}>
       <div style={s.head}>
-        <span style={s.title}>{t.hrRulesTitle}</span>
+        <span style={s.title}>{title || t.hrRulesTitle}</span>
         {!draft && <button style={s.addBtn} onClick={() => setDraft(blankRule())}>{t.hrAddRule}</button>}
       </div>
-      <p style={s.help}>{t.hrRulesHelp}</p>
+      <p style={s.help}>{help || t.hrRulesHelp}</p>
 
       {rules.length === 0 && !draft && <p style={s.empty}>{t.hrNoRules}</p>}
 
@@ -350,6 +355,7 @@ export default function HoursRuleBuilder({ rules, onChange }) {
               <option value="min_daily">{t.hrType_min_daily}</option>
               <option value="seventh_day">{t.hrType_seventh_day}</option>
               <option value="night_diff">{t.hrType_night_diff}</option>
+              <option value="window_mult">{t.hrType_window_mult}</option>
             </select>
           </Field>
 
@@ -580,6 +586,26 @@ export default function HoursRuleBuilder({ rules, onChange }) {
             </>
           )}
 
+          {draft.type === 'window_mult' && (
+            <>
+              <Field label={t.hrWindowFrom}>
+                <input style={s.input} type="time" value={draft.from} onChange={e => setD('from', e.target.value)} />
+              </Field>
+              <Field label={t.hrWindowTo}>
+                <input style={s.input} type="time" value={draft.to} onChange={e => setD('to', e.target.value)} />
+              </Field>
+              <Field label={t.hrWindowMult}>
+                <input style={s.input} type="number" min="1" step="0.05" value={draft.mult} onChange={e => setD('mult', e.target.value)} />
+              </Field>
+              <p style={s.hint}>{t.hrWindowHint}</p>
+              {/* End ≤ start means the window wraps past midnight — surface it so
+                  it's never a surprise. Zero-padded HH:MM compares lexically. */}
+              {draft.from && draft.to && draft.to <= draft.from && (
+                <p style={s.note}>{t.hrWindowWrapWarn.replace('{to}', draft.to)}</p>
+              )}
+            </>
+          )}
+
           <div style={s.preview}>{describeRule(draft, t)}</div>
 
           <div style={s.actions}>
@@ -653,6 +679,11 @@ function coerceDraft(d) {
       out.fromHour = parseFloat(d.fromHour) || 0;
       out.toHour = parseFloat(d.toHour) || 0;
       out.pct = parseFloat(d.pct) || 0;
+      break;
+    case 'window_mult':
+      out.from = d.from;                            // 'HH:MM' — window start (day-of-week from `when`)
+      out.to = d.to;                                // 'HH:MM' — end; ≤ start means it wraps past midnight
+      out.mult = parseFloat(d.mult) || 1.5;
       break;
     default:
       break;

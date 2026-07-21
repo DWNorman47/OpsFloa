@@ -86,6 +86,17 @@ export default function PublicChangeOrderPage() {
     <div style={{ minHeight: '100vh', background: '#f9fafb', padding: '40px 16px' }}>
       <div style={styles.card}>
         <div style={{ borderBottom: '2px solid var(--ops-page-accent)', paddingBottom: 16, marginBottom: 20 }}>
+          {/* Contractor letterhead — logo (and name) so the client sees who it's from. */}
+          {(co.company_logo_url || co.company_name) && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+              {co.company_logo_url && (
+                <img src={co.company_logo_url} alt={co.company_name || ''} style={{ maxHeight: 56, maxWidth: 220, objectFit: 'contain' }} />
+              )}
+              {co.company_name && (
+                <div style={{ fontSize: 18, fontWeight: 700, color: '#111827' }}>{co.company_name}</div>
+              )}
+            </div>
+          )}
           <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--ops-page-accent)', letterSpacing: 1, textTransform: 'uppercase' }}>{t.pcoChangeOrder}</div>
           <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
             {co.co_number} · {new Date(co.sent_at).toLocaleDateString()}

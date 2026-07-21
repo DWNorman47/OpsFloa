@@ -301,6 +301,10 @@ let dirtSheetsCollapsed = false;             // dirt panel: Sheets section start
 let dirtContoursCollapsed = false;           // dirt panel: the traced-contours list section
 let dirtTakeoffCollapsed = false;            // dirt panel: the area/line/count takeoff-quantities list section
 let dirtEarthworkCollapsed = false;          // dirt panel: the Earthwork (boundary + settings + calculate) section
+// Per-type/color shape subgroups in the dirt panel collapse independently; keyed
+// by a stable group key (see dirtGroupHeader). A Set of the COLLAPSED keys, so a
+// group defaults to expanded until the user folds it.
+const dirtGroupsCollapsed = new Set();
 // Earthwork mode declutters the canvas: only dirt-trade markups draw, and only
 // the focused surface's contours/pads. General redline + other-trade markups are
 // hidden (they reappear when you leave dirt mode). Layer toggles apply on top.
@@ -3884,6 +3888,26 @@ function dirtSetupComplete() {
   return alignIsSet();
 }
 
+// A collapsible subgroup header for the dirt panel's shape lists — a color swatch
+// (optional), a bold label + count, and a ▾/▸ chevron. `gkey` is a stable key
+// tracked in dirtGroupsCollapsed, so each type/color group folds independently.
+function dirtGroupHeader(gkey, label, count, color) {
+  const collapsed = dirtGroupsCollapsed.has(gkey);
+  const sw = color ? `<span class="ctr-sw" style="background:${color}"></span>` : '';
+  // gkey can carry material names with quotes (e.g. `18" hdpe`); URI-encode it so
+  // it's always attribute-safe (decoded back in the toggle handler).
+  return `<div class="dirt-grp" data-act="toggle-group" data-gkey="${encodeURIComponent(gkey)}">` +
+    `${sw}<span class="dirt-grp-lbl"><b>${esc(label)}</b> (${count})</span>` +
+    `<span class="v">${collapsed ? '▸' : '▾'}</span></div>`;
+}
+// The type/material label a takeoff groups under (mirrors takeoffSubtotals so the
+// group headers and the Σ subtotals line up).
+function takeoffGroupLabel(kind, m) {
+  const cfg = m.cfg || {};
+  if (kind === 'qline') return pipeScheduleLabel(cfg);
+  return cfg.label || (kind === 'qcount' ? 'Item' : 'Area');
+}
+
 function renderDirtPanel() {
   const panel = $('dirtPanel');
   if (!panel || panel.classList.contains('hidden')) return;
@@ -3907,26 +3931,40 @@ function renderDirtPanel() {
     rows.push(`<label class="dirt-row" style="cursor:pointer"><span>Ghost the other sheet</span><input type="checkbox" id="ghostChk" ${ghostOn ? 'checked' : ''}></label>`);
   }
 
-  // Contours — the focused surface's traced lines/spots/pads, sitework-style:
-  // sorted by elevation, color swatch, edit ✎ / delete ✕, click to select & jump.
+  // Contours — the focused surface's traced lines/spots/pads ON THE CURRENT PAGE,
+  // split into collapsible Contours / Spots / Pads subgroups (sorted by elevation),
+  // color swatch, edit ✎ / delete ✕, click to select & jump.
   const surfLabel = curSurface === 'proposed' ? 'Proposed' : 'Existing';
   const surfItems = state.markups
-    .filter(m => (m.kind === 'contour' || m.kind === 'espot' || m.kind === 'epad') && (m.surface || 'existing') === curSurface)
+    .filter(m => (m.kind === 'contour' || m.kind === 'espot' || m.kind === 'epad') && (m.surface || 'existing') === curSurface && m.page === state.page)
     .sort((a, b) => (b.elev == null ? -1e9 : b.elev) - (a.elev == null ? -1e9 : a.elev));
   rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-contours"><span>${surfLabel} contours (${surfItems.length})</span><span class="v">${dirtContoursCollapsed ? '▸' : '▾'}</span></div>`);
   if (!dirtContoursCollapsed) {
-    rows.push(`<div class="dirt-crow"><span class="hint">New traces are <b>${curSurface}</b> · dashed = existing, solid = proposed</span>${surfItems.length ? '<button class="ctr-clear" data-act="clear-surface" title="Delete all traces on this surface">Clear</button>' : ''}</div>`);
+    rows.push(`<div class="dirt-crow"><span class="hint">New traces are <b>${curSurface}</b> · dashed = existing, solid = proposed · this page only</span>${surfItems.length ? '<button class="ctr-clear" data-act="clear-surface" title="Delete all traces on this surface">Clear</button>' : ''}</div>`);
     if (!surfItems.length) {
-      rows.push('<div class="hint" style="margin:2px 0 8px">No traces on this surface yet — trace a contour (⛰), spot (◎), or pad (◫).</div>');
+      rows.push('<div class="hint" style="margin:2px 0 8px">No traces on this page yet — trace a contour (⛰), spot (◎), or pad (◫).</div>');
     } else {
-      for (const m of surfItems) {
-        const typ = m.kind === 'espot' ? 'spot' : m.kind === 'epad' ? 'flat pad' : `${m.pts.length} pts`;
-        rows.push(`<div class="ctr-row${m.id === selectedId ? ' sel' : ''}" data-id="${m.id}">` +
-          `<span class="ctr-sw" style="background:${elevColor(m.elev || 0, m.surface)}"></span>` +
-          `<span class="ctr-lbl">${m.elev != null ? elevStr(m.elev) + ' ft' : 'no elev'} · ${typ}</span>` +
-          `<button class="ctr-btn" data-act="edit-elev" title="Edit elevation">✎</button>` +
-          `<button class="ctr-btn" data-act="del-ctr" title="Delete">✕</button>` +
-          `</div>`);
+      const ctrGroups = [{ kind: 'contour', label: 'Contours' }, { kind: 'espot', label: 'Spots' }, { kind: 'epad', label: 'Pads' }]
+        .map(g => ({ ...g, items: surfItems.filter(m => m.kind === g.kind) }))
+        .filter(g => g.items.length);
+      // Only one type present → skip the subheader (it would just echo the
+      // section header above). Two+ types → collapsible per-type subgroups.
+      const flat = ctrGroups.length <= 1;
+      for (const g of ctrGroups) {
+        const gkey = `c:${curSurface}:${g.kind}`;
+        if (!flat) {
+          rows.push(dirtGroupHeader(gkey, g.label, g.items.length, null));
+          if (dirtGroupsCollapsed.has(gkey)) continue;
+        }
+        for (const m of g.items) {
+          const typ = m.kind === 'espot' ? 'spot' : m.kind === 'epad' ? 'flat pad' : `${m.pts.length} pts`;
+          rows.push(`<div class="ctr-row${m.id === selectedId ? ' sel' : ''}" data-id="${m.id}">` +
+            `<span class="ctr-sw" style="background:${elevColor(m.elev || 0, m.surface)}"></span>` +
+            `<span class="ctr-lbl">${m.elev != null ? elevStr(m.elev) + ' ft' : 'no elev'} · ${typ}</span>` +
+            `<button class="ctr-btn" data-act="edit-elev" title="Edit elevation">✎</button>` +
+            `<button class="ctr-btn" data-act="del-ctr" title="Delete">✕</button>` +
+            `</div>`);
+        }
       }
     }
   }
@@ -3934,30 +3972,48 @@ function renderDirtPanel() {
   // SEPARATE from the cut/fill grade surface above: they carry no existing/proposed
   // surface, so a surfacing/paving job lives entirely here (not under Contours).
   const qk = { qarea: [], qline: [], qcount: [] };
-  for (const m of state.markups) if (qk[m.kind]) qk[m.kind].push(m);
+  for (const m of state.markups) if (qk[m.kind] && m.page === state.page) qk[m.kind].push(m);
   const qTotal = qk.qarea.length + qk.qline.length + qk.qcount.length;
   rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-takeoff"><span>Takeoffs (${qTotal})</span><span class="v">${dirtTakeoffCollapsed ? '▸' : '▾'}</span></div>`);
   if (!dirtTakeoffCollapsed) {
     if (!qTotal) {
-      rows.push('<div class="hint" style="margin:2px 0 8px">No area / line / count takeoffs yet. Trace one with the <b>▨ Area</b> / <b>⌇ Line</b> / <b>⊙ Count</b> tools — these price into the <b>$ Bid</b> and are separate from the cut/fill contours above.</div>');
+      rows.push('<div class="hint" style="margin:2px 0 8px">No area / line / count takeoffs on this page. Trace one with the <b>▨ Area</b> / <b>⌇ Line</b> / <b>⊙ Count</b> tools — these price into the <b>$ Bid</b> and are separate from the cut/fill contours above.</div>');
     } else {
       const icon = { qarea: '▨', qline: '⌇', qcount: '⊙' };
-      const groupLabel = { qarea: 'Areas', qline: 'Lines', qcount: 'Counts' };
+      // Build every (kind → material/type + color) group first, so e.g. gravel and
+      // asphalt areas each get their own collapsible subheader (with its swatch).
+      const allGroups = [];
       for (const kind of ['qarea', 'qline', 'qcount']) {
         const items = qk[kind];
         if (!items.length) continue;
-        rows.push(`<div class="dirt-crow"><span class="hint"><b>${groupLabel[kind]}</b> (${items.length})</span></div>`);
+        const groups = new Map();
         for (const m of items) {
-          const sw = kind === 'qline' ? lineColorHex(m.cfg || {}) : kind === 'qarea' ? areaColorHex(m.cfg || {}) : (m.color || '#e0533f');
+          const color = kind === 'qline' ? lineColorHex(m.cfg || {}) : kind === 'qarea' ? areaColorHex(m.cfg || {}) : (m.color || '#e0533f');
+          const label = takeoffGroupLabel(kind, m);
+          const gkey = `t:${kind}:${label}:${color}`;
+          const g = groups.get(gkey) || { kind, gkey, label, color, items: [] };
+          g.items.push(m); groups.set(gkey, g);
+        }
+        for (const g of groups.values()) allGroups.push(g);
+      }
+      // Only one group across all takeoffs → skip the subheader (it would just
+      // echo the section header). Two+ → collapsible per-material subgroups.
+      const flat = allGroups.length <= 1;
+      for (const g of allGroups) {
+        if (!flat) {
+          rows.push(dirtGroupHeader(g.gkey, `${icon[g.kind]} ${g.label}`, g.items.length, g.color));
+          if (dirtGroupsCollapsed.has(g.gkey)) continue;
+        }
+        for (const m of g.items) {
           rows.push(`<div class="ctr-row${m.id === selectedId ? ' sel' : ''}" data-id="${m.id}">` +
-            `<span class="ctr-sw" style="background:${sw}"></span>` +
-            `<span class="ctr-lbl">${icon[kind]} ${esc(measureValue(m))}</span>` +
+            `<span class="ctr-sw" style="background:${g.color}"></span>` +
+            `<span class="ctr-lbl">${icon[g.kind]} ${esc(measureValue(m))}</span>` +
             `<button class="ctr-btn" data-act="edit-takeoff" title="Edit / reconfigure">✎</button>` +
             `<button class="ctr-btn" data-act="del-ctr" title="Delete">✕</button>` +
             `</div>`);
         }
         // per-material / per-type subtotal(s) for this group
-        for (const s of takeoffSubtotals(kind, items)) {
+        for (const s of takeoffSubtotals(g.kind, g.items)) {
           rows.push(`<div class="dirt-row"><span>Σ ${esc(s.label)}</span><span class="v"><b>${esc(s.text)}</b></span></div>`);
         }
       }
@@ -4026,6 +4082,13 @@ function renderDirtPanel() {
   if (toggleContours) toggleContours.addEventListener('click', () => { dirtContoursCollapsed = !dirtContoursCollapsed; renderDirtPanel(); });
   const toggleTakeoff = body.querySelector('[data-act="toggle-takeoff"]');
   if (toggleTakeoff) toggleTakeoff.addEventListener('click', () => { dirtTakeoffCollapsed = !dirtTakeoffCollapsed; renderDirtPanel(); });
+  body.querySelectorAll('[data-act="toggle-group"]').forEach(el => {
+    el.addEventListener('click', () => {
+      const k = decodeURIComponent(el.dataset.gkey);
+      if (dirtGroupsCollapsed.has(k)) dirtGroupsCollapsed.delete(k); else dirtGroupsCollapsed.add(k);
+      renderDirtPanel();
+    });
+  });
   const clearSurf = body.querySelector('[data-act="clear-surface"]');
   if (clearSurf) clearSurf.addEventListener('click', clearSurfaceContours);
   body.querySelectorAll('.ctr-row').forEach(row => {

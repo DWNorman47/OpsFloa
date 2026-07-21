@@ -4,6 +4,7 @@ import { fmtHours, formatCurrency } from '../utils';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
 import { handlePdfError } from '../pdfError';
+import DeductionListEditor, { newDeduction } from './DeductionListEditor';
 
 function downloadCSV(rows, filename) {
   const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
@@ -43,6 +44,52 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
   const [addSaving, setAddSaving] = useState(false);
   const [addError, setAddError] = useState('');
   const [addSuccess, setAddSuccess] = useState(false);
+  // Per-worker deductions (loans, garnishments, a worker-specific line) — on top
+  // of the company-wide list. Loaded lazily when the section is first opened.
+  const [showDeductions, setShowDeductions] = useState(false);
+  const [deductions, setDeductions] = useState(null); // null = not loaded yet
+  const [dedSaving, setDedSaving] = useState(false);
+  const [dedError, setDedError] = useState('');
+  const [dedSaved, setDedSaved] = useState(false);
+
+  const rowToForm = d => ({ id: `d${d.id}`, name: d.name || '', kind: d.kind === 'fixed' ? 'fixed' : 'percent', value: d.value != null ? String(d.value) : '', cap: d.cap_amount != null ? String(d.cap_amount) : '' });
+
+  const toggleDeductions = async () => {
+    const next = !showDeductions;
+    setShowDeductions(next);
+    setDedError(''); setDedSaved(false);
+    if (next && deductions == null) {
+      try {
+        const r = await api.get(`/admin/workers/${worker.id}/deductions`);
+        setDeductions((r.data.deductions || []).map(rowToForm));
+      } catch (err) {
+        setDeductions([]);
+        setDedError(err?.response?.data?.error || t.dedSaveFailed);
+      }
+    }
+  };
+
+  const saveDeductions = async () => {
+    setDedSaving(true); setDedError(''); setDedSaved(false);
+    try {
+      const payload = (deductions || [])
+        .filter(it => String(it.name).trim() && Number.isFinite(parseFloat(it.value)) && parseFloat(it.value) >= 0)
+        .map(it => {
+          const out = { name: String(it.name).trim().slice(0, 120), kind: it.kind, value: parseFloat(it.value) };
+          const cap = parseFloat(it.cap);
+          if (it.kind === 'percent' && Number.isFinite(cap) && cap > 0) out.cap_amount = cap;
+          return out;
+        });
+      const r = await api.put(`/admin/workers/${worker.id}/deductions`, { deductions: payload });
+      setDeductions((r.data.deductions || []).map(rowToForm));
+      setDedSaved(true);
+      setTimeout(() => setDedSaved(false), 3000);
+    } catch (err) {
+      setDedError(err?.response?.data?.error || t.dedSaveFailed);
+    } finally {
+      setDedSaving(false);
+    }
+  };
 
   const handleAddEntry = async e => {
     e.preventDefault();
@@ -142,10 +189,34 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
         <div style={styles.billSection}>
           <div style={styles.sectionHeader}>
             <h4 style={styles.billHeading}>{t.generateBill}</h4>
-            <button style={styles.addEntryBtn} onClick={() => { setShowAddEntry(v => !v); setAddError(''); setAddSuccess(false); }}>
-              {showAddEntry ? `✕ ${t.cancel}` : `+ ${t.addEntry}`}
-            </button>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button style={styles.addEntryBtn} onClick={toggleDeductions}>
+                {showDeductions ? `✕ ${t.cancel}` : `− ${t.dedWorkerBtn}`}
+              </button>
+              <button style={styles.addEntryBtn} onClick={() => { setShowAddEntry(v => !v); setAddError(''); setAddSuccess(false); }}>
+                {showAddEntry ? `✕ ${t.cancel}` : `+ ${t.addEntry}`}
+              </button>
+            </div>
           </div>
+          {showDeductions && (
+            <div style={styles.addForm}>
+              <p style={{ fontSize: 12.5, color: '#6b7280', margin: '0 0 12px', lineHeight: 1.5 }}>{t.dedWorkerNote}</p>
+              {deductions == null ? (
+                <div style={{ color: '#6b7280', fontSize: 13 }}>{t.loading}</div>
+              ) : (
+                <>
+                  <DeductionListEditor items={deductions} onChange={setDeductions} />
+                  {dedError && <div style={styles.addError}>{dedError}</div>}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12 }}>
+                    <button style={{ ...styles.fetchBtn, ...(dedSaving ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={saveDeductions} disabled={dedSaving}>
+                      {dedSaving ? t.saving : t.dedSave}
+                    </button>
+                    {dedSaved && <span style={{ color: '#059669', fontSize: 13, fontWeight: 600 }}>{t.dedSaved}</span>}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           {addSuccess && <div style={styles.addSuccess}>{t.entryAddedSuccess}</div>}
           {showAddEntry && (
             <form onSubmit={handleAddEntry} style={styles.addForm}>

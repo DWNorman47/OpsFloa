@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useT } from '../hooks/useT';
 import { invalidateCache } from '../offlineDb';
@@ -71,6 +71,9 @@ function blankForm() {
     // is a list the company writes itself. Kept in policy shape so saving is a
     // pass-through — a second form shape would be one more thing to drift.
     rules: [],
+    // Per-role overrides: [{ roleId, addToStandard, rules }]. Empty = every
+    // worker uses the Standard Rules above (today's behaviour).
+    roleRules: [],
   };
 }
 
@@ -85,6 +88,11 @@ function policyToForm(raw) {
   // Rules round-trip untouched. The server's parseRules drops anything it can't
   // read, so a rule that survived a save is already a shape this can hand back.
   f.rules = Array.isArray(p.rules) ? p.rules : [];
+  f.roleRules = Array.isArray(p.roleRules)
+    ? p.roleRules
+        .filter(r => r && r.roleId != null)
+        .map(r => ({ roleId: Number(r.roleId), addToStandard: r.addToStandard !== false, rules: Array.isArray(r.rules) ? r.rules : [] }))
+    : [];
   const sh = p.standardHours || {};
   const days = Object.keys(sh).filter(k => sh[k] && sh[k].start);
   if (days.length) {
@@ -163,10 +171,14 @@ function formToPolicy(f) {
       pct: parseFloat(f.nightPct) || 0,
     };
   }
+  const roleRules = (Array.isArray(f.roleRules) ? f.roleRules : [])
+    .filter(r => r && r.roleId != null && Number.isFinite(Number(r.roleId)))
+    .map(r => ({ roleId: Number(r.roleId), addToStandard: r.addToStandard !== false, rules: Array.isArray(r.rules) ? r.rules : [] }));
   return {
     version: 1,
     enabled: !!f.enabled,
     rules: Array.isArray(f.rules) ? f.rules : [],
+    roleRules,
     standardHours,
     rounding: {
       clockIn:  { reference: f.inRef,  intervalMin: parseInt(f.inInterval, 10) || 15,  graceMin: parseInt(f.inGrace, 10) || 0,  direction: f.inDir },
@@ -185,9 +197,30 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
 
+  // Company roles for the Role Rules picker + name labels. Empty on 403 (an
+  // admin without role visibility just can't add role sections; the Standard
+  // Rules still work). Any already-saved roleRules keep their id either way.
+  const [roles, setRoles] = useState([]);
+  useEffect(() => {
+    api.get('/admin/roles').then(r => setRoles(r.data || [])).catch(silentError('hoursrules-roles'));
+  }, []);
+
   const set = (k, v) => { setForm(f => ({ ...f, [k]: v })); setSaved(false); };
   const toggleDay = (d) => { setForm(f => ({ ...f, workDays: { ...f.workDays, [d]: !f.workDays[d] } })); setSaved(false); };
-  const applyPreset = (key) => { if (PRESETS[key]) { setForm(PRESETS[key]()); setSaved(false); } };
+  // A preset rewrites only Standard Rules/Hours; role sections are preserved.
+  const applyPreset = (key) => { if (PRESETS[key]) { setForm(f => ({ ...PRESETS[key](), roleRules: f.roleRules })); setSaved(false); } };
+
+  const roleName = (id) => roles.find(r => r.id === Number(id))?.name || t.hrRolePickerLabel;
+  const usedRoleIds = new Set(form.roleRules.map(r => Number(r.roleId)));
+  const addableRoles = roles.filter(r => !usedRoleIds.has(r.id));
+  const addRoleSection = () => {
+    const next = addableRoles[0];
+    if (!next) return;
+    set('roleRules', [...form.roleRules, { roleId: next.id, addToStandard: true, rules: [] }]);
+  };
+  const updateRoleSection = (idx, patch) =>
+    set('roleRules', form.roleRules.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+  const removeRoleSection = (idx) => set('roleRules', form.roleRules.filter((_, i) => i !== idx));
 
   const save = async () => {
     setSaving(true); setError('');
@@ -267,7 +300,57 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
             <p style={s.hint}>{t.hrTransparencyHint}</p>
           </section>
 
-          <HoursRuleBuilder rules={form.rules} onChange={rs => set('rules', rs)} />
+          <HoursRuleBuilder rules={form.rules} onChange={rs => set('rules', rs)} title={t.hrStandardRulesTitle} />
+
+          <section style={s.section}>
+            <div style={s.headRow}>
+              <div>
+                <h4 style={s.h4}>{t.hrRoleRulesTitle}</h4>
+                <p style={s.hint}>{t.hrRoleRulesHint}</p>
+              </div>
+              <button type="button" style={s.addTier} onClick={addRoleSection} disabled={addableRoles.length === 0}>
+                {t.hrAddRoleRules}
+              </button>
+            </div>
+
+            {form.roleRules.map((rr, idx) => (
+              <div key={idx} style={s.roleCard}>
+                <div style={s.roleHead}>
+                  <div style={s.field}>
+                    <label style={s.label}>{t.hrRolePickerLabel}</label>
+                    <select
+                      style={s.input}
+                      value={String(rr.roleId)}
+                      onChange={e => updateRoleSection(idx, { roleId: Number(e.target.value) })}
+                    >
+                      {/* Current role always listed even if since-deleted, so its
+                          id round-trips; other options exclude already-added roles. */}
+                      {!roles.some(r => r.id === Number(rr.roleId)) && (
+                        <option value={String(rr.roleId)}>{`#${rr.roleId}`}</option>
+                      )}
+                      {roles
+                        .filter(r => r.id === Number(rr.roleId) || !usedRoleIds.has(r.id))
+                        .map(r => <option key={r.id} value={String(r.id)}>{r.name}</option>)}
+                    </select>
+                  </div>
+                  <button type="button" style={s.tierRemove} onClick={() => removeRoleSection(idx)} aria-label={t.hrRemoveRoleRules}>×</button>
+                </div>
+
+                <label style={s.checkRow}>
+                  <input type="checkbox" checked={rr.addToStandard !== false} onChange={e => updateRoleSection(idx, { addToStandard: e.target.checked })} />
+                  <span>{t.hrRoleAddOnTop}</span>
+                </label>
+                <p style={s.hint}>{rr.addToStandard !== false ? t.hrRoleAddOnTopHint : t.hrRoleOverwriteHint}</p>
+
+                <HoursRuleBuilder
+                  rules={rr.rules}
+                  onChange={rs => updateRoleSection(idx, { rules: rs })}
+                  title={roleName(rr.roleId)}
+                  help={t.hrRoleRulesBuilderHelp}
+                />
+              </div>
+            ))}
+          </section>
         </>
       )}
 
@@ -317,6 +400,8 @@ const s = {
   tierLabel: { fontSize: 13, color: '#374151', fontWeight: 600 },
   tierRemove: { background: '#fef2f2', color: '#ef4444', border: '1px solid #fecaca', borderRadius: 6, width: 26, height: 26, fontSize: 15, fontWeight: 700, cursor: 'pointer', lineHeight: 1 },
   addTier: { background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', borderRadius: 7, padding: '6px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', marginTop: 4 },
+  roleCard: { marginTop: 14, padding: 14, background: '#f8fafc', border: '1px solid #eef0f2', borderRadius: 10 },
+  roleHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 12, marginBottom: 10, flexWrap: 'wrap' },
   edge: { marginTop: 12, padding: 12, background: '#f8fafc', borderRadius: 8 },
   edgeTitle: { fontSize: 13, fontWeight: 700, color: '#334155', marginBottom: 8 },
   checkRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: '#374151', cursor: 'pointer' },

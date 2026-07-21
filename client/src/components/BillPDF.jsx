@@ -1,6 +1,5 @@
 import React from 'react';
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
-import CompanyLogoPdf from './CompanyLogoPdf';
 import { formatCurrency, langToLocale } from '../utils';
 
 function fmtDate(str, locale = 'en-US') {
@@ -76,6 +75,9 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
   // disagreed with the screen it was printed from.
   const fmtMoney = v => formatCurrency(v, currency);
   const { worker, entries, reimbursements = [], summary, period } = data;
+  // When the company has configured deductions, the stub shows Gross Wages →
+  // deductions → Net Pay instead of a single Total Due. Empty → unchanged.
+  const hasDeductions = Array.isArray(summary.deductions) && summary.deductions.length > 0;
 
   const periodStr = period.from || period.to
     ? `${period.from ? fmtDateShort(period.from, locale) : (t.pdfBeginning || 'Beginning')} – ${period.to ? fmtDateShort(period.to, locale) : (t.pdfPresent || 'Present')}`
@@ -111,7 +113,6 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
         {/* Invoice header */}
         <View style={s.invHeader}>
           <View>
-            <CompanyLogoPdf src={ci.logo_url} style={s.companyLogo} />
             <Text style={s.brand}>{worker.invoice_name || worker.full_name || '—'}</Text>
             <Text style={s.brandSub}>{t.pdfEmployeeTimeInvoice || 'Employee Time Invoice'}</Text>
           </View>
@@ -264,6 +265,22 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
                 <Text style={[s.sumVal, { color: '#2563eb' }]}>{fmtMoney(summary.guarantee_cost || 0)}</Text>
               </View>
             )}
+            {hasDeductions && (
+              <>
+                <View style={[s.sumRow, s.sumDivider]}>
+                  <Text style={[s.sumLabel, s.sumBold]}>{t.pdfGrossWages || 'Gross Wages'}</Text>
+                  <Text style={[s.sumVal, s.sumBold]}>{fmtMoney(summary.gross_wages)}</Text>
+                </View>
+                {summary.deductions.map((d, i) => (
+                  <View key={i} style={s.sumRow}>
+                    <Text style={[s.sumLabel, { color: '#b91c1c' }]}>
+                      {d.name}{d.kind === 'percent' ? ` (${d.value}%)` : ''}
+                    </Text>
+                    <Text style={[s.sumVal, { color: '#b91c1c' }]}>−{fmtMoney(d.amount)}</Text>
+                  </View>
+                ))}
+              </>
+            )}
             {(summary.reimbursement_total || 0) > 0 && (
               <View style={s.sumRow}>
                 <Text style={[s.sumLabel, { color: '#7c3aed' }]}>{t.expenseReimbursements || 'Expense Reimbursements'}</Text>
@@ -271,8 +288,8 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
               </View>
             )}
             <View style={s.sumTotal}>
-              <Text style={s.sumTotalText}>{t.totalDue || 'Total Due'}</Text>
-              <Text style={s.sumTotalText}>{fmtMoney(summary.total_cost)}</Text>
+              <Text style={s.sumTotalText}>{hasDeductions ? (t.pdfNetPay || 'Net Pay') : (t.totalDue || 'Total Due')}</Text>
+              <Text style={s.sumTotalText}>{fmtMoney(hasDeductions ? summary.net_pay : summary.total_cost)}</Text>
             </View>
           </View>
         </View>

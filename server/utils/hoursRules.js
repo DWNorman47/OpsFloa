@@ -98,7 +98,7 @@ const ROUNDING_REFERENCES = ['schedule', 'clock'];
 // is 10h, which under an 8h threshold is 2h of overtime — not 1.5h of overtime
 // and 0.5h of regular.
 const RULE_TYPES = ['clip_start', 'clip_end', 'add_time', 'remove_time', 'auto_break', 'round', 'ot_tier',
-  'rest_day', 'min_daily', 'seventh_day', 'night_diff'];
+  'rest_day', 'min_daily', 'seventh_day', 'night_diff', 'window_mult'];
 const ROUND_EDGES = ['in', 'out', 'both']; // which punch edge a `round` rule rounds
 const OT_TIER_BASES = ['day', 'week'];     // an ot_tier rule counts hours per day or per week
 const RULE_WHEN_KINDS = [
@@ -446,6 +446,22 @@ function parseRule(raw, index) {
       return { ...base, fromHour, toHour, pct };
     }
 
+    case 'window_mult': {
+      // A GOVERNING multiplier for hours worked inside a day-of-week + clock-time
+      // window (unlike night_diff, which is an additive %). `when` anchors the
+      // window's START day; `from`/`to` are minutes-since-midnight. `to <= from`
+      // means the window wraps into the next day (from==to = a full 24h), so a
+      // window can run Sat 19:00 → Sun 05:00. Covered hours are carved out of the
+      // normal daily/weekly OT and priced at `mult`× — see windowHoursForEntry /
+      // computeOT in payCalculations. Stored `from`/`to` as HH:MM by the builder;
+      // here they become minutes so the calculator does plain interval math.
+      const from = toMin(raw.from), to = toMin(raw.to);
+      const mult = Number(raw.mult);
+      if (from == null || to == null) return null;
+      if (!Number.isFinite(mult) || mult <= 0) return null;
+      return { ...base, from, to, mult };
+    }
+
     default:
       return null;
   }
@@ -555,6 +571,11 @@ function parsePolicy(raw) {
     // sharper here: a half-understood rule that still fires would quietly bill
     // the wrong number, and a wrong invoice is worse than a missing rule.
     rules: parseRules(obj.rules),
+    // Per-role rule overrides. Each entry attaches an independent rule list to a
+    // worker role (users.role_id); `addToStandard` decides whether it stacks on
+    // the standard `rules` or replaces them for that role. Absent → company-wide
+    // behaviour, exactly as before.
+    roleRules: parseRoleRules(obj.roleRules),
     // Tiered overtime + 7th-consecutive-day config (Milestone 2). Passed
     // through with light normalization; the pay calculator (resolveBands)
     // validates individual bands.
@@ -566,6 +587,35 @@ function parsePolicy(raw) {
   };
 }
 
+/** Normalize the roleRules array; drop entries without a valid integer roleId. */
+function parseRoleRules(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const e of raw) {
+    if (!e || typeof e !== 'object') continue;
+    const roleId = Number(e.roleId);
+    if (!Number.isInteger(roleId)) continue;
+    out.push({ roleId, addToStandard: e.addToStandard !== false, rules: parseRules(e.rules) });
+  }
+  return out;
+}
+
+/**
+ * The rule list that actually applies to a worker of `roleId`:
+ *   - no matching role section (or roleId null/unknown) → the standard rules;
+ *   - a section with addToStandard → standard rules PLUS the role's rules;
+ *   - a section without → the role's rules ONLY (replaces standard).
+ * A `roleRules` entry for a since-deleted role simply never matches, so nothing
+ * needs cleanup. Callers pass the worker's users.role_id.
+ */
+function effectiveRulesForRole(policy, roleId) {
+  const std = policy.rules || [];
+  if (roleId == null || !Array.isArray(policy.roleRules) || policy.roleRules.length === 0) return std;
+  const rr = policy.roleRules.find(x => x.roleId === roleId);
+  if (!rr) return std;
+  return rr.addToStandard ? std.concat(rr.rules) : rr.rules;
+}
+
 /**
  * Extract the tiered-overtime config for the pay calculator from a company
  * `settings` object, or null when there's nothing tiered configured (so
@@ -573,7 +623,7 @@ function parsePolicy(raw) {
  * `{ dailyBands, weeklyBands, seventhDay }` when the enabled policy defines
  * bands or a 7th-day rule.
  */
-function otConfigFromSettings(settings) {
+function otConfigFromSettings(settings, roleId = null) {
   const p = parsePolicy(settings && settings.hours_rules);
   if (!p.enabled) return null;
   const o = p.overtime || {};
@@ -600,7 +650,9 @@ function otConfigFromSettings(settings) {
   let seventhDay = has7th ? o.seventhDay : null;
 
   // ── Custom-rule builder equivalents (override the fixed slots when present) ──
-  const rules = p.rules || [];
+  // Role-aware: a worker's role rules (ot_tier / premiums) feed their OT config.
+  // roleId null → the standard rules, identical to the company-wide behaviour.
+  const rules = effectiveRulesForRole(p, roleId);
   // ot_tier rules — resolved per bucket in computeOT (a matching rule's bands
   // override the fixed-slot config for its days).
   const tierRules = rules.filter(r => r.type === 'ot_tier');
@@ -618,10 +670,13 @@ function otConfigFromSettings(settings) {
   // night_diff rule: overrides the fixed-slot night differential.
   const nightRule = rules.find(r => r.type === 'night_diff');
   if (nightRule) nightDifferential = { fromHour: nightRule.fromHour, toHour: nightRule.toHour, pct: nightRule.pct };
+  // window_mult rules — a governing multiplier for hours inside a day-of-week +
+  // clock-time window, carved out of the normal OT calc in computeOT.
+  const windowRules = rules.filter(r => r.type === 'window_mult');
 
   const has7thFinal = !!seventhDay;
   if (!hasDaily && !hasWeekly && !has7thFinal && !restDay && !minDailyHours && !nightDifferential
-      && tierRules.length === 0 && minDailyRules.length === 0) return null;
+      && tierRules.length === 0 && minDailyRules.length === 0 && windowRules.length === 0) return null;
   return {
     dailyBands:  hasDaily  ? o.dailyBands  : [],
     weeklyBands: hasWeekly ? o.weeklyBands : [],
@@ -631,6 +686,25 @@ function otConfigFromSettings(settings) {
     nightDifferential,
     tierRules,
     minDailyRules,
+    windowRules,
+  };
+}
+
+/**
+ * A per-request memoized selector: `otConfigByRole(roleId)` returns the OT config
+ * for that role, computing (and caching) it lazily. `null` roleId is a valid key
+ * (the standard config). Parsing the policy once per distinct role per request is
+ * cheap and keeps the per-worker loop a simple lookup. When a company has no role
+ * rules every role resolves to the same standard config.
+ */
+function otConfigByRoleFactory(settings) {
+  const cache = new Map();
+  return function otConfigByRole(roleId = null) {
+    const key = roleId == null ? '__std__' : roleId;
+    if (cache.has(key)) return cache.get(key);
+    const cfg = otConfigFromSettings(settings, roleId);
+    cache.set(key, cfg);
+    return cfg;
   };
 }
 
@@ -1080,19 +1154,24 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null) {
  *
  * @param entries  rows with { start_time, end_time, work_date, user_id, ... }
  * @param policy   a parsed policy (from parsePolicy)
- * @param ctx      { shiftMap?, workerStandardById? } optional reference sources:
- *                 shiftMap keyed by `${user_id}|${YYYY-MM-DD}` → shift row;
- *                 workerStandardById keyed by user_id → weekday standardHours map.
+ * @param ctx      { shiftMap?, workerStandardById?, workerRoleById? } optional
+ *                 reference sources: shiftMap keyed by `${user_id}|${YYYY-MM-DD}`
+ *                 → shift row; workerStandardById keyed by user_id → weekday
+ *                 standardHours map; workerRoleById keyed by user_id → role_id,
+ *                 which selects each worker's effective (role-aware) rule list.
  */
 function roundEntriesForPay(entries, policy, ctx = {}) {
   if (!policy || !policy.enabled) return entries;
   const inOff = policy.rounding.clockIn.direction === 'off';
   const outOff = policy.rounding.clockOut.direction === 'off';
-  const rules = policy.rules || [];
+  const standardRules = policy.rules || [];
+  const hasRoleRules = Array.isArray(policy.roleRules) && policy.roleRules.length > 0;
   // Nothing configured on either mechanism → same array reference, as before.
-  if (inOff && outOff && rules.length === 0) return entries;
+  // Role rules may add rules for some workers even when the standard list is
+  // empty, so keep processing whenever any role section exists.
+  if (inOff && outOff && standardRules.length === 0 && !hasRoleRules) return entries;
 
-  const { shiftMap, workerStandardById } = ctx;
+  const { shiftMap, workerStandardById, workerRoleById } = ctx;
   // Whether to surface the original punch alongside the paid time. When a company
   // opts for "paid only", we still round but don't expose the raw punch.
   const showRaw = policy.display?.showActualAndPaid !== false;
@@ -1103,6 +1182,11 @@ function roundEntriesForPay(entries, policy, ctx = {}) {
     const workerStandard = workerStandardById ? workerStandardById[e.user_id] : null;
     const expected = resolveExpected(policy, e.work_date, { shift, workerStandard });
 
+    // The rule list that applies to THIS worker: role-aware when the caller
+    // supplied a role map, otherwise the standard list (unchanged behaviour).
+    const rules = (hasRoleRules && workerRoleById)
+      ? effectiveRulesForRole(policy, workerRoleById[e.user_id])
+      : standardRules;
     const dayRules = rules.filter(r => ruleMatchesDate(r, e.work_date));
 
     // Rounding first: the rule list operates on the paid punch, not the raw one.
@@ -1156,6 +1240,9 @@ module.exports = {
   DEFAULT_POLICY,
   roundEntriesFromSettings,
   otConfigFromSettings,
+  otConfigByRoleFactory,
+  effectiveRulesForRole,
+  parseRoleRules,
   migrateFixedSlots,
   hasFixedSlots,
   ROUNDING_DIRECTIONS,

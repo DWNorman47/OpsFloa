@@ -23,6 +23,170 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-21 — Plan Room: earthwork side menu — current page only, grouped/collapsible
+
+**Done.** Plan Room `v59 → v60`. The dirt/earthwork side menu's shape lists
+(Contours + Takeoffs) now (1) show only shapes **on the current page** — the
+contour list was surface-scoped but pulled every page; takeoffs weren't filtered
+at all — and (2) organize shapes into **collapsible per-type/color subgroups**,
+each with its own ▾/▸ header, swatch, and count.
+
+**Calls I made on the grouping:**
+- **Contours / Spots / Pads** group by *type* (a contour's color is its elevation,
+  so the swatch stays per-row; grouping by color there would fragment into one
+  group per elevation).
+- **Takeoffs** group by *type + material/color* — so gravel areas and asphalt
+  areas (different colors) are separate collapsible groups, each keeping its Σ
+  subtotal. This is the "/color" half of the request where color actually maps to
+  a material.
+- Groups default **expanded**; a `Set` of collapsed keys remembers folds for the
+  session (not persisted to the file — cheap, and avoids schema churn).
+- **Follow-up (`v60 → v61`):** when a section resolves to a single type/material
+  group, the subheader is dropped and the rows render flat — no more "Contours (N)"
+  echoing "Existing contours (N)" right above it. Subheaders only appear once
+  there are 2+ groups to organize.
+
+Gotcha handled: storm-pipe labels contain a double-quote (`18" hdpe`), which would
+break a `data-` attribute — group keys are URI-encoded in the DOM and decoded on
+click.
+
+Client-only, planroom files only (`git status` clean on `sitework/`). `node
+--check` passes; there's no automated test for the tool-app UI, so this wants a
+quick manual look: open a multi-page set, confirm the menu only lists the current
+page's shapes and that each type/material subheader folds.
+
+## 2026-07-21 — Pay stubs: deductions (gross → net), Social Security & anything else
+
+**Shipped.** Server `e29027a`, client `a814fcc`. Employees' pay output can now
+show deductions and a **Net Pay** figure. There was **nothing** for this before —
+every pay surface was gross-only (`hours × rate`), and the one `cp_compute_
+deductions` toggle was a dead experimental stub.
+
+**What I built, and the call behind it.** You picked a **configurable %/fixed
+list**, not an auto tax engine — so a deduction is just a name + either a percent
+of gross wages (optional cap) or a flat amount. That's deliberately **not** a tax
+calculator: it applies the rates you enter, your accountant reconciles the exact
+figures. It's the right call for a shop in Honduras (IHSS/RAP as flat %, plus
+whatever else) and it's why that old auto-deductions toggle was never finished —
+real bracket math is a payroll-processor job.
+
+Two sources, both live:
+- **Company-wide list** — Administration → Company Settings → **Payroll
+  Deductions**. Applies to everyone. Stored as a JSON setting exactly like the
+  hours-rules policy; empty = no deductions, so nothing changes for a company that
+  never touches it.
+- **Per-employee extras** — on each worker's card in Team (the same place you
+  generate their bill), a **Deductions** section for loans, advances, garnishments.
+  New `worker_deductions` table (migration **0143**), applied on top of the
+  company list.
+
+The per-worker **pay PDF** (the "Employee Time Invoice" you already download per
+worker) now reads **Gross Wages → each deduction (−) → reimbursements (+) → Net
+Pay** whenever deductions exist. Reimbursements are added back to net, not
+deducted from — they're expense repayments, not wages. Currency follows the
+company setting, so a Honduras stub prints "L" with no extra work.
+
+**Judgment calls worth knowing:**
+- **It lives on the existing per-worker pay PDF**, not a brand-new document — you
+  said "put it wherever you like," and that PDF was already the de-facto pay stub.
+- **Per-worker deductions are additive** (extras on top of the company list). True
+  per-worker *exemption* from a company deduction isn't in v1 — say the word if a
+  worker needs to be carved out of, say, the company SS line.
+- The worker's **on-screen** pay view (`PayStubView`) still shows gross only — I
+  focused on the printable stub you asked for. Adding net there is a fast follow
+  if you want it.
+
+⚠️ **Migration 0143 must run on stage/prod before this works there** — the
+per-worker table. (Given the earlier stage hiccup, worth a glance that the
+nightly migrate ran clean.) The company-wide list works off settings alone and
+needs no table.
+
+⚠️ **Not yet run through a real payslip.** The gross→net math is unit-tested
+(11 cases: percent/cap/fixed, per-worker merge, net = gross − deductions +
+reimbursements, empty = no-op). Full server suite **1016 green**, client build +
+i18n parity + smoke green. Before it promotes, generate one real stub with a
+couple of deductions and confirm the net matches by hand.
+
+## 2026-07-21 — Hours & Rules: time-window multiplier (weekend-premium schedules)
+
+**Shipped.** `320174e`. New rule type **Time-window multiplier** (`window_mult`):
+hours worked inside a day-of-week + clock-time window are paid at a set multiple
+of base *regardless of the overtime threshold*. Your example is now buildable as
+three rules — Sat 05:00→19:00 @1.25×, Sat 19:00→Sun 05:00 @1.5×, Sun 05:00→Mon
+05:00 @2× — and is the first test in the suite. Windows wrap past midnight (end ≤
+start → next day; end = start → a full 24h), so a single rule spans two calendar
+days.
+
+**The call that shapes the money — I picked "governing," not "stacking."** These
+multipliers **replace** the normal OT for the covered hours: a weekend hour is
+priced *exactly* at the window rate, and those hours are **carved out of the
+daily/weekly OT calc** — they don't count toward the 8h/40h threshold and they
+don't get an OT multiplier layered on top. That's what makes "Saturday is 1.25×"
+mean 1.25×, full stop, even on a 10-hour Saturday. The alternative reading —
+"pay whatever OT they'd normally get, *plus* the window premium on top" — would
+make that same hour 1.25× only when it isn't also OT, and more when it is. I went
+with governing because your numbers are a complete schedule, not a bonus. **If
+you actually wanted stacking, say so — it's a different calculation.**
+
+Two smaller things worth knowing:
+- **Window hours show up in the "overtime hours" column**, because they ride the
+  same premium-band machinery as rest-day / 7th-day pay. They're premium hours,
+  not regular — just labeled OT on reports.
+- **Overlap → highest multiplier wins that minute; a break never inflates
+  premium hours** (the covered total is capped at the paid duration). And
+  `window_mult` is independent of rest-day / 7th-day / minimum-daily rules — if a
+  day is somehow covered by both, it gets split rather than double-counted. Odd
+  to configure both on one day; documented, not blocked.
+
+No window rules configured → the engine is byte-identical to before (proven; the
+long-break negative-hours quirk still pins). Full suite **1005 green**, client
+build + i18n parity + smoke green. `docs/db-enums.md` documents the type.
+
+⚠️ **Not yet run through a real invoice.** The math is unit-tested against your
+schedule, but before this promotes past dev I'd generate one real weekend bill
+and eyeball that the premium lands where expected.
+
+## 2026-07-21 — Hours & Rules: per-role rules (Standard Rules + Role Rules)
+
+**Shipped.** Two commits: `9638ff1` (engine + UI + i18n), `0195879` (pay-site
+sweep). "Rules" is now **Standard Rules**; a new **Role Rules** section lets you
+give any role its own rule list, with a per-role checkbox to **add on top of**
+the Standard Rules or **replace** them (default: add on top — your call from the
+chat). Roles without a section keep the Standard Rules. A policy with no role
+rules is byte-identical to before (proven by test).
+
+**The subtle part was that pay config was never actually per-worker.** Overtime
+config was resolved **once per request** for the whole company, and the `ctx`
+plumbing that could carry per-worker data was **dead in production** (only tests
+ever populated it). So this wasn't "add a field" — it was standing up
+`workerRoleById` + a memoized `otConfigByRole(role_id)` at **14 separate money
+paths** (worker invoice, project bill, project metrics, OT report, payroll
+export, worker-hours export, certified payroll, 4 QuickBooks paths, pay-stubs,
+the weekly email; project spend/WIP inherit it through the shared labor query).
+The risk that matters: **a missed site silently pays that role by the Standard
+Rules.** Mitigated by funneling every site through the same three helpers and
+keeping the no-role code path unchanged — but it's why this went out as its own
+reviewable commit.
+
+**Judgment call worth knowing about:** three of the paths — QuickBooks time push,
+the QBO payroll journal, and certified payroll (and the lean worker-hours CSV) —
+**only round hours; they don't compute tiered OT at all today**, by their own
+existing design. I threaded role into their *rounding* (so a role's clip/break/
+add-time rules apply) but **did not** newly teach them tiered/role OT. That keeps
+them consistent with how they already treat the *company* OT config (they ignore
+it too). If you'd expect a role's OT tiers to reach a QuickBooks push or a
+certified-payroll form, say so — that's a deliberate line I drew, not an
+oversight.
+
+Size cap on the `hours_rules` setting raised 8 KB → 40 KB (role lists multiply
+it). `docs/db-enums.md` updated (roleRules shape + cap). Full server suite **992
+green**, client build + i18n parity + smoke green.
+
+⚠️ **Not yet exercised with a real role override end-to-end.** The math is
+unit-tested, but before this promotes past dev I'd spot-check one real pay path
+(e.g. a project bill) for a worker in a role that overrides OT, to confirm the
+number changes where expected and nowhere else.
+
 ## 2026-07-16 — Email bounce suppression: reconnected, and made reversible
 
 **Fixed.** `458d920`. Resend bounce webhook + two ways to undo a suppression + a
