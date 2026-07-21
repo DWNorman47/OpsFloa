@@ -23,6 +23,22 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-21 — Tools: retired the Sitework Takeoff tab (hidden, not deleted)
+
+**Done.** `ecf816b`. Plan Room replaces the Sitework Takeoff tool, so its tab +
+card are now hidden in Tools via a single `SHOW_SITEWORK = false` flag in
+`ToolsPage.jsx`. Hidden for **everyone**, including companies that own the Takeoff
+add-on; legacy `#sitework` / `#excavation` deep links fall through to Plan Room on
+the existing redirect.
+
+**Reversible by design, and nothing deleted:** flip `SHOW_SITEWORK` to `true` to
+bring the tab back (still add-on-gated), and the `/tool-apps/sitework/` files are
+untouched. ⚠️ One caveat: this hides it from the Tools **menu**, but the static
+tool still answers at its direct URL (`/tool-apps/sitework/index.html`) if someone
+has it bookmarked — deleting it later is what closes that off. Didn't touch the
+Takeoff **add-on** billing/entitlement or the `Sitework` calculator group (asphalt
+/ aggregate / slope) in Calculators — those are separate.
+
 ## 2026-07-21 — Plan Room: earthwork side menu — current page only, grouped/collapsible
 
 **Done.** Plan Room `v59 → v60`. The dirt/earthwork side menu's shape lists
