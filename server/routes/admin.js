@@ -22,6 +22,8 @@ const { sendEmail } = require('../email');
 const { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, nightPremiumCost } = require('../utils/payCalculations');
 const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, validatePolicyRaw, migrateFixedSlots, hasFixedSlots } = require('../utils/hoursRules');
 const { computePaid } = require('../utils/paidHours');
+const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = require('../utils/deductions');
+const { DEDUCTION_KINDS } = require('../constants/deductionEnums');
 const { weekRange, weekBucketKey } = require('../utils/weekBounds');
 const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const qbo = require('../services/qbo');
@@ -190,7 +192,7 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
   // couldn't update them. Added during 2026-04-30 audit pass.
   const adminNumericKeys = ['shift_reminder_hour', 'pto_annual_days', 'cycle_count_audit_pct', 'cycle_count_reconcile_threshold'];
   const numericKeys = [...rateKeys, ...notifKeys, ...adminNumericKeys, 'overtime_threshold', 'media_retention_days', 'qbo_bill_terms_days', 'week_start'];
-  const stringKeys = ['overtime_rule', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules'];
+  const stringKeys = ['overtime_rule', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules', 'deductions'];
   const allowed = [...numericKeys, ...stringKeys, ...FEATURE_KEYS];
   const companyId = req.user.company_id;
   try {
@@ -247,6 +249,15 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
             if (isNaN(id)) return res.status(400).json({ error: 'Invalid checklist template ID' });
             const tmpl = await pool.query('SELECT id FROM safety_checklist_templates WHERE id=$1 AND company_id=$2', [id, companyId]);
             if (tmpl.rowCount === 0) return res.status(400).json({ error: 'Checklist template not found' });
+          }
+          if (key === 'deductions' && val !== '') {
+            // A JSON list of company-wide deductions; the engine (parseCompanyDeductions)
+            // normalizes on read and drops anything malformed, so only shape + size
+            // are guarded here.
+            if (String(val).length > 20000) return res.status(400).json({ error: 'deductions is too large' });
+            let parsed;
+            try { parsed = JSON.parse(val); } catch { return res.status(400).json({ error: 'deductions must be valid JSON' }); }
+            if (!parsed || typeof parsed !== 'object') return res.status(400).json({ error: 'deductions must be a JSON object or array' });
           }
           await pool.query(
             'INSERT INTO settings (company_id, key, value) VALUES ($1, $2, $3) ON CONFLICT (company_id, key) DO UPDATE SET value = $3',
@@ -1058,6 +1069,17 @@ router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
     const roundedReimbTotal = Math.round(reimbursementTotal * 100) / 100;
     const totalCost = roundedRegularCost + roundedOvertimeCost + roundedPrevailingCost + roundedGuaranteeCost;
 
+    // Pay-stub deductions: the company-wide list (settings) plus this worker's own
+    // rows, applied to gross wages. Empty config → no deduction lines and net_pay
+    // equals the gross Total Due, so the stub is unchanged for companies that
+    // never configure deductions.
+    const workerDedRows = await pool.query(
+      'SELECT id, name, kind, value, cap_amount, active FROM worker_deductions WHERE user_id = $1 AND company_id = $2 AND active = true ORDER BY id',
+      [req.params.id, companyId]
+    );
+    const dedList = parseCompanyDeductions(settings.deductions).concat(normalizeWorkerDeductions(workerDedRows.rows));
+    const stub = payStubTotals(totalCost, roundedReimbTotal, dedList);
+
     res.json({
       worker,
       entries,
@@ -1069,10 +1091,86 @@ router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
         guarantee_weeks: guaranteeWeeks, guarantee_cost: roundedGuaranteeCost,
         reimbursement_total: roundedReimbTotal,
         total_cost: totalCost + roundedReimbTotal,
+        // Deductions → net pay (gross wages − deductions + reimbursements).
+        gross_wages: stub.gross_wages, deductions: stub.deductions,
+        deductions_total: stub.deductions_total, net_pay: stub.net_pay,
         overtime_multiplier: settings.overtime_multiplier, prevailing_wage_rate: settings.prevailing_wage_rate,
       },
       period: { from: from || null, to: to || null },
     });
+  } catch (err) {
+    logger.error({ err }, 'catch block error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /admin/workers/:id/deductions — this worker's OWN deduction lines (on top
+// of the company-wide list). Returns the full rows so the editor can round-trip.
+router.get('/workers/:id/deductions', requireAdmin, requirePerm('manage_workers'), async (req, res) => {
+  const companyId = req.user.company_id;
+  try {
+    const ok = await pool.query('SELECT 1 FROM users WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
+    if (ok.rowCount === 0) return res.status(404).json({ error: 'Worker not found' });
+    const { rows } = await pool.query(
+      'SELECT id, name, kind, value, cap_amount, note, active FROM worker_deductions WHERE user_id = $1 AND company_id = $2 ORDER BY id',
+      [req.params.id, companyId]
+    );
+    res.json({ deductions: rows });
+  } catch (err) {
+    logger.error({ err }, 'catch block error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// PUT /admin/workers/:id/deductions — replace this worker's whole deduction set.
+// Body: { deductions: [{ name, kind, value, cap_amount?, note? }] }. Validated
+// against DEDUCTION_KINDS; unknown-kind / negative / unnamed rows are dropped.
+router.put('/workers/:id/deductions', requireAdmin, requirePerm('manage_workers'), async (req, res) => {
+  const companyId = req.user.company_id;
+  const userId = req.params.id;
+  const incoming = Array.isArray(req.body.deductions) ? req.body.deductions : [];
+  try {
+    const ok = await pool.query('SELECT 1 FROM users WHERE id = $1 AND company_id = $2', [userId, companyId]);
+    if (ok.rowCount === 0) return res.status(404).json({ error: 'Worker not found' });
+
+    const rows = [];
+    for (const d of incoming) {
+      if (!d || !DEDUCTION_KINDS.includes(d.kind)) continue;
+      const name = String(d.name == null ? '' : d.name).trim().slice(0, 120);
+      const value = parseFloat(d.value);
+      if (!name || !Number.isFinite(value) || value < 0) continue;
+      const capNum = parseFloat(d.cap_amount);
+      const cap = d.kind === 'percent' && Number.isFinite(capNum) && capNum > 0 ? capNum : null;
+      rows.push({ name, kind: d.kind, value, cap, note: typeof d.note === 'string' ? d.note.slice(0, 500) : null });
+    }
+    if (rows.length > 50) return res.status(400).json({ error: 'Too many deductions (max 50)' });
+
+    // Replace the full set atomically so a failure can't leave the worker with a
+    // half-applied deduction list.
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM worker_deductions WHERE user_id = $1 AND company_id = $2', [userId, companyId]);
+      for (const r of rows) {
+        await client.query(
+          `INSERT INTO worker_deductions (user_id, company_id, name, kind, value, cap_amount, note, active, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, true, NOW())`,
+          [userId, companyId, r.name, r.kind, r.value, r.cap, r.note]
+        );
+      }
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
+    }
+
+    const fresh = await pool.query(
+      'SELECT id, name, kind, value, cap_amount, note, active FROM worker_deductions WHERE user_id = $1 AND company_id = $2 ORDER BY id',
+      [userId, companyId]
+    );
+    res.json({ deductions: fresh.rows });
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });

@@ -57,6 +57,7 @@ For each column we record:
 | `users.rate_type` | `hourly`, `daily` | **enforced** (CHECK in `0101`) | `server/constants/userEnums.js`, `server/routes/admin.js:1331` | Daily-rate pay calc + `day_mark_mode` gate. |
 | `users.overtime_rule` (per-user) | `daily`, `weekly`, `none` | **enforced** (CHECK in `0101`) | `server/constants/userEnums.js`, `server/routes/admin.js:1214` | Overtime calculation. |
 | `users.worker_type` | `employee`, `contractor`, `subcontractor`, `owner` | **enforced** (CHECK in `0071`) | `server/routes/admin.js:1217` | Display + report filtering on worker profile. |
+| `worker_deductions.kind` | `percent`, `fixed` | **enforced** (CHECK `chk_worker_deductions_kind` in `0143`) | `server/constants/deductionEnums.js` (`DEDUCTION_KINDS`), `server/utils/deductions.js`, `server/routes/admin.js` (PUT `/workers/:id/deductions`) | Per-worker pay-stub deduction lines (loans, garnishments, worker-specific tax). `percent` = % of gross wages (optional `cap_amount`); `fixed` = flat amount. Same vocabulary as the company-wide `deductions` settings JSON. Applied on the per-worker pay stub → net pay. |
 | `reimbursements.status` | `pending`, `approved`, `rejected` | **enforced** (CHECK in `0071`) | `server/routes/reimbursements.js` | Financial workflow. |
 | `settings.value` (key=`overtime_rule`) | `daily`, `weekly` | **app-only** | `server/routes/admin.js` PATCH validation | Company-wide overtime calc. |
 | `settings.value` (key=`invoice_signature`) | `none`, `optional`, `required` | **app-only** | `server/routes/admin.js` PATCH validation | Whether workers must sign invoices before exporting. |
@@ -312,6 +313,21 @@ that had the previous default.
   `otConfigByRoleFactory` and carried to every pay site by threading each
   worker's `role_id` (see `paidHours.computePaid`'s `roleId`). Not
   DB-enum-constrained (nested JSON, same posture as `rules[]`).
+
+- `deductions` (JSON list, default `''`) — company-wide payroll deductions for
+  the per-worker **pay stub** (gross wages → net). Shape `{ items: [{ id, name,
+  kind, value, cap }] }` (a bare array is also accepted). `kind` is `percent` (of
+  gross wages, optional `cap` = max amount per period) or `fixed` (flat amount) —
+  same vocabulary as the `worker_deductions.kind` column above. `''`/empty = no
+  deductions, so the stub stays gross-only for companies that never configure it.
+  Validated on write for **shape (JSON object/array) + size (≤ 20 KB)** in PATCH
+  `/admin/settings`; canonical normalization is `server/utils/deductions.js`
+  (`parseCompanyDeductions`, which never throws and drops malformed items). The
+  per-worker `worker_deductions` rows stack ON TOP of this list. Deductions apply
+  to gross **wages** only — reimbursements are added back to net, not deducted
+  from. Consumed by `GET /admin/workers/:id/entries` (→ `payStubTotals`) and the
+  pay-stub PDF. **Not** a tax engine: it applies configured rates, it does not
+  compute statutory brackets/ceilings.
 
 ### Module visibility flags (`module_*`, boolean, in `FEATURE_KEYS`)
 
