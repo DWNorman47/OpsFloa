@@ -33,6 +33,7 @@ const BUILDER_OUTPUT = [
   { id: 'rh3i4j', type: 'clip_start', when: { kind: 'month_days', days: [1, 15] }, at: '08:00' },
   { id: 'rk5l6m', type: 'clip_start', when: { kind: 'month_weeks', weeks: [1, -1] }, at: '08:00' },
   { id: 'rn7o8p', type: 'clip_start', when: { kind: 'nth_weeks', start: '2026-07-06', every: 2 }, at: '08:00' },
+  { id: 'rw1x2y', type: 'window_mult', when: { kind: 'weekdays', days: [6] }, from: '05:00', to: '19:00', mult: 1.25 },
 ];
 
 describe('every rule the builder can emit survives the engine', () => {
@@ -47,7 +48,7 @@ describe('every rule the builder can emit survives the engine', () => {
     const { RULE_TYPES, RULE_WHEN_KINDS } = require('../utils/hoursRules');
     // Mirrors the <option> values in the builder's type + when selects.
     const uiTypes = ['clip_start', 'clip_end', 'add_time', 'remove_time', 'auto_break', 'round', 'ot_tier',
-      'rest_day', 'min_daily', 'seventh_day', 'night_diff'];
+      'rest_day', 'min_daily', 'seventh_day', 'night_diff', 'window_mult'];
     const uiWhen = ['every_day', 'weekdays', 'month_days', 'month_weekdays', 'nth_days', 'months', 'nth_months', 'month_weeks', 'nth_weeks'];
     expect(uiTypes.every(x => RULE_TYPES.includes(x))).toBe(true);
     expect(uiWhen.every(x => RULE_WHEN_KINDS.includes(x))).toBe(true);

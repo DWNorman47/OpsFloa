@@ -67,6 +67,78 @@ function nightPremiumCost(entries, nightCfg, baseRate) {
   return entries.reduce((c, e) => c + nightHoursForEntry(e, from, to) * baseRate * (pct / 100), 0);
 }
 
+/** "YYYY-MM-DD" shifted by `k` days, timezone-independent. Null on a bad key. */
+function shiftDateStr(dk, k) {
+  const m = String(dk).substring(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  d.setUTCDate(d.getUTCDate() + k);
+  return d.toISOString().substring(0, 10);
+}
+
+/**
+ * Paid hours of one entry that fall inside each time-window multiplier, as a
+ * `Map(mult → hours)`. A `window_mult` rule defines a day-of-week + clock-time
+ * window (via its `when` and minutes-since-midnight `from`/`to`, where `to <= from`
+ * wraps past midnight — so a window can run Sat 19:00 → Sun 05:00). We test the
+ * window's anchor day against the entry's work_date and its two neighbours
+ * (`k ∈ {-1,0,1}`) so a window that started the previous day and wraps into this
+ * one is still counted. Overlapping windows: the **highest** multiplier wins each
+ * minute. The total is capped at the entry's PAID duration (gross − break),
+ * filling the higher multipliers first, so a break can never inflate premium hours.
+ *
+ * These are GOVERNING multipliers (the covered hours are carved out of the normal
+ * OT calc and priced entirely at `mult`), not an additive premium like night_diff.
+ */
+function windowHoursForEntry(e, windowRules) {
+  if (!windowRules || !windowRules.length) return new Map();
+  const s = hmToMin(e.start_time);
+  let en = hmToMin(e.end_time);
+  if (s == null || en == null) return new Map();
+  if (en <= s) en += 1440;                       // overnight shift (end == start → 0-length)
+  const d0 = String(e.work_date).substring(0, 10);
+
+  // Collect covered [lo, hi, mult] segments in minutes-from-work_date-midnight.
+  const segs = [];
+  for (const r of windowRules) {
+    const wf = Number(r.from);
+    let wt = Number(r.to);
+    if (!Number.isFinite(wf) || !Number.isFinite(wt)) continue;
+    if (wt <= wf) wt += 1440;                     // wrap; from == to → +1440 (full 24h)
+    const mult = parseFloat(r.mult);
+    if (!(mult > 0)) continue;
+    for (const k of [-1, 0, 1]) {
+      const anchor = shiftDateStr(d0, k);
+      if (anchor == null || !ruleMatchesDate(r, anchor)) continue;
+      const lo = Math.max(s, k * 1440 + wf);
+      const hi = Math.min(en, k * 1440 + wt);
+      if (hi > lo) segs.push([lo, hi, mult]);
+    }
+  }
+  if (!segs.length) return new Map();
+
+  // Resolve overlaps: over each elementary interval between boundaries, the
+  // highest covering multiplier wins. Sum gross minutes per multiplier.
+  const bounds = [...new Set(segs.flatMap(([lo, hi]) => [lo, hi]))].sort((a, b) => a - b);
+  const grossByMult = new Map();
+  for (let i = 0; i < bounds.length - 1; i++) {
+    const a = bounds[i], b = bounds[i + 1];
+    let best = 0;
+    for (const [lo, hi, m] of segs) if (lo <= a && hi >= b && m > best) best = m;
+    if (best > 0) grossByMult.set(best, (grossByMult.get(best) || 0) + (b - a));
+  }
+
+  // Cap at paid minutes, assigning to the higher multipliers first.
+  let pool = Math.max(0, (en - s) - (Number(e.break_minutes) || 0));
+  const out = new Map();
+  for (const m of [...grossByMult.keys()].sort((a, b) => b - a)) {
+    if (pool <= 0) break;
+    const take = Math.min(grossByMult.get(m), pool);
+    if (take > 0) { out.set(m, take / 60); pool -= take; }
+  }
+  return out;
+}
+
 /**
  * Resolve the overtime *bands* for a bucket (day or week). A band is
  * `{ afterHours, mult }`: hours in the bucket above `afterHours` (and below the
@@ -182,15 +254,39 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null) {
   const restDays = restDay ? new Set((restDay.days || []).map(Number)) : null;
   let seventhFirst = 0, seventhRest = 0, restDayHours = 0;
 
+  // Time-window multipliers: hours inside a day-of-week + clock-time window are a
+  // governing premium, carved out per entry BEFORE bucketing so they never feed
+  // (or trip) the daily/weekly OT threshold — they're paid at the window's mult
+  // regardless of the OT rule. `residualOf` is the entry's remaining paid hours;
+  // with no window rules it is entryDuration, so everything below is unchanged.
+  const windowRules = (otConfig && Array.isArray(otConfig.windowRules)) ? otConfig.windowRules : [];
+  const windowByMult = new Map();
+  let windowTotal = 0;
+  const residualOf = new Map();
+  for (const e of auto) {
+    let residual = entryDuration(e);
+    if (windowRules.length) {
+      for (const [m, h] of windowHoursForEntry(e, windowRules)) {
+        windowByMult.set(m, (windowByMult.get(m) || 0) + h);
+        windowTotal += h;
+        residual -= h;
+      }
+      residual = Math.max(0, residual); // carve-out must not push a residual negative
+    }
+    // No window rules → residual is entryDuration verbatim, preserving the
+    // long-break negative-hours quirk that pins upstream data-integrity bugs.
+    residualOf.set(e, residual);
+  }
+
   if (rule === 'none') {
-    autoReg = auto.reduce((s, e) => s + entryDuration(e), 0);
+    autoReg = auto.reduce((s, e) => s + residualOf.get(e), 0);
   } else {
     const buckets = {};
     auto.forEach(e => {
       const key = rule === 'weekly'
         ? weekBucketKey(e.work_date, weekStart)
         : e.work_date.toString().substring(0, 10);
-      buckets[key] = (buckets[key] || 0) + entryDuration(e);
+      buckets[key] = (buckets[key] || 0) + residualOf.get(e);
     });
 
     // Identify each week's 7th-day key: group worked days by workweek; a week
@@ -237,9 +333,10 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null) {
   if (sd && seventhFirst > 0) otBands.push({ hours: seventhFirst, mult: parseFloat(sd.firstMult) || 1.5 });
   if (sd && seventhRest > 0)  otBands.push({ hours: seventhRest,  mult: parseFloat(sd.afterMult)  || 2 });
   if (overrideOt > 0) otBands.push({ hours: overrideOt, mult: null });
+  for (const [mult, hours] of windowByMult) if (hours > 0) otBands.push({ hours, mult });
 
   const tierOt = [...otByMult.values()].reduce((s, h) => s + h, 0);
-  const overtimeHours = tierOt + restDayHours + seventhFirst + seventhRest + overrideOt;
+  const overtimeHours = tierOt + restDayHours + seventhFirst + seventhRest + overrideOt + windowTotal;
 
   return {
     regularHours:  overrideReg + autoReg,
@@ -274,7 +371,22 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
       auto.push(e);
     }
   }
-  if (rule === 'none' || !auto.length) return entries;
+  if (!auto.length) return entries;
+
+  // Time-window multipliers: each entry's covered hours are OT regardless of
+  // where they fall in the day/week, so seed every entry's OT with them and carve
+  // them out of the residual that drives the normal reg/OT fill below. Mirrors
+  // computeOT so the per-entry OT still sums to the summary total. No window rules
+  // → windowSumOf is 0 everywhere and this is a no-op.
+  const windowRules = (otConfig && Array.isArray(otConfig.windowRules)) ? otConfig.windowRules : [];
+  const windowSumOf = new Map();
+  for (const e of auto) {
+    let ws = 0;
+    if (windowRules.length) for (const h of windowHoursForEntry(e, windowRules).values()) ws += h;
+    windowSumOf.set(e, ws);
+    e.overtime_hours = ws;
+  }
+  if (rule === 'none') return entries; // no daily/weekly OT; window OT (if any) already set
 
   const sd = (otConfig && otConfig.seventhDay && otConfig.seventhDay.enabled && rule === 'daily') ? otConfig.seventhDay : null;
   const restDay = (otConfig && otConfig.restDay && rule === 'daily') ? otConfig.restDay : null;
@@ -297,20 +409,24 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
   }
 
   for (const [dk, es] of buckets) {
-    const total = es.reduce((s, e) => s + entryDuration(e), 0);
     if ((restDays && restDays.has(weekdayOfDate(dk))) || (sd && seventhKeys.has(dk))) {
-      for (const e of es) e.overtime_hours = entryDuration(e); // whole day is OT
+      for (const e of es) e.overtime_hours = entryDuration(e); // whole day is OT (window hours included)
       continue;
     }
+    // Window hours are already carved out; only the residual drives the reg/OT
+    // fill. Without window rules `resid` is entryDuration verbatim (windowSumOf is
+    // 0 and no clamp), so this matches the prior behaviour exactly.
+    const residOf = e => windowRules.length ? Math.max(0, entryDuration(e) - windowSumOf.get(e)) : entryDuration(e);
+    const residualTotal = es.reduce((s, e) => s + residOf(e), 0);
     const minD = minDailyForBucket(otConfig, rule, dk);
-    if (minD > 0 && total < minD) continue; // short day topped up to floor → all regular
+    if (minD > 0 && residualTotal < minD) continue; // residual floored to regular; window OT stays as seeded
     // regular/OT split point for THIS bucket (tiers only re-price above it) — per
     // bucket so a date-scoped ot_tier rule moves the boundary on its days.
     let regLeft = bandsForBucket(rule, threshold, otConfig, dk)[0].afterHours;
     for (const e of es) {
-      const d = entryDuration(e);
-      const r = Math.max(0, Math.min(d, regLeft));
-      e.overtime_hours = d - r;
+      const resid = residOf(e);
+      const r = Math.max(0, Math.min(resid, regLeft));
+      e.overtime_hours = windowSumOf.get(e) + (resid - r); // window OT + residual OT
       regLeft -= r;
     }
   }
@@ -352,4 +468,4 @@ function computeDailyPayCosts(entries, overtimeRule, threshold, dailyRate, overt
   };
 }
 
-module.exports = { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, resolveBands, nightHoursForEntry, nightPremiumCost };
+module.exports = { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, resolveBands, nightHoursForEntry, nightPremiumCost, windowHoursForEntry };

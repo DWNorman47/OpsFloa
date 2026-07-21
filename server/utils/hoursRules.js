@@ -98,7 +98,7 @@ const ROUNDING_REFERENCES = ['schedule', 'clock'];
 // is 10h, which under an 8h threshold is 2h of overtime — not 1.5h of overtime
 // and 0.5h of regular.
 const RULE_TYPES = ['clip_start', 'clip_end', 'add_time', 'remove_time', 'auto_break', 'round', 'ot_tier',
-  'rest_day', 'min_daily', 'seventh_day', 'night_diff'];
+  'rest_day', 'min_daily', 'seventh_day', 'night_diff', 'window_mult'];
 const ROUND_EDGES = ['in', 'out', 'both']; // which punch edge a `round` rule rounds
 const OT_TIER_BASES = ['day', 'week'];     // an ot_tier rule counts hours per day or per week
 const RULE_WHEN_KINDS = [
@@ -446,6 +446,22 @@ function parseRule(raw, index) {
       return { ...base, fromHour, toHour, pct };
     }
 
+    case 'window_mult': {
+      // A GOVERNING multiplier for hours worked inside a day-of-week + clock-time
+      // window (unlike night_diff, which is an additive %). `when` anchors the
+      // window's START day; `from`/`to` are minutes-since-midnight. `to <= from`
+      // means the window wraps into the next day (from==to = a full 24h), so a
+      // window can run Sat 19:00 → Sun 05:00. Covered hours are carved out of the
+      // normal daily/weekly OT and priced at `mult`× — see windowHoursForEntry /
+      // computeOT in payCalculations. Stored `from`/`to` as HH:MM by the builder;
+      // here they become minutes so the calculator does plain interval math.
+      const from = toMin(raw.from), to = toMin(raw.to);
+      const mult = Number(raw.mult);
+      if (from == null || to == null) return null;
+      if (!Number.isFinite(mult) || mult <= 0) return null;
+      return { ...base, from, to, mult };
+    }
+
     default:
       return null;
   }
@@ -654,10 +670,13 @@ function otConfigFromSettings(settings, roleId = null) {
   // night_diff rule: overrides the fixed-slot night differential.
   const nightRule = rules.find(r => r.type === 'night_diff');
   if (nightRule) nightDifferential = { fromHour: nightRule.fromHour, toHour: nightRule.toHour, pct: nightRule.pct };
+  // window_mult rules — a governing multiplier for hours inside a day-of-week +
+  // clock-time window, carved out of the normal OT calc in computeOT.
+  const windowRules = rules.filter(r => r.type === 'window_mult');
 
   const has7thFinal = !!seventhDay;
   if (!hasDaily && !hasWeekly && !has7thFinal && !restDay && !minDailyHours && !nightDifferential
-      && tierRules.length === 0 && minDailyRules.length === 0) return null;
+      && tierRules.length === 0 && minDailyRules.length === 0 && windowRules.length === 0) return null;
   return {
     dailyBands:  hasDaily  ? o.dailyBands  : [],
     weeklyBands: hasWeekly ? o.weeklyBands : [],
@@ -667,6 +686,7 @@ function otConfigFromSettings(settings, roleId = null) {
     nightDifferential,
     tierRules,
     minDailyRules,
+    windowRules,
   };
 }
 

@@ -225,7 +225,7 @@ that had the previous default.
 
   | Field | Allowed values |
   |---|---|
-  | `rules[].type` | `clip_start` \| `clip_end` \| `add_time` \| `remove_time` \| `auto_break` |
+  | `rules[].type` | `clip_start` \| `clip_end` \| `add_time` \| `remove_time` \| `auto_break` \| `round` \| `ot_tier` \| `rest_day` \| `min_daily` \| `seventh_day` \| `night_diff` \| `window_mult` |
   | `rules[].when.kind` | `every_day` \| `weekdays` \| `month_days` \| `month_weekdays` \| `nth_days` \| `months` \| `nth_months` \| `month_weeks` \| `nth_weeks` |
   | `rules[].edge` (add/remove) | `before` \| `after` |
   | `rules[].base` (add/remove) | `schedule` (default) \| `punch` |
@@ -233,6 +233,17 @@ that had the previous default.
   | `rules[].trigger.kind` (auto_break) | `always` \| `after_hours` |
   | `rules[].behavior` (clip_start) | `ignore` \| `prevent` \| `auto` |
   | `rules[].behavior` (clip_end) | `ignore` \| `auto` |
+
+  **`window_mult` — a governing time-of-day multiplier.** Unlike `night_diff`
+  (an additive %), a `window_mult` rule pays hours worked inside a day-of-week +
+  clock-time window at `mult`× base, carved out of (and overriding) the normal
+  daily/weekly OT — a weekend-premium schedule, e.g. Sat 05:00→19:00 @1.25×,
+  Sat 19:00→Sun 05:00 @1.5×, Sun 05:00→Mon 05:00 @2×. Fields: `when` (anchors the
+  window's START day), `from`/`to` (`HH:MM` from the builder, stored to minutes by
+  `parseRule`; `to ≤ from` wraps past midnight, `from == to` = a full 24h), and
+  `mult` (> 0). Overlapping windows: highest mult per minute; total capped at the
+  entry's paid duration. Resolved in `payCalculations.windowHoursForEntry` /
+  `computeOT`, wired via `otConfigFromSettings`'s `windowRules`.
 
   ⚠️ **Only `behavior: 'ignore'` is enforced** (default). It's pure pay math —
   don't pay time outside the boundary. `prevent` (block the clock-in) and `auto`
