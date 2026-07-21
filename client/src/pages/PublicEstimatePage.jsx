@@ -113,6 +113,17 @@ export default function PublicEstimatePage() {
     <div style={{ minHeight: '100vh', background: '#f9fafb', padding: '40px 16px' }}>
       <div style={styles.card}>
         <div style={{ borderBottom: '2px solid var(--ops-page-accent)', paddingBottom: 16, marginBottom: 20 }}>
+          {/* Contractor letterhead — logo (and name) so the client sees who it's from. */}
+          {(estimate.company_logo_url || estimate.company_name) && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+              {estimate.company_logo_url && (
+                <img src={estimate.company_logo_url} alt={estimate.company_name || ''} style={{ maxHeight: 56, maxWidth: 220, objectFit: 'contain' }} />
+              )}
+              {estimate.company_name && (
+                <div style={{ fontSize: 18, fontWeight: 700, color: '#111827' }}>{estimate.company_name}</div>
+              )}
+            </div>
+          )}
           <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--ops-page-accent)', letterSpacing: 1, textTransform: 'uppercase' }}>{t.peEstimate}</div>
           <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
             {estimate.estimate_number} · {new Date(estimate.sent_at).toLocaleDateString()}

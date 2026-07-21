@@ -1,6 +1,5 @@
 import React from 'react';
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
-import CompanyLogoPdf from './CompanyLogoPdf';
 import { formatCurrency, langToLocale } from '../utils';
 
 function fmtDate(str, locale = 'en-US') {
@@ -114,7 +113,6 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
         {/* Invoice header */}
         <View style={s.invHeader}>
           <View>
-            <CompanyLogoPdf src={ci.logo_url} style={s.companyLogo} />
             <Text style={s.brand}>{worker.invoice_name || worker.full_name || '—'}</Text>
             <Text style={s.brandSub}>{t.pdfEmployeeTimeInvoice || 'Employee Time Invoice'}</Text>
           </View>
