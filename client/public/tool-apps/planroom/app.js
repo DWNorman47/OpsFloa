@@ -10,6 +10,7 @@ import { createStore, randId, hashBytes } from '../shared/engine-store.js?v=1';
 import { openDoc, bytesToBase64, base64ToBytes, defaultRenderScale } from '../shared/engine-doc.js?v=1';
 import { createModals, esc, fmt, money } from '../shared/engine-ui.js?v=1';
 import { distToPolyline, pointSegDist, simplifyPts, polyLengthFt, polygonAreaFt2, polygonPerimeterFt, pointInPolygon, dist, alignApply } from '../shared/engine-measure.js?v=1';
+import polygonClipping from '../shared/polygon-clipping.js?v=1';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '../shared/pdf.worker.min.js';
 
@@ -2707,21 +2708,60 @@ function handleCircleClick(sel, w) {
 // When the last hole is gone, drop the metadata so the shape is a plain ring again
 // (and a later hole cut reads the current outline, not a stale m.outer).
 function normalizeHoles(m) { if (m.holes && m.holes.length === 0) { delete m.holes; delete m.outer; } }
+// Markup/region → polygon-clipping geometry (Polygon = [outerRing, ...holeRings],
+// each ring a closed array of [x,y]). Input winding doesn't matter to the library.
+const ringXY = r => { const a = r.map(p => [p.x, p.y]); if (a.length) a.push([r[0].x, r[0].y]); return a; };
+const markupPolygon = m => hasHoles(m) ? [ringXY(m.outer), ...m.holes.map(ringXY)] : [ringXY(m.pts)];
+function ringToPts(ring) {
+  const pts = ring.map(c => ({ x: c[0], y: c[1] }));
+  if (pts.length > 1) { const f = pts[0], l = pts[pts.length - 1]; if (f.x === l.x && f.y === l.y) pts.pop(); }
+  return pts;
+}
+const ringAreaPx = r => Math.abs(ringSignedArea(r));
+const markupNetPx = m => hasHoles(m) ? ringAreaPx(m.outer) - m.holes.reduce((s, h) => s + ringAreaPx(h), 0) : ringAreaPx(m.pts);
+// Write one result polygon ([outerPts, ...holePts]) onto a markup, keeping m.pts as
+// the single keyhole ring every consumer reads.
+function setMarkupGeom(target, poly) {
+  const outer = poly[0], holes = poly.slice(1);
+  if (holes.length) { target.outer = outer; target.holes = holes.map(h => orientOpposite(h, outer)); target.pts = buildKeyhole(target.outer, target.holes); }
+  else { delete target.outer; delete target.holes; target.pts = outer; }
+  target.modified = Date.now();
+}
+// Delete Area: subtract the Box/Circle region from a closed area via a robust
+// polygon difference. Handles hole (region inside), notch (region crossing the
+// edge), split (region slicing across → multiple pieces) and full removal alike.
 function cutHole(m, region) {
-  if (!CLOSED_KINDS.includes(m.kind)) { setMsg('Delete Area cuts a hole in a closed area — not available on this shape.'); return; }
-  const outer = (hasHoles(m) ? m.outer : m.pts).slice();
-  if (!region.poly.every(p => pointInPolygon(p.x, p.y, outer))) {
-    setMsg('Place the Box / Circle fully inside the area to cut a hole (edge-crossing cuts come later).');
-    return;
-  }
+  if (!CLOSED_KINDS.includes(m.kind)) { setMsg('Delete Area cuts from a closed area — not available on this shape.'); return; }
+  let result;
+  try { result = polygonClipping.difference(markupPolygon(m), [ringXY(region.poly)]); }
+  catch (err) { setMsg('Couldn’t compute that cut — try a different box / circle.'); return; }
+  const polys = (result || [])
+    .map(poly => poly.map(ringToPts).filter(r => r.length >= 3))
+    .filter(poly => poly.length && poly[0].length >= 3);
+  const before = markupNetPx(m);
+  const after = polys.reduce((s, poly) => s + ringAreaPx(poly[0]) - poly.slice(1).reduce((h, r) => h + ringAreaPx(r), 0), 0);
+  if (polys.length && before - after < 1) { setMsg('The Box / Circle didn’t overlap this area.'); return; }
   const prev = snapshot();
-  m.outer = outer.slice();
-  m.holes = (m.holes || []).concat([orientOpposite(region.poly, m.outer)]);
-  m.pts = buildKeyhole(m.outer, m.holes);
-  m.modified = Date.now(); invalidateForKind(m);
+  if (polys.length === 0) {
+    const idx = state.markups.indexOf(m); if (idx >= 0) state.markups.splice(idx, 1);
+    if (selectedId === m.id) selectedId = null;
+    invalidateForKind(m); pushUndo(prev); markupsChanged(); setMsg('The whole area was removed.'); vp.requestDraw(); return;
+  }
+  setMarkupGeom(m, polys[0]);
+  const clones = [];
+  for (let i = 1; i < polys.length; i++) {
+    const c = { ...JSON.parse(JSON.stringify(m)), id: randId(), created: Date.now() };
+    delete c.outer; delete c.holes;
+    setMarkupGeom(c, polys[i]);
+    clones.push(c);
+  }
+  if (clones.length) { const idx = state.markups.indexOf(m); state.markups.splice(idx + 1, 0, ...clones); }
+  invalidateForKind(m);
   pushUndo(prev); markupsChanged();
   const s = state.scales[m.page] || 0;
-  setMsg(s ? `Hole cut — area now ${fmt(polygonAreaFt2(m.pts, s), 0)} SF.` : 'Hole cut.');
+  const totalSf = s ? [m, ...clones].reduce((sum, x) => sum + polygonAreaFt2(x.pts, s), 0) : 0;
+  setMsg(clones.length ? `Cut — area split into ${clones.length + 1} pieces${s ? ` (${fmt(totalSf, 0)} SF total)` : ''}.`
+    : (s ? `Cut — area now ${fmt(polygonAreaFt2(m.pts, s), 0)} SF.` : 'Cut.'));
   vp.requestDraw();
 }
 function applyRegionOp(m, region) {

@@ -1275,14 +1275,28 @@ shortcut). Reshape routes to `m.outer`/`m.holes` rings and rebuilds the keyhole 
 Add/Remove (dropdown + Alt-click) and marquee Delete Points all work per-ring;
 `normalizeHoles` reverts to a plain ring when the last hole goes. `?v` →56.
 
-**Still open (David said yes to both, wrinkles to settle):**
-- **Edge-crossing Delete-Area notches** — needs a real polygon-difference (a simple
-  polygon minus a convex box/circle can be non-convex; Sutherland–Hodgman only does
-  intersection). Will inline + heavily unit-test a boolean-difference routine as its
-  own pass — the one money-critical bit I won't rush.
-- **Draw-time Join** — ambiguous: closing a live trace to a *middle* vertex (not the
-  start, per the spec) leaves the pre-join points as a tail, which is odd for an
-  area. Need to confirm the intended result before building.
+**Draw-time Join (shipped 2026-07-20):** click (not drag) an earlier vertex of the
+live trace to close the shape to it, keeping all points (`tryDraftJoin`).
+
+**Edge-crossing Delete-Area notches (shipped 2026-07-20 — via a vendored library):**
+Hand-rolling a clean polygon difference was a dead end — I built three versions
+(Greiner–Hormann boundary-walk, convex decomposition, decomposition+edge-merge) and
+**test-first caught that every one silently returns the wrong area on degenerate
+cases** common in real drawings (a box flush against an area edge; any circle, whose
+many-edged seams never merge). A silently-wrong quantity in a bid tool is the one
+thing not to ship. So, with David's OK, I vendored **`polygon-clipping` v0.15.7**
+(Martinez–Rueda, MIT) — `npm i --no-save` → esbuild-bundled to a self-contained ESM
+at `tool-apps/shared/polygon-clipping.js` (splaytree + robust-predicates inlined;
+the two `process.env` refs are `typeof`-guarded, browser-safe). Imported **only** by
+`planroom/app.js` (shared engine + sitework untouched, no package.json change, not in
+the Vite bundle). `cutHole` now calls `polygonClipping.difference` and maps the
+multipolygon result to the model: inside → keyhole hole, crossing → notch, slice →
+split into clones, contained → delete. **Verified both layers standalone:** the
+library nails all degenerate cases (collinear/flush edges, identical polys, circles),
+and the app's mapping glue nets correct SF for notch/hole/slice/2nd-hole-in-holed/
+remove. `?v` →59.
+
+To update the lib: see the header in `polygon-clipping.js`.
 
 ---
 
