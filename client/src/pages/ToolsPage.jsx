@@ -17,6 +17,13 @@ const SITEWORK_TOOL_URL = '/tool-apps/sitework/index.html';
 const PLANROOM_TOOL_URL = '/tool-apps/planroom/index.html';
 const PDFTOOLS_TOOL_URL = '/tool-apps/pdftools/index.html';
 
+// Sitework Takeoff is retired in favour of Plan Room but NOT deleted — flip this
+// to true to bring its tab + card back. While false the tab is hidden for
+// everyone (even Takeoff-add-on owners) and any #sitework / #excavation deep link
+// falls through to Plan Room. The tool-app files under /tool-apps/sitework/ are
+// left untouched.
+const SHOW_SITEWORK = false;
+
 // Default to Plan Room (the daily-use base tool, always visible). The old
 // excavation tool was removed; its legacy '#excavation' deep links land on sitework.
 function resolveTab() {
@@ -35,6 +42,8 @@ export default function ToolsPage() {
   // Sitework Takeoff is a paid add-on — visible only to companies that own it
   // (or during trial / while exempt, matching the server's requireTakeoffAddon).
   const hasTakeoff = !!(user?.addon_takeoff || ['exempt', 'trial'].includes(user?.subscription_status));
+  // Sitework shows only when the retirement flag is off AND the company owns the add-on.
+  const showSitework = SHOW_SITEWORK && hasTakeoff;
   // Plan Room is the $40 base tier — a daily-use horizontal tool. Unlike the
   // vertical takeoff (hidden without the add-on), its tab is always visible so
   // the whole company can discover it; unowned, it shows a locked card.
@@ -56,14 +65,14 @@ export default function ToolsPage() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  // If they land on the (hidden) takeoff tab without the add-on, move them to
-  // Plan Room (always visible), not off into an unrelated tool.
+  // If they land on the (hidden) Sitework tab — retired, or without the add-on —
+  // move them to Plan Room (always visible), not off into an unrelated tool.
   useEffect(() => {
-    if (user && !hasTakeoff && tab === 'sitework') {
+    if (user && !showSitework && tab === 'sitework') {
       setTab('planroom');
       history.replaceState(null, '', '#planroom');
     }
-  }, [user, hasTakeoff, tab]);
+  }, [user, showSitework, tab]);
 
   const switchTab = next => {
     setTab(next);
@@ -95,7 +104,7 @@ export default function ToolsPage() {
 
   const tabs = [
     { id: 'planroom', label: 'Plan Room' },
-    ...(hasTakeoff ? [{ id: 'sitework', label: 'Sitework Takeoff' }] : []),
+    ...(showSitework ? [{ id: 'sitework', label: 'Sitework Takeoff' }] : []),
     { id: 'transcription', label: 'Transcription' },
     { id: 'summarizer', label: 'Summarizer' },
     { id: 'docqa', label: 'Doc Q&A' },
@@ -171,7 +180,7 @@ export default function ToolsPage() {
         </PageSection>
       )}
 
-      {tab === 'sitework' && hasTakeoff && (
+      {tab === 'sitework' && showSitework && (
         <PageSection
           eyebrow="Sitework"
           title="Sitework Takeoff Estimator"
