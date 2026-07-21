@@ -23,6 +23,47 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-21 — Hours & Rules: per-role rules (Standard Rules + Role Rules)
+
+**Shipped.** Two commits: `9638ff1` (engine + UI + i18n), `0195879` (pay-site
+sweep). "Rules" is now **Standard Rules**; a new **Role Rules** section lets you
+give any role its own rule list, with a per-role checkbox to **add on top of**
+the Standard Rules or **replace** them (default: add on top — your call from the
+chat). Roles without a section keep the Standard Rules. A policy with no role
+rules is byte-identical to before (proven by test).
+
+**The subtle part was that pay config was never actually per-worker.** Overtime
+config was resolved **once per request** for the whole company, and the `ctx`
+plumbing that could carry per-worker data was **dead in production** (only tests
+ever populated it). So this wasn't "add a field" — it was standing up
+`workerRoleById` + a memoized `otConfigByRole(role_id)` at **14 separate money
+paths** (worker invoice, project bill, project metrics, OT report, payroll
+export, worker-hours export, certified payroll, 4 QuickBooks paths, pay-stubs,
+the weekly email; project spend/WIP inherit it through the shared labor query).
+The risk that matters: **a missed site silently pays that role by the Standard
+Rules.** Mitigated by funneling every site through the same three helpers and
+keeping the no-role code path unchanged — but it's why this went out as its own
+reviewable commit.
+
+**Judgment call worth knowing about:** three of the paths — QuickBooks time push,
+the QBO payroll journal, and certified payroll (and the lean worker-hours CSV) —
+**only round hours; they don't compute tiered OT at all today**, by their own
+existing design. I threaded role into their *rounding* (so a role's clip/break/
+add-time rules apply) but **did not** newly teach them tiered/role OT. That keeps
+them consistent with how they already treat the *company* OT config (they ignore
+it too). If you'd expect a role's OT tiers to reach a QuickBooks push or a
+certified-payroll form, say so — that's a deliberate line I drew, not an
+oversight.
+
+Size cap on the `hours_rules` setting raised 8 KB → 40 KB (role lists multiply
+it). `docs/db-enums.md` updated (roleRules shape + cap). Full server suite **992
+green**, client build + i18n parity + smoke green.
+
+⚠️ **Not yet exercised with a real role override end-to-end.** The math is
+unit-tested, but before this promotes past dev I'd spot-check one real pay path
+(e.g. a project bill) for a worker in a role that overrides OT, to confirm the
+number changes where expected and nowhere else.
+
 ## 2026-07-16 — Email bounce suppression: reconnected, and made reversible
 
 **Fixed.** `458d920`. Resend bounce webhook + two ways to undo a suppression + a
