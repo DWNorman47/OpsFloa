@@ -41,6 +41,10 @@ each with its own ▾/▸ header, swatch, and count.
   a material.
 - Groups default **expanded**; a `Set` of collapsed keys remembers folds for the
   session (not persisted to the file — cheap, and avoids schema churn).
+- **Follow-up (`v60 → v61`):** when a section resolves to a single type/material
+  group, the subheader is dropped and the rows render flat — no more "Contours (N)"
+  echoing "Existing contours (N)" right above it. Subheaders only appear once
+  there are 2+ groups to organize.
 
 Gotcha handled: storm-pipe labels contain a double-quote (`18" hdpe`), which would
 break a `data-` attribute — group keys are URI-encoded in the DOM and decoded on

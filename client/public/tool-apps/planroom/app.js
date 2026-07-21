@@ -3944,13 +3944,19 @@ function renderDirtPanel() {
     if (!surfItems.length) {
       rows.push('<div class="hint" style="margin:2px 0 8px">No traces on this page yet — trace a contour (⛰), spot (◎), or pad (◫).</div>');
     } else {
-      for (const g of [{ kind: 'contour', label: 'Contours' }, { kind: 'espot', label: 'Spots' }, { kind: 'epad', label: 'Pads' }]) {
-        const items = surfItems.filter(m => m.kind === g.kind);
-        if (!items.length) continue;
+      const ctrGroups = [{ kind: 'contour', label: 'Contours' }, { kind: 'espot', label: 'Spots' }, { kind: 'epad', label: 'Pads' }]
+        .map(g => ({ ...g, items: surfItems.filter(m => m.kind === g.kind) }))
+        .filter(g => g.items.length);
+      // Only one type present → skip the subheader (it would just echo the
+      // section header above). Two+ types → collapsible per-type subgroups.
+      const flat = ctrGroups.length <= 1;
+      for (const g of ctrGroups) {
         const gkey = `c:${curSurface}:${g.kind}`;
-        rows.push(dirtGroupHeader(gkey, g.label, items.length, null));
-        if (dirtGroupsCollapsed.has(gkey)) continue;
-        for (const m of items) {
+        if (!flat) {
+          rows.push(dirtGroupHeader(gkey, g.label, g.items.length, null));
+          if (dirtGroupsCollapsed.has(gkey)) continue;
+        }
+        for (const m of g.items) {
           const typ = m.kind === 'espot' ? 'spot' : m.kind === 'epad' ? 'flat pad' : `${m.pts.length} pts`;
           rows.push(`<div class="ctr-row${m.id === selectedId ? ' sel' : ''}" data-id="${m.id}">` +
             `<span class="ctr-sw" style="background:${elevColor(m.elev || 0, m.surface)}"></span>` +
@@ -3974,34 +3980,41 @@ function renderDirtPanel() {
       rows.push('<div class="hint" style="margin:2px 0 8px">No area / line / count takeoffs on this page. Trace one with the <b>▨ Area</b> / <b>⌇ Line</b> / <b>⊙ Count</b> tools — these price into the <b>$ Bid</b> and are separate from the cut/fill contours above.</div>');
     } else {
       const icon = { qarea: '▨', qline: '⌇', qcount: '⊙' };
+      // Build every (kind → material/type + color) group first, so e.g. gravel and
+      // asphalt areas each get their own collapsible subheader (with its swatch).
+      const allGroups = [];
       for (const kind of ['qarea', 'qline', 'qcount']) {
         const items = qk[kind];
         if (!items.length) continue;
-        // Group each kind by material/type + color, so e.g. gravel and asphalt
-        // areas become their own collapsible subheaders (each with its swatch).
         const groups = new Map();
         for (const m of items) {
           const color = kind === 'qline' ? lineColorHex(m.cfg || {}) : kind === 'qarea' ? areaColorHex(m.cfg || {}) : (m.color || '#e0533f');
           const label = takeoffGroupLabel(kind, m);
           const gkey = `t:${kind}:${label}:${color}`;
-          const g = groups.get(gkey) || { label, color, items: [] };
+          const g = groups.get(gkey) || { kind, gkey, label, color, items: [] };
           g.items.push(m); groups.set(gkey, g);
         }
-        for (const [gkey, g] of groups) {
-          rows.push(dirtGroupHeader(gkey, `${icon[kind]} ${g.label}`, g.items.length, g.color));
-          if (dirtGroupsCollapsed.has(gkey)) continue;
-          for (const m of g.items) {
-            rows.push(`<div class="ctr-row${m.id === selectedId ? ' sel' : ''}" data-id="${m.id}">` +
-              `<span class="ctr-sw" style="background:${g.color}"></span>` +
-              `<span class="ctr-lbl">${icon[kind]} ${esc(measureValue(m))}</span>` +
-              `<button class="ctr-btn" data-act="edit-takeoff" title="Edit / reconfigure">✎</button>` +
-              `<button class="ctr-btn" data-act="del-ctr" title="Delete">✕</button>` +
-              `</div>`);
-          }
-          // per-material / per-type subtotal(s) for this group
-          for (const s of takeoffSubtotals(kind, g.items)) {
-            rows.push(`<div class="dirt-row"><span>Σ ${esc(s.label)}</span><span class="v"><b>${esc(s.text)}</b></span></div>`);
-          }
+        for (const g of groups.values()) allGroups.push(g);
+      }
+      // Only one group across all takeoffs → skip the subheader (it would just
+      // echo the section header). Two+ → collapsible per-material subgroups.
+      const flat = allGroups.length <= 1;
+      for (const g of allGroups) {
+        if (!flat) {
+          rows.push(dirtGroupHeader(g.gkey, `${icon[g.kind]} ${g.label}`, g.items.length, g.color));
+          if (dirtGroupsCollapsed.has(g.gkey)) continue;
+        }
+        for (const m of g.items) {
+          rows.push(`<div class="ctr-row${m.id === selectedId ? ' sel' : ''}" data-id="${m.id}">` +
+            `<span class="ctr-sw" style="background:${g.color}"></span>` +
+            `<span class="ctr-lbl">${icon[g.kind]} ${esc(measureValue(m))}</span>` +
+            `<button class="ctr-btn" data-act="edit-takeoff" title="Edit / reconfigure">✎</button>` +
+            `<button class="ctr-btn" data-act="del-ctr" title="Delete">✕</button>` +
+            `</div>`);
+        }
+        // per-material / per-type subtotal(s) for this group
+        for (const s of takeoffSubtotals(g.kind, g.items)) {
+          rows.push(`<div class="dirt-row"><span>Σ ${esc(s.label)}</span><span class="v"><b>${esc(s.text)}</b></span></div>`);
         }
       }
     }
