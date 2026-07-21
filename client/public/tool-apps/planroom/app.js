@@ -1317,7 +1317,7 @@ function handlePoints(ctx, m) {
   }
   if (m.kind === 'callout') return [m.pts[1]]; // move the leader target
   if (VERTEX_NONEDIT.has(m.kind)) return [];
-  if (hasHoles(m)) return []; // a holed area's m.pts is a keyhole ring — don't expose its raw points
+  if (hasHoles(m)) return [m.outer, ...m.holes].flat(); // handles on the real outer + hole rings, not the keyhole
   return m.pts; // per-vertex handles: line/arrow endpoints + every polyline/polygon point
 }
 
@@ -2244,27 +2244,28 @@ els.cv.addEventListener('pointerdown', e => {
       const hi = hitHandle(ctx, sel, w);
       // Alt-click reshapes the vertex set: on a point → remove it; on an edge →
       // add one; Shift+Alt-click a segment → cut the line there (split in two).
-      if (e.altKey && canReshape(sel) && !hasHoles(sel)) {
-        if (hi >= 0) { deleteVertexAt(sel, hi); return; }
-        const edge = nearestEdge(sel, w, Math.max(8 / vp.view.zoom, 4));
-        if (edge) {
-          if (e.shiftKey) {
+      if (e.altKey && canReshape(sel)) {
+        if (hi >= 0) { deleteHandle(sel, hi); return; }
+        const tol = Math.max(8 / vp.view.zoom, 4);
+        if (e.shiftKey) {
+          const edge = nearestEdge(sel, w, tol);
+          if (edge) {
             if (isOpenPoly(sel)) cutAtEdge(sel, edge.i);
             else setMsg('Cutting works on open lines (contours), not closed shapes.');
-          } else {
-            insertVertexAt(sel, edge);
+            return;
           }
+        } else if (insertHandle(sel, w, tol)) {
           return;
         }
       }
       // Explicit edit-mode ops (Edit-points dropdown) — the click-free equivalent
       // of the Alt-click shortcuts above. Only when reshapeable and no modifier is
       // held; a click that hits nothing falls through to Move / reselect below.
-      if (canReshape(sel) && !e.altKey && !hasHoles(sel)) {
+      if (canReshape(sel) && !e.altKey) {
         const tol = Math.max(8 / vp.view.zoom, 4);
         if (editOp === 'join') { if (handleJoin(sel, w)) return; }
-        if (editOp === 'remove' && hi >= 0) { deleteVertexAt(sel, hi); return; }
-        if (editOp === 'add') { const edge = nearestEdge(sel, w, tol); if (edge) { insertVertexAt(sel, edge); return; } }
+        if (editOp === 'remove' && hi >= 0) { deleteHandle(sel, hi); return; }
+        if (editOp === 'add') { if (insertHandle(sel, w, tol)) return; }
         if (editOp === 'cut') {
           const edge = nearestEdge(sel, w, tol);
           if (edge) {
@@ -2390,6 +2391,9 @@ els.cv.addEventListener('pointermove', e => {
       m.pts = [opposite, { x: w.x, y: w.y }];
     } else if (m.kind === 'callout') {
       m.pts[1] = { x: w.x, y: w.y };
+    } else if (hasHoles(m)) {
+      const ref = handleRef(m, drag.hi); // drag an outer / hole vertex, then rebuild the keyhole
+      if (ref) { ref.ring[ref.vi] = { x: w.x, y: w.y }; m.pts = buildKeyhole(m.outer, m.holes); }
     } else if (m.pts[drag.hi]) {
       m.pts[drag.hi] = { x: w.x, y: w.y }; // move a single vertex (line/arrow + any polyline/polygon)
     }
@@ -2622,6 +2626,53 @@ function areaPerimeterFt(m) {
   if (hasHoles(m)) return [m.outer, ...m.holes].reduce((sum, r) => sum + polygonPerimeterFt(r, s), 0);
   return polygonPerimeterFt(m.pts, s);
 }
+// The rings a user actually edits: the outer + each hole for a holed area, else the
+// single ring. Handle indices (from handlePoints) map back through handleRef.
+const editRings = m => hasHoles(m) ? [m.outer, ...m.holes] : [m.pts];
+function handleRef(m, i) {
+  for (const ring of editRings(m)) { if (i < ring.length) return { ring, vi: i, isHole: ring !== m.outer && ring !== m.pts }; i -= ring.length; }
+  return null;
+}
+function nearestEdgeInRings(m, w, tol) {
+  let best = null;
+  for (const ring of editRings(m)) {
+    const n = ring.length;
+    for (let i = 0; i < n; i++) {
+      const pr = projOnSeg(ring[i], ring[(i + 1) % n], w);
+      if (pr.d <= tol && (!best || pr.d < best.d)) best = { ring, i, p: { x: pr.x, y: pr.y }, d: pr.d };
+    }
+  }
+  return best;
+}
+// Add / remove a vertex on the correct ring, then rebuild the keyhole. Both fall
+// back to the plain-ring primitives when the shape has no holes.
+function insertHandle(m, w, tol) {
+  if (!hasHoles(m)) { const e = nearestEdge(m, w, tol); if (e) { insertVertexAt(m, e); return true; } return false; }
+  const e = nearestEdgeInRings(m, w, tol); if (!e) return false;
+  const prev = snapshot();
+  e.ring.splice(e.i + 1, 0, e.p);
+  m.pts = buildKeyhole(m.outer, m.holes); m.modified = Date.now(); invalidateForKind(m);
+  pushUndo(prev); markupsChanged(); setMsg('Point added.');
+  return true;
+}
+function deleteHandle(m, hi) {
+  if (!hasHoles(m)) { deleteVertexAt(m, hi); return; }
+  const ref = handleRef(m, hi); if (!ref) return;
+  const prev = snapshot();
+  if (!ref.isHole) {
+    if (m.outer.length <= 3) { setMsg('The outline needs at least 3 points.'); return; }
+    m.outer.splice(ref.vi, 1);
+  } else if (ref.ring.length <= 3) {
+    m.holes = m.holes.filter(h => h !== ref.ring); // last removable vertex → drop the whole hole
+  } else {
+    ref.ring.splice(ref.vi, 1);
+  }
+  m.pts = buildKeyhole(m.outer, m.holes);
+  const droppedHole = !hasHoles(m); // the last hole just collapsed
+  normalizeHoles(m);
+  m.modified = Date.now(); invalidateForKind(m);
+  pushUndo(prev); markupsChanged(); setMsg(droppedHole ? 'Hole removed.' : 'Point removed.');
+}
 
 // ---- Box / Circle marquee regions. A region is { test(point)->bool, poly } so it
 // can both catch vertices (Delete Points) and cut a hole (Delete Area).
@@ -2651,9 +2702,12 @@ function handleCircleClick(sel, w) {
 }
 // Delete Area: cut the region out of a closed area as a keyhole hole. v1 requires
 // the region to sit fully inside the outer ring (edge-crossing notches come later).
+// When the last hole is gone, drop the metadata so the shape is a plain ring again
+// (and a later hole cut reads the current outline, not a stale m.outer).
+function normalizeHoles(m) { if (m.holes && m.holes.length === 0) { delete m.holes; delete m.outer; } }
 function cutHole(m, region) {
   if (!CLOSED_KINDS.includes(m.kind)) { setMsg('Delete Area cuts a hole in a closed area — not available on this shape.'); return; }
-  const outer = m.outer || m.pts;
+  const outer = (hasHoles(m) ? m.outer : m.pts).slice();
   if (!region.poly.every(p => pointInPolygon(p.x, p.y, outer))) {
     setMsg('Place the Box / Circle fully inside the area to cut a hole (edge-crossing cuts come later).');
     return;
@@ -2670,21 +2724,37 @@ function cutHole(m, region) {
 }
 function applyRegionOp(m, region) {
   if (editRegionOp === 'delarea') { cutHole(m, region); return; }
-  if (hasHoles(m)) { setMsg('Delete Points is off while this area has holes — undo the hole first.'); return; }
-  const keep = m.pts.filter(p => !region.test(p));
-  const removed = m.pts.length - keep.length;
-  if (removed === 0) { setMsg('No points fell inside the selection.'); return; }
-  const prev = snapshot();
-  if (keep.length >= minPtsFor(m)) {
-    m.pts = keep; m.modified = Date.now(); invalidateForKind(m);
-    pushUndo(prev); markupsChanged(); setMsg(`Removed ${removed} point${removed === 1 ? '' : 's'}.`);
-  } else {
-    // the region swallowed the whole shape (or all but a sliver) → delete it
+  const delWholeShape = () => {
+    const prev = snapshot();
     const idx = state.markups.indexOf(m);
     if (idx >= 0) state.markups.splice(idx, 1);
     if (selectedId === m.id) selectedId = null;
     invalidateForKind(m);
     pushUndo(prev); markupsChanged(); setMsg('Whole shape was inside the selection — deleted.');
+  };
+  if (hasHoles(m)) {
+    const outer = m.outer.filter(p => !region.test(p));
+    if (outer.length < 3) { delWholeShape(); return; }
+    const holes = m.holes.map(h => h.filter(p => !region.test(p))).filter(h => h.length >= 3);
+    const removed = (m.outer.length - outer.length)
+      + (m.holes.reduce((s, h) => s + h.length, 0) - holes.reduce((s, h) => s + h.length, 0));
+    if (removed === 0) { setMsg('No points fell inside the selection.'); return; }
+    const prev = snapshot();
+    m.outer = outer; m.holes = holes; m.pts = buildKeyhole(m.outer, m.holes);
+    normalizeHoles(m);
+    m.modified = Date.now(); invalidateForKind(m);
+    pushUndo(prev); markupsChanged(); setMsg(`Removed ${removed} point${removed === 1 ? '' : 's'}.`);
+    return;
+  }
+  const keep = m.pts.filter(p => !region.test(p));
+  const removed = m.pts.length - keep.length;
+  if (removed === 0) { setMsg('No points fell inside the selection.'); return; }
+  if (keep.length >= minPtsFor(m)) {
+    const prev = snapshot();
+    m.pts = keep; m.modified = Date.now(); invalidateForKind(m);
+    pushUndo(prev); markupsChanged(); setMsg(`Removed ${removed} point${removed === 1 ? '' : 's'}.`);
+  } else {
+    delWholeShape();
   }
 }
 // Marquee overlay (world coords; drawn inside the page transform).
