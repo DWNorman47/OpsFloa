@@ -472,10 +472,13 @@ publicRouter.get('/view/:token', async (req, res) => {
               COALESCE((SELECT value FROM settings s WHERE s.company_id = co.company_id AND s.key = 'currency'), 'USD') AS currency,
               co.subtotal_cents, co.tax_pct, co.total_cents,
               co.sent_at, co.responded_at, co.accepted_signer_name,
-              c.language AS client_language
+              c.language AS client_language,
+              -- Contractor letterhead for the client-facing page.
+              cm.name AS company_name, cm.logo_url AS company_logo_url
          FROM change_orders co
          LEFT JOIN projects p ON p.id = co.project_id
          LEFT JOIN clients c ON c.id = p.client_id
+         LEFT JOIN companies cm ON cm.id = co.company_id
         WHERE co.response_token_hash = $1`,
       [sha256(req.params.token)]
     );
