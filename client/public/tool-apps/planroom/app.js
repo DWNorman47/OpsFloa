@@ -779,6 +779,7 @@ function refreshEditbar() {
   const on = editModeActive();
   if (on === _editbarOn) return;
   _editbarOn = on;
+  if (on) { setEditMode('points'); setEditOp('move'); } // (re)entering edit mode always starts at Points / Move
   document.body.classList.toggle('pr-editing', on);
 }
 function setEditOp(op) {
@@ -2684,7 +2685,7 @@ function boxRegion(a, b) {
     poly: [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }],
   };
 }
-function circleRegion(c, r, seg = 48) {
+function circleRegion(c, r, seg = 16) {
   const poly = [];
   for (let i = 0; i < seg; i++) { const a = (i / seg) * Math.PI * 2; poly.push({ x: c.x + r * Math.cos(a), y: c.y + r * Math.sin(a) }); }
   return { test: p => Math.hypot(p.x - c.x, p.y - c.y) <= r, poly };
@@ -4287,6 +4288,14 @@ if ($('btnThumbsClose')) $('btnThumbsClose').addEventListener('click', () => doc
 if ($('btnThumbsOpen')) $('btnThumbsOpen').addEventListener('click', () => document.body.classList.remove('nothumbs'));
 
 document.addEventListener('keydown', e => {
+  // Undo / redo FIRST, so an open Projects / Company / Bid panel can't swallow the
+  // shortcut. Only a modal dialog (mid-edit) or typing in a field suppresses it.
+  const typing = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable);
+  if (!typing && (e.ctrlKey || e.metaKey) && !modals.isOpen()) {
+    const k = e.key.toLowerCase();
+    if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
+    if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); return; }
+  }
   const companyOpen = !$('company').classList.contains('hidden');
   const bidOpen = !$('roofBid').classList.contains('hidden');
   if (modals.isOpen() || companyOpen || bidOpen || !els.projects.classList.contains('hidden')) {
@@ -4298,8 +4307,6 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
-  if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
   if (e.key === 'Enter' && alignDraft) { // accept the shift-only alignment
     e.preventDefault();
     alignDraft = null;
