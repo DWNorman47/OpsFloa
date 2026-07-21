@@ -755,8 +755,11 @@ let calibPts = null;  // [firstPoint] while calibrating
 let hoverW = null;    // cursor world pos while drafting (rubber band)
 let previewing = false; // true while drawMarkup renders the in-progress draft
 let editOp = 'move';  // active edit-points operation while a reshapeable shape is selected: move|add|remove|cut|join
+let editMode = 'points'; // how the Select tool edits a reshapeable shape: points | box | circle (marquee)
+let editRegionOp = 'delpoints'; // what a Box/Circle marquee does: delpoints | delarea
 let _editbarOn = null; // cache so refreshEditbar only writes the DOM when it changes
 let joinPick = null;  // {id, vi} — the first endpoint picked in Join mode, between the two clicks
+let circleCenter = null; // world point after the first click of a Circle marquee (awaiting the radius click)
 
 const centroid = pts => ({
   x: pts.reduce((a, p) => a + p.x, 0) / pts.length,
@@ -783,6 +786,16 @@ function setEditOp(op) {
   joinPick = null; // any pending Join pick is abandoned when the op changes
   const sel = document.getElementById('prEditOp');
   if (sel && sel.value !== op) sel.value = op;
+}
+function setEditMode(mode) {
+  editMode = mode;
+  circleCenter = null; joinPick = null; hoverW = null;
+  document.body.classList.toggle('pr-region', mode !== 'points');
+  const sel = document.getElementById('prEditMode');
+  if (sel && sel.value !== mode) sel.value = mode;
+  // a marquee mode wants a crosshair; point editing keeps the arrow
+  els.cv.classList.toggle('crosshair', tool === 'select' && mode !== 'points');
+  vp.requestDraw();
 }
 
 /* ============================== Undo / redo ============================== */
@@ -1544,6 +1557,7 @@ function paint(ctx) {
   const sel = selMarkup();
   if (sel && sel.page === state.page) drawSelection(ctx, sel);
   if (joinPick) drawJoinPick(ctx);
+  if ((drag && drag.mode === 'marquee-box') || circleCenter) drawMarquee(ctx);
   ctx.restore();
   refreshEditbar();  // show/hide the Edit-points toolbar to match the selection
   updateNavPads(); // DOM overlay, not canvas — safe after restore; runs each paint
@@ -1923,7 +1937,7 @@ function setTool(t) {
   cancelDraft();
   if (alignDraft && t !== 'align') alignDraft = null; // keep any applied shift; drop the in-progress pair
   drag = null;
-  joinPick = null; // abandon any half-finished Join when switching tools
+  joinPick = null; circleCenter = null; // abandon any half-finished Join / Circle marquee when switching tools
   document.querySelectorAll('.tool').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
   syncToolGroups(); // reflect the active tool on the dirt-trade group faces
   els.cv.classList.toggle('crosshair', t !== 'pan' && t !== 'select');
@@ -2031,6 +2045,10 @@ document.querySelectorAll('.tool').forEach(b => b.addEventListener('click', () =
 {
   const prEditOpSel = document.getElementById('prEditOp');
   if (prEditOpSel) prEditOpSel.addEventListener('change', () => setEditOp(prEditOpSel.value));
+  const prEditModeSel = document.getElementById('prEditMode');
+  if (prEditModeSel) prEditModeSel.addEventListener('change', () => setEditMode(prEditModeSel.value));
+  const prEditRegionSel = document.getElementById('prEditRegionOp');
+  if (prEditRegionSel) prEditRegionSel.addEventListener('change', () => { editRegionOp = prEditRegionSel.value; });
 }
 
 /* ---- Tool-group flyouts (dirt trade) — mirrors the sitework tool ---- */
@@ -2216,6 +2234,11 @@ els.cv.addEventListener('pointerdown', e => {
   if (tool === 'select') {
     const ctx = vp.ctx;
     const sel = selMarkup();
+    // Box / Circle marquee edit modes act on the selected reshapeable shape.
+    if (editMode !== 'points' && sel && sel.page === state.page && canReshape(sel)) {
+      if (editMode === 'box') { undoCapture = null; drag = { mode: 'marquee-box', ptr: e.pointerId, from: w, cur: w, moved: false }; vp.requestDraw(); return; }
+      if (editMode === 'circle') { handleCircleClick(sel, w); return; }
+    }
     if (sel && sel.page === state.page) {
       const hi = hitHandle(ctx, sel, w);
       // Alt-click reshapes the vertex set: on a point → remove it; on an edge →
@@ -2304,7 +2327,18 @@ els.cv.addEventListener('pointermove', e => {
     hoverW = vp.screenToWorld(sp.x, sp.y);
     vp.requestDraw();
   }
+  if (circleCenter && !drag) { // preview the Circle marquee radius between its two clicks
+    const sp = screenPt(e);
+    hoverW = vp.screenToWorld(sp.x, sp.y);
+    vp.requestDraw();
+  }
   if (!drag || e.pointerId !== drag.ptr) return;
+  if (drag.mode === 'marquee-box') {
+    const sp2 = screenPt(e);
+    drag.cur = vp.screenToWorld(sp2.x, sp2.y);
+    vp.requestDraw();
+    return;
+  }
   const s = screenPt(e);
   const w = vp.screenToWorld(s.x, s.y);
   if (drag.mode === 'scalebar') {
@@ -2373,6 +2407,15 @@ function endDrag(e) {
   const d = drag;
   drag = null;
   els.cv.classList.remove('grabbing');
+
+  if (d.mode === 'marquee-box') {
+    const m = selMarkup();
+    // require a real drag, not a click: the box must span a few screen pixels
+    const spanPx = Math.max(Math.abs(d.cur.x - d.from.x), Math.abs(d.cur.y - d.from.y)) * vp.view.zoom;
+    if (m && spanPx >= 3) applyRegionOp(m, boxTest(d.from, d.cur));
+    vp.requestDraw();
+    return;
+  }
 
   if (d.mode === 'pan') {
     // a click on empty space (no pan movement) clears the selection; a real pan keeps it
@@ -2529,6 +2572,60 @@ function handleJoin(sel, w) {
   selectedId = a.id; joinPick = null;
   pushUndo(prev); markupsChanged(); setMsg('Joined.'); vp.requestDraw();
   return true;
+}
+
+// ---- Box / Circle marquee region ops (Delete Points now; Delete Area in a later
+// slice). A region is a predicate test(point)->bool over the shape's vertices.
+function boxTest(a, b) {
+  const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+  return p => p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
+}
+// Circle marquee: first click sets the center, second sets the radius.
+function handleCircleClick(sel, w) {
+  if (!circleCenter) {
+    circleCenter = { x: w.x, y: w.y }; hoverW = { x: w.x, y: w.y };
+    setMsg('Circle: click again to set the radius.'); vp.requestDraw(); return;
+  }
+  const c = circleCenter, r = Math.hypot(w.x - c.x, w.y - c.y);
+  circleCenter = null; hoverW = null;
+  if (r < 1e-6) { setMsg('Circle canceled.'); vp.requestDraw(); return; }
+  applyRegionOp(sel, p => Math.hypot(p.x - c.x, p.y - c.y) <= r);
+  vp.requestDraw();
+}
+function applyRegionOp(m, test) {
+  if (editRegionOp === 'delarea') { setMsg('Delete Area (cutting a hole) arrives in the next update — switch to Delete Points to remove vertices.'); return; }
+  const keep = m.pts.filter(p => !test(p));
+  const removed = m.pts.length - keep.length;
+  if (removed === 0) { setMsg('No points fell inside the selection.'); return; }
+  const prev = snapshot();
+  if (keep.length >= minPtsFor(m)) {
+    m.pts = keep; m.modified = Date.now(); invalidateForKind(m);
+    pushUndo(prev); markupsChanged(); setMsg(`Removed ${removed} point${removed === 1 ? '' : 's'}.`);
+  } else {
+    // the region swallowed the whole shape (or all but a sliver) → delete it
+    const idx = state.markups.indexOf(m);
+    if (idx >= 0) state.markups.splice(idx, 1);
+    if (selectedId === m.id) selectedId = null;
+    invalidateForKind(m);
+    pushUndo(prev); markupsChanged(); setMsg('Whole shape was inside the selection — deleted.');
+  }
+}
+// Marquee overlay (world coords; drawn inside the page transform).
+function drawMarquee(ctx) {
+  const z = vp.view.zoom;
+  ctx.save();
+  ctx.strokeStyle = '#4da3ff'; ctx.setLineDash([5 / z, 4 / z]); ctx.lineWidth = 1.4 / z;
+  ctx.fillStyle = 'rgba(77,163,255,.10)';
+  if (drag && drag.mode === 'marquee-box') {
+    const a = drag.from, b = drag.cur;
+    ctx.beginPath();
+    ctx.rect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+    ctx.fill(); ctx.stroke();
+  } else if (circleCenter && hoverW) {
+    const r = Math.hypot(hoverW.x - circleCenter.x, hoverW.y - circleCenter.y);
+    ctx.beginPath(); ctx.arc(circleCenter.x, circleCenter.y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function commitDraft() {
