@@ -1598,6 +1598,10 @@ async function setPage(p, { fit = false } = {}) {
   if (!state.doc) return;
   state.page = Math.max(1, Math.min(state.doc.numPages, p));
   syncSurfaceToPage();
+  // The dirt panel's shape lists are scoped to the current page, so they have to
+  // re-render on every page change — including the saved-page restore during load
+  // (self-guards to a no-op when the panel is hidden).
+  renderDirtPanel();
   updatePageUI();
   await ensurePage(state.page);
   if (fit) { const b = await baseSize(state.page); vp.fitTo(b.width, b.height); }
