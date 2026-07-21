@@ -23,6 +23,45 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-21 — Hours & Rules: time-window multiplier (weekend-premium schedules)
+
+**Shipped.** `320174e`. New rule type **Time-window multiplier** (`window_mult`):
+hours worked inside a day-of-week + clock-time window are paid at a set multiple
+of base *regardless of the overtime threshold*. Your example is now buildable as
+three rules — Sat 05:00→19:00 @1.25×, Sat 19:00→Sun 05:00 @1.5×, Sun 05:00→Mon
+05:00 @2× — and is the first test in the suite. Windows wrap past midnight (end ≤
+start → next day; end = start → a full 24h), so a single rule spans two calendar
+days.
+
+**The call that shapes the money — I picked "governing," not "stacking."** These
+multipliers **replace** the normal OT for the covered hours: a weekend hour is
+priced *exactly* at the window rate, and those hours are **carved out of the
+daily/weekly OT calc** — they don't count toward the 8h/40h threshold and they
+don't get an OT multiplier layered on top. That's what makes "Saturday is 1.25×"
+mean 1.25×, full stop, even on a 10-hour Saturday. The alternative reading —
+"pay whatever OT they'd normally get, *plus* the window premium on top" — would
+make that same hour 1.25× only when it isn't also OT, and more when it is. I went
+with governing because your numbers are a complete schedule, not a bonus. **If
+you actually wanted stacking, say so — it's a different calculation.**
+
+Two smaller things worth knowing:
+- **Window hours show up in the "overtime hours" column**, because they ride the
+  same premium-band machinery as rest-day / 7th-day pay. They're premium hours,
+  not regular — just labeled OT on reports.
+- **Overlap → highest multiplier wins that minute; a break never inflates
+  premium hours** (the covered total is capped at the paid duration). And
+  `window_mult` is independent of rest-day / 7th-day / minimum-daily rules — if a
+  day is somehow covered by both, it gets split rather than double-counted. Odd
+  to configure both on one day; documented, not blocked.
+
+No window rules configured → the engine is byte-identical to before (proven; the
+long-break negative-hours quirk still pins). Full suite **1005 green**, client
+build + i18n parity + smoke green. `docs/db-enums.md` documents the type.
+
+⚠️ **Not yet run through a real invoice.** The math is unit-tested against your
+schedule, but before this promotes past dev I'd generate one real weekend bill
+and eyeball that the premium lands where expected.
+
 ## 2026-07-21 — Hours & Rules: per-role rules (Standard Rules + Role Rules)
 
 **Shipped.** Two commits: `9638ff1` (engine + UI + i18n), `0195879` (pay-site
