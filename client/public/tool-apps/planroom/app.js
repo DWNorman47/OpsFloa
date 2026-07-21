@@ -1317,6 +1317,7 @@ function handlePoints(ctx, m) {
   }
   if (m.kind === 'callout') return [m.pts[1]]; // move the leader target
   if (VERTEX_NONEDIT.has(m.kind)) return [];
+  if (hasHoles(m)) return []; // a holed area's m.pts is a keyhole ring — don't expose its raw points
   return m.pts; // per-vertex handles: line/arrow endpoints + every polyline/polygon point
 }
 
@@ -2243,7 +2244,7 @@ els.cv.addEventListener('pointerdown', e => {
       const hi = hitHandle(ctx, sel, w);
       // Alt-click reshapes the vertex set: on a point → remove it; on an edge →
       // add one; Shift+Alt-click a segment → cut the line there (split in two).
-      if (e.altKey && canReshape(sel)) {
+      if (e.altKey && canReshape(sel) && !hasHoles(sel)) {
         if (hi >= 0) { deleteVertexAt(sel, hi); return; }
         const edge = nearestEdge(sel, w, Math.max(8 / vp.view.zoom, 4));
         if (edge) {
@@ -2259,7 +2260,7 @@ els.cv.addEventListener('pointerdown', e => {
       // Explicit edit-mode ops (Edit-points dropdown) — the click-free equivalent
       // of the Alt-click shortcuts above. Only when reshapeable and no modifier is
       // held; a click that hits nothing falls through to Move / reselect below.
-      if (canReshape(sel) && !e.altKey) {
+      if (canReshape(sel) && !e.altKey && !hasHoles(sel)) {
         const tol = Math.max(8 / vp.view.zoom, 4);
         if (editOp === 'join') { if (handleJoin(sel, w)) return; }
         if (editOp === 'remove' && hi >= 0) { deleteVertexAt(sel, hi); return; }
@@ -2412,7 +2413,7 @@ function endDrag(e) {
     const m = selMarkup();
     // require a real drag, not a click: the box must span a few screen pixels
     const spanPx = Math.max(Math.abs(d.cur.x - d.from.x), Math.abs(d.cur.y - d.from.y)) * vp.view.zoom;
-    if (m && spanPx >= 3) applyRegionOp(m, boxTest(d.from, d.cur));
+    if (m && spanPx >= 3) applyRegionOp(m, boxRegion(d.from, d.cur));
     vp.requestDraw();
     return;
   }
@@ -2449,6 +2450,14 @@ function endDrag(e) {
   if ((d.mode === 'move' || d.mode === 'handle') && d.moved) {
     const m = selMarkup();
     if (m) { m.modified = Date.now(); invalidateForKind(m); }
+    // A holed area was dragged as its keyhole m.pts — carry m.outer/m.holes the
+    // same delta so the metadata (perimeter, future holes) stays in sync.
+    if (m && d.mode === 'move' && hasHoles(m) && d.orig && d.orig[0] && m.pts[0]) {
+      const dx = m.pts[0].x - d.orig[0].x, dy = m.pts[0].y - d.orig[0].y;
+      const shift = ring => ring.map(p => ({ x: p.x + dx, y: p.y + dy }));
+      m.outer = shift(m.outer); m.holes = m.holes.map(shift);
+      m.pts = buildKeyhole(m.outer, m.holes);
+    }
     pushUndo(undoCapture); undoCapture = null;
     markupsChanged();
   } else {
@@ -2574,11 +2583,59 @@ function handleJoin(sel, w) {
   return true;
 }
 
-// ---- Box / Circle marquee region ops (Delete Points now; Delete Area in a later
-// slice). A region is a predicate test(point)->bool over the shape's vertices.
-function boxTest(a, b) {
+// ---- Holes (keyhole model) ----------------------------------------------------
+// A holed area keeps the outer ring in m.outer and hole rings in m.holes; m.pts is
+// the derived "keyhole" ring (outer + a zero-width bridge into each hole, wound
+// opposite) that every existing consumer already reads — so area (shoelace nets
+// out), fill (nonzero winding), hit-test and earthwork all stay correct with no
+// engine changes. Plain areas carry neither field and m.pts is just the ring.
+const hasHoles = m => Array.isArray(m.holes) && m.holes.length > 0;
+function ringSignedArea(poly) {
+  let a = 0;
+  for (let i = 0, n = poly.length; i < n; i++) { const j = (i + 1) % n; a += poly[i].x * poly[j].y - poly[j].x * poly[i].y; }
+  return a / 2;
+}
+// return `ring` wound OPPOSITE to `outer` (required for the hole to subtract)
+function orientOpposite(ring, outer) {
+  return Math.sign(ringSignedArea(ring)) === Math.sign(ringSignedArea(outer)) ? ring.slice().reverse() : ring.slice();
+}
+// Stitch outer + each hole into one self-touching ring via the nearest vertex pair.
+function buildKeyhole(outer, holes) {
+  let ring = outer.slice();
+  for (const hole of (holes || [])) {
+    let bi = 0, bj = 0, bd = Infinity;
+    for (let i = 0; i < ring.length; i++) for (let j = 0; j < hole.length; j++) {
+      const d = Math.hypot(ring[i].x - hole[j].x, ring[i].y - hole[j].y);
+      if (d < bd) { bd = d; bi = i; bj = j; }
+    }
+    // after outer vertex bi: enter the hole at bj, traverse it, close back to bj,
+    // bridge back to bi, then resume the outer ring.
+    const loop = hole.slice(bj).concat(hole.slice(0, bj));
+    loop.push({ x: hole[bj].x, y: hole[bj].y }, { x: ring[bi].x, y: ring[bi].y });
+    ring = ring.slice(0, bi + 1).concat(loop, ring.slice(bi + 1));
+  }
+  return ring;
+}
+// Perimeter that skips the zero-width bridges: outer + each hole ring on its own.
+function areaPerimeterFt(m) {
+  const s = state.scales[m.page] || 0;
+  if (hasHoles(m)) return [m.outer, ...m.holes].reduce((sum, r) => sum + polygonPerimeterFt(r, s), 0);
+  return polygonPerimeterFt(m.pts, s);
+}
+
+// ---- Box / Circle marquee regions. A region is { test(point)->bool, poly } so it
+// can both catch vertices (Delete Points) and cut a hole (Delete Area).
+function boxRegion(a, b) {
   const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
-  return p => p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
+  return {
+    test: p => p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1,
+    poly: [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }],
+  };
+}
+function circleRegion(c, r, seg = 48) {
+  const poly = [];
+  for (let i = 0; i < seg; i++) { const a = (i / seg) * Math.PI * 2; poly.push({ x: c.x + r * Math.cos(a), y: c.y + r * Math.sin(a) }); }
+  return { test: p => Math.hypot(p.x - c.x, p.y - c.y) <= r, poly };
 }
 // Circle marquee: first click sets the center, second sets the radius.
 function handleCircleClick(sel, w) {
@@ -2589,12 +2646,32 @@ function handleCircleClick(sel, w) {
   const c = circleCenter, r = Math.hypot(w.x - c.x, w.y - c.y);
   circleCenter = null; hoverW = null;
   if (r < 1e-6) { setMsg('Circle canceled.'); vp.requestDraw(); return; }
-  applyRegionOp(sel, p => Math.hypot(p.x - c.x, p.y - c.y) <= r);
+  applyRegionOp(sel, circleRegion(c, r));
   vp.requestDraw();
 }
-function applyRegionOp(m, test) {
-  if (editRegionOp === 'delarea') { setMsg('Delete Area (cutting a hole) arrives in the next update — switch to Delete Points to remove vertices.'); return; }
-  const keep = m.pts.filter(p => !test(p));
+// Delete Area: cut the region out of a closed area as a keyhole hole. v1 requires
+// the region to sit fully inside the outer ring (edge-crossing notches come later).
+function cutHole(m, region) {
+  if (!CLOSED_KINDS.includes(m.kind)) { setMsg('Delete Area cuts a hole in a closed area — not available on this shape.'); return; }
+  const outer = m.outer || m.pts;
+  if (!region.poly.every(p => pointInPolygon(p.x, p.y, outer))) {
+    setMsg('Place the Box / Circle fully inside the area to cut a hole (edge-crossing cuts come later).');
+    return;
+  }
+  const prev = snapshot();
+  m.outer = outer.slice();
+  m.holes = (m.holes || []).concat([orientOpposite(region.poly, m.outer)]);
+  m.pts = buildKeyhole(m.outer, m.holes);
+  m.modified = Date.now(); invalidateForKind(m);
+  pushUndo(prev); markupsChanged();
+  const s = state.scales[m.page] || 0;
+  setMsg(s ? `Hole cut — area now ${fmt(polygonAreaFt2(m.pts, s), 0)} SF.` : 'Hole cut.');
+  vp.requestDraw();
+}
+function applyRegionOp(m, region) {
+  if (editRegionOp === 'delarea') { cutHole(m, region); return; }
+  if (hasHoles(m)) { setMsg('Delete Points is off while this area has holes — undo the hole first.'); return; }
+  const keep = m.pts.filter(p => !region.test(p));
   const removed = m.pts.length - keep.length;
   if (removed === 0) { setMsg('No points fell inside the selection.'); return; }
   const prev = snapshot();
@@ -2760,7 +2837,7 @@ els.cv.addEventListener('dblclick', e => {
     selectedId = hit.id;
     vp.requestDraw();
     const s = state.scales[hit.page] || 0;
-    askAreaConfig(polygonAreaFt2(hit.pts, s), polygonPerimeterFt(hit.pts, s), hit.cfg).then(cfg => {
+    askAreaConfig(polygonAreaFt2(hit.pts, s), areaPerimeterFt(hit), hit.cfg).then(cfg => {
       if (!cfg) return;
       const prev = snapshot();
       hit.cfg = cfg;
@@ -3879,7 +3956,7 @@ function reconfigureTakeoff(m) {
   selectedId = m.id; vp.requestDraw();
   const s = state.scales[m.page] || 0;
   const apply = cfg => { if (!cfg) return; const prev = snapshot(); m.cfg = cfg; pushUndo(prev); markupsChanged(); };
-  if (m.kind === 'qarea') askAreaConfig(polygonAreaFt2(m.pts, s), polygonPerimeterFt(m.pts, s), m.cfg).then(cfg => { if (cfg) lastAreaCfg = cfg; apply(cfg); });
+  if (m.kind === 'qarea') askAreaConfig(polygonAreaFt2(m.pts, s), areaPerimeterFt(m), m.cfg).then(cfg => { if (cfg) lastAreaCfg = cfg; apply(cfg); });
   else if (m.kind === 'qline') askLineConfig(polyLengthFt(m.pts, s), m.cfg).then(cfg => { if (cfg) { lastLineCfg = cfg; lastLineColor = cfg.color; } apply(cfg); });
   else if (m.kind === 'qcount') askCountConfig(m.pts.length, m.cfg).then(cfg => { if (cfg) lastCountCfg = cfg; apply(cfg); });
 }
@@ -5256,7 +5333,7 @@ function askAreaConfig(areaSf, perimFt, prefill) {
 
 // live area/perimeter (feet) for a stored qarea markup, from its sheet's scale
 const qareaSf = m => polygonAreaFt2(m.pts, state.scales[m.page] || 0);
-const qareaPerimFt = m => polygonPerimeterFt(m.pts, state.scales[m.page] || 0);
+const qareaPerimFt = m => areaPerimeterFt(m); // holes-aware: outer + hole rings, no bridge double-count
 
 // Side-menu subtotals: roll up a takeoff group by material/type. Areas net out
 // deducts within the same material+unit; lines sum length (+trench CY); counts
@@ -5816,7 +5893,7 @@ function drywallTotals() {
     else if (m.kind === 'dceiling') {
       const ct = (m.cfg && m.cfg.ctype) || 'drywall';
       const sf = dceilingSf(m);
-      if (act[ct]) { act[ct].sf += sf; act[ct].perim += polygonPerimeterFt(m.pts, state.scales[m.page] || 0); }
+      if (act[ct]) { act[ct].sf += sf; act[ct].perim += areaPerimeterFt(m); }
       else ceilSF += sf; // drywall ceiling
     }
     else if (m.kind === 'dopening') { const c = m.cfg || {}; const n = m.pts.length; openDeductSF += n * (Number(c.deductSF) || 0); if (openCounts[c.otype] != null) openCounts[c.otype] += n; }
