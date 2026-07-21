@@ -2405,6 +2405,7 @@ function endDrag(e) {
   if (draftDrag && e.pointerId === draftDrag.ptr) { // finished repositioning a draft vertex
     const dd = draftDrag; draftDrag = null;
     if (dd.moved && draft) draftRecord(dd.prev); // one undo step for the whole move
+    else if (draft) tryDraftJoin(dd.i);          // a click (no drag) on a vertex → close the shape to it
     vp.requestDraw();
     return;
   }
@@ -2773,6 +2774,21 @@ function drawMarquee(ctx) {
     ctx.beginPath(); ctx.arc(circleCenter.x, circleCenter.y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
   }
   ctx.restore();
+}
+
+// Draw-time Join: a click (not a drag) on an earlier vertex of the live trace —
+// not the start, the current end, or the point adjacent to the end — closes the
+// shape with an edge to that vertex, keeping every point placed so far, then
+// finishes. (Reposition still works: press-drag a vertex instead of clicking it.)
+function tryDraftJoin(k) {
+  if (!draft || POINT_KINDS.includes(draft.kind)) return;
+  const last = draft.pts.length - 1;
+  if (last < 3) return;                 // need enough points to make a loop
+  if (k <= 0 || k >= last - 1) return;  // exclude the start, the end, and the point next to the end
+  const prev = JSON.stringify(draft.pts);
+  draft.pts.push({ x: draft.pts[k].x, y: draft.pts[k].y }); // closing edge to the clicked vertex
+  draftRecord(prev);
+  commitDraft();
 }
 
 function commitDraft() {
