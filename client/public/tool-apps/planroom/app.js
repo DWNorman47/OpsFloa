@@ -2415,6 +2415,11 @@ els.cv.addEventListener('pointerdown', e => {
 });
 
 // ---- Context cursor: tell the user what a click will do here ----------------
+// A compact custom 4-arrow "move" so a draggable POINT reads a touch smaller than
+// the shape body (which uses the full system `move`). White glyph, black outline
+// for contrast on any sheet; hotspot centered on the 20×20 art.
+const MOVE_PT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'><path d='M10 2 L13 5 L12 5 L12 8 L15 8 L15 7 L18 10 L15 13 L15 12 L12 12 L12 15 L13 15 L10 18 L7 15 L8 15 L8 12 L5 12 L5 13 L2 10 L5 7 L5 8 L8 8 L8 5 L7 5 Z' fill='#fff' stroke='#000' stroke-width='1.2' stroke-linejoin='round'/></svg>";
+const CURSOR_MOVE_PT = `url("data:image/svg+xml,${encodeURIComponent(MOVE_PT_SVG)}") 10 10, move`;
 // The cursor when hovering nothing interactive, per tool/mode.
 function baseCursor() {
   if (tool === 'pan') return 'grab';
@@ -2434,7 +2439,7 @@ function hoverCursor(w) {
       const isEnd = isOpenPoly(sel) && (hi === 0 || hi === sel.pts.length - 1);
       if (editOp === 'remove') return 'crosshair';                  // click removes this point
       if (isEnd && (editOp === 'join' || moveEnd)) return 'pointer'; // click connects / welds
-      return 'move';                                                 // drag this point
+      return CURSOR_MOVE_PT;                                         // drag this point (smaller move)
     }
     const edge = nearestEdge(sel, w, tol);
     if (edge) {
@@ -2452,10 +2457,11 @@ function hoverCursor(w) {
 function cursorFor(w) {
   if (drag) {
     if (drag.mode === 'pan') return 'grabbing';
-    if (drag.mode === 'move' || drag.mode === 'handle') return 'move';
+    if (drag.mode === 'handle') return CURSOR_MOVE_PT; // dragging a single point
+    if (drag.mode === 'move') return 'move';           // dragging the whole shape
     return 'crosshair'; // marquee / draw
   }
-  if (draftDrag) return 'move';
+  if (draftDrag) return CURSOR_MOVE_PT; // repositioning a draft vertex
   return hoverCursor(w) || baseCursor();
 }
 function refreshCursor(e) { const s = screenPt(e); els.cv.style.cursor = cursorFor(vp.screenToWorld(s.x, s.y)); }
