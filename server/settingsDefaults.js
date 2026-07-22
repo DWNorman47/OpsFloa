@@ -1,5 +1,5 @@
 const FEATURE_KEYS = ['feature_scheduling', 'feature_analytics', 'feature_public', 'feature_chat', 'feature_prevailing_wage', 'feature_reimbursements', 'feature_pto', 'module_field', 'module_timeclock', 'module_work', 'module_inventory', 'module_tools', 'module_analytics', 'module_team', 'module_financial_reports', 'feature_project_integration', 'feature_overtime', 'feature_geolocation', 'feature_inactive_alerts', 'feature_overtime_alerts', 'feature_broadcast', 'feature_media_gallery', 'feature_admin_edit_time', 'feature_worker_edit_time', 'show_worker_wages', 'notification_use_work_hours', 'media_delete_on_project_archive', 'notify_timeoff_requests', 'notify_budget_alerts', 'notify_entry_submitted', 'report_weekly_payroll', 'report_weekly_low_stock', 'report_monthly_valuation', 'report_daily_ot_column', 'qbo_auto_push', 'qbo_auto_push_expenses', 'qbo_auto_create_customers', 'notify_qbo_disconnect', 'cp_track_classifications', 'cp_track_fringes', 'cp_collect_ssn', 'cp_require_signature', 'cp_compute_deductions', 'cp_wh347_format', 'hide_work_orders_tab', 'hide_projects_tab'];
-const STRING_KEYS = ['overtime_rule', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'cycle_count_reconcile_threshold_type', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules'];
+const STRING_KEYS = ['overtime_rule', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'cycle_count_reconcile_threshold_type', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules', 'deductions'];
 
 // Defaults available to all authenticated users
 const SETTINGS_DEFAULTS = {
@@ -58,6 +58,11 @@ const SETTINGS_DEFAULTS = {
   // as a JSON policy document. Empty = no policy = the engine is a pure no-op,
   // so existing companies are unaffected. See server/utils/hoursRules.js.
   hours_rules: '',
+  // Company-wide payroll deductions (social security, taxes, etc.) as a JSON
+  // list `{ items: [{ id, name, kind, value, cap }] }`. Empty = no deductions,
+  // so the pay stub stays gross-only for companies that never configure it.
+  // Applied to gross wages on the per-worker pay stub. See server/utils/deductions.js.
+  deductions: '',
 };
 
 // Admin-only defaults (superset of SETTINGS_DEFAULTS)

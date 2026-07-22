@@ -372,7 +372,7 @@ app.get('/api/settings', requireAuth, async (req, res) => {
 app.get('/api/company-info', requireAuth, async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT name, address, phone, contact_email FROM companies WHERE id = $1',
+      'SELECT name, address, phone, contact_email, logo_url FROM companies WHERE id = $1',
       [req.user.company_id]
     );
     res.json(result.rows[0] || {});

@@ -98,7 +98,11 @@ async function loadEstimateFull(companyId, estimateId) {
     'SELECT * FROM estimate_lines WHERE estimate_id = $1 ORDER BY sort_order, id',
     [estimateId]
   );
-  return { ...headRes.rows[0], lines: linesRes.rows };
+  // Never leak the share-token secrets in the general estimate payload (GET /:id
+  // is requireAuth, so any company user can read it). The raw link is handed out
+  // only by the explicit, admin-only POST /:id/link, and the one-time send card.
+  const { response_token, response_token_hash, ...head } = headRes.rows[0];
+  return { ...head, lines: linesRes.rows };
 }
 
 async function recomputeAndStoreTotals(client, estimateId) {
@@ -457,8 +461,10 @@ router.post('/:id/send', requireAdmin, async (req, res) => {
       // gets wired AND patches it to 'sent' / 'failed'. Writing
       // 'pending' here would leave every estimate forever-pending and
       // make the column meaningless as a failure signal.
-      `UPDATE estimates SET status = 'sent', sent_at = NOW(), response_token_hash = $1 WHERE id = $2`,
-      [sha256(rawToken), req.params.id]
+      // Store the raw token too (not just its hash) so the link is retrievable
+      // later via POST /:id/link. The hash stays the key for public lookups.
+      `UPDATE estimates SET status = 'sent', sent_at = NOW(), response_token = $1, response_token_hash = $2 WHERE id = $3`,
+      [rawToken, sha256(rawToken), req.params.id]
     );
     await client.query('COMMIT');
     await recordAudit({
@@ -473,6 +479,49 @@ router.post('/:id/send', requireAdmin, async (req, res) => {
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     req.log.error({ err }, 'estimate send error');
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /estimates/:id/link — retrieve the client-facing share/accept token for an
+// already-sent estimate, so the admin can get the link (/e/<token>) again. Returns
+// the stored token; estimates sent before the token was stored (legacy) mint a
+// fresh one on first call — which rotates the link, so any previously-shared URL
+// for that estimate stops working. New sends keep a stable link (no rotation).
+router.post('/:id/link', requireAdmin, async (req, res) => {
+  const companyId = req.user.company_id;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const headRes = await client.query(
+      'SELECT id, status, response_token FROM estimates WHERE id = $1 AND company_id = $2 FOR UPDATE',
+      [req.params.id, companyId]
+    );
+    if (headRes.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Estimate not found' });
+    }
+    if (headRes.rows[0].status === 'draft') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Estimate has not been sent yet' });
+    }
+    let token = headRes.rows[0].response_token;
+    if (!token) {
+      // Legacy estimate: only the hash was stored, so the original token is
+      // unrecoverable. Mint a new one (this rotates the link).
+      token = crypto.randomBytes(32).toString('hex');
+      await client.query(
+        'UPDATE estimates SET response_token = $1, response_token_hash = $2 WHERE id = $3',
+        [token, sha256(token), req.params.id]
+      );
+    }
+    await client.query('COMMIT');
+    res.json({ response_token: token });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    req.log.error({ err }, 'estimate link error');
     res.status(500).json({ error: 'Server error' });
   } finally {
     client.release();
@@ -623,9 +672,12 @@ publicRouter.get('/view/:token', async (req, res) => {
               COALESCE((SELECT value FROM settings s WHERE s.company_id = e.company_id AND s.key = 'currency'), 'USD') AS currency,
               e.subtotal_cents, e.tax_pct, e.total_cents,
               e.valid_until, e.status, e.sent_at, e.responded_at, e.accepted_signer_name,
-              e.exclusions, e.terms, c.language AS client_language
+              e.exclusions, e.terms, c.language AS client_language,
+              -- Contractor letterhead for the client-facing page.
+              co.name AS company_name, co.logo_url AS company_logo_url
          FROM estimates e
          LEFT JOIN clients c ON c.id = e.client_id
+         LEFT JOIN companies co ON co.id = e.company_id
         WHERE e.response_token_hash = $1`,
       [sha256(req.params.token)]
     );

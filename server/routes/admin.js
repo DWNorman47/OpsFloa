@@ -20,8 +20,10 @@ const { logFailure } = require('../failureLog');
 const { sendPushToUser, sendPushToAllWorkers } = require('../push');
 const { sendEmail } = require('../email');
 const { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, nightPremiumCost } = require('../utils/payCalculations');
-const { roundEntriesFromSettings, otConfigFromSettings, validatePolicyRaw, migrateFixedSlots, hasFixedSlots } = require('../utils/hoursRules');
+const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, validatePolicyRaw, migrateFixedSlots, hasFixedSlots } = require('../utils/hoursRules');
 const { computePaid } = require('../utils/paidHours');
+const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = require('../utils/deductions');
+const { DEDUCTION_KINDS } = require('../constants/deductionEnums');
 const { weekRange, weekBucketKey } = require('../utils/weekBounds');
 const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const qbo = require('../services/qbo');
@@ -190,7 +192,7 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
   // couldn't update them. Added during 2026-04-30 audit pass.
   const adminNumericKeys = ['shift_reminder_hour', 'pto_annual_days', 'cycle_count_audit_pct', 'cycle_count_reconcile_threshold'];
   const numericKeys = [...rateKeys, ...notifKeys, ...adminNumericKeys, 'overtime_threshold', 'media_retention_days', 'qbo_bill_terms_days', 'week_start'];
-  const stringKeys = ['overtime_rule', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules'];
+  const stringKeys = ['overtime_rule', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules', 'deductions'];
   const allowed = [...numericKeys, ...stringKeys, ...FEATURE_KEYS];
   const companyId = req.user.company_id;
   try {
@@ -222,7 +224,10 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
             // Stored as a JSON policy document; the engine (hoursRules.parsePolicy)
             // normalizes on read, so we only guard shape + size here. A too-large
             // or non-object value is rejected outright.
-            if (String(val).length > 8000) return res.status(400).json({ error: 'hours_rules is too large' });
+            // Per-role rule lists multiply the document size (one rule set per
+            // role on top of the standard list), so the cap is generous but still
+            // bounded to keep a runaway payload out of the settings row.
+            if (String(val).length > 40000) return res.status(400).json({ error: 'hours_rules is too large' });
             let parsed;
             try { parsed = JSON.parse(val); } catch { return res.status(400).json({ error: 'hours_rules must be valid JSON' }); }
             if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
@@ -244,6 +249,15 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
             if (isNaN(id)) return res.status(400).json({ error: 'Invalid checklist template ID' });
             const tmpl = await pool.query('SELECT id FROM safety_checklist_templates WHERE id=$1 AND company_id=$2', [id, companyId]);
             if (tmpl.rowCount === 0) return res.status(400).json({ error: 'Checklist template not found' });
+          }
+          if (key === 'deductions' && val !== '') {
+            // A JSON list of company-wide deductions; the engine (parseCompanyDeductions)
+            // normalizes on read and drops anything malformed, so only shape + size
+            // are guarded here.
+            if (String(val).length > 20000) return res.status(400).json({ error: 'deductions is too large' });
+            let parsed;
+            try { parsed = JSON.parse(val); } catch { return res.status(400).json({ error: 'deductions must be valid JSON' }); }
+            if (!parsed || typeof parsed !== 'object') return res.status(400).json({ error: 'deductions must be a JSON object or array' });
           }
           await pool.query(
             'INSERT INTO settings (company_id, key, value) VALUES ($1, $2, $3) ON CONFLICT (company_id, key) DO UPDATE SET value = $3',
@@ -987,7 +1001,7 @@ router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const userResult = await pool.query(
-      'SELECT id, full_name, invoice_name, username, email, hourly_rate, rate_type, overtime_rule, guaranteed_weekly_hours FROM users WHERE id = $1 AND role = $2 AND company_id = $3',
+      'SELECT id, full_name, invoice_name, username, email, hourly_rate, rate_type, overtime_rule, guaranteed_weekly_hours, role_id FROM users WHERE id = $1 AND role = $2 AND company_id = $3',
       [req.params.id, 'worker', companyId]
     );
     if (userResult.rowCount === 0) return res.status(404).json({ error: 'Worker not found' });
@@ -1020,10 +1034,10 @@ router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
     const reimbursementTotal = reimbursements.reduce((sum, r) => sum + parseFloat(r.amount), 0);
 
     const settings = await getSettings(companyId);
-    entries = roundEntriesFromSettings(entries, settings);
     const worker = userResult.rows[0];
+    entries = roundEntriesFromSettings(entries, settings, { workerRoleById: { [worker.id]: worker.role_id } });
     const workerOTRule = worker.overtime_rule || 'daily';
-    const otConfig = otConfigFromSettings(settings);
+    const otConfig = otConfigFromSettings(settings, worker.role_id);
     const { regularHours, overtimeHours, otBands } = computeOT(entries, workerOTRule, settings.overtime_threshold, settings.week_start, otConfig);
     // Per-entry OT for the invoice's daily line-item column (sums to overtimeHours above)
     annotateEntryOvertime(entries, workerOTRule, settings.overtime_threshold, settings.week_start, otConfig);
@@ -1055,6 +1069,17 @@ router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
     const roundedReimbTotal = Math.round(reimbursementTotal * 100) / 100;
     const totalCost = roundedRegularCost + roundedOvertimeCost + roundedPrevailingCost + roundedGuaranteeCost;
 
+    // Pay-stub deductions: the company-wide list (settings) plus this worker's own
+    // rows, applied to gross wages. Empty config → no deduction lines and net_pay
+    // equals the gross Total Due, so the stub is unchanged for companies that
+    // never configure deductions.
+    const workerDedRows = await pool.query(
+      'SELECT id, name, kind, value, cap_amount, active FROM worker_deductions WHERE user_id = $1 AND company_id = $2 AND active = true ORDER BY id',
+      [req.params.id, companyId]
+    );
+    const dedList = parseCompanyDeductions(settings.deductions).concat(normalizeWorkerDeductions(workerDedRows.rows));
+    const stub = payStubTotals(totalCost, roundedReimbTotal, dedList);
+
     res.json({
       worker,
       entries,
@@ -1066,10 +1091,86 @@ router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
         guarantee_weeks: guaranteeWeeks, guarantee_cost: roundedGuaranteeCost,
         reimbursement_total: roundedReimbTotal,
         total_cost: totalCost + roundedReimbTotal,
+        // Deductions → net pay (gross wages − deductions + reimbursements).
+        gross_wages: stub.gross_wages, deductions: stub.deductions,
+        deductions_total: stub.deductions_total, net_pay: stub.net_pay,
         overtime_multiplier: settings.overtime_multiplier, prevailing_wage_rate: settings.prevailing_wage_rate,
       },
       period: { from: from || null, to: to || null },
     });
+  } catch (err) {
+    logger.error({ err }, 'catch block error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /admin/workers/:id/deductions — this worker's OWN deduction lines (on top
+// of the company-wide list). Returns the full rows so the editor can round-trip.
+router.get('/workers/:id/deductions', requireAdmin, requirePerm('manage_workers'), async (req, res) => {
+  const companyId = req.user.company_id;
+  try {
+    const ok = await pool.query('SELECT 1 FROM users WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
+    if (ok.rowCount === 0) return res.status(404).json({ error: 'Worker not found' });
+    const { rows } = await pool.query(
+      'SELECT id, name, kind, value, cap_amount, note, active FROM worker_deductions WHERE user_id = $1 AND company_id = $2 ORDER BY id',
+      [req.params.id, companyId]
+    );
+    res.json({ deductions: rows });
+  } catch (err) {
+    logger.error({ err }, 'catch block error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// PUT /admin/workers/:id/deductions — replace this worker's whole deduction set.
+// Body: { deductions: [{ name, kind, value, cap_amount?, note? }] }. Validated
+// against DEDUCTION_KINDS; unknown-kind / negative / unnamed rows are dropped.
+router.put('/workers/:id/deductions', requireAdmin, requirePerm('manage_workers'), async (req, res) => {
+  const companyId = req.user.company_id;
+  const userId = req.params.id;
+  const incoming = Array.isArray(req.body.deductions) ? req.body.deductions : [];
+  try {
+    const ok = await pool.query('SELECT 1 FROM users WHERE id = $1 AND company_id = $2', [userId, companyId]);
+    if (ok.rowCount === 0) return res.status(404).json({ error: 'Worker not found' });
+
+    const rows = [];
+    for (const d of incoming) {
+      if (!d || !DEDUCTION_KINDS.includes(d.kind)) continue;
+      const name = String(d.name == null ? '' : d.name).trim().slice(0, 120);
+      const value = parseFloat(d.value);
+      if (!name || !Number.isFinite(value) || value < 0) continue;
+      const capNum = parseFloat(d.cap_amount);
+      const cap = d.kind === 'percent' && Number.isFinite(capNum) && capNum > 0 ? capNum : null;
+      rows.push({ name, kind: d.kind, value, cap, note: typeof d.note === 'string' ? d.note.slice(0, 500) : null });
+    }
+    if (rows.length > 50) return res.status(400).json({ error: 'Too many deductions (max 50)' });
+
+    // Replace the full set atomically so a failure can't leave the worker with a
+    // half-applied deduction list.
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM worker_deductions WHERE user_id = $1 AND company_id = $2', [userId, companyId]);
+      for (const r of rows) {
+        await client.query(
+          `INSERT INTO worker_deductions (user_id, company_id, name, kind, value, cap_amount, note, active, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, true, NOW())`,
+          [userId, companyId, r.name, r.kind, r.value, r.cap, r.note]
+        );
+      }
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
+    }
+
+    const fresh = await pool.query(
+      'SELECT id, name, kind, value, cap_amount, note, active FROM worker_deductions WHERE user_id = $1 AND company_id = $2 ORDER BY id',
+      [userId, companyId]
+    );
+    res.json({ deductions: fresh.rows });
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });
@@ -1633,7 +1734,7 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
     if (projectResult.rowCount === 0) return res.status(404).json({ error: 'Project not found' });
 
     const entriesResult = await pool.query(
-      `SELECT te.*, COALESCE(u.invoice_name, u.full_name) as worker_name, u.username, u.hourly_rate, u.rate_type, u.overtime_rule
+      `SELECT te.*, COALESCE(u.invoice_name, u.full_name) as worker_name, u.username, u.hourly_rate, u.rate_type, u.overtime_rule, u.role_id
        FROM time_entries te
        JOIN users u ON te.user_id = u.id
        WHERE te.project_id = $1
@@ -1646,17 +1747,20 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
 
     let entries = entriesResult.rows;
     const settings = await getSettings(companyId);
-    entries = roundEntriesFromSettings(entries, settings);
+    const workerRoleById = {};
+    entries.forEach(e => { workerRoleById[e.user_id] = e.role_id; });
+    entries = roundEntriesFromSettings(entries, settings, { workerRoleById });
 
     // Per-worker OT using each worker's own rule
     const workerEntries = {};
     entries.filter(e => e.wage_type === 'regular').forEach(e => {
-      if (!workerEntries[e.user_id]) workerEntries[e.user_id] = { items: [], rate: parseFloat(e.hourly_rate) || settings.default_hourly_rate, rate_type: e.rate_type, overtime_rule: e.overtime_rule || 'daily' };
+      if (!workerEntries[e.user_id]) workerEntries[e.user_id] = { items: [], rate: parseFloat(e.hourly_rate) || settings.default_hourly_rate, rate_type: e.rate_type, overtime_rule: e.overtime_rule || 'daily', role_id: e.role_id };
       workerEntries[e.user_id].items.push(e);
     });
     let regularHours = 0, overtimeHours = 0, regularCost = 0, overtimeCost = 0;
-    const otConfig = otConfigFromSettings(settings);
-    Object.values(workerEntries).forEach(({ items, rate, rate_type, overtime_rule }) => {
+    const otConfigByRole = otConfigByRoleFactory(settings);
+    Object.values(workerEntries).forEach(({ items, rate, rate_type, overtime_rule, role_id }) => {
+      const otConfig = otConfigByRole(role_id);
       const { regularHours: reg, overtimeHours: ot, otBands } = computeOT(items, overtime_rule, settings.overtime_threshold, settings.week_start, otConfig);
       // Per-entry OT for the project bill's daily line-item column (each worker uses their own rule)
       annotateEntryOvertime(items, overtime_rule, settings.overtime_threshold, settings.week_start, otConfig);
@@ -1718,7 +1822,8 @@ router.get('/projects/metrics', requireAdmin, async (req, res) => {
         `SELECT te.project_id, te.user_id, te.work_date, te.start_time, te.end_time,
                 te.break_minutes, te.wage_type, te.overtime_hours_override,
                 COALESCE(u.hourly_rate, $2) AS rate,
-                COALESCE(u.overtime_rule, 'daily') AS ot_rule
+                COALESCE(u.overtime_rule, 'daily') AS ot_rule,
+                u.role_id AS role_id
            FROM time_entries te
            JOIN users u ON te.user_id = u.id
           WHERE te.company_id = $1 AND te.status != 'rejected'`,
@@ -1726,8 +1831,10 @@ router.get('/projects/metrics', requireAdmin, async (req, res) => {
       ),
     ]);
 
+    const metricsRoleById = {};
+    entriesRes.rows.forEach(e => { metricsRoleById[e.user_id] = e.role_id; });
     const byProject = new Map();
-    for (const e of roundEntriesFromSettings(entriesRes.rows, metricsSettings)) {
+    for (const e of roundEntriesFromSettings(entriesRes.rows, metricsSettings, { workerRoleById: metricsRoleById })) {
       if (!byProject.has(e.project_id)) byProject.set(e.project_id, []);
       byProject.get(e.project_id).push(e);
     }
@@ -1746,7 +1853,7 @@ router.get('/projects/metrics', requireAdmin, async (req, res) => {
         byWorker.get(e.user_id).push(e);
       }
       for (const rows_ of byWorker.values()) {
-        const r = computePaid(rows_, metricsSettings, { rule: rows_[0].ot_rule || 'daily' });
+        const r = computePaid(rows_, metricsSettings, { rule: rows_[0].ot_rule || 'daily', roleId: rows_[0].role_id ?? null });
         regularHours += r.regularHours;
         overtimeHours += r.overtimeHours;
       }
@@ -3120,7 +3227,7 @@ router.get('/overtime-report', requireAdmin, requirePerm('view_reports'), requir
     const prevRate = parseFloat(s.prevailing_wage_rate) || 45;
 
     const workers = await pool.query(
-      `SELECT u.id, u.full_name, u.invoice_name, u.hourly_rate, u.rate_type, u.overtime_rule FROM users u
+      `SELECT u.id, u.full_name, u.invoice_name, u.hourly_rate, u.rate_type, u.overtime_rule, u.role_id FROM users u
        WHERE u.company_id = $1 AND u.role = 'worker' AND u.active = true
        ORDER BY u.full_name`,
       [companyId]
@@ -3137,17 +3244,20 @@ router.get('/overtime-report', requireAdmin, requirePerm('view_reports'), requir
     const projectRateMap = {};
     projectRates.rows.forEach(p => { if (p.prevailing_wage_rate != null) projectRateMap[p.id] = parseFloat(p.prevailing_wage_rate); });
 
-    const paidRows = roundEntriesFromSettings(entries.rows, s);
+    const otWorkerRoleById = {};
+    workers.rows.forEach(w => { otWorkerRoleById[w.id] = w.role_id; });
+    const paidRows = roundEntriesFromSettings(entries.rows, s, { workerRoleById: otWorkerRoleById });
     const byWorker = {};
     paidRows.forEach(e => {
       if (!byWorker[e.user_id]) byWorker[e.user_id] = [];
       byWorker[e.user_id].push(e);
     });
 
-    const otConfig = otConfigFromSettings(s);
+    const otConfigByRole = otConfigByRoleFactory(s);
     const rows = workers.rows.map(w => {
       const wEntries = byWorker[w.id] || [];
       const workerOTRule = w.overtime_rule || 'daily';
+      const otConfig = otConfigByRole(w.role_id);
       const { regularHours, overtimeHours, otBands } = computeOT(wEntries, workerOTRule, threshold, s.week_start, otConfig);
       let prevHours = 0, prevailingCost = 0;
       wEntries.filter(e => e.wage_type === 'prevailing').forEach(e => {
@@ -3200,7 +3310,7 @@ router.get('/payroll-export', requireAdmin, requirePerm('view_reports'), require
     const prevRate = parseFloat(s.prevailing_wage_rate) || 45;
 
     const workers = await pool.query(
-      `SELECT u.id, u.full_name, u.invoice_name, u.hourly_rate, u.rate_type, u.overtime_rule FROM users u
+      `SELECT u.id, u.full_name, u.invoice_name, u.hourly_rate, u.rate_type, u.overtime_rule, u.role_id FROM users u
        WHERE u.company_id = $1 AND u.role = 'worker' AND u.active = true
        ORDER BY u.full_name`,
       [companyId]
@@ -3217,7 +3327,9 @@ router.get('/payroll-export', requireAdmin, requirePerm('view_reports'), require
     const projectRateMapExport = {};
     projectRatesExport.rows.forEach(p => { if (p.prevailing_wage_rate != null) projectRateMapExport[p.id] = parseFloat(p.prevailing_wage_rate); });
 
-    const paidRows = roundEntriesFromSettings(entries.rows, s);
+    const exportRoleById = {};
+    workers.rows.forEach(w => { exportRoleById[w.id] = w.role_id; });
+    const paidRows = roundEntriesFromSettings(entries.rows, s, { workerRoleById: exportRoleById });
     const byWorker = {};
     paidRows.forEach(e => {
       if (!byWorker[e.user_id]) byWorker[e.user_id] = [];
@@ -3228,10 +3340,11 @@ router.get('/payroll-export', requireAdmin, requirePerm('view_reports'), require
     const headers = ['Worker', 'Rate Type', 'Overtime', 'Rate', 'Regular Hrs', 'OT Hrs', 'Prevailing Hrs', 'Total Hrs', 'Mileage (mi)', 'Regular Pay', 'OT Pay', 'Prevailing Pay', 'Total Pay'];
     const lines = [headers.join(',')];
 
-    const otConfig = otConfigFromSettings(s);
+    const otConfigByRole = otConfigByRoleFactory(s);
     workers.rows.forEach(w => {
       const wEntries = byWorker[w.id] || [];
       const workerOTRule = w.overtime_rule || 'daily';
+      const otConfig = otConfigByRole(w.role_id);
       const { regularHours, overtimeHours, otBands } = computeOT(wEntries, workerOTRule, threshold, s.week_start, otConfig);
       let prevHours = 0, prevailingCost = 0;
       wEntries.filter(e => e.wage_type === 'prevailing').forEach(e => {
@@ -3287,7 +3400,7 @@ router.get('/export/worker-hours', requireAdmin, requirePerm('view_reports'), re
     const wVals = [companyId];
     if (accessIds && accessIds.length) { wVals.push(accessIds); wConds.push(`id = ANY($${wVals.length})`); }
     const workers = await pool.query(
-      `SELECT id, full_name, invoice_name, overtime_rule FROM users WHERE ${wConds.join(' AND ')} ORDER BY full_name`,
+      `SELECT id, full_name, invoice_name, overtime_rule, role_id FROM users WHERE ${wConds.join(' AND ')} ORDER BY full_name`,
       wVals
     );
 
@@ -3299,7 +3412,9 @@ router.get('/export/worker-hours', requireAdmin, requirePerm('view_reports'), re
       eVals
     );
 
-    const paidRows = roundEntriesFromSettings(entries.rows, s);
+    const whRoleById = {};
+    workers.rows.forEach(w => { whRoleById[w.id] = w.role_id; });
+    const paidRows = roundEntriesFromSettings(entries.rows, s, { workerRoleById: whRoleById });
     const byWorker = {};
     paidRows.forEach(e => { (byWorker[e.user_id] = byWorker[e.user_id] || []).push(e); });
 
@@ -3484,7 +3599,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_reports'), requ
     if (project_id) { conditions.push(`te.project_id = $${idx++}`); values.push(parseInt(project_id)); }
 
     const result = await pool.query(
-      `SELECT te.user_id, COALESCE(u.invoice_name, u.full_name) as worker_name, u.hourly_rate, u.classification,
+      `SELECT te.user_id, COALESCE(u.invoice_name, u.full_name) as worker_name, u.hourly_rate, u.classification, u.role_id,
               to_char(te.work_date, 'YYYY-MM-DD') as work_date,
               te.start_time, te.end_time, te.break_minutes, te.wage_type,
               te.classification AS entry_classification
@@ -3502,7 +3617,9 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_reports'), requ
     const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
     const workerMap = {};
 
-    for (const row of roundEntriesFromSettings(result.rows, s)) {
+    const cpRoleById = {};
+    result.rows.forEach(r => { cpRoleById[r.user_id] = r.role_id; });
+    for (const row of roundEntriesFromSettings(result.rows, s, { workerRoleById: cpRoleById })) {
       if (!workerMap[row.user_id]) {
         workerMap[row.user_id] = {
           worker_id: row.user_id,

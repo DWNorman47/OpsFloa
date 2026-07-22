@@ -357,6 +357,20 @@ body.printing-bid .bid-linkbar { display: none; }
 /* contour list (dirt panel) — the traced lines/spots/pads for the focused surface */
 .dirt-crow { display: flex; align-items: center; gap: 8px; padding: 2px 2px 6px; }
 .dirt-crow .hint { flex: 1 1 auto; }
+/* Collapsible per-type/color shape subgroup header in the dirt panel. */
+.dirt-grp { display: flex; align-items: center; gap: 7px; cursor: pointer; user-select: none; padding: 5px 2px 4px; }
+.dirt-grp:hover { color: var(--text); }
+.dirt-grp-lbl { flex: 1 1 auto; font-size: 12px; color: var(--muted); }
+.dirt-grp .v { color: var(--muted); }
+/* Section-header right group (eye + chevron) so the eye sits by the collapse arrow. */
+.dirt-hd-r { display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+/* Eye = whether this group draws on the plan. White = shown, dark gray = hidden. */
+.dirt-eye { display: inline-flex; align-items: center; cursor: pointer; color: var(--text); flex: 0 0 auto; }
+.dirt-eye:hover { color: var(--accent); }
+.dirt-eye.off { color: #565f6a; }
+.dirt-eye.off:hover { color: var(--muted); }
+/* "Show markups from all pages" toggle, set off above the shape lists. */
+.dirt-allpages { margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--border); }
 .ctr-row { display: flex; align-items: center; gap: 7px; padding: 4px 5px; border-radius: 5px; cursor: pointer; font-size: 12.5px; }
 .ctr-row:hover { background: var(--panel2); }
 .ctr-row.sel { background: rgba(77,163,255,.16); outline: 1px solid var(--accent); }

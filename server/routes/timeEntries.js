@@ -319,7 +319,7 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
     const [periods, settingsRows, workerRow] = await Promise.all([
       pool.query('SELECT * FROM pay_periods WHERE company_id = $1 ORDER BY period_start DESC', [companyId]),
       pool.query('SELECT key, value FROM settings WHERE company_id = $1', [companyId]),
-      pool.query('SELECT overtime_rule, hourly_rate, rate_type, guaranteed_weekly_hours FROM users WHERE id = $1', [userId]),
+      pool.query('SELECT overtime_rule, hourly_rate, rate_type, guaranteed_weekly_hours, role_id FROM users WHERE id = $1', [userId]),
     ]);
     const s = { overtime_threshold: 8, default_hourly_rate: 0 };
     settingsRows.rows.forEach(r => {
@@ -356,7 +356,7 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
         // invoice — this used to round but drop the tiered-overtime config, so
         // a company on CA-style tiers saw one number here and another on a bill.
         const { paid: paidEntries, regularHours, overtimeHours } =
-          computePaid(entries, s, { rule: workerOTRule });
+          computePaid(entries, s, { rule: workerOTRule, roleId: workerData.role_id ?? null });
         let prevailingHours = 0, totalMileage = 0;
         for (const e of paidEntries) {
           if (e.wage_type === 'prevailing') {

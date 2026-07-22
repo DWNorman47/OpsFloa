@@ -85,7 +85,6 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
           {/* Invoice header */}
           <div style={s.invHeader}>
             <div>
-              {ci?.logo_url && <img src={ci.logo_url} alt="" style={s.companyLogo} />}
               {ci?.name && <div style={s.brand}>{ci.name}</div>}
               <div style={s.brandSub}>{t.employeeTimeInvoice}</div>
             </div>
