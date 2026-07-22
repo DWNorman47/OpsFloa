@@ -2762,6 +2762,20 @@ function doExtendClick(w) {
   pushUndo(prev); markupsChanged(); vp.requestDraw();
 }
 
+// Shift+Enter during an extend session: weld the connected end to the shape's
+// other end (a closed loop), then finish. weldEnds needs ≥3 points for a loop;
+// with fewer it just finishes.
+function closeExtendLoop() {
+  const a = extend && state.markups.find(m => m.id === extend.id);
+  if (a && isOpenPoly(a) && a.pts.length >= 3) {
+    const activeVi = extend.atFront ? 0 : a.pts.length - 1;
+    weldEnds(a, activeVi, a, extend.atFront ? a.pts.length - 1 : 0);
+  } else {
+    setMsg('Finished.');
+  }
+  extend = null; hoverW = null; vp.requestDraw();
+}
+
 // ---- Holes (keyhole model) ----------------------------------------------------
 // A holed area keeps the outer ring in m.outer and hole rings in m.holes; m.pts is
 // the derived "keyhole" ring (outer + a zero-width bridge into each hole, wound
@@ -3001,6 +3015,16 @@ function tryDraftJoin(k) {
   const prev = JSON.stringify(draft.pts);
   draft.pts.push({ x: draft.pts[k].x, y: draft.pts[k].y }); // closing edge to the clicked vertex
   draftRecord(prev);
+  commitDraft();
+}
+
+// Shift+Enter while drafting: close the polyline (last point → first) before
+// committing, so the drawn line finishes as a loop. No-op close for point-kinds
+// or a too-short line; then commit as usual.
+function closeDraftAndCommit() {
+  if (draft && Array.isArray(draft.pts) && draft.pts.length >= 3 && !POINT_KINDS.includes(draft.kind)) {
+    draft.pts.push({ x: draft.pts[0].x, y: draft.pts[0].y });
+  }
   commitDraft();
 }
 
@@ -4645,6 +4669,10 @@ document.addEventListener('keydown', e => {
     setMsg('Alignment cancelled.');
     return;
   }
+  // Shift+Enter: weld the current end to the shape's other end (close the loop),
+  // then finish — the closing shortcut for both an extend session and a draft.
+  if (e.key === 'Enter' && e.shiftKey && extend) { e.preventDefault(); closeExtendLoop(); return; }
+  if (e.key === 'Enter' && e.shiftKey && draft) { e.preventDefault(); closeDraftAndCommit(); return; }
   if (e.key === 'Enter' && extend) { e.preventDefault(); extend = null; hoverW = null; setMsg('Finished.'); vp.requestDraw(); return; }
   if (e.key === 'Enter' && draft) { e.preventDefault(); commitDraft(); return; }
   if (e.key === 'Backspace' && draft) {
