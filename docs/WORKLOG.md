@@ -37,6 +37,11 @@ space **lays a point** (extends that end), a plain click on another loose end
 to pointerup (reusing the pan drag mode), which is what lets a drag pan without
 laying a point.
 
+**Follow-up (`v67`): Shift+Enter closes the loop + finishes.** Welds the current
+end to the shape's other end (a closed loop) and finishes — the closing
+counterpart to plain Enter. Works in an extend session and while drafting; needs
+≥3 points, else it just finishes.
+
 **Follow-up (`v66`): tap-to-join in the Move op too.** A motionless quick tap on a
 loose end connects (green ring); a second motionless tap on a matching end welds
 them (close a loop / merge two lines). Any movement, or a press held > 300ms, is a
