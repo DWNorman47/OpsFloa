@@ -37,10 +37,19 @@ space **lays a point** (extends that end), a plain click on another loose end
 to pointerup (reusing the pan drag mode), which is what lets a drag pan without
 laying a point.
 
+**Follow-up (`v66`): tap-to-join in the Move op too.** A motionless quick tap on a
+loose end connects (green ring); a second motionless tap on a matching end welds
+them (close a loop / merge two lines). Any movement, or a press held > 300ms, is a
+normal vertex Move — dragging still repositions the point. Since the join tap has
+no movement the point is untouched, so the weld is one clean undo step. (This is
+the "tap, no drag" variant the Join op's click-to-weld doesn't cover.)
+
 **Judgment calls (couldn't runtime-test a tool-app UI, so worth a real click-through):**
-- Scoped it to the **Join edit-op**, not all of edit mode — in Move mode clicking
-  an endpoint drags it to reshape, which shouldn't change. If you wanted this to be
-  the behavior in *every* edit op, that's a different call.
+- Scoped the *first* interaction (extend/pan) to the **Join edit-op**; the Move op
+  gets only the lightweight tap-to-join. Dragging an endpoint in Move still
+  reshapes as before.
+- In Move, you **connect with the first tap** (the user's spec presupposed being
+  "connected" but didn't say how) — select a line, tap one end, tap the other.
 - **Finish** = Enter / double-click / Esc (matches the drawing convention); each
   laid point is its own undo step. There's no separate "cancel and discard the
   whole extension" — Esc just stops, and Ctrl-Z peels points back.
