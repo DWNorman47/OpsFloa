@@ -780,6 +780,11 @@ let joinPick = null;  // {id, vi} — the first endpoint picked in Join mode, be
 // { id, atFront }. A plain click then lays a point (extending that end) or welds to
 // another loose end; a drag pans. Enter/Esc/double-click finish.
 let extend = null;
+// MOVE op tap-to-join: tap a loose end to connect (moveEnd = { id, vi }), then TAP
+// another end (no movement, quick) to weld them. Any movement, or a held press,
+// falls through to a normal vertex Move. A tap = released within TAP_MS, unmoved.
+let moveEnd = null;
+const TAP_MS = 300;
 let circleCenter = null; // world point after the first click of a Circle marquee (awaiting the radius click)
 
 const centroid = pts => ({
@@ -805,13 +810,13 @@ function refreshEditbar() {
 }
 function setEditOp(op) {
   editOp = op;
-  joinPick = null; extend = null; // any pending Join pick / extend is abandoned when the op changes
+  joinPick = null; extend = null; moveEnd = null; // any pending Join pick / extend / connect is abandoned when the op changes
   const sel = document.getElementById('prEditOp');
   if (sel && sel.value !== op) sel.value = op;
 }
 function setEditMode(mode) {
   editMode = mode;
-  circleCenter = null; joinPick = null; extend = null; hoverW = null;
+  circleCenter = null; joinPick = null; extend = null; moveEnd = null; hoverW = null;
   document.body.classList.toggle('pr-region', mode !== 'points');
   const sel = document.getElementById('prEditMode');
   if (sel && sel.value !== mode) sel.value = mode;
@@ -1395,6 +1400,17 @@ function drawExtend(ctx) {
   ctx.restore();
 }
 
+// Green ring on the endpoint the MOVE-op tap-to-join is connected to.
+function drawMoveEnd(ctx) {
+  const m = state.markups.find(x => x.id === moveEnd.id);
+  if (!m || m.page !== state.page || !m.pts || !m.pts[moveEnd.vi]) return;
+  const p = m.pts[moveEnd.vi], z = vp.view.zoom;
+  ctx.save();
+  ctx.beginPath(); ctx.arc(p.x, p.y, 8 / z, 0, Math.PI * 2);
+  ctx.lineWidth = 2.4 / z; ctx.strokeStyle = '#22c55e'; ctx.stroke();
+  ctx.restore();
+}
+
 /* ---- hit testing (world coords; tolerances shrink with zoom) ---- */
 
 function hitHandle(ctx, m, w) {
@@ -1598,6 +1614,7 @@ function paint(ctx) {
   if (sel && sel.page === state.page) drawSelection(ctx, sel);
   if (joinPick) drawJoinPick(ctx);
   if (extend) drawExtend(ctx);
+  if (moveEnd) drawMoveEnd(ctx);
   if ((drag && drag.mode === 'marquee-box') || circleCenter) drawMarquee(ctx);
   ctx.restore();
   refreshEditbar();  // show/hide the Edit-points toolbar to match the selection
@@ -1982,7 +1999,7 @@ function setTool(t) {
   cancelDraft();
   if (alignDraft && t !== 'align') alignDraft = null; // keep any applied shift; drop the in-progress pair
   drag = null;
-  joinPick = null; extend = null; circleCenter = null; // abandon any half-finished Join / extend / Circle marquee when switching tools
+  joinPick = null; extend = null; moveEnd = null; circleCenter = null; // abandon any half-finished Join / extend / connect / Circle marquee when switching tools
   document.querySelectorAll('.tool').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
   syncToolGroups(); // reflect the active tool on the dirt-trade group faces
   els.cv.classList.toggle('crosshair', t !== 'pan' && t !== 'select');
@@ -2306,6 +2323,18 @@ els.cv.addEventListener('pointerdown', e => {
       }
       // not on a loose end → fall through to normal select / pan
     }
+    // Move op, already connected: a tap on ANY loose end welds (handled at
+    // pointerup); a drag on it moves that point instead. Lets you weld a second,
+    // not-yet-selected line's end, not just the selected line's own other end.
+    if (editMode === 'points' && editOp === 'move' && moveEnd && !e.altKey) {
+      const hitEnd = endpointNear(w, Math.max(11 / vp.view.zoom, 7));
+      if (hitEnd) {
+        selectedId = hitEnd.m.id;
+        undoCapture = snapshot();
+        drag = { mode: 'handle', ptr: e.pointerId, id: hitEnd.m.id, hi: hitEnd.vi, moved: false, isEnd: true, t0: Date.now() };
+        return;
+      }
+    }
     if (sel && sel.page === state.page) {
       const hi = hitHandle(ctx, sel, w);
       // Alt-click reshapes the vertex set: on a point → remove it; on an edge →
@@ -2342,7 +2371,9 @@ els.cv.addEventListener('pointerdown', e => {
       }
       if (hi >= 0) {
         undoCapture = snapshot();
-        drag = { mode: 'handle', ptr: e.pointerId, id: sel.id, hi, moved: false };
+        // isEnd + t0 let a motionless quick tap on a loose end connect / join in Move op.
+        const isEnd = isOpenPoly(sel) && (hi === 0 || hi === sel.pts.length - 1);
+        drag = { mode: 'handle', ptr: e.pointerId, id: sel.id, hi, moved: false, isEnd, t0: Date.now() };
         return;
       }
     }
@@ -2496,6 +2527,8 @@ function endDrag(e) {
   if (d.mode === 'pan') {
     // While connected, a click (no pan) lays a point or welds; a real pan just moves the view.
     if (d.extendAt && !d.moved && extend) { doExtendClick(d.extendAt); return; }
+    // A tap on empty space cancels a pending Move-op connect (before it deselects).
+    if (!d.moved && moveEnd) { moveEnd = null; setMsg('Disconnected.'); vp.requestDraw(); return; }
     // a click on empty space (no pan movement) clears the selection; a real pan keeps it
     if (d.deselect && !d.moved && selectedId) { selectedId = null; renderMarkupList(); vp.requestDraw(); }
     return;
@@ -2537,8 +2570,13 @@ function endDrag(e) {
     }
     pushUndo(undoCapture); undoCapture = null;
     markupsChanged();
+    moveEnd = null; // a real drag is a Move, not a connect/join
   } else {
     undoCapture = null;
+    // MOVE op: a motionless, quick tap on a loose end connects, then joins.
+    if (d.mode === 'handle' && d.isEnd && editOp === 'move' && (Date.now() - d.t0) <= TAP_MS) {
+      handleMoveTap(d.id, d.hi);
+    }
   }
 }
 els.cv.addEventListener('pointerup', endDrag);
@@ -2677,6 +2715,32 @@ function weldEnds(a, aVi, b, bVi) {
   a.modified = Date.now(); invalidateForKind(a);
   selectedId = a.id;
   pushUndo(prev); markupsChanged(); setMsg('Joined.'); vp.requestDraw();
+}
+
+// Can two loose ends be welded? Same line type; for one line's own two ends, they
+// must be distinct and have at least one point between them (a real loop).
+function canJoinEnds(a, aVi, b, bVi) {
+  if (!a || !b || a.kind !== b.kind) return false;
+  if (a.id === b.id) return aVi !== bVi && a.pts.length >= 3;
+  return true;
+}
+// MOVE op: a motionless tap on a loose end. First tap connects (moveEnd); a second
+// tap on another matching end welds them; tapping the connected end disconnects.
+function handleMoveTap(id, vi) {
+  const b = state.markups.find(m => m.id === id);
+  if (!b || !isOpenPoly(b)) { moveEnd = null; return; }
+  if (!moveEnd) {
+    moveEnd = { id, vi };
+    setMsg('Connected to an endpoint — tap the other end to join; drag to move it instead.');
+    vp.requestDraw();
+    return;
+  }
+  if (moveEnd.id === id && moveEnd.vi === vi) { moveEnd = null; setMsg('Disconnected.'); vp.requestDraw(); return; }
+  const a = state.markups.find(m => m.id === moveEnd.id);
+  if (canJoinEnds(a, moveEnd.vi, b, vi)) { weldEnds(a, moveEnd.vi, b, vi); moveEnd = null; return; }
+  moveEnd = { id, vi }; // not a valid pair → move the connection to the tapped end
+  setMsg(a && a.kind !== b.kind ? 'Those are different line types — can’t join.' : 'Connected — tap a matching loose end to join.');
+  vp.requestDraw();
 }
 
 // A click while connected (extend session): on another loose end → weld to it (or
@@ -4592,6 +4656,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelected(); return; }
   if (e.key === 'Escape') {
     if (extend) { extend = null; hoverW = null; setMsg('Finished extending.'); vp.requestDraw(); }
+    else if (moveEnd) { moveEnd = null; setMsg('Disconnected.'); vp.requestDraw(); }
     else if (draft || calibPts) { cancelDraft(); }
     else if (drag) { drag = null; vp.requestDraw(); }
     else if (selectedId) { selectedId = null; renderMarkupList(); vp.requestDraw(); }
