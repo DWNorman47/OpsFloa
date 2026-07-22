@@ -23,6 +23,30 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-21 — Plan Room: Join op → connect / extend / weld / pan
+
+**Done.** Plan Room `v64 → v65` (plus `v63` fix: the side panel now re-renders on
+page change, so a refresh no longer needs a checkbox toggle to show the page's
+markups).
+
+Reworked the **Join** edit-op into a fluid endpoint interaction on open lines:
+click a loose end to **connect** (ring + rubber-band); then a plain click on empty
+space **lays a point** (extends that end), a plain click on another loose end
+**welds** them (or closes the loop); hold-drag on empty space / another shape
+**pans**. Enter / double-click / Esc finish. The click-vs-drag decision is deferred
+to pointerup (reusing the pan drag mode), which is what lets a drag pan without
+laying a point.
+
+**Judgment calls (couldn't runtime-test a tool-app UI, so worth a real click-through):**
+- Scoped it to the **Join edit-op**, not all of edit mode — in Move mode clicking
+  an endpoint drags it to reshape, which shouldn't change. If you wanted this to be
+  the behavior in *every* edit op, that's a different call.
+- **Finish** = Enter / double-click / Esc (matches the drawing convention); each
+  laid point is its own undo step. There's no separate "cancel and discard the
+  whole extension" — Esc just stops, and Ctrl-Z peels points back.
+- Weld keeps the existing rule: the two lines must be the **same type**.
+- The old two-click Join (`handleJoin`) is superseded; left in place, now unused.
+
 ## 2026-07-21 — Plan Room: earthwork side menu — visibility eyes + all-pages toggle
 
 **Done.** Plan Room `v61 → v62`. Two additions to the dirt/earthwork side menu:
