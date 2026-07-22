@@ -822,6 +822,7 @@ function setEditMode(mode) {
   if (sel && sel.value !== mode) sel.value = mode;
   // a marquee mode wants a crosshair; point editing keeps the arrow
   els.cv.classList.toggle('crosshair', tool === 'select' && mode !== 'points');
+  els.cv.style.cursor = baseCursor();
   vp.requestDraw();
 }
 
@@ -2003,6 +2004,7 @@ function setTool(t) {
   document.querySelectorAll('.tool').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
   syncToolGroups(); // reflect the active tool on the dirt-trade group faces
   els.cv.classList.toggle('crosshair', t !== 'pan' && t !== 'select');
+  els.cv.style.cursor = baseCursor();
   // per-tool color memory (highlighter yellow, ink red, user overrides stick)
   if (t !== 'pan' && t !== 'select') els.mkColor.value = toolColors[t] || DEFAULT_COLOR;
   if (t === 'calibrate') {
@@ -2412,7 +2414,60 @@ els.cv.addEventListener('pointerdown', e => {
   drag = { mode: 'draw', ptr: e.pointerId, markup, from: s, moved: false };
 });
 
+// ---- Context cursor: tell the user what a click will do here ----------------
+// A compact custom 4-arrow "move" so a draggable POINT reads a touch smaller than
+// the shape body (which uses the full system `move`). White glyph, black outline
+// for contrast on any sheet; hotspot centered on the 20×20 art.
+const MOVE_PT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 20 20'><path d='M10 2 L13.5 5.5 L11.5 5.5 L11.5 8.5 L14.5 8.5 L14.5 6.5 L18 10 L14.5 13.5 L14.5 11.5 L11.5 11.5 L11.5 14.5 L13.5 14.5 L10 18 L6.5 14.5 L8.5 14.5 L8.5 11.5 L5.5 11.5 L5.5 13.5 L2 10 L5.5 6.5 L5.5 8.5 L8.5 8.5 L8.5 5.5 L6.5 5.5 Z' fill='#fff' stroke='#000' stroke-width='1' stroke-linejoin='round'/></svg>";
+const CURSOR_MOVE_PT = `url("data:image/svg+xml,${encodeURIComponent(MOVE_PT_SVG)}") 8 8, move`;
+// The cursor when hovering nothing interactive, per tool/mode.
+function baseCursor() {
+  if (tool === 'pan') return 'grab';
+  if (tool !== 'select' || editMode !== 'points') return 'crosshair'; // draw tools / box-circle place points
+  return 'grab'; // select + points: empty space pans
+}
+// Refined cursor for what's under the pointer (null → fall back to baseCursor).
+function hoverCursor(w) {
+  if (!state.doc || tool !== 'select' || editMode !== 'points') return null;
+  const ctx = vp.ctx, tol = Math.max(11 / vp.view.zoom, 7);
+  // Extend session (Join op, connected): weld on a loose end, lay a point on empty.
+  if (extend) return endpointNear(w, tol) ? 'pointer' : 'crosshair';
+  const sel = selMarkup();
+  if (sel && sel.page === state.page && canReshape(sel)) {
+    const hi = hitHandle(ctx, sel, w);
+    if (hi >= 0) {
+      const isEnd = isOpenPoly(sel) && (hi === 0 || hi === sel.pts.length - 1);
+      if (editOp === 'remove') return 'crosshair';                  // click removes this point
+      if (isEnd && (editOp === 'join' || moveEnd)) return 'pointer'; // click connects / welds
+      return CURSOR_MOVE_PT;                                         // drag this point (smaller move)
+    }
+    const edge = nearestEdge(sel, w, tol);
+    if (edge) {
+      if (editOp === 'add') return 'copy';                          // click adds a point here
+      if (editOp === 'cut' && isOpenPoly(sel)) return 'crosshair';  // click cuts the line here
+    }
+  }
+  // Connect / weld targets across shapes (Move-op connected, or Join op).
+  if ((moveEnd || editOp === 'join') && endpointNear(w, tol)) return 'pointer';
+  const hm = hitMarkup(ctx, w);
+  if (hm) return hm.id === selectedId ? 'move' : 'pointer';         // drag the selected shape / click to select another
+  return null;                                                       // empty → base (pan)
+}
+// The cursor for the current instant — the drag state wins, else hover.
+function cursorFor(w) {
+  if (drag) {
+    if (drag.mode === 'pan') return 'grabbing';
+    if (drag.mode === 'handle') return CURSOR_MOVE_PT; // dragging a single point
+    if (drag.mode === 'move') return 'move';           // dragging the whole shape
+    return 'crosshair'; // marquee / draw
+  }
+  if (draftDrag) return CURSOR_MOVE_PT; // repositioning a draft vertex
+  return hoverCursor(w) || baseCursor();
+}
+function refreshCursor(e) { const s = screenPt(e); els.cv.style.cursor = cursorFor(vp.screenToWorld(s.x, s.y)); }
+
 els.cv.addEventListener('pointermove', e => {
+  refreshCursor(e); // hover feedback + drag-state cursor, every move
   if (draftDrag && e.pointerId === draftDrag.ptr) { // reposition an existing draft vertex
     const s = screenPt(e);
     const w = vp.screenToWorld(s.x, s.y);
@@ -2514,6 +2569,7 @@ function endDrag(e) {
   const d = drag;
   drag = null;
   els.cv.classList.remove('grabbing');
+  els.cv.style.cursor = cursorFor(vp.screenToWorld(screenPt(e).x, screenPt(e).y)); // back to hover feedback
 
   if (d.mode === 'marquee-box') {
     const m = selMarkup();
