@@ -37,11 +37,13 @@ space **lays a point** (extends that end), a plain click on another loose end
 to pointerup (reusing the pan drag mode), which is what lets a drag pan without
 laying a point.
 
-**Follow-up (`v68`): context-aware cursor.** The pointer now signals what a click
-will do — `move` over a draggable vertex/shape, `pointer` over a clickable/weld
-target, `copy` to add a point, `crosshair` to place/cut/remove, `grab` on empty.
-Computed each pointermove (cheap checks first, all-markup hit test only when
-hovering elsewhere); gated to select+points so draw tools keep the crosshair.
+**Follow-up (`v68`/`v69`): context-aware cursor.** The pointer now signals what a
+click will do — a **draggable point** shows a compact custom 4-arrow move glyph
+(so it reads smaller/different from the shape **body**, which uses the system
+`move`), `pointer` over a clickable/weld target, `copy` to add a point,
+`crosshair` to place/cut/remove, `grab` on empty. Computed each pointermove (cheap
+checks first, all-markup hit test only when hovering elsewhere); gated to
+select+points so draw tools keep the crosshair.
 
 **Follow-up (`v67`): Shift+Enter closes the loop + finishes.** Welds the current
 end to the shape's other end (a closed loop) and finishes — the closing
