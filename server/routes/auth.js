@@ -14,6 +14,7 @@ const { seedBuiltinRoles, getUserPermissions } = require('../permissions');
 const { effectiveSubscriptionStatus } = require('../utils/subscription');
 const { escapeHtml } = require('../utils/htmlEscape');
 const { encrypt: encryptSecret, decrypt: decryptSecret } = require('../utils/secretBox');
+const { LEGAL_VERSION } = require('../constants/legal');
 
 // Hash a token for safe storage — raw token goes in the email, hash goes in the DB
 const sha256 = str => crypto.createHash('sha256').update(str).digest('hex');
@@ -273,6 +274,11 @@ router.post('/register', authLimiter, async (req, res) => {
   if (username.length > 50) return res.status(400).json({ error: 'Username must be 50 characters or fewer' });
   const pwErr = validatePassword(password, username);
   if (pwErr) return res.status(400).json({ error: pwErr });
+  // Clickwrap: the account owner must affirmatively accept the Terms + Privacy
+  // Policy. Enforced here (not just the UI checkbox) and recorded below.
+  if (req.body.accepted_terms !== true) {
+    return res.status(400).json({ error: 'You must accept the Terms of Use and Privacy Policy to create an account.' });
+  }
 
   // Capture real client IP (req.ip respects trust proxy setting)
   const registrationIp = req.ip || 'unknown';
@@ -352,6 +358,14 @@ router.post('/register', authLimiter, async (req, res) => {
       [companyId, username, hash, full_name, first_name||null, middle_name||null, last_name||null, email, confirmTokenHash, confirmExpires]
     );
     const newUserId = userResult.rows[0].id;
+
+    // Record the clickwrap acceptance in the same transaction, so the audit row
+    // rolls back with the account if anything below fails. Stamps the live docs
+    // version + the registration IP.
+    await client.query(
+      `INSERT INTO legal_acceptances (user_id, company_id, version, context, ip) VALUES ($1, $2, $3, 'signup', $4)`,
+      [newUserId, companyId, LEGAL_VERSION, registrationIp]
+    );
 
     // Seed Worker/Admin/Owner built-in roles for the new company and assign
     // Owner to the admin we just created. Done inside the same transaction
