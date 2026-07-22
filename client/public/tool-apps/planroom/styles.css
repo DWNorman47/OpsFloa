@@ -362,8 +362,8 @@ body.printing-bid .bid-linkbar { display: none; }
 .dirt-grp:hover { color: var(--text); }
 .dirt-grp-lbl { flex: 1 1 auto; font-size: 12px; color: var(--muted); }
 .dirt-grp .v { color: var(--muted); }
-/* Section-header left group (eye + label) so the chevron stays hard right. */
-.dirt-hd { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+/* Section-header right group (eye + chevron) so the eye sits by the collapse arrow. */
+.dirt-hd-r { display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 /* Eye = whether this group draws on the plan. White = shown, dark gray = hidden. */
 .dirt-eye { display: inline-flex; align-items: center; cursor: pointer; color: var(--text); flex: 0 0 auto; }
 .dirt-eye:hover { color: var(--accent); }

@@ -3937,8 +3937,8 @@ function dirtGroupHeader(gkey, label, count, color) {
   // gkey can carry material names with quotes (e.g. `18" hdpe`); URI-encode it so
   // it's always attribute-safe (decoded back in the toggle handler).
   return `<div class="dirt-grp" data-act="toggle-group" data-gkey="${encodeURIComponent(gkey)}">` +
-    `${dirtEye(gkey)}${sw}<span class="dirt-grp-lbl"><b>${esc(label)}</b> (${count})</span>` +
-    `<span class="v">${collapsed ? '▸' : '▾'}</span></div>`;
+    `${sw}<span class="dirt-grp-lbl"><b>${esc(label)}</b> (${count})</span>` +
+    `${dirtEye(gkey)}<span class="v">${collapsed ? '▸' : '▾'}</span></div>`;
 }
 // The type/material label a takeoff groups under (mirrors takeoffSubtotals so the
 // group headers and the Σ subtotals line up).
@@ -3986,7 +3986,7 @@ function renderDirtPanel() {
   const surfItems = state.markups
     .filter(m => (m.kind === 'contour' || m.kind === 'espot' || m.kind === 'epad') && (m.surface || 'existing') === curSurface && onPage(m))
     .sort((a, b) => (b.elev == null ? -1e9 : b.elev) - (a.elev == null ? -1e9 : a.elev));
-  rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-contours"><span class="dirt-hd">${dirtEye('sec:contours:' + curSurface)}<span>${surfLabel} contours (${surfItems.length})</span></span><span class="v">${dirtContoursCollapsed ? '▸' : '▾'}</span></div>`);
+  rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-contours"><span>${surfLabel} contours (${surfItems.length})</span><span class="dirt-hd-r">${dirtEye('sec:contours:' + curSurface)}<span class="v">${dirtContoursCollapsed ? '▸' : '▾'}</span></span></div>`);
   if (!dirtContoursCollapsed) {
     rows.push(`<div class="dirt-crow"><span class="hint">New traces are <b>${curSurface}</b> · dashed = existing, solid = proposed${dirtShowAllPages ? '' : ' · this page only'}</span>${surfItems.length ? '<button class="ctr-clear" data-act="clear-surface" title="Delete all traces on this surface">Clear</button>' : ''}</div>`);
     if (!surfItems.length) {
@@ -4025,7 +4025,7 @@ function renderDirtPanel() {
   const qk = { qarea: [], qline: [], qcount: [] };
   for (const m of state.markups) if (qk[m.kind] && onPage(m)) qk[m.kind].push(m);
   const qTotal = qk.qarea.length + qk.qline.length + qk.qcount.length;
-  rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-takeoff"><span class="dirt-hd">${dirtEye('sec:takeoffs')}<span>Takeoffs (${qTotal})</span></span><span class="v">${dirtTakeoffCollapsed ? '▸' : '▾'}</span></div>`);
+  rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-takeoff"><span>Takeoffs (${qTotal})</span><span class="dirt-hd-r">${dirtEye('sec:takeoffs')}<span class="v">${dirtTakeoffCollapsed ? '▸' : '▾'}</span></span></div>`);
   if (!dirtTakeoffCollapsed) {
     if (!qTotal) {
       rows.push(`<div class="hint" style="margin:2px 0 8px">No area / line / count takeoffs ${dirtShowAllPages ? 'yet' : 'on this page'}. Trace one with the <b>▨ Area</b> / <b>⌇ Line</b> / <b>⊙ Count</b> tools — these price into the <b>$ Bid</b> and are separate from the cut/fill contours above.</div>`);
