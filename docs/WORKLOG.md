@@ -23,6 +23,95 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-21 — Plan Room: Join op → connect / extend / weld / pan
+
+**Done.** Plan Room `v64 → v65` (plus `v63` fix: the side panel now re-renders on
+page change, so a refresh no longer needs a checkbox toggle to show the page's
+markups).
+
+Reworked the **Join** edit-op into a fluid endpoint interaction on open lines:
+click a loose end to **connect** (ring + rubber-band); then a plain click on empty
+space **lays a point** (extends that end), a plain click on another loose end
+**welds** them (or closes the loop); hold-drag on empty space / another shape
+**pans**. Enter / double-click / Esc finish. The click-vs-drag decision is deferred
+to pointerup (reusing the pan drag mode), which is what lets a drag pan without
+laying a point.
+
+**Follow-up (`v67`): Shift+Enter closes the loop + finishes.** Welds the current
+end to the shape's other end (a closed loop) and finishes — the closing
+counterpart to plain Enter. Works in an extend session and while drafting; needs
+≥3 points, else it just finishes.
+
+**Follow-up (`v66`): tap-to-join in the Move op too.** A motionless quick tap on a
+loose end connects (green ring); a second motionless tap on a matching end welds
+them (close a loop / merge two lines). Any movement, or a press held > 300ms, is a
+normal vertex Move — dragging still repositions the point. Since the join tap has
+no movement the point is untouched, so the weld is one clean undo step. (This is
+the "tap, no drag" variant the Join op's click-to-weld doesn't cover.)
+
+**Judgment calls (couldn't runtime-test a tool-app UI, so worth a real click-through):**
+- Scoped the *first* interaction (extend/pan) to the **Join edit-op**; the Move op
+  gets only the lightweight tap-to-join. Dragging an endpoint in Move still
+  reshapes as before.
+- In Move, you **connect with the first tap** (the user's spec presupposed being
+  "connected" but didn't say how) — select a line, tap one end, tap the other.
+- **Finish** = Enter / double-click / Esc (matches the drawing convention); each
+  laid point is its own undo step. There's no separate "cancel and discard the
+  whole extension" — Esc just stops, and Ctrl-Z peels points back.
+- Weld keeps the existing rule: the two lines must be the **same type**.
+- The old two-click Join (`handleJoin`) is superseded; left in place, now unused.
+
+## 2026-07-21 — Plan Room: earthwork side menu — visibility eyes + all-pages toggle
+
+**Done.** Plan Room `v61 → v62`. Two additions to the dirt/earthwork side menu:
+
+- **Eye icon on every header + subheader** (Contours, Takeoffs, and each type/
+  material subgroup) that toggles whether that group draws **on the plan**. White
+  eye = shown, dark gray = hidden. Hooks the existing `markupShown` via a new
+  `dirtHidden` set keyed the same way as the panel groups (`shapeVisKeys`), so
+  hiding "Gravel areas" or "Existing contours" declutters the canvas without
+  deleting anything. The eye stops propagation so clicking it doesn't also fold
+  the header it sits in.
+- **"Show markups from all pages" checkbox** above the lists. Off (default) = only
+  the current page's shapes, as before; on = every page's, each off-page row
+  tagged `· p<N>`. It's a **list** filter only — the plan still draws the current
+  page (this is the replacement for the scrapped "red eye / cross-page" idea).
+
+**Scrapped from the original ask:** the red/cross-page eye state — the checkbox
+covers that need for the list instead.
+
+**Edge case handled:** if you hid a subgroup while 2+ types existed, then deleted
+the others (making it flat, so its subheader disappears), the hidden key would
+otherwise be stuck with no eye to undo it — the flat branch now clears that key so
+the section eye stays authoritative.
+
+**Call:** visibility is keyed by group, not by page, so hiding "Gravel areas"
+hides them on whatever page you're viewing (they're the same group). And the
+alignment **Ghost** overlay still shows the other sheet's contours even when
+hidden — it's a deliberate alignment-preview, left as-is. Say the word if either
+should change.
+
+planroom files only (sitework untouched); `node --check` clean. No automated test
+for the tool-app UI — worth a manual pass: toggle an eye and confirm the group
+vanishes from the plan; check the all-pages box and confirm off-page shapes list
+with a `· p<N>` tag.
+
+## 2026-07-21 — Tools: retired the Sitework Takeoff tab (hidden, not deleted)
+
+**Done.** `ecf816b`. Plan Room replaces the Sitework Takeoff tool, so its tab +
+card are now hidden in Tools via a single `SHOW_SITEWORK = false` flag in
+`ToolsPage.jsx`. Hidden for **everyone**, including companies that own the Takeoff
+add-on; legacy `#sitework` / `#excavation` deep links fall through to Plan Room on
+the existing redirect.
+
+**Reversible by design, and nothing deleted:** flip `SHOW_SITEWORK` to `true` to
+bring the tab back (still add-on-gated), and the `/tool-apps/sitework/` files are
+untouched. ⚠️ One caveat: this hides it from the Tools **menu**, but the static
+tool still answers at its direct URL (`/tool-apps/sitework/index.html`) if someone
+has it bookmarked — deleting it later is what closes that off. Didn't touch the
+Takeoff **add-on** billing/entitlement or the `Sitework` calculator group (asphalt
+/ aggregate / slope) in Calculators — those are separate.
+
 ## 2026-07-21 — Plan Room: earthwork side menu — current page only, grouped/collapsible
 
 **Done.** Plan Room `v59 → v60`. The dirt/earthwork side menu's shape lists

@@ -305,6 +305,15 @@ let dirtEarthworkCollapsed = false;          // dirt panel: the Earthwork (bound
 // by a stable group key (see dirtGroupHeader). A Set of the COLLAPSED keys, so a
 // group defaults to expanded until the user folds it.
 const dirtGroupsCollapsed = new Set();
+// Per-group MAP visibility: the eye icon on a header/subheader toggles whether
+// that group's shapes draw on the plan. A Set of the HIDDEN vis keys (section or
+// group), so everything is visible until the user clicks an eye off. Keyed the
+// same way as shapeVisKeys / the panel groups.
+const dirtHidden = new Set();
+// Side-menu list scope: off = only the current page's shapes; on = every page's
+// (the "Show markups from all pages" checkbox). This is a LIST filter only — the
+// plan/canvas still draws the current page.
+let dirtShowAllPages = false;
 // Earthwork mode declutters the canvas: only dirt-trade markups draw, and only
 // the focused surface's contours/pads. General redline + other-trade markups are
 // hidden (they reappear when you leave dirt mode). Layer toggles apply on top.
@@ -312,6 +321,9 @@ const DIRT_KINDS = new Set(['contour', 'espot', 'epad', 'ebound', 'qarea', 'qlin
 function markupShown(m) {
   if (!layerVisible(m)) return false;
   if (state.trade !== 'dirt') return true;
+  // A group hidden by its eye (section- or subgroup-level) doesn't draw.
+  const vk = shapeVisKeys(m);
+  if (vk && (dirtHidden.has(vk.section) || dirtHidden.has(vk.group))) return false;
   if (!DIRT_KINDS.has(m.kind)) return false;
   return !m.surface || m.surface === curSurface;
 }
@@ -764,6 +776,15 @@ let editMode = 'points'; // how the Select tool edits a reshapeable shape: point
 let editRegionOp = 'delpoints'; // what a Box/Circle marquee does: delpoints | delarea
 let _editbarOn = null; // cache so refreshEditbar only writes the DOM when it changes
 let joinPick = null;  // {id, vi} — the first endpoint picked in Join mode, between the two clicks
+// Join op "extend" session: after clicking a loose end you stay connected to it —
+// { id, atFront }. A plain click then lays a point (extending that end) or welds to
+// another loose end; a drag pans. Enter/Esc/double-click finish.
+let extend = null;
+// MOVE op tap-to-join: tap a loose end to connect (moveEnd = { id, vi }), then TAP
+// another end (no movement, quick) to weld them. Any movement, or a held press,
+// falls through to a normal vertex Move. A tap = released within TAP_MS, unmoved.
+let moveEnd = null;
+const TAP_MS = 300;
 let circleCenter = null; // world point after the first click of a Circle marquee (awaiting the radius click)
 
 const centroid = pts => ({
@@ -789,13 +810,13 @@ function refreshEditbar() {
 }
 function setEditOp(op) {
   editOp = op;
-  joinPick = null; // any pending Join pick is abandoned when the op changes
+  joinPick = null; extend = null; moveEnd = null; // any pending Join pick / extend / connect is abandoned when the op changes
   const sel = document.getElementById('prEditOp');
   if (sel && sel.value !== op) sel.value = op;
 }
 function setEditMode(mode) {
   editMode = mode;
-  circleCenter = null; joinPick = null; hoverW = null;
+  circleCenter = null; joinPick = null; extend = null; moveEnd = null; hoverW = null;
   document.body.classList.toggle('pr-region', mode !== 'points');
   const sel = document.getElementById('prEditMode');
   if (sel && sel.value !== mode) sel.value = mode;
@@ -1362,6 +1383,34 @@ function drawJoinPick(ctx) {
   ctx.restore();
 }
 
+// Extend session: a ring on the connected end + a dashed rubber-band to the cursor,
+// so it's clear you're laying points off that end.
+function drawExtend(ctx) {
+  const m = state.markups.find(x => x.id === extend.id);
+  if (!m || m.page !== state.page || !m.pts || !m.pts.length) return;
+  const end = extend.atFront ? m.pts[0] : m.pts[m.pts.length - 1], z = vp.view.zoom;
+  ctx.save();
+  if (hoverW) {
+    ctx.beginPath(); ctx.moveTo(end.x, end.y); ctx.lineTo(hoverW.x, hoverW.y);
+    ctx.lineWidth = 1.6 / z; ctx.strokeStyle = '#4da3ff'; ctx.setLineDash([6 / z, 4 / z]); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  ctx.beginPath(); ctx.arc(end.x, end.y, 7 / z, 0, Math.PI * 2);
+  ctx.lineWidth = 2.4 / z; ctx.strokeStyle = '#4da3ff'; ctx.stroke();
+  ctx.restore();
+}
+
+// Green ring on the endpoint the MOVE-op tap-to-join is connected to.
+function drawMoveEnd(ctx) {
+  const m = state.markups.find(x => x.id === moveEnd.id);
+  if (!m || m.page !== state.page || !m.pts || !m.pts[moveEnd.vi]) return;
+  const p = m.pts[moveEnd.vi], z = vp.view.zoom;
+  ctx.save();
+  ctx.beginPath(); ctx.arc(p.x, p.y, 8 / z, 0, Math.PI * 2);
+  ctx.lineWidth = 2.4 / z; ctx.strokeStyle = '#22c55e'; ctx.stroke();
+  ctx.restore();
+}
+
 /* ---- hit testing (world coords; tolerances shrink with zoom) ---- */
 
 function hitHandle(ctx, m, w) {
@@ -1564,6 +1613,8 @@ function paint(ctx) {
   const sel = selMarkup();
   if (sel && sel.page === state.page) drawSelection(ctx, sel);
   if (joinPick) drawJoinPick(ctx);
+  if (extend) drawExtend(ctx);
+  if (moveEnd) drawMoveEnd(ctx);
   if ((drag && drag.mode === 'marquee-box') || circleCenter) drawMarquee(ctx);
   ctx.restore();
   refreshEditbar();  // show/hide the Edit-points toolbar to match the selection
@@ -1586,6 +1637,10 @@ async function setPage(p, { fit = false } = {}) {
   if (!state.doc) return;
   state.page = Math.max(1, Math.min(state.doc.numPages, p));
   syncSurfaceToPage();
+  // The dirt panel's shape lists are scoped to the current page, so they have to
+  // re-render on every page change — including the saved-page restore during load
+  // (self-guards to a no-op when the panel is hidden).
+  renderDirtPanel();
   updatePageUI();
   await ensurePage(state.page);
   if (fit) { const b = await baseSize(state.page); vp.fitTo(b.width, b.height); }
@@ -1944,7 +1999,7 @@ function setTool(t) {
   cancelDraft();
   if (alignDraft && t !== 'align') alignDraft = null; // keep any applied shift; drop the in-progress pair
   drag = null;
-  joinPick = null; circleCenter = null; // abandon any half-finished Join / Circle marquee when switching tools
+  joinPick = null; extend = null; moveEnd = null; circleCenter = null; // abandon any half-finished Join / extend / connect / Circle marquee when switching tools
   document.querySelectorAll('.tool').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
   syncToolGroups(); // reflect the active tool on the dirt-trade group faces
   els.cv.classList.toggle('crosshair', t !== 'pan' && t !== 'select');
@@ -2246,6 +2301,40 @@ els.cv.addEventListener('pointerdown', e => {
       if (editMode === 'box') { undoCapture = null; drag = { mode: 'marquee-box', ptr: e.pointerId, from: w, cur: w, moved: false }; vp.requestDraw(); return; }
       if (editMode === 'circle') { handleCircleClick(sel, w); return; }
     }
+    // Join op — connect to a loose end, then lay points / weld / pan (decided at
+    // pointerup by doExtendClick / the pan branch of endDrag).
+    if (editMode === 'points' && editOp === 'join' && !e.altKey) {
+      if (extend) {
+        // Connected: defer — a plain click lays a point or welds; a drag pans.
+        drag = { mode: 'pan', ptr: e.pointerId, last: { x: e.clientX, y: e.clientY }, from: { x: e.clientX, y: e.clientY }, moved: false, extendAt: w };
+        els.cv.classList.add('grabbing');
+        return;
+      }
+      const hitEnd = endpointNear(w, Math.max(11 / vp.view.zoom, 7));
+      if (hitEnd) {
+        selectedId = hitEnd.m.id;
+        extend = { id: hitEnd.m.id, atFront: hitEnd.vi === 0 };
+        setMsg('Connected to a loose end — click to lay a point, click another loose end to weld, drag to pan, Enter / Esc / double-click to finish.');
+        // a drag from here pans; a plain release just stays connected
+        drag = { mode: 'pan', ptr: e.pointerId, last: { x: e.clientX, y: e.clientY }, from: { x: e.clientX, y: e.clientY }, moved: false };
+        els.cv.classList.add('grabbing');
+        renderMarkupList(); vp.requestDraw();
+        return;
+      }
+      // not on a loose end → fall through to normal select / pan
+    }
+    // Move op, already connected: a tap on ANY loose end welds (handled at
+    // pointerup); a drag on it moves that point instead. Lets you weld a second,
+    // not-yet-selected line's end, not just the selected line's own other end.
+    if (editMode === 'points' && editOp === 'move' && moveEnd && !e.altKey) {
+      const hitEnd = endpointNear(w, Math.max(11 / vp.view.zoom, 7));
+      if (hitEnd) {
+        selectedId = hitEnd.m.id;
+        undoCapture = snapshot();
+        drag = { mode: 'handle', ptr: e.pointerId, id: hitEnd.m.id, hi: hitEnd.vi, moved: false, isEnd: true, t0: Date.now() };
+        return;
+      }
+    }
     if (sel && sel.page === state.page) {
       const hi = hitHandle(ctx, sel, w);
       // Alt-click reshapes the vertex set: on a point → remove it; on an edge →
@@ -2269,7 +2358,6 @@ els.cv.addEventListener('pointerdown', e => {
       // held; a click that hits nothing falls through to Move / reselect below.
       if (canReshape(sel) && !e.altKey) {
         const tol = Math.max(8 / vp.view.zoom, 4);
-        if (editOp === 'join') { if (handleJoin(sel, w)) return; }
         if (editOp === 'remove' && hi >= 0) { deleteHandle(sel, hi); return; }
         if (editOp === 'add') { if (insertHandle(sel, w, tol)) return; }
         if (editOp === 'cut') {
@@ -2283,7 +2371,9 @@ els.cv.addEventListener('pointerdown', e => {
       }
       if (hi >= 0) {
         undoCapture = snapshot();
-        drag = { mode: 'handle', ptr: e.pointerId, id: sel.id, hi, moved: false };
+        // isEnd + t0 let a motionless quick tap on a loose end connect / join in Move op.
+        const isEnd = isOpenPoly(sel) && (hi === 0 || hi === sel.pts.length - 1);
+        drag = { mode: 'handle', ptr: e.pointerId, id: sel.id, hi, moved: false, isEnd, t0: Date.now() };
         return;
       }
     }
@@ -2336,6 +2426,11 @@ els.cv.addEventListener('pointermove', e => {
     vp.requestDraw();
   }
   if (circleCenter && !drag) { // preview the Circle marquee radius between its two clicks
+    const sp = screenPt(e);
+    hoverW = vp.screenToWorld(sp.x, sp.y);
+    vp.requestDraw();
+  }
+  if (extend && !drag) { // rubber-band from the connected end to the cursor
     const sp = screenPt(e);
     hoverW = vp.screenToWorld(sp.x, sp.y);
     vp.requestDraw();
@@ -2430,6 +2525,10 @@ function endDrag(e) {
   }
 
   if (d.mode === 'pan') {
+    // While connected, a click (no pan) lays a point or welds; a real pan just moves the view.
+    if (d.extendAt && !d.moved && extend) { doExtendClick(d.extendAt); return; }
+    // A tap on empty space cancels a pending Move-op connect (before it deselects).
+    if (!d.moved && moveEnd) { moveEnd = null; setMsg('Disconnected.'); vp.requestDraw(); return; }
     // a click on empty space (no pan movement) clears the selection; a real pan keeps it
     if (d.deselect && !d.moved && selectedId) { selectedId = null; renderMarkupList(); vp.requestDraw(); }
     return;
@@ -2471,8 +2570,13 @@ function endDrag(e) {
     }
     pushUndo(undoCapture); undoCapture = null;
     markupsChanged();
+    moveEnd = null; // a real drag is a Move, not a connect/join
   } else {
     undoCapture = null;
+    // MOVE op: a motionless, quick tap on a loose end connects, then joins.
+    if (d.mode === 'handle' && d.isEnd && editOp === 'move' && (Date.now() - d.t0) <= TAP_MS) {
+      handleMoveTap(d.id, d.hi);
+    }
   }
 }
 els.cv.addEventListener('pointerup', endDrag);
@@ -2592,6 +2696,84 @@ function handleJoin(sel, w) {
   selectedId = a.id; joinPick = null;
   pushUndo(prev); markupsChanged(); setMsg('Joined.'); vp.requestDraw();
   return true;
+}
+
+// Weld the active end of `a` (aVi) onto another loose end `b`/`bVi` — same math as
+// handleJoin: close a single line into a loop, or merge two lines into one.
+function weldEnds(a, aVi, b, bVi) {
+  if (a.kind !== b.kind) { setMsg('Join: the two lines must be the same type.'); return; }
+  const prev = snapshot();
+  if (a.id === b.id) {
+    if (a.pts.length < 3) { setMsg('Join: a loop needs at least 3 points.'); return; }
+    a.pts.push({ x: a.pts[0].x, y: a.pts[0].y });
+  } else {
+    const aPts = aVi === 0 ? a.pts.slice().reverse() : a.pts.slice();
+    const bPts = bVi === 0 ? b.pts.slice() : b.pts.slice().reverse();
+    a.pts = aPts.concat(bPts);
+    const bi = state.markups.indexOf(b); if (bi >= 0) state.markups.splice(bi, 1);
+  }
+  a.modified = Date.now(); invalidateForKind(a);
+  selectedId = a.id;
+  pushUndo(prev); markupsChanged(); setMsg('Joined.'); vp.requestDraw();
+}
+
+// Can two loose ends be welded? Same line type; for one line's own two ends, they
+// must be distinct and have at least one point between them (a real loop).
+function canJoinEnds(a, aVi, b, bVi) {
+  if (!a || !b || a.kind !== b.kind) return false;
+  if (a.id === b.id) return aVi !== bVi && a.pts.length >= 3;
+  return true;
+}
+// MOVE op: a motionless tap on a loose end. First tap connects (moveEnd); a second
+// tap on another matching end welds them; tapping the connected end disconnects.
+function handleMoveTap(id, vi) {
+  const b = state.markups.find(m => m.id === id);
+  if (!b || !isOpenPoly(b)) { moveEnd = null; return; }
+  if (!moveEnd) {
+    moveEnd = { id, vi };
+    setMsg('Connected to an endpoint — tap the other end to join; drag to move it instead.');
+    vp.requestDraw();
+    return;
+  }
+  if (moveEnd.id === id && moveEnd.vi === vi) { moveEnd = null; setMsg('Disconnected.'); vp.requestDraw(); return; }
+  const a = state.markups.find(m => m.id === moveEnd.id);
+  if (canJoinEnds(a, moveEnd.vi, b, vi)) { weldEnds(a, moveEnd.vi, b, vi); moveEnd = null; return; }
+  moveEnd = { id, vi }; // not a valid pair → move the connection to the tapped end
+  setMsg(a && a.kind !== b.kind ? 'Those are different line types — can’t join.' : 'Connected — tap a matching loose end to join.');
+  vp.requestDraw();
+}
+
+// A click while connected (extend session): on another loose end → weld to it (or
+// close the loop); on empty space → lay a point extending the connected end.
+function doExtendClick(w) {
+  const a = state.markups.find(m => m.id === extend.id);
+  if (!a || !isOpenPoly(a) || !a.pts || !a.pts.length) { extend = null; hoverW = null; vp.requestDraw(); return; }
+  const activeVi = extend.atFront ? 0 : a.pts.length - 1;
+  const target = endpointNear(w, Math.max(11 / vp.view.zoom, 7));
+  if (target && !(target.m.id === a.id && target.vi === activeVi)) {
+    weldEnds(a, activeVi, target.m, target.vi); // to another end, or the shape's own other end (loop)
+    extend = null; hoverW = null;
+    return;
+  }
+  const prev = snapshot();
+  const pt = { x: w.x, y: w.y };
+  if (extend.atFront) a.pts.unshift(pt); else a.pts.push(pt); // active end stays the growing end
+  a.modified = Date.now(); invalidateForKind(a);
+  pushUndo(prev); markupsChanged(); vp.requestDraw();
+}
+
+// Shift+Enter during an extend session: weld the connected end to the shape's
+// other end (a closed loop), then finish. weldEnds needs ≥3 points for a loop;
+// with fewer it just finishes.
+function closeExtendLoop() {
+  const a = extend && state.markups.find(m => m.id === extend.id);
+  if (a && isOpenPoly(a) && a.pts.length >= 3) {
+    const activeVi = extend.atFront ? 0 : a.pts.length - 1;
+    weldEnds(a, activeVi, a, extend.atFront ? a.pts.length - 1 : 0);
+  } else {
+    setMsg('Finished.');
+  }
+  extend = null; hoverW = null; vp.requestDraw();
 }
 
 // ---- Holes (keyhole model) ----------------------------------------------------
@@ -2836,6 +3018,16 @@ function tryDraftJoin(k) {
   commitDraft();
 }
 
+// Shift+Enter while drafting: close the polyline (last point → first) before
+// committing, so the drawn line finishes as a loop. No-op close for point-kinds
+// or a too-short line; then commit as usual.
+function closeDraftAndCommit() {
+  if (draft && Array.isArray(draft.pts) && draft.pts.length >= 3 && !POINT_KINDS.includes(draft.kind)) {
+    draft.pts.push({ x: draft.pts[0].x, y: draft.pts[0].y });
+  }
+  commitDraft();
+}
+
 function commitDraft() {
   if (!draft) return;
   const d = draft;
@@ -2954,6 +3146,7 @@ function cancelDraft() {
 // double-click: finish a measure draft, or edit a note's text
 els.cv.addEventListener('dblclick', e => {
   if (!state.doc) return;
+  if (extend) { extend = null; hoverW = null; setMsg('Finished.'); vp.requestDraw(); return; }
   if (draft) { commitDraft(); return; }
   const s = screenPt(e);
   const w = vp.screenToWorld(s.x, s.y);
@@ -3888,9 +4081,33 @@ function dirtSetupComplete() {
   return alignIsSet();
 }
 
-// A collapsible subgroup header for the dirt panel's shape lists — a color swatch
-// (optional), a bold label + count, and a ▾/▸ chevron. `gkey` is a stable key
-// tracked in dirtGroupsCollapsed, so each type/color group folds independently.
+// The section- and subgroup-visibility keys a listable shape belongs to, matching
+// the panel's grouping. Used by both markupShown (what draws) and the eye icons
+// (what the header toggles). Returns null for anything that isn't a dirt shape.
+function shapeVisKeys(m) {
+  if (m.kind === 'contour' || m.kind === 'espot' || m.kind === 'epad') {
+    return { section: `sec:contours:${m.surface || 'existing'}`, group: `c:${m.surface || 'existing'}:${m.kind}` };
+  }
+  if (m.kind === 'qarea' || m.kind === 'qline' || m.kind === 'qcount') {
+    const color = m.kind === 'qline' ? lineColorHex(m.cfg || {}) : m.kind === 'qarea' ? areaColorHex(m.cfg || {}) : (m.color || '#e0533f');
+    return { section: 'sec:takeoffs', group: `t:${m.kind}:${takeoffGroupLabel(m.kind, m)}:${color}` };
+  }
+  return null;
+}
+
+// The map-visibility eye for a header/subheader. Shown (white) = draws on the
+// plan; hidden (dark gray) = doesn't. Its own clickable element so it doesn't
+// also toggle the header's collapse (the handler stops propagation).
+const EYE_SVG = '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path fill="currentColor" d="M12 5C6.5 5 2.7 8.6 1 12c1.7 3.4 5.5 7 11 7s9.3-3.6 11-7c-1.7-3.4-5.5-7-11-7zm0 11.5A4.5 4.5 0 1 1 12 7a4.5 4.5 0 0 1 0 9.5zM12 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>';
+function dirtEye(vkey) {
+  const hidden = dirtHidden.has(vkey);
+  return `<span class="dirt-eye${hidden ? ' off' : ''}" data-act="toggle-vis" data-vkey="${encodeURIComponent(vkey)}" ` +
+    `title="${hidden ? 'Hidden on the plan — click to show' : 'Shown on the plan — click to hide'}">${EYE_SVG}</span>`;
+}
+
+// A collapsible subgroup header for the dirt panel's shape lists — an eye, a color
+// swatch (optional), a bold label + count, and a ▾/▸ chevron. `gkey` is a stable
+// key tracked in dirtGroupsCollapsed (fold) and dirtHidden (map visibility).
 function dirtGroupHeader(gkey, label, count, color) {
   const collapsed = dirtGroupsCollapsed.has(gkey);
   const sw = color ? `<span class="ctr-sw" style="background:${color}"></span>` : '';
@@ -3898,7 +4115,7 @@ function dirtGroupHeader(gkey, label, count, color) {
   // it's always attribute-safe (decoded back in the toggle handler).
   return `<div class="dirt-grp" data-act="toggle-group" data-gkey="${encodeURIComponent(gkey)}">` +
     `${sw}<span class="dirt-grp-lbl"><b>${esc(label)}</b> (${count})</span>` +
-    `<span class="v">${collapsed ? '▸' : '▾'}</span></div>`;
+    `${dirtEye(gkey)}<span class="v">${collapsed ? '▸' : '▾'}</span></div>`;
 }
 // The type/material label a takeoff groups under (mirrors takeoffSubtotals so the
 // group headers and the Σ subtotals line up).
@@ -3931,16 +4148,24 @@ function renderDirtPanel() {
     rows.push(`<label class="dirt-row" style="cursor:pointer"><span>Ghost the other sheet</span><input type="checkbox" id="ghostChk" ${ghostOn ? 'checked' : ''}></label>`);
   }
 
-  // Contours — the focused surface's traced lines/spots/pads ON THE CURRENT PAGE,
-  // split into collapsible Contours / Spots / Pads subgroups (sorted by elevation),
-  // color swatch, edit ✎ / delete ✕, click to select & jump.
+  // Controls whether the shape lists below list every page's markups or just this
+  // page's (a LIST filter — the plan still draws the current page). The eye on each
+  // header/subheader is separate: it hides that group on the plan itself.
+  const onPage = m => dirtShowAllPages || m.page === state.page;
+  const pageTag = m => (dirtShowAllPages && m.page !== state.page) ? ` · p${m.page}` : '';
+  rows.push(`<label class="dirt-row dirt-allpages" style="cursor:pointer"><span>Show markups from all pages</span><input type="checkbox" id="showAllPagesChk" ${dirtShowAllPages ? 'checked' : ''}></label>`);
+
+  // Contours — the focused surface's traced lines/spots/pads (current page, or all
+  // pages when the checkbox is on), split into collapsible Contours / Spots / Pads
+  // subgroups (sorted by elevation), color swatch, edit ✎ / delete ✕, eye = hide
+  // on plan, click a row to select & jump.
   const surfLabel = curSurface === 'proposed' ? 'Proposed' : 'Existing';
   const surfItems = state.markups
-    .filter(m => (m.kind === 'contour' || m.kind === 'espot' || m.kind === 'epad') && (m.surface || 'existing') === curSurface && m.page === state.page)
+    .filter(m => (m.kind === 'contour' || m.kind === 'espot' || m.kind === 'epad') && (m.surface || 'existing') === curSurface && onPage(m))
     .sort((a, b) => (b.elev == null ? -1e9 : b.elev) - (a.elev == null ? -1e9 : a.elev));
-  rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-contours"><span>${surfLabel} contours (${surfItems.length})</span><span class="v">${dirtContoursCollapsed ? '▸' : '▾'}</span></div>`);
+  rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-contours"><span>${surfLabel} contours (${surfItems.length})</span><span class="dirt-hd-r">${dirtEye('sec:contours:' + curSurface)}<span class="v">${dirtContoursCollapsed ? '▸' : '▾'}</span></span></div>`);
   if (!dirtContoursCollapsed) {
-    rows.push(`<div class="dirt-crow"><span class="hint">New traces are <b>${curSurface}</b> · dashed = existing, solid = proposed · this page only</span>${surfItems.length ? '<button class="ctr-clear" data-act="clear-surface" title="Delete all traces on this surface">Clear</button>' : ''}</div>`);
+    rows.push(`<div class="dirt-crow"><span class="hint">New traces are <b>${curSurface}</b> · dashed = existing, solid = proposed${dirtShowAllPages ? '' : ' · this page only'}</span>${surfItems.length ? '<button class="ctr-clear" data-act="clear-surface" title="Delete all traces on this surface">Clear</button>' : ''}</div>`);
     if (!surfItems.length) {
       rows.push('<div class="hint" style="margin:2px 0 8px">No traces on this page yet — trace a contour (⛰), spot (◎), or pad (◫).</div>');
     } else {
@@ -3950,6 +4175,9 @@ function renderDirtPanel() {
       // Only one type present → skip the subheader (it would just echo the
       // section header above). Two+ types → collapsible per-type subgroups.
       const flat = ctrGroups.length <= 1;
+      // Flat = no subgroup eye, so the section eye governs; drop any stale hidden
+      // key for the lone group (else it could be stuck hidden with no way back).
+      if (flat && ctrGroups[0]) dirtHidden.delete(`c:${curSurface}:${ctrGroups[0].kind}`);
       for (const g of ctrGroups) {
         const gkey = `c:${curSurface}:${g.kind}`;
         if (!flat) {
@@ -3960,7 +4188,7 @@ function renderDirtPanel() {
           const typ = m.kind === 'espot' ? 'spot' : m.kind === 'epad' ? 'flat pad' : `${m.pts.length} pts`;
           rows.push(`<div class="ctr-row${m.id === selectedId ? ' sel' : ''}" data-id="${m.id}">` +
             `<span class="ctr-sw" style="background:${elevColor(m.elev || 0, m.surface)}"></span>` +
-            `<span class="ctr-lbl">${m.elev != null ? elevStr(m.elev) + ' ft' : 'no elev'} · ${typ}</span>` +
+            `<span class="ctr-lbl">${m.elev != null ? elevStr(m.elev) + ' ft' : 'no elev'} · ${typ}${pageTag(m)}</span>` +
             `<button class="ctr-btn" data-act="edit-elev" title="Edit elevation">✎</button>` +
             `<button class="ctr-btn" data-act="del-ctr" title="Delete">✕</button>` +
             `</div>`);
@@ -3972,12 +4200,12 @@ function renderDirtPanel() {
   // SEPARATE from the cut/fill grade surface above: they carry no existing/proposed
   // surface, so a surfacing/paving job lives entirely here (not under Contours).
   const qk = { qarea: [], qline: [], qcount: [] };
-  for (const m of state.markups) if (qk[m.kind] && m.page === state.page) qk[m.kind].push(m);
+  for (const m of state.markups) if (qk[m.kind] && onPage(m)) qk[m.kind].push(m);
   const qTotal = qk.qarea.length + qk.qline.length + qk.qcount.length;
-  rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-takeoff"><span>Takeoffs (${qTotal})</span><span class="v">${dirtTakeoffCollapsed ? '▸' : '▾'}</span></div>`);
+  rows.push(`<div class="roof-sub dirt-collapse" data-act="toggle-takeoff"><span>Takeoffs (${qTotal})</span><span class="dirt-hd-r">${dirtEye('sec:takeoffs')}<span class="v">${dirtTakeoffCollapsed ? '▸' : '▾'}</span></span></div>`);
   if (!dirtTakeoffCollapsed) {
     if (!qTotal) {
-      rows.push('<div class="hint" style="margin:2px 0 8px">No area / line / count takeoffs on this page. Trace one with the <b>▨ Area</b> / <b>⌇ Line</b> / <b>⊙ Count</b> tools — these price into the <b>$ Bid</b> and are separate from the cut/fill contours above.</div>');
+      rows.push(`<div class="hint" style="margin:2px 0 8px">No area / line / count takeoffs ${dirtShowAllPages ? 'yet' : 'on this page'}. Trace one with the <b>▨ Area</b> / <b>⌇ Line</b> / <b>⊙ Count</b> tools — these price into the <b>$ Bid</b> and are separate from the cut/fill contours above.</div>`);
     } else {
       const icon = { qarea: '▨', qline: '⌇', qcount: '⊙' };
       // Build every (kind → material/type + color) group first, so e.g. gravel and
@@ -3999,6 +4227,9 @@ function renderDirtPanel() {
       // Only one group across all takeoffs → skip the subheader (it would just
       // echo the section header). Two+ → collapsible per-material subgroups.
       const flat = allGroups.length <= 1;
+      // Flat = no subgroup eye, so the section eye governs; clear any stale hidden
+      // key for the lone group so it can't be stuck hidden with no eye to fix it.
+      if (flat && allGroups[0]) dirtHidden.delete(allGroups[0].gkey);
       for (const g of allGroups) {
         if (!flat) {
           rows.push(dirtGroupHeader(g.gkey, `${icon[g.kind]} ${g.label}`, g.items.length, g.color));
@@ -4007,7 +4238,7 @@ function renderDirtPanel() {
         for (const m of g.items) {
           rows.push(`<div class="ctr-row${m.id === selectedId ? ' sel' : ''}" data-id="${m.id}">` +
             `<span class="ctr-sw" style="background:${g.color}"></span>` +
-            `<span class="ctr-lbl">${icon[g.kind]} ${esc(measureValue(m))}</span>` +
+            `<span class="ctr-lbl">${icon[g.kind]} ${esc(measureValue(m))}${pageTag(m)}</span>` +
             `<button class="ctr-btn" data-act="edit-takeoff" title="Edit / reconfigure">✎</button>` +
             `<button class="ctr-btn" data-act="del-ctr" title="Delete">✕</button>` +
             `</div>`);
@@ -4089,6 +4320,19 @@ function renderDirtPanel() {
       renderDirtPanel();
     });
   });
+  // Eye = hide/show that group on the PLAN. stopPropagation so clicking it doesn't
+  // also fold the header it sits in. Redraw the canvas since visibility changed.
+  body.querySelectorAll('[data-act="toggle-vis"]').forEach(el => {
+    el.addEventListener('click', e => {
+      e.stopPropagation();
+      const k = decodeURIComponent(el.dataset.vkey);
+      if (dirtHidden.has(k)) dirtHidden.delete(k); else dirtHidden.add(k);
+      renderDirtPanel();
+      vp.requestDraw();
+    });
+  });
+  const allPagesChk = body.querySelector('#showAllPagesChk');
+  if (allPagesChk) allPagesChk.addEventListener('change', e => { dirtShowAllPages = e.target.checked; renderDirtPanel(); });
   const clearSurf = body.querySelector('[data-act="clear-surface"]');
   if (clearSurf) clearSurf.addEventListener('click', clearSurfaceContours);
   body.querySelectorAll('.ctr-row').forEach(row => {
@@ -4425,6 +4669,11 @@ document.addEventListener('keydown', e => {
     setMsg('Alignment cancelled.');
     return;
   }
+  // Shift+Enter: weld the current end to the shape's other end (close the loop),
+  // then finish — the closing shortcut for both an extend session and a draft.
+  if (e.key === 'Enter' && e.shiftKey && extend) { e.preventDefault(); closeExtendLoop(); return; }
+  if (e.key === 'Enter' && e.shiftKey && draft) { e.preventDefault(); closeDraftAndCommit(); return; }
+  if (e.key === 'Enter' && extend) { e.preventDefault(); extend = null; hoverW = null; setMsg('Finished.'); vp.requestDraw(); return; }
   if (e.key === 'Enter' && draft) { e.preventDefault(); commitDraft(); return; }
   if (e.key === 'Backspace' && draft) {
     e.preventDefault();
@@ -4434,7 +4683,9 @@ document.addEventListener('keydown', e => {
   }
   if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelected(); return; }
   if (e.key === 'Escape') {
-    if (draft || calibPts) { cancelDraft(); }
+    if (extend) { extend = null; hoverW = null; setMsg('Finished extending.'); vp.requestDraw(); }
+    else if (moveEnd) { moveEnd = null; setMsg('Disconnected.'); vp.requestDraw(); }
+    else if (draft || calibPts) { cancelDraft(); }
     else if (drag) { drag = null; vp.requestDraw(); }
     else if (selectedId) { selectedId = null; renderMarkupList(); vp.requestDraw(); }
     return;
