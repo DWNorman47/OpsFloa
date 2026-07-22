@@ -23,6 +23,35 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-22 — Signup: real clickwrap acceptance (Terms + Privacy) with an audit trail
+
+**Done.** `f397e6b`. In response to a "what do I need for legal cover?" question:
+the EULA + Privacy pages were real, substantive docs (dated 2025-03-21, Texas
+governing law, warranty disclaimer, liability cap) — but **nobody was recorded as
+having agreed to them**, so acceptance couldn't be proven. Now:
+
+- Register form has a **required** "I agree to the Terms of Use (EULA) and Privacy
+  Policy" checkbox (links to `/eula` + `/privacy`); Create is disabled until ticked.
+- `POST /auth/register` **enforces** `accepted_terms === true` server-side and
+  **records** it (new `legal_acceptances` table, migration 0145: user_id,
+  company_id, version, context, ip, accepted_at) in the same transaction as the
+  account, stamping `LEGAL_VERSION` (`'2025-03-21'`) + the registration IP.
+
+**What this does NOT cover — flagged for a lawyer, out of scope for code:**
+- The **payroll/tax liability** disclaimer is the biggest gap. OpsFloa computes
+  hours/OT/deductions across HN + US; the EULA has a generic "as is" but no
+  explicit "not a payroll provider / tax advisor; you're responsible for pay
+  accuracy & compliance." That's document language a lawyer should add.
+- Privacy Policy should list **sub-processors** (Stripe, Intuit, Resend,
+  Cloudflare, Neon) and address **employee geolocation** consent.
+- **Worker invite** acceptance (only the owner accepts today), business entity /
+  E&O insurance — all still open, none are code changes I can make blind.
+
+⚠️ **Migration 0145 must run on stage/prod** before the register endpoint works
+there (it inserts into `legal_acceptances`). Existing accounts have no acceptance
+row — a backfill or a re-prompt-on-next-login is a possible follow-up if you want
+historical coverage.
+
 ## 2026-07-21 — Plan Room: Join op → connect / extend / weld / pan
 
 **Done.** Plan Room `v64 → v65` (plus `v63` fix: the side panel now re-renders on
