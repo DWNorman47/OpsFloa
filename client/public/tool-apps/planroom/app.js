@@ -776,6 +776,10 @@ let editMode = 'points'; // how the Select tool edits a reshapeable shape: point
 let editRegionOp = 'delpoints'; // what a Box/Circle marquee does: delpoints | delarea
 let _editbarOn = null; // cache so refreshEditbar only writes the DOM when it changes
 let joinPick = null;  // {id, vi} — the first endpoint picked in Join mode, between the two clicks
+// Join op "extend" session: after clicking a loose end you stay connected to it —
+// { id, atFront }. A plain click then lays a point (extending that end) or welds to
+// another loose end; a drag pans. Enter/Esc/double-click finish.
+let extend = null;
 let circleCenter = null; // world point after the first click of a Circle marquee (awaiting the radius click)
 
 const centroid = pts => ({
@@ -801,13 +805,13 @@ function refreshEditbar() {
 }
 function setEditOp(op) {
   editOp = op;
-  joinPick = null; // any pending Join pick is abandoned when the op changes
+  joinPick = null; extend = null; // any pending Join pick / extend is abandoned when the op changes
   const sel = document.getElementById('prEditOp');
   if (sel && sel.value !== op) sel.value = op;
 }
 function setEditMode(mode) {
   editMode = mode;
-  circleCenter = null; joinPick = null; hoverW = null;
+  circleCenter = null; joinPick = null; extend = null; hoverW = null;
   document.body.classList.toggle('pr-region', mode !== 'points');
   const sel = document.getElementById('prEditMode');
   if (sel && sel.value !== mode) sel.value = mode;
@@ -1374,6 +1378,23 @@ function drawJoinPick(ctx) {
   ctx.restore();
 }
 
+// Extend session: a ring on the connected end + a dashed rubber-band to the cursor,
+// so it's clear you're laying points off that end.
+function drawExtend(ctx) {
+  const m = state.markups.find(x => x.id === extend.id);
+  if (!m || m.page !== state.page || !m.pts || !m.pts.length) return;
+  const end = extend.atFront ? m.pts[0] : m.pts[m.pts.length - 1], z = vp.view.zoom;
+  ctx.save();
+  if (hoverW) {
+    ctx.beginPath(); ctx.moveTo(end.x, end.y); ctx.lineTo(hoverW.x, hoverW.y);
+    ctx.lineWidth = 1.6 / z; ctx.strokeStyle = '#4da3ff'; ctx.setLineDash([6 / z, 4 / z]); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  ctx.beginPath(); ctx.arc(end.x, end.y, 7 / z, 0, Math.PI * 2);
+  ctx.lineWidth = 2.4 / z; ctx.strokeStyle = '#4da3ff'; ctx.stroke();
+  ctx.restore();
+}
+
 /* ---- hit testing (world coords; tolerances shrink with zoom) ---- */
 
 function hitHandle(ctx, m, w) {
@@ -1576,6 +1597,7 @@ function paint(ctx) {
   const sel = selMarkup();
   if (sel && sel.page === state.page) drawSelection(ctx, sel);
   if (joinPick) drawJoinPick(ctx);
+  if (extend) drawExtend(ctx);
   if ((drag && drag.mode === 'marquee-box') || circleCenter) drawMarquee(ctx);
   ctx.restore();
   refreshEditbar();  // show/hide the Edit-points toolbar to match the selection
@@ -1960,7 +1982,7 @@ function setTool(t) {
   cancelDraft();
   if (alignDraft && t !== 'align') alignDraft = null; // keep any applied shift; drop the in-progress pair
   drag = null;
-  joinPick = null; circleCenter = null; // abandon any half-finished Join / Circle marquee when switching tools
+  joinPick = null; extend = null; circleCenter = null; // abandon any half-finished Join / extend / Circle marquee when switching tools
   document.querySelectorAll('.tool').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
   syncToolGroups(); // reflect the active tool on the dirt-trade group faces
   els.cv.classList.toggle('crosshair', t !== 'pan' && t !== 'select');
@@ -2262,6 +2284,28 @@ els.cv.addEventListener('pointerdown', e => {
       if (editMode === 'box') { undoCapture = null; drag = { mode: 'marquee-box', ptr: e.pointerId, from: w, cur: w, moved: false }; vp.requestDraw(); return; }
       if (editMode === 'circle') { handleCircleClick(sel, w); return; }
     }
+    // Join op — connect to a loose end, then lay points / weld / pan (decided at
+    // pointerup by doExtendClick / the pan branch of endDrag).
+    if (editMode === 'points' && editOp === 'join' && !e.altKey) {
+      if (extend) {
+        // Connected: defer — a plain click lays a point or welds; a drag pans.
+        drag = { mode: 'pan', ptr: e.pointerId, last: { x: e.clientX, y: e.clientY }, from: { x: e.clientX, y: e.clientY }, moved: false, extendAt: w };
+        els.cv.classList.add('grabbing');
+        return;
+      }
+      const hitEnd = endpointNear(w, Math.max(11 / vp.view.zoom, 7));
+      if (hitEnd) {
+        selectedId = hitEnd.m.id;
+        extend = { id: hitEnd.m.id, atFront: hitEnd.vi === 0 };
+        setMsg('Connected to a loose end — click to lay a point, click another loose end to weld, drag to pan, Enter / Esc / double-click to finish.');
+        // a drag from here pans; a plain release just stays connected
+        drag = { mode: 'pan', ptr: e.pointerId, last: { x: e.clientX, y: e.clientY }, from: { x: e.clientX, y: e.clientY }, moved: false };
+        els.cv.classList.add('grabbing');
+        renderMarkupList(); vp.requestDraw();
+        return;
+      }
+      // not on a loose end → fall through to normal select / pan
+    }
     if (sel && sel.page === state.page) {
       const hi = hitHandle(ctx, sel, w);
       // Alt-click reshapes the vertex set: on a point → remove it; on an edge →
@@ -2285,7 +2329,6 @@ els.cv.addEventListener('pointerdown', e => {
       // held; a click that hits nothing falls through to Move / reselect below.
       if (canReshape(sel) && !e.altKey) {
         const tol = Math.max(8 / vp.view.zoom, 4);
-        if (editOp === 'join') { if (handleJoin(sel, w)) return; }
         if (editOp === 'remove' && hi >= 0) { deleteHandle(sel, hi); return; }
         if (editOp === 'add') { if (insertHandle(sel, w, tol)) return; }
         if (editOp === 'cut') {
@@ -2352,6 +2395,11 @@ els.cv.addEventListener('pointermove', e => {
     vp.requestDraw();
   }
   if (circleCenter && !drag) { // preview the Circle marquee radius between its two clicks
+    const sp = screenPt(e);
+    hoverW = vp.screenToWorld(sp.x, sp.y);
+    vp.requestDraw();
+  }
+  if (extend && !drag) { // rubber-band from the connected end to the cursor
     const sp = screenPt(e);
     hoverW = vp.screenToWorld(sp.x, sp.y);
     vp.requestDraw();
@@ -2446,6 +2494,8 @@ function endDrag(e) {
   }
 
   if (d.mode === 'pan') {
+    // While connected, a click (no pan) lays a point or welds; a real pan just moves the view.
+    if (d.extendAt && !d.moved && extend) { doExtendClick(d.extendAt); return; }
     // a click on empty space (no pan movement) clears the selection; a real pan keeps it
     if (d.deselect && !d.moved && selectedId) { selectedId = null; renderMarkupList(); vp.requestDraw(); }
     return;
@@ -2608,6 +2658,44 @@ function handleJoin(sel, w) {
   selectedId = a.id; joinPick = null;
   pushUndo(prev); markupsChanged(); setMsg('Joined.'); vp.requestDraw();
   return true;
+}
+
+// Weld the active end of `a` (aVi) onto another loose end `b`/`bVi` — same math as
+// handleJoin: close a single line into a loop, or merge two lines into one.
+function weldEnds(a, aVi, b, bVi) {
+  if (a.kind !== b.kind) { setMsg('Join: the two lines must be the same type.'); return; }
+  const prev = snapshot();
+  if (a.id === b.id) {
+    if (a.pts.length < 3) { setMsg('Join: a loop needs at least 3 points.'); return; }
+    a.pts.push({ x: a.pts[0].x, y: a.pts[0].y });
+  } else {
+    const aPts = aVi === 0 ? a.pts.slice().reverse() : a.pts.slice();
+    const bPts = bVi === 0 ? b.pts.slice() : b.pts.slice().reverse();
+    a.pts = aPts.concat(bPts);
+    const bi = state.markups.indexOf(b); if (bi >= 0) state.markups.splice(bi, 1);
+  }
+  a.modified = Date.now(); invalidateForKind(a);
+  selectedId = a.id;
+  pushUndo(prev); markupsChanged(); setMsg('Joined.'); vp.requestDraw();
+}
+
+// A click while connected (extend session): on another loose end → weld to it (or
+// close the loop); on empty space → lay a point extending the connected end.
+function doExtendClick(w) {
+  const a = state.markups.find(m => m.id === extend.id);
+  if (!a || !isOpenPoly(a) || !a.pts || !a.pts.length) { extend = null; hoverW = null; vp.requestDraw(); return; }
+  const activeVi = extend.atFront ? 0 : a.pts.length - 1;
+  const target = endpointNear(w, Math.max(11 / vp.view.zoom, 7));
+  if (target && !(target.m.id === a.id && target.vi === activeVi)) {
+    weldEnds(a, activeVi, target.m, target.vi); // to another end, or the shape's own other end (loop)
+    extend = null; hoverW = null;
+    return;
+  }
+  const prev = snapshot();
+  const pt = { x: w.x, y: w.y };
+  if (extend.atFront) a.pts.unshift(pt); else a.pts.push(pt); // active end stays the growing end
+  a.modified = Date.now(); invalidateForKind(a);
+  pushUndo(prev); markupsChanged(); vp.requestDraw();
 }
 
 // ---- Holes (keyhole model) ----------------------------------------------------
@@ -2970,6 +3058,7 @@ function cancelDraft() {
 // double-click: finish a measure draft, or edit a note's text
 els.cv.addEventListener('dblclick', e => {
   if (!state.doc) return;
+  if (extend) { extend = null; hoverW = null; setMsg('Finished.'); vp.requestDraw(); return; }
   if (draft) { commitDraft(); return; }
   const s = screenPt(e);
   const w = vp.screenToWorld(s.x, s.y);
@@ -4492,6 +4581,7 @@ document.addEventListener('keydown', e => {
     setMsg('Alignment cancelled.');
     return;
   }
+  if (e.key === 'Enter' && extend) { e.preventDefault(); extend = null; hoverW = null; setMsg('Finished.'); vp.requestDraw(); return; }
   if (e.key === 'Enter' && draft) { e.preventDefault(); commitDraft(); return; }
   if (e.key === 'Backspace' && draft) {
     e.preventDefault();
@@ -4501,7 +4591,8 @@ document.addEventListener('keydown', e => {
   }
   if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelected(); return; }
   if (e.key === 'Escape') {
-    if (draft || calibPts) { cancelDraft(); }
+    if (extend) { extend = null; hoverW = null; setMsg('Finished extending.'); vp.requestDraw(); }
+    else if (draft || calibPts) { cancelDraft(); }
     else if (drag) { drag = null; vp.requestDraw(); }
     else if (selectedId) { selectedId = null; renderMarkupList(); vp.requestDraw(); }
     return;
