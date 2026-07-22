@@ -2418,8 +2418,8 @@ els.cv.addEventListener('pointerdown', e => {
 // A compact custom 4-arrow "move" so a draggable POINT reads a touch smaller than
 // the shape body (which uses the full system `move`). White glyph, black outline
 // for contrast on any sheet; hotspot centered on the 20×20 art.
-const MOVE_PT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'><path d='M10 2 L13 5 L12 5 L12 8 L15 8 L15 7 L18 10 L15 13 L15 12 L12 12 L12 15 L13 15 L10 18 L7 15 L8 15 L8 12 L5 12 L5 13 L2 10 L5 7 L5 8 L8 8 L8 5 L7 5 Z' fill='#fff' stroke='#000' stroke-width='1.2' stroke-linejoin='round'/></svg>";
-const CURSOR_MOVE_PT = `url("data:image/svg+xml,${encodeURIComponent(MOVE_PT_SVG)}") 10 10, move`;
+const MOVE_PT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 20 20'><path d='M10 2 L13.5 5.5 L11.5 5.5 L11.5 8.5 L14.5 8.5 L14.5 6.5 L18 10 L14.5 13.5 L14.5 11.5 L11.5 11.5 L11.5 14.5 L13.5 14.5 L10 18 L6.5 14.5 L8.5 14.5 L8.5 11.5 L5.5 11.5 L5.5 13.5 L2 10 L5.5 6.5 L5.5 8.5 L8.5 8.5 L8.5 5.5 L6.5 5.5 Z' fill='#fff' stroke='#000' stroke-width='1' stroke-linejoin='round'/></svg>";
+const CURSOR_MOVE_PT = `url("data:image/svg+xml,${encodeURIComponent(MOVE_PT_SVG)}") 8 8, move`;
 // The cursor when hovering nothing interactive, per tool/mode.
 function baseCursor() {
   if (tool === 'pan') return 'grab';
