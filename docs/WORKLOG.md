@@ -23,6 +23,59 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-23 — Roof Measurement mode in Plan Room (EagleView-style report) — MVP prototype
+
+**Done (prototype).** A new **Roof Measurement** mode inside Plan Room — trace a
+roof on an aerial, get a branded measurement report (squares, per-facet pitch &
+area, edges by type, penetrations, waste). The EagleView/Hover play; incumbents
+charge **$20–100 per report**. Plan + full design: `docs/plans/roof-measurement.md`.
+
+**The big finding that made this small:** Plan Room's roofing trade pack *already*
+contains the entire roof engine — `slopeFactor`/`hipValleyFactor`/`edgeFactor`/
+`planeSquares`/`edgeFt`, `roofingTotals()`, per-facet pitch, the plane/edge/item
+draw tools, edge types (eave/rake/ridge/hip/valley) and penetrations. Scale-from-
+image and image ingest already work too. So this was **not a new engine** — it's a
+new *deliverable* (the report) + new *packaging* (its own add-on) on top of
+geometry that already ships. Built the way Storm/Utility was: a mode gated by an
+add-on flag, not a forked tool-app.
+
+**What shipped:**
+- **`roof` add-on gate** (mirrors `storm`): `AuthContext` writes `roof:
+  !!user.addon_roof` into `tc_addons`; `hasRoofAddon()` + `ROOF_ON` + a `has-roof`
+  body class; `roof-only` CSS. Until a backend `addon_roof` + Stripe price exist,
+  it shows for **exempt/trial only** — build-hidden, like `STORM_SELLABLE`.
+- **`roofmeas` mode** registered additively across the ~10 hard-coded per-trade
+  spots (TRADE_TOOLS, PANEL_IDS, TRADE_PANEL, setTrade class+hint, syncPanelButtons,
+  the trade dropdown, CSS). It **reuses the roofing draw tools verbatim** — the
+  `.tr-roof` CSS now shows in `trade-roofmeas` too — so zero new draw code.
+- **The report:** `renderRoofReport()` + a printable, branded one-pager
+  (`printing-report`, reusing the letterhead/branding machinery). Total roof area
+  (w/ waste), base area, per-facet table (plan SF · pitch · squares), edges LF by
+  type, penetrations, uncalibrated-sheet warning. Live-refreshes via
+  `markupsChanged()`.
+- Plan Room `?v=70 → 71` (both tags).
+
+**Judgment calls:**
+- Reused the roofing trade's tools rather than giving `roofmeas` its own toolbar,
+  so the mode currently inherits the **`has-takeoff` gate** — i.e. today it needs
+  the Takeoff layer too. Fine for the prototype (exempt users see everything);
+  decoupling for a truly standalone roof add-on is deferred (in the plan).
+- Every mode-registration edit is **additive** (a new line beside each existing
+  trade case, never a change to one) — those lists have "drifted" before, so this
+  keeps existing trades byte-identical. Verified `node --check`, client build,
+  sitework clean, 11 original trades untouched.
+
+⚠️ **Two go/no-go items before productizing** (both in the plan): (1) prove
+**scale-from-aerial accuracy** and the **report** on a real roof; (2) **per-edge
+pitch** — `edgeFt` corrects hip/valley/rake with the single global `state.roofPitch`,
+so a multi-pitch roof's sloped edge LF is only right for the main pitch. Fix before
+anyone bids off it.
+
+⚠️ **To sell it:** backend `addon_roof` column + Stripe price + a `BillingPanel`
+entry + a sellable-gate (mirror Storm's `STORM_SELLABLE`). None of that exists yet.
+
+---
+
 ## 2026-07-23 — Two new trade tools: Voice-memo → Daily Log, and Bilingual Crew Cards
 
 **Done.** Asked "what other tools would trades find handy?", shortlisted the

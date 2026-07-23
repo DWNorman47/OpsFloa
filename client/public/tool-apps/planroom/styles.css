@@ -148,9 +148,14 @@ body.has-takeoff .tb-upsell { display: none; }
 /* storm/utility add-on gating: the deep pipe-schedule / structure-depth /
    invert-depth / netting inputs show only for companies that own addon_storm */
 body:not(.has-storm) .storm-only { display: none !important; }
+/* roof-measurement add-on gating: the Roof Measurement mode entry + its report
+   panel show only for companies that own addon_roof */
+body:not(.has-roof) .roof-only { display: none !important; }
 /* trade mode: each trade's tools/panels show only when that trade is selected
    in the #tradeSel dropdown (default = plain markup & measure) */
-body:not(.trade-roofing) .tr-roof { display: none; }
+/* roof draw tools are shared by the Roofing takeoff and Roof Measurement modes */
+body:not(.trade-roofing):not(.trade-roofmeas) .tr-roof { display: none; }
+body:not(.trade-roofmeas) .tr-roofmeas { display: none; }
 body:not(.trade-dirt) .tr-dirt { display: none; }
 body:not(.trade-drywall) .tr-dwall { display: none; }
 body:not(.trade-flooring) .tr-floor { display: none; }
@@ -330,14 +335,14 @@ body.nothumbs #hud { left: 48px; } /* make room for the open button */
 }
 
 /* ---------- markup list panel ---------- */
-#markupPanel, #roofPanel, #dirtPanel, #dwPanel, #floorPanel, #framPanel, #escPanel, #strpPanel, #sidPanel, #demPanel, #fncPanel, #lscPanel {
+#markupPanel, #roofPanel, #roofMeasPanel, #dirtPanel, #dwPanel, #floorPanel, #framPanel, #escPanel, #strpPanel, #sidPanel, #demPanel, #fncPanel, #lscPanel {
   flex: 0 0 268px; display: flex; flex-direction: column; min-height: 0;
   background: var(--panel); border-left: 1px solid var(--border);
 }
 #markupPanel.hidden, #roofPanel.hidden, #dirtPanel.hidden, #dwPanel.hidden { display: none; }
 /* no document loaded → the toolbar is hidden (progressive disclosure), so hide
    the side panels too; they reappear once a plan is open. */
-body:not(.has-doc) #markupPanel, body:not(.has-doc) #roofPanel,
+body:not(.has-doc) #markupPanel, body:not(.has-doc) #roofPanel, body:not(.has-doc) #roofMeasPanel,
 body:not(.has-doc) #dirtPanel, body:not(.has-doc) #dwPanel,
 body:not(.has-doc) #floorPanel, body:not(.has-doc) #framPanel,
 body:not(.has-doc) #escPanel, body:not(.has-doc) #strpPanel,
@@ -450,7 +455,29 @@ body.printing-bid .bid-linkbar { display: none; }
 .bid-head label { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
 .bid-head input { width: 100%; padding: 7px 9px; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-size: 14px; }
 
+/* ---- roof measurement report ---- */
+#roofReportPrint { display: none; }
+.rr-table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 4px 0 10px; }
+.rr-table th, .rr-table td { text-align: right; padding: 3px 6px; border-bottom: 1px solid var(--border); }
+.rr-table th:first-child, .rr-table td:first-child { text-align: left; }
+.rr-table th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .3px; }
+.rr-table .v { color: var(--accent); font-variant-numeric: tabular-nums; }
+.rr-co-name { font-size: 18px; font-weight: 700; }
+.rr-co-details { font-size: 12.5px; color: var(--muted); line-height: 1.5; margin-top: 3px; }
+.rr-title { font-size: 16px; font-weight: 700; margin: 10px 0 4px; }
+.rr-sub { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+
 @media print {
+  body.printing-report > *:not(#roofReportPrint) { display: none !important; }
+  body.printing-report #roofReportPrint { display: block !important; position: static; background: #fff; color: #000; padding: 0 4px; }
+  body.printing-report #roofReportPrint .rr-table th, body.printing-report #roofReportPrint .rr-table td,
+  body.printing-report #roofReportPrint .roof-tot, body.printing-report #roofReportPrint .roof-tot .v,
+  body.printing-report #roofReportPrint .rr-table .v, body.printing-report #roofReportPrint .rr-sub { color: #000; }
+  body.printing-report #roofReportPrint .rr-table th, body.printing-report #roofReportPrint .rr-table td { border-color: #999; }
+  body.printing-report .rr-letterhead { border-bottom: 2px solid #000; padding-bottom: 8px; margin-bottom: 12px; }
+  body.printing-report .rr-co-details { color: #333; }
+  body.printing-report .roof-sub { color: #555; }
+
   body.printing-bid > *:not(#roofBid) { display: none !important; }
   body.printing-bid #roofBid { position: static; display: block !important; background: #fff; }
   body.printing-bid #roofBid .modal-box { max-width: none; box-shadow: none; border: none; background: #fff; color: #000; padding: 0; }

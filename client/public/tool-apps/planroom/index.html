@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css?v=70">
+<link rel="stylesheet" href="styles.css?v=71">
 <script>
 (() => {
   try {
@@ -79,6 +79,7 @@
     <select id="tradeSel" class="mini-sel tb-takeoff" title="Takeoff trade — pick one to show its tools and bid; leave off for plain markup & measure">
       <option value="">Takeoff: off</option>
       <option value="roofing">🏠 Roofing</option>
+      <option value="roofmeas" class="roof-only">📐 Roof Measurement (aerial)</option>
       <option value="dirt">⛰ Earthwork</option>
       <option value="drywall">🧱 Drywall &amp; Paint</option>
       <option value="flooring">▦ Flooring &amp; Tile</option>
@@ -410,6 +411,7 @@
     </div>
     <div class="tb-cluster">
     <button id="btnRoof" class="btn tb-takeoff tr-roof" title="Roofing takeoff — squares, edges, and counts across the set">🏠<span class="btn-label"> Roof</span></button>
+    <button id="btnRoofMeas" class="btn tb-takeoff roof-only tr-roofmeas" title="Roof measurement report — squares, edges & penetrations from the aerial">📐<span class="btn-label"> Report</span></button>
     <button id="btnDw" class="btn tb-takeoff tr-dwall" title="Drywall & Paint — wall height, sheet size, waste, coverage; net SF & materials">🧱<span class="btn-label"> Drywall</span></button>
     <button id="btnFloor" class="btn tb-takeoff tr-floor" title="Flooring & Tile — net floor SF by material with waste; prices in $ Bid">▦<span class="btn-label"> Floor</span></button>
     <button id="btnFram" class="btn tb-takeoff tr-fram" title="Framing & Lumber — studs, plates & board-feet by stud size; prices in $ Bid">🪵<span class="btn-label"> Framing</span></button>
@@ -502,6 +504,18 @@
       <label>Waste <input type="number" id="roofWaste" min="0" max="40" step="1" style="width:48px"> %</label>
     </div>
     <div id="roofBody" class="mk-list"></div>
+  </aside>
+  <aside id="roofMeasPanel" class="hidden roof-only" aria-label="Roof measurement report">
+    <div class="mk-head">
+      <b>📐 Roof Measurement</b>
+      <button id="roofMeasPrint" class="btn tiny" title="Print a branded measurement report">🖨 Print</button>
+      <button id="btnRoofMeasClose" class="panel-x" title="Close the report">✕</button>
+    </div>
+    <div class="roof-settings">
+      <label>Default pitch <input type="number" id="roofMeasPitch" min="0" max="24" step="1" style="width:52px"> /12</label>
+      <label>Waste <input type="number" id="roofMeasWaste" min="0" max="40" step="1" style="width:48px"> %</label>
+    </div>
+    <div id="roofMeasBody" class="mk-list"></div>
   </aside>
   <aside id="dirtPanel" class="hidden" aria-label="Earthwork takeoff">
     <div class="mk-head"><b>⛰ Earthwork (cut / fill)</b><button id="btnDirtClose" class="panel-x" title="Close the earthwork panel">✕</button></div>
@@ -708,6 +722,14 @@
   </div>
 </div>
 
+<!-- Print-only branded roof measurement report. Kept a DIRECT child of body (like
+     the modals) so the printing-report rule can hide everything else. Populated by
+     renderRoofReport() alongside the on-screen panel. -->
+<div id="roofReportPrint" aria-hidden="true">
+  <div id="roofReportLetterhead" class="rr-letterhead"></div>
+  <div id="roofReportContent"></div>
+</div>
+
 <!-- takeoff bid modal (with letterhead / branding) -->
 <div id="roofBid" class="modal hidden">
   <div class="modal-box wide bid-box">
@@ -815,6 +837,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=70"></script>
+<script type="module" src="app.js?v=71"></script>
 </body>
 </html>

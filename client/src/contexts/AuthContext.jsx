@@ -82,6 +82,7 @@ export function AuthProvider({ children }) {
           takeoff: !!user.addon_takeoff,
           planroom: !!user.addon_planroom,
           storm: !!user.addon_storm,
+          roof: !!user.addon_roof,
           status: user.subscription_status || null,
         }));
       } else {
