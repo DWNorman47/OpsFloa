@@ -23,6 +23,54 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-23 — Two new trade tools: Voice-memo → Daily Log, and Bilingual Crew Cards
+
+**Done.** Asked "what other tools would trades find handy?", shortlisted the
+un-built ones into the roadmap, and built the top two. Both reuse existing
+infrastructure — no new engines.
+
+**1. Voice memo → Daily Log** (a second output on a recording, like Minutes):
+- `POST /recordings/:id/daily-log` — clones the Minutes route with a jobsite
+  prompt (Summary / Work completed / Crew / Materials & deliveries / Equipment /
+  **Delays, issues & blockers** / Weather / Safety / Action items). Same strict
+  grounding as Minutes (transcript-only, keep speaker labels, don't invent).
+- Stored on the recording: `daily_log_md` / `daily_log_at` (**migration 0146**),
+  same 1:1 rationale as minutes (0140). A recording can hold both.
+- UI: "Make daily log" button beside "Turn into minutes" in `TranscriptionTool`,
+  green result box, persists across reload. Transcription tab retitled "Voice
+  transcription, minutes & daily logs" so trades find it.
+- **Judgment call:** built as a sibling action on a recording, not a separate
+  upload pipeline — Minutes already set that precedent and duplicating the
+  R2/AssemblyAI flow would've been wasteful. A full per-project daily-log *ledger*
+  (dated history, not just generation) is a bigger feature, parked.
+
+**2. Bilingual Crew Cards** (new **Crew Cards** tab):
+- English task notes → clean Spanish (or bilingual) task card. `POST /office/
+  crew-card` (`CREW_CARD_SYSTEM`) + `CrewCardTool.jsx`, same text-in/markdown-out
+  shape as the Summarizer.
+- **Default is bilingual** (Spanish + English in parens) on purpose: it lets the
+  foreman verify the translation against their own words — that trust is why
+  they'll use it instead of guessing. Toggle to Spanish-only for the printout.
+
+Both inherit the existing gating for free: Business plan + `module_tools` on, and
+the shared **300 AI-requests/month** meter (`runAi`). Model is Haiku (same as the
+other office tools). Client build + server `node --check` green; sitework clean.
+
+⚠️ **Migration 0146 must run on stage/prod** before the daily-log button works
+there (the generate call writes `daily_log_md`; until the column exists it 502s —
+transcription/minutes are unaffected).
+
+⚠️ **Neither prompt has seen real input.** The daily-log prompt has never run on a
+real jobsite memo, and **the crew-card Spanish has not been checked by a native
+speaker** — worth one real pass each before leaning on them. (Same caveat that's
+open on the Red-Flag Scanner and Meeting Minutes prompts.)
+
+**Roadmap:** both moved to "Already built"; **Snap-a-receipt job costing** (OCR →
+expense line) is now the top un-built trade tool, with Photo→punch-list, SOW
+generator, portable cost book, and the MEP trade-engineering calcs behind it.
+
+---
+
 ## 2026-07-23 — Legal footer on the sign-in / sign-up pages + single-source entity name
 
 **Done.** Groundwork for forming a business entity (LLC). Two things:

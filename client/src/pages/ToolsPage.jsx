@@ -12,6 +12,7 @@ import DocQATool from '../components/DocQATool';
 import RedFlagScannerTool from '../components/RedFlagScannerTool';
 import CalculatorsTool from '../components/CalculatorsTool';
 import EmailDrafterTool from '../components/EmailDrafterTool';
+import CrewCardTool from '../components/CrewCardTool';
 
 const SITEWORK_TOOL_URL = '/tool-apps/sitework/index.html';
 const PLANROOM_TOOL_URL = '/tool-apps/planroom/index.html';
@@ -111,6 +112,7 @@ export default function ToolsPage() {
   { id: 'redflags', label: 'Red-Flag Scanner' },
   { id: 'calcs', label: 'Calculators' },
     { id: 'emaildraft', label: 'Email Drafter' },
+    { id: 'crewcard', label: 'Crew Cards' },
     { id: 'pdftools', label: 'PDF Toolkit' },
   ];
 
@@ -212,8 +214,8 @@ export default function ToolsPage() {
       {tab === 'transcription' && (
         <PageSection
           eyebrow="Transcription"
-          title="Voice transcription"
-          description="Upload a meeting or call recording and get back a transcript that separates who said what. Rename speakers, jump the audio to any line, and copy or download the text."
+          title="Voice transcription, minutes & daily logs"
+          description="Upload a meeting, call, or jobsite recording and get back a transcript that separates who said what. Then turn it into meeting minutes — or walk the site talking and turn a voice memo into a structured daily log (work done, deliveries, delays, action items)."
         >
           <TranscriptionTool />
         </PageSection>
@@ -266,6 +268,16 @@ export default function ToolsPage() {
           description="Turn a few notes into a polished email or text — payment reminders, quote follow-ups, running-late messages — in the tone you pick."
         >
           <EmailDrafterTool />
+        </PageSection>
+      )}
+
+      {tab === 'crewcard' && (
+        <PageSection
+          eyebrow="Crew"
+          title="Bilingual crew task cards"
+          description="Type the day's tasks in English and hand your crew a clean Spanish task card. Keep it bilingual to check the translation, or switch to Spanish-only for the printout."
+        >
+          <CrewCardTool />
         </PageSection>
       )}
 
