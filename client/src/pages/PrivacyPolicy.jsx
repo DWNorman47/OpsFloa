@@ -12,13 +12,14 @@ export default function PrivacyPolicy() {
       <div style={styles.container}>
         <a href="/" style={styles.back}>Back to OpsFloa</a>
         <h1 style={styles.h1}>Privacy Policy</h1>
-        <p style={styles.updated}>Last updated: March 21, 2025</p>
+        <p style={styles.updated}>Last updated: July 22, 2026</p>
 
         <p style={styles.p}>OpsFloa ("we," "our," or "us") operates opsfloa.com and provides workforce management software for mobile teams and service businesses. This Privacy Policy explains how we collect, use, and protect your information.</p>
 
         <h2 style={styles.h2}>1. Information We Collect</h2>
         <p style={styles.p}><strong>Account information:</strong> When you register, we collect your company name, name, email address, and password (stored as a secure hash).</p>
         <p style={styles.p}><strong>Usage data:</strong> Time entries, work assignments, clock-in/out records, GPS coordinates (when location features are used), and reports submitted through the app.</p>
+        <p style={styles.p}><strong>Employee location:</strong> If your employer enables location features, we record your device's GPS coordinates at clock-in and clock-out to verify where work was performed — only at those moments, not continuously. Employers are responsible for notifying their workers about location collection and obtaining any consent required by local law.</p>
         <p style={styles.p}><strong>Device and browser data:</strong> IP address, browser type, and device identifiers for security and session management.</p>
         <p style={styles.p}><strong>Payment information:</strong> Billing is processed by Stripe. We do not store your credit card numbers. We receive billing status and subscription metadata from Stripe.</p>
         <p style={styles.p}><strong>QuickBooks data:</strong> If you connect QuickBooks Online, we store OAuth tokens (encrypted) to sync time entries on your behalf. We only access the data necessary to push time activities.</p>
@@ -33,13 +34,17 @@ export default function PrivacyPolicy() {
           <li>Comply with legal obligations</li>
         </ul>
 
-        <h2 style={styles.h2}>3. Data Sharing</h2>
-        <p style={styles.p}>We do not sell your personal data. We share data only with:</p>
+        <h2 style={styles.h2}>3. Data Sharing and Sub-Processors</h2>
+        <p style={styles.p}>We do not sell your personal data. We share data only with the service providers ("sub-processors") that help us operate OpsFloa, each under contract and only as necessary:</p>
         <ul style={styles.ul}>
-          <li><strong>Service providers:</strong> Hosting, database, email, payments, and analytics only as necessary to operate the service.</li>
-          <li><strong>Intuit/QuickBooks:</strong> When you connect QuickBooks, we exchange data with Intuit's API per your authorization.</li>
-          <li><strong>Legal requirements:</strong> If required by law or to protect the rights and safety of users.</li>
+          <li><strong>Stripe</strong> — subscription billing and payment processing.</li>
+          <li><strong>Intuit (QuickBooks Online)</strong> — accounting sync, only when you connect it and per your authorization.</li>
+          <li><strong>Resend</strong> — transactional email (invitations, confirmations, password resets, and reports).</li>
+          <li><strong>Cloudflare (R2)</strong> — storage of files you upload, such as plans, photos, and documents.</li>
+          <li><strong>Neon</strong> — hosted PostgreSQL database.</li>
+          <li><strong>Vercel and Render</strong> — application and API hosting.</li>
         </ul>
+        <p style={styles.p}>We may also disclose data where required by law or to protect the rights and safety of users. This list may change as our providers change; we will update it here.</p>
 
         <h2 style={styles.h2}>4. Data Security</h2>
         <p style={styles.p}>We use industry-standard security measures including encryption for sensitive credentials, TLS in transit, hashed passwords, and multi-factor authentication. Access to production systems is restricted and logged.</p>

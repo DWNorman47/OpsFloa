@@ -5,8 +5,9 @@
  *
  * Matches the "Last updated" date on the EULA / Privacy pages. Bump BOTH — this
  * constant and that date on the pages — whenever those documents materially
- * change, and existing users should be re-prompted to accept.
+ * change; users without an acceptance row for the current version are re-prompted
+ * by the login gate (see TermsGate / GET /auth/me `needs_terms`).
  */
-const LEGAL_VERSION = '2025-03-21';
+const LEGAL_VERSION = '2026-07-22';
 
 module.exports = { LEGAL_VERSION };

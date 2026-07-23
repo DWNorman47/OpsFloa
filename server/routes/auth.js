@@ -107,6 +107,20 @@ async function buildSessionUser(baseUser) {
     admin_permissions: userRow.admin_permissions ?? null,
   });
 
+  // Does this user still owe acceptance of the CURRENT legal docs? Super-admins
+  // (platform operators) are exempt. Wrapped so a missing table / query error
+  // NEVER blocks login — if we can't tell, we don't gate.
+  let needsTerms = false;
+  if (baseUser.role !== 'super_admin') {
+    try {
+      const acc = await pool.query(
+        'SELECT 1 FROM legal_acceptances WHERE user_id = $1 AND version = $2 LIMIT 1',
+        [baseUser.id, LEGAL_VERSION]
+      );
+      needsTerms = acc.rowCount === 0;
+    } catch { needsTerms = false; }
+  }
+
   return {
     id: baseUser.id,
     username: baseUser.username,
@@ -136,6 +150,7 @@ async function buildSessionUser(baseUser) {
     rate_type: userRow.rate_type || 'hourly',
     day_mark_mode: !!userRow.day_mark_mode,
     guaranteed_weekly_hours: userRow.guaranteed_weekly_hours != null ? parseFloat(userRow.guaranteed_weekly_hours) : null,
+    needs_terms: needsTerms,
   };
 }
 
@@ -252,6 +267,22 @@ router.get('/me', requireAuth, async (req, res) => {
     return res.json({ user: await buildSessionUser(req.user) });
   } catch (err) {
     logger.error({ err }, 'catch block error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Record acceptance of the CURRENT legal docs for the logged-in user (the
+// re-prompt gate for existing users + invited workers). Idempotent enough — a
+// duplicate row for the same version is harmless; the audit trail keeps both.
+router.post('/accept-terms', requireAuth, async (req, res) => {
+  try {
+    await pool.query(
+      `INSERT INTO legal_acceptances (user_id, company_id, version, context, ip) VALUES ($1, $2, $3, 'login', $4)`,
+      [req.user.id, req.user.company_id, LEGAL_VERSION, req.ip || 'unknown']
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error({ err }, 'accept-terms error');
     res.status(500).json({ error: 'Server error' });
   }
 });
