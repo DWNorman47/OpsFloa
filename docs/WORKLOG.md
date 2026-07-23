@@ -47,10 +47,29 @@ having agreed to them**, so acceptance couldn't be proven. Now:
 - **Worker invite** acceptance (only the owner accepts today), business entity /
   E&O insurance — all still open, none are code changes I can make blind.
 
-⚠️ **Migration 0145 must run on stage/prod** before the register endpoint works
-there (it inserts into `legal_acceptances`). Existing accounts have no acceptance
-row — a backfill or a re-prompt-on-next-login is a possible follow-up if you want
-historical coverage.
+⚠️ **Migration 0145 must run on stage/prod** before register / the gate work there
+(both insert into `legal_acceptances`). The `needs_terms` check is wrapped so a
+missing table can't block login, but the gate won't function until the table exists.
+
+**Follow-up (`3ca6309`) — re-prompt gate + doc improvements (the "all of it" pass):**
+- **Re-prompt gate:** `GET /auth/me` returns `needs_terms` (no acceptance row for
+  the current `LEGAL_VERSION`; super-admins exempt; wrapped so a missing table
+  never locks login out). New `POST /auth/accept-terms` records it. Client
+  `TermsGate` is a blocking modal in `App` — **existing accounts and invited
+  workers** must accept on next login (they have no acceptance row, so the gate
+  catches them automatically; no backfill needed).
+- **Privacy Policy:** named sub-processor list (Stripe, Intuit, Resend, Cloudflare,
+  Neon, Vercel/Render) + an employee-location section.
+- **EULA:** new "Customer Responsibilities; No Payroll, Tax, or Legal Advice"
+  section — the payroll-liability gap I flagged, as a **plain-English draft for a
+  lawyer to finalize** (I am not one).
+- Bumped `LEGAL_VERSION` + both doc dates to `2026-07-22` so the accepted version
+  matches the revised content. When the lawyer revises further, bump both again →
+  the gate re-prompts everyone for the finalized version.
+
+Still open (not code): worker-invite flow doesn't *separately* capture acceptance
+(the login gate covers workers instead), business entity / E&O insurance, and a
+real lawyer review of all the above language.
 
 ## 2026-07-21 — Plan Room: Join op → connect / extend / weld / pan
 
