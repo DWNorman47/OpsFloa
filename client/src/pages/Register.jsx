@@ -4,6 +4,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
 import api from '../api';
+import LegalFooter from '../components/LegalFooter';
 import { safeLocal } from '../utils/safeStorage';
 
 export default function Register() {
@@ -171,6 +172,7 @@ export default function Register() {
         <p style={styles.loginLink}>
           {t.registerAlreadyHaveAccount} <Link to="/login" style={styles.link}>{t.registerLogIn}</Link>
         </p>
+        <LegalFooter />
       </div>
     </div>
   );

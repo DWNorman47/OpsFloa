@@ -23,6 +23,31 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-23 — Legal footer on the sign-in / sign-up pages + single-source entity name
+
+**Done.** Groundwork for forming a business entity (LLC). Two things:
+
+- **`LegalFooter`** on the Login and Register pages: `Terms of Use (EULA) · Privacy
+  Policy` links + a `© <year> OpsFloa` line. Surfaces the legal docs on the public
+  entry pages (good hygiene), independent of any entity decision. Reuses the
+  existing `registerAgreeEula` / `registerAgreePrivacy` i18n keys — no new strings.
+- **`client/src/legal.js` → `LEGAL_ENTITY`** — the entity name now lives in **one
+  place** (currently `'OpsFloa'`). When the business is registered, changing that
+  one constant updates the footer everywhere.
+
+**Judgment call — did NOT touch the EULA/Privacy body.** David said "go ahead" on
+wiring the entity name into the docs, but he hasn't registered a name yet. I won't
+invent a legal entity name and drop it into a legal document, so the doc-body swap
+(`OpsFloa` → the registered name in the EULA/Privacy intro + contact lines) is a
+one-line edit **waiting on the real name**. The footer is the part that's safe now.
+
+**Context (advice given, not code):** David is US-based; the Honduras angle is a
+*customer*, not a foreign operation, so this is a plain US-LLC decision, not a
+cross-border one. Reminded him the EULA names **Texas** governing law — if he
+forms/lives elsewhere, that clause should match his state. Not a lawyer; not advice.
+
+---
+
 ## 2026-07-22 — Signup: real clickwrap acceptance (Terms + Privacy) with an audit trail
 
 **Done.** `f397e6b`. In response to a "what do I need for legal cover?" question:
