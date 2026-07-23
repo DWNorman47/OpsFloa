@@ -65,11 +65,16 @@ add-on flag, not a forked tool-app.
   keeps existing trades byte-identical. Verified `node --check`, client build,
   sitework clean, 11 original trades untouched.
 
-⚠️ **Two go/no-go items before productizing** (both in the plan): (1) prove
-**scale-from-aerial accuracy** and the **report** on a real roof; (2) **per-edge
-pitch** — `edgeFt` corrects hip/valley/rake with the single global `state.roofPitch`,
-so a multi-pitch roof's sloped edge LF is only right for the main pitch. Fix before
-anyone bids off it.
+⚠️ **Go/no-go before productizing** (in the plan): prove **scale-from-aerial
+accuracy** and the **report** on a real roof.
+
+**Follow-up (`<pending>`) — per-edge pitch fixed (the multi-pitch gap):** each roof
+edge now carries its own `pitch` — rake/hip/valley prompt for it at draw time
+(default = main pitch, Enter keeps it); eave/ridge/flashing lie flat and don't ask.
+`edgeFt` uses `m.pitch`, falling back to the global `state.roofPitch` for edges
+saved before the change, so **multi-pitch roofs are now correct and old projects are
+byte-identical**. This also improves the existing roofing-takeoff bids (same
+`edgeFt`). Plan Room `?v 71 → 72`.
 
 ⚠️ **To sell it:** backend `addon_roof` column + Stripe price + a `BillingPanel`
 entry + a sellable-gate (mirror Storm's `STORM_SELLABLE`). None of that exists yet.

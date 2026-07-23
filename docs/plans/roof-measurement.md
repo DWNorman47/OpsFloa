@@ -86,10 +86,10 @@ from `roofingTotals()` + a per-facet walk of `state.markups`:
 - **Decouple from `has-takeoff`:** the reused roofing draw buttons are
   `tb-takeoff`-gated, so today the mode needs the Takeoff layer too. For a truly
   standalone roof add-on, give `roofmeas` its own `roof-only` toolbar buttons.
-- **Per-edge pitch accuracy:** `edgeFt` corrects hip/valley/rake with the single
-  global `state.roofPitch` ([app.js:513](../../client/public/tool-apps/planroom/app.js#L513)),
-  so a multi-pitch roof's sloped edge LF is only right for the main pitch. Store
-  pitch per `redge` for a mixed-pitch roof.
+- ~~**Per-edge pitch accuracy:**~~ ✅ **DONE.** Each `redge` now carries its own
+  `pitch` (captured at draw time; rake/hip/valley prompt for it, defaulting to the
+  main pitch). `edgeFt` uses `m.pitch`, falling back to the global for edges saved
+  before the change — so multi-pitch roofs are correct and old projects unchanged.
 - **Discriminator on facets:** `roofingTotals()` scans *all* `plane`/`redge`
   markups regardless of mode, so a "measurement" roof and a "bid" roof on the
   same sheet share facets. Add an `m.purpose` discriminator only if that turns

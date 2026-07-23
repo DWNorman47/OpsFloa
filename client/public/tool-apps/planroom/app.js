@@ -519,7 +519,12 @@ function edgeFactor(etype, pitch) {
   return 1; // eave, ridge, flashing measured directly on the plan
 }
 const planeSquares = (m, ftPerPx) => polygonAreaFt2(m.pts, ftPerPx) * slopeFactor(m.pitch) / 100;
-const edgeFt = (m, ftPerPx) => polyLengthFt(m.pts, ftPerPx) * edgeFactor(m.etype, state.roofPitch);
+// Hip/valley/rake edges get longer with pitch, so the correction must use the
+// pitch of THAT edge's roof, not one roof-wide value — otherwise a multi-pitch
+// roof's edge LF is only right for the main pitch. Each edge carries its own
+// `pitch` (captured at draw time); edges saved before that existed have no
+// `pitch` and fall back to the global default, so old projects are unchanged.
+const edgeFt = (m, ftPerPx) => polyLengthFt(m.pts, ftPerPx) * edgeFactor(m.etype, m.pitch != null ? m.pitch : state.roofPitch);
 
 // Roofing bid lines: materials/labor derived from the live takeoff, with
 // editable unit prices. Sensible defaults; every quantity traces to the roof.
@@ -3140,7 +3145,7 @@ function commitDraft() {
   }
   const extra = {};
   if (d.kind === 'plane') extra.pitch = state.roofPitch;
-  else if (d.kind === 'redge') extra.etype = $('edgeType') ? $('edgeType').value : 'eave';
+  else if (d.kind === 'redge') { extra.etype = $('edgeType') ? $('edgeType').value : 'eave'; extra.pitch = state.roofPitch; }
   else if (d.kind === 'ritem') extra.itype = $('itemType') ? $('itemType').value : 'boot';
   else if (d.kind === 'contour' || d.kind === 'epad') extra.surface = curSurface;
   else if (d.kind === 'froom') extra.cfg = { ftype: curFloorType };
@@ -3187,6 +3192,11 @@ function commitDraft() {
     if (d.kind === 'plane') {
       modals.askNumber(`Roof plane pitch (rise per 12)`, 'e.g. 6 for 6/12. Sloped area & squares update live.', state.roofPitch, 1)
         .then(v => { if (v != null && v >= 0) { const m = state.markups[state.markups.length - 1]; if (m && m.kind === 'plane') { m.pitch = v; markupsChanged(); } } });
+    } else if (d.kind === 'redge' && (extra.etype === 'rake' || extra.etype === 'hip' || extra.etype === 'valley')) {
+      // Only rake/hip/valley are pitch-corrected (eave/ridge/flashing lie flat),
+      // so only those ask. Defaults to the main pitch — Enter keeps it.
+      modals.askNumber(`${EDGE_LABEL[extra.etype]} pitch (rise per 12)`, 'Slope correction for this edge — Enter keeps the main pitch.', state.roofPitch, 1)
+        .then(v => { if (v != null && v >= 0) { const m = state.markups[state.markups.length - 1]; if (m && m.kind === 'redge') { m.pitch = v; markupsChanged(); } } });
     } else if (d.kind === 'contour' || d.kind === 'epad') {
       const surf = extra.surface;
       modals.askNumber(`${d.kind === 'contour' ? 'Contour' : 'Pad'} elevation (ft) — ${surf === 'existing' ? 'existing' : 'proposed'}`,
