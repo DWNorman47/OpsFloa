@@ -15,7 +15,17 @@
 
 jest.mock('../db', () => ({ query: jest.fn() }));
 
-const { computePaid, laborCostCents, payNumbers } = require('../utils/paidHours');
+const { computePaid, laborCostCents, payNumbers, leaveRateMultipliers } = require('../utils/paidHours');
+
+describe('leaveRateMultipliers', () => {
+  test('percent of base → fraction; default/garbage → 1 (unchanged)', () => {
+    expect(leaveRateMultipliers({ sick_pay_pct: 80, vacation_pay_pct: 50 })).toEqual({ sick: 0.8, vacation: 0.5 });
+    expect(leaveRateMultipliers({})).toEqual({ sick: 1, vacation: 1 });
+    expect(leaveRateMultipliers(undefined)).toEqual({ sick: 1, vacation: 1 });
+    expect(leaveRateMultipliers({ sick_pay_pct: 'x', vacation_pay_pct: -5 })).toEqual({ sick: 1, vacation: 1 });
+    expect(leaveRateMultipliers({ sick_pay_pct: 0 })).toEqual({ sick: 0, vacation: 1 });
+  });
+});
 
 // A policy that visibly changes the numbers: ignore the early clock-in, deduct
 // a lunch hour, and credit a late stay off the 17:00 baseline.

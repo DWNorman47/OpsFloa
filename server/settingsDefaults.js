@@ -8,6 +8,9 @@ const SETTINGS_DEFAULTS = {
   // Company Standards → Regular Shift: the fallback hours a full sick/vacation day
   // pays when the worker has no shift scheduled and no weekday leave-value rule.
   regular_shift_hours: 8,
+  // Paid-leave rate as a percent of the worker's base rate (sick and vacation
+  // separately). 100 = full base rate (the prior, unchanged behaviour).
+  sick_pay_pct: 100, vacation_pay_pct: 100,
   // feature_chat and feature_broadcast start OFF — both are optional
   // engagement features most teams don't enable on day one. Migration
   // 0095 backfilled '1' for existing companies so the flip is a no-op

@@ -279,13 +279,13 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
             )}
             {summary.sick_hours > 0 && summary.rate > 0 && (
               <View style={s.sumRow}>
-                <Text style={s.sumLabel}>{(t.pdfSickPayRate || 'Sick Pay ({rate}/hr)').replace('{rate}', fmtMoney(summary.rate))}</Text>
+                <Text style={s.sumLabel}>{(t.pdfSickPayRate || 'Sick Pay ({rate}/hr)').replace('{rate}', fmtMoney(summary.sick_rate ?? summary.rate))}</Text>
                 <Text style={s.sumVal}>{fmtMoney(summary.sick_cost)}</Text>
               </View>
             )}
             {summary.vacation_hours > 0 && summary.rate > 0 && (
               <View style={s.sumRow}>
-                <Text style={s.sumLabel}>{(t.pdfVacationPayRate || 'Vacation Pay ({rate}/hr)').replace('{rate}', fmtMoney(summary.rate))}</Text>
+                <Text style={s.sumLabel}>{(t.pdfVacationPayRate || 'Vacation Pay ({rate}/hr)').replace('{rate}', fmtMoney(summary.vacation_rate ?? summary.rate))}</Text>
                 <Text style={s.sumVal}>{fmtMoney(summary.vacation_cost)}</Text>
               </View>
             )}

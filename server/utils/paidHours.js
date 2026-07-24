@@ -123,6 +123,18 @@ const LABOR_ENTRY_COLUMNS = `
   u.role_id AS role_id`;
 
 /**
+ * Paid-leave pay multipliers from settings: sick and vacation each as a fraction
+ * of the worker's base rate (100% → 1). Undefined/garbage → 1, so the cost is
+ * unchanged for companies that never touch these. Apply as
+ * `leaveHours * rate * mult`. Negative percents are clamped to 0 (never a credit).
+ */
+function leaveRateMultipliers(settings) {
+  const s = settings || {};
+  const frac = (v) => { const n = parseFloat(v); return Number.isFinite(n) && n >= 0 ? n / 100 : 1; };
+  return { sick: frac(s.sick_pay_pct), vacation: frac(s.vacation_pay_pct) };
+}
+
+/**
  * Paid { sick, vacation } hours for ONE worker over [from,to] — approved
  * sick/vacation time-off valued schedule-first (shift hours → weekday leave rule
  * → Regular Shift default), with partial requests paid their logged `hours`.
@@ -188,5 +200,6 @@ module.exports = {
   laborCostCents,
   computeWorkerLeave,
   computeCompanyLeave,
+  leaveRateMultipliers,
   LABOR_ENTRY_COLUMNS,
 };

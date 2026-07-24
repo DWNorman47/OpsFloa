@@ -23,6 +23,33 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-24 — Leave pay rate (separate sick/vacation %) + hide presets once rules exist
+
+**Two follow-ups.**
+
+**1. Configurable leave pay rate.** You picked **separate sick % and vacation %**
+of base. Two new Company Standards settings — `sick_pay_pct` / `vacation_pay_pct`,
+**default 100** (so every existing company is unchanged). Sick/vacation *hours*
+are unaffected; only the *pay* scales: `hours × rate × pct/100`. Applied through
+one shared helper (`paidHours.leaveRateMultipliers`) at all three cost surfaces
+(worker invoice, payroll/overtime-report, worker-hours CSV). Pay-stubs endpoint
+is hours-only (no dollar lines) so it needed no change. The invoice PDF's "Sick
+Pay (…/hr)" label now shows the **effective** rate (base × pct), carried as
+`sick_rate`/`vacation_rate` in the summary, so an 80% line doesn't misreport the
+per-hour figure. Negative percents clamp to 0 (never a credit).
+
+**2. Presets hidden once rules exist.** The Honduras/US/California/Off preset
+buttons **overwrite** the Standard Rules — a stray tap would wipe a configured
+policy. They now show only when the rule list is empty (`form.rules` and
+`form.roleRules` both empty); build any rule and they disappear, reappear if you
+clear back to none. Role sections were already preserved across a preset apply;
+this just removes the foot-gun entirely once there's something to protect.
+
+**Verify:** 1049 server tests (new `leaveRateMultipliers` unit cases) + i18n
+parity + client build green; sitework clean.
+
+---
+
 ## 2026-07-24 — Time Off Value: schedule-driven, partial days, sick + vacation
 
 **Done.** Reworked the sick-pay feature (below) into a general **paid-leave**
