@@ -82,6 +82,8 @@ export function WorkforcePanel() {
     return window.location.hash.startsWith('#wf-') && ALL_TABS.includes(hashSub) ? hashSub : null;
   };
   const [tab, setTab] = useState(() => getHashTab() || 'live');
+  // Team Member Reports: one member's detail panel open at a time.
+  const [selectedReportWorker, setSelectedReportWorker] = useState(null);
 
   const toggleSection = key => setCollapsedSections(s => {
     const next = { ...s, [key]: !s[key] };
@@ -271,7 +273,7 @@ export function WorkforcePanel() {
             </button>
             {!collapsedSections.workers && (workers.length === 0
               ? <p style={{ color: '#666' }}>{`No ${workerLabelPlural.toLowerCase()} yet.`}</p>
-              : workers.map(w => <WorkerMetrics key={w.id} worker={w} currency={settings?.currency ?? 'USD'} companyInfo={companyInfo} overtimeEnabled={settings?.feature_overtime !== false} projectsEnabled={settings?.feature_project_integration !== false} projects={projects} settings={settings} />)
+              : workers.map(w => <WorkerMetrics key={w.id} worker={w} currency={settings?.currency ?? 'USD'} companyInfo={companyInfo} overtimeEnabled={settings?.feature_overtime !== false} projectsEnabled={settings?.feature_project_integration !== false} projects={projects} settings={settings} selected={selectedReportWorker === w.id} onSelect={() => setSelectedReportWorker(id => id === w.id ? null : w.id)} />)
             )}
             {settings?.feature_project_integration !== false && <>
               <button style={styles.sectionToggle} onClick={() => toggleSection('projects')}>

@@ -23,6 +23,51 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-24 — Team Member Reports redesign: interactive, explain-why lines
+
+**Done** (3 commits). Rebuilt Time Clock ▸ Reports ▸ Team Member Reports so a
+number is never a mystery: pick a member, generate a period, and click any line
+to see exactly which rules and settings produced it.
+
+**Shape.** Members are now compact rows (not cards), one detail panel open at a
+time (selection lifted to AdminDashboard). The panel has From/To + preset chips
+(**This week · Last week · Last two weeks · Last month**), the **Add Deductions**
+and **Add Entries** buttons up top, the generated lines in the middle, and
+**preview / CSV / PDF at the bottom**. Weeks are Sun–Sat (matches the app's
+default range).
+
+**The explain trace** (the real work — 3 phases):
+1. *Engine* (`hoursRules.js`): an opt-in trace. `roundEntriesForPay(ctx.explain)`
+   + `applyRules(trace)` record, per entry, only what fired — rounding (from→to +
+   which round rule), clip (boundary + rule ids), add/remove-time (the **actual**
+   signed paid-minute movement on that line, so a +30 rule that nets +5 says +5),
+   auto-break (minutes added). **Invariant, tested:** paid start/end/break are
+   byte-identical with explain on vs off; every other pay caller is untouched.
+2. *Endpoint* (`?explain=1`): appends per-entry overtime + prevailing notes, a
+   `settings_used` block (rate, OT rule/threshold/mult, role, prevailing, Regular
+   Shift, sick/vac %, guarantee), and `leave_detail` (per-day sick/vac valuation:
+   schedule / rule+id / default / partial). All gated on the flag.
+3. *Client*: each entry line expands to plain-English trace; the pay-summary
+   lines (OT, sick, vacation, guarantee, deductions) and an "Inputs used" panel
+   expand too. Rule text reuses the builder's `describeRule`; every item links to
+   where it's set — **Administration ▸ Workspace** for rules/company standards,
+   **Team** for a member's pay settings (open-the-screen, no deep-highlight, per
+   your pick).
+
+**Judgment calls:** the trace shows the paid-minute effect *on the line* (not the
+raw rule credit) so the effect always matches the number; the rule's own
+definition still shows via `describeRule`. Deep-link highlighting was deliberately
+skipped. Links do a normal route nav (no reload thanks to react-router).
+
+**Perf:** you asked — no measurable hit. The trace is computed only for a single
+member on a click (`explain=1`); invoices, payroll, QBO, the worker screen, and
+scheduled reports never request it and run exactly as before.
+
+**Verify:** server 1061 + client 255 (+ i18n parity) + builds green; sitework
+clean. New `hoursRulesExplain` suite pins the on==off invariant.
+
+---
+
 ## 2026-07-24 — Leave pay rate (separate sick/vacation %) + hide presets once rules exist
 
 **Two follow-ups.**
