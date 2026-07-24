@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { usePlan } from '../hooks/usePlan';
 import { useT } from '../hooks/useT';
 import CompanyChat from '../components/CompanyChat';
+import MemberReportRow from '../components/MemberReportRow';
 import LiveKPIs from '../components/LiveKPIs';
 import { SkeletonStatRow, SkeletonList } from '../components/Skeleton';
 import BroadcastMessage from '../components/BroadcastMessage';
@@ -82,8 +83,9 @@ export function WorkforcePanel() {
     return window.location.hash.startsWith('#wf-') && ALL_TABS.includes(hashSub) ? hashSub : null;
   };
   const [tab, setTab] = useState(() => getHashTab() || 'live');
-  // Team Member Reports: one member's detail panel open at a time.
+  // Team Member Reports: one member's detail panel below the table at a time.
   const [selectedReportWorker, setSelectedReportWorker] = useState(null);
+  const [reportPage, setReportPage] = useState(0);
 
   const toggleSection = key => setCollapsedSections(s => {
     const next = { ...s, [key]: !s[key] };
@@ -273,7 +275,36 @@ export function WorkforcePanel() {
             </button>
             {!collapsedSections.workers && (workers.length === 0
               ? <p style={{ color: '#666' }}>{`No ${workerLabelPlural.toLowerCase()} yet.`}</p>
-              : workers.map(w => <WorkerMetrics key={w.id} worker={w} currency={settings?.currency ?? 'USD'} companyInfo={companyInfo} overtimeEnabled={settings?.feature_overtime !== false} projectsEnabled={settings?.feature_project_integration !== false} projects={projects} settings={settings} selected={selectedReportWorker === w.id} onSelect={() => setSelectedReportWorker(id => id === w.id ? null : w.id)} />)
+              : (() => {
+                  const PAGE = 8;
+                  const pages = Math.max(1, Math.ceil(workers.length / PAGE));
+                  const page = Math.min(reportPage, pages - 1);
+                  const slice = workers.slice(page * PAGE, page * PAGE + PAGE);
+                  const sel = workers.find(w => w.id === selectedReportWorker) || null;
+                  return (
+                    <>
+                      <div style={styles.memberTable}>
+                        {slice.map(w => (
+                          <MemberReportRow key={w.id} worker={w} overtimeEnabled={settings?.feature_overtime !== false}
+                            selected={selectedReportWorker === w.id}
+                            onSelect={() => setSelectedReportWorker(id => id === w.id ? null : w.id)} />
+                        ))}
+                      </div>
+                      {pages > 1 && (
+                        <div style={styles.pager}>
+                          <button style={{ ...styles.pagerBtn, ...(page === 0 ? styles.pagerBtnOff : {}) }} disabled={page === 0} onClick={() => setReportPage(p => Math.max(0, p - 1))}>‹ {t.paginationPrev}</button>
+                          <span style={styles.pagerInfo}>{t.paginationPageOf.replace('{n}', page + 1).replace('{total}', pages)}</span>
+                          <button style={{ ...styles.pagerBtn, ...(page >= pages - 1 ? styles.pagerBtnOff : {}) }} disabled={page >= pages - 1} onClick={() => setReportPage(p => Math.min(pages - 1, p + 1))}>{t.paginationNext} ›</button>
+                        </div>
+                      )}
+                      {sel && (
+                        <Suspense fallback={<TabLoader />}>
+                          <WorkerMetrics key={sel.id} worker={sel} currency={settings?.currency ?? 'USD'} companyInfo={companyInfo} overtimeEnabled={settings?.feature_overtime !== false} projectsEnabled={settings?.feature_project_integration !== false} projects={projects} settings={settings} />
+                        </Suspense>
+                      )}
+                    </>
+                  );
+                })()
             )}
             {settings?.feature_project_integration !== false && <>
               <button style={styles.sectionToggle} onClick={() => toggleSection('projects')}>
@@ -335,6 +366,11 @@ const styles = {
   subheading: { fontSize: 18, fontWeight: 600, margin: '32px 0 16px' },
   sectionToggle: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: '12px 16px', fontSize: 16, fontWeight: 600, color: '#111827', cursor: 'pointer', marginTop: 24, marginBottom: 4, textAlign: 'left' },
   chevron: { fontSize: 11, color: '#6b7280' },
+  memberTable: { background: '#fff', borderRadius: 10, boxShadow: '0 1px 6px rgba(0,0,0,0.07)', overflow: 'hidden', marginTop: 4 },
+  pager: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, marginTop: 12 },
+  pagerBtn: { background: '#fff', border: '1px solid #d1d5db', borderRadius: 7, padding: '6px 14px', fontSize: 13, fontWeight: 600, color: '#374151', cursor: 'pointer' },
+  pagerBtnOff: { opacity: 0.45, cursor: 'not-allowed' },
+  pagerInfo: { fontSize: 13, color: '#6b7280', fontWeight: 600, fontVariantNumeric: 'tabular-nums' },
   trialBanner: { padding: '10px 24px', border: '1px solid', fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 10 },
   trialUpgradeBtn: { background: 'none', border: 'none', fontWeight: 700, textDecoration: 'underline', cursor: 'pointer', fontSize: 14, color: 'inherit', padding: 0 },
   liveLayout: { display: 'grid', gridTemplateColumns: '1fr 340px', gap: 20, alignItems: 'start' },

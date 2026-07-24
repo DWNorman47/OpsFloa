@@ -34,14 +34,13 @@ function presetRange(kind) {
 
 function defaultDates() { return presetRange('lastweek'); }
 
-export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = {}, overtimeEnabled = true, projectsEnabled = true, projects = [], settings = null, selected, onSelect }) {
+// The report AREA: the detail panel for ONE selected member, rendered once below
+// the member table (not per row). Mounted with key={worker.id} so switching
+// members resets its state cleanly.
+export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = {}, overtimeEnabled = true, projectsEnabled = true, projects = [], settings = null }) {
   const t = useT();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const isControlled = typeof onSelect === 'function';
-  const [internalOpen, setInternalOpen] = useState(false);
-  const open = isControlled ? !!selected : internalOpen;
-  const toggleOpen = () => (isControlled ? onSelect() : setInternalOpen(o => !o));
 
   const [from, setFrom] = useState(defaultDates().from);
   const [to, setTo] = useState(defaultDates().to);
@@ -227,17 +226,12 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
   const dur = e => ((new Date(`1970-01-01T${e.end_time}`) - new Date(`1970-01-01T${e.start_time}`)) / 3600000);
 
   return (
-    <div style={{ ...styles.row, ...(open ? styles.rowOpen : {}) }}>
-      <div style={styles.rowHead} onClick={toggleOpen} role="button" tabIndex={0} onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), toggleOpen())}>
-        <span style={styles.chev}>{open ? '▾' : '▸'}</span>
+    <div style={styles.panelCard}>
+      <div style={styles.panelHead}>
         <span style={styles.name}>{worker.full_name}</span>
         <span style={styles.username}>@{worker.username}</span>
-        <span style={styles.rowSpacer} />
-        <span style={styles.rowTotals}>{fmtHours(parseFloat(worker.total_hours) || 0)} · {worker.total_entries || 0} {t.entriesMetric}</span>
       </div>
-
-      {open && (
-        <div style={styles.panel}>
+      <div style={styles.panel}>
           <div style={styles.panelActions}>
             <button style={styles.addEntryBtn} onClick={toggleDeductions}>{showDeductions ? `✕ ${t.cancel}` : `− ${t.dedWorkerBtn}`}</button>
             <button style={styles.addEntryBtn} onClick={() => { setShowAddEntry(v => !v); setAddError(''); setAddSuccess(false); }}>{showAddEntry ? `✕ ${t.cancel}` : `+ ${t.addEntry}`}</button>
@@ -391,8 +385,7 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
               {showPreview && previewUrl && <iframe src={previewUrl} style={styles.pdfViewer} title="Bill Preview" />}
             </div>
           )}
-        </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -450,15 +443,12 @@ function InputsUsed({ su, t, currency, goto }) {
 }
 
 const styles = {
-  row: { background: '#fff', borderRadius: 10, marginBottom: 8, boxShadow: '0 1px 4px rgba(0,0,0,0.06)', overflow: 'hidden' },
-  rowOpen: { boxShadow: '0 2px 14px rgba(0,0,0,0.10)' },
-  rowHead: { padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' },
-  chev: { color: '#9ca3af', fontSize: 12, width: 12 },
-  name: { fontWeight: 700, fontSize: 15 },
+  panelCard: { background: '#fff', borderRadius: 12, boxShadow: '0 2px 14px rgba(0,0,0,0.10)', overflow: 'hidden', marginTop: 16 },
+  panelHead: { padding: '14px 18px', display: 'flex', alignItems: 'baseline', gap: 10, borderBottom: '1px solid #f0f0f0' },
+  name: { fontWeight: 700, fontSize: 16 },
   username: { color: '#6b7280', fontSize: 12.5 },
   rowSpacer: { flex: 1 },
-  rowTotals: { color: '#6b7280', fontSize: 13, fontWeight: 600 },
-  panel: { padding: '14px 16px', borderTop: '1px solid #f0f0f0', background: '#fafafa' },
+  panel: { padding: '14px 18px', background: '#fafafa' },
   panelActions: { display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 },
   addEntryBtn: { padding: '5px 14px', background: '#f0fdf4', color: '#15803d', border: '1px solid #bbf7d0', borderRadius: 7, fontWeight: 600, fontSize: 13, cursor: 'pointer' },
   addForm: { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 9, padding: '14px 16px', marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 10 },
