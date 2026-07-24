@@ -12,18 +12,26 @@ const VALID_TYPES = ['vacation', 'sick', 'personal', 'other'];
 
 // POST /time-off — worker submits a request
 router.post('/', requireAuth, async (req, res) => {
-  const { type, start_date, end_date, note } = req.body;
+  const { type, start_date, end_date, note, hours } = req.body;
   if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date are required' });
   if (end_date < start_date) return res.status(400).json({ error: 'end_date must be on or after start_date' });
   if (type && !VALID_TYPES.includes(type)) return res.status(400).json({ error: 'Invalid type' });
   const noteTrimmed = note?.trim() || null;
   if (noteTrimmed && noteTrimmed.length > 500) return res.status(400).json({ error: 'Note must be 500 characters or fewer' });
+  // Optional partial hours: pay exactly this many hours instead of a full day.
+  // Only sensible for a single-day request; NULL means a full (schedule-valued) day.
+  let hoursVal = null;
+  if (hours !== undefined && hours !== null && hours !== '') {
+    hoursVal = parseFloat(hours);
+    if (!Number.isFinite(hoursVal) || hoursVal <= 0 || hoursVal > 24) return res.status(400).json({ error: 'Hours must be between 0 and 24' });
+    if (start_date !== end_date) return res.status(400).json({ error: 'Partial hours apply to a single-day request only' });
+  }
   const companyId = req.user.company_id;
   try {
     const result = await pool.query(
-      `INSERT INTO time_off_requests (company_id, user_id, type, start_date, end_date, note)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [companyId, req.user.id, type || 'vacation', start_date, end_date, noteTrimmed]
+      `INSERT INTO time_off_requests (company_id, user_id, type, start_date, end_date, note, hours)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [companyId, req.user.id, type || 'vacation', start_date, end_date, noteTrimmed, hoursVal]
     );
     logAudit(companyId, req.user.id, req.user.full_name, 'timeoff.submitted', 'time_off_request', result.rows[0].id, null,
       { type: type || 'vacation', start_date, end_date });

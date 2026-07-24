@@ -307,7 +307,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
   }
 });
 
-const { hoursWorked, computeOT, sickHoursForPeriod } = require('../utils/payCalculations');
+const { hoursWorked, computeOT, computeLeaveHours, shiftHoursByDate } = require('../utils/payCalculations');
 const { computePaid } = require('../utils/paidHours');
 const { sickRulesFromSettings } = require('../utils/hoursRules');
 const { weekRange } = require('../utils/weekBounds');
@@ -322,11 +322,12 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
       pool.query('SELECT key, value FROM settings WHERE company_id = $1', [companyId]),
       pool.query('SELECT overtime_rule, hourly_rate, rate_type, guaranteed_weekly_hours, role_id FROM users WHERE id = $1', [userId]),
     ]);
-    const s = { overtime_threshold: 8, default_hourly_rate: 0 };
+    const s = { overtime_threshold: 8, default_hourly_rate: 0, regular_shift_hours: 8 };
     settingsRows.rows.forEach(r => {
       if (r.key === 'overtime_threshold') s.overtime_threshold = parseFloat(r.value);
       if (r.key === 'default_hourly_rate') s.default_hourly_rate = parseFloat(r.value);
       if (r.key === 'hours_rules') s.hours_rules = r.value;
+      if (r.key === 'regular_shift_hours') s.regular_shift_hours = parseFloat(r.value);
     });
     const workerData = workerRow.rows[0] || {};
     const workerOTRule = workerData.overtime_rule || 'daily';
@@ -345,26 +346,30 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
         [userId, minDate, maxDate]
       );
 
-      // Paid sick days: value approved 'sick' time-off in the span by the
-      // sick_value rules; per-period totals computed inside the loop.
-      const sickRules = sickRulesFromSettings(s, workerData.role_id);
-      let sickRows = [];
-      if (sickRules.length) {
-        const sr = await pool.query(
-          `SELECT start_date, end_date FROM time_off_requests
-           WHERE user_id = $1 AND company_id = $2 AND type = 'sick' AND status = 'approved'
+      // Paid sick + vacation: approved time-off valued schedule-first. Fetch the
+      // worker's requests + shifts for the span once; value per period below.
+      const leaveRules = sickRulesFromSettings(s, workerData.role_id);
+      const [leaveReqs, leaveShifts] = await Promise.all([
+        pool.query(
+          `SELECT type, hours, start_date, end_date FROM time_off_requests
+           WHERE user_id = $1 AND company_id = $2 AND type IN ('sick','vacation') AND status = 'approved'
              AND start_date <= $4::date AND end_date >= $3::date`,
           [userId, companyId, minDate, maxDate]
-        );
-        sickRows = sr.rows;
-      }
+        ),
+        pool.query(
+          `SELECT shift_date, start_time, end_time FROM shifts
+           WHERE user_id = $1 AND company_id = $2 AND shift_date >= $3::date AND shift_date <= $4::date`,
+          [userId, companyId, minDate, maxDate]
+        ),
+      ]);
+      const shiftsByDate = shiftHoursByDate(leaveShifts.rows);
 
       for (const period of periods.rows) {
         const ps = period.period_start.toString().substring(0, 10);
         const pe = period.period_end.toString().substring(0, 10);
         const entries = allEntries.rows.filter(e => e.work_date_str >= ps && e.work_date_str <= pe);
-        const sickHours = sickHoursForPeriod(sickRows, sickRules, ps, pe);
-        if (entries.length === 0 && sickHours === 0) continue; // sick-only periods still show a stub
+        const { sick: sickHours, vacation: vacationHours } = computeLeaveHours(leaveReqs.rows, shiftsByDate, leaveRules, s.regular_shift_hours, ps, pe);
+        if (entries.length === 0 && sickHours === 0 && vacationHours === 0) continue; // leave-only periods still show a stub
 
         // Apply the company's hours rules to the raw punches before computing
         // hours; paid entries carry raw_* fields for display. Through the
@@ -407,6 +412,7 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
             guarantee_min_hours: guaranteeMinHours,
             guaranteed_weekly_hours: guaranteedWeeklyHours,
             sick_hours: +sickHours.toFixed(2),
+            vacation_hours: +vacationHours.toFixed(2),
           },
         });
       }

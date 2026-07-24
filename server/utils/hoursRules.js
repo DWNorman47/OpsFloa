@@ -439,12 +439,14 @@ function parseRule(raw, index) {
     }
 
     case 'sick_value': {
-      // How many paid hours an APPROVED sick day is worth on the days `when`
-      // selects (e.g. Mon+Thu = 9h, Fri = 8h). Sourced from approved 'sick'
-      // time-off requests and paid as its own category — never worked hours.
+      // "Time Off Value": how many paid hours an APPROVED full time-off day is
+      // worth on the days `when` selects (e.g. Mon+Thu = 9h, Fri = 8h). `applies`
+      // picks which leave it values — sick, vacation, or both. Sourced from
+      // approved time-off requests and paid as its own category — never worked hours.
       const hours = Number(raw.hours);
       if (!Number.isFinite(hours) || hours <= 0) return null;
-      return { ...base, hours };
+      const applies = ['sick', 'vacation', 'both'].includes(raw.applies) ? raw.applies : 'both';
+      return { ...base, hours, applies };
     }
 
     case 'seventh_day': {
@@ -637,16 +639,17 @@ function effectiveRulesForRole(policy, roleId) {
   return rr.addToStandard ? std.concat(rr.rules) : rr.rules;
 }
 
-// The sick-day value rules for a role (effective list filtered to sick_value).
-// Used to price approved 'sick' time-off into its own paid category. Empty when
-// the policy is off or has no sick_value rules → no sick pay, behaviour unchanged.
+// The Time Off Value rules for a role (effective list filtered to sick_value —
+// the internal type id; each rule's `applies` picks sick/vacation/both). Used to
+// price approved time-off into its own paid category. Empty when the policy is
+// off or has no such rules → no leave pay, behaviour unchanged.
 function sickRulesFromSettings(settings, roleId = null) {
   const p = parsePolicy(settings && settings.hours_rules);
   if (!p.enabled) return [];
   return effectiveRulesForRole(p, roleId).filter(r => r.type === 'sick_value');
 }
 
-// Memoized per-role sick_value rules — parse the policy once, cache per role.
+// Memoized per-role Time Off Value rules — parse the policy once, cache per role.
 // For loops over many workers (payroll/exports) so the policy isn't re-parsed each.
 function sickRulesByRoleFactory(settings) {
   const p = parsePolicy(settings && settings.hours_rules);

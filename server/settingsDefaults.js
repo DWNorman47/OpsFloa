@@ -5,6 +5,9 @@ const STRING_KEYS = ['overtime_rule', 'currency', 'company_timezone', 'invoice_s
 const SETTINGS_DEFAULTS = {
   prevailing_wage_rate: 45, default_hourly_rate: 30, overtime_multiplier: 1.5,
   overtime_rule: 'daily', overtime_threshold: 8,
+  // Company Standards → Regular Shift: the fallback hours a full sick/vacation day
+  // pays when the worker has no shift scheduled and no weekday leave-value rule.
+  regular_shift_hours: 8,
   // feature_chat and feature_broadcast start OFF — both are optional
   // engagement features most teams don't enable on day one. Migration
   // 0095 backfilled '1' for existing companies so the flip is a no-op

@@ -1,7 +1,7 @@
 const pool = require('../db');
 const { ADMIN_SETTINGS_DEFAULTS, applySettingsRows } = require('../settingsDefaults');
-const { roundEntriesFromSettings, otConfigFromSettings } = require('./hoursRules');
-const { computeOT, otBandsCost, nightPremiumCost } = require('./payCalculations');
+const { roundEntriesFromSettings, otConfigFromSettings, sickRulesFromSettings, sickRulesByRoleFactory } = require('./hoursRules');
+const { computeOT, otBandsCost, nightPremiumCost, shiftHoursByDate, computeLeaveHours } = require('./payCalculations');
 
 /**
  * The ONE way to turn raw punches into paid hours and money.
@@ -122,10 +122,71 @@ const LABOR_ENTRY_COLUMNS = `
   COALESCE(u.overtime_rule, 'daily') AS ot_rule,
   u.role_id AS role_id`;
 
+/**
+ * Paid { sick, vacation } hours for ONE worker over [from,to] — approved
+ * sick/vacation time-off valued schedule-first (shift hours → weekday leave rule
+ * → Regular Shift default), with partial requests paid their logged `hours`.
+ * The single-worker path (worker invoice, a worker's own pay stubs).
+ */
+async function computeWorkerLeave({ companyId, userId, roleId, settings, from, to }) {
+  if (!from || !to) return { sick: 0, vacation: 0 };
+  const leaveRules = sickRulesFromSettings(settings, roleId);
+  const [reqs, shifts] = await Promise.all([
+    pool.query(
+      `SELECT type, hours, start_date, end_date FROM time_off_requests
+       WHERE user_id = $1 AND company_id = $2 AND type IN ('sick','vacation') AND status = 'approved'
+         AND start_date <= $4::date AND end_date >= $3::date`,
+      [userId, companyId, from, to]
+    ),
+    pool.query(
+      `SELECT shift_date, start_time, end_time FROM shifts
+       WHERE user_id = $1 AND company_id = $2 AND shift_date >= $3::date AND shift_date <= $4::date`,
+      [userId, companyId, from, to]
+    ),
+  ]);
+  return computeLeaveHours(reqs.rows, shiftHoursByDate(shifts.rows), leaveRules, settings.regular_shift_hours, from, to);
+}
+
+/**
+ * Paid { sick, vacation } hours for a whole company's workers over [from,to] in
+ * one pair of queries (payroll data + exports). Returns Map(userId → {sick,
+ * vacation}); leave rules are resolved per worker's role.
+ */
+async function computeCompanyLeave({ companyId, workers, settings, from, to }) {
+  const byUser = new Map();
+  if (!from || !to) return byUser;
+  const leaveByRole = sickRulesByRoleFactory(settings);
+  const [reqs, shifts] = await Promise.all([
+    pool.query(
+      `SELECT user_id, type, hours, start_date, end_date FROM time_off_requests
+       WHERE company_id = $1 AND type IN ('sick','vacation') AND status = 'approved'
+         AND start_date <= $3::date AND end_date >= $2::date`,
+      [companyId, from, to]
+    ),
+    pool.query(
+      `SELECT user_id, shift_date, start_time, end_time FROM shifts
+       WHERE company_id = $1 AND shift_date >= $2::date AND shift_date <= $3::date`,
+      [companyId, from, to]
+    ),
+  ]);
+  const reqByUser = new Map(), shiftByUser = new Map();
+  for (const r of reqs.rows) { if (!reqByUser.has(r.user_id)) reqByUser.set(r.user_id, []); reqByUser.get(r.user_id).push(r); }
+  for (const s of shifts.rows) { if (!shiftByUser.has(s.user_id)) shiftByUser.set(s.user_id, []); shiftByUser.get(s.user_id).push(s); }
+  for (const w of workers || []) {
+    byUser.set(w.id, computeLeaveHours(
+      reqByUser.get(w.id) || [], shiftHoursByDate(shiftByUser.get(w.id) || []),
+      leaveByRole(w.role_id), settings.regular_shift_hours, from, to
+    ));
+  }
+  return byUser;
+}
+
 module.exports = {
   loadSettings,
   payNumbers,
   computePaid,
   laborCostCents,
+  computeWorkerLeave,
+  computeCompanyLeave,
   LABOR_ENTRY_COLUMNS,
 };

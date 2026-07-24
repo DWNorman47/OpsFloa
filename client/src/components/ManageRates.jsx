@@ -78,6 +78,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
     overtime_multiplier: String(settings?.overtime_multiplier ?? 1.5),
     overtime_rule: settings?.overtime_rule ?? 'daily',
     overtime_threshold: String(settings?.overtime_threshold ?? 8),
+    regular_shift_hours: String(settings?.regular_shift_hours ?? 8),
     week_start: String(settings?.week_start ?? 1),
     notification_inactive_days: String(settings?.notification_inactive_days ?? 3),
     notification_use_work_hours: settings?.notification_use_work_hours ?? true,
@@ -169,6 +170,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
       overtime_multiplier: String(settings.overtime_multiplier ?? 1.5),
       overtime_rule: settings.overtime_rule ?? 'daily',
       overtime_threshold: String(settings.overtime_threshold ?? 8),
+      regular_shift_hours: String(settings.regular_shift_hours ?? 8),
       week_start: String(settings.week_start ?? 1),
       notification_inactive_days: String(settings.notification_inactive_days ?? 3),
       notification_use_work_hours: settings.notification_use_work_hours ?? true,
@@ -239,6 +241,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
         overtime_multiplier: parseFloat(form.overtime_multiplier),
         overtime_rule: form.overtime_rule,
         overtime_threshold: parseFloat(form.overtime_threshold),
+        regular_shift_hours: parseFloat(form.regular_shift_hours),
         week_start: parseInt(form.week_start, 10),
         notification_inactive_days: parseFloat(form.notification_inactive_days),
         notification_use_work_hours: form.notification_use_work_hours,
@@ -699,6 +702,17 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
                 <option value="5">{t.dayFriday}</option>
                 <option value="6">{t.daySaturday}</option>
               </select>
+            </div>
+          </div>
+          <div style={styles.row}>
+            <div>
+              <div style={styles.label}>{t.mrRegularShift}</div>
+              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrRegularShiftDesc}</div>
+            </div>
+            <div style={styles.inputGroup}>
+              <input style={{ ...styles.input, width: 90 }} type="number" min="1" max="24" step="0.5"
+                value={form.regular_shift_hours} onChange={e => set('regular_shift_hours', e.target.value)} />
+              <span style={{ fontSize: 13, color: '#6b7280', marginLeft: 6 }}>{t.hoursShort}</span>
             </div>
           </div>
           <div style={styles.row}>

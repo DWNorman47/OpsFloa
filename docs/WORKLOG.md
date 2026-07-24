@@ -23,6 +23,56 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-24 — Time Off Value: schedule-driven, partial days, sick + vacation
+
+**Done.** Reworked the sick-pay feature (below) into a general **paid-leave**
+engine covering **sick AND vacation**, valued **schedule-first**, with **partial
+days**. Sick and vacation each show as **their own line** (hours + pay) on the
+invoice PDF. Supersedes the "Sick Day Value" entry below — same `sick_value` rule
+type id (kept, to avoid churning saved policies), now surfaced as **"Time Off
+Value"**.
+
+**How a full leave day is valued now (precedence):** the worker's **scheduled
+shift hours** that day → the **Time Off Value rule** for that weekday → the
+company **Regular Shift** default (new setting, defaults 8). This is the fix
+David asked for: *"scheduled 4 hours and calls out sick → they only get four."*
+The schedule wins over the rule.
+
+**Partial days:** new nullable **`hours`** column on `time_off_requests`
+(migration `0148`; NULL = full day, N = pay exactly N). Worker enters it on a
+single-day sick/vacation request; admin card + worker card show `2 h` instead of
+the day count.
+
+**Rule now carries `applies`** (`sick` | `vacation` | `both`, default both) — a
+dropdown on the rule. So "Mon = 9h sick, but vacation = 8h" is expressible. The
+engine filters the weekday fallback by the request's leave type.
+
+**Centralized valuation** in `paidHours.computeWorkerLeave` (single worker) /
+`computeCompanyLeave` (whole company, 2 queries) → both call
+`payCalculations.computeLeaveHours(requests, shiftsByDate, rules, regularShift,
+from, to)` returning `{ sick, vacation }`. Replaced the old
+`sickHoursForPeriod`/`loadSickByUser` helpers everywhere. All **4 pay surfaces**
+now carry sick **and** vacation (worker invoice, pay-stubs, payroll data,
+worker-hours CSV — CSV gained Vacation Hrs / Vacation Pay columns).
+
+**Judgment calls (overrule me):**
+- Kept the internal rule type id `sick_value` rather than renaming to
+  `time_off_value` — a rename would need a policy migration for any saved rule
+  and touches the contract test; the label is decoupled and reads "Time Off
+  Value" everywhere. If you'd rather the id match, say so.
+- **Fixed a latent edit bug** while in there: editing a saved `min_daily` or
+  `sick_value` rule showed the *default* hours, not the saved value (the engine
+  stores `hours`, the input binds `minHours`/`sickHours`). Now mapped back on
+  edit. Pre-existing since those rules landed; unrelated to leave but one line.
+- Leave still pays at **base rate**, its own category, never feeds OT or project
+  labor. `total_hours` stays worked-only (sick/vacation/guarantee shown as
+  separate lines that sum into the displayed total).
+
+**Verify:** 1048 server tests + i18n parity + client build green; sitework clean.
+New `applies`/partial/schedule-precedence cases in the `sickValue` suite.
+
+---
+
 ## 2026-07-24 — Pay Rules: Sick Day Value (approved sick time-off, paid by weekday)
 
 **Done.** New **`sick_value`** rule type: an approved sick day is now paid a

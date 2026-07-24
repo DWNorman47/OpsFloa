@@ -61,7 +61,8 @@ function blankRule() {
     minHours: '4',
     minRequiresClockin: true,   // min_daily: floor only on days worked (default)
     minActiveWindow: 'week',    // when clock-in not required: worked-that-week vs. -that-period gate
-    sickHours: '8',             // sick_value: paid hours an approved sick day is worth
+    sickHours: '8',             // sick_value (Time Off Value): paid hours a full leave day is worth
+    leaveApplies: 'both',       // sick_value: which leave it values — sick | vacation | both
     firstHours: '8',
     firstMult: '1.5',
     afterMult: '2',
@@ -167,7 +168,10 @@ export function describeRule(r, t) {
       const nc = r.requiresClockin === false ? ` ${ncMap[r.activeWindow] || t.hrSumMinNoClockinWeek}` : '';
       return `${when} — ${t.hrSumMinDaily.replace('{n}', r.hours)}${nc}`;
     }
-    case 'sick_value': return `${when} — ${t.hrSumSickValue.replace('{n}', r.hours)}`;
+    case 'sick_value': {
+      const applies = { sick: t.hrLeaveSick, vacation: t.hrLeaveVacation }[r.applies] || t.hrLeaveBoth;
+      return `${when} — ${t.hrSumSickValue.replace('{n}', r.hours).replace('{leave}', applies)}`;
+    }
     case 'seventh_day': return `${when} — ${t.hrSumSeventh.replace('{a}', r.firstMult).replace('{b}', r.afterMult)}`;
     case 'night_diff': return `${when} — ${t.hrSumNight.replace('{pct}', r.pct).replace('{from}', r.fromHour).replace('{to}', r.toHour)}`;
     case 'window_mult': {
@@ -208,11 +212,25 @@ export default function HoursRuleBuilder({ rules, onChange, title, help }) {
   // Load an existing rule into the draft. A stored rule only carries the fields
   // its type uses, so merge it onto a blank draft to fill the rest (keeping its
   // id so commit replaces it, not appends a copy).
+  // A few rule types store a value under a name that differs from the draft input
+  // it's edited through (the engine wants `hours`, the input is `minHours`/
+  // `sickHours`). Map those back so editing a saved rule shows its real values.
+  const draftFieldsFromRule = (rule) => {
+    switch (rule.type) {
+      case 'min_daily': return rule.hours != null ? { minHours: String(rule.hours) } : {};
+      case 'sick_value': return {
+        ...(rule.hours != null ? { sickHours: String(rule.hours) } : {}),
+        leaveApplies: rule.applies || 'both',
+      };
+      default: return {};
+    }
+  };
   const edit = (rule) => setDraft({
     ...blankRule(),
     ...rule,
     when: { ...(rule.when || { kind: 'every_day' }) },
     trigger: { ...blankRule().trigger, ...(rule.trigger || {}) },
+    ...draftFieldsFromRule(rule),
   });
   const editing = !!draft && rules.some(r => r.id === draft.id);
 
@@ -590,6 +608,13 @@ export default function HoursRuleBuilder({ rules, onChange, title, help }) {
 
           {draft.type === 'sick_value' && (
             <>
+              <Field label={t.hrLeaveApplies}>
+                <select style={s.input} value={draft.leaveApplies} onChange={e => setD('leaveApplies', e.target.value)}>
+                  <option value="both">{t.hrLeaveBoth}</option>
+                  <option value="sick">{t.hrLeaveSick}</option>
+                  <option value="vacation">{t.hrLeaveVacation}</option>
+                </select>
+              </Field>
               <Field label={t.hrSickValue}>
                 <input style={s.input} type="number" min="0.5" step="0.5" value={draft.sickHours} onChange={e => setD('sickHours', e.target.value)} />
               </Field>
@@ -721,6 +746,7 @@ function coerceDraft(d) {
     }
     case 'sick_value':
       out.hours = parseFloat(d.sickHours) || 0;
+      out.applies = ['sick', 'vacation', 'both'].includes(d.leaveApplies) ? d.leaveApplies : 'both';
       break;
     case 'seventh_day':
       out.firstHours = parseFloat(d.firstHours) || 0;

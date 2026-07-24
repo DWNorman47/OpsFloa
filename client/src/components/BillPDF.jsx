@@ -235,9 +235,21 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
                 <Text style={[s.sumVal, { color: '#2563eb' }]}>+{fmtH(summary.guarantee_shortfall_hours)}</Text>
               </View>
             )}
+            {summary.sick_hours > 0 && (
+              <View style={s.sumRow}>
+                <Text style={s.sumLabel}>{t.pdfSickHours || 'Sick Hours'}</Text>
+                <Text style={s.sumVal}>{fmtH(summary.sick_hours)}</Text>
+              </View>
+            )}
+            {summary.vacation_hours > 0 && (
+              <View style={s.sumRow}>
+                <Text style={s.sumLabel}>{t.pdfVacationHours || 'Vacation Hours'}</Text>
+                <Text style={s.sumVal}>{fmtH(summary.vacation_hours)}</Text>
+              </View>
+            )}
             <View style={[s.sumRow, s.sumDivider]}>
               <Text style={[s.sumLabel, s.sumBold]}>{t.totalHours || 'Total Hours'}</Text>
-              <Text style={[s.sumVal, s.sumBold]}>{fmtH((summary.total_hours || 0) + (summary.guarantee_shortfall_hours || 0))}</Text>
+              <Text style={[s.sumVal, s.sumBold]}>{fmtH((summary.total_hours || 0) + (summary.guarantee_shortfall_hours || 0) + (summary.sick_hours || 0) + (summary.vacation_hours || 0))}</Text>
             </View>
             {summary.rate > 0 && summary.regular_hours > 0 && (
               <View style={[s.sumRow, s.sumDivider]}>
@@ -263,6 +275,18 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
                   {(t.pdfMinGuaranteePay || 'Minimum Guarantee ({hrs} @ {rate}/hr)').replace('{hrs}', fmtH(summary.guarantee_shortfall_hours)).replace('{rate}', fmtMoney(summary.rate))}
                 </Text>
                 <Text style={[s.sumVal, { color: '#2563eb' }]}>{fmtMoney(summary.guarantee_cost || 0)}</Text>
+              </View>
+            )}
+            {summary.sick_hours > 0 && summary.rate > 0 && (
+              <View style={s.sumRow}>
+                <Text style={s.sumLabel}>{(t.pdfSickPayRate || 'Sick Pay ({rate}/hr)').replace('{rate}', fmtMoney(summary.rate))}</Text>
+                <Text style={s.sumVal}>{fmtMoney(summary.sick_cost)}</Text>
+              </View>
+            )}
+            {summary.vacation_hours > 0 && summary.rate > 0 && (
+              <View style={s.sumRow}>
+                <Text style={s.sumLabel}>{(t.pdfVacationPayRate || 'Vacation Pay ({rate}/hr)').replace('{rate}', fmtMoney(summary.rate))}</Text>
+                <Text style={s.sumVal}>{fmtMoney(summary.vacation_cost)}</Text>
               </View>
             )}
             {hasDeductions && (

@@ -55,30 +55,64 @@ function weekDaysOf(dk, weekStart) {
 }
 const isWeekdayKey = (dk) => { const w = weekdayOfDate(dk); return w >= 1 && w <= 5; };
 
+/** Total scheduled hours per YYYY-MM-DD from a worker's shifts (sum of shift
+ *  durations that day; shifts carry no break). */
+function shiftHoursByDate(shifts) {
+  const m = new Map();
+  for (const sh of shifts || []) {
+    if (!sh || sh.shift_date == null) continue;
+    const dk = String(sh.shift_date).substring(0, 10);
+    m.set(dk, (m.get(dk) || 0) + hoursWorked(sh.start_time, sh.end_time));
+  }
+  return m;
+}
+
 /**
- * Total paid sick hours for a set of APPROVED 'sick' time-off requests over a pay
- * period, valued per day by the sick_value rules (e.g. Mon 9h, Fri 8h). A day
- * matching no rule is worth 0 (not configured → unpaid). Requests are date ranges
- * (start_date … end_date), clipped to [from, to] and de-duped so overlapping
- * requests can't double-count a day. No rules / no range → 0.
+ * Paid sick + vacation hours over a pay period, valued SCHEDULE-first. For each
+ * APPROVED sick/vacation request:
+ *   - `hours` set (a partial day) → pay exactly that many hours;
+ *   - otherwise (a full day) each day is worth, in order: the worker's SCHEDULED
+ *     shift hours that day → the weekday leave-value rule → the company Regular
+ *     Shift default. Days are clipped to [from,to] and de-duped per type.
+ * Returns { sick, vacation } totals; no requests / no range → { 0, 0 }.
+ *
+ * @param requests       [{ type:'sick'|'vacation', hours:number|null, start_date, end_date }]
+ * @param shiftsByDate   Map(YYYY-MM-DD → scheduled hours) from shiftHoursByDate
+ * @param leaveRules     the Time Off Value rules; each carries `applies`
+ *                       ('sick' | 'vacation' | 'both') selecting which leave it values
+ * @param regularShiftHours  company Regular Shift default (last-resort hours)
  */
-function sickHoursForPeriod(sickRequests, sickRules, from, to) {
-  if (!Array.isArray(sickRules) || !sickRules.length || !from || !to) return 0;
+function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours, from, to) {
+  const totals = { sick: 0, vacation: 0 };
+  if (!from || !to) return totals;
   const f = String(from).substring(0, 10), t = String(to).substring(0, 10);
-  const days = new Set();
-  for (const req of sickRequests || []) {
-    if (!req || req.start_date == null || req.end_date == null) continue;
-    const s = String(req.start_date).substring(0, 10);
-    const e = String(req.end_date).substring(0, 10);
-    for (const dk of eachDateKey(s < f ? f : s, e > t ? t : e)) days.add(dk); // clip to [from,to]
-  }
-  let total = 0;
-  for (const dk of days) {
+  const rules = Array.isArray(leaveRules) ? leaveRules : [];
+  const def = parseFloat(regularShiftHours) || 0;
+  const seen = { sick: new Set(), vacation: new Set() }; // full-day de-dup, per type
+  const ruleAppliesTo = (r, type) => { const a = r.applies || 'both'; return a === 'both' || a === type; };
+  const dayValue = (dk, type) => {
+    const sched = (shiftsByDate && shiftsByDate.get(dk)) || 0;
+    if (sched > 0) return sched;                          // 1) scheduled shift hours
     let best = 0;
-    for (const r of sickRules) if (ruleMatchesDate(r, dk)) best = Math.max(best, parseFloat(r.hours) || 0);
-    total += best;
+    for (const r of rules) if (ruleAppliesTo(r, type) && ruleMatchesDate(r, dk)) best = Math.max(best, parseFloat(r.hours) || 0);
+    return best > 0 ? best : def;                         // 2) Time Off Value rule → 3) Regular Shift default
+  };
+  for (const req of requests || []) {
+    if (!req) continue;
+    const type = req.type === 'vacation' ? 'vacation' : 'sick';
+    if (req.hours != null && req.hours !== '') {           // partial → pay the logged hours
+      totals[type] += parseFloat(req.hours) || 0;
+      continue;
+    }
+    if (req.start_date == null || req.end_date == null) continue;
+    const s = String(req.start_date).substring(0, 10), e = String(req.end_date).substring(0, 10);
+    for (const dk of eachDateKey(s < f ? f : s, e > t ? t : e)) {
+      if (seen[type].has(dk)) continue;                    // dedup overlapping requests
+      seen[type].add(dk);
+      totals[type] += dayValue(dk, type);
+    }
   }
-  return total;
+  return totals;
 }
 
 /** Minutes since midnight from an "HH:MM[:SS]" string (null-safe). */
@@ -561,4 +595,4 @@ function computeDailyPayCosts(entries, overtimeRule, threshold, dailyRate, overt
   };
 }
 
-module.exports = { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, resolveBands, nightHoursForEntry, nightPremiumCost, windowHoursForEntry, sickHoursForPeriod };
+module.exports = { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, resolveBands, nightHoursForEntry, nightPremiumCost, windowHoursForEntry, shiftHoursByDate, computeLeaveHours };

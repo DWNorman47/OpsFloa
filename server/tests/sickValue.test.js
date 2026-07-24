@@ -1,62 +1,105 @@
 /**
- * sick_value rule + sickHoursForPeriod: an approved 'sick' day is paid the hours
- * its weekday rule gives (e.g. Mon+Thu = 9h, Fri = 8h), as its own category.
- * A day matching no rule is worth 0; overlapping requests don't double-count;
- * days are clipped to the pay period; no rules → 0 (unchanged).
+ * computeLeaveHours: approved sick/vacation time-off → paid { sick, vacation }
+ * hours, valued schedule-first. Precedence for a FULL day: scheduled shift hours
+ * → weekday leave-value rule → company Regular Shift default. Partial requests
+ * (an `hours` value) pay exactly that. Vacation works identically to sick.
  */
 
-const { sickHoursForPeriod } = require('../utils/payCalculations');
+const { computeLeaveHours, shiftHoursByDate } = require('../utils/payCalculations');
 const { sickRulesFromSettings } = require('../utils/hoursRules');
 
-const sickRules = (rules) => sickRulesFromSettings({ hours_rules: JSON.stringify({ enabled: true, rules }) });
+// One weekday leave rule: Monday(1) = 9h. (Everything else falls through.)
+const rules = sickRulesFromSettings({ hours_rules: JSON.stringify({
+  enabled: true, rules: [{ id: 'a', type: 'sick_value', when: { kind: 'weekdays', days: [1] }, hours: 9 }],
+}) });
+const WK = ['2026-07-06', '2026-07-12']; // Mon 07-06 … Sun 07-12
+const NO_SHIFTS = new Map();
+const DEF = 8; // Regular Shift default
+const full = (type, start_date, end_date) => ({ type, hours: null, start_date, end_date });
 
-// David's example: Mon(1) + Thu(4) = 9h, Fri(5) = 8h.
-const RULES = [
-  { id: 'a', type: 'sick_value', when: { kind: 'weekdays', days: [1, 4] }, hours: 9 },
-  { id: 'b', type: 'sick_value', when: { kind: 'weekdays', days: [5] }, hours: 8 },
-];
-// Week of Mon 2026-07-06 … Sun 2026-07-12.
-const WK = ['2026-07-06', '2026-07-12'];
-const req = (start_date, end_date) => ({ start_date, end_date });
-
-describe('parse', () => {
-  test('sick_value rules parse with hours + when', () => {
-    const r = sickRules(RULES);
-    expect(r.map(x => x.hours)).toEqual([9, 8]);
-    expect(r[0].type).toBe('sick_value');
+describe('shiftHoursByDate', () => {
+  test('sums shift durations per day', () => {
+    const m = shiftHoursByDate([{ shift_date: '2026-07-06', start_time: '08:00:00', end_time: '12:00:00' }]);
+    expect(m.get('2026-07-06')).toBeCloseTo(4);
   });
 });
 
-describe('sickHoursForPeriod', () => {
-  const rules = sickRules(RULES);
-
-  test('a Mon–Fri sick week values each day by its weekday rule', () => {
-    // Mon 9 + Tue 0 + Wed 0 + Thu 9 + Fri 8 = 26
-    expect(sickHoursForPeriod([req('2026-07-06', '2026-07-10')], rules, ...WK)).toBe(26);
+describe('computeLeaveHours — full-day precedence', () => {
+  test('scheduled shift hours win over the rule', () => {
+    const shifts = shiftHoursByDate([{ shift_date: '2026-07-06', start_time: '08:00:00', end_time: '12:00:00' }]); // 4h Mon
+    const r = computeLeaveHours([full('sick', '2026-07-06', '2026-07-06')], shifts, rules, DEF, ...WK);
+    expect(r).toEqual({ sick: 4, vacation: 0 }); // 4 scheduled, not 9 (rule)
   });
 
-  test('a single Friday is worth 8', () => {
-    expect(sickHoursForPeriod([req('2026-07-10', '2026-07-10')], rules, ...WK)).toBe(8);
+  test('no shift → the weekday rule (Monday = 9)', () => {
+    const r = computeLeaveHours([full('sick', '2026-07-06', '2026-07-06')], NO_SHIFTS, rules, DEF, ...WK);
+    expect(r.sick).toBe(9);
   });
 
-  test('a day with no matching rule (Tuesday) is worth 0', () => {
-    expect(sickHoursForPeriod([req('2026-07-07', '2026-07-07')], rules, ...WK)).toBe(0);
+  test('no shift and no rule → the Regular Shift default (Tuesday = 8)', () => {
+    const r = computeLeaveHours([full('sick', '2026-07-07', '2026-07-07')], NO_SHIFTS, rules, DEF, ...WK);
+    expect(r.sick).toBe(8);
+  });
+});
+
+describe('computeLeaveHours — partial + vacation + edges', () => {
+  test('a partial request pays exactly the logged hours', () => {
+    const r = computeLeaveHours([{ type: 'sick', hours: 2, start_date: '2026-07-07', end_date: '2026-07-07' }], NO_SHIFTS, rules, DEF, ...WK);
+    expect(r.sick).toBe(2);
+  });
+
+  test('vacation is valued the same way, on its own total', () => {
+    const r = computeLeaveHours([
+      full('vacation', '2026-07-06', '2026-07-06'), // Mon → rule 9
+      full('sick', '2026-07-07', '2026-07-07'),      // Tue → default 8
+    ], NO_SHIFTS, rules, DEF, ...WK);
+    expect(r).toEqual({ sick: 8, vacation: 9 });
+  });
+
+  test('overlapping same-type requests do not double-count a day', () => {
+    const r = computeLeaveHours([full('sick', '2026-07-06', '2026-07-06'), full('sick', '2026-07-06', '2026-07-07')], NO_SHIFTS, rules, DEF, ...WK);
+    expect(r.sick).toBe(9 + 8); // Mon 9 + Tue 8, Monday counted once
   });
 
   test('days are clipped to the pay period', () => {
-    // Sick Mon–Fri but the period is only Mon–Wed → just Monday's 9
-    expect(sickHoursForPeriod([req('2026-07-06', '2026-07-10')], rules, '2026-07-06', '2026-07-08')).toBe(9);
+    // Sick Mon–Fri but the period is only Mon–Tue → Mon 9 + Tue 8 = 17
+    const r = computeLeaveHours([full('sick', '2026-07-06', '2026-07-10')], NO_SHIFTS, rules, DEF, '2026-07-06', '2026-07-07');
+    expect(r.sick).toBe(17);
   });
 
-  test('overlapping requests do not double-count a day', () => {
-    expect(sickHoursForPeriod([req('2026-07-06', '2026-07-06'), req('2026-07-06', '2026-07-07')], rules, ...WK)).toBe(9);
+  test('no requests / no range → zero', () => {
+    expect(computeLeaveHours([], NO_SHIFTS, rules, DEF, ...WK)).toEqual({ sick: 0, vacation: 0 });
+    expect(computeLeaveHours([full('sick', '2026-07-06', '2026-07-06')], NO_SHIFTS, rules, DEF, null, null)).toEqual({ sick: 0, vacation: 0 });
+  });
+});
+
+describe('computeLeaveHours — applies (sick / vacation / both)', () => {
+  const RANGE = ['2026-07-06', '2026-07-19']; // two Mondays: 07-06 and 07-13
+  const ruleFor = (applies) => sickRulesFromSettings({ hours_rules: JSON.stringify({
+    enabled: true, rules: [{ id: 'x', type: 'sick_value', when: { kind: 'weekdays', days: [1] }, hours: 9, applies }],
+  }) });
+
+  test('a sick-only rule values a sick day but not a vacation day', () => {
+    const r = computeLeaveHours([
+      full('sick', '2026-07-06', '2026-07-06'),      // Monday → rule 9
+      full('vacation', '2026-07-13', '2026-07-13'),  // Monday, but rule is sick-only → default 8
+    ], NO_SHIFTS, ruleFor('sick'), DEF, ...RANGE);
+    expect(r).toEqual({ sick: 9, vacation: 8 });
   });
 
-  test('no sick_value rules → 0 (unchanged)', () => {
-    expect(sickHoursForPeriod([req('2026-07-06', '2026-07-10')], [], ...WK)).toBe(0);
+  test('a vacation-only rule values a vacation day but not a sick day', () => {
+    const r = computeLeaveHours([
+      full('sick', '2026-07-06', '2026-07-06'),      // Monday, rule is vacation-only → default 8
+      full('vacation', '2026-07-13', '2026-07-13'),  // Monday → rule 9
+    ], NO_SHIFTS, ruleFor('vacation'), DEF, ...RANGE);
+    expect(r).toEqual({ sick: 8, vacation: 9 });
   });
 
-  test('no requests → 0', () => {
-    expect(sickHoursForPeriod([], rules, ...WK)).toBe(0);
+  test("a 'both' rule (and a legacy rule with no applies) values either", () => {
+    const both = computeLeaveHours([full('sick', '2026-07-06', '2026-07-06'), full('vacation', '2026-07-13', '2026-07-13')], NO_SHIFTS, ruleFor('both'), DEF, ...RANGE);
+    expect(both).toEqual({ sick: 9, vacation: 9 });
+    // A rule stored before `applies` existed parses to applies:'both' → same result.
+    const legacy = computeLeaveHours([full('sick', '2026-07-06', '2026-07-06')], NO_SHIFTS, [{ type: 'sick_value', when: { kind: 'weekdays', days: [1] }, hours: 9 }], DEF, ...RANGE);
+    expect(legacy.sick).toBe(9);
   });
 });
