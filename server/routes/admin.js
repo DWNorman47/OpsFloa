@@ -1035,7 +1035,10 @@ router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
 
     const settings = await getSettings(companyId);
     const worker = userResult.rows[0];
-    entries = roundEntriesFromSettings(entries, settings, { workerRoleById: { [worker.id]: worker.role_id } });
+    // The Team Member Report asks for ?explain=1 to get, per entry, a trace of
+    // what the pay engine did — off by default so every other caller is unchanged.
+    const explain = req.query.explain === '1' || req.query.explain === 'true';
+    entries = roundEntriesFromSettings(entries, settings, { workerRoleById: { [worker.id]: worker.role_id }, explain });
     const workerOTRule = worker.overtime_rule || 'daily';
     const otConfig = otConfigFromSettings(settings, worker.role_id);
     // range carries the min_daily "no clock-in" guarantee; null from/to (all-time
@@ -1066,8 +1069,8 @@ router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
     // Paid sick + vacation: approved time-off valued schedule-first (shift hours →
     // weekday leave rule → Regular Shift default), each its own line. Sick and
     // vacation pay at their configured percent of base (default 100%).
-    const { sick: sickHours, vacation: vacationHours } =
-      await computeWorkerLeave({ companyId, userId: req.params.id, roleId: worker.role_id, settings, from, to });
+    const { sick: sickHours, vacation: vacationHours, detail: leaveDetail } =
+      await computeWorkerLeave({ companyId, userId: req.params.id, roleId: worker.role_id, settings, from, to, withDetail: explain });
     const leaveMult = leaveRateMultipliers(settings);
     const roundedSickCost = Math.round(sickHours * rate * leaveMult.sick * 100) / 100;
     const roundedVacationCost = Math.round(vacationHours * rate * leaveMult.vacation * 100) / 100;
@@ -1090,10 +1093,32 @@ router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
     const dedList = parseCompanyDeductions(settings.deductions).concat(normalizeWorkerDeductions(workerDedRows.rows));
     const stub = payStubTotals(totalCost, roundedReimbTotal, dedList);
 
+    // Explain view: attach per-entry overtime + wage-type notes to each entry's
+    // trace, and a settings-used block (employee + base values the line-item math
+    // read). Rule ids in the trace resolve against the policy the client already
+    // has (settings.hours_rules). Off by default → no cost, no shape change.
+    let settingsUsed = null;
+    if (explain) {
+      for (const e of entries) {
+        const ex = e.explain || (e.explain = []);
+        if (e.wage_type === 'prevailing') ex.push({ code: 'wage_type', wageType: 'prevailing' });
+        if ((e.overtime_hours || 0) > 0) ex.push({ code: 'overtime', otHours: e.overtime_hours, threshold: settings.overtime_threshold, rule: workerOTRule });
+      }
+      settingsUsed = {
+        rate, rate_type: worker.rate_type || 'hourly', overtime_rule: workerOTRule,
+        overtime_threshold: settings.overtime_threshold, overtime_multiplier: settings.overtime_multiplier,
+        week_start: settings.week_start, role_id: worker.role_id,
+        prevailing_wage_rate: settings.prevailing_wage_rate, regular_shift_hours: settings.regular_shift_hours,
+        sick_pay_pct: settings.sick_pay_pct, vacation_pay_pct: settings.vacation_pay_pct,
+        guaranteed_weekly_hours: worker.guaranteed_weekly_hours,
+      };
+    }
+
     res.json({
       worker,
       entries,
       reimbursements,
+      ...(explain ? { settings_used: settingsUsed, leave_detail: leaveDetail } : {}),
       summary: {
         total_hours: totalHours, regular_hours: regularHours, overtime_hours: overtimeHours, prevailing_hours: prevailingHours,
         rate, regular_cost: roundedRegularCost, overtime_cost: roundedOvertimeCost, prevailing_cost: roundedPrevailingCost,

@@ -73,6 +73,29 @@ describe('computeLeaveHours — partial + vacation + edges', () => {
   });
 });
 
+describe('computeLeaveHours — detail breakdown (explain)', () => {
+  test('records how each leave day got its hours', () => {
+    const detail = [];
+    const shifts = shiftHoursByDate([{ shift_date: '2026-07-06', start_time: '08:00:00', end_time: '12:00:00' }]); // Mon 4h
+    computeLeaveHours([
+      full('sick', '2026-07-06', '2026-07-06'),                                          // Mon scheduled → schedule
+      full('sick', '2026-07-07', '2026-07-07'),                                          // Tue no shift/rule → default
+      { type: 'vacation', hours: 2, start_date: '2026-07-08', end_date: '2026-07-08' },   // partial
+    ], shifts, rules, DEF, ...WK, detail);
+    expect(detail).toEqual([
+      { type: 'sick', date: '2026-07-06', hours: 4, source: 'schedule' },
+      { type: 'sick', date: '2026-07-07', hours: 8, source: 'default' },
+      { type: 'vacation', date: '2026-07-08', hours: 2, source: 'partial' },
+    ]);
+  });
+
+  test('a rule-valued day carries the winning rule id', () => {
+    const detail = [];
+    computeLeaveHours([full('sick', '2026-07-06', '2026-07-06')], NO_SHIFTS, rules, DEF, ...WK, detail); // Mon rule = 9
+    expect(detail).toEqual([{ type: 'sick', date: '2026-07-06', hours: 9, source: 'rule', ruleId: 'a' }]);
+  });
+});
+
 describe('computeLeaveHours — applies (sick / vacation / both)', () => {
   const RANGE = ['2026-07-06', '2026-07-19']; // two Mondays: 07-06 and 07-13
   const ruleFor = (applies) => sickRulesFromSettings({ hours_rules: JSON.stringify({

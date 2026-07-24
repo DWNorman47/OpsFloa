@@ -140,8 +140,8 @@ function leaveRateMultipliers(settings) {
  * → Regular Shift default), with partial requests paid their logged `hours`.
  * The single-worker path (worker invoice, a worker's own pay stubs).
  */
-async function computeWorkerLeave({ companyId, userId, roleId, settings, from, to }) {
-  if (!from || !to) return { sick: 0, vacation: 0 };
+async function computeWorkerLeave({ companyId, userId, roleId, settings, from, to, withDetail = false }) {
+  if (!from || !to) return withDetail ? { sick: 0, vacation: 0, detail: [] } : { sick: 0, vacation: 0 };
   const leaveRules = sickRulesFromSettings(settings, roleId);
   const [reqs, shifts] = await Promise.all([
     pool.query(
@@ -156,7 +156,11 @@ async function computeWorkerLeave({ companyId, userId, roleId, settings, from, t
       [userId, companyId, from, to]
     ),
   ]);
-  return computeLeaveHours(reqs.rows, shiftHoursByDate(shifts.rows), leaveRules, settings.regular_shift_hours, from, to);
+  // withDetail (the report's explain view) also returns the per-day valuation
+  // breakdown — how each leave day got its hours (schedule / rule / default / partial).
+  const detail = withDetail ? [] : null;
+  const totals = computeLeaveHours(reqs.rows, shiftHoursByDate(shifts.rows), leaveRules, settings.regular_shift_hours, from, to, detail);
+  return withDetail ? { ...totals, detail } : totals;
 }
 
 /**

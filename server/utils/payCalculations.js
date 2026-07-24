@@ -82,7 +82,7 @@ function shiftHoursByDate(shifts) {
  *                       ('sick' | 'vacation' | 'both') selecting which leave it values
  * @param regularShiftHours  company Regular Shift default (last-resort hours)
  */
-function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours, from, to) {
+function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours, from, to, detail = null) {
   const totals = { sick: 0, vacation: 0 };
   if (!from || !to) return totals;
   const f = String(from).substring(0, 10), t = String(to).substring(0, 10);
@@ -90,18 +90,22 @@ function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours
   const def = parseFloat(regularShiftHours) || 0;
   const seen = { sick: new Set(), vacation: new Set() }; // full-day de-dup, per type
   const ruleAppliesTo = (r, type) => { const a = r.applies || 'both'; return a === 'both' || a === type; };
+  // How a full day is valued, plus WHY (for the explain trace).
   const dayValue = (dk, type) => {
     const sched = (shiftsByDate && shiftsByDate.get(dk)) || 0;
-    if (sched > 0) return sched;                          // 1) scheduled shift hours
-    let best = 0;
-    for (const r of rules) if (ruleAppliesTo(r, type) && ruleMatchesDate(r, dk)) best = Math.max(best, parseFloat(r.hours) || 0);
-    return best > 0 ? best : def;                         // 2) Time Off Value rule → 3) Regular Shift default
+    if (sched > 0) return { hours: sched, source: 'schedule' };            // 1) scheduled shift hours
+    let best = 0, bestRule = null;
+    for (const r of rules) if (ruleAppliesTo(r, type) && ruleMatchesDate(r, dk)) { const h = parseFloat(r.hours) || 0; if (h > best) { best = h; bestRule = r.id; } }
+    if (best > 0) return { hours: best, source: 'rule', ruleId: bestRule };  // 2) Time Off Value rule
+    return { hours: def, source: 'default' };                               // 3) Regular Shift default
   };
   for (const req of requests || []) {
     if (!req) continue;
     const type = req.type === 'vacation' ? 'vacation' : 'sick';
     if (req.hours != null && req.hours !== '') {           // partial → pay the logged hours
-      totals[type] += parseFloat(req.hours) || 0;
+      const h = parseFloat(req.hours) || 0;
+      totals[type] += h;
+      if (detail) detail.push({ type, date: req.start_date != null ? String(req.start_date).substring(0, 10) : null, hours: h, source: 'partial' });
       continue;
     }
     if (req.start_date == null || req.end_date == null) continue;
@@ -109,7 +113,9 @@ function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours
     for (const dk of eachDateKey(s < f ? f : s, e > t ? t : e)) {
       if (seen[type].has(dk)) continue;                    // dedup overlapping requests
       seen[type].add(dk);
-      totals[type] += dayValue(dk, type);
+      const v = dayValue(dk, type);
+      totals[type] += v.hours;
+      if (detail) detail.push({ type, date: dk, hours: v.hours, source: v.source, ...(v.ruleId ? { ruleId: v.ruleId } : {}) });
     }
   }
   return totals;
