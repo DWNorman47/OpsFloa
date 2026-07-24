@@ -55,6 +55,32 @@ function weekDaysOf(dk, weekStart) {
 }
 const isWeekdayKey = (dk) => { const w = weekdayOfDate(dk); return w >= 1 && w <= 5; };
 
+/**
+ * Total paid sick hours for a set of APPROVED 'sick' time-off requests over a pay
+ * period, valued per day by the sick_value rules (e.g. Mon 9h, Fri 8h). A day
+ * matching no rule is worth 0 (not configured → unpaid). Requests are date ranges
+ * (start_date … end_date), clipped to [from, to] and de-duped so overlapping
+ * requests can't double-count a day. No rules / no range → 0.
+ */
+function sickHoursForPeriod(sickRequests, sickRules, from, to) {
+  if (!Array.isArray(sickRules) || !sickRules.length || !from || !to) return 0;
+  const f = String(from).substring(0, 10), t = String(to).substring(0, 10);
+  const days = new Set();
+  for (const req of sickRequests || []) {
+    if (!req || req.start_date == null || req.end_date == null) continue;
+    const s = String(req.start_date).substring(0, 10);
+    const e = String(req.end_date).substring(0, 10);
+    for (const dk of eachDateKey(s < f ? f : s, e > t ? t : e)) days.add(dk); // clip to [from,to]
+  }
+  let total = 0;
+  for (const dk of days) {
+    let best = 0;
+    for (const r of sickRules) if (ruleMatchesDate(r, dk)) best = Math.max(best, parseFloat(r.hours) || 0);
+    total += best;
+  }
+  return total;
+}
+
 /** Minutes since midnight from an "HH:MM[:SS]" string (null-safe). */
 function hmToMin(hhmm) {
   if (hhmm == null) return null;
@@ -535,4 +561,4 @@ function computeDailyPayCosts(entries, overtimeRule, threshold, dailyRate, overt
   };
 }
 
-module.exports = { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, resolveBands, nightHoursForEntry, nightPremiumCost, windowHoursForEntry };
+module.exports = { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, resolveBands, nightHoursForEntry, nightPremiumCost, windowHoursForEntry, sickHoursForPeriod };

@@ -61,6 +61,7 @@ function blankRule() {
     minHours: '4',
     minRequiresClockin: true,   // min_daily: floor only on days worked (default)
     minActiveWindow: 'week',    // when clock-in not required: worked-that-week vs. -that-period gate
+    sickHours: '8',             // sick_value: paid hours an approved sick day is worth
     firstHours: '8',
     firstMult: '1.5',
     afterMult: '2',
@@ -166,6 +167,7 @@ export function describeRule(r, t) {
       const nc = r.requiresClockin === false ? ` ${ncMap[r.activeWindow] || t.hrSumMinNoClockinWeek}` : '';
       return `${when} — ${t.hrSumMinDaily.replace('{n}', r.hours)}${nc}`;
     }
+    case 'sick_value': return `${when} — ${t.hrSumSickValue.replace('{n}', r.hours)}`;
     case 'seventh_day': return `${when} — ${t.hrSumSeventh.replace('{a}', r.firstMult).replace('{b}', r.afterMult)}`;
     case 'night_diff': return `${when} — ${t.hrSumNight.replace('{pct}', r.pct).replace('{from}', r.fromHour).replace('{to}', r.toHour)}`;
     case 'window_mult': {
@@ -363,6 +365,7 @@ export default function HoursRuleBuilder({ rules, onChange, title, help }) {
               <option value="ot_tier">{t.hrType_ot_tier}</option>
               <option value="rest_day">{t.hrType_rest_day}</option>
               <option value="min_daily">{t.hrType_min_daily}</option>
+              <option value="sick_value">{t.hrType_sick_value}</option>
               <option value="seventh_day">{t.hrType_seventh_day}</option>
               <option value="night_diff">{t.hrType_night_diff}</option>
               <option value="window_mult">{t.hrType_window_mult}</option>
@@ -585,6 +588,15 @@ export default function HoursRuleBuilder({ rules, onChange, title, help }) {
             </>
           )}
 
+          {draft.type === 'sick_value' && (
+            <>
+              <Field label={t.hrSickValue}>
+                <input style={s.input} type="number" min="0.5" step="0.5" value={draft.sickHours} onChange={e => setD('sickHours', e.target.value)} />
+              </Field>
+              <p style={s.hint}>{t.hrSickRuleHint}</p>
+            </>
+          )}
+
           {draft.type === 'seventh_day' && (
             <>
               <Field label={t.hrSdFirst}>
@@ -707,6 +719,9 @@ function coerceDraft(d) {
         : 'week';
       break;
     }
+    case 'sick_value':
+      out.hours = parseFloat(d.sickHours) || 0;
+      break;
     case 'seventh_day':
       out.firstHours = parseFloat(d.firstHours) || 0;
       out.firstMult = parseFloat(d.firstMult) || 1.5;

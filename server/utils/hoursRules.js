@@ -98,7 +98,7 @@ const ROUNDING_REFERENCES = ['schedule', 'clock'];
 // is 10h, which under an 8h threshold is 2h of overtime — not 1.5h of overtime
 // and 0.5h of regular.
 const RULE_TYPES = ['clip_start', 'clip_end', 'add_time', 'remove_time', 'auto_break', 'round', 'ot_tier',
-  'rest_day', 'min_daily', 'seventh_day', 'night_diff', 'window_mult'];
+  'rest_day', 'min_daily', 'seventh_day', 'night_diff', 'window_mult', 'sick_value'];
 const ROUND_EDGES = ['in', 'out', 'both']; // which punch edge a `round` rule rounds
 const OT_TIER_BASES = ['day', 'week'];     // an ot_tier rule counts hours per day or per week
 // min_daily "no clock-in" qualifying window (which activity earns an empty day)
@@ -438,6 +438,15 @@ function parseRule(raw, index) {
       return { ...base, hours, requiresClockin, activeWindow };
     }
 
+    case 'sick_value': {
+      // How many paid hours an APPROVED sick day is worth on the days `when`
+      // selects (e.g. Mon+Thu = 9h, Fri = 8h). Sourced from approved 'sick'
+      // time-off requests and paid as its own category — never worked hours.
+      const hours = Number(raw.hours);
+      if (!Number.isFinite(hours) || hours <= 0) return null;
+      return { ...base, hours };
+    }
+
     case 'seventh_day': {
       // 7th consecutive worked day of a workweek → whole day OT (first N hours at
       // one mult, the rest at a higher one). Workweek-detected, so `when` is not
@@ -626,6 +635,31 @@ function effectiveRulesForRole(policy, roleId) {
   const rr = policy.roleRules.find(x => x.roleId === roleId);
   if (!rr) return std;
   return rr.addToStandard ? std.concat(rr.rules) : rr.rules;
+}
+
+// The sick-day value rules for a role (effective list filtered to sick_value).
+// Used to price approved 'sick' time-off into its own paid category. Empty when
+// the policy is off or has no sick_value rules → no sick pay, behaviour unchanged.
+function sickRulesFromSettings(settings, roleId = null) {
+  const p = parsePolicy(settings && settings.hours_rules);
+  if (!p.enabled) return [];
+  return effectiveRulesForRole(p, roleId).filter(r => r.type === 'sick_value');
+}
+
+// Memoized per-role sick_value rules — parse the policy once, cache per role.
+// For loops over many workers (payroll/exports) so the policy isn't re-parsed each.
+function sickRulesByRoleFactory(settings) {
+  const p = parsePolicy(settings && settings.hours_rules);
+  const enabled = !!p.enabled;
+  const cache = new Map();
+  return function sickRulesByRole(roleId = null) {
+    if (!enabled) return [];
+    const key = roleId == null ? '__std__' : roleId;
+    if (cache.has(key)) return cache.get(key);
+    const rules = effectiveRulesForRole(p, roleId).filter(r => r.type === 'sick_value');
+    cache.set(key, rules);
+    return rules;
+  };
 }
 
 /**
@@ -1254,6 +1288,8 @@ module.exports = {
   otConfigFromSettings,
   otConfigByRoleFactory,
   effectiveRulesForRole,
+  sickRulesFromSettings,
+  sickRulesByRoleFactory,
   parseRoleRules,
   migrateFixedSlots,
   hasFixedSlots,

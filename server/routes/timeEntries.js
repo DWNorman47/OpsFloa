@@ -307,8 +307,9 @@ router.delete('/:id', requireAuth, async (req, res) => {
   }
 });
 
-const { hoursWorked, computeOT } = require('../utils/payCalculations');
+const { hoursWorked, computeOT, sickHoursForPeriod } = require('../utils/payCalculations');
 const { computePaid } = require('../utils/paidHours');
+const { sickRulesFromSettings } = require('../utils/hoursRules');
 const { weekRange } = require('../utils/weekBounds');
 
 // GET /time-entries/pay-stubs — worker's pay periods with aggregated hours
@@ -344,11 +345,26 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
         [userId, minDate, maxDate]
       );
 
+      // Paid sick days: value approved 'sick' time-off in the span by the
+      // sick_value rules; per-period totals computed inside the loop.
+      const sickRules = sickRulesFromSettings(s, workerData.role_id);
+      let sickRows = [];
+      if (sickRules.length) {
+        const sr = await pool.query(
+          `SELECT start_date, end_date FROM time_off_requests
+           WHERE user_id = $1 AND company_id = $2 AND type = 'sick' AND status = 'approved'
+             AND start_date <= $4::date AND end_date >= $3::date`,
+          [userId, companyId, minDate, maxDate]
+        );
+        sickRows = sr.rows;
+      }
+
       for (const period of periods.rows) {
         const ps = period.period_start.toString().substring(0, 10);
         const pe = period.period_end.toString().substring(0, 10);
         const entries = allEntries.rows.filter(e => e.work_date_str >= ps && e.work_date_str <= pe);
-        if (entries.length === 0) continue;
+        const sickHours = sickHoursForPeriod(sickRows, sickRules, ps, pe);
+        if (entries.length === 0 && sickHours === 0) continue; // sick-only periods still show a stub
 
         // Apply the company's hours rules to the raw punches before computing
         // hours; paid entries carry raw_* fields for display. Through the
@@ -390,6 +406,7 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
             guarantee_shortfall_hours: guaranteeShortfall,
             guarantee_min_hours: guaranteeMinHours,
             guaranteed_weekly_hours: guaranteedWeeklyHours,
+            sick_hours: +sickHours.toFixed(2),
           },
         });
       }

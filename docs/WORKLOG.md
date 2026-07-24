@@ -23,6 +23,39 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-24 — Pay Rules: Sick Day Value (approved sick time-off, paid by weekday)
+
+**Done.** New **`sick_value`** rule type: an approved sick day is now paid a
+per-weekday number of hours (e.g. Mon+Thu = 9h, Fri = 8h = two rules), as **its
+own "Sick" line**. **The big thing this bridges:** sick time-off was recorded but
+**never touched pay** — approved `sick` requests were just dated ranges. Now the
+pay pipeline reads them and values them.
+
+**Design (locked with David up front):** *source* = approved `sick` time-off
+requests (reuse the PTO system — nothing new to enter); *representation* = a
+separate Sick line, not folded into regular hours.
+
+**Engine:** `sickRulesFromSettings` / `sickRulesByRoleFactory` (role-aware) pull
+the `sick_value` rules; `sickHoursForPeriod(requests, rules, from, to)` expands the
+approved ranges into days (clipped to the period, de-duped so overlaps don't
+double-count) and values each by the matching rule (max if several; **no rule for a
+day → 0, i.e. unpaid**). Paid at **base rate**, its own category — never worked
+hours, never feeds OT.
+
+**Wired at the 4 worker-pay surfaces**, each adding `sick_hours`/`sick_cost` and
+folding sick pay into gross (so it flows to net/deductions): worker invoice (the
+money stub), worker pay-stubs (a **sick-only period now shows a stub** — the empty
+guard was relaxed), the payroll data endpoint, and the worker-hours CSV (new Sick
+Hrs / Sick Pay columns). **NOT** the project bill / project labor cost — a sick day
+isn't project labor. `total_hours` stays worked-only, mirroring how the weekly
+guarantee is treated.
+
+**UI:** `sick_value` in the rule-type dropdown + an hours editor, using the shared
+weekday `when` selector; summary + EN/ES strings. New `sickValue` test suite; the
+builder-contract type list updated. 305 pay/hours tests + i18n parity green.
+
+---
+
 ## 2026-07-24 — Time Clock: a clocked-in supervisor lands on Workforce
 
 **Done.** On a **plain** landing at `/timeclock` (no `#tab` / `#wf-` link), a user
