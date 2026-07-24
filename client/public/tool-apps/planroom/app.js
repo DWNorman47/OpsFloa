@@ -1072,7 +1072,9 @@ function drawMarkup(ctx, m) {
         ctx.beginPath();
         m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
         ctx.closePath();
-        if (layers.fills) { ctx.globalAlpha = 0.12; ctx.fill(); ctx.globalAlpha = 1; }
+        // A deducting area is a void — outline only, no colored fill (matches the
+        // deduct convention used on earthwork/dirt areas).
+        if (layers.fills && !(m.cfg && m.cfg.deduct)) { ctx.globalAlpha = 0.12; ctx.fill(); ctx.globalAlpha = 1; }
         ctx.stroke();
       }
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y); }
