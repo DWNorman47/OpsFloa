@@ -509,6 +509,16 @@ function hasRoofAddon() {
     return !!(a.roof || a.status === 'exempt' || a.status === 'trial');
   } catch (_) { return false; }
 }
+// Dev override: preview the roof-only "Door A" experience even when entitled to
+// takeoff (exempt/trial read BOTH flags true, so Door A would normally hide).
+// `?roofsolo=1` turns it on (persisted); `?roofsolo=0` clears it.
+function roofSoloPreview() {
+  try {
+    const u = new URLSearchParams(location.search);
+    if (u.has('roofsolo')) localStorage.setItem('tc_roof_solo', u.get('roofsolo') !== '0' ? '1' : '0');
+    return localStorage.getItem('tc_roof_solo') === '1';
+  } catch (_) { return false; }
+}
 
 // pitch-correction: sloped length / area factor for a given rise-per-12
 function slopeFactor(pitch) { const p = (pitch || 0) / 12; return Math.sqrt(1 + p * p); }
@@ -3836,6 +3846,12 @@ function applyTakeoffGate() {
   document.body.classList.toggle('has-storm', STORM_ON); // hides the deep storm/utility fields when absent
   ROOF_ON = hasRoofAddon();
   document.body.classList.toggle('has-roof', ROOF_ON); // reveals the Roof Measurement mode + report
+  // Roof draw tools show for a takeoff OR a roof owner (roof-only owners have no
+  // takeoff layer but must still be able to trace). "can do roof work".
+  document.body.classList.toggle('has-roofwork', hasTakeoffLayer() || ROOF_ON);
+  // Door A (the roof-only entry button) shows for a roof owner without takeoff;
+  // the dev override forces the roof-only view for a both-entitled (exempt) account.
+  document.body.classList.toggle('roof-solo', roofSoloPreview());
 }
 let STORM_ON = false; // cached storm entitlement (refreshed in applyTakeoffGate); gates the M4 netting outputs
 let ROOF_ON = false;  // cached roof-measurement entitlement (refreshed in applyTakeoffGate)
@@ -3995,6 +4011,9 @@ if ($('btnRoofMeas')) $('btnRoofMeas').addEventListener('click', () => {
   if (!$('roofMeasPanel').classList.contains('hidden')) { closeOtherPanels('roofMeasPanel'); renderRoofReport(); }
   syncPanelButtons();
 });
+// Door A — the alternate roof-only entry (shown only to a roof owner without
+// takeoff, or under the ?roofsolo preview). Enters the roof-measurement mode.
+if ($('btnRoofDoor')) $('btnRoofDoor').addEventListener('click', () => setTrade('roofmeas'));
 if ($('btnRoofMeasClose')) $('btnRoofMeasClose').addEventListener('click', () => {
   $('roofMeasPanel').classList.add('hidden');
   syncPanelButtons();

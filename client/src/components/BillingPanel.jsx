@@ -74,6 +74,7 @@ export default function BillingPanel() {
   const [addTakeoff, setAddTakeoff] = useState(false);
   const [addPlanroom, setAddPlanroom] = useState(false);
   const [addStorm, setAddStorm] = useState(false);
+  const [addRoof, setAddRoof] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [workerInputMode, setWorkerInputMode] = useState('slider');
   const [workerDraft, setWorkerDraft] = useState('');
@@ -109,6 +110,10 @@ export default function BillingPanel() {
           add_storm: true,
           storm_price_id: annual ? plans.storm.annual_price_id : plans.storm.monthly_price_id,
         } : {}),
+        ...(addRoof && plans?.roof ? {
+          add_roof: true,
+          roof_price_id: annual ? plans.roof.annual_price_id : plans.roof.monthly_price_id,
+        } : {}),
       });
       window.location.href = r.data.url;
     } catch (err) {
@@ -142,6 +147,7 @@ export default function BillingPanel() {
       if (addon === 'takeoff') updateUser?.({ addon_takeoff: true });
       if (addon === 'planroom') updateUser?.({ addon_planroom: true });
       if (addon === 'storm') updateUser?.({ addon_storm: true });
+      if (addon === 'roof') updateUser?.({ addon_roof: true });
       if (addon === 'qbo') updateUser?.({ addon_qbo: true });
     } catch (err) {
       setBillingError(err.response?.data?.error || 'Could not add the add-on.');
@@ -177,6 +183,7 @@ export default function BillingPanel() {
       if (addon === 'takeoff') updateUser?.({ addon_takeoff: false });
       if (addon === 'planroom') updateUser?.({ addon_planroom: false });
       if (addon === 'storm') updateUser?.({ addon_storm: false });
+      if (addon === 'roof') updateUser?.({ addon_roof: false });
       if (addon === 'qbo') updateUser?.({ addon_qbo: false });
     } catch (err) {
       setBillingError(err.response?.data?.error || 'Could not remove the add-on.');
@@ -207,6 +214,7 @@ export default function BillingPanel() {
   const hasTakeoff = status?.addon_takeoff;
   const hasPlanroom = status?.addon_planroom;
   const hasStorm = status?.addon_storm;
+  const hasRoof = status?.addon_roof;
   const isActive = sub === 'active';
   const isTrial = sub === 'trial';
   const isTrialExpired = sub === 'trial_expired';
@@ -219,12 +227,16 @@ export default function BillingPanel() {
     { key: 'planroom', title: 'Plan Room', owned: hasPlanroom, plan: plans?.planroom, desc: 'View, mark up, and measure plan sets in the browser, with a company library and live share sessions.' },
     { key: 'takeoff', title: 'Takeoff', owned: hasTakeoff, plan: plans?.takeoff, desc: 'Turn Plan Room measurements into priced, branded trade takeoffs and bids — earthwork, drywall, roofing, and more. Requires Plan Room.' },
     { key: 'storm', title: 'Storm/Utility', owned: hasStorm, plan: plans?.storm, desc: 'Deep underground-utility takeoff — pipe schedule, structure depth, invert-driven trench depth, and spoil/backfill netting.' },
+    { key: 'roof', title: 'Roof Measurement', owned: hasRoof, plan: plans?.roof, desc: 'Trace a roof on an aerial and get a branded measurement report — squares, pitch, edges, and penetrations. Requires Plan Room.' },
     { key: 'qbo', title: 'QuickBooks Online', owned: hasQbo, plan: plans?.qbo, desc: 'Push invoices to QuickBooks and keep their payment status in sync.' },
   ];
   // Storm/Utility is built but its math isn't verified yet — keep it OFF the
   // menu (no buy option) until then; owned companies can still manage/turn it
   // off. Flip to true to open it for sale.
   const STORM_SELLABLE = false;
+  // Roof Measurement is built but its scale/report math isn't verified on a real
+  // roof yet — same posture as Storm. Flip to true to open it for sale.
+  const ROOF_SELLABLE = false;
 
   // Shown in place of an add-on's buy option when you already have it (in the
   // plan-selection state) — a Turn-off action so an owned add-on is managed in
@@ -326,9 +338,10 @@ export default function BillingPanel() {
             }
             if (!a.plan?.monthly_price_id) return null;
             if (a.key === 'storm' && !STORM_SELLABLE) return null; // built, not yet on the menu
-            // Takeoff is a layer on Plan Room. One-click adds a single item, so
-            // it can't add Plan Room in the same step — require it first.
-            const needsPlanroom = a.key === 'takeoff' && !hasPlanroom;
+            if (a.key === 'roof' && !ROOF_SELLABLE) return null;  // built, not yet on the menu
+            // Takeoff and Roof Measurement are layers on Plan Room. One-click adds
+            // a single item, so it can't add Plan Room in the same step — require it first.
+            const needsPlanroom = (a.key === 'takeoff' || a.key === 'roof') && !hasPlanroom;
             const blocked = !!redirecting || needsPlanroom;
             return (
               <div key={a.key} style={{ ...s.addonCard, marginTop: 14, marginBottom: 0 }}>
@@ -347,7 +360,7 @@ export default function BillingPanel() {
                   </button>
                 </div>
                 <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.5, marginTop: 6 }}>
-                  {a.desc} {needsPlanroom ? t.billingTakeoffNeedsPlanroom : 'Prorated onto your current subscription — no re-checkout.'}
+                  {a.desc} {needsPlanroom ? (a.key === 'roof' ? 'Add Plan Room first — Roof Measurement rides on it.' : t.billingTakeoffNeedsPlanroom) : 'Prorated onto your current subscription — no re-checkout.'}
                 </div>
               </div>
             );
@@ -647,6 +660,24 @@ export default function BillingPanel() {
             </div>
           )}
           {hasStorm && ownedAddonCard('storm', 'Storm/Utility')}
+
+          {ROOF_SELLABLE && !hasRoof && plans?.roof?.monthly_price_id && (
+            <div style={s.addonCard}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                <input type="checkbox" checked={addRoof} onChange={e => setAddRoof(e.target.checked)}
+                  style={{ accentColor: '#d97706', width: 16, height: 16 }} />
+                <span style={s.addonTitle}>
+                  + Roof Measurement add-on &nbsp;
+                  <span style={{ fontSize: 18, fontWeight: 800, color: '#d97706' }}>${plans?.roof?.monthly ?? '—'}</span>
+                  <span style={{ fontSize: 13, color: '#6b7280' }}>/mo</span>
+                </span>
+              </label>
+              <div style={{ paddingLeft: 26, fontSize: 12, color: '#6b7280', lineHeight: 1.5, marginTop: 6 }}>
+                Trace a roof on an aerial and get a branded measurement report — squares, pitch, edges, and penetrations. Requires Plan Room.
+              </div>
+            </div>
+          )}
+          {hasRoof && ownedAddonCard('roof', 'Roof Measurement')}
 
           <ClientPortalProPlaceholder />
 

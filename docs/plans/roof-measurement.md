@@ -97,11 +97,31 @@ from `roofingTotals()` + a per-facet walk of `state.markups`:
   - Testing wrinkle: exempt/trial reads both flags true, so Door A won't show for
     an exempt account — add a dev override to preview the roof-only door.
 
-## Deferred (productization, after the prototype proves out)
-- **Sell it:** backend `addon_roof` column + Stripe price ($40, above) +
-  `BillingPanel` entry, and a `ROOF_SELLABLE`-style gate (mirror Storm) that stays
-  off until the real-roof math is verified. Until then it shows for exempt/trial
-  only.
+## Built 2026-07-23 — billing plumbing + two-door UX (behind the not-sellable gate)
+The full `addon_roof` lifecycle now mirrors `addon_storm`, staged off:
+- **DB:** migration `0147_addon_roof.sql` (boolean on `companies`). ⚠️ must run on
+  stage/prod.
+- **Session:** `buildSessionUser` selects + returns `addon_roof` → `tc_addons`.
+- **Stripe:** `ADDON_PRICES.roof`, `/plans`+`/status` include roof, `/checkout` and
+  `/checkout-addon` accept it, `roof` added to `STANDALONE_ADDONS`, and all three
+  webhook handlers map `STRIPE_PRICE_ROOF[_ANNUAL]` → `addon_roof`. Roof **requires
+  Plan Room** (enforced in all three checkout paths, like Takeoff).
+- **Gate:** `requirePlanToolsAddon` now also passes on `addon_roof`, so a roof owner
+  can save via `/api/takeoffs`.
+- **Billing UI:** `BillingPanel` roof card + owned card + manage row, gated by
+  **`ROOF_SELLABLE = false`** (mirrors `STORM_SELLABLE`). SuperAdmin has a roof toggle.
+- **Two-door tool-app:** roof draw tools re-gated `tb-takeoff` → `roofwork`
+  (`has-roofwork` = takeoff OR roof); alternate **Door A** button (`btnRoofDoor`,
+  `.roof-door`, shown when `has-roof && !has-takeoff`); `?roofsolo=1` dev override
+  (a `roof-solo` body class that hides takeoff chrome so an exempt account can
+  preview the roof-only door). Plan Room `?v 72 → 73`.
+
+## To actually turn it on (remaining)
+- Create the **$40 Stripe price** (+ annual) and set `STRIPE_PRICE_ROOF` /
+  `STRIPE_PRICE_ROOF_ANNUAL` in the deployed env.
+- **Verify the math on a real roof** (scale-from-aerial + the report).
+- Flip **`ROOF_SELLABLE = true`** in `BillingPanel.jsx`. Until then it shows for
+  exempt/trial only.
 - ~~**Per-edge pitch accuracy:**~~ ✅ **DONE.** Each `redge` now carries its own
   `pitch` (captured at draw time; rake/hip/valley prompt for it, defaulting to the
   main pitch). `edgeFt` uses `m.pitch`, falling back to the global for edges saved

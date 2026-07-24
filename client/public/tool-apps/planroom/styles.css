@@ -151,6 +151,17 @@ body:not(.has-storm) .storm-only { display: none !important; }
 /* roof-measurement add-on gating: the Roof Measurement mode entry + its report
    panel show only for companies that own addon_roof */
 body:not(.has-roof) .roof-only { display: none !important; }
+/* the roof draw tools are shared by the Roofing takeoff (addon_takeoff) and Roof
+   Measurement (addon_roof) — show them for either entitlement, hide for neither */
+body:not(.has-roofwork) .roofwork { display: none !important; }
+/* Door A — the alternate roof-only entry button: shown to a roof owner WITHOUT
+   takeoff (a takeoff owner reaches roof via the trade dropdown instead). The
+   .roof-solo preview forces it on for a both-entitled (exempt) account. */
+body:not(.has-roof) .roof-door,
+body.has-takeoff:not(.roof-solo) .roof-door { display: none !important; }
+/* roof-solo preview: hide the takeoff chrome (dropdown, other trades, $ Bid) so
+   an entitled account can see the clean roof-only door. */
+body.roof-solo .tb-takeoff { display: none !important; }
 /* trade mode: each trade's tools/panels show only when that trade is selected
    in the #tradeSel dropdown (default = plain markup & measure) */
 /* roof draw tools are shared by the Roofing takeoff and Roof Measurement modes */

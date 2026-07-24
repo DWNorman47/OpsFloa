@@ -23,6 +23,51 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-23 — Roof Measurement: billing plumbing + two-door standalone sale (staged off)
+
+**Done.** Made `addon_roof` a real, sellable add-on — a faithful clone of
+`addon_storm` — plus the "two-door" UX so it can be bought standalone (without
+Takeoff). **Staged behind `ROOF_SELLABLE = false`**, so it's a one-flag flip once
+the math's verified. Price **$40/mo** (decided earlier). Design of record:
+`docs/plans/roof-measurement.md`.
+
+**Backend (mirrors storm end-to-end):**
+- Migration **0147** — `addon_roof` boolean on `companies`. ⚠️ **run on stage/prod.**
+- `buildSessionUser` selects + returns `addon_roof` (→ `tc_addons`, which the
+  tool-app already read).
+- Stripe (`routes/stripe.js`): `ADDON_PRICES.roof`, `/plans` + `/status` include
+  roof, `/checkout` + `/checkout-addon` accept it, and **all three webhook
+  handlers** map `STRIPE_PRICE_ROOF[_ANNUAL]` → `addon_roof`. Roof is in
+  `STANDALONE_ADDONS` (sellable without a base plan, unlike storm) but **requires
+  Plan Room** — enforced in all three checkout paths, like Takeoff.
+- `requirePlanToolsAddon` also passes on `addon_roof`, so a roof owner can save via
+  `/api/takeoffs`.
+- SuperAdmin PATCH + list + a toggle row; `.env.example` + 4 new stripe test cases.
+
+**Two-door tool-app UX** (Plan Room `?v 72 → 73`):
+- Re-gated the roof draw tools `tb-takeoff` → **`roofwork`** (`has-roofwork` =
+  takeoff **or** roof), so a roof-only owner (no takeoff) can trace.
+- **Door A** — a `📐 Roof Measurement` button (`.roof-door`) that shows only for a
+  roof owner **without** takeoff; a takeoff owner reaches roof via the trade
+  dropdown (Door B) and never sees the button. For a roof-only owner, the takeoff
+  chrome is already auto-hidden (it's `tb-takeoff`).
+- **`?roofsolo=1` dev override** — since exempt/trial read *both* flags true, Door A
+  wouldn't show for David; this forces the roof-only view (hides takeoff chrome) so
+  he can preview it. `?roofsolo=0` clears it.
+
+**Judgment call — naming:** the Stripe env is **`STRIPE_PRICE_ROOF`** (matches
+`addon_roof` and the `STRIPE_PRICE_<x>`→`addon_<x>` pattern of every other add-on).
+David had made `STRIPE_PRICE_ROOFING` first; we agreed `_ROOF` is the consistent
+name, so he's renaming the env var.
+
+⚠️ **To flip it on:** (1) point `STRIPE_PRICE_ROOF` (+ `_ANNUAL`) at the real $40
+Stripe price; (2) run migration 0147 on stage/prod; (3) verify the math on a real
+roof; (4) set `ROOF_SELLABLE = true` in `BillingPanel.jsx`. All verified green:
+stripe addon tests (22), auth/superadmin (27), client build, `node --check`,
+sitework clean.
+
+---
+
 ## 2026-07-23 — Roof Measurement mode in Plan Room (EagleView-style report) — MVP prototype
 
 **Done (prototype).** A new **Roof Measurement** mode inside Plan Room — trace a

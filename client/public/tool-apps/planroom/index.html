@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css?v=72">
+<link rel="stylesheet" href="styles.css?v=73">
 <script>
 (() => {
   try {
@@ -91,9 +91,10 @@
       <option value="fence">🚧 Fencing &amp; Guardrail</option>
       <option value="landscape">🌳 Landscape &amp; Irrigation</option>
     </select>
-    <button class="tool tb-takeoff tr-roof" data-tool="plane" title="Roof plane — trace a roof face, set its pitch → sloped area + squares">▰</button>
-    <button class="tool tb-takeoff tr-roof" data-tool="redge" title="Roof edge — trace eave/rake/ridge/hip/valley/flashing → linear feet (hip/valley/rake pitch-corrected)">╱</button>
-    <select id="edgeType" class="mini-sel tb-takeoff tr-roof" title="Roof-edge type for the next edge drawn">
+    <button id="btnRoofDoor" class="btn roof-door" title="Roof Measurement — trace a roof on an aerial and get a branded measurement report">📐<span class="btn-label"> Roof Measurement</span></button>
+    <button class="tool roofwork tr-roof" data-tool="plane" title="Roof plane — trace a roof face, set its pitch → sloped area + squares">▰</button>
+    <button class="tool roofwork tr-roof" data-tool="redge" title="Roof edge — trace eave/rake/ridge/hip/valley/flashing → linear feet (hip/valley/rake pitch-corrected)">╱</button>
+    <select id="edgeType" class="mini-sel roofwork tr-roof" title="Roof-edge type for the next edge drawn">
       <option value="eave">Eave</option>
       <option value="rake">Rake</option>
       <option value="ridge">Ridge</option>
@@ -101,8 +102,8 @@
       <option value="valley">Valley</option>
       <option value="flashing">Flashing</option>
     </select>
-    <button class="tool tb-takeoff tr-roof" data-tool="ritem" title="Roof item — count pipe boots / vents / skylights / chimneys">⊕</button>
-    <select id="itemType" class="mini-sel tb-takeoff tr-roof" title="Roof-item type for the next count">
+    <button class="tool roofwork tr-roof" data-tool="ritem" title="Roof item — count pipe boots / vents / skylights / chimneys">⊕</button>
+    <select id="itemType" class="mini-sel roofwork tr-roof" title="Roof-item type for the next count">
       <option value="boot">Pipe boot</option>
       <option value="vent">Vent</option>
       <option value="skylight">Skylight</option>
@@ -411,7 +412,7 @@
     </div>
     <div class="tb-cluster">
     <button id="btnRoof" class="btn tb-takeoff tr-roof" title="Roofing takeoff — squares, edges, and counts across the set">🏠<span class="btn-label"> Roof</span></button>
-    <button id="btnRoofMeas" class="btn tb-takeoff roof-only tr-roofmeas" title="Roof measurement report — squares, edges & penetrations from the aerial">📐<span class="btn-label"> Report</span></button>
+    <button id="btnRoofMeas" class="btn roof-only tr-roofmeas" title="Roof measurement report — squares, edges & penetrations from the aerial">📐<span class="btn-label"> Report</span></button>
     <button id="btnDw" class="btn tb-takeoff tr-dwall" title="Drywall & Paint — wall height, sheet size, waste, coverage; net SF & materials">🧱<span class="btn-label"> Drywall</span></button>
     <button id="btnFloor" class="btn tb-takeoff tr-floor" title="Flooring & Tile — net floor SF by material with waste; prices in $ Bid">▦<span class="btn-label"> Floor</span></button>
     <button id="btnFram" class="btn tb-takeoff tr-fram" title="Framing & Lumber — studs, plates & board-feet by stud size; prices in $ Bid">🪵<span class="btn-label"> Framing</span></button>
@@ -837,6 +838,6 @@
   </div>
 </div>
 
-<script type="module" src="app.js?v=72"></script>
+<script type="module" src="app.js?v=73"></script>
 </body>
 </html>
