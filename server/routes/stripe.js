@@ -136,6 +136,10 @@ router.post('/checkout', requireAdmin, requirePerm('manage_billing'), async (req
     if (add_roof && !add_planroom && !c.addon_planroom) {
       return res.status(400).json({ error: 'Roof Measurement requires Plan Room — add Plan Room too.', code: 'planroom_required' });
     }
+    // Storm/Utility rides on the Takeoff add-on.
+    if (add_storm && !add_takeoff && !c.addon_takeoff) {
+      return res.status(400).json({ error: 'Storm/Utility requires the Takeoff add-on — add Takeoff too.', code: 'takeoff_required' });
+    }
 
     let customerId = c.stripe_customer_id;
     if (!customerId) {
@@ -222,7 +226,7 @@ router.post('/addon', requireAdmin, requirePerm('manage_billing'), async (req, r
   const cfg = ADDON_PRICES[req.body && req.body.addon];
   if (!cfg) return res.status(400).json({ error: 'Unknown add-on' });
   try {
-    const r = await pool.query('SELECT stripe_subscription_id, addon_planroom FROM companies WHERE id = $1', [req.user.company_id]);
+    const r = await pool.query('SELECT stripe_subscription_id, addon_planroom, addon_takeoff FROM companies WHERE id = $1', [req.user.company_id]);
     const subId = r.rows[0] && r.rows[0].stripe_subscription_id;
     if (!subId) return res.status(400).json({ error: 'No active subscription — subscribe to a plan first.', code: 'no_subscription' });
 
@@ -235,6 +239,11 @@ router.post('/addon', requireAdmin, requirePerm('manage_billing'), async (req, r
     // Plan Room app), so Plan Room must already be owned to add it one-click.
     if (req.body.addon === 'roof' && !r.rows[0].addon_planroom) {
       return res.status(400).json({ error: 'Roof Measurement requires Plan Room — add Plan Room first.', code: 'planroom_required' });
+    }
+    // Storm/Utility is a deep layer on the Takeoff trade — useless without it, so
+    // Takeoff must already be owned to add Storm one-click.
+    if (req.body.addon === 'storm' && !r.rows[0].addon_takeoff) {
+      return res.status(400).json({ error: 'Storm/Utility requires the Takeoff add-on — add Takeoff first.', code: 'takeoff_required' });
     }
 
     const stripe = getStripe();

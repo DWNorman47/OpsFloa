@@ -23,6 +23,38 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-23 — Storm + Roof: opened for purchase through billing
+
+**Done.** Flipped both `STORM_SELLABLE` and `ROOF_SELLABLE` to **true** in
+`BillingPanel.jsx` — both add-ons now appear in billing for purchase. Also closed
+the two gaps that "sellable" exposed:
+
+- **Storm→Takeoff dependency** (Storm is dead without Takeoff, so selling it alone
+  is a broken purchase). Added the guard everywhere Takeoff→Plan Room already had
+  one: server `/checkout` + `/addon` (`code: 'takeoff_required'`), the manage-list
+  "needs Takeoff" gate + message, and the Storm checkbox now pulls Takeoff (+ Plan
+  Room) in. Dependency chain is now enforced end to end: Plan Room ← Takeoff ←
+  Storm, and Plan Room ← Roof.
+- **Roof standalone buy** — roof is now in the "buy without a plan" flow (a roof
+  card before the buy-alone button, added to `picks`, its checkbox pulls Plan Room
+  in), so the two-door "Plan Room + Roof" standalone door actually completes a
+  purchase, not just the one-click add for existing subscribers.
+
+⚠️ **Two things still gate real go-live — David is turning sale ON knowing both:**
+1. **Stripe price IDs must be set** or the buy cards stay hidden (they're gated on
+   `plans?.x?.monthly_price_id`): `STRIPE_PRICE_ROOF` (David is renaming from
+   `_ROOFING`) and `STRIPE_PRICE_STORM`, each + `_ANNUAL`, pointing at the real $40
+   / $20 prices. Roof also needs **migration 0147** run on stage/prod.
+2. **Neither add-on's math is verified.** These flags were the "don't sell until the
+   math is checked on a real one" gate (Storm's utility/excavation math; Roof's
+   scale-from-aerial + report). Turning them on sells unverified output — flagged;
+   David's call. Set either flag back to `false` to pull it without losing owned
+   companies' management.
+
+Verified: stripe/auth tests (45), client build, sitework clean.
+
+---
+
 ## 2026-07-23 — Roof Measurement: billing plumbing + two-door standalone sale (staged off)
 
 **Done.** Made `addon_roof` a real, sellable add-on — a faithful clone of

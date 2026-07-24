@@ -116,12 +116,14 @@ The full `addon_roof` lifecycle now mirrors `addon_storm`, staged off:
   (a `roof-solo` body class that hides takeoff chrome so an exempt account can
   preview the roof-only door). Plan Room `?v 72 → 73`.
 
-## To actually turn it on (remaining)
+## On sale (2026-07-23)
+`ROOF_SELLABLE = true` — the roof card is in billing (one-click add + the
+standalone buy-alone "Plan Room + Roof" flow). Remaining to actually transact:
 - Create the **$40 Stripe price** (+ annual) and set `STRIPE_PRICE_ROOF` /
-  `STRIPE_PRICE_ROOF_ANNUAL` in the deployed env.
-- **Verify the math on a real roof** (scale-from-aerial + the report).
-- Flip **`ROOF_SELLABLE = true`** in `BillingPanel.jsx`. Until then it shows for
-  exempt/trial only.
+  `STRIPE_PRICE_ROOF_ANNUAL` in the deployed env (or the buy card stays hidden).
+- Run **migration 0147** on stage/prod.
+- ⚠️ **The scale-from-aerial + report math is NOT verified on a real roof** — it
+  was opened for sale anyway. Verify before leaning on the output.
 - ~~**Per-edge pitch accuracy:**~~ ✅ **DONE.** Each `redge` now carries its own
   `pitch` (captured at draw time; rake/hip/valley prompt for it, defaulting to the
   main pitch). `edgeFt` uses `m.pitch`, falling back to the global for edges saved

@@ -230,13 +230,12 @@ export default function BillingPanel() {
     { key: 'roof', title: 'Roof Measurement', owned: hasRoof, plan: plans?.roof, desc: 'Trace a roof on an aerial and get a branded measurement report — squares, pitch, edges, and penetrations. Requires Plan Room.' },
     { key: 'qbo', title: 'QuickBooks Online', owned: hasQbo, plan: plans?.qbo, desc: 'Push invoices to QuickBooks and keep their payment status in sync.' },
   ];
-  // Storm/Utility is built but its math isn't verified yet — keep it OFF the
-  // menu (no buy option) until then; owned companies can still manage/turn it
-  // off. Flip to true to open it for sale.
-  const STORM_SELLABLE = false;
-  // Roof Measurement is built but its scale/report math isn't verified on a real
-  // roof yet — same posture as Storm. Flip to true to open it for sale.
-  const ROOF_SELLABLE = false;
+  // Storm/Utility and Roof Measurement are on sale. Both need their Stripe price
+  // IDs configured (STRIPE_PRICE_STORM / STRIPE_PRICE_ROOF, + _ANNUAL) or the buy
+  // cards stay hidden (they're gated on plans?.x?.monthly_price_id). Set back to
+  // false to pull either off the menu; owned companies keep managing it either way.
+  const STORM_SELLABLE = true;
+  const ROOF_SELLABLE = true;
 
   // Shown in place of an add-on's buy option when you already have it (in the
   // plan-selection state) — a Turn-off action so an owned add-on is managed in
@@ -339,10 +338,12 @@ export default function BillingPanel() {
             if (!a.plan?.monthly_price_id) return null;
             if (a.key === 'storm' && !STORM_SELLABLE) return null; // built, not yet on the menu
             if (a.key === 'roof' && !ROOF_SELLABLE) return null;  // built, not yet on the menu
-            // Takeoff and Roof Measurement are layers on Plan Room. One-click adds
-            // a single item, so it can't add Plan Room in the same step — require it first.
+            // Takeoff and Roof Measurement are layers on Plan Room; Storm is a layer
+            // on Takeoff. One-click adds a single item, so the layer beneath must
+            // already be owned — require it first.
             const needsPlanroom = (a.key === 'takeoff' || a.key === 'roof') && !hasPlanroom;
-            const blocked = !!redirecting || needsPlanroom;
+            const needsTakeoff = a.key === 'storm' && !hasTakeoff;
+            const blocked = !!redirecting || needsPlanroom || needsTakeoff;
             return (
               <div key={a.key} style={{ ...s.addonCard, marginTop: 14, marginBottom: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
@@ -360,7 +361,7 @@ export default function BillingPanel() {
                   </button>
                 </div>
                 <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.5, marginTop: 6 }}>
-                  {a.desc} {needsPlanroom ? (a.key === 'roof' ? 'Add Plan Room first — Roof Measurement rides on it.' : t.billingTakeoffNeedsPlanroom) : 'Prorated onto your current subscription — no re-checkout.'}
+                  {a.desc} {needsTakeoff ? 'Add the Takeoff add-on first — Storm/Utility rides on it.' : needsPlanroom ? (a.key === 'roof' ? 'Add Plan Room first — Roof Measurement rides on it.' : t.billingTakeoffNeedsPlanroom) : 'Prorated onto your current subscription — no re-checkout.'}
                 </div>
               </div>
             );
@@ -619,6 +620,25 @@ export default function BillingPanel() {
             </div>
           )}
 
+          {ROOF_SELLABLE && !hasRoof && plans?.roof?.monthly_price_id && (
+            <div style={s.addonCard}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                {/* Roof Measurement rides on Plan Room — checking it pulls Plan Room in. */}
+                <input type="checkbox" checked={addRoof} onChange={e => { const v = e.target.checked; setAddRoof(v); if (v && !hasPlanroom) setAddPlanroom(true); }}
+                  style={{ accentColor: '#d97706', width: 16, height: 16 }} />
+                <span style={s.addonTitle}>
+                  + Roof Measurement add-on &nbsp;
+                  <span style={{ fontSize: 18, fontWeight: 800, color: '#d97706' }}>${plans?.roof?.monthly ?? '—'}</span>
+                  <span style={{ fontSize: 13, color: '#6b7280' }}>/mo</span>
+                </span>
+              </label>
+              <div style={{ paddingLeft: 26, fontSize: 12, color: '#6b7280', lineHeight: 1.5, marginTop: 6 }}>
+                Trace a roof on an aerial and get a branded measurement report — squares, pitch, edges, and penetrations.
+                {!hasPlanroom && <span style={{ display: 'block', marginTop: 4, color: '#92400e', fontWeight: 600 }}>Includes Plan Room.</span>}
+              </div>
+            </div>
+          )}
+
           {/* Buy the checked add-ons without a plan — one subscription for
               whichever of Plan Room / Takeoff are ticked above. The same
               checkboxes still bundle into a plan if one is chosen. */}
@@ -626,6 +646,7 @@ export default function BillingPanel() {
             const picks = [
               addPlanroom && !hasPlanroom && plans?.planroom?.monthly_price_id && 'planroom',
               addTakeoff && !hasTakeoff && plans?.takeoff?.monthly_price_id && 'takeoff',
+              addRoof && !hasRoof && plans?.roof?.monthly_price_id && 'roof',
             ].filter(Boolean);
             const busy = redirecting === 'buy-addons';
             return (
@@ -646,7 +667,8 @@ export default function BillingPanel() {
           {STORM_SELLABLE && !hasStorm && plans?.storm?.monthly_price_id && (
             <div style={s.addonCard}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                <input type="checkbox" checked={addStorm} onChange={e => setAddStorm(e.target.checked)}
+                {/* Storm rides on Takeoff (which rides on Plan Room) — checking it pulls both in. */}
+                <input type="checkbox" checked={addStorm} onChange={e => { const v = e.target.checked; setAddStorm(v); if (v && !hasTakeoff) { setAddTakeoff(true); if (!hasPlanroom) setAddPlanroom(true); } }}
                   style={{ accentColor: '#d97706', width: 16, height: 16 }} />
                 <span style={s.addonTitle}>
                   + Storm/Utility add-on &nbsp;
@@ -660,23 +682,6 @@ export default function BillingPanel() {
             </div>
           )}
           {hasStorm && ownedAddonCard('storm', 'Storm/Utility')}
-
-          {ROOF_SELLABLE && !hasRoof && plans?.roof?.monthly_price_id && (
-            <div style={s.addonCard}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                <input type="checkbox" checked={addRoof} onChange={e => setAddRoof(e.target.checked)}
-                  style={{ accentColor: '#d97706', width: 16, height: 16 }} />
-                <span style={s.addonTitle}>
-                  + Roof Measurement add-on &nbsp;
-                  <span style={{ fontSize: 18, fontWeight: 800, color: '#d97706' }}>${plans?.roof?.monthly ?? '—'}</span>
-                  <span style={{ fontSize: 13, color: '#6b7280' }}>/mo</span>
-                </span>
-              </label>
-              <div style={{ paddingLeft: 26, fontSize: 12, color: '#6b7280', lineHeight: 1.5, marginTop: 6 }}>
-                Trace a roof on an aerial and get a branded measurement report — squares, pitch, edges, and penetrations. Requires Plan Room.
-              </div>
-            </div>
-          )}
           {hasRoof && ownedAddonCard('roof', 'Roof Measurement')}
 
           <ClientPortalProPlaceholder />
