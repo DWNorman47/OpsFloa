@@ -47,6 +47,32 @@ function normalizeTimeHash(rawHash) {
   return TIME_TAB_ALIASES[hash] || hash;
 }
 
+// Cached "clocked in" flag — persisted so the Personal/Workforce default can be
+// decided synchronously at mount (no /clock/status round-trip → no flash). Set by
+// Dashboard when the clock state is known; cleared on clock-out here and on logout
+// (AuthContext clears the same 'tc_clocked_in' key).
+const CLOCKED_IN_FLAG = 'tc_clocked_in';
+function clockedInFlag() {
+  try { return safeLocal.getItem(CLOCKED_IN_FLAG) === '1'; } catch { return false; }
+}
+function setClockedInFlag(on) {
+  try { safeLocal.setItem(CLOCKED_IN_FLAG, on ? '1' : ''); } catch { /* storage blocked */ }
+}
+
+// Personal vs Workforce on landing: an explicit #wf- link → Workforce; a plain
+// landing while clocked in (and the user holds both halves) → Workforce; else the
+// personal clock (or Workforce for an oversight-only user with no personal clock).
+function landingGroup(user) {
+  const rawHash = window.location.hash || '';
+  if (rawHash.startsWith('#wf-')) return 'workforce';
+  const plain = !rawHash.replace('#', '').trim();
+  const canPersonal = userCanSeeModule(user, 'timeclock');
+  const canWorkforce = userCanSeeModule(user, 'workforce');
+  if (plain && clockedInFlag() && canPersonal && canWorkforce) return 'workforce';
+  if (canPersonal) return 'personal';
+  return canWorkforce ? 'workforce' : 'personal';
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const { onSync } = useOffline() || {};
@@ -76,18 +102,10 @@ export default function Dashboard() {
   // row only appears for admins who can see both; everyone else just gets their
   // one group. Workforce tabs carry a '#wf-' hash. An oversight-only admin (can
   // see Workforce but not the personal clock) defaults to the Workforce group.
-  const [group, setGroup] = useState(() => {
-    if (window.location.hash.startsWith('#wf-')) return 'workforce';
-    if (userCanSeeModule(user, 'timeclock')) return 'personal';
-    return userCanSeeModule(user, 'workforce') ? 'workforce' : 'personal';
-  });
+  const [group, setGroup] = useState(() => landingGroup(user));
   const [entryView, setEntryView] = useState('list');
   const [shiftPrefill, setShiftPrefill] = useState(null);
   const [chatUnread, setChatUnread] = useState(false);
-  // Plain landing = no #tab / #wf- in the URL at mount (captured once). Used to
-  // decide the clocked-in default below without ever overriding an explicit link.
-  const plainLandingRef = useRef(!window.location.hash.replace('#', '').trim());
-  const autoGroupDoneRef = useRef(false);
 
   const handleFillFromShift = shift => {
     setShiftPrefill(shift);
@@ -134,24 +152,14 @@ export default function Dashboard() {
     api.get('/clock/status').then(r => setHeaderClock(r.data || false)).catch(() => setHeaderClock(false));
   }, []);
 
-  // Clocked-in default: a supervisor who's already clocked in usually comes back
-  // to Time Clock to watch their crew, not to re-clock themselves. So on a PLAIN
-  // landing (no explicit #tab / #wf- link), once the clock status is known, drop a
-  // clocked-in user who holds BOTH the personal clock and Workforce into the
-  // Workforce group. Runs once; an explicit link or a manual toggle is untouched,
-  // and effectiveGroup still guards anyone who can't actually see Workforce.
+  // Cache the clocked-in state (once known) so the Personal/Workforce default can
+  // be decided SYNCHRONOUSLY at the next mount — no waiting on /clock/status, so
+  // no flash of the personal view flipping to Workforce. Cleared here on clock-out
+  // and on logout (AuthContext), so it survives navigation but not a shift end.
   useEffect(() => {
-    if (autoGroupDoneRef.current) return;
-    if (headerClock === null || !settings) return; // wait for clock status + settings
-    autoGroupDoneRef.current = true;
-    const clockedIn = !!(headerClock && headerClock.clock_in_time);
-    const canPersonal = userCanSeeModule(user, 'timeclock');
-    const canWorkforce = settings.module_timeclock !== false && userCanSeeModule(user, 'workforce');
-    if (plainLandingRef.current && clockedIn && canPersonal && canWorkforce) {
-      setGroup('workforce');
-      history.replaceState(null, '', '#wf-live');
-    }
-  }, [headerClock, settings, user]);
+    if (headerClock === null) return; // still loading — don't touch the cache
+    setClockedInFlag(!!(headerClock && headerClock.clock_in_time));
+  }, [headerClock]);
 
   // Tick header elapsed timer while clocked in
   useEffect(() => {
@@ -469,10 +477,10 @@ ${signatureDataUrl ? `
   useEffect(() => {
     const syncGroupFromHash = () => {
       const rawHash = window.location.hash || '';
-      if (rawHash.startsWith('#wf-')) {
-        setGroup('workforce');
-      } else if (userCanSeeModule(user, 'timeclock')) {
-        setGroup('personal');
+      const g = landingGroup(user);
+      setGroup(g);
+      // Personal-group hashes also select a tab (Workforce carries its own #wf-).
+      if (g === 'personal') {
         const nextTab = normalizeTimeHash(rawHash);
         if (TABS.includes(nextTab)) {
           setTab(nextTab);

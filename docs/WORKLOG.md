@@ -26,16 +26,21 @@ or act on. Commit hashes are on `dev` unless noted.
 ## 2026-07-24 — Time Clock: a clocked-in supervisor lands on Workforce
 
 **Done.** On a **plain** landing at `/timeclock` (no `#tab` / `#wf-` link), a user
-who is **currently clocked in** and holds **both** the personal clock and Workforce
-now opens straight into the **Workforce** group instead of their own clock — a
-supervisor who's already punched in usually comes back to watch their crew, not to
-re-clock themselves.
+who is **clocked in** and holds **both** the personal clock and Workforce now opens
+straight into the **Workforce** group instead of their own clock — a supervisor
+who's already punched in usually comes back to watch their crew, not to re-clock
+themselves.
 
-Guarded tightly (`Dashboard.jsx`): fires **once**, only after the clock status
-loads, never when the URL carries an explicit tab/`#wf-` link or after a manual
-group toggle, and `effectiveGroup` still overrides anyone who can't actually see
-Workforce. Not clocked in → unchanged (personal clock). Oversight-only users were
-already defaulting to Workforce.
+**Approach (revised, `cd1af3f` → this):** first pass decided the default *after*
+`/clock/status` resolved, which flashed the personal view then flipped it. Reworked
+per David to a **cached clocked-in flag** (`tc_clocked_in` in localStorage): the
+Dashboard keeps it in sync with the clock state, and the Personal/Workforce default
+is read from it **synchronously at mount** (`landingGroup()`), so there's no flash.
+Start on the personal clock at login; once clocked in, later Time Clock visits open
+Workforce; cleared on **clock-out** (self-heals a stale flag when the status
+reloads) and on **logout** (fresh login starts personal). An explicit `#tab`/`#wf-`
+link or a manual toggle is never overridden, and `effectiveGroup` still guards
+anyone who can't see Workforce.
 
 ---
 

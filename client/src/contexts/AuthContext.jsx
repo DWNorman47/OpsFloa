@@ -137,6 +137,9 @@ export function AuthProvider({ children }) {
     safeLocal.removeItem('tc_user');
     safeSession.removeItem('tc_token');
     safeSession.removeItem('tc_user');
+    // Drop the cached clocked-in flag so a fresh login starts on the personal
+    // clock, not Workforce (Dashboard re-sets it once clock status loads).
+    safeLocal.removeItem('tc_clocked_in');
     setUser(null);
     setFirstLogin(false);
   };
