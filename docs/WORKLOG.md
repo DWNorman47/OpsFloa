@@ -74,6 +74,15 @@ correctness.
 Verified: 320 server tests (new `minDailyNoClockin` suite + all pay/hours suites
 green — backward compat), i18n parity (7), client build, sitework clean.
 
+**Follow-up — two more qualifying gates.** The no-clock-in dropdown now also offers
+**"every weekday that week"** and **"every other day that week"**: an empty day D
+is guaranteed only if the worker clocked in on the OTHER days of D's week — every
+weekday (Mon–Fri) except D, or every day except D (e.g. guarantee Sunday only if
+Mon–Sat were all worked). These are per-day gates in `computeOT` (`weekDaysOf`);
+they're hidden in the builder when the rule applies **Every Day** (only sensible
+for specific days), and `formToRule` coerces the value away if that happens. 324
+server tests (+4 gate cases) green.
+
 ---
 
 ## 2026-07-23 — Storm + Roof: opened for purchase through billing

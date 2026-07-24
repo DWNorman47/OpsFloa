@@ -41,6 +41,20 @@ function eachDateKey(from, to) {
   return out;
 }
 
+/** The 7 YYYY-MM-DD keys of the weekStart-aligned week that contains `dk`. */
+function weekDaysOf(dk, weekStart) {
+  const m = String(dk).substring(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return [];
+  const base = Date.UTC(+m[1], +m[2] - 1, +m[3]);
+  const wd = new Date(base).getUTCDay();               // 0=Sun … 6=Sat
+  const back = (((wd - weekStart) % 7) + 7) % 7;        // days since the week's start
+  const start = base - back * 86400000;
+  const out = [];
+  for (let i = 0; i < 7; i++) out.push(new Date(start + i * 86400000).toISOString().substring(0, 10));
+  return out;
+}
+const isWeekdayKey = (dk) => { const w = weekdayOfDate(dk); return w >= 1 && w <= 5; };
+
 /** Minutes since midnight from an "HH:MM[:SS]" string (null-safe). */
 function hmToMin(hhmm) {
   if (hhmm == null) return null;
@@ -358,9 +372,20 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
         let floor = 0;
         for (const r of noClockRules) {
           if (!ruleMatchesDate(r, dk)) continue;
-          const gate = r.activeWindow === 'period'
-            ? workedAnyInPeriod
-            : activeWeeks.has(weekBucketKey(dk, weekStart));
+          let gate;
+          if (r.activeWindow === 'period') {
+            gate = workedAnyInPeriod;
+          } else if (r.activeWindow === 'every_weekday' || r.activeWindow === 'every_other_day') {
+            // Empty day D qualifies only if the worker clocked in on the OTHER days
+            // of D's week: every weekday (Mon–Fri) except D, or every day except D.
+            const weekdaysOnly = r.activeWindow === 'every_weekday';
+            gate = weekDaysOf(dk, weekStart).every(d =>
+              d === dk                                   // D itself is the day being filled — irrelevant
+              || (weekdaysOnly && !isWeekdayKey(d))      // weekends don't count for the weekday gate
+              || buckets[d] != null);                    // otherwise that day must have been worked
+          } else {
+            gate = activeWeeks.has(weekBucketKey(dk, weekStart)); // 'week'
+          }
           if (gate) floor = Math.max(floor, parseFloat(r.hours) || 0);
         }
         if (floor > 0) autoReg += floor;   // guaranteed regular hours (no OT)

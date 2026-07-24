@@ -158,9 +158,12 @@ export function describeRule(r, t) {
     }
     case 'rest_day': return `${when} — ${t.hrSumRestDay.replace('{mult}', r.mult)}`;
     case 'min_daily': {
-      const nc = r.requiresClockin === false
-        ? ` ${r.activeWindow === 'period' ? t.hrSumMinNoClockinPeriod : t.hrSumMinNoClockinWeek}`
-        : '';
+      const ncMap = {
+        period: t.hrSumMinNoClockinPeriod,
+        every_weekday: t.hrSumMinNoClockinEveryWeekday,
+        every_other_day: t.hrSumMinNoClockinEveryOtherDay,
+      };
+      const nc = r.requiresClockin === false ? ` ${ncMap[r.activeWindow] || t.hrSumMinNoClockinWeek}` : '';
       return `${when} — ${t.hrSumMinDaily.replace('{n}', r.hours)}${nc}`;
     }
     case 'seventh_day': return `${when} — ${t.hrSumSeventh.replace('{a}', r.firstMult).replace('{b}', r.afterMult)}`;
@@ -565,9 +568,16 @@ export default function HoursRuleBuilder({ rules, onChange, title, help }) {
               </label>
               {!draft.minRequiresClockin && (
                 <Field label={t.hrMinActiveWindow}>
-                  <select style={s.input} value={draft.minActiveWindow} onChange={e => setD('minActiveWindow', e.target.value)}>
+                  {/* The "every weekday / every other day that week" gates only make
+                      sense for a specific-day rule, so hide them when this applies
+                      every day (and fall back to "that week" for display). */}
+                  <select style={s.input}
+                    value={draft.when?.kind === 'every_day' && (draft.minActiveWindow === 'every_weekday' || draft.minActiveWindow === 'every_other_day') ? 'week' : draft.minActiveWindow}
+                    onChange={e => setD('minActiveWindow', e.target.value)}>
                     <option value="week">{t.hrMinActiveWindowWeek}</option>
                     <option value="period">{t.hrMinActiveWindowPeriod}</option>
+                    {draft.when?.kind !== 'every_day' && <option value="every_weekday">{t.hrMinActiveWindowEveryWeekday}</option>}
+                    {draft.when?.kind !== 'every_day' && <option value="every_other_day">{t.hrMinActiveWindowEveryOtherDay}</option>}
                   </select>
                 </Field>
               )}
@@ -686,11 +696,17 @@ function coerceDraft(d) {
     case 'rest_day':
       out.mult = parseFloat(d.mult) || 1.5;
       break;
-    case 'min_daily':
+    case 'min_daily': {
       out.hours = parseFloat(d.minHours) || 0;
       out.requiresClockin = d.minRequiresClockin !== false;
-      out.activeWindow = d.minActiveWindow === 'period' ? 'period' : 'week';
+      // The specific-day gates only apply when the rule targets specific days.
+      const specific = d.when && d.when.kind !== 'every_day';
+      const aw = d.minActiveWindow;
+      out.activeWindow = aw === 'period' ? 'period'
+        : ((aw === 'every_weekday' || aw === 'every_other_day') && specific) ? aw
+        : 'week';
       break;
+    }
     case 'seventh_day':
       out.firstHours = parseFloat(d.firstHours) || 0;
       out.firstMult = parseFloat(d.firstMult) || 1.5;

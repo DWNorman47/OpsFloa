@@ -101,6 +101,8 @@ const RULE_TYPES = ['clip_start', 'clip_end', 'add_time', 'remove_time', 'auto_b
   'rest_day', 'min_daily', 'seventh_day', 'night_diff', 'window_mult'];
 const ROUND_EDGES = ['in', 'out', 'both']; // which punch edge a `round` rule rounds
 const OT_TIER_BASES = ['day', 'week'];     // an ot_tier rule counts hours per day or per week
+// min_daily "no clock-in" qualifying window (which activity earns an empty day)
+const MIN_ACTIVE_WINDOWS = ['week', 'period', 'every_weekday', 'every_other_day'];
 const RULE_WHEN_KINDS = [
   'every_day', 'weekdays', 'month_days', 'month_weekdays',
   'nth_days',      // every Nth calendar day from an anchor date
@@ -425,10 +427,14 @@ function parseRule(raw, index) {
       if (!Number.isFinite(hours) || hours <= 0) return null;
       // requiresClockin defaults TRUE — the original behaviour, a floor only on
       // days actually worked. When FALSE, the floor is also GRANTED on matching
-      // days with no clock-in (guaranteed hours), gated by activeWindow: the
-      // worker must have clocked in that 'week', or anywhere in the 'period'.
+      // days with no clock-in (guaranteed hours), gated by activeWindow — the
+      // qualifying condition for an empty day D:
+      //   'week'            → worker clocked in at least once in D's week
+      //   'period'          → worker clocked in at least once in the pay period
+      //   'every_weekday'   → worker worked every weekday (Mon–Fri) of D's week except D
+      //   'every_other_day' → worker worked every day of D's week except D
       const requiresClockin = raw.requiresClockin !== false;
-      const activeWindow = raw.activeWindow === 'period' ? 'period' : 'week';
+      const activeWindow = MIN_ACTIVE_WINDOWS.includes(raw.activeWindow) ? raw.activeWindow : 'week';
       return { ...base, hours, requiresClockin, activeWindow };
     }
 

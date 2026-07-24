@@ -79,3 +79,33 @@ describe('activeWindow = period', () => {
     expect(r.regularHours).toBeCloseTo(0);
   });
 });
+
+// One-week range (Mon 07-06 … Sun 07-12), weekStart Monday.
+const WK = { from: '2026-07-06', to: '2026-07-12' };
+const daysWorked = (dates) => dates.map(d => e(d, '08:00', '16:00')); // 8h each
+
+describe('activeWindow = every_weekday (guarantee a weekday if all OTHER weekdays were worked)', () => {
+  // Rule targets Friday only.
+  const fri = () => otConfig([{ id: 'm', type: 'min_daily', when: { kind: 'weekdays', days: [5] }, hours: 8, requiresClockin: false, activeWindow: 'every_weekday' }]);
+  test('empty Friday is guaranteed when Mon–Thu were worked', () => {
+    const r = computeOT(daysWorked(['2026-07-06', '2026-07-07', '2026-07-08', '2026-07-09']), 'daily', 8, 1, fri(), WK);
+    expect(r.regularHours).toBeCloseTo(40); // 32 worked + 8 guaranteed Friday
+  });
+  test('not guaranteed when a weekday (Thu) is missing', () => {
+    const r = computeOT(daysWorked(['2026-07-06', '2026-07-07', '2026-07-08']), 'daily', 8, 1, fri(), WK);
+    expect(r.regularHours).toBeCloseTo(24); // Friday not earned
+  });
+});
+
+describe('activeWindow = every_other_day (guarantee a day if EVERY other day of the week was worked)', () => {
+  // Rule targets Sunday only.
+  const sun = () => otConfig([{ id: 'm', type: 'min_daily', when: { kind: 'weekdays', days: [0] }, hours: 8, requiresClockin: false, activeWindow: 'every_other_day' }]);
+  test('empty Sunday is guaranteed when Mon–Sat were all worked', () => {
+    const r = computeOT(daysWorked(['2026-07-06', '2026-07-07', '2026-07-08', '2026-07-09', '2026-07-10', '2026-07-11']), 'daily', 8, 1, sun(), WK);
+    expect(r.regularHours).toBeCloseTo(56); // 48 worked + 8 guaranteed Sunday
+  });
+  test('not guaranteed when a day (Sat) is missing', () => {
+    const r = computeOT(daysWorked(['2026-07-06', '2026-07-07', '2026-07-08', '2026-07-09', '2026-07-10']), 'daily', 8, 1, sun(), WK);
+    expect(r.regularHours).toBeCloseTo(40); // Sunday not earned
+  });
+});
