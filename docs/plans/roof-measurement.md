@@ -79,13 +79,29 @@ from `roofingTotals()` + a per-facet walk of `state.markups`:
 2. **The report output.** The genuinely new artifact and the thing customers pay
    EagleView for. Built this pass.
 
+## Decisions locked (2026-07-23)
+- **Price: $40/mo** (`addon_roof`). Standalone door = Plan Room $40 + Roof $40 =
+  **$80/mo**; full suite = Plan Room $40 + Takeoff $60 + Roof $40 = **$140/mo**.
+  One entitlement, one price (not price-discriminated by door). Deliberately at
+  the low/wedge end — easy to raise a new product later; hard to walk a high one
+  back. Actual price lives in Stripe.
+- **Sold standalone via a two-door design** (agreed): buyable *without* Takeoff.
+  - **Door A — alternate roof button**, shown only when `has-roof && !has-takeoff`.
+    Enters a clean roof-only experience; the takeoff chrome (trade dropdown, other
+    trades, `$ Bid`) is already auto-hidden because it's `tb-takeoff` and they don't
+    own takeoff. Requires re-gating the roof draw tools from takeoff-only to
+    **takeoff-OR-roof** (a "can-do-roof" gate) so a roof-only owner can trace.
+  - **Door B — the trade dropdown** (`roofmeas` mode), for takeoff owners; the
+    alternate button hides when takeoff is owned. Buy/cancel transitions flip which
+    door shows; saved roof projects load either way.
+  - Testing wrinkle: exempt/trial reads both flags true, so Door A won't show for
+    an exempt account — add a dev override to preview the roof-only door.
+
 ## Deferred (productization, after the prototype proves out)
-- **Sell it:** backend `addon_roof` column + Stripe price + `BillingPanel` entry,
-  and a `ROOF_SELLABLE`-style gate (mirror Storm). Until then it shows for
-  exempt/trial only.
-- **Decouple from `has-takeoff`:** the reused roofing draw buttons are
-  `tb-takeoff`-gated, so today the mode needs the Takeoff layer too. For a truly
-  standalone roof add-on, give `roofmeas` its own `roof-only` toolbar buttons.
+- **Sell it:** backend `addon_roof` column + Stripe price ($40, above) +
+  `BillingPanel` entry, and a `ROOF_SELLABLE`-style gate (mirror Storm) that stays
+  off until the real-roof math is verified. Until then it shows for exempt/trial
+  only.
 - ~~**Per-edge pitch accuracy:**~~ ✅ **DONE.** Each `redge` now carries its own
   `pitch` (captured at draw time; rake/hip/valley prompt for it, defaulting to the
   main pitch). `edgeFt` uses `m.pitch`, falling back to the global for edges saved
