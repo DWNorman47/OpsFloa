@@ -23,6 +23,22 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-24 — Time Clock: a clocked-in supervisor lands on Workforce
+
+**Done.** On a **plain** landing at `/timeclock` (no `#tab` / `#wf-` link), a user
+who is **currently clocked in** and holds **both** the personal clock and Workforce
+now opens straight into the **Workforce** group instead of their own clock — a
+supervisor who's already punched in usually comes back to watch their crew, not to
+re-clock themselves.
+
+Guarded tightly (`Dashboard.jsx`): fires **once**, only after the clock status
+loads, never when the URL carries an explicit tab/`#wf-` link or after a manual
+group toggle, and `effectiveGroup` still overrides anyone who can't actually see
+Workforce. Not clocked in → unchanged (personal clock). Oversight-only users were
+already defaulting to Workforce.
+
+---
+
 ## 2026-07-24 — Hours & Rules: Minimum Daily Hours can pay without a clock-in
 
 **Done.** A `min_daily` rule now has a **"Requires clock-in"** checkbox. Default ON

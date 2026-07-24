@@ -84,6 +84,10 @@ export default function Dashboard() {
   const [entryView, setEntryView] = useState('list');
   const [shiftPrefill, setShiftPrefill] = useState(null);
   const [chatUnread, setChatUnread] = useState(false);
+  // Plain landing = no #tab / #wf- in the URL at mount (captured once). Used to
+  // decide the clocked-in default below without ever overriding an explicit link.
+  const plainLandingRef = useRef(!window.location.hash.replace('#', '').trim());
+  const autoGroupDoneRef = useRef(false);
 
   const handleFillFromShift = shift => {
     setShiftPrefill(shift);
@@ -129,6 +133,25 @@ export default function Dashboard() {
   useEffect(() => {
     api.get('/clock/status').then(r => setHeaderClock(r.data || false)).catch(() => setHeaderClock(false));
   }, []);
+
+  // Clocked-in default: a supervisor who's already clocked in usually comes back
+  // to Time Clock to watch their crew, not to re-clock themselves. So on a PLAIN
+  // landing (no explicit #tab / #wf- link), once the clock status is known, drop a
+  // clocked-in user who holds BOTH the personal clock and Workforce into the
+  // Workforce group. Runs once; an explicit link or a manual toggle is untouched,
+  // and effectiveGroup still guards anyone who can't actually see Workforce.
+  useEffect(() => {
+    if (autoGroupDoneRef.current) return;
+    if (headerClock === null || !settings) return; // wait for clock status + settings
+    autoGroupDoneRef.current = true;
+    const clockedIn = !!(headerClock && headerClock.clock_in_time);
+    const canPersonal = userCanSeeModule(user, 'timeclock');
+    const canWorkforce = settings.module_timeclock !== false && userCanSeeModule(user, 'workforce');
+    if (plainLandingRef.current && clockedIn && canPersonal && canWorkforce) {
+      setGroup('workforce');
+      history.replaceState(null, '', '#wf-live');
+    }
+  }, [headerClock, settings, user]);
 
   // Tick header elapsed timer while clocked in
   useEffect(() => {
