@@ -57,10 +57,9 @@ const SETTINGS_DEFAULTS = {
   cp_compute_deductions: false,     // Strategy A — OpsFloa computes fed/state/FICA withholdings (OFF by default; payroll processor handles this)
   media_retention_days: 0,
   week_start: 1, // 0=Sunday, 1=Monday, …, 6=Saturday (OpsFloa's default pay-period start)
-  // The company's standard working week span (0=Sun … 6=Sat). Distinct from
-  // week_start (which begins the pay/OT week); this describes which days are
-  // normal work days, Mon–Fri by default.
-  work_week_start: 1, work_week_end: 5,
+  // The last day of the company's work week (0=Sun … 6=Sat), Sunday by default.
+  // Distinct from week_start, which begins the pay/OT week.
+  work_week_end: 0,
   currency: 'USD', invoice_signature: 'optional', default_temp_password: '', global_required_checklist_template_id: '',
   label_client: 'Customer', label_worker: 'Team Member', label_field: 'Field Work',
   setup_questionnaire_completed_at: '',
