@@ -1067,6 +1067,17 @@ function edgeCredit(rules, type, edge, punchMin, anchorBase = null) {
   return maxReplace + sumStack;
 }
 
+// Explain-only: ids of the add/remove-time rules on one edge that actually fired
+// (credit > 0), so a trace can name and link them. Never touches the pay math.
+function adjustFiredRuleIds(rules, edge, punchMin, anchorBase) {
+  const ids = [];
+  for (const r of rules) {
+    if ((r.type !== 'add_time' && r.type !== 'remove_time') || r.edge !== edge) continue;
+    if (ruleCredit(r, punchMin, anchorBase) > 0) ids.push(r.id);
+  }
+  return ids;
+}
+
 /**
  * Run the rule list against one already-rounded punch.
  *
@@ -1074,9 +1085,13 @@ function edgeCredit(rules, type, edge, punchMin, anchorBase = null) {
  * @param loggedBreakMin   what the worker typed at clock-out
  * @param rules            parsed, already filtered to this date
  * @param expected         {startMin, endMin} scheduled day, or null
+ * @param trace            explain-only: when an array is passed, each mechanism
+ *                         that changed the punch appends a structured note
+ *                         (code + effect + the rule ids that fired). null (the
+ *                         default) → no notes and identical behaviour/cost.
  * @returns {{startMin, endMin, breakMin}}
  */
-function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null) {
+function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null, trace = null) {
   // The punch as it arrived. Rung thresholds are ALWAYS judged against this,
   // never against the clipped value — an End Time rule at 5:00 would otherwise
   // pull every punch back to 5:00 and no rung could ever fire.
@@ -1114,6 +1129,8 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null) {
       if (r.behavior !== 'auto') e = Math.min(e, r.at);
     }
   }
+  const clipStartTo = s !== punchStart ? s : null; // trace: paid start pulled forward by a Start Time rule
+  const clipEndTo = e !== punchEnd ? e : null;     // trace: paid end pulled back by an End Time rule
   // No End Time rule for this day → fall back to the scheduled day. Validation
   // requires the rule (see validatePolicy), so this only catches a policy
   // written straight into the DB.
@@ -1123,8 +1140,10 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null) {
 
   // ── 2. Adjust ── the credit lands on the BASELINE, not on the punch. The
   // punch decides which rung was reached; it is not the thing added to.
+  let afterDelta = 0; // trace: signed change in paid minutes from the after edge (+ = more pay)
   const hasAfter = rules.some(r => (r.type === 'add_time' || r.type === 'remove_time') && r.edge === 'after');
   if (hasAfter) {
+    const ePre = e;
     const net = edgeCredit(rules, 'add_time', 'after', punchEnd, baseEnd)
               - edgeCredit(rules, 'remove_time', 'after', punchEnd, baseEnd);
     const scheduleBased = rules.some(r => r.edge === 'after' && r.base === 'schedule'
@@ -1142,12 +1161,15 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null) {
       // base 'punch': a flat bonus on the actual punch, by design.
       e = e + net;
     }
+    afterDelta = e - ePre; // the real movement of the paid end, for the trace
   }
 
   // The clock-in edge, mirrored: credit moves the paid start EARLIER off the
   // baseline.
+  let beforeDelta = 0; // trace: signed change in paid minutes from the before edge (+ = more pay)
   const hasBefore = rules.some(r => (r.type === 'add_time' || r.type === 'remove_time') && r.edge === 'before');
   if (hasBefore) {
+    const sPre = s;
     const net = edgeCredit(rules, 'add_time', 'before', punchStart, baseStart)
               - edgeCredit(rules, 'remove_time', 'before', punchStart, baseStart);
     const scheduleBased = rules.some(r => r.edge === 'before' && r.base === 'schedule'
@@ -1160,6 +1182,7 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null) {
     } else {
       s = s - net;
     }
+    beforeDelta = sPre - s; // earlier start (s decreased) = more paid time = positive
   }
 
   if (e < s) e = s;
@@ -1183,7 +1206,16 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null) {
     if (r.trigger.kind === 'after_hours' && workedHours < r.trigger.hours) continue;
     expectedBreak += r.minutes;
   }
-  const breakMin = Math.max(expectedBreak, Number(loggedBreakMin) || 0);
+  const loggedBreak = Number(loggedBreakMin) || 0;
+  const breakMin = Math.max(expectedBreak, loggedBreak);
+
+  if (trace) {
+    if (clipStartTo != null) trace.push({ code: 'clip_start', toMin: clipStartTo, ruleIds: rules.filter(r => r.type === 'clip_start' && r.behavior !== 'auto' && r.at === clipStartTo).map(r => r.id) });
+    if (clipEndTo != null) trace.push({ code: 'clip_end', toMin: clipEndTo, ruleIds: rules.filter(r => r.type === 'clip_end' && r.behavior !== 'auto' && r.at === clipEndTo).map(r => r.id) });
+    if (afterDelta !== 0) trace.push({ code: afterDelta > 0 ? 'add_time' : 'remove_time', edge: 'after', deltaMin: afterDelta, ruleIds: adjustFiredRuleIds(rules, 'after', punchEnd, baseEnd) });
+    if (beforeDelta !== 0) trace.push({ code: beforeDelta > 0 ? 'add_time' : 'remove_time', edge: 'before', deltaMin: beforeDelta, ruleIds: adjustFiredRuleIds(rules, 'before', punchStart, baseStart) });
+    if (expectedBreak > loggedBreak) trace.push({ code: 'auto_break', breakMin, addedMin: expectedBreak - loggedBreak, ruleIds: rules.filter(r => r.type === 'auto_break' && !(r.trigger.kind === 'after_hours' && workedHours < r.trigger.hours)).map(r => r.id) });
+  }
 
   return { startMin: s, endMin: e, breakMin };
 }
@@ -1220,7 +1252,7 @@ function roundEntriesForPay(entries, policy, ctx = {}) {
   // empty, so keep processing whenever any role section exists.
   if (inOff && outOff && standardRules.length === 0 && !hasRoleRules) return entries;
 
-  const { shiftMap, workerStandardById, workerRoleById } = ctx;
+  const { shiftMap, workerStandardById, workerRoleById, explain } = ctx;
   // Whether to surface the original punch alongside the paid time. When a company
   // opts for "paid only", we still round but don't expose the raw punch.
   const showRaw = policy.display?.showActualAndPaid !== false;
@@ -1243,34 +1275,58 @@ function roundEntriesForPay(entries, policy, ctx = {}) {
     // for its edge(s) — later matching rules win; with none, the global config
     // applies exactly as before.
     let cfgIn = policy.rounding.clockIn, cfgOut = policy.rounding.clockOut;
+    let roundRuleIn = null, roundRuleOut = null; // explain: which round rule drove each edge (null = global config)
     for (const r of dayRules) {
       if (r.type !== 'round') continue;
       const cfg = { reference: r.reference, intervalMin: r.intervalMin, graceMin: r.graceMin, direction: r.direction };
-      if (r.edge === 'in' || r.edge === 'both') cfgIn = cfg;
-      if (r.edge === 'out' || r.edge === 'both') cfgOut = cfg;
+      if (r.edge === 'in' || r.edge === 'both') { cfgIn = cfg; roundRuleIn = r.id; }
+      if (r.edge === 'out' || r.edge === 'both') { cfgOut = cfg; roundRuleOut = r.id; }
     }
     const { start, end } = applyRounding(e.start_time, e.end_time, expected, { clockIn: cfgIn, clockOut: cfgOut });
     let finalStart = start;
     let finalEnd = end;
     let breakMin = e.break_minutes;
 
+    const trace = explain ? [] : null;
     if (dayRules.length) {
-      const out = applyRules(toMin(start), toMin(end), e.break_minutes, dayRules, expected);
+      const out = applyRules(toMin(start), toMin(end), e.break_minutes, dayRules, expected, trace);
       finalStart = toHHMMSS(out.startMin);
       finalEnd = toHHMMSS(out.endMin);
       breakMin = out.breakMin;
     }
 
     const breakChanged = breakMin !== e.break_minutes;
-    if (finalStart === e.start_time && finalEnd === e.end_time && !breakChanged) return e;
+    const changed = !(finalStart === e.start_time && finalEnd === e.end_time && !breakChanged);
 
+    // Default path — byte-identical to before: unchanged entries return the same
+    // reference; changed ones carry the paid punch, raw punch, and adjusted flag.
+    if (!explain) {
+      if (!changed) return e;
+      return {
+        ...e,
+        start_time: finalStart,
+        end_time: finalEnd,
+        ...(breakChanged ? { break_minutes: breakMin, raw_break_minutes: e.break_minutes } : {}),
+        ...(showRaw ? { raw_start_time: e.start_time, raw_end_time: e.end_time } : {}),
+        rounding_adjusted: true,
+      };
+    }
+
+    // Explain path — the rounding step, then the applyRules trace (clip/adjust/
+    // break), attached as `explain`. Numbers are identical to the default path.
+    const items = [];
+    if (start !== e.start_time) items.push({ code: 'rounding_in', fromTime: e.start_time, toTime: start, ruleId: roundRuleIn });
+    if (end !== e.end_time) items.push({ code: 'rounding_out', fromTime: e.end_time, toTime: end, ruleId: roundRuleOut });
+    if (trace) items.push(...trace);
+    if (!changed && items.length === 0) return e;
     return {
       ...e,
       start_time: finalStart,
       end_time: finalEnd,
-      ...(breakChanged ? { break_minutes: breakMin, raw_break_minutes: e.break_minutes } : {}),
-      ...(showRaw ? { raw_start_time: e.start_time, raw_end_time: e.end_time } : {}),
-      rounding_adjusted: true,
+      ...(changed && breakChanged ? { break_minutes: breakMin, raw_break_minutes: e.break_minutes } : {}),
+      ...(changed && showRaw ? { raw_start_time: e.start_time, raw_end_time: e.end_time } : {}),
+      ...(changed ? { rounding_adjusted: true } : {}),
+      ...(items.length ? { explain: items } : {}),
     };
   });
 }
