@@ -82,6 +82,8 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
     sick_pay_pct: String(settings?.sick_pay_pct ?? 100),
     vacation_pay_pct: String(settings?.vacation_pay_pct ?? 100),
     week_start: String(settings?.week_start ?? 1),
+    work_week_start: String(settings?.work_week_start ?? 1),
+    work_week_end: String(settings?.work_week_end ?? 5),
     notification_inactive_days: String(settings?.notification_inactive_days ?? 3),
     notification_use_work_hours: settings?.notification_use_work_hours ?? true,
     notification_start_hour: String(settings?.notification_start_hour ?? 6),
@@ -176,6 +178,8 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
       sick_pay_pct: String(settings.sick_pay_pct ?? 100),
       vacation_pay_pct: String(settings.vacation_pay_pct ?? 100),
       week_start: String(settings.week_start ?? 1),
+      work_week_start: String(settings.work_week_start ?? 1),
+      work_week_end: String(settings.work_week_end ?? 5),
       notification_inactive_days: String(settings.notification_inactive_days ?? 3),
       notification_use_work_hours: settings.notification_use_work_hours ?? true,
       notification_start_hour: String(settings.notification_start_hour ?? 6),
@@ -249,6 +253,8 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
         sick_pay_pct: parseFloat(form.sick_pay_pct),
         vacation_pay_pct: parseFloat(form.vacation_pay_pct),
         week_start: parseInt(form.week_start, 10),
+        work_week_start: parseInt(form.work_week_start, 10),
+        work_week_end: parseInt(form.work_week_end, 10),
         notification_inactive_days: parseFloat(form.notification_inactive_days),
         notification_use_work_hours: form.notification_use_work_hours,
         notification_start_hour: parseFloat(form.notification_start_hour),
@@ -700,6 +706,39 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
             </div>
             <div style={styles.inputGroup}>
               <select style={{ ...styles.input, width: 'auto', textAlign: 'left' }} value={form.week_start} onChange={e => set('week_start', e.target.value)}>
+                <option value="0">{t.daySunday}</option>
+                <option value="1">{t.dayMonday}</option>
+                <option value="2">{t.dayTuesday}</option>
+                <option value="3">{t.dayWednesday}</option>
+                <option value="4">{t.dayThursday}</option>
+                <option value="5">{t.dayFriday}</option>
+                <option value="6">{t.daySaturday}</option>
+              </select>
+            </div>
+          </div>
+          <div style={styles.row}>
+            <div>
+              <div style={styles.label}>{t.mrWorkWeekStart}</div>
+              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrWorkWeekDesc}</div>
+            </div>
+            <div style={styles.inputGroup}>
+              <select style={{ ...styles.input, width: 'auto', textAlign: 'left' }} value={form.work_week_start} onChange={e => set('work_week_start', e.target.value)}>
+                <option value="0">{t.daySunday}</option>
+                <option value="1">{t.dayMonday}</option>
+                <option value="2">{t.dayTuesday}</option>
+                <option value="3">{t.dayWednesday}</option>
+                <option value="4">{t.dayThursday}</option>
+                <option value="5">{t.dayFriday}</option>
+                <option value="6">{t.daySaturday}</option>
+              </select>
+            </div>
+          </div>
+          <div style={styles.row}>
+            <div>
+              <div style={styles.label}>{t.mrWorkWeekEnd}</div>
+            </div>
+            <div style={styles.inputGroup}>
+              <select style={{ ...styles.input, width: 'auto', textAlign: 'left' }} value={form.work_week_end} onChange={e => set('work_week_end', e.target.value)}>
                 <option value="0">{t.daySunday}</option>
                 <option value="1">{t.dayMonday}</option>
                 <option value="2">{t.dayTuesday}</option>
