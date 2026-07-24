@@ -356,7 +356,7 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
         // invoice — this used to round but drop the tiered-overtime config, so
         // a company on CA-style tiers saw one number here and another on a bill.
         const { paid: paidEntries, regularHours, overtimeHours } =
-          computePaid(entries, s, { rule: workerOTRule, roleId: workerData.role_id ?? null });
+          computePaid(entries, s, { rule: workerOTRule, roleId: workerData.role_id ?? null, range: { from: ps, to: pe } });
         let prevailingHours = 0, totalMileage = 0;
         for (const e of paidEntries) {
           if (e.wage_type === 'prevailing') {

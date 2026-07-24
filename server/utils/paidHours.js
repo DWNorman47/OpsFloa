@@ -53,7 +53,7 @@ async function loadSettings(companyId) {
  * selects both the effective rule list (via the rounding engine) and the OT config.
  * Null/absent → the standard rules, identical to the company-wide behaviour.
  */
-function computePaid(entries, settings, { rule = 'daily', ctx = {}, roleId = null } = {}) {
+function computePaid(entries, settings, { rule = 'daily', ctx = {}, roleId = null, range = null } = {}) {
   // These entries are one worker's. When a role is supplied, tell the rounding
   // engine which role applies (workerRoleById) and select that role's OT config.
   let effCtx = ctx;
@@ -69,7 +69,9 @@ function computePaid(entries, settings, { rule = 'daily', ctx = {}, roleId = nul
   const paid = roundEntriesFromSettings(entries || [], settings, effCtx);
   const otConfig = otConfigFromSettings(settings, roleId);
   const { threshold, weekStart } = payNumbers(settings);
-  const { regularHours, overtimeHours, otBands } = computeOT(paid, rule, threshold, weekStart, otConfig);
+  // `range` (the pay period being computed) enables the min_daily "no clock-in"
+  // guarantee to fill empty days; absent → today's entry-only behaviour.
+  const { regularHours, overtimeHours, otBands } = computeOT(paid, rule, threshold, weekStart, otConfig, range);
   return { paid, regularHours, overtimeHours, otBands, otConfig };
 }
 

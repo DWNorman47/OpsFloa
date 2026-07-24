@@ -59,6 +59,8 @@ function blankRule() {
     mult: '1.5',
     // premium fields (rest_day reuses mult; others below)
     minHours: '4',
+    minRequiresClockin: true,   // min_daily: floor only on days worked (default)
+    minActiveWindow: 'week',    // when clock-in not required: worked-that-week vs. -that-period gate
     firstHours: '8',
     firstMult: '1.5',
     afterMult: '2',
@@ -155,7 +157,12 @@ export function describeRule(r, t) {
       return `${when} — ${t.hrSumOtTier.replace('{n}', r.afterHours).replace('{per}', per).replace('{mult}', r.mult)}`;
     }
     case 'rest_day': return `${when} — ${t.hrSumRestDay.replace('{mult}', r.mult)}`;
-    case 'min_daily': return `${when} — ${t.hrSumMinDaily.replace('{n}', r.hours)}`;
+    case 'min_daily': {
+      const nc = r.requiresClockin === false
+        ? ` ${r.activeWindow === 'period' ? t.hrSumMinNoClockinPeriod : t.hrSumMinNoClockinWeek}`
+        : '';
+      return `${when} — ${t.hrSumMinDaily.replace('{n}', r.hours)}${nc}`;
+    }
     case 'seventh_day': return `${when} — ${t.hrSumSeventh.replace('{a}', r.firstMult).replace('{b}', r.afterMult)}`;
     case 'night_diff': return `${when} — ${t.hrSumNight.replace('{pct}', r.pct).replace('{from}', r.fromHour).replace('{to}', r.toHour)}`;
     case 'window_mult': {
@@ -552,7 +559,19 @@ export default function HoursRuleBuilder({ rules, onChange, title, help }) {
               <Field label={t.hrMinDaily}>
                 <input style={s.input} type="number" min="0.5" step="0.5" value={draft.minHours} onChange={e => setD('minHours', e.target.value)} />
               </Field>
-              <p style={s.hint}>{t.hrMinRuleHint}</p>
+              <label style={s.checkRow}>
+                <input type="checkbox" checked={draft.minRequiresClockin} onChange={e => setD('minRequiresClockin', e.target.checked)} />
+                <span>{t.hrMinRequiresClockin}</span>
+              </label>
+              {!draft.minRequiresClockin && (
+                <Field label={t.hrMinActiveWindow}>
+                  <select style={s.input} value={draft.minActiveWindow} onChange={e => setD('minActiveWindow', e.target.value)}>
+                    <option value="week">{t.hrMinActiveWindowWeek}</option>
+                    <option value="period">{t.hrMinActiveWindowPeriod}</option>
+                  </select>
+                </Field>
+              )}
+              <p style={s.hint}>{draft.minRequiresClockin ? t.hrMinRuleHint : t.hrMinNoClockinHint}</p>
             </>
           )}
 
@@ -669,6 +688,8 @@ function coerceDraft(d) {
       break;
     case 'min_daily':
       out.hours = parseFloat(d.minHours) || 0;
+      out.requiresClockin = d.minRequiresClockin !== false;
+      out.activeWindow = d.minActiveWindow === 'period' ? 'period' : 'week';
       break;
     case 'seventh_day':
       out.firstHours = parseFloat(d.firstHours) || 0;
@@ -728,6 +749,7 @@ const s = {
   chip: { padding: '5px 11px', border: '1px solid #d1d5db', background: '#fff', borderRadius: 999, fontSize: 12, cursor: 'pointer', color: '#6b7280' },
   chipOn: { background: 'var(--ops-page-accent, #059669)', borderColor: 'transparent', color: '#fff', fontWeight: 600 },
   hint: { fontSize: 11.5, color: '#6b7280', margin: 0, lineHeight: 1.45 },
+  checkRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#374151', cursor: 'pointer' },
   err: { fontSize: 12, color: '#b91c1c', margin: 0, fontWeight: 600 },
   preview: { fontSize: 12.5, color: '#065f46', background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 6, padding: '7px 10px' },
   actions: { display: 'flex', gap: 8, marginTop: 2 },

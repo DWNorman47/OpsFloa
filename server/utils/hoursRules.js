@@ -423,7 +423,13 @@ function parseRule(raw, index) {
       // Reporting-time pay: a floor of paid regular hours on a matching short day.
       const hours = Number(raw.hours);
       if (!Number.isFinite(hours) || hours <= 0) return null;
-      return { ...base, hours };
+      // requiresClockin defaults TRUE — the original behaviour, a floor only on
+      // days actually worked. When FALSE, the floor is also GRANTED on matching
+      // days with no clock-in (guaranteed hours), gated by activeWindow: the
+      // worker must have clocked in that 'week', or anywhere in the 'period'.
+      const requiresClockin = raw.requiresClockin !== false;
+      const activeWindow = raw.activeWindow === 'period' ? 'period' : 'week';
+      return { ...base, hours, requiresClockin, activeWindow };
     }
 
     case 'seventh_day': {

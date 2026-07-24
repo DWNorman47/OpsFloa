@@ -23,6 +23,43 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-24 — Hours & Rules: Minimum Daily Hours can pay without a clock-in
+
+**Done.** A `min_daily` rule now has a **"Requires clock-in"** checkbox. Default ON
+= today's behaviour (reporting-time pay — a floor only on days actually worked).
+Turn it OFF and the minimum is **guaranteed on the rule's applicable days even with
+no clock-in** ("guaranteed hours").
+
+**The gate David asked for** (his refinement of the scope question): when clock-in
+isn't required, a second control — **the worker must have clocked in "that week"
+vs. "anywhere in the pay period"** — decides whether an empty day is paid. A window
+with *zero* activity is never paid, so a fully-absent worker/week/period earns
+nothing. It only fills *empty* days; worked days are unchanged.
+
+**Engine** (`payCalculations.computeOT`): takes an optional pay-period `range`.
+After the normal per-day bucketing, it walks the applicable days in the range with
+no worked bucket and, if the week/period gate passes, adds the floor as **regular
+hours** (same as the existing short-day floor — no OT). No `range`, or
+requiresClockin=true → byte-identical to before. Threaded through `computePaid`.
+
+**Wired the range at the four worker-pay-for-period sites** so the stub and the
+payroll can't disagree: worker pay-stubs, worker invoice, payroll export, and
+worker-hours export. **NOT** the project bill / project metrics / `laborCostCents`
+/ QBO paths — a no-clock-in guaranteed day isn't attributable to a project, and
+those read project cost or OT only. Extra guard for free: the export queries are
+`u.active = true`, so terminated workers can't collect the guarantee.
+
+**Judgment call — no line item for the empty days.** Guaranteed no-clock-in hours
+fold into the summary *regular hours* with no per-day line (there's no entry to
+show), exactly like the existing floor already tops a short day beyond its punch. A
+labelled "guaranteed hours" line on the stub is a nice follow-up for clarity, not
+correctness.
+
+Verified: 320 server tests (new `minDailyNoClockin` suite + all pay/hours suites
+green — backward compat), i18n parity (7), client build, sitework clean.
+
+---
+
 ## 2026-07-23 — Storm + Roof: opened for purchase through billing
 
 **Done.** Flipped both `STORM_SELLABLE` and `ROOF_SELLABLE` to **true** in

@@ -26,6 +26,21 @@ function weekdayOfDate(dk) {
   return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay();
 }
 
+/** YYYY-MM-DD keys from `from` to `to` inclusive (UTC, TZ-independent). Bounded
+ *  so a stray range can't loop unbounded. */
+function eachDateKey(from, to) {
+  const out = [];
+  const mf = String(from).substring(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const mt = String(to).substring(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!mf || !mt) return out;
+  let d = Date.UTC(+mf[1], +mf[2] - 1, +mf[3]);
+  const end = Date.UTC(+mt[1], +mt[2] - 1, +mt[3]);
+  for (let i = 0; d <= end && i < 2000; i++, d += 86400000) {
+    out.push(new Date(d).toISOString().substring(0, 10));
+  }
+  return out;
+}
+
 /** Minutes since midnight from an "HH:MM[:SS]" string (null-safe). */
 function hmToMin(hhmm) {
   if (hhmm == null) return null;
@@ -218,7 +233,7 @@ function minDailyForBucket(otConfig, rule, dk) {
  * @param {object} [otConfig=null] - tiered-OT config {dailyBands, weeklyBands}; null = single tier
  * @returns {{regularHours:number, overtimeHours:number, otBands:Array<{hours:number,mult:number|null}>}}
  */
-function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null) {
+function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, range = null) {
   const regular = entries.filter(e => e.wage_type === 'regular');
 
   // Partition entries with an explicit override out of the automatic calc.
@@ -324,6 +339,33 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null) {
         }
       }
     });
+
+    // Minimum-daily guarantee WITHOUT a clock-in: a min_daily rule flagged
+    // requiresClockin === false also grants its floor on matching days in the pay
+    // period that have NO worked bucket ("guaranteed hours"). Gated so it isn't
+    // paid to someone absent the whole window — the worker must have clocked in
+    // that 'week' (activeWindow 'week') or anywhere in the 'period' ('period').
+    // Worked days are already floored above; this only fills the empty ones, and
+    // only when the caller passes the pay-period `range` (no range → unchanged).
+    const minDailyRules = (otConfig && Array.isArray(otConfig.minDailyRules)) ? otConfig.minDailyRules : [];
+    const noClockRules = minDailyRules.filter(r => r.requiresClockin === false && (parseFloat(r.hours) || 0) > 0);
+    if (rule === 'daily' && noClockRules.length && range && range.from && range.to) {
+      const activeWeeks = new Set(Object.keys(buckets).map(dk => weekBucketKey(dk, weekStart)));
+      const workedAnyInPeriod = Object.keys(buckets).length > 0;
+      for (const dk of eachDateKey(range.from, range.to)) {
+        if (buckets[dk] != null) continue;                          // worked day — floored above
+        if (restDays && restDays.has(weekdayOfDate(dk))) continue;  // don't guarantee a rest day
+        let floor = 0;
+        for (const r of noClockRules) {
+          if (!ruleMatchesDate(r, dk)) continue;
+          const gate = r.activeWindow === 'period'
+            ? workedAnyInPeriod
+            : activeWeeks.has(weekBucketKey(dk, weekStart));
+          if (gate) floor = Math.max(floor, parseFloat(r.hours) || 0);
+        }
+        if (floor > 0) autoReg += floor;   // guaranteed regular hours (no OT)
+      }
+    }
   }
 
   const otBands = [...otByMult.entries()]

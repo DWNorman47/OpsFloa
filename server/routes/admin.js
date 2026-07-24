@@ -1038,7 +1038,9 @@ router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
     entries = roundEntriesFromSettings(entries, settings, { workerRoleById: { [worker.id]: worker.role_id } });
     const workerOTRule = worker.overtime_rule || 'daily';
     const otConfig = otConfigFromSettings(settings, worker.role_id);
-    const { regularHours, overtimeHours, otBands } = computeOT(entries, workerOTRule, settings.overtime_threshold, settings.week_start, otConfig);
+    // range carries the min_daily "no clock-in" guarantee; null from/to (all-time
+    // invoice) → the guard in computeOT skips it, so behaviour is unchanged.
+    const { regularHours, overtimeHours, otBands } = computeOT(entries, workerOTRule, settings.overtime_threshold, settings.week_start, otConfig, { from, to });
     // Per-entry OT for the invoice's daily line-item column (sums to overtimeHours above)
     annotateEntryOvertime(entries, workerOTRule, settings.overtime_threshold, settings.week_start, otConfig);
     const prevailingHours = entries.filter(e => e.wage_type === 'prevailing').reduce((sum, e) => {
@@ -3258,7 +3260,7 @@ router.get('/overtime-report', requireAdmin, requirePerm('view_reports'), requir
       const wEntries = byWorker[w.id] || [];
       const workerOTRule = w.overtime_rule || 'daily';
       const otConfig = otConfigByRole(w.role_id);
-      const { regularHours, overtimeHours, otBands } = computeOT(wEntries, workerOTRule, threshold, s.week_start, otConfig);
+      const { regularHours, overtimeHours, otBands } = computeOT(wEntries, workerOTRule, threshold, s.week_start, otConfig, { from, to });
       let prevHours = 0, prevailingCost = 0;
       wEntries.filter(e => e.wage_type === 'prevailing').forEach(e => {
         const h = hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60;
@@ -3345,7 +3347,7 @@ router.get('/payroll-export', requireAdmin, requirePerm('view_reports'), require
       const wEntries = byWorker[w.id] || [];
       const workerOTRule = w.overtime_rule || 'daily';
       const otConfig = otConfigByRole(w.role_id);
-      const { regularHours, overtimeHours, otBands } = computeOT(wEntries, workerOTRule, threshold, s.week_start, otConfig);
+      const { regularHours, overtimeHours, otBands } = computeOT(wEntries, workerOTRule, threshold, s.week_start, otConfig, { from, to });
       let prevHours = 0, prevailingCost = 0;
       wEntries.filter(e => e.wage_type === 'prevailing').forEach(e => {
         const h = hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60;
