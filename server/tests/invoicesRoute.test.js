@@ -157,15 +157,17 @@ describe('POST /api/invoices/:id/send', () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, invoice_number: 'INV-2026-0001', client_email: 'client@acme.com', client_name_snapshot: 'Acme', total_cents: '100000' }] }) // loadInvoiceFull: head
       .mockResolvedValueOnce({ rows: [] })                                                                // loadInvoiceFull: lines
       .mockResolvedValueOnce({ rows: [] })                                                                // loadInvoiceFull: payments
-      .mockResolvedValueOnce({ rows: [{ company_name: 'Contractor Co', currency: 'USD' }] });             // company + currency
+      .mockResolvedValueOnce({ rows: [{ company_name: 'Contractor Co', currency: 'USD', sender_email: 'admin@contractor.com' }] }); // company + currency + sender
     const res = await request(makeApp()).post('/api/invoices/42/send');
     expect(res.status).toBe(200);
     expect(res.body.email).toMatchObject({ sent: true, to: 'client@acme.com' });
     expect(sendEmail).toHaveBeenCalledTimes(1);
-    const [to, subject, html] = sendEmail.mock.calls[0];
+    const [to, subject, html, , opts] = sendEmail.mock.calls[0];
     expect(to).toBe('client@acme.com');
     expect(subject).toMatch(/INV-2026-0001/);
     expect(html).toMatch(/\/i\/[0-9a-f]{64}/); // the public link carries the raw token
+    // From shows the contractor, replies go to the sender — not OpsFloa.
+    expect(opts).toMatchObject({ fromName: 'Contractor Co', replyTo: 'admin@contractor.com' });
   });
 });
 

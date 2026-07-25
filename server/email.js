@@ -13,6 +13,17 @@ const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KE
 // the OpsFloa display name when only an address is given.
 const FROM_ADDRESS = process.env.EMAIL_FROM || 'info@opsfloa.com';
 const FROM = FROM_ADDRESS.includes('<') ? FROM_ADDRESS : `OpsFloa <${FROM_ADDRESS}>`;
+// The bare address, used when a caller overrides only the display name (the
+// address must stay on the verified sending domain — only the name changes).
+const FROM_BARE = FROM_ADDRESS.includes('<') ? (FROM_ADDRESS.match(/<([^>]+)>/)?.[1] || FROM_ADDRESS) : FROM_ADDRESS;
+
+// Build the From header, optionally overriding just the display name (quoted so
+// commas/specials in a company name can't malform the header). Address unchanged.
+function fromHeader(fromName) {
+  if (!fromName) return FROM;
+  const safe = String(fromName).replace(/["\r\n]/g, '').trim().slice(0, 100);
+  return safe ? `"${safe}" <${FROM_BARE}>` : FROM;
+}
 const REDIRECT_TO = process.env.EMAIL_REDIRECT_TO || 'info@opsfloa.com';
 
 // The bounce-skip lives in services/emailSuppression.js, alongside the writes
@@ -67,7 +78,11 @@ async function deliver(msg) {
 //   { suppressed: 'demo' }     — acting company is the demo tenant
 //   { skipped: <reason> }      — nothing sent, but not a failure (no key, bounce, …)
 // Only `ok === false` signals a real delivery failure.
-async function sendEmail(to, subject, html, attachments) {
+// `opts` (optional): { fromName, replyTo } — override the From display name (the
+// address stays on the verified domain) and set a Reply-To so replies reach the
+// sender (e.g. an invoice email shows the contractor's name and replies go to
+// them, not OpsFloa). Existing callers pass nothing and are unaffected.
+async function sendEmail(to, subject, html, attachments, opts = {}) {
   if (!to) return { skipped: 'no_recipient' };
 
   // Demo/test tenant: never send real email. Suppress and flag the request
@@ -100,12 +115,14 @@ async function sendEmail(to, subject, html, attachments) {
   }
 
   const resendAttachments = toResendAttachments(attachments);
+  const from = fromHeader(opts.fromName);
+  const replyTo = opts.replyTo || undefined;
 
   if (emailMode === 'redirect') {
     const env = process.env.NODE_ENV || 'development';
     logger.debug({ to, subject, env }, 'email redirect (dev)');
     const msg = {
-      from: FROM,
+      from,
       to: REDIRECT_TO,
       subject: `[${env.toUpperCase()} → ${to}] ${subject}`,
       html: `
@@ -120,12 +137,14 @@ async function sendEmail(to, subject, html, attachments) {
         ${html}`,
     };
     if (resendAttachments) msg.attachments = resendAttachments;
+    if (replyTo) msg.replyTo = replyTo;
     return deliver(msg);
   }
 
   // emailMode === 'real'
-  const msg = { from: FROM, to, subject, html };
+  const msg = { from, to, subject, html };
   if (resendAttachments) msg.attachments = resendAttachments;
+  if (replyTo) msg.replyTo = replyTo;
   return deliver(msg);
 }
 

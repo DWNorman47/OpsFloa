@@ -94,8 +94,9 @@ async function loadInvoiceFull(companyId, invoiceId) {
     pool.query('SELECT * FROM invoice_lines WHERE invoice_id = $1 ORDER BY sort_order, id', [invoiceId]),
     pool.query('SELECT id, amount_cents, paid_date, method, reference, notes, created_at FROM invoice_payments WHERE invoice_id = $1 ORDER BY paid_date, id', [invoiceId]),
   ]);
-  // Never leak the share-token hash in the general payload (GET /:id is requireAuth).
-  const { response_token_hash, ...head } = headRes.rows[0]; // eslint-disable-line no-unused-vars
+  // Never leak the share token (raw or hash) in the general payload — the raw
+  // token is only returned by /send and /link, on purpose.
+  const { response_token_hash, response_token, ...head } = headRes.rows[0]; // eslint-disable-line no-unused-vars
   const paid = payRes.rows.reduce((s, p) => s + parseInt(p.amount_cents, 10), 0);
   return { ...head, lines: linesRes.rows, payments: payRes.rows, amount_paid_cents: paid, balance_cents: Math.max(0, parseInt(head.total_cents, 10) - paid) };
 }
@@ -451,7 +452,7 @@ function formatMoney(cents, currency) {
 // button to the public /i/<token> view page. Best-effort — the caller sends it
 // AFTER the invoice is committed as 'sent', so a delivery failure never blocks
 // the send (the admin still has the copyable link). Returns sendEmail()'s result.
-async function emailInvoiceToClient({ invoice, token, companyName, currency }) {
+async function emailInvoiceToClient({ invoice, token, companyName, currency, replyTo }) {
   const co  = escapeHtml(companyName || 'OpsFloa');
   const num = escapeHtml(invoice.invoice_number || '');
   const who = escapeHtml(invoice.client_name_snapshot || 'there');
@@ -473,7 +474,8 @@ async function emailInvoiceToClient({ invoice, token, companyName, currency }) {
       <a href="${url}" style="display:inline-block;background:#1a56db;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;margin-top:8px">View invoice</a>
       <p style="color:#9ca3af;font-size:12px;margin-top:24px;word-break:break-all">${url}</p>
     </div>`;
-  return sendEmail(invoice.client_email, subject, html);
+  // From shows the company name; replies go to the sender (not OpsFloa).
+  return sendEmail(invoice.client_email, subject, html, undefined, { fromName: companyName, replyTo });
 }
 
 // POST /invoices/:id/send — draft → sent; mint a public token, freeze lines,
@@ -491,9 +493,10 @@ router.post('/:id/send', requireAdmin, async (req, res) => {
     const rawToken = crypto.randomBytes(32).toString('hex');
     await client.query(
       `UPDATE invoices SET status = 'sent', sent_at = NOW(),
-         issue_date = COALESCE(issue_date, CURRENT_DATE), response_token_hash = $1, updated_at = NOW()
-       WHERE id = $2`,
-      [sha256(rawToken), req.params.id]
+         issue_date = COALESCE(issue_date, CURRENT_DATE),
+         response_token = $1, response_token_hash = $2, updated_at = NOW()
+       WHERE id = $3`,
+      [rawToken, sha256(rawToken), req.params.id]
     );
     await client.query('COMMIT');
     await recordAudit({ invoiceId: req.params.id, action: 'sent', actorKind: 'admin', actorUserId: req.user.id, actorIp: req.ip });
@@ -507,13 +510,15 @@ router.post('/:id/send', requireAdmin, async (req, res) => {
       try {
         const meta = await pool.query(
           `SELECT co.name AS company_name,
-                  COALESCE((SELECT value FROM settings s WHERE s.company_id = $1 AND s.key = 'currency'), 'USD') AS currency
+                  COALESCE((SELECT value FROM settings s WHERE s.company_id = $1 AND s.key = 'currency'), 'USD') AS currency,
+                  (SELECT email FROM users WHERE id = $2) AS sender_email
              FROM companies co WHERE co.id = $1`,
-          [companyId]
+          [companyId, req.user.id]
         );
         const r = await emailInvoiceToClient({
           invoice: full, token: rawToken,
           companyName: meta.rows[0]?.company_name, currency: meta.rows[0]?.currency || 'USD',
+          replyTo: meta.rows[0]?.sender_email || null,
         });
         email = r?.ok
           ? { sent: true, to: full.client_email }
@@ -531,18 +536,22 @@ router.post('/:id/send', requireAdmin, async (req, res) => {
   } finally { client.release(); }
 });
 
-// POST /invoices/:id/link — re-mint the public share link for a sent invoice.
-// (The raw token isn't stored, so this ROTATES the link — any previously shared
-// URL for this invoice stops working.)
+// POST /invoices/:id/link — get the client-facing share link for a sent invoice
+// again (so the admin can re-copy it). Returns the STORED token, so it matches
+// the link already emailed and never rotates. Legacy invoices sent before the
+// token was stored mint one on first call (which rotates that one link only).
 router.post('/:id/link', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   try {
-    const headRes = await pool.query('SELECT status FROM invoices WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
+    const headRes = await pool.query('SELECT status, response_token FROM invoices WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
     if (headRes.rowCount === 0) return res.status(404).json({ error: 'Invoice not found' });
     if (headRes.rows[0].status === 'draft') return res.status(400).json({ error: 'Invoice has not been sent yet' });
-    const rawToken = crypto.randomBytes(32).toString('hex');
-    await pool.query('UPDATE invoices SET response_token_hash = $1 WHERE id = $2 AND company_id = $3', [sha256(rawToken), req.params.id, companyId]);
-    res.json({ response_token: rawToken });
+    let token = headRes.rows[0].response_token;
+    if (!token) {
+      token = crypto.randomBytes(32).toString('hex');
+      await pool.query('UPDATE invoices SET response_token = $1, response_token_hash = $2 WHERE id = $3 AND company_id = $4', [token, sha256(token), req.params.id, companyId]);
+    }
+    res.json({ response_token: token });
   } catch (err) {
     req.log.error({ err }, 'invoice link error');
     res.status(500).json({ error: 'Server error' });

@@ -23,6 +23,24 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-25 — Invoices: stable share link + email From = the contractor
+
+Two fixes from David's questions on the send-email:
+
+- **Stable share token.** `POST /:id/send` now STORES the raw token (migration
+  `0151` adds `invoices.response_token`, mirroring estimates), and `POST /:id/link`
+  returns that SAME token instead of rotating. Before, "Copy link" minted a fresh
+  token — which would have **broken the `/i/<token>` link just emailed** to the
+  client. `loadInvoiceFull` strips the raw token from the general payload.
+- **Email From / Reply-To.** The send email now shows the **company name** as the
+  From display-name (the address stays on OpsFloa's verified domain — Resend
+  requires the sending domain be verified, so it can't literally be the
+  contractor's address) and sets **Reply-To to the sending admin**, so the client
+  sees the contractor and replies reach them, not `info@opsfloa.com`. `sendEmail`
+  gained an optional `{ fromName, replyTo }` param (backward-compatible).
+
+Verify green (82 suites / 1082); migration `0151` validated by CI lint.
+
 ## 2026-07-25 — Invoices: email the client on send
 
 Wired the invoice **Send** flow to actually email the client a link to the public
