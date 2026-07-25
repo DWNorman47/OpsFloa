@@ -23,6 +23,30 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-25 — Sitework tool boxed into one removable folder
+
+David wants the standalone Sitework Takeoff tool out of the project but
+recoverable. Consolidated **everything sitework** into a single root folder
+`sitework-archived/` via `git mv` (moved, not copied — it's the sole copy now):
+- `client/public/tool-apps/sitework/` (the 5-file tool, ~1.7 MB)
+- `server/tests/siteworkToPlanRoom.test.js` (the one test that *reads*
+  `sitework/app.js` — it had to move too or `verify` breaks)
+- `README.md` runbook (what it is, what does/doesn't depend on it, remove +
+  restore steps).
+
+Mirrors repo paths inside the box, so restore = `cp -r sitework-archived/{client,server} .`.
+Verify green afterwards: server jest **82 suites / 1081 tests** (−1 suite, −14
+tests = exactly the moved sitework test); client build OK.
+
+**Findings / calls:** Plan Room + `tool-apps/shared/` are independent copies
+(`PARITY.md`), so they were untouched and keep working. `ToolsPage.jsx` still has
+**inert** sitework refs (all behind `SHOW_SITEWORK = false`) — they don't break
+build/runtime, so I left them and documented the optional cleanup + the restore
+path in the box README rather than editing the shared file. The final *removal*
+(deleting/taking out `sitework-archived/`) is David's to do. First attempt was a
+copy-alongside-live (wrong — deleting the box left the tool wired in); redone as a
+move so the one folder truly is the removal unit.
+
 ## 2026-07-25 — Native invoices, Phase 5: QuickBooks unified onto native (mirror retired)
 
 QBO is now a **sync layer on the native `invoices` table** — one invoice table,
