@@ -211,8 +211,8 @@ async function requireTakeoffAddon(req, res, next) {
 }
 
 // Any plan-tools add-on unlocks the shared library routes (/api/takeoffs
-// serves both the sitework takeoff tool and Plan Room, list-filtered by the
-// data.app marker). M6 of docs/plans/plan-viewer-markup.md adds the
+// serves the Plan Room takeoff library, list-filtered by the data.app
+// marker). M6 of docs/plans/plan-viewer-markup.md adds the
 // addon_planroom column + flag to this check when that SKU lands.
 async function requirePlanToolsAddon(req, res, next) {
   try {

@@ -23,6 +23,30 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-25 — Sitework: all live references removed
+
+Purged sitework from the running codebase (David: "leave sitework in the past").
+
+- **`ToolsPage.jsx`** — removed the `SITEWORK_TOOL_URL` const, the `SHOW_SITEWORK`
+  flag, `hasTakeoff`/`showSitework`, the `#excavation → sitework` `resolveTab`
+  mapping, the hidden-tab redirect effect, the tab entry, and the whole render
+  block. (The tab was already gated off; this deletes the dead code.)
+- **Governing docs** — dropped the "Frozen: the sitework tool" section in
+  `CLAUDE.md`; updated `MAP.md` (the `sitework/` entry → notes it's archived) and
+  the `db-enums.md` `live_sessions.tool` note.
+- **Stale comments** — `index.js`, `middleware/auth.js`, `routes/takeoffs.js`,
+  `routes/stripe.js`, `api.js`, and a test header no longer name the retired tool.
+
+Verify green (82 suites / 1081). **Intentionally KEPT** (calling these out so they
+don't read as misses):
+- the **Calculators "Sitework" category** (asphalt/base/grade) — a civil-work
+  category, *not* the tool; renaming it would be wrong.
+- the **`live_sessions.tool` = `'sitework'`** enum value — vestigial but lockstep
+  with the CHECK; dropping it means a migration for a never-used reserved value,
+  not worth it (documented in `db-enums.md`).
+- **historical/lineage/roadmap** mentions in `docs/plans/*`, `tool-apps/shared`
+  provenance comments + `PARITY.md`, and the WORKLOG — that's sitework's past.
+
 ## 2026-07-25 — Sitework tool boxed into one removable folder
 
 David wants the standalone Sitework Takeoff tool out of the project but

@@ -51,12 +51,6 @@
   routes — the routes are renderers. The rule/OT engine lives in `hoursRules.js`,
   `payCalculations.js`, `paidHours.js`, `deductions.js`.
 
-## Frozen: the sitework tool
-- `client/public/tool-apps/sitework/` is a **live, frozen** tool — never edit it.
-  Plan Room ports its logic by **copying** into `tool-apps/shared/` or `planroom/`.
-  Confirm `git status --porcelain client/public/tool-apps/sitework/` is empty at
-  every Plan Room commit. Touch sitework only with explicit per-case authorization.
-
 ## Plan Room & migrations & i18n
 - **Plan Room:** editing `tool-apps/planroom/app.js` or `styles.css`? Bump the
   `?v=N` query on **both** references in `planroom/index.html` (cache-bust).

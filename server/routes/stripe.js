@@ -298,7 +298,7 @@ router.post('/addon/remove', requireAdmin, requirePerm('manage_billing'), async 
 
 // POST /stripe/checkout-addon — buy one or more add-ons with NO base plan.
 //
-// For a company that wants just Plan Room and/or Sitework Takeoff without
+// For a company that wants just Plan Room and/or the Takeoff add-on without
 // subscribing to a regular plan. Creates ONE Stripe subscription whose line
 // items are the chosen add-ons — so a company buying both gets a single
 // subscription and a single invoice, not two. The rest of the system already

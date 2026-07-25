@@ -213,7 +213,7 @@ const projectsRouter = require('./routes/projects');
 app.use('/api/work', projectsRouter);        // renamed home for the core Work/Projects resource
 app.use('/api/projects', projectsRouter);     // legacy alias (project sub-resources still live at /api/projects/:id/...)
 app.use('/api/work-orders', requireAuth, require('./routes/workOrders'));
-app.use('/api/takeoffs', requireAuth, requirePlanToolsAddon, require('./routes/takeoffs')); // company-shared plan-tools library (sitework takeoff + Plan Room)
+app.use('/api/takeoffs', requireAuth, requirePlanToolsAddon, require('./routes/takeoffs')); // company-shared Plan Room takeoff library
 // Live collaboration sessions. The SSE stream authenticates via a query token
 // (EventSource can't send a Bearer header) so it's registered BEFORE the gated
 // router — otherwise requireAuth would reject it for the missing header.

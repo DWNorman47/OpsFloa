@@ -52,8 +52,7 @@ role rules, `roundEntriesFromSettings`, `otConfigFromSettings`, the rule builder
 
 ## Tool-apps (`client/public/tool-apps/`)
 - `planroom/` — **Plan Room / Takeoff** (`app.js` + `index.html`). Roofing, earthwork, roof-measurement, storm, siding, etc. **Bump `?v=N` on both files** when editing; it cache-busts.
-- `sitework/` — the **frozen** standalone sitework takeoff. Do NOT edit (see the never-break-sitework rule); Plan Room ports its logic by copying into `shared/`.
-- `shared/` — engine copied out of sitework (view/store/doc/measure, polygon-clipping, pdf libs).
+- `shared/` — the Plan Room engine (view/store/doc/measure, polygon-clipping, pdf libs). Originally copied out of the standalone sitework takeoff, which is now retired/archived to `sitework-archived/` at the repo root.
 - `pdftools/` — PDF utilities.
 
 ## Testing & verify
