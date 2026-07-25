@@ -112,14 +112,16 @@ that holds the exhaustive detail.
 - **Wall Dig button** — hidden "for now" in the takeoff tool; bring it back, remove
   it, or leave it hidden? (2026-07-10)
 
-- **Native invoices, or QuickBooks forever?** ⚠️ **The biggest one on this list.**
-  `project_invoices` is a QBO *mirror* — only `routes/qbo.js` ever writes it, so a
-  company without QBO connected has **zero rows**. This blocks sub pay-apps
-  entirely, and it is **already breaking closeout today** (see the two closeout
-  bugs above). Either invent a native invoice/AR concept, or make QBO a hard
-  dependency of project billing and say so out loud. Nothing in the money category
-  should be built before this is decided. See `docs/plans/gc-tools.md`.
-  (2026-07-16)
+- ~~**Native invoices, or QuickBooks forever?**~~ **DECIDED 2026-07-25 — native
+  invoices; QuickBooks is an optional extra, never a dependency.** OpsFloa gets its
+  own invoice / accounts-receivable concept so a company that never connects
+  QuickBooks can still invoice, record payment, and close out. QBO stays a **sync
+  layer on top** — the mirror is fine, it just can't be the *source of truth*.
+  This unblocks the two closeout bugs above (read OpsFloa's own invoices instead of
+  an empty QBO mirror), sub pay-applications, and invoicing straight off a service
+  work order. **Next:** scope the native-invoice build (data model → create / track
+  / mark paid → how the existing QBO mirror coexists) before any other money-category
+  work. See `docs/plans/gc-tools.md`. → memory: project_native_invoices_decision.
 - **Do you want GC customers at all?** Everything OpsFloa does today assumes a
   contractor who **self-performs**. A GC coordinates *other people* — different
   buyer, different anxiety, the one who pays Procore ($10k+/yr). Worth entering
