@@ -23,6 +23,47 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-25 — One pay engine behind the pay surfaces (phases A–C)
+
+**Done (3 commits).** The four pay surfaces re-orchestrated the hours→money chain
+by hand; the full cost-assembly (prevailing, guarantee, leave $, deductions, net)
+lived inline in the invoice route only and had drifted. New
+`server/utils/payStatement.js` is now the single assembler:
+- `buildPayStatement(inputs)` — **pure** (no DB): hours→costs→prevailing→guarantee
+  →leave $→deductions→gross/net, cents-rounded so lines reconcile to totals.
+- `workerStatement` (one worker) + `companyStatements` (whole company, batched,
+  no N+1) feed it. `computeGuaranteeShortfall` lifted out of admin.js into
+  `payCalculations.js` (shared).
+- Phase B: the **invoice** now flattens a statement into its existing `summary`
+  shape (BillPDF/Team Member Report untouched). Phase C: the **overtime report**
+  and **payroll CSV** render `companyStatements`.
+
+**Two decided behavior changes** (locked with David):
+1. **Prevailing → per-project** (project rate, company fallback) everywhere; the
+   invoice moved to match the payroll surfaces. Same worker now costs the same on
+   every screen.
+2. **Payroll views gained guarantee + net pay**: Total Pay now includes any
+   guarantee top-up (unchanged when there's no guarantee); new Min-Guarantee and
+   Net Pay (gross − deductions, reimbursements excluded) columns on the report
+   table + CSV.
+
+**Latent drift the merge resolved** (all converged onto the invoice's discipline):
+report/CSV had a magic `|| 30` rate floor and a `|| 8` threshold floor the invoice
+lacked; costs now cents-rounded before summing everywhere.
+
+**Verify:** new `payStatement.test.js` pins reconciliation + per-project prevailing
++ leave % + guarantee + deductions→net + determinism; server 1068, client 255,
+i18n parity, build all green.
+
+⚠️ **Phase D not done (stageable): pay stubs.** `PayStubView.jsx` still recomputes
+pay-stub money **client-side** from its own settings — the last surface not on the
+shared engine, and the biggest remaining drift risk. Folding it in needs a
+fetch-once-per-span statement variant (per-period `workerStatement` would re-query
+each period) + a PayStubView rewrite to render server money. Held for a checkpoint
+because it's the only client-visible pay-math change.
+
+---
+
 ## 2026-07-24 — Team Member Reports redesign: interactive, explain-why lines
 
 **Done** (3 commits). Rebuilt Time Clock ▸ Reports ▸ Team Member Reports so a
