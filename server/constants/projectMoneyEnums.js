@@ -57,6 +57,31 @@ const ESTIMATE_AUDIT_ACTOR_KINDS = Object.freeze([
   'admin', 'client', 'system',
 ]);
 
+// Native invoice (owner-side AR) lifecycle. See migration 0149. 'partial'/'paid'
+// are derived from recorded payments; 'void' cancels. Distinct from the estimate
+// set (an invoice is billed, not quoted) and from project_invoices' payment_status
+// (which is a QBO-mirror field, not a lifecycle).
+const INVOICE_STATUSES = Object.freeze([
+  'draft', 'sent', 'partial', 'paid', 'void',
+]);
+
+// Once sent (a document of record) or money has moved, lines are frozen — a
+// correction voids and reissues, mirroring ESTIMATE_FROZEN_STATUSES. Only 'draft'
+// is editable.
+const INVOICE_FROZEN_STATUSES = Object.freeze([
+  'sent', 'partial', 'paid', 'void',
+]);
+
+// How a recorded payment came in (invoice_payments.method).
+const INVOICE_PAYMENT_METHODS = Object.freeze([
+  'check', 'card', 'cash', 'ach', 'other',
+]);
+
+// Audit trail values for invoice_audit.action (reuses the actor_kind set).
+const INVOICE_AUDIT_ACTIONS = Object.freeze([
+  'created', 'sent', 'payment', 'voided',
+]);
+
 // Header money math. Order matters — overhead is on subtotal, margin
 // is on subtotal+overhead, contingency is on the post-margin amount,
 // tax is the last layer. All rounded at each step to keep the math
@@ -95,6 +120,22 @@ function computeLineTotal({ qty, unit_cost_cents }) {
   return Math.round(q * u);
 }
 
+// Invoice header math. Simpler than an estimate: an invoice bills line items +
+// tax; there is no overhead/margin/contingency cascade (those are cost/estimate
+// concepts, already baked into a from-estimate invoice's lines). `retainage_held`
+// is the portion the client withholds until closeout — computed off the total,
+// tracked so the closeout retainage-release check has a real number to read.
+function computeInvoiceTotals({ lines = [], tax_pct = 0, retainage_pct = 0 }) {
+  const subtotal = lines.reduce((sum, l) => {
+    const lineTotal = Number.isFinite(l.total_cents) ? Math.round(l.total_cents) : 0;
+    return sum + Math.max(0, lineTotal);
+  }, 0);
+  const tax = Math.round(subtotal * (tax_pct / 100));
+  const total = subtotal + tax;
+  const retainage_held = Math.round(total * (retainage_pct / 100));
+  return { subtotal, tax, total, retainage_held };
+}
+
 module.exports = {
   ESTIMATE_STATUSES,
   ESTIMATE_FROZEN_STATUSES,
@@ -103,6 +144,11 @@ module.exports = {
   ESTIMATE_AUDIT_ACTOR_KINDS,
   CHANGE_ORDER_STATUSES,
   CHANGE_ORDER_FROZEN_STATUSES,
+  INVOICE_STATUSES,
+  INVOICE_FROZEN_STATUSES,
+  INVOICE_PAYMENT_METHODS,
+  INVOICE_AUDIT_ACTIONS,
   computeEstimateTotals,
   computeLineTotal,
+  computeInvoiceTotals,
 };
