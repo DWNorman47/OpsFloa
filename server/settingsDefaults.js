@@ -5,6 +5,12 @@ const STRING_KEYS = ['overtime_rule', 'currency', 'company_timezone', 'invoice_s
 const SETTINGS_DEFAULTS = {
   prevailing_wage_rate: 45, default_hourly_rate: 30, overtime_multiplier: 1.5,
   overtime_rule: 'daily', overtime_threshold: 8,
+  // Company Standards → Regular Shift: the fallback hours a full sick/vacation day
+  // pays when the worker has no shift scheduled and no weekday leave-value rule.
+  regular_shift_hours: 8,
+  // Paid-leave rate as a percent of the worker's base rate (sick and vacation
+  // separately). 100 = full base rate (the prior, unchanged behaviour).
+  sick_pay_pct: 100, vacation_pay_pct: 100,
   // feature_chat and feature_broadcast start OFF — both are optional
   // engagement features most teams don't enable on day one. Migration
   // 0095 backfilled '1' for existing companies so the flip is a no-op
@@ -51,6 +57,9 @@ const SETTINGS_DEFAULTS = {
   cp_compute_deductions: false,     // Strategy A — OpsFloa computes fed/state/FICA withholdings (OFF by default; payroll processor handles this)
   media_retention_days: 0,
   week_start: 1, // 0=Sunday, 1=Monday, …, 6=Saturday (OpsFloa's default pay-period start)
+  // The last day of the company's work week (0=Sun … 6=Sat), Sunday by default.
+  // Distinct from week_start, which begins the pay/OT week.
+  work_week_end: 0,
   currency: 'USD', invoice_signature: 'optional', default_temp_password: '', global_required_checklist_template_id: '',
   label_client: 'Customer', label_worker: 'Team Member', label_field: 'Field Work',
   setup_questionnaire_completed_at: '',

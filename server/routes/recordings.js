@@ -449,6 +449,97 @@ router.post('/:id/minutes', async (req, res) => {
   });
 });
 
+// --- Daily log ------------------------------------------------------------
+
+// The "voice memo → daily log" tool. Same shape as minutes, but pointed at a
+// jobsite instead of a meeting: a super or foreman walks the site talking
+// ("poured the north footings, waiting on the rebar delivery, lost an hour to
+// rain") and gets back a structured daily log. Delays and blockers get their own
+// section on purpose — a dated, contemporaneous note of a delay is exactly what
+// a delay claim later stands on.
+const DAILY_LOG_SYSTEM =
+  'You turn a jobsite recording — usually one person walking the site talking, ' +
+  'sometimes a short crew huddle — into a construction daily log. Use ONLY what ' +
+  'is in the transcript. Never invent quantities, names, dates, weather, or ' +
+  'events that were not spoken. Speech is messy: ignore small talk and false ' +
+  'starts, and do not turn thinking-out-loud into a completed task.\n\n' +
+  'Output GitHub-flavored markdown with these sections, in this order, OMITTING ' +
+  'any the recording does not mention (do not emit an empty section, and do not ' +
+  'write "none" — just leave it out):\n' +
+  '"## Summary" — 1-3 sentences on the day on site.\n' +
+  '"## Work completed" — bullets of what actually got done.\n' +
+  '"## Crew & manpower" — who was on site / headcount, if mentioned.\n' +
+  '"## Materials & deliveries" — what arrived, is on site, or is short.\n' +
+  '"## Equipment" — equipment used, delivered, or down.\n' +
+  '"## Delays, issues & blockers" — anything that cost or will cost time ' +
+  '(weather, no-shows, missing material, RFIs, inspections). Keep the cause and ' +
+  'any stated duration ("lost ~2 hrs to rain").\n' +
+  '"## Weather" — only if weather was mentioned.\n' +
+  '"## Safety" — incidents, near-misses, or safety notes, if any.\n' +
+  '"## Action items" — bullets, each starting with the owner in bold and a due ' +
+  'date when one was said, e.g. "**Luis:** chase the rebar delivery — first ' +
+  'thing tomorrow". If nobody was named, write "**Unassigned:**".\n\n' +
+  'The transcript may be labelled with speaker letters or names — use them as ' +
+  'given, keep an un-named "Speaker A" as-is, and never guess who they are. If ' +
+  'the recording clearly is not a jobsite update (e.g. a formal meeting), give ' +
+  'just a Summary and note that briefly. Output only the markdown shapes above: ' +
+  '## headings, - bullets, **bold**.';
+
+// POST /recordings/:id/daily-log — generate + store a daily log for a recording
+router.post('/:id/daily-log', async (req, res) => {
+  const companyId = req.user.company_id;
+  let recording;
+  try {
+    recording = await loadRecording(req.params.id, companyId);
+    if (!recording) return res.status(404).json({ error: 'Recording not found' });
+    if (!isAdmin(req.user) && recording.user_id !== req.user.id) return res.status(403).json({ error: 'Not your recording' });
+    if (recording.status !== 'completed') {
+      return res.status(409).json({ error: 'That recording is still transcribing — a daily log needs a finished transcript.' });
+    }
+  } catch (err) {
+    req.log.error({ err }, 'route error');
+    return res.status(500).json({ error: 'Server error' });
+  }
+
+  let transcript, clipped;
+  try {
+    const { rows } = await pool.query(
+      `SELECT speaker, text FROM recording_utterances WHERE recording_id = $1 ORDER BY start_ms, id`,
+      [recording.id]
+    );
+    if (!rows.length) return res.status(409).json({ error: 'That recording has no transcript to work from.' });
+    const names = recording.speaker_names || {};
+    const label = sp => (names[sp] || '').trim() || `Speaker ${sp}`;
+    const line = u => `${label(u.speaker)}: ${u.text}`;
+    const full = rows.map(line).join('\n');
+    transcript = full.slice(0, MAX_INPUT);
+    clipped = full.length > MAX_INPUT;
+  } catch (err) {
+    req.log.error({ err }, 'daily log transcript build failed');
+    return res.status(500).json({ error: 'Server error' });
+  }
+
+  await runAi(req, res, async () => {
+    const result = await anthropic.generate({
+      system: DAILY_LOG_SYSTEM,
+      prompt: `Jobsite recording transcript:\n"""\n${transcript}\n"""\n\nWrite the daily log.`,
+      maxTokens: 2000,
+    });
+    // Best-effort persist (see minutes above for why a failed write still returns
+    // the log rather than 502-ing a call the user was already metered for).
+    try {
+      await pool.query(
+        'UPDATE recordings SET daily_log_md = $1, daily_log_at = now() WHERE id = $2 AND company_id = $3',
+        [result, recording.id, companyId]
+      );
+    } catch (err) {
+      if (req.log && req.log.error) req.log.error({ err }, 'daily log save failed');
+    }
+    logAudit(companyId, req.user.id, req.user.full_name, 'recording.daily_log_generated', 'recording', recording.id, recording.title, {});
+    return { result, clipped, daily_log_at: new Date().toISOString() };
+  });
+});
+
 // PATCH /recordings/:id — rename title, assign project, set speaker names
 router.patch('/:id', async (req, res) => {
   const companyId = req.user.company_id;

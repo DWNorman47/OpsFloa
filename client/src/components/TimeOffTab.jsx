@@ -29,7 +29,7 @@ export default function TimeOffTab() {
   const TYPE_LABELS = { vacation: t.typeVacation, sick: t.typeSick, personal: t.typePersonal, other: t.typeOther };
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [form, setForm] = useState({ type: 'vacation', start_date: '', end_date: '', note: '' });
+  const [form, setForm] = useState({ type: 'vacation', start_date: '', end_date: '', note: '', hours: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [showForm, setShowForm] = useState(false);
@@ -59,9 +59,13 @@ export default function TimeOffTab() {
     if (form.end_date < form.start_date) { setError(t.endDateAfterStart); return; }
     setSaving(true); setError('');
     try {
-      const r = await api.post('/time-off', form);
+      // Partial hours only apply to a single-day sick/vacation request; drop otherwise.
+      const singleDay = form.start_date === form.end_date;
+      const paidType = form.type === 'sick' || form.type === 'vacation';
+      const payload = { ...form, hours: (singleDay && paidType) ? form.hours : '' };
+      const r = await api.post('/time-off', payload);
       setRequests(prev => [r.data, ...prev]);
-      setForm({ type: 'vacation', start_date: '', end_date: '', note: '' });
+      setForm({ type: 'vacation', start_date: '', end_date: '', note: '', hours: '' });
       setShowForm(false);
       toast(t.requestSubmitted, 'success');
     } catch (err) {
@@ -123,6 +127,14 @@ export default function TimeOffTab() {
               <input id="timeoff-end-date" style={s.input} type="date" value={form.end_date} min={form.start_date} onChange={e => set('end_date', e.target.value)} required disabled={saving} />
             </div>
           </div>
+          {form.start_date && form.start_date === form.end_date && (form.type === 'sick' || form.type === 'vacation') && (
+            <div style={s.fieldGroup}>
+              <label style={s.label} htmlFor="timeoff-hours">{t.timeOffHoursLabel}</label>
+              <input id="timeoff-hours" style={{ ...s.input, maxWidth: 160 }} type="number" min="0" max="24" step="0.25"
+                value={form.hours} onChange={e => set('hours', e.target.value)} placeholder={t.timeOffHoursPlaceholder} disabled={saving} />
+              <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{t.timeOffHoursHint}</div>
+            </div>
+          )}
           <div style={s.fieldGroup}>
             <label style={s.label} htmlFor="timeoff-note">{t.noteOptionalLabel}</label>
             <textarea id="timeoff-note" style={{ ...s.input, resize: 'vertical', minHeight: 56 }} maxLength={500} value={form.note} onChange={e => set('note', e.target.value)} placeholder={t.noteDetailsPlaceholder} disabled={saving} />
@@ -153,7 +165,9 @@ export default function TimeOffTab() {
               </div>
               <div style={s.dates}>
                 {fmt(r.start_date, locale)} – {fmt(r.end_date, locale)}
-                {(() => { const d = days(r.start_date?.toString().substring(0,10), r.end_date?.toString().substring(0,10)); return <span style={s.dayCount}>{d} {d !== 1 ? t.days : t.day}</span>; })()}
+                {r.hours != null
+                  ? <span style={s.dayCount}>{(+r.hours)} {t.hoursShort}</span>
+                  : (() => { const d = days(r.start_date?.toString().substring(0,10), r.end_date?.toString().substring(0,10)); return <span style={s.dayCount}>{d} {d !== 1 ? t.days : t.day}</span>; })()}
               </div>
               {r.note && <p style={s.note}>{r.note}</p>}
               {r.review_note && (

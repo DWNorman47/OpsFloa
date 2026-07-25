@@ -14,6 +14,7 @@ const { seedBuiltinRoles, getUserPermissions } = require('../permissions');
 const { effectiveSubscriptionStatus } = require('../utils/subscription');
 const { escapeHtml } = require('../utils/htmlEscape');
 const { encrypt: encryptSecret, decrypt: decryptSecret } = require('../utils/secretBox');
+const { LEGAL_VERSION } = require('../constants/legal');
 
 // Hash a token for safe storage — raw token goes in the email, hash goes in the DB
 const sha256 = str => crypto.createHash('sha256').update(str).digest('hex');
@@ -86,7 +87,7 @@ function signToken(user) {
 async function buildSessionUser(baseUser) {
   const [companyRes, userRes] = await Promise.all([
     pool.query(
-      `SELECT name, plan, subscription_status, addon_qbo, addon_certified_payroll, addon_takeoff, addon_planroom, addon_storm,
+      `SELECT name, plan, subscription_status, addon_qbo, addon_certified_payroll, addon_takeoff, addon_planroom, addon_storm, addon_roof,
               trial_ends_at, slug, accepts_service_requests, client_portal_pro_interest
        FROM companies WHERE id = $1`,
       [baseUser.company_id]
@@ -106,6 +107,20 @@ async function buildSessionUser(baseUser) {
     admin_permissions: userRow.admin_permissions ?? null,
   });
 
+  // Does this user still owe acceptance of the CURRENT legal docs? Super-admins
+  // (platform operators) are exempt. Wrapped so a missing table / query error
+  // NEVER blocks login — if we can't tell, we don't gate.
+  let needsTerms = false;
+  if (baseUser.role !== 'super_admin') {
+    try {
+      const acc = await pool.query(
+        'SELECT 1 FROM legal_acceptances WHERE user_id = $1 AND version = $2 LIMIT 1',
+        [baseUser.id, LEGAL_VERSION]
+      );
+      needsTerms = acc.rowCount === 0;
+    } catch { needsTerms = false; }
+  }
+
   return {
     id: baseUser.id,
     username: baseUser.username,
@@ -122,6 +137,7 @@ async function buildSessionUser(baseUser) {
     addon_takeoff: company.addon_takeoff || false,
     addon_planroom: company.addon_planroom || false,
     addon_storm: company.addon_storm || false,
+    addon_roof: company.addon_roof || false,
     company_slug: company.slug || null,
     accepts_service_requests: !!company.accepts_service_requests,
     client_portal_pro_interest: !!company.client_portal_pro_interest,
@@ -135,6 +151,7 @@ async function buildSessionUser(baseUser) {
     rate_type: userRow.rate_type || 'hourly',
     day_mark_mode: !!userRow.day_mark_mode,
     guaranteed_weekly_hours: userRow.guaranteed_weekly_hours != null ? parseFloat(userRow.guaranteed_weekly_hours) : null,
+    needs_terms: needsTerms,
   };
 }
 
@@ -255,6 +272,22 @@ router.get('/me', requireAuth, async (req, res) => {
   }
 });
 
+// Record acceptance of the CURRENT legal docs for the logged-in user (the
+// re-prompt gate for existing users + invited workers). Idempotent enough — a
+// duplicate row for the same version is harmless; the audit trail keeps both.
+router.post('/accept-terms', requireAuth, async (req, res) => {
+  try {
+    await pool.query(
+      `INSERT INTO legal_acceptances (user_id, company_id, version, context, ip) VALUES ($1, $2, $3, 'login', $4)`,
+      [req.user.id, req.user.company_id, LEGAL_VERSION, req.ip || 'unknown']
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error({ err }, 'accept-terms error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // Register — creates a new company and its first admin user
 router.post('/register', authLimiter, async (req, res) => {
   const { password, timezone } = req.body;
@@ -273,6 +306,11 @@ router.post('/register', authLimiter, async (req, res) => {
   if (username.length > 50) return res.status(400).json({ error: 'Username must be 50 characters or fewer' });
   const pwErr = validatePassword(password, username);
   if (pwErr) return res.status(400).json({ error: pwErr });
+  // Clickwrap: the account owner must affirmatively accept the Terms + Privacy
+  // Policy. Enforced here (not just the UI checkbox) and recorded below.
+  if (req.body.accepted_terms !== true) {
+    return res.status(400).json({ error: 'You must accept the Terms of Use and Privacy Policy to create an account.' });
+  }
 
   // Capture real client IP (req.ip respects trust proxy setting)
   const registrationIp = req.ip || 'unknown';
@@ -352,6 +390,14 @@ router.post('/register', authLimiter, async (req, res) => {
       [companyId, username, hash, full_name, first_name||null, middle_name||null, last_name||null, email, confirmTokenHash, confirmExpires]
     );
     const newUserId = userResult.rows[0].id;
+
+    // Record the clickwrap acceptance in the same transaction, so the audit row
+    // rolls back with the account if anything below fails. Stamps the live docs
+    // version + the registration IP.
+    await client.query(
+      `INSERT INTO legal_acceptances (user_id, company_id, version, context, ip) VALUES ($1, $2, $3, 'signup', $4)`,
+      [newUserId, companyId, LEGAL_VERSION, registrationIp]
+    );
 
     // Seed Worker/Admin/Owner built-in roles for the new company and assign
     // Owner to the admin we just created. Done inside the same transaction

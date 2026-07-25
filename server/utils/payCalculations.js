@@ -26,6 +26,101 @@ function weekdayOfDate(dk) {
   return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay();
 }
 
+/** YYYY-MM-DD keys from `from` to `to` inclusive (UTC, TZ-independent). Bounded
+ *  so a stray range can't loop unbounded. */
+function eachDateKey(from, to) {
+  const out = [];
+  const mf = String(from).substring(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const mt = String(to).substring(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!mf || !mt) return out;
+  let d = Date.UTC(+mf[1], +mf[2] - 1, +mf[3]);
+  const end = Date.UTC(+mt[1], +mt[2] - 1, +mt[3]);
+  for (let i = 0; d <= end && i < 2000; i++, d += 86400000) {
+    out.push(new Date(d).toISOString().substring(0, 10));
+  }
+  return out;
+}
+
+/** The 7 YYYY-MM-DD keys of the weekStart-aligned week that contains `dk`. */
+function weekDaysOf(dk, weekStart) {
+  const m = String(dk).substring(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return [];
+  const base = Date.UTC(+m[1], +m[2] - 1, +m[3]);
+  const wd = new Date(base).getUTCDay();               // 0=Sun … 6=Sat
+  const back = (((wd - weekStart) % 7) + 7) % 7;        // days since the week's start
+  const start = base - back * 86400000;
+  const out = [];
+  for (let i = 0; i < 7; i++) out.push(new Date(start + i * 86400000).toISOString().substring(0, 10));
+  return out;
+}
+const isWeekdayKey = (dk) => { const w = weekdayOfDate(dk); return w >= 1 && w <= 5; };
+
+/** Total scheduled hours per YYYY-MM-DD from a worker's shifts (sum of shift
+ *  durations that day; shifts carry no break). */
+function shiftHoursByDate(shifts) {
+  const m = new Map();
+  for (const sh of shifts || []) {
+    if (!sh || sh.shift_date == null) continue;
+    const dk = String(sh.shift_date).substring(0, 10);
+    m.set(dk, (m.get(dk) || 0) + hoursWorked(sh.start_time, sh.end_time));
+  }
+  return m;
+}
+
+/**
+ * Paid sick + vacation hours over a pay period, valued SCHEDULE-first. For each
+ * APPROVED sick/vacation request:
+ *   - `hours` set (a partial day) → pay exactly that many hours;
+ *   - otherwise (a full day) each day is worth, in order: the worker's SCHEDULED
+ *     shift hours that day → the weekday leave-value rule → the company Regular
+ *     Shift default. Days are clipped to [from,to] and de-duped per type.
+ * Returns { sick, vacation } totals; no requests / no range → { 0, 0 }.
+ *
+ * @param requests       [{ type:'sick'|'vacation', hours:number|null, start_date, end_date }]
+ * @param shiftsByDate   Map(YYYY-MM-DD → scheduled hours) from shiftHoursByDate
+ * @param leaveRules     the Time Off Value rules; each carries `applies`
+ *                       ('sick' | 'vacation' | 'both') selecting which leave it values
+ * @param regularShiftHours  company Regular Shift default (last-resort hours)
+ */
+function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours, from, to, detail = null) {
+  const totals = { sick: 0, vacation: 0 };
+  if (!from || !to) return totals;
+  const f = String(from).substring(0, 10), t = String(to).substring(0, 10);
+  const rules = Array.isArray(leaveRules) ? leaveRules : [];
+  const def = parseFloat(regularShiftHours) || 0;
+  const seen = { sick: new Set(), vacation: new Set() }; // full-day de-dup, per type
+  const ruleAppliesTo = (r, type) => { const a = r.applies || 'both'; return a === 'both' || a === type; };
+  // How a full day is valued, plus WHY (for the explain trace).
+  const dayValue = (dk, type) => {
+    const sched = (shiftsByDate && shiftsByDate.get(dk)) || 0;
+    if (sched > 0) return { hours: sched, source: 'schedule' };            // 1) scheduled shift hours
+    let best = 0, bestRule = null;
+    for (const r of rules) if (ruleAppliesTo(r, type) && ruleMatchesDate(r, dk)) { const h = parseFloat(r.hours) || 0; if (h > best) { best = h; bestRule = r.id; } }
+    if (best > 0) return { hours: best, source: 'rule', ruleId: bestRule };  // 2) Time Off Value rule
+    return { hours: def, source: 'default' };                               // 3) Regular Shift default
+  };
+  for (const req of requests || []) {
+    if (!req) continue;
+    const type = req.type === 'vacation' ? 'vacation' : 'sick';
+    if (req.hours != null && req.hours !== '') {           // partial → pay the logged hours
+      const h = parseFloat(req.hours) || 0;
+      totals[type] += h;
+      if (detail) detail.push({ type, date: req.start_date != null ? String(req.start_date).substring(0, 10) : null, hours: h, source: 'partial' });
+      continue;
+    }
+    if (req.start_date == null || req.end_date == null) continue;
+    const s = String(req.start_date).substring(0, 10), e = String(req.end_date).substring(0, 10);
+    for (const dk of eachDateKey(s < f ? f : s, e > t ? t : e)) {
+      if (seen[type].has(dk)) continue;                    // dedup overlapping requests
+      seen[type].add(dk);
+      const v = dayValue(dk, type);
+      totals[type] += v.hours;
+      if (detail) detail.push({ type, date: dk, hours: v.hours, source: v.source, ...(v.ruleId ? { ruleId: v.ruleId } : {}) });
+    }
+  }
+  return totals;
+}
+
 /** Minutes since midnight from an "HH:MM[:SS]" string (null-safe). */
 function hmToMin(hhmm) {
   if (hhmm == null) return null;
@@ -218,7 +313,7 @@ function minDailyForBucket(otConfig, rule, dk) {
  * @param {object} [otConfig=null] - tiered-OT config {dailyBands, weeklyBands}; null = single tier
  * @returns {{regularHours:number, overtimeHours:number, otBands:Array<{hours:number,mult:number|null}>}}
  */
-function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null) {
+function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, range = null) {
   const regular = entries.filter(e => e.wage_type === 'regular');
 
   // Partition entries with an explicit override out of the automatic calc.
@@ -324,6 +419,44 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null) {
         }
       }
     });
+
+    // Minimum-daily guarantee WITHOUT a clock-in: a min_daily rule flagged
+    // requiresClockin === false also grants its floor on matching days in the pay
+    // period that have NO worked bucket ("guaranteed hours"). Gated so it isn't
+    // paid to someone absent the whole window — the worker must have clocked in
+    // that 'week' (activeWindow 'week') or anywhere in the 'period' ('period').
+    // Worked days are already floored above; this only fills the empty ones, and
+    // only when the caller passes the pay-period `range` (no range → unchanged).
+    const minDailyRules = (otConfig && Array.isArray(otConfig.minDailyRules)) ? otConfig.minDailyRules : [];
+    const noClockRules = minDailyRules.filter(r => r.requiresClockin === false && (parseFloat(r.hours) || 0) > 0);
+    if (rule === 'daily' && noClockRules.length && range && range.from && range.to) {
+      const activeWeeks = new Set(Object.keys(buckets).map(dk => weekBucketKey(dk, weekStart)));
+      const workedAnyInPeriod = Object.keys(buckets).length > 0;
+      for (const dk of eachDateKey(range.from, range.to)) {
+        if (buckets[dk] != null) continue;                          // worked day — floored above
+        if (restDays && restDays.has(weekdayOfDate(dk))) continue;  // don't guarantee a rest day
+        let floor = 0;
+        for (const r of noClockRules) {
+          if (!ruleMatchesDate(r, dk)) continue;
+          let gate;
+          if (r.activeWindow === 'period') {
+            gate = workedAnyInPeriod;
+          } else if (r.activeWindow === 'every_weekday' || r.activeWindow === 'every_other_day') {
+            // Empty day D qualifies only if the worker clocked in on the OTHER days
+            // of D's week: every weekday (Mon–Fri) except D, or every day except D.
+            const weekdaysOnly = r.activeWindow === 'every_weekday';
+            gate = weekDaysOf(dk, weekStart).every(d =>
+              d === dk                                   // D itself is the day being filled — irrelevant
+              || (weekdaysOnly && !isWeekdayKey(d))      // weekends don't count for the weekday gate
+              || buckets[d] != null);                    // otherwise that day must have been worked
+          } else {
+            gate = activeWeeks.has(weekBucketKey(dk, weekStart)); // 'week'
+          }
+          if (gate) floor = Math.max(floor, parseFloat(r.hours) || 0);
+        }
+        if (floor > 0) autoReg += floor;   // guaranteed regular hours (no OT)
+      }
+    }
   }
 
   const otBands = [...otByMult.entries()]
@@ -468,4 +601,4 @@ function computeDailyPayCosts(entries, overtimeRule, threshold, dailyRate, overt
   };
 }
 
-module.exports = { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, resolveBands, nightHoursForEntry, nightPremiumCost, windowHoursForEntry };
+module.exports = { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, resolveBands, nightHoursForEntry, nightPremiumCost, windowHoursForEntry, shiftHoursByDate, computeLeaveHours };

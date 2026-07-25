@@ -167,7 +167,9 @@ export default function AdminTimeOff({ settings }) {
                     <div style={s.cardTop}>
                       <div style={s.dates}>
                         {fmt(r.start_date, locale)} – {fmt(r.end_date, locale)}
-                        <span style={s.dayCount}>{d} {d !== 1 ? t.daysLabel : t.dayLabel}</span>
+                        {r.hours != null
+                          ? <span style={s.dayCount}>{(+r.hours)} {t.hoursShort}</span>
+                          : <span style={s.dayCount}>{d} {d !== 1 ? t.daysLabel : t.dayLabel}</span>}
                       </div>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                         <span style={{ ...s.typeBadge, background: TYPE_COLORS[r.type] + '22', color: TYPE_COLORS[r.type] }}>

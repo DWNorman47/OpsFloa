@@ -94,6 +94,9 @@ export default function TranscriptionTool() {
   const [minutes, setMinutes] = useState('');
   const [minutesBusy, setMinutesBusy] = useState(false);
   const [minutesErr, setMinutesErr] = useState('');
+  const [dailyLog, setDailyLog] = useState('');
+  const [dailyBusy, setDailyBusy] = useState(false);
+  const [dailyErr, setDailyErr] = useState('');
   const fileInputRef = useRef(null);
   const audioRef = useRef(null);
 
@@ -129,9 +132,11 @@ export default function TranscriptionTool() {
     try {
       const { data } = await api.get(`/recordings/${id}`);
       setDetail(data);
-      // minutes are stored on the recording, so they survive a reload
+      // minutes + daily log are stored on the recording, so they survive a reload
       setMinutes(data.minutes_md || '');
       setMinutesErr('');
+      setDailyLog(data.daily_log_md || '');
+      setDailyErr('');
       setNameEdits(data.speaker_names || {});
       setTitleEdit(data.title || '');
     } catch {
@@ -241,6 +246,24 @@ export default function TranscriptionTool() {
 
   const copyMinutes = async () => {
     try { await navigator.clipboard.writeText(minutes); } catch { /* clipboard unavailable */ }
+  };
+
+  const makeDailyLog = async () => {
+    if (!detail || dailyBusy) return;
+    setDailyErr(''); setDailyBusy(true);
+    try {
+      const { data } = await api.post(`/recordings/${detail.id}/daily-log`, {}, { suppressToast: true });
+      setDailyLog(data.result || '');
+      setDetail(d => (d ? { ...d, daily_log_at: data.daily_log_at } : d));
+    } catch (e) {
+      setDailyErr(e?.response?.data?.error || 'Could not write the daily log. Please try again.');
+    } finally {
+      setDailyBusy(false);
+    }
+  };
+
+  const copyDailyLog = async () => {
+    try { await navigator.clipboard.writeText(dailyLog); } catch { /* clipboard unavailable */ }
   };
 
   const copyTranscript = async () => {
@@ -360,6 +383,9 @@ export default function TranscriptionTool() {
                   <button className="ops-button-secondary" onClick={makeMinutes} disabled={minutesBusy}>
                     {minutesBusy ? 'Writing minutes…' : minutes ? 'Redo minutes' : 'Turn into minutes'}
                   </button>
+                  <button className="ops-button-secondary" onClick={makeDailyLog} disabled={dailyBusy}>
+                    {dailyBusy ? 'Writing daily log…' : dailyLog ? 'Redo daily log' : 'Make daily log'}
+                  </button>
                   <button className="ops-button-secondary" onClick={copyTranscript}>{copied ? 'Copied!' : 'Copy transcript'}</button>
                   <button className="ops-button-secondary" onClick={downloadTranscript}>Download .txt</button>
                   <button className="ops-button-secondary" onClick={() => remove(detail.id)} style={{ color: '#b91c1c' }}>Delete</button>
@@ -387,6 +413,22 @@ export default function TranscriptionTool() {
                       </div>
                     )}
                     <div style={styles.minutesBody}>{renderAiMarkdown(minutes)}</div>
+                  </div>
+                )}
+
+                {dailyErr && <div style={styles.minutesErr}>{dailyErr}</div>}
+
+                {dailyLog && (
+                  <div style={styles.dailyBox}>
+                    <div style={styles.minutesHead}>
+                      <b>Daily log</b>
+                      {detail.daily_log_at && !dailyBusy && (
+                        <span style={styles.minutesAge}>saved {new Date(detail.daily_log_at).toLocaleString()}</span>
+                      )}
+                      <span style={styles.dailyAi}>uses 1 AI request</span>
+                      <button className="ops-button-secondary" onClick={copyDailyLog} style={{ marginLeft: 'auto' }}>Copy</button>
+                    </div>
+                    <div style={styles.minutesBody}>{renderAiMarkdown(dailyLog)}</div>
                   </div>
                 )}
 
@@ -510,6 +552,8 @@ const styles = {
   minutesTip: { fontSize: 12.5, lineHeight: 1.6, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '8px 10px', margin: '6px 0 4px' },
   minutesBody: { fontSize: 14, lineHeight: 1.6, color: '#0f172a' },
   minutesErr: { margin: '4px 0 12px', padding: '10px 12px', borderRadius: 8, fontSize: 13.5, background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c' },
+  dailyBox: { border: '1px solid #bbf7d0', borderRadius: 12, background: '#f2fdf5', padding: '10px 14px 14px', margin: '4px 0 16px' },
+  dailyAi: { fontSize: 11.5, color: '#047857', background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 20, padding: '1px 8px' },
   card: {
     background: '#fff',
     border: '1px solid #e2e8f0',

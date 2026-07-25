@@ -32,19 +32,56 @@ function isChunkLoadError(error) {
 }
 
 const RELOAD_FLAG = 'tc_chunk_reload_at';
-const RELOAD_COOLDOWN_MS = 30_000; // don't loop: once per 30s max
+const HARD_RESET_FLAG = 'tc_chunk_hardreset_at';
+const RELOAD_COOLDOWN_MS = 30_000;      // a plain reload, at most once per 30s
+const HARD_RESET_COOLDOWN_MS = 60_000;  // the SW/cache nuke, at most once per 60s
 
 /**
- * Reload once to pick up the fresh build. Guarded by sessionStorage
- * so a bad build can't put us in a reload loop — if we reloaded
- * recently and still see the error, let the normal error UI render.
+ * Last resort when a plain reload didn't clear the stale chunk — almost always
+ * because the service worker is still serving a cached index.html that points
+ * at chunk filenames the server has already replaced. Unregister the SW and drop
+ * the Cache Storage caches (NOT IndexedDB — the offline queue lives there and
+ * must survive), then reload straight from the network. The SW re-registers on
+ * the next load.
+ */
+async function hardResetAndReload() {
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister().catch(() => {})));
+    }
+    if (typeof caches !== 'undefined') {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k).catch(() => {})));
+    }
+  } catch { /* best effort */ }
+  window.location.reload();
+}
+
+/**
+ * Recover from a stale-build chunk error, escalating and bounded so a genuinely
+ * broken build can't loop:
+ *   1st time      → a plain reload (a fresh index.html usually fixes it),
+ *   still failing → nuke the SW + caches and reload (defeats a stale SW),
+ *   still failing → give up and let the error UI render.
+ * Returns true if it kicked off a recovery, so the caller skips the crash card.
  */
 function tryReloadForStaleBuild() {
   try {
-    const last = parseInt(sessionStorage.getItem(RELOAD_FLAG) || '0', 10);
-    if (Date.now() - last < RELOAD_COOLDOWN_MS) return false;
-    sessionStorage.setItem(RELOAD_FLAG, String(Date.now()));
-  } catch { /* sessionStorage may be disabled */ }
+    const now = Date.now();
+    const lastReload = parseInt(sessionStorage.getItem(RELOAD_FLAG) || '0', 10);
+    const lastHard = parseInt(sessionStorage.getItem(HARD_RESET_FLAG) || '0', 10);
+    // The hard reset already ran and it STILL failed → out of options.
+    if (now - lastHard < HARD_RESET_COOLDOWN_MS) return false;
+    // A plain reload didn't clear it → escalate to the SW/cache nuke.
+    if (now - lastReload < RELOAD_COOLDOWN_MS) {
+      sessionStorage.setItem(HARD_RESET_FLAG, String(now));
+      hardResetAndReload();
+      return true;
+    }
+    // First attempt → a plain reload.
+    sessionStorage.setItem(RELOAD_FLAG, String(now));
+  } catch { window.location.reload(); return true; } // sessionStorage disabled: reload once, unguarded
   window.location.reload();
   return true;
 }

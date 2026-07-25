@@ -239,6 +239,9 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
   };
 
   const schedRule = form.inRef === 'schedule' || form.outRef === 'schedule';
+  // Any Standard or role rule configured → the company has real rules to protect,
+  // so the (overwriting) preset shortcuts are hidden.
+  const hasSavedRules = (form.rules?.length || 0) > 0 || (form.roleRules?.length || 0) > 0;
 
   return (
     <div style={s.card}>
@@ -257,13 +260,18 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
         </label>
       </div>
 
-      <div style={s.presetRow}>
-        <span style={s.label}>{t.hrPreset}</span>
-        <button type="button" style={s.presetBtn} onClick={() => applyPreset('honduras')}>{t.hrPresetHonduras}</button>
-        <button type="button" style={s.presetBtn} onClick={() => applyPreset('us_quarter')}>{t.hrPresetUS}</button>
-        <button type="button" style={s.presetBtn} onClick={() => applyPreset('california')}>{t.hrPresetCalifornia}</button>
-        <button type="button" style={s.presetBtn} onClick={() => applyPreset('off')}>{t.hrPresetOff}</button>
-      </div>
+      {/* Presets overwrite the Standard Rules/Hours, so once a company has built
+          any rules we hide them — a stray "California" tap shouldn't wipe real
+          config. They reappear only when the rule list is empty again. */}
+      {!hasSavedRules && (
+        <div style={s.presetRow}>
+          <span style={s.label}>{t.hrPreset}</span>
+          <button type="button" style={s.presetBtn} onClick={() => applyPreset('honduras')}>{t.hrPresetHonduras}</button>
+          <button type="button" style={s.presetBtn} onClick={() => applyPreset('us_quarter')}>{t.hrPresetUS}</button>
+          <button type="button" style={s.presetBtn} onClick={() => applyPreset('california')}>{t.hrPresetCalifornia}</button>
+          <button type="button" style={s.presetBtn} onClick={() => applyPreset('off')}>{t.hrPresetOff}</button>
+        </div>
+      )}
 
       {form.enabled && (
         <>

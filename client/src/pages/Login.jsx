@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
 import api from '../api';
 import PasswordInput from '../components/PasswordInput';
+import LegalFooter from '../components/LegalFooter';
 import { pickLandingPath } from '../modulePermissions';
 import { safeLocal } from '../utils/safeStorage';
 
@@ -304,6 +305,7 @@ export default function Login() {
         <p style={styles.registerLink}>
           {t.loginNewToOpsFloa} <Link to="/register" style={styles.link}>{t.loginCreateAccount}</Link>
         </p>
+        <LegalFooter />
       </div>
     </div>
   );

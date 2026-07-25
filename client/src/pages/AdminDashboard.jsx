@@ -1,9 +1,10 @@
-import React, { useState, useEffect, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { useAuth } from '../contexts/AuthContext';
 import { usePlan } from '../hooks/usePlan';
 import { useT } from '../hooks/useT';
 import CompanyChat from '../components/CompanyChat';
+import MemberReportRow from '../components/MemberReportRow';
 import LiveKPIs from '../components/LiveKPIs';
 import { SkeletonStatRow, SkeletonList } from '../components/Skeleton';
 import BroadcastMessage from '../components/BroadcastMessage';
@@ -82,12 +83,24 @@ export function WorkforcePanel() {
     return window.location.hash.startsWith('#wf-') && ALL_TABS.includes(hashSub) ? hashSub : null;
   };
   const [tab, setTab] = useState(() => getHashTab() || 'live');
+  // Team Member Reports: one member's detail panel below the table at a time.
+  const [selectedReportWorker, setSelectedReportWorker] = useState(null);
+  const [reportPage, setReportPage] = useState(0);
 
-  const toggleSection = key => setCollapsedSections(s => {
-    const next = { ...s, [key]: !s[key] };
-    safeLocal.setItem('opsfloa_report_sections', JSON.stringify(next));
-    return next;
-  });
+  // Report section headers, so opening one can scroll to it instead of the page top.
+  const sectionRefs = useRef({});
+  const toggleSection = key => {
+    const opening = !!collapsedSections[key]; // was collapsed → this click opens it
+    setCollapsedSections(s => {
+      const next = { ...s, [key]: !s[key] };
+      safeLocal.setItem('opsfloa_report_sections', JSON.stringify(next));
+      return next;
+    });
+    // Bring the opened section's header to the top of the viewport. Each lazy
+    // section has its own Suspense boundary, so the header stays mounted while
+    // its body loads and this target is always present.
+    if (opening) requestAnimationFrame(() => sectionRefs.current[key]?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+  };
 
   useEffect(() => {
     api.get('/stripe/status').then(r => setBilling(r.data)).catch(silentError('admindashboard'));
@@ -265,38 +278,67 @@ export function WorkforcePanel() {
         ) : tab === 'reports' ? (
           <Suspense fallback={<TabLoader />}>
             <h2 style={styles.heading}>{t.tabReports}</h2>
-            <button style={styles.sectionToggle} onClick={() => toggleSection('workers')}>
+            <button ref={el => { sectionRefs.current.workers = el; }} type="button" style={styles.sectionToggle} onClick={() => toggleSection('workers')}>
               <span>{`${workerLabel} reports`}</span>
               <span style={styles.chevron}>{collapsedSections.workers ? '▶' : '▼'}</span>
             </button>
             {!collapsedSections.workers && (workers.length === 0
               ? <p style={{ color: '#666' }}>{`No ${workerLabelPlural.toLowerCase()} yet.`}</p>
-              : workers.map(w => <WorkerMetrics key={w.id} worker={w} currency={settings?.currency ?? 'USD'} companyInfo={companyInfo} overtimeEnabled={settings?.feature_overtime !== false} projectsEnabled={settings?.feature_project_integration !== false} projects={projects} settings={settings} />)
+              : (() => {
+                  const PAGE = 8;
+                  const pages = Math.max(1, Math.ceil(workers.length / PAGE));
+                  const page = Math.min(reportPage, pages - 1);
+                  const slice = workers.slice(page * PAGE, page * PAGE + PAGE);
+                  const sel = workers.find(w => w.id === selectedReportWorker) || null;
+                  return (
+                    <>
+                      <div style={styles.memberTable}>
+                        {slice.map(w => (
+                          <MemberReportRow key={w.id} worker={w} overtimeEnabled={settings?.feature_overtime !== false}
+                            selected={selectedReportWorker === w.id}
+                            onSelect={() => setSelectedReportWorker(id => id === w.id ? null : w.id)} />
+                        ))}
+                      </div>
+                      {pages > 1 && (
+                        <div style={styles.pager}>
+                          <button style={{ ...styles.pagerBtn, ...(page === 0 ? styles.pagerBtnOff : {}) }} disabled={page === 0} onClick={() => setReportPage(p => Math.max(0, p - 1))}>‹ {t.paginationPrev}</button>
+                          <span style={styles.pagerInfo}>{t.paginationPageOf.replace('{n}', page + 1).replace('{total}', pages)}</span>
+                          <button style={{ ...styles.pagerBtn, ...(page >= pages - 1 ? styles.pagerBtnOff : {}) }} disabled={page >= pages - 1} onClick={() => setReportPage(p => Math.min(pages - 1, p + 1))}>{t.paginationNext} ›</button>
+                        </div>
+                      )}
+                      {sel && (
+                        <Suspense fallback={<TabLoader />}>
+                          <WorkerMetrics key={sel.id} worker={sel} currency={settings?.currency ?? 'USD'} companyInfo={companyInfo} overtimeEnabled={settings?.feature_overtime !== false} projectsEnabled={settings?.feature_project_integration !== false} projects={projects} settings={settings} />
+                        </Suspense>
+                      )}
+                    </>
+                  );
+                })()
             )}
             {settings?.feature_project_integration !== false && <>
-              <button style={styles.sectionToggle} onClick={() => toggleSection('projects')}>
+              <button ref={el => { sectionRefs.current.projects = el; }} type="button" style={styles.sectionToggle} onClick={() => toggleSection('projects')}>
                 <span>{`Projects reports`}</span>
                 <span style={styles.chevron}>{collapsedSections.projects ? '▶' : '▼'}</span>
               </button>
-              {!collapsedSections.projects && <ProjectReports currency={settings?.currency ?? 'USD'} settings={settings} />}
+              {!collapsedSections.projects && <Suspense fallback={<TabLoader />}><ProjectReports currency={settings?.currency ?? 'USD'} settings={settings} /></Suspense>}
             </>}
             {settings?.feature_overtime !== false && <>
-              <button style={styles.sectionToggle} onClick={() => toggleSection('overtime')}>
+              <button ref={el => { sectionRefs.current.overtime = el; }} type="button" style={styles.sectionToggle} onClick={() => toggleSection('overtime')}>
                 <span>{t.overtimeReport}</span>
                 <span style={styles.chevron}>{collapsedSections.overtime ? '▶' : '▼'}</span>
               </button>
-              {!collapsedSections.overtime && (plan.isStarter ? <OvertimeReport currency={settings?.currency ?? 'USD'} /> : <UpgradePrompt requiredPlan="starter" feature={t.overtimeReport} />)}
+              {!collapsedSections.overtime && (plan.isStarter ? <Suspense fallback={<TabLoader />}><OvertimeReport currency={settings?.currency ?? 'USD'} /></Suspense> : <UpgradePrompt requiredPlan="starter" feature={t.overtimeReport} />)}
             </>}
-            <button style={styles.sectionToggle} onClick={() => toggleSection('payroll')}>
+            <button ref={el => { sectionRefs.current.payroll = el; }} type="button" style={styles.sectionToggle} onClick={() => toggleSection('payroll')}>
               <span>{t.payrollLabel}</span>
               <span style={styles.chevron}>{collapsedSections.payroll ? '▶' : '▼'}</span>
             </button>
-            {!collapsedSections.payroll && (plan.hasQbo ? <CertifiedPayroll projects={projects} settings={settings} requireSignature={plan.hasCertifiedPayroll && settings?.cp_require_signature !== false} wh347Format={plan.hasCertifiedPayroll && settings?.cp_wh347_format !== false} /> : <UpgradePrompt requiredPlan="qbo" feature={t.payrollLabel} />)}
-            <button style={styles.sectionToggle} onClick={() => toggleSection('export')}>
+            {!collapsedSections.payroll && (plan.hasQbo ? <Suspense fallback={<TabLoader />}><CertifiedPayroll projects={projects} settings={settings} requireSignature={plan.hasCertifiedPayroll && settings?.cp_require_signature !== false} wh347Format={plan.hasCertifiedPayroll && settings?.cp_wh347_format !== false} /></Suspense> : <UpgradePrompt requiredPlan="qbo" feature={t.payrollLabel} />)}
+            <button ref={el => { sectionRefs.current.export = el; }} type="button" style={styles.sectionToggle} onClick={() => toggleSection('export')}>
               <span>{t.export}</span>
               <span style={styles.chevron}>{collapsedSections.export ? '▶' : '▼'}</span>
             </button>
-            {!collapsedSections.export && (plan.isStarter ? <ExportPanel workers={workers} projects={projects} settings={settings} /> : <UpgradePrompt requiredPlan="starter" feature={t.export} />)}
+            {!collapsedSections.export && (plan.isStarter ? <Suspense fallback={<TabLoader />}><ExportPanel workers={workers} projects={projects} settings={settings} /></Suspense> : <UpgradePrompt requiredPlan="starter" feature={t.export} />)}
           </Suspense>
         ) : tab === 'timeoff' && settings?.feature_pto !== false ? (
           <Suspense fallback={<TabLoader />}>
@@ -331,8 +373,13 @@ const styles = {
   tabActive: { flex: 1, padding: '9px 0', background: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 14, color: 'var(--ops-page-accent)', cursor: 'pointer', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', whiteSpace: 'nowrap', textAlign: 'center' },
   heading: { marginBottom: 20, fontSize: 22 },
   subheading: { fontSize: 18, fontWeight: 600, margin: '32px 0 16px' },
-  sectionToggle: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: '12px 16px', fontSize: 16, fontWeight: 600, color: '#111827', cursor: 'pointer', marginTop: 24, marginBottom: 4, textAlign: 'left' },
+  sectionToggle: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: '12px 16px', fontSize: 16, fontWeight: 600, color: '#111827', cursor: 'pointer', marginTop: 24, marginBottom: 4, textAlign: 'left', scrollMarginTop: 16 },
   chevron: { fontSize: 11, color: '#6b7280' },
+  memberTable: { background: '#fff', borderRadius: 10, boxShadow: '0 1px 6px rgba(0,0,0,0.07)', overflow: 'hidden', marginTop: 4 },
+  pager: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, marginTop: 12 },
+  pagerBtn: { background: '#fff', border: '1px solid #d1d5db', borderRadius: 7, padding: '6px 14px', fontSize: 13, fontWeight: 600, color: '#374151', cursor: 'pointer' },
+  pagerBtnOff: { opacity: 0.45, cursor: 'not-allowed' },
+  pagerInfo: { fontSize: 13, color: '#6b7280', fontWeight: 600, fontVariantNumeric: 'tabular-nums' },
   trialBanner: { padding: '10px 24px', border: '1px solid', fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 10 },
   trialUpgradeBtn: { background: 'none', border: 'none', fontWeight: 700, textDecoration: 'underline', cursor: 'pointer', fontSize: 14, color: 'inherit', padding: 0 },
   liveLayout: { display: 'grid', gridTemplateColumns: '1fr 340px', gap: 20, alignItems: 'start' },

@@ -23,6 +23,484 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-24 — Team Member Reports redesign: interactive, explain-why lines
+
+**Done** (3 commits). Rebuilt Time Clock ▸ Reports ▸ Team Member Reports so a
+number is never a mystery: pick a member, generate a period, and click any line
+to see exactly which rules and settings produced it.
+
+**Shape.** Members are now compact rows (not cards), one detail panel open at a
+time (selection lifted to AdminDashboard). The panel has From/To + preset chips
+(**This week · Last week · Last two weeks · Last month**), the **Add Deductions**
+and **Add Entries** buttons up top, the generated lines in the middle, and
+**preview / CSV / PDF at the bottom**. Weeks are Sun–Sat (matches the app's
+default range).
+
+**The explain trace** (the real work — 3 phases):
+1. *Engine* (`hoursRules.js`): an opt-in trace. `roundEntriesForPay(ctx.explain)`
+   + `applyRules(trace)` record, per entry, only what fired — rounding (from→to +
+   which round rule), clip (boundary + rule ids), add/remove-time (the **actual**
+   signed paid-minute movement on that line, so a +30 rule that nets +5 says +5),
+   auto-break (minutes added). **Invariant, tested:** paid start/end/break are
+   byte-identical with explain on vs off; every other pay caller is untouched.
+2. *Endpoint* (`?explain=1`): appends per-entry overtime + prevailing notes, a
+   `settings_used` block (rate, OT rule/threshold/mult, role, prevailing, Regular
+   Shift, sick/vac %, guarantee), and `leave_detail` (per-day sick/vac valuation:
+   schedule / rule+id / default / partial). All gated on the flag.
+3. *Client*: each entry line expands to plain-English trace; the pay-summary
+   lines (OT, sick, vacation, guarantee, deductions) and an "Inputs used" panel
+   expand too. Rule text reuses the builder's `describeRule`; every item links to
+   where it's set — **Administration ▸ Workspace** for rules/company standards,
+   **Team** for a member's pay settings (open-the-screen, no deep-highlight, per
+   your pick).
+
+**Judgment calls:** the trace shows the paid-minute effect *on the line* (not the
+raw rule credit) so the effect always matches the number; the rule's own
+definition still shows via `describeRule`. Deep-link highlighting was deliberately
+skipped. Links do a normal route nav (no reload thanks to react-router).
+
+**Perf:** you asked — no measurable hit. The trace is computed only for a single
+member on a click (`explain=1`); invoices, payroll, QBO, the worker screen, and
+scheduled reports never request it and run exactly as before.
+
+**Verify:** server 1061 + client 255 (+ i18n parity) + builds green; sitework
+clean. New `hoursRulesExplain` suite pins the on==off invariant.
+
+---
+
+## 2026-07-24 — Leave pay rate (separate sick/vacation %) + hide presets once rules exist
+
+**Two follow-ups.**
+
+**1. Configurable leave pay rate.** You picked **separate sick % and vacation %**
+of base. Two new Company Standards settings — `sick_pay_pct` / `vacation_pay_pct`,
+**default 100** (so every existing company is unchanged). Sick/vacation *hours*
+are unaffected; only the *pay* scales: `hours × rate × pct/100`. Applied through
+one shared helper (`paidHours.leaveRateMultipliers`) at all three cost surfaces
+(worker invoice, payroll/overtime-report, worker-hours CSV). Pay-stubs endpoint
+is hours-only (no dollar lines) so it needed no change. The invoice PDF's "Sick
+Pay (…/hr)" label now shows the **effective** rate (base × pct), carried as
+`sick_rate`/`vacation_rate` in the summary, so an 80% line doesn't misreport the
+per-hour figure. Negative percents clamp to 0 (never a credit).
+
+**2. Presets hidden once rules exist.** The Honduras/US/California/Off preset
+buttons **overwrite** the Standard Rules — a stray tap would wipe a configured
+policy. They now show only when the rule list is empty (`form.rules` and
+`form.roleRules` both empty); build any rule and they disappear, reappear if you
+clear back to none. Role sections were already preserved across a preset apply;
+this just removes the foot-gun entirely once there's something to protect.
+
+**Verify:** 1049 server tests (new `leaveRateMultipliers` unit cases) + i18n
+parity + client build green; sitework clean.
+
+---
+
+## 2026-07-24 — Time Off Value: schedule-driven, partial days, sick + vacation
+
+**Done.** Reworked the sick-pay feature (below) into a general **paid-leave**
+engine covering **sick AND vacation**, valued **schedule-first**, with **partial
+days**. Sick and vacation each show as **their own line** (hours + pay) on the
+invoice PDF. Supersedes the "Sick Day Value" entry below — same `sick_value` rule
+type id (kept, to avoid churning saved policies), now surfaced as **"Time Off
+Value"**.
+
+**How a full leave day is valued now (precedence):** the worker's **scheduled
+shift hours** that day → the **Time Off Value rule** for that weekday → the
+company **Regular Shift** default (new setting, defaults 8). This is the fix
+David asked for: *"scheduled 4 hours and calls out sick → they only get four."*
+The schedule wins over the rule.
+
+**Partial days:** new nullable **`hours`** column on `time_off_requests`
+(migration `0148`; NULL = full day, N = pay exactly N). Worker enters it on a
+single-day sick/vacation request; admin card + worker card show `2 h` instead of
+the day count.
+
+**Rule now carries `applies`** (`sick` | `vacation` | `both`, default both) — a
+dropdown on the rule. So "Mon = 9h sick, but vacation = 8h" is expressible. The
+engine filters the weekday fallback by the request's leave type.
+
+**Centralized valuation** in `paidHours.computeWorkerLeave` (single worker) /
+`computeCompanyLeave` (whole company, 2 queries) → both call
+`payCalculations.computeLeaveHours(requests, shiftsByDate, rules, regularShift,
+from, to)` returning `{ sick, vacation }`. Replaced the old
+`sickHoursForPeriod`/`loadSickByUser` helpers everywhere. All **4 pay surfaces**
+now carry sick **and** vacation (worker invoice, pay-stubs, payroll data,
+worker-hours CSV — CSV gained Vacation Hrs / Vacation Pay columns).
+
+**Judgment calls (overrule me):**
+- Kept the internal rule type id `sick_value` rather than renaming to
+  `time_off_value` — a rename would need a policy migration for any saved rule
+  and touches the contract test; the label is decoupled and reads "Time Off
+  Value" everywhere. If you'd rather the id match, say so.
+- **Fixed a latent edit bug** while in there: editing a saved `min_daily` or
+  `sick_value` rule showed the *default* hours, not the saved value (the engine
+  stores `hours`, the input binds `minHours`/`sickHours`). Now mapped back on
+  edit. Pre-existing since those rules landed; unrelated to leave but one line.
+- Leave still pays at **base rate**, its own category, never feeds OT or project
+  labor. `total_hours` stays worked-only (sick/vacation/guarantee shown as
+  separate lines that sum into the displayed total).
+
+**Verify:** 1048 server tests + i18n parity + client build green; sitework clean.
+New `applies`/partial/schedule-precedence cases in the `sickValue` suite.
+
+---
+
+## 2026-07-24 — Pay Rules: Sick Day Value (approved sick time-off, paid by weekday)
+
+**Done.** New **`sick_value`** rule type: an approved sick day is now paid a
+per-weekday number of hours (e.g. Mon+Thu = 9h, Fri = 8h = two rules), as **its
+own "Sick" line**. **The big thing this bridges:** sick time-off was recorded but
+**never touched pay** — approved `sick` requests were just dated ranges. Now the
+pay pipeline reads them and values them.
+
+**Design (locked with David up front):** *source* = approved `sick` time-off
+requests (reuse the PTO system — nothing new to enter); *representation* = a
+separate Sick line, not folded into regular hours.
+
+**Engine:** `sickRulesFromSettings` / `sickRulesByRoleFactory` (role-aware) pull
+the `sick_value` rules; `sickHoursForPeriod(requests, rules, from, to)` expands the
+approved ranges into days (clipped to the period, de-duped so overlaps don't
+double-count) and values each by the matching rule (max if several; **no rule for a
+day → 0, i.e. unpaid**). Paid at **base rate**, its own category — never worked
+hours, never feeds OT.
+
+**Wired at the 4 worker-pay surfaces**, each adding `sick_hours`/`sick_cost` and
+folding sick pay into gross (so it flows to net/deductions): worker invoice (the
+money stub), worker pay-stubs (a **sick-only period now shows a stub** — the empty
+guard was relaxed), the payroll data endpoint, and the worker-hours CSV (new Sick
+Hrs / Sick Pay columns). **NOT** the project bill / project labor cost — a sick day
+isn't project labor. `total_hours` stays worked-only, mirroring how the weekly
+guarantee is treated.
+
+**UI:** `sick_value` in the rule-type dropdown + an hours editor, using the shared
+weekday `when` selector; summary + EN/ES strings. New `sickValue` test suite; the
+builder-contract type list updated. 305 pay/hours tests + i18n parity green.
+
+---
+
+## 2026-07-24 — Time Clock: a clocked-in supervisor lands on Workforce
+
+**Done.** On a **plain** landing at `/timeclock` (no `#tab` / `#wf-` link), a user
+who is **clocked in** and holds **both** the personal clock and Workforce now opens
+straight into the **Workforce** group instead of their own clock — a supervisor
+who's already punched in usually comes back to watch their crew, not to re-clock
+themselves.
+
+**Approach (revised, `cd1af3f` → this):** first pass decided the default *after*
+`/clock/status` resolved, which flashed the personal view then flipped it. Reworked
+per David to a **cached clocked-in flag** (`tc_clocked_in` in localStorage): the
+Dashboard keeps it in sync with the clock state, and the Personal/Workforce default
+is read from it **synchronously at mount** (`landingGroup()`), so there's no flash.
+Start on the personal clock at login; once clocked in, later Time Clock visits open
+Workforce; cleared on **clock-out** (self-heals a stale flag when the status
+reloads) and on **logout** (fresh login starts personal). An explicit `#tab`/`#wf-`
+link or a manual toggle is never overridden, and `effectiveGroup` still guards
+anyone who can't see Workforce.
+
+---
+
+## 2026-07-24 — Hours & Rules: Minimum Daily Hours can pay without a clock-in
+
+**Done.** A `min_daily` rule now has a **"Requires clock-in"** checkbox. Default ON
+= today's behaviour (reporting-time pay — a floor only on days actually worked).
+Turn it OFF and the minimum is **guaranteed on the rule's applicable days even with
+no clock-in** ("guaranteed hours").
+
+**The gate David asked for** (his refinement of the scope question): when clock-in
+isn't required, a second control — **the worker must have clocked in "that week"
+vs. "anywhere in the pay period"** — decides whether an empty day is paid. A window
+with *zero* activity is never paid, so a fully-absent worker/week/period earns
+nothing. It only fills *empty* days; worked days are unchanged.
+
+**Engine** (`payCalculations.computeOT`): takes an optional pay-period `range`.
+After the normal per-day bucketing, it walks the applicable days in the range with
+no worked bucket and, if the week/period gate passes, adds the floor as **regular
+hours** (same as the existing short-day floor — no OT). No `range`, or
+requiresClockin=true → byte-identical to before. Threaded through `computePaid`.
+
+**Wired the range at the four worker-pay-for-period sites** so the stub and the
+payroll can't disagree: worker pay-stubs, worker invoice, payroll export, and
+worker-hours export. **NOT** the project bill / project metrics / `laborCostCents`
+/ QBO paths — a no-clock-in guaranteed day isn't attributable to a project, and
+those read project cost or OT only. Extra guard for free: the export queries are
+`u.active = true`, so terminated workers can't collect the guarantee.
+
+**Judgment call — no line item for the empty days.** Guaranteed no-clock-in hours
+fold into the summary *regular hours* with no per-day line (there's no entry to
+show), exactly like the existing floor already tops a short day beyond its punch. A
+labelled "guaranteed hours" line on the stub is a nice follow-up for clarity, not
+correctness.
+
+Verified: 320 server tests (new `minDailyNoClockin` suite + all pay/hours suites
+green — backward compat), i18n parity (7), client build, sitework clean.
+
+**Follow-up — two more qualifying gates.** The no-clock-in dropdown now also offers
+**"every weekday that week"** and **"every other day that week"**: an empty day D
+is guaranteed only if the worker clocked in on the OTHER days of D's week — every
+weekday (Mon–Fri) except D, or every day except D (e.g. guarantee Sunday only if
+Mon–Sat were all worked). These are per-day gates in `computeOT` (`weekDaysOf`);
+they're hidden in the builder when the rule applies **Every Day** (only sensible
+for specific days), and `formToRule` coerces the value away if that happens. 324
+server tests (+4 gate cases) green.
+
+---
+
+## 2026-07-23 — Storm + Roof: opened for purchase through billing
+
+**Done.** Flipped both `STORM_SELLABLE` and `ROOF_SELLABLE` to **true** in
+`BillingPanel.jsx` — both add-ons now appear in billing for purchase. Also closed
+the two gaps that "sellable" exposed:
+
+- **Storm→Takeoff dependency** (Storm is dead without Takeoff, so selling it alone
+  is a broken purchase). Added the guard everywhere Takeoff→Plan Room already had
+  one: server `/checkout` + `/addon` (`code: 'takeoff_required'`), the manage-list
+  "needs Takeoff" gate + message, and the Storm checkbox now pulls Takeoff (+ Plan
+  Room) in. Dependency chain is now enforced end to end: Plan Room ← Takeoff ←
+  Storm, and Plan Room ← Roof.
+- **Roof standalone buy** — roof is now in the "buy without a plan" flow (a roof
+  card before the buy-alone button, added to `picks`, its checkbox pulls Plan Room
+  in), so the two-door "Plan Room + Roof" standalone door actually completes a
+  purchase, not just the one-click add for existing subscribers.
+
+⚠️ **Two things still gate real go-live — David is turning sale ON knowing both:**
+1. **Stripe price IDs must be set** or the buy cards stay hidden (they're gated on
+   `plans?.x?.monthly_price_id`): `STRIPE_PRICE_ROOF` (David is renaming from
+   `_ROOFING`) and `STRIPE_PRICE_STORM`, each + `_ANNUAL`, pointing at the real $40
+   / $20 prices. Roof also needs **migration 0147** run on stage/prod.
+2. **Neither add-on's math is verified.** These flags were the "don't sell until the
+   math is checked on a real one" gate (Storm's utility/excavation math; Roof's
+   scale-from-aerial + report). Turning them on sells unverified output — flagged;
+   David's call. Set either flag back to `false` to pull it without losing owned
+   companies' management.
+
+Verified: stripe/auth tests (45), client build, sitework clean.
+
+---
+
+## 2026-07-23 — Roof Measurement: billing plumbing + two-door standalone sale (staged off)
+
+**Done.** Made `addon_roof` a real, sellable add-on — a faithful clone of
+`addon_storm` — plus the "two-door" UX so it can be bought standalone (without
+Takeoff). **Staged behind `ROOF_SELLABLE = false`**, so it's a one-flag flip once
+the math's verified. Price **$40/mo** (decided earlier). Design of record:
+`docs/plans/roof-measurement.md`.
+
+**Backend (mirrors storm end-to-end):**
+- Migration **0147** — `addon_roof` boolean on `companies`. ⚠️ **run on stage/prod.**
+- `buildSessionUser` selects + returns `addon_roof` (→ `tc_addons`, which the
+  tool-app already read).
+- Stripe (`routes/stripe.js`): `ADDON_PRICES.roof`, `/plans` + `/status` include
+  roof, `/checkout` + `/checkout-addon` accept it, and **all three webhook
+  handlers** map `STRIPE_PRICE_ROOF[_ANNUAL]` → `addon_roof`. Roof is in
+  `STANDALONE_ADDONS` (sellable without a base plan, unlike storm) but **requires
+  Plan Room** — enforced in all three checkout paths, like Takeoff.
+- `requirePlanToolsAddon` also passes on `addon_roof`, so a roof owner can save via
+  `/api/takeoffs`.
+- SuperAdmin PATCH + list + a toggle row; `.env.example` + 4 new stripe test cases.
+
+**Two-door tool-app UX** (Plan Room `?v 72 → 73`):
+- Re-gated the roof draw tools `tb-takeoff` → **`roofwork`** (`has-roofwork` =
+  takeoff **or** roof), so a roof-only owner (no takeoff) can trace.
+- **Door A** — a `📐 Roof Measurement` button (`.roof-door`) that shows only for a
+  roof owner **without** takeoff; a takeoff owner reaches roof via the trade
+  dropdown (Door B) and never sees the button. For a roof-only owner, the takeoff
+  chrome is already auto-hidden (it's `tb-takeoff`).
+- **`?roofsolo=1` dev override** — since exempt/trial read *both* flags true, Door A
+  wouldn't show for David; this forces the roof-only view (hides takeoff chrome) so
+  he can preview it. `?roofsolo=0` clears it.
+
+**Judgment call — naming:** the Stripe env is **`STRIPE_PRICE_ROOF`** (matches
+`addon_roof` and the `STRIPE_PRICE_<x>`→`addon_<x>` pattern of every other add-on).
+David had made `STRIPE_PRICE_ROOFING` first; we agreed `_ROOF` is the consistent
+name, so he's renaming the env var.
+
+⚠️ **To flip it on:** (1) point `STRIPE_PRICE_ROOF` (+ `_ANNUAL`) at the real $40
+Stripe price; (2) run migration 0147 on stage/prod; (3) verify the math on a real
+roof; (4) set `ROOF_SELLABLE = true` in `BillingPanel.jsx`. All verified green:
+stripe addon tests (22), auth/superadmin (27), client build, `node --check`,
+sitework clean.
+
+---
+
+## 2026-07-23 — Roof Measurement mode in Plan Room (EagleView-style report) — MVP prototype
+
+**Done (prototype).** A new **Roof Measurement** mode inside Plan Room — trace a
+roof on an aerial, get a branded measurement report (squares, per-facet pitch &
+area, edges by type, penetrations, waste). The EagleView/Hover play; incumbents
+charge **$20–100 per report**. Plan + full design: `docs/plans/roof-measurement.md`.
+
+**The big finding that made this small:** Plan Room's roofing trade pack *already*
+contains the entire roof engine — `slopeFactor`/`hipValleyFactor`/`edgeFactor`/
+`planeSquares`/`edgeFt`, `roofingTotals()`, per-facet pitch, the plane/edge/item
+draw tools, edge types (eave/rake/ridge/hip/valley) and penetrations. Scale-from-
+image and image ingest already work too. So this was **not a new engine** — it's a
+new *deliverable* (the report) + new *packaging* (its own add-on) on top of
+geometry that already ships. Built the way Storm/Utility was: a mode gated by an
+add-on flag, not a forked tool-app.
+
+**What shipped:**
+- **`roof` add-on gate** (mirrors `storm`): `AuthContext` writes `roof:
+  !!user.addon_roof` into `tc_addons`; `hasRoofAddon()` + `ROOF_ON` + a `has-roof`
+  body class; `roof-only` CSS. Until a backend `addon_roof` + Stripe price exist,
+  it shows for **exempt/trial only** — build-hidden, like `STORM_SELLABLE`.
+- **`roofmeas` mode** registered additively across the ~10 hard-coded per-trade
+  spots (TRADE_TOOLS, PANEL_IDS, TRADE_PANEL, setTrade class+hint, syncPanelButtons,
+  the trade dropdown, CSS). It **reuses the roofing draw tools verbatim** — the
+  `.tr-roof` CSS now shows in `trade-roofmeas` too — so zero new draw code.
+- **The report:** `renderRoofReport()` + a printable, branded one-pager
+  (`printing-report`, reusing the letterhead/branding machinery). Total roof area
+  (w/ waste), base area, per-facet table (plan SF · pitch · squares), edges LF by
+  type, penetrations, uncalibrated-sheet warning. Live-refreshes via
+  `markupsChanged()`.
+- Plan Room `?v=70 → 71` (both tags).
+
+**Judgment calls:**
+- Reused the roofing trade's tools rather than giving `roofmeas` its own toolbar,
+  so the mode currently inherits the **`has-takeoff` gate** — i.e. today it needs
+  the Takeoff layer too. Fine for the prototype (exempt users see everything);
+  decoupling for a truly standalone roof add-on is deferred (in the plan).
+- Every mode-registration edit is **additive** (a new line beside each existing
+  trade case, never a change to one) — those lists have "drifted" before, so this
+  keeps existing trades byte-identical. Verified `node --check`, client build,
+  sitework clean, 11 original trades untouched.
+
+⚠️ **Go/no-go before productizing** (in the plan): prove **scale-from-aerial
+accuracy** and the **report** on a real roof.
+
+**Follow-up (`<pending>`) — per-edge pitch fixed (the multi-pitch gap):** each roof
+edge now carries its own `pitch` — rake/hip/valley prompt for it at draw time
+(default = main pitch, Enter keeps it); eave/ridge/flashing lie flat and don't ask.
+`edgeFt` uses `m.pitch`, falling back to the global `state.roofPitch` for edges
+saved before the change, so **multi-pitch roofs are now correct and old projects are
+byte-identical**. This also improves the existing roofing-takeoff bids (same
+`edgeFt`). Plan Room `?v 71 → 72`.
+
+⚠️ **To sell it:** backend `addon_roof` column + Stripe price + a `BillingPanel`
+entry + a sellable-gate (mirror Storm's `STORM_SELLABLE`). None of that exists yet.
+
+---
+
+## 2026-07-23 — Two new trade tools: Voice-memo → Daily Log, and Bilingual Crew Cards
+
+**Done.** Asked "what other tools would trades find handy?", shortlisted the
+un-built ones into the roadmap, and built the top two. Both reuse existing
+infrastructure — no new engines.
+
+**1. Voice memo → Daily Log** (a second output on a recording, like Minutes):
+- `POST /recordings/:id/daily-log` — clones the Minutes route with a jobsite
+  prompt (Summary / Work completed / Crew / Materials & deliveries / Equipment /
+  **Delays, issues & blockers** / Weather / Safety / Action items). Same strict
+  grounding as Minutes (transcript-only, keep speaker labels, don't invent).
+- Stored on the recording: `daily_log_md` / `daily_log_at` (**migration 0146**),
+  same 1:1 rationale as minutes (0140). A recording can hold both.
+- UI: "Make daily log" button beside "Turn into minutes" in `TranscriptionTool`,
+  green result box, persists across reload. Transcription tab retitled "Voice
+  transcription, minutes & daily logs" so trades find it.
+- **Judgment call:** built as a sibling action on a recording, not a separate
+  upload pipeline — Minutes already set that precedent and duplicating the
+  R2/AssemblyAI flow would've been wasteful. A full per-project daily-log *ledger*
+  (dated history, not just generation) is a bigger feature, parked.
+
+**2. Bilingual Crew Cards** (new **Crew Cards** tab):
+- English task notes → clean Spanish (or bilingual) task card. `POST /office/
+  crew-card` (`CREW_CARD_SYSTEM`) + `CrewCardTool.jsx`, same text-in/markdown-out
+  shape as the Summarizer.
+- **Default is bilingual** (Spanish + English in parens) on purpose: it lets the
+  foreman verify the translation against their own words — that trust is why
+  they'll use it instead of guessing. Toggle to Spanish-only for the printout.
+
+Both inherit the existing gating for free: Business plan + `module_tools` on, and
+the shared **300 AI-requests/month** meter (`runAi`). Model is Haiku (same as the
+other office tools). Client build + server `node --check` green; sitework clean.
+
+⚠️ **Migration 0146 must run on stage/prod** before the daily-log button works
+there (the generate call writes `daily_log_md`; until the column exists it 502s —
+transcription/minutes are unaffected).
+
+⚠️ **Neither prompt has seen real input.** The daily-log prompt has never run on a
+real jobsite memo, and **the crew-card Spanish has not been checked by a native
+speaker** — worth one real pass each before leaning on them. (Same caveat that's
+open on the Red-Flag Scanner and Meeting Minutes prompts.)
+
+**Roadmap:** both moved to "Already built"; **Snap-a-receipt job costing** (OCR →
+expense line) is now the top un-built trade tool, with Photo→punch-list, SOW
+generator, portable cost book, and the MEP trade-engineering calcs behind it.
+
+---
+
+## 2026-07-23 — Legal footer on the sign-in / sign-up pages + single-source entity name
+
+**Done.** Groundwork for forming a business entity (LLC). Two things:
+
+- **`LegalFooter`** on the Login and Register pages: `Terms of Use (EULA) · Privacy
+  Policy` links + a `© <year> OpsFloa` line. Surfaces the legal docs on the public
+  entry pages (good hygiene), independent of any entity decision. Reuses the
+  existing `registerAgreeEula` / `registerAgreePrivacy` i18n keys — no new strings.
+- **`client/src/legal.js` → `LEGAL_ENTITY`** — the entity name now lives in **one
+  place** (currently `'OpsFloa'`). When the business is registered, changing that
+  one constant updates the footer everywhere.
+
+**Judgment call — did NOT touch the EULA/Privacy body.** David said "go ahead" on
+wiring the entity name into the docs, but he hasn't registered a name yet. I won't
+invent a legal entity name and drop it into a legal document, so the doc-body swap
+(`OpsFloa` → the registered name in the EULA/Privacy intro + contact lines) is a
+one-line edit **waiting on the real name**. The footer is the part that's safe now.
+
+**Context (advice given, not code):** David is US-based; the Honduras angle is a
+*customer*, not a foreign operation, so this is a plain US-LLC decision, not a
+cross-border one. Reminded him the EULA names **Texas** governing law — if he
+forms/lives elsewhere, that clause should match his state. Not a lawyer; not advice.
+
+---
+
+## 2026-07-22 — Signup: real clickwrap acceptance (Terms + Privacy) with an audit trail
+
+**Done.** `f397e6b`. In response to a "what do I need for legal cover?" question:
+the EULA + Privacy pages were real, substantive docs (dated 2025-03-21, Texas
+governing law, warranty disclaimer, liability cap) — but **nobody was recorded as
+having agreed to them**, so acceptance couldn't be proven. Now:
+
+- Register form has a **required** "I agree to the Terms of Use (EULA) and Privacy
+  Policy" checkbox (links to `/eula` + `/privacy`); Create is disabled until ticked.
+- `POST /auth/register` **enforces** `accepted_terms === true` server-side and
+  **records** it (new `legal_acceptances` table, migration 0145: user_id,
+  company_id, version, context, ip, accepted_at) in the same transaction as the
+  account, stamping `LEGAL_VERSION` (`'2025-03-21'`) + the registration IP.
+
+**What this does NOT cover — flagged for a lawyer, out of scope for code:**
+- The **payroll/tax liability** disclaimer is the biggest gap. OpsFloa computes
+  hours/OT/deductions across HN + US; the EULA has a generic "as is" but no
+  explicit "not a payroll provider / tax advisor; you're responsible for pay
+  accuracy & compliance." That's document language a lawyer should add.
+- Privacy Policy should list **sub-processors** (Stripe, Intuit, Resend,
+  Cloudflare, Neon) and address **employee geolocation** consent.
+- **Worker invite** acceptance (only the owner accepts today), business entity /
+  E&O insurance — all still open, none are code changes I can make blind.
+
+⚠️ **Migration 0145 must run on stage/prod** before register / the gate work there
+(both insert into `legal_acceptances`). The `needs_terms` check is wrapped so a
+missing table can't block login, but the gate won't function until the table exists.
+
+**Follow-up (`3ca6309`) — re-prompt gate + doc improvements (the "all of it" pass):**
+- **Re-prompt gate:** `GET /auth/me` returns `needs_terms` (no acceptance row for
+  the current `LEGAL_VERSION`; super-admins exempt; wrapped so a missing table
+  never locks login out). New `POST /auth/accept-terms` records it. Client
+  `TermsGate` is a blocking modal in `App` — **existing accounts and invited
+  workers** must accept on next login (they have no acceptance row, so the gate
+  catches them automatically; no backfill needed).
+- **Privacy Policy:** named sub-processor list (Stripe, Intuit, Resend, Cloudflare,
+  Neon, Vercel/Render) + an employee-location section.
+- **EULA:** new "Customer Responsibilities; No Payroll, Tax, or Legal Advice"
+  section — the payroll-liability gap I flagged, as a **plain-English draft for a
+  lawyer to finalize** (I am not one).
+- Bumped `LEGAL_VERSION` + both doc dates to `2026-07-22` so the accepted version
+  matches the revised content. When the lawyer revises further, bump both again →
+  the gate re-prompts everyone for the finalized version.
+
+Still open (not code): worker-invite flow doesn't *separately* capture acceptance
+(the login gate covers workers instead), business entity / E&O insurance, and a
+real lawyer review of all the above language.
+
 ## 2026-07-21 — Plan Room: Join op → connect / extend / weld / pan
 
 **Done.** Plan Room `v64 → v65` (plus `v63` fix: the side panel now re-renders on

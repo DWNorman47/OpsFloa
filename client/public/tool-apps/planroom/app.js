@@ -500,6 +500,25 @@ function hasStormAddon() {
     return !!(a.storm || a.status === 'exempt' || a.status === 'trial');
   } catch (_) { return false; }
 }
+// Roof Measurement is its own paid add-on (the EagleView-style report mode),
+// independent of the takeoff layer. Same reader shape as storm; gates the
+// roof-measure mode entry + its report panel.
+function hasRoofAddon() {
+  try {
+    const a = JSON.parse(localStorage.getItem('tc_addons') || '{}');
+    return !!(a.roof || a.status === 'exempt' || a.status === 'trial');
+  } catch (_) { return false; }
+}
+// Dev override: preview the roof-only "Door A" experience even when entitled to
+// takeoff (exempt/trial read BOTH flags true, so Door A would normally hide).
+// `?roofsolo=1` turns it on (persisted); `?roofsolo=0` clears it.
+function roofSoloPreview() {
+  try {
+    const u = new URLSearchParams(location.search);
+    if (u.has('roofsolo')) localStorage.setItem('tc_roof_solo', u.get('roofsolo') !== '0' ? '1' : '0');
+    return localStorage.getItem('tc_roof_solo') === '1';
+  } catch (_) { return false; }
+}
 
 // pitch-correction: sloped length / area factor for a given rise-per-12
 function slopeFactor(pitch) { const p = (pitch || 0) / 12; return Math.sqrt(1 + p * p); }
@@ -510,7 +529,12 @@ function edgeFactor(etype, pitch) {
   return 1; // eave, ridge, flashing measured directly on the plan
 }
 const planeSquares = (m, ftPerPx) => polygonAreaFt2(m.pts, ftPerPx) * slopeFactor(m.pitch) / 100;
-const edgeFt = (m, ftPerPx) => polyLengthFt(m.pts, ftPerPx) * edgeFactor(m.etype, state.roofPitch);
+// Hip/valley/rake edges get longer with pitch, so the correction must use the
+// pitch of THAT edge's roof, not one roof-wide value — otherwise a multi-pitch
+// roof's edge LF is only right for the main pitch. Each edge carries its own
+// `pitch` (captured at draw time); edges saved before that existed have no
+// `pitch` and fall back to the global default, so old projects are unchanged.
+const edgeFt = (m, ftPerPx) => polyLengthFt(m.pts, ftPerPx) * edgeFactor(m.etype, m.pitch != null ? m.pitch : state.roofPitch);
 
 // Roofing bid lines: materials/labor derived from the live takeoff, with
 // editable unit prices. Sensible defaults; every quantity traces to the roof.
@@ -886,6 +910,7 @@ els.btnRedo.addEventListener('click', redo);
 function markupsChanged() {
   renderMarkupList();
   if (typeof renderRoofPanel === 'function') renderRoofPanel();
+  if (typeof renderRoofReport === 'function') renderRoofReport();
   if (typeof renderDirtPanel === 'function') renderDirtPanel();
   if (typeof renderDrywallPanel === 'function') renderDrywallPanel();
   if (typeof renderFlooringPanel === 'function') renderFlooringPanel();
@@ -1047,7 +1072,9 @@ function drawMarkup(ctx, m) {
         ctx.beginPath();
         m.pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
         ctx.closePath();
-        if (layers.fills) { ctx.globalAlpha = 0.12; ctx.fill(); ctx.globalAlpha = 1; }
+        // A deducting area is a void — outline only, no colored fill (matches the
+        // deduct convention used on earthwork/dirt areas).
+        if (layers.fills && !(m.cfg && m.cfg.deduct)) { ctx.globalAlpha = 0.12; ctx.fill(); ctx.globalAlpha = 1; }
         ctx.stroke();
       }
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y); }
@@ -1137,9 +1164,16 @@ function drawMarkup(ctx, m) {
     }
     case 'qarea': {
       const col = areaColorHex(m.cfg || {});
-      // Deduct areas draw hollow (outline only) so they read as holes cut out of
-      // the filled additive areas around them — no colored inside.
-      dirtOutline(ctx, m, col, { closed: true, dash: [12, 7], fillAlpha: (m.cfg && m.cfg.deduct) ? 0 : 0.12 });
+      // A deduct is a void: outline only, no fill of its own. An additive area
+      // fills with its same-type deducts punched out as real holes, so the deduct
+      // region shows the plan through — not a colored fill (its own or the
+      // additive's beneath it).
+      if (m.cfg && m.cfg.deduct) {
+        dirtOutline(ctx, m, col, { closed: true, dash: [12, 7], fillAlpha: 0 });
+      } else {
+        fillAreaWithDeducts(ctx, m, col);
+        dirtOutline(ctx, m, col, { closed: true, dash: [12, 7], fillAlpha: 0 });
+      }
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y, col); }
       break;
     }
@@ -1189,6 +1223,29 @@ function dirtOutline(ctx, m, col, opts) {
   if (o.fillAlpha && o.closed && m.pts.length >= 3 && layers.fills) { ctx.globalAlpha = o.fillAlpha; ctx.fill(); ctx.globalAlpha = 1; }
   ctx.stroke();
   ctx.setLineDash([]);
+}
+
+// Fill an additive area takeoff, with any same-type deduct areas punched out as
+// real holes (so the plan shows through the cutout, not a colored fill). Deducts
+// subtract from their own label (matching the bid math), so the visual hole
+// tracks the same grouping. Clip to the additive first so a deduct that pokes
+// outside it never paints fill where there's no area.
+function fillAreaWithDeducts(ctx, m, col) {
+  if (!layers.fills || !m.pts || m.pts.length < 3) return;
+  const label = (m.cfg && m.cfg.label) || '';
+  const holes = state.markups.filter(x =>
+    x !== m && x.kind === 'qarea' && x.page === m.page &&
+    x.cfg && x.cfg.deduct && (x.cfg.label || '') === label &&
+    x.pts && x.pts.length >= 3);
+  const trace = pts => { pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath(); };
+  ctx.save();
+  ctx.beginPath(); trace(m.pts); ctx.clip();          // paint only inside the additive
+  ctx.beginPath(); trace(m.pts);                      // outer ring …
+  for (const h of holes) trace(h.pts);                // … minus each deduct ring
+  ctx.fillStyle = col; ctx.globalAlpha = 0.12;
+  ctx.fill('evenodd');                                // even-odd → additive with holes
+  ctx.globalAlpha = 1;
+  ctx.restore();
 }
 
 // elevation label (white-haloed, colored by elevation) for earthwork markups
@@ -3130,7 +3187,7 @@ function commitDraft() {
   }
   const extra = {};
   if (d.kind === 'plane') extra.pitch = state.roofPitch;
-  else if (d.kind === 'redge') extra.etype = $('edgeType') ? $('edgeType').value : 'eave';
+  else if (d.kind === 'redge') { extra.etype = $('edgeType') ? $('edgeType').value : 'eave'; extra.pitch = state.roofPitch; }
   else if (d.kind === 'ritem') extra.itype = $('itemType') ? $('itemType').value : 'boot';
   else if (d.kind === 'contour' || d.kind === 'epad') extra.surface = curSurface;
   else if (d.kind === 'froom') extra.cfg = { ftype: curFloorType };
@@ -3177,6 +3234,11 @@ function commitDraft() {
     if (d.kind === 'plane') {
       modals.askNumber(`Roof plane pitch (rise per 12)`, 'e.g. 6 for 6/12. Sloped area & squares update live.', state.roofPitch, 1)
         .then(v => { if (v != null && v >= 0) { const m = state.markups[state.markups.length - 1]; if (m && m.kind === 'plane') { m.pitch = v; markupsChanged(); } } });
+    } else if (d.kind === 'redge' && (extra.etype === 'rake' || extra.etype === 'hip' || extra.etype === 'valley')) {
+      // Only rake/hip/valley are pitch-corrected (eave/ridge/flashing lie flat),
+      // so only those ask. Defaults to the main pitch — Enter keeps it.
+      modals.askNumber(`${EDGE_LABEL[extra.etype]} pitch (rise per 12)`, 'Slope correction for this edge — Enter keeps the main pitch.', state.roofPitch, 1)
+        .then(v => { if (v != null && v >= 0) { const m = state.markups[state.markups.length - 1]; if (m && m.kind === 'redge') { m.pitch = v; markupsChanged(); } } });
     } else if (d.kind === 'contour' || d.kind === 'epad') {
       const surf = extra.surface;
       modals.askNumber(`${d.kind === 'contour' ? 'Contour' : 'Pad'} elevation (ft) — ${surf === 'existing' ? 'existing' : 'proposed'}`,
@@ -3735,16 +3797,104 @@ function renderRoofPanel() {
   $('roofBody').innerHTML = rows.join('');
 }
 
+/* ============================== Roof Measurement report (roof add-on) ============================== */
+
+// Same geometry as the roofing takeoff (roofingTotals / planeSquares / edgeFt),
+// but the deliverable is a measurement report — the EagleView-style artifact —
+// not a priced bid. Renders the on-screen panel AND the print-only branded block.
+function renderRoofReport() {
+  const panel = $('roofMeasPanel');
+  const printing = document.body.classList.contains('printing-report');
+  if ((!panel || panel.classList.contains('hidden')) && !printing) return;
+
+  const T = roofingTotals();
+  const facets = state.markups.filter(m => m.kind === 'plane');
+  let html = '';
+  html += `<div class="roof-tot big"><span>Total roof area (with ${fmt(state.roofWaste, 0)}% waste)</span><span class="v">${fmt(T.squaresWaste, 1)} sq</span></div>`;
+  html += `<div class="roof-tot"><span>Base area</span><span class="v">${fmt(T.squares, 1)} sq · ${fmt(T.squares * 100, 0)} SF</span></div>`;
+  html += `<div class="roof-tot"><span>Roof planes</span><span class="v">${T.planes}</span></div>`;
+  if (T.scaleMissing) html += `<div class="hint" style="margin:6px 0">Some sheets aren't calibrated (📏) — those planes/edges are excluded. Set the scale on the aerial first.</div>`;
+
+  if (facets.length) {
+    html += '<div class="roof-sub">Roof planes</div>';
+    html += '<table class="rr-table"><thead><tr><th>Plane</th><th>Plan SF</th><th>Pitch</th><th>Squares</th></tr></thead><tbody>';
+    facets.forEach((m, i) => {
+      const s = state.scales[m.page] || 0;
+      const planSF = s ? polygonAreaFt2(m.pts, s) : 0;
+      const sq = s ? planeSquares(m, s) : 0;
+      html += `<tr><td>#${i + 1}</td><td class="v">${s ? fmt(planSF, 0) : '—'}</td><td>${fmt(m.pitch || 0, 0)}/12</td><td class="v">${s ? fmt(sq, 2) : '—'}</td></tr>`;
+    });
+    html += '</tbody></table>';
+  }
+
+  const edgeKeys = EDGE_TYPES.filter(k => T.edges[k]);
+  if (edgeKeys.length) {
+    html += '<div class="roof-sub">Edges (LF)</div><table class="rr-table"><tbody>';
+    for (const k of edgeKeys) html += `<tr><td>${EDGE_LABEL[k]}</td><td class="v">${fmt(T.edges[k], 0)} ft</td></tr>`;
+    html += '</tbody></table>';
+  }
+
+  const itemKeys = ITEM_TYPES.filter(k => T.items[k]);
+  if (itemKeys.length) {
+    html += '<div class="roof-sub">Penetrations (EA)</div><table class="rr-table"><tbody>';
+    for (const k of itemKeys) html += `<tr><td>${ITEM_LABEL[k]}</td><td class="v">${T.items[k]}</td></tr>`;
+    html += '</tbody></table>';
+  }
+
+  if (!facets.length && !edgeKeys.length && !itemKeys.length) {
+    html += '<div class="mk-empty">No roof traced yet — set the scale (📏) on the aerial, trace each plane (▰) and set its pitch, then add edges (╱).</div>';
+  }
+
+  if ($('roofMeasBody')) $('roofMeasBody').innerHTML = html;
+
+  // Mirror into the print-only branded block.
+  const content = $('roofReportContent');
+  if (content) {
+    const co = loadBranding();
+    const lh = $('roofReportLetterhead');
+    if (lh) {
+      const name = co.name ? `<div class="rr-co-name">${esc(co.name)}</div>` : '';
+      const details = co.details ? `<div class="rr-co-details">${esc(co.details).replace(/\n/g, '<br>')}</div>` : '';
+      lh.innerHTML = name + details;
+    }
+    const proj = (state.bidMeta && state.bidMeta.project) || state.projectName || '';
+    const title = `<div class="rr-title">Roof Measurement Report</div><div class="rr-sub">${esc(proj)}${proj ? ' · ' : ''}${esc(new Date().toLocaleDateString())}</div>`;
+    content.innerHTML = title + html;
+  }
+}
+
+function printRoofReport() {
+  document.body.classList.add('printing-report'); // set first so renderRoofReport populates the print block even if the panel is closed
+  renderRoofReport();
+  const done = () => { document.body.classList.remove('printing-report'); window.removeEventListener('afterprint', done); };
+  window.addEventListener('afterprint', done);
+  window.print();
+  setTimeout(done, 1000); // Safari sometimes skips afterprint
+}
+
 function applyTakeoffGate() {
   document.body.classList.toggle('has-takeoff', hasTakeoffLayer());
   STORM_ON = hasStormAddon();
   document.body.classList.toggle('has-storm', STORM_ON); // hides the deep storm/utility fields when absent
+  ROOF_ON = hasRoofAddon();
+  document.body.classList.toggle('has-roof', ROOF_ON); // reveals the Roof Measurement mode + report
+  // Roof draw tools show for a takeoff OR a roof owner (roof-only owners have no
+  // takeoff layer but must still be able to trace). "can do roof work".
+  document.body.classList.toggle('has-roofwork', hasTakeoffLayer() || ROOF_ON);
+  // Door A (the roof-only entry button) shows for a roof owner without takeoff;
+  // the dev override forces the roof-only view for a both-entitled (exempt) account.
+  document.body.classList.toggle('roof-solo', roofSoloPreview());
 }
 let STORM_ON = false; // cached storm entitlement (refreshed in applyTakeoffGate); gates the M4 netting outputs
+let ROOF_ON = false;  // cached roof-measurement entitlement (refreshed in applyTakeoffGate)
 
 /* trade mode: which takeoff trade's tools/panels/bid are in play */
 const TRADE_TOOLS = {
   roofing: ['plane', 'redge', 'ritem'],
+  // Roof Measurement (roof add-on) reuses the roofing draw tools verbatim — its
+  // difference from the roofing pack is the deliverable (a measurement report,
+  // not a priced bid), not the tracing.
+  roofmeas: ['plane', 'redge', 'ritem'],
   dirt: ['wand', 'contour', 'espot', 'epad', 'ebound', 'align', 'autoarea', 'qarea', 'qline', 'qcount'],
   drywall: ['dwall', 'dceiling', 'dopening', 'dtrim', 'dheight'],
   flooring: ['froom', 'ftrans'],
@@ -3762,7 +3912,7 @@ const FOCUS_HIDDEN_TOOLS = ['cloud', 'rect', 'ellipse', 'arrow', 'line', 'freeha
 // own list of "the others", and the lists drifted as packs were added (opening
 // Roof left Framing open, because btnRoof predates the framing pack). Derive it
 // from one list so the next pack can't reintroduce that.
-const PANEL_IDS = ['markupPanel', 'roofPanel', 'dirtPanel', 'dwPanel', 'floorPanel', 'framPanel', 'escPanel', 'strpPanel', 'sidPanel', 'demPanel', 'fncPanel', 'lscPanel'];
+const PANEL_IDS = ['markupPanel', 'roofPanel', 'roofMeasPanel', 'dirtPanel', 'dwPanel', 'floorPanel', 'framPanel', 'escPanel', 'strpPanel', 'sidPanel', 'demPanel', 'fncPanel', 'lscPanel'];
 function closeOtherPanels(keepId) {
   for (const id of PANEL_IDS) {
     if (id === keepId) continue;
@@ -3773,7 +3923,7 @@ function closeOtherPanels(keepId) {
 // Toolbar trade buttons show an 'active' state while their side panel is open.
 function syncPanelButtons() {
   const mark = (btnId, panelId) => { const b = $(btnId), p = $(panelId); if (b && p) b.classList.toggle('active', !p.classList.contains('hidden')); };
-  mark('btnRoof', 'roofPanel'); mark('btnDw', 'dwPanel'); mark('btnFloor', 'floorPanel'); mark('btnFram', 'framPanel'); mark('btnEsc', 'escPanel'); mark('btnStrp', 'strpPanel'); mark('btnSid', 'sidPanel'); mark('btnDem', 'demPanel'); mark('btnFnc', 'fncPanel'); mark('btnLsc', 'lscPanel');
+  mark('btnRoof', 'roofPanel'); mark('btnRoofMeas', 'roofMeasPanel'); mark('btnDw', 'dwPanel'); mark('btnFloor', 'floorPanel'); mark('btnFram', 'framPanel'); mark('btnEsc', 'escPanel'); mark('btnStrp', 'strpPanel'); mark('btnSid', 'sidPanel'); mark('btnDem', 'demPanel'); mark('btnFnc', 'fncPanel'); mark('btnLsc', 'lscPanel');
   // Earthwork has no toolbar button — its panel is closed by the ✕ in its header
   // and reopened by the floating ⛰ button (top-right of the canvas), shown only
   // while in dirt mode with the panel closed.
@@ -3784,6 +3934,7 @@ function setTrade(t, { save = true } = {}) {
   state.trade = t || '';
   document.body.classList.toggle('trade-active', !!state.trade);
   document.body.classList.toggle('trade-roofing', state.trade === 'roofing');
+  document.body.classList.toggle('trade-roofmeas', state.trade === 'roofmeas');
   document.body.classList.toggle('trade-dirt', state.trade === 'dirt');
   document.body.classList.toggle('trade-drywall', state.trade === 'drywall');
   document.body.classList.toggle('trade-flooring', state.trade === 'flooring');
@@ -3801,7 +3952,7 @@ function setTrade(t, { save = true } = {}) {
   }
   if (state.trade && FOCUS_HIDDEN_TOOLS.includes(tool)) setTool('pan'); // annotation/measure collapse in trade focus
   // leaving a trade closes that trade's panel (markupPanel isn't trade-owned)
-  const TRADE_PANEL = { roofing: 'roofPanel', dirt: 'dirtPanel', drywall: 'dwPanel', flooring: 'floorPanel', framing: 'framPanel', esc: 'escPanel', striping: 'strpPanel', siding: 'sidPanel', demo: 'demPanel', fence: 'fncPanel', landscape: 'lscPanel' };
+  const TRADE_PANEL = { roofing: 'roofPanel', roofmeas: 'roofMeasPanel', dirt: 'dirtPanel', drywall: 'dwPanel', flooring: 'floorPanel', framing: 'framPanel', esc: 'escPanel', striping: 'strpPanel', siding: 'sidPanel', demo: 'demPanel', fence: 'fncPanel', landscape: 'lscPanel' };
   for (const [tr, panelId] of Object.entries(TRADE_PANEL)) {
     if (state.trade !== tr) { const p = $(panelId); if (p) p.classList.add('hidden'); }
   }
@@ -3814,9 +3965,17 @@ function setTrade(t, { save = true } = {}) {
     renderDirtPanel();
     syncSurfaceToPage(); // refresh the surface toggle's gray/white/align state on entering dirt
   }
+  // Roof Measurement: open the report panel by default — the report IS the point
+  // of the mode.
+  if (state.trade === 'roofmeas' && $('roofMeasPanel')) {
+    closeOtherPanels('roofMeasPanel');
+    $('roofMeasPanel').classList.remove('hidden');
+    renderRoofReport();
+  }
   syncPanelButtons();
   if (save) { // hints only on a user switch — not when a load restores the mode
     if (state.trade === 'roofing') setMsg('Roofing takeoff — trace planes (▰), edges (╱), items (⊕); totals in 🏠 Roof, prices in $ Bid.');
+    else if (state.trade === 'roofmeas') setMsg('Roof Measurement — set the scale (📏) on the aerial, trace each roof plane (▰) and set its pitch, add edges (╱); the report is in 📐 Report.');
     else if (state.trade === 'dirt') setMsg('Earthwork takeoff — set the sheets in ⛰ Dirt, trace contours (⛰), align (⌖), then ∑ Calculate.');
     else if (state.trade === 'drywall') setMsg('Drywall & Paint — trace wall runs (▬) and ceilings (⬜); set the wall height in 🧱; prices in $ Bid.');
     else if (state.trade === 'flooring') setMsg('Flooring & Tile — trace each room (▦), set its material; net SF by material in 🟫, prices in $ Bid.');
@@ -3836,7 +3995,9 @@ if ($('tradeSel')) $('tradeSel').addEventListener('change', e => setTrade(e.targ
 // push loaded roof settings into the inputs + refresh the panel
 function syncRoofInputs() {
   if ($('roofPitch')) { $('roofPitch').value = state.roofPitch; $('roofWaste').value = state.roofWaste; }
+  if ($('roofMeasPitch')) { $('roofMeasPitch').value = state.roofPitch; $('roofMeasWaste').value = state.roofWaste; }
   renderRoofPanel();
+  renderRoofReport();
 }
 
 if ($('roofPitch')) {
@@ -3858,6 +4019,38 @@ $('btnRoof').addEventListener('click', () => {
   if (!$('roofPanel').classList.contains('hidden')) { closeOtherPanels('roofPanel'); renderRoofPanel(); }
   syncPanelButtons();
 });
+
+// Roof Measurement report panel: pitch/waste mirror the roofing state (shown in
+// the report mode, where the roofing panel is closed), plus open/close/print.
+if ($('roofMeasPitch')) {
+  $('roofMeasPitch').value = state.roofPitch;
+  $('roofMeasWaste').value = state.roofWaste;
+  $('roofMeasPitch').addEventListener('change', e => {
+    state.roofPitch = Math.max(0, Math.min(24, parseFloat(e.target.value) || 0));
+    e.target.value = state.roofPitch;
+    if ($('roofPitch')) $('roofPitch').value = state.roofPitch;
+    scheduleSave(); renderRoofReport(); renderRoofPanel(); renderMarkupList(); vp.requestDraw();
+  });
+  $('roofMeasWaste').addEventListener('change', e => {
+    state.roofWaste = Math.max(0, Math.min(40, parseFloat(e.target.value) || 0));
+    e.target.value = state.roofWaste;
+    if ($('roofWaste')) $('roofWaste').value = state.roofWaste;
+    scheduleSave(); renderRoofReport(); renderRoofPanel();
+  });
+}
+if ($('btnRoofMeas')) $('btnRoofMeas').addEventListener('click', () => {
+  $('roofMeasPanel').classList.toggle('hidden');
+  if (!$('roofMeasPanel').classList.contains('hidden')) { closeOtherPanels('roofMeasPanel'); renderRoofReport(); }
+  syncPanelButtons();
+});
+// Door A — the alternate roof-only entry (shown only to a roof owner without
+// takeoff, or under the ?roofsolo preview). Enters the roof-measurement mode.
+if ($('btnRoofDoor')) $('btnRoofDoor').addEventListener('click', () => setTrade('roofmeas'));
+if ($('btnRoofMeasClose')) $('btnRoofMeasClose').addEventListener('click', () => {
+  $('roofMeasPanel').classList.add('hidden');
+  syncPanelButtons();
+});
+if ($('roofMeasPrint')) $('roofMeasPrint').addEventListener('click', printRoofReport);
 $('btnUpsell').addEventListener('click', () => {
   setMsg('Takeoff layer ($60/mo add-on): turn your measurements into roofing squares, pitch-corrected edges, materials, and a priced, branded bid. Add it from Billing.');
 });

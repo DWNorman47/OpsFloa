@@ -5,6 +5,7 @@ import { safeSession } from './utils/safeStorage';
 import InstallPrompt from './components/InstallPrompt';
 import UpdatePrompt from './components/UpdatePrompt';
 import WelcomeModal from './components/WelcomeModal';
+import TermsGate from './components/TermsGate';
 import SkipLink from './components/SkipLink';
 import { ToastProvider } from './contexts/ToastContext';
 import { OfflineProvider } from './contexts/OfflineContext';
@@ -278,6 +279,7 @@ export default function App() {
             <SettingsProvider>
               <SkipLink />
               <WelcomeModal />
+              <TermsGate />
               <AppRoutes />
               <InstallPrompt />
               <UpdatePrompt />

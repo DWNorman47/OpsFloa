@@ -48,7 +48,7 @@ describe('every rule the builder can emit survives the engine', () => {
     const { RULE_TYPES, RULE_WHEN_KINDS } = require('../utils/hoursRules');
     // Mirrors the <option> values in the builder's type + when selects.
     const uiTypes = ['clip_start', 'clip_end', 'add_time', 'remove_time', 'auto_break', 'round', 'ot_tier',
-      'rest_day', 'min_daily', 'seventh_day', 'night_diff', 'window_mult'];
+      'rest_day', 'min_daily', 'sick_value', 'seventh_day', 'night_diff', 'window_mult'];
     const uiWhen = ['every_day', 'weekdays', 'month_days', 'month_weekdays', 'nth_days', 'months', 'nth_months', 'month_weeks', 'nth_weeks'];
     expect(uiTypes.every(x => RULE_TYPES.includes(x))).toBe(true);
     expect(uiWhen.every(x => RULE_WHEN_KINDS.includes(x))).toBe(true);

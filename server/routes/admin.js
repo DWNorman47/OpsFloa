@@ -21,7 +21,7 @@ const { sendPushToUser, sendPushToAllWorkers } = require('../push');
 const { sendEmail } = require('../email');
 const { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, nightPremiumCost } = require('../utils/payCalculations');
 const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, validatePolicyRaw, migrateFixedSlots, hasFixedSlots } = require('../utils/hoursRules');
-const { computePaid } = require('../utils/paidHours');
+const { computePaid, computeWorkerLeave, computeCompanyLeave, leaveRateMultipliers } = require('../utils/paidHours');
 const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = require('../utils/deductions');
 const { DEDUCTION_KINDS } = require('../constants/deductionEnums');
 const { weekRange, weekBucketKey } = require('../utils/weekBounds');
@@ -191,7 +191,7 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
   // ADMIN_SETTINGS_DEFAULTS without being in this allowlist, so the UI
   // couldn't update them. Added during 2026-04-30 audit pass.
   const adminNumericKeys = ['shift_reminder_hour', 'pto_annual_days', 'cycle_count_audit_pct', 'cycle_count_reconcile_threshold'];
-  const numericKeys = [...rateKeys, ...notifKeys, ...adminNumericKeys, 'overtime_threshold', 'media_retention_days', 'qbo_bill_terms_days', 'week_start'];
+  const numericKeys = [...rateKeys, ...notifKeys, ...adminNumericKeys, 'overtime_threshold', 'media_retention_days', 'qbo_bill_terms_days', 'week_start', 'work_week_end', 'regular_shift_hours', 'sick_pay_pct', 'vacation_pay_pct'];
   const stringKeys = ['overtime_rule', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules', 'deductions'];
   const allowed = [...numericKeys, ...stringKeys, ...FEATURE_KEYS];
   const companyId = req.user.company_id;
@@ -1035,10 +1035,15 @@ router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
 
     const settings = await getSettings(companyId);
     const worker = userResult.rows[0];
-    entries = roundEntriesFromSettings(entries, settings, { workerRoleById: { [worker.id]: worker.role_id } });
+    // The Team Member Report asks for ?explain=1 to get, per entry, a trace of
+    // what the pay engine did — off by default so every other caller is unchanged.
+    const explain = req.query.explain === '1' || req.query.explain === 'true';
+    entries = roundEntriesFromSettings(entries, settings, { workerRoleById: { [worker.id]: worker.role_id }, explain });
     const workerOTRule = worker.overtime_rule || 'daily';
     const otConfig = otConfigFromSettings(settings, worker.role_id);
-    const { regularHours, overtimeHours, otBands } = computeOT(entries, workerOTRule, settings.overtime_threshold, settings.week_start, otConfig);
+    // range carries the min_daily "no clock-in" guarantee; null from/to (all-time
+    // invoice) → the guard in computeOT skips it, so behaviour is unchanged.
+    const { regularHours, overtimeHours, otBands } = computeOT(entries, workerOTRule, settings.overtime_threshold, settings.week_start, otConfig, { from, to });
     // Per-entry OT for the invoice's daily line-item column (sums to overtimeHours above)
     annotateEntryOvertime(entries, workerOTRule, settings.overtime_threshold, settings.week_start, otConfig);
     const prevailingHours = entries.filter(e => e.wage_type === 'prevailing').reduce((sum, e) => {
@@ -1061,13 +1066,21 @@ router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
     const { shortfall: guaranteeShortfall, minHours: guaranteeMinHours, weeks: guaranteeWeeks } =
       computeGuaranteeShortfall(totalHours, worker.guaranteed_weekly_hours, from, to);
     const guaranteeCost = guaranteeShortfall * rate;
+    // Paid sick + vacation: approved time-off valued schedule-first (shift hours →
+    // weekday leave rule → Regular Shift default), each its own line. Sick and
+    // vacation pay at their configured percent of base (default 100%).
+    const { sick: sickHours, vacation: vacationHours, detail: leaveDetail } =
+      await computeWorkerLeave({ companyId, userId: req.params.id, roleId: worker.role_id, settings, from, to, withDetail: explain });
+    const leaveMult = leaveRateMultipliers(settings);
+    const roundedSickCost = Math.round(sickHours * rate * leaveMult.sick * 100) / 100;
+    const roundedVacationCost = Math.round(vacationHours * rate * leaveMult.vacation * 100) / 100;
     // Round each cost component to cents so displayed line items always sum to the total
     const roundedRegularCost = Math.round(regularCost * 100) / 100;
     const roundedOvertimeCost = Math.round(overtimeCost * 100) / 100;
     const roundedPrevailingCost = Math.round(prevailingCost * 100) / 100;
     const roundedGuaranteeCost = Math.round(guaranteeCost * 100) / 100;
     const roundedReimbTotal = Math.round(reimbursementTotal * 100) / 100;
-    const totalCost = roundedRegularCost + roundedOvertimeCost + roundedPrevailingCost + roundedGuaranteeCost;
+    const totalCost = roundedRegularCost + roundedOvertimeCost + roundedPrevailingCost + roundedGuaranteeCost + roundedSickCost + roundedVacationCost;
 
     // Pay-stub deductions: the company-wide list (settings) plus this worker's own
     // rows, applied to gross wages. Empty config → no deduction lines and net_pay
@@ -1080,15 +1093,39 @@ router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
     const dedList = parseCompanyDeductions(settings.deductions).concat(normalizeWorkerDeductions(workerDedRows.rows));
     const stub = payStubTotals(totalCost, roundedReimbTotal, dedList);
 
+    // Explain view: attach per-entry overtime + wage-type notes to each entry's
+    // trace, and a settings-used block (employee + base values the line-item math
+    // read). Rule ids in the trace resolve against the policy the client already
+    // has (settings.hours_rules). Off by default → no cost, no shape change.
+    let settingsUsed = null;
+    if (explain) {
+      for (const e of entries) {
+        const ex = e.explain || (e.explain = []);
+        if (e.wage_type === 'prevailing') ex.push({ code: 'wage_type', wageType: 'prevailing' });
+        if ((e.overtime_hours || 0) > 0) ex.push({ code: 'overtime', otHours: e.overtime_hours, threshold: settings.overtime_threshold, rule: workerOTRule });
+      }
+      settingsUsed = {
+        rate, rate_type: worker.rate_type || 'hourly', overtime_rule: workerOTRule,
+        overtime_threshold: settings.overtime_threshold, overtime_multiplier: settings.overtime_multiplier,
+        week_start: settings.week_start, role_id: worker.role_id,
+        prevailing_wage_rate: settings.prevailing_wage_rate, regular_shift_hours: settings.regular_shift_hours,
+        sick_pay_pct: settings.sick_pay_pct, vacation_pay_pct: settings.vacation_pay_pct,
+        guaranteed_weekly_hours: worker.guaranteed_weekly_hours,
+      };
+    }
+
     res.json({
       worker,
       entries,
       reimbursements,
+      ...(explain ? { settings_used: settingsUsed, leave_detail: leaveDetail } : {}),
       summary: {
         total_hours: totalHours, regular_hours: regularHours, overtime_hours: overtimeHours, prevailing_hours: prevailingHours,
         rate, regular_cost: roundedRegularCost, overtime_cost: roundedOvertimeCost, prevailing_cost: roundedPrevailingCost,
         guarantee_shortfall_hours: guaranteeShortfall, guarantee_min_hours: guaranteeMinHours,
         guarantee_weeks: guaranteeWeeks, guarantee_cost: roundedGuaranteeCost,
+        sick_hours: sickHours, sick_cost: roundedSickCost, sick_rate: Math.round(rate * leaveMult.sick * 100) / 100,
+        vacation_hours: vacationHours, vacation_cost: roundedVacationCost, vacation_rate: Math.round(rate * leaveMult.vacation * 100) / 100,
         reimbursement_total: roundedReimbTotal,
         total_cost: totalCost + roundedReimbTotal,
         // Deductions → net pay (gross wages − deductions + reimbursements).
@@ -3254,11 +3291,13 @@ router.get('/overtime-report', requireAdmin, requirePerm('view_reports'), requir
     });
 
     const otConfigByRole = otConfigByRoleFactory(s);
+    const leaveByUser = await computeCompanyLeave({ companyId, workers: workers.rows, settings: s, from, to });
+    const leaveMult = leaveRateMultipliers(s);
     const rows = workers.rows.map(w => {
       const wEntries = byWorker[w.id] || [];
       const workerOTRule = w.overtime_rule || 'daily';
       const otConfig = otConfigByRole(w.role_id);
-      const { regularHours, overtimeHours, otBands } = computeOT(wEntries, workerOTRule, threshold, s.week_start, otConfig);
+      const { regularHours, overtimeHours, otBands } = computeOT(wEntries, workerOTRule, threshold, s.week_start, otConfig, { from, to });
       let prevHours = 0, prevailingCost = 0;
       wEntries.filter(e => e.wage_type === 'prevailing').forEach(e => {
         const h = hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60;
@@ -3277,18 +3316,25 @@ router.get('/overtime-report', requireAdmin, requirePerm('view_reports'), requir
         overtimeCost = otBandsCost(otBands, rate, otMult)
           + nightPremiumCost(wEntries, otConfig && otConfig.nightDifferential, rate);
       }
-      const totalCost = regularCost + overtimeCost + prevailingCost;
+      const { sick: sickHours, vacation: vacationHours } = leaveByUser.get(w.id) || { sick: 0, vacation: 0 };
+      const sickCost = sickHours * rate * leaveMult.sick;
+      const vacationCost = vacationHours * rate * leaveMult.vacation;
+      const totalCost = regularCost + overtimeCost + prevailingCost + sickCost + vacationCost;
       const mileage = wEntries.reduce((s, e) => s + (parseFloat(e.mileage) || 0), 0);
       return {
         worker_id: w.id, worker_name: w.invoice_name || w.full_name, rate, rate_type: w.rate_type || 'hourly', overtime_rule: workerOTRule,
         regular_hours: parseFloat(regularHours.toFixed(2)),
         overtime_hours: parseFloat(overtimeHours.toFixed(2)),
         prevailing_hours: parseFloat(prevHours.toFixed(2)),
+        sick_hours: parseFloat(sickHours.toFixed(2)),
+        vacation_hours: parseFloat(vacationHours.toFixed(2)),
         total_hours: parseFloat(totalHours.toFixed(2)),
         mileage: parseFloat(mileage.toFixed(1)),
         regular_cost: parseFloat(regularCost.toFixed(2)),
         overtime_cost: parseFloat(overtimeCost.toFixed(2)),
         prevailing_cost: parseFloat(prevailingCost.toFixed(2)),
+        sick_cost: parseFloat(sickCost.toFixed(2)),
+        vacation_cost: parseFloat(vacationCost.toFixed(2)),
         total_cost: parseFloat(totalCost.toFixed(2)),
       };
     });
@@ -3337,15 +3383,17 @@ router.get('/payroll-export', requireAdmin, requirePerm('view_reports'), require
     });
 
     const esc = csvCell; // RFC-4180 quoting + spreadsheet formula-injection guard
-    const headers = ['Worker', 'Rate Type', 'Overtime', 'Rate', 'Regular Hrs', 'OT Hrs', 'Prevailing Hrs', 'Total Hrs', 'Mileage (mi)', 'Regular Pay', 'OT Pay', 'Prevailing Pay', 'Total Pay'];
+    const headers = ['Worker', 'Rate Type', 'Overtime', 'Rate', 'Regular Hrs', 'OT Hrs', 'Prevailing Hrs', 'Sick Hrs', 'Vacation Hrs', 'Total Hrs', 'Mileage (mi)', 'Regular Pay', 'OT Pay', 'Prevailing Pay', 'Sick Pay', 'Vacation Pay', 'Total Pay'];
     const lines = [headers.join(',')];
 
     const otConfigByRole = otConfigByRoleFactory(s);
+    const leaveByUser = await computeCompanyLeave({ companyId, workers: workers.rows, settings: s, from, to });
+    const leaveMult = leaveRateMultipliers(s);
     workers.rows.forEach(w => {
       const wEntries = byWorker[w.id] || [];
       const workerOTRule = w.overtime_rule || 'daily';
       const otConfig = otConfigByRole(w.role_id);
-      const { regularHours, overtimeHours, otBands } = computeOT(wEntries, workerOTRule, threshold, s.week_start, otConfig);
+      const { regularHours, overtimeHours, otBands } = computeOT(wEntries, workerOTRule, threshold, s.week_start, otConfig, { from, to });
       let prevHours = 0, prevailingCost = 0;
       wEntries.filter(e => e.wage_type === 'prevailing').forEach(e => {
         const h = hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60;
@@ -3364,15 +3412,22 @@ router.get('/payroll-export', requireAdmin, requirePerm('view_reports'), require
         overtimeCost = otBandsCost(otBands, rate, otMult)
           + nightPremiumCost(wEntries, otConfig && otConfig.nightDifferential, rate);
       }
+      const { sick: sickHours, vacation: vacationHours } = leaveByUser.get(w.id) || { sick: 0, vacation: 0 };
+      const sickCost = sickHours * rate * leaveMult.sick;
+      const vacationCost = vacationHours * rate * leaveMult.vacation;
       lines.push([
         esc(w.invoice_name || w.full_name), w.rate_type || 'hourly', workerOTRule, rate.toFixed(2),
         regularHours.toFixed(2), overtimeHours.toFixed(2), prevHours.toFixed(2),
+        sickHours.toFixed(2),
+        vacationHours.toFixed(2),
         (regularHours + overtimeHours + prevHours).toFixed(2),
         mileage.toFixed(1),
         regularCost.toFixed(2),
         overtimeCost.toFixed(2),
         prevailingCost.toFixed(2),
-        (regularCost + overtimeCost + prevailingCost).toFixed(2),
+        sickCost.toFixed(2),
+        vacationCost.toFixed(2),
+        (regularCost + overtimeCost + prevailingCost + sickCost + vacationCost).toFixed(2),
       ].join(','));
     });
 
