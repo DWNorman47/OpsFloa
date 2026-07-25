@@ -180,10 +180,17 @@ async function computeAutoStatus(companyId, projectId, item) {
   }
   if (item.auto_source === 'invoices' && item.category === 'final_invoice') {
     try {
+      // Native invoices are the owner-side AR source of truth. Also count a
+      // paid QBO-mirror row (project_invoices) so QuickBooks companies aren't
+      // regressed before Phase 5 migrates those rows into `invoices`. Zero
+      // invoices → 'in_progress' (not a permanent block — the manual-waive on
+      // the item is the escape hatch for projects that never invoice here).
       const r = await pool.query(
-        `SELECT COUNT(*) AS done
-           FROM project_invoices
-          WHERE project_id = $1 AND payment_status = 'paid'`,
+        `SELECT
+           (SELECT COUNT(*) FROM invoices
+             WHERE project_id = $1 AND status = 'paid')
+         + (SELECT COUNT(*) FROM project_invoices
+             WHERE project_id = $1 AND payment_status = 'paid') AS done`,
         [projectId]
       );
       return parseInt(r.rows[0].done, 10) > 0 ? 'done' : 'in_progress';
@@ -191,15 +198,33 @@ async function computeAutoStatus(companyId, projectId, item) {
   }
   if (item.auto_source === 'invoices' && item.category === 'retainage_release') {
     try {
+      // Retainage is native-only modeling (project_invoices has no retainage
+      // column). Done only when invoices EXIST and none still hold retainage —
+      // the old SUM(balance) over project_invoices returned 0 (→ 'done') for
+      // every non-QBO project, which had zero rows: a false positive.
       const r = await pool.query(
-        `SELECT COALESCE(SUM(balance), 0) AS open_balance
-           FROM project_invoices WHERE project_id = $1`,
+        `SELECT COUNT(*) AS n, COALESCE(SUM(retainage_held_cents), 0) AS held
+           FROM invoices WHERE project_id = $1 AND status <> 'void'`,
         [projectId]
       );
-      return parseFloat(r.rows[0].open_balance) === 0 ? 'done' : 'in_progress';
+      const n = parseInt(r.rows[0].n, 10);
+      if (n === 0) return 'in_progress';               // nothing invoiced → not released
+      return parseInt(r.rows[0].held, 10) === 0 ? 'done' : 'in_progress';
     } catch { return null; }
   }
   return null;
+}
+
+// An item's effective status: its computed auto-status if it has an auto_source
+// (auto items are never persisted past 'pending'), else the stored status. The
+// GET read path layers the same computation in; the transition gate uses this so
+// the two never disagree about whether an item is "done".
+async function effectiveItemStatus(companyId, projectId, item) {
+  if (item.auto_source) {
+    const auto = await computeAutoStatus(companyId, projectId, item);
+    if (auto) return auto;
+  }
+  return item.status;
 }
 
 // ── Closeout CRUD ─────────────────────────────────────────────────────────────
@@ -350,35 +375,42 @@ router.post('/projects/:id/closeout/transition', requireAdmin, async (req, res) 
     );
     if (closeoutRes.rowCount === 0) return res.status(404).json({ error: 'Closeout not opened yet' });
     const co = closeoutRes.rows[0];
-    // Substantial requires punchlist done + final inspection done.
+    // Substantial requires punchlist done + final inspection done. Auto-source
+    // items (punchlist) are never persisted past 'pending' — their real status
+    // is computed on read — so the gate MUST compute it here too, else it reads
+    // a stale 'pending' and 409s even when the source module says done.
     if (to === 'substantially_complete') {
       const r = await pool.query(
-        `SELECT category, status FROM project_closeout_items
+        `SELECT category, status, auto_source FROM project_closeout_items
           WHERE closeout_id = $1 AND category IN ('punchlist','final_inspection')`,
         [co.id]
       );
-      const byCat = Object.fromEntries(r.rows.map(it => [it.category, it.status]));
-      // Evaluate items with auto-source via the same compute path.
       for (const cat of ['punchlist', 'final_inspection']) {
         const item = r.rows.find(i => i.category === cat);
         if (!item) continue;
-        if (!CLOSEOUT_ITEM_DONE_STATUSES.includes(item.status)) {
+        const status = await effectiveItemStatus(companyId, req.params.id, item);
+        if (!CLOSEOUT_ITEM_DONE_STATUSES.includes(status)) {
           return res.status(409).json({ error: `Cannot transition to substantially_complete: ${cat} item not done` });
         }
       }
     }
     if (to === 'final_complete') {
+      // Same compute-on-read fix: a pure SQL count over stored `status` treats
+      // every auto item as 'pending' (they're never written past that), so
+      // final_complete was unreachable for EVERY company. Compute each required
+      // item's effective status before deciding it's still missing.
       const r = await pool.query(
-        `SELECT COUNT(*) AS missing
-           FROM project_closeout_items
-          WHERE closeout_id = $1 AND required = true
-            AND status NOT IN ('done','waived','n_a')`,
+        `SELECT category, status, auto_source FROM project_closeout_items
+          WHERE closeout_id = $1 AND required = true`,
         [co.id]
       );
-      if (parseInt(r.rows[0].missing, 10) > 0) {
-        return res.status(409).json({
-          error: 'Cannot transition to final_complete: required items still pending',
-        });
+      for (const item of r.rows) {
+        const status = await effectiveItemStatus(companyId, req.params.id, item);
+        if (!CLOSEOUT_ITEM_DONE_STATUSES.includes(status)) {
+          return res.status(409).json({
+            error: 'Cannot transition to final_complete: required items still pending',
+          });
+        }
       }
     }
     const subDate = (to === 'substantially_complete' && !co.substantial_completion_date)

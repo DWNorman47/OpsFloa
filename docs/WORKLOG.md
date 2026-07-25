@@ -23,6 +23,32 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-25 — Native invoices, Phase 3: closeout unblocked (three bugs)
+
+Fixed `server/routes/closeout.js`. These were the reason non-QBO projects
+couldn't close out (the whole motivation for native invoices).
+
+- **`final_invoice` false negative.** Read `project_invoices` (the QBO mirror),
+  empty for non-QBO companies → stuck `in_progress` forever. Now counts a paid
+  **native** invoice *or* a paid QBO-mirror row (so QBO companies don't regress
+  before Phase 5 folds the mirror in). Zero invoices → `in_progress`, not a
+  permanent block — the item's manual-waive is the escape hatch.
+- **`retainage_release` false positive.** `SUM(project_invoices.balance)` over
+  **zero rows** is 0 → reported `done` for every non-QBO project. Now: done only
+  when native invoices **exist** and their `retainage_held_cents` sums to 0;
+  zero invoices → `in_progress`.
+- **Transition gate read stale status → `final_complete` unreachable for
+  EVERYONE.** Auto items are never persisted past `'pending'` (computed on
+  read), but both gates (`substantially_complete`, `final_complete`) checked the
+  *stored* status — so an auto item always looked pending and 409'd. Both gates
+  now compute the effective status (new `effectiveItemStatus` helper) before
+  deciding. Dropped the dead `byCat` and the comment that claimed the compute
+  already happened.
+
+Tests: +5 in `closeoutRoute.test.js` (compute-on-read reaches substantial;
+unpaid auto invoice blocks final_complete; native-invoice repoint; retainage
+zero-rows no longer false-done). Full server suite 1095 green.
+
 ## 2026-07-25 — Native invoices, Phase 2: server route + payment lifecycle
 
 Built `server/routes/invoices.js` (mounted authed + token-public in `index.js`,
