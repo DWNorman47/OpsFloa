@@ -9,6 +9,7 @@ Keep it current when a subsystem moves.
 - **DB**: PostgreSQL (Neon). Migrations: `server/migrations/NNNN_*.sql` (numbered, run on boot).
 - **Email** Resend · **Files** Cloudflare R2 · **Payments** Stripe · **Accounting** QuickBooks/Intuit.
 - Branches: `dev` → dev.opsfloa.com (work here). `main` → opsfloa.com (PR only; never pushed directly).
+- Deploys from `dev`: Vercel (client) **auto** on every push (~1 min); Render (server) usually-but-**not-always** — a backend change may need a manual Render deploy to show up. See `CLAUDE.md`.
 
 ## Navigation (hash-tab screens)
 - **Administration** (`/administration`) — `AdministrationPage.jsx`, tabs via `#hash`.
