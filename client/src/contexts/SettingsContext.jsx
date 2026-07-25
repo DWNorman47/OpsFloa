@@ -36,6 +36,17 @@ export function SettingsProvider({ children }) {
   // Refetch whenever the authenticated user changes (login, logout, impersonation).
   useEffect(() => { refresh(); }, [refresh]);
 
+  // Bridge the company currency to the static tool-apps (Plan Room), which read
+  // localStorage rather than React context — so their money() formats in the
+  // company currency instead of hardcoding '$'. Mirrors the tc_addons bridge.
+  useEffect(() => {
+    try {
+      const cur = settings?.currency;
+      if (cur) localStorage.setItem('tc_currency', cur);
+      else localStorage.removeItem('tc_currency');
+    } catch { /* storage blocked */ }
+  }, [settings?.currency]);
+
   return (
     <SettingsContext.Provider value={{ settings, loading, refresh, setSettings }}>
       {children}
