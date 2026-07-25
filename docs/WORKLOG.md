@@ -23,6 +23,25 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-25 — Invoice online pay, Phase 1: Stripe Connect onboarding
+
+Foundation for clients paying invoices online, with money landing in the
+**company's own** Stripe (Connect, **no platform fee** — David's calls). Full plan:
+`docs/plans/invoice-online-pay.md`.
+
+- **Migration `0152`** — `companies.stripe_connect_account_id` +
+  `stripe_connect_charges_enabled` (cached flag). We store only the
+  connected-account id, never the company's keys. Distinct from
+  `stripe_customer_id`/`stripe_subscription_id` (OpsFloa's *own* billing).
+- **`routes/stripe.js`** — `POST /stripe/connect/onboard` (create/reuse a Standard
+  connected account → hosted onboarding link) + `GET /stripe/connect/status`
+  (retrieve → `charges_enabled`, cached on the row). Reuses `getStripe()` +
+  `manage_billing` perm.
+
+Verify green (82 / 1082). Next: Phase 2 (public "Pay now" → Checkout on the
+connected account). ⚠️ David's Stripe dashboard, when we reach Phase 2–3: enable
+**Connect**, and add a **Connect webhook** endpoint + signing secret.
+
 ## 2026-07-25 — Invoices: stable share link + email From = the contractor
 
 Two fixes from David's questions on the send-email:

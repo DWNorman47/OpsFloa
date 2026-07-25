@@ -389,6 +389,61 @@ router.post('/checkout-addon', requireAdmin, requirePerm('manage_billing'), asyn
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Failed to create checkout session' }); }
 });
 
+// ── Stripe Connect (invoice online payments) ─────────────────────────────────
+// Separate from the subscription billing above: this lets a company connect
+// their OWN Stripe account so their clients can pay invoices, money landing in
+// the company's balance. We only ever store the connected-account id + a cached
+// charges-enabled flag — never the company's keys.
+
+// POST /stripe/connect/onboard — create (or reuse) the company's Standard
+// connected account and return a hosted onboarding link.
+router.post('/connect/onboard', requireAdmin, requirePerm('manage_billing'), async (req, res) => {
+  const companyId = req.user.company_id;
+  try {
+    const stripe = getStripe();
+    const r = await pool.query('SELECT stripe_connect_account_id FROM companies WHERE id = $1', [companyId]);
+    let acct = r.rows[0]?.stripe_connect_account_id;
+    if (!acct) {
+      const account = await stripe.accounts.create({ type: 'standard', metadata: { company_id: String(companyId) } });
+      acct = account.id;
+      await pool.query('UPDATE companies SET stripe_connect_account_id = $1 WHERE id = $2', [acct, companyId]);
+    }
+    const base = (process.env.APP_URL || 'https://opsfloa.com').replace(/\/+$/, '');
+    const link = await stripe.accountLinks.create({
+      account: acct,
+      refresh_url: `${base}/?stripe_connect=refresh`,
+      return_url: `${base}/?stripe_connect=return`,
+      type: 'account_onboarding',
+    });
+    res.json({ url: link.url });
+  } catch (err) {
+    req.log.error({ err }, 'stripe connect onboard error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /stripe/connect/status — is the company connected AND able to accept
+// charges? Caches charges_enabled on the row so the public pay path can gate
+// without a Stripe round-trip.
+router.get('/connect/status', requireAdmin, async (req, res) => {
+  const companyId = req.user.company_id;
+  try {
+    const r = await pool.query('SELECT stripe_connect_account_id, stripe_connect_charges_enabled FROM companies WHERE id = $1', [companyId]);
+    const acct = r.rows[0]?.stripe_connect_account_id;
+    if (!acct) return res.json({ connected: false, charges_enabled: false });
+    const stripe = getStripe();
+    const account = await stripe.accounts.retrieve(acct);
+    const chargesEnabled = !!account.charges_enabled;
+    if (chargesEnabled !== r.rows[0].stripe_connect_charges_enabled) {
+      await pool.query('UPDATE companies SET stripe_connect_charges_enabled = $1 WHERE id = $2', [chargesEnabled, companyId]);
+    }
+    res.json({ connected: true, charges_enabled: chargesEnabled, details_submitted: !!account.details_submitted });
+  } catch (err) {
+    req.log.error({ err }, 'stripe connect status error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // POST /stripe/webhook
 router.post('/webhook', async (req, res) => {
   const sig = req.headers['stripe-signature'];
