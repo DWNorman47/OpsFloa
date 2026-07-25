@@ -1,0 +1,17 @@
+# Normalize line endings: store text as LF in the repo AND check it out as LF,
+# so Windows working copies stop triggering the "LF will be replaced by CRLF"
+# warning on every commit. Binaries are auto-detected and left untouched.
+* text=auto eol=lf
+
+# Belt-and-suspenders: never normalize these binary assets.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
