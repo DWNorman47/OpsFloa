@@ -51,9 +51,9 @@ describe('GET /api/projects/:id/pnl', () => {
       if (/FROM project_budget_categories/.test(sql)) {
         return Promise.resolve({ rows: [{ sum: '25000000' }] });
       }
-      if (/FROM project_invoices/.test(sql)) {
-        // billed $180k, collected $150k
-        return Promise.resolve({ rows: [{ billed_dollars: '180000.00', collected_dollars: '150000.00' }] });
+      if (/FROM invoices\b/.test(sql)) {
+        // billed $180k, collected $150k — native, in cents
+        return Promise.resolve({ rows: [{ billed_cents: '18000000', collected_cents: '15000000' }] });
       }
       if (/FROM settings/.test(sql)) return Promise.resolve({ rows: [] });
       if (/FROM time_entries/.test(sql)) {
@@ -91,7 +91,7 @@ describe('GET /api/projects/:id/pnl', () => {
       }
       if (/FROM estimates/.test(sql)) return Promise.resolve({ rows: [] });
       if (/FROM project_budget_categories/.test(sql)) return Promise.resolve({ rows: [{ sum: '0' }] });
-      if (/FROM project_invoices/.test(sql)) return Promise.resolve({ rows: [{ billed_dollars: '0', collected_dollars: '0' }] });
+      if (/FROM invoices\b/.test(sql)) return Promise.resolve({ rows: [{ billed_cents: '0', collected_cents: '0' }] });
       if (/FROM settings/.test(sql)) return Promise.resolve({ rows: [] });
       if (/FROM time_entries/.test(sql)) return Promise.resolve({ rows: [] });
       return Promise.resolve({ rows: [{ dollars: '0', cents: '0' }] });
@@ -131,8 +131,8 @@ describe('GET /api/wip-report', () => {
       if (/FROM project_budget_categories/.test(sql)) {
         return Promise.resolve({ rows: [{ sum: '21400000' }] });  // $214k budgeted cost
       }
-      if (/FROM project_invoices/.test(sql)) {
-        return Promise.resolve({ rows: [{ billed_dollars: '180000.00', collected_dollars: '180000.00' }] });
+      if (/FROM invoices\b/.test(sql)) {
+        return Promise.resolve({ rows: [{ billed_cents: '18000000', collected_cents: '18000000' }] });
       }
       if (/FROM time_entries/.test(sql)) {
         return Promise.resolve({ rows: [{ user_id: 1, work_date: '2026-04-01', start_time: '08:00:00', end_time: '16:00:00', break_minutes: 0, wage_type: 'regular', overtime_hours_override: null, rate: '1775', ot_rule: 'none' }] });  // 8h @ $1,775 = $14,200
@@ -172,7 +172,7 @@ describe('GET /api/wip-report', () => {
         return Promise.resolve({ rowCount: 1, rows: [{ total_cents: '10000000' }] });
       }
       if (/FROM project_budget_categories/.test(sql)) return Promise.resolve({ rows: [{ sum: '8000000' }] });
-      if (/FROM project_invoices/.test(sql)) return Promise.resolve({ rows: [{ billed_dollars: '50000', collected_dollars: '50000' }] });
+      if (/FROM invoices\b/.test(sql)) return Promise.resolve({ rows: [{ billed_cents: '5000000', collected_cents: '5000000' }] });
       if (/FROM time_entries/.test(sql)) return Promise.resolve({ rows: [{ dollars: '4000' }] });
       return Promise.resolve({ rows: [{ cents: '0' }] });
     });

@@ -121,7 +121,7 @@ describe('DELETE /superadmin/companies/:id', () => {
       'certified_payroll_signatures', 'time_off_requests', 'reimbursements',
       'inventory_transactions', 'inventory_cycle_counts', 'purchase_orders',
       'inventory_items', 'inventory_locations', 'inventory_suppliers',
-      'project_documents', 'project_invoices',
+      'project_documents', 'invoices', 'project_invoices',
       'service_requests', 'qbo_sync_errors', 'client_errors',
       'inbox', 'push_subscriptions', 'audit_log', 'equipment_items',
       'impersonation_log',

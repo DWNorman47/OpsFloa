@@ -23,6 +23,39 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-25 — Native invoices, Phase 5: QuickBooks unified onto native (mirror retired)
+
+QBO is now a **sync layer on the native `invoices` table** — one invoice table,
+no more dual-source AR. Migration `0150` + rewired every `project_invoices`
+reader/writer.
+
+- **`0150_unify_invoices.sql`** (atomic — the whole file is one implicit tx):
+  copies each QBO-mirror row into `invoices` (`source='qbo'`, carries
+  `qbo_invoice_id` + new `qbo_doc_number`; dollars→cents), gives each a summary
+  line, **reconstructs the paid portion as an `invoice_payment`** (so native
+  balance + AR "collected" stay right), then **repoints `lien_waivers.invoice_id`**
+  off `project_invoices(id)` onto `invoices(id)` (drop FK → remap ids via a temp
+  `migrated_pi_id` → add FK). Number scheme `QBO-IMP-<pi.id>` so it can't collide
+  with qbo.js's `QBO-<qboId>`.
+- **`qbo.js`** rewired: push creates a native invoice (+line) instead of the
+  mirror; the project-invoices list reads native mapped back to the QBO-panel
+  shape (so the existing Projects UI is unchanged); check-payment updates the
+  native row's status + re-syncs the imported payment (idempotent delete-insert).
+- **Readers repointed to native:** `projectReports` AR rollup (billed = Σ
+  `total_cents`, collected = Σ `invoice_payments`), `lienWaivers` ownership check,
+  `closeout` `final_invoice` (dropped the Phase-3 mirror bridge), `superadmin`
+  wipe now clears `invoices` (children cascade).
+- ⚠️ **Judgment call — `project_invoices` kept DORMANT, not dropped.** Rather than
+  `DROP TABLE` on production financial data in the same change, the mirror is left
+  in place as a rollback backup (no code touches it but the superadmin wipe). The
+  physical drop is a filed one-liner (`docs/BACKLOG.md`) once this is verified in
+  prod. QBO isn't connected on dev, so the data-copy is a schema-only no-op on dev.
+
+Verify: full server suite **1095 green** (projectReports + superadminDelete tests
+updated to native). ⚠️ The migration's data path only exercises on a DB with real
+QBO-mirror rows — **CI migration-lint validates the SQL against the built schema**;
+smoke-test on a QBO-connected company after prod merge (push → check-payment → AR).
+
 ## 2026-07-25 — Native invoices, Phase 4: client UI (the module is now usable)
 
 Built the admin UI + client-facing page, cloned from the estimates surface.

@@ -224,13 +224,28 @@ router.post('/invoices', requireAdmin, async (req, res) => {
       docNumber: doc_number || null,
       txnDate: txn_date || null,
     });
-    // Persist invoice record if project_id provided
+    // Mirror the pushed invoice into the NATIVE invoices table (source='qbo',
+    // keyed by qbo_invoice_id) — project_invoices is retired. Fire-and-forget:
+    // the QBO invoice already exists, so a mirror hiccup must not fail the push.
+    // Number scheme 'QBO-<qboId>' is distinct from the migration's 'QBO-IMP-'.
     if (invoice?.Id && project_id) {
+      const cents = Math.round(parsed * 100);
       pool.query(
-        `INSERT INTO project_invoices (company_id, project_id, qbo_invoice_id, doc_number, amount, txn_date, balance, payment_status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'unpaid')`,
-        [req.user.company_id, project_id, invoice.Id, invoice.DocNumber || null, parsed,
-         txn_date || new Date().toLocaleDateString('en-CA'), parsed]
+        `WITH ins AS (
+           INSERT INTO invoices
+             (company_id, project_id, invoice_number, client_name_snapshot, status,
+              subtotal_cents, tax_cents, total_cents, issue_date, qbo_invoice_id,
+              qbo_doc_number, source, created_by)
+           SELECT $1, $2, 'QBO-' || $3,
+                  COALESCE((SELECT NULLIF(cl.name, '') FROM projects p JOIN clients cl ON cl.id = p.client_id WHERE p.id = $2), 'QuickBooks'),
+                  'sent', $4, 0, $4, $5, $3, $6, 'qbo', $7
+           RETURNING id, company_id
+         )
+         INSERT INTO invoice_lines (invoice_id, category, sort_order, description, qty, unit_cost_cents, total_cents)
+         SELECT id, 'other', 0, $8, 1, $4, $4 FROM ins`,
+        [req.user.company_id, project_id, invoice.Id, cents,
+         txn_date || new Date().toLocaleDateString('en-CA'), invoice.DocNumber || null, req.user.id,
+         description || `QuickBooks invoice ${invoice.DocNumber || invoice.Id}`]
       ).catch(err => logger.error({ err }, '[QBO invoice save]'));
     }
     logAudit(req.user.company_id, req.user.id, req.user.full_name, 'qbo.invoice_created', 'qbo_invoice', invoice?.Id || null, invoice?.DocNumber || null,
@@ -246,11 +261,24 @@ router.post('/invoices', requireAdmin, async (req, res) => {
 // GET /api/qbo/invoices/project/:projectId — list saved invoices for a project
 router.get('/invoices/project/:projectId', requireAdmin, async (req, res) => {
   try {
+    // Read the native invoices that carry a QBO link, mapped back to the shape
+    // the Projects QBO panel expects ({ doc_number, amount, balance, payment_status }).
     const { rows } = await pool.query(
-      `SELECT id, qbo_invoice_id, doc_number, amount, txn_date, balance, payment_status, created_at, last_checked_at
-       FROM project_invoices
-       WHERE company_id = $1 AND project_id = $2
-       ORDER BY created_at DESC`,
+      `SELECT i.id,
+              i.qbo_invoice_id,
+              i.qbo_doc_number AS doc_number,
+              (i.total_cents / 100.0) AS amount,
+              i.issue_date AS txn_date,
+              GREATEST(0, i.total_cents - COALESCE(pay.paid, 0)) / 100.0 AS balance,
+              CASE i.status WHEN 'paid' THEN 'paid' WHEN 'partial' THEN 'partial' ELSE 'unpaid' END AS payment_status,
+              i.created_at,
+              (SELECT MAX(created_at) FROM invoice_payments p2 WHERE p2.invoice_id = i.id) AS last_checked_at
+         FROM invoices i
+         LEFT JOIN (
+           SELECT invoice_id, SUM(amount_cents) AS paid FROM invoice_payments GROUP BY invoice_id
+         ) pay ON pay.invoice_id = i.id
+        WHERE i.company_id = $1 AND i.project_id = $2 AND i.qbo_invoice_id IS NOT NULL
+        ORDER BY i.created_at DESC`,
       [req.user.company_id, req.params.projectId]
     );
     res.json(rows);
@@ -272,13 +300,44 @@ router.post('/invoices/:invoiceId/check-payment', requireAdmin, async (req, res)
     if (balance <= 0) payment_status = 'paid';
     else if (balance < totalAmt) payment_status = 'partial';
     else payment_status = 'unpaid';
+    // Native status: 'sent' means fully unpaid (the QBO UI still labels it 'unpaid').
+    const nativeStatus = balance <= 0 ? 'paid' : (balance < totalAmt ? 'partial' : 'sent');
+    const paidCents = Math.round(Math.max(0, totalAmt - balance) * 100);
 
-    await pool.query(
-      `UPDATE project_invoices
-       SET balance = $1, payment_status = $2, last_checked_at = NOW()
-       WHERE qbo_invoice_id = $3 AND company_id = $4`,
-      [balance, payment_status, req.params.invoiceId, req.user.company_id]
-    );
+    // Refresh the native invoice(s) linked to this QBO invoice: update the total
+    // + status and re-sync the imported payment (delete-then-insert keeps
+    // check-payment idempotent — QBO stays the source of truth for the amount).
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const inv = await client.query(
+        'SELECT id FROM invoices WHERE qbo_invoice_id = $1 AND company_id = $2',
+        [req.params.invoiceId, req.user.company_id]
+      );
+      for (const row of inv.rows) {
+        await client.query(
+          'UPDATE invoices SET total_cents = $1, subtotal_cents = $1, status = $2, updated_at = NOW() WHERE id = $3',
+          [Math.round(totalAmt * 100), nativeStatus, row.id]
+        );
+        await client.query(
+          `DELETE FROM invoice_payments WHERE invoice_id = $1 AND method = 'other' AND notes = 'QuickBooks payment (imported)'`,
+          [row.id]
+        );
+        if (paidCents > 0) {
+          await client.query(
+            `INSERT INTO invoice_payments (invoice_id, company_id, amount_cents, paid_date, method, notes)
+             VALUES ($1, $2, $3, CURRENT_DATE, 'other', 'QuickBooks payment (imported)')`,
+            [row.id, req.user.company_id, paidCents]
+          );
+        }
+      }
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
 
     res.json({ qbo_invoice_id: req.params.invoiceId, balance, payment_status, total: totalAmt });
   } catch (err) {

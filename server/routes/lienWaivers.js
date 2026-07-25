@@ -161,7 +161,7 @@ router.post('/projects/:projectId/lien-waivers', requireAdmin, async (req, res) 
       return res.status(400).json({ error: 'invalid subcontract_po_id' });
     if (!(await ownsInCompany('subcontractors', subcontractor_id)))
       return res.status(400).json({ error: 'invalid subcontractor_id' });
-    if (!(await ownsInCompany('project_invoices', invoice_id)))
+    if (!(await ownsInCompany('invoices', invoice_id)))
       return res.status(400).json({ error: 'invalid invoice_id' });
     // sub_payment_id has no company_id of its own — verify via its parent PO.
     if (sub_payment_id) {

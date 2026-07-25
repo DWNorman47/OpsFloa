@@ -484,7 +484,8 @@ router.delete('/companies/:id', requireSuperAdmin, async (req, res) => {
 
     // ── Project-level records ───────────────────────────────────────────────
     await client.query(`DELETE FROM project_documents           WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM project_invoices            WHERE company_id = $1`, [id]);
+    await client.query(`DELETE FROM invoices                    WHERE company_id = $1`, [id]); // cascades invoice_lines/payments/audit
+    await client.query(`DELETE FROM project_invoices            WHERE company_id = $1`, [id]); // dormant QBO mirror (retired; kept as backup)
 
     // ── Support / SaaS surfaces ─────────────────────────────────────────────
     await client.query(`DELETE FROM service_requests            WHERE company_id = $1`, [id]);

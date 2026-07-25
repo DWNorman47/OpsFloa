@@ -180,17 +180,12 @@ async function computeAutoStatus(companyId, projectId, item) {
   }
   if (item.auto_source === 'invoices' && item.category === 'final_invoice') {
     try {
-      // Native invoices are the owner-side AR source of truth. Also count a
-      // paid QBO-mirror row (project_invoices) so QuickBooks companies aren't
-      // regressed before Phase 5 migrates those rows into `invoices`. Zero
-      // invoices → 'in_progress' (not a permanent block — the manual-waive on
-      // the item is the escape hatch for projects that never invoice here).
+      // Native invoices are the single source of truth — QBO-synced invoices now
+      // live here too (project_invoices was unified in). Zero invoices →
+      // 'in_progress' (not a permanent block — the item's manual-waive is the
+      // escape hatch for projects that never invoice here).
       const r = await pool.query(
-        `SELECT
-           (SELECT COUNT(*) FROM invoices
-             WHERE project_id = $1 AND status = 'paid')
-         + (SELECT COUNT(*) FROM project_invoices
-             WHERE project_id = $1 AND payment_status = 'paid') AS done`,
+        `SELECT COUNT(*) AS done FROM invoices WHERE project_id = $1 AND status = 'paid'`,
         [projectId]
       );
       return parseInt(r.rows[0].done, 10) > 0 ? 'done' : 'in_progress';

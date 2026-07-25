@@ -210,6 +210,16 @@ that holds the exhaustive detail.
 ## 📌 Planned / ready-to-build
 *Scoped with a plan; just not started.*
 
+- **Drop the dormant `project_invoices` table** — migration `0150` unified the
+  QBO mirror into native `invoices` (data copied, `lien_waivers` FK repointed,
+  `qbo.js`/`projectReports`/`closeout`/`lienWaivers` all read native). The old
+  table is left **dormant as a rollback backup** — no code reads/writes it except
+  the superadmin company-wipe. Once verified in production (create a QBO invoice,
+  check-payment, confirm AR + closeout read right), add a one-line migration
+  `DROP TABLE project_invoices` and remove the dormant delete in `superadmin.js`
+  + its `expectedTables` entry. Until then, `project_invoices` holds a duplicate
+  copy of the pre-migration rows.
+
 - **Plan Room platform (MASTER PLAN)** — `docs/plans/plan-viewer-markup.md`
   (2026-07-11, two tiers, **money-first sequencing**). **Base add-on ~$40/mo**
   (`addon_planroom`): viewer + markup + measure + company library +
