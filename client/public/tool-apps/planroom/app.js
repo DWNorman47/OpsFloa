@@ -1164,9 +1164,16 @@ function drawMarkup(ctx, m) {
     }
     case 'qarea': {
       const col = areaColorHex(m.cfg || {});
-      // Deduct areas draw hollow (outline only) so they read as holes cut out of
-      // the filled additive areas around them — no colored inside.
-      dirtOutline(ctx, m, col, { closed: true, dash: [12, 7], fillAlpha: (m.cfg && m.cfg.deduct) ? 0 : 0.12 });
+      // A deduct is a void: outline only, no fill of its own. An additive area
+      // fills with its same-type deducts punched out as real holes, so the deduct
+      // region shows the plan through — not a colored fill (its own or the
+      // additive's beneath it).
+      if (m.cfg && m.cfg.deduct) {
+        dirtOutline(ctx, m, col, { closed: true, dash: [12, 7], fillAlpha: 0 });
+      } else {
+        fillAreaWithDeducts(ctx, m, col);
+        dirtOutline(ctx, m, col, { closed: true, dash: [12, 7], fillAlpha: 0 });
+      }
       if (m.pts.length >= 3) { const c = centroid(m.pts); labelAt(ctx, m, c.x, c.y, col); }
       break;
     }
@@ -1216,6 +1223,29 @@ function dirtOutline(ctx, m, col, opts) {
   if (o.fillAlpha && o.closed && m.pts.length >= 3 && layers.fills) { ctx.globalAlpha = o.fillAlpha; ctx.fill(); ctx.globalAlpha = 1; }
   ctx.stroke();
   ctx.setLineDash([]);
+}
+
+// Fill an additive area takeoff, with any same-type deduct areas punched out as
+// real holes (so the plan shows through the cutout, not a colored fill). Deducts
+// subtract from their own label (matching the bid math), so the visual hole
+// tracks the same grouping. Clip to the additive first so a deduct that pokes
+// outside it never paints fill where there's no area.
+function fillAreaWithDeducts(ctx, m, col) {
+  if (!layers.fills || !m.pts || m.pts.length < 3) return;
+  const label = (m.cfg && m.cfg.label) || '';
+  const holes = state.markups.filter(x =>
+    x !== m && x.kind === 'qarea' && x.page === m.page &&
+    x.cfg && x.cfg.deduct && (x.cfg.label || '') === label &&
+    x.pts && x.pts.length >= 3);
+  const trace = pts => { pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath(); };
+  ctx.save();
+  ctx.beginPath(); trace(m.pts); ctx.clip();          // paint only inside the additive
+  ctx.beginPath(); trace(m.pts);                      // outer ring …
+  for (const h of holes) trace(h.pts);                // … minus each deduct ring
+  ctx.fillStyle = col; ctx.globalAlpha = 0.12;
+  ctx.fill('evenodd');                                // even-odd → additive with holes
+  ctx.globalAlpha = 1;
+  ctx.restore();
 }
 
 // elevation label (white-haloed, colored by elevation) for earthwork markups
