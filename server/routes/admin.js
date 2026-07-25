@@ -3263,20 +3263,22 @@ router.get('/export/worker-hours', requireAdmin, requirePerm('view_reports'), re
     const byWorker = {};
     paidRows.forEach(e => { (byWorker[e.user_id] = byWorker[e.user_id] || []).push(e); });
 
-    const netHours = e => hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60;
     const dayKey = d => (d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10));
+    const otConfigByRole = otConfigByRoleFactory(s);
 
     const lines = [['Worker', 'Regular Hrs', 'OT Hrs', 'Total Hrs', 'Days Worked'].join(',')];
     let tReg = 0, tOt = 0, tTot = 0, tDays = 0;
     for (const w of workers.rows) {
       const we = byWorker[w.id] || [];
-      const total = we.reduce((sum, e) => sum + netHours(e), 0);
-      const { overtimeHours } = computeOT(we, w.overtime_rule || 'daily', threshold, weekStart);
-      const ot = Math.min(overtimeHours, total);     // OT can't exceed total worked
-      const regular = Math.max(0, total - ot);        // Regular = Total − OT (no double count)
+      // Regular/OT from the shared OT engine (role-aware tiered config) so this
+      // export's split matches the invoice/report/stub instead of its own math.
+      // No `range` passed: this is an hours-WORKED report, so it excludes the
+      // min-daily "no clock-in" guarantee fill the pay surfaces include.
+      const { regularHours, overtimeHours } = computeOT(we, w.overtime_rule || 'daily', threshold, weekStart, otConfigByRole(w.role_id));
+      const total = regularHours + overtimeHours;
       const days = new Set(we.map(e => dayKey(e.work_date))).size;
-      tReg += regular; tOt += ot; tTot += total; tDays += days;
-      lines.push([csvCell(w.invoice_name || w.full_name), regular.toFixed(2), ot.toFixed(2), total.toFixed(2), days].join(','));
+      tReg += regularHours; tOt += overtimeHours; tTot += total; tDays += days;
+      lines.push([csvCell(w.invoice_name || w.full_name), regularHours.toFixed(2), overtimeHours.toFixed(2), total.toFixed(2), days].join(','));
     }
     lines.push([csvCell('TOTAL'), tReg.toFixed(2), tOt.toFixed(2), tTot.toFixed(2), tDays].join(','));
 
