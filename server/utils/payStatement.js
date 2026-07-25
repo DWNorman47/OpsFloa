@@ -2,9 +2,10 @@ const pool = require('../db');
 const {
   computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost,
   nightPremiumCost, hoursWorked, computeGuaranteeShortfall,
+  computeLeaveHours, shiftHoursByDate,
 } = require('./payCalculations');
 const { leaveRateMultipliers, computeWorkerLeave, computeCompanyLeave } = require('./paidHours');
-const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory } = require('./hoursRules');
+const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, sickRulesFromSettings } = require('./hoursRules');
 const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = require('./deductions');
 
 /**
@@ -245,4 +246,65 @@ async function companyStatements({ companyId, workers, settings, from, to }) {
   return out;
 }
 
-module.exports = { buildPayStatement, workerStatement, companyStatements };
+/**
+ * One statement PER PAY PERIOD for a worker, fetching the whole span ONCE then
+ * pricing each period from the shared slice (no per-period round-trips). Returns
+ * [{ period, statement }] for every period that had activity (entries or leave);
+ * fully-empty periods are dropped. Used by the worker's pay stubs.
+ * `periods` are pay_period rows ({ id, period_start, period_end, label, ... }).
+ */
+async function workerPeriodStatements({ companyId, worker, settings, periods }) {
+  const out = [];
+  const list = periods || [];
+  if (list.length === 0) return out;
+  const day = d => String(d).substring(0, 10);
+  const minDate = list.reduce((m, p) => (day(p.period_start) < m ? day(p.period_start) : m), day(list[0].period_start));
+  const maxDate = list.reduce((m, p) => (day(p.period_end) > m ? day(p.period_end) : m), day(list[0].period_end));
+
+  const [entriesR, dedR, projectRateMap, leaveReqs, leaveShifts] = await Promise.all([
+    pool.query(
+      `SELECT te.*, p.name as project_name, to_char(te.work_date, 'YYYY-MM-DD') as work_date_str
+       FROM time_entries te LEFT JOIN projects p ON te.project_id = p.id
+       WHERE te.user_id = $1 AND te.status = 'approved' AND te.work_date >= $2 AND te.work_date <= $3
+       ORDER BY te.work_date, te.start_time`,
+      [worker.id, minDate, maxDate]
+    ),
+    pool.query(
+      'SELECT id, name, kind, value, cap_amount, active FROM worker_deductions WHERE user_id = $1 AND company_id = $2 AND active = true ORDER BY id',
+      [worker.id, companyId]
+    ),
+    loadProjectRateMap(companyId),
+    pool.query(
+      `SELECT type, hours, start_date, end_date FROM time_off_requests
+       WHERE user_id = $1 AND company_id = $2 AND type IN ('sick','vacation') AND status = 'approved'
+         AND start_date <= $4::date AND end_date >= $3::date`,
+      [worker.id, companyId, minDate, maxDate]
+    ),
+    pool.query(
+      `SELECT shift_date, start_time, end_time FROM shifts
+       WHERE user_id = $1 AND company_id = $2 AND shift_date >= $3::date AND shift_date <= $4::date`,
+      [worker.id, companyId, minDate, maxDate]
+    ),
+  ]);
+
+  const paidAll = roundEntriesFromSettings(entriesR.rows, settings, { workerRoleById: { [worker.id]: worker.role_id } });
+  const otConfig = otConfigFromSettings(settings, worker.role_id);
+  const deductions = parseCompanyDeductions(settings.deductions).concat(normalizeWorkerDeductions(dedR.rows));
+  const leaveRules = sickRulesFromSettings(settings, worker.role_id);
+  const shiftsByDate = shiftHoursByDate(leaveShifts.rows);
+
+  for (const period of list) {
+    const ps = day(period.period_start), pe = day(period.period_end);
+    const entries = paidAll.filter(e => e.work_date_str >= ps && e.work_date_str <= pe);
+    const leave = computeLeaveHours(leaveReqs.rows, shiftsByDate, leaveRules, settings.regular_shift_hours, ps, pe);
+    if (entries.length === 0 && leave.sick === 0 && leave.vacation === 0) continue; // leave-only periods still show; fully-empty drop
+    const statement = buildPayStatement({
+      worker, entries, reimbursements: [], leave, deductions,
+      otConfig, projectRateMap, settings, from: ps, to: pe, explain: false,
+    });
+    out.push({ period, statement });
+  }
+  return out;
+}
+
+module.exports = { buildPayStatement, workerStatement, companyStatements, workerPeriodStatements };

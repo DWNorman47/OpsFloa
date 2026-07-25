@@ -23,7 +23,7 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
-## 2026-07-25 — One pay engine behind the pay surfaces (phases A–C)
+## 2026-07-25 — One pay engine behind the pay surfaces (phases A–D)
 
 **Done (3 commits).** The four pay surfaces re-orchestrated the hours→money chain
 by hand; the full cost-assembly (prevailing, guarantee, leave $, deductions, net)
@@ -55,12 +55,17 @@ lacked; costs now cents-rounded before summing everywhere.
 + leave % + guarantee + deductions→net + determinism; server 1068, client 255,
 i18n parity, build all green.
 
-⚠️ **Phase D not done (stageable): pay stubs.** `PayStubView.jsx` still recomputes
-pay-stub money **client-side** from its own settings — the last surface not on the
-shared engine, and the biggest remaining drift risk. Folding it in needs a
-fetch-once-per-span statement variant (per-period `workerStatement` would re-query
-each period) + a PayStubView rewrite to render server money. Held for a checkpoint
-because it's the only client-visible pay-math change.
+**Phase D done — pay stubs now priced by the engine.** New `workerPeriodStatements`
+fetches the worker's whole span once and prices each pay period via
+`buildPayStatement` (no per-period re-query); the pay-stubs route drops its
+hand-built settings subset for full `loadSettings`, so it can finally price money.
+`PayStubView.jsx` renders server money instead of recomputing it — the old
+client-side formula ignored per-project prevailing, OT tiers, night premium, leave
+and deductions, so a tiered-OT company saw a different number on the stub than on
+the invoice. The stub now also shows sick/vacation pay + deductions + net pay.
+⚠️ **Worker-visible:** stub dollar amounts may shift (to the correct, engine
+number) — most visibly for companies on tiered OT, per-project prevailing, or with
+deductions. All four surfaces now derive from one `buildPayStatement`.
 
 ---
 
