@@ -19,7 +19,7 @@ const { coerceBody } = require('../middleware/coerce');
 const { logFailure } = require('../failureLog');
 const { sendPushToUser, sendPushToAllWorkers } = require('../push');
 const { sendEmail } = require('../email');
-const { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, nightPremiumCost } = require('../utils/payCalculations');
+const { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, nightPremiumCost, computeGuaranteeShortfall } = require('../utils/payCalculations');
 const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, validatePolicyRaw, migrateFixedSlots, hasFixedSlots } = require('../utils/hoursRules');
 const { computePaid, computeWorkerLeave, computeCompanyLeave, leaveRateMultipliers } = require('../utils/paidHours');
 const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = require('../utils/deductions');
@@ -1521,20 +1521,8 @@ router.post('/workers', requireAdmin, requirePerm('manage_workers'),
   }
 });
 
-// Helper: compute how many hours short of the weekly guarantee a period is
-function computeGuaranteeShortfall(totalHours, guaranteedWeeklyHours, fromDate, toDate) {
-  if (!guaranteedWeeklyHours || parseFloat(guaranteedWeeklyHours) <= 0) return { shortfall: 0, minHours: 0, weeks: 0 };
-  let weeks = 1;
-  if (fromDate && toDate) {
-    const f = new Date(String(fromDate).substring(0, 10) + 'T00:00:00');
-    const t = new Date(String(toDate).substring(0, 10) + 'T00:00:00');
-    const days = Math.round((t - f) / (1000 * 60 * 60 * 24)) + 1;
-    weeks = Math.max(1, Math.round(days / 7));
-  }
-  const minHours = parseFloat(guaranteedWeeklyHours) * weeks;
-  const shortfall = Math.max(0, minHours - totalHours);
-  return { shortfall: +shortfall.toFixed(2), minHours: +minHours.toFixed(2), weeks };
-}
+// computeGuaranteeShortfall now lives in utils/payCalculations.js (shared by the
+// pay-statement engine and every pay surface). Imported at the top of this file.
 
 // Update a worker (full_name, first_name, middle_name, last_name, username, role, language, hourly_rate, rate_type, email, worker_type)
 router.patch('/workers/:id', requireAdmin, requirePerm('manage_workers'),

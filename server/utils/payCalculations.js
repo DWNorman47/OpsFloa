@@ -121,6 +121,26 @@ function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours
   return totals;
 }
 
+/**
+ * How many hours short of the weekly-hours guarantee a period ran. The guarantee
+ * scales by whole weeks in [from,to]; a shortfall tops the period up to the floor.
+ * No guarantee configured (0/absent) → all zeros. (Lifted from admin.js so every
+ * pay surface shares one definition.)
+ */
+function computeGuaranteeShortfall(totalHours, guaranteedWeeklyHours, fromDate, toDate) {
+  if (!guaranteedWeeklyHours || parseFloat(guaranteedWeeklyHours) <= 0) return { shortfall: 0, minHours: 0, weeks: 0 };
+  let weeks = 1;
+  if (fromDate && toDate) {
+    const f = new Date(String(fromDate).substring(0, 10) + 'T00:00:00');
+    const t = new Date(String(toDate).substring(0, 10) + 'T00:00:00');
+    const days = Math.round((t - f) / (1000 * 60 * 60 * 24)) + 1;
+    weeks = Math.max(1, Math.round(days / 7));
+  }
+  const minHours = parseFloat(guaranteedWeeklyHours) * weeks;
+  const shortfall = Math.max(0, minHours - totalHours);
+  return { shortfall: +shortfall.toFixed(2), minHours: +minHours.toFixed(2), weeks };
+}
+
 /** Minutes since midnight from an "HH:MM[:SS]" string (null-safe). */
 function hmToMin(hhmm) {
   if (hhmm == null) return null;
@@ -601,4 +621,4 @@ function computeDailyPayCosts(entries, overtimeRule, threshold, dailyRate, overt
   };
 }
 
-module.exports = { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, resolveBands, nightHoursForEntry, nightPremiumCost, windowHoursForEntry, shiftHoursByDate, computeLeaveHours };
+module.exports = { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, resolveBands, nightHoursForEntry, nightPremiumCost, windowHoursForEntry, shiftHoursByDate, computeLeaveHours, computeGuaranteeShortfall };
