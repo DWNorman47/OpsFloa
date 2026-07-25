@@ -74,9 +74,11 @@ app.use(pinoHttp({
 const TOKENIZED_URL_PATTERNS = [
   /^(\/api)?\/public\/book\/manage\/([^/?]+)/,
   /^(\/api)?\/public\/estimates\/(view|accept|decline)\/([^/?]+)/,
+  /^(\/api)?\/public\/invoices\/view\/([^/?]+)/,
   /^(\/api)?\/public\/change-orders\/(view|accept|decline)\/([^/?]+)/,
   /^(\/api)?\/public\/lien-waivers\/sign\/([^/?]+)/,
   /^\/e\/([^/?]+)/,
+  /^\/i\/([^/?]+)/,
   /^\/co\/([^/?]+)/,
   /^\/lien-waiver-sign\/([^/?]+)/,
   /^\/book\/manage\/([^/?]+)/,
@@ -274,6 +276,12 @@ app.use('/api/public/book', bookingRoutes.publicRouter);
 const estimatesRoutes = require('./routes/estimates');
 app.use('/api/public/estimates', estimatesRoutes.publicRouter);
 app.use('/api/estimates', requireAuth, requirePlan('business'), estimatesRoutes);
+
+// Native invoices — owner-side AR so a company without QuickBooks can invoice,
+// record payment, and close out. Same admin-authed + token-public split as estimates.
+const invoicesRoutes = require('./routes/invoices');
+app.use('/api/public/invoices', invoicesRoutes.publicRouter);
+app.use('/api/invoices', requireAuth, requirePlan('business'), invoicesRoutes);
 
 // Public token-keyed routes and unauthenticated webhooks must mount before
 // any broad authenticated /api routers.

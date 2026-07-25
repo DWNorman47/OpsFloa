@@ -23,6 +23,35 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-25 — Native invoices, Phase 2: server route + payment lifecycle
+
+Built `server/routes/invoices.js` (mounted authed + token-public in `index.js`,
+`business`-plan gated like estimates), cloning the estimates route. See
+`docs/plans/` (mossy-launching-mist) for the phase map.
+
+- **Three creation sources, as decided.** From scratch (`POST /invoices`),
+  `POST /invoices/from-estimate/:id` (copies an **accepted** estimate's lines;
+  409 otherwise), and `POST /invoices/from-project/:id` (T&M prefill: one Labor
+  line valued by the pay engine's `laborCostCents` over the project's *approved*
+  entries, plus a line per `project_expenses` row — editable before send).
+- **Payment lifecycle.** `POST /:id/payments` records full/partial payments into
+  `invoice_payments`, then derives status off Σpayments vs total:
+  draft→partial→paid; `POST /:id/void` cancels; both blocked appropriately (no
+  payment on draft/void). Money-critical derivation is unit-pinned in
+  `tests/invoicesRoute.test.js` (18 tests, mocked pool like estimates).
+- ⚠️ **Judgment call — no stored raw share token.** Unlike estimates (which
+  stores the raw token for stable re-retrieval), invoices store only the hash.
+  `/send` returns the raw token once; `POST /:id/link` **rotates** the link
+  (mints a new token, so a previously-shared URL stops working). Chosen to avoid
+  a second migration on the just-shipped 0149 and to not persist raw tokens. If
+  you want estimate-style stable links, it needs a `response_token` column.
+- **Found while wiring:** `retainage_pct`/`retainage_held_cents` are owner-side
+  retainage with no prior home in the schema — carried through
+  `computeInvoiceTotals` so Phase 3's closeout `retainage_release` check has a
+  real number to read.
+
+Next: Phase 3 (closeout fixes — the three bugs), then Phase 4 (client UI).
+
 ## 2026-07-25 — Backlog cleanup: Plan Room bugs + tool-app currency
 
 Cleared three backlog items and confirmed a fourth obsolete.
