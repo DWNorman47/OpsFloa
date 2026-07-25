@@ -23,6 +23,35 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-25 — Native invoices, Phase 4: client UI (the module is now usable)
+
+Built the admin UI + client-facing page, cloned from the estimates surface.
+A company can now create → send → get paid → close out entirely in-app.
+
+- **`InvoicesPanel`** (`pages/InvoicesPage.jsx`) mounts as a new **Invoices tab**
+  in the Projects module (next to Estimates, same `canSeeSales` gate). List with
+  status badges + balance column, the cents line-item editor (`MoneyInput`/
+  `useCents`), draft edit, and a detail view with send / copy-link / **record
+  payment** / void + a payments ledger. All money via `useCents`/`useCurrency`
+  (no hardcoded `$`).
+- **Three create sources** surfaced in one "New" menu: Blank, From an accepted
+  estimate (searchable picker → `from-estimate`), From project time & expenses
+  (picker → `from-project`).
+- **`InvoicePDF.jsx`** cloned from EstimatePDF (simpler math: subtotal → tax →
+  total, retainage, amount paid / balance due), reusing the `pdf*` i18n keys.
+- **Public `/i/:token`** view page (`PublicInvoicePage.jsx`, view-only — online
+  pay deferred) + route in `App.jsx` + token redaction pattern already added
+  server-side.
+- **i18n:** ~110 `inv*` keys added to **both** `moduleEn` and `moduleEs`
+  (`i18nModules.js`); category labels reuse the `estCat*` keys. Parity test green.
+
+Verify: client eslint clean, vitest 255 green (incl. i18n parity), production
+build OK; sitework untouched.
+
+⚠️ Not yet wired: the invoice link isn't emailed (admin copies it, same as
+estimates today); online payment on the public page is deferred. Phase 5 (QBO
+unification) is still open and stageable.
+
 ## 2026-07-25 — Native invoices, Phase 3: closeout unblocked (three bugs)
 
 Fixed `server/routes/closeout.js`. These were the reason non-QBO projects
