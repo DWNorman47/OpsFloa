@@ -86,7 +86,11 @@ describe('shape of the exported blob', () => {
       expect(m.result).toBeUndefined();
       expect(m.cfg && m.cfg.prices).toBeUndefined();
     }
-    expect(JSON.stringify(data)).not.toMatch(/cutCY|backfillCY|999/);
+    // The result blob's keys are the unambiguous leak signal. The old check also
+    // matched the bare value `999` (the fixture's cutCY) — but that substring
+    // shows up in the `created: Date.now()` timestamp on any day whose ms value
+    // contains "999", so it false-failed by calendar. The keys can't collide.
+    expect(JSON.stringify(data)).not.toMatch(/cutCY|backfillCY/);
   });
 });
 
