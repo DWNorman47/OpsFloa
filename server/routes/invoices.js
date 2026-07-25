@@ -13,6 +13,13 @@ const {
   computeLineTotal,
 } = require('../constants/projectMoneyEnums');
 const { loadSettings, laborCostCents, LABOR_ENTRY_COLUMNS } = require('../utils/paidHours');
+const { sendEmail } = require('../email');
+const { escapeHtml } = require('../utils/htmlEscape');
+
+// Frontend base URL for the client-facing link in the send email — the same env
+// the auth / invite emails use. Trailing slash trimmed so `${APP_URL}/i/<token>`
+// is clean.
+const APP_URL = (process.env.APP_URL || 'https://opsfloa.com').replace(/\/+$/, '');
 
 // Native invoices (owner-side AR) — OpsFloa's own invoice concept so a company
 // without QuickBooks can invoice, record payment, and close out. Mirrors
@@ -431,8 +438,47 @@ router.put('/:id/lines', requireAdmin, async (req, res) => {
   } finally { client.release(); }
 });
 
-// POST /invoices/:id/send — draft → sent; mint a public token, freeze lines.
-// Returns the raw token once (the admin copies the /i/<token> link).
+// Amount as a currency string for the email (there's no shared server money
+// formatter). Intl gives the right symbol per ISO code; falls back to a plain
+// number if the code is odd.
+function formatMoney(cents, currency) {
+  const n = (parseInt(cents, 10) || 0) / 100;
+  try { return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency || 'USD' }).format(n); }
+  catch { return `${n.toFixed(2)} ${currency || 'USD'}`; }
+}
+
+// Client-facing "your invoice is ready" email: greeting, balance due, and a
+// button to the public /i/<token> view page. Best-effort — the caller sends it
+// AFTER the invoice is committed as 'sent', so a delivery failure never blocks
+// the send (the admin still has the copyable link). Returns sendEmail()'s result.
+async function emailInvoiceToClient({ invoice, token, companyName, currency }) {
+  const co  = escapeHtml(companyName || 'OpsFloa');
+  const num = escapeHtml(invoice.invoice_number || '');
+  const who = escapeHtml(invoice.client_name_snapshot || 'there');
+  const url = `${APP_URL}/i/${token}`;
+  const total   = parseInt(invoice.total_cents, 10) || 0;
+  const paid    = parseInt(invoice.amount_paid_cents, 10) || 0;
+  const balance = Math.max(0, total - paid);
+  const dueLabel = paid > 0 ? 'Balance due' : 'Amount due';
+  const dueLine = invoice.due_date
+    ? `<p style="color:#6b7280;font-size:13px;margin:0 0 20px">Due ${escapeHtml(String(invoice.due_date).slice(0, 10))}</p>`
+    : '';
+  const subject = `Invoice ${invoice.invoice_number} from ${companyName || 'OpsFloa'}`;
+  const html = `
+    <div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px">
+      <h2 style="color:#1a56db;margin:0 0 8px">Invoice ${num}</h2>
+      <p style="color:#444;margin:0 0 16px">Hi ${who}, ${co} sent you an invoice.</p>
+      <p style="color:#111827;font-size:16px;margin:0 0 6px"><strong>${dueLabel}: ${formatMoney(balance, currency)}</strong></p>
+      ${dueLine}
+      <a href="${url}" style="display:inline-block;background:#1a56db;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;margin-top:8px">View invoice</a>
+      <p style="color:#9ca3af;font-size:12px;margin-top:24px;word-break:break-all">${url}</p>
+    </div>`;
+  return sendEmail(invoice.client_email, subject, html);
+}
+
+// POST /invoices/:id/send — draft → sent; mint a public token, freeze lines,
+// and email the client the link (best-effort). Returns the raw token too so the
+// admin can copy the /i/<token> link (and share it manually if there's no email).
 router.post('/:id/send', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   const client = await pool.connect();
@@ -452,7 +498,32 @@ router.post('/:id/send', requireAdmin, async (req, res) => {
     await client.query('COMMIT');
     await recordAudit({ invoiceId: req.params.id, action: 'sent', actorKind: 'admin', actorUserId: req.user.id, actorIp: req.ip });
     await logAudit(companyId, req.user.id, req.user.full_name, 'invoice.sent', 'invoice', req.params.id, headRes.rows[0].invoice_number, null);
-    res.json({ ...(await loadInvoiceFull(companyId, req.params.id)), response_token: rawToken });
+    const full = await loadInvoiceFull(companyId, req.params.id);
+    // Email the client the /i/<token> link, best-effort. The invoice is already
+    // committed 'sent', so a delivery failure/skip just means the admin shares
+    // the copyable link instead — never a 500.
+    let email = { sent: false, reason: 'no_recipient' };
+    if (full.client_email) {
+      try {
+        const meta = await pool.query(
+          `SELECT co.name AS company_name,
+                  COALESCE((SELECT value FROM settings s WHERE s.company_id = $1 AND s.key = 'currency'), 'USD') AS currency
+             FROM companies co WHERE co.id = $1`,
+          [companyId]
+        );
+        const r = await emailInvoiceToClient({
+          invoice: full, token: rawToken,
+          companyName: meta.rows[0]?.company_name, currency: meta.rows[0]?.currency || 'USD',
+        });
+        email = r?.ok
+          ? { sent: true, to: full.client_email }
+          : { sent: false, to: full.client_email, reason: r?.error ? 'error' : (r?.skipped || r?.suppressed || 'unknown') };
+      } catch (err) {
+        req.log.error({ err }, 'invoice send email error');
+        email = { sent: false, to: full.client_email, reason: 'error' };
+      }
+    }
+    res.json({ ...full, response_token: rawToken, email });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     req.log.error({ err }, 'invoice send error');

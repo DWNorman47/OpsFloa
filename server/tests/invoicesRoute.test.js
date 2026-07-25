@@ -20,6 +20,7 @@ jest.mock('../db', () => {
 });
 
 jest.mock('../auditLog', () => ({ logAudit: jest.fn() }));
+jest.mock('../email', () => ({ sendEmail: jest.fn().mockResolvedValue({ ok: true }) }));
 
 const express = require('express');
 const request = require('supertest');
@@ -139,6 +140,32 @@ describe('POST /api/invoices/:id/send', () => {
       .mockResolvedValueOnce(undefined);
     const res = await request(makeApp()).post('/api/invoices/42/send');
     expect(res.status).toBe(409);
+  });
+
+  test('emails the client a /i/ link on a successful send', async () => {
+    const { sendEmail } = require('../email');
+    sendEmail.mockClear();
+    pool.query
+      .mockResolvedValueOnce(undefined)                                                                   // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, status: 'draft', invoice_number: 'INV-2026-0001' }] }) // FOR UPDATE
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ tax_pct: '0', retainage_pct: '0' }] })               // recomputeTotals: head
+      .mockResolvedValueOnce({ rows: [{ total_cents: '100000' }] })                                       // recomputeTotals: lines
+      .mockResolvedValueOnce(undefined)                                                                   // recomputeTotals: UPDATE
+      .mockResolvedValueOnce(undefined)                                                                   // UPDATE status='sent'
+      .mockResolvedValueOnce(undefined)                                                                   // COMMIT
+      .mockResolvedValueOnce(undefined)                                                                   // recordAudit INSERT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, invoice_number: 'INV-2026-0001', client_email: 'client@acme.com', client_name_snapshot: 'Acme', total_cents: '100000' }] }) // loadInvoiceFull: head
+      .mockResolvedValueOnce({ rows: [] })                                                                // loadInvoiceFull: lines
+      .mockResolvedValueOnce({ rows: [] })                                                                // loadInvoiceFull: payments
+      .mockResolvedValueOnce({ rows: [{ company_name: 'Contractor Co', currency: 'USD' }] });             // company + currency
+    const res = await request(makeApp()).post('/api/invoices/42/send');
+    expect(res.status).toBe(200);
+    expect(res.body.email).toMatchObject({ sent: true, to: 'client@acme.com' });
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+    const [to, subject, html] = sendEmail.mock.calls[0];
+    expect(to).toBe('client@acme.com');
+    expect(subject).toMatch(/INV-2026-0001/);
+    expect(html).toMatch(/\/i\/[0-9a-f]{64}/); // the public link carries the raw token
   });
 });
 

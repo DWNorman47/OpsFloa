@@ -579,7 +579,10 @@ function InvoiceDetail({ id, onBack, onEdit }) {
       setSendToken(data.response_token);
       const url = `${window.location.origin}/i/${data.response_token}`;
       try { await navigator.clipboard?.writeText(url); } catch {}
-      toast(t.invToastSent, 'success');
+      // The server emails the client when there's an email on file; otherwise the
+      // admin shares the copied link (shown in the card below).
+      if (data.email?.sent) toast(`${t.invToastEmailed} ${data.email.to}`, 'success');
+      else toast(t.invToastSent, 'success');
     } catch (err) {
       setActionError(err.response?.data?.error || t.invErrSend);
     } finally {

@@ -23,6 +23,30 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-25 — Invoices: email the client on send
+
+Wired the invoice **Send** flow to actually email the client a link to the public
+`/i/:token` page (before: the admin copied the link by hand — same gap estimates
+still have).
+
+- **`routes/invoices.js` `POST /:id/send`** — after committing `'sent'`, if the
+  invoice has a `client_email` it sends a house-style email (greeting + amount /
+  balance due + a "View invoice" button → `${APP_URL}/i/<token>`) through the
+  shared `sendEmail` (Resend). **Best-effort:** the invoice is already committed,
+  so a delivery failure/skip never 500s — the response carries an
+  `email: { sent, to, reason }` status and the admin still gets the copyable link.
+- **Client** — the send toast now reads "emailed to <client>" when it went out,
+  else the existing "sent" (copy the link). New `invToastEmailed` key (EN + ES).
+- Reuses existing infra: `sendEmail`'s guards (demo/bounce/dev-redirect/no-key),
+  `utils/htmlEscape`, `APP_URL`. **No PDF attached** — the public page is the
+  canonical view; server-side PDF render is a bigger lift, deferred.
+- Test: +1 in `invoicesRoute.test.js` (mocks `../email`, asserts the client gets
+  a `/i/<token>` link on success). Verify green (82 suites / 1082).
+
+⚠️ Real delivery needs `RESEND_API_KEY` + verified `EMAIL_FROM` + `NODE_ENV=production`
+(see [[project_email_resend]]); non-prod redirects to `EMAIL_REDIRECT_TO`. The
+remaining deferred invoice item is **online payment** on the public page.
+
 ## 2026-07-25 — Sitework: all live references removed
 
 Purged sitework from the running codebase (David: "leave sitework in the past").
