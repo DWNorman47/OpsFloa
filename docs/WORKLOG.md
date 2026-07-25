@@ -47,6 +47,11 @@ don't read as misses):
 - **historical/lineage/roadmap** mentions in `docs/plans/*`, `tool-apps/shared`
   provenance comments + `PARITY.md`, and the WORKLOG — that's sitework's past.
 
+**Final state:** David then deleted the `sitework-archived/` box too, so sitework
+is entirely gone from the repo. Recoverable only from git history — commit
+`e859f05` ("Box sitework…") holds the full tool + test + README
+(`git checkout e859f05 -- sitework-archived/`).
+
 ## 2026-07-25 — Sitework tool boxed into one removable folder
 
 David wants the standalone Sitework Takeoff tool out of the project but

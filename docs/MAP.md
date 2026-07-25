@@ -52,7 +52,7 @@ role rules, `roundEntriesFromSettings`, `otConfigFromSettings`, the rule builder
 
 ## Tool-apps (`client/public/tool-apps/`)
 - `planroom/` — **Plan Room / Takeoff** (`app.js` + `index.html`). Roofing, earthwork, roof-measurement, storm, siding, etc. **Bump `?v=N` on both files** when editing; it cache-busts.
-- `shared/` — the Plan Room engine (view/store/doc/measure, polygon-clipping, pdf libs). Originally copied out of the standalone sitework takeoff, which is now retired/archived to `sitework-archived/` at the repo root.
+- `shared/` — the Plan Room engine (view/store/doc/measure, polygon-clipping, pdf libs). Originally copied out of the standalone sitework takeoff, since retired and removed from the repo (recoverable from git history if ever needed).
 - `pdftools/` — PDF utilities.
 
 ## Testing & verify
