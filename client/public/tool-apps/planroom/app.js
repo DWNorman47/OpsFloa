@@ -5856,6 +5856,10 @@ async function deleteCompanyShared(id, name) {
 }
 
 function openCompany() {
+  // Show the signed-in company's name in the header (bridged to localStorage by
+  // the React app's AuthContext), so it's clear whose library you're sharing to.
+  let cn = ''; try { cn = localStorage.getItem('tc_company') || ''; } catch { /* blocked */ }
+  $('companyTitle').textContent = cn ? `${cn} — Company library` : 'Company library';
   $('company').classList.remove('hidden');
   companyMsg('');
   refreshCompanyList();
