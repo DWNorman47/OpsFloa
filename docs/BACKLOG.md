@@ -21,17 +21,18 @@ that holds the exhaustive detail.
 
 ## 🔧 Bugs — set aside for later
 
-- **The hours-rules engine reaches 4 of the 10 paths that turn hours into
-  money** (2026-07-16). Verified while building the rule builder; table of all
-  ten in `docs/plans/hours-rules-builder.md`. `qbo.js:727` and
-  `jobs/scheduledReports.js:125` don't import `hoursRules` at all;
-  `admin.js:1709` hardcodes `'daily'` and ignores the worker's own overtime
-  rule; `projectSpend.js`/`projectReports.js` are raw SQL that bypasses the
-  engine; `WorkerSummary.jsx` and `Tests.jsx` are hand-copied client mirrors.
-  **Turn a policy on today and the invoice, the worker's screen and what lands
-  in QuickBooks disagree.** Harmless while no company has a policy enabled —
-  which is why it hasn't bitten — and a blocker the moment one does. This is
-  M4b in the plan.
+- ~~**The hours-rules engine reaches 4 of the 10 paths that turn hours into
+  money**~~ **RESOLVED (money-of-record) 2026-07-25.** Every path that produces a
+  number a company acts on now runs through the shared engine: the four worker-pay
+  surfaces (invoice, overtime report, payroll CSV, pay stubs) render one
+  `buildPayStatement` (`server/utils/payStatement.js`); `qbo.js`,
+  `jobs/scheduledReports.js`, `projectReports.js` and project metrics (`admin.js`,
+  via `computePaid` with the worker's own OT rule — the hardcoded `'daily'` is
+  gone) use `paidHours`/the engine; `projectSpend.js` is retired. So turning on a
+  policy no longer makes the invoice, payroll and QuickBooks disagree. **Remaining
+  (low-stakes, display-only):** `WorkerSummary.jsx` (a worker's own dashboard
+  glance) and `Tests.jsx` (QA harness) still compute pay independently — not the
+  money of record; fold onto a server number if they ever drift.
 - **Stale CSP hash blocks the inline auth-guard script on stage**
   (`client/public/tool-apps/sitework/index.html:9`). The Content-Security-Policy
   is set by the frontend host (Vercel), not the Express server, and it isn't
@@ -50,32 +51,18 @@ that holds the exhaustive detail.
   - Slow initial loads (Time Clock / Inventory / Team) that look stuck.
   - A11y: tab/shell controls lack accessible names; invalid public links mix
     "Not Found / Unauthorized" wording. (filed 2026-07-11)
-- **Tool-apps still print `$` regardless of the company currency**
-  (`client/public/tool-apps/shared/engine-ui.js:18` `money()`, and the sitework
-  tool's own copy). Everything else — app, PDFs, public client pages, report
-  emails — was fixed in the 2026-07-16 currency sweep, but the static tool-apps
-  are sandboxed: they're plain HTML served from `public/`, outside React, with no
-  access to `SettingsContext` or `GET /api/settings`. The Plan Room bid tables
-  consume the shared `money()`, so Plan Room + sitework both show dollars to an
-  HNL company. Fix needs a delivery mechanism — most likely piggyback the
-  existing `tc_addons` localStorage bridge that `AuthContext` already writes for
-  add-on gating, and have `engine-ui.money()` read the code from there. Note
-  Intl reads the symbol off the LOCALE, not the currency code, so it needs the
-  locale map too (`server/currency.js` / `client/src/utils.js`). **Sitework is
-  off-limits** — do Plan Room + the shared engine only, or the sitework copy
-  diverges. (2026-07-16)
-- **Newer takeoff kinds skip the `NEEDS_SCALE` guard** (`planroom/app.js:239`).
-  `NEEDS_SCALE` blocks a tool on an uncalibrated sheet and sends you to 📏.
-  Roofing/earthwork/drywall kinds are registered, but the flooring and framing
-  packs never added theirs: `froom`, `ftrans`, `fwall`, `fsheath` all produce
-  LF/SF, so on an uncalibrated sheet they trace happily and silently return 0 —
-  a wrong bid rather than an error. (ESC's `escline`/`escarea` are registered
-  correctly.) One-line fix, but verify no flow depends on tracing pre-scale.
-  (2026-07-16)
-- **`fopening` missing from `POINT_KINDS`** (`planroom/app.js:1945`). It's a
-  count kind drawn as dots, but `POINT_KINDS` drives rubber-band suppression,
-  the draft label, and the minimum-point count — so unlike its twin `dopening`
-  it wrongly rubber-bands and needs 2 clicks instead of 1. (2026-07-16)
+- ~~**Tool-apps still print `$` regardless of the company currency**~~
+  **RESOLVED (Plan Room) 2026-07-25.** `SettingsContext` now writes a
+  `tc_currency` localStorage key (mirroring the `tc_addons` bridge), and the
+  shared `engine-ui.money()` reads it and formats in the company currency via a
+  locale map (mirror of `client/src/utils.js`), USD fallback. Plan Room bid tables
+  now respect the currency. **Sitework's own `money()` copy is intentionally left
+  on `$`** (off-limits); it'll diverge until the sitework port, which is accepted.
+- ~~**Newer takeoff kinds skip the `NEEDS_SCALE` guard**~~ **RESOLVED
+  2026-07-25.** `froom`/`ftrans`/`fwall`/`fsheath` added to `NEEDS_SCALE` — they
+  now block + nudge to 📏 on an uncalibrated sheet instead of silently returning 0.
+- ~~**`fopening` missing from `POINT_KINDS`**~~ **RESOLVED 2026-07-25.** Added, so
+  it behaves like its twin `dopening` (single click, no rubber-band).
 - **Closeout is broken for companies without QuickBooks, in both directions.**
   `project_invoices` is a **QBO mirror** — only `server/routes/qbo.js` ever
   writes it — so a company without QBO connected has **zero rows**. Both

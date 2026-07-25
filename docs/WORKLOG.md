@@ -23,6 +23,30 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-25 — Backlog cleanup: Plan Room bugs + tool-app currency
+
+Cleared three backlog items and confirmed a fourth obsolete.
+
+- **Tool-app currency ($ hardcoded).** `SettingsContext` writes a `tc_currency`
+  localStorage key; the shared `engine-ui.money()` reads it and formats in the
+  company currency (locale map mirrors `client/src/utils.js`), USD fallback. Plan
+  Room bid tables now respect a non-USD company. **Sitework's own `money()` copy
+  is left on `$`** (off-limits) — accepted divergence until the sitework port.
+- **`fopening` → `POINT_KINDS`** — single-click dot kind now behaves like its twin
+  `dopening` instead of rubber-banding + needing two clicks.
+- **`froom`/`ftrans`/`fwall`/`fsheath` → `NEEDS_SCALE`** — flooring/framing kinds
+  now block on an uncalibrated sheet (📏 nudge) instead of silently tracing to a
+  0 bid.
+- **"Hours engine reaches only 4/10 money paths" — marked RESOLVED (money-of-
+  record).** Verified the flagged server paths now use the engine (qbo, scheduled
+  reports, project reports/metrics, plus the four pay surfaces on
+  `buildPayStatement`); only two client display-mirrors (`WorkerSummary.jsx`,
+  `Tests.jsx`) remain as low-stakes estimates.
+
+Plan Room `?v` 75→76 (engine-ui import 1→2). Client verify green; sitework clean.
+
+---
+
 ## 2026-07-25 — One pay engine behind the pay surfaces (phases A–D)
 
 **Done (3 commits).** The four pay surfaces re-orchestrated the hours→money chain
