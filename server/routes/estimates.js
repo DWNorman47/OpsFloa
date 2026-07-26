@@ -170,7 +170,9 @@ router.get('/', requireAuth, async (req, res) => {
     conditions.push(`client_id = $${params.length}`);
   }
   if (q) {
-    params.push(`%${q}%`);
+    // Escape ILIKE metacharacters so a literal % or _ in the query matches
+    // literally rather than acting as a wildcard (matches invoices.js).
+    params.push(`%${String(q).replace(/([\\%_])/g, '\\$1')}%`);
     conditions.push(`(project_name ILIKE $${params.length} OR client_name_snapshot ILIKE $${params.length} OR estimate_number ILIKE $${params.length})`);
   }
   const where = conditions.join(' AND ');
@@ -696,7 +698,7 @@ publicRouter.get('/view/:token', async (req, res) => {
 });
 
 publicRouter.post('/accept/:token', publicWriteLimiter, async (req, res) => {
-  const signerName = (req.body.typed_name || '').toString().trim();
+  const signerName = (req.body.typed_name || '').toString().trim().slice(0, 255); // cap: unauthenticated free-text
   if (!signerName) return res.status(400).json({ error: 'typed_name is required' });
   const authorized = req.body.authorized === true;
   if (!authorized) return res.status(400).json({ error: 'authorization confirmation required' });

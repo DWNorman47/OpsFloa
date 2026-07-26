@@ -23,6 +23,37 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-26 — "Go for all of it" batch 7: cleanup sweep
+
+Five lower-severity hygiene/correctness fixes closing out the review:
+
+1. **Unescaped ILIKE search** in the estimate + change-order list endpoints — a
+   literal `%` or `_` in the query acted as a wildcard. Now escaped with the same
+   `replace(/([\\%_])/g, '\\$1')` invoices.js already used.
+2. **Internal token hashes leaked in authed payloads.** `co.*` / `lw.*` / `a.*`
+   (and several `RETURNING *`) carried `response_token_hash` / `sign_token_hash` /
+   `manage_token_hash` into list + detail + send responses. Stripped at each
+   return point (a shared `stripToken` in lienWaivers; destructure elsewhere),
+   matching how estimates/invoices already scrub theirs. Low severity (SHA-256,
+   same-company admin) but it's internal token material.
+3. **Unbounded signer name** on the public accept/sign routes (`typed_name`) —
+   capped to 255 chars, since it's unauthenticated free text.
+4. **Night differential mis-rated.** `nightPremiumCost` applied the baseRate
+   premium to EVERY entry, including `prevailing` hours (which carry their own
+   rate) and leave. Now scoped to `wage_type='regular'` — the only hours priced
+   at baseRate.
+5. **Project-doc delete ordering.** `DELETE /projects/:id/documents/:docId`
+   deleted the R2 blob BEFORE the DB row, so a failed row delete left a record
+   pointing at a missing file. Flipped to DB-first, best-effort-blob-second —
+   matching the client-documents delete (a failed blob delete now only orphans a
+   file the R2 lifecycle reaps).
+
+Tests: prevailing-gets-no-night-premium case added. Server suite: 1103 pass.
+
+**All seven review batches now shipped.** (batches 1–7, dev)
+
+---
+
 ## 2026-07-26 — "Go for all of it" batch 6: pay-engine semantics (money-critical)
 
 Four verified fixes in `payCalculations.js` / `payStatement.js`, plus one gap

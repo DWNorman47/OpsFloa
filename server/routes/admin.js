@@ -2224,8 +2224,12 @@ router.delete('/projects/:id/documents/:docId', requireAdmin, async (req, res) =
     );
     if (doc.rowCount === 0) return res.status(404).json({ error: 'Document not found' });
     const { deleteByUrl } = require('../r2');
-    await deleteByUrl(doc.rows[0].url).catch(() => {});
+    // DB row first, blob second (best-effort) — matches the client-documents
+    // delete. Deleting the blob first then failing the row delete would leave a
+    // row pointing at a missing file; this way a failed blob delete only orphans
+    // a file the R2 lifecycle can reap later.
     await pool.query('DELETE FROM project_documents WHERE id=$1', [req.params.docId]);
+    deleteByUrl(doc.rows[0].url).catch(() => {});
     res.json({ deleted: true });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });

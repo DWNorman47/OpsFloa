@@ -187,7 +187,12 @@ function nightPremiumCost(entries, nightCfg, baseRate) {
   if (!pct) return 0;
   const from = parseFloat(nightCfg.fromHour), to = parseFloat(nightCfg.toHour);
   if (!Number.isFinite(from) || !Number.isFinite(to)) return 0;
-  return entries.reduce((c, e) => c + nightHoursForEntry(e, from, to) * baseRate * (pct / 100), 0);
+  // Only 'regular' hours are priced at baseRate. Prevailing hours carry their own
+  // (prevailing) rate and leave has no punch, so applying a baseRate night premium
+  // to them would pay the differential at the wrong rate.
+  return entries.reduce((c, e) => e.wage_type === 'regular'
+    ? c + nightHoursForEntry(e, from, to) * baseRate * (pct / 100)
+    : c, 0);
 }
 
 /** "YYYY-MM-DD" shifted by `k` days, timezone-independent. Null on a bad key. */

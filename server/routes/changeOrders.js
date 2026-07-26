@@ -82,7 +82,10 @@ async function loadCoFull(companyId, coId) {
     'SELECT * FROM change_order_lines WHERE change_order_id = $1 ORDER BY sort_order, id',
     [coId]
   );
-  return { ...head, lines: linesRes.rows };
+  // co.* carries response_token_hash; keep the internal token material out of
+  // authed detail/send payloads (matches estimates/invoices).
+  const { response_token_hash, ...safe } = head;
+  return { ...safe, lines: linesRes.rows };
 }
 
 async function recomputeTotals(client, coId) {
@@ -128,7 +131,8 @@ router.get('/change-orders', requireAuth, async (req, res) => {
   }
   if (project_id) { params.push(project_id); conditions.push(`co.project_id = $${params.length}`); }
   if (q) {
-    params.push(`%${q}%`);
+    // Escape ILIKE metacharacters so a literal % or _ matches literally (matches invoices.js).
+    params.push(`%${String(q).replace(/([\\%_])/g, '\\$1')}%`);
     conditions.push(`(co.co_number ILIKE $${params.length} OR co.description ILIKE $${params.length})`);
   }
   const where = conditions.join(' AND ');
@@ -145,7 +149,8 @@ router.get('/change-orders', requireAuth, async (req, res) => {
       ),
     ]);
     res.json({
-      items: dataRes.rows,
+      // co.* carries response_token_hash; strip it from the list payload.
+      items: dataRes.rows.map(({ response_token_hash, ...r }) => r),
       total: parseInt(countRes.rows[0].count, 10),
       page,
       pages: Math.ceil(parseInt(countRes.rows[0].count, 10) / limit),
@@ -497,7 +502,7 @@ publicRouter.get('/view/:token', async (req, res) => {
 });
 
 publicRouter.post('/accept/:token', publicWriteLimiter, async (req, res) => {
-  const signerName = (req.body.typed_name || '').toString().trim();
+  const signerName = (req.body.typed_name || '').toString().trim().slice(0, 255); // cap: unauthenticated free-text
   if (!signerName) return res.status(400).json({ error: 'typed_name is required' });
   if (req.body.authorized !== true) return res.status(400).json({ error: 'authorization confirmation required' });
   const tokenHash = sha256(req.params.token);

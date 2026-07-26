@@ -118,4 +118,13 @@ describe('night-shift differential', () => {
   test('no config → zero premium', () => {
     expect(nightPremiumCost([entry(MON, '22:00:00', '06:00:00')], null, 10)).toBe(0);
   });
+  test('prevailing hours get NO baseRate night premium (wrong rate)', () => {
+    // Prevailing hours are priced at the prevailing rate elsewhere; a baseRate
+    // night premium must not be layered on them.
+    const prevailing = [entry(MON, '22:00:00', '06:00:00', { wage_type: 'prevailing' })];
+    expect(nightPremiumCost(prevailing, { fromHour: 19, toHour: 5, pct: 25 }, 10)).toBe(0);
+    // A regular entry in the same window still gets it.
+    const regular = [entry(MON, '22:00:00', '06:00:00')];
+    expect(nightPremiumCost(regular, { fromHour: 19, toHour: 5, pct: 25 }, 10)).toBeCloseTo(7 * 10 * 0.25, 5);
+  });
 });

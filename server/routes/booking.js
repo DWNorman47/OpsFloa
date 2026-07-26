@@ -746,8 +746,10 @@ router.post('/appointment-types/:id/book', requireAuth, async (req, res) => {
     await logAudit(companyId, req.user.id, req.user.full_name,
       'appointment.booked', 'appointment', insertRes.rows[0].id, apt.name,
       { assigned_user_id: winner.id, scheduled_at: slotStart.toISOString() });
+    // Strip the token hash — the caller gets the raw manage_token; the hash is internal.
+    const { manage_token_hash, ...appt } = insertRes.rows[0];
     res.status(201).json({
-      ...insertRes.rows[0],
+      ...appt,
       manage_token: rawToken,   // raw, returned only on this response
       assigned_user_name: winner.full_name,
     });
@@ -793,7 +795,8 @@ router.get('/appointments', requireAuth, async (req, res) => {
       ),
     ]);
     res.json({
-      items: dataRes.rows,
+      // a.* carries manage_token_hash; strip it from the list payload.
+      items: dataRes.rows.map(({ manage_token_hash, ...a }) => a),
       total: parseInt(countRes.rows[0].count, 10),
       page,
       pages: Math.ceil(parseInt(countRes.rows[0].count, 10) / limit),
