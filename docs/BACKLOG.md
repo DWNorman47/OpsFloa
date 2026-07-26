@@ -123,10 +123,14 @@ that holds the exhaustive detail.
   with fringe modeled separately** (`worker_fringes`), so "OT on the base rate,
   fringe paid straight" needs **no schema change**. Remaining decisions collapse to
   "reuse the company's existing OT config for the threshold" and "route the report
-  through `annotateEntryOvertime` for a per-day ST/OT split." **Still gated on David
-  validating against one real WH-347** before the pay-math change (see spec). The
-  inline break-clamp bug on this endpoint was fixed 2026-07-26. (Found review batch
-  6; audited on request.)
+  through `annotateEntryOvertime` for a per-day ST/OT split." **Config-driven, not a
+  50-state ruleset** — the engine's OT config is company+role only (no
+  per-project/classification), so it's a **two-phase** build: P1 route through the
+  shared engine (broad by construction), P2 a per-project OT override for jobs whose
+  wage determination differs from the company rule. Gate is now an **archetype test
+  matrix** (federal / CA-daily / no-state-law) + reconcile-to-`buildPayStatement`,
+  not one customer's form. Inline break-clamp bug fixed 2026-07-26. (Found review
+  batch 6; audited + broadened on request.)
 - ~~**Raw `localStorage`/`sessionStorage` still used in feature components.**~~
   **RESOLVED 2026-07-20.** Swept 72 calls across 23 post-login files onto
   `safeSession`/`safeLocal`; `debugBundle` reads storage inside its try now. Every

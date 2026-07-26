@@ -30,12 +30,28 @@ buckets raw hours per day into `regular_days` / `prevailing_days` and computes
   2026-07-26** (it had its own inline copy, so the Batch-6 engine clamp didn't
   reach it).
 
-## The rule (federal baseline — confirm per Gate)
+## Design stance: config-driven, NOT a 50-state ruleset
 
-- **Threshold:** federal CWHSSA is weekly, >40h. States can add daily (CA >8h/day,
+Anyone in any state can buy this, so we do **not** hardcode state law. Two reasons:
+state rules change, and prevailing OT is ultimately fixed by the **wage
+determination attached to each contract** (a per-project document) that can
+override state law per craft. A built-in 50-state table would rot *and* still miss
+determination-specific clauses.
+
+Instead: make the OT config expressive enough to represent any
+threshold/rate/premium (it mostly already is), default it sensibly, and let the
+**company's own configured rule** drive the report. We're not building "California
+prevailing OT" — we're making the WH-347 honor the same OT rule the rest of the app
+already honors. That's multi-state by construction because the config is
+per-company.
+
+## The rule (what the config must express)
+
+- **Threshold:** federal CWHSSA is weekly >40h; states can add daily (CA >8h/day,
   2× >12h, 7th-day). → **Reuse the company's existing OT config** (`hours_rules` /
-  `otConfig`). A CA contractor already set daily-8; a federal shop set weekly-40.
-  No new config, automatically right per their setup.
+  `otConfig`; company-wide + per-role via `effectiveRulesForRole` /
+  `otConfigByRoleFactory`). A CA contractor already set daily-8; a federal shop set
+  weekly-40.
 - **OT rate:** 1.5× (or the configured tier mult) × the **base** rate — the
   prevailing base rate for prevailing hours, the worker's `hourly_rate` for
   regular hours.
@@ -43,6 +59,18 @@ buckets raw hours per day into `regular_days` / `prevailing_days` and computes
   Already a separate column.
 - **Combine streams:** all hours (regular + prevailing) count toward the threshold;
   the OT portion is priced at the rate of the hours that crossed the line.
+
+## The engine boundary that "broad" runs into
+
+The OT engine today is **company-wide + per-role** only — there is **no per-project
+or per-classification OT rule** (classification is a separate field from
+`role_id`). So:
+
+- A company whose single OT rule covers all its work → Phase 1 is correct and broad.
+- A company running a prevailing job whose determination needs daily-8 while its
+  regular work is weekly-40, **or** two prevailing jobs in different states, →
+  cannot be expressed by company+role config. That's the real extensibility gap,
+  addressed in Phase 2.
 
 ## Implementation approach
 
@@ -77,14 +105,35 @@ Net: delete the manual `hoursWorked`/bucket loop (`admin.js:3513-3521`) and the 
 cells, a rate-of-pay column per (base) and the fringe column already present, and
 an OT rate line. `i18n.js` EN+ES keys for the new labels (i18n.test.js parity).
 
-## Gate (do before any of the above)
+## Phasing
 
-Pull **one real customer's WH-347** for a week with >40h (or >8h/day if they're in a
-daily-OT state) and match OpsFloa's output line-for-line — ST hours, OT hours, rate
-of pay, fringe, gross. That confirms the threshold basis and OT rate for the states
-and crafts we actually serve, before committing the pay-math change. Not a
-lawyer-review; just "does our number equal the number their payroll already
-produces."
+- **Phase 1 — broad by construction.** Route the WH-347 through the shared engine so
+  it honors the company's configured OT rule (the Implementation approach above).
+  Correct for the majority; multi-state because the config is per-company; no schema
+  change.
+- **Phase 2 — any state, any job.** Add a **per-project (or per-classification /
+  wage-determination) OT override** so a specific prevailing job can carry its own
+  threshold + rate independent of the company blanket rule. The engine already
+  threads per-*role* config through `roundEntriesFromSettings` (`workerRoleById` →
+  `effectiveRulesForRole` / `otConfigByRoleFactory`); per-*project* is the same
+  plumbing shape plus a small schema add (`projects.hours_rules` override, or an
+  OT-rule field on the wage determination). Ship only if a real customer needs a
+  per-job rule that differs from their company rule.
+
+## Gate — an archetype matrix, not one customer's form
+
+Validate against a **matrix of state archetypes** built as test fixtures with
+expected outputs derived from published rules, so it doesn't hinge on a single
+contractor:
+
+- Federal-only: weekly >40h @ 1.5× base.
+- California-style: daily >8h @ 1.5×, >12h @ 2×, 7th-consecutive-day.
+- No-state-law state: federal baseline.
+
+Plus the hard invariant: **WH-347 gross must reconcile to `buildPayStatement`** for
+the same worker/week. First, confirm the existing config vocabulary can *express*
+each archetype (it looks sufficient — daily/weekly/tier/rest-day/7th-day — but prove
+it). A real customer's WH-347 is then a welcome sanity check, not the blocker.
 
 ## Tests
 
