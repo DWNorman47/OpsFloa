@@ -23,6 +23,39 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-26 — "Go for all of it" batch 3: the Stripe subscription webhook
+
+Five real hardening fixes on `routes/stripe.js` (a sixth flagged item —
+incomplete/paused status mapping — was already handled by `mapStripeStatus`):
+
+1. **Activation stored no subscription id.** `checkout.session.completed` read
+   `session.metadata.company_id`, but checkout only set `subscription_data.metadata`
+   (→ the *subscription*, not the session), so the session's metadata was empty and
+   the `if (companyId && …)` guard fell through — `companies.stripe_subscription_id`
+   never got written (it's the ONLY writer). That silently broke `/addon`, `/portal`,
+   and the superadmin delete guard. Fixed both ways: checkout now sets top-level
+   `metadata` on the session too, and the handler falls back to the retrieved
+   **subscription's** metadata for sessions already in flight. `subscription.updated`
+   now also (re)asserts the sub id so it can't be left unset.
+2. **Plan read from `items[0]`.** Stripe doesn't order subscription items, so a
+   business sub whose per-worker seat or an add-on sorted first was mis-mapped to
+   `plan='free'` → the paying company loses access. New `planFromItems()` scans all
+   items for the first real base plan.
+3. **Out-of-order events.** New `last_stripe_event_at` watermark (migration 0153):
+   the three lifecycle writes fold `AND (… IS NULL OR … <= event.created)` into
+   their WHERE, so a stale `updated`/`deleted` (Stripe retries up to 3 days, no
+   ordering guarantee) can't resurrect a canceled company.
+4. **`payment_failed` could resurrect.** The past_due write was unconditional; now
+   guarded to `subscription_status IN ('active','trial','past_due')` so it won't
+   un-cancel or un-exempt a company.
+5. **Fail-open webhook.** The handler caught every error and still returned 200 —
+   a transient Neon blip dropped the state change forever. Now returns **500** so
+   Stripe retries (Sentry still fires for genuinely deterministic failures).
+
+New `stripeWebhookRoute.test.js` (6 tests) pins all five. Server suite: 1091 pass.
+
+---
+
 ## 2026-07-26 — "Go for all of it" batch 2: delete paths vs the booking FKs
 
 The company-wipe and the demo-workspace reset kept **two hand-maintained delete
