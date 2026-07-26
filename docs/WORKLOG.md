@@ -23,6 +23,29 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-25 — Review follow-up: superadmin wipe fix + cleanup pass ("all of it")
+
+- **Superadmin company-wipe (pre-existing bug).** `DELETE FROM projects` is
+  RESTRICTed by **seven** sub-ledger FKs — `subcontract_pos` (0107) plus the six
+  the `0114` audit-followup migration flipped CASCADE→RESTRICT (`lien_waivers`,
+  `change_orders`, `submittals`, `project_closeouts`, `project_expenses`,
+  `project_budget_categories`). None were deleted first, so wiping any company
+  with any of that data 500'd, leaving it un-deletable. Added the deletes in
+  FK-safe order (`subcontract_pos` before `subcontractors`; all before projects;
+  each parent CASCADEs its children) + `estimates` for orphan cleanup. Test
+  asserts both presence and the ordering.
+- **Server cleanups:** `createInvoice` advisory lock (no number-collision 500 on
+  concurrent create); from-project skips $0 expense lines; the list search escapes
+  ILIKE `%`/`_`; void locks its row (`FOR UPDATE`); `invoiceTotals` + the QBO list
+  scope by `company_id` / exclude void; `0150` also populates `client_id` +
+  `project_name` on migrated QBO rows.
+- **Client cleanups:** the invoice-list load ignores superseded responses (the
+  filter/page race); line items keyed by a stable `_k` so deleting a row no longer
+  resets an adjacent money field; `SourcePicker` matches visible fields (not
+  `JSON.stringify`); dropped a dead param.
+
+Verify green (82 / 1083).
+
 ## 2026-07-25 — Full review + fixes (Tier 1 bugs + unambiguous Tier 2)
 
 Ran a 5-way parallel review over the session's invoice / QBO / Stripe / sitework /

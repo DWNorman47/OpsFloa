@@ -162,6 +162,9 @@ const NUMBER_SQL = `
 
 // Insert a header (with generated number) + lines + totals in one TX; returns the id.
 async function createInvoice(client, companyId, userId, fields, lines, { source = 'scratch', source_estimate_id = null } = {}) {
+  // Serialize number generation per company within this tx so two concurrent
+  // creates can't compute the same MAX+1 and collide on uq_invoices_number.
+  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`invoice_number:${companyId}`]);
   const headRes = await client.query(
     `INSERT INTO invoices
        (company_id, invoice_number, project_id, client_id, client_name_snapshot, client_email,
@@ -203,7 +206,9 @@ router.get('/', requireAuth, async (req, res) => {
   if (project_id) { params.push(project_id); conditions.push(`project_id = $${params.length}`); }
   if (client_id) { params.push(client_id); conditions.push(`client_id = $${params.length}`); }
   if (q) {
-    params.push(`%${q}%`);
+    // Escape ILIKE metacharacters so a literal % or _ in the query matches
+    // literally (default backslash escape) rather than acting as a wildcard.
+    params.push(`%${String(q).replace(/([\\%_])/g, '\\$1')}%`);
     conditions.push(`(project_name ILIKE $${params.length} OR client_name_snapshot ILIKE $${params.length} OR invoice_number ILIKE $${params.length})`);
   }
   const where = conditions.join(' AND ');
@@ -328,6 +333,7 @@ router.post('/from-project/:projectId', requireAdmin, async (req, res) => {
     if (laborCents > 0) lines.push({ category: 'labor', sort_order: sort++, description: `Labor — ${proj.name}`, qty: 1, unit: null, unit_cost_cents: laborCents, total_cents: laborCents, notes: null });
     for (const e of expensesRes.rows) {
       const amt = parseInt(e.amount_cents, 10) || 0;
+      if (amt <= 0) continue; // skip $0 expenses — they'd just clutter the draft
       lines.push({ category: MONEY_CATEGORIES.includes(e.category) ? e.category : 'other', sort_order: sort++, description: e.description || 'Expense', qty: 1, unit: null, unit_cost_cents: amt, total_cents: amt, notes: null });
     }
     if (lines.length === 0) return res.status(400).json({ error: 'No approved labor or expenses to invoice on this project' });
@@ -599,18 +605,24 @@ router.post('/:id/payments', requireAdmin, async (req, res) => {
 // POST /invoices/:id/void — cancel an invoice (any status). Payments stay for the record.
 router.post('/:id/void', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
+  const client = await pool.connect();
   try {
-    const headRes = await pool.query('SELECT status, invoice_number FROM invoices WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
-    if (headRes.rowCount === 0) return res.status(404).json({ error: 'Invoice not found' });
-    if (headRes.rows[0].status === 'void') return res.status(409).json({ error: 'Invoice is already void' });
-    await pool.query("UPDATE invoices SET status = 'void', updated_at = NOW() WHERE id = $1 AND company_id = $2", [req.params.id, companyId]);
+    await client.query('BEGIN');
+    // Lock the row so void can't interleave with a concurrent /payments (which
+    // also locks) — otherwise the two status writes could race.
+    const headRes = await client.query('SELECT status, invoice_number FROM invoices WHERE id = $1 AND company_id = $2 FOR UPDATE', [req.params.id, companyId]);
+    if (headRes.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Invoice not found' }); }
+    if (headRes.rows[0].status === 'void') { await client.query('ROLLBACK'); return res.status(409).json({ error: 'Invoice is already void' }); }
+    await client.query("UPDATE invoices SET status = 'void', updated_at = NOW() WHERE id = $1 AND company_id = $2", [req.params.id, companyId]);
+    await client.query('COMMIT');
     await recordAudit({ invoiceId: req.params.id, action: 'voided', actorKind: 'admin', actorUserId: req.user.id, actorIp: req.ip });
     await logAudit(companyId, req.user.id, req.user.full_name, 'invoice.voided', 'invoice', req.params.id, headRes.rows[0].invoice_number, null);
     res.json(await loadInvoiceFull(companyId, req.params.id));
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     req.log.error({ err }, 'invoice void error');
     res.status(500).json({ error: 'Server error' });
-  }
+  } finally { client.release(); }
 });
 
 // ── Public (client-facing) invoice view ──────────────────────────────────────

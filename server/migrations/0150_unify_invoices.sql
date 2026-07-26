@@ -28,13 +28,14 @@ ALTER TABLE invoices ADD COLUMN IF NOT EXISTS migrated_pi_id  INTEGER;
 --    >= 0, so a negative mirror row (a QBO credit memo) would otherwise abort the
 --    entire migration and block the deploy. A credit memo lands as a $0 row.
 INSERT INTO invoices
-  (company_id, project_id, invoice_number, client_name_snapshot, status,
+  (company_id, project_id, client_id, invoice_number, client_name_snapshot, project_name, status,
    subtotal_cents, tax_cents, total_cents, issue_date, qbo_invoice_id,
    qbo_doc_number, source, created_at, migrated_pi_id)
 SELECT
-  pi.company_id, pi.project_id,
+  pi.company_id, pi.project_id, p.client_id,
   'QBO-IMP-' || pi.id,
   COALESCE(NULLIF(cl.name, ''), 'QuickBooks import'),
+  p.name,
   CASE pi.payment_status WHEN 'paid' THEN 'paid' WHEN 'partial' THEN 'partial' ELSE 'sent' END,
   GREATEST(0, ROUND(COALESCE(pi.amount, 0) * 100))::bigint,
   0,

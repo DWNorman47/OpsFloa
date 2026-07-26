@@ -122,6 +122,11 @@ describe('DELETE /superadmin/companies/:id', () => {
       'inventory_transactions', 'inventory_cycle_counts', 'purchase_orders',
       'inventory_items', 'inventory_locations', 'inventory_suppliers',
       'project_documents', 'invoices', 'project_invoices',
+      // Project sub-ledgers with ON DELETE RESTRICT on project_id — must be wiped
+      // before `DELETE FROM projects` (else the whole wipe 500s).
+      'subcontract_pos', 'subcontractors', 'lien_waivers', 'change_orders',
+      'submittals', 'project_closeouts', 'project_expenses',
+      'project_budget_categories', 'estimates',
       'service_requests', 'qbo_sync_errors', 'client_errors',
       'inbox', 'push_subscriptions', 'audit_log', 'equipment_items',
       'impersonation_log',
@@ -141,6 +146,18 @@ describe('DELETE /superadmin/companies/:id', () => {
     expect(txnIdx).toBeGreaterThan(-1);
     expect(itemsIdx).toBeGreaterThan(-1);
     expect(txnIdx).toBeLessThan(itemsIdx);
+
+    // projects RESTRICT ordering: the sub-ledgers (and subcontract_pos before
+    // subcontractors) must be deleted BEFORE projects.
+    const idxOf = re => sqls.findIndex(sql => re.test(sql));
+    const projIdx = idxOf(/DELETE FROM projects\b/);
+    const poIdx   = idxOf(/DELETE FROM subcontract_pos\b/);
+    const subsIdx = idxOf(/DELETE FROM subcontractors\b/);
+    expect(poIdx).toBeGreaterThan(-1);
+    expect(poIdx).toBeLessThan(subsIdx);      // subcontract_pos before subcontractors
+    for (const re of [/DELETE FROM subcontract_pos\b/, /DELETE FROM lien_waivers\b/, /DELETE FROM change_orders\b/, /DELETE FROM submittals\b/, /DELETE FROM project_closeouts\b/, /DELETE FROM project_expenses\b/, /DELETE FROM project_budget_categories\b/]) {
+      expect(idxOf(re)).toBeLessThan(projIdx); // all RESTRICT sub-ledgers before projects
+    }
 
     // cycle_counts before items (cycle_count_lines RESTRICT-ref items)
     const ccIdx = sqls.findIndex(sql => /DELETE FROM inventory_cycle_counts\b/.test(sql));

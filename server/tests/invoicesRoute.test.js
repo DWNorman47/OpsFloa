@@ -235,7 +235,10 @@ describe('POST /api/invoices/:id/payments', () => {
 // ── POST /invoices/:id/void ───────────────────────────────────────────────────
 describe('POST /api/invoices/:id/void', () => {
   test('409 when already void', async () => {
-    pool.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'void', invoice_number: 'INV-2026-0001' }] });
+    pool.query
+      .mockResolvedValueOnce(undefined)                                                        // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'void', invoice_number: 'INV-2026-0001' }] }) // SELECT ... FOR UPDATE
+      .mockResolvedValueOnce(undefined);                                                       // ROLLBACK
     const res = await request(makeApp()).post('/api/invoices/42/void');
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/already void/i);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import api from '../api';
@@ -64,20 +64,23 @@ function InvoicesList({ onOpen, onNew, onFromEstimate, onFromProject }) {
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState({ key: 'created_at', dir: 'desc' });
   const LIMIT = 50;
+  const reqSeq = useRef(0);
 
   const load = useCallback(async () => {
+    const seq = ++reqSeq.current; // ignore this response if a newer load has started
     setLoading(true);
     try {
       const params = { page, limit: LIMIT };
       if (statusFilter) params.status = statusFilter;
       if (filter) params.q = filter;
       const { data } = await api.get('/invoices', { params });
+      if (seq !== reqSeq.current) return; // superseded (e.g. filter changed mid-flight)
       setInvoices(data.items || []);
       setMeta({ total: data.total || 0, page: data.page || 1, pages: data.pages || 1 });
     } catch (err) {
-      silentError(err);
+      if (seq === reqSeq.current) silentError(err);
     } finally {
-      setLoading(false);
+      if (seq === reqSeq.current) setLoading(false);
     }
   }, [filter, statusFilter, page]);
 
@@ -228,8 +231,11 @@ function SourcePicker({ title, placeholder, fetchItems, renderItem, onPick, onCa
     fetchItems().then(rows => setItems(rows || [])).catch(() => setItems([])).finally(() => setLoading(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Match on the visible name-ish fields only — not JSON.stringify, which also
+  // matches hidden ids / timestamps / status and even the JSON key names.
   const filtered = q
-    ? items.filter(it => JSON.stringify(it).toLowerCase().includes(q.toLowerCase()))
+    ? items.filter(it => [it.name, it.project_name, it.client_name, it.client_name_snapshot, it.estimate_number, it.invoice_number]
+        .filter(Boolean).join(' ').toLowerCase().includes(q.toLowerCase()))
     : items;
 
   async function pick(it) {
@@ -283,9 +289,11 @@ function InvoiceForm({ existing, onSave, onCancel }) {
     terms: existing?.terms || '',
     notes: existing?.notes || '',
   });
+  // Each line carries a stable _k so React keys by identity, not array index —
+  // otherwise deleting a row resets the MoneyInput state of the rows below it.
   const [lines, setLines] = useState(existing?.lines?.length > 0
-    ? existing.lines.map(l => ({ ...l }))
-    : [{ category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0 }]
+    ? existing.lines.map(l => ({ ...l, _k: l.id ?? crypto.randomUUID() }))
+    : [{ category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0, _k: crypto.randomUUID() }]
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -294,7 +302,7 @@ function InvoiceForm({ existing, onSave, onCancel }) {
   function clearFieldError(k) { setFieldErrors(prev => (prev[k] ? { ...prev, [k]: undefined } : prev)); }
   function updateHead(k, v) { setDirty(true); clearFieldError(k); setHead(h => ({ ...h, [k]: v })); }
   function updateLine(i, k, v) { setDirty(true); setLines(arr => arr.map((line, idx) => idx === i ? { ...line, [k]: v } : line)); }
-  function addLine() { setDirty(true); setLines(arr => [...arr, { category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0 }]); }
+  function addLine() { setDirty(true); setLines(arr => [...arr, { category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0, _k: crypto.randomUUID() }]); }
   function removeLine(i) { setDirty(true); setLines(arr => arr.filter((_, idx) => idx !== i)); }
 
   // Live totals — mirrors server computeInvoiceTotals (subtotal → tax → retainage).
@@ -411,7 +419,7 @@ function InvoiceForm({ existing, onSave, onCancel }) {
               {lines.map((l, i) => {
                 const total = Math.round((parseFloat(l.qty) || 0) * (parseInt(l.unit_cost_cents, 10) || 0));
                 return (
-                  <tr key={i}>
+                  <tr key={l._k}>
                     <td style={styles.lineTd}>
                       <select value={l.category} onChange={e => updateLine(i, 'category', e.target.value)} style={{ ...styles.input, padding: '6px 8px' }}>
                         {CATEGORIES.map(c => <option key={c} value={c}>{t[CATEGORY_LABEL_KEYS[c]]}</option>)}
@@ -832,7 +840,7 @@ export function InvoicesPanel() {
   }
   function backToList() { setView({ kind: 'list' }); }
 
-  async function createFrom(path, item) {
+  async function createFrom(path) {
     try {
       const { data } = await api.post(path);
       setView({ kind: 'detail', id: data.id });
@@ -862,7 +870,7 @@ export function InvoicesPanel() {
               <span style={{ color: '#6b7280' }}> · {est.project_name} · {est.client_name_snapshot}</span>
             </>
           )}
-          onPick={est => createFrom(`/invoices/from-estimate/${est.id}`, est)}
+          onPick={est => createFrom(`/invoices/from-estimate/${est.id}`)}
           onCancel={backToList}
         />
       )}
@@ -877,7 +885,7 @@ export function InvoicesPanel() {
               {p.client_name && <span style={{ color: '#6b7280' }}> · {p.client_name}</span>}
             </>
           )}
-          onPick={p => createFrom(`/invoices/from-project/${p.id}`, p)}
+          onPick={p => createFrom(`/invoices/from-project/${p.id}`)}
           onCancel={backToList}
         />
       )}

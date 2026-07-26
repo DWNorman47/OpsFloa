@@ -487,6 +487,22 @@ router.delete('/companies/:id', requireSuperAdmin, async (req, res) => {
     await client.query(`DELETE FROM invoices                    WHERE company_id = $1`, [id]); // cascades invoice_lines/payments/audit
     await client.query(`DELETE FROM project_invoices            WHERE company_id = $1`, [id]); // dormant QBO mirror (retired; kept as backup)
 
+    // Project sub-ledgers whose project_id FK is ON DELETE RESTRICT (subcontract
+    // POs from 0107 + the 0114 audit-followup tables). These MUST be deleted
+    // before `DELETE FROM projects` below, or that delete raises an FK violation
+    // and the whole wipe rolls back (500 — the company can never be deleted).
+    // subcontract_pos first (subcontractors' subcontractor_id is also RESTRICT);
+    // each parent CASCADEs its own children.
+    await client.query(`DELETE FROM subcontract_pos            WHERE company_id = $1`, [id]); // cascades subcontract_po_payments
+    await client.query(`DELETE FROM subcontractors            WHERE company_id = $1`, [id]); // cascades subcontractor_documents
+    await client.query(`DELETE FROM lien_waivers              WHERE company_id = $1`, [id]);
+    await client.query(`DELETE FROM change_orders             WHERE company_id = $1`, [id]); // cascades change_order_lines
+    await client.query(`DELETE FROM submittals                WHERE company_id = $1`, [id]); // cascades submittal children
+    await client.query(`DELETE FROM project_closeouts         WHERE company_id = $1`, [id]); // cascades project_closeout_items
+    await client.query(`DELETE FROM project_expenses          WHERE company_id = $1`, [id]);
+    await client.query(`DELETE FROM project_budget_categories WHERE project_id IN (SELECT id FROM projects WHERE company_id = $1)`, [id]); // no company_id column
+    await client.query(`DELETE FROM estimates                 WHERE company_id = $1`, [id]); // cascades estimate_lines/audit; frees converted_project_id
+
     // ── Support / SaaS surfaces ─────────────────────────────────────────────
     await client.query(`DELETE FROM service_requests            WHERE company_id = $1`, [id]);
     await client.query(`DELETE FROM qbo_sync_errors             WHERE company_id = $1`, [id]);

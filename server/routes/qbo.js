@@ -283,6 +283,7 @@ router.get('/invoices/project/:projectId', requireAdmin, async (req, res) => {
            SELECT invoice_id, SUM(amount_cents) AS paid FROM invoice_payments GROUP BY invoice_id
          ) pay ON pay.invoice_id = i.id
         WHERE i.company_id = $1 AND i.project_id = $2 AND i.qbo_invoice_id IS NOT NULL
+          AND i.status <> 'void'
         ORDER BY i.created_at DESC`,
       [req.user.company_id, req.params.projectId]
     );

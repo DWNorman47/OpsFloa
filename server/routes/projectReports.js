@@ -23,7 +23,7 @@ async function assertProjectInCompany(companyId, projectId) {
 // is retired). Void invoices are excluded from both figures.
 // billed    = SUM(total_cents) over non-void invoices
 // collected = SUM(invoice_payments.amount_cents) for those invoices
-async function invoiceTotals(projectId) {
+async function invoiceTotals(projectId, companyId) {
   try {
     const r = await pool.query(
       `SELECT
@@ -32,11 +32,11 @@ async function invoiceTotals(projectId) {
            SELECT SUM(p.amount_cents)
              FROM invoice_payments p
              JOIN invoices i2 ON i2.id = p.invoice_id
-            WHERE i2.project_id = $1 AND i2.status <> 'void'
+            WHERE i2.project_id = $1 AND i2.company_id = $2 AND i2.status <> 'void'
          ), 0) AS collected_cents
        FROM invoices i
-      WHERE i.project_id = $1 AND i.status <> 'void'`,
-      [projectId]
+      WHERE i.project_id = $1 AND i.company_id = $2 AND i.status <> 'void'`,
+      [projectId, companyId]
     );
     return {
       billed_cents:    parseInt(r.rows[0].billed_cents, 10) || 0,
@@ -159,7 +159,7 @@ router.get('/projects/:id/pnl', requireAuth, async (req, res) => {
     const [contractValue, spend, invoices] = await Promise.all([
       contractValueCents(req.params.id),
       spendTotals(req.params.id, settings),
-      invoiceTotals(req.params.id),
+      invoiceTotals(req.params.id, companyId),
     ]);
 
     // gross_profit = revenue billed − cost spent  (lagging actual)
@@ -203,7 +203,7 @@ router.get('/projects/pnl-summary', requireAuth, async (req, res) => {
       const [contractValue, spend, invoices] = await Promise.all([
         contractValueCents(p.id),
         spendTotals(p.id, settings),
-        invoiceTotals(p.id),
+        invoiceTotals(p.id, companyId),
       ]);
       const gross_profit_cents     = invoices.billed_cents - spend.spent_cents;
       const projected_profit_cents = contractValue - (spend.spent_cents + spend.committed_cents);
@@ -250,7 +250,7 @@ router.get('/wip-report', requireAuth, async (req, res) => {
       const [contractValue, spend, invoices, budgetSum] = await Promise.all([
         contractValueCents(p.id),
         spendTotals(p.id, settings),
-        invoiceTotals(p.id),
+        invoiceTotals(p.id, companyId),
         (async () => {
           try {
             const r = await pool.query(
@@ -327,7 +327,7 @@ router.get('/wip-report/export', requireAuth, async (req, res) => {
     res.write(headers.join(',') + '\n');
     for (const p of projRes.rows) {
       const [contractValue, spend, invoices, budgetSum] = await Promise.all([
-        contractValueCents(p.id), spendTotals(p.id, csvSettings), invoiceTotals(p.id),
+        contractValueCents(p.id), spendTotals(p.id, csvSettings), invoiceTotals(p.id, companyId),
         (async () => {
           try {
             const r = await pool.query(
