@@ -3512,7 +3512,10 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_reports'), requ
       }
       const w = workerMap[row.user_id];
       const dayKey = DAY_KEYS[new Date(row.work_date + 'T00:00:00').getDay()];
-      const h = hoursWorked(row.start_time, row.end_time) - (row.break_minutes || 0) / 60;
+      // Clamp at 0 (this report sums hours inline, so it doesn't get the pay
+      // engine's entryDuration clamp): break > shift must not report negative
+      // hours on a compliance document.
+      const h = Math.max(0, hoursWorked(row.start_time, row.end_time) - (row.break_minutes || 0) / 60);
       if (row.wage_type === 'prevailing') {
         w.prevailing_days[dayKey] = +(w.prevailing_days[dayKey] + h).toFixed(2);
       } else {

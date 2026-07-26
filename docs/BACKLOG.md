@@ -113,19 +113,20 @@ that holds the exhaustive detail.
   fresh local project each time, so copying the same cloud takeoff twice yields two
   local projects both linked to it. Minor; could reuse the already-linked local
   project instead. (2026-07-11)
-- **Prevailing-wage hours never accrue overtime.** In `payStatement.js` the
-  prevailing bucket is summed flat (`hours × prevailing rate`) and `computeOT`
-  only ever looks at `wage_type='regular'` entries, so a Davis-Bacon worker doing
-  >8h/day (or >40h/week) of prevailing work is paid straight-time on the overtime
-  portion — a real compliance gap, not a crash. **Not fixed mechanically on
-  purpose:** doing it right needs product/legal decisions I shouldn't guess at —
-  the OT threshold basis (daily 8h? weekly 40h? combined with regular hours on
-  mixed days?), the OT rate (1.5× the *prevailing* rate, and does the fringe
-  portion get the multiplier?), and how prevailing + regular hours interact when
-  both occur on one day. Guessing the wrong rule would produce confidently-wrong
-  paychecks, which is worse than the known gap. Needs David to spec the rule, then
-  it's a focused change in the pay engine + a test matrix. (Found in review batch 6,
-  2026-07-26.)
+- **Prevailing / certified-payroll overtime.** → **spec:
+  `docs/plans/certified-payroll-ot.md`.** Audited 2026-07-26 and the scope got
+  *clearer and bigger*: the WH-347 report (`GET /admin/certified-payroll`,
+  `admin.js:3454`) computes **no overtime at all** — regular *and* prevailing — it
+  bucket-sums raw hours and grosses `hours × rate` flat, bypassing
+  `buildPayStatement`. So any >40h week on a compliance form is understated. The
+  audit *resolved* the decision I was worried about: the stored rate is **base-only
+  with fringe modeled separately** (`worker_fringes`), so "OT on the base rate,
+  fringe paid straight" needs **no schema change**. Remaining decisions collapse to
+  "reuse the company's existing OT config for the threshold" and "route the report
+  through `annotateEntryOvertime` for a per-day ST/OT split." **Still gated on David
+  validating against one real WH-347** before the pay-math change (see spec). The
+  inline break-clamp bug on this endpoint was fixed 2026-07-26. (Found review batch
+  6; audited on request.)
 - ~~**Raw `localStorage`/`sessionStorage` still used in feature components.**~~
   **RESOLVED 2026-07-20.** Swept 72 calls across 23 post-login files onto
   `safeSession`/`safeLocal`; `debugBundle` reads storage inside its try now. Every

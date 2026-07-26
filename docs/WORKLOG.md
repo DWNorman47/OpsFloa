@@ -23,6 +23,29 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-26 — Certified-payroll / prevailing-OT audit (+ break clamp)
+
+Audited the WH-347 path to figure out how to close the prevailing-OT gap without
+guessing money math. Finding was bigger than the BACKLOG note: `GET
+/admin/certified-payroll` (`admin.js:3454`) computes **no overtime at all** — it
+bucket-sums raw hours and grosses `hours × rate` flat, and it **bypasses
+`buildPayStatement`** (hand-rolled, which is why it drifted). So the compliance
+report understates OT for *everyone*, not just prevailing workers.
+
+The audit *resolved* the hard question, though: the stored rate is **base-only,
+fringe modeled separately** (`worker_fringes`, per-category per-hour) — exactly the
+WH-347 model, so "OT on base, fringe straight" needs no schema change. The other
+decisions collapse to "reuse the company's existing OT config" + "route through
+`annotateEntryOvertime` for a per-day ST/OT split."
+
+Wrote the full plan → `docs/plans/certified-payroll-ot.md`; updated the BACKLOG
+item to point at it. **Still gated** on David matching one real WH-347 before the
+pay-math change. Shipped now: the inline **break-clamp** fix on this endpoint
+(`admin.js:3515`, its own copy of the Batch-6 bug — negative hours on a compliance
+doc). 1103 pass.
+
+---
+
 ## 2026-07-26 — "Go for all of it" batch 7: cleanup sweep
 
 Five lower-severity hygiene/correctness fixes closing out the review:
