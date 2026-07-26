@@ -256,12 +256,12 @@ describe('computeOT — more edge cases', () => {
     expect(regularHours).toBeCloseTo(8);
   });
 
-  test('break longer than shift produces negative hours (known quirk — pins behavior)', () => {
-    // Data integrity problem, not a calc bug — but document what happens if
-    // dirty data reaches this function. h = -1h → regularHours still 0, no OT.
+  test('break longer than shift clamps the day to 0 (never negative)', () => {
+    // Dirty data (break > shift) must never subtract from paid hours/pay.
+    // entryDuration clamps at 0, so this contributes nothing rather than −1h.
     const entries = [daily('2024-01-01', '08:00', '09:00', 'regular', 120)]; // 1h shift, 2h break
     const { regularHours, overtimeHours } = computeOT(entries, 'daily', 8);
-    expect(regularHours).toBeCloseTo(-1); // negative — flag as data-integrity bug upstream
+    expect(regularHours).toBeCloseTo(0);
     expect(overtimeHours).toBe(0);
   });
 

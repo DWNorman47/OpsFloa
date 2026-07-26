@@ -57,7 +57,9 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
   let prevailingHours = 0, prevailingCostRaw = 0;
   for (const e of paid) {
     if (e.wage_type !== 'prevailing') continue;
-    const h = hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60;
+    // Clamp at 0 (matches entryDuration): a break longer than the shift must not
+    // produce negative prevailing hours/cost.
+    const h = Math.max(0, hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60);
     prevailingHours += h;
     prevailingCostRaw += h * (projectRateMap && projectRateMap[e.project_id] != null ? projectRateMap[e.project_id] : prevRate);
   }
@@ -75,12 +77,15 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     overtimeCostRaw = otBandsCost(otBands, rate, otMult) + nightPremiumCost(paid, otConfig && otConfig.nightDifferential, rate);
   }
 
-  const { shortfall: guaranteeShortfall, minHours: guaranteeMinHours, weeks: guaranteeWeeks } =
-    computeGuaranteeShortfall(totalHours, worker.guaranteed_weekly_hours, from, to);
-
   const mult = leaveRateMultipliers(settings);
   const sickHours = (leave && leave.sick) || 0;
   const vacationHours = (leave && leave.vacation) || 0;
+
+  // Paid leave counts toward the weekly-hours guarantee. A worker guaranteed 40h
+  // who worked 30h and took 10h sick has been covered for 40h — paying a 10h
+  // guarantee shortfall ON TOP of the 10h sick pay would double-pay those hours.
+  const { shortfall: guaranteeShortfall, minHours: guaranteeMinHours, weeks: guaranteeWeeks } =
+    computeGuaranteeShortfall(totalHours + sickHours + vacationHours, worker.guaranteed_weekly_hours, from, to);
 
   // Round every line to cents so line items provably sum to the totals.
   const regularCost = cents(regularCostRaw);

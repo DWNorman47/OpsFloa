@@ -67,6 +67,17 @@ describe('buildPayStatement — the reconciled decisions', () => {
     expect(st.cost.guarantee).toBe(960);          // 32 × 30
   });
 
+  test('paid leave counts toward the guarantee (no double-pay)', () => {
+    const st = build({
+      worker: worker({ guaranteed_weekly_hours: 40 }),
+      entries: [entry()],                // 8h worked
+      leave: { sick: 20, vacation: 4 },  // 24h paid leave
+    });
+    // Covered for 8 + 24 = 32 of the 40h guarantee → 8h shortfall, not 32.
+    expect(st.hours.guaranteeShortfall).toBe(8);
+    expect(st.cost.guarantee).toBe(240); // 8 × 30
+  });
+
   test('deductions → net; wages-net excludes reimbursements, net-pay includes them', () => {
     const st = build({
       entries: [entry()], // gross 240

@@ -23,6 +23,41 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-26 — "Go for all of it" batch 6: pay-engine semantics (money-critical)
+
+Four verified fixes in `payCalculations.js` / `payStatement.js`, plus one gap
+filed rather than guessed:
+
+1. **Guarantee double-paid leave.** The weekly-hours guarantee shortfall was
+   computed from worked hours only (`regular + OT + prevailing`), ignoring paid
+   leave. A worker guaranteed 40h who worked 30h and took 10h sick got 30 + 10
+   sick + **10 guarantee** = 50h paid. Leave now counts toward the guarantee base
+   (`+ sick + vacation`), so covered-to-40 → no shortfall.
+2. **Partial leave double-counted across pay periods.** A partial time-off request
+   (single logged `hours` + a date range) is fetched by any period it overlaps, so
+   a request straddling a period boundary was paid IN FULL in both. Now anchored
+   to the period containing its `start_date` — counted exactly once.
+3. **`min_daily > threshold` erased worked overtime.** When the reporting-time
+   floor exceeded the OT threshold, a short-of-floor day dumped the whole floor
+   into regular and skipped banding (worked 9h with floor 10 / threshold 8 → 10
+   reg / 0 OT). Now the worked hours are banded first (OT preserved) and the
+   shortfall tops up as regular. Identical for the usual floor ≤ threshold.
+4. **Break > shift → negative pay.** `entryDuration` (and the prevailing loop)
+   returned `shiftHours − breakHours` unclamped, so dirty data (break longer than
+   the shift) subtracted from paid hours and pay. Clamped at 0.
+
+Filed to BACKLOG (not fixed): **prevailing-wage hours never accrue overtime** —
+a real Davis-Bacon compliance gap, but fixing it right needs product/legal
+decisions (OT threshold basis, 1.5× *which* rate, fringe treatment, mixed-day
+interaction). Guessing would produce confidently-wrong paychecks, worse than the
+known gap — so it needs David's spec first.
+
+Tests: guarantee-with-leave, partial-straddle (×2), floor-above-threshold, and
+break-clamp cases added; the old test that *pinned* the negative-hours quirk was
+flipped to assert the clamp. Server suite: 1102 pass.
+
+---
+
 ## 2026-07-26 — "Go for all of it" batch 5: public-route + impersonation hardening
 
 Four tenant/abuse-surface fixes:

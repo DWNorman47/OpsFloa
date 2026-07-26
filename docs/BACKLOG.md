@@ -113,6 +113,19 @@ that holds the exhaustive detail.
   fresh local project each time, so copying the same cloud takeoff twice yields two
   local projects both linked to it. Minor; could reuse the already-linked local
   project instead. (2026-07-11)
+- **Prevailing-wage hours never accrue overtime.** In `payStatement.js` the
+  prevailing bucket is summed flat (`hours × prevailing rate`) and `computeOT`
+  only ever looks at `wage_type='regular'` entries, so a Davis-Bacon worker doing
+  >8h/day (or >40h/week) of prevailing work is paid straight-time on the overtime
+  portion — a real compliance gap, not a crash. **Not fixed mechanically on
+  purpose:** doing it right needs product/legal decisions I shouldn't guess at —
+  the OT threshold basis (daily 8h? weekly 40h? combined with regular hours on
+  mixed days?), the OT rate (1.5× the *prevailing* rate, and does the fringe
+  portion get the multiplier?), and how prevailing + regular hours interact when
+  both occur on one day. Guessing the wrong rule would produce confidently-wrong
+  paychecks, which is worse than the known gap. Needs David to spec the rule, then
+  it's a focused change in the pay engine + a test matrix. (Found in review batch 6,
+  2026-07-26.)
 - ~~**Raw `localStorage`/`sessionStorage` still used in feature components.**~~
   **RESOLVED 2026-07-20.** Swept 72 calls across 23 post-login files onto
   `safeSession`/`safeLocal`; `debugBundle` reads storage inside its try now. Every

@@ -16,7 +16,9 @@ function hoursWorked(start, end) {
 }
 
 function entryDuration(e) {
-  return hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60;
+  // Clamp at 0: a break longer than the shift (bad/hostile input) would otherwise
+  // yield a negative duration that subtracts from paid hours — and thus from pay.
+  return Math.max(0, hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60);
 }
 
 /** Day of week (0=Sun … 6=Sat) for a YYYY-MM-DD key, timezone-independent. */
@@ -103,9 +105,15 @@ function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours
     if (!req) continue;
     const type = req.type === 'vacation' ? 'vacation' : 'sick';
     if (req.hours != null && req.hours !== '') {           // partial → pay the logged hours
+      // Count the lump only in the period that contains its start date. The
+      // fetch query returns any request overlapping [from,to], so a partial
+      // straddling a pay-period boundary would otherwise be paid IN FULL in both
+      // periods (this loader runs once per period for per-worker pay stubs).
+      const anchor = req.start_date != null ? String(req.start_date).substring(0, 10) : null;
+      if (anchor != null && (anchor < f || anchor > t)) continue;
       const h = parseFloat(req.hours) || 0;
       totals[type] += h;
-      if (detail) detail.push({ type, date: req.start_date != null ? String(req.start_date).substring(0, 10) : null, hours: h, source: 'partial' });
+      if (detail) detail.push({ type, date: anchor, hours: h, source: 'partial' });
       continue;
     }
     if (req.start_date == null || req.end_date == null) continue;
@@ -426,16 +434,21 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
         seventhFirst += Math.min(h, firstT);
         seventhRest  += Math.max(0, h - firstT);
       } else {
+        // Band the actually-worked hours FIRST so overtime is preserved, THEN
+        // top the day up to the reporting-time floor with regular hours. The old
+        // code dumped the whole floor into regular whenever h < minD, which
+        // erased genuine OT on any day where the floor exceeded the OT threshold
+        // (e.g. minDaily 10, threshold 8, worked 9 → paid 10 reg / 0 OT instead
+        // of 9 reg + 1 OT). For the usual floor <= threshold this is identical.
+        const bb = bandsForBucket(rule, threshold, otConfig, dk);
+        autoReg += Math.min(h, bb[0].afterHours);
+        bb.forEach((b, i) => {
+          const upper = i + 1 < bb.length ? bb[i + 1].afterHours : Infinity;
+          addOt(Math.max(0, Math.min(h, upper) - b.afterHours), b.mult);
+        });
         const minD = minDailyForBucket(otConfig, rule, dk);
         if (minD > 0 && h < minD) {
-          autoReg += minD;                        // short day topped up to the floor
-        } else {
-          const bb = bandsForBucket(rule, threshold, otConfig, dk);
-          autoReg += Math.min(h, bb[0].afterHours);
-          bb.forEach((b, i) => {
-            const upper = i + 1 < bb.length ? bb[i + 1].afterHours : Infinity;
-            addOt(Math.max(0, Math.min(h, upper) - b.afterHours), b.mult);
-          });
+          autoReg += (minD - h);                  // reporting-time floor: pay the shortfall as regular
         }
       }
     });

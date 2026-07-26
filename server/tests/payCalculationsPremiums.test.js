@@ -56,6 +56,23 @@ describe('minimum daily hours (reporting-time floor)', () => {
     expect(r.regularHours).toBeCloseTo(8, 5);
     expect(r.overtimeHours).toBeCloseTo(2, 5);
   });
+
+  test('a floor ABOVE the OT threshold still preserves worked overtime', () => {
+    // minDaily 10 > threshold 8; worked 9 → 8 reg + 1 OT (worked), then topped up
+    // 1h to the floor as regular = 9 reg / 1 OT. The old code paid 10 reg / 0 OT.
+    const r = computeOT([hDay(MON, 9)], 'daily', 8, 1, { minDailyHours: 10 });
+    expect(r.regularHours).toBeCloseTo(9, 5);
+    expect(r.overtimeHours).toBeCloseTo(1, 5);
+  });
+});
+
+describe('break longer than the shift', () => {
+  test('a break exceeding the shift clamps the day to 0, not negative', () => {
+    // 1h shift, 2h break → duration would be −1h; must not subtract from pay.
+    const r = computeOT([entry(MON, '08:00:00', '09:00:00', { break_minutes: 120 })], 'daily', 8, 1, {});
+    expect(r.regularHours).toBeCloseTo(0, 5);
+    expect(r.overtimeHours).toBeCloseTo(0, 5);
+  });
 });
 
 describe('work_date as a pg Date, not a string', () => {
