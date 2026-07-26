@@ -23,6 +23,37 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-26 — "Go for all of it" batch 2: delete paths vs the booking FKs
+
+The company-wipe and the demo-workspace reset kept **two hand-maintained delete
+lists**, and they'd drifted. The full wipe (superadmin) had the 0114 RESTRICT
+sub-ledgers but **not the booking tables** (0113); the demo reset had an even
+shorter list. Since the demo seed now creates `appointments`, and
+`appointments.assigned_user_id` / `.appointment_type_id` are both `ON DELETE
+RESTRICT`, the demo reset's `DELETE FROM users` would 500 on the next reset — and
+the full wipe would 500 on any company that ever booked an appointment.
+
+Fixed at the altitude of the drift: **extracted one `purgeCompanyRows(client, id)`**
+and pointed both the wipe route and `deleteDemoWorkspace` at it, so the list can't
+diverge again. Folded in:
+- **Booking (0113):** `appointments` (cascades `appointment_audit`) →
+  `appointment_types` (cascades the two join tables) → `shift_types` →
+  `bookable_windows`, all before `users`.
+- **`roles` / `role_permissions`** — these were in the demo list but **missing
+  from the full wipe** (it relied on `companies` cascade); now explicit in both,
+  after `users` (users.role_id → roles).
+- **Export endpoint** (`GET /companies/:id/export`) list synced: added the booking
+  tables, `invoices`, `estimates`, and the project sub-ledgers it had also drifted
+  past — churned-customer exports were silently incomplete.
+
+Test: `superadminDelete.test.js` gained the booking tables + a booking-ordering
+assertion (appointments before users AND appointment_types) and the roles-after-
+users check. Server suite: 1085 pass. (One cross-suite flake in
+`updateLanguageImpersonation` under load — passes isolated and on re-run; unrelated
+to this change.)
+
+---
+
 ## 2026-07-26 — "Go for all of it" batch 1: the work_date-as-Date class of bug
 
 Second review's headline finding, verified and fixed. **Root cause:** node-postgres

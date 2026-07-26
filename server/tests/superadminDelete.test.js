@@ -129,8 +129,12 @@ describe('DELETE /superadmin/companies/:id', () => {
       'project_budget_categories', 'estimates',
       'service_requests', 'qbo_sync_errors', 'client_errors',
       'inbox', 'push_subscriptions', 'audit_log', 'equipment_items',
+      // Booking module (0113): appointments FK RESTRICT to both users and
+      // appointment_types, so it must be wiped before either.
+      'appointments', 'appointment_types', 'shift_types', 'bookable_windows',
       'impersonation_log',
-      'clients', 'projects', 'advanced_settings', 'settings', 'users', 'companies',
+      'clients', 'projects', 'advanced_settings', 'settings',
+      'role_permissions', 'users', 'roles', 'companies',
     ];
     for (const table of expectedTables) {
       const hit = sqls.some(sql => sql.includes(`FROM ${table}`) || sql.includes(`FROM ${table} `) || new RegExp(`DELETE FROM ${table}\\b`).test(sql));
@@ -162,6 +166,21 @@ describe('DELETE /superadmin/companies/:id', () => {
     // cycle_counts before items (cycle_count_lines RESTRICT-ref items)
     const ccIdx = sqls.findIndex(sql => /DELETE FROM inventory_cycle_counts\b/.test(sql));
     expect(ccIdx).toBeLessThan(itemsIdx);
+
+    // Booking RESTRICT ordering: appointments.assigned_user_id and
+    // .appointment_type_id are both ON DELETE RESTRICT, so appointments must be
+    // wiped before users AND before appointment_types.
+    const apptIdx      = idxOf(/DELETE FROM appointments\b/);
+    const apptTypesIdx = idxOf(/DELETE FROM appointment_types\b/);
+    const usersIdx     = idxOf(/DELETE FROM users\b/);
+    expect(apptIdx).toBeGreaterThan(-1);
+    expect(apptIdx).toBeLessThan(usersIdx);
+    expect(apptIdx).toBeLessThan(apptTypesIdx);
+
+    // roles after users (users.role_id references roles)
+    const rolesIdx = idxOf(/DELETE FROM roles\b/);
+    expect(rolesIdx).toBeGreaterThan(-1);
+    expect(usersIdx).toBeLessThan(rolesIdx);
 
     // companies last
     const compIdx = sqls.findIndex(sql => /DELETE FROM companies\b/.test(sql));
