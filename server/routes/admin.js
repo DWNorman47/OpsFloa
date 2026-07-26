@@ -2487,6 +2487,35 @@ router.post('/projects/:id/merge-into/:target_id', requireAdmin, requirePerm('ma
     const sourceName = check.rows.find(r => r.id === sourceId)?.name;
     const targetName = check.rows.find(r => r.id === targetId)?.name;
 
+    // The re-point list below only moves operational tables (time entries,
+    // reports, RFIs, …). It does NOT move the financial / audit-followup ledgers,
+    // whose project_id FK is ON DELETE RESTRICT (change orders, subcontract POs,
+    // submittals, closeouts, expenses, budgets, lien waivers) or SET NULL
+    // (invoices, estimates). So merging a source that has any of those would
+    // either 500 on the DELETE (RESTRICT) or silently orphan the money (SET NULL).
+    // Merging financial records across projects isn't supported yet (unique
+    // closeout/budget rows per project, real merge semantics) — fail cleanly
+    // instead of corrupting/500ing. See docs/BACKLOG.md.
+    const fin = await pool.query(
+      `SELECT (
+           EXISTS(SELECT 1 FROM change_orders             WHERE project_id = $1 AND company_id = $2)
+        OR EXISTS(SELECT 1 FROM submittals                WHERE project_id = $1 AND company_id = $2)
+        OR EXISTS(SELECT 1 FROM subcontract_pos           WHERE project_id = $1 AND company_id = $2)
+        OR EXISTS(SELECT 1 FROM project_closeouts         WHERE project_id = $1 AND company_id = $2)
+        OR EXISTS(SELECT 1 FROM project_expenses          WHERE project_id = $1 AND company_id = $2)
+        OR EXISTS(SELECT 1 FROM lien_waivers              WHERE project_id = $1 AND company_id = $2)
+        OR EXISTS(SELECT 1 FROM invoices                  WHERE project_id = $1 AND company_id = $2)
+        OR EXISTS(SELECT 1 FROM project_budget_categories WHERE project_id = $1)
+        OR EXISTS(SELECT 1 FROM estimates                 WHERE converted_project_id = $1 AND company_id = $2)
+      ) AS has_financial`,
+      [sourceId, companyId]
+    );
+    if (fin.rows[0].has_financial) {
+      return res.status(409).json({
+        error: 'This project has financial records (change orders, POs, submittals, closeouts, expenses, budgets, lien waivers, invoices, or estimates). Merging those across projects isn\'t supported yet — move or resolve them first.',
+      });
+    }
+
     const client = await pool.connect();
     try {
       await client.query('BEGIN');

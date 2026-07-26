@@ -23,6 +23,26 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-25 — Follow-through: delete/merge paths vs the 0114 RESTRICT FKs
+
+Chased the `0114` CASCADE→RESTRICT project-FK change through the *other* delete
+paths, after fixing the superadmin wipe:
+
+- **Demo-workspace reset — verified SAFE.** `deleteDemoWorkspace` also does
+  `DELETE FROM projects`, but its seeder (`createDemoWorkspace`) never creates any
+  RESTRICT sub-ledger tables, so nothing can block it. No fix needed.
+- **Project merge — found + guarded a real bug.** `admin.js`
+  `POST /projects/:id/merge-into/:target_id` re-points only 12 operational tables
+  then hard-deletes the source, so a source with financial records (change orders /
+  POs / submittals / closeouts / expenses / budgets / lien waivers = RESTRICT, or
+  invoices / estimates = SET NULL) would **500 on the delete or silently orphan the
+  money**. Added a pre-check that returns a clean **409** instead. Full
+  financial-aware merge (needs real merge semantics for the per-project unique
+  closeout/budget rows) is filed in `docs/BACKLOG.md`.
+
+Verify green (82 / 1083). ⚠️ The merge endpoint has no tests (pre-existing gap);
+the guard is a simple defensive pre-check.
+
 ## 2026-07-25 — Review follow-up: superadmin wipe fix + cleanup pass ("all of it")
 
 - **Superadmin company-wipe (pre-existing bug).** `DELETE FROM projects` is

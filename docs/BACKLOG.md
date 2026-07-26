@@ -21,6 +21,22 @@ that holds the exhaustive detail.
 
 ## 🔧 Bugs — set aside for later
 
+- **Project merge doesn't move financial records** (`admin.js`
+  `POST /projects/:id/merge-into/:target_id`). The re-point list only covers
+  operational tables (time entries, reports, RFIs, …), not the financial /
+  audit-followup ledgers — change orders, subcontract POs, submittals, closeouts,
+  expenses, budgets, lien waivers (all `project_id` FK **RESTRICT**) or invoices /
+  estimates (**SET NULL**). So merging a source with any of those would 500 on the
+  final `DELETE FROM projects` (RESTRICT) or silently orphan the money (SET NULL).
+  **Guarded 2026-07-25:** the endpoint now pre-checks and returns a clean 409
+  instead of 500ing / orphaning. **Still TODO:** actually *support* merging those —
+  non-trivial because `project_closeouts` / `project_budget_categories` are unique
+  per project, so it needs real merge semantics (combine vs. keep-target), not just
+  a re-point. The hardcoded re-point list is also inherently fragile (this is how
+  it went stale); a schema-driven "re-point every table with a project_id FK" would
+  be more durable. (Found during the invoice review; same FK class as the superadmin
+  wipe bug that was fixed.)
+
 - ~~**The hours-rules engine reaches 4 of the 10 paths that turn hours into
   money**~~ **RESOLVED (money-of-record) 2026-07-25.** Every path that produces a
   number a company acts on now runs through the shared engine: the four worker-pay
