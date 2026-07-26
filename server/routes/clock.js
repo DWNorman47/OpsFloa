@@ -150,22 +150,38 @@ router.post('/in', requireAuth, requirePerm('clock_self'), clockLimiter, coerceB
     const parsedClockInTime = clock_in_time ? new Date(clock_in_time) : null;
     const clockInTs = parsedClockInTime && !isNaN(parsedClockInTime) ? parsedClockInTime : null;
 
+    // DO NOTHING, not DO UPDATE: if the worker is already clocked in, an
+    // ON CONFLICT DO UPDATE would silently OVERWRITE the in-progress shift —
+    // its original clock_in_time and project gone, the morning's hours erased
+    // with no time entry ever created. Instead the conflict is a no-op and we
+    // return the existing clock-in below, so a double-tap, a second device, or
+    // an offline-queue replay is idempotent and the shift is preserved.
+    // (Changing projects mid-shift is what /switch is for.)
     const result = await pool.query(
       `INSERT INTO active_clock (user_id, company_id, project_id, clock_in_time, clock_in_lat, clock_in_lng, work_date, notes, timezone, clock_source, clocked_in_by)
        VALUES ($1, $2, $3, COALESCE($4::timestamptz, NOW()), $5, $6, COALESCE($7::date, CURRENT_DATE), $8, $9, $10, $11)
-       ON CONFLICT (user_id) DO UPDATE
-         SET project_id = EXCLUDED.project_id,
-             clock_in_time = EXCLUDED.clock_in_time,
-             clock_in_lat = EXCLUDED.clock_in_lat,
-             clock_in_lng = EXCLUDED.clock_in_lng,
-             work_date = EXCLUDED.work_date,
-             notes = EXCLUDED.notes,
-             timezone = EXCLUDED.timezone,
-             clock_source = EXCLUDED.clock_source,
-             clocked_in_by = EXCLUDED.clocked_in_by
+       ON CONFLICT (user_id) DO NOTHING
        RETURNING *`,
       [req.user.id, companyId, project_id, clockInTs, lat || null, lng || null, local_work_date || null, notes || null, timezone || null, 'worker', null]
     );
+
+    if (result.rowCount === 0) {
+      // Already clocked in — return the untouched existing shift.
+      const existing = await pool.query('SELECT * FROM active_clock WHERE user_id = $1', [req.user.id]);
+      const exRow = existing.rows[0];
+      if (exRow) {
+        let exName = null;
+        if (exRow.project_id) {
+          const pr = await pool.query('SELECT name FROM projects WHERE id = $1 AND company_id = $2', [exRow.project_id, companyId]);
+          exName = pr.rows[0]?.name || null;
+        }
+        return res.status(200).json({ ...exRow, project_name: exName, already_clocked_in: true });
+      }
+      // Extremely unlikely: the conflicting row vanished between INSERT and
+      // SELECT. Surface it rather than returning an empty body.
+      logFailure(req, 'clock.in', 'conflict_row_missing');
+      return res.status(409).json({ error: 'Already clocked in.' });
+    }
 
     const row = result.rows[0];
 
@@ -522,6 +538,16 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
     let entryResult;
     try {
       await txClient.query('BEGIN');
+      // The active_clock SELECT above is unlocked, so two concurrent /out calls
+      // both read the row and, without this, both insert a time entry for the
+      // same shift (double pay). Re-check under a row lock: FOR UPDATE serializes
+      // the pair; the loser finds the row already gone and aborts with no entry.
+      const locked = await txClient.query('SELECT 1 FROM active_clock WHERE user_id = $1 FOR UPDATE', [req.user.id]);
+      if (locked.rowCount === 0) {
+        await txClient.query('ROLLBACK');
+        logFailure(req, 'clock.out', 'not_clocked_in');
+        return res.status(400).json({ error: 'Not clocked in' });
+      }
       // Phase 2 dual-write: clockInTime / clockOutTime are already real UTC
       // instants, so we can write them straight to start_ts / end_ts without
       // round-tripping through wall-clock + TZ.

@@ -23,6 +23,33 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-26 — "Go for all of it" batch 4: clock-in/out races
+
+Two concurrency bugs on `routes/clock.js`, both money/data-integrity:
+
+- **Double clock-out → duplicate time entry (double pay).** `/out` read
+  `active_clock` with a plain unlocked SELECT *outside* the transaction, then in a
+  separate tx inserted the time entry + deleted the row. Two near-simultaneous
+  `/out` calls (double-tap, retry) both read the row and both inserted an entry.
+  Added a `SELECT 1 … FOR UPDATE` re-check at the top of the tx (mirroring what
+  `/switch` already did): the lock serializes the pair and the loser finds the row
+  gone and aborts with no entry. One shift → one entry.
+- **Re-clock-in silently erased the shift.** `/in` used `ON CONFLICT (user_id) DO
+  UPDATE`, so a worker already clocked into Project A who re-tapped (stale UI,
+  second device, offline replay) had their original clock-in *overwritten* — start
+  time and project gone, the morning's hours vanished with no entry. Changed to
+  `DO NOTHING` and, on conflict, return the untouched existing clock-in
+  (`already_clocked_in: true`, 200). Idempotent for double-taps/offline-replay,
+  preserves the shift; changing projects mid-shift stays `/switch`'s job. Verified
+  the client surfaces this as a normal clocked-in state (it reads `r.data` on any
+  2xx and refreshes `/clock/status`).
+
+No new clock-route test harness — clock.js routes have none, and `/in`'s pre-INSERT
+validation chain makes a bespoke one disproportionate; the fixes are standard PG
+semantics verified against the client contract. Server suite: 1091 pass.
+
+---
+
 ## 2026-07-26 — "Go for all of it" batch 3: the Stripe subscription webhook
 
 Five real hardening fixes on `routes/stripe.js` (a sixth flagged item —
