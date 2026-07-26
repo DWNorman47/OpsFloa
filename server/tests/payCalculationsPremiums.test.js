@@ -58,6 +58,30 @@ describe('minimum daily hours (reporting-time floor)', () => {
   });
 });
 
+describe('work_date as a pg Date, not a string', () => {
+  // A DATE column comes back from node-postgres as a JS Date at local midnight,
+  // never a 'YYYY-MM-DD' string. Every date-scoped rule (rest day, OT tiers,
+  // min-daily) keys off the weekday, so it must read a Date exactly like the
+  // string form — String(aDate).substring(0,10) yields "Sun Jul 05", which the
+  // weekday parse rejects, silently no-op'ing the rule on every pay surface.
+  const dSun = new Date(2026, 6, 5); // Sun Jul 5 2026, local midnight
+  const dMon = new Date(2026, 6, 6); // Mon Jul 6 2026
+  const hDayD = (d, hours) => entry(d, '00:00:00', `${String(hours).padStart(2, '0')}:00:00`);
+
+  test('rest-day premium fires for a Date work_date', () => {
+    const r = computeOT([hDayD(dSun, 6)], 'daily', 8, 1, { restDay: { mult: 2, days: [0] } });
+    expect(r.regularHours).toBeCloseTo(0, 5);
+    expect(r.overtimeHours).toBeCloseTo(6, 5);
+    expect(r.otBands).toEqual([{ hours: 6, mult: 2 }]);
+  });
+
+  test('a Date weekday is not treated as the Sunday rest day', () => {
+    const r = computeOT([hDayD(dMon, 8)], 'daily', 8, 1, { restDay: { mult: 2, days: [0] } });
+    expect(r.regularHours).toBeCloseTo(8, 5);
+    expect(r.overtimeHours).toBeCloseTo(0, 5);
+  });
+});
+
 describe('night-shift differential', () => {
   test('overnight shift overlaps the 19:00–05:00 window', () => {
     // 22:00–06:00 → night portion 22:00–05:00 = 7h.

@@ -116,7 +116,7 @@ function laborCostCents(entries, settings) {
 // wrapped the result in GREATEST(0, …), which turned every overnight shift into
 // a negative interval clamped to zero — overnight labor cost $0.
 const LABOR_ENTRY_COLUMNS = `
-  te.user_id, te.work_date, te.start_time, te.end_time, te.break_minutes,
+  te.user_id, to_char(te.work_date, 'YYYY-MM-DD') AS work_date, te.start_time, te.end_time, te.break_minutes,
   te.wage_type, te.overtime_hours_override,
   COALESCE(u.hourly_rate, 0) AS rate,
   COALESCE(u.overtime_rule, 'daily') AS ot_rule,

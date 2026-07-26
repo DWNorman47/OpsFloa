@@ -410,12 +410,15 @@ router.post('/copy-last-week', requireAuth, async (req, res) => {
        WHERE user_id=$1 AND company_id=$2 AND work_date BETWEEN $3 AND $4`,
       [req.user.id, companyId, thisWk.from, thisWk.to]
     );
-    const existingDates = new Set(existing.rows.map(r => r.work_date?.toString().substring(0, 10)));
+    // work_date is a pg Date (local midnight); toLocaleDateString('en-CA') gives
+    // 'YYYY-MM-DD'. The old .toString().substring(0,10) yielded "Mon Jul 20" →
+    // new Date("Mon Jul 20T00:00:00") = Invalid Date → insert "Invalid Date" → 500.
+    const toISO = d => new Date(d).toLocaleDateString('en-CA');
+    const existingDates = new Set(existing.rows.map(r => r.work_date && toISO(r.work_date)));
 
     const created = [];
-    const toISO = d => d.toLocaleDateString('en-CA');
     for (const e of lastWeek.rows) {
-      const lastDate = new Date(e.work_date.toString().substring(0, 10) + 'T00:00:00');
+      const lastDate = new Date(toISO(e.work_date) + 'T00:00:00');
       const thisDate = new Date(lastDate);
       thisDate.setDate(lastDate.getDate() + 7);
       const thisDateStr = toISO(thisDate);

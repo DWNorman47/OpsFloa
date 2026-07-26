@@ -6,7 +6,7 @@
 const { weekBucketKey } = require('./weekBounds');
 // One-way dependency (hoursRules has no requires, so no cycle): ot_tier rules are
 // `when`-scoped, so a bucket's bands can depend on its date.
-const { ruleMatchesDate } = require('./hoursRules');
+const { ruleMatchesDate, ymd } = require('./hoursRules');
 
 /** Decimal hours between two HH:MM[:SS] strings. Handles midnight-crossing shifts. */
 function hoursWorked(start, end) {
@@ -211,7 +211,7 @@ function windowHoursForEntry(e, windowRules) {
   let en = hmToMin(e.end_time);
   if (s == null || en == null) return new Map();
   if (en <= s) en += 1440;                       // overnight shift (end == start → 0-length)
-  const d0 = String(e.work_date).substring(0, 10);
+  const d0 = ymd(e.work_date);
 
   // Collect covered [lo, hi, mult] segments in minutes-from-work_date-midnight.
   const segs = [];
@@ -400,7 +400,7 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
     auto.forEach(e => {
       const key = rule === 'weekly'
         ? weekBucketKey(e.work_date, weekStart)
-        : e.work_date.toString().substring(0, 10);
+        : ymd(e.work_date);
       buckets[key] = (buckets[key] || 0) + residualOf.get(e);
     });
 
@@ -548,7 +548,7 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
   // bucket by day (daily) or workweek (weekly); entries stay in chronological order
   const buckets = new Map();
   for (const e of auto) {
-    const key = rule === 'weekly' ? weekBucketKey(e.work_date, weekStart) : String(e.work_date).substring(0, 10);
+    const key = rule === 'weekly' ? weekBucketKey(e.work_date, weekStart) : ymd(e.work_date);
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key).push(e);
   }
@@ -610,7 +610,7 @@ function otBandsCost(otBands, baseRate, defaultMult) {
  */
 function computeDailyPayCosts(entries, overtimeRule, threshold, dailyRate, overtimeMultiplier, otConfig = null) {
   const regular = entries.filter(e => e.wage_type === 'regular');
-  const days = new Set(regular.map(e => e.work_date.toString().substring(0, 10))).size;
+  const days = new Set(regular.map(e => ymd(e.work_date))).size;
   if (overtimeRule === 'none') {
     return { regularCost: days * dailyRate, overtimeCost: 0 };
   }

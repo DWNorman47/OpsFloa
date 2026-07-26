@@ -155,7 +155,11 @@ async function loadProjectRateMap(companyId) {
 async function workerStatement({ companyId, worker, settings, from, to, explain = false }) {
   const [entriesR, reimbR, dedR, projectRateMap, leave] = await Promise.all([
     pool.query(
-      `SELECT te.*, p.name as project_name
+      // work_date AS text — this column wins over te.*'s Date. pg returns DATE as
+      // a JS Date, but the rules engine keys on a 'YYYY-MM-DD' string, so a Date
+      // silently no-ops every date-scoped rule (Mon-scoped OT, rest-day, etc.).
+      // Not a global pg-types parser — other code relies on Date objects.
+      `SELECT te.*, p.name as project_name, to_char(te.work_date, 'YYYY-MM-DD') AS work_date
        FROM time_entries te
        LEFT JOIN projects p ON te.project_id = p.id
        WHERE te.user_id = $1 AND te.status = 'approved'
@@ -209,7 +213,7 @@ async function companyStatements({ companyId, workers, settings, from, to }) {
 
   const [entriesR, dedR, projectRateMap, leaveByUser] = await Promise.all([
     pool.query(
-      `SELECT te.user_id, te.project_id, te.wage_type, te.start_time, te.end_time, te.work_date, te.break_minutes, te.mileage
+      `SELECT te.user_id, te.project_id, te.wage_type, te.start_time, te.end_time, to_char(te.work_date, 'YYYY-MM-DD') AS work_date, te.break_minutes, te.mileage
        FROM time_entries te
        WHERE te.company_id = $1 AND te.work_date >= $2 AND te.work_date <= $3 AND te.status = 'approved'`,
       [companyId, from, to]
@@ -263,7 +267,7 @@ async function workerPeriodStatements({ companyId, worker, settings, periods }) 
 
   const [entriesR, dedR, projectRateMap, leaveReqs, leaveShifts] = await Promise.all([
     pool.query(
-      `SELECT te.*, p.name as project_name, to_char(te.work_date, 'YYYY-MM-DD') as work_date_str
+      `SELECT te.*, p.name as project_name, to_char(te.work_date, 'YYYY-MM-DD') AS work_date
        FROM time_entries te LEFT JOIN projects p ON te.project_id = p.id
        WHERE te.user_id = $1 AND te.status = 'approved' AND te.work_date >= $2 AND te.work_date <= $3
        ORDER BY te.work_date, te.start_time`,
@@ -295,7 +299,7 @@ async function workerPeriodStatements({ companyId, worker, settings, periods }) 
 
   for (const period of list) {
     const ps = day(period.period_start), pe = day(period.period_end);
-    const entries = paidAll.filter(e => e.work_date_str >= ps && e.work_date_str <= pe);
+    const entries = paidAll.filter(e => e.work_date >= ps && e.work_date <= pe);
     const leave = computeLeaveHours(leaveReqs.rows, shiftsByDate, leaveRules, settings.regular_shift_hours, ps, pe);
     if (entries.length === 0 && leave.sick === 0 && leave.vacation === 0) continue; // leave-only periods still show; fully-empty drop
     const statement = buildPayStatement({

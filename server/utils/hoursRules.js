@@ -163,8 +163,21 @@ function toHHMMSS(min) {
  * timezone-independent way. new Date('YYYY-MM-DD') parses as UTC midnight, so
  * getUTCDay() gives the intended calendar weekday regardless of server TZ.
  */
+// pg returns DATE columns as a local-midnight JS Date; the whole rules engine
+// keys on a 'YYYY-MM-DD' string. Normalize both forms here (a Date via LOCAL
+// parts — never toISOString, which would shift the day off-UTC) so a raw-Date
+// work_date from any caller can't silently no-op the date-scoped rules.
+function ymd(workDate) {
+  if (workDate == null) return workDate;
+  if (typeof workDate === 'string') return workDate.slice(0, 10);
+  if (workDate instanceof Date) {
+    return `${workDate.getFullYear()}-${String(workDate.getMonth() + 1).padStart(2, '0')}-${String(workDate.getDate()).padStart(2, '0')}`;
+  }
+  return String(workDate).slice(0, 10);
+}
+
 function weekdayOf(workDate) {
-  const s = String(workDate).substring(0, 10);
+  const s = ymd(workDate) || '';
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) return null;
   return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay();
@@ -1258,17 +1271,20 @@ function roundEntriesForPay(entries, policy, ctx = {}) {
   const showRaw = policy.display?.showActualAndPaid !== false;
   return entries.map(e => {
     if (!e.start_time || !e.end_time) return e;
-    const dateStr = String(e.work_date).substring(0, 10);
+    // pg returns a DATE as a JS Date (local midnight); the date-scoped helpers
+    // below key off a 'YYYY-MM-DD' string. Normalize once, locally — don't mutate
+    // e.work_date, so a caller still holding the row sees it unchanged.
+    const dateStr = ymd(e.work_date);
     const shift = shiftMap ? shiftMap[`${e.user_id}|${dateStr}`] : null;
     const workerStandard = workerStandardById ? workerStandardById[e.user_id] : null;
-    const expected = resolveExpected(policy, e.work_date, { shift, workerStandard });
+    const expected = resolveExpected(policy, dateStr, { shift, workerStandard });
 
     // The rule list that applies to THIS worker: role-aware when the caller
     // supplied a role map, otherwise the standard list (unchanged behaviour).
     const rules = (hasRoleRules && workerRoleById)
       ? effectiveRulesForRole(policy, workerRoleById[e.user_id])
       : standardRules;
-    const dayRules = rules.filter(r => ruleMatchesDate(r, e.work_date));
+    const dayRules = rules.filter(r => ruleMatchesDate(r, dateStr));
 
     // Rounding first: the rule list operates on the paid punch, not the raw one.
     // A `round` rule is a when-scoped override of the fixed-slot rounding config
@@ -1374,6 +1390,7 @@ module.exports = {
   ruleCredit,
   ruleMatchesDate,
   roundEntriesForPay,
+  ymd,
   // exported for tests
   toMin,
   toHHMMSS,

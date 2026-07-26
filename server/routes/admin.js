@@ -20,7 +20,7 @@ const { logFailure } = require('../failureLog');
 const { sendPushToUser, sendPushToAllWorkers } = require('../push');
 const { sendEmail } = require('../email');
 const { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, nightPremiumCost, computeGuaranteeShortfall } = require('../utils/payCalculations');
-const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, validatePolicyRaw, migrateFixedSlots, hasFixedSlots } = require('../utils/hoursRules');
+const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, validatePolicyRaw, migrateFixedSlots, hasFixedSlots, ymd } = require('../utils/hoursRules');
 const { computePaid, computeWorkerLeave, computeCompanyLeave, leaveRateMultipliers } = require('../utils/paidHours');
 const { workerStatement, companyStatements } = require('../utils/payStatement');
 const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = require('../utils/deductions');
@@ -2799,7 +2799,7 @@ router.post('/entries/bulk-approve', requireAdmin, requirePerm('approve_entries'
     for (const [userId, rows] of Object.entries(byWorker)) {
       const count = rows.length;
       const pushBody = count === 1
-        ? `Your entry for ${rows[0].work_date?.toString().substring(0,10)} (${rows[0].start_time}–${rows[0].end_time}) was approved.`
+        ? `Your entry for ${ymd(rows[0].work_date)} (${rows[0].start_time}–${rows[0].end_time}) was approved.`
         : `${count} time entries were approved.`;
       sendPushToUser(parseInt(userId), { title: 'Time entry approved', body: pushBody, url: '/timeclock' });
       createInboxItem(parseInt(userId), companyId, 'approval', 'Time entry approved ✓', pushBody, '/timeclock');
@@ -2866,12 +2866,12 @@ router.patch('/entries/:id/approve', requireAdmin, requirePerm('approve_entries'
     if (worker.rows[0]?.email) {
       const { work_date, start_time, end_time } = result.rows[0];
       sendEmail(worker.rows[0].email, 'Time entry approved ✓',
-        `<p>Hi ${escapeHtml(worker.rows[0].full_name)},</p><p>Your time entry for <b>${work_date?.toString().substring(0,10)}</b> (${start_time}–${end_time}) has been <b style="color:#059669">approved</b>.</p><p>— OpsFloa</p>`);
+        `<p>Hi ${escapeHtml(worker.rows[0].full_name)},</p><p>Your time entry for <b>${ymd(work_date)}</b> (${start_time}–${end_time}) has been <b style="color:#059669">approved</b>.</p><p>— OpsFloa</p>`);
     }
     const entry = result.rows[0];
     sendPushToUser(entry.user_id, { title: 'Time entry approved', body: 'An admin approved your time entry.', url: '/timeclock' });
     createInboxItem(entry.user_id, companyId, 'approval', 'Time entry approved ✓',
-      `Your entry for ${entry.work_date?.toString().substring(0,10)} (${entry.start_time}–${entry.end_time}) was approved.`, '/timeclock');
+      `Your entry for ${ymd(entry.work_date)} (${entry.start_time}–${entry.end_time}) was approved.`, '/timeclock');
     res.json(entry);
 
     // QBO auto-sync — fire-and-forget, never blocks the response
@@ -2999,7 +2999,7 @@ router.patch('/entries/:id/reject', requireAdmin, requirePerm('approve_entries')
     if (rejWorker.rows[0]?.email) {
       const { work_date, start_time, end_time } = result.rows[0];
       sendEmail(rejWorker.rows[0].email, 'Time entry rejected',
-        `<p>Hi ${escapeHtml(rejWorker.rows[0].full_name)},</p><p>Your time entry for <b>${work_date?.toString().substring(0,10)}</b> (${start_time}–${end_time}) was <b style="color:#ef4444">rejected</b>${note ? ` with the note: <i>${escapeHtml(note)}</i>` : ''}.</p><p>Please log in to review and resubmit.</p><p>— OpsFloa</p>`);
+        `<p>Hi ${escapeHtml(rejWorker.rows[0].full_name)},</p><p>Your time entry for <b>${ymd(work_date)}</b> (${start_time}–${end_time}) was <b style="color:#ef4444">rejected</b>${note ? ` with the note: <i>${escapeHtml(note)}</i>` : ''}.</p><p>Please log in to review and resubmit.</p><p>— OpsFloa</p>`);
     }
     const rejEntry = result.rows[0];
     sendPushToUser(rejEntry.user_id, {
@@ -3008,7 +3008,7 @@ router.patch('/entries/:id/reject', requireAdmin, requirePerm('approve_entries')
       url: '/timeclock',
     });
     createInboxItem(rejEntry.user_id, companyId, 'rejection', 'Time entry rejected',
-      `Your entry for ${rejEntry.work_date?.toString().substring(0,10)} was rejected.${note ? ` Reason: ${note}` : ''}`, '/timeclock');
+      `Your entry for ${ymd(rejEntry.work_date)} was rejected.${note ? ` Reason: ${note}` : ''}`, '/timeclock');
     res.json(rejEntry);
 
     // QBO cleanup — void the time activity if already synced

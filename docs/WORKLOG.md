@@ -23,6 +23,44 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-26 — "Go for all of it" batch 1: the work_date-as-Date class of bug
+
+Second review's headline finding, verified and fixed. **Root cause:** node-postgres
+returns a `DATE` column as a JS `Date` (local midnight), never a `'YYYY-MM-DD'`
+string — and `db.js` has no `setTypeParser` override. The pay/rules engine keyed
+off the day via `String(work_date).substring(0,10)`, which on a `Date` yields
+`"Sat Jul 26"` — the weekday parse then rejects it, so **every date-scoped rule
+silently no-op'd on the four pay surfaces** (worker invoice, OT report, payroll CSV,
+pay stubs) while the admin report — which loads `to_char(...)` — computed them
+correctly. A live surface divergence on money: the exact failure the pay pipeline
+was consolidated to prevent.
+
+Fixed at both ends so it can't regress by either route:
+- **Loaders cast at the source** — `payStatement.js` (all three loaders) and
+  `paidHours.js` `LABOR_ENTRY_COLUMNS` now `SELECT to_char(te.work_date,
+  'YYYY-MM-DD') AS work_date`, so the engine's inputs are strings.
+- **The engine is now `Date`-robust regardless of caller** — added a shared
+  `ymd()` (exported from `hoursRules.js`) that normalizes both shapes; routed it
+  through `roundEntriesFromSettings` (locally, *not* mutating the caller's row —
+  `admin.js`/`qbo.js` still hold their `Date`s) and the four `computeOT` internal
+  date keys. `weekBucketKey` was already `Date`-safe.
+- **Regression test that feeds a real `Date`** (`payCalculationsPremiums.test.js`)
+  — the existing tests all passed string dates, which is exactly why this slipped
+  through. The new case fails without the fix.
+
+Also swept the same bug class out of two display paths:
+- **copy-last-week** (`timeEntries.js`) did `.toString().substring(0,10)` → `new
+  Date("Sat Jul 26T00:00:00")` = Invalid Date → it would insert `work_date="Invalid
+  Date"` → 500. Now `toLocaleDateString('en-CA')`.
+- **Approve/reject notifications** (`admin.js`, 5 spots) rendered `"Sat Jul 26"`
+  in the worker's email/push/inbox. Now `ymd()`.
+
+Server suite: 1085 pass (was 1083 + 2 new). Batches 2–7 (delete paths, Stripe
+webhook, clock races, public-route hardening, pay semantics, misc cleanup) still
+queued from the same review.
+
+---
+
 ## 2026-07-25 — Follow-through: delete/merge paths vs the 0114 RESTRICT FKs
 
 Chased the `0114` CASCADE→RESTRICT project-FK change through the *other* delete
