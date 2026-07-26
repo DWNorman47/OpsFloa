@@ -44,9 +44,11 @@ function readHeaderFields(body) {
   return {
     project_id:           body.project_id ?? null,
     client_id:            body.client_id ?? null,
-    client_name_snapshot: (body.client_name_snapshot || '').toString().trim(),
-    client_email:         body.client_email ? body.client_email.toString().trim() : null,
-    project_name:         (body.project_name || '').toString().trim() || null,
+    // These three are VARCHAR(255) — cap so an over-long value is a clean 400
+    // (below) or a truncated store, not a "value too long" 500 at INSERT/UPDATE.
+    client_name_snapshot: (body.client_name_snapshot || '').toString().trim().slice(0, 255),
+    client_email:         body.client_email ? body.client_email.toString().trim().slice(0, 255) : null,
+    project_name:         (body.project_name || '').toString().trim().slice(0, 255) || null,
     project_address:      body.project_address || null,
     tax_pct:              parsePct(body.tax_pct),
     retainage_pct:        parsePct(body.retainage_pct),
@@ -370,39 +372,38 @@ router.get('/:id', requireAuth, async (req, res) => {
 // PATCH /invoices/:id — header fields; draft only
 router.patch('/:id', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
-  try {
-    const headRes = await pool.query('SELECT status FROM invoices WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
-    if (headRes.rowCount === 0) return res.status(404).json({ error: 'Invoice not found' });
-    if (isFrozen(headRes.rows[0].status)) return res.status(409).json({ error: 'Invoice is frozen at this status; void and reissue to revise' });
-    const fields = readHeaderFields(req.body);
-    for (const k of ['tax_pct', 'retainage_pct']) {
-      if (fields[k] === null) return res.status(400).json({ error: `${k} out of range` });
-    }
-    if (!fields.client_name_snapshot) return res.status(400).json({ error: 'client_name_snapshot is required' });
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query(
-        `UPDATE invoices SET
-           project_id=$1, client_id=$2, client_name_snapshot=$3, client_email=$4,
-           project_name=$5, project_address=$6, tax_pct=$7, retainage_pct=$8,
-           issue_date=$9, due_date=$10, notes=$11, terms=$12, updated_at=NOW()
-         WHERE id = $13`,
-        [fields.project_id, fields.client_id, fields.client_name_snapshot, fields.client_email,
-         fields.project_name, fields.project_address, fields.tax_pct, fields.retainage_pct,
-         fields.issue_date, fields.due_date, fields.notes, fields.terms, req.params.id]
-      );
-      await recomputeTotals(client, req.params.id);
-      await client.query('COMMIT');
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw err;
-    } finally { client.release(); }
-    res.json(await loadInvoiceFull(companyId, req.params.id));
-  } catch (err) {
-    req.log.error({ err }, 'invoice patch error');
-    res.status(500).json({ error: 'Server error' });
+  const fields = readHeaderFields(req.body);
+  for (const k of ['tax_pct', 'retainage_pct']) {
+    if (fields[k] === null) return res.status(400).json({ error: `${k} out of range` });
   }
+  if (!fields.client_name_snapshot) return res.status(400).json({ error: 'client_name_snapshot is required' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Lock the row and re-check frozen INSIDE the tx (like PUT /:id/lines): a
+    // concurrent send could otherwise flip draft→sent between the check and this
+    // UPDATE and let a total-changing edit land on a sent document of record.
+    const headRes = await client.query('SELECT status FROM invoices WHERE id = $1 AND company_id = $2 FOR UPDATE', [req.params.id, companyId]);
+    if (headRes.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Invoice not found' }); }
+    if (isFrozen(headRes.rows[0].status)) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'Invoice is frozen at this status; void and reissue to revise' }); }
+    await client.query(
+      `UPDATE invoices SET
+         project_id=$1, client_id=$2, client_name_snapshot=$3, client_email=$4,
+         project_name=$5, project_address=$6, tax_pct=$7, retainage_pct=$8,
+         issue_date=$9, due_date=$10, notes=$11, terms=$12, updated_at=NOW()
+       WHERE id = $13 AND company_id = $14`,
+      [fields.project_id, fields.client_id, fields.client_name_snapshot, fields.client_email,
+       fields.project_name, fields.project_address, fields.tax_pct, fields.retainage_pct,
+       fields.issue_date, fields.due_date, fields.notes, fields.terms, req.params.id, companyId]
+    );
+    await recomputeTotals(client, req.params.id);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    req.log.error({ err }, 'invoice patch error');
+    return res.status(500).json({ error: 'Server error' });
+  } finally { client.release(); }
+  res.json(await loadInvoiceFull(companyId, req.params.id));
 });
 
 // PUT /invoices/:id/lines — bulk replace; draft only
@@ -461,8 +462,10 @@ async function emailInvoiceToClient({ invoice, token, companyName, currency, rep
   const paid    = parseInt(invoice.amount_paid_cents, 10) || 0;
   const balance = Math.max(0, total - paid);
   const dueLabel = paid > 0 ? 'Balance due' : 'Amount due';
+  // due_date is a JS Date here (pg returns DATE columns as Date, and this is
+  // pre-JSON) — String(date) is "Mon Jul 20 2026 …", so format to YYYY-MM-DD.
   const dueLine = invoice.due_date
-    ? `<p style="color:#6b7280;font-size:13px;margin:0 0 20px">Due ${escapeHtml(String(invoice.due_date).slice(0, 10))}</p>`
+    ? `<p style="color:#6b7280;font-size:13px;margin:0 0 20px">Due ${escapeHtml(new Date(invoice.due_date).toISOString().slice(0, 10))}</p>`
     : '';
   const subject = `Invoice ${invoice.invoice_number} from ${companyName || 'OpsFloa'}`;
   const html = `
@@ -562,9 +565,12 @@ router.post('/:id/link', requireAdmin, async (req, res) => {
 router.post('/:id/payments', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   const amount = typeof req.body.amount_cents === 'number' ? req.body.amount_cents : parseInt(req.body.amount_cents, 10);
-  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'amount_cents must be a positive integer' });
+  // Must be a whole number of cents — a fractional value would 500 on the BIGINT
+  // column, not 400.
+  if (!Number.isInteger(amount) || amount <= 0) return res.status(400).json({ error: 'amount_cents must be a positive integer' });
   const method = INVOICE_PAYMENT_METHODS.includes(req.body.method) ? req.body.method : 'other';
   const paid_date = req.body.paid_date || null;
+  if (paid_date && !/^\d{4}-\d{2}-\d{2}$/.test(paid_date)) return res.status(400).json({ error: 'paid_date must be YYYY-MM-DD' });
   const reference = req.body.reference ? req.body.reference.toString().slice(0, 120) : null;
   const notes = req.body.notes ? req.body.notes.toString() : null;
   const client = await pool.connect();

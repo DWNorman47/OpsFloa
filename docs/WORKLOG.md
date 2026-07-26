@@ -23,6 +23,49 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-25 — Full review + fixes (Tier 1 bugs + unambiguous Tier 2)
+
+Ran a 5-way parallel review over the session's invoice / QBO / Stripe / sitework /
+email work; verified findings against the code, fixed the confirmed bugs + clear
+could-breaks.
+
+**🔴 real bugs**
+- **Migration `0150` would ABORT the deploy on a negative QBO amount** (credit
+  memo) — negative `*_cents` violates the `≥ 0` CHECKs. Clamped to
+  `GREATEST(0, …)` so such a row lands as $0. **Edited `0150` in place** — the only
+  option, since a later migration can't rescue one that aborts first; dev applied
+  it as a 0-row no-op, so no divergence.
+- **Two subscription webhooks called `sendEmail({…})`** (object) against the
+  positional fn → the payment-failed + trial-ending admin emails silently never
+  sent. Fixed to positional. *(pre-existing)*
+- **Invoice send email rendered a garbled due date** (`String(Date)` → "Mon Jul
+  20") → `toISOString().slice(0,10)`.
+- **`InvoiceFormLoader`: a failed edit-load showed a blank "New invoice" form** →
+  saving created a duplicate. Now shows an error + back (`invErrLoad`).
+
+**🟠 could-break**
+- **Closeout: added the real escape hatch** — an auto item can now be manually
+  waived/N-A'd, overriding the compute-on-read. Before, `final_complete` was
+  unreachable for anyone billing via QBO/cash/outside OpsFloa, despite a comment
+  falsely claiming a waive existed.
+- **QBO:** `check-payment` no longer resurrects a voided invoice (`status<>'void'`);
+  `POST /invoices` scopes `project_id` + the client-name snapshot to the caller's
+  company (was a small cross-tenant leak I'd introduced).
+- **Invoices:** `PATCH` locks + re-checks frozen inside its tx (was a TOCTOU vs a
+  concurrent send); `VARCHAR(255)` header fields capped; payments reject fractional
+  `amount_cents` / malformed `paid_date` with 400 not 500.
+- **Client:** "Balance" column sorts by balance (was amount-paid); a stale/unknown
+  Tools hash (e.g. `#sitework`) falls back to Plan Room, not a blank page; PDF
+  retainage shown as "held" (no misleading minus), matching the web.
+
+Tests +1 (closeout waive), PATCH tests updated. Verify green (82 / 1083).
+
+⚠️ **Left as-is, flagged:** a **pre-existing superadmin company-wipe bug** —
+`subcontract_pos` `RESTRICT`s `DELETE FROM projects`, so wiping any company that
+made a sub-PO 500s. Real but out of this scope. Plus lower-priority cleanup
+(client-side sort spans only the current page, concurrent-create number race,
+`invoiceTotals`/AR `company_id` defense-in-depth, etc.).
+
 ## 2026-07-25 — Invoice online pay, Phase 1: Stripe Connect onboarding
 
 Foundation for clients paying invoices online, with money landing in the

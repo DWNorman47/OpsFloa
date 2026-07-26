@@ -24,6 +24,9 @@ ALTER TABLE invoices ADD COLUMN IF NOT EXISTS migrated_pi_id  INTEGER;
 --    company; anchor it on the mirror PK ('QBO-IMP-<pi.id>', distinct from the
 --    'QBO-<qboId>' scheme qbo.js uses for new pushes, so the two never collide).
 --    Mirror money is dollars; native is cents. Status maps from payment_status.
+--    Amounts are clamped to >= 0 (GREATEST(0, ...)): invoices/lines CHECK cents
+--    >= 0, so a negative mirror row (a QBO credit memo) would otherwise abort the
+--    entire migration and block the deploy. A credit memo lands as a $0 row.
 INSERT INTO invoices
   (company_id, project_id, invoice_number, client_name_snapshot, status,
    subtotal_cents, tax_cents, total_cents, issue_date, qbo_invoice_id,
@@ -33,9 +36,9 @@ SELECT
   'QBO-IMP-' || pi.id,
   COALESCE(NULLIF(cl.name, ''), 'QuickBooks import'),
   CASE pi.payment_status WHEN 'paid' THEN 'paid' WHEN 'partial' THEN 'partial' ELSE 'sent' END,
-  ROUND(COALESCE(pi.amount, 0) * 100)::bigint,
+  GREATEST(0, ROUND(COALESCE(pi.amount, 0) * 100))::bigint,
   0,
-  ROUND(COALESCE(pi.amount, 0) * 100)::bigint,
+  GREATEST(0, ROUND(COALESCE(pi.amount, 0) * 100))::bigint,
   pi.txn_date,
   pi.qbo_invoice_id,
   pi.doc_number,
@@ -54,8 +57,8 @@ SELECT
   i.id, 'other', 0,
   COALESCE('QuickBooks invoice ' || NULLIF(pi.doc_number, ''), 'QuickBooks invoice'),
   1,
-  ROUND(COALESCE(pi.amount, 0) * 100)::bigint,
-  ROUND(COALESCE(pi.amount, 0) * 100)::bigint
+  GREATEST(0, ROUND(COALESCE(pi.amount, 0) * 100))::bigint,
+  GREATEST(0, ROUND(COALESCE(pi.amount, 0) * 100))::bigint
 FROM invoices i
 JOIN project_invoices pi ON pi.id = i.migrated_pi_id;
 

@@ -541,10 +541,10 @@ router.post('/webhook', async (req, res) => {
                 : null;
               const { sendEmail } = require('../email');
               for (const admin of adminsRes.rows) {
-                sendEmail({
-                  to: admin.email,
-                  subject: `Payment failed for your OpsFloa subscription`,
-                  html: `
+                sendEmail(
+                  admin.email,
+                  `Payment failed for your OpsFloa subscription`,
+                  `
                     <div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px">
                       <h2 style="color:#b91c1c;margin-bottom:8px">Payment failed</h2>
                       <p style="color:#444">Hi ${admin.full_name || ''}, we weren't able to charge your payment method${amountStr ? ` for ${amountStr}` : ''} for <strong>${company.name}</strong>.</p>
@@ -556,7 +556,7 @@ router.post('/webhook', async (req, res) => {
                       <p style="color:#9ca3af;font-size:12px;margin-top:24px">If the retry succeeds, no action is needed and you'll stay on your current plan.</p>
                     </div>
                   `,
-                }).catch(err => req.log.warn({ err }, 'payment_failed email send failed'));
+                ).catch(err => req.log.warn({ err }, 'payment_failed email send failed'));
               }
             }
           } catch (err) {
@@ -600,10 +600,10 @@ router.post('/webhook', async (req, res) => {
             const endsStr = new Date(company.trial_ends_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
             const { sendEmail } = require('../email');
             for (const admin of adminsRes.rows) {
-              sendEmail({
-                to: admin.email,
-                subject: `Your OpsFloa trial ends ${endsStr}`,
-                html: `
+              sendEmail(
+                admin.email,
+                `Your OpsFloa trial ends ${endsStr}`,
+                `
                   <div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px">
                     <h2 style="color:#1a56db;margin-bottom:8px">Trial ending soon</h2>
                     <p style="color:#444">Hi ${admin.full_name || ''}, your OpsFloa trial for <strong>${company.name}</strong> ends on <strong>${endsStr}</strong>.</p>
@@ -614,7 +614,7 @@ router.post('/webhook', async (req, res) => {
                     </a>
                   </div>
                 `,
-              }).catch(err => req.log.warn({ err }, 'trial-will-end email send failed'));
+              ).catch(err => req.log.warn({ err }, 'trial-will-end email send failed'));
             }
           }
         } catch (err) {

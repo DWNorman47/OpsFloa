@@ -152,7 +152,7 @@ export default function InvoicePDF({ invoice, currency = 'USD', companyInfo = {}
             {invoice.retainage_held_cents > 0 && (
               <View style={s.totalRow}>
                 <Text style={s.totalLabel}>{tr('invRetainageHeld', 'Retainage held')} ({invoice.retainage_pct}%)</Text>
-                <Text style={s.totalValue}>-{fmtCents(invoice.retainage_held_cents, currency)}</Text>
+                <Text style={s.totalValue}>{fmtCents(invoice.retainage_held_cents, currency)}</Text>
               </View>
             )}
             {paid > 0 && (

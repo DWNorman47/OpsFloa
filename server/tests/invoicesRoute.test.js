@@ -81,14 +81,22 @@ describe('POST /api/invoices', () => {
 
 // ── PATCH /invoices/:id — frozen once sent ────────────────────────────────────
 describe('PATCH /api/invoices/:id', () => {
+  // PATCH now locks the row and re-checks frozen inside the tx (BEGIN → SELECT
+  // FOR UPDATE → ROLLBACK on the guard paths).
   test('404 when the invoice is in another company', async () => {
-    pool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    pool.query
+      .mockResolvedValueOnce(undefined)                 // BEGIN
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // SELECT ... FOR UPDATE
+      .mockResolvedValueOnce(undefined);                // ROLLBACK
     const res = await request(makeApp()).patch('/api/invoices/42').send({ client_name_snapshot: 'Y' });
     expect(res.status).toBe(404);
   });
 
   test('409 when the invoice is sent (frozen)', async () => {
-    pool.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'sent' }] });
+    pool.query
+      .mockResolvedValueOnce(undefined)                                  // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'sent' }] }) // SELECT ... FOR UPDATE
+      .mockResolvedValueOnce(undefined);                                 // ROLLBACK
     const res = await request(makeApp()).patch('/api/invoices/42').send({ client_name_snapshot: 'Y' });
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/frozen/i);

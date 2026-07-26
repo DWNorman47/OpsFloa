@@ -207,6 +207,18 @@ describe('PATCH /api/closeout-items/:id', () => {
     expect(res.body.error).toMatch(/auto-computed/i);
   });
 
+  // The escape hatch: an auto item CAN be manually waived (overrides the compute).
+  test('an auto_source item can be manually waived', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 7, project_id: 42, closeout_id: 99, status: 'pending', auto_source: 'invoices' }] }) // ownership check
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 7, status: 'waived' }] }); // UPDATE ... RETURNING *
+    const res = await request(makeApp())
+      .patch('/api/closeout-items/7')
+      .send({ status: 'waived' });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('waived');
+  });
+
   test('400 on invalid status', async () => {
     pool.query.mockResolvedValueOnce({ rowCount: 1, rows: [{
       id: 7, project_id: 42, closeout_id: 99,

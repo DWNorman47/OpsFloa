@@ -236,8 +236,13 @@ router.post('/invoices', requireAdmin, async (req, res) => {
              (company_id, project_id, invoice_number, client_name_snapshot, status,
               subtotal_cents, tax_cents, total_cents, issue_date, qbo_invoice_id,
               qbo_doc_number, source, created_by)
-           SELECT $1, $2, 'QBO-' || $3,
-                  COALESCE((SELECT NULLIF(cl.name, '') FROM projects p JOIN clients cl ON cl.id = p.client_id WHERE p.id = $2), 'QuickBooks'),
+           SELECT $1,
+                  -- Scope project_id + the client-name snapshot to the caller's
+                  -- company: a foreign project_id resolves to NULL / the fallback
+                  -- name rather than linking to (or leaking) another tenant's data.
+                  (SELECT p2.id FROM projects p2 WHERE p2.id = $2 AND p2.company_id = $1),
+                  'QBO-' || $3,
+                  COALESCE((SELECT NULLIF(cl.name, '') FROM projects p JOIN clients cl ON cl.id = p.client_id WHERE p.id = $2 AND p.company_id = $1), 'QuickBooks'),
                   'sent', $4, 0, $4, $5, $3, $6, 'qbo', $7
            RETURNING id, company_id
          )
@@ -311,7 +316,9 @@ router.post('/invoices/:invoiceId/check-payment', requireAdmin, async (req, res)
     try {
       await client.query('BEGIN');
       const inv = await client.query(
-        'SELECT id FROM invoices WHERE qbo_invoice_id = $1 AND company_id = $2',
+        // Exclude 'void' — a voided invoice must not be resurrected into AR by a
+        // later check-payment.
+        "SELECT id FROM invoices WHERE qbo_invoice_id = $1 AND company_id = $2 AND status <> 'void'",
         [req.params.invoiceId, req.user.company_id]
       );
       for (const row of inv.rows) {

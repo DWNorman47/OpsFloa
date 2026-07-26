@@ -210,11 +210,15 @@ async function computeAutoStatus(companyId, projectId, item) {
   return null;
 }
 
-// An item's effective status: its computed auto-status if it has an auto_source
-// (auto items are never persisted past 'pending'), else the stored status. The
-// GET read path layers the same computation in; the transition gate uses this so
-// the two never disagree about whether an item is "done".
+// An item's effective status: a manual waive/N-A override if set, else its
+// computed auto-status (for auto_source items), else the stored status. The GET
+// read path layers the same computation in; the transition gate uses this so the
+// two never disagree about whether an item is "done".
 async function effectiveItemStatus(companyId, projectId, item) {
+  // A manual waive / N-A override wins over the auto compute — the escape hatch
+  // for an auto item that won't reach 'done' on its own (e.g. billed outside
+  // OpsFloa, or paid via QBO where the mirror row stays 'sent').
+  if (item.status === 'waived' || item.status === 'n_a') return item.status;
   if (item.auto_source) {
     const auto = await computeAutoStatus(companyId, projectId, item);
     if (auto) return auto;
@@ -246,7 +250,8 @@ router.get('/projects/:id/closeout', requireAuth, async (req, res) => {
     for (const it of itemsRes.rows) {
       let status = it.status;
       let computedAuto = null;
-      if (it.auto_source) {
+      // A manual waive / N-A override wins over the auto compute (see effectiveItemStatus).
+      if (it.auto_source && it.status !== 'waived' && it.status !== 'n_a') {
         computedAuto = await computeAutoStatus(companyId, req.params.id, it);
         if (computedAuto) status = computedAuto;
       }
@@ -448,7 +453,14 @@ router.patch('/closeout-items/:id', requireAdmin, async (req, res) => {
     if (checkRes.rowCount === 0) return res.status(404).json({ error: 'Checklist item not found' });
     const item = checkRes.rows[0];
     if (item.auto_source) {
-      return res.status(409).json({ error: 'Auto-computed items cannot be toggled directly' });
+      // Auto items normally compute their status, but allow an explicit manual
+      // OVERRIDE — waive / mark N/A (the closeout escape hatch), or reset to
+      // 'pending' to hand control back to the auto compute. Anything else must
+      // come from the source module.
+      const s = req.body.status;
+      if (s !== undefined && !['waived', 'n_a', 'pending'].includes(s)) {
+        return res.status(409).json({ error: 'Auto-computed items can only be waived, marked N/A, or reset to pending' });
+      }
     }
     const fields = [];
     const params = [];

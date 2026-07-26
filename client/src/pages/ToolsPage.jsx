@@ -17,11 +17,13 @@ import CrewCardTool from '../components/CrewCardTool';
 const PLANROOM_TOOL_URL = '/tool-apps/planroom/index.html';
 const PDFTOOLS_TOOL_URL = '/tool-apps/pdftools/index.html';
 
-// Default to Plan Room (the daily-use base tool, always visible).
+// Default to Plan Room (the daily-use base tool). Any hash that isn't a real tab
+// — a typo, or a stale bookmark like the retired #sitework — falls back to Plan
+// Room instead of rendering an empty page. Keep in sync with the `tabs` array below.
+const KNOWN_TABS = ['planroom', 'transcription', 'summarizer', 'docqa', 'redflags', 'calcs', 'emaildraft', 'crewcard', 'pdftools'];
 function resolveTab() {
   const h = window.location.hash.replace('#', '');
-  if (!h) return 'planroom';
-  return h;
+  return KNOWN_TABS.includes(h) ? h : 'planroom';
 }
 
 export default function ToolsPage() {

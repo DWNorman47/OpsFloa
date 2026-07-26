@@ -88,6 +88,8 @@ function InvoicesList({ onOpen, onNew, onFromEstimate, onFromProject }) {
     () => sortRows(invoices, sort, {
       total_cents: r => parseFloat(r.total_cents) || 0,
       amount_paid_cents: r => parseFloat(r.amount_paid_cents) || 0,
+      // The "Balance" column shows total − paid, so it must sort by that, not by amount paid.
+      balance: r => Math.max(0, (parseInt(r.total_cents, 10) || 0) - (parseInt(r.amount_paid_cents, 10) || 0)),
       created_at: r => r.created_at,
     }),
     [invoices, sort]
@@ -139,7 +141,7 @@ function InvoicesList({ onOpen, onNew, onFromEstimate, onFromProject }) {
                   <SortHeader sortKey="project_name" sort={sort} setSort={setSort}>{t.invProject}</SortHeader>
                   <SortHeader sortKey="client_name_snapshot" sort={sort} setSort={setSort}>{t.invClient}</SortHeader>
                   <SortHeader sortKey="total_cents" sort={sort} setSort={setSort} align="right">{t.invTotal}</SortHeader>
-                  <SortHeader sortKey="amount_paid_cents" sort={sort} setSort={setSort} align="right">{t.invBalance}</SortHeader>
+                  <SortHeader sortKey="balance" sort={sort} setSort={setSort} align="right">{t.invBalance}</SortHeader>
                   <SortHeader sortKey="status" sort={sort} setSort={setSort}>{t.invStatus}</SortHeader>
                   <SortHeader sortKey="created_at" sort={sort} setSort={setSort}>{t.invCreated}</SortHeader>
                 </tr>
@@ -890,14 +892,28 @@ export function InvoicesPanel() {
 }
 
 function InvoiceFormLoader({ existing, onSave, onCancel }) {
+  const t = useT();
+  const needsLoad = !!(existing?.id && !existing?.client_name_snapshot);
   const [resolved, setResolved] = useState(existing && !existing.id ? existing : null);
-  const [loading, setLoading] = useState(existing?.id && !existing?.client_name_snapshot);
+  const [loading, setLoading] = useState(needsLoad);
   useEffect(() => {
-    if (existing?.id && !existing?.client_name_snapshot) {
-      api.get(`/invoices/${existing.id}`).then(({ data }) => { setResolved(data); setLoading(false); }).catch(() => setLoading(false));
+    if (needsLoad) {
+      api.get(`/invoices/${existing.id}`)
+        .then(({ data }) => { setResolved(data); setLoading(false); })
+        .catch(() => setLoading(false));
     }
-  }, [existing]);
+  }, [existing]); // eslint-disable-line react-hooks/exhaustive-deps
   if (loading) return <SkeletonList rows={4} />;
+  // A failed edit-load must NOT fall through to a blank "New invoice" form —
+  // saving that would create a duplicate. Show the error + a way back instead.
+  if (needsLoad && !resolved) {
+    return (
+      <div className="admin-page-shell">
+        <div style={styles.errorBox}>{t.invErrLoad}</div>
+        <button onClick={onCancel} style={styles.ghostBtn}>← {t.invBackToList}</button>
+      </div>
+    );
+  }
   return <InvoiceForm existing={resolved} onSave={onSave} onCancel={onCancel} />;
 }
 
