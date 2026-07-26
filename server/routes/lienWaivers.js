@@ -410,6 +410,8 @@ router.post('/lien-waivers/:id/void', requireAdmin, async (req, res) => {
 // ── Public signing page ─────────────────────────────────────────────────────
 
 const publicRouter = require('express').Router();
+const { publicReadLimiter, publicWriteLimiter } = require('../middleware/publicLimiters');
+publicRouter.use(publicReadLimiter);
 
 publicRouter.get('/sign/:token', async (req, res) => {
   try {
@@ -435,7 +437,7 @@ publicRouter.get('/sign/:token', async (req, res) => {
   }
 });
 
-publicRouter.post('/sign/:token', async (req, res) => {
+publicRouter.post('/sign/:token', publicWriteLimiter, async (req, res) => {
   const signerName = (req.body.typed_name || '').toString().trim();
   const signatureMethod = req.body.signature_method;
   if (!signerName) return res.status(400).json({ error: 'typed_name required' });

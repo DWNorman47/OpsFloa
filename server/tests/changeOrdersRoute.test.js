@@ -142,10 +142,40 @@ describe('POST /api/public/change-orders/accept/:token', () => {
 
 describe('POST /api/public/change-orders/decline/:token', () => {
   test('404 when token does not match', async () => {
-    pool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    pool.query
+      .mockResolvedValueOnce(undefined)                 // BEGIN
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // SELECT ... FOR UPDATE
+      .mockResolvedValueOnce(undefined);                // ROLLBACK
     const res = await request(makeApp())
       .post('/api/public/change-orders/decline/tok')
       .send({});
     expect(res.status).toBe(404);
+  });
+
+  test('409 when CO not in sent', async () => {
+    pool.query
+      .mockResolvedValueOnce(undefined)                                          // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 7, status: 'accepted' }] }) // SELECT ... FOR UPDATE
+      .mockResolvedValueOnce(undefined);                                         // ROLLBACK
+    const res = await request(makeApp())
+      .post('/api/public/change-orders/decline/tok')
+      .send({});
+    expect(res.status).toBe(409);
+  });
+
+  test('declines a sent CO under a row lock (FOR UPDATE + status guard)', async () => {
+    pool.query
+      .mockResolvedValueOnce(undefined)                                       // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 7, status: 'sent' }] }) // SELECT ... FOR UPDATE
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })                       // UPDATE ... declined
+      .mockResolvedValueOnce(undefined);                                      // COMMIT
+    const res = await request(makeApp())
+      .post('/api/public/change-orders/decline/tok')
+      .send({});
+    expect(res.status).toBe(200);
+    const sel = pool.query.mock.calls.find(c => /SELECT id, status FROM change_orders/.test(c[0]));
+    expect(sel[0]).toMatch(/FOR UPDATE/);
+    const upd = pool.query.mock.calls.find(c => /UPDATE change_orders SET status='declined'/.test(c[0]));
+    expect(upd[0]).toMatch(/AND status='sent'/);
   });
 });

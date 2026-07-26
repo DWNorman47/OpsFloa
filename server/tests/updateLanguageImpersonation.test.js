@@ -22,10 +22,19 @@ function makeApp() {
   return app;
 }
 
-// Tokens omit `tv` so requireAuth skips the token_version lookup — this isolates
-// the impersonation gate, which is independent of token versioning.
+// The normal token omits `tv` so requireAuth skips the token_version lookup —
+// this isolates the impersonation gate. The imp tokens DO hit the DB now:
+// requireAuth re-checks the impersonated user is active and (when imp_by is
+// present) that the super-admin who started the session is still active +
+// super_admin. `didUpdateLanguage()` isolates the route's own write from that
+// auth-check query.
 const normalToken = jwt.sign({ id: 42, role: 'worker', company_id: 'c1', username: 'ana' }, process.env.JWT_SECRET);
 const impToken = jwt.sign({ id: 42, role: 'worker', company_id: 'c1', username: 'ana', imp: true }, process.env.JWT_SECRET);
+const impByToken = jwt.sign({ id: 42, role: 'worker', company_id: 'c1', username: 'ana', imp: true, imp_by: 7 }, process.env.JWT_SECRET);
+
+// requireAuth's impersonation active-check returns these three columns.
+const authOk = { rows: [{ target_active: true, imp_active: true, imp_role: 'super_admin' }] };
+const didUpdateLanguage = () => pool.query.mock.calls.some(c => /UPDATE users SET language/.test(c[0]));
 
 beforeEach(() => { pool.query.mockReset(); });
 
@@ -44,22 +53,54 @@ describe('POST /auth/update-language', () => {
   });
 
   test('an impersonation session does NOT write to the profile', async () => {
+    pool.query.mockResolvedValue(authOk); // only the requireAuth active-check runs
     const res = await request(makeApp())
       .post('/api/auth/update-language')
       .set('Authorization', `Bearer ${impToken}`)
       .send({ language: 'English' });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ success: true, language: 'English', persisted: false });
-    // The Spanish profile is left exactly as it was.
-    expect(pool.query).not.toHaveBeenCalled();
+    // The Spanish profile is left exactly as it was — no UPDATE.
+    expect(didUpdateLanguage()).toBe(false);
   });
 
   test('a blank language is still rejected under impersonation', async () => {
+    pool.query.mockResolvedValue(authOk);
     const res = await request(makeApp())
       .post('/api/auth/update-language')
       .set('Authorization', `Bearer ${impToken}`)
       .send({ language: '   ' });
     expect(res.status).toBe(400);
-    expect(pool.query).not.toHaveBeenCalled();
+    expect(didUpdateLanguage()).toBe(false);
+  });
+
+  test('rejects the session when the impersonated user has been deactivated', async () => {
+    pool.query.mockResolvedValue({ rows: [{ target_active: false, imp_active: true, imp_role: 'super_admin' }] });
+    const res = await request(makeApp())
+      .post('/api/auth/update-language')
+      .set('Authorization', `Bearer ${impByToken}`)
+      .send({ language: 'English' });
+    expect(res.status).toBe(401);
+    expect(didUpdateLanguage()).toBe(false);
+  });
+
+  test('rejects the session when the super-admin who started it is deactivated', async () => {
+    pool.query.mockResolvedValue({ rows: [{ target_active: true, imp_active: false, imp_role: 'super_admin' }] });
+    const res = await request(makeApp())
+      .post('/api/auth/update-language')
+      .set('Authorization', `Bearer ${impByToken}`)
+      .send({ language: 'English' });
+    expect(res.status).toBe(401);
+    expect(didUpdateLanguage()).toBe(false);
+  });
+
+  test('rejects the session when the super-admin has been demoted', async () => {
+    pool.query.mockResolvedValue({ rows: [{ target_active: true, imp_active: true, imp_role: 'admin' }] });
+    const res = await request(makeApp())
+      .post('/api/auth/update-language')
+      .set('Authorization', `Bearer ${impByToken}`)
+      .send({ language: 'English' });
+    expect(res.status).toBe(401);
+    expect(didUpdateLanguage()).toBe(false);
   });
 });

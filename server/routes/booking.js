@@ -575,6 +575,20 @@ router.post('/appointment-types/:id/book', requireAuth, async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Appointment type inactive' });
     }
+    // Scope project_id to this company. It's inserted straight from the body,
+    // so without this an admin of company A could attach company B's project id
+    // (a cross-tenant reference that leaks the other company's project via any
+    // join off appointments.project_id).
+    if (project_id != null) {
+      const proj = await client.query(
+        'SELECT 1 FROM projects WHERE id = $1 AND company_id = $2',
+        [project_id, companyId]
+      );
+      if (proj.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Invalid project' });
+      }
+    }
     const apt = at.rows[0];
     // Reject past-slot or under-advance-notice bookings. Without this an
     // admin script could create historical appointments to skew

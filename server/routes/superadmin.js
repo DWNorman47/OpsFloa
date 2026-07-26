@@ -608,6 +608,11 @@ router.post('/companies/:id/impersonate', requireSuperAdmin, async (req, res) =>
         // language switcher) so a super-admin's view changes never persist to
         // the real user's saved preferences.
         imp: true,
+        // Who started it. requireAuth re-checks this super-admin is still active
+        // and still super_admin on every request, so a fired/demoted super-admin
+        // loses their live impersonation sessions immediately (the token itself
+        // carries no tv, so the normal active-check would otherwise skip it).
+        imp_by: req.user.id,
       },
       process.env.JWT_SECRET,
       { expiresIn: '4h' }

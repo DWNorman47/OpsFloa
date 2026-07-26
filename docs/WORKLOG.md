@@ -23,6 +23,38 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-26 — "Go for all of it" batch 5: public-route + impersonation hardening
+
+Four tenant/abuse-surface fixes:
+
+1. **Fired super-admin kept live impersonation.** Impersonation ("Login as")
+   tokens carry no `tv`, so requireAuth's active-check skipped them entirely — a
+   super-admin deactivated or demoted mid-session (4h token) kept full access to
+   the impersonated company, and a target user offboarded mid-session kept theirs.
+   Added `imp_by` (the super-admin's id) to the token and an `else if
+   (payload.imp)` branch in `middleware/auth.js` that re-checks, every request,
+   that the target is active AND the impersonator is still active + super_admin.
+2. **Public token routers had no rate limit.** The estimate/change-order/
+   invoice/lien-waiver public routers (view + accept/decline/sign) ran
+   unthrottled — only booking was limited. Added a shared
+   `middleware/publicLimiters.js` (`publicReadLimiter` 60/min router-wide,
+   `publicWriteLimiter` 20/hr on the mutations), mirroring booking's shape.
+3. **Decline was a TOCTOU.** Estimate + change-order `decline` did a plain
+   SELECT-then-UPDATE with no lock; the CO variant's UPDATE had no `status` guard
+   at all, so a decline racing an accept left the CO 'declined' with the project
+   budget already bumped. Both now `BEGIN` + `SELECT … FOR UPDATE` + re-check +
+   guarded UPDATE + `COMMIT`, matching their accept flows.
+4. **Cross-tenant project on a booking.** The authenticated admin book route
+   inserted `project_id` straight from the body — an admin of company A could
+   attach company B's project id. Now validated against `projects WHERE id = $1
+   AND company_id = $2` before insert.
+
+Tests: 3 new impersonation-guard cases (target/super-admin deactivated, super-admin
+demoted → 401) + happy-path decline cases pinning the `FOR UPDATE`. Server suite:
+1097 pass.
+
+---
+
 ## 2026-07-26 — "Go for all of it" batch 4: clock-in/out races
 
 Two concurrency bugs on `routes/clock.js`, both money/data-integrity:

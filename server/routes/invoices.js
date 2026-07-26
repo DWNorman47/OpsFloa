@@ -627,6 +627,8 @@ router.post('/:id/void', requireAdmin, async (req, res) => {
 
 // ── Public (client-facing) invoice view ──────────────────────────────────────
 const publicRouter = require('express').Router();
+const { publicReadLimiter } = require('../middleware/publicLimiters');
+publicRouter.use(publicReadLimiter);
 
 publicRouter.get('/view/:token', async (req, res) => {
   try {
