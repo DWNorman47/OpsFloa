@@ -700,8 +700,14 @@ async function main() {
       await upsertBy(
         client,
         'rfis',
-        { company_id: companyId, project_id: projectByIndex(i).id, rfi_number: 100 + i },
+        // Key on exactly the unique constraint (company_id, rfi_number). project_id
+        // is NOT part of that index, so keying on it here desyncs the upsert: if a
+        // reseed shifts projectByIndex(i) to a different project, the SELECT misses
+        // the stale RFI and the INSERT collides on idx_rfis_company_number. Keep
+        // project_id as an updated value instead.
+        { company_id: companyId, rfi_number: 100 + i },
         {
+          project_id: projectByIndex(i).id,
           subject: [
             'Confirm alternate mounting location',
             'Clarify room naming convention',

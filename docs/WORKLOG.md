@@ -106,6 +106,30 @@ real paycheck until David merges to prod.
 
 ---
 
+## 2026-07-27 — Fix demo-seed crash: RFI upsert key didn't match the unique index
+
+CI "Seed Demo Operations" failed on `duplicate key value violates unique constraint
+"idx_rfis_company_number"`. Root cause: `upsertBy` does SELECT-by-key → INSERT-if-
+missing, and the RFI call keyed on `(company_id, project_id, rfi_number)` while the
+index is only `(company_id, rfi_number)`. The seed reuses the DB across runs (the
+"wipe" step clears storage, not rows), so when a reseed shifts `projectByIndex(i)`
+to a different project, the SELECT misses the stale RFI and the INSERT collides on
+the index. Fixed by keying on exactly the constraint columns and moving `project_id`
+into the updated values — now idempotent regardless of the project mapping.
+
+Audited the sibling numbered tables (estimates / subcontract_pos / change_orders /
+submittals) against their real constraints — all aligned; RFIs were the only
+desync. (`ensureBy` merges key+values on insert, so project_id still lands on the
+create path.)
+
+Not fixed (separate, non-fatal): the "skipped 8 demo users due to username
+collision with another company" warning — those demo usernames already exist under
+another company and global username uniqueness blocks reuse. The seed degrades
+gracefully (warns, continues); it did NOT cause the exit-1. Left for a decision on
+whether to namespace demo usernames or clear the colliding accounts.
+
+---
+
 ## 2026-07-26 — Traceability: close the last two gaps (OT multiplier + night everywhere)
 
 Followed the night-differential breakout by closing the two follow-ups it left.
