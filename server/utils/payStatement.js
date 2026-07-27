@@ -4,7 +4,7 @@ const {
   nightPremiumCost, hoursWorked, computeGuaranteeShortfall,
   computeLeaveHours, shiftHoursByDate,
 } = require('./payCalculations');
-const { leaveRateMultipliers, computeWorkerLeave, computeCompanyLeave } = require('./paidHours');
+const { leaveRateMultipliers, computeWorkerLeave, computeCompanyLeave, otRuleFromSettings } = require('./paidHours');
 const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, sickRulesFromSettings } = require('./hoursRules');
 const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = require('./deductions');
 const { splitRateAware, hasSimpleOtConfig } = require('./rateAwareOvertime');
@@ -41,7 +41,7 @@ const cents = n => Math.round((Number(n) || 0) * 100) / 100;
  * @param opts.explain           attach settings_used / leaveDetail + per-entry OT/wage notes
  */
 function buildPayStatement({ worker, entries, reimbursements = [], leave = { sick: 0, vacation: 0 }, deductions = [], otConfig = null, projectRateMap = {}, settings = {}, from = null, to = null, explain = false }) {
-  const rule = worker.overtime_rule || 'daily';
+  const rule = otRuleFromSettings(settings, worker.overtime_rule);
   const threshold = parseFloat(settings.overtime_threshold) || 8;
   const weekStart = settings.week_start;
   const otMult = parseFloat(settings.overtime_multiplier) || 1.5;
@@ -67,9 +67,9 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     // overtime on prevailing / multi-rate hours — see docs/plans/rate-aware-overtime.md.
     const otMethod = settings.overtime_rate_method === 'weighted_average' ? 'weighted_average' : 'rate_when_worked';
     const split = splitRateAware(paid, { rule, threshold, weekStart, otMult, baseRateOf, method: otMethod });
-    // Per-entry OT for the line-item display column (BillPDF / WorkerMetrics).
-    for (const e of paid) e.overtime_hours = 0;
-    split.worked.forEach((e, i) => { e.overtime_hours = split.perEntry[i].ot; });
+    // Per-entry OT + reason for the line-item display column (BillPDF / WorkerMetrics).
+    for (const e of paid) { e.overtime_hours = 0; e.overtime_reason = null; }
+    split.worked.forEach((e, i) => { e.overtime_hours = split.perEntry[i].ot; e.overtime_reason = split.perEntry[i].reason; });
     ({ regularHours, overtimeHours, prevailingHours, regularCost: regularCostRaw, overtimeCost: overtimeCostRaw, prevailingCost: prevailingCostRaw } = split);
     totalHours = regularHours + overtimeHours + prevailingHours;
   } else {
@@ -129,7 +129,7 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     for (const e of paid) {
       const ex = e.explain || (e.explain = []);
       if (e.wage_type === 'prevailing') ex.push({ code: 'wage_type', wageType: 'prevailing' });
-      if ((e.overtime_hours || 0) > 0) ex.push({ code: 'overtime', otHours: e.overtime_hours, threshold, rule });
+      if ((e.overtime_hours || 0) > 0) ex.push({ code: 'overtime', otHours: e.overtime_hours, reason: e.overtime_reason || (rule === 'weekly' ? 'weekly' : 'daily'), threshold, rule });
     }
     settingsUsed = {
       rate, rate_type: rateType, overtime_rule: rule, overtime_threshold: threshold,
@@ -241,9 +241,15 @@ async function companyStatements({ companyId, workers, settings, from, to }) {
 
   const [entriesR, dedR, projectRateMap, leaveByUser] = await Promise.all([
     pool.query(
+      // ORDER BY is REQUIRED, not cosmetic: rate-aware OT attributes overtime to
+      // the chronologically-later hours and prices each at its own rate, so the
+      // gross depends on entry order. The single-worker loaders order the same
+      // way; without this, the overtime report / payroll CSV could disagree with
+      // the invoice for a multi-rate worker (nondeterministic DB scan order).
       `SELECT te.user_id, te.project_id, te.wage_type, te.start_time, te.end_time, to_char(te.work_date, 'YYYY-MM-DD') AS work_date, te.break_minutes, te.mileage
        FROM time_entries te
-       WHERE te.company_id = $1 AND te.work_date >= $2 AND te.work_date <= $3 AND te.status = 'approved'`,
+       WHERE te.company_id = $1 AND te.work_date >= $2 AND te.work_date <= $3 AND te.status = 'approved'
+       ORDER BY te.user_id, te.work_date ASC, te.start_time ASC`,
       [companyId, from, to]
     ),
     pool.query(

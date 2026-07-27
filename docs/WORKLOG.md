@@ -106,6 +106,93 @@ real paycheck until David merges to prod.
 
 ---
 
+## 2026-07-26 — Overtime explanations now say WHY (traceability)
+
+Found via David eyeballing a demo bill: an entry showed "8.5h overtime — over 8h
+daily" but the 8.5h was a **manual override**, not the daily rule (which on a 9h
+day yields ~1h). The pay statement pushed a blanket `{code:'overtime', threshold,
+rule}` for ANY overtime, so it mislabeled override, rest-day, 7th-day, tier and
+window OT all as "over Nh daily" — an untraceable, misleading trail on a money
+document.
+
+Added per-entry **`overtime_reason`** through the engine (additive — no change to
+the hours math):
+- `annotateEntryOvertime` tags each OT-attribution path: `override`, `rest_day`,
+  `seventh_day`, `window`, or `daily`/`weekly` (over-threshold).
+- The rate-aware path threads the reason through `rateAwarePay`'s `perEntry` (from
+  the annotated clones) → `buildPayStatement` stamps `e.overtime_reason`.
+- The explain item now carries `reason`; the WH-347/report trace (`reportTrace.js`)
+  renders it: "manually set on this entry", "worked on a rest day", "7th
+  consecutive day worked", "premium time window", or "over Nh daily/weekly". The
+  summary rollup uses an honest `{n}h overtime` instead of claiming a single rule.
+- i18n: 5 new `trOvertime*` keys EN+ES.
+
+Tests pin the attribution (override ≠ daily, rest-day, 7th-day, no-OT→no-reason),
+including the exact Leo Martinez case. 1121 pass.
+
+---
+
+## 2026-07-26 — Two follow-ups from the review notes
+
+**⚠️ Behavior change — "Allow overtime = off" now actually stops overtime pay.**
+`feature_overtime` was a pay-engine no-op (it only drove alerts + which tiles
+show), so a company that turned overtime OFF still had OT computed and paid.
+Added `otRuleFromSettings(settings, workerRule)` to `paidHours.js` (off →
+resolves the rule to `'none'`, which the engine already supports) and routed
+EVERY pay/labor-cost surface through it: `buildPayStatement` (invoice/CSV/stub/OT
+report), `laborCostCents`, project-bill, project metrics, the hours-export report,
+certified-payroll, qbo `computeGroupOvertime`, and the client WorkerSummary
+estimate. Default is ON, so only companies that explicitly disabled it change —
+and for them, straight-time-only is now consistent with the already-supported
+per-worker `overtime_rule='none'`. **David should confirm this semantic at merge**
+(the alternative reading — "just hide the OT UI, still pay OT per law" — is why it
+was flagged as a product call). Pinned with a `buildPayStatement` test.
+
+**Removed the stale overtime math from the dev QA page.** `client/src/pages/
+Tests.jsx` carried its own copy of the OLD `computeOT`/`computeDailyPayCosts` and
+~90 lines of test cases pinning the retired regular-only algorithm — testing dead
+code (the client now uses `rateAwareSplit`, the real math is server-side + fully
+covered). Deleted the copies + their four test blocks (kept the still-valid
+`hoursWorked` test). 1017 → 882 lines. Full verify green (1117 pass).
+
+---
+
+## 2026-07-26 — Rate-aware overtime: review sweep (5 agents) + fixes
+
+Ran a 5-agent adversarial review over the whole rate-aware overtime feature
+(calculator core, buildPayStatement integration, the 3 consolidated engines, the
+client, the settings plumbing). Verified every finding against the code before
+touching anything. Two HIGH bugs, both money:
+
+1. **`hasSimpleOtConfig` flattened fixed-slot tiered OT** (found independently by
+   3 agents). `otConfigFromSettings` emits tiers in TWO shapes — custom `ot_tier`
+   rules (`tierRules`) AND fixed-slot `dailyBands`/`weeklyBands` (un-migrated from
+   stored policies). The gate only checked the former, so a company with e.g. a
+   California `8h@1.5× / 12h@2×` policy stored as bands routed through the flat
+   rate-aware path and lost the 2× tier — silent underpay across ALL surfaces
+   (invoice, CSV, stubs, project bill, QBO, WH-347). Fixed: gate on the bands too
+   (any → per-band engine). Added `hasSimpleOtConfig` unit tests (the path was
+   entirely uncovered).
+2. **`companyStatements` had no `ORDER BY`.** The rate-aware engine attributes OT
+   to the chronologically-later hours and prices each at its own rate, so gross is
+   order-dependent — but the company-wide loader (overtime report + payroll CSV)
+   fed entries in raw DB order while the invoice/stub loaders order chronologically.
+   Same worker → different gross on different surfaces, nondeterministically. Fixed
+   with the matching `ORDER BY`.
+
+Plus three lower ones: **NaN prevailing rate** on the WH-347 when a company has no
+prevailing rate set (`parseFloat(undefined) ?? 45` stays NaN → NaN gross); the
+**qbo** bill query missing `ORDER BY` (latent — benign only because QBO prices at a
+flat rate); and the **WorkerSummary** weekly estimate ignoring `week_start`. All
+fixed. Also added defensive `parseFloat(threshold)||8` coalesces.
+
+Verified-clean (no action): regular-only regression = byte-identical; night
+differential correctly routes to the per-band path; splitRateAware reconciles by
+construction; no surface re-derives OT cost the old way; QBO premium formula
+correct; certified-payroll response is a superset. 1116 pass.
+
+---
+
 ## 2026-07-26 — Rate-aware overtime: the money core (increment 1 of the build)
 
 Approved the plan (`docs/plans/rate-aware-overtime.md`) + David's ask to make the

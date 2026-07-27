@@ -38,7 +38,7 @@ function entryHours(e) {
 // it doesn't model tiered/rest-day/7th-day premiums or the weighted-average
 // method. ALL worked hours (regular + prevailing) count toward one threshold, and
 // each overtime hour is paid at the rate it earned. Honors overtime_hours_override.
-function rateAwareSplit(entries, { rule, threshold, mult, rate, prevailingRate }) {
+function rateAwareSplit(entries, { rule, threshold, mult, rate, prevailingRate, weekStart = 1 }) {
   const worked = entries.filter(e => e.start_time && e.end_time);
   const baseRateOf = e => (e.wage_type === 'prevailing' ? (parseFloat(prevailingRate) || 0) : rate);
   const otOf = new Map();
@@ -57,10 +57,11 @@ function rateAwareSplit(entries, { rule, threshold, mult, rate, prevailingRate }
   } else {
     const bucketKey = e => {
       if (rule === 'weekly') {
+        // Start-of-week date, anchored to the company's week_start (0=Sun..6=Sat)
+        // so the estimate groups weeks the same way the server pays them.
         const d = new Date(e.work_date.substring(0, 10) + 'T00:00:00');
-        const jan4 = new Date(d.getFullYear(), 0, 4);
-        const week = Math.ceil(((d - jan4) / 86400000 + jan4.getDay() + 1) / 7);
-        return `${d.getFullYear()}-W${week}`;
+        d.setDate(d.getDate() - ((d.getDay() - weekStart + 7) % 7));
+        return `w:${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
       }
       return e.work_date.substring(0, 10);
     };
@@ -118,8 +119,10 @@ export default function WorkerSummary({ entries, hourlyRate, rateType = 'hourly'
   const rate = parseFloat(hourlyRate) || 30;
   // Straight regular / all overtime / straight prevailing + the hourly cost —
   // prevailing & multi-rate hours now earn overtime, matching the server.
+  // "Allow overtime = off" (overtimeEnabled=false) means no OT accrues — match
+  // the server, which now gates the rule to 'none' the same way.
   const { regularHours, overtimeHours, prevailingHours, cost: hourlyCost } = rateAwareSplit(
-    filtered, { rule: overtimeRule, threshold: overtimeThreshold, mult: overtimeMultiplier, rate, prevailingRate }
+    filtered, { rule: overtimeEnabled ? overtimeRule : 'none', threshold: overtimeThreshold, mult: overtimeMultiplier, rate, prevailingRate, weekStart }
   );
 
   let estimatedPay;

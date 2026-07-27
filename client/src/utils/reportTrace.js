@@ -62,12 +62,21 @@ export function renderTraceItem(item, { t, policyRaw }) {
       const base = t.trBreak.replace('{n}', item.addedMin).replace('{total}', item.breakMin);
       return { text: withRule(base, rulesText(item.ruleIds)), link: SETTINGS_LINKS.hours_rules };
     }
-    case 'overtime':
-      return {
-        text: t.trOvertime.replace('{n}', item.otHours).replace('{th}', item.threshold)
-          .replace('{rule}', item.rule === 'weekly' ? t.trWeekly : t.trDaily),
-        link: SETTINGS_LINKS.hours_rules,
-      };
+    case 'overtime': {
+      // Explain WHY the overtime applies, not a blanket "over Nh daily".
+      const n = item.otHours;
+      let text, link = SETTINGS_LINKS.hours_rules;
+      switch (item.reason) {
+        case 'override':    text = t.trOvertimeOverride.replace('{n}', n); link = null; break; // per-entry, not a rule
+        case 'rest_day':    text = t.trOvertimeRestDay.replace('{n}', n); break;
+        case 'seventh_day': text = t.trOvertimeSeventh.replace('{n}', n); break;
+        case 'window':      text = t.trOvertimeWindow.replace('{n}', n); break;
+        case 'total':       text = t.trOvertimeTotal.replace('{n}', n); link = null; break; // aggregate rollup
+        default:            text = t.trOvertime.replace('{n}', n).replace('{th}', item.threshold)
+          .replace('{rule}', item.rule === 'weekly' ? t.trWeekly : t.trDaily);
+      }
+      return { text, link };
+    }
     case 'wage_type':
       return { text: t.trPrevailing, link: SETTINGS_LINKS.company_standards };
     default:

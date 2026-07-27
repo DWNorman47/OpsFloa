@@ -9,7 +9,7 @@
  * ONE threshold regardless of wage_type.
  */
 
-const { rateAwarePay } = require('../utils/rateAwareOvertime');
+const { rateAwarePay, hasSimpleOtConfig } = require('../utils/rateAwareOvertime');
 
 // One entry. Rate is decided by baseRateOf per test (by wage_type / project).
 const mk = (work_date, start, end, wage_type = 'regular', project_id = null, break_minutes = 0) =>
@@ -89,6 +89,28 @@ describe('weighted_average (opt-in)', () => {
     const r = rateAwarePay(entries, { rule: 'weekly', threshold: 40, otMult: 1.5, baseRateOf: excavatorRate, method: 'weighted_average' });
     // straight = 30*45 + 15*30 = 1800; regRate = 1800/45 = 40; premium = 5*40*0.5 = 100
     expect(r.cost).toBeCloseTo(1900, 2);
+  });
+});
+
+describe('hasSimpleOtConfig — gate to the per-band engine', () => {
+  test('plain / no config → rate-aware path', () => {
+    expect(hasSimpleOtConfig(null)).toBe(true);
+    expect(hasSimpleOtConfig({ dailyBands: [], weeklyBands: [], tierRules: [] })).toBe(true);
+  });
+  test('fixed-slot tiered bands must NOT flatten to one multiplier (per-band path)', () => {
+    // California-style stored as fixed-slot bands — otConfigFromSettings emits
+    // these un-migrated. Missing this routed them through the flat rate-aware
+    // path and silently dropped the 2× tier.
+    expect(hasSimpleOtConfig({ dailyBands: [{ afterHours: 8, mult: 1.5 }, { afterHours: 12, mult: 2 }] })).toBe(false);
+    expect(hasSimpleOtConfig({ weeklyBands: [{ afterHours: 40, mult: 1.5 }] })).toBe(false);
+  });
+  test('other premiums also route to the per-band path', () => {
+    expect(hasSimpleOtConfig({ tierRules: [{}] })).toBe(false);
+    expect(hasSimpleOtConfig({ restDay: { mult: 2, days: [0] } })).toBe(false);
+    expect(hasSimpleOtConfig({ seventhDay: { enabled: true } })).toBe(false);
+    expect(hasSimpleOtConfig({ nightDifferential: { pct: 10 } })).toBe(false);
+    expect(hasSimpleOtConfig({ minDailyHours: 4 })).toBe(false);
+    expect(hasSimpleOtConfig({ windowRules: [{}] })).toBe(false);
   });
 });
 

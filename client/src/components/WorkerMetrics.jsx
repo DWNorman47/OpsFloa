@@ -333,7 +333,7 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
                 {overtimeEnabled && s.overtime_hours > 0 && (
                   <SummaryLine label={t.overtimeLabel} value={`${fmtHours(s.overtime_hours)} · ${formatCurrency(s.overtime_cost, currency)}`}
                     open={openLine === 'ot'} onToggle={() => toggleLine('ot')}
-                    detail={<Trace items={[{ code: 'overtime', otHours: s.overtime_hours, threshold: billData.settings_used?.overtime_threshold, rule: billData.settings_used?.overtime_rule }]} />} />
+                    detail={<Trace items={[{ code: 'overtime', otHours: s.overtime_hours, reason: 'total', threshold: billData.settings_used?.overtime_threshold, rule: billData.settings_used?.overtime_rule }]} />} />
                 )}
                 {s.prevailing_hours > 0 && <SummaryLine label={t.prevailingLabel} value={`${fmtHours(s.prevailing_hours)} · ${formatCurrency(s.prevailing_cost, currency)}`} />}
                 {s.sick_hours > 0 && (

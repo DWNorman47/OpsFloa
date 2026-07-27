@@ -56,7 +56,9 @@ function rateAwarePay(entries, { rule, threshold, weekStart = 1, otMult, baseRat
     const st = total - ot;
     straightHours += st;
     overtimeHours += ot;
-    return { st, ot, baseRate: baseRateOf(e) };
+    // Why this entry's OT applies (from the clone annotation: 'override' or the
+    // daily/weekly threshold — rate-aware only runs on simple configs).
+    return { st, ot, baseRate: baseRateOf(e), reason: ot > 0 ? (clones[i].overtime_reason || null) : null };
   });
 
   let cost;
@@ -85,10 +87,16 @@ function rateAwarePay(entries, { rule, threshold, weekStart = 1, otMult, baseRat
 function hasSimpleOtConfig(otConfig) {
   if (!otConfig) return true; // no policy → plain single-multiplier OT
   // Field names per otConfigFromSettings (hoursRules.js): premium features and
-  // the ot_tier / min_daily / window rule arrays. ANY of them → keep the existing
-  // per-band engine path.
+  // the rule arrays. ANY of them → keep the existing per-band engine path.
   if (otConfig.restDay || otConfig.seventhDay || otConfig.nightDifferential) return false;
   if (otConfig.minDailyHours) return false;
+  // Tiered OT lives in TWO shapes: custom `ot_tier` rules (tierRules) AND the
+  // fixed-slot bands (dailyBands/weeklyBands) that otConfigFromSettings emits
+  // un-migrated from stored policies. Missing the bands would flatten a
+  // California-style 8h@1.5×/12h@2× policy to a single multiplier — silent
+  // underpay. Both must route to the per-band engine.
+  if (Array.isArray(otConfig.dailyBands) && otConfig.dailyBands.length) return false;
+  if (Array.isArray(otConfig.weeklyBands) && otConfig.weeklyBands.length) return false;
   if (Array.isArray(otConfig.tierRules) && otConfig.tierRules.length) return false;
   if (Array.isArray(otConfig.minDailyRules) && otConfig.minDailyRules.length) return false;
   if (Array.isArray(otConfig.windowRules) && otConfig.windowRules.length) return false;

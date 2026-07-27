@@ -34,6 +34,17 @@ describe('buildPayStatement — hours + reconciliation', () => {
     expect(st.totals.grossWages).toBeCloseTo(lines);
   });
 
+  test('feature_overtime off → no overtime accrues (all hours straight)', () => {
+    // 10h day, daily-8: normally 8 reg + 2 OT. With "Allow overtime" off, the
+    // rule resolves to 'none', so all 10h are regular and there's no OT premium.
+    const st = build({ entries: [entry({ end_time: '18:00:00' })], settings: { ...SETTINGS, feature_overtime: false } });
+    expect(st.hours.regular).toBeCloseTo(10);
+    expect(st.hours.overtime).toBeCloseTo(0);
+    expect(st.cost.regular).toBe(300);   // 10 × 30
+    expect(st.cost.overtime).toBe(0);
+    expect(st.totals.grossWages).toBe(300);
+  });
+
   test('deterministic — same inputs, same numbers', () => {
     const a = build({ entries: [entry({ end_time: '18:00:00' })] });
     const b = build({ entries: [entry({ end_time: '18:00:00' })] });

@@ -529,7 +529,9 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
  * short days topped up by a minimum-daily floor, get 0.
  */
 function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig = null) {
-  for (const e of entries) e.overtime_hours = 0; // default for prevailing / non-regular
+  // overtime_reason records WHY each entry's OT applies, so the pay statement can
+  // explain it truthfully instead of blanket-labelling everything "over Nh daily".
+  for (const e of entries) { e.overtime_hours = 0; e.overtime_reason = null; } // default (prevailing / non-regular)
   const regular = entries.filter(e => e.wage_type === 'regular');
 
   // Per-entry admin override: OT = clamped override, carved out of the auto calc.
@@ -538,6 +540,7 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
     if (e.overtime_hours_override != null) {
       const total = entryDuration(e);
       e.overtime_hours = Math.max(0, Math.min(total, parseFloat(e.overtime_hours_override)));
+      e.overtime_reason = e.overtime_hours > 0 ? 'override' : null;
     } else {
       auto.push(e);
     }
@@ -556,6 +559,7 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
     if (windowRules.length) for (const h of windowHoursForEntry(e, windowRules).values()) ws += h;
     windowSumOf.set(e, ws);
     e.overtime_hours = ws;
+    e.overtime_reason = ws > 0 ? 'window' : null;
   }
   if (rule === 'none') return entries; // no daily/weekly OT; window OT (if any) already set
 
@@ -580,8 +584,10 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
   }
 
   for (const [dk, es] of buckets) {
-    if ((restDays && restDays.has(weekdayOfDate(dk))) || (sd && seventhKeys.has(dk))) {
-      for (const e of es) e.overtime_hours = entryDuration(e); // whole day is OT (window hours included)
+    const isRest = restDays && restDays.has(weekdayOfDate(dk));
+    if (isRest || (sd && seventhKeys.has(dk))) {
+      const reason = isRest ? 'rest_day' : 'seventh_day';
+      for (const e of es) { e.overtime_hours = entryDuration(e); e.overtime_reason = e.overtime_hours > 0 ? reason : null; } // whole day is OT
       continue;
     }
     // Window hours are already carved out; only the residual drives the reg/OT
@@ -597,7 +603,12 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
     for (const e of es) {
       const resid = residOf(e);
       const r = Math.max(0, Math.min(resid, regLeft));
-      e.overtime_hours = windowSumOf.get(e) + (resid - r); // window OT + residual OT
+      const thresholdOt = resid - r;
+      e.overtime_hours = windowSumOf.get(e) + thresholdOt; // window OT + residual OT
+      // Over-threshold OT names the rule; if the entry's only OT is window hours,
+      // keep the 'window' reason seeded above.
+      e.overtime_reason = thresholdOt > 0 ? (rule === 'weekly' ? 'weekly' : 'daily')
+        : (windowSumOf.get(e) > 0 ? 'window' : null);
       regLeft -= r;
     }
   }
