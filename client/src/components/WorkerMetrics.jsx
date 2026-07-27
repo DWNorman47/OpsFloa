@@ -333,7 +333,13 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
                 {overtimeEnabled && s.overtime_hours > 0 && (
                   <SummaryLine label={t.overtimeLabel} value={`${fmtHours(s.overtime_hours)} · ${formatCurrency(s.overtime_cost, currency)}`}
                     open={openLine === 'ot'} onToggle={() => toggleLine('ot')}
-                    detail={<Trace items={[{ code: 'overtime', otHours: s.overtime_hours, reason: 'total', threshold: billData.settings_used?.overtime_threshold, rule: billData.settings_used?.overtime_rule }]} />} />
+                    detail={<div style={styles.trace}>
+                      {(s.overtime_bands && s.overtime_bands.length > 0
+                        ? s.overtime_bands.map((b, i) => (
+                            <div key={i} style={styles.traceItem}><span>{(t.trOvertimeBand || '{n}h at {m}×').replace('{n}', fmtHours(b.hours)).replace('{m}', b.mult)}</span></div>
+                          ))
+                        : [<div key="t" style={styles.traceItem}><span>{t.trOvertimeTotal.replace('{n}', fmtHours(s.overtime_hours))}</span></div>])}
+                    </div>} />
                 )}
                 {s.prevailing_hours > 0 && <SummaryLine label={t.prevailingLabel} value={`${fmtHours(s.prevailing_hours)} · ${formatCurrency(s.prevailing_cost, currency)}`} />}
                 {s.night_cost > 0 && (() => {

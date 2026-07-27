@@ -58,6 +58,7 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
 
   let regularHours, overtimeHours, prevailingHours, totalHours;
   let regularCostRaw, overtimeCostRaw, prevailingCostRaw;
+  let overtimeBands = []; // [{hours, mult}] — how many OT hours at which multiplier
 
   if (rateType !== 'daily' && hasSimpleOtConfig(otConfig)) {
     // ── Rate-aware path ─────────────────────────────────────────────────────
@@ -72,6 +73,8 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     split.worked.forEach((e, i) => { e.overtime_hours = split.perEntry[i].ot; e.overtime_reason = split.perEntry[i].reason; });
     ({ regularHours, overtimeHours, prevailingHours, regularCost: regularCostRaw, overtimeCost: overtimeCostRaw, prevailingCost: prevailingCostRaw } = split);
     totalHours = regularHours + overtimeHours + prevailingHours;
+    // Simple config → every OT hour is at the one multiplier.
+    if (overtimeHours > 0) overtimeBands = [{ hours: overtimeHours, mult: otMult }];
   } else {
     // ── Existing path ───────────────────────────────────────────────────────
     // Daily-rate workers, or premium OT configs (tiers, rest-day, 7th-day,
@@ -98,6 +101,11 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
       regularCostRaw = regularHours * rate;
       overtimeCostRaw = otBandsCost(ot.otBands, rate, otMult);
     }
+    // Premium configs price OT per band — surface how many hours at each multiplier
+    // (mult null = the plain overtime multiplier) so a 2× rest-day or a tier is visible.
+    overtimeBands = (ot.otBands || [])
+      .filter(b => (b.hours || 0) > 0)
+      .map(b => ({ hours: b.hours, mult: b.mult != null ? b.mult : otMult }));
   }
 
   // Night-shift differential — an ADDITIVE premium on hours worked inside the
@@ -169,6 +177,11 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     reimbursements: reimbursements || [],
     hours: {
       regular: regularHours, overtime: overtimeHours, prevailing: prevailingHours,
+      // OT hours grouped by the multiplier they were paid at (highest first) so the
+      // report can show "2h at 2×, 3h at 1.5×" instead of one opaque overtime figure.
+      overtimeBands: Object.entries(
+        overtimeBands.reduce((m, b) => { const k = String(b.mult); m[k] = (m[k] || 0) + b.hours; return m; }, {})
+      ).map(([mult, h]) => ({ mult: parseFloat(mult), hours: +h.toFixed(2) })).sort((a, b) => b.mult - a.mult),
       night: nightHours,
       sick: sickHours, vacation: vacationHours,
       guaranteeShortfall, guaranteeMin: guaranteeMinHours, guaranteeWeeks,

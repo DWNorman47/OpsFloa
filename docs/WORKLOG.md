@@ -106,6 +106,39 @@ real paycheck until David merges to prod.
 
 ---
 
+## 2026-07-26 — Traceability: close the last two gaps (OT multiplier + night everywhere)
+
+Followed the night-differential breakout by closing the two follow-ups it left.
+
+**Gap 1 — the multiplier each OT hour was paid at.** The overtime line showed a
+lump sum + a *reason* (rest-day / override / tier), but never the rate. Added
+`hours.overtimeBands` to the statement — OT hours grouped by the multiplier they
+earned (`[{mult, hours}]`, highest first), from `ot.otBands` on the per-band path
+and a single `otMult` band on the rate-aware path. The worker-invoice line now
+expands to "2h at 2×, 3h at 1.5×", so a 2× rest-day or a tiered band (or the manual
+2× override in the Leo bill) is visible instead of folded into one figure.
+
+**Gap 2 — night differential across the other engines.** Two things, one of them a
+real bug:
+- **project-bill route** folded night into overtime AND summed buckets for its
+  total — broke it into its own `night_cost` bucket (added to the total), matching
+  the worker invoice.
+- **QBO billing OMITTED night entirely** (total = labor + OT premium + reimb, no
+  night term) — a *latent underpayment*: a night-shift company's QuickBooks bill was
+  short by the night premium on every push. `computeGroupOvertime` now returns
+  `nightHours`/`nightPremium`; the preview total includes it and the push emits a
+  dedicated "Night differential premium" line. Tests pin both.
+
+Display: night now shows on the invoice PDF, project-bill PDF, pay stub, and — as a
+*conditional* column that only appears when someone earned it (rare premium, don't
+clutter the dense table) — the overtime report and the QBO bill preview.
+
+New tests: OT bands (simple + rest-day 2×), QBO night premium (preview + push).
+1130 pass. Every dollar on the pay report now traces to a visible, itemized cause;
+no engine folds or drops a factor.
+
+---
+
 ## 2026-07-26 — Traceability audit: break out the hidden night differential
 
 Audited every term in the gross-pay formula against what the report actually

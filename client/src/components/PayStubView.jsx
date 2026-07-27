@@ -48,6 +48,7 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
     guarantee_shortfall_hours = 0, guarantee_min_hours = 0,
     sick_hours = 0, vacation_hours = 0,
     regular_cost = 0, overtime_cost = 0, prevailing_cost = 0, guarantee_cost = 0,
+    night_hours = 0, night_cost = 0,
     sick_cost = 0, vacation_cost = 0, gross_wages = 0,
     deductions = [], net_pay = 0,
     rate: workerRate = 0, overtime_multiplier: otMult = 1.5,
@@ -220,6 +221,12 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
                     <div style={s.sumRow}>
                       <span>{t.prevailingPay} ({fmtMoney(prevRate)}/hr)</span>
                       <span>{fmtMoney(prevailing_cost)}</span>
+                    </div>
+                  )}
+                  {night_cost > 0 && (
+                    <div style={s.sumRow}>
+                      <span>{t.nightDiffLabel || 'Night differential'}{night_hours > 0 ? ` (${fmtH(night_hours)})` : ''}</span>
+                      <span>{fmtMoney(night_cost)}</span>
                     </div>
                   )}
                   {guarantee_shortfall_hours > 0 && guarantee_cost > 0 && (

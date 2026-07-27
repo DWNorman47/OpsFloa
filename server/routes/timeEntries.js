@@ -337,6 +337,7 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
         regular_hours: n2(st.hours.regular),
         overtime_hours: n2(st.hours.overtime),
         prevailing_hours: n2(st.hours.prevailing),
+        night_hours: n2(st.hours.night),
         total_mileage: parseFloat((st.hours.mileage || 0).toFixed(1)),
         guarantee_shortfall_hours: st.hours.guaranteeShortfall,
         guarantee_min_hours: st.hours.guaranteeMin,
@@ -346,6 +347,7 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
         // Priced by the shared engine (the stub used to recompute these on the client).
         rate: st.rates.rate,
         regular_cost: st.cost.regular, overtime_cost: st.cost.overtime, prevailing_cost: st.cost.prevailing,
+        night_cost: st.cost.night,
         guarantee_cost: st.cost.guarantee, sick_cost: st.cost.sick, vacation_cost: st.cost.vacation,
         sick_rate: st.cost.sickRate, vacation_rate: st.cost.vacationRate,
         overtime_multiplier: st.rates.overtimeMultiplier, prevailing_wage_rate: st.rates.prevailingWageRate,

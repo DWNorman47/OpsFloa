@@ -19,7 +19,7 @@ const { coerceBody } = require('../middleware/coerce');
 const { logFailure } = require('../failureLog');
 const { sendPushToUser, sendPushToAllWorkers } = require('../push');
 const { sendEmail } = require('../email');
-const { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, nightPremiumCost, computeGuaranteeShortfall } = require('../utils/payCalculations');
+const { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, nightPremiumCost, nightHoursForEntry, computeGuaranteeShortfall } = require('../utils/payCalculations');
 const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, validatePolicyRaw, migrateFixedSlots, hasFixedSlots, ymd } = require('../utils/hoursRules');
 const { computePaid, computeWorkerLeave, computeCompanyLeave, leaveRateMultipliers, otRuleFromSettings } = require('../utils/paidHours');
 const { workerStatement, companyStatements } = require('../utils/payStatement');
@@ -1020,6 +1020,7 @@ router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
     const st = await workerStatement({ companyId, worker, settings, from, to, explain });
     const summary = {
       total_hours: st.hours.total, regular_hours: st.hours.regular, overtime_hours: st.hours.overtime, prevailing_hours: st.hours.prevailing,
+      overtime_bands: st.hours.overtimeBands,
       rate: st.rates.rate, regular_cost: st.cost.regular, overtime_cost: st.cost.overtime, prevailing_cost: st.cost.prevailing,
       night_hours: st.hours.night, night_cost: st.cost.night,
       guarantee_shortfall_hours: st.hours.guaranteeShortfall, guarantee_min_hours: st.hours.guaranteeMin,
@@ -1694,7 +1695,7 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
       if (!workerEntries[e.user_id]) workerEntries[e.user_id] = { items: [], rate: parseFloat(e.hourly_rate) || settings.default_hourly_rate, rate_type: e.rate_type, overtime_rule: otRuleFromSettings(settings, e.overtime_rule), role_id: e.role_id };
       workerEntries[e.user_id].items.push(e);
     });
-    let regularHours = 0, overtimeHours = 0, regularCost = 0, overtimeCost = 0, prevailingHours = 0, prevailingCost = 0;
+    let regularHours = 0, overtimeHours = 0, regularCost = 0, overtimeCost = 0, prevailingHours = 0, prevailingCost = 0, nightHours = 0, nightCost = 0;
     const otConfigByRole = otConfigByRoleFactory(settings);
     Object.values(workerEntries).forEach(({ items, rate, rate_type, overtime_rule, role_id }) => {
       const otConfig = otConfigByRole(role_id);
@@ -1716,7 +1717,16 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
           regularCost += dc.regularCost; overtimeCost += dc.overtimeCost;
         } else {
           regularCost += rh * rate;
-          overtimeCost += otBandsCost(otBands, rate, settings.overtime_multiplier) + nightPremiumCost(reg, otConfig && otConfig.nightDifferential, rate);
+          overtimeCost += otBandsCost(otBands, rate, settings.overtime_multiplier);
+          // Night differential is its own factor (not folded into overtime) — matches the worker invoice.
+          const nd = otConfig && otConfig.nightDifferential;
+          if (nd) {
+            const npct = parseFloat(nd.pct) || 0, nfrom = parseFloat(nd.fromHour), nto = parseFloat(nd.toHour);
+            if (npct && Number.isFinite(nfrom) && Number.isFinite(nto)) {
+              nightCost += nightPremiumCost(reg, nd, rate);
+              for (const e of reg) nightHours += nightHoursForEntry(e, nfrom, nto);
+            }
+          }
         }
         items.filter(e => e.wage_type === 'prevailing').forEach(e => {
           const h = Math.max(0, hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60);
@@ -1726,12 +1736,12 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
     });
 
     const totalHours = regularHours + overtimeHours + prevailingHours;
-    const totalCost = regularCost + overtimeCost + prevailingCost;
+    const totalCost = regularCost + overtimeCost + prevailingCost + nightCost;
 
     res.json({
       project: projectResult.rows[0],
       entries,
-      summary: { total_hours: totalHours, regular_hours: regularHours, overtime_hours: overtimeHours, prevailing_hours: prevailingHours, regular_cost: regularCost, overtime_cost: overtimeCost, prevailing_cost: prevailingCost, total_cost: totalCost, overtime_multiplier: settings.overtime_multiplier, prevailing_wage_rate: effectivePrevRate },
+      summary: { total_hours: totalHours, regular_hours: regularHours, overtime_hours: overtimeHours, prevailing_hours: prevailingHours, night_hours: nightHours, regular_cost: regularCost, overtime_cost: overtimeCost, prevailing_cost: prevailingCost, night_cost: nightCost, total_cost: totalCost, overtime_multiplier: settings.overtime_multiplier, prevailing_wage_rate: effectivePrevRate },
       period: { from: from || null, to: to || null },
     });
   } catch (err) {

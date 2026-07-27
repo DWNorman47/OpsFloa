@@ -176,3 +176,24 @@ describe('buildPayStatement — night differential is its own visible factor', (
     expect(st.hours.night).toBeCloseTo(0);
   });
 });
+
+describe('buildPayStatement — overtime bands expose the multiplier', () => {
+  test('simple OT reports its hours at the plain multiplier', () => {
+    const st = build({ entries: [entry({ end_time: '18:00:00' })] }); // 10h → 2h OT at 1.5×
+    expect(st.hours.overtimeBands).toEqual([{ mult: 1.5, hours: 2 }]);
+  });
+
+  test('a premium rest-day rate is visible as its own 2× band', () => {
+    // 2026-07-05 is a Sunday; rest-day config makes the whole day OT at 2×.
+    const st = build({
+      entries: [entry({ work_date: '2026-07-05', start_time: '08:00:00', end_time: '14:00:00' })], // 6h
+      otConfig: { restDay: { mult: 2, days: [0] } },
+    });
+    expect(st.hours.overtimeBands.some(b => b.mult === 2 && b.hours > 0)).toBe(true);
+  });
+
+  test('no OT → no bands', () => {
+    const st = build({ entries: [entry()] }); // 8h, no OT
+    expect(st.hours.overtimeBands).toEqual([]);
+  });
+});
