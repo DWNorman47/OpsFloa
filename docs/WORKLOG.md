@@ -106,6 +106,31 @@ real paycheck until David merges to prod.
 
 ---
 
+## 2026-07-27 — Tool-app PWA: "new version available" reload prompt
+
+The real reason the takeoff fixes "weren't there": the installed PWA tool window
+kept running the old build. Confirmed the cause — the built SW precache manifest
+includes `tool-apps/planroom/{app.js,index.html}` (0.43 MiB app.js, well under the
+5 MiB cap), so the root service worker serves the tool FROM precache. An open tool
+window has no update signal (the main app has UpdatePrompt via version.json polling;
+the static tool-apps had nothing), so after a deploy it silently stayed on the old
+version until a manual hard-refresh.
+
+Added `tool-apps/shared/update-check.js` (loaded by planroom/index.html; reusable by
+the other tool-apps). Because the tool is served from the precache, the SW lifecycle
+is the accurate signal: it nudges `registration.update()` on load / every 10 min /
+on focus, and when a newer worker takes control (`controllerchange`, guarded against
+the first-install case) shows a dismissible "A new version is available — Reload"
+banner. The reload loads the freshly-precached build (sw.js is served max-age=0, so
+new workers propagate; skipWaiting + clients.claim make the new precache active).
+
+Bootstrap caveat: existing installs still on the old index.html don't reference the
+new script yet, so they need ONE manual refresh to land on this version; every
+deploy after that prompts automatically. Verified the built sw.js precaches the new
+script. 1131 pass.
+
+---
+
 ## 2026-07-27 — Takeoff: click the start point to close a LINE into a loop
 
 David couldn't join the ends of a line takeoff and wondered if closing only got
