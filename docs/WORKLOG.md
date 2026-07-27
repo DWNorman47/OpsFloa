@@ -23,6 +23,36 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-26 — Rate-aware overtime: the money core (increment 1 of the build)
+
+Approved the plan (`docs/plans/rate-aware-overtime.md`) + David's ask to make the
+blended method a per-company choice. Built the **isolated, tested money core**
+first — before wiring it into any paycheck — because OT math can't be eyeballed and
+the scenario tests ARE the accuracy guarantee.
+
+- **`server/utils/rateAwareOvertime.js`** — pure calculator. All of a worker's hours
+  count toward ONE threshold regardless of wage_type (the fix for multi-rate work);
+  reuses `annotateEntryOvertime` (via a uniform-wage_type clone) for the chronological
+  OT-hour attribution, then prices per-entry. Two methods: `rate_when_worked`
+  (default — each OT hour at the rate it earned) and `weighted_average` (FLSA blend,
+  opt-in). **Scope v1: plain single-multiplier OT** — `hasSimpleOtConfig()` gates
+  out tiers/rest-day/7th-day/window premiums (they need per-band attribution) so the
+  integration layer keeps those on the existing path until that lands.
+- **Setting `overtime_rate_method`** (default `rate_when_worked`) — constant
+  `payEnums.js`, settingsDefaults, admin PATCH validation, db-enums row.
+- **`rateAwareOvertime.test.js`** — the scenario matrix A–F as executable
+  expected-pay: excavator prevailing-then-civilian $420 / civilian-then-prevailing
+  $435 (order matters), Kentucky call center $855, Honduras 1.25× L.925, pure
+  prevailing week $2,340, break-clamp $0, weighted-average mixed week $1,900, and the
+  single-rate invariant (both methods agree). All pass.
+
+**Not yet wired into pay** — the calculator is standalone. Next increments (todo):
+integrate into `buildPayStatement` with the cross-surface reconcile invariant + the
+no-regression guarantee, then route the WH-347 report through it. Nothing changes a
+real paycheck until those land and David merges. 1112 pass.
+
+---
+
 ## 2026-07-26 — Certified-payroll / prevailing-OT audit (+ break clamp)
 
 Audited the WH-347 path to figure out how to close the prevailing-OT gap without
