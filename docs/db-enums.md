@@ -336,6 +336,25 @@ that had the previous default.
   pay-stub PDF. **Not** a tax engine: it applies configured rates, it does not
   compute statutory brackets/ceilings.
 
+- `paycheck_rules` (JSON policy, default `''`) — named **paycheck rulesets** (pay
+  schedule + how/when deductions apply), built in Administration ▸ Workspace ▸
+  Paycheck Rules. Shape `{ version, rulesets: [{ id, name, schedule, deductions,
+  notes }] }`; money in **cents**. Every fixed-value field lives inside the JSON
+  (not a DB column, same posture as `hours_rules`), with the allowed sets frozen in
+  `server/constants/paycheckRuleEnums.js` and clamped on read by
+  `normalizePaycheckRules` (never throws):
+  `schedule.frequency` = `weekly` \| `biweekly` \| `semimonthly` \| `monthly`;
+  `schedule.weekendShift` = `none` \| `before` \| `after`;
+  `deductions.timing` = `every` \| `grouped`;
+  `deductions.group.by` = `pair` \| `month`;
+  `deductions.group.applyOn` = `first` \| `second` \| `last`;
+  `deductions.cap.type` = `none` \| `amount` \| `percent`;
+  `deductions.scope` = `all` \| `selected`.
+  Validated on write for **shape (JSON object) + size (≤ 60 KB)** in PATCH
+  `/admin/settings`. `''`/empty = none configured, so existing companies are
+  unaffected. **Not yet consumed** — assigning rulesets to employee types and the
+  pay-engine math land later (see `docs/plans/paycheck-rules.md`).
+
 ### Module visibility flags (`module_*`, boolean, in `FEATURE_KEYS`)
 
 Admin-controlled module toggles: `module_timeclock`, `module_team` (Directory),

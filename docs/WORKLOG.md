@@ -106,7 +106,34 @@ real paycheck until David merges to prod.
 
 ---
 
-## 2026-07-27 — Tool-app PWA: "new version available" reload prompt
+## 2026-07-27 — New settings section: Paycheck Rules (builder + storage)
+
+Built a **Paycheck Rules** section (Administration ▸ Workspace, beside Hours & Rules
+/ Deductions), modeled on the Deductions/Hours-rules pattern. Admins build named
+**rulesets**; each has a pay **schedule** (weekly / biweekly / semi-monthly /
+monthly — with pay weekday + anchor date for biweekly, two days-of-month for
+semi-monthly, day-of-month/last for monthly, and a weekend-shift) and a
+**deductions** block (timing every/grouped; group by pair or calendar month; apply
+to first/second/last check; combine the group; an **exempt amount** subtracted
+before deducting; an optional cap by amount or percent; a min-net floor; scope
+all/selected deductions). David's two examples drop out as **presets**: "Every other
+Thursday" (biweekly, grouped by pair, apply second, combine, exempt $11k) and "15th
+& 30th" (semi-monthly, grouped by month, apply last, combine, exempt $11k).
+
+Scope this phase = builder + storage only. Assigning rulesets to employee types and
+the actual pay-engine math are explicitly **later** (documented in
+`docs/plans/paycheck-rules.md`).
+
+Pieces: `server/constants/paycheckRuleEnums.js` (frozen enum sets +
+`normalizePaycheckRules` that clamps every field on read, never throws — same
+posture as `hoursRules.parsePolicy`); new `paycheck_rules` string setting
+(settingsDefaults `STRING_KEYS`/defaults, the duplicate PATCH allowlist in
+`admin.js`, and a shape+size validation block — the two-allowlist gotcha the
+architecture map flagged); `PaycheckRulesSettings.jsx` (list + add/duplicate/delete,
+per-ruleset editor with conditional fields, plain-English summary, presets, dollar
+inputs ↔ cents); mounted in AdministrationPage under the existing `manage_settings`
+gate; EN+ES i18n (`pcr*`, parity test green); `docs/db-enums.md` row for every
+fixed-value field. Normalizer tests pin the clamping. 1140 pass.
 
 The real reason the takeoff fixes "weren't there": the installed PWA tool window
 kept running the old build. Confirmed the cause — the built SW precache manifest

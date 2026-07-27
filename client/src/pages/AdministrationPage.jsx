@@ -10,6 +10,7 @@ import BillingPanel from '../components/BillingPanel';
 import ManageRates from '../components/ManageRates';
 import HoursRulesSettings from '../components/HoursRulesSettings';
 import DeductionsSettings from '../components/DeductionsSettings';
+import PaycheckRulesSettings from '../components/PaycheckRulesSettings';
 import AdvancedSettings from '../components/AdvancedSettings';
 import AuditLog from '../components/AuditLog';
 import ServiceRequestsAdmin from '../components/ServiceRequestsAdmin';
@@ -790,6 +791,12 @@ export default function AdministrationPage() {
               body={t.dedGroupBody}
             >
               <DeductionsSettings settings={settings} onSettingsUpdated={setSettings} />
+            </WorkspaceSettingGroup>
+            <WorkspaceSettingGroup
+              title={t.pcrGroupTitle}
+              body={t.pcrGroupBody}
+            >
+              <PaycheckRulesSettings settings={settings} onSettingsUpdated={setSettings} />
             </WorkspaceSettingGroup>
             <WorkspaceSettingGroup
               title={t.admpAdvancedControlsTitle}
