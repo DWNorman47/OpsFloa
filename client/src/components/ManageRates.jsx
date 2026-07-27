@@ -78,6 +78,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
     overtime_multiplier: String(settings?.overtime_multiplier ?? 1.5),
     overtime_rule: settings?.overtime_rule ?? 'daily',
     overtime_threshold: String(settings?.overtime_threshold ?? 8),
+    overtime_rate_method: settings?.overtime_rate_method ?? 'rate_when_worked',
     regular_shift_hours: String(settings?.regular_shift_hours ?? 8),
     sick_pay_pct: String(settings?.sick_pay_pct ?? 100),
     vacation_pay_pct: String(settings?.vacation_pay_pct ?? 100),
@@ -173,6 +174,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
       overtime_multiplier: String(settings.overtime_multiplier ?? 1.5),
       overtime_rule: settings.overtime_rule ?? 'daily',
       overtime_threshold: String(settings.overtime_threshold ?? 8),
+      overtime_rate_method: settings.overtime_rate_method ?? 'rate_when_worked',
       regular_shift_hours: String(settings.regular_shift_hours ?? 8),
       sick_pay_pct: String(settings.sick_pay_pct ?? 100),
       vacation_pay_pct: String(settings.vacation_pay_pct ?? 100),
@@ -247,6 +249,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
         overtime_multiplier: parseFloat(form.overtime_multiplier),
         overtime_rule: form.overtime_rule,
         overtime_threshold: parseFloat(form.overtime_threshold),
+        overtime_rate_method: form.overtime_rate_method,
         regular_shift_hours: parseFloat(form.regular_shift_hours),
         sick_pay_pct: parseFloat(form.sick_pay_pct),
         vacation_pay_pct: parseFloat(form.vacation_pay_pct),
@@ -894,6 +897,15 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
             <div style={styles.inputGroup}>
               <input style={styles.input} type="number" min="1" step="0.5" value={form.overtime_threshold} onChange={e => set('overtime_threshold', e.target.value)} required />
               <span style={styles.suffix}>{t.ratesHrs}</span>
+            </div>
+          </div>
+          <div style={styles.row}>
+            <label style={styles.label}>{t.ratesRateMethod}<HelpTip text={t.ratesRateMethodHelp} /></label>
+            <div style={styles.inputGroup}>
+              <select style={{ ...styles.input, width: 'auto', textAlign: 'left' }} value={form.overtime_rate_method} onChange={e => set('overtime_rate_method', e.target.value)}>
+                <option value="rate_when_worked">{t.ratesRateWhenWorked}</option>
+                <option value="weighted_average">{t.ratesWeightedAverage}</option>
+              </select>
             </div>
           </div>
           <div style={styles.row}>

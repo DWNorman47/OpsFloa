@@ -110,8 +110,19 @@ row before writing code — that's the whole point of doing this first.
    1.5`, which no longer reproduces the now-blended `cost.overtime` when OT spans two
    rates. The dollar figure is right (read from `cost.overtime`); only the implied
    arithmetic in the label is stale.
-5. ⬜ **UI:** a settings toggle for `overtime_rate_method` (rate-when-worked /
-   weighted-average), EN+ES.
+5. ✅ **UI:** settings toggle for `overtime_rate_method` (rate-when-worked /
+   weighted-average) in `ManageRates.jsx`'s overtime section, with a help tip;
+   `ratesRateMethod*` i18n keys EN+ES. Done 2026-07-26.
+
+## Remaining (low priority)
+
+- **WorkerSummary "estimated pay"** (`WorkerSummary.jsx:108`) still prices
+  prevailing flat + OT at the regular rate via its own client `computeOT`. It's a
+  labeled *estimate*; making it exact means porting the calculator to the browser.
+  Acceptable as an approximation; may slightly understate for prevailing workers.
+- **OT-multiplier labels** on `BillPDF.jsx`/`ProjectBillPDF.jsx` (`Overtime Pay
+  (1.5×)`) — the dollar figure is correct (read from `cost.overtime`); only the
+  implied `hours × rate × 1.5` in the label is stale when OT spans two rates.
 
 ## Known edge to decide later, not guess now
 
