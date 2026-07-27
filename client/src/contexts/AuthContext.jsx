@@ -147,7 +147,19 @@ export function AuthProvider({ children }) {
     setFirstLogin(false);
   };
 
-  const updateUser = patch => setUser(u => ({ ...u, ...patch }));
+  const updateUser = patch => setUser(u => {
+    if (!u) return u;
+    const next = { ...u, ...patch };
+    // Persist the merged user to the active token store. Without this, updateUser
+    // touched only React state, so a cleared flag (e.g. needs_terms after accepting
+    // the Terms) was lost on reload — the stale tc_user cache (used on offline /
+    // /auth/me-failure bootstraps) kept re-showing the clickwrap gate every time.
+    try {
+      const store = safeSession.getItem('tc_token') ? safeSession : safeLocal;
+      store.setItem('tc_user', JSON.stringify(next));
+    } catch { /* storage blocked */ }
+    return next;
+  });
   const clearFirstLogin = () => setFirstLogin(false);
 
   return (
