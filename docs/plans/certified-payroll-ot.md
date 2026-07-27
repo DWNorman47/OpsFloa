@@ -1,7 +1,12 @@
 # Certified Payroll (WH-347) — real ST/OT split
 
-**Status:** spec only, blocked on one validation step (see Gate). No pay-math code
-until a real WH-347 confirms the rule for the states/crafts we serve.
+> **Superseded by [`rate-aware-overtime.md`](./rate-aware-overtime.md).** The WH-347
+> is one consumer of the rate-aware pay engine described there; the fix is engine-wide
+> (all pay surfaces), not report-only. Keep this doc for the WH-347 column/grid
+> details; the engine work + scenario matrix live in the broader plan.
+
+**Status:** spec only. No pay-math code until the scenario matrix in the broader
+plan is confirmed.
 
 ## Problem
 

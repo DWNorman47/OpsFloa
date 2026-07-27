@@ -113,8 +113,15 @@ that holds the exhaustive detail.
   fresh local project each time, so copying the same cloud takeoff twice yields two
   local projects both linked to it. Minor; could reuse the already-linked local
   project instead. (2026-07-11)
-- **Prevailing / certified-payroll overtime.** → **spec:
-  `docs/plans/certified-payroll-ot.md`.** Audited 2026-07-26 and the scope got
+- **Rate-aware overtime (prevailing / multi-rate / international).** → **spec:
+  `docs/plans/rate-aware-overtime.md`** (broadened from the WH-347-only
+  `certified-payroll-ot.md`). David's goal: one adaptable engine for any use case
+  (Oregon excavator mixing prevailing + civilian jobs in a day, Kentucky call
+  center, Honduras elevator co) with no jurisdiction hardcoded. The one real gap is
+  multi-rate hours never earning OT; fix is rate-aware "rate-when-worked" pricing,
+  engine-wide, with a plain-English scenario matrix as the spec + a cross-surface
+  reconcile invariant. Method note: rate-when-worked (generalizes worldwide);
+  weighted-average is a future US toggle. Audited 2026-07-26 and the scope got
   *clearer and bigger*: the WH-347 report (`GET /admin/certified-payroll`,
   `admin.js:3454`) computes **no overtime at all** — regular *and* prevailing — it
   bucket-sums raw hours and grosses `hours × rate` flat, bypassing
