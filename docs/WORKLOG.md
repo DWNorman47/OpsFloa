@@ -106,6 +106,19 @@ real paycheck until David merges to prod.
 
 ---
 
+## 2026-07-27 — Takeoff: `deduct` no longer carries to the next area
+
+Drawing an area takeoff and checking "deduct" (mark the shape a void) made the NEXT
+new area default to deduct too. Cause: the whole cfg — including `deduct` — is
+stashed in `lastAreaCfg` and used to pre-fill the next area (a real convenience for
+label/mode/color). `deduct` is a per-shape property, not a default, so it shouldn't
+ride along. Added `rememberAreaCfg(cfg)` (strips `deduct` before storing) and routed
+all four `lastAreaCfg =` sites through it. The shape's own stored cfg keeps its real
+deduct; editing an existing shape still pre-fills from that shape's cfg, so its
+deduct state is preserved there. Bumped planroom cache-bust v77→v78.
+
+---
+
 ## 2026-07-27 — Username uniqueness: global → per-company (the real multi-tenant fix)
 
 Chased down the demo-seed "skipped 8 workers due to username collision with another
