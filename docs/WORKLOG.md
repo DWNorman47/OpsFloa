@@ -129,6 +129,9 @@ new script yet, so they need ONE manual refresh to land on this version; every
 deploy after that prompts automatically. Verified the built sw.js precaches the new
 script. 1131 pass.
 
+Follow-up: wired the same script into `pdftools/index.html` too (also precached —
+same staleness gap), so every tool-app now surfaces the reload prompt.
+
 ---
 
 ## 2026-07-27 — Takeoff: click the start point to close a LINE into a loop
