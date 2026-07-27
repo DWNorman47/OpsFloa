@@ -3156,7 +3156,7 @@ function commitDraft() {
     const s = pageFtPerPx();
     askAreaConfig(polygonAreaFt2(pts, s), polygonPerimeterFt(pts, s), lastAreaCfg).then(cfg => {
       if (!cfg) { vp.requestDraw(); return; }
-      lastAreaCfg = cfg;
+      rememberAreaCfg(cfg);
       state.markups.push({ id: randId(), page: state.page, kind: 'qarea', pts, cfg, created: Date.now() });
       pushUndo(d.prev);
       markupsChanged();
@@ -3283,7 +3283,7 @@ els.cv.addEventListener('dblclick', e => {
       if (!cfg) return;
       const prev = snapshot();
       hit.cfg = cfg;
-      lastAreaCfg = cfg;
+      rememberAreaCfg(cfg);
       pushUndo(prev);
       markupsChanged();
     });
@@ -4639,7 +4639,7 @@ function reconfigureTakeoff(m) {
   selectedId = m.id; vp.requestDraw();
   const s = state.scales[m.page] || 0;
   const apply = cfg => { if (!cfg) return; const prev = snapshot(); m.cfg = cfg; pushUndo(prev); markupsChanged(); };
-  if (m.kind === 'qarea') askAreaConfig(polygonAreaFt2(m.pts, s), areaPerimeterFt(m), m.cfg).then(cfg => { if (cfg) lastAreaCfg = cfg; apply(cfg); });
+  if (m.kind === 'qarea') askAreaConfig(polygonAreaFt2(m.pts, s), areaPerimeterFt(m), m.cfg).then(cfg => { if (cfg) rememberAreaCfg(cfg); apply(cfg); });
   else if (m.kind === 'qline') askLineConfig(polyLengthFt(m.pts, s), m.cfg).then(cfg => { if (cfg) { lastLineCfg = cfg; lastLineColor = cfg.color; } apply(cfg); });
   else if (m.kind === 'qcount') askCountConfig(m.pts.length, m.cfg).then(cfg => { if (cfg) lastCountCfg = cfg; apply(cfg); });
 }
@@ -5981,6 +5981,12 @@ function syncAreaMode() {
   $('atThickLbl').textContent = mode === 'strip' ? 'Strip depth (in)' : 'Thickness (in)';
 }
 let lastAreaCfg = null;
+// The last area's settings pre-fill the NEXT new area (label, mode, color, …) as a
+// convenience. `deduct` is deliberately NOT carried: it's a per-shape property
+// (this one shape is a void), so drawing a deduct must not silently make every
+// following shape a deduct too. Editing an existing shape pre-fills from that
+// shape's own cfg, so its deduct state is preserved there.
+const rememberAreaCfg = cfg => { lastAreaCfg = cfg ? { ...cfg, deduct: false } : cfg; };
 function askAreaConfig(areaSf, perimFt, prefill) {
   return new Promise(resolve => {
     const preview = () => { $('atResult').innerHTML = areaResultRows(areaSf, readAreaCfg(), perimFt); };
@@ -6523,7 +6529,7 @@ async function wandArea(w) {
   askAreaConfig(polygonAreaFt2(pts, s), polygonPerimeterFt(pts, s), lastAreaCfg).then(cfg => {
     if (!cfg) { vp.requestDraw(); return; }
     const prev = snapshot();
-    lastAreaCfg = cfg;
+    rememberAreaCfg(cfg);
     state.markups.push({ id: randId(), page: state.page, kind: 'qarea', pts, cfg, created: Date.now() });
     pushUndo(prev);
     markupsChanged();

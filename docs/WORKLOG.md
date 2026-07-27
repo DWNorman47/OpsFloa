@@ -106,6 +106,41 @@ real paycheck until David merges to prod.
 
 ---
 
+## 2026-07-27 — Terms gate re-prompting every load: stale cached user
+
+The EULA/Privacy clickwrap kept re-appearing after accepting. Server side is
+correct — `/accept-terms` writes a `legal_acceptances` row (user_id + LEGAL_VERSION)
+and `buildSessionUser` gates `needs_terms` on it, so login and `/auth/me` reflect a
+saved acceptance. The bug was client-side: `AuthContext.updateUser` mutated only
+React state and never wrote the merged user back to the `tc_user` cache. So
+`TermsGate`'s `updateUser({needs_terms:false})` cleared the flag in memory but the
+cache still held `needs_terms:true` — and the bootstrap paths that read the cache
+instead of a live `/auth/me` (offline, or an `/auth/me` timeout/failure — common for
+a PWA where `navigator.onLine` is unreliable) resurrected the gate on the next load.
+
+Fix: `updateUser` now persists the merged user to the active token store
+(sessionStorage for impersonation tabs, else localStorage). Once accepted, the
+cache agrees with the DB, so no bootstrap path re-shows the gate. Online `/auth/me`
+stays authoritative — the fix doesn't mask a real server state, it just stops the
+stale cache from overriding an accepted one. Test pins that a cleared `needs_terms`
+is written to `tc_user`. The intended "ask once per account, saved in the DB, unless
+the version bumps" behavior now actually holds.
+
+---
+
+## 2026-07-27 — Takeoff: `deduct` no longer carries to the next area
+
+Drawing an area takeoff and checking "deduct" (mark the shape a void) made the NEXT
+new area default to deduct too. Cause: the whole cfg — including `deduct` — is
+stashed in `lastAreaCfg` and used to pre-fill the next area (a real convenience for
+label/mode/color). `deduct` is a per-shape property, not a default, so it shouldn't
+ride along. Added `rememberAreaCfg(cfg)` (strips `deduct` before storing) and routed
+all four `lastAreaCfg =` sites through it. The shape's own stored cfg keeps its real
+deduct; editing an existing shape still pre-fills from that shape's cfg, so its
+deduct state is preserved there. Bumped planroom cache-bust v77→v78.
+
+---
+
 ## 2026-07-27 — Username uniqueness: global → per-company (the real multi-tenant fix)
 
 Chased down the demo-seed "skipped 8 workers due to username collision with another
