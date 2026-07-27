@@ -75,7 +75,7 @@ export function WorkforcePanel() {
   });
 
   // tab must be declared before any useEffect that references it (avoids TDZ in minified output)
-  const ALL_TABS = ['live', 'approvals', 'reports', 'timeoff', 'expenses', 'manage'];
+  const ALL_TABS = ['live', 'approvals', 'reports', 'payroll', 'timeoff', 'expenses', 'manage'];
   // Workforce tabs use a 'wf-' hash prefix so they don't collide with the
   // Personal group's tabs in the shared Time Clock module.
   const getHashTab = () => {
@@ -229,6 +229,7 @@ export function WorkforcePanel() {
             { id: 'live', label: t.tabLive, dot: chatUnread && settings?.feature_chat !== false ? '#3b82f6' : null },
             ...(canDo('approve_entries') ? [{ id: 'approvals', label: t.tabApprovals, dot: pendingCount > 0 ? '#f59e0b' : null }] : []),
             ...(canDo('view_reports') ? [{ id: 'reports', label: t.tabReports }] : []),
+            ...(canDo('view_reports') ? [{ id: 'payroll', label: t.tabPayroll }] : []),
             ...(settings?.feature_pto !== false ? [{ id: 'timeoff', label: t.tabTimeOff }] : []),
             ...(settings?.feature_reimbursements !== false ? [{ id: 'expenses', label: t.tabExpenses, dot: pendingReimbursements > 0 ? '#f59e0b' : null }] : []),
             ...(settings?.feature_scheduling !== false ? [{ id: 'manage', label: t.tabManage }] : []),
@@ -322,6 +323,14 @@ export function WorkforcePanel() {
               </button>
               {!collapsedSections.projects && <Suspense fallback={<TabLoader />}><ProjectReports currency={settings?.currency ?? 'USD'} settings={settings} /></Suspense>}
             </>}
+          </Suspense>
+        ) : tab === 'payroll' ? (
+          <Suspense fallback={<TabLoader />}>
+            <h2 style={styles.heading}>{t.tabPayroll}</h2>
+            <p style={styles.payrollIntro}>
+              {t.payrollTabIntro}{' '}
+              <button type="button" style={styles.payrollConfigLink} onClick={() => { window.location.href = '/administration#workspace'; }}>{t.payrollTabConfigure}</button>
+            </p>
             {settings?.feature_overtime !== false && <>
               <button ref={el => { sectionRefs.current.overtime = el; }} type="button" style={styles.sectionToggle} onClick={() => toggleSection('overtime')}>
                 <span>{t.overtimeReport}</span>
@@ -330,10 +339,10 @@ export function WorkforcePanel() {
               {!collapsedSections.overtime && (plan.isStarter ? <Suspense fallback={<TabLoader />}><OvertimeReport currency={settings?.currency ?? 'USD'} /></Suspense> : <UpgradePrompt requiredPlan="starter" feature={t.overtimeReport} />)}
             </>}
             <button ref={el => { sectionRefs.current.payroll = el; }} type="button" style={styles.sectionToggle} onClick={() => toggleSection('payroll')}>
-              <span>{t.payrollLabel}</span>
+              <span>{t.certifiedPayrollLabel}</span>
               <span style={styles.chevron}>{collapsedSections.payroll ? '▶' : '▼'}</span>
             </button>
-            {!collapsedSections.payroll && (plan.hasQbo ? <Suspense fallback={<TabLoader />}><CertifiedPayroll projects={projects} settings={settings} requireSignature={plan.hasCertifiedPayroll && settings?.cp_require_signature !== false} wh347Format={plan.hasCertifiedPayroll && settings?.cp_wh347_format !== false} /></Suspense> : <UpgradePrompt requiredPlan="qbo" feature={t.payrollLabel} />)}
+            {!collapsedSections.payroll && (plan.hasQbo ? <Suspense fallback={<TabLoader />}><CertifiedPayroll projects={projects} settings={settings} requireSignature={plan.hasCertifiedPayroll && settings?.cp_require_signature !== false} wh347Format={plan.hasCertifiedPayroll && settings?.cp_wh347_format !== false} /></Suspense> : <UpgradePrompt requiredPlan="qbo" feature={t.certifiedPayrollLabel} />)}
             <button ref={el => { sectionRefs.current.export = el; }} type="button" style={styles.sectionToggle} onClick={() => toggleSection('export')}>
               <span>{t.export}</span>
               <span style={styles.chevron}>{collapsedSections.export ? '▶' : '▼'}</span>
@@ -372,6 +381,8 @@ const styles = {
   tab: { flex: 1, padding: '9px 0', background: 'none', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 14, color: '#666', cursor: 'pointer', whiteSpace: 'nowrap', textAlign: 'center' },
   tabActive: { flex: 1, padding: '9px 0', background: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 14, color: 'var(--ops-page-accent)', cursor: 'pointer', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', whiteSpace: 'nowrap', textAlign: 'center' },
   heading: { marginBottom: 20, fontSize: 22 },
+  payrollIntro: { fontSize: 14, color: '#555', margin: '-8px 0 20px', lineHeight: 1.5, maxWidth: 640 },
+  payrollConfigLink: { background: 'none', border: 'none', color: 'var(--ops-page-accent)', fontWeight: 600, cursor: 'pointer', padding: 0, fontSize: 14, textDecoration: 'underline' },
   subheading: { fontSize: 18, fontWeight: 600, margin: '32px 0 16px' },
   sectionToggle: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: '12px 16px', fontSize: 16, fontWeight: 600, color: '#111827', cursor: 'pointer', marginTop: 24, marginBottom: 4, textAlign: 'left', scrollMarginTop: 16 },
   chevron: { fontSize: 11, color: '#6b7280' },

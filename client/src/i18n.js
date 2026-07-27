@@ -120,6 +120,10 @@ const translations = {
     tabAnalytics: 'Analytics',
     tabApprovals: 'Approvals',
     tabReports: 'Reports',
+    tabPayroll: 'Payroll',
+    payrollTabIntro: 'Review hours and net pay, export for your payroll processor, and run certified payroll.',
+    payrollTabConfigure: 'Configure pay rules →',
+    certifiedPayrollLabel: 'Certified Payroll',
     tabManage: 'Scheduling',
     tabSettings: 'Settings',
 
@@ -4482,6 +4486,10 @@ const translations = {
     tabAnalytics: 'Análisis',
     tabApprovals: 'Control de Asistencia',
     tabReports: 'Reportes',
+    tabPayroll: 'Nómina',
+    payrollTabIntro: 'Revisa horas y pago neto, exporta para tu procesador de nómina y ejecuta la nómina certificada.',
+    payrollTabConfigure: 'Configurar reglas de pago →',
+    certifiedPayrollLabel: 'Nómina Certificada',
     tabManage: 'Gestionar',
     tabSettings: 'Configuración',
 

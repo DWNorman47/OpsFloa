@@ -106,7 +106,23 @@ real paycheck until David merges to prod.
 
 ---
 
-## 2026-07-27 — New settings section: Paycheck Rules (builder + storage)
+## 2026-07-27 — Workforce: dedicated Payroll tab
+
+Added a **Payroll** tab to Time Clock ▸ Workforce (`WorkforcePanel` in
+AdminDashboard.jsx), between Reports and Time Off, gated on the same `view_reports`
+permission. Rather than invent new surfaces, it collects the three payroll tools
+that were buried as collapsible sections inside the Reports tab and **moves** them
+here (no duplication): the **Overtime / payroll register** (per-worker hours + net
+pay), **Certified Payroll** (WH-347), and the **Payroll export** (CSV for the
+payroll processor). Reports now stays focused on worker + project analytics.
+
+Kept the existing plan gates (OT/export → Starter, certified payroll → QBO) and the
+collapsible-section pattern + localStorage keys, so nothing regresses. Relabeled the
+certified-payroll section header from "Payroll" → **"Certified Payroll"**
+(`certifiedPayrollLabel`) so it doesn't clash with the tab name. Added a short intro
+line with a link to Administration ▸ Workspace (where Paycheck Rules + Deductions
+live). New i18n: `tabPayroll`, `payrollTabIntro`, `payrollTabConfigure`,
+`certifiedPayrollLabel` (EN+ES, parity green). 1140 pass.
 
 Built a **Paycheck Rules** section (Administration ▸ Workspace, beside Hours & Rules
 / Deductions), modeled on the Deductions/Hours-rules pattern. Admins build named
