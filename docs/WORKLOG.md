@@ -23,6 +23,32 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-26 — Rate-aware overtime: consolidate project-bill + qbo (increment 3)
+
+Closed the two server-money engines the audit flagged as diverging from the new
+`buildPayStatement`. Extracted `splitRateAware` (calculator + the regular/overtime/
+prevailing bucket split) so the math isn't written three times; refactored
+`buildPayStatement` onto it (equivalent, suite green).
+
+- **Project bill** (`GET /projects/:id/bill`): each worker's hours (regular +
+  prevailing at the project rate) go through the shared engine now, gated on
+  `hasSimpleOtConfig`. The project total agrees with the worker invoice.
+- **qbo `computeGroupOvertime`**: all worked hours (incl. prevailing) count toward
+  the OT threshold, so a prevailing-heavy week earns the OT premium in the QBO
+  push. QBO bills labor flat at the worker rate (it doesn't apply prevailing
+  *rates* — separate pre-existing gap), so OT is priced at that rate. Tiered
+  configs keep the `otBands` path. 1113 pass.
+
+**Stopped at a checkpoint before the WH-347.** Certified payroll is not a drop-in
+like the other two — its client (`CertifiedPayroll.jsx`/`CertifiedPayrollPDF.jsx`)
+recomputes cost flat and renders the compliance grid, so it needs server compute
+**plus** the per-day O/S rows + PDF + EN/ES i18n. Deferred as its own focused piece
+rather than rush a legal form (spec: `certified-payroll-ot.md`). The client
+`WorkerSummary` estimate is the other remaining item (lowest priority). Both are
+tracked in `rate-aware-overtime.md` build-order step 3.
+
+---
+
 ## 2026-07-26 — Rate-aware overtime: wired into buildPayStatement (increment 2)
 
 The calculator now drives real pay. `buildPayStatement` routes through

@@ -89,19 +89,21 @@ row before writing code — that's the whole point of doing this first.
    prevailing-under-threshold are byte-identical (whole existing suite green);
    prevailing-over-threshold now earns OT. The four surfaces that read the statement
    — worker invoice, payroll CSV, pay stub, overtime report — get it for free.
-3. ⬜ **Consolidate the 4 duplicate engines** that never went through
-   `buildPayStatement` and now DISAGREE with it (still pay prevailing flat):
-   - `routes/admin.js` `GET /projects/:id/bill` (project bill route) — its own OT
-     engine; prevailing flat at ~:1710.
-   - `routes/qbo.js` `computeGroupOvertime` (~:796) — OT on regular only, premium
-     off `hourlyRate`.
-   - `routes/admin.js` certified-payroll (~:3457) — the WH-347; also needs its
-     per-day ST/OT grid (see `certified-payroll-ot.md`).
-   - `client/src/components/WorkerSummary.jsx:108` — a client-side *estimate*
-     (labeled "estimated"); lowest priority.
-   Route each through `buildPayStatement` / the shared calculator so every surface
-   agrees. Until then there's a known dev-only gap: the worker invoice pays
-   prevailing OT while these four still show it flat.
+3. **Consolidate the duplicate engines** that never went through `buildPayStatement`:
+   - ✅ `routes/admin.js` `GET /projects/:id/bill` (project bill) — done 2026-07-26,
+     via `splitRateAware` per worker. Agrees with the invoice now.
+   - ✅ `routes/qbo.js` `computeGroupOvertime` — done 2026-07-26; all worked hours
+     (incl. prevailing) count toward the threshold. (QBO bills labor flat at the
+     worker rate — it doesn't apply prevailing *rates* at all; that's a separate
+     pre-existing gap, not this work.)
+   - ⬜ `routes/admin.js` certified-payroll / **WH-347** (~:3468) — deferred as its
+     own focused piece: it's server compute **and** client work (the client
+     `CertifiedPayroll.jsx` / `CertifiedPayrollPDF.jsx` recompute cost flat and
+     render the grid), so it needs the per-day ST/OT (O/S) rows + PDF + EN/ES i18n.
+     See `certified-payroll-ot.md`. Until then the WH-347 still shows prevailing flat.
+   - ⬜ `client/src/components/WorkerSummary.jsx:108` — a client-side *estimate*
+     (labeled "estimated"); fixing it exactly means porting the calculator to JS or
+     a server round-trip. Lowest priority; acceptable as an approximation meanwhile.
 4. ⬜ **Cosmetic:** the `Overtime Pay (1.5×)` labels in `BillPDF.jsx:262` /
    `ProjectBillPDF.jsx:182` / `ProjectsPage.jsx:1111` imply `otHours × workerRate ×
    1.5`, which no longer reproduces the now-blended `cost.overtime` when OT spans two
