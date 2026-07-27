@@ -1108,7 +1108,7 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
                     )}
                     {billData.summary.overtime_hours > 0 && (
                       <div style={styles.budgetRow}>
-                        <span style={styles.budgetLabel}>Overtime ({parseFloat(billData.summary.overtime_hours).toFixed(1)}h × {billData.summary.overtime_multiplier}x)</span>
+                        <span style={styles.budgetLabel}>Overtime ({parseFloat(billData.summary.overtime_hours).toFixed(1)}h)</span>
                         <span style={{ ...styles.budgetValue, color: '#ef4444' }}>{fmtMoney(billData.summary.overtime_cost)}</span>
                       </div>
                     )}
