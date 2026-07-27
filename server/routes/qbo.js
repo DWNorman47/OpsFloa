@@ -13,7 +13,7 @@ const { encrypt } = require('../services/encryption');
 // the four separate hour calculations below can't drift apart again.
 const { loadSettings, computePaid, otRuleFromSettings } = require('../utils/paidHours');
 const { roundEntriesFromSettings, otConfigFromSettings } = require('../utils/hoursRules');
-const { otBandsCost } = require('../utils/payCalculations');
+const { otBandsCost, nightPremiumCost, nightHoursForEntry } = require('../utils/payCalculations');
 const { rateAwarePay, hasSimpleOtConfig } = require('../utils/rateAwareOvertime');
 const { applySettingsRows, ADMIN_SETTINGS_DEFAULTS } = require('../settingsDefaults');
 
@@ -799,7 +799,7 @@ function computeGroupOvertime(group, ot) {
   // Honor "Allow overtime = off" (feature_overtime) the same as the pay engine.
   const rule = otRuleFromSettings(ot.settings, group.overtimeRule || ot.rule);
   if (rule === 'none' || !group.timeEntries.length) {
-    return { overtimeHours: 0, overtimePremium: 0, rule };
+    return { overtimeHours: 0, overtimePremium: 0, nightHours: 0, nightPremium: 0, rule };
   }
   // These punches are already the paid ones — gatherBillData rounds at fetch.
   const entries = group.timeEntries.map(te => ({
@@ -818,14 +818,26 @@ function computeGroupOvertime(group, ot) {
     const method = ot.settings.overtime_rate_method === 'weighted_average' ? 'weighted_average' : 'rate_when_worked';
     const ra = rateAwarePay(entries, { rule, threshold: ot.threshold, weekStart: ot.weekStart, otMult: ot.multiplier, baseRateOf: () => group.hourlyRate, method });
     const premium = ra.cost - (ra.straightHours + ra.overtimeHours) * group.hourlyRate;
-    return { overtimeHours: ra.overtimeHours, overtimePremium: premium, rule };
+    // Simple configs never carry a night differential (that routes to the per-band path).
+    return { overtimeHours: ra.overtimeHours, overtimePremium: premium, nightHours: 0, nightPremium: 0, rule };
   }
   // Premium OT configs (tiers / rest-day / 7th-day / window / night): keep the
   // per-band path — OT on regular only, tiers billed at their own multipliers.
   const { overtimeHours, otBands } = computePaid(entries, ot.settings, { rule, roleId: group.roleId ?? null });
   const premium = otBandsCost(otBands, group.hourlyRate, ot.multiplier)
                 - overtimeHours * group.hourlyRate;
-  return { overtimeHours, overtimePremium: premium, rule };
+  // Night differential is billed as its own premium line (before, QBO omitted it
+  // entirely — a night-shift company's bill underpaid by the night premium).
+  let nightHours = 0, nightPremium = 0;
+  const nd = otConfig && otConfig.nightDifferential;
+  if (nd) {
+    const npct = parseFloat(nd.pct) || 0, nfrom = parseFloat(nd.fromHour), nto = parseFloat(nd.toHour);
+    if (npct && Number.isFinite(nfrom) && Number.isFinite(nto)) {
+      nightPremium = nightPremiumCost(entries, nd, group.hourlyRate);
+      for (const e of entries) if (e.wage_type === 'regular') nightHours += nightHoursForEntry(e, nfrom, nto);
+    }
+  }
+  return { overtimeHours, overtimePremium: premium, nightHours, nightPremium, rule };
 }
 
 // POST /api/qbo/push-bills-preview — dry-run summary of what would be billed
@@ -841,7 +853,7 @@ router.post('/push-bills-preview', requireAdmin, async (req, res) => {
       const laborHours = g.timeEntries.reduce((s, t) => s + t.hours, 0);
       const laborAmount = laborHours * g.hourlyRate;
       const reimbAmount = g.reimbursements.reduce((s, r) => s + r.amount, 0);
-      const { overtimeHours, overtimePremium } = computeGroupOvertime(g, ot);
+      const { overtimeHours, overtimePremium, nightHours, nightPremium } = computeGroupOvertime(g, ot);
       return {
         user_id: g.userId,
         full_name: g.fullName,
@@ -851,6 +863,8 @@ router.post('/push-bills-preview', requireAdmin, async (req, res) => {
         labor_amount: parseFloat(laborAmount.toFixed(2)),
         overtime_hours: parseFloat(overtimeHours.toFixed(2)),
         overtime_premium: parseFloat(overtimePremium.toFixed(2)),
+        night_hours: parseFloat((nightHours || 0).toFixed(2)),
+        night_premium: parseFloat((nightPremium || 0).toFixed(2)),
         reimbursements: g.reimbursements.length,
         reimb_amount: parseFloat(reimbAmount.toFixed(2)),
         time_entry_rows: g.timeEntries.map(te => ({
@@ -868,7 +882,7 @@ router.post('/push-bills-preview', requireAdmin, async (req, res) => {
           project_name: r.projectName,
           description: r.description,
         })),
-        total: parseFloat((laborAmount + overtimePremium + reimbAmount).toFixed(2)),
+        total: parseFloat((laborAmount + overtimePremium + nightPremium + reimbAmount).toFixed(2)),
       };
     });
     res.json({ groups: result, overtime: { rule: ot.rule, threshold: ot.threshold, multiplier: ot.multiplier } });
@@ -945,7 +959,7 @@ router.post('/push-bills', requireAdmin, async (req, res) => {
       // Overtime premium: an extra item-based line that covers the (multiplier-1)
       // uplift on OT hours. The per-entry lines above price straight hours at
       // the base rate; this line makes the contractor whole for their OT shifts.
-      const { overtimeHours, overtimePremium } = computeGroupOvertime(g, ot);
+      const { overtimeHours, overtimePremium, nightHours, nightPremium } = computeGroupOvertime(g, ot);
       if (overtimeHours > 0 && overtimePremium > 0) {
         lines.push({
           type: 'item',
@@ -953,6 +967,16 @@ router.post('/push-bills', requireAdmin, async (req, res) => {
           qty: parseFloat(overtimeHours.toFixed(2)),
           unitPrice: parseFloat((g.hourlyRate * (ot.multiplier - 1)).toFixed(4)),
           description: `Overtime premium — ${ot.multiplier}× on ${overtimeHours.toFixed(2)} h (${ot.rule}, threshold ${ot.threshold} h)`,
+        });
+      }
+      // Night differential — its own premium line (was previously never billed).
+      if (nightHours > 0 && nightPremium > 0) {
+        lines.push({
+          type: 'item',
+          itemId: laborItemId,
+          qty: parseFloat(nightHours.toFixed(2)),
+          unitPrice: parseFloat((nightPremium / nightHours).toFixed(4)),
+          description: `Night differential premium on ${nightHours.toFixed(2)} h`,
         });
       }
 

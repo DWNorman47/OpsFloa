@@ -106,6 +106,89 @@ real paycheck until David merges to prod.
 
 ---
 
+## 2026-07-26 — Traceability: close the last two gaps (OT multiplier + night everywhere)
+
+Followed the night-differential breakout by closing the two follow-ups it left.
+
+**Gap 1 — the multiplier each OT hour was paid at.** The overtime line showed a
+lump sum + a *reason* (rest-day / override / tier), but never the rate. Added
+`hours.overtimeBands` to the statement — OT hours grouped by the multiplier they
+earned (`[{mult, hours}]`, highest first), from `ot.otBands` on the per-band path
+and a single `otMult` band on the rate-aware path. The worker-invoice line now
+expands to "2h at 2×, 3h at 1.5×", so a 2× rest-day or a tiered band (or the manual
+2× override in the Leo bill) is visible instead of folded into one figure.
+
+**Gap 2 — night differential across the other engines.** Two things, one of them a
+real bug:
+- **project-bill route** folded night into overtime AND summed buckets for its
+  total — broke it into its own `night_cost` bucket (added to the total), matching
+  the worker invoice.
+- **QBO billing OMITTED night entirely** (total = labor + OT premium + reimb, no
+  night term) — a *latent underpayment*: a night-shift company's QuickBooks bill was
+  short by the night premium on every push. `computeGroupOvertime` now returns
+  `nightHours`/`nightPremium`; the preview total includes it and the push emits a
+  dedicated "Night differential premium" line. Tests pin both.
+
+Display: night now shows on the invoice PDF, project-bill PDF, pay stub, and — as a
+*conditional* column that only appears when someone earned it (rare premium, don't
+clutter the dense table) — the overtime report and the QBO bill preview.
+
+New tests: OT bands (simple + rest-day 2×), QBO night premium (preview + push).
+1130 pass. Every dollar on the pay report now traces to a visible, itemized cause;
+no engine folds or drops a factor.
+
+---
+
+## 2026-07-26 — Traceability audit: break out the hidden night differential
+
+Audited every term in the gross-pay formula against what the report actually
+shows. Result: rate, OT multiplier, threshold/rule, prevailing rate, sick/vacation
+%, guarantee, deductions, reimbursements are ALL surfaced (Inputs Used +
+expandable per-line traces), and OT reason + logged break were just added. **One
+factor was completely hidden: the night-shift differential** — `buildPayStatement`
+folded `nightPremiumCost` straight into `overtimeCostRaw`, so it had no line, no
+trace, and wasn't in Inputs Used. A company with a night premium couldn't see it.
+
+Broke it out as its own factor (gross total unchanged — the premium just moved out
+of the overtime bucket into its own):
+- `payStatement.js`: `cost.night` + `hours.night`; `settingsUsed.night_differential`
+  (window + %). Overtime cost no longer includes the night premium.
+- Flatteners (worker invoice + OT report) carry `night_hours`/`night_cost`; totals
+  already use `grossWages` so nothing regresses (night = 0 for everyone without the
+  rule).
+- Client: a "Night differential" summary line with an expandable trace ("{n}h in
+  the 22:00–05:00 night window, paid at +25%"), an Inputs-Used row, the invoice PDF
+  line, i18n EN+ES.
+
+Tests pin the breakout (premium out of overtime, gross unchanged). 1125 pass.
+
+Still partial (documented, low priority): premium OT lines show the *reason*
+(rest-day / 7th-day / tier / window) but not the specific multiplier applied; and
+the project-bill / qbo engines still fold night into overtime (a cross-surface
+consistency follow-up — their totals are correct, just not broken out). Night diff
+display on the pay stub / project-bill PDF / OT-report views is also a follow-up
+(their totals include it via grossWages).
+
+---
+
+## 2026-07-26 — Traceability: surface the entry's own break in the trace
+
+David spotted a 30-min break he didn't set. Root cause = **demo data**: the seed
+stamps `break_minutes: i % 2 === 0 ? 30 : 0` on alternating entries
+(`seed-demo-data.js:1303`), stored on the entry. Not a bug in the engine — but the
+trace **never showed it**: `roundEntriesForPay` only emits an `auto_break` item
+when a *rule* changes the break (`hoursRules.js:1230`); an entry's own logged break
+silently cut paid hours with no explanation. (The engine takes `max(rule break,
+logged break)`, so a real 60-min auto_break rule would raise it to 60 — if such a
+rule is actually in the saved `hours_rules` policy and fires.)
+
+Fix: the pay statement now pushes a `break_logged` explain item for any entry whose
+break wasn't rule-adjusted (`raw_break_minutes` unset), rendered as "{n} min break
+— recorded on the time entry" (`reportTrace.js`, i18n EN+ES). So the break is
+visible and traceable instead of a phantom deduction. Tests pin it. 1123 pass.
+
+---
+
 ## 2026-07-26 — Overtime explanations now say WHY (traceability)
 
 Found via David eyeballing a demo bill: an entry showed "8.5h overtime — over 8h

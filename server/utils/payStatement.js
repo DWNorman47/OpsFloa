@@ -1,7 +1,7 @@
 const pool = require('../db');
 const {
   computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost,
-  nightPremiumCost, hoursWorked, computeGuaranteeShortfall,
+  nightPremiumCost, nightHoursForEntry, hoursWorked, computeGuaranteeShortfall,
   computeLeaveHours, shiftHoursByDate,
 } = require('./payCalculations');
 const { leaveRateMultipliers, computeWorkerLeave, computeCompanyLeave, otRuleFromSettings } = require('./paidHours');
@@ -58,6 +58,7 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
 
   let regularHours, overtimeHours, prevailingHours, totalHours;
   let regularCostRaw, overtimeCostRaw, prevailingCostRaw;
+  let overtimeBands = []; // [{hours, mult}] — how many OT hours at which multiplier
 
   if (rateType !== 'daily' && hasSimpleOtConfig(otConfig)) {
     // ── Rate-aware path ─────────────────────────────────────────────────────
@@ -72,6 +73,8 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     split.worked.forEach((e, i) => { e.overtime_hours = split.perEntry[i].ot; e.overtime_reason = split.perEntry[i].reason; });
     ({ regularHours, overtimeHours, prevailingHours, regularCost: regularCostRaw, overtimeCost: overtimeCostRaw, prevailingCost: prevailingCostRaw } = split);
     totalHours = regularHours + overtimeHours + prevailingHours;
+    // Simple config → every OT hour is at the one multiplier.
+    if (overtimeHours > 0) overtimeBands = [{ hours: overtimeHours, mult: otMult }];
   } else {
     // ── Existing path ───────────────────────────────────────────────────────
     // Daily-rate workers, or premium OT configs (tiers, rest-day, 7th-day,
@@ -96,7 +99,26 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
       overtimeCostRaw = dc.overtimeCost;
     } else {
       regularCostRaw = regularHours * rate;
-      overtimeCostRaw = otBandsCost(ot.otBands, rate, otMult) + nightPremiumCost(paid, otConfig && otConfig.nightDifferential, rate);
+      overtimeCostRaw = otBandsCost(ot.otBands, rate, otMult);
+    }
+    // Premium configs price OT per band — surface how many hours at each multiplier
+    // (mult null = the plain overtime multiplier) so a 2× rest-day or a tier is visible.
+    overtimeBands = (ot.otBands || [])
+      .filter(b => (b.hours || 0) > 0)
+      .map(b => ({ hours: b.hours, mult: b.mult != null ? b.mult : otMult }));
+  }
+
+  // Night-shift differential — an ADDITIVE premium on hours worked inside the
+  // night window, at the regular rate (prevailing / daily-rate excluded). Broken
+  // out as its own factor so it's visible instead of buried in the overtime cost.
+  let nightPremiumRaw = 0, nightHours = 0;
+  const nightCfg = (rateType !== 'daily' && otConfig && otConfig.nightDifferential) ? otConfig.nightDifferential : null;
+  if (nightCfg) {
+    const npct = parseFloat(nightCfg.pct) || 0;
+    const nfrom = parseFloat(nightCfg.fromHour), nto = parseFloat(nightCfg.toHour);
+    if (npct && Number.isFinite(nfrom) && Number.isFinite(nto)) {
+      for (const e of paid) if (e.wage_type === 'regular') nightHours += nightHoursForEntry(e, nfrom, nto);
+      nightPremiumRaw = nightPremiumCost(paid, nightCfg, rate);
     }
   }
 
@@ -117,7 +139,8 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
   const guaranteeCost = cents(guaranteeShortfall * rate);
   const sickCost = cents(sickHours * rate * mult.sick);
   const vacationCost = cents(vacationHours * rate * mult.vacation);
-  const grossWages = regularCost + overtimeCost + prevailingCost + guaranteeCost + sickCost + vacationCost;
+  const nightPremium = cents(nightPremiumRaw);
+  const grossWages = regularCost + overtimeCost + prevailingCost + nightPremium + guaranteeCost + sickCost + vacationCost;
 
   const reimbursementTotal = cents((reimbursements || []).reduce((s, r) => s + (parseFloat(r.amount) || 0), 0));
   const mileage = paid.reduce((s, e) => s + (parseFloat(e.mileage) || 0), 0);
@@ -129,6 +152,11 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     for (const e of paid) {
       const ex = e.explain || (e.explain = []);
       if (e.wage_type === 'prevailing') ex.push({ code: 'wage_type', wageType: 'prevailing' });
+      // The entry's own logged break silently reduces paid hours and was never
+      // traced (only rule-driven auto_break was). When a rule changed the break
+      // (raw_break_minutes set), the auto_break item already explains it; otherwise
+      // this surfaces the break that's recorded on the entry so it's visible.
+      if ((e.break_minutes || 0) > 0 && e.raw_break_minutes == null) ex.push({ code: 'break_logged', breakMin: e.break_minutes });
       if ((e.overtime_hours || 0) > 0) ex.push({ code: 'overtime', otHours: e.overtime_hours, reason: e.overtime_reason || (rule === 'weekly' ? 'weekly' : 'daily'), threshold, rule });
     }
     settingsUsed = {
@@ -137,6 +165,8 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
       prevailing_wage_rate: prevRate, regular_shift_hours: settings.regular_shift_hours,
       sick_pay_pct: settings.sick_pay_pct, vacation_pay_pct: settings.vacation_pay_pct,
       guaranteed_weekly_hours: worker.guaranteed_weekly_hours,
+      // Night differential (only when configured) so Inputs Used can show the window + %.
+      ...(nightCfg && nightPremiumRaw > 0 ? { night_differential: { fromHour: parseFloat(nightCfg.fromHour), toHour: parseFloat(nightCfg.toHour), pct: parseFloat(nightCfg.pct) } } : {}),
     };
   }
 
@@ -147,12 +177,19 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     reimbursements: reimbursements || [],
     hours: {
       regular: regularHours, overtime: overtimeHours, prevailing: prevailingHours,
+      // OT hours grouped by the multiplier they were paid at (highest first) so the
+      // report can show "2h at 2×, 3h at 1.5×" instead of one opaque overtime figure.
+      overtimeBands: Object.entries(
+        overtimeBands.reduce((m, b) => { const k = String(b.mult); m[k] = (m[k] || 0) + b.hours; return m; }, {})
+      ).map(([mult, h]) => ({ mult: parseFloat(mult), hours: +h.toFixed(2) })).sort((a, b) => b.mult - a.mult),
+      night: nightHours,
       sick: sickHours, vacation: vacationHours,
       guaranteeShortfall, guaranteeMin: guaranteeMinHours, guaranteeWeeks,
       total: totalHours, mileage,
     },
     cost: {
       regular: regularCost, overtime: overtimeCost, prevailing: prevailingCost,
+      night: nightPremium,
       sick: sickCost, vacation: vacationCost, guarantee: guaranteeCost,
       sickRate: cents(rate * mult.sick), vacationRate: cents(rate * mult.vacation),
     },

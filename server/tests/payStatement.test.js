@@ -140,3 +140,60 @@ describe('buildPayStatement — anti-drift contract', () => {
     expect(st.totals.grossWages).toBe(420);
   });
 });
+
+describe('buildPayStatement — explain trace surfaces the break', () => {
+  test("an entry's logged break is a trace item, not invisible", () => {
+    // The confusion David hit: a 30-min break silently cut paid hours with no
+    // trace line. It should show up as a 'break_logged' explain item.
+    const st = build({ entries: [entry({ break_minutes: 30 })], explain: true });
+    const ex = st.entries[0].explain || [];
+    expect(ex.some(i => i.code === 'break_logged' && i.breakMin === 30)).toBe(true);
+  });
+
+  test('no break → no break trace item', () => {
+    const st = build({ entries: [entry({ break_minutes: 0 })], explain: true });
+    const ex = st.entries[0].explain || [];
+    expect(ex.some(i => i.code === 'break_logged')).toBe(false);
+  });
+});
+
+describe('buildPayStatement — night differential is its own visible factor', () => {
+  test('night premium is broken out of overtime, gross unchanged', () => {
+    // 22:00–06:00 = 8h overnight; window 19:00–05:00 covers 22:00–05:00 = 7h.
+    const st = build({
+      entries: [entry({ start_time: '22:00:00', end_time: '06:00:00' })],
+      otConfig: { nightDifferential: { fromHour: 19, toHour: 5, pct: 25 } },
+    });
+    expect(st.hours.night).toBeCloseTo(7);
+    expect(st.cost.night).toBe(52.5);        // 7 × 30 × 0.25 — its own line
+    expect(st.cost.overtime).toBe(0);        // 8h day, no OT; night NOT folded into overtime
+    expect(st.totals.grossWages).toBe(292.5); // 8×30 regular + 52.50 night
+  });
+
+  test('no night config → no night cost/hours', () => {
+    const st = build({ entries: [entry({ start_time: '22:00:00', end_time: '06:00:00' })] });
+    expect(st.cost.night).toBe(0);
+    expect(st.hours.night).toBeCloseTo(0);
+  });
+});
+
+describe('buildPayStatement — overtime bands expose the multiplier', () => {
+  test('simple OT reports its hours at the plain multiplier', () => {
+    const st = build({ entries: [entry({ end_time: '18:00:00' })] }); // 10h → 2h OT at 1.5×
+    expect(st.hours.overtimeBands).toEqual([{ mult: 1.5, hours: 2 }]);
+  });
+
+  test('a premium rest-day rate is visible as its own 2× band', () => {
+    // 2026-07-05 is a Sunday; rest-day config makes the whole day OT at 2×.
+    const st = build({
+      entries: [entry({ work_date: '2026-07-05', start_time: '08:00:00', end_time: '14:00:00' })], // 6h
+      otConfig: { restDay: { mult: 2, days: [0] } },
+    });
+    expect(st.hours.overtimeBands.some(b => b.mult === 2 && b.hours > 0)).toBe(true);
+  });
+
+  test('no OT → no bands', () => {
+    const st = build({ entries: [entry()] }); // 8h, no OT
+    expect(st.hours.overtimeBands).toEqual([]);
+  });
+});

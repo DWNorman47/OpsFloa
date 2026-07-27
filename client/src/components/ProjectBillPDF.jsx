@@ -189,6 +189,12 @@ export default function ProjectBillPDF({ data, currency = 'USD', companyInfo = {
               <Text style={{ color: '#d97706', fontWeight: 'bold' }}>{formatCurrency(summary.prevailing_cost, currency)}</Text>
             </View>
           )}
+          {summary.night_cost > 0 && (
+            <View style={s.costRow}>
+              <Text style={{ color: '#374151' }}>{(t.nightDiffLabel || 'Night differential')}{summary.night_hours > 0 ? ` — ${Number(summary.night_hours).toFixed(2)} hrs` : ''}</Text>
+              <Text style={{ color: '#7c3aed', fontWeight: 'bold' }}>{formatCurrency(summary.night_cost, currency)}</Text>
+            </View>
+          )}
           <View style={s.totalRow}>
             <Text style={s.totalLabel}>{t.totalDue || 'Total Due'}</Text>
             <Text style={s.totalValue}>{formatCurrency(summary.total_cost, currency)}</Text>
