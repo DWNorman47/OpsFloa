@@ -269,6 +269,12 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
                 <Text style={s.sumVal}>{fmtMoney(summary.prevailing_cost)}</Text>
               </View>
             )}
+            {summary.night_cost > 0 && (
+              <View style={s.sumRow}>
+                <Text style={s.sumLabel}>{(t.nightDiffLabel || 'Night differential')}{summary.night_hours > 0 ? ` (${Number(summary.night_hours).toFixed(2)} hrs)` : ''}</Text>
+                <Text style={s.sumVal}>{fmtMoney(summary.night_cost)}</Text>
+              </View>
+            )}
             {summary.guarantee_shortfall_hours > 0 && summary.rate > 0 && (
               <View style={s.sumRow}>
                 <Text style={[s.sumLabel, { color: '#2563eb' }]}>

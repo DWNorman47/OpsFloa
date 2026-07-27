@@ -1021,6 +1021,7 @@ router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
     const summary = {
       total_hours: st.hours.total, regular_hours: st.hours.regular, overtime_hours: st.hours.overtime, prevailing_hours: st.hours.prevailing,
       rate: st.rates.rate, regular_cost: st.cost.regular, overtime_cost: st.cost.overtime, prevailing_cost: st.cost.prevailing,
+      night_hours: st.hours.night, night_cost: st.cost.night,
       guarantee_shortfall_hours: st.hours.guaranteeShortfall, guarantee_min_hours: st.hours.guaranteeMin,
       guarantee_weeks: st.hours.guaranteeWeeks, guarantee_cost: st.cost.guarantee,
       sick_hours: st.hours.sick, sick_cost: st.cost.sick, sick_rate: st.cost.sickRate,
@@ -3213,13 +3214,15 @@ router.get('/overtime-report', requireAdmin, requirePerm('view_reports'), requir
         guarantee_shortfall_hours: n2(st.hours.guaranteeShortfall),
         total_hours: n2(st.hours.total),
         mileage: parseFloat((st.hours.mileage || 0).toFixed(1)),
+        night_hours: n2(st.hours.night),
         regular_cost: st.cost.regular,
         overtime_cost: st.cost.overtime,
         prevailing_cost: st.cost.prevailing,
+        night_cost: st.cost.night,
         sick_cost: st.cost.sick,
         vacation_cost: st.cost.vacation,
         guarantee_cost: st.cost.guarantee,
-        total_cost: st.totals.grossWages, // gross (now includes any guarantee top-up)
+        total_cost: st.totals.grossWages, // gross (now includes night differential + any guarantee top-up)
         net_pay: st.totals.netWages,       // gross − deductions (reimbursements excluded)
       };
     });

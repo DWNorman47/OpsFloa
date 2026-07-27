@@ -106,6 +106,38 @@ real paycheck until David merges to prod.
 
 ---
 
+## 2026-07-26 — Traceability audit: break out the hidden night differential
+
+Audited every term in the gross-pay formula against what the report actually
+shows. Result: rate, OT multiplier, threshold/rule, prevailing rate, sick/vacation
+%, guarantee, deductions, reimbursements are ALL surfaced (Inputs Used +
+expandable per-line traces), and OT reason + logged break were just added. **One
+factor was completely hidden: the night-shift differential** — `buildPayStatement`
+folded `nightPremiumCost` straight into `overtimeCostRaw`, so it had no line, no
+trace, and wasn't in Inputs Used. A company with a night premium couldn't see it.
+
+Broke it out as its own factor (gross total unchanged — the premium just moved out
+of the overtime bucket into its own):
+- `payStatement.js`: `cost.night` + `hours.night`; `settingsUsed.night_differential`
+  (window + %). Overtime cost no longer includes the night premium.
+- Flatteners (worker invoice + OT report) carry `night_hours`/`night_cost`; totals
+  already use `grossWages` so nothing regresses (night = 0 for everyone without the
+  rule).
+- Client: a "Night differential" summary line with an expandable trace ("{n}h in
+  the 22:00–05:00 night window, paid at +25%"), an Inputs-Used row, the invoice PDF
+  line, i18n EN+ES.
+
+Tests pin the breakout (premium out of overtime, gross unchanged). 1125 pass.
+
+Still partial (documented, low priority): premium OT lines show the *reason*
+(rest-day / 7th-day / tier / window) but not the specific multiplier applied; and
+the project-bill / qbo engines still fold night into overtime (a cross-surface
+consistency follow-up — their totals are correct, just not broken out). Night diff
+display on the pay stub / project-bill PDF / OT-report views is also a follow-up
+(their totals include it via grossWages).
+
+---
+
 ## 2026-07-26 — Traceability: surface the entry's own break in the trace
 
 David spotted a 30-min break he didn't set. Root cause = **demo data**: the seed

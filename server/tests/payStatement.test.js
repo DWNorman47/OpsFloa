@@ -156,3 +156,23 @@ describe('buildPayStatement — explain trace surfaces the break', () => {
     expect(ex.some(i => i.code === 'break_logged')).toBe(false);
   });
 });
+
+describe('buildPayStatement — night differential is its own visible factor', () => {
+  test('night premium is broken out of overtime, gross unchanged', () => {
+    // 22:00–06:00 = 8h overnight; window 19:00–05:00 covers 22:00–05:00 = 7h.
+    const st = build({
+      entries: [entry({ start_time: '22:00:00', end_time: '06:00:00' })],
+      otConfig: { nightDifferential: { fromHour: 19, toHour: 5, pct: 25 } },
+    });
+    expect(st.hours.night).toBeCloseTo(7);
+    expect(st.cost.night).toBe(52.5);        // 7 × 30 × 0.25 — its own line
+    expect(st.cost.overtime).toBe(0);        // 8h day, no OT; night NOT folded into overtime
+    expect(st.totals.grossWages).toBe(292.5); // 8×30 regular + 52.50 night
+  });
+
+  test('no night config → no night cost/hours', () => {
+    const st = build({ entries: [entry({ start_time: '22:00:00', end_time: '06:00:00' })] });
+    expect(st.cost.night).toBe(0);
+    expect(st.hours.night).toBeCloseTo(0);
+  });
+});

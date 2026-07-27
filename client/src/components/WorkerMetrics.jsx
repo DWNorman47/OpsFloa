@@ -336,6 +336,19 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
                     detail={<Trace items={[{ code: 'overtime', otHours: s.overtime_hours, reason: 'total', threshold: billData.settings_used?.overtime_threshold, rule: billData.settings_used?.overtime_rule }]} />} />
                 )}
                 {s.prevailing_hours > 0 && <SummaryLine label={t.prevailingLabel} value={`${fmtHours(s.prevailing_hours)} · ${formatCurrency(s.prevailing_cost, currency)}`} />}
+                {s.night_cost > 0 && (() => {
+                  const nd = billData.settings_used?.night_differential;
+                  const hr = h => `${String(Math.floor(h)).padStart(2, '0')}:${String(Math.round((h - Math.floor(h)) * 60)).padStart(2, '0')}`;
+                  const detailText = nd
+                    ? (t.trNight || '{n}h in the {from}–{to} night window, paid at +{pct}%')
+                        .replace('{n}', fmtHours(s.night_hours)).replace('{from}', hr(nd.fromHour)).replace('{to}', hr(nd.toHour)).replace('{pct}', nd.pct)
+                    : `${fmtHours(s.night_hours)}`;
+                  return (
+                    <SummaryLine label={t.nightDiffLabel || 'Night differential'} value={`${fmtHours(s.night_hours)} · ${formatCurrency(s.night_cost, currency)}`}
+                      open={openLine === 'night'} onToggle={() => toggleLine('night')}
+                      detail={<div style={styles.trace}><div style={styles.traceItem}><span>{detailText}</span><button style={styles.traceLink} onClick={() => goto('/administration#workspace')}>{t.trViewSetting} →</button></div></div>} />
+                  );
+                })()}
                 {s.sick_hours > 0 && (
                   <SummaryLine label={t.pdfSickHours || 'Sick'} value={`${fmtHours(s.sick_hours)} · ${formatCurrency(s.sick_cost, currency)}`}
                     open={openLine === 'sick'} onToggle={() => toggleLine('sick')}
@@ -425,6 +438,7 @@ function InputsUsed({ su, t, currency, goto }) {
     { label: t.trOtThreshold, value: `${su.overtime_threshold}h`, link: '/administration#workspace' },
     { label: t.trOtMult, value: `${su.overtime_multiplier}×`, link: '/administration#workspace' },
     su.prevailing_wage_rate > 0 ? { label: t.prevailingLabel, value: `${money(su.prevailing_wage_rate)}/hr`, link: '/administration#workspace' } : null,
+    su.night_differential ? { label: t.nightDiffLabel || 'Night differential', value: `${String(Math.floor(su.night_differential.fromHour)).padStart(2, '0')}:00–${String(Math.floor(su.night_differential.toHour)).padStart(2, '0')}:00 +${su.night_differential.pct}%`, link: '/administration#workspace' } : null,
     { label: t.mrRegularShift, value: `${su.regular_shift_hours}h`, link: '/administration#workspace' },
     { label: t.mrSickPayRate, value: `${su.sick_pay_pct}%`, link: '/administration#workspace' },
     { label: t.mrVacationPayRate, value: `${su.vacation_pay_pct}%`, link: '/administration#workspace' },

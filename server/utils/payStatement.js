@@ -1,7 +1,7 @@
 const pool = require('../db');
 const {
   computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost,
-  nightPremiumCost, hoursWorked, computeGuaranteeShortfall,
+  nightPremiumCost, nightHoursForEntry, hoursWorked, computeGuaranteeShortfall,
   computeLeaveHours, shiftHoursByDate,
 } = require('./payCalculations');
 const { leaveRateMultipliers, computeWorkerLeave, computeCompanyLeave, otRuleFromSettings } = require('./paidHours');
@@ -96,7 +96,21 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
       overtimeCostRaw = dc.overtimeCost;
     } else {
       regularCostRaw = regularHours * rate;
-      overtimeCostRaw = otBandsCost(ot.otBands, rate, otMult) + nightPremiumCost(paid, otConfig && otConfig.nightDifferential, rate);
+      overtimeCostRaw = otBandsCost(ot.otBands, rate, otMult);
+    }
+  }
+
+  // Night-shift differential — an ADDITIVE premium on hours worked inside the
+  // night window, at the regular rate (prevailing / daily-rate excluded). Broken
+  // out as its own factor so it's visible instead of buried in the overtime cost.
+  let nightPremiumRaw = 0, nightHours = 0;
+  const nightCfg = (rateType !== 'daily' && otConfig && otConfig.nightDifferential) ? otConfig.nightDifferential : null;
+  if (nightCfg) {
+    const npct = parseFloat(nightCfg.pct) || 0;
+    const nfrom = parseFloat(nightCfg.fromHour), nto = parseFloat(nightCfg.toHour);
+    if (npct && Number.isFinite(nfrom) && Number.isFinite(nto)) {
+      for (const e of paid) if (e.wage_type === 'regular') nightHours += nightHoursForEntry(e, nfrom, nto);
+      nightPremiumRaw = nightPremiumCost(paid, nightCfg, rate);
     }
   }
 
@@ -117,7 +131,8 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
   const guaranteeCost = cents(guaranteeShortfall * rate);
   const sickCost = cents(sickHours * rate * mult.sick);
   const vacationCost = cents(vacationHours * rate * mult.vacation);
-  const grossWages = regularCost + overtimeCost + prevailingCost + guaranteeCost + sickCost + vacationCost;
+  const nightPremium = cents(nightPremiumRaw);
+  const grossWages = regularCost + overtimeCost + prevailingCost + nightPremium + guaranteeCost + sickCost + vacationCost;
 
   const reimbursementTotal = cents((reimbursements || []).reduce((s, r) => s + (parseFloat(r.amount) || 0), 0));
   const mileage = paid.reduce((s, e) => s + (parseFloat(e.mileage) || 0), 0);
@@ -142,6 +157,8 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
       prevailing_wage_rate: prevRate, regular_shift_hours: settings.regular_shift_hours,
       sick_pay_pct: settings.sick_pay_pct, vacation_pay_pct: settings.vacation_pay_pct,
       guaranteed_weekly_hours: worker.guaranteed_weekly_hours,
+      // Night differential (only when configured) so Inputs Used can show the window + %.
+      ...(nightCfg && nightPremiumRaw > 0 ? { night_differential: { fromHour: parseFloat(nightCfg.fromHour), toHour: parseFloat(nightCfg.toHour), pct: parseFloat(nightCfg.pct) } } : {}),
     };
   }
 
@@ -152,12 +169,14 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     reimbursements: reimbursements || [],
     hours: {
       regular: regularHours, overtime: overtimeHours, prevailing: prevailingHours,
+      night: nightHours,
       sick: sickHours, vacation: vacationHours,
       guaranteeShortfall, guaranteeMin: guaranteeMinHours, guaranteeWeeks,
       total: totalHours, mileage,
     },
     cost: {
       regular: regularCost, overtime: overtimeCost, prevailing: prevailingCost,
+      night: nightPremium,
       sick: sickCost, vacation: vacationCost, guarantee: guaranteeCost,
       sickRate: cents(rate * mult.sick), vacationRate: cents(rate * mult.vacation),
     },
