@@ -106,6 +106,24 @@ real paycheck until David merges to prod.
 
 ---
 
+## 2026-07-27 — Takeoff: click the start point to close a LINE into a loop
+
+David couldn't join the ends of a line takeoff and wondered if closing only got
+built for areas. It hadn't only been built for areas — a `qline` is a reshapeable
+open poly, and closing a line into a loop was already possible via **Shift+Enter**
+while drawing or the **Select ▸ Edit ▸ Join** op after. But the *natural* gesture —
+clicking the start point to close, the way every polygon tool works — was blocked:
+`tryDraftJoin` had `if (k <= 0 …) return`, silently ignoring a click on the start
+vertex. Areas felt different only because they finish as closed polygons on
+double-click; lines finish open, so the missing start-click left no obvious closer.
+
+Allowed `tryDraftJoin` to close to the start (k===0, ≥3 points) — clicking the
+first point now closes any drawing polyline (line or area) into a loop. Also
+reworded the line-drawing hint to say so. The `qlineLenFt` perimeter includes the
+closing segment, as expected for a loop. Cache-bust v78→v79.
+
+---
+
 ## 2026-07-27 — Terms gate re-prompting every load: stale cached user
 
 The EULA/Privacy clickwrap kept re-appearing after accepting. Server side is

@@ -2091,7 +2091,7 @@ function setTool(t) {
   } else if (t === 'qarea') {
     setMsg('Trace a paved/graded area; Enter/double-click to close, then pick a material. Double-click it later to edit.');
   } else if (t === 'qline') {
-    setMsg('Trace a run (curb, pipe, silt fence…); Enter/double-click to finish, then set the type / trench.');
+    setMsg('Trace a run (curb, pipe, silt fence…); Enter/double-click to finish. Click the start point (or Shift+Enter) to close it into a loop.');
   } else if (t === 'qcount') {
     setMsg('Click each item to count; Enter or double-click to finish and name it.');
   } else if (t === 'dwall') {
@@ -3123,8 +3123,14 @@ function drawMarquee(ctx) {
 function tryDraftJoin(k) {
   if (!draft || POINT_KINDS.includes(draft.kind)) return;
   const last = draft.pts.length - 1;
-  if (last < 3) return;                 // need enough points to make a loop
-  if (k <= 0 || k >= last - 1) return;  // exclude the start, the end, and the point next to the end
+  if (k === 0) {
+    // Click the START to close the loop — the universal "join the ends" gesture,
+    // and (besides Shift+Enter) the way to make a LINE takeoff a closed loop.
+    // Lines finish open, so without this it felt like only areas could close.
+    if (last < 2) return;                    // a loop needs at least 3 points
+  } else {
+    if (last < 3 || k >= last - 1) return;   // close to a mid-vertex; exclude the end + its neighbor
+  }
   const prev = JSON.stringify(draft.pts);
   draft.pts.push({ x: draft.pts[k].x, y: draft.pts[k].y }); // closing edge to the clicked vertex
   draftRecord(prev);
