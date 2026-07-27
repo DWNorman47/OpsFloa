@@ -97,10 +97,35 @@ describe('buildPayStatement — anti-drift contract', () => {
   // The same statement drives every surface, so the shared buckets are identical
   // no matter which projection reads them. (The routes just relabel these keys.)
   test('invoice projection and report projection read identical numbers', () => {
+    // 10h prevailing @ $50, daily-8 → 8h straight-time + 2h overtime (rate-aware
+    // pays prevailing overtime; before, all 10h were flat).
     const st = build({ entries: [entry({ end_time: '18:00:00', wage_type: 'prevailing', project_id: 7 })], projectRateMap: { 7: 50 }, leave: { sick: 8, vacation: 0 } });
     const invoice = { regular_hours: st.hours.regular, overtime_hours: st.hours.overtime, prevailing_hours: st.hours.prevailing, prevailing_cost: st.cost.prevailing, sick_hours: st.hours.sick, sick_cost: st.cost.sick };
     const report = { regular_hours: st.hours.regular, overtime_hours: st.hours.overtime, prevailing_hours: st.hours.prevailing, prevailing_cost: st.cost.prevailing, sick_hours: st.hours.sick, sick_cost: st.cost.sick };
-    expect(report).toEqual(invoice);
-    expect(report.prevailing_cost).toBe(500); // 10h × 50 (per-project), one computation feeding both
+    expect(report).toEqual(invoice);           // one computation feeding both projections
+    expect(st.hours.prevailing).toBe(8);        // straight-time prevailing
+    expect(st.hours.overtime).toBe(2);          // the 2h over the daily-8 threshold, now paid
+    expect(st.cost.prevailing).toBe(400);       // 8h × 50
+    expect(st.cost.overtime).toBe(150);         // 2h × 50 × 1.5 — OT at the PREVAILING rate
+  });
+
+  test('excavator: mixed prevailing + civilian in one day reconciles to $420 (scenario A)', () => {
+    // 6h prevailing @45 THEN 4h civilian @30, daily-8. buildPayStatement must
+    // produce the same number the standalone calculator does.
+    const st = build({
+      worker: worker({ hourly_rate: 30 }),
+      entries: [
+        entry({ start_time: '06:00:00', end_time: '12:00:00', wage_type: 'prevailing', project_id: 1 }), // 6h @45
+        entry({ start_time: '12:00:00', end_time: '16:00:00', wage_type: 'regular' }),                    // 4h @30 (last 2h OT)
+      ],
+      projectRateMap: { 1: 45 },
+    });
+    expect(st.hours.prevailing).toBeCloseTo(6);
+    expect(st.hours.regular).toBeCloseTo(2);
+    expect(st.hours.overtime).toBeCloseTo(2);
+    expect(st.cost.prevailing).toBe(270); // 6 × 45
+    expect(st.cost.regular).toBe(60);     // 2 × 30
+    expect(st.cost.overtime).toBe(90);    // 2 × 30 × 1.5 (civilian OT)
+    expect(st.totals.grossWages).toBe(420);
   });
 });

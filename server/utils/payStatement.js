@@ -7,6 +7,7 @@ const {
 const { leaveRateMultipliers, computeWorkerLeave, computeCompanyLeave } = require('./paidHours');
 const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, sickRulesFromSettings } = require('./hoursRules');
 const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = require('./deductions');
+const { rateAwarePay, hasSimpleOtConfig } = require('./rateAwareOvertime');
 
 /**
  * ONE pay statement, produced once, rendered by every pay surface.
@@ -49,32 +50,67 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
   const rateType = worker.rate_type || 'hourly';
   const paid = entries || [];
 
-  // Hours + per-entry OT (the per-entry column BillPDF/WorkerMetrics read).
-  const { regularHours, overtimeHours, otBands } = computeOT(paid, rule, threshold, weekStart, otConfig, { from, to });
-  annotateEntryOvertime(paid, rule, threshold, weekStart, otConfig);
+  // The base rate a given entry earns: its project's prevailing rate (company
+  // rate as fallback) for prevailing work, the worker's rate otherwise.
+  const baseRateOf = e => e.wage_type === 'prevailing'
+    ? (projectRateMap && projectRateMap[e.project_id] != null ? projectRateMap[e.project_id] : prevRate)
+    : rate;
 
-  // Prevailing — per-project rate, company rate as fallback (canonical for all surfaces).
-  let prevailingHours = 0, prevailingCostRaw = 0;
-  for (const e of paid) {
-    if (e.wage_type !== 'prevailing') continue;
-    // Clamp at 0 (matches entryDuration): a break longer than the shift must not
-    // produce negative prevailing hours/cost.
-    const h = Math.max(0, hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60);
-    prevailingHours += h;
-    prevailingCostRaw += h * (projectRateMap && projectRateMap[e.project_id] != null ? projectRateMap[e.project_id] : prevRate);
-  }
+  let regularHours, overtimeHours, prevailingHours, totalHours;
+  let regularCostRaw, overtimeCostRaw, prevailingCostRaw;
 
-  const totalHours = regularHours + overtimeHours + prevailingHours;
-
-  // Regular/OT cost — daily-rate workers price per day; hourly use OT bands + night premium.
-  let regularCostRaw, overtimeCostRaw;
-  if (rateType === 'daily') {
-    const dc = computeDailyPayCosts(paid, rule, threshold, rate, otMult, otConfig);
-    regularCostRaw = dc.regularCost;
-    overtimeCostRaw = dc.overtimeCost;
+  if (rateType !== 'daily' && hasSimpleOtConfig(otConfig)) {
+    // ── Rate-aware path ─────────────────────────────────────────────────────
+    // ALL worked hours (regular + prevailing, any per-project prevailing rate)
+    // count toward ONE overtime threshold, and each OT hour is priced at the rate
+    // it earned (or the weighted-average blend). This is the only path that pays
+    // overtime on prevailing / multi-rate hours — see docs/plans/rate-aware-overtime.md.
+    const otMethod = settings.overtime_rate_method === 'weighted_average' ? 'weighted_average' : 'rate_when_worked';
+    const worked = paid.filter(e => e.start_time && e.end_time);
+    const ra = rateAwarePay(worked, { rule, threshold, weekStart, otMult, baseRateOf, method: otMethod });
+    // Per-entry OT for the line-item display column (BillPDF / WorkerMetrics).
+    for (const e of paid) e.overtime_hours = 0;
+    worked.forEach((e, i) => { e.overtime_hours = ra.perEntry[i].ot; });
+    // Split into the statement's regular / overtime / prevailing buckets by
+    // wage_type × straight/overtime. `overtime` absorbs ALL overtime pay (both
+    // rates + any blended premium), so the three cost buckets always sum to
+    // ra.cost — the gross reconciles by construction.
+    regularHours = 0; overtimeHours = 0; prevailingHours = 0;
+    regularCostRaw = 0; prevailingCostRaw = 0;
+    worked.forEach((e, i) => {
+      const p = ra.perEntry[i];
+      overtimeHours += p.ot;
+      if (e.wage_type === 'prevailing') { prevailingHours += p.st; prevailingCostRaw += p.st * p.baseRate; }
+      else { regularHours += p.st; regularCostRaw += p.st * p.baseRate; }
+    });
+    overtimeCostRaw = ra.cost - regularCostRaw - prevailingCostRaw;
+    totalHours = regularHours + overtimeHours + prevailingHours;
   } else {
-    regularCostRaw = regularHours * rate;
-    overtimeCostRaw = otBandsCost(otBands, rate, otMult) + nightPremiumCost(paid, otConfig && otConfig.nightDifferential, rate);
+    // ── Existing path ───────────────────────────────────────────────────────
+    // Daily-rate workers, or premium OT configs (tiers, rest-day, 7th-day,
+    // windows, night differential) that need per-band attribution. Prevailing
+    // stays flat here until the per-band rate-aware work lands.
+    const ot = computeOT(paid, rule, threshold, weekStart, otConfig, { from, to });
+    annotateEntryOvertime(paid, rule, threshold, weekStart, otConfig);
+    regularHours = ot.regularHours; overtimeHours = ot.overtimeHours;
+    prevailingHours = 0; prevailingCostRaw = 0;
+    for (const e of paid) {
+      if (e.wage_type !== 'prevailing') continue;
+      // Clamp at 0 (matches entryDuration): a break longer than the shift must not
+      // produce negative prevailing hours/cost.
+      const h = Math.max(0, hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60);
+      prevailingHours += h;
+      prevailingCostRaw += h * (projectRateMap && projectRateMap[e.project_id] != null ? projectRateMap[e.project_id] : prevRate);
+    }
+    totalHours = regularHours + overtimeHours + prevailingHours;
+    if (rateType === 'daily') {
+      const dc = computeDailyPayCosts(paid, rule, threshold, rate, otMult, otConfig);
+      regularCostRaw = dc.regularCost;
+      overtimeCostRaw = dc.overtimeCost;
+    } else {
+      regularCostRaw = regularHours * rate;
+      overtimeCostRaw = otBandsCost(ot.otBands, rate, otMult) + nightPremiumCost(paid, otConfig && otConfig.nightDifferential, rate);
+    }
   }
 
   const mult = leaveRateMultipliers(settings);

@@ -83,11 +83,15 @@ function rateAwarePay(entries, { rule, threshold, weekStart = 1, otMult, baseRat
  * per-band attribution lands.
  */
 function hasSimpleOtConfig(otConfig) {
-  if (!otConfig) return true;
-  if (Array.isArray(otConfig.tiers) && otConfig.tiers.length) return false;
-  if (otConfig.restDay || otConfig.seventhDay || otConfig.minDailyHours) return false;
+  if (!otConfig) return true; // no policy → plain single-multiplier OT
+  // Field names per otConfigFromSettings (hoursRules.js): premium features and
+  // the ot_tier / min_daily / window rule arrays. ANY of them → keep the existing
+  // per-band engine path.
+  if (otConfig.restDay || otConfig.seventhDay || otConfig.nightDifferential) return false;
+  if (otConfig.minDailyHours) return false;
+  if (Array.isArray(otConfig.tierRules) && otConfig.tierRules.length) return false;
+  if (Array.isArray(otConfig.minDailyRules) && otConfig.minDailyRules.length) return false;
   if (Array.isArray(otConfig.windowRules) && otConfig.windowRules.length) return false;
-  if (otConfig.nightDifferential) return false;
   return true;
 }
 

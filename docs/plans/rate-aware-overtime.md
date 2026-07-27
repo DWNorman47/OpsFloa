@@ -80,15 +80,35 @@ row before writing code — that's the whole point of doing this first.
 
 ## Build order
 
-1. **This doc + the scenario tests** (the spec) — encode A–F as executable
-   expected-pay assertions.
-2. **Engine:** give each worked entry an effective base rate; run OT attribution
-   over all worked entries as one chronological stream; price per-entry
-   (ST × rate + OT × rate × mult). Preserve the aggregate `computeOT` contract for
-   callers that still need totals; keep tiered-OT correctness (per-entry, per-band).
-3. **Surfaces:** confirm invoice / CSV / stub reconcile; then route the WH-347
-   report through the engine and add its per-day ST/OT grid (was
-   `certified-payroll-ot.md` Phase 1).
+1. ✅ **Scenario tests + the calculator + the method setting** (increment 1, done
+   2026-07-26). `utils/rateAwareOvertime.js`, `constants/payEnums.js`,
+   `overtime_rate_method` setting, `rateAwareOvertime.test.js` (A–F pass).
+2. ✅ **Integrate into `buildPayStatement`** (increment 2, done 2026-07-26). Gated on
+   `hasSimpleOtConfig` + hourly; premium configs (tiers/rest-day/7th-day/window/
+   night) and daily-rate workers keep the existing per-band path. Regular-only and
+   prevailing-under-threshold are byte-identical (whole existing suite green);
+   prevailing-over-threshold now earns OT. The four surfaces that read the statement
+   — worker invoice, payroll CSV, pay stub, overtime report — get it for free.
+3. ⬜ **Consolidate the 4 duplicate engines** that never went through
+   `buildPayStatement` and now DISAGREE with it (still pay prevailing flat):
+   - `routes/admin.js` `GET /projects/:id/bill` (project bill route) — its own OT
+     engine; prevailing flat at ~:1710.
+   - `routes/qbo.js` `computeGroupOvertime` (~:796) — OT on regular only, premium
+     off `hourlyRate`.
+   - `routes/admin.js` certified-payroll (~:3457) — the WH-347; also needs its
+     per-day ST/OT grid (see `certified-payroll-ot.md`).
+   - `client/src/components/WorkerSummary.jsx:108` — a client-side *estimate*
+     (labeled "estimated"); lowest priority.
+   Route each through `buildPayStatement` / the shared calculator so every surface
+   agrees. Until then there's a known dev-only gap: the worker invoice pays
+   prevailing OT while these four still show it flat.
+4. ⬜ **Cosmetic:** the `Overtime Pay (1.5×)` labels in `BillPDF.jsx:262` /
+   `ProjectBillPDF.jsx:182` / `ProjectsPage.jsx:1111` imply `otHours × workerRate ×
+   1.5`, which no longer reproduces the now-blended `cost.overtime` when OT spans two
+   rates. The dollar figure is right (read from `cost.overtime`); only the implied
+   arithmetic in the label is stale.
+5. ⬜ **UI:** a settings toggle for `overtime_rate_method` (rate-when-worked /
+   weighted-average), EN+ES.
 
 ## Known edge to decide later, not guess now
 

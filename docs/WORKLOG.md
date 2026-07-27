@@ -23,6 +23,34 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-26 — Rate-aware overtime: wired into buildPayStatement (increment 2)
+
+The calculator now drives real pay. `buildPayStatement` routes through
+`rateAwarePay` when the config is plain single-multiplier OT and the worker is
+hourly (`hasSimpleOtConfig` gate); premium configs (tiers/rest-day/7th-day/window/
+night) and daily-rate workers keep the existing per-band path untouched.
+
+- **Prevailing/multi-rate hours now earn OT** on the four surfaces that read the
+  shared statement — worker invoice, payroll CSV, pay stub, overtime report — for
+  free (they read `cost.*`, confirmed by a consumer audit).
+- **No regression:** regular-only and prevailing-under-threshold are byte-identical
+  (whole suite green). The ONE test that changed is the intended fix — 10h
+  prevailing @ $50 now reads 8h ST ($400) + 2h OT ($150) instead of 10h flat
+  ($500). Added the excavator scenario-A reconcile test at the statement level
+  ($420). 1113 pass.
+- The three cost buckets always sum to the calculator's total (`overtime` absorbs
+  all OT pay incl. any blended premium), so gross reconciles by construction.
+
+⚠️ **Known dev-only gap (tracked):** a consumer audit found **4 duplicate engines**
+that never went through `buildPayStatement` and still pay prevailing flat, so they
+now disagree with the invoice: the project-bill route (`admin.js` ~1710), `qbo.js`
+`computeGroupOvertime` (~796), certified-payroll/WH-347 (`admin.js` ~3457), and the
+client-side *estimate* `WorkerSummary.jsx:108`. Consolidating those onto the shared
+statement is the next increment (build-order step 3 in the plan). Nothing hits a
+real paycheck until David merges to prod.
+
+---
+
 ## 2026-07-26 — Rate-aware overtime: the money core (increment 1 of the build)
 
 Approved the plan (`docs/plans/rate-aware-overtime.md`) + David's ask to make the
