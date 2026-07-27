@@ -95,4 +95,28 @@ function hasSimpleOtConfig(otConfig) {
   return true;
 }
 
-module.exports = { rateAwarePay, hasSimpleOtConfig };
+/**
+ * rateAwarePay + the split every surface needs: regular / overtime / prevailing
+ * hours and costs, by wage_type × straight/overtime. `overtimeCost` absorbs ALL
+ * overtime pay (both rates + any blended premium) so the three cost buckets always
+ * sum to the calculator's total — the gross reconciles by construction. Also
+ * returns `perEntry` (aligned with the worked entries) so the caller can stamp
+ * `overtime_hours` on its rows for the per-day line-item column.
+ *
+ * Same args as rateAwarePay. Callers gate on hasSimpleOtConfig() first.
+ */
+function splitRateAware(entries, opts) {
+  const worked = (entries || []).filter(e => e.start_time && e.end_time);
+  const ra = rateAwarePay(worked, opts);
+  let regularHours = 0, overtimeHours = 0, prevailingHours = 0, regularCost = 0, prevailingCost = 0;
+  worked.forEach((e, i) => {
+    const p = ra.perEntry[i];
+    overtimeHours += p.ot;
+    if (e.wage_type === 'prevailing') { prevailingHours += p.st; prevailingCost += p.st * p.baseRate; }
+    else { regularHours += p.st; regularCost += p.st * p.baseRate; }
+  });
+  const overtimeCost = ra.cost - regularCost - prevailingCost;
+  return { regularHours, overtimeHours, prevailingHours, regularCost, overtimeCost, prevailingCost, perEntry: ra.perEntry, worked };
+}
+
+module.exports = { rateAwarePay, splitRateAware, hasSimpleOtConfig };

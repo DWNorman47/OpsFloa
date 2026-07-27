@@ -23,6 +23,7 @@ const { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otB
 const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, validatePolicyRaw, migrateFixedSlots, hasFixedSlots, ymd } = require('../utils/hoursRules');
 const { computePaid, computeWorkerLeave, computeCompanyLeave, leaveRateMultipliers } = require('../utils/paidHours');
 const { workerStatement, companyStatements } = require('../utils/payStatement');
+const { splitRateAware, hasSimpleOtConfig } = require('../utils/rateAwareOvertime');
 const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = require('../utils/deductions');
 const { DEDUCTION_KINDS } = require('../constants/deductionEnums');
 const { OVERTIME_RATE_METHODS } = require('../constants/payEnums');
@@ -1681,37 +1682,46 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
     entries.forEach(e => { workerRoleById[e.user_id] = e.role_id; });
     entries = roundEntriesFromSettings(entries, settings, { workerRoleById });
 
-    // Per-worker OT using each worker's own rule
+    // Per-worker OT using each worker's own rule. All of a worker's hours
+    // (regular + prevailing at the project rate) go through the shared rate-aware
+    // engine so prevailing / multi-rate hours earn overtime, consistent with the
+    // worker invoice. Premium OT configs + daily-rate workers keep the per-band path.
+    const effectivePrevRate = parseFloat(projectResult.rows[0].prevailing_wage_rate) || settings.prevailing_wage_rate;
+    const otMethod = settings.overtime_rate_method === 'weighted_average' ? 'weighted_average' : 'rate_when_worked';
     const workerEntries = {};
-    entries.filter(e => e.wage_type === 'regular').forEach(e => {
+    entries.forEach(e => {
       if (!workerEntries[e.user_id]) workerEntries[e.user_id] = { items: [], rate: parseFloat(e.hourly_rate) || settings.default_hourly_rate, rate_type: e.rate_type, overtime_rule: e.overtime_rule || 'daily', role_id: e.role_id };
       workerEntries[e.user_id].items.push(e);
     });
-    let regularHours = 0, overtimeHours = 0, regularCost = 0, overtimeCost = 0;
+    let regularHours = 0, overtimeHours = 0, regularCost = 0, overtimeCost = 0, prevailingHours = 0, prevailingCost = 0;
     const otConfigByRole = otConfigByRoleFactory(settings);
     Object.values(workerEntries).forEach(({ items, rate, rate_type, overtime_rule, role_id }) => {
       const otConfig = otConfigByRole(role_id);
-      const { regularHours: reg, overtimeHours: ot, otBands } = computeOT(items, overtime_rule, settings.overtime_threshold, settings.week_start, otConfig);
-      // Per-entry OT for the project bill's daily line-item column (each worker uses their own rule)
-      annotateEntryOvertime(items, overtime_rule, settings.overtime_threshold, settings.week_start, otConfig);
-      regularHours += reg; overtimeHours += ot;
-      if (rate_type === 'daily') {
-        const dc = computeDailyPayCosts(items, overtime_rule, settings.overtime_threshold, rate, settings.overtime_multiplier, otConfig);
-        regularCost += dc.regularCost;
-        overtimeCost += dc.overtimeCost;
+      if (rate_type !== 'daily' && hasSimpleOtConfig(otConfig)) {
+        const baseRateOf = e => (e.wage_type === 'prevailing' ? effectivePrevRate : rate);
+        const s = splitRateAware(items, { rule: overtime_rule, threshold: settings.overtime_threshold, weekStart: settings.week_start, otMult: settings.overtime_multiplier, baseRateOf, method: otMethod });
+        for (const e of items) e.overtime_hours = 0;
+        s.worked.forEach((e, i) => { e.overtime_hours = s.perEntry[i].ot; });
+        regularHours += s.regularHours; overtimeHours += s.overtimeHours; prevailingHours += s.prevailingHours;
+        regularCost += s.regularCost; overtimeCost += s.overtimeCost; prevailingCost += s.prevailingCost;
       } else {
-        regularCost += reg * rate;
-        overtimeCost += otBandsCost(otBands, rate, settings.overtime_multiplier)
-          + nightPremiumCost(items, otConfig && otConfig.nightDifferential, rate);
+        // Per-band path: OT on regular only, prevailing flat (premium configs / daily rate).
+        const reg = items.filter(e => e.wage_type === 'regular');
+        const { regularHours: rh, overtimeHours: oh, otBands } = computeOT(reg, overtime_rule, settings.overtime_threshold, settings.week_start, otConfig);
+        annotateEntryOvertime(reg, overtime_rule, settings.overtime_threshold, settings.week_start, otConfig);
+        regularHours += rh; overtimeHours += oh;
+        if (rate_type === 'daily') {
+          const dc = computeDailyPayCosts(reg, overtime_rule, settings.overtime_threshold, rate, settings.overtime_multiplier, otConfig);
+          regularCost += dc.regularCost; overtimeCost += dc.overtimeCost;
+        } else {
+          regularCost += rh * rate;
+          overtimeCost += otBandsCost(otBands, rate, settings.overtime_multiplier) + nightPremiumCost(reg, otConfig && otConfig.nightDifferential, rate);
+        }
+        items.filter(e => e.wage_type === 'prevailing').forEach(e => {
+          const h = Math.max(0, hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60);
+          prevailingHours += h; prevailingCost += h * effectivePrevRate;
+        });
       }
-    });
-
-    const effectivePrevRate = parseFloat(projectResult.rows[0].prevailing_wage_rate) || settings.prevailing_wage_rate;
-    let prevailingHours = 0, prevailingCost = 0;
-    entries.filter(e => e.wage_type === 'prevailing').forEach(e => {
-      const h = hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60;
-      prevailingHours += h;
-      prevailingCost += h * effectivePrevRate;
     });
 
     const totalHours = regularHours + overtimeHours + prevailingHours;

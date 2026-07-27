@@ -7,7 +7,7 @@ const {
 const { leaveRateMultipliers, computeWorkerLeave, computeCompanyLeave } = require('./paidHours');
 const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, sickRulesFromSettings } = require('./hoursRules');
 const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = require('./deductions');
-const { rateAwarePay, hasSimpleOtConfig } = require('./rateAwareOvertime');
+const { splitRateAware, hasSimpleOtConfig } = require('./rateAwareOvertime');
 
 /**
  * ONE pay statement, produced once, rendered by every pay surface.
@@ -66,24 +66,11 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     // it earned (or the weighted-average blend). This is the only path that pays
     // overtime on prevailing / multi-rate hours — see docs/plans/rate-aware-overtime.md.
     const otMethod = settings.overtime_rate_method === 'weighted_average' ? 'weighted_average' : 'rate_when_worked';
-    const worked = paid.filter(e => e.start_time && e.end_time);
-    const ra = rateAwarePay(worked, { rule, threshold, weekStart, otMult, baseRateOf, method: otMethod });
+    const split = splitRateAware(paid, { rule, threshold, weekStart, otMult, baseRateOf, method: otMethod });
     // Per-entry OT for the line-item display column (BillPDF / WorkerMetrics).
     for (const e of paid) e.overtime_hours = 0;
-    worked.forEach((e, i) => { e.overtime_hours = ra.perEntry[i].ot; });
-    // Split into the statement's regular / overtime / prevailing buckets by
-    // wage_type × straight/overtime. `overtime` absorbs ALL overtime pay (both
-    // rates + any blended premium), so the three cost buckets always sum to
-    // ra.cost — the gross reconciles by construction.
-    regularHours = 0; overtimeHours = 0; prevailingHours = 0;
-    regularCostRaw = 0; prevailingCostRaw = 0;
-    worked.forEach((e, i) => {
-      const p = ra.perEntry[i];
-      overtimeHours += p.ot;
-      if (e.wage_type === 'prevailing') { prevailingHours += p.st; prevailingCostRaw += p.st * p.baseRate; }
-      else { regularHours += p.st; regularCostRaw += p.st * p.baseRate; }
-    });
-    overtimeCostRaw = ra.cost - regularCostRaw - prevailingCostRaw;
+    split.worked.forEach((e, i) => { e.overtime_hours = split.perEntry[i].ot; });
+    ({ regularHours, overtimeHours, prevailingHours, regularCost: regularCostRaw, overtimeCost: overtimeCostRaw, prevailingCost: prevailingCostRaw } = split);
     totalHours = regularHours + overtimeHours + prevailingHours;
   } else {
     // ── Existing path ───────────────────────────────────────────────────────

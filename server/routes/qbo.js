@@ -12,8 +12,9 @@ const { encrypt } = require('../services/encryption');
 // about the same day. Rounding is applied at each point entries are fetched, so
 // the four separate hour calculations below can't drift apart again.
 const { loadSettings, computePaid } = require('../utils/paidHours');
-const { roundEntriesFromSettings } = require('../utils/hoursRules');
+const { roundEntriesFromSettings, otConfigFromSettings } = require('../utils/hoursRules');
 const { otBandsCost } = require('../utils/payCalculations');
+const { rateAwarePay, hasSimpleOtConfig } = require('../utils/rateAwareOvertime');
 const { applySettingsRows, ADMIN_SETTINGS_DEFAULTS } = require('../settingsDefaults');
 
 const { logAudit } = require('../auditLog');
@@ -806,11 +807,20 @@ function computeGroupOvertime(group, ot) {
     wage_type:     te.wageType,
     break_minutes: te.breakMinutes,
   }));
+  const otConfig = otConfigFromSettings(ot.settings, group.roleId ?? null);
+  if (hasSimpleOtConfig(otConfig)) {
+    // ALL worked hours (incl. prevailing) count toward the threshold — before,
+    // prevailing hours never earned OT here. QBO bills labor flat at the worker's
+    // rate, so OT is priced at that same rate; the premium is what's added on top
+    // of the straight time already billed per entry.
+    const method = ot.settings.overtime_rate_method === 'weighted_average' ? 'weighted_average' : 'rate_when_worked';
+    const ra = rateAwarePay(entries, { rule, threshold: ot.threshold, weekStart: ot.weekStart, otMult: ot.multiplier, baseRateOf: () => group.hourlyRate, method });
+    const premium = ra.cost - (ra.straightHours + ra.overtimeHours) * group.hourlyRate;
+    return { overtimeHours: ra.overtimeHours, overtimePremium: premium, rule };
+  }
+  // Premium OT configs (tiers / rest-day / 7th-day / window / night): keep the
+  // per-band path — OT on regular only, tiers billed at their own multipliers.
   const { overtimeHours, otBands } = computePaid(entries, ot.settings, { rule, roleId: group.roleId ?? null });
-  // Premium = what the OT hours cost at their own multipliers, minus the
-  // straight time already billed per entry. Priced off otBands rather than one
-  // flat multiplier, so a tiered policy (8h @1.5×, 12h @2×) bills its tiers
-  // instead of flattening them to the company default.
   const premium = otBandsCost(otBands, group.hourlyRate, ot.multiplier)
                 - overtimeHours * group.hourlyRate;
   return { overtimeHours, overtimePremium: premium, rule };
