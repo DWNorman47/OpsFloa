@@ -4,7 +4,7 @@ const {
   nightPremiumCost, hoursWorked, computeGuaranteeShortfall,
   computeLeaveHours, shiftHoursByDate,
 } = require('./payCalculations');
-const { leaveRateMultipliers, computeWorkerLeave, computeCompanyLeave } = require('./paidHours');
+const { leaveRateMultipliers, computeWorkerLeave, computeCompanyLeave, otRuleFromSettings } = require('./paidHours');
 const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, sickRulesFromSettings } = require('./hoursRules');
 const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = require('./deductions');
 const { splitRateAware, hasSimpleOtConfig } = require('./rateAwareOvertime');
@@ -41,7 +41,7 @@ const cents = n => Math.round((Number(n) || 0) * 100) / 100;
  * @param opts.explain           attach settings_used / leaveDetail + per-entry OT/wage notes
  */
 function buildPayStatement({ worker, entries, reimbursements = [], leave = { sick: 0, vacation: 0 }, deductions = [], otConfig = null, projectRateMap = {}, settings = {}, from = null, to = null, explain = false }) {
-  const rule = worker.overtime_rule || 'daily';
+  const rule = otRuleFromSettings(settings, worker.overtime_rule);
   const threshold = parseFloat(settings.overtime_threshold) || 8;
   const weekStart = settings.week_start;
   const otMult = parseFloat(settings.overtime_multiplier) || 1.5;

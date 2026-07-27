@@ -119,8 +119,10 @@ export default function WorkerSummary({ entries, hourlyRate, rateType = 'hourly'
   const rate = parseFloat(hourlyRate) || 30;
   // Straight regular / all overtime / straight prevailing + the hourly cost —
   // prevailing & multi-rate hours now earn overtime, matching the server.
+  // "Allow overtime = off" (overtimeEnabled=false) means no OT accrues — match
+  // the server, which now gates the rule to 'none' the same way.
   const { regularHours, overtimeHours, prevailingHours, cost: hourlyCost } = rateAwareSplit(
-    filtered, { rule: overtimeRule, threshold: overtimeThreshold, mult: overtimeMultiplier, rate, prevailingRate, weekStart }
+    filtered, { rule: overtimeEnabled ? overtimeRule : 'none', threshold: overtimeThreshold, mult: overtimeMultiplier, rate, prevailingRate, weekStart }
   );
 
   let estimatedPay;

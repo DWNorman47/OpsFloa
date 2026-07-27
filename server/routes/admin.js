@@ -21,7 +21,7 @@ const { sendPushToUser, sendPushToAllWorkers } = require('../push');
 const { sendEmail } = require('../email');
 const { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, nightPremiumCost, computeGuaranteeShortfall } = require('../utils/payCalculations');
 const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, validatePolicyRaw, migrateFixedSlots, hasFixedSlots, ymd } = require('../utils/hoursRules');
-const { computePaid, computeWorkerLeave, computeCompanyLeave, leaveRateMultipliers } = require('../utils/paidHours');
+const { computePaid, computeWorkerLeave, computeCompanyLeave, leaveRateMultipliers, otRuleFromSettings } = require('../utils/paidHours');
 const { workerStatement, companyStatements } = require('../utils/payStatement');
 const { splitRateAware, hasSimpleOtConfig } = require('../utils/rateAwareOvertime');
 const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = require('../utils/deductions');
@@ -1690,7 +1690,7 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
     const otMethod = settings.overtime_rate_method === 'weighted_average' ? 'weighted_average' : 'rate_when_worked';
     const workerEntries = {};
     entries.forEach(e => {
-      if (!workerEntries[e.user_id]) workerEntries[e.user_id] = { items: [], rate: parseFloat(e.hourly_rate) || settings.default_hourly_rate, rate_type: e.rate_type, overtime_rule: e.overtime_rule || 'daily', role_id: e.role_id };
+      if (!workerEntries[e.user_id]) workerEntries[e.user_id] = { items: [], rate: parseFloat(e.hourly_rate) || settings.default_hourly_rate, rate_type: e.rate_type, overtime_rule: otRuleFromSettings(settings, e.overtime_rule), role_id: e.role_id };
       workerEntries[e.user_id].items.push(e);
     });
     let regularHours = 0, overtimeHours = 0, regularCost = 0, overtimeCost = 0, prevailingHours = 0, prevailingCost = 0;
@@ -1793,7 +1793,7 @@ router.get('/projects/metrics', requireAdmin, async (req, res) => {
         byWorker.get(e.user_id).push(e);
       }
       for (const rows_ of byWorker.values()) {
-        const r = computePaid(rows_, metricsSettings, { rule: rows_[0].ot_rule || 'daily', roleId: rows_[0].role_id ?? null });
+        const r = computePaid(rows_, metricsSettings, { rule: otRuleFromSettings(metricsSettings, rows_[0].ot_rule), roleId: rows_[0].role_id ?? null });
         regularHours += r.regularHours;
         overtimeHours += r.overtimeHours;
       }
@@ -3320,7 +3320,7 @@ router.get('/export/worker-hours', requireAdmin, requirePerm('view_reports'), re
       // export's split matches the invoice/report/stub instead of its own math.
       // No `range` passed: this is an hours-WORKED report, so it excludes the
       // min-daily "no clock-in" guarantee fill the pay surfaces include.
-      const { regularHours, overtimeHours } = computeOT(we, w.overtime_rule || 'daily', threshold, weekStart, otConfigByRole(w.role_id));
+      const { regularHours, overtimeHours } = computeOT(we, otRuleFromSettings(s, w.overtime_rule), threshold, weekStart, otConfigByRole(w.role_id));
       const total = regularHours + overtimeHours;
       const days = new Set(we.map(e => dayKey(e.work_date))).size;
       tReg += regularHours; tOt += overtimeHours; tTot += total; tDays += days;
@@ -3529,7 +3529,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_reports'), requ
           worker_name: row.worker_name,
           rate: parseFloat(row.hourly_rate) || defaultRate,
           classification: row.entry_classification || row.classification || null,
-          overtime_rule: row.overtime_rule || 'daily',
+          overtime_rule: otRuleFromSettings(s, row.overtime_rule),
           role_id: row.role_id,
           items: [],
         };

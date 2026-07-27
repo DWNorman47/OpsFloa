@@ -32,6 +32,19 @@ function payNumbers(settings) {
 }
 
 /**
+ * The overtime rule to ACTUALLY apply for a worker. When a company turns off
+ * "Allow overtime" (feature_overtime = false) no overtime accrues anywhere — the
+ * same as a per-worker rule of 'none', which the engine already supports. Every
+ * pay/labor-cost surface resolves the rule through here instead of reading
+ * `overtime_rule` directly, so the toggle can't be honored on one surface and
+ * ignored on another. Absent/true flag → the worker's rule (default 'daily').
+ */
+function otRuleFromSettings(settings, workerRule) {
+  const off = settings && (settings.feature_overtime === false || settings.feature_overtime === '0' || settings.feature_overtime === 0);
+  return off ? 'none' : (workerRule || 'daily');
+}
+
+/**
  * Load a company's settings. Was a private helper inside admin.js, so every
  * other route re-queried the settings table by hand — which is how two of them
  * ended up never reading `hours_rules`.
@@ -96,7 +109,7 @@ function laborCostCents(entries, settings) {
   for (const rows of byWorker.values()) {
     const rate = parseFloat(rows[0].rate) || 0;
     if (!rate) continue;
-    const rule = rows[0].ot_rule || 'daily';
+    const rule = otRuleFromSettings(settings, rows[0].ot_rule);
     const { paid, regularHours, otBands, otConfig } = computePaid(rows, settings, { rule, roleId: rows[0].role_id ?? null });
     dollars += regularHours * rate;
     dollars += otBandsCost(otBands, rate, multiplier);
@@ -200,6 +213,7 @@ async function computeCompanyLeave({ companyId, workers, settings, from, to }) {
 module.exports = {
   loadSettings,
   payNumbers,
+  otRuleFromSettings,
   computePaid,
   laborCostCents,
   computeWorkerLeave,

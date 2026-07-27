@@ -106,6 +106,31 @@ real paycheck until David merges to prod.
 
 ---
 
+## 2026-07-26 — Two follow-ups from the review notes
+
+**⚠️ Behavior change — "Allow overtime = off" now actually stops overtime pay.**
+`feature_overtime` was a pay-engine no-op (it only drove alerts + which tiles
+show), so a company that turned overtime OFF still had OT computed and paid.
+Added `otRuleFromSettings(settings, workerRule)` to `paidHours.js` (off →
+resolves the rule to `'none'`, which the engine already supports) and routed
+EVERY pay/labor-cost surface through it: `buildPayStatement` (invoice/CSV/stub/OT
+report), `laborCostCents`, project-bill, project metrics, the hours-export report,
+certified-payroll, qbo `computeGroupOvertime`, and the client WorkerSummary
+estimate. Default is ON, so only companies that explicitly disabled it change —
+and for them, straight-time-only is now consistent with the already-supported
+per-worker `overtime_rule='none'`. **David should confirm this semantic at merge**
+(the alternative reading — "just hide the OT UI, still pay OT per law" — is why it
+was flagged as a product call). Pinned with a `buildPayStatement` test.
+
+**Removed the stale overtime math from the dev QA page.** `client/src/pages/
+Tests.jsx` carried its own copy of the OLD `computeOT`/`computeDailyPayCosts` and
+~90 lines of test cases pinning the retired regular-only algorithm — testing dead
+code (the client now uses `rateAwareSplit`, the real math is server-side + fully
+covered). Deleted the copies + their four test blocks (kept the still-valid
+`hoursWorked` test). 1017 → 882 lines. Full verify green (1117 pass).
+
+---
+
 ## 2026-07-26 — Rate-aware overtime: review sweep (5 agents) + fixes
 
 Ran a 5-agent adversarial review over the whole rate-aware overtime feature

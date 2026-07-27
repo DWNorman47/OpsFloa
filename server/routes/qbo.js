@@ -11,7 +11,7 @@ const { encrypt } = require('../services/encryption');
 // enabled would have had OpsFloa's own invoice and its QuickBooks bill disagree
 // about the same day. Rounding is applied at each point entries are fetched, so
 // the four separate hour calculations below can't drift apart again.
-const { loadSettings, computePaid } = require('../utils/paidHours');
+const { loadSettings, computePaid, otRuleFromSettings } = require('../utils/paidHours');
 const { roundEntriesFromSettings, otConfigFromSettings } = require('../utils/hoursRules');
 const { otBandsCost } = require('../utils/payCalculations');
 const { rateAwarePay, hasSimpleOtConfig } = require('../utils/rateAwareOvertime');
@@ -796,7 +796,8 @@ async function getOvertimeSettings(companyId) {
  * be added on top of the straight hours × base_rate already billed per entry.
  */
 function computeGroupOvertime(group, ot) {
-  const rule = group.overtimeRule || ot.rule;
+  // Honor "Allow overtime = off" (feature_overtime) the same as the pay engine.
+  const rule = otRuleFromSettings(ot.settings, group.overtimeRule || ot.rule);
   if (rule === 'none' || !group.timeEntries.length) {
     return { overtimeHours: 0, overtimePremium: 0, rule };
   }
