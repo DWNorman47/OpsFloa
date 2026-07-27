@@ -219,18 +219,14 @@ async function ensureDemoCompany(client) {
 async function ensureDemoAdmin(client, companyId) {
   const { ownerId } = await seedBuiltinRoles(client, companyId);
   const username = DEMO_ADMIN_USERNAME;
+  // Usernames are unique PER COMPANY (migration 0154), so the demo admin is
+  // resolved within this tenant — "Admin" existing in some other company is
+  // irrelevant and no longer blocks the seed.
   const existingUser = await one(
     client,
-    'SELECT id, company_id FROM users WHERE username = $1 LIMIT 1',
-    [username]
+    'SELECT id FROM users WHERE username = $1 AND company_id = $2 LIMIT 1',
+    [username, companyId]
   );
-
-  if (existingUser && existingUser.company_id !== companyId) {
-    throw new Error(
-      `Cannot seed demo admin "${username}" because that username belongs to another company. ` +
-      'Set DEMO_ADMIN_USERNAME to a unique value for this environment.'
-    );
-  }
 
   const hash = await bcrypt.hash(DEMO_ADMIN_PASSWORD, 10);
   if (existingUser) {
@@ -384,23 +380,12 @@ async function main() {
     ];
 
     const users = [];
-    const skippedUsers = [];
+    // Usernames are unique PER COMPANY (migration 0154), so ensureBy on
+    // (company_id, username) is authoritative: a demo worker name that some other
+    // tenant also uses no longer collides. (Before, a global UNIQUE(username)
+    // forced a cross-company pre-check that silently dropped colliding workers —
+    // that's why the demo could ship with a missing crew.)
     for (const [username, fullName, role, email, rate] of peopleSeed) {
-      // Two-step lookup to handle username collisions with real customers
-      // gracefully. The (company_id, username) ensureBy below is correct
-      // for the common case, but if `username` already exists in ANOTHER
-      // company the global UNIQUE constraint on users.username would
-      // make our INSERT throw and abort the whole cron-driven seed run.
-      // Pre-check globally so we can skip + warn instead of dying.
-      const collision = await one(
-        client,
-        'SELECT company_id FROM users WHERE username = $1 LIMIT 1',
-        [username]
-      );
-      if (collision && collision.company_id !== companyId) {
-        skippedUsers.push(username);
-        continue;
-      }
       const row = await ensureBy(
         client,
         'users',
@@ -419,12 +404,6 @@ async function main() {
         'id, full_name, role'
       );
       users.push(row);
-    }
-    if (skippedUsers.length > 0) {
-      console.warn(
-        `[demo-seed] skipped ${skippedUsers.length} demo user(s) due to username collision with another company: ${skippedUsers.join(', ')}. ` +
-        'Demo will be missing these workers. Rename the demo usernames or move the colliding real account to clear.'
-      );
     }
     const existingUsers = await client.query(
       `SELECT id, full_name, role FROM users WHERE company_id = $1 AND active = true ORDER BY id`,

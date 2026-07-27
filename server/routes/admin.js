@@ -1460,7 +1460,9 @@ router.patch('/workers/:id', requireAdmin, requirePerm('manage_workers'),
   try {
     if (username) {
       const clean = username.toLowerCase().trim();
-      const conflict = await pool.query('SELECT id FROM users WHERE username = $1 AND id != $2', [clean, req.params.id]);
+      // Usernames are unique PER COMPANY (migration 0154), so a name taken in
+      // another tenant must not block this one — scope the conflict check.
+      const conflict = await pool.query('SELECT id FROM users WHERE username = $1 AND company_id = $2 AND id != $3', [clean, companyId, req.params.id]);
       if (conflict.rowCount > 0) return res.status(409).json({ error: 'Username already taken' });
     }
     if (rate_type !== undefined && !VALID_RATE_TYPES.includes(rate_type)) {

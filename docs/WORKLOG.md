@@ -106,6 +106,45 @@ real paycheck until David merges to prod.
 
 ---
 
+## 2026-07-27 — Username uniqueness: global → per-company (the real multi-tenant fix)
+
+Chased down the demo-seed "skipped 8 workers due to username collision with another
+company" warning. It was NOT colliding with real customers — those names are
+demo-only. The data settled it: exactly one "Demo Operations" tenant (the nightly
+public demo) and a SEPARATE exempt tenant "OpsFloa Demo Workspace" that already
+holds all 8 worker usernames. They collided purely because `users.username` carried
+a GLOBAL `UNIQUE` (schema.sql: `username VARCHAR(100) UNIQUE`), even though the app
+is per-company everywhere else — login is `WHERE (username|email)=$1 AND
+company_id=$3`, and every conflict check scopes by company_id. So the DB constraint
+was stricter than the tenancy model: two companies couldn't both have a
+"leo.martinez", or even both have an "Admin". **No data leaked** — full isolation
+on company_id holds — but one tenant's username choices silently constrained
+another's, and the demo seed was the visible casualty.
+
+Fixed at the root — migration **0154**: drop the global constraint (resolved by
+SHAPE via pg_constraint, not by hard-coded name, so it's environment-agnostic) and
+add `UNIQUE (company_id, username)`. Existing rows are already globally unique, so
+none violate the per-company index — no cleanup. Updated the two spots that assumed
+global uniqueness:
+- `admin.js` worker-edit conflict check — added `company_id` (a name used only in
+  another tenant must not block this one).
+- Seed: `ensureDemoAdmin` scoped to the company + dropped its cross-company throw;
+  removed the worker-loop global pre-check/skip that was the *actual* cause of the
+  missing crew. (That pre-check existed because the seed runs in ONE transaction —
+  a failed INSERT can't be caught mid-transaction — so they pre-checked instead.
+  Per-company uniqueness makes the whole dance unnecessary.)
+
+Audited every username touchpoint: all others key on id / invite_token /
+reset_token or already include company_id. Test: worker-edit conflict check is
+company-scoped. 1131 pass; migration static-lint passes (fresh-apply needs a DB → CI).
+
+Rollout: the dev server deploy applies 0154 to the dev DB; the nightly seed (runs
+from `main`) then seeds the full crew once dev→main is merged. Touches prod's user
+model on the next main deploy — strictly a LOOSENING (per-company vs global), and no
+existing row violates it.
+
+---
+
 ## 2026-07-27 — Fix demo-seed crash: RFI upsert key didn't match the unique index
 
 CI "Seed Demo Operations" failed on `duplicate key value violates unique constraint
