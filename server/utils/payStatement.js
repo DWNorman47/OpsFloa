@@ -67,9 +67,9 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     // overtime on prevailing / multi-rate hours — see docs/plans/rate-aware-overtime.md.
     const otMethod = settings.overtime_rate_method === 'weighted_average' ? 'weighted_average' : 'rate_when_worked';
     const split = splitRateAware(paid, { rule, threshold, weekStart, otMult, baseRateOf, method: otMethod });
-    // Per-entry OT for the line-item display column (BillPDF / WorkerMetrics).
-    for (const e of paid) e.overtime_hours = 0;
-    split.worked.forEach((e, i) => { e.overtime_hours = split.perEntry[i].ot; });
+    // Per-entry OT + reason for the line-item display column (BillPDF / WorkerMetrics).
+    for (const e of paid) { e.overtime_hours = 0; e.overtime_reason = null; }
+    split.worked.forEach((e, i) => { e.overtime_hours = split.perEntry[i].ot; e.overtime_reason = split.perEntry[i].reason; });
     ({ regularHours, overtimeHours, prevailingHours, regularCost: regularCostRaw, overtimeCost: overtimeCostRaw, prevailingCost: prevailingCostRaw } = split);
     totalHours = regularHours + overtimeHours + prevailingHours;
   } else {
@@ -129,7 +129,7 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     for (const e of paid) {
       const ex = e.explain || (e.explain = []);
       if (e.wage_type === 'prevailing') ex.push({ code: 'wage_type', wageType: 'prevailing' });
-      if ((e.overtime_hours || 0) > 0) ex.push({ code: 'overtime', otHours: e.overtime_hours, threshold, rule });
+      if ((e.overtime_hours || 0) > 0) ex.push({ code: 'overtime', otHours: e.overtime_hours, reason: e.overtime_reason || (rule === 'weekly' ? 'weekly' : 'daily'), threshold, rule });
     }
     settingsUsed = {
       rate, rate_type: rateType, overtime_rule: rule, overtime_threshold: threshold,

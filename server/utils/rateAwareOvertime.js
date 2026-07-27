@@ -56,7 +56,9 @@ function rateAwarePay(entries, { rule, threshold, weekStart = 1, otMult, baseRat
     const st = total - ot;
     straightHours += st;
     overtimeHours += ot;
-    return { st, ot, baseRate: baseRateOf(e) };
+    // Why this entry's OT applies (from the clone annotation: 'override' or the
+    // daily/weekly threshold — rate-aware only runs on simple configs).
+    return { st, ot, baseRate: baseRateOf(e), reason: ot > 0 ? (clones[i].overtime_reason || null) : null };
   });
 
   let cost;

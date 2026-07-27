@@ -106,6 +106,32 @@ real paycheck until David merges to prod.
 
 ---
 
+## 2026-07-26 — Overtime explanations now say WHY (traceability)
+
+Found via David eyeballing a demo bill: an entry showed "8.5h overtime — over 8h
+daily" but the 8.5h was a **manual override**, not the daily rule (which on a 9h
+day yields ~1h). The pay statement pushed a blanket `{code:'overtime', threshold,
+rule}` for ANY overtime, so it mislabeled override, rest-day, 7th-day, tier and
+window OT all as "over Nh daily" — an untraceable, misleading trail on a money
+document.
+
+Added per-entry **`overtime_reason`** through the engine (additive — no change to
+the hours math):
+- `annotateEntryOvertime` tags each OT-attribution path: `override`, `rest_day`,
+  `seventh_day`, `window`, or `daily`/`weekly` (over-threshold).
+- The rate-aware path threads the reason through `rateAwarePay`'s `perEntry` (from
+  the annotated clones) → `buildPayStatement` stamps `e.overtime_reason`.
+- The explain item now carries `reason`; the WH-347/report trace (`reportTrace.js`)
+  renders it: "manually set on this entry", "worked on a rest day", "7th
+  consecutive day worked", "premium time window", or "over Nh daily/weekly". The
+  summary rollup uses an honest `{n}h overtime` instead of claiming a single rule.
+- i18n: 5 new `trOvertime*` keys EN+ES.
+
+Tests pin the attribution (override ≠ daily, rest-day, 7th-day, no-OT→no-reason),
+including the exact Leo Martinez case. 1121 pass.
+
+---
+
 ## 2026-07-26 — Two follow-ups from the review notes
 
 **⚠️ Behavior change — "Allow overtime = off" now actually stops overtime pay.**
