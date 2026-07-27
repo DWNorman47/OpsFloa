@@ -23,6 +23,35 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-26 — Rate-aware overtime: the WH-347 / certified payroll (increment 4)
+
+The compliance form now shows real overtime. End-to-end:
+
+- **Server** (`GET /admin/certified-payroll`): collects each worker's rounded
+  entries and runs them through `splitRateAware` (gated on `hasSimpleOtConfig`;
+  premium configs keep the flat fallback) for a per-day **straight/overtime split**
+  by wage type, OT-aware costs, and an OT-aware `gross_pay`. Response gained
+  `ot_days`, `overtime_total`, `regular_cost`/`prevailing_cost`/`overtime_cost`,
+  `overtime_multiplier`. Added `u.overtime_rule` to the query.
+- **Client** `CertifiedPayroll.jsx`: on-screen table + the print view now render a
+  combined **Overtime** row and read the server-computed costs instead of
+  recomputing `hours × rate` flat.
+- **`CertifiedPayrollPDF.jsx`**: the WH-347 "O" sub-row (previously left blank with
+  a TODO) is populated with the per-day OT hours + OT total; the "S" row shows
+  straight-time and the full gross; the rate column shows the prevailing rate when
+  the worker has prevailing hours.
+- **i18n**: `overtime` key added (EN "Overtime" / ES "Horas Extra"); parity test green.
+
+Full `npm run verify` green (server 1113 + client eslint/vitest/i18n/build). No
+bespoke certified-payroll route test — the math is the already-tested
+`splitRateAware`; the endpoint just buckets it.
+
+Remaining from the plan: the client-side **WorkerSummary "estimated pay"** preview
+(labeled an estimate; lowest priority), the cosmetic OT-multiplier **labels** on
+BillPDF/ProjectBillPDF, and a **settings toggle** for `overtime_rate_method`.
+
+---
+
 ## 2026-07-26 — Rate-aware overtime: consolidate project-bill + qbo (increment 3)
 
 Closed the two server-money engines the audit flagged as diverging from the new

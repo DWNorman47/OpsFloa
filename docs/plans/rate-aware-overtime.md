@@ -96,11 +96,12 @@ row before writing code — that's the whole point of doing this first.
      (incl. prevailing) count toward the threshold. (QBO bills labor flat at the
      worker rate — it doesn't apply prevailing *rates* at all; that's a separate
      pre-existing gap, not this work.)
-   - ⬜ `routes/admin.js` certified-payroll / **WH-347** (~:3468) — deferred as its
-     own focused piece: it's server compute **and** client work (the client
-     `CertifiedPayroll.jsx` / `CertifiedPayrollPDF.jsx` recompute cost flat and
-     render the grid), so it needs the per-day ST/OT (O/S) rows + PDF + EN/ES i18n.
-     See `certified-payroll-ot.md`. Until then the WH-347 still shows prevailing flat.
+   - ✅ `routes/admin.js` certified-payroll / **WH-347** — done 2026-07-26. Server
+     computes the per-day straight/overtime split per worker via `splitRateAware`
+     (premium configs keep the flat fallback); client `CertifiedPayroll.jsx`
+     (on-screen table + print) reads server costs and renders a combined Overtime
+     row; `CertifiedPayrollPDF.jsx` populates the WH-347 "O" sub-row (was blank);
+     `overtime` i18n key added EN+ES. Full verify green.
    - ⬜ `client/src/components/WorkerSummary.jsx:108` — a client-side *estimate*
      (labeled "estimated"); fixing it exactly means porting the calculator to JS or
      a server round-trip. Lowest priority; acceptable as an approximation meanwhile.

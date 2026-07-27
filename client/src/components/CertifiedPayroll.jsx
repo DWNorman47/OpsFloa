@@ -84,28 +84,18 @@ export default function CertifiedPayroll({ projects, settings, requireSignature 
     const headerRow = `<tr><th>${workerLabel}</th><th>Classification</th>${DAY_LABELS.map(d => `<th>${d}</th>`).join('')}<th>Total</th><th>Rate</th><th>Gross</th></tr>`;
 
     const workerRows = data.workers.flatMap(w => {
-      const rows = [];
-      if (w.regular_total > 0) {
-        rows.push(`<tr>
-          <td rowspan="${w.prevailing_total > 0 ? 1 : 1}">${w.worker_name}</td>
-          <td>Regular</td>
-          ${DAY_KEYS.map(d => `<td>${w.regular_days[d] || '—'}</td>`).join('')}
-          <td><strong>${fmtH(w.regular_total)}</strong></td>
-          <td>$${w.rate.toFixed(2)}/hr</td>
-          <td>$${(w.regular_total * w.rate).toFixed(2)}</td>
-        </tr>`);
-      }
-      if (w.prevailing_total > 0) {
-        rows.push(`<tr>
-          ${w.regular_total === 0 ? `<td>${w.worker_name}</td>` : '<td></td>'}
-          <td>Prevailing</td>
-          ${DAY_KEYS.map(d => `<td>${w.prevailing_days[d] || '—'}</td>`).join('')}
-          <td><strong>${fmtH(w.prevailing_total)}</strong></td>
-          <td>$${w.prevailing_rate.toFixed(2)}/hr</td>
-          <td>$${(w.prevailing_total * w.prevailing_rate).toFixed(2)}</td>
-        </tr>`);
-      }
-      return rows;
+      const lines = [];
+      if (w.regular_total > 0) lines.push({ label: t.regular, days: w.regular_days, total: w.regular_total, rate: `$${w.rate.toFixed(2)}/hr`, cost: w.regular_cost });
+      if (w.prevailing_total > 0) lines.push({ label: t.prevailing, days: w.prevailing_days, total: w.prevailing_total, rate: `$${w.prevailing_rate.toFixed(2)}/hr`, cost: w.prevailing_cost });
+      if (w.overtime_total > 0) lines.push({ label: t.overtime, days: w.ot_days, total: w.overtime_total, rate: `${w.overtime_multiplier}×`, cost: w.overtime_cost });
+      return lines.map((ln, i) => `<tr>
+        <td>${i === 0 ? w.worker_name : ''}</td>
+        <td>${ln.label}</td>
+        ${DAY_KEYS.map(d => `<td>${ln.days[d] || '—'}</td>`).join('')}
+        <td><strong>${fmtH(ln.total)}</strong></td>
+        <td>${ln.rate}</td>
+        <td>$${(ln.cost || 0).toFixed(2)}</td>
+      </tr>`);
     }).join('');
 
     win.document.write(`<!DOCTYPE html><html><head>
@@ -221,28 +211,23 @@ export default function CertifiedPayroll({ projects, settings, requireSignature 
                 </thead>
                 <tbody>
                   {data.workers.flatMap(w => {
-                    const rows = [];
-                    if (w.regular_total > 0) rows.push(
-                      <tr key={`${w.worker_id}-reg`} style={styles.tr}>
-                        <td style={styles.nameTd}>{w.worker_name}</td>
-                        <td style={{ ...styles.td, ...styles.classTd }}>{t.regular}</td>
-                        {DAY_KEYS.map(d => <td key={d} style={styles.dayTd}>{w.regular_days[d] || '—'}</td>)}
-                        <td style={{ ...styles.td, fontWeight: 700 }}>{fmtH(w.regular_total)}</td>
-                        <td style={styles.td}>${w.rate.toFixed(2)}</td>
-                        <td style={styles.td}>${(w.regular_total * w.rate).toFixed(2)}</td>
+                    // Straight-time Regular + Prevailing rows, then a combined
+                    // Overtime row. Costs come from the server (OT-aware) — the
+                    // client no longer recomputes hours × rate flat.
+                    const lines = [];
+                    if (w.regular_total > 0) lines.push({ k: 'reg', label: t.regular, days: w.regular_days, total: w.regular_total, rate: `$${w.rate.toFixed(2)}`, cost: w.regular_cost });
+                    if (w.prevailing_total > 0) lines.push({ k: 'prev', label: t.prevailing, days: w.prevailing_days, total: w.prevailing_total, rate: `$${w.prevailing_rate.toFixed(2)}`, cost: w.prevailing_cost, bg: '#fffbeb', color: '#92400e' });
+                    if (w.overtime_total > 0) lines.push({ k: 'ot', label: t.overtime, days: w.ot_days, total: w.overtime_total, rate: `${w.overtime_multiplier}×`, cost: w.overtime_cost, bg: '#eef2ff', color: '#3730a3' });
+                    return lines.map((ln, i) => (
+                      <tr key={`${w.worker_id}-${ln.k}`} style={{ ...styles.tr, ...(ln.bg ? { background: ln.bg } : {}) }}>
+                        <td style={styles.nameTd}>{i === 0 ? w.worker_name : ''}</td>
+                        <td style={{ ...styles.td, ...styles.classTd, ...(ln.color ? { color: ln.color, fontWeight: 600 } : {}) }}>{ln.label}</td>
+                        {DAY_KEYS.map(d => <td key={d} style={styles.dayTd}>{ln.days[d] || '—'}</td>)}
+                        <td style={{ ...styles.td, fontWeight: 700 }}>{fmtH(ln.total)}</td>
+                        <td style={styles.td}>{ln.rate}</td>
+                        <td style={styles.td}>${(ln.cost || 0).toFixed(2)}</td>
                       </tr>
-                    );
-                    if (w.prevailing_total > 0) rows.push(
-                      <tr key={`${w.worker_id}-prev`} style={{ ...styles.tr, background: '#fffbeb' }}>
-                        <td style={styles.nameTd}>{w.regular_total === 0 ? w.worker_name : ''}</td>
-                        <td style={{ ...styles.td, ...styles.classTd, color: '#92400e', fontWeight: 600 }}>{t.prevailing}</td>
-                        {DAY_KEYS.map(d => <td key={d} style={styles.dayTd}>{w.prevailing_days[d] || '—'}</td>)}
-                        <td style={{ ...styles.td, fontWeight: 700 }}>{fmtH(w.prevailing_total)}</td>
-                        <td style={styles.td}>${w.prevailing_rate.toFixed(2)}</td>
-                        <td style={styles.td}>${(w.prevailing_total * w.prevailing_rate).toFixed(2)}</td>
-                      </tr>
-                    );
-                    return rows;
+                    ));
                   })}
                 </tbody>
               </table>

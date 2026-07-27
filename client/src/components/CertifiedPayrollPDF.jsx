@@ -182,9 +182,14 @@ export default function CertifiedPayrollPDF({ report, settings }) {
 }
 
 function WorkerBlock({ w, alt }) {
-  // Two sub-rows per worker: straight (S) and overtime (O). Current data
-  // doesn't split OT from straight in the /certified-payroll response;
-  // until that's done we put all hours on the S row and leave O blank.
+  // Two sub-rows per worker: straight (S) and overtime (O). The S row carries the
+  // straight-time hours per day (regular + prevailing) and the full gross; the O
+  // row carries the overtime hours per day. The rate column shows the prevailing
+  // rate when the worker has prevailing hours (WH-347 is a prevailing-wage form),
+  // else the regular rate.
+  const straightTotal = +((w.regular_total || 0) + (w.prevailing_total || 0)).toFixed(2);
+  const otDays = w.ot_days || {};
+  const shownRate = w.prevailing_total > 0 ? w.prevailing_rate : w.rate;
   return (
     <>
       <View style={alt ? styles.workerRowAlt : styles.workerRow}>
@@ -199,9 +204,9 @@ function WorkerBlock({ w, alt }) {
         <Text style={styles.cellSsn}>{w.ssn_last4 ? `***-**-${w.ssn_last4}` : ''}</Text>
         <Text style={styles.cellClass}>{w.classification || ''}</Text>
         <Text style={styles.cellOtSt}>S</Text>
-        {DAY_KEYS.map(k => <Text key={k} style={styles.cellDay}>{fmtHours(w.regular_days[k] + (w.prevailing_days[k] || 0))}</Text>)}
-        <Text style={styles.cellTotal}>{fmtHours(w.total)}</Text>
-        <Text style={styles.cellRate}>${fmtMoney(w.rate)}</Text>
+        {DAY_KEYS.map(k => <Text key={k} style={styles.cellDay}>{fmtHours((w.regular_days[k] || 0) + (w.prevailing_days[k] || 0))}</Text>)}
+        <Text style={styles.cellTotal}>{fmtHours(straightTotal)}</Text>
+        <Text style={styles.cellRate}>${fmtMoney(shownRate)}</Text>
         <Text style={styles.cellGross}>${fmtMoney(w.gross_pay)}</Text>
       </View>
       <View style={alt ? styles.workerRowAlt : styles.workerRow}>
@@ -209,8 +214,8 @@ function WorkerBlock({ w, alt }) {
         <Text style={styles.cellSsn}> </Text>
         <Text style={styles.cellClass}> </Text>
         <Text style={styles.cellOtSt}>O</Text>
-        {DAY_KEYS.map(k => <Text key={k} style={styles.cellDay}> </Text>)}
-        <Text style={styles.cellTotal}> </Text>
+        {DAY_KEYS.map(k => <Text key={k} style={styles.cellDay}>{fmtHours(otDays[k] || 0)}</Text>)}
+        <Text style={styles.cellTotal}>{fmtHours(w.overtime_total)}</Text>
         <Text style={styles.cellRate}> </Text>
         <Text style={styles.cellGross}> </Text>
       </View>
