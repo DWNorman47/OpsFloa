@@ -13,6 +13,7 @@ import RetryBanner from '../components/RetryBanner';
 import ProjectFinancialsTab from '../components/ProjectFinancialsTab';
 import ProjectCloseoutTab from '../components/ProjectCloseoutTab';
 import { EstimatesPanel } from './EstimatesPage';
+import { InvoicesPanel } from './InvoicesPage';
 import { ChangeOrdersPanel } from './ChangeOrdersPage';
 import { SubPOsPanel } from './SubsPage';
 import WorkOrdersPanel from '../components/WorkOrdersPanel';
@@ -1107,7 +1108,7 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
                     )}
                     {billData.summary.overtime_hours > 0 && (
                       <div style={styles.budgetRow}>
-                        <span style={styles.budgetLabel}>Overtime ({parseFloat(billData.summary.overtime_hours).toFixed(1)}h × {billData.summary.overtime_multiplier}x)</span>
+                        <span style={styles.budgetLabel}>Overtime ({parseFloat(billData.summary.overtime_hours).toFixed(1)}h)</span>
                         <span style={{ ...styles.budgetValue, color: '#ef4444' }}>{fmtMoney(billData.summary.overtime_cost)}</span>
                       </div>
                     )}
@@ -1948,7 +1949,7 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
 // Reuse the perms the standalone Sales module used so these tabs only show for
 // users who could see Sales before the consolidation.
 const SALES_TAB_PERMS = ['manage_projects', 'manage_settings'];
-const PROJECT_TAB_IDS = ['projects', 'estimates', 'change_orders', 'pos'];
+const PROJECT_TAB_IDS = ['projects', 'estimates', 'invoices', 'change_orders', 'pos'];
 
 export default function ProjectsPage() {
   const t = useT();
@@ -2031,6 +2032,7 @@ export default function ProjectsPage() {
     ...(hideWorkOrders ? [] : [{ id: 'work_orders', label: 'Work Orders' }]),
     ...(canSeeSales ? [
       { id: 'estimates', label: t.estList },
+      { id: 'invoices', label: t.invList },
       { id: 'change_orders', label: t.coList },
     ] : []),
     ...(canSeePOs ? [{ id: 'pos', label: t.subPurchaseOrders }] : []),
@@ -2038,7 +2040,7 @@ export default function ProjectsPage() {
 
   // Fall back to the first visible tab if the requested one is hidden or gated.
   const tabAllowed = (id) => {
-    if (id === 'estimates' || id === 'change_orders') return canSeeSales;
+    if (id === 'estimates' || id === 'invoices' || id === 'change_orders') return canSeeSales;
     if (id === 'pos') return canSeePOs;
     if (id === 'projects') return !hideProjects;
     if (id === 'work_orders') return !hideWorkOrders;
@@ -2061,6 +2063,12 @@ export default function ProjectsPage() {
         {activeTab === 'estimates' && (
           <div style={{ marginTop: 24 }}>
             <EstimatesPanel />
+          </div>
+        )}
+
+        {activeTab === 'invoices' && (
+          <div style={{ marginTop: 24 }}>
+            <InvoicesPanel />
           </div>
         )}
 

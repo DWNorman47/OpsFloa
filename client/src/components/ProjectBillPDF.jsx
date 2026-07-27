@@ -179,7 +179,7 @@ export default function ProjectBillPDF({ data, currency = 'USD', companyInfo = {
           )}
           {summary.overtime_hours > 0 && (
             <View style={s.costRow}>
-              <Text style={{ color: '#374151' }}>{(t.pdfOvertimeLabor || 'Overtime — {hrs} hrs × {mult}x').replace('{hrs}', summary.overtime_hours.toFixed(2)).replace('{mult}', summary.overtime_multiplier)}</Text>
+              <Text style={{ color: '#374151' }}>{(t.pdfOvertimeLabor || 'Overtime — {hrs} hrs').replace('{hrs}', summary.overtime_hours.toFixed(2))}</Text>
               <Text style={{ color: '#dc2626', fontWeight: 'bold' }}>{formatCurrency(summary.overtime_cost, currency)}</Text>
             </View>
           )}

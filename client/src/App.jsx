@@ -38,6 +38,7 @@ const Tests             = lazy(() => import('./pages/Tests'));
 const Changelog         = lazy(() => import('./pages/Changelog'));
 const HelpPage          = lazy(() => import('./pages/HelpPage'));
 const PublicEstimatePage = lazy(() => import('./pages/PublicEstimatePage'));
+const PublicInvoicePage = lazy(() => import('./pages/PublicInvoicePage'));
 const FinancialReportsPage = lazy(() => import('./pages/FinancialReportsPage'));
 const PublicChangeOrderPage = lazy(() => import('./pages/PublicChangeOrderPage'));
 const SubmittalsPage    = lazy(() => import('./pages/SubmittalsPage'));
@@ -165,6 +166,7 @@ function AppRoutes() {
       <Route path="/r/:slug" element={<ServiceRequest />} />
       <Route path="/companies/:slug" element={<PublicCompanyProfilePage />} />
       <Route path="/e/:token" element={<PublicEstimatePage />} />
+      <Route path="/i/:token" element={<PublicInvoicePage />} />
       <Route path="/co/:token" element={<PublicChangeOrderPage />} />
       <Route path="/lien-waiver-sign/:token" element={<PublicLienWaiverSignPage />} />
       <Route path="/book/:companySlug" element={<PublicBookingPage />} />

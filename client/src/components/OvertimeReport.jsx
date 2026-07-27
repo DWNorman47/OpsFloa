@@ -49,8 +49,10 @@ export default function OvertimeReport({ currency = 'USD' }) {
     regular_cost: acc.regular_cost + r.regular_cost,
     overtime_cost: acc.overtime_cost + r.overtime_cost,
     prevailing_cost: acc.prevailing_cost + r.prevailing_cost,
+    guarantee_cost: acc.guarantee_cost + (r.guarantee_cost || 0),
     total_cost: acc.total_cost + r.total_cost,
-  }), { regular_hours: 0, overtime_hours: 0, prevailing_hours: 0, total_hours: 0, mileage: 0, regular_cost: 0, overtime_cost: 0, prevailing_cost: 0, total_cost: 0 });
+    net_pay: acc.net_pay + (r.net_pay || 0),
+  }), { regular_hours: 0, overtime_hours: 0, prevailing_hours: 0, total_hours: 0, mileage: 0, regular_cost: 0, overtime_cost: 0, prevailing_cost: 0, guarantee_cost: 0, total_cost: 0, net_pay: 0 });
 
   const downloadPayroll = async () => {
     try {
@@ -109,7 +111,9 @@ export default function OvertimeReport({ currency = 'USD' }) {
                 <Col k="regular_cost" label={t.regPay} />
                 <Col k="overtime_cost" label={t.otPay} />
                 <Col k="prevailing_cost" label={t.prevPay} />
+                <Col k="guarantee_cost" label={t.guaranteeCol} />
                 <Col k="total_cost" label={t.totalPayCol} />
+                <Col k="net_pay" label={t.netPayCol} />
               </tr>
             </thead>
             <tbody>
@@ -127,7 +131,9 @@ export default function OvertimeReport({ currency = 'USD' }) {
                   <td style={styles.tdNum}>{money(r.regular_cost)}</td>
                   <td style={{ ...styles.tdNum, color: r.overtime_cost > 0 ? '#d97706' : undefined }}>{money(r.overtime_cost)}</td>
                   <td style={styles.tdNum}>{money(r.prevailing_cost)}</td>
+                  <td style={{ ...styles.tdNum, color: (r.guarantee_cost || 0) > 0 ? '#2563eb' : undefined }}>{(r.guarantee_cost || 0) > 0 ? money(r.guarantee_cost) : '—'}</td>
                   <td style={{ ...styles.tdNum, fontWeight: 700 }}>{money(r.total_cost)}</td>
+                  <td style={{ ...styles.tdNum, fontWeight: 700 }}>{money(r.net_pay)}</td>
                 </tr>
               ))}
             </tbody>
@@ -142,7 +148,9 @@ export default function OvertimeReport({ currency = 'USD' }) {
                 <td style={styles.tdNum}><strong>{money(totals.regular_cost)}</strong></td>
                 <td style={styles.tdNum}><strong>{money(totals.overtime_cost)}</strong></td>
                 <td style={styles.tdNum}><strong>{money(totals.prevailing_cost)}</strong></td>
+                <td style={styles.tdNum}><strong>{totals.guarantee_cost > 0 ? money(totals.guarantee_cost) : '—'}</strong></td>
                 <td style={styles.tdNum}><strong>{money(totals.total_cost)}</strong></td>
+                <td style={styles.tdNum}><strong>{money(totals.net_pay)}</strong></td>
               </tr>
             </tfoot>
           </table>

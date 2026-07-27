@@ -28,6 +28,20 @@ function planFromPrice(priceId) {
   return 'free';
 }
 
+// The base plan for a subscription = the first item whose price maps to a real
+// plan. Stripe does NOT guarantee item order, so keying off items[0] (as this
+// used to) would mis-read a business sub as 'free' whenever the per-worker seat
+// item or an add-on sorted ahead of the base price — silently downgrading a
+// paying company. 'free' only if NO item is a recognized base plan (e.g. an
+// add-ons-only subscription from /checkout-addon).
+function planFromItems(items) {
+  for (const it of items || []) {
+    const p = planFromPrice(it.price?.id);
+    if (p !== 'free') return p;
+  }
+  return 'free';
+}
+
 // GET /stripe/plans — available pricing plans
 router.get('/plans', requireAdmin, async (req, res) => {
   // Takeoff add-on amounts are read live from Stripe so they never drift from
@@ -183,6 +197,11 @@ router.post('/checkout', requireAdmin, requirePerm('manage_billing'), async (req
       line_items: lineItems,
       success_url: `${process.env.APP_URL}/administration#billing`,
       cancel_url: `${process.env.APP_URL}/administration#billing`,
+      // Set company_id on BOTH the session and the subscription. subscription_data
+      // only reaches the Subscription; the checkout.session.completed webhook reads
+      // the session's own metadata, so without this the activation handler had no
+      // company_id and never stored stripe_subscription_id.
+      metadata: { company_id: String(req.user.company_id) },
       subscription_data: {
         metadata: { company_id: String(req.user.company_id) },
         ...(trialEnd ? { trial_end: trialEnd } : {}),
@@ -298,7 +317,7 @@ router.post('/addon/remove', requireAdmin, requirePerm('manage_billing'), async 
 
 // POST /stripe/checkout-addon — buy one or more add-ons with NO base plan.
 //
-// For a company that wants just Plan Room and/or Sitework Takeoff without
+// For a company that wants just Plan Room and/or the Takeoff add-on without
 // subscribing to a regular plan. Creates ONE Stripe subscription whose line
 // items are the chosen add-ons — so a company buying both gets a single
 // subscription and a single invoice, not two. The rest of the system already
@@ -380,6 +399,8 @@ router.post('/checkout-addon', requireAdmin, requirePerm('manage_billing'), asyn
       line_items: lineItems,
       success_url: `${process.env.APP_URL}/administration#billing`,
       cancel_url: `${process.env.APP_URL}/administration#billing`,
+      // company_id on both session and subscription (see /checkout above).
+      metadata: { company_id: String(req.user.company_id) },
       subscription_data: {
         metadata: { company_id: String(req.user.company_id) },
         ...(trialEnd ? { trial_end: trialEnd } : {}),
@@ -387,6 +408,61 @@ router.post('/checkout-addon', requireAdmin, requirePerm('manage_billing'), asyn
     });
     res.json({ url: session.url });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Failed to create checkout session' }); }
+});
+
+// ── Stripe Connect (invoice online payments) ─────────────────────────────────
+// Separate from the subscription billing above: this lets a company connect
+// their OWN Stripe account so their clients can pay invoices, money landing in
+// the company's balance. We only ever store the connected-account id + a cached
+// charges-enabled flag — never the company's keys.
+
+// POST /stripe/connect/onboard — create (or reuse) the company's Standard
+// connected account and return a hosted onboarding link.
+router.post('/connect/onboard', requireAdmin, requirePerm('manage_billing'), async (req, res) => {
+  const companyId = req.user.company_id;
+  try {
+    const stripe = getStripe();
+    const r = await pool.query('SELECT stripe_connect_account_id FROM companies WHERE id = $1', [companyId]);
+    let acct = r.rows[0]?.stripe_connect_account_id;
+    if (!acct) {
+      const account = await stripe.accounts.create({ type: 'standard', metadata: { company_id: String(companyId) } });
+      acct = account.id;
+      await pool.query('UPDATE companies SET stripe_connect_account_id = $1 WHERE id = $2', [acct, companyId]);
+    }
+    const base = (process.env.APP_URL || 'https://opsfloa.com').replace(/\/+$/, '');
+    const link = await stripe.accountLinks.create({
+      account: acct,
+      refresh_url: `${base}/?stripe_connect=refresh`,
+      return_url: `${base}/?stripe_connect=return`,
+      type: 'account_onboarding',
+    });
+    res.json({ url: link.url });
+  } catch (err) {
+    req.log.error({ err }, 'stripe connect onboard error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /stripe/connect/status — is the company connected AND able to accept
+// charges? Caches charges_enabled on the row so the public pay path can gate
+// without a Stripe round-trip.
+router.get('/connect/status', requireAdmin, async (req, res) => {
+  const companyId = req.user.company_id;
+  try {
+    const r = await pool.query('SELECT stripe_connect_account_id, stripe_connect_charges_enabled FROM companies WHERE id = $1', [companyId]);
+    const acct = r.rows[0]?.stripe_connect_account_id;
+    if (!acct) return res.json({ connected: false, charges_enabled: false });
+    const stripe = getStripe();
+    const account = await stripe.accounts.retrieve(acct);
+    const chargesEnabled = !!account.charges_enabled;
+    if (chargesEnabled !== r.rows[0].stripe_connect_charges_enabled) {
+      await pool.query('UPDATE companies SET stripe_connect_charges_enabled = $1 WHERE id = $2', [chargesEnabled, companyId]);
+    }
+    res.json({ connected: true, charges_enabled: chargesEnabled, details_submitted: !!account.details_submitted });
+  } catch (err) {
+    req.log.error({ err }, 'stripe connect status error');
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // POST /stripe/webhook
@@ -403,35 +479,46 @@ router.post('/webhook', async (req, res) => {
 
   try {
     const obj = event.data.object;
+    // Stripe events carry no ordering guarantee. `event.created` (epoch seconds)
+    // is the watermark: the subscription-lifecycle branches only apply when this
+    // event is at least as new as the last one we applied, so a stale
+    // updated/deleted can't clobber newer state. (See migration 0153.)
+    const eventCreated = event.created;
     if (event.type === 'checkout.session.completed') {
-      const companyId = obj.metadata?.company_id;
-      if (companyId && obj.subscription) {
+      if (obj.subscription) {
         const stripe = getStripe();
         const sub = await stripe.subscriptions.retrieve(obj.subscription);
-        const items = sub.items.data;
-        const plan = planFromPrice(items[0]?.price?.id);
-        // Pro add-on is present if any item matches the addon_qbo price IDs
-        const proIds = [process.env.STRIPE_PRICE_QBO, process.env.STRIPE_PRICE_QBO_ANNUAL].filter(Boolean);
-        const hasProAddon = items.some(i => proIds.includes(i.price.id));
-        const takeoffIds = [process.env.STRIPE_PRICE_TAKEOFF, process.env.STRIPE_PRICE_TAKEOFF_ANNUAL].filter(Boolean);
-        const hasTakeoff = items.some(i => takeoffIds.includes(i.price.id));
-        const planroomIds = [process.env.STRIPE_PRICE_PLANROOM, process.env.STRIPE_PRICE_PLANROOM_ANNUAL].filter(Boolean);
-        const hasPlanroom = items.some(i => planroomIds.includes(i.price.id));
-        const stormIds = [process.env.STRIPE_PRICE_STORM, process.env.STRIPE_PRICE_STORM_ANNUAL].filter(Boolean);
-        const hasStorm = items.some(i => stormIds.includes(i.price.id));
-        const roofIds = [process.env.STRIPE_PRICE_ROOF, process.env.STRIPE_PRICE_ROOF_ANNUAL].filter(Boolean);
-        const hasRoof = items.some(i => roofIds.includes(i.price.id));
-        const mrrCents = calcMrrCents(items);
-        await pool.query(
-          'UPDATE companies SET stripe_subscription_id = $1, subscription_status = $2, plan = $3, addon_qbo = $4, addon_takeoff = $5, addon_planroom = $6, addon_storm = $7, addon_roof = $8, mrr_cents = $9 WHERE id = $10',
-          [obj.subscription, 'active', plan, hasProAddon, hasTakeoff, hasPlanroom, hasStorm, hasRoof, mrrCents, companyId]
-        );
+        // Prefer the session's own metadata; fall back to the subscription's.
+        // Older sessions were created without top-level metadata, so the sub is
+        // the reliable carrier of company_id there.
+        const companyId = obj.metadata?.company_id || sub.metadata?.company_id;
+        if (companyId) {
+          const items = sub.items.data;
+          const plan = planFromItems(items);
+          // Pro add-on is present if any item matches the addon_qbo price IDs
+          const proIds = [process.env.STRIPE_PRICE_QBO, process.env.STRIPE_PRICE_QBO_ANNUAL].filter(Boolean);
+          const hasProAddon = items.some(i => proIds.includes(i.price.id));
+          const takeoffIds = [process.env.STRIPE_PRICE_TAKEOFF, process.env.STRIPE_PRICE_TAKEOFF_ANNUAL].filter(Boolean);
+          const hasTakeoff = items.some(i => takeoffIds.includes(i.price.id));
+          const planroomIds = [process.env.STRIPE_PRICE_PLANROOM, process.env.STRIPE_PRICE_PLANROOM_ANNUAL].filter(Boolean);
+          const hasPlanroom = items.some(i => planroomIds.includes(i.price.id));
+          const stormIds = [process.env.STRIPE_PRICE_STORM, process.env.STRIPE_PRICE_STORM_ANNUAL].filter(Boolean);
+          const hasStorm = items.some(i => stormIds.includes(i.price.id));
+          const roofIds = [process.env.STRIPE_PRICE_ROOF, process.env.STRIPE_PRICE_ROOF_ANNUAL].filter(Boolean);
+          const hasRoof = items.some(i => roofIds.includes(i.price.id));
+          const mrrCents = calcMrrCents(items);
+          await pool.query(
+            `UPDATE companies SET stripe_subscription_id = $1, subscription_status = $2, plan = $3, addon_qbo = $4, addon_takeoff = $5, addon_planroom = $6, addon_storm = $7, addon_roof = $8, mrr_cents = $9, last_stripe_event_at = $11
+              WHERE id = $10 AND (last_stripe_event_at IS NULL OR last_stripe_event_at <= $11)`,
+            [obj.subscription, 'active', plan, hasProAddon, hasTakeoff, hasPlanroom, hasStorm, hasRoof, mrrCents, companyId, eventCreated]
+          );
+        }
       }
     } else if (event.type === 'customer.subscription.updated') {
       const companyId = obj.metadata?.company_id;
       if (companyId) {
         const items = obj.items?.data || [];
-        const plan = planFromPrice(items[0]?.price?.id);
+        const plan = planFromItems(items);
         const proIds = [process.env.STRIPE_PRICE_QBO, process.env.STRIPE_PRICE_QBO_ANNUAL].filter(Boolean);
         const hasProAddon = items.some(i => proIds.includes(i.price.id));
         const takeoffIds = [process.env.STRIPE_PRICE_TAKEOFF, process.env.STRIPE_PRICE_TAKEOFF_ANNUAL].filter(Boolean);
@@ -446,18 +533,22 @@ router.post('/webhook', async (req, res) => {
         // Map Stripe's subscription status (`trialing`, `incomplete`,
         // `unpaid`, etc.) onto our internal set before writing — the
         // companies.subscription_status column is CHECK-constrained and
-        // a raw Stripe value would fail the constraint.
+        // a raw Stripe value would fail the constraint. Also (re)assert
+        // stripe_subscription_id (obj.id) so the sub id is never left unset if
+        // the watermark ever skips the checkout.session.completed event.
         await pool.query(
-          'UPDATE companies SET subscription_status = $1, plan = $2, addon_qbo = $3, addon_takeoff = $4, addon_planroom = $5, addon_storm = $6, addon_roof = $7, mrr_cents = $8 WHERE id = $9',
-          [mapStripeStatus(obj.status), plan, hasProAddon, hasTakeoff, hasPlanroom, hasStorm, hasRoof, mrrCents, companyId]
+          `UPDATE companies SET subscription_status = $1, plan = $2, addon_qbo = $3, addon_takeoff = $4, addon_planroom = $5, addon_storm = $6, addon_roof = $7, mrr_cents = $8, stripe_subscription_id = $10, last_stripe_event_at = $11
+            WHERE id = $9 AND (last_stripe_event_at IS NULL OR last_stripe_event_at <= $11)`,
+          [mapStripeStatus(obj.status), plan, hasProAddon, hasTakeoff, hasPlanroom, hasStorm, hasRoof, mrrCents, companyId, obj.id, eventCreated]
         );
       }
     } else if (event.type === 'customer.subscription.deleted') {
       const companyId = obj.metadata?.company_id;
       if (companyId) {
         await pool.query(
-          'UPDATE companies SET subscription_status = $1, addon_qbo = false, addon_takeoff = false, addon_planroom = false, addon_storm = false, addon_roof = false WHERE id = $2',
-          ['canceled', companyId]
+          `UPDATE companies SET subscription_status = $1, addon_qbo = false, addon_takeoff = false, addon_planroom = false, addon_storm = false, addon_roof = false, last_stripe_event_at = $3
+            WHERE id = $2 AND (last_stripe_event_at IS NULL OR last_stripe_event_at <= $3)`,
+          ['canceled', companyId, eventCreated]
         );
       }
     } else if (event.type === 'invoice.payment_failed') {
@@ -466,7 +557,14 @@ router.post('/webhook', async (req, res) => {
         const sub = await stripe.subscriptions.retrieve(obj.subscription);
         const companyId = sub.metadata?.company_id;
         if (companyId) {
-          await pool.query('UPDATE companies SET subscription_status = $1 WHERE id = $2', ['past_due', companyId]);
+          // Only a live-ish subscription can go past_due. Guard so a late-retried
+          // payment_failed can't resurrect a company that's already canceled,
+          // exempt (superadmin-comped), or trial_expired.
+          await pool.query(
+            `UPDATE companies SET subscription_status = 'past_due'
+              WHERE id = $1 AND subscription_status IN ('active','trial','past_due')`,
+            [companyId]
+          );
 
           // Email every admin so they can update the payment method before
           // the card is retried-then-stopped and their workers get locked out.
@@ -486,10 +584,10 @@ router.post('/webhook', async (req, res) => {
                 : null;
               const { sendEmail } = require('../email');
               for (const admin of adminsRes.rows) {
-                sendEmail({
-                  to: admin.email,
-                  subject: `Payment failed for your OpsFloa subscription`,
-                  html: `
+                sendEmail(
+                  admin.email,
+                  `Payment failed for your OpsFloa subscription`,
+                  `
                     <div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px">
                       <h2 style="color:#b91c1c;margin-bottom:8px">Payment failed</h2>
                       <p style="color:#444">Hi ${admin.full_name || ''}, we weren't able to charge your payment method${amountStr ? ` for ${amountStr}` : ''} for <strong>${company.name}</strong>.</p>
@@ -501,7 +599,7 @@ router.post('/webhook', async (req, res) => {
                       <p style="color:#9ca3af;font-size:12px;margin-top:24px">If the retry succeeds, no action is needed and you'll stay on your current plan.</p>
                     </div>
                   `,
-                }).catch(err => req.log.warn({ err }, 'payment_failed email send failed'));
+                ).catch(err => req.log.warn({ err }, 'payment_failed email send failed'));
               }
             }
           } catch (err) {
@@ -545,10 +643,10 @@ router.post('/webhook', async (req, res) => {
             const endsStr = new Date(company.trial_ends_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
             const { sendEmail } = require('../email');
             for (const admin of adminsRes.rows) {
-              sendEmail({
-                to: admin.email,
-                subject: `Your OpsFloa trial ends ${endsStr}`,
-                html: `
+              sendEmail(
+                admin.email,
+                `Your OpsFloa trial ends ${endsStr}`,
+                `
                   <div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px">
                     <h2 style="color:#1a56db;margin-bottom:8px">Trial ending soon</h2>
                     <p style="color:#444">Hi ${admin.full_name || ''}, your OpsFloa trial for <strong>${company.name}</strong> ends on <strong>${endsStr}</strong>.</p>
@@ -559,7 +657,7 @@ router.post('/webhook', async (req, res) => {
                     </a>
                   </div>
                 `,
-              }).catch(err => req.log.warn({ err }, 'trial-will-end email send failed'));
+              ).catch(err => req.log.warn({ err }, 'trial-will-end email send failed'));
             }
           }
         } catch (err) {
@@ -567,12 +665,14 @@ router.post('/webhook', async (req, res) => {
         }
       }
     }
+    res.json({ received: true });
   } catch (err) {
-    // Webhook processing failed after signature verification succeeded.
-    // Log + Sentry so we hear about chronically failing subscription events
-    // (Stripe retries for up to 3 days before giving up). Still return 200
-    // so Stripe doesn't retry a deterministic failure, unless the failure
-    // was transient (5xx from our DB) — we can tune this later.
+    // Processing failed AFTER signature verification. These branches do DB
+    // writes and Stripe reads — overwhelmingly *transient* failures — so return
+    // 500 and let Stripe retry (it retries for up to 3 days). Silently 200-ing
+    // here dropped the state change forever, which is far worse than a few
+    // retries of a genuinely deterministic failure; Sentry still surfaces the
+    // latter so we can fix the root cause.
     req.log.error({ err, eventType: event?.type, eventId: event?.id }, 'stripe webhook handler failed');
     if (process.env.SENTRY_DSN) {
       const Sentry = require('@sentry/node');
@@ -581,9 +681,8 @@ router.post('/webhook', async (req, res) => {
         extra: { event_id: event?.id },
       });
     }
+    res.status(500).json({ error: 'webhook handler failed' });
   }
-
-  res.json({ received: true });
 });
 
 module.exports = router;

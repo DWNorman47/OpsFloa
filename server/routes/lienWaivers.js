@@ -14,6 +14,10 @@ const {
 
 const sha256 = s => crypto.createHash('sha256').update(s).digest('hex');
 
+// The sign link's token hash is internal — never return it in an API payload
+// (matches how estimates/invoices/CO strip their response_token_hash).
+const stripToken = row => { if (!row) return row; const { sign_token_hash, ...rest } = row; return rest; };
+
 async function assertProjectInCompany(companyId, projectId) {
   const r = await pool.query(
     'SELECT id, name FROM projects WHERE id = $1 AND company_id = $2',
@@ -30,7 +34,7 @@ async function assertWaiverInCompany(companyId, waiverId) {
       WHERE lw.id = $1 AND lw.company_id = $2`,
     [waiverId, companyId]
   );
-  return r.rows[0] || null;
+  return stripToken(r.rows[0] || null);
 }
 
 // ── List ─────────────────────────────────────────────────────────────────────
@@ -72,7 +76,7 @@ router.get('/lien-waivers', requireAuth, async (req, res) => {
       ),
     ]);
     res.json({
-      items: dataRes.rows,
+      items: dataRes.rows.map(stripToken),
       total: parseInt(countRes.rows[0].count, 10),
       page,
       pages: Math.ceil(parseInt(countRes.rows[0].count, 10) / limit),
@@ -161,7 +165,7 @@ router.post('/projects/:projectId/lien-waivers', requireAdmin, async (req, res) 
       return res.status(400).json({ error: 'invalid subcontract_po_id' });
     if (!(await ownsInCompany('subcontractors', subcontractor_id)))
       return res.status(400).json({ error: 'invalid subcontractor_id' });
-    if (!(await ownsInCompany('project_invoices', invoice_id)))
+    if (!(await ownsInCompany('invoices', invoice_id)))
       return res.status(400).json({ error: 'invalid invoice_id' });
     // sub_payment_id has no company_id of its own — verify via its parent PO.
     if (sub_payment_id) {
@@ -250,7 +254,7 @@ router.patch('/lien-waivers/:id', requireAdmin, async (req, res) => {
       `UPDATE lien_waivers SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`,
       params
     );
-    res.json(r.rows[0]);
+    res.json(stripToken(r.rows[0]));
   } catch (err) {
     req.log.error({ err }, 'lien waiver patch error');
     res.status(500).json({ error: 'Server error' });
@@ -276,7 +280,10 @@ router.post('/lien-waivers/:id/send', requireAdmin, async (req, res) => {
     );
     await logAudit(companyId, req.user.id, req.user.full_name,
       'lien_waiver.sent', 'lien_waiver', req.params.id, null, null);
-    res.json({ ...r.rows[0], sign_token: rawToken });
+    // Don't echo the token hash back — the admin gets the raw sign_token; the
+    // hash is internal (matches estimates/invoices detail payloads).
+    const { sign_token_hash, ...waiver } = r.rows[0];
+    res.json({ ...waiver, sign_token: rawToken });
   } catch (err) {
     req.log.error({ err }, 'lien waiver send error');
     res.status(500).json({ error: 'Server error' });
@@ -305,7 +312,7 @@ router.post('/lien-waivers/:id/sign-internal', requireAdmin, async (req, res) =>
     );
     await logAudit(companyId, req.user.id, req.user.full_name,
       'lien_waiver.signed_internal', 'lien_waiver', req.params.id, null, null);
-    res.json(r.rows[0]);
+    res.json(stripToken(r.rows[0]));
   } catch (err) {
     req.log.error({ err }, 'lien waiver sign-internal error');
     res.status(500).json({ error: 'Server error' });
@@ -410,6 +417,8 @@ router.post('/lien-waivers/:id/void', requireAdmin, async (req, res) => {
 // ── Public signing page ─────────────────────────────────────────────────────
 
 const publicRouter = require('express').Router();
+const { publicReadLimiter, publicWriteLimiter } = require('../middleware/publicLimiters');
+publicRouter.use(publicReadLimiter);
 
 publicRouter.get('/sign/:token', async (req, res) => {
   try {
@@ -435,8 +444,8 @@ publicRouter.get('/sign/:token', async (req, res) => {
   }
 });
 
-publicRouter.post('/sign/:token', async (req, res) => {
-  const signerName = (req.body.typed_name || '').toString().trim();
+publicRouter.post('/sign/:token', publicWriteLimiter, async (req, res) => {
+  const signerName = (req.body.typed_name || '').toString().trim().slice(0, 255); // cap: unauthenticated free-text
   const signatureMethod = req.body.signature_method;
   if (!signerName) return res.status(400).json({ error: 'typed_name required' });
   if (!LIEN_WAIVER_SIGNATURE_METHODS.includes(signatureMethod)) {

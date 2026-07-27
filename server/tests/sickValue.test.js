@@ -48,6 +48,25 @@ describe('computeLeaveHours — partial + vacation + edges', () => {
     expect(r.sick).toBe(2);
   });
 
+  test('a partial straddling the period start is NOT paid here (anchored to its start date)', () => {
+    // Logged 6h partial that started in the PREVIOUS period (07-04). The fetch
+    // query returns it because its end (07-08) overlaps this period, but the lump
+    // must be paid in the period containing its start — not double-paid here.
+    const r = computeLeaveHours(
+      [{ type: 'sick', hours: 6, start_date: '2026-07-04', end_date: '2026-07-08' }],
+      NO_SHIFTS, rules, DEF, ...WK
+    );
+    expect(r.sick).toBe(0);
+  });
+
+  test('a partial that starts inside the period IS paid here', () => {
+    const r = computeLeaveHours(
+      [{ type: 'sick', hours: 6, start_date: '2026-07-07', end_date: '2026-07-13' }],
+      NO_SHIFTS, rules, DEF, ...WK
+    );
+    expect(r.sick).toBe(6);
+  });
+
   test('vacation is valued the same way, on its own total', () => {
     const r = computeLeaveHours([
       full('vacation', '2026-07-06', '2026-07-06'), // Mon → rule 9

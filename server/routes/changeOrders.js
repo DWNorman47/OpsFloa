@@ -82,7 +82,10 @@ async function loadCoFull(companyId, coId) {
     'SELECT * FROM change_order_lines WHERE change_order_id = $1 ORDER BY sort_order, id',
     [coId]
   );
-  return { ...head, lines: linesRes.rows };
+  // co.* carries response_token_hash; keep the internal token material out of
+  // authed detail/send payloads (matches estimates/invoices).
+  const { response_token_hash, ...safe } = head;
+  return { ...safe, lines: linesRes.rows };
 }
 
 async function recomputeTotals(client, coId) {
@@ -128,7 +131,8 @@ router.get('/change-orders', requireAuth, async (req, res) => {
   }
   if (project_id) { params.push(project_id); conditions.push(`co.project_id = $${params.length}`); }
   if (q) {
-    params.push(`%${q}%`);
+    // Escape ILIKE metacharacters so a literal % or _ matches literally (matches invoices.js).
+    params.push(`%${String(q).replace(/([\\%_])/g, '\\$1')}%`);
     conditions.push(`(co.co_number ILIKE $${params.length} OR co.description ILIKE $${params.length})`);
   }
   const where = conditions.join(' AND ');
@@ -145,7 +149,8 @@ router.get('/change-orders', requireAuth, async (req, res) => {
       ),
     ]);
     res.json({
-      items: dataRes.rows,
+      // co.* carries response_token_hash; strip it from the list payload.
+      items: dataRes.rows.map(({ response_token_hash, ...r }) => r),
       total: parseInt(countRes.rows[0].count, 10),
       page,
       pages: Math.ceil(parseInt(countRes.rows[0].count, 10) / limit),
@@ -454,6 +459,8 @@ async function applyAcceptedCoToBudget(client, coId, projectId) {
 // ── Public token-keyed accept / decline ──────────────────────────────────────
 
 const publicRouter = require('express').Router();
+const { publicReadLimiter, publicWriteLimiter } = require('../middleware/publicLimiters');
+publicRouter.use(publicReadLimiter);
 
 publicRouter.get('/view/:token', async (req, res) => {
   try {
@@ -494,8 +501,8 @@ publicRouter.get('/view/:token', async (req, res) => {
   }
 });
 
-publicRouter.post('/accept/:token', async (req, res) => {
-  const signerName = (req.body.typed_name || '').toString().trim();
+publicRouter.post('/accept/:token', publicWriteLimiter, async (req, res) => {
+  const signerName = (req.body.typed_name || '').toString().trim().slice(0, 255); // cap: unauthenticated free-text
   if (!signerName) return res.status(400).json({ error: 'typed_name is required' });
   if (req.body.authorized !== true) return res.status(400).json({ error: 'authorization confirmation required' });
   const tokenHash = sha256(req.params.token);
@@ -533,23 +540,38 @@ publicRouter.post('/accept/:token', async (req, res) => {
   }
 });
 
-publicRouter.post('/decline/:token', async (req, res) => {
+publicRouter.post('/decline/:token', publicWriteLimiter, async (req, res) => {
   const tokenHash = sha256(req.params.token);
+  const client = await pool.connect();
   try {
-    const r = await pool.query(
-      `SELECT id, status FROM change_orders WHERE response_token_hash = $1`,
+    // Lock the row (matches the accept flow) and re-check status under the lock.
+    // The old plain SELECT-then-UPDATE could race the accept: accept commits
+    // (bumping the project budget), then this decline overwrote status to
+    // 'declined' with the budget left bumped — an inconsistent CO. The
+    // `AND status='sent'` guard + rowCount check make the write a real no-op
+    // when it's already been actioned.
+    await client.query('BEGIN');
+    const r = await client.query(
+      `SELECT id, status FROM change_orders WHERE response_token_hash = $1 FOR UPDATE`,
       [tokenHash]
     );
-    if (r.rowCount === 0) return res.status(404).json({ error: 'Not found' });
-    if (r.rows[0].status !== 'sent') return res.status(409).json({ error: `Cannot decline from '${r.rows[0].status}'` });
-    await pool.query(
-      `UPDATE change_orders SET status='declined', responded_at=NOW() WHERE id=$1`,
+    if (r.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Not found' }); }
+    if (r.rows[0].status !== 'sent') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: `Cannot decline from '${r.rows[0].status}'` });
+    }
+    await client.query(
+      `UPDATE change_orders SET status='declined', responded_at=NOW() WHERE id=$1 AND status='sent'`,
       [r.rows[0].id]
     );
+    await client.query('COMMIT');
     res.json({ success: true });
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     logger.error({ err }, 'public CO decline error');
     res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
   }
 });
 

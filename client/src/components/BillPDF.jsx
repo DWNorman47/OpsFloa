@@ -259,7 +259,7 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
             )}
             {overtimeEnabled && summary.overtime_hours > 0 && summary.rate > 0 && (
               <View style={s.sumRow}>
-                <Text style={s.sumLabel}>{(t.pdfOvertimePayMult || 'Overtime Pay ({mult}×)').replace('{mult}', summary.overtime_multiplier)}</Text>
+                <Text style={s.sumLabel}>{(t.pdfOvertimePayHrs || 'Overtime Pay ({hrs} hrs)').replace('{hrs}', Number(summary.overtime_hours).toFixed(2))}</Text>
                 <Text style={s.sumVal}>{fmtMoney(summary.overtime_cost)}</Text>
               </View>
             )}

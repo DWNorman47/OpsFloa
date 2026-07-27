@@ -170,7 +170,9 @@ router.get('/', requireAuth, async (req, res) => {
     conditions.push(`client_id = $${params.length}`);
   }
   if (q) {
-    params.push(`%${q}%`);
+    // Escape ILIKE metacharacters so a literal % or _ in the query matches
+    // literally rather than acting as a wildcard (matches invoices.js).
+    params.push(`%${String(q).replace(/([\\%_])/g, '\\$1')}%`);
     conditions.push(`(project_name ILIKE $${params.length} OR client_name_snapshot ILIKE $${params.length} OR estimate_number ILIKE $${params.length})`);
   }
   const where = conditions.join(' AND ');
@@ -651,6 +653,8 @@ router.post('/:id/convert', requireAdmin, async (req, res) => {
 // ── Public endpoints (no auth, token-keyed) ──────────────────────────────────
 
 const publicRouter = require('express').Router();
+const { publicReadLimiter, publicWriteLimiter } = require('../middleware/publicLimiters');
+publicRouter.use(publicReadLimiter);
 
 publicRouter.get('/view/:token', async (req, res) => {
   try {
@@ -693,8 +697,8 @@ publicRouter.get('/view/:token', async (req, res) => {
   }
 });
 
-publicRouter.post('/accept/:token', async (req, res) => {
-  const signerName = (req.body.typed_name || '').toString().trim();
+publicRouter.post('/accept/:token', publicWriteLimiter, async (req, res) => {
+  const signerName = (req.body.typed_name || '').toString().trim().slice(0, 255); // cap: unauthenticated free-text
   if (!signerName) return res.status(400).json({ error: 'typed_name is required' });
   const authorized = req.body.authorized === true;
   if (!authorized) return res.status(400).json({ error: 'authorization confirmation required' });
@@ -746,29 +750,39 @@ publicRouter.post('/accept/:token', async (req, res) => {
   }
 });
 
-publicRouter.post('/decline/:token', async (req, res) => {
+publicRouter.post('/decline/:token', publicWriteLimiter, async (req, res) => {
   const reason = req.body.reason ? req.body.reason.toString().slice(0, 1000) : null;
+  const client = await pool.connect();
   try {
-    const r = await pool.query(
-      `SELECT id, status FROM estimates WHERE response_token_hash = $1`,
+    // Lock the row so a decline can't race an accept (or a second decline) —
+    // matches the accept flow. Without the lock, an accept committing between
+    // the read and the write would leave an accepted estimate showing declined.
+    await client.query('BEGIN');
+    const r = await client.query(
+      `SELECT id, status FROM estimates WHERE response_token_hash = $1 FOR UPDATE`,
       [sha256(req.params.token)]
     );
-    if (r.rowCount === 0) return res.status(404).json({ error: 'Not found' });
+    if (r.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Not found' }); }
     if (r.rows[0].status !== 'sent') {
+      await client.query('ROLLBACK');
       return res.status(409).json({ error: `Cannot decline from status '${r.rows[0].status}'` });
     }
-    await pool.query(
+    await client.query(
       `UPDATE estimates SET status='declined', responded_at=NOW() WHERE id=$1 AND status='sent'`,
       [r.rows[0].id]
     );
+    await client.query('COMMIT');
     await recordAudit({
       estimateId: r.rows[0].id, action: 'declined', actorKind: 'client',
       actorIp: req.ip, details: { reason },
     });
     res.json({ success: true });
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     logger.error({ err }, 'public estimate decline error');
     res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
   }
 });
 

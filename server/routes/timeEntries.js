@@ -307,9 +307,8 @@ router.delete('/:id', requireAuth, async (req, res) => {
   }
 });
 
-const { hoursWorked, computeOT, computeLeaveHours, shiftHoursByDate } = require('../utils/payCalculations');
-const { computePaid } = require('../utils/paidHours');
-const { sickRulesFromSettings } = require('../utils/hoursRules');
+const { loadSettings } = require('../utils/paidHours');
+const { workerPeriodStatements } = require('../utils/payStatement');
 const { weekRange } = require('../utils/weekBounds');
 
 // GET /time-entries/pay-stubs — worker's pay periods with aggregated hours
@@ -317,106 +316,43 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
   const userId = req.user.id;
   const companyId = req.user.company_id;
   try {
-    const [periods, settingsRows, workerRow] = await Promise.all([
+    const [periods, workerRow, settings] = await Promise.all([
       pool.query('SELECT * FROM pay_periods WHERE company_id = $1 ORDER BY period_start DESC', [companyId]),
-      pool.query('SELECT key, value FROM settings WHERE company_id = $1', [companyId]),
-      pool.query('SELECT overtime_rule, hourly_rate, rate_type, guaranteed_weekly_hours, role_id FROM users WHERE id = $1', [userId]),
+      pool.query('SELECT id, overtime_rule, hourly_rate, rate_type, guaranteed_weekly_hours, role_id FROM users WHERE id = $1', [userId]),
+      loadSettings(companyId),
     ]);
-    const s = { overtime_threshold: 8, default_hourly_rate: 0, regular_shift_hours: 8 };
-    settingsRows.rows.forEach(r => {
-      if (r.key === 'overtime_threshold') s.overtime_threshold = parseFloat(r.value);
-      if (r.key === 'default_hourly_rate') s.default_hourly_rate = parseFloat(r.value);
-      if (r.key === 'hours_rules') s.hours_rules = r.value;
-      if (r.key === 'regular_shift_hours') s.regular_shift_hours = parseFloat(r.value);
-    });
-    const workerData = workerRow.rows[0] || {};
-    const workerOTRule = workerData.overtime_rule || 'daily';
-    const guaranteedWeeklyHours = workerData.guaranteed_weekly_hours ? parseFloat(workerData.guaranteed_weekly_hours) : null;
-
-    const result = [];
-    if (periods.rows.length > 0) {
-      const minDate = periods.rows[periods.rows.length - 1].period_start;
-      const maxDate = periods.rows[0].period_end;
-      const allEntries = await pool.query(
-        `SELECT te.*, p.name as project_name,
-                to_char(te.work_date, 'YYYY-MM-DD') as work_date_str
-         FROM time_entries te LEFT JOIN projects p ON te.project_id = p.id
-         WHERE te.user_id = $1 AND te.status = 'approved' AND te.work_date >= $2 AND te.work_date <= $3
-         ORDER BY te.work_date, te.start_time`,
-        [userId, minDate, maxDate]
-      );
-
-      // Paid sick + vacation: approved time-off valued schedule-first. Fetch the
-      // worker's requests + shifts for the span once; value per period below.
-      const leaveRules = sickRulesFromSettings(s, workerData.role_id);
-      const [leaveReqs, leaveShifts] = await Promise.all([
-        pool.query(
-          `SELECT type, hours, start_date, end_date FROM time_off_requests
-           WHERE user_id = $1 AND company_id = $2 AND type IN ('sick','vacation') AND status = 'approved'
-             AND start_date <= $4::date AND end_date >= $3::date`,
-          [userId, companyId, minDate, maxDate]
-        ),
-        pool.query(
-          `SELECT shift_date, start_time, end_time FROM shifts
-           WHERE user_id = $1 AND company_id = $2 AND shift_date >= $3::date AND shift_date <= $4::date`,
-          [userId, companyId, minDate, maxDate]
-        ),
-      ]);
-      const shiftsByDate = shiftHoursByDate(leaveShifts.rows);
-
-      for (const period of periods.rows) {
-        const ps = period.period_start.toString().substring(0, 10);
-        const pe = period.period_end.toString().substring(0, 10);
-        const entries = allEntries.rows.filter(e => e.work_date_str >= ps && e.work_date_str <= pe);
-        const { sick: sickHours, vacation: vacationHours } = computeLeaveHours(leaveReqs.rows, shiftsByDate, leaveRules, s.regular_shift_hours, ps, pe);
-        if (entries.length === 0 && sickHours === 0 && vacationHours === 0) continue; // leave-only periods still show a stub
-
-        // Apply the company's hours rules to the raw punches before computing
-        // hours; paid entries carry raw_* fields for display. Through the
-        // shared pipeline so the worker's own screen can't disagree with the
-        // invoice — this used to round but drop the tiered-overtime config, so
-        // a company on CA-style tiers saw one number here and another on a bill.
-        const { paid: paidEntries, regularHours, overtimeHours } =
-          computePaid(entries, s, { rule: workerOTRule, roleId: workerData.role_id ?? null, range: { from: ps, to: pe } });
-        let prevailingHours = 0, totalMileage = 0;
-        for (const e of paidEntries) {
-          if (e.wage_type === 'prevailing') {
-            prevailingHours += hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60;
-          }
-          if (e.mileage) totalMileage += parseFloat(e.mileage);
-        }
-
-        const totalHours = regularHours + overtimeHours + prevailingHours;
-        // Guarantee shortfall: scale by how many weeks are in this pay period
-        let guaranteeShortfall = 0, guaranteeMinHours = 0;
-        if (guaranteedWeeklyHours) {
-          const ps = new Date(String(period.period_start).substring(0, 10) + 'T00:00:00');
-          const pe = new Date(String(period.period_end).substring(0, 10) + 'T00:00:00');
-          const days = Math.round((pe - ps) / (1000 * 60 * 60 * 24)) + 1;
-          const weeks = Math.max(1, Math.round(days / 7));
-          guaranteeMinHours = +(guaranteedWeeklyHours * weeks).toFixed(2);
-          guaranteeShortfall = +Math.max(0, guaranteeMinHours - totalHours).toFixed(2);
-        }
-        result.push({
-          id: period.id,
-          period_start: period.period_start,
-          period_end: period.period_end,
-          label: period.label,
-          entries: paidEntries,
-          summary: {
-            regular_hours: +regularHours.toFixed(2),
-            overtime_hours: +overtimeHours.toFixed(2),
-            prevailing_hours: +prevailingHours.toFixed(2),
-            total_mileage: +totalMileage.toFixed(1),
-            guarantee_shortfall_hours: guaranteeShortfall,
-            guarantee_min_hours: guaranteeMinHours,
-            guaranteed_weekly_hours: guaranteedWeeklyHours,
-            sick_hours: +sickHours.toFixed(2),
-            vacation_hours: +vacationHours.toFixed(2),
-          },
-        });
-      }
-    }
+    const worker = workerRow.rows[0] || {};
+    // Price each pay period through the one shared engine (fetch-once per span) so
+    // the worker's own stub can't disagree with the invoice/report. Money used to
+    // be recomputed on the client from a simplified formula — now it comes priced.
+    const priced = await workerPeriodStatements({ companyId, worker, settings, periods: periods.rows });
+    const n2 = x => parseFloat((x || 0).toFixed(2));
+    const result = priced.map(({ period, statement: st }) => ({
+      id: period.id,
+      period_start: period.period_start,
+      period_end: period.period_end,
+      label: period.label,
+      entries: st.entries,
+      summary: {
+        regular_hours: n2(st.hours.regular),
+        overtime_hours: n2(st.hours.overtime),
+        prevailing_hours: n2(st.hours.prevailing),
+        total_mileage: parseFloat((st.hours.mileage || 0).toFixed(1)),
+        guarantee_shortfall_hours: st.hours.guaranteeShortfall,
+        guarantee_min_hours: st.hours.guaranteeMin,
+        guaranteed_weekly_hours: worker.guaranteed_weekly_hours ? parseFloat(worker.guaranteed_weekly_hours) : null,
+        sick_hours: n2(st.hours.sick),
+        vacation_hours: n2(st.hours.vacation),
+        // Priced by the shared engine (the stub used to recompute these on the client).
+        rate: st.rates.rate,
+        regular_cost: st.cost.regular, overtime_cost: st.cost.overtime, prevailing_cost: st.cost.prevailing,
+        guarantee_cost: st.cost.guarantee, sick_cost: st.cost.sick, vacation_cost: st.cost.vacation,
+        sick_rate: st.cost.sickRate, vacation_rate: st.cost.vacationRate,
+        overtime_multiplier: st.rates.overtimeMultiplier, prevailing_wage_rate: st.rates.prevailingWageRate,
+        gross_wages: st.totals.grossWages, deductions: st.deductions,
+        deductions_total: st.totals.deductionsTotal, net_pay: st.totals.netWages,
+      },
+    }));
     res.json(result);
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
@@ -474,12 +410,15 @@ router.post('/copy-last-week', requireAuth, async (req, res) => {
        WHERE user_id=$1 AND company_id=$2 AND work_date BETWEEN $3 AND $4`,
       [req.user.id, companyId, thisWk.from, thisWk.to]
     );
-    const existingDates = new Set(existing.rows.map(r => r.work_date?.toString().substring(0, 10)));
+    // work_date is a pg Date (local midnight); toLocaleDateString('en-CA') gives
+    // 'YYYY-MM-DD'. The old .toString().substring(0,10) yielded "Mon Jul 20" →
+    // new Date("Mon Jul 20T00:00:00") = Invalid Date → insert "Invalid Date" → 500.
+    const toISO = d => new Date(d).toLocaleDateString('en-CA');
+    const existingDates = new Set(existing.rows.map(r => r.work_date && toISO(r.work_date)));
 
     const created = [];
-    const toISO = d => d.toLocaleDateString('en-CA');
     for (const e of lastWeek.rows) {
-      const lastDate = new Date(e.work_date.toString().substring(0, 10) + 'T00:00:00');
+      const lastDate = new Date(toISO(e.work_date) + 'T00:00:00');
       const thisDate = new Date(lastDate);
       thisDate.setDate(lastDate.getDate() + 7);
       const thisDateStr = toISO(thisDate);

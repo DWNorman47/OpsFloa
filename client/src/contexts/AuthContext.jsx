@@ -85,8 +85,11 @@ export function AuthProvider({ children }) {
           roof: !!user.addon_roof,
           status: user.subscription_status || null,
         }));
+        if (user.company_name) localStorage.setItem('tc_company', user.company_name);
+        else localStorage.removeItem('tc_company');
       } else {
         localStorage.removeItem('tc_addons');
+        localStorage.removeItem('tc_company');
       }
     } catch { /* storage blocked */ }
   }, [user]);

@@ -8,7 +8,7 @@
 import { createViewport } from '../shared/engine-view.js?v=2';
 import { createStore, randId, hashBytes } from '../shared/engine-store.js?v=1';
 import { openDoc, bytesToBase64, base64ToBytes, defaultRenderScale } from '../shared/engine-doc.js?v=1';
-import { createModals, esc, fmt, money } from '../shared/engine-ui.js?v=1';
+import { createModals, esc, fmt, money } from '../shared/engine-ui.js?v=2';
 import { distToPolyline, pointSegDist, simplifyPts, polyLengthFt, polygonAreaFt2, polygonPerimeterFt, pointInPolygon, dist, alignApply } from '../shared/engine-measure.js?v=1';
 import polygonClipping from '../shared/polygon-clipping.js?v=1';
 
@@ -446,7 +446,7 @@ const TOOL_FACE = {
 const groupCurrent = { surface: 'contour', takeoff: 'qarea' };
 const MEASURE_TOOLS = ['calibrate', 'mlength', 'marea', 'mcount'];
 const CLICK_TOOLS = ['mlength', 'marea', 'mcount', 'plane', 'redge', 'ritem', 'contour', 'epad', 'ebound', 'qarea', 'qline', 'qcount', 'dwall', 'dceiling', 'dopening', 'dtrim', 'dheight', 'froom', 'ftrans', 'fwall', 'fopening', 'fsheath', 'escline', 'escitem', 'escarea', 'sstripe', 'sstall', 'smark', 'swall', 'sopening', 'sgutter', 'sinsul', 'dmarea', 'dmline', 'dmitem', 'fnline', 'fngate', 'lsarea', 'lsplant', 'lsline', 'lshead']; // click-built (vs drag; espot/align are special-cased)
-const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling', 'dtrim', 'escline', 'escarea', 'sstripe', 'swall', 'sgutter', 'sinsul', 'dmarea', 'dmline', 'fnline', 'lsarea', 'lsline']; // produce ft / SF / squares
+const NEEDS_SCALE = ['mlength', 'marea', 'plane', 'redge', 'qarea', 'qline', 'dwall', 'dceiling', 'dtrim', 'froom', 'ftrans', 'fwall', 'fsheath', 'escline', 'escarea', 'sstripe', 'swall', 'sgutter', 'sinsul', 'dmarea', 'dmline', 'fnline', 'lsarea', 'lsline']; // produce ft / SF / squares
 
 /* ---- earthwork (sitework pack) helpers ---- */
 // stable hue per elevation so equal elevations match visually; existing lighter
@@ -2698,7 +2698,7 @@ els.cv.addEventListener('pointercancel', endDrag);
 /* ---- click-built measure drafts: commit / cancel ---- */
 
 const CLOSED_KINDS = ['marea', 'plane', 'epad', 'ebound', 'qarea', 'dceiling', 'froom', 'fsheath', 'escarea', 'swall', 'sinsul', 'dmarea', 'lsarea']; // 3+ pts, closed polygon
-const POINT_KINDS = ['mcount', 'ritem', 'qcount', 'dopening', 'escitem', 'sstall', 'smark', 'sopening', 'dmitem', 'fngate', 'lsplant', 'lshead']; // 1+ pts, no rubber band
+const POINT_KINDS = ['mcount', 'ritem', 'qcount', 'dopening', 'fopening', 'escitem', 'sstall', 'smark', 'sopening', 'dmitem', 'fngate', 'lsplant', 'lshead']; // 1+ pts, no rubber band
 
 /* ---- vertex reshaping: drag a point (handled in the pointer flow), Alt-click
    an edge to insert a point, Alt-click a point to remove it ---- */
@@ -5856,6 +5856,10 @@ async function deleteCompanyShared(id, name) {
 }
 
 function openCompany() {
+  // Show the signed-in company's name in the header (bridged to localStorage by
+  // the React app's AuthContext), so it's clear whose library you're sharing to.
+  let cn = ''; try { cn = localStorage.getItem('tc_company') || ''; } catch { /* blocked */ }
+  $('companyTitle').textContent = cn ? `${cn} — Company library` : 'Company library';
   $('company').classList.remove('hidden');
   companyMsg('');
   refreshCompanyList();

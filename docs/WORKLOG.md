@@ -23,6 +23,756 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-26 — Rate-aware overtime: the WH-347 / certified payroll (increment 4)
+
+The compliance form now shows real overtime. End-to-end:
+
+- **Server** (`GET /admin/certified-payroll`): collects each worker's rounded
+  entries and runs them through `splitRateAware` (gated on `hasSimpleOtConfig`;
+  premium configs keep the flat fallback) for a per-day **straight/overtime split**
+  by wage type, OT-aware costs, and an OT-aware `gross_pay`. Response gained
+  `ot_days`, `overtime_total`, `regular_cost`/`prevailing_cost`/`overtime_cost`,
+  `overtime_multiplier`. Added `u.overtime_rule` to the query.
+- **Client** `CertifiedPayroll.jsx`: on-screen table + the print view now render a
+  combined **Overtime** row and read the server-computed costs instead of
+  recomputing `hours × rate` flat.
+- **`CertifiedPayrollPDF.jsx`**: the WH-347 "O" sub-row (previously left blank with
+  a TODO) is populated with the per-day OT hours + OT total; the "S" row shows
+  straight-time and the full gross; the rate column shows the prevailing rate when
+  the worker has prevailing hours.
+- **i18n**: `overtime` key added (EN "Overtime" / ES "Horas Extra"); parity test green.
+
+Full `npm run verify` green (server 1113 + client eslint/vitest/i18n/build). No
+bespoke certified-payroll route test — the math is the already-tested
+`splitRateAware`; the endpoint just buckets it.
+
+Remaining from the plan: the client-side **WorkerSummary "estimated pay"** preview
+(labeled an estimate; lowest priority), the cosmetic OT-multiplier **labels** on
+BillPDF/ProjectBillPDF, and a **settings toggle** for `overtime_rate_method`.
+
+---
+
+## 2026-07-26 — Rate-aware overtime: consolidate project-bill + qbo (increment 3)
+
+Closed the two server-money engines the audit flagged as diverging from the new
+`buildPayStatement`. Extracted `splitRateAware` (calculator + the regular/overtime/
+prevailing bucket split) so the math isn't written three times; refactored
+`buildPayStatement` onto it (equivalent, suite green).
+
+- **Project bill** (`GET /projects/:id/bill`): each worker's hours (regular +
+  prevailing at the project rate) go through the shared engine now, gated on
+  `hasSimpleOtConfig`. The project total agrees with the worker invoice.
+- **qbo `computeGroupOvertime`**: all worked hours (incl. prevailing) count toward
+  the OT threshold, so a prevailing-heavy week earns the OT premium in the QBO
+  push. QBO bills labor flat at the worker rate (it doesn't apply prevailing
+  *rates* — separate pre-existing gap), so OT is priced at that rate. Tiered
+  configs keep the `otBands` path. 1113 pass.
+
+**Stopped at a checkpoint before the WH-347.** Certified payroll is not a drop-in
+like the other two — its client (`CertifiedPayroll.jsx`/`CertifiedPayrollPDF.jsx`)
+recomputes cost flat and renders the compliance grid, so it needs server compute
+**plus** the per-day O/S rows + PDF + EN/ES i18n. Deferred as its own focused piece
+rather than rush a legal form (spec: `certified-payroll-ot.md`). The client
+`WorkerSummary` estimate is the other remaining item (lowest priority). Both are
+tracked in `rate-aware-overtime.md` build-order step 3.
+
+---
+
+## 2026-07-26 — Rate-aware overtime: wired into buildPayStatement (increment 2)
+
+The calculator now drives real pay. `buildPayStatement` routes through
+`rateAwarePay` when the config is plain single-multiplier OT and the worker is
+hourly (`hasSimpleOtConfig` gate); premium configs (tiers/rest-day/7th-day/window/
+night) and daily-rate workers keep the existing per-band path untouched.
+
+- **Prevailing/multi-rate hours now earn OT** on the four surfaces that read the
+  shared statement — worker invoice, payroll CSV, pay stub, overtime report — for
+  free (they read `cost.*`, confirmed by a consumer audit).
+- **No regression:** regular-only and prevailing-under-threshold are byte-identical
+  (whole suite green). The ONE test that changed is the intended fix — 10h
+  prevailing @ $50 now reads 8h ST ($400) + 2h OT ($150) instead of 10h flat
+  ($500). Added the excavator scenario-A reconcile test at the statement level
+  ($420). 1113 pass.
+- The three cost buckets always sum to the calculator's total (`overtime` absorbs
+  all OT pay incl. any blended premium), so gross reconciles by construction.
+
+⚠️ **Known dev-only gap (tracked):** a consumer audit found **4 duplicate engines**
+that never went through `buildPayStatement` and still pay prevailing flat, so they
+now disagree with the invoice: the project-bill route (`admin.js` ~1710), `qbo.js`
+`computeGroupOvertime` (~796), certified-payroll/WH-347 (`admin.js` ~3457), and the
+client-side *estimate* `WorkerSummary.jsx:108`. Consolidating those onto the shared
+statement is the next increment (build-order step 3 in the plan). Nothing hits a
+real paycheck until David merges to prod.
+
+---
+
+## 2026-07-26 — Rate-aware overtime: the money core (increment 1 of the build)
+
+Approved the plan (`docs/plans/rate-aware-overtime.md`) + David's ask to make the
+blended method a per-company choice. Built the **isolated, tested money core**
+first — before wiring it into any paycheck — because OT math can't be eyeballed and
+the scenario tests ARE the accuracy guarantee.
+
+- **`server/utils/rateAwareOvertime.js`** — pure calculator. All of a worker's hours
+  count toward ONE threshold regardless of wage_type (the fix for multi-rate work);
+  reuses `annotateEntryOvertime` (via a uniform-wage_type clone) for the chronological
+  OT-hour attribution, then prices per-entry. Two methods: `rate_when_worked`
+  (default — each OT hour at the rate it earned) and `weighted_average` (FLSA blend,
+  opt-in). **Scope v1: plain single-multiplier OT** — `hasSimpleOtConfig()` gates
+  out tiers/rest-day/7th-day/window premiums (they need per-band attribution) so the
+  integration layer keeps those on the existing path until that lands.
+- **Setting `overtime_rate_method`** (default `rate_when_worked`) — constant
+  `payEnums.js`, settingsDefaults, admin PATCH validation, db-enums row.
+- **`rateAwareOvertime.test.js`** — the scenario matrix A–F as executable
+  expected-pay: excavator prevailing-then-civilian $420 / civilian-then-prevailing
+  $435 (order matters), Kentucky call center $855, Honduras 1.25× L.925, pure
+  prevailing week $2,340, break-clamp $0, weighted-average mixed week $1,900, and the
+  single-rate invariant (both methods agree). All pass.
+
+**Not yet wired into pay** — the calculator is standalone. Next increments (todo):
+integrate into `buildPayStatement` with the cross-surface reconcile invariant + the
+no-regression guarantee, then route the WH-347 report through it. Nothing changes a
+real paycheck until those land and David merges. 1112 pass.
+
+---
+
+## 2026-07-26 — Certified-payroll / prevailing-OT audit (+ break clamp)
+
+Audited the WH-347 path to figure out how to close the prevailing-OT gap without
+guessing money math. Finding was bigger than the BACKLOG note: `GET
+/admin/certified-payroll` (`admin.js:3454`) computes **no overtime at all** — it
+bucket-sums raw hours and grosses `hours × rate` flat, and it **bypasses
+`buildPayStatement`** (hand-rolled, which is why it drifted). So the compliance
+report understates OT for *everyone*, not just prevailing workers.
+
+The audit *resolved* the hard question, though: the stored rate is **base-only,
+fringe modeled separately** (`worker_fringes`, per-category per-hour) — exactly the
+WH-347 model, so "OT on base, fringe straight" needs no schema change. The other
+decisions collapse to "reuse the company's existing OT config" + "route through
+`annotateEntryOvertime` for a per-day ST/OT split."
+
+Wrote the full plan → `docs/plans/certified-payroll-ot.md`; updated the BACKLOG
+item to point at it. **Still gated** on David matching one real WH-347 before the
+pay-math change. Shipped now: the inline **break-clamp** fix on this endpoint
+(`admin.js:3515`, its own copy of the Batch-6 bug — negative hours on a compliance
+doc). 1103 pass.
+
+---
+
+## 2026-07-26 — "Go for all of it" batch 7: cleanup sweep
+
+Five lower-severity hygiene/correctness fixes closing out the review:
+
+1. **Unescaped ILIKE search** in the estimate + change-order list endpoints — a
+   literal `%` or `_` in the query acted as a wildcard. Now escaped with the same
+   `replace(/([\\%_])/g, '\\$1')` invoices.js already used.
+2. **Internal token hashes leaked in authed payloads.** `co.*` / `lw.*` / `a.*`
+   (and several `RETURNING *`) carried `response_token_hash` / `sign_token_hash` /
+   `manage_token_hash` into list + detail + send responses. Stripped at each
+   return point (a shared `stripToken` in lienWaivers; destructure elsewhere),
+   matching how estimates/invoices already scrub theirs. Low severity (SHA-256,
+   same-company admin) but it's internal token material.
+3. **Unbounded signer name** on the public accept/sign routes (`typed_name`) —
+   capped to 255 chars, since it's unauthenticated free text.
+4. **Night differential mis-rated.** `nightPremiumCost` applied the baseRate
+   premium to EVERY entry, including `prevailing` hours (which carry their own
+   rate) and leave. Now scoped to `wage_type='regular'` — the only hours priced
+   at baseRate.
+5. **Project-doc delete ordering.** `DELETE /projects/:id/documents/:docId`
+   deleted the R2 blob BEFORE the DB row, so a failed row delete left a record
+   pointing at a missing file. Flipped to DB-first, best-effort-blob-second —
+   matching the client-documents delete (a failed blob delete now only orphans a
+   file the R2 lifecycle reaps).
+
+Tests: prevailing-gets-no-night-premium case added. Server suite: 1103 pass.
+
+**All seven review batches now shipped.** (batches 1–7, dev)
+
+---
+
+## 2026-07-26 — "Go for all of it" batch 6: pay-engine semantics (money-critical)
+
+Four verified fixes in `payCalculations.js` / `payStatement.js`, plus one gap
+filed rather than guessed:
+
+1. **Guarantee double-paid leave.** The weekly-hours guarantee shortfall was
+   computed from worked hours only (`regular + OT + prevailing`), ignoring paid
+   leave. A worker guaranteed 40h who worked 30h and took 10h sick got 30 + 10
+   sick + **10 guarantee** = 50h paid. Leave now counts toward the guarantee base
+   (`+ sick + vacation`), so covered-to-40 → no shortfall.
+2. **Partial leave double-counted across pay periods.** A partial time-off request
+   (single logged `hours` + a date range) is fetched by any period it overlaps, so
+   a request straddling a period boundary was paid IN FULL in both. Now anchored
+   to the period containing its `start_date` — counted exactly once.
+3. **`min_daily > threshold` erased worked overtime.** When the reporting-time
+   floor exceeded the OT threshold, a short-of-floor day dumped the whole floor
+   into regular and skipped banding (worked 9h with floor 10 / threshold 8 → 10
+   reg / 0 OT). Now the worked hours are banded first (OT preserved) and the
+   shortfall tops up as regular. Identical for the usual floor ≤ threshold.
+4. **Break > shift → negative pay.** `entryDuration` (and the prevailing loop)
+   returned `shiftHours − breakHours` unclamped, so dirty data (break longer than
+   the shift) subtracted from paid hours and pay. Clamped at 0.
+
+Filed to BACKLOG (not fixed): **prevailing-wage hours never accrue overtime** —
+a real Davis-Bacon compliance gap, but fixing it right needs product/legal
+decisions (OT threshold basis, 1.5× *which* rate, fringe treatment, mixed-day
+interaction). Guessing would produce confidently-wrong paychecks, worse than the
+known gap — so it needs David's spec first.
+
+Tests: guarantee-with-leave, partial-straddle (×2), floor-above-threshold, and
+break-clamp cases added; the old test that *pinned* the negative-hours quirk was
+flipped to assert the clamp. Server suite: 1102 pass.
+
+---
+
+## 2026-07-26 — "Go for all of it" batch 5: public-route + impersonation hardening
+
+Four tenant/abuse-surface fixes:
+
+1. **Fired super-admin kept live impersonation.** Impersonation ("Login as")
+   tokens carry no `tv`, so requireAuth's active-check skipped them entirely — a
+   super-admin deactivated or demoted mid-session (4h token) kept full access to
+   the impersonated company, and a target user offboarded mid-session kept theirs.
+   Added `imp_by` (the super-admin's id) to the token and an `else if
+   (payload.imp)` branch in `middleware/auth.js` that re-checks, every request,
+   that the target is active AND the impersonator is still active + super_admin.
+2. **Public token routers had no rate limit.** The estimate/change-order/
+   invoice/lien-waiver public routers (view + accept/decline/sign) ran
+   unthrottled — only booking was limited. Added a shared
+   `middleware/publicLimiters.js` (`publicReadLimiter` 60/min router-wide,
+   `publicWriteLimiter` 20/hr on the mutations), mirroring booking's shape.
+3. **Decline was a TOCTOU.** Estimate + change-order `decline` did a plain
+   SELECT-then-UPDATE with no lock; the CO variant's UPDATE had no `status` guard
+   at all, so a decline racing an accept left the CO 'declined' with the project
+   budget already bumped. Both now `BEGIN` + `SELECT … FOR UPDATE` + re-check +
+   guarded UPDATE + `COMMIT`, matching their accept flows.
+4. **Cross-tenant project on a booking.** The authenticated admin book route
+   inserted `project_id` straight from the body — an admin of company A could
+   attach company B's project id. Now validated against `projects WHERE id = $1
+   AND company_id = $2` before insert.
+
+Tests: 3 new impersonation-guard cases (target/super-admin deactivated, super-admin
+demoted → 401) + happy-path decline cases pinning the `FOR UPDATE`. Server suite:
+1097 pass.
+
+---
+
+## 2026-07-26 — "Go for all of it" batch 4: clock-in/out races
+
+Two concurrency bugs on `routes/clock.js`, both money/data-integrity:
+
+- **Double clock-out → duplicate time entry (double pay).** `/out` read
+  `active_clock` with a plain unlocked SELECT *outside* the transaction, then in a
+  separate tx inserted the time entry + deleted the row. Two near-simultaneous
+  `/out` calls (double-tap, retry) both read the row and both inserted an entry.
+  Added a `SELECT 1 … FOR UPDATE` re-check at the top of the tx (mirroring what
+  `/switch` already did): the lock serializes the pair and the loser finds the row
+  gone and aborts with no entry. One shift → one entry.
+- **Re-clock-in silently erased the shift.** `/in` used `ON CONFLICT (user_id) DO
+  UPDATE`, so a worker already clocked into Project A who re-tapped (stale UI,
+  second device, offline replay) had their original clock-in *overwritten* — start
+  time and project gone, the morning's hours vanished with no entry. Changed to
+  `DO NOTHING` and, on conflict, return the untouched existing clock-in
+  (`already_clocked_in: true`, 200). Idempotent for double-taps/offline-replay,
+  preserves the shift; changing projects mid-shift stays `/switch`'s job. Verified
+  the client surfaces this as a normal clocked-in state (it reads `r.data` on any
+  2xx and refreshes `/clock/status`).
+
+No new clock-route test harness — clock.js routes have none, and `/in`'s pre-INSERT
+validation chain makes a bespoke one disproportionate; the fixes are standard PG
+semantics verified against the client contract. Server suite: 1091 pass.
+
+---
+
+## 2026-07-26 — "Go for all of it" batch 3: the Stripe subscription webhook
+
+Five real hardening fixes on `routes/stripe.js` (a sixth flagged item —
+incomplete/paused status mapping — was already handled by `mapStripeStatus`):
+
+1. **Activation stored no subscription id.** `checkout.session.completed` read
+   `session.metadata.company_id`, but checkout only set `subscription_data.metadata`
+   (→ the *subscription*, not the session), so the session's metadata was empty and
+   the `if (companyId && …)` guard fell through — `companies.stripe_subscription_id`
+   never got written (it's the ONLY writer). That silently broke `/addon`, `/portal`,
+   and the superadmin delete guard. Fixed both ways: checkout now sets top-level
+   `metadata` on the session too, and the handler falls back to the retrieved
+   **subscription's** metadata for sessions already in flight. `subscription.updated`
+   now also (re)asserts the sub id so it can't be left unset.
+2. **Plan read from `items[0]`.** Stripe doesn't order subscription items, so a
+   business sub whose per-worker seat or an add-on sorted first was mis-mapped to
+   `plan='free'` → the paying company loses access. New `planFromItems()` scans all
+   items for the first real base plan.
+3. **Out-of-order events.** New `last_stripe_event_at` watermark (migration 0153):
+   the three lifecycle writes fold `AND (… IS NULL OR … <= event.created)` into
+   their WHERE, so a stale `updated`/`deleted` (Stripe retries up to 3 days, no
+   ordering guarantee) can't resurrect a canceled company.
+4. **`payment_failed` could resurrect.** The past_due write was unconditional; now
+   guarded to `subscription_status IN ('active','trial','past_due')` so it won't
+   un-cancel or un-exempt a company.
+5. **Fail-open webhook.** The handler caught every error and still returned 200 —
+   a transient Neon blip dropped the state change forever. Now returns **500** so
+   Stripe retries (Sentry still fires for genuinely deterministic failures).
+
+New `stripeWebhookRoute.test.js` (6 tests) pins all five. Server suite: 1091 pass.
+
+---
+
+## 2026-07-26 — "Go for all of it" batch 2: delete paths vs the booking FKs
+
+The company-wipe and the demo-workspace reset kept **two hand-maintained delete
+lists**, and they'd drifted. The full wipe (superadmin) had the 0114 RESTRICT
+sub-ledgers but **not the booking tables** (0113); the demo reset had an even
+shorter list. Since the demo seed now creates `appointments`, and
+`appointments.assigned_user_id` / `.appointment_type_id` are both `ON DELETE
+RESTRICT`, the demo reset's `DELETE FROM users` would 500 on the next reset — and
+the full wipe would 500 on any company that ever booked an appointment.
+
+Fixed at the altitude of the drift: **extracted one `purgeCompanyRows(client, id)`**
+and pointed both the wipe route and `deleteDemoWorkspace` at it, so the list can't
+diverge again. Folded in:
+- **Booking (0113):** `appointments` (cascades `appointment_audit`) →
+  `appointment_types` (cascades the two join tables) → `shift_types` →
+  `bookable_windows`, all before `users`.
+- **`roles` / `role_permissions`** — these were in the demo list but **missing
+  from the full wipe** (it relied on `companies` cascade); now explicit in both,
+  after `users` (users.role_id → roles).
+- **Export endpoint** (`GET /companies/:id/export`) list synced: added the booking
+  tables, `invoices`, `estimates`, and the project sub-ledgers it had also drifted
+  past — churned-customer exports were silently incomplete.
+
+Test: `superadminDelete.test.js` gained the booking tables + a booking-ordering
+assertion (appointments before users AND appointment_types) and the roles-after-
+users check. Server suite: 1085 pass. (One cross-suite flake in
+`updateLanguageImpersonation` under load — passes isolated and on re-run; unrelated
+to this change.)
+
+---
+
+## 2026-07-26 — "Go for all of it" batch 1: the work_date-as-Date class of bug
+
+Second review's headline finding, verified and fixed. **Root cause:** node-postgres
+returns a `DATE` column as a JS `Date` (local midnight), never a `'YYYY-MM-DD'`
+string — and `db.js` has no `setTypeParser` override. The pay/rules engine keyed
+off the day via `String(work_date).substring(0,10)`, which on a `Date` yields
+`"Sat Jul 26"` — the weekday parse then rejects it, so **every date-scoped rule
+silently no-op'd on the four pay surfaces** (worker invoice, OT report, payroll CSV,
+pay stubs) while the admin report — which loads `to_char(...)` — computed them
+correctly. A live surface divergence on money: the exact failure the pay pipeline
+was consolidated to prevent.
+
+Fixed at both ends so it can't regress by either route:
+- **Loaders cast at the source** — `payStatement.js` (all three loaders) and
+  `paidHours.js` `LABOR_ENTRY_COLUMNS` now `SELECT to_char(te.work_date,
+  'YYYY-MM-DD') AS work_date`, so the engine's inputs are strings.
+- **The engine is now `Date`-robust regardless of caller** — added a shared
+  `ymd()` (exported from `hoursRules.js`) that normalizes both shapes; routed it
+  through `roundEntriesFromSettings` (locally, *not* mutating the caller's row —
+  `admin.js`/`qbo.js` still hold their `Date`s) and the four `computeOT` internal
+  date keys. `weekBucketKey` was already `Date`-safe.
+- **Regression test that feeds a real `Date`** (`payCalculationsPremiums.test.js`)
+  — the existing tests all passed string dates, which is exactly why this slipped
+  through. The new case fails without the fix.
+
+Also swept the same bug class out of two display paths:
+- **copy-last-week** (`timeEntries.js`) did `.toString().substring(0,10)` → `new
+  Date("Sat Jul 26T00:00:00")` = Invalid Date → it would insert `work_date="Invalid
+  Date"` → 500. Now `toLocaleDateString('en-CA')`.
+- **Approve/reject notifications** (`admin.js`, 5 spots) rendered `"Sat Jul 26"`
+  in the worker's email/push/inbox. Now `ymd()`.
+
+Server suite: 1085 pass (was 1083 + 2 new). Batches 2–7 (delete paths, Stripe
+webhook, clock races, public-route hardening, pay semantics, misc cleanup) still
+queued from the same review.
+
+---
+
+## 2026-07-25 — Follow-through: delete/merge paths vs the 0114 RESTRICT FKs
+
+Chased the `0114` CASCADE→RESTRICT project-FK change through the *other* delete
+paths, after fixing the superadmin wipe:
+
+- **Demo-workspace reset — verified SAFE.** `deleteDemoWorkspace` also does
+  `DELETE FROM projects`, but its seeder (`createDemoWorkspace`) never creates any
+  RESTRICT sub-ledger tables, so nothing can block it. No fix needed.
+- **Project merge — found + guarded a real bug.** `admin.js`
+  `POST /projects/:id/merge-into/:target_id` re-points only 12 operational tables
+  then hard-deletes the source, so a source with financial records (change orders /
+  POs / submittals / closeouts / expenses / budgets / lien waivers = RESTRICT, or
+  invoices / estimates = SET NULL) would **500 on the delete or silently orphan the
+  money**. Added a pre-check that returns a clean **409** instead. Full
+  financial-aware merge (needs real merge semantics for the per-project unique
+  closeout/budget rows) is filed in `docs/BACKLOG.md`.
+
+Verify green (82 / 1083). ⚠️ The merge endpoint has no tests (pre-existing gap);
+the guard is a simple defensive pre-check.
+
+## 2026-07-25 — Review follow-up: superadmin wipe fix + cleanup pass ("all of it")
+
+- **Superadmin company-wipe (pre-existing bug).** `DELETE FROM projects` is
+  RESTRICTed by **seven** sub-ledger FKs — `subcontract_pos` (0107) plus the six
+  the `0114` audit-followup migration flipped CASCADE→RESTRICT (`lien_waivers`,
+  `change_orders`, `submittals`, `project_closeouts`, `project_expenses`,
+  `project_budget_categories`). None were deleted first, so wiping any company
+  with any of that data 500'd, leaving it un-deletable. Added the deletes in
+  FK-safe order (`subcontract_pos` before `subcontractors`; all before projects;
+  each parent CASCADEs its children) + `estimates` for orphan cleanup. Test
+  asserts both presence and the ordering.
+- **Server cleanups:** `createInvoice` advisory lock (no number-collision 500 on
+  concurrent create); from-project skips $0 expense lines; the list search escapes
+  ILIKE `%`/`_`; void locks its row (`FOR UPDATE`); `invoiceTotals` + the QBO list
+  scope by `company_id` / exclude void; `0150` also populates `client_id` +
+  `project_name` on migrated QBO rows.
+- **Client cleanups:** the invoice-list load ignores superseded responses (the
+  filter/page race); line items keyed by a stable `_k` so deleting a row no longer
+  resets an adjacent money field; `SourcePicker` matches visible fields (not
+  `JSON.stringify`); dropped a dead param.
+
+Verify green (82 / 1083).
+
+## 2026-07-25 — Full review + fixes (Tier 1 bugs + unambiguous Tier 2)
+
+Ran a 5-way parallel review over the session's invoice / QBO / Stripe / sitework /
+email work; verified findings against the code, fixed the confirmed bugs + clear
+could-breaks.
+
+**🔴 real bugs**
+- **Migration `0150` would ABORT the deploy on a negative QBO amount** (credit
+  memo) — negative `*_cents` violates the `≥ 0` CHECKs. Clamped to
+  `GREATEST(0, …)` so such a row lands as $0. **Edited `0150` in place** — the only
+  option, since a later migration can't rescue one that aborts first; dev applied
+  it as a 0-row no-op, so no divergence.
+- **Two subscription webhooks called `sendEmail({…})`** (object) against the
+  positional fn → the payment-failed + trial-ending admin emails silently never
+  sent. Fixed to positional. *(pre-existing)*
+- **Invoice send email rendered a garbled due date** (`String(Date)` → "Mon Jul
+  20") → `toISOString().slice(0,10)`.
+- **`InvoiceFormLoader`: a failed edit-load showed a blank "New invoice" form** →
+  saving created a duplicate. Now shows an error + back (`invErrLoad`).
+
+**🟠 could-break**
+- **Closeout: added the real escape hatch** — an auto item can now be manually
+  waived/N-A'd, overriding the compute-on-read. Before, `final_complete` was
+  unreachable for anyone billing via QBO/cash/outside OpsFloa, despite a comment
+  falsely claiming a waive existed.
+- **QBO:** `check-payment` no longer resurrects a voided invoice (`status<>'void'`);
+  `POST /invoices` scopes `project_id` + the client-name snapshot to the caller's
+  company (was a small cross-tenant leak I'd introduced).
+- **Invoices:** `PATCH` locks + re-checks frozen inside its tx (was a TOCTOU vs a
+  concurrent send); `VARCHAR(255)` header fields capped; payments reject fractional
+  `amount_cents` / malformed `paid_date` with 400 not 500.
+- **Client:** "Balance" column sorts by balance (was amount-paid); a stale/unknown
+  Tools hash (e.g. `#sitework`) falls back to Plan Room, not a blank page; PDF
+  retainage shown as "held" (no misleading minus), matching the web.
+
+Tests +1 (closeout waive), PATCH tests updated. Verify green (82 / 1083).
+
+⚠️ **Left as-is, flagged:** a **pre-existing superadmin company-wipe bug** —
+`subcontract_pos` `RESTRICT`s `DELETE FROM projects`, so wiping any company that
+made a sub-PO 500s. Real but out of this scope. Plus lower-priority cleanup
+(client-side sort spans only the current page, concurrent-create number race,
+`invoiceTotals`/AR `company_id` defense-in-depth, etc.).
+
+## 2026-07-25 — Invoice online pay, Phase 1: Stripe Connect onboarding
+
+Foundation for clients paying invoices online, with money landing in the
+**company's own** Stripe (Connect, **no platform fee** — David's calls). Full plan:
+`docs/plans/invoice-online-pay.md`.
+
+- **Migration `0152`** — `companies.stripe_connect_account_id` +
+  `stripe_connect_charges_enabled` (cached flag). We store only the
+  connected-account id, never the company's keys. Distinct from
+  `stripe_customer_id`/`stripe_subscription_id` (OpsFloa's *own* billing).
+- **`routes/stripe.js`** — `POST /stripe/connect/onboard` (create/reuse a Standard
+  connected account → hosted onboarding link) + `GET /stripe/connect/status`
+  (retrieve → `charges_enabled`, cached on the row). Reuses `getStripe()` +
+  `manage_billing` perm.
+
+Verify green (82 / 1082). Next: Phase 2 (public "Pay now" → Checkout on the
+connected account). ⚠️ David's Stripe dashboard, when we reach Phase 2–3: enable
+**Connect**, and add a **Connect webhook** endpoint + signing secret.
+
+## 2026-07-25 — Invoices: stable share link + email From = the contractor
+
+Two fixes from David's questions on the send-email:
+
+- **Stable share token.** `POST /:id/send` now STORES the raw token (migration
+  `0151` adds `invoices.response_token`, mirroring estimates), and `POST /:id/link`
+  returns that SAME token instead of rotating. Before, "Copy link" minted a fresh
+  token — which would have **broken the `/i/<token>` link just emailed** to the
+  client. `loadInvoiceFull` strips the raw token from the general payload.
+- **Email From / Reply-To.** The send email now shows the **company name** as the
+  From display-name (the address stays on OpsFloa's verified domain — Resend
+  requires the sending domain be verified, so it can't literally be the
+  contractor's address) and sets **Reply-To to the sending admin**, so the client
+  sees the contractor and replies reach them, not `info@opsfloa.com`. `sendEmail`
+  gained an optional `{ fromName, replyTo }` param (backward-compatible).
+
+Verify green (82 suites / 1082); migration `0151` validated by CI lint.
+
+## 2026-07-25 — Invoices: email the client on send
+
+Wired the invoice **Send** flow to actually email the client a link to the public
+`/i/:token` page (before: the admin copied the link by hand — same gap estimates
+still have).
+
+- **`routes/invoices.js` `POST /:id/send`** — after committing `'sent'`, if the
+  invoice has a `client_email` it sends a house-style email (greeting + amount /
+  balance due + a "View invoice" button → `${APP_URL}/i/<token>`) through the
+  shared `sendEmail` (Resend). **Best-effort:** the invoice is already committed,
+  so a delivery failure/skip never 500s — the response carries an
+  `email: { sent, to, reason }` status and the admin still gets the copyable link.
+- **Client** — the send toast now reads "emailed to <client>" when it went out,
+  else the existing "sent" (copy the link). New `invToastEmailed` key (EN + ES).
+- Reuses existing infra: `sendEmail`'s guards (demo/bounce/dev-redirect/no-key),
+  `utils/htmlEscape`, `APP_URL`. **No PDF attached** — the public page is the
+  canonical view; server-side PDF render is a bigger lift, deferred.
+- Test: +1 in `invoicesRoute.test.js` (mocks `../email`, asserts the client gets
+  a `/i/<token>` link on success). Verify green (82 suites / 1082).
+
+⚠️ Real delivery needs `RESEND_API_KEY` + verified `EMAIL_FROM` + `NODE_ENV=production`
+(see [[project_email_resend]]); non-prod redirects to `EMAIL_REDIRECT_TO`. The
+remaining deferred invoice item is **online payment** on the public page.
+
+## 2026-07-25 — Sitework: all live references removed
+
+Purged sitework from the running codebase (David: "leave sitework in the past").
+
+- **`ToolsPage.jsx`** — removed the `SITEWORK_TOOL_URL` const, the `SHOW_SITEWORK`
+  flag, `hasTakeoff`/`showSitework`, the `#excavation → sitework` `resolveTab`
+  mapping, the hidden-tab redirect effect, the tab entry, and the whole render
+  block. (The tab was already gated off; this deletes the dead code.)
+- **Governing docs** — dropped the "Frozen: the sitework tool" section in
+  `CLAUDE.md`; updated `MAP.md` (the `sitework/` entry → notes it's archived) and
+  the `db-enums.md` `live_sessions.tool` note.
+- **Stale comments** — `index.js`, `middleware/auth.js`, `routes/takeoffs.js`,
+  `routes/stripe.js`, `api.js`, and a test header no longer name the retired tool.
+
+Verify green (82 suites / 1081). **Intentionally KEPT** (calling these out so they
+don't read as misses):
+- the **Calculators "Sitework" category** (asphalt/base/grade) — a civil-work
+  category, *not* the tool; renaming it would be wrong.
+- the **`live_sessions.tool` = `'sitework'`** enum value — vestigial but lockstep
+  with the CHECK; dropping it means a migration for a never-used reserved value,
+  not worth it (documented in `db-enums.md`).
+- **historical/lineage/roadmap** mentions in `docs/plans/*`, `tool-apps/shared`
+  provenance comments + `PARITY.md`, and the WORKLOG — that's sitework's past.
+
+**Final state:** David then deleted the `sitework-archived/` box too, so sitework
+is entirely gone from the repo. Recoverable only from git history — commit
+`e859f05` ("Box sitework…") holds the full tool + test + README
+(`git checkout e859f05 -- sitework-archived/`).
+
+## 2026-07-25 — Sitework tool boxed into one removable folder
+
+David wants the standalone Sitework Takeoff tool out of the project but
+recoverable. Consolidated **everything sitework** into a single root folder
+`sitework-archived/` via `git mv` (moved, not copied — it's the sole copy now):
+- `client/public/tool-apps/sitework/` (the 5-file tool, ~1.7 MB)
+- `server/tests/siteworkToPlanRoom.test.js` (the one test that *reads*
+  `sitework/app.js` — it had to move too or `verify` breaks)
+- `README.md` runbook (what it is, what does/doesn't depend on it, remove +
+  restore steps).
+
+Mirrors repo paths inside the box, so restore = `cp -r sitework-archived/{client,server} .`.
+Verify green afterwards: server jest **82 suites / 1081 tests** (−1 suite, −14
+tests = exactly the moved sitework test); client build OK.
+
+**Findings / calls:** Plan Room + `tool-apps/shared/` are independent copies
+(`PARITY.md`), so they were untouched and keep working. `ToolsPage.jsx` still has
+**inert** sitework refs (all behind `SHOW_SITEWORK = false`) — they don't break
+build/runtime, so I left them and documented the optional cleanup + the restore
+path in the box README rather than editing the shared file. The final *removal*
+(deleting/taking out `sitework-archived/`) is David's to do. First attempt was a
+copy-alongside-live (wrong — deleting the box left the tool wired in); redone as a
+move so the one folder truly is the removal unit.
+
+## 2026-07-25 — Native invoices, Phase 5: QuickBooks unified onto native (mirror retired)
+
+QBO is now a **sync layer on the native `invoices` table** — one invoice table,
+no more dual-source AR. Migration `0150` + rewired every `project_invoices`
+reader/writer.
+
+- **`0150_unify_invoices.sql`** (atomic — the whole file is one implicit tx):
+  copies each QBO-mirror row into `invoices` (`source='qbo'`, carries
+  `qbo_invoice_id` + new `qbo_doc_number`; dollars→cents), gives each a summary
+  line, **reconstructs the paid portion as an `invoice_payment`** (so native
+  balance + AR "collected" stay right), then **repoints `lien_waivers.invoice_id`**
+  off `project_invoices(id)` onto `invoices(id)` (drop FK → remap ids via a temp
+  `migrated_pi_id` → add FK). Number scheme `QBO-IMP-<pi.id>` so it can't collide
+  with qbo.js's `QBO-<qboId>`.
+- **`qbo.js`** rewired: push creates a native invoice (+line) instead of the
+  mirror; the project-invoices list reads native mapped back to the QBO-panel
+  shape (so the existing Projects UI is unchanged); check-payment updates the
+  native row's status + re-syncs the imported payment (idempotent delete-insert).
+- **Readers repointed to native:** `projectReports` AR rollup (billed = Σ
+  `total_cents`, collected = Σ `invoice_payments`), `lienWaivers` ownership check,
+  `closeout` `final_invoice` (dropped the Phase-3 mirror bridge), `superadmin`
+  wipe now clears `invoices` (children cascade).
+- ⚠️ **Judgment call — `project_invoices` kept DORMANT, not dropped.** Rather than
+  `DROP TABLE` on production financial data in the same change, the mirror is left
+  in place as a rollback backup (no code touches it but the superadmin wipe). The
+  physical drop is a filed one-liner (`docs/BACKLOG.md`) once this is verified in
+  prod. QBO isn't connected on dev, so the data-copy is a schema-only no-op on dev.
+
+Verify: full server suite **1095 green** (projectReports + superadminDelete tests
+updated to native). ⚠️ The migration's data path only exercises on a DB with real
+QBO-mirror rows — **CI migration-lint validates the SQL against the built schema**;
+smoke-test on a QBO-connected company after prod merge (push → check-payment → AR).
+
+## 2026-07-25 — Native invoices, Phase 4: client UI (the module is now usable)
+
+Built the admin UI + client-facing page, cloned from the estimates surface.
+A company can now create → send → get paid → close out entirely in-app.
+
+- **`InvoicesPanel`** (`pages/InvoicesPage.jsx`) mounts as a new **Invoices tab**
+  in the Projects module (next to Estimates, same `canSeeSales` gate). List with
+  status badges + balance column, the cents line-item editor (`MoneyInput`/
+  `useCents`), draft edit, and a detail view with send / copy-link / **record
+  payment** / void + a payments ledger. All money via `useCents`/`useCurrency`
+  (no hardcoded `$`).
+- **Three create sources** surfaced in one "New" menu: Blank, From an accepted
+  estimate (searchable picker → `from-estimate`), From project time & expenses
+  (picker → `from-project`).
+- **`InvoicePDF.jsx`** cloned from EstimatePDF (simpler math: subtotal → tax →
+  total, retainage, amount paid / balance due), reusing the `pdf*` i18n keys.
+- **Public `/i/:token`** view page (`PublicInvoicePage.jsx`, view-only — online
+  pay deferred) + route in `App.jsx` + token redaction pattern already added
+  server-side.
+- **i18n:** ~110 `inv*` keys added to **both** `moduleEn` and `moduleEs`
+  (`i18nModules.js`); category labels reuse the `estCat*` keys. Parity test green.
+
+Verify: client eslint clean, vitest 255 green (incl. i18n parity), production
+build OK; sitework untouched.
+
+⚠️ Not yet wired: the invoice link isn't emailed (admin copies it, same as
+estimates today); online payment on the public page is deferred. Phase 5 (QBO
+unification) is still open and stageable.
+
+## 2026-07-25 — Native invoices, Phase 3: closeout unblocked (three bugs)
+
+Fixed `server/routes/closeout.js`. These were the reason non-QBO projects
+couldn't close out (the whole motivation for native invoices).
+
+- **`final_invoice` false negative.** Read `project_invoices` (the QBO mirror),
+  empty for non-QBO companies → stuck `in_progress` forever. Now counts a paid
+  **native** invoice *or* a paid QBO-mirror row (so QBO companies don't regress
+  before Phase 5 folds the mirror in). Zero invoices → `in_progress`, not a
+  permanent block — the item's manual-waive is the escape hatch.
+- **`retainage_release` false positive.** `SUM(project_invoices.balance)` over
+  **zero rows** is 0 → reported `done` for every non-QBO project. Now: done only
+  when native invoices **exist** and their `retainage_held_cents` sums to 0;
+  zero invoices → `in_progress`.
+- **Transition gate read stale status → `final_complete` unreachable for
+  EVERYONE.** Auto items are never persisted past `'pending'` (computed on
+  read), but both gates (`substantially_complete`, `final_complete`) checked the
+  *stored* status — so an auto item always looked pending and 409'd. Both gates
+  now compute the effective status (new `effectiveItemStatus` helper) before
+  deciding. Dropped the dead `byCat` and the comment that claimed the compute
+  already happened.
+
+Tests: +5 in `closeoutRoute.test.js` (compute-on-read reaches substantial;
+unpaid auto invoice blocks final_complete; native-invoice repoint; retainage
+zero-rows no longer false-done). Full server suite 1095 green.
+
+## 2026-07-25 — Native invoices, Phase 2: server route + payment lifecycle
+
+Built `server/routes/invoices.js` (mounted authed + token-public in `index.js`,
+`business`-plan gated like estimates), cloning the estimates route. See
+`docs/plans/` (mossy-launching-mist) for the phase map.
+
+- **Three creation sources, as decided.** From scratch (`POST /invoices`),
+  `POST /invoices/from-estimate/:id` (copies an **accepted** estimate's lines;
+  409 otherwise), and `POST /invoices/from-project/:id` (T&M prefill: one Labor
+  line valued by the pay engine's `laborCostCents` over the project's *approved*
+  entries, plus a line per `project_expenses` row — editable before send).
+- **Payment lifecycle.** `POST /:id/payments` records full/partial payments into
+  `invoice_payments`, then derives status off Σpayments vs total:
+  draft→partial→paid; `POST /:id/void` cancels; both blocked appropriately (no
+  payment on draft/void). Money-critical derivation is unit-pinned in
+  `tests/invoicesRoute.test.js` (18 tests, mocked pool like estimates).
+- ⚠️ **Judgment call — no stored raw share token.** Unlike estimates (which
+  stores the raw token for stable re-retrieval), invoices store only the hash.
+  `/send` returns the raw token once; `POST /:id/link` **rotates** the link
+  (mints a new token, so a previously-shared URL stops working). Chosen to avoid
+  a second migration on the just-shipped 0149 and to not persist raw tokens. If
+  you want estimate-style stable links, it needs a `response_token` column.
+- **Found while wiring:** `retainage_pct`/`retainage_held_cents` are owner-side
+  retainage with no prior home in the schema — carried through
+  `computeInvoiceTotals` so Phase 3's closeout `retainage_release` check has a
+  real number to read.
+
+Next: Phase 3 (closeout fixes — the three bugs), then Phase 4 (client UI).
+
+## 2026-07-25 — Backlog cleanup: Plan Room bugs + tool-app currency
+
+Cleared three backlog items and confirmed a fourth obsolete.
+
+- **Tool-app currency ($ hardcoded).** `SettingsContext` writes a `tc_currency`
+  localStorage key; the shared `engine-ui.money()` reads it and formats in the
+  company currency (locale map mirrors `client/src/utils.js`), USD fallback. Plan
+  Room bid tables now respect a non-USD company. **Sitework's own `money()` copy
+  is left on `$`** (off-limits) — accepted divergence until the sitework port.
+- **`fopening` → `POINT_KINDS`** — single-click dot kind now behaves like its twin
+  `dopening` instead of rubber-banding + needing two clicks.
+- **`froom`/`ftrans`/`fwall`/`fsheath` → `NEEDS_SCALE`** — flooring/framing kinds
+  now block on an uncalibrated sheet (📏 nudge) instead of silently tracing to a
+  0 bid.
+- **"Hours engine reaches only 4/10 money paths" — marked RESOLVED (money-of-
+  record).** Verified the flagged server paths now use the engine (qbo, scheduled
+  reports, project reports/metrics, plus the four pay surfaces on
+  `buildPayStatement`); only two client display-mirrors (`WorkerSummary.jsx`,
+  `Tests.jsx`) remain as low-stakes estimates.
+
+Plan Room `?v` 75→76 (engine-ui import 1→2). Client verify green; sitework clean.
+
+---
+
+## 2026-07-25 — One pay engine behind the pay surfaces (phases A–D)
+
+**Done (3 commits).** The four pay surfaces re-orchestrated the hours→money chain
+by hand; the full cost-assembly (prevailing, guarantee, leave $, deductions, net)
+lived inline in the invoice route only and had drifted. New
+`server/utils/payStatement.js` is now the single assembler:
+- `buildPayStatement(inputs)` — **pure** (no DB): hours→costs→prevailing→guarantee
+  →leave $→deductions→gross/net, cents-rounded so lines reconcile to totals.
+- `workerStatement` (one worker) + `companyStatements` (whole company, batched,
+  no N+1) feed it. `computeGuaranteeShortfall` lifted out of admin.js into
+  `payCalculations.js` (shared).
+- Phase B: the **invoice** now flattens a statement into its existing `summary`
+  shape (BillPDF/Team Member Report untouched). Phase C: the **overtime report**
+  and **payroll CSV** render `companyStatements`.
+
+**Two decided behavior changes** (locked with David):
+1. **Prevailing → per-project** (project rate, company fallback) everywhere; the
+   invoice moved to match the payroll surfaces. Same worker now costs the same on
+   every screen.
+2. **Payroll views gained guarantee + net pay**: Total Pay now includes any
+   guarantee top-up (unchanged when there's no guarantee); new Min-Guarantee and
+   Net Pay (gross − deductions, reimbursements excluded) columns on the report
+   table + CSV.
+
+**Latent drift the merge resolved** (all converged onto the invoice's discipline):
+report/CSV had a magic `|| 30` rate floor and a `|| 8` threshold floor the invoice
+lacked; costs now cents-rounded before summing everywhere.
+
+**Verify:** new `payStatement.test.js` pins reconciliation + per-project prevailing
++ leave % + guarantee + deductions→net + determinism; server 1068, client 255,
+i18n parity, build all green.
+
+**Phase D done — pay stubs now priced by the engine.** New `workerPeriodStatements`
+fetches the worker's whole span once and prices each pay period via
+`buildPayStatement` (no per-period re-query); the pay-stubs route drops its
+hand-built settings subset for full `loadSettings`, so it can finally price money.
+`PayStubView.jsx` renders server money instead of recomputing it — the old
+client-side formula ignored per-project prevailing, OT tiers, night premium, leave
+and deductions, so a tiered-OT company saw a different number on the stub than on
+the invoice. The stub now also shows sick/vacation pay + deductions + net pay.
+⚠️ **Worker-visible:** stub dollar amounts may shift (to the correct, engine
+number) — most visibly for companies on tiered OT, per-project prevailing, or with
+deductions. All four surfaces now derive from one `buildPayStatement`.
+
+---
+
 ## 2026-07-24 — Team Member Reports redesign: interactive, explain-why lines
 
 **Done** (3 commits). Rebuilt Time Clock ▸ Reports ▸ Team Member Reports so a

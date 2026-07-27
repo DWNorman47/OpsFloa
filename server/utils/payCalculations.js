@@ -6,7 +6,7 @@
 const { weekBucketKey } = require('./weekBounds');
 // One-way dependency (hoursRules has no requires, so no cycle): ot_tier rules are
 // `when`-scoped, so a bucket's bands can depend on its date.
-const { ruleMatchesDate } = require('./hoursRules');
+const { ruleMatchesDate, ymd } = require('./hoursRules');
 
 /** Decimal hours between two HH:MM[:SS] strings. Handles midnight-crossing shifts. */
 function hoursWorked(start, end) {
@@ -16,7 +16,9 @@ function hoursWorked(start, end) {
 }
 
 function entryDuration(e) {
-  return hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60;
+  // Clamp at 0: a break longer than the shift (bad/hostile input) would otherwise
+  // yield a negative duration that subtracts from paid hours — and thus from pay.
+  return Math.max(0, hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60);
 }
 
 /** Day of week (0=Sun … 6=Sat) for a YYYY-MM-DD key, timezone-independent. */
@@ -103,9 +105,15 @@ function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours
     if (!req) continue;
     const type = req.type === 'vacation' ? 'vacation' : 'sick';
     if (req.hours != null && req.hours !== '') {           // partial → pay the logged hours
+      // Count the lump only in the period that contains its start date. The
+      // fetch query returns any request overlapping [from,to], so a partial
+      // straddling a pay-period boundary would otherwise be paid IN FULL in both
+      // periods (this loader runs once per period for per-worker pay stubs).
+      const anchor = req.start_date != null ? String(req.start_date).substring(0, 10) : null;
+      if (anchor != null && (anchor < f || anchor > t)) continue;
       const h = parseFloat(req.hours) || 0;
       totals[type] += h;
-      if (detail) detail.push({ type, date: req.start_date != null ? String(req.start_date).substring(0, 10) : null, hours: h, source: 'partial' });
+      if (detail) detail.push({ type, date: anchor, hours: h, source: 'partial' });
       continue;
     }
     if (req.start_date == null || req.end_date == null) continue;
@@ -119,6 +127,26 @@ function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours
     }
   }
   return totals;
+}
+
+/**
+ * How many hours short of the weekly-hours guarantee a period ran. The guarantee
+ * scales by whole weeks in [from,to]; a shortfall tops the period up to the floor.
+ * No guarantee configured (0/absent) → all zeros. (Lifted from admin.js so every
+ * pay surface shares one definition.)
+ */
+function computeGuaranteeShortfall(totalHours, guaranteedWeeklyHours, fromDate, toDate) {
+  if (!guaranteedWeeklyHours || parseFloat(guaranteedWeeklyHours) <= 0) return { shortfall: 0, minHours: 0, weeks: 0 };
+  let weeks = 1;
+  if (fromDate && toDate) {
+    const f = new Date(String(fromDate).substring(0, 10) + 'T00:00:00');
+    const t = new Date(String(toDate).substring(0, 10) + 'T00:00:00');
+    const days = Math.round((t - f) / (1000 * 60 * 60 * 24)) + 1;
+    weeks = Math.max(1, Math.round(days / 7));
+  }
+  const minHours = parseFloat(guaranteedWeeklyHours) * weeks;
+  const shortfall = Math.max(0, minHours - totalHours);
+  return { shortfall: +shortfall.toFixed(2), minHours: +minHours.toFixed(2), weeks };
 }
 
 /** Minutes since midnight from an "HH:MM[:SS]" string (null-safe). */
@@ -159,7 +187,12 @@ function nightPremiumCost(entries, nightCfg, baseRate) {
   if (!pct) return 0;
   const from = parseFloat(nightCfg.fromHour), to = parseFloat(nightCfg.toHour);
   if (!Number.isFinite(from) || !Number.isFinite(to)) return 0;
-  return entries.reduce((c, e) => c + nightHoursForEntry(e, from, to) * baseRate * (pct / 100), 0);
+  // Only 'regular' hours are priced at baseRate. Prevailing hours carry their own
+  // (prevailing) rate and leave has no punch, so applying a baseRate night premium
+  // to them would pay the differential at the wrong rate.
+  return entries.reduce((c, e) => e.wage_type === 'regular'
+    ? c + nightHoursForEntry(e, from, to) * baseRate * (pct / 100)
+    : c, 0);
 }
 
 /** "YYYY-MM-DD" shifted by `k` days, timezone-independent. Null on a bad key. */
@@ -191,7 +224,7 @@ function windowHoursForEntry(e, windowRules) {
   let en = hmToMin(e.end_time);
   if (s == null || en == null) return new Map();
   if (en <= s) en += 1440;                       // overnight shift (end == start → 0-length)
-  const d0 = String(e.work_date).substring(0, 10);
+  const d0 = ymd(e.work_date);
 
   // Collect covered [lo, hi, mult] segments in minutes-from-work_date-midnight.
   const segs = [];
@@ -380,7 +413,7 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
     auto.forEach(e => {
       const key = rule === 'weekly'
         ? weekBucketKey(e.work_date, weekStart)
-        : e.work_date.toString().substring(0, 10);
+        : ymd(e.work_date);
       buckets[key] = (buckets[key] || 0) + residualOf.get(e);
     });
 
@@ -406,16 +439,21 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
         seventhFirst += Math.min(h, firstT);
         seventhRest  += Math.max(0, h - firstT);
       } else {
+        // Band the actually-worked hours FIRST so overtime is preserved, THEN
+        // top the day up to the reporting-time floor with regular hours. The old
+        // code dumped the whole floor into regular whenever h < minD, which
+        // erased genuine OT on any day where the floor exceeded the OT threshold
+        // (e.g. minDaily 10, threshold 8, worked 9 → paid 10 reg / 0 OT instead
+        // of 9 reg + 1 OT). For the usual floor <= threshold this is identical.
+        const bb = bandsForBucket(rule, threshold, otConfig, dk);
+        autoReg += Math.min(h, bb[0].afterHours);
+        bb.forEach((b, i) => {
+          const upper = i + 1 < bb.length ? bb[i + 1].afterHours : Infinity;
+          addOt(Math.max(0, Math.min(h, upper) - b.afterHours), b.mult);
+        });
         const minD = minDailyForBucket(otConfig, rule, dk);
         if (minD > 0 && h < minD) {
-          autoReg += minD;                        // short day topped up to the floor
-        } else {
-          const bb = bandsForBucket(rule, threshold, otConfig, dk);
-          autoReg += Math.min(h, bb[0].afterHours);
-          bb.forEach((b, i) => {
-            const upper = i + 1 < bb.length ? bb[i + 1].afterHours : Infinity;
-            addOt(Math.max(0, Math.min(h, upper) - b.afterHours), b.mult);
-          });
+          autoReg += (minD - h);                  // reporting-time floor: pay the shortfall as regular
         }
       }
     });
@@ -528,7 +566,7 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
   // bucket by day (daily) or workweek (weekly); entries stay in chronological order
   const buckets = new Map();
   for (const e of auto) {
-    const key = rule === 'weekly' ? weekBucketKey(e.work_date, weekStart) : String(e.work_date).substring(0, 10);
+    const key = rule === 'weekly' ? weekBucketKey(e.work_date, weekStart) : ymd(e.work_date);
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key).push(e);
   }
@@ -590,7 +628,7 @@ function otBandsCost(otBands, baseRate, defaultMult) {
  */
 function computeDailyPayCosts(entries, overtimeRule, threshold, dailyRate, overtimeMultiplier, otConfig = null) {
   const regular = entries.filter(e => e.wage_type === 'regular');
-  const days = new Set(regular.map(e => e.work_date.toString().substring(0, 10))).size;
+  const days = new Set(regular.map(e => ymd(e.work_date))).size;
   if (overtimeRule === 'none') {
     return { regularCost: days * dailyRate, overtimeCost: 0 };
   }
@@ -601,4 +639,4 @@ function computeDailyPayCosts(entries, overtimeRule, threshold, dailyRate, overt
   };
 }
 
-module.exports = { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, resolveBands, nightHoursForEntry, nightPremiumCost, windowHoursForEntry, shiftHoursByDate, computeLeaveHours };
+module.exports = { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, resolveBands, nightHoursForEntry, nightPremiumCost, windowHoursForEntry, shiftHoursByDate, computeLeaveHours, computeGuaranteeShortfall };

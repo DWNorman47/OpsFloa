@@ -40,6 +40,33 @@ async function requireAuth(req, res, next) {
       // DB hiccup — fail closed for safety.
       return res.status(503).json({ error: 'Auth service temporarily unavailable' });
     }
+  } else if (payload.imp) {
+    // Impersonation ("Login as") tokens carry no tv, so the block above skips
+    // them — but over the token's 4h life either party can change:
+    //   - the impersonated user could be deactivated (offboarded), and must
+    //     lose access immediately, not at token expiry;
+    //   - the super-admin who started the session could be deactivated or
+    //     demoted, and their live impersonation must end at once.
+    try {
+      const { rows } = await pool.query(
+        `SELECT
+           (SELECT active FROM users WHERE id = $1)      AS target_active,
+           (SELECT active FROM users WHERE id = $2)      AS imp_active,
+           (SELECT role   FROM users WHERE id = $2)      AS imp_role`,
+        [payload.id, payload.imp_by ?? null]
+      );
+      const row = rows[0] || {};
+      if (row.target_active === false) {
+        return res.status(401).json({ error: 'Account deactivated' });
+      }
+      // imp_by is absent on tokens minted before this claim existed; only
+      // enforce the impersonator check when the token carries it.
+      if (payload.imp_by != null && (row.imp_active !== true || row.imp_role !== 'super_admin')) {
+        return res.status(401).json({ error: 'Impersonation session ended' });
+      }
+    } catch (err) {
+      return res.status(503).json({ error: 'Auth service temporarily unavailable' });
+    }
   }
 
   req.user = payload;
@@ -211,8 +238,8 @@ async function requireTakeoffAddon(req, res, next) {
 }
 
 // Any plan-tools add-on unlocks the shared library routes (/api/takeoffs
-// serves both the sitework takeoff tool and Plan Room, list-filtered by the
-// data.app marker). M6 of docs/plans/plan-viewer-markup.md adds the
+// serves the Plan Room takeoff library, list-filtered by the data.app
+// marker). M6 of docs/plans/plan-viewer-markup.md adds the
 // addon_planroom column + flag to this check when that SKU lands.
 async function requirePlanToolsAddon(req, res, next) {
   try {

@@ -1,7 +1,7 @@
 /**
  * jumpstartToMarkups — the client converter that turns the vision model's
  * structured draft into Plan Room markups. Lifted verbatim from planroom/app.js
- * (same pattern as the sitework converter) so the test exercises the real code.
+ * so the test exercises the real code, not a re-implementation.
  *
  * The crux: coordinates arrive NORMALIZED [0,1] of the page image and must be
  * scaled to base px (normalized × page dims). A wrong scaling drops every marker

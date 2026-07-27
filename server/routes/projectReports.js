@@ -18,24 +18,29 @@ async function assertProjectInCompany(companyId, projectId) {
   return r.rows[0] || null;
 }
 
-// Sum invoice money for a project — returns cents.
-// billed = SUM(amount) over any invoice (sent → has a number); we DON'T
-//   exclude unknown because in QBO-synced flows unknown means "we don't
-//   know yet" not "not sent"
-// collected = SUM(amount - balance) — what actually came in
-async function invoiceTotals(projectId) {
+// Sum invoice money for a project — returns cents, from the native `invoices`
+// table (QBO-synced rows live here too since the unification; project_invoices
+// is retired). Void invoices are excluded from both figures.
+// billed    = SUM(total_cents) over non-void invoices
+// collected = SUM(invoice_payments.amount_cents) for those invoices
+async function invoiceTotals(projectId, companyId) {
   try {
     const r = await pool.query(
       `SELECT
-         COALESCE(SUM(amount), 0)            AS billed_dollars,
-         COALESCE(SUM(amount - COALESCE(balance, 0)), 0) AS collected_dollars
-       FROM project_invoices
-       WHERE project_id = $1`,
-      [projectId]
+         COALESCE(SUM(i.total_cents), 0) AS billed_cents,
+         COALESCE((
+           SELECT SUM(p.amount_cents)
+             FROM invoice_payments p
+             JOIN invoices i2 ON i2.id = p.invoice_id
+            WHERE i2.project_id = $1 AND i2.company_id = $2 AND i2.status <> 'void'
+         ), 0) AS collected_cents
+       FROM invoices i
+      WHERE i.project_id = $1 AND i.company_id = $2 AND i.status <> 'void'`,
+      [projectId, companyId]
     );
     return {
-      billed_cents:    Math.round(parseFloat(r.rows[0].billed_dollars) * 100),
-      collected_cents: Math.round(parseFloat(r.rows[0].collected_dollars) * 100),
+      billed_cents:    parseInt(r.rows[0].billed_cents, 10) || 0,
+      collected_cents: parseInt(r.rows[0].collected_cents, 10) || 0,
     };
   } catch {
     return { billed_cents: 0, collected_cents: 0 };
@@ -154,7 +159,7 @@ router.get('/projects/:id/pnl', requireAuth, async (req, res) => {
     const [contractValue, spend, invoices] = await Promise.all([
       contractValueCents(req.params.id),
       spendTotals(req.params.id, settings),
-      invoiceTotals(req.params.id),
+      invoiceTotals(req.params.id, companyId),
     ]);
 
     // gross_profit = revenue billed − cost spent  (lagging actual)
@@ -198,7 +203,7 @@ router.get('/projects/pnl-summary', requireAuth, async (req, res) => {
       const [contractValue, spend, invoices] = await Promise.all([
         contractValueCents(p.id),
         spendTotals(p.id, settings),
-        invoiceTotals(p.id),
+        invoiceTotals(p.id, companyId),
       ]);
       const gross_profit_cents     = invoices.billed_cents - spend.spent_cents;
       const projected_profit_cents = contractValue - (spend.spent_cents + spend.committed_cents);
@@ -245,7 +250,7 @@ router.get('/wip-report', requireAuth, async (req, res) => {
       const [contractValue, spend, invoices, budgetSum] = await Promise.all([
         contractValueCents(p.id),
         spendTotals(p.id, settings),
-        invoiceTotals(p.id),
+        invoiceTotals(p.id, companyId),
         (async () => {
           try {
             const r = await pool.query(
@@ -322,7 +327,7 @@ router.get('/wip-report/export', requireAuth, async (req, res) => {
     res.write(headers.join(',') + '\n');
     for (const p of projRes.rows) {
       const [contractValue, spend, invoices, budgetSum] = await Promise.all([
-        contractValueCents(p.id), spendTotals(p.id, csvSettings), invoiceTotals(p.id),
+        contractValueCents(p.id), spendTotals(p.id, csvSettings), invoiceTotals(p.id, companyId),
         (async () => {
           try {
             const r = await pool.query(
