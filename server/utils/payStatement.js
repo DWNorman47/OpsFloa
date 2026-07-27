@@ -129,6 +129,11 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     for (const e of paid) {
       const ex = e.explain || (e.explain = []);
       if (e.wage_type === 'prevailing') ex.push({ code: 'wage_type', wageType: 'prevailing' });
+      // The entry's own logged break silently reduces paid hours and was never
+      // traced (only rule-driven auto_break was). When a rule changed the break
+      // (raw_break_minutes set), the auto_break item already explains it; otherwise
+      // this surfaces the break that's recorded on the entry so it's visible.
+      if ((e.break_minutes || 0) > 0 && e.raw_break_minutes == null) ex.push({ code: 'break_logged', breakMin: e.break_minutes });
       if ((e.overtime_hours || 0) > 0) ex.push({ code: 'overtime', otHours: e.overtime_hours, reason: e.overtime_reason || (rule === 'weekly' ? 'weekly' : 'daily'), threshold, rule });
     }
     settingsUsed = {

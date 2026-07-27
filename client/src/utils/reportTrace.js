@@ -62,6 +62,9 @@ export function renderTraceItem(item, { t, policyRaw }) {
       const base = t.trBreak.replace('{n}', item.addedMin).replace('{total}', item.breakMin);
       return { text: withRule(base, rulesText(item.ruleIds)), link: SETTINGS_LINKS.hours_rules };
     }
+    case 'break_logged':
+      // The break recorded on the entry itself (not from a rule) — no setting to link to.
+      return { text: t.trBreakLogged.replace('{n}', item.breakMin), link: null };
     case 'overtime': {
       // Explain WHY the overtime applies, not a blanket "over Nh daily".
       const n = item.otHours;

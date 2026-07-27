@@ -140,3 +140,19 @@ describe('buildPayStatement — anti-drift contract', () => {
     expect(st.totals.grossWages).toBe(420);
   });
 });
+
+describe('buildPayStatement — explain trace surfaces the break', () => {
+  test("an entry's logged break is a trace item, not invisible", () => {
+    // The confusion David hit: a 30-min break silently cut paid hours with no
+    // trace line. It should show up as a 'break_logged' explain item.
+    const st = build({ entries: [entry({ break_minutes: 30 })], explain: true });
+    const ex = st.entries[0].explain || [];
+    expect(ex.some(i => i.code === 'break_logged' && i.breakMin === 30)).toBe(true);
+  });
+
+  test('no break → no break trace item', () => {
+    const st = build({ entries: [entry({ break_minutes: 0 })], explain: true });
+    const ex = st.entries[0].explain || [];
+    expect(ex.some(i => i.code === 'break_logged')).toBe(false);
+  });
+});

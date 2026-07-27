@@ -106,6 +106,24 @@ real paycheck until David merges to prod.
 
 ---
 
+## 2026-07-26 — Traceability: surface the entry's own break in the trace
+
+David spotted a 30-min break he didn't set. Root cause = **demo data**: the seed
+stamps `break_minutes: i % 2 === 0 ? 30 : 0` on alternating entries
+(`seed-demo-data.js:1303`), stored on the entry. Not a bug in the engine — but the
+trace **never showed it**: `roundEntriesForPay` only emits an `auto_break` item
+when a *rule* changes the break (`hoursRules.js:1230`); an entry's own logged break
+silently cut paid hours with no explanation. (The engine takes `max(rule break,
+logged break)`, so a real 60-min auto_break rule would raise it to 60 — if such a
+rule is actually in the saved `hours_rules` policy and fires.)
+
+Fix: the pay statement now pushes a `break_logged` explain item for any entry whose
+break wasn't rule-adjusted (`raw_break_minutes` unset), rendered as "{n} min break
+— recorded on the time entry" (`reportTrace.js`, i18n EN+ES). So the break is
+visible and traceable instead of a phantom deduction. Tests pin it. 1123 pass.
+
+---
+
 ## 2026-07-26 — Overtime explanations now say WHY (traceability)
 
 Found via David eyeballing a demo bill: an entry showed "8.5h overtime — over 8h
