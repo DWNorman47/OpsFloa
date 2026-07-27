@@ -114,15 +114,21 @@ row before writing code — that's the whole point of doing this first.
    weighted-average) in `ManageRates.jsx`'s overtime section, with a help tip;
    `ratesRateMethod*` i18n keys EN+ES. Done 2026-07-26.
 
-## Remaining (low priority)
+## Done — leftovers cleared 2026-07-26
 
-- **WorkerSummary "estimated pay"** (`WorkerSummary.jsx:108`) still prices
-  prevailing flat + OT at the regular rate via its own client `computeOT`. It's a
-  labeled *estimate*; making it exact means porting the calculator to the browser.
-  Acceptable as an approximation; may slightly understate for prevailing workers.
-- **OT-multiplier labels** on `BillPDF.jsx`/`ProjectBillPDF.jsx` (`Overtime Pay
-  (1.5×)`) — the dollar figure is correct (read from `cost.overtime`); only the
-  implied `hours × rate × 1.5` in the label is stale when OT spans two rates.
+- ✅ **WorkerSummary "estimated pay"** — replaced its client `computeOT` with a
+  rate-aware `rateAwareSplit` (mirrors the server's default rate-when-worked, single
+  multiplier): all worked hours count toward one threshold, prevailing/multi-rate
+  hours earn OT, hours stats + the estimate both updated. Still a client duplicate
+  of the engine (a known drift risk we accepted deliberately); it's an *estimate*
+  and doesn't model tiers/premiums or the weighted-average method.
+- ✅ **OT-multiplier labels** on `BillPDF`/`ProjectBillPDF`/`ProjectsPage` — now
+  show the overtime **hours** ("Overtime — 8.00 hrs") instead of the misleading
+  "× 1.5x"; the dollar figures were always correct.
+
+**Whole feature complete.** Only future extension left is per-project /
+per-classification OT overrides (build-order step 3, Phase 2) if a customer ever
+needs a job whose wage determination differs from their company rule.
 
 ## Known edge to decide later, not guess now
 

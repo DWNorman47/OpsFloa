@@ -32,45 +32,65 @@ function entryHours(e) {
   return (en - s) / 3600000 - (e.break_minutes || 0) / 60;
 }
 
-// Client mirror of server/utils/payCalculations.js computeOT. Kept in sync by
-// hand because the worker's WorkerSummary needs the same numbers the server
-// will pay them. Must honor overtime_hours_override the same way the server does.
-function computeOT(entries, rule, threshold) {
-  const regular = entries.filter(e => e.wage_type === 'regular');
-  const overridden = regular.filter(e => e.overtime_hours_override != null);
-  const auto       = regular.filter(e => e.overtime_hours_override == null);
+// Client mirror of the server's rate-aware overtime (server/utils/rateAwareOvertime.js,
+// default "rate when worked" method, single multiplier). Kept in sync by hand so
+// the worker's own estimate matches what they'll be paid. This is an ESTIMATE:
+// it doesn't model tiered/rest-day/7th-day premiums or the weighted-average
+// method. ALL worked hours (regular + prevailing) count toward one threshold, and
+// each overtime hour is paid at the rate it earned. Honors overtime_hours_override.
+function rateAwareSplit(entries, { rule, threshold, mult, rate, prevailingRate }) {
+  const worked = entries.filter(e => e.start_time && e.end_time);
+  const baseRateOf = e => (e.wage_type === 'prevailing' ? (parseFloat(prevailingRate) || 0) : rate);
+  const otOf = new Map();
 
-  let overrideReg = 0, overrideOt = 0;
-  for (const e of overridden) {
-    const total = entryHours(e);
-    const ot = Math.max(0, Math.min(total, parseFloat(e.overtime_hours_override)));
-    overrideReg += total - ot;
-    overrideOt  += ot;
+  // Per-entry override carved out first (as the server does).
+  const auto = [];
+  for (const e of worked) {
+    if (e.overtime_hours_override != null) {
+      const total = entryHours(e);
+      otOf.set(e, Math.max(0, Math.min(total, parseFloat(e.overtime_hours_override))));
+    } else auto.push(e);
   }
 
-  let autoReg = 0, autoOt = 0;
-  if (rule === 'weekly') {
-    const weekly = {};
-    auto.forEach(e => {
-      const d = new Date(e.work_date.substring(0, 10) + 'T00:00:00');
-      const jan4 = new Date(d.getFullYear(), 0, 4);
-      const week = Math.ceil(((d - jan4) / 86400000 + jan4.getDay() + 1) / 7);
-      const key = `${d.getFullYear()}-W${week}`;
-      weekly[key] = (weekly[key] || 0) + entryHours(e);
-    });
-    autoReg = Object.values(weekly).reduce((s, h) => s + Math.min(h, threshold), 0);
-    autoOt  = Object.values(weekly).reduce((s, h) => s + Math.max(h - threshold, 0), 0);
+  if (rule === 'none') {
+    for (const e of auto) otOf.set(e, 0);
   } else {
-    const daily = {};
-    auto.forEach(e => { daily[e.work_date.substring(0, 10)] = (daily[e.work_date.substring(0, 10)] || 0) + entryHours(e); });
-    autoReg = Object.values(daily).reduce((s, h) => s + Math.min(h, threshold), 0);
-    autoOt  = Object.values(daily).reduce((s, h) => s + Math.max(h - threshold, 0), 0);
+    const bucketKey = e => {
+      if (rule === 'weekly') {
+        const d = new Date(e.work_date.substring(0, 10) + 'T00:00:00');
+        const jan4 = new Date(d.getFullYear(), 0, 4);
+        const week = Math.ceil(((d - jan4) / 86400000 + jan4.getDay() + 1) / 7);
+        return `${d.getFullYear()}-W${week}`;
+      }
+      return e.work_date.substring(0, 10);
+    };
+    const buckets = {};
+    for (const e of auto) { const k = bucketKey(e); (buckets[k] = buckets[k] || []).push(e); }
+    for (const es of Object.values(buckets)) {
+      // Chronological fill: straight time up to the threshold, the rest overtime.
+      es.sort((a, b) => `${a.work_date}${a.start_time || ''}`.localeCompare(`${b.work_date}${b.start_time || ''}`));
+      let regLeft = threshold;
+      for (const e of es) {
+        const total = entryHours(e);
+        const reg = Math.max(0, Math.min(total, regLeft));
+        otOf.set(e, total - reg);
+        regLeft -= reg;
+      }
+    }
   }
 
-  return {
-    regularHours:  overrideReg + autoReg,
-    overtimeHours: overrideOt  + autoOt,
-  };
+  let regularHours = 0, overtimeHours = 0, prevailingHours = 0, cost = 0;
+  for (const e of worked) {
+    const total = entryHours(e);
+    const ot = otOf.get(e) || 0;
+    const st = total - ot;
+    const br = baseRateOf(e);
+    overtimeHours += ot;
+    cost += st * br + ot * br * mult;
+    if (e.wage_type === 'prevailing') prevailingHours += st;
+    else regularHours += st;
+  }
+  return { regularHours, overtimeHours, prevailingHours, cost };
 }
 
 export default function WorkerSummary({ entries, hourlyRate, rateType = 'hourly', overtimeMultiplier = 1.5, prevailingRate = 0, overtimeRule = 'daily', overtimeThreshold = 8, weekStart = 1, showWages = false, currency = 'USD', overtimeEnabled = true }) {
@@ -95,17 +115,22 @@ export default function WorkerSummary({ entries, hourlyRate, rateType = 'hourly'
   }, [entries, from, to]);
 
   const totalHours = filtered.reduce((sum, e) => sum + entryHours(e), 0);
-  const { regularHours, overtimeHours } = computeOT(filtered, overtimeRule, overtimeThreshold);
-  const prevailingHours = filtered.filter(e => e.wage_type === 'prevailing').reduce((s, e) => s + entryHours(e), 0);
-
   const rate = parseFloat(hourlyRate) || 30;
+  // Straight regular / all overtime / straight prevailing + the hourly cost —
+  // prevailing & multi-rate hours now earn overtime, matching the server.
+  const { regularHours, overtimeHours, prevailingHours, cost: hourlyCost } = rateAwareSplit(
+    filtered, { rule: overtimeRule, threshold: overtimeThreshold, mult: overtimeMultiplier, rate, prevailingRate }
+  );
+
   let estimatedPay;
   if (rateType === 'daily') {
-    const regularDays = new Set(filtered.filter(e => e.wage_type === 'regular').map(e => e.work_date.toString().substring(0, 10))).size;
+    const regularDays = new Set(filtered.filter(e => e.wage_type === 'regular').map(e => String(e.work_date).substring(0, 10))).size;
+    // Daily-rate workers earn per worked day; overtime + prevailing are estimated
+    // hourly on top (an approximation — exact daily-rate math lives server-side).
     const otCost = overtimeHours * (rate / overtimeThreshold) * overtimeMultiplier;
-    estimatedPay = (regularDays * rate) + otCost + (prevailingHours * prevailingRate);
+    estimatedPay = (regularDays * rate) + otCost + (prevailingHours * (parseFloat(prevailingRate) || 0));
   } else {
-    estimatedPay = (regularHours * rate) + (overtimeHours * rate * overtimeMultiplier) + (prevailingHours * prevailingRate);
+    estimatedPay = hourlyCost;
   }
 
   const byProject = {};
