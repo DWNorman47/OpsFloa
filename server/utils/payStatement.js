@@ -241,9 +241,15 @@ async function companyStatements({ companyId, workers, settings, from, to }) {
 
   const [entriesR, dedR, projectRateMap, leaveByUser] = await Promise.all([
     pool.query(
+      // ORDER BY is REQUIRED, not cosmetic: rate-aware OT attributes overtime to
+      // the chronologically-later hours and prices each at its own rate, so the
+      // gross depends on entry order. The single-worker loaders order the same
+      // way; without this, the overtime report / payroll CSV could disagree with
+      // the invoice for a multi-rate worker (nondeterministic DB scan order).
       `SELECT te.user_id, te.project_id, te.wage_type, te.start_time, te.end_time, to_char(te.work_date, 'YYYY-MM-DD') AS work_date, te.break_minutes, te.mileage
        FROM time_entries te
-       WHERE te.company_id = $1 AND te.work_date >= $2 AND te.work_date <= $3 AND te.status = 'approved'`,
+       WHERE te.company_id = $1 AND te.work_date >= $2 AND te.work_date <= $3 AND te.status = 'approved'
+       ORDER BY te.user_id, te.work_date ASC, te.start_time ASC`,
       [companyId, from, to]
     ),
     pool.query(

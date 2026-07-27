@@ -1699,7 +1699,7 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
       const otConfig = otConfigByRole(role_id);
       if (rate_type !== 'daily' && hasSimpleOtConfig(otConfig)) {
         const baseRateOf = e => (e.wage_type === 'prevailing' ? effectivePrevRate : rate);
-        const s = splitRateAware(items, { rule: overtime_rule, threshold: settings.overtime_threshold, weekStart: settings.week_start, otMult: settings.overtime_multiplier, baseRateOf, method: otMethod });
+        const s = splitRateAware(items, { rule: overtime_rule, threshold: parseFloat(settings.overtime_threshold) || 8, weekStart: settings.week_start, otMult: parseFloat(settings.overtime_multiplier) || 1.5, baseRateOf, method: otMethod });
         for (const e of items) e.overtime_hours = 0;
         s.worked.forEach((e, i) => { e.overtime_hours = s.perEntry[i].ot; });
         regularHours += s.regularHours; overtimeHours += s.overtimeHours; prevailingHours += s.prevailingHours;
@@ -3505,7 +3505,10 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_reports'), requ
 
     const s = await getSettings(companyId);
     const defaultRate = parseFloat(s.default_hourly_rate) || 30;
-    const prevRate = projectPrevRate ?? parseFloat(s.prevailing_wage_rate) ?? 45;
+    // Number.isFinite guards the NaN hole: parseFloat(undefined) is NaN, and
+    // `NaN ?? 45` stays NaN (nullish only catches null/undefined) — which would
+    // make every prevailing cost + the OT math + gross NaN on the report.
+    const prevRate = Number.isFinite(projectPrevRate) ? projectPrevRate : (parseFloat(s.prevailing_wage_rate) || 45);
 
     const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
     const emptyDays = () => ({ mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0, sun: 0 });
@@ -3547,7 +3550,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_reports'), requ
 
       if (hasSimpleOtConfig(otConfig)) {
         const baseRateOf = e => (e.wage_type === 'prevailing' ? prevRate : w.rate);
-        const split = splitRateAware(w.items, { rule: w.overtime_rule, threshold: s.overtime_threshold, weekStart: s.week_start, otMult, baseRateOf, method: otMethod });
+        const split = splitRateAware(w.items, { rule: w.overtime_rule, threshold: parseFloat(s.overtime_threshold) || 8, weekStart: s.week_start, otMult, baseRateOf, method: otMethod });
         split.worked.forEach((e, i) => {
           const p = split.perEntry[i];
           const dk = dayKeyOf(e);

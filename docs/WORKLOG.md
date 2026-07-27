@@ -106,6 +106,42 @@ real paycheck until David merges to prod.
 
 ---
 
+## 2026-07-26 — Rate-aware overtime: review sweep (5 agents) + fixes
+
+Ran a 5-agent adversarial review over the whole rate-aware overtime feature
+(calculator core, buildPayStatement integration, the 3 consolidated engines, the
+client, the settings plumbing). Verified every finding against the code before
+touching anything. Two HIGH bugs, both money:
+
+1. **`hasSimpleOtConfig` flattened fixed-slot tiered OT** (found independently by
+   3 agents). `otConfigFromSettings` emits tiers in TWO shapes — custom `ot_tier`
+   rules (`tierRules`) AND fixed-slot `dailyBands`/`weeklyBands` (un-migrated from
+   stored policies). The gate only checked the former, so a company with e.g. a
+   California `8h@1.5× / 12h@2×` policy stored as bands routed through the flat
+   rate-aware path and lost the 2× tier — silent underpay across ALL surfaces
+   (invoice, CSV, stubs, project bill, QBO, WH-347). Fixed: gate on the bands too
+   (any → per-band engine). Added `hasSimpleOtConfig` unit tests (the path was
+   entirely uncovered).
+2. **`companyStatements` had no `ORDER BY`.** The rate-aware engine attributes OT
+   to the chronologically-later hours and prices each at its own rate, so gross is
+   order-dependent — but the company-wide loader (overtime report + payroll CSV)
+   fed entries in raw DB order while the invoice/stub loaders order chronologically.
+   Same worker → different gross on different surfaces, nondeterministically. Fixed
+   with the matching `ORDER BY`.
+
+Plus three lower ones: **NaN prevailing rate** on the WH-347 when a company has no
+prevailing rate set (`parseFloat(undefined) ?? 45` stays NaN → NaN gross); the
+**qbo** bill query missing `ORDER BY` (latent — benign only because QBO prices at a
+flat rate); and the **WorkerSummary** weekly estimate ignoring `week_start`. All
+fixed. Also added defensive `parseFloat(threshold)||8` coalesces.
+
+Verified-clean (no action): regular-only regression = byte-identical; night
+differential correctly routes to the per-band path; splitRateAware reconciles by
+construction; no surface re-derives OT cost the old way; QBO premium formula
+correct; certified-payroll response is a superset. 1116 pass.
+
+---
+
 ## 2026-07-26 — Rate-aware overtime: the money core (increment 1 of the build)
 
 Approved the plan (`docs/plans/rate-aware-overtime.md`) + David's ask to make the

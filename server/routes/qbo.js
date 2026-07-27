@@ -688,7 +688,8 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
           AND ($2::date IS NULL OR te.work_date >= $2::date)
           AND ($3::date IS NULL OR te.work_date <= $3::date)
           AND ($4::int[] IS NULL OR te.user_id = ANY($4::int[]))
-          AND u.qbo_vendor_id IS NOT NULL`,
+          AND u.qbo_vendor_id IS NOT NULL
+        ORDER BY te.user_id, te.work_date, te.start_time`,
       [companyId, from || null, to || null, ids]
     ),
     pool.query(
