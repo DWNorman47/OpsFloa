@@ -23,6 +23,38 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-28 — Billing bug: Business checkout overcharged for extra workers ⚠️
+
+**Symptom (David):** buying Business with extra members shows the right price in
+the app but a higher one on Stripe. Example: 28 team members → app says $610/yr,
+Stripe checkout said **$910/yr**.
+
+**Root cause:** `client/src/components/BillingPanel.jsx` sent the per-worker Stripe
+line item a quantity of `workerCount` (the *full* team size, 28) instead of the
+overage beyond the 15 included in the base plan (28 − 15 = **13**). The base price
+already bundles 15 seats, so Stripe billed 15 twice: base ($350, incl. 15) + 28
+extra × $20 = $910. Correct is base + 13 × $20 = $610. The *display* math was right
+all along (it used `businessOverage`); only the two checkout calls used the raw
+count. The server (`/stripe/checkout`) just passes `worker_count` through as the
+quantity — its contract is "extras only", which the client was violating.
+
+**Fix:** both checkout call sites now send `businessOverage` (= max(0, workerCount
+− INCLUDED_WORKERS)). Hoisted `INCLUDED_WORKERS = 15` to module scope with a comment
+tying it to the seats built into `STRIPE_PRICE_BUSINESS_BASE`, and moved the
+`businessOverage` computation up next to the state so the earlier `subscribeSelectedPlan`
+handler shares the one value (no duplicated formula, no use-before-declare).
+
+⚠️ **Remediation — check existing subs.** Anyone who bought Business-with-extras
+through this flow *before* today was overcharged (billed for total workers, not
+extras). Worth auditing Stripe for business subscriptions where the Additional
+Worker quantity equals total team size instead of team−15, and correcting/crediting.
+
+⚠️ **Note:** `INCLUDED_WORKERS = 15` is a client constant that must stay in lockstep
+with whatever seat count is baked into the Stripe base price. If that base ever
+changes, this constant has to change with it — the server has no notion of "included
+workers" to cross-check against. Candidate to move into the `/stripe/plans` payload
+later so there's one source of truth. Parked in BACKLOG.
+
 ## 2026-07-27 — Payroll run: CSV export + finalize/record a run
 
 The Payroll tab could compute a run live but couldn't *do* anything with it. Two

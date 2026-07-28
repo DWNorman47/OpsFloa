@@ -104,6 +104,13 @@ that holds the exhaustive detail.
 
 ## 🧭 Design flaws — raised, set aside for later
 
+- **"Included workers" (15) is duplicated between client and Stripe.** The Business
+  base price bundles 15 seats; the client hardcodes `INCLUDED_WORKERS = 15` in
+  `BillingPanel.jsx` to compute the per-worker overage sent to checkout. If the
+  Stripe base ever bundles a different count, the constant silently drifts and we
+  over/undercharge (this exact drift caused the 2026-07-28 overcharge bug). Fix:
+  surface `included_workers` in the `/stripe/plans` payload so there's one source of
+  truth and the server can also sanity-check the quantity. (2026-07-28)
 - ~~**Company-share conflict model is fork-only.**~~ **RESOLVED 2026-07-14.** The
   conflict dialog is now 3-way (Keep both / Overwrite theirs / Cancel), and a
   **manual, admin-releasable lock** (migration 0138) lets a user reserve a shared

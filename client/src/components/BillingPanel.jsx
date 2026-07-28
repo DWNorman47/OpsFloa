@@ -5,6 +5,12 @@ import { useAuth } from '../contexts/AuthContext';
 import { SkeletonList } from './Skeleton';
 
 import { silentError } from '../errorReporter';
+
+// Workers bundled into the Business base price. The per-worker Stripe line item
+// is billed for workers BEYOND this — so checkout must send (team size − this),
+// not the full team size. Must match the seats built into STRIPE_PRICE_BUSINESS_BASE.
+const INCLUDED_WORKERS = 15;
+
 function daysLeft(dateStr) {
   if (!dateStr) return 0;
   return Math.max(0, Math.ceil((new Date(dateStr) - new Date()) / 86400000));
@@ -78,6 +84,10 @@ export default function BillingPanel() {
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [workerInputMode, setWorkerInputMode] = useState('slider');
   const [workerDraft, setWorkerDraft] = useState('');
+
+  // Additional workers to bill (beyond the base plan's included seats). This is
+  // the Stripe per-worker quantity — NOT the total team size.
+  const businessOverage = Math.max(0, workerCount - INCLUDED_WORKERS);
 
   useEffect(() => {
     Promise.all([api.get('/stripe/status'), api.get('/stripe/plans')])
@@ -200,8 +210,8 @@ export default function BillingPanel() {
       checkout(
         annual ? plans?.business.base_annual_price_id : plans?.business.base_monthly_price_id,
         annual
-          ? { worker_price_id: plans?.business.worker_annual_price_id, worker_count: workerCount }
-          : { worker_price_id: plans?.business.worker_monthly_price_id, worker_count: workerCount }
+          ? { worker_price_id: plans?.business.worker_annual_price_id, worker_count: businessOverage }
+          : { worker_price_id: plans?.business.worker_monthly_price_id, worker_count: businessOverage }
       );
     }
   };
@@ -301,9 +311,6 @@ export default function BillingPanel() {
       </div>
     );
   };
-
-  const INCLUDED_WORKERS = 15;
-  const businessOverage = Math.max(0, workerCount - INCLUDED_WORKERS);
 
   const BASE_MONTHLY = plans?.business.base_monthly ?? 35;
   const PER_WORKER_MONTHLY = plans?.business.per_worker_monthly ?? 2;
@@ -533,8 +540,8 @@ export default function BillingPanel() {
                 : checkout(
                   annual ? plans?.business.base_annual_price_id : plans?.business.base_monthly_price_id,
                   annual
-                    ? { worker_price_id: plans?.business.worker_annual_price_id, worker_count: workerCount }
-                    : { worker_price_id: plans?.business.worker_monthly_price_id, worker_count: workerCount }
+                    ? { worker_price_id: plans?.business.worker_annual_price_id, worker_count: businessOverage }
+                    : { worker_price_id: plans?.business.worker_monthly_price_id, worker_count: businessOverage }
                 )
               }
               t={t}
