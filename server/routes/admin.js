@@ -3859,11 +3859,28 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_reports'), requ
         regular_total = split.regularHours; prevailing_total = split.prevailingHours; overtime_total = split.overtimeHours;
         regular_cost = split.regularCost; prevailing_cost = split.prevailingCost; overtime_cost = split.overtimeCost;
       } else {
-        // Flat fallback (premium configs): no prevailing OT, as before.
-        for (const e of w.items) {
+        // Premium OT config (tiers / rest-day / night / min-daily): run the SAME OT
+        // engine as the pay statement and project bill so overtime isn't silently
+        // dropped on the WH-347. OT on regular entries only; prevailing stays flat
+        // (matches buildPayStatement's premium path). Previously this fell back to
+        // flat hours and reported zero overtime — understating OT hours and gross.
+        const threshold = parseFloat(s.overtime_threshold) || 8;
+        const reg = w.items.filter(e => e.wage_type === 'regular');
+        const { regularHours: rh, overtimeHours: oh, otBands } = computeOT(reg, w.overtime_rule, threshold, s.week_start, otConfig);
+        annotateEntryOvertime(reg, w.overtime_rule, threshold, s.week_start, otConfig);
+        for (const e of reg) {
           const h = dur(e), dk = dayKeyOf(e);
-          if (e.wage_type === 'prevailing') { prevailing_days[dk] = +(prevailing_days[dk] + h).toFixed(2); prevailing_total += h; prevailing_cost += h * prevRate; }
-          else { regular_days[dk] = +(regular_days[dk] + h).toFixed(2); regular_total += h; regular_cost += h * w.rate; }
+          const otH = Math.min(Math.max(0, e.overtime_hours || 0), h);
+          if (otH) ot_days[dk] = +(ot_days[dk] + otH).toFixed(2);
+          regular_days[dk] = +(regular_days[dk] + (h - otH)).toFixed(2);
+        }
+        regular_total = rh; overtime_total = oh;
+        regular_cost = rh * w.rate;
+        overtime_cost = otBandsCost(otBands, w.rate, otMult);
+        for (const e of w.items.filter(e => e.wage_type === 'prevailing')) {
+          const h = dur(e), dk = dayKeyOf(e);
+          prevailing_days[dk] = +(prevailing_days[dk] + h).toFixed(2);
+          prevailing_total += h; prevailing_cost += h * prevRate;
         }
       }
       return {

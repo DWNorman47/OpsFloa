@@ -23,6 +23,34 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-28 — Certified Payroll dropped overtime under premium OT policies
+
+**David:** Certified Payroll and a worker's Team Member Report disagreed for the same
+week — and the report's total (12h15m) didn't match its one visible entry (8h45m).
+
+Traced both engines (subagent). Findings:
+
+- **8h45m vs 8h15m is not a bug.** Both pay paths subtract the 30-min break once →
+  8.25h worked. The entry row just displays raw elapsed (8h45m); the pay math uses 8.25h.
+- **The 12h15m is a `guaranteed_weekly_hours` top-up** (~4h) on top of 8.25h worked.
+  The server keeps it separate (`hours.regular` vs `hours.guaranteeShortfall`) and the
+  **current** Team Member UI already shows it as its own "Minimum guarantee" line
+  ([WorkerMetrics.jsx:368]). The screenshot showing it folded into "Regular 12h" is a
+  **stale cached client** — nothing to fix server-side; a hard refresh shows the split.
+- **Real bug — Certified Payroll's `computeWorker` dropped overtime entirely** whenever
+  the company's `hours_rules` isn't a "simple" OT config (`hasSimpleOtConfig` false →
+  tiers / rest-day / night / min-daily). Its premium branch summed flat hours with
+  **zero OT**, so the WH-347 understated OT hours and gross (Alex: $264 instead of $268;
+  0 OT instead of 15m). Every other surface (pay statement, project bill) runs the real
+  OT engine.
+
+**Fix:** the premium branch now uses the same engine as the project bill /
+buildPayStatement — `computeOT` + `annotateEntryOvertime` + `otBandsCost` on the
+regular entries (prevailing stays flat), bucketing the per-entry OT into the day
+columns. So the WH-347 shows the same regular/OT split and gross the rest of payroll
+does. (Only affected companies with a premium hours-rules policy; simple/absent configs
+already went through `splitRateAware` and were correct.)
+
 ## 2026-07-28 — Certified Payroll counted unapproved hours (inconsistent with all other pay)
 
 **David:** the Certified Payroll report showed Marcus Chen 8h 15m / $297 for the
