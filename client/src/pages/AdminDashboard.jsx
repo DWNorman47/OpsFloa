@@ -352,11 +352,7 @@ export function WorkforcePanel() {
                 </p>
                 <Suspense fallback={<TabLoader />}><PayrollRun currency={settings?.currency ?? 'USD'} onFinalized={() => setPayrollHistoryKey(k => k + 1)} /></Suspense>
                 <Suspense fallback={<TabLoader />}><PayrollHistory currency={settings?.currency ?? 'USD'} refreshKey={payrollHistoryKey} /></Suspense>
-                <button ref={el => { sectionRefs.current.payroll = el; }} type="button" style={styles.sectionToggle} onClick={() => toggleSection('payroll')}>
-                  <span>{t.certifiedPayrollLabel}</span>
-                  <span style={styles.chevron}>{collapsedSections.payroll ? '▶' : '▼'}</span>
-                </button>
-                {!collapsedSections.payroll && <Suspense fallback={<TabLoader />}><CertifiedPayroll projects={projects} settings={settings} requireSignature={settings?.cp_require_signature !== false} wh347Format={settings?.cp_wh347_format !== false} /></Suspense>}
+                <Suspense fallback={<TabLoader />}><CertifiedPayroll projects={projects} settings={settings} requireSignature={settings?.cp_require_signature !== false} wh347Format={settings?.cp_wh347_format !== false} /></Suspense>
               </>
             ) : (
               <UpgradePrompt requiredPlan="advanced_payroll" feature={t.tabPayroll} />

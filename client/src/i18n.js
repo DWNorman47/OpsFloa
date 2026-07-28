@@ -123,7 +123,6 @@ const translations = {
     tabPayroll: 'Payroll',
     payrollTabIntro: 'Review hours and net pay, export for your payroll processor, and run certified payroll.',
     payrollTabConfigure: 'Configure pay rules →',
-    certifiedPayrollLabel: 'Certified Payroll',
     tabManage: 'Scheduling',
     tabSettings: 'Settings',
 
@@ -1179,7 +1178,7 @@ const translations = {
     workersActive: 'team members active',
 
     // ── Certified Payroll ────────────────────────────────────────────────────
-    certifiedPayrollTitle: 'Payroll',
+    certifiedPayrollTitle: 'Certified Payroll',
     certPayrollDesc: 'Weekly hours by worker and classification for prevailing wage compliance reporting.',
     weekEnding: 'Week ending',
     projectOptional: 'Project (optional)',
@@ -4552,7 +4551,6 @@ const translations = {
     tabPayroll: 'Nómina',
     payrollTabIntro: 'Revisa horas y pago neto, exporta para tu procesador de nómina y ejecuta la nómina certificada.',
     payrollTabConfigure: 'Configurar reglas de pago →',
-    certifiedPayrollLabel: 'Nómina Certificada',
     tabManage: 'Gestionar',
     tabSettings: 'Configuración',
 
