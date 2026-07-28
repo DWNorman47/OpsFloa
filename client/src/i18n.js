@@ -643,6 +643,8 @@ const translations = {
     // Paycheck Rules — pay schedule + deduction rulesets
     pcrGroupTitle: 'Paycheck Rules',
     pcrGroupBody: 'Named rulesets for pay schedules and how deductions apply. Assign them to employee types later.',
+    pcrUpgradeTitle: 'Paycheck Rules is part of Advanced Payroll',
+    pcrUpgradeBody: 'Build custom pay schedules and deduction rulesets with the Advanced Payroll add-on. Simple hours, overtime, and prevailing-wage reporting stay free in Reports.',
     pcrDesc: 'Build rulesets that set when paychecks are issued and how/when deductions apply. Each ruleset can later be assigned to a type of employee.',
     pcrNote: 'These define the rules only — assigning rulesets to employees and running the paycheck math come later.',
     pcrUnnamed: 'Untitled ruleset',
@@ -5009,6 +5011,8 @@ const translations = {
     // Paycheck Rules — pay schedule + deduction rulesets
     pcrGroupTitle: 'Reglas de Nómina',
     pcrGroupBody: 'Conjuntos de reglas para calendarios de pago y cómo se aplican las deducciones. Asígnalos a tipos de empleado más adelante.',
+    pcrUpgradeTitle: 'Reglas de Nómina es parte de Nómina Avanzada',
+    pcrUpgradeBody: 'Crea calendarios de pago y conjuntos de reglas de deducción personalizados con el complemento Nómina Avanzada. Las horas simples, las horas extra y los reportes de salario prevaleciente siguen siendo gratis en Reportes.',
     pcrDesc: 'Crea conjuntos de reglas que definen cuándo se emiten los pagos y cómo/cuándo se aplican las deducciones. Cada conjunto podrá asignarse luego a un tipo de empleado.',
     pcrNote: 'Esto define solo las reglas — asignar los conjuntos a empleados y ejecutar el cálculo del pago vienen después.',
     pcrUnnamed: 'Conjunto sin título',

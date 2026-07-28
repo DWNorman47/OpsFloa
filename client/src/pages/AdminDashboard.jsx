@@ -37,7 +37,7 @@ function TabLoader() {
 
 function UpgradePrompt({ requiredPlan, feature }) {
   const t = useT();
-  const planName = requiredPlan === 'qbo' ? 'QuickBooks Online add-on' : requiredPlan === 'business' ? 'Business' : 'Starter';
+  const planName = requiredPlan === 'qbo' ? 'QuickBooks Online add-on' : requiredPlan === 'advanced_payroll' ? 'Advanced Payroll add-on' : requiredPlan === 'business' ? 'Business' : 'Starter';
   return (
     <div style={{ background: '#f9fafb', border: '2px dashed #d1d5db', borderRadius: 10, padding: '32px 24px', textAlign: 'center', marginBottom: 24 }}>
       <div style={{ fontSize: 28, marginBottom: 8 }}>🔒</div>
@@ -323,14 +323,7 @@ export function WorkforcePanel() {
               </button>
               {!collapsedSections.projects && <Suspense fallback={<TabLoader />}><ProjectReports currency={settings?.currency ?? 'USD'} settings={settings} /></Suspense>}
             </>}
-          </Suspense>
-        ) : tab === 'payroll' ? (
-          <Suspense fallback={<TabLoader />}>
-            <h2 style={styles.heading}>{t.tabPayroll}</h2>
-            <p style={styles.payrollIntro}>
-              {t.payrollTabIntro}{' '}
-              <button type="button" style={styles.payrollConfigLink} onClick={() => { window.location.href = '/administration#workspace'; }}>{t.payrollTabConfigure}</button>
-            </p>
+            {/* Hours register + timesheet export are the free base-plan reporting (not the Advanced Payroll add-on). */}
             {settings?.feature_overtime !== false && <>
               <button ref={el => { sectionRefs.current.overtime = el; }} type="button" style={styles.sectionToggle} onClick={() => toggleSection('overtime')}>
                 <span>{t.overtimeReport}</span>
@@ -338,16 +331,30 @@ export function WorkforcePanel() {
               </button>
               {!collapsedSections.overtime && (plan.isStarter ? <Suspense fallback={<TabLoader />}><OvertimeReport currency={settings?.currency ?? 'USD'} /></Suspense> : <UpgradePrompt requiredPlan="starter" feature={t.overtimeReport} />)}
             </>}
-            <button ref={el => { sectionRefs.current.payroll = el; }} type="button" style={styles.sectionToggle} onClick={() => toggleSection('payroll')}>
-              <span>{t.certifiedPayrollLabel}</span>
-              <span style={styles.chevron}>{collapsedSections.payroll ? '▶' : '▼'}</span>
-            </button>
-            {!collapsedSections.payroll && (plan.hasQbo ? <Suspense fallback={<TabLoader />}><CertifiedPayroll projects={projects} settings={settings} requireSignature={plan.hasCertifiedPayroll && settings?.cp_require_signature !== false} wh347Format={plan.hasCertifiedPayroll && settings?.cp_wh347_format !== false} /></Suspense> : <UpgradePrompt requiredPlan="qbo" feature={t.certifiedPayrollLabel} />)}
             <button ref={el => { sectionRefs.current.export = el; }} type="button" style={styles.sectionToggle} onClick={() => toggleSection('export')}>
               <span>{t.export}</span>
               <span style={styles.chevron}>{collapsedSections.export ? '▶' : '▼'}</span>
             </button>
             {!collapsedSections.export && (plan.isStarter ? <Suspense fallback={<TabLoader />}><ExportPanel workers={workers} projects={projects} settings={settings} /></Suspense> : <UpgradePrompt requiredPlan="starter" feature={t.export} />)}
+          </Suspense>
+        ) : tab === 'payroll' ? (
+          <Suspense fallback={<TabLoader />}>
+            <h2 style={styles.heading}>{t.tabPayroll}</h2>
+            {plan.hasAdvancedPayroll ? (
+              <>
+                <p style={styles.payrollIntro}>
+                  {t.payrollTabIntro}{' '}
+                  <button type="button" style={styles.payrollConfigLink} onClick={() => { window.location.href = '/administration#workspace'; }}>{t.payrollTabConfigure}</button>
+                </p>
+                <button ref={el => { sectionRefs.current.payroll = el; }} type="button" style={styles.sectionToggle} onClick={() => toggleSection('payroll')}>
+                  <span>{t.certifiedPayrollLabel}</span>
+                  <span style={styles.chevron}>{collapsedSections.payroll ? '▶' : '▼'}</span>
+                </button>
+                {!collapsedSections.payroll && <Suspense fallback={<TabLoader />}><CertifiedPayroll projects={projects} settings={settings} requireSignature={settings?.cp_require_signature !== false} wh347Format={settings?.cp_wh347_format !== false} /></Suspense>}
+              </>
+            ) : (
+              <UpgradePrompt requiredPlan="advanced_payroll" feature={t.tabPayroll} />
+            )}
           </Suspense>
         ) : tab === 'timeoff' && settings?.feature_pto !== false ? (
           <Suspense fallback={<TabLoader />}>

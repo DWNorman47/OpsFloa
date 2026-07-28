@@ -175,12 +175,16 @@ async function requireProAddon(req, res, next) {
   }
 }
 
-// Gate a route to the Certified Payroll add-on. Same trial/exempt bypass as
-// requireProAddon; otherwise requires companies.addon_certified_payroll.
+// Gate WH-347 / certified-payroll routes to the ADVANCED PAYROLL add-on. Certified
+// payroll was folded into Advanced Payroll (see migration 0155), so this OR-gates on
+// the new flag and the legacy certified one. Same trial/exempt bypass as
+// requireProAddon. The export name stays `requireCertifiedPayrollAddon` so the many
+// route references + test mocks don't churn; `requireAdvancedPayrollAddon` is an
+// alias for new call sites.
 async function requireCertifiedPayrollAddon(req, res, next) {
   try {
     const r = await pool.query(
-      'SELECT plan, subscription_status, addon_certified_payroll, trial_ends_at FROM companies WHERE id = $1',
+      'SELECT plan, subscription_status, addon_certified_payroll, addon_advanced_payroll, trial_ends_at FROM companies WHERE id = $1',
       [req.user.company_id]
     );
     const company = r.rows[0];
@@ -195,17 +199,18 @@ async function requireCertifiedPayrollAddon(req, res, next) {
       return res.status(403).json({ error: 'Subscription required', code: 'subscription_required' });
     }
 
-    if (company.subscription_status === 'exempt' || company.subscription_status === 'trial' || company.addon_certified_payroll) {
+    if (company.subscription_status === 'exempt' || company.subscription_status === 'trial' || company.addon_advanced_payroll || company.addon_certified_payroll) {
       req.company = company;
       return next();
     }
 
-    return res.status(403).json({ error: 'Certified Payroll add-on required', code: 'certified_payroll_required' });
+    return res.status(403).json({ error: 'Advanced Payroll add-on required', code: 'advanced_payroll_required' });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
   }
 }
+const requireAdvancedPayrollAddon = requireCertifiedPayrollAddon; // alias — same gate
 
 async function requireTakeoffAddon(req, res, next) {
   try {
@@ -293,7 +298,7 @@ function requirePermission(key) {
 const { hasPerm, requirePerm } = require('../permissions');
 
 module.exports = {
-  requireAuth, requireAdmin, requireSuperAdmin, requirePlan, requireProAddon, requireCertifiedPayrollAddon, requireTakeoffAddon, requirePlanToolsAddon,
+  requireAuth, requireAdmin, requireSuperAdmin, requirePlan, requireProAddon, requireCertifiedPayrollAddon, requireAdvancedPayrollAddon, requireTakeoffAddon, requirePlanToolsAddon,
   hasAdminPermission, requirePermission,
   hasPerm, requirePerm,
 };

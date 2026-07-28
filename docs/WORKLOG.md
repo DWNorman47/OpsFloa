@@ -106,7 +106,34 @@ real paycheck until David merges to prod.
 
 ---
 
-## 2026-07-27 — Workforce: dedicated Payroll tab
+## 2026-07-27 — Advanced Payroll add-on (gate Payroll + Paycheck Rules + WH-347)
+
+Packaged the advanced payroll stuff behind a paid add-on, **Advanced Payroll**, per
+David's call. Free (base plan) in Reports: the hours register (regular/OT/prevailing)
++ timesheet export — **moved the OT report + export back to Reports** (undoing that
+part of the previous Payroll-tab commit). Paid (Advanced Payroll): the Payroll tab
+(WH-347 / certified payroll), and the Paycheck Rules settings section. Certified
+payroll is **folded in** — WH-347 was its own superadmin-only add-on; no one had
+purchased it, so it collapses into Advanced Payroll.
+
+Entitlement plumbing (`addon_advanced_payroll`, the "N places"):
+- Migration 0155: new boolean column, backfilled from `addon_certified_payroll`.
+- `auth.js buildSessionUser`: SELECT + surface it on the session user.
+- `middleware/auth.js`: `requireCertifiedPayrollAddon` now OR-gates on
+  `addon_advanced_payroll || addon_certified_payroll` (kept the export name so the
+  ~25 test mocks + route refs don't churn; added a `requireAdvancedPayrollAddon`
+  alias). Error code → `advanced_payroll_required`.
+- `usePlan()`: `hasAdvancedPayroll`; `hasCertifiedPayroll` now aliases it (certified
+  is a capability of advanced), so existing cp_* gates keep working.
+- Superadmin: PATCH plumbing + list SELECTs + the toggle relabeled "Advanced
+  Payroll add-on" (writes the new flag).
+- `UpgradePrompt` learns `advanced_payroll`; Payroll tab shows it when off; Paycheck
+  Rules section shows an upsell when off. EN+ES i18n.
+
+Fixed a latent bug along the way: the WH-347 panel gated on `hasQbo` (wrong) — now
+`hasAdvancedPayroll`. Superadmin-toggleable now; **Stripe self-serve is a follow-up**
+(model on takeoff). Paycheck Rules save is client-gated for now (inert without the
+engine). 1140 pass, i18n parity, build clean.
 
 Added a **Payroll** tab to Time Clock ▸ Workforce (`WorkforcePanel` in
 AdminDashboard.jsx), between Reports and Time Off, gated on the same `view_reports`

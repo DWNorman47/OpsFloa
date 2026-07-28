@@ -98,7 +98,22 @@ show/hides by frequency; deductions block), a plain-English summary line per rul
 **Presets** seed the two driving examples. Mount beside Hours & Rules in the same
 settings page/tab, under the same admin permission. Bilingual EN+ES keys.
 
+## Packaging — the Advanced Payroll add-on (SHIPPED 2026-07-27)
+Paycheck Rules + WH-347/certified payroll + the Payroll tab gate on a paid add-on,
+**Advanced Payroll** (`companies.addon_advanced_payroll`, migration 0155). Certified
+payroll was folded in (its old `addon_certified_payroll` is OR-gated + backfilled;
+`requireCertifiedPayrollAddon` now checks the new flag, keeping its name to avoid
+churn). Free in Reports (base plan): the hours register (regular/OT/prevailing) +
+timesheet export. `usePlan().hasAdvancedPayroll` gates the client; superadmin-
+toggleable today (like certified payroll was) — **Stripe self-serve is a follow-up**
+(model on the takeoff add-on: `ADDON_PRICES`, webhook entitlement, BillingPanel,
+`STRIPE_PRICE_ADVANCED_PAYROLL[_ANNUAL]`). Also fixed a latent bug: the WH-347 panel
+used to gate on `hasQbo` — now `hasAdvancedPayroll`.
+
 ## Later (out of scope now)
+- **Stripe self-serve purchase** of Advanced Payroll (above).
+- Server-side gate on the `paycheck_rules` SAVE (currently client-gated; the setting
+  is inert without the engine, so low risk until the pay-engine phase).
 - Assign a ruleset to a worker / employee type (`worker.paycheck_ruleset_id`).
 - Pay-engine integration: build actual pay periods + apply the deduction math in
   `payStatement`/`deductions`.

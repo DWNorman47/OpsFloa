@@ -796,7 +796,17 @@ export default function AdministrationPage() {
               title={t.pcrGroupTitle}
               body={t.pcrGroupBody}
             >
-              <PaycheckRulesSettings settings={settings} onSettingsUpdated={setSettings} />
+              {plan.hasAdvancedPayroll ? (
+                <PaycheckRulesSettings settings={settings} onSettingsUpdated={setSettings} />
+              ) : (
+                <div style={{ background: '#f9fafb', border: '2px dashed #d1d5db', borderRadius: 10, padding: 24, textAlign: 'center' }}>
+                  <div style={{ fontSize: 24, marginBottom: 8 }}>🔒</div>
+                  <div style={{ fontWeight: 700, color: '#111827', marginBottom: 6 }}>{t.pcrUpgradeTitle}</div>
+                  <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 14, maxWidth: 480, marginLeft: 'auto', marginRight: 'auto' }}>{t.pcrUpgradeBody}</div>
+                  <button style={{ background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '9px 20px', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: 'pointer' }}
+                    onClick={() => { window.location.href = '/administration#billing'; }}>{t.viewPlans}</button>
+                </div>
+              )}
             </WorkspaceSettingGroup>
             <WorkspaceSettingGroup
               title={t.admpAdvancedControlsTitle}

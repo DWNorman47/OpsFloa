@@ -9,7 +9,9 @@ export function usePlan() {
   const plan = user?.plan || 'free';
   const status = user?.subscription_status || 'trial';
   const qboAddon = user?.addon_qbo || false;
-  const certifiedPayrollAddon = user?.addon_certified_payroll || false;
+  // Certified payroll folded into Advanced Payroll (migration 0155). Grant on either
+  // the new flag or the legacy certified one during the transition.
+  const advancedPayrollAddon = user?.addon_advanced_payroll || user?.addon_certified_payroll || false;
   const takeoffAddon = user?.addon_takeoff || false;
   const isTrial = status === 'trial';
   const isExempt = status === 'exempt';
@@ -36,7 +38,10 @@ export function usePlan() {
     isStarter: atLeast('starter'),
     isBusiness: atLeast('business'),
     hasQbo: qboAddon || isTrial || isExempt,
-    hasCertifiedPayroll: certifiedPayrollAddon || isTrial || isExempt,
+    // Advanced Payroll gates WH-347, Paycheck Rules, and the Payroll tab. Certified
+    // payroll is a capability of it, so hasCertifiedPayroll aliases the same grant.
+    hasAdvancedPayroll: advancedPayrollAddon || isTrial || isExempt,
+    hasCertifiedPayroll: advancedPayrollAddon || isTrial || isExempt,
     hasTakeoff: takeoffAddon || isTrial || isExempt,
     atLeast,
     // History limit in days — null means no limit
