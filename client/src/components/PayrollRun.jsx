@@ -3,6 +3,7 @@ import api from '../api';
 import { useT } from '../hooks/useT';
 import { formatCurrency } from '../utils';
 import { silentError } from '../errorReporter';
+import PayStub from './PayStub';
 
 /**
  * Payroll Run — the ruleset-driven register for a pay period. Each worker's
@@ -28,6 +29,7 @@ export default function PayrollRun({ currency = 'USD' }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [openRow, setOpenRow] = useState(null);
   const money = v => formatCurrency(v, currency);
 
   const run = async () => {
@@ -95,17 +97,31 @@ export default function PayrollRun({ currency = 'USD' }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.rows.map((r, i) => (
-                    <tr key={`${r.worker_id}-${r.pay_date}-${i}`} style={s.tr}>
-                      <td style={s.td}>{r.pay_date}</td>
-                      <td style={s.tdName}>{r.worker_name}{r.role_name ? <span style={s.muted}> · {r.role_name}</span> : ''}</td>
-                      <td style={s.td}>{r.ruleset_name || <span style={s.muted}>{t.pcrRunNoRule}</span>}</td>
-                      <td style={s.td}>{r.period_start} – {r.period_end}</td>
-                      <td style={s.tdNum}>{money(r.gross)}</td>
-                      <td style={{ ...s.tdNum, color: r.deduction_total > 0 ? '#b91c1c' : undefined }}>{r.deduction_total > 0 ? `−${money(r.deduction_total)}` : '—'}</td>
-                      <td style={{ ...s.tdNum, fontWeight: 700 }}>{money(r.net)}</td>
-                    </tr>
-                  ))}
+                  {data.rows.map((r, i) => {
+                    const key = `${r.worker_id}-${r.pay_date}-${i}`;
+                    const open = openRow === key;
+                    return (
+                      <React.Fragment key={key}>
+                        <tr style={{ ...s.tr, cursor: 'pointer', ...(open ? { background: '#f0f9ff' } : {}) }}
+                          onClick={() => setOpenRow(open ? null : key)} title={t.pcrRunViewStub}>
+                          <td style={s.td}>{open ? '▾ ' : '▸ '}{r.pay_date}</td>
+                          <td style={s.tdName}>{r.worker_name}{r.role_name ? <span style={s.muted}> · {r.role_name}</span> : ''}</td>
+                          <td style={s.td}>{r.ruleset_name || <span style={s.muted}>{t.pcrRunNoRule}</span>}</td>
+                          <td style={s.td}>{r.period_start} – {r.period_end}</td>
+                          <td style={s.tdNum}>{money(r.gross)}</td>
+                          <td style={{ ...s.tdNum, color: r.deduction_total > 0 ? '#b91c1c' : undefined }}>{r.deduction_total > 0 ? `−${money(r.deduction_total)}` : '—'}</td>
+                          <td style={{ ...s.tdNum, fontWeight: 700 }}>{money(r.net)}</td>
+                        </tr>
+                        {open && (
+                          <tr>
+                            <td colSpan={7} style={{ padding: '10px 14px', background: '#f8fafc' }}>
+                              <PayStub check={r} currency={currency} />
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
                 </tbody>
                 <tfoot>
                   <tr style={s.totalRow}>

@@ -93,9 +93,9 @@ function applyGroupDeductions(periods, deductions, ruleset) {
   return periods.map(p => {
     if (p.deductionsApply) {
       const c = computeRuleNet(p.gross || 0, deductions, ruleset, combined[p.groupKey]);
-      return { ...p, deductionTotal: c.deductionTotal, net: c.net, base: c.base };
+      return { ...p, deductionTotal: c.deductionTotal, net: c.net, base: c.base, exempt: c.exempt, combinedGross: round2(combined[p.groupKey]), lines: c.lines };
     }
-    return { ...p, deductionTotal: 0, net: round2(p.gross || 0), base: 0 };
+    return { ...p, deductionTotal: 0, net: round2(p.gross || 0), base: 0, exempt: 0, combinedGross: p.gross || 0, lines: [] };
   });
 }
 

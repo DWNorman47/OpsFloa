@@ -3308,29 +3308,34 @@ router.get('/payroll-run', requireAdmin, requirePerm('view_reports'), requireCer
     };
     ready.forEach(r => { r.periods = periodsFor(r.ruleset); });
 
-    // Gross per worker for each distinct period range (one companyStatements call each).
+    // A worker's full statement for each distinct period range (one call each) — the
+    // stub needs the hours/cost breakdown, not just the gross.
     const rangeKeys = new Set();
     ready.forEach(r => r.periods.forEach(p => rangeKeys.add(p.periodStart + '|' + p.periodEnd)));
-    const grossByRange = {};
+    const stmtByRange = {};
     for (const rk of rangeKeys) {
       const [ps, pe] = rk.split('|');
-      const sts = await companyStatements({ companyId, workers: workers.rows, settings: s, from: ps, to: pe });
-      const m = new Map();
-      workers.rows.forEach(w => { const st = sts.get(w.id); m.set(w.id, st ? st.totals.grossWages : 0); });
-      grossByRange[rk] = m;
+      stmtByRange[rk] = await companyStatements({ companyId, workers: workers.rows, settings: s, from: ps, to: pe });
     }
+    const stmtFor = (rk, id) => (stmtByRange[rk] ? stmtByRange[rk].get(id) : null);
 
-    // One row per (worker, check): combine each group, exempt once, deduct on the flagged check.
+    // One row (stub) per (worker, check): combine each group, exempt once, deduct on the flagged check.
     const rows = [];
     for (const r of ready) {
       const deds = [...deductionsForRole(companyDeds, r.w.role_id), ...normalizeWorkerDeductions(wdByUser[r.w.id])];
-      const withGross = r.periods.map(p => ({ ...p, gross: grossByRange[p.periodStart + '|' + p.periodEnd].get(r.w.id) || 0 }));
+      const withGross = r.periods.map(p => { const st = stmtFor(p.periodStart + '|' + p.periodEnd, r.w.id); return { ...p, gross: st ? st.totals.grossWages : 0 }; });
       for (const p of applyGroupDeductions(withGross, deds, r.ruleset)) {
+        const st = stmtFor(p.periodStart + '|' + p.periodEnd, r.w.id);
         rows.push({
           worker_id: r.w.id, worker_name: r.name, role_name: r.w.role_name || null,
           ruleset_name: r.ruleset ? r.ruleset.name : null,
           pay_date: p.payDate, period_start: p.periodStart, period_end: p.periodEnd, deducts: !!p.deductionsApply,
-          gross: p.gross, deduction_total: p.deductionTotal, net: p.net,
+          gross: p.gross, exempt: p.exempt, combined_gross: p.combinedGross,
+          deduction_total: p.deductionTotal, net: p.net,
+          deduction_lines: (p.lines || []).map(l => ({ name: l.name, amount: l.amount })),
+          rate: st ? st.rates.rate : null,
+          hours: st ? { regular: st.hours.regular, overtime: st.hours.overtime, prevailing: st.hours.prevailing, night: st.hours.night, sick: st.hours.sick, vacation: st.hours.vacation, total: st.hours.total } : null,
+          cost: st ? { regular: st.cost.regular, overtime: st.cost.overtime, prevailing: st.cost.prevailing, night: st.cost.night, sick: st.cost.sick, vacation: st.cost.vacation, guarantee: st.cost.guarantee } : null,
         });
       }
     }

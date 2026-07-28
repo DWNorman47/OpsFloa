@@ -106,6 +106,16 @@ real paycheck until David merges to prod.
 
 ---
 
+## 2026-07-27 — Payroll: pay stubs from the run (itemized, printable)
+
+Turned the register from net figures into actual **pay stubs**. `applyGroupDeductions`
+now returns the itemized `lines` + `exempt`/`combinedGross`; the run endpoint keeps
+each period's full statement so every check row carries its **hours/cost breakdown**
++ **itemized deduction lines**. New reusable `PayStub.jsx` renders one stub —
+earnings (regular/OT/prevailing/night/leave), gross, each deduction line (with a "on
+the group total − exempt" note when combined), net — plus a clean **print** window.
+In the Payroll tab, each register row now **expands to its stub**. Bilingual. 1168 pass.
+
 ## 2026-07-27 — Payroll: pay-period generation + multi-check combining (the $11k case)
 
 The run now does the real thing — David's signature case computes exactly.
