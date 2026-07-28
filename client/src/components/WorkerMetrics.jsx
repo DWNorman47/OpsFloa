@@ -191,10 +191,14 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
       const h = ((new Date(`1970-01-01T${e.end_time}`) - new Date(`1970-01-01T${e.start_time}`)) / 3600000).toFixed(2);
       return [e.work_date?.toString().substring(0, 10), 'Time', e.project_name || '', e.wage_type, e.start_time, e.end_time, ...(showOtCol ? [(e.overtime_hours || 0).toFixed(2)] : []), h, ''];
     });
+    const g = billData.summary;
+    const guaranteeRows = (g && g.guarantee_shortfall_hours > 0)
+      ? [['', 'Guarantee top-up', '', 'Weekly-hours guarantee', '', '', ...(showOtCol ? [''] : []), Number(g.guarantee_shortfall_hours).toFixed(2), g.guarantee_cost]]
+      : [];
     const reimbRows = (billData.reimbursements || []).map(r => [
       r.expense_date?.toString().substring(0, 10), 'Expense', r.project_name || '', r.category || r.description || '', '', '', ...(showOtCol ? [''] : []), '', r.amount,
     ]);
-    downloadCSV([headers, ...timeRows, ...reimbRows], `${worker.username}-${from || 'all'}-to-${to || 'all'}.csv`);
+    downloadCSV([headers, ...timeRows, ...guaranteeRows, ...reimbRows], `${worker.username}-${from || 'all'}-to-${to || 'all'}.csv`);
   };
 
   const PRESETS = [
@@ -205,7 +209,7 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
   ];
 
   const s = billData?.summary;
-  const hasResults = billData && (billData.entries.length > 0 || (billData.reimbursements || []).length > 0 || (s?.sick_hours > 0) || (s?.vacation_hours > 0));
+  const hasResults = billData && (billData.entries.length > 0 || (billData.reimbursements || []).length > 0 || (s?.sick_hours > 0) || (s?.vacation_hours > 0) || (s?.guarantee_shortfall_hours > 0));
 
   // A trace expander row: renders the engine's explain items for one line.
   const Trace = ({ items }) => {
@@ -289,7 +293,7 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
           {billData && hasResults && (
             <div style={{ marginTop: 16 }}>
               {/* ── Time entries ── */}
-              {billData.entries.length > 0 && (
+              {(billData.entries.length > 0 || s.guarantee_shortfall_hours > 0) && (
                 <div style={styles.section}>
                   <div style={styles.sectionTitle}>{t.trTimeEntries}</div>
                   {billData.entries.map((e, idx) => {
@@ -309,6 +313,34 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
                       </div>
                     );
                   })}
+                  {/* Guaranteed-weekly-hours top-up: a derived line, not a clocked entry.
+                      Shown here (not folded into a summary total) so every paid hour traces
+                      to a row + the rule that produced it. */}
+                  {s.guarantee_shortfall_hours > 0 && (
+                    <div>
+                      <div style={{ ...styles.line, ...styles.lineClickable }} onClick={() => toggleLine('guarantee')}>
+                        <span style={styles.lineDate}>—</span>
+                        <span style={styles.lineMid}>{t.guaranteeTopupLabel} · {formatCurrency(s.guarantee_cost, currency)}</span>
+                        <span style={styles.lineTimes} />
+                        <span style={styles.lineHours}>{fmtHours(s.guarantee_shortfall_hours)}</span>
+                        <span style={styles.lineChev}>{openLine === 'guarantee' ? '▾' : '▸'}</span>
+                      </div>
+                      {openLine === 'guarantee' && (
+                        <div style={styles.trace}>
+                          <div style={styles.traceItem}>
+                            <span>{(t.trGuaranteeTopup || 'Guaranteed {min}h over {weeks} wk; worked {worked}h — topped up {short}h × {rate} = {cost}.')
+                              .replace('{min}', fmtHours(s.guarantee_min_hours))
+                              .replace('{weeks}', s.guarantee_weeks)
+                              .replace('{worked}', fmtHours(s.total_hours))
+                              .replace('{short}', fmtHours(s.guarantee_shortfall_hours))
+                              .replace('{rate}', formatCurrency(s.rate, currency))
+                              .replace('{cost}', formatCurrency(s.guarantee_cost, currency))}</span>
+                            <button style={styles.traceLink} onClick={() => goto('/team')}>{t.trViewSetting} →</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -365,11 +397,8 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
                     open={openLine === 'vacation'} onToggle={() => toggleLine('vacation')}
                     detail={<LeaveDetail rows={(billData.leave_detail || []).filter(d => d.type === 'vacation')} t={t} policyRaw={policyRaw} goto={goto} />} />
                 )}
-                {s.guarantee_shortfall_hours > 0 && (
-                  <SummaryLine label={t.minGuaranteeLabel || 'Minimum guarantee'} value={`+${fmtHours(s.guarantee_shortfall_hours)} · ${formatCurrency(s.guarantee_cost, currency)}`}
-                    open={openLine === 'guarantee'} onToggle={() => toggleLine('guarantee')}
-                    detail={<div style={styles.trace}><div style={styles.traceItem}><span>{(t.trGuarantee || 'Guaranteed {min}h over {weeks} wk; worked less, topped up.').replace('{min}', fmtHours(s.guarantee_min_hours)).replace('{weeks}', s.guarantee_weeks)}</span><button style={styles.traceLink} onClick={() => goto('/team')}>{t.trViewSetting} →</button></div></div>} />
-                )}
+                {/* Guarantee top-up is a Time-Entries row above (traceable to its rule),
+                    not a summary line — it must not add hours into the summary. */}
                 <SummaryLine label={t.totalHours || 'Total hours'} value={fmtHours((s.total_hours || 0) + (s.guarantee_shortfall_hours || 0) + (s.sick_hours || 0) + (s.vacation_hours || 0))} strong />
                 {(s.deductions || []).length > 0 && (
                   <>

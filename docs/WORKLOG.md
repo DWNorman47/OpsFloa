@@ -23,6 +23,29 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-28 — Guarantee top-up is now a traceable Time-Entries row (not a summary total)
+
+**David (standing rule, reinforced):** everything in Team Member Reports must be
+traceable — any "why is this amount X?" answerable from there, no hours folded into a
+summary total without a matching clickable entry. Saved as [[feedback_traceability]].
+
+The weekly-hours **guarantee top-up** was showing only as a PAY SUMMARY line (and on a
+stale cached client, folded into "Regular 12h"). Now it's a row in **TIME ENTRIES**:
+`Weekly-hours guarantee top-up · $<cost>` … `<hours>`, expandable to the rule
+("Guaranteed {min}h over {weeks} wk; worked {worked} — topped up {short} × {rate} =
+{cost}") + a "View setting →" link to the worker's guarantee config. Removed the
+guarantee line from PAY SUMMARY so the summary never adds hours without a traceable
+source; Total Hours/Cost still reconcile. CSV export gets the same top-up row.
+
+Server already keeps `hours.regular` (worked) and `hours.guaranteeShortfall` separate,
+so Regular was never actually inflated in current code — the folded "12h" was the old
+cached client. Client-only change (`WorkerMetrics.jsx` + i18n).
+
+Follow-up if he wants full parity: mirror the same treatment in the **bill PDF**
+(`BillPDF.jsx` still shows guarantee as a summary line) and give **leave** (sick/
+vacation) the same Time-Entries-row treatment (today they're summary lines with a
+leave-detail expander).
+
 ## 2026-07-28 — Certified Payroll dropped overtime under premium OT policies
 
 **David:** Certified Payroll and a worker's Team Member Report disagreed for the same
