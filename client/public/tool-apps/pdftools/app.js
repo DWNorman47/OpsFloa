@@ -110,6 +110,12 @@ function renderGrid() {
     const img = card.querySelector('img'), ph = card.querySelector('.ph');
     const key = pg.src + ':' + pg.page;
     if (thumbs[key]) { img.src = thumbs[key]; if (ph) ph.remove(); } else { img.style.display = 'none'; }
+    const thumbBox = card.querySelector('.thumb');
+    if (thumbBox) {
+      thumbBox.style.cursor = 'zoom-in';
+      thumbBox.title = 'Click to view full size';
+      thumbBox.addEventListener('click', () => openViewer(pg));
+    }
     card.querySelector('.sel').addEventListener('change', e => {
       pg.sel = e.target.checked; card.classList.toggle('selected', pg.sel); updateToolbar();
     });
@@ -175,37 +181,117 @@ function reorder(fromId, toId, after) {
   renderGrid();
 }
 
-/* ---------- build & download (pdf-lib) ---------- */
+/* ---------- build & download (pdf-lib, with a pdf.js raster fallback) ---------- */
+// pdf-lib copies each page losslessly. Some PDFs render fine in pdf.js but can't be
+// copied by pdf-lib (a dangling object ref, odd encryption) — that used to crash the
+// whole export with a cryptic "Expected instance of …, but got undefined". Now a page
+// that can't be copied falls back to a rasterized image (via pdf.js, which already
+// rendered it), so the download still succeeds.
+async function rasterizeInto(out, pg) {
+  const page = await state.sources[pg.src].doc.getPage(pg.page + 1);
+  const rotation = ((((page.rotate || 0) + pg.rot) % 360) + 360) % 360;
+  const vp = page.getViewport({ scale: 2, rotation });
+  const c = document.createElement('canvas');
+  c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+  await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+  const b64 = c.toDataURL('image/jpeg', 0.85).split(',')[1];
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  const jpg = await out.embedJpg(arr);
+  const p = out.addPage([vp.width, vp.height]);
+  p.drawImage(jpg, { x: 0, y: 0, width: vp.width, height: vp.height });
+}
+
 async function buildPdf(pageList) {
   const out = await PDFDocument.create();
-  const libDocs = {};
+  const libDocs = {}; // src -> PDFDocument | null (null = couldn't load that file)
+  let rasterized = 0, failed = 0;
   for (const pg of pageList) {
-    if (!libDocs[pg.src])
-      libDocs[pg.src] = await PDFDocument.load(state.sources[pg.src].bytes.slice(), { ignoreEncryption: true });
-    const [copied] = await out.copyPages(libDocs[pg.src], [pg.page]);
-    if (pg.rot) copied.setRotation(degrees((copied.getRotation().angle + pg.rot) % 360));
-    out.addPage(copied);
+    const meta = state.sources[pg.src];
+    if (!meta) { failed++; continue; }
+    if (libDocs[pg.src] === undefined) {
+      try { libDocs[pg.src] = await PDFDocument.load(meta.bytes.slice(), { ignoreEncryption: true, throwOnInvalidObject: false }); }
+      catch (_) { libDocs[pg.src] = null; }
+    }
+    let ok = false;
+    const srcDoc = libDocs[pg.src];
+    if (srcDoc) {
+      try {
+        const [copied] = await out.copyPages(srcDoc, [pg.page]);
+        if (copied) {
+          if (pg.rot) copied.setRotation(degrees((copied.getRotation().angle + pg.rot) % 360));
+          out.addPage(copied);
+          ok = true;
+        }
+      } catch (_) { /* fall through to raster */ }
+    }
+    if (!ok) {
+      try { await rasterizeInto(out, pg); rasterized++; }
+      catch (_) { failed++; }
+    }
   }
-  return out.save();
+  const bytes = out.getPageCount() > 0 ? await out.save() : null;
+  return { bytes, rasterized, failed, total: pageList.length };
 }
 
 async function downloadPages(pageList, filename) {
   if (!pageList.length) { toast('No pages to save.'); return; }
   busy(true, 'Building PDF…');
   try {
-    const bytes = await buildPdf(pageList);
+    const { bytes, rasterized, failed, total } = await buildPdf(pageList);
+    if (!bytes) { toast('None of the pages could be exported — the PDF may be damaged or protected.'); busy(false); return; }
     const blob = new Blob([bytes], { type: 'application/pdf' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = filename;
     a.click();
     URL.revokeObjectURL(a.href);
-    toast(`Saved ${filename} (${pageList.length} page${pageList.length === 1 ? '' : 's'}).`);
+    const saved = total - failed;
+    let msg = `Saved ${filename} (${saved} page${saved === 1 ? '' : 's'}).`;
+    if (rasterized) msg += ` ${rasterized} couldn't be copied and were saved as images.`;
+    if (failed) msg += ` ${failed} could not be included.`;
+    toast(msg);
   } catch (e) {
     toast('Could not build the PDF: ' + (e && e.message ? e.message : e));
   }
   busy(false);
 }
+
+/* ---------- full-size page viewer ---------- */
+let viewerEl = null;
+function ensureViewer() {
+  if (viewerEl) return viewerEl;
+  viewerEl = document.createElement('div');
+  viewerEl.style.cssText = 'position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;background:rgba(17,24,39,0.85);padding:24px';
+  viewerEl.innerHTML = '<button type="button" aria-label="Close" style="position:absolute;top:14px;right:18px;background:rgba(255,255,255,0.15);color:#fff;border:none;border-radius:8px;width:38px;height:38px;font-size:22px;cursor:pointer;line-height:1">✕</button><div class="pv-body" style="max-width:100%;max-height:100%;overflow:auto"></div>';
+  viewerEl.querySelector('button').addEventListener('click', closeViewer);
+  viewerEl.addEventListener('click', e => { if (e.target === viewerEl) closeViewer(); });
+  document.body.appendChild(viewerEl);
+  return viewerEl;
+}
+function closeViewer() { if (viewerEl) viewerEl.style.display = 'none'; }
+async function openViewer(pg) {
+  const ov = ensureViewer();
+  const body = ov.querySelector('.pv-body');
+  body.innerHTML = '<div style="color:#fff;padding:40px;font:14px system-ui,sans-serif">Rendering…</div>';
+  ov.style.display = 'flex';
+  try {
+    const page = await state.sources[pg.src].doc.getPage(pg.page + 1);
+    const rotation = ((((page.rotate || 0) + pg.rot) % 360) + 360) % 360;
+    const one = page.getViewport({ scale: 1, rotation });
+    const scale = Math.max(0.2, Math.min((window.innerWidth - 60) / one.width, (window.innerHeight - 60) / one.height, 4));
+    const vp = page.getViewport({ scale, rotation });
+    const c = document.createElement('canvas');
+    c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+    c.style.cssText = 'display:block;background:#fff;box-shadow:0 8px 40px rgba(0,0,0,0.5);max-width:100%;height:auto';
+    await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+    body.innerHTML = ''; body.appendChild(c);
+  } catch (_) {
+    body.innerHTML = '<div style="color:#fff;padding:40px;font:14px system-ui,sans-serif">Could not render this page.</div>';
+  }
+}
+window.addEventListener('keydown', e => { if (e.key === 'Escape') closeViewer(); });
 
 /* ---------- wiring ---------- */
 $('btnOpen').addEventListener('click', () => $('fileInput').click());

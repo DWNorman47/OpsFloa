@@ -106,7 +106,24 @@ real paycheck until David merges to prod.
 
 ---
 
-## 2026-07-27 — Payroll run: the ruleset-driven register (with setup-error flagging)
+## 2026-07-27 — PDF toolkit: export no longer crashes on odd PDFs + full-size viewer
+
+**Bug** ("expected instance of e, but got undefined" on download/export): traced to
+pdf-lib. The clean-PDF path is fine (verified in node against the actual
+`pdf-lib.min.js`), so it's PDF-specific — a page that pdf.js renders but pdf-lib's
+object copier can't copy (dangling ref / protection) hit an internal instance
+assertion and sank the whole export. Fix: `buildPdf` now copies each page in its own
+try/catch and, when a page can't be copied, **falls back to rasterizing it via pdf.js**
+(the renderer that already drew the thumbnail) and embedding the image — so the
+download always succeeds. Loads with `throwOnInvalidObject:false`; a missing source or
+truly unusable page is counted, and the toast reports exactly what happened
+("Saved … N couldn't be copied and were saved as images"). No more cryptic crash.
+
+**Feature:** click any page thumbnail to open it **full size** in an overlay (pdf.js
+rendered to fit the viewport, honoring the page's rotation; click-away / ✕ / Esc to
+close). Self-contained in `app.js` (no index.html/CSS change). pdftools isn't on the
+`?v` scheme — the SW precache revisions it and the update-check banner prompts a
+reload. 1156 pass.
 
 The pay engine's first run. `server/utils/paycheckRun.js` (pure, 12 tests) +
 `GET /admin/payroll-run` + `PayrollRun.jsx` (the centerpiece of the Payroll tab):
