@@ -120,7 +120,17 @@ function parse(raw) {
   } catch { return []; }
 }
 
+// Most recent occurrence of a weekday (0=Sun … 6=Sat) as a local YYYY-MM-DD — seeds a
+// biweekly anchor so an "every other <day>" preset actually lands on that day.
+function lastWeekdayIso(dow) {
+  const d = new Date();
+  d.setDate(d.getDate() - ((d.getDay() - dow + 7) % 7));
+  return d.toLocaleDateString('en-CA');
+}
+
 const PRESETS = {
+  everyFriday: () => ({ ...toForm({}), id: rid(), frequency: 'weekly', payWeekday: 5, periodBasis: 'work_week', _open: true }),
+  everyOtherFriday: () => ({ ...toForm({}), id: rid(), frequency: 'biweekly', payWeekday: 5, anchorDate: lastWeekdayIso(5), periodBasis: 'work_week', _open: true }),
   biweekly: () => ({ ...toForm({}), id: rid(), frequency: 'biweekly', payWeekday: 4, timing: 'grouped', groupBy: 'pair', applyOn: 'second', combineGroup: true, exemptAmount: '11000', _open: true }),
   semimonthly: () => ({ ...toForm({}), id: rid(), frequency: 'semimonthly', day1: '15', day2: '30', timing: 'grouped', groupBy: 'month', applyOn: 'last', combineGroup: true, exemptAmount: '11000', _open: true }),
 };
@@ -359,6 +369,8 @@ export default function PaycheckRulesSettings({ settings, onSettingsUpdated }) {
       <div style={s.addRow}>
         <button type="button" style={s.addBtn} onClick={() => addRule()}>+ {t.pcrAddRuleset}</button>
         <span style={s.presetLabel}>{t.pcrPreset}</span>
+        <button type="button" style={s.presetBtn} onClick={() => addRule(PRESETS.everyFriday())}>{t.pcrPresetEveryFriday}</button>
+        <button type="button" style={s.presetBtn} onClick={() => addRule(PRESETS.everyOtherFriday())}>{t.pcrPresetEveryOtherFriday}</button>
         <button type="button" style={s.presetBtn} onClick={() => addRule(PRESETS.biweekly())}>{t.pcrPresetBiweekly}</button>
         <button type="button" style={s.presetBtn} onClick={() => addRule(PRESETS.semimonthly())}>{t.pcrPresetSemimonthly}</button>
       </div>
