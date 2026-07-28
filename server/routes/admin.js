@@ -3376,12 +3376,26 @@ router.get('/payroll-periods', requireAdmin, requirePerm('view_reports'), requir
     const s = await getSettings(req.user.company_id);
     const weekStart = parseInt(s.week_start ?? 1, 10);
     const rulesets = normalizePaycheckRules(s.paycheck_rules).rulesets;
+    // Bound to real work — don't offer empty periods from before anyone logged hours
+    // (or after the last hours). No time entries at all → no periods to run.
+    const bounds = await pool.query(
+      "SELECT to_char(MIN(work_date), 'YYYY-MM-DD') AS first, to_char(MAX(work_date), 'YYYY-MM-DD') AS last FROM time_entries WHERE company_id = $1",
+      [req.user.company_id]
+    );
+    const firstWork = bounds.rows[0] && bounds.rows[0].first;
+    const lastWork = bounds.rows[0] && bounds.rows[0].last;
+    if (!firstWork) return res.json({ periods: [] });
     const todayIso = new Date().toISOString().slice(0, 10);
     const shiftIso = (isoStr, days) => { const dt = new Date(isoStr + 'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate() + days); return dt.toISOString().slice(0, 10); };
-    const fromIso = shiftIso(todayIso, -430); // ~14 months of history
+    // Generate up to today (a period's pay date can fall a few days after its work
+    // period ends); the overlap filter below trims periods with no hours either side.
+    const genFrom = shiftIso(firstWork, -45); // lead so the boundary period is generated
+    const genTo = todayIso;
     const seen = new Map();
     for (const rs of rulesets) {
-      for (const p of generatePeriods(rs.schedule, fromIso, todayIso, weekStart)) {
+      for (const p of generatePeriods(rs.schedule, genFrom, genTo, weekStart)) {
+        // Keep only periods that actually overlap the work timeline [firstWork, lastWork].
+        if (p.periodEnd < firstWork || p.periodStart > lastWork) continue;
         const key = `${p.payDate}|${p.periodStart}|${p.periodEnd}`;
         if (!seen.has(key)) seen.set(key, { pay_date: p.payDate, period_start: p.periodStart, period_end: p.periodEnd });
       }
