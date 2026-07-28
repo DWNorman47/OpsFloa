@@ -27,6 +27,7 @@ const ManageSchedule = lazy(() => import('../components/ManageSchedule'));
 const ExportPanel = lazy(() => import('../components/ExportPanel'));
 const OvertimeReport = lazy(() => import('../components/OvertimeReport'));
 const CertifiedPayroll = lazy(() => import('../components/CertifiedPayroll'));
+const PayrollRun = lazy(() => import('../components/PayrollRun'));
 const AdminTimeOff = lazy(() => import('../components/AdminTimeOff'));
 const ReimbursementsAdmin = lazy(() => import('../components/ReimbursementsAdmin'));
 
@@ -346,6 +347,7 @@ export function WorkforcePanel() {
                   {t.payrollTabIntro}{' '}
                   <button type="button" style={styles.payrollConfigLink} onClick={() => { window.location.href = '/administration#workspace'; }}>{t.payrollTabConfigure}</button>
                 </p>
+                <Suspense fallback={<TabLoader />}><PayrollRun currency={settings?.currency ?? 'USD'} /></Suspense>
                 <button ref={el => { sectionRefs.current.payroll = el; }} type="button" style={styles.sectionToggle} onClick={() => toggleSection('payroll')}>
                   <span>{t.certifiedPayrollLabel}</span>
                   <span style={styles.chevron}>{collapsedSections.payroll ? '▶' : '▼'}</span>

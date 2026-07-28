@@ -110,11 +110,22 @@ toggleable today (like certified payroll was) — **Stripe self-serve is a follo
 `STRIPE_PRICE_ADVANCED_PAYROLL[_ANNUAL]`). Also fixed a latent bug: the WH-347 panel
 used to gate on `hasQbo` — now `hasAdvancedPayroll`.
 
+## Assignment + run (SHIPPED 2026-07-27)
+Assignment is **by role**: a ruleset lists the `roles` it covers; each deduction
+carries `roleIds` (empty = all). The run — `server/utils/paycheckRun.js` +
+`GET /admin/payroll-run` + `PayrollRun.jsx` in the Payroll tab — resolves each
+worker's ruleset from their role and computes gross → deductions → net for a period:
+- **Tie-breaker (David):** a role matching **0 or >1** rulesets (or a worker with no
+  role) is a **flagged setup error** in the run, never a silent guess.
+- Deductions = company-wide + the worker's role-scoped + their personal rows, run
+  through the ruleset's **exempt → deduct → cap → min-net** math (`computeRuleNet`).
+
 ## Later (out of scope now)
-- **Stripe self-serve purchase** of Advanced Payroll (above).
-- Server-side gate on the `paycheck_rules` SAVE (currently client-gated; the setting
-  is inert without the engine, so low risk until the pay-engine phase).
-- Assign a ruleset to a worker / employee type (`worker.paycheck_ruleset_id`).
-- Pay-engine integration: build actual pay periods + apply the deduction math in
-  `payStatement`/`deductions`.
-- Prod smoke test.
+- **Multi-check combining:** the run computes ONE period as a single check. A
+  ruleset's `combineGroup` (sum a pair/month of checks BEFORE the exempt, deduct on
+  the `applyOn` check) needs **generated pay periods** from the schedule
+  (biweekly-anchor / semimonthly / weekend-shift) — the next increment.
+- **Stripe self-serve purchase** of Advanced Payroll.
+- Server-side gate on the `paycheck_rules` SAVE (currently client-gated; inert
+  without the engine).
+- Pay stubs + payroll-processor export off the run; prod smoke test.

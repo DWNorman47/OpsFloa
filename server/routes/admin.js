@@ -14,6 +14,8 @@ const pool = require('../db');
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 function isValidEmail(email) { return EMAIL_RE.test(String(email).trim()); }
 const { requireAdmin, requirePlan, requireCertifiedPayrollAddon, requirePerm } = require('../middleware/auth');
+const { normalizePaycheckRules } = require('../constants/paycheckRuleEnums');
+const { resolveRuleset, deductionsForRole, computeRuleNet } = require('../utils/paycheckRun');
 const { PERMISSIONS, PERMISSION_KEYS, BUILTIN_ROLES, getUserPermissions } = require('../permissions');
 const { coerceBody } = require('../middleware/coerce');
 const { logFailure } = require('../failureLog');
@@ -3248,6 +3250,58 @@ router.get('/overtime-report', requireAdmin, requirePerm('view_reports'), requir
       };
     });
     res.json(rows);
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
+// GET /admin/payroll-run — the ruleset-driven payroll register for a pay period.
+// Resolves each worker's Paycheck ruleset from their role (0 or >1 match → a flagged
+// SETUP ERROR, never a guess), computes gross from the pay engine, then applies the
+// role's deductions + the ruleset's exempt/cap/min-net math → net. Advanced Payroll.
+// requireCertifiedPayrollAddon IS the Advanced Payroll gate (folded in; see 0155).
+router.get('/payroll-run', requireAdmin, requirePerm('view_reports'), requireCertifiedPayrollAddon, async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) return res.status(400).json({ error: 'from and to required' });
+  const companyId = req.user.company_id;
+  try {
+    const s = await getSettings(companyId);
+    const rulesets = normalizePaycheckRules(s.paycheck_rules).rulesets;
+    const companyDeds = parseCompanyDeductions(s.deductions);
+    const workers = await pool.query(
+      `SELECT u.id, u.full_name, u.invoice_name, u.hourly_rate, u.rate_type, u.overtime_rule, u.role_id, u.guaranteed_weekly_hours, r.name AS role_name
+         FROM users u LEFT JOIN roles r ON r.id = u.role_id
+        WHERE u.company_id = $1 AND u.role = 'worker' AND u.active = true
+        ORDER BY u.full_name`,
+      [companyId]
+    );
+    const statements = await companyStatements({ companyId, workers: workers.rows, settings: s, from, to });
+    const wd = await pool.query(
+      'SELECT user_id, id, name, kind, value, cap_amount, active FROM worker_deductions WHERE company_id = $1 AND active = true',
+      [companyId]
+    );
+    const wdByUser = {};
+    wd.rows.forEach(r => { (wdByUser[r.user_id] = wdByUser[r.user_id] || []).push(r); });
+
+    const rows = [];
+    const errors = [];
+    for (const w of workers.rows) {
+      const st = statements.get(w.id);
+      const gross = st ? st.totals.grossWages : 0;
+      const name = w.invoice_name || w.full_name;
+      const resolved = resolveRuleset(rulesets, w.role_id);
+      if (resolved.error) {
+        errors.push({ worker_id: w.id, worker_name: name, role_name: w.role_name || null, reason: resolved.error, matches: resolved.matches || null, gross });
+        continue;
+      }
+      const deds = [...deductionsForRole(companyDeds, w.role_id), ...normalizeWorkerDeductions(wdByUser[w.id])];
+      const calc = computeRuleNet(gross, deds, resolved.ruleset);
+      rows.push({
+        worker_id: w.id, worker_name: name, role_name: w.role_name || null,
+        ruleset_name: resolved.ruleset ? resolved.ruleset.name : null,
+        gross: calc.gross, exempt: calc.exempt, deduction_total: calc.deductionTotal, net: calc.net,
+        deduction_lines: calc.lines,
+      });
+    }
+    res.json({ from, to, rows, errors, ruleset_count: rulesets.length });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 

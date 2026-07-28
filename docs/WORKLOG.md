@@ -106,7 +106,27 @@ real paycheck until David merges to prod.
 
 ---
 
-## 2026-07-27 — Hours & Pay Rules ▸ Role Rules: multi-role selector
+## 2026-07-27 — Payroll run: the ruleset-driven register (with setup-error flagging)
+
+The pay engine's first run. `server/utils/paycheckRun.js` (pure, 12 tests) +
+`GET /admin/payroll-run` + `PayrollRun.jsx` (the centerpiece of the Payroll tab):
+pick a period, and each worker's Paycheck ruleset is resolved **from their role**.
+
+- **Tie-breaker (David's call):** a role that matches **zero or more than one**
+  ruleset — or a worker with **no role** — is a **flagged setup error**, listed
+  prominently ("N workers need setup…") and excluded from the register. Never a
+  silent guess. (`resolveRuleset` → `{ruleset}` | `{error}`.)
+- **Money math:** gross comes from the existing pay-statement engine
+  (`companyStatements`); deductions = company-wide + the worker's **role-scoped** +
+  their **personal** rows, run through the ruleset's **exempt → deduct → cap →
+  min-net** (`computeRuleNet`, in dollars to match the statement engine; ruleset
+  cents ÷ 100 on the way in). Register shows gross · deductions · net + totals.
+- Gated on Advanced Payroll (via the `requireCertifiedPayrollAddon` alias — same
+  gate, already in every test mock, so no churn).
+
+**Scope (stated in the UI):** computes the selected period as ONE check. A ruleset's
+`combineGroup` (sum a pair/month of checks before the exempt, deduct on one) needs
+generated pay periods from the schedule — the next increment. 1156 pass.
 
 Each Role Rules section covered exactly one role (a single `<select>`). Made it
 cover **multiple roles**: `roleRules[].roleId` (single) → `roleIds` (array), with a
