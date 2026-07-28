@@ -3728,6 +3728,34 @@ router.post('/broadcast', requireAdmin, requirePerm('manage_settings'), requireP
   res.json({ sent: true });
 });
 
+// GET /admin/certified-payroll/weeks — valid week-ending dates for the picker, so a
+// week can't be set to a mid-week day. Ends on the company's work-week-end (derived
+// from week_start) and is bounded to weeks that overlap real work, newest first.
+router.get('/certified-payroll/weeks', requireAdmin, requirePerm('view_reports'), requireCertifiedPayrollAddon, async (req, res) => {
+  try {
+    const s = await getSettings(req.user.company_id);
+    const weekStart = parseInt(s.week_start ?? 1, 10);
+    const weekEndDow = (weekStart + 6) % 7; // 0=Sun … 6=Sat
+    const bounds = await pool.query(
+      "SELECT to_char(MIN(work_date), 'YYYY-MM-DD') AS first, to_char(MAX(work_date), 'YYYY-MM-DD') AS last FROM time_entries WHERE company_id = $1",
+      [req.user.company_id]
+    );
+    const first = bounds.rows[0] && bounds.rows[0].first;
+    const last = bounds.rows[0] && bounds.rows[0].last;
+    if (!first) return res.json({ weeks: [] });
+    const DAY = 86400000;
+    const atMs = iso => { const [y, m, d] = iso.split('-').map(Number); return Date.UTC(y, m - 1, d); };
+    const isoOf = t => new Date(t).toISOString().slice(0, 10);
+    const dow = t => new Date(t).getUTCDay();
+    const firstMs = atMs(first), lastMs = atMs(last);
+    // Week-ending date of the week that contains the last work day, then step back.
+    let we = lastMs + ((weekEndDow - dow(lastMs) + 7) % 7) * DAY;
+    const weeks = [];
+    for (; we >= firstMs && weeks.length < 60; we -= 7 * DAY) weeks.push(isoOf(we));
+    res.json({ weeks });
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
 // GET /admin/certified-payroll?week_end=YYYY-MM-DD&project_id=N
 // Returns prevailing-wage hours by worker broken down by day of week for a 7-day window
 router.get('/certified-payroll', requireAdmin, requirePerm('view_reports'), requireCertifiedPayrollAddon, async (req, res) => {

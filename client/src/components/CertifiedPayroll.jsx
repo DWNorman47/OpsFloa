@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
@@ -58,10 +58,33 @@ export default function CertifiedPayroll({ projects, settings, requireSignature 
     }
   };
   const [weekEnd, setWeekEnd] = useState(lastSunday());
+  const [weeks, setWeeks] = useState(null); // null=loading, []=none (fall back to date input)
   const [projectId, setProjectId] = useState('');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Valid week-ending dates (aligned to the work week, bounded to real hours). Default
+  // to the most recent so the picker can't sit on an arbitrary mid-week day.
+  useEffect(() => {
+    let alive = true;
+    api.get('/admin/certified-payroll/weeks').then(r => {
+      if (!alive) return;
+      const list = r.data?.weeks || [];
+      setWeeks(list);
+      if (list.length) setWeekEnd(list[0]);
+    }).catch(() => { if (alive) setWeeks([]); });
+    return () => { alive = false; };
+  }, []);
+
+  // Week span for one week-ending ISO date, formatted in UTC (the dates are UTC-midnight
+  // ISO strings — formatting in local time would shift them a day west of UTC).
+  const fmtWeekOption = (endIso) => {
+    const end = new Date(endIso + 'T00:00:00Z');
+    const start = new Date(end); start.setUTCDate(start.getUTCDate() - 6);
+    const o = { month: 'short', day: 'numeric', timeZone: 'UTC' };
+    return `${start.toLocaleDateString(locale, o)} – ${end.toLocaleDateString(locale, { ...o, year: 'numeric' })}`;
+  };
 
   const generate = async () => {
     setError('');
@@ -143,7 +166,13 @@ export default function CertifiedPayroll({ projects, settings, requireSignature 
       <div style={styles.controls}>
         <div style={styles.field}>
           <label htmlFor="cp-week-end" style={styles.label}>{t.weekEnding}</label>
-          <input id="cp-week-end" style={styles.input} type="date" value={weekEnd} onChange={e => { setWeekEnd(e.target.value); setData(null); }} />
+          {weeks && weeks.length > 0 ? (
+            <select id="cp-week-end" style={styles.input} value={weekEnd} onChange={e => { setWeekEnd(e.target.value); setData(null); }}>
+              {weeks.map(w => <option key={w} value={w}>{fmtWeekOption(w)}</option>)}
+            </select>
+          ) : (
+            <input id="cp-week-end" style={styles.input} type="date" value={weekEnd} onChange={e => { setWeekEnd(e.target.value); setData(null); }} />
+          )}
         </div>
         <div style={styles.field}>
           <label htmlFor="cp-project" style={styles.label}>Project optional</label>
