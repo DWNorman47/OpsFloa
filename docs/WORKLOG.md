@@ -23,6 +23,39 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-27 — Payroll run: CSV export + finalize/record a run
+
+The Payroll tab could compute a run live but couldn't *do* anything with it. Two
+pieces, bundled:
+
+- **CSV export** — a "Download CSV" button on the live register writes one row per
+  check (pay date, worker, role, ruleset, period, regular/OT/prevailing hrs,
+  gross/deductions/net) for a payroll processor. Client-only, no server round-trip.
+- **Finalize/record** — "Finalize run" snapshots the live register into two new
+  tables (`payroll_runs` + `payroll_run_checks`, migration `0156`, money in CENTS).
+  A finalized run *stops recomputing* — it's a locked record of what was paid, so a
+  later time-entry or rule edit doesn't retroactively change a run you already cut
+  checks for. Each check carries a `detail` JSONB stub snapshot so its pay stub
+  renders exactly as finalized. New **Finalized runs** panel below the register:
+  expand a run → checks, mark one/all paid, or void the whole run.
+
+Findings / calls:
+
+- **Refactored, didn't duplicate.** The live `GET /payroll-run` handler became a
+  pure `computePayrollRun(companyId, from, to)` helper; the GET route and the new
+  `POST /payroll-run/finalize` both call it, so the finalize snapshot is *exactly*
+  what the register showed — no second code path to drift.
+- **Finalize refuses on setup errors.** If any worker still has the 0-or-many
+  ruleset flag, finalize 400s with `code:'setup_errors'` rather than recording a
+  partial/guessed run — same never-guess rule as the live register.
+- **Gate reuse.** All routes sit behind `requireCertifiedPayrollAddon` (which is the
+  Advanced Payroll gate post-`0155`) — no new middleware, so no test-mock churn.
+- **No new tests.** The routes are thin DB wrappers over the already-tested
+  `computePayrollRun`; the two status columns are CHECK-constrained (`0156` +
+  `docs/db-enums.md`). Verify stays green at 1168 server / 256 client. ⚠️ If you want
+  belt-and-suspenders coverage on the finalize→paid→void lifecycle, that's a good
+  follow-up but needs the DB-mock harness the other admin route tests use.
+
 ## 2026-07-26 — Rate-aware overtime: the WH-347 / certified payroll (increment 4)
 
 The compliance form now shows real overtime. End-to-end:

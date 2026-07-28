@@ -22,7 +22,7 @@ const REASON_KEY = {
 function today() { return new Date().toLocaleDateString('en-CA'); }
 function monthStart() { const d = new Date(); d.setDate(1); return d.toLocaleDateString('en-CA'); }
 
-export default function PayrollRun({ currency = 'USD' }) {
+export default function PayrollRun({ currency = 'USD', onFinalized }) {
   const t = useT();
   const [from, setFrom] = useState(monthStart);
   const [to, setTo] = useState(today);
@@ -30,7 +30,21 @@ export default function PayrollRun({ currency = 'USD' }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [openRow, setOpenRow] = useState(null);
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalizeMsg, setFinalizeMsg] = useState('');
   const money = v => formatCurrency(v, currency);
+
+  const finalize = async () => {
+    if (!data || !data.rows.length || data.errors.length) return;
+    setFinalizing(true); setFinalizeMsg('');
+    try {
+      await api.post('/admin/payroll-run/finalize', { from, to });
+      setFinalizeMsg(t.pcrRunFinalized);
+      onFinalized && onFinalized();
+    } catch (err) {
+      setFinalizeMsg(err?.response?.data?.error || t.pcrRunFailed);
+    } finally { setFinalizing(false); }
+  };
 
   const run = async () => {
     setError(''); setLoading(true);
@@ -47,6 +61,24 @@ export default function PayrollRun({ currency = 'USD' }) {
     ? data.rows.reduce((a, r) => ({ gross: a.gross + r.gross, ded: a.ded + r.deduction_total, net: a.net + r.net }), { gross: 0, ded: 0, net: 0 })
     : null;
 
+  const downloadCsv = () => {
+    if (!data || !data.rows.length) return;
+    const cols = ['Pay date', 'Worker', 'Role', 'Ruleset', 'Period start', 'Period end', 'Regular hrs', 'OT hrs', 'Prevailing hrs', 'Gross', 'Deductions', 'Net'];
+    const esc = v => { const str = String(v == null ? '' : v); return /[",\n]/.test(str) ? '"' + str.replace(/"/g, '""') + '"' : str; };
+    const lines = [cols.join(',')];
+    data.rows.forEach(r => {
+      const h = r.hours || {};
+      lines.push([r.pay_date, r.worker_name, r.role_name || '', r.ruleset_name || '', r.period_start, r.period_end,
+        h.regular || 0, h.overtime || 0, h.prevailing || 0, r.gross, r.deduction_total, r.net].map(esc).join(','));
+    });
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `payroll_${from}_${to}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
   return (
     <div style={s.card}>
       <h3 style={s.title}>{t.pcrRunTitle}</h3>
@@ -59,6 +91,8 @@ export default function PayrollRun({ currency = 'USD' }) {
           <input type="date" style={s.input} value={to} onChange={e => { setTo(e.target.value); setData(null); }} /></div>
         <button style={{ ...s.runBtn, ...((loading || !from || !to) ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
           onClick={run} disabled={loading || !from || !to}>{loading ? t.loading : t.pcrRunGo}</button>
+        <button style={{ ...s.csvBtn, ...((!data || !data.rows.length) ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+          onClick={downloadCsv} disabled={!data || !data.rows.length}>{t.pcrRunCsv}</button>
       </div>
 
       {error && <p role="alert" style={s.error}>{error}</p>}
@@ -135,6 +169,19 @@ export default function PayrollRun({ currency = 'USD' }) {
             </div>
           ) : data.errors.length === 0 && <p style={s.note}>{t.pcrRunEmpty}</p>}
 
+          {data.rows.length > 0 && (
+            <div style={s.finalizeRow}>
+              <button
+                style={{ ...s.finalizeBtn, ...((finalizing || data.errors.length > 0) ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+                onClick={finalize} disabled={finalizing || data.errors.length > 0}
+                title={data.errors.length > 0 ? t.pcrRunFinalizeBlocked : undefined}>
+                {finalizing ? t.pcrRunFinalizing : t.pcrRunFinalize}
+              </button>
+              <span style={s.finalizeHint}>{data.errors.length > 0 ? t.pcrRunFinalizeBlocked : t.pcrRunFinalizeHint}</span>
+              {finalizeMsg && <span style={s.finalizeMsg}>{finalizeMsg}</span>}
+            </div>
+          )}
+
           <p style={s.footnote}>{t.pcrRunScopeNote}</p>
         </>
       )}
@@ -151,6 +198,7 @@ const s = {
   label: { fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase' },
   input: { padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: 7, fontSize: 13 },
   runBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: 'pointer' },
+  csvBtn: { background: '#059669', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: 'pointer' },
   error: { color: '#ef4444', fontSize: 13, marginBottom: 10 },
   errorBox: { background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, padding: '14px 16px', marginBottom: 16 },
   errorHead: { fontSize: 14, fontWeight: 700, color: '#991b1b', marginBottom: 8 },
@@ -168,5 +216,9 @@ const s = {
   tdName: { padding: '7px 10px', textAlign: 'left', fontWeight: 600, fontSize: 13, color: '#111827', whiteSpace: 'nowrap' },
   tdNum: { padding: '7px 10px', textAlign: 'right', fontSize: 13, color: '#374151', whiteSpace: 'nowrap' },
   totalRow: { borderTop: '2px solid #e5e7eb', background: '#f9fafb' },
+  finalizeRow: { display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginTop: 16 },
+  finalizeBtn: { background: '#0f766e', color: '#fff', border: 'none', padding: '9px 22px', borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: 'pointer' },
+  finalizeHint: { fontSize: 12, color: '#6b7280', maxWidth: 380, lineHeight: 1.4 },
+  finalizeMsg: { fontSize: 13, fontWeight: 600, color: '#0f766e' },
   footnote: { fontSize: 12, color: '#94a3b8', margin: '14px 0 0', lineHeight: 1.5, maxWidth: 640, background: '#f8fafc', border: '1px solid #eef0f2', borderRadius: 6, padding: '7px 11px' },
 };

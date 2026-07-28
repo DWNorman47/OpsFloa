@@ -3254,16 +3254,10 @@ router.get('/overtime-report', requireAdmin, requirePerm('view_reports'), requir
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
-// GET /admin/payroll-run — the ruleset-driven payroll register for a pay period.
-// Resolves each worker's Paycheck ruleset from their role (0 or >1 match → a flagged
-// SETUP ERROR, never a guess), computes gross from the pay engine, then applies the
-// role's deductions + the ruleset's exempt/cap/min-net math → net. Advanced Payroll.
-// requireCertifiedPayrollAddon IS the Advanced Payroll gate (folded in; see 0155).
-router.get('/payroll-run', requireAdmin, requirePerm('view_reports'), requireCertifiedPayrollAddon, async (req, res) => {
-  const { from, to } = req.query;
-  if (!from || !to) return res.status(400).json({ error: 'from and to required' });
-  const companyId = req.user.company_id;
-  try {
+// Compute the ruleset-driven payroll register for [from, to]: resolve each worker's
+// ruleset from their role (0/>1 → a flagged setup error), generate their pay periods,
+// price each, and combine → exempt → deduct. Shared by the live GET + finalize snapshot.
+async function computePayrollRun(companyId, from, to) {
     const s = await getSettings(companyId);
     const rulesets = normalizePaycheckRules(s.paycheck_rules).rulesets;
     const companyDeds = parseCompanyDeductions(s.deductions);
@@ -3340,8 +3334,100 @@ router.get('/payroll-run', requireAdmin, requirePerm('view_reports'), requireCer
       }
     }
     rows.sort((a, b) => (a.pay_date < b.pay_date ? -1 : a.pay_date > b.pay_date ? 1 : a.worker_name.localeCompare(b.worker_name)));
+    return { from, to, rows, errors, ruleset_count: rulesets.length };
+}
 
-    res.json({ from, to, rows, errors, ruleset_count: rulesets.length });
+const centsOf = v => Math.round((Number(v) || 0) * 100);
+
+// GET /admin/payroll-run — the live register. requireCertifiedPayrollAddon IS the
+// Advanced Payroll gate (folded in; see 0155).
+router.get('/payroll-run', requireAdmin, requirePerm('view_reports'), requireCertifiedPayrollAddon, async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) return res.status(400).json({ error: 'from and to required' });
+  try {
+    res.json(await computePayrollRun(req.user.company_id, from, to));
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
+// POST /admin/payroll-run/finalize — snapshot the run for [from,to] into a locked
+// record (payroll_runs + payroll_run_checks). Refuses if there are setup errors.
+router.post('/payroll-run/finalize', requireAdmin, requirePerm('view_reports'), requireCertifiedPayrollAddon, async (req, res) => {
+  const { from, to } = req.body || {};
+  if (!from || !to) return res.status(400).json({ error: 'from and to required' });
+  const companyId = req.user.company_id;
+  try {
+    const { rows, errors } = await computePayrollRun(companyId, from, to);
+    if (errors.length) return res.status(400).json({ error: 'Fix the setup errors before finalizing', code: 'setup_errors', errors });
+    if (!rows.length) return res.status(400).json({ error: 'No paychecks in that range to finalize' });
+    const tot = rows.reduce((a, r) => ({ g: a.g + centsOf(r.gross), d: a.d + centsOf(r.deduction_total), n: a.n + centsOf(r.net) }), { g: 0, d: 0, n: 0 });
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const run = await client.query(
+        `INSERT INTO payroll_runs (company_id, period_from, period_to, status, check_count, gross_cents, deduction_cents, net_cents, created_by)
+         VALUES ($1,$2,$3,'finalized',$4,$5,$6,$7,$8) RETURNING id`,
+        [companyId, from, to, rows.length, tot.g, tot.d, tot.n, req.user.id]
+      );
+      const runId = run.rows[0].id;
+      for (const r of rows) {
+        await client.query(
+          `INSERT INTO payroll_run_checks (run_id, company_id, user_id, worker_name, role_name, ruleset_name, pay_date, period_start, period_end, gross_cents, deduction_cents, net_cents, detail, status)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending')`,
+          [runId, companyId, r.worker_id, r.worker_name, r.role_name, r.ruleset_name, r.pay_date, r.period_start, r.period_end,
+            centsOf(r.gross), centsOf(r.deduction_total), centsOf(r.net),
+            JSON.stringify({ hours: r.hours, cost: r.cost, deduction_lines: r.deduction_lines, exempt: r.exempt, combined_gross: r.combined_gross, rate: r.rate, deducts: r.deducts })]
+        );
+      }
+      await client.query('COMMIT');
+      await logAudit(companyId, req.user.id, req.user.full_name, 'payroll.finalized', 'payroll_run', String(runId), null, { from, to, checks: rows.length });
+      res.json({ run_id: runId });
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; }
+    finally { client.release(); }
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
+// GET /admin/payroll-runs — finalized runs (newest first).
+router.get('/payroll-runs', requireAdmin, requirePerm('view_reports'), requireCertifiedPayrollAddon, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT pr.id, pr.period_from, pr.period_to, pr.status, pr.check_count, pr.gross_cents, pr.deduction_cents, pr.net_cents, pr.created_at,
+              (SELECT COUNT(*)::int FROM payroll_run_checks c WHERE c.run_id = pr.id AND c.status = 'paid') AS paid_count
+         FROM payroll_runs pr WHERE pr.company_id = $1 ORDER BY pr.created_at DESC LIMIT 50`,
+      [req.user.company_id]
+    );
+    res.json(r.rows);
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
+// GET /admin/payroll-runs/:id — a finalized run + its checks (from the snapshot).
+router.get('/payroll-runs/:id', requireAdmin, requirePerm('view_reports'), requireCertifiedPayrollAddon, async (req, res) => {
+  try {
+    const run = await pool.query('SELECT * FROM payroll_runs WHERE id = $1 AND company_id = $2', [req.params.id, req.user.company_id]);
+    if (!run.rowCount) return res.status(404).json({ error: 'Not found' });
+    const checks = await pool.query('SELECT * FROM payroll_run_checks WHERE run_id = $1 ORDER BY pay_date, worker_name', [req.params.id]);
+    res.json({ run: run.rows[0], checks: checks.rows });
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
+// POST /admin/payroll-runs/:id/paid — mark checks paid ({ all:true } or { check_ids:[…] }).
+router.post('/payroll-runs/:id/paid', requireAdmin, requirePerm('view_reports'), requireCertifiedPayrollAddon, async (req, res) => {
+  const { all, check_ids } = req.body || {};
+  try {
+    const run = await pool.query('SELECT id FROM payroll_runs WHERE id = $1 AND company_id = $2', [req.params.id, req.user.company_id]);
+    if (!run.rowCount) return res.status(404).json({ error: 'Not found' });
+    if (all) await pool.query("UPDATE payroll_run_checks SET status = 'paid', paid_at = NOW() WHERE run_id = $1 AND status = 'pending'", [req.params.id]);
+    else if (Array.isArray(check_ids) && check_ids.length) await pool.query("UPDATE payroll_run_checks SET status = 'paid', paid_at = NOW() WHERE run_id = $1 AND id = ANY($2::int[])", [req.params.id, check_ids]);
+    else return res.status(400).json({ error: 'all or check_ids required' });
+    res.json({ ok: true });
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
+// POST /admin/payroll-runs/:id/void — void a finalized run.
+router.post('/payroll-runs/:id/void', requireAdmin, requirePerm('view_reports'), requireCertifiedPayrollAddon, async (req, res) => {
+  try {
+    const r = await pool.query("UPDATE payroll_runs SET status = 'void' WHERE id = $1 AND company_id = $2 RETURNING id", [req.params.id, req.user.company_id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 

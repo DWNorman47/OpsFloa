@@ -28,6 +28,7 @@ const ExportPanel = lazy(() => import('../components/ExportPanel'));
 const OvertimeReport = lazy(() => import('../components/OvertimeReport'));
 const CertifiedPayroll = lazy(() => import('../components/CertifiedPayroll'));
 const PayrollRun = lazy(() => import('../components/PayrollRun'));
+const PayrollHistory = lazy(() => import('../components/PayrollHistory'));
 const AdminTimeOff = lazy(() => import('../components/AdminTimeOff'));
 const ReimbursementsAdmin = lazy(() => import('../components/ReimbursementsAdmin'));
 
@@ -84,6 +85,8 @@ export function WorkforcePanel() {
     return window.location.hash.startsWith('#wf-') && ALL_TABS.includes(hashSub) ? hashSub : null;
   };
   const [tab, setTab] = useState(() => getHashTab() || 'live');
+  // Bumped when a payroll run is finalized so the history list below reloads.
+  const [payrollHistoryKey, setPayrollHistoryKey] = useState(0);
   // Team Member Reports: one member's detail panel below the table at a time.
   const [selectedReportWorker, setSelectedReportWorker] = useState(null);
   const [reportPage, setReportPage] = useState(0);
@@ -347,7 +350,8 @@ export function WorkforcePanel() {
                   {t.payrollTabIntro}{' '}
                   <button type="button" style={styles.payrollConfigLink} onClick={() => { window.location.href = '/administration#workspace'; }}>{t.payrollTabConfigure}</button>
                 </p>
-                <Suspense fallback={<TabLoader />}><PayrollRun currency={settings?.currency ?? 'USD'} /></Suspense>
+                <Suspense fallback={<TabLoader />}><PayrollRun currency={settings?.currency ?? 'USD'} onFinalized={() => setPayrollHistoryKey(k => k + 1)} /></Suspense>
+                <Suspense fallback={<TabLoader />}><PayrollHistory currency={settings?.currency ?? 'USD'} refreshKey={payrollHistoryKey} /></Suspense>
                 <button ref={el => { sectionRefs.current.payroll = el; }} type="button" style={styles.sectionToggle} onClick={() => toggleSection('payroll')}>
                   <span>{t.certifiedPayrollLabel}</span>
                   <span style={styles.chevron}>{collapsedSections.payroll ? '▶' : '▼'}</span>
