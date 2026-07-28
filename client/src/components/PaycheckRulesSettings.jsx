@@ -96,6 +96,22 @@ function fromForm(f) {
   };
 }
 
+// The weekend-shift only matters when a pay date can actually land on Sat/Sun.
+// Weekly/biweekly paydays are a FIXED weekday (the pay weekday, or the anchor's
+// weekday), so they only hit a weekend if that weekday IS a weekend. Semimonthly/
+// monthly are calendar days that drift across weekdays, so it can always matter.
+function paydayCanHitWeekend(f) {
+  if (f.frequency === 'semimonthly' || f.frequency === 'monthly') return true;
+  if (f.frequency === 'weekly') return f.payWeekday === 0 || f.payWeekday === 6;
+  if (f.frequency === 'biweekly') {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(f.anchorDate || '')) return false;
+    const [y, m, d] = f.anchorDate.split('-').map(Number);
+    const wd = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+    return wd === 0 || wd === 6;
+  }
+  return false;
+}
+
 function parse(raw) {
   if (!raw) return [];
   try {
@@ -255,13 +271,15 @@ export default function PaycheckRulesSettings({ settings, onSettingsUpdated }) {
                   </select>
                 </Field>
               )}
-              <Field label={t.pcrWeekendShift}>
-                <select style={s.input} value={f.weekendShift} onChange={e => patchRule(f.id, { weekendShift: e.target.value })}>
-                  <option value="none">{t.pcrShiftNone}</option>
-                  <option value="before">{t.pcrShiftBefore}</option>
-                  <option value="after">{t.pcrShiftAfter}</option>
-                </select>
-              </Field>
+              {paydayCanHitWeekend(f) && (
+                <Field label={t.pcrWeekendShift}>
+                  <select style={s.input} value={f.weekendShift} onChange={e => patchRule(f.id, { weekendShift: e.target.value })}>
+                    <option value="none">{t.pcrShiftNone}</option>
+                    <option value="before">{t.pcrShiftBefore}</option>
+                    <option value="after">{t.pcrShiftAfter}</option>
+                  </select>
+                </Field>
+              )}
 
               {/* ── Deductions ── */}
               <div style={s.sectionLabel}>{t.pcrDeductions}</div>
