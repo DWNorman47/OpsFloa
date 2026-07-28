@@ -51,16 +51,20 @@ function deductionsForRole(companyDeductions, roleId) {
 }
 
 /**
- * Apply a ruleset's deduction MATH to one paycheck's gross (dollars):
- *   base = max(0, gross − exempt) → deductions computed on base → ruleset cap →
- *   min-net floor (deductions never push net below minNet).
- * A null ruleset means "no ruleset math": exempt 0, no cap/floor, deductions on gross.
+ * Apply a ruleset's deduction MATH to one paycheck (dollars):
+ *   base = max(0, baseGross − exempt) → deductions computed on base → ruleset cap →
+ *   min-net floor (deductions never push THIS check's net below minNet).
+ * `baseGross` is the amount the exempt+deductions are figured on; it defaults to the
+ * check's own gross, but for a combined group it's the group's total (so the exempt
+ * is subtracted once across the pair/month). The net is always this check's gross −
+ * the computed deductions. A null ruleset means no ruleset math (exempt 0, no cap/floor).
  */
-function computeRuleNet(gross, deductions, ruleset) {
+function computeRuleNet(gross, deductions, ruleset, baseGross) {
   const ded = (ruleset && ruleset.deductions) || {};
   const g = Math.max(0, round2(gross));
+  const bg = Math.max(0, round2(baseGross == null ? g : baseGross));
   const exempt = Math.max(0, (ded.exemptAmountCents || 0) / 100);
-  const base = Math.max(0, round2(g - exempt));
+  const base = Math.max(0, round2(bg - exempt));
 
   const { lines, total } = computeDeductions(base, deductions);
   let dedTotal = total;
@@ -76,4 +80,23 @@ function computeRuleNet(gross, deductions, ruleset) {
   return { gross: g, exempt, base, lines, deductionTotal: dedTotal, net: round2(g - dedTotal) };
 }
 
-module.exports = { resolveRuleset, deductionsForRole, computeRuleNet };
+/**
+ * Compute net for a worker's checks over a set of GROUPED periods (each carries
+ * `gross`, `groupKey`, `deductionsApply`). Deductions land only on the flagged check
+ * of each group, figured on the group's COMBINED gross minus the exempt (David's
+ * "combine the two checks, subtract 11,000, deduct from that"). Other checks in the
+ * group net to their own gross. Returns the periods with { deductionTotal, net, base }.
+ */
+function applyGroupDeductions(periods, deductions, ruleset) {
+  const combined = {};
+  for (const p of periods) combined[p.groupKey] = round2((combined[p.groupKey] || 0) + (p.gross || 0));
+  return periods.map(p => {
+    if (p.deductionsApply) {
+      const c = computeRuleNet(p.gross || 0, deductions, ruleset, combined[p.groupKey]);
+      return { ...p, deductionTotal: c.deductionTotal, net: c.net, base: c.base };
+    }
+    return { ...p, deductionTotal: 0, net: round2(p.gross || 0), base: 0 };
+  });
+}
+
+module.exports = { resolveRuleset, deductionsForRole, computeRuleNet, applyGroupDeductions };

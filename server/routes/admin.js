@@ -15,7 +15,8 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 function isValidEmail(email) { return EMAIL_RE.test(String(email).trim()); }
 const { requireAdmin, requirePlan, requireCertifiedPayrollAddon, requirePerm } = require('../middleware/auth');
 const { normalizePaycheckRules } = require('../constants/paycheckRuleEnums');
-const { resolveRuleset, deductionsForRole, computeRuleNet } = require('../utils/paycheckRun');
+const { resolveRuleset, deductionsForRole, applyGroupDeductions } = require('../utils/paycheckRun');
+const { generatePeriods, groupPeriods } = require('../utils/payPeriods');
 const { PERMISSIONS, PERMISSION_KEYS, BUILTIN_ROLES, getUserPermissions } = require('../permissions');
 const { coerceBody } = require('../middleware/coerce');
 const { logFailure } = require('../failureLog');
@@ -3273,7 +3274,6 @@ router.get('/payroll-run', requireAdmin, requirePerm('view_reports'), requireCer
         ORDER BY u.full_name`,
       [companyId]
     );
-    const statements = await companyStatements({ companyId, workers: workers.rows, settings: s, from, to });
     const wd = await pool.query(
       'SELECT user_id, id, name, kind, value, cap_amount, active FROM worker_deductions WHERE company_id = $1 AND active = true',
       [companyId]
@@ -3281,26 +3281,61 @@ router.get('/payroll-run', requireAdmin, requirePerm('view_reports'), requireCer
     const wdByUser = {};
     wd.rows.forEach(r => { (wdByUser[r.user_id] = wdByUser[r.user_id] || []).push(r); });
 
-    const rows = [];
+    // Resolve each worker's ruleset from their role (0/>1 = a flagged setup error).
+    const ready = [];
     const errors = [];
     for (const w of workers.rows) {
-      const st = statements.get(w.id);
-      const gross = st ? st.totals.grossWages : 0;
       const name = w.invoice_name || w.full_name;
       const resolved = resolveRuleset(rulesets, w.role_id);
       if (resolved.error) {
-        errors.push({ worker_id: w.id, worker_name: name, role_name: w.role_name || null, reason: resolved.error, matches: resolved.matches || null, gross });
+        errors.push({ worker_id: w.id, worker_name: name, role_name: w.role_name || null, reason: resolved.error, matches: resolved.matches || null });
         continue;
       }
-      const deds = [...deductionsForRole(companyDeds, w.role_id), ...normalizeWorkerDeductions(wdByUser[w.id])];
-      const calc = computeRuleNet(gross, deds, resolved.ruleset);
-      rows.push({
-        worker_id: w.id, worker_name: name, role_name: w.role_name || null,
-        ruleset_name: resolved.ruleset ? resolved.ruleset.name : null,
-        gross: calc.gross, exempt: calc.exempt, deduction_total: calc.deductionTotal, net: calc.net,
-        deduction_lines: calc.lines,
-      });
+      ready.push({ w, name, ruleset: resolved.ruleset });
     }
+
+    // Generate + group the pay periods each ruleset issues in [from, to] (once per
+    // ruleset). A null ruleset (none configured) → the whole window is one check.
+    const periodsByRuleset = {};
+    const periodsFor = ruleset => {
+      const key = ruleset ? ruleset.id : '__none__';
+      if (periodsByRuleset[key]) return periodsByRuleset[key];
+      let grouped;
+      if (!ruleset) grouped = [{ periodStart: from, periodEnd: to, payDate: to, groupKey: '0', deductionsApply: true }];
+      else grouped = groupPeriods(generatePeriods(ruleset.schedule, from, to), ruleset.deductions || {});
+      periodsByRuleset[key] = grouped;
+      return grouped;
+    };
+    ready.forEach(r => { r.periods = periodsFor(r.ruleset); });
+
+    // Gross per worker for each distinct period range (one companyStatements call each).
+    const rangeKeys = new Set();
+    ready.forEach(r => r.periods.forEach(p => rangeKeys.add(p.periodStart + '|' + p.periodEnd)));
+    const grossByRange = {};
+    for (const rk of rangeKeys) {
+      const [ps, pe] = rk.split('|');
+      const sts = await companyStatements({ companyId, workers: workers.rows, settings: s, from: ps, to: pe });
+      const m = new Map();
+      workers.rows.forEach(w => { const st = sts.get(w.id); m.set(w.id, st ? st.totals.grossWages : 0); });
+      grossByRange[rk] = m;
+    }
+
+    // One row per (worker, check): combine each group, exempt once, deduct on the flagged check.
+    const rows = [];
+    for (const r of ready) {
+      const deds = [...deductionsForRole(companyDeds, r.w.role_id), ...normalizeWorkerDeductions(wdByUser[r.w.id])];
+      const withGross = r.periods.map(p => ({ ...p, gross: grossByRange[p.periodStart + '|' + p.periodEnd].get(r.w.id) || 0 }));
+      for (const p of applyGroupDeductions(withGross, deds, r.ruleset)) {
+        rows.push({
+          worker_id: r.w.id, worker_name: r.name, role_name: r.w.role_name || null,
+          ruleset_name: r.ruleset ? r.ruleset.name : null,
+          pay_date: p.payDate, period_start: p.periodStart, period_end: p.periodEnd, deducts: !!p.deductionsApply,
+          gross: p.gross, deduction_total: p.deductionTotal, net: p.net,
+        });
+      }
+    }
+    rows.sort((a, b) => (a.pay_date < b.pay_date ? -1 : a.pay_date > b.pay_date ? 1 : a.worker_name.localeCompare(b.worker_name)));
+
     res.json({ from, to, rows, errors, ruleset_count: rulesets.length });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });

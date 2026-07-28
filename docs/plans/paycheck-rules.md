@@ -120,11 +120,18 @@ worker's ruleset from their role and computes gross → deductions → net for a
 - Deductions = company-wide + the worker's role-scoped + their personal rows, run
   through the ruleset's **exempt → deduct → cap → min-net** math (`computeRuleNet`).
 
+## Pay periods + multi-check combining (SHIPPED 2026-07-27)
+`server/utils/payPeriods.js` (pure, UTC, 10 tests) generates the paychecks a
+ruleset's schedule issues in a window — weekly / biweekly-from-anchor / semimonthly
+(with day clamping) / monthly, weekend-shift — then groups them (pair / calendar
+month) and flags which check the deductions land on. The run now generates each
+worker's periods, fetches gross per period (one `companyStatements` per distinct
+range), and `applyGroupDeductions` combines the group's gross, subtracts the exempt
+**once**, and deducts on the flagged check — David's "every other Thursday, deduct on
+the 2nd, combined − $11k" and "15th & 30th, deduct on the 30th" now compute exactly.
+The register is one row per (worker, check), sorted by pay date.
+
 ## Later (out of scope now)
-- **Multi-check combining:** the run computes ONE period as a single check. A
-  ruleset's `combineGroup` (sum a pair/month of checks BEFORE the exempt, deduct on
-  the `applyOn` check) needs **generated pay periods** from the schedule
-  (biweekly-anchor / semimonthly / weekend-shift) — the next increment.
 - **Stripe self-serve purchase** of Advanced Payroll.
 - Server-side gate on the `paycheck_rules` SAVE (currently client-gated; inert
   without the engine).

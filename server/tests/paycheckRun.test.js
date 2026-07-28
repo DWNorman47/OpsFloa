@@ -3,7 +3,7 @@
  * deduction scoping, and the per-check deduction math (exempt → deduct → cap → floor).
  */
 
-const { resolveRuleset, deductionsForRole, computeRuleNet } = require('../utils/paycheckRun');
+const { resolveRuleset, deductionsForRole, computeRuleNet, applyGroupDeductions } = require('../utils/paycheckRun');
 
 describe('resolveRuleset — assignment by role, errors are surfaced not guessed', () => {
   const RS = [{ id: 'a', name: 'A', roles: [1, 2] }, { id: 'b', name: 'B', roles: [3] }];
@@ -74,5 +74,28 @@ describe('computeRuleNet — exempt → deduct → cap → min-net floor', () =>
     const c = computeRuleNet(5000, tax10, rs);           // 10% = 500 → net 4500 < 4800
     expect(c.net).toBe(4800);
     expect(c.deductionTotal).toBe(200);                  // floored
+  });
+
+  test('baseGross overrides the deduction base but net comes off the check gross', () => {
+    const c = computeRuleNet(6000, tax10, { deductions: { exemptAmountCents: 1100000 } }, 12000);
+    expect(c.base).toBe(1000);          // (12000 combined − 11000 exempt)
+    expect(c.deductionTotal).toBe(100); // 10% of 1000
+    expect(c.net).toBe(5900);           // 6000 check − 100
+  });
+});
+
+describe('applyGroupDeductions — combine the group, exempt once, deduct on the flagged check', () => {
+  test("David's biweekly: two $6,000 checks, $11k exempt, deduct on the 2nd (10%)", () => {
+    const ded = [{ id: 'x', name: 'Tax', kind: 'percent', value: 10, cap: null }];
+    const rs = { deductions: { exemptAmountCents: 1100000 } }; // $11,000
+    const [c1, c2] = applyGroupDeductions([
+      { groupKey: '0', deductionsApply: false, gross: 6000 },
+      { groupKey: '0', deductionsApply: true, gross: 6000 },
+    ], ded, rs);
+    expect(c1.deductionTotal).toBe(0);   // first check untouched
+    expect(c1.net).toBe(6000);
+    expect(c2.base).toBe(1000);          // 12000 combined − 11000 exempt
+    expect(c2.deductionTotal).toBe(100); // 10% of 1000
+    expect(c2.net).toBe(5900);           // 6000 − 100
   });
 });

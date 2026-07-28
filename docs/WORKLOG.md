@@ -106,6 +106,26 @@ real paycheck until David merges to prod.
 
 ---
 
+## 2026-07-27 — Payroll: pay-period generation + multi-check combining (the $11k case)
+
+The run now does the real thing — David's signature case computes exactly.
+`server/utils/payPeriods.js` (pure, UTC-deterministic, 10 tests) turns a ruleset's
+**schedule** into the paychecks it issues in a window: weekly, **biweekly from an
+anchor** (every other Thursday), **semimonthly** (15th & 30th, "30" clamping to the
+last day of short months), monthly ("last"), with a **weekend shift**. `groupPeriods`
+groups them (pair / calendar month) and flags which check the deductions land on
+(first/second/last).
+
+The run endpoint (`/admin/payroll-run`) now: resolves each worker's ruleset from
+role (0/>1 still a flagged setup error), **generates their pay periods** in [from,to],
+fetches gross **per period** (one `companyStatements` per distinct range), then
+`applyGroupDeductions` (paycheckRun.js) **combines each group's gross, subtracts the
+exempt ONCE, and deducts on the flagged check** — `computeRuleNet` grew a `baseGross`
+arg so the deduction base is the group total while the net comes off each check's own
+gross. Register is one row per (worker, check), sorted by pay date; `PayrollRun.jsx`
+gained Pay-date + Period columns. New tests pin the combine ("two $6k checks, $11k
+exempt, deduct on the 2nd → 10% of $1,000 on check 2"). 1168 pass.
+
 ## 2026-07-27 — PDF toolkit: add images as pages + choose the download name
 
 - **Images → pages.** The file picker + drop now accept **JPG/PNG**; each image

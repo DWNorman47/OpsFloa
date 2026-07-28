@@ -85,20 +85,22 @@ export default function PayrollRun({ currency = 'USD' }) {
               <table style={s.table}>
                 <thead>
                   <tr>
+                    <th style={s.th}>{t.pcrRunPayDate}</th>
                     <th style={s.th}>{t.pcrRunWorker}</th>
-                    <th style={s.th}>{t.pcrRunRole}</th>
                     <th style={s.th}>{t.pcrRunRuleset}</th>
+                    <th style={s.th}>{t.pcrRunPeriod}</th>
                     <th style={s.thNum}>{t.pcrRunGross}</th>
                     <th style={s.thNum}>{t.pcrRunDeductions}</th>
                     <th style={s.thNum}>{t.pcrRunNet}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {data.rows.map(r => (
-                    <tr key={r.worker_id} style={s.tr}>
-                      <td style={s.tdName}>{r.worker_name}</td>
-                      <td style={s.td}>{r.role_name || '—'}</td>
+                  {data.rows.map((r, i) => (
+                    <tr key={`${r.worker_id}-${r.pay_date}-${i}`} style={s.tr}>
+                      <td style={s.td}>{r.pay_date}</td>
+                      <td style={s.tdName}>{r.worker_name}{r.role_name ? <span style={s.muted}> · {r.role_name}</span> : ''}</td>
                       <td style={s.td}>{r.ruleset_name || <span style={s.muted}>{t.pcrRunNoRule}</span>}</td>
+                      <td style={s.td}>{r.period_start} – {r.period_end}</td>
                       <td style={s.tdNum}>{money(r.gross)}</td>
                       <td style={{ ...s.tdNum, color: r.deduction_total > 0 ? '#b91c1c' : undefined }}>{r.deduction_total > 0 ? `−${money(r.deduction_total)}` : '—'}</td>
                       <td style={{ ...s.tdNum, fontWeight: 700 }}>{money(r.net)}</td>
@@ -107,7 +109,7 @@ export default function PayrollRun({ currency = 'USD' }) {
                 </tbody>
                 <tfoot>
                   <tr style={s.totalRow}>
-                    <td style={s.td} colSpan={3}><strong>{t.pcrRunTotals}</strong></td>
+                    <td style={s.td} colSpan={4}><strong>{t.pcrRunTotals}</strong></td>
                     <td style={s.tdNum}><strong>{money(totals.gross)}</strong></td>
                     <td style={s.tdNum}><strong>{totals.ded > 0 ? `−${money(totals.ded)}` : '—'}</strong></td>
                     <td style={s.tdNum}><strong>{money(totals.net)}</strong></td>
