@@ -23,11 +23,13 @@
 <body>
 <header id="topbar">
   <div class="brand">PDF&nbsp;Toolkit</div>
-  <button id="btnOpen" class="btn primary">Open PDFs…</button>
-  <input type="file" id="fileInput" accept="application/pdf" multiple hidden>
+  <button id="btnOpen" class="btn primary">Open files…</button>
+  <input type="file" id="fileInput" accept="application/pdf,image/jpeg,image/png" multiple hidden>
   <span class="spacer"></span>
   <span id="pageInfo" class="info"></span>
   <button id="btnSelectAll" class="btn" disabled>Select all</button>
+  <input id="fileName" type="text" placeholder="file name" title="Name for the downloaded PDF (.pdf is added automatically)" disabled
+    style="padding:7px 10px;border:1px solid #cbd5e1;border-radius:7px;font-size:13px;width:150px;background:#fff;color:#111">
   <button id="btnExtract" class="btn" disabled title="Save only the checked pages as a new PDF">Extract selected…</button>
   <button id="btnDownload" class="btn go" disabled title="Save every page, in the current order and rotation, as one PDF">Download PDF</button>
   <button id="btnClear" class="btn" disabled>Clear</button>
@@ -38,8 +40,8 @@
   <div id="dropZone" class="drop">
     <div class="drop-inner">
       <div class="drop-emoji">🗂️</div>
-      <div class="drop-title">Drop PDF files here</div>
-      <div class="drop-sub">or click <b>Open PDFs…</b> — combine several files, reorder, rotate, and delete pages, or extract a few, then download. Everything stays on your device; nothing is uploaded.</div>
+      <div class="drop-title">Drop PDFs or images here</div>
+      <div class="drop-sub">or click <b>Open files…</b> — combine PDFs and image files (JPG, PNG), reorder, rotate, and delete pages, or extract a few, then download. Everything stays on your device; nothing is uploaded.</div>
     </div>
   </div>
   <div id="grid" class="grid hidden"></div>
@@ -52,7 +54,7 @@
   <div class="modal-box">
     <h3>PDF Toolkit</h3>
     <ul class="help-list">
-      <li><b>Open / drop</b> one or more PDFs — their pages all appear together as thumbnails.</li>
+      <li><b>Open / drop</b> one or more PDFs or images (JPG, PNG) — every page and picture appears together as thumbnails. Click a thumbnail to view it full size.</li>
       <li><b>Combine (merge):</b> open several files, then <b>Download PDF</b> saves all pages as one document.</li>
       <li><b>Reorder:</b> drag a page thumbnail to a new spot.</li>
       <li><b>Rotate:</b> the ⟳ button on a page turns it 90°.</li>

@@ -106,6 +106,21 @@ real paycheck until David merges to prod.
 
 ---
 
+## 2026-07-27 — PDF toolkit: add images as pages + choose the download name
+
+- **Images → pages.** The file picker + drop now accept **JPG/PNG**; each image
+  becomes a one-page source that flows through the same grid (thumbnail, reorder,
+  rotate, delete, extract, full-size view) as PDF pages. `buildPdf` embeds images via
+  pdf-lib `embedJpg/embedPng`, sized to the picture, with a **canvas re-encode
+  fallback** for a mislabeled/unusual format. Sources are now tagged `kind: 'pdf' |
+  'image'`; the thumbnail, viewer, and build paths branch on it.
+- **Choose the output name.** A filename box in the toolbar (seeded from the source
+  name / "combined", never clobbering a typed value) drives both Download and Extract;
+  `outName()` sanitizes it and appends `.pdf`.
+
+Self-contained in the tool-app (app.js + index.html); no `?v` (SW precache revisions
+it). 1156 pass.
+
 ## 2026-07-27 — PDF toolkit: export no longer crashes on odd PDFs + full-size viewer
 
 **Bug** ("expected instance of e, but got undefined" on download/export): traced to

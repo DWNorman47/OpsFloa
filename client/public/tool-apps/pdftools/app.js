@@ -34,30 +34,75 @@ function showEmpty() {
 }
 
 /* ---------- loading ---------- */
+const isPdfFile = f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+const isImageFile = f => /^image\/(jpeg|png)$/.test(f.type) || /\.(jpe?g|png)$/i.test(f.name);
+
 async function openFiles(fileList) {
-  const files = [...fileList].filter(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
-  if (!files.length) { toast('Drop PDF files.'); return; }
+  const files = [...fileList].filter(f => isPdfFile(f) || isImageFile(f));
+  if (!files.length) { toast('Drop PDF or image files (JPG, PNG).'); return; }
   busy(true, 'Loading…');
   try {
     for (const f of files) {
+      if (isImageFile(f)) { await addImageSource(f); continue; }
       const bytes = new Uint8Array(await f.arrayBuffer());
       // pdf.js detaches the buffer it's given, so hand it a copy and keep `bytes` for pdf-lib
       const doc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
       const src = state.sources.length;
-      state.sources.push({ name: f.name, bytes, doc });
+      state.sources.push({ kind: 'pdf', name: f.name, bytes, doc });
       for (let p = 0; p < doc.numPages; p++)
         state.pages.push({ id: ++uid, src, page: p, rot: 0, sel: false });
     }
     renderGrid();
     await ensureThumbs();
   } catch (e) {
-    toast('Could not read a PDF: ' + (e && e.message ? e.message : e));
+    toast('Could not read a file: ' + (e && e.message ? e.message : e));
   }
   busy(false);
 }
 
+// A JPG/PNG becomes a one-page source: bytes for the pdf-lib embed, a dataURL for the
+// thumbnail + viewer, and the natural size for laying out the page.
+async function addImageSource(f) {
+  const bytes = new Uint8Array(await f.arrayBuffer());
+  const mime = (/png$/i.test(f.type) || /\.png$/i.test(f.name)) ? 'image/png' : 'image/jpeg';
+  const dataUrl = await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(new Blob([bytes], { type: mime }));
+  });
+  const dim = await new Promise(resolve => {
+    const im = new Image();
+    im.onload = () => resolve({ width: im.naturalWidth, height: im.naturalHeight });
+    im.onerror = () => resolve({ width: 0, height: 0 });
+    im.src = dataUrl;
+  });
+  if (!dim.width || !dim.height) { toast('Could not read image: ' + f.name); return; }
+  const src = state.sources.length;
+  state.sources.push({ kind: 'image', name: f.name, bytes, mime, dataUrl, width: dim.width, height: dim.height });
+  state.pages.push({ id: ++uid, src, page: 0, rot: 0, sel: false });
+}
+
+function imageThumb(src) {
+  return new Promise(resolve => {
+    const im = new Image();
+    im.onload = () => {
+      const scale = Math.min(1, 220 / im.naturalWidth);
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(im.naturalWidth * scale));
+      c.height = Math.max(1, Math.round(im.naturalHeight * scale));
+      c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+      resolve(c.toDataURL('image/jpeg', 0.7));
+    };
+    im.onerror = () => resolve(src.dataUrl);
+    im.src = src.dataUrl;
+  });
+}
+
 async function renderThumb(srcIdx, pageIdx) {
-  const page = await state.sources[srcIdx].doc.getPage(pageIdx + 1);
+  const source = state.sources[srcIdx];
+  if (source.kind === 'image') return imageThumb(source);
+  const page = await source.doc.getPage(pageIdx + 1);
   const base = page.getViewport({ scale: 1 });
   const vp = page.getViewport({ scale: Math.max(0.2, 220 / base.width) });
   const c = document.createElement('canvas');
@@ -131,6 +176,17 @@ function renderGrid() {
   updateToolbar();
 }
 
+// Default download name: a single source keeps its name; multiple → "combined".
+function defaultBaseName() {
+  if (state.sources.length === 1) return state.sources[0].name.replace(/\.(pdf|jpe?g|png)$/i, '');
+  return 'combined';
+}
+// The filename box value → a safe "<name>.pdf".
+function outName() {
+  let base = ($('fileName').value || '').trim().replace(/\.pdf$/i, '').replace(/[\\/:*?"<>|]/g, '_');
+  return (base || 'document') + '.pdf';
+}
+
 function updateToolbar() {
   const n = state.pages.length, selN = state.pages.filter(p => p.sel).length;
   $('pageInfo').textContent = n ? `${n} page${n === 1 ? '' : 's'}${selN ? ` · ${selN} selected` : ''}` : '';
@@ -138,6 +194,9 @@ function updateToolbar() {
   $('btnExtract').disabled = !selN;
   $('btnSelectAll').disabled = !n;
   $('btnClear').disabled = !n;
+  const fn = $('fileName');
+  fn.disabled = !n;
+  if (n && !fn.value.trim()) fn.value = defaultBaseName(); // seed a sensible default, never clobber a typed name
   $('btnSelectAll').textContent = (n && selN === n) ? 'Select none' : 'Select all';
 }
 
@@ -203,6 +262,35 @@ async function rasterizeInto(out, pg) {
   p.drawImage(jpg, { x: 0, y: 0, width: vp.width, height: vp.height });
 }
 
+// Re-encode any browser-decodable image to JPEG bytes — rescues a mislabeled
+// extension or an unusual format (CMYK, etc.) that embedJpg/embedPng rejects.
+async function imageToJpegBytes(dataUrl) {
+  const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = dataUrl; });
+  const c = document.createElement('canvas');
+  c.width = im.naturalWidth; c.height = im.naturalHeight;
+  c.getContext('2d').drawImage(im, 0, 0);
+  const b64 = c.toDataURL('image/jpeg', 0.92).split(',')[1];
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return arr;
+}
+
+// An image source → a page sized to the image, with the picture drawn to fill it.
+async function imagePageInto(out, meta, rot) {
+  let img;
+  try {
+    img = meta.mime === 'image/png'
+      ? await out.embedPng(meta.bytes.slice())
+      : await out.embedJpg(meta.bytes.slice());
+  } catch (_) {
+    img = await out.embedJpg(await imageToJpegBytes(meta.dataUrl));
+  }
+  const p = out.addPage([meta.width, meta.height]);
+  p.drawImage(img, { x: 0, y: 0, width: meta.width, height: meta.height });
+  if (rot) p.setRotation(degrees(rot % 360));
+}
+
 async function buildPdf(pageList) {
   const out = await PDFDocument.create();
   const libDocs = {}; // src -> PDFDocument | null (null = couldn't load that file)
@@ -210,6 +298,11 @@ async function buildPdf(pageList) {
   for (const pg of pageList) {
     const meta = state.sources[pg.src];
     if (!meta) { failed++; continue; }
+    if (meta.kind === 'image') {
+      try { await imagePageInto(out, meta, pg.rot); }
+      catch (_) { failed++; }
+      continue;
+    }
     if (libDocs[pg.src] === undefined) {
       try { libDocs[pg.src] = await PDFDocument.load(meta.bytes.slice(), { ignoreEncryption: true, throwOnInvalidObject: false }); }
       catch (_) { libDocs[pg.src] = null; }
@@ -276,8 +369,16 @@ async function openViewer(pg) {
   const body = ov.querySelector('.pv-body');
   body.innerHTML = '<div style="color:#fff;padding:40px;font:14px system-ui,sans-serif">Rendering…</div>';
   ov.style.display = 'flex';
+  const source = state.sources[pg.src];
+  if (source.kind === 'image') {
+    const el = new Image();
+    el.src = source.dataUrl;
+    el.style.cssText = `display:block;max-width:100%;max-height:calc(100vh - 60px);height:auto;background:#fff;box-shadow:0 8px 40px rgba(0,0,0,0.5);transform:rotate(${pg.rot}deg)`;
+    body.innerHTML = ''; body.appendChild(el);
+    return;
+  }
   try {
-    const page = await state.sources[pg.src].doc.getPage(pg.page + 1);
+    const page = await source.doc.getPage(pg.page + 1);
     const rotation = ((((page.rotate || 0) + pg.rot) % 360) + 360) % 360;
     const one = page.getViewport({ scale: 1, rotation });
     const scale = Math.max(0.2, Math.min((window.innerWidth - 60) / one.width, (window.innerHeight - 60) / one.height, 4));
@@ -296,11 +397,8 @@ window.addEventListener('keydown', e => { if (e.key === 'Escape') closeViewer();
 /* ---------- wiring ---------- */
 $('btnOpen').addEventListener('click', () => $('fileInput').click());
 $('fileInput').addEventListener('change', e => { openFiles(e.target.files); e.target.value = ''; });
-$('btnDownload').addEventListener('click', () => {
-  const base = state.sources.length === 1 ? state.sources[0].name.replace(/\.pdf$/i, '') : 'combined';
-  downloadPages(state.pages, base + '.pdf');
-});
-$('btnExtract').addEventListener('click', () => downloadPages(state.pages.filter(p => p.sel), 'extracted.pdf'));
+$('btnDownload').addEventListener('click', () => downloadPages(state.pages, outName()));
+$('btnExtract').addEventListener('click', () => downloadPages(state.pages.filter(p => p.sel), outName()));
 $('btnSelectAll').addEventListener('click', () => {
   const all = state.pages.length && state.pages.every(p => p.sel);
   state.pages.forEach(p => (p.sel = !all));
@@ -309,6 +407,7 @@ $('btnSelectAll').addEventListener('click', () => {
 $('btnClear').addEventListener('click', () => {
   state.sources = []; state.pages = [];
   for (const k of Object.keys(thumbs)) delete thumbs[k]; // src indices restart, so drop stale thumbs
+  $('fileName').value = ''; // next load reseeds the default name
   showEmpty();
 });
 $('btnHelp').addEventListener('click', () => $('help').classList.remove('hidden'));
