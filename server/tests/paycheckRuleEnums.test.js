@@ -76,6 +76,12 @@ describe('normalizeRuleset — field clamping', () => {
     expect(normalizeRuleset({ deductions: { combineGroup: false } }, 0).deductions.combineGroup).toBe(false);
   });
 
+  test('roles: applies-to list is kept, de-duped, non-primitives dropped', () => {
+    expect(normalizeRuleset({ roles: [1, 2, 2, 'x', null, {}, 3] }, 0).roles).toEqual([1, 2, 'x', 3]);
+    expect(normalizeRuleset({}, 0).roles).toEqual([]);        // missing → empty (unassigned)
+    expect(normalizeRuleset({ roles: 'nope' }, 0).roles).toEqual([]); // non-array → empty
+  });
+
   test('missing id gets a stable index-based fallback; strings are length-capped', () => {
     const r = normalizeRuleset({ name: 'x'.repeat(200) }, 7);
     expect(r.id).toBe('pr_7');

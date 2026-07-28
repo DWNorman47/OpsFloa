@@ -323,7 +323,10 @@ that had the previous default.
 
 - `deductions` (JSON list, default `''`) — company-wide payroll deductions for
   the per-worker **pay stub** (gross wages → net). Shape `{ items: [{ id, name,
-  kind, value, cap }] }` (a bare array is also accepted). `kind` is `percent` (of
+  kind, value, cap, roleIds }] }` (a bare array is also accepted). `roleIds` is an
+  optional array of role ids the deduction is scoped to — **empty/absent = all
+  employees** (the original company-wide behavior); non-empty = only workers in
+  those roles ("role deductions"). `kind` is `percent` (of
   gross wages, optional `cap` = max amount per period) or `fixed` (flat amount) —
   same vocabulary as the `worker_deductions.kind` column above. `''`/empty = no
   deductions, so the stub stays gross-only for companies that never configure it.
@@ -338,8 +341,9 @@ that had the previous default.
 
 - `paycheck_rules` (JSON policy, default `''`) — named **paycheck rulesets** (pay
   schedule + how/when deductions apply), built in Administration ▸ Workspace ▸
-  Paycheck Rules. Shape `{ version, rulesets: [{ id, name, schedule, deductions,
-  notes }] }`; money in **cents**. Every fixed-value field lives inside the JSON
+  Paycheck Rules. Shape `{ version, rulesets: [{ id, name, roles, schedule,
+  deductions, notes }] }`; money in **cents**. `roles` is the array of role ids the
+  ruleset applies to (a worker gets their ruleset from their role; empty = unassigned). Every fixed-value field lives inside the JSON
   (not a DB column, same posture as `hours_rules`), with the allowed sets frozen in
   `server/constants/paycheckRuleEnums.js` and clamped on read by
   `normalizePaycheckRules` (never throws):

@@ -39,6 +39,16 @@ describe('parseCompanyDeductions', () => {
   test('also accepts a bare array', () => {
     expect(parseCompanyDeductions(JSON.stringify([{ name: 'X', kind: 'fixed', value: 10 }]))).toHaveLength(1);
   });
+
+  test('role scope: roleIds kept (de-duped, primitives only); absent = all employees', () => {
+    const raw = JSON.stringify({ items: [
+      { id: 'a', name: 'Union dues', kind: 'fixed', value: 20, roleIds: [3, 3, 'x', null, {}] },
+      { id: 'b', name: 'Social Security', kind: 'percent', value: 6 }, // no roleIds → company-wide
+    ] });
+    const list = parseCompanyDeductions(raw);
+    expect(list[0].roleIds).toEqual([3, 'x']); // de-duped, non-primitives dropped
+    expect(list[1].roleIds).toEqual([]);        // absent → all employees
+  });
 });
 
 describe('normalizeWorkerDeductions', () => {

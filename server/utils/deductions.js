@@ -36,6 +36,10 @@ function normalizeDeduction(raw) {
     kind,
     value,
     cap: Number.isFinite(cap) && cap > 0 ? cap : null,
+    // Role scope: role IDs this deduction applies to. Empty/absent = ALL employees
+    // (company-wide, the original behavior). Non-empty = only workers in those
+    // roles. Per-worker DB rows never carry this (they're already worker-scoped).
+    roleIds: [...new Set((Array.isArray(raw.roleIds) ? raw.roleIds : []).filter(x => typeof x === 'number' || typeof x === 'string'))].slice(0, 200),
   };
 }
 

@@ -43,6 +43,9 @@ function normalizeRuleset(r, i) {
   return {
     id: (typeof r.id === 'string' && r.id) ? r.id.slice(0, 40) : `pr_${i}`,
     name: String(r.name == null ? '' : r.name).slice(0, 120),
+    // Role IDs this ruleset applies to (a worker's role → their ruleset). Empty =
+    // not yet assigned. Kept as-is (role ids may be int or uuid) and de-duped.
+    roles: [...new Set((Array.isArray(r.roles) ? r.roles : []).filter(x => typeof x === 'number' || typeof x === 'string'))].slice(0, 200),
     schedule: {
       frequency: oneOf(sched.frequency, PAYCHECK_FREQUENCIES, 'biweekly'),
       payWeekday: clampWeekday(sched.payWeekday),

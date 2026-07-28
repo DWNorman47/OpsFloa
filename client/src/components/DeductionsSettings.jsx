@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useT } from '../hooks/useT';
 import { invalidateCache } from '../offlineDb';
@@ -27,6 +27,7 @@ function parseItems(raw) {
     kind: KINDS.includes(it.kind) ? it.kind : 'percent',
     value: it.value != null ? String(it.value) : '',
     cap: it.cap != null ? String(it.cap) : '',
+    roleIds: Array.isArray(it.roleIds) ? it.roleIds : [],
   }));
 }
 
@@ -40,6 +41,7 @@ function toPolicy(items) {
         const out = { id: it.id, name: String(it.name).trim().slice(0, 120), kind: it.kind, value: parseFloat(it.value) };
         const cap = parseFloat(it.cap);
         if (it.kind === 'percent' && Number.isFinite(cap) && cap > 0) out.cap = cap;
+        if (Array.isArray(it.roleIds) && it.roleIds.length) out.roleIds = it.roleIds; // role-scoped; empty = all employees
         return out;
       }),
   };
@@ -48,9 +50,14 @@ function toPolicy(items) {
 export default function DeductionsSettings({ settings, onSettingsUpdated }) {
   const t = useT();
   const [items, setItems] = useState(() => parseItems(settings?.deductions));
+  const [roles, setRoles] = useState([]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.get('/admin/roles').then(r => setRoles(r.data || [])).catch(silentError('deductions-roles'));
+  }, []);
 
   const change = (next) => { setItems(next); setSaved(false); };
 
@@ -72,7 +79,7 @@ export default function DeductionsSettings({ settings, onSettingsUpdated }) {
   return (
     <div style={s.card}>
       <p style={s.desc}>{t.dedDesc}</p>
-      <DeductionListEditor items={items} onChange={change} />
+      <DeductionListEditor items={items} onChange={change} roles={roles} />
       <p style={s.note}>{t.dedNote}</p>
       {error && <p role="alert" style={s.error}>{error}</p>}
       <div style={s.actions}>

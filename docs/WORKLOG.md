@@ -106,7 +106,26 @@ real paycheck until David merges to prod.
 
 ---
 
-## 2026-07-27 — Advanced Payroll add-on (gate Payroll + Paycheck Rules + WH-347)
+## 2026-07-27 — Payroll assignment layer: rulesets → roles + role deductions
+
+The link that turns Paycheck Rules into an actual payroll run is **role**, per
+David. Two pieces (config/storage; the pay engine that consumes them is still later):
+
+- **Rulesets select the roles they apply to.** Each ruleset carries `roles: []`
+  (role ids). Builder: a chip multi-select of the company's roles (fetched from
+  `GET /admin/roles`, same as HoursRules), and the summary line now leads with the
+  role names (or "No roles"). A worker will get their ruleset from their role.
+- **Role deductions in Payroll Deductions.** Each deduction carries an optional
+  `roleIds: []` — **empty = all employees** (the original company-wide behavior),
+  non-empty = only workers in those roles. `DeductionListEditor` grew an opt-in
+  "Applies to" chip row (All employees / roles), enabled by a new `roles` prop —
+  omitted in the per-worker context (those are already worker-scoped). `normalize
+  Deduction` now preserves `roleIds` (de-duped, primitives only); the per-worker PUT
+  route maps fixed fields so the unused `roleIds` is harmlessly ignored there.
+
+Both normalizers keep the fields as-is (role ids may be int or uuid), de-dupe, and
+cap the array. EN+ES i18n; db-enums updated for both shapes; tests pin the role
+normalization on rulesets + deductions. 1142 pass.
 
 Packaged the advanced payroll stuff behind a paid add-on, **Advanced Payroll**, per
 David's call. Free (base plan) in Reports: the hours register (regular/OT/prevailing)

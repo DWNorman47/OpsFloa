@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useT } from '../hooks/useT';
 import { invalidateCache } from '../offlineDb';
@@ -36,6 +36,7 @@ function toForm(r) {
   return {
     id: r.id || rid(),
     name: r.name || '',
+    roles: Array.isArray(r.roles) ? r.roles : [],
     frequency: s.frequency || 'biweekly',
     payWeekday: s.payWeekday == null ? 4 : s.payWeekday,
     anchorDate: s.anchorDate || '',
@@ -66,6 +67,7 @@ function fromForm(f) {
   return {
     id: f.id,
     name: String(f.name || '').trim().slice(0, 120),
+    roles: Array.isArray(f.roles) ? f.roles : [],
     schedule: {
       frequency: f.frequency,
       payWeekday: Number(f.payWeekday),
@@ -105,7 +107,9 @@ const PRESETS = {
   semimonthly: () => ({ ...toForm({}), id: rid(), frequency: 'semimonthly', day1: '15', day2: '30', timing: 'grouped', groupBy: 'month', applyOn: 'last', combineGroup: true, exemptAmount: '11000', _open: true }),
 };
 
-function describe(f, t) {
+function describe(f, t, roles) {
+  const roleNames = (f.roles || []).map(id => (roles.find(r => r.id === id) || {}).name).filter(Boolean);
+  const who = roleNames.length ? roleNames.join(', ') : t.pcrRolesUnassigned;
   const wd = (t.pcrWeekdays && t.pcrWeekdays[f.payWeekday]) || '';
   let sched;
   if (f.frequency === 'weekly') sched = `${t.pcrFreqWeekly} · ${wd}`;
@@ -121,19 +125,28 @@ function describe(f, t) {
     ded = `${applyName} · ${byName}`;
     if (parseFloat(f.exemptAmount) > 0) ded += ` · −${money(f.exemptAmount)}`;
   }
-  return `${sched}  —  ${ded}`;
+  return `${who}  —  ${sched}  —  ${ded}`;
 }
 
 export default function PaycheckRulesSettings({ settings, onSettingsUpdated }) {
   const t = useT();
   const [rules, setRules] = useState(() => parse(settings?.paycheck_rules));
+  const [roles, setRoles] = useState([]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
   const deductionOptions = companyDeductions(settings?.deductions);
 
+  useEffect(() => {
+    api.get('/admin/roles').then(r => setRoles(r.data || [])).catch(silentError('paycheckrules-roles'));
+  }, []);
+
   const touch = next => { setRules(next); setSaved(false); };
   const patchRule = (id, patch) => touch(rules.map(r => (r.id === id ? { ...r, ...patch } : r)));
+  const toggleRulesetRole = (f, rid) => {
+    const cur = f.roles || [];
+    patchRule(f.id, { roles: cur.includes(rid) ? cur.filter(x => x !== rid) : [...cur, rid] });
+  };
   const addRule = f => touch([...rules, f || { ...toForm({}), id: rid(), _open: true }]);
   const dupRule = id => { const r = rules.find(x => x.id === id); if (r) touch([...rules, { ...r, id: rid(), name: `${r.name || t.pcrUnnamed} (copy)`, _open: true }]); };
   const delRule = id => touch(rules.filter(r => r.id !== id));
@@ -164,7 +177,7 @@ export default function PaycheckRulesSettings({ settings, onSettingsUpdated }) {
             </button>
             <div style={s.rsTitleWrap}>
               <div style={s.rsName}>{f.name || t.pcrUnnamed}</div>
-              <div style={s.rsSummary}>{describe(f, t)}</div>
+              <div style={s.rsSummary}>{describe(f, t, roles)}</div>
             </div>
             <button type="button" style={s.miniBtn} onClick={() => dupRule(f.id)}>{t.pcrDuplicate}</button>
             <button type="button" style={{ ...s.miniBtn, color: '#dc2626' }} onClick={() => delRule(f.id)}>{t.pcrDelete}</button>
@@ -175,6 +188,17 @@ export default function PaycheckRulesSettings({ settings, onSettingsUpdated }) {
               <Field label={t.pcrName}>
                 <input style={s.input} value={f.name} placeholder={t.pcrNamePlaceholder}
                   onChange={e => patchRule(f.id, { name: e.target.value })} />
+              </Field>
+
+              <Field label={t.pcrRoles} hint={t.pcrRolesHint}>
+                {roles.length === 0
+                  ? <p style={s.hint}>{t.pcrRolesNone}</p>
+                  : <div style={s.chipRow}>
+                      {roles.map(r => (
+                        <button key={r.id} type="button" style={(f.roles || []).includes(r.id) ? s.chipOn : s.chip}
+                          onClick={() => toggleRulesetRole(f, r.id)}>{r.name}</button>
+                      ))}
+                    </div>}
               </Field>
 
               {/* ── Pay schedule ── */}
@@ -353,6 +377,9 @@ const s = {
   check: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#374151', cursor: 'pointer' },
   checkList: { display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 0 8px' },
   hint: { fontSize: 12, color: '#94a3b8', marginTop: 3, lineHeight: 1.4 },
+  chipRow: { display: 'flex', gap: 6, flexWrap: 'wrap' },
+  chip: { background: '#fff', color: '#374151', border: '1px solid #d1d5db', borderRadius: 999, padding: '4px 12px', fontSize: 12.5, cursor: 'pointer' },
+  chipOn: { background: 'var(--ops-page-accent, #1d4ed8)', color: '#fff', border: '1px solid var(--ops-page-accent, #1d4ed8)', borderRadius: 999, padding: '4px 12px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' },
   addRow: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 6 },
   addBtn: { background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: 8, padding: '8px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
   presetLabel: { fontSize: 12, color: '#9ca3af' },
