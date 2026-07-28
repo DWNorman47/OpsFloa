@@ -3338,7 +3338,7 @@ async function computePayrollRun(companyId, from, to) {
         const st = stmtFor(p.periodStart + '|' + p.periodEnd, r.w.id);
         rows.push({
           worker_id: r.w.id, worker_name: r.name, role_name: r.w.role_name || null,
-          ruleset_name: r.ruleset ? r.ruleset.name : null,
+          ruleset_name: r.ruleset ? r.ruleset.name : null, has_ruleset: !!r.ruleset,
           pay_date: p.payDate, period_start: p.periodStart, period_end: p.periodEnd, deducts: !!p.deductionsApply,
           gross: p.gross, exempt: p.exempt, combined_gross: p.combinedGross,
           deduction_total: p.deductionTotal, net: p.net,
@@ -3362,6 +3362,32 @@ router.get('/payroll-run', requireAdmin, requirePerm('view_reports'), requireCer
   if (!from || !to) return res.status(400).json({ error: 'from and to required' });
   try {
     res.json(await computePayrollRun(req.user.company_id, from, to));
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
+// GET /admin/payroll-periods — the actual pay periods the company's ruleset
+// schedule(s) issue, newest first. This is what the Payroll tab offers instead of a
+// raw date range, so the run lines up with real paychecks. Union across rulesets
+// (deduped by pay date + period); no future periods (you run payroll after a period
+// closes). Empty when no rulesets are configured — the tab falls back to a range.
+router.get('/payroll-periods', requireAdmin, requirePerm('view_reports'), requireCertifiedPayrollAddon, async (req, res) => {
+  try {
+    const s = await getSettings(req.user.company_id);
+    const rulesets = normalizePaycheckRules(s.paycheck_rules).rulesets;
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const shiftIso = (isoStr, days) => { const dt = new Date(isoStr + 'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate() + days); return dt.toISOString().slice(0, 10); };
+    const fromIso = shiftIso(todayIso, -430); // ~14 months of history
+    const seen = new Map();
+    for (const rs of rulesets) {
+      for (const p of generatePeriods(rs.schedule, fromIso, todayIso)) {
+        const key = `${p.payDate}|${p.periodStart}|${p.periodEnd}`;
+        if (!seen.has(key)) seen.set(key, { pay_date: p.payDate, period_start: p.periodStart, period_end: p.periodEnd });
+      }
+    }
+    const periods = [...seen.values()]
+      .sort((a, b) => (a.pay_date < b.pay_date ? 1 : a.pay_date > b.pay_date ? -1 : 0))
+      .slice(0, 60);
+    res.json({ periods });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 

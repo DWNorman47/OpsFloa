@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useT } from '../hooks/useT';
 import { formatCurrency } from '../utils';
@@ -21,6 +21,9 @@ const REASON_KEY = {
 
 function today() { return new Date().toLocaleDateString('en-CA'); }
 function monthStart() { const d = new Date(); d.setDate(1); return d.toLocaleDateString('en-CA'); }
+const periodKeyOf = p => `${p.pay_date}|${p.period_start}|${p.period_end}`;
+const fmtDay = iso => { const [y, m, d] = iso.split('-'); return new Date(Date.UTC(+y, +m - 1, +d)).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); };
+const fmtFull = iso => { const [y, m, d] = iso.split('-'); return new Date(Date.UTC(+y, +m - 1, +d)).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); };
 
 export default function PayrollRun({ currency = 'USD', onFinalized }) {
   const t = useT();
@@ -32,6 +35,11 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
   const [openRow, setOpenRow] = useState(null);
   const [finalizing, setFinalizing] = useState(false);
   const [finalizeMsg, setFinalizeMsg] = useState('');
+  // Pay periods from the ruleset schedule(s). null = still loading; [] = none
+  // configured → fall back to a custom date range.
+  const [periods, setPeriods] = useState(null);
+  const [periodKey, setPeriodKey] = useState('');
+  const [customRange, setCustomRange] = useState(false);
   const money = v => formatCurrency(v, currency);
 
   const finalize = async () => {
@@ -46,16 +54,43 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
     } finally { setFinalizing(false); }
   };
 
-  const run = async () => {
-    setError(''); setLoading(true);
+  // Explicit args so a just-picked period runs without waiting for state to settle.
+  const run = async (f = from, tt = to) => {
+    if (!f || !tt) return;
+    setError(''); setFinalizeMsg(''); setLoading(true);
     try {
-      const r = await api.get(`/admin/payroll-run?from=${from}&to=${to}`);
+      const r = await api.get(`/admin/payroll-run?from=${f}&to=${tt}`);
       setData(r.data);
     } catch (err) {
       setError(err?.response?.data?.error || t.pcrRunFailed);
       silentError('payroll-run')(err);
     } finally { setLoading(false); }
   };
+
+  const selectPeriod = (key) => {
+    setPeriodKey(key);
+    const p = (periods || []).find(x => periodKeyOf(x) === key);
+    if (p) { setFrom(p.period_start); setTo(p.pay_date); run(p.period_start, p.pay_date); }
+  };
+
+  // Load the schedule's pay periods once; auto-select + run the latest.
+  useEffect(() => {
+    let alive = true;
+    api.get('/admin/payroll-periods').then(r => {
+      if (!alive) return;
+      const list = r.data?.periods || [];
+      setPeriods(list);
+      if (list.length) {
+        const p = list[0];
+        setPeriodKey(periodKeyOf(p));
+        setFrom(p.period_start); setTo(p.pay_date);
+        run(p.period_start, p.pay_date);
+      } else {
+        setCustomRange(true);
+      }
+    }).catch(err => { if (alive) { setPeriods([]); setCustomRange(true); silentError('payroll-periods')(err); } });
+    return () => { alive = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const totals = data
     ? data.rows.reduce((a, r) => ({ gross: a.gross + r.gross, ded: a.ded + r.deduction_total, net: a.net + r.net }), { gross: 0, ded: 0, net: 0 })
@@ -85,15 +120,34 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
       <p style={s.sub}>{t.pcrRunDesc}</p>
 
       <div style={s.controls}>
-        <div style={s.field}><label style={s.label}>{t.pcrRunFrom}</label>
-          <input type="date" style={s.input} value={from} onChange={e => { setFrom(e.target.value); setData(null); }} /></div>
-        <div style={s.field}><label style={s.label}>{t.pcrRunTo}</label>
-          <input type="date" style={s.input} value={to} onChange={e => { setTo(e.target.value); setData(null); }} /></div>
+        {!customRange && periods && periods.length > 0 ? (
+          <div style={{ ...s.field, flex: '1 1 320px' }}><label style={s.label}>{t.pcrRunPayPeriod}</label>
+            <select style={s.input} value={periodKey} onChange={e => selectPeriod(e.target.value)}>
+              {periods.map(p => {
+                const k = periodKeyOf(p);
+                return <option key={k} value={k}>{`${t.pcrRunPayLabel} ${fmtFull(p.pay_date)}  ·  ${fmtDay(p.period_start)} – ${fmtDay(p.period_end)}`}</option>;
+              })}
+            </select>
+          </div>
+        ) : (
+          <>
+            <div style={s.field}><label style={s.label}>{t.pcrRunFrom}</label>
+              <input type="date" style={s.input} value={from} onChange={e => { setFrom(e.target.value); setData(null); }} /></div>
+            <div style={s.field}><label style={s.label}>{t.pcrRunTo}</label>
+              <input type="date" style={s.input} value={to} onChange={e => { setTo(e.target.value); setData(null); }} /></div>
+          </>
+        )}
         <button style={{ ...s.runBtn, ...((loading || !from || !to) ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
-          onClick={run} disabled={loading || !from || !to}>{loading ? t.loading : t.pcrRunGo}</button>
+          onClick={() => run()} disabled={loading || !from || !to}>{loading ? t.loading : t.pcrRunGo}</button>
         <button style={{ ...s.csvBtn, ...((!data || !data.rows.length) ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
           onClick={downloadCsv} disabled={!data || !data.rows.length}>{t.pcrRunCsv}</button>
       </div>
+      {periods && periods.length > 0 && (
+        <button type="button" style={s.modeToggle}
+          onClick={() => { setCustomRange(v => !v); setData(null); }}>
+          {customRange ? `← ${t.pcrRunUsePeriods}` : t.pcrRunCustomRange}
+        </button>
+      )}
 
       {error && <p role="alert" style={s.error}>{error}</p>}
 
@@ -153,7 +207,7 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
                           onClick={() => setOpenRow(open ? null : key)} title={t.pcrRunViewStub}>
                           <td style={s.td}>{open ? '▾ ' : '▸ '}{r.pay_date}</td>
                           <td style={s.tdName}>{r.worker_name}{r.role_name ? <span style={s.muted}> · {r.role_name}</span> : ''}</td>
-                          <td style={s.td}>{r.ruleset_name || <span style={s.muted}>{t.pcrRunNoRule}</span>}</td>
+                          <td style={s.td}>{r.ruleset_name || <span style={s.muted}>{r.has_ruleset ? t.pcrRunUnnamedRuleset : t.pcrRunNoRule}</span>}</td>
                           <td style={s.td}>{r.period_start} – {r.period_end}</td>
                           <td style={s.tdNum}>{money(r.gross)}</td>
                           <td style={{ ...s.tdNum, color: r.deduction_total > 0 ? '#b91c1c' : undefined }}>{r.deduction_total > 0 ? `−${money(r.deduction_total)}` : '—'}</td>
@@ -212,6 +266,7 @@ const s = {
   input: { padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: 7, fontSize: 13 },
   runBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: 'pointer' },
   csvBtn: { background: '#059669', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: 'pointer' },
+  modeToggle: { background: 'none', border: 'none', color: 'var(--ops-page-accent)', fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 0, margin: '-6px 0 14px' },
   error: { color: '#ef4444', fontSize: 13, marginBottom: 10 },
   errorBox: { background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, padding: '14px 16px', marginBottom: 16 },
   errorHead: { fontSize: 14, fontWeight: 700, color: '#991b1b', marginBottom: 8 },

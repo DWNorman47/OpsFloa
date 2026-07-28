@@ -23,6 +23,33 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-28 — Payroll run: pay-period dropdown replaces the raw date range
+
+**David's point:** if payroll has set periods, why ask for an arbitrary date range?
+Right — the range was the wrong control and the source of the pay-date-in-window
+confusion from earlier today.
+
+**What shipped:** the Payroll tab now leads with a **Pay period** dropdown built from
+the ruleset schedule(s), newest first, and auto-selects + loads the latest on open.
+New `GET /admin/payroll-periods` derives the real periods server-side (only place that
+knows the schedule math), unions across rulesets, dedupes by pay date + period, caps
+at 60, no future periods. Picking one sets the range to that period and runs. A
+"Use a custom date range instead" toggle keeps the old two-date inputs for the cases
+that need them (grouped deductions spanning a month, odd reconciliations); companies
+with no rulesets fall straight to the range.
+
+**Also fixed a mislabel the screenshot exposed:** workers on an *unnamed* ruleset
+showed "No ruleset" — identical to the genuinely-null case. Rows now carry
+`has_ruleset`, so an unnamed-but-real ruleset reads "Unnamed ruleset". (Nudge: name
+your rulesets — the dropdown/label lean on it.)
+
+**Caveat I made a call on:** with multiple *different* pay schedules there's no single
+global period list. I union them into one dropdown labeled by date — clean for the
+common single-schedule shop, and for multi-schedule the earlier `notices` explain any
+worker whose schedule has no check in the picked period. If multi-schedule becomes
+common, the next step is scoping the dropdown per schedule. Parked in BACKLOG next to
+the pay-date-vs-work-period note.
+
 ## 2026-07-28 — Payroll run "no workers with pay" was a misdiagnosis
 
 **Symptom (David):** ran payroll for a period workers clearly worked, got "No
