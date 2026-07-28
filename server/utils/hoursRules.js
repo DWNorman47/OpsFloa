@@ -623,15 +623,20 @@ function parsePolicy(raw) {
   };
 }
 
-/** Normalize the roleRules array; drop entries without a valid integer roleId. */
+/**
+ * Normalize the roleRules array. Each entry now covers one OR MORE roles via
+ * `roleIds` (an array); the legacy single `roleId` is still accepted and folded in.
+ * Ids are coerced to integers, de-duped, and an entry with no valid id is dropped.
+ */
 function parseRoleRules(raw) {
   if (!Array.isArray(raw)) return [];
   const out = [];
   for (const e of raw) {
     if (!e || typeof e !== 'object') continue;
-    const roleId = Number(e.roleId);
-    if (!Number.isInteger(roleId)) continue;
-    out.push({ roleId, addToStandard: e.addToStandard !== false, rules: parseRules(e.rules) });
+    const rawIds = Array.isArray(e.roleIds) ? e.roleIds : (e.roleId != null ? [e.roleId] : []);
+    const roleIds = [...new Set(rawIds.map(Number).filter(Number.isInteger))];
+    if (roleIds.length === 0) continue;
+    out.push({ roleIds, addToStandard: e.addToStandard !== false, rules: parseRules(e.rules) });
   }
   return out;
 }
@@ -647,7 +652,10 @@ function parseRoleRules(raw) {
 function effectiveRulesForRole(policy, roleId) {
   const std = policy.rules || [];
   if (roleId == null || !Array.isArray(policy.roleRules) || policy.roleRules.length === 0) return std;
-  const rr = policy.roleRules.find(x => x.roleId === roleId);
+  // A section can cover multiple roles (roleIds); the legacy single roleId is
+  // still honored for any un-normalized policy.
+  const rr = policy.roleRules.find(x =>
+    (Array.isArray(x.roleIds) ? x.roleIds.includes(roleId) : x.roleId === roleId));
   if (!rr) return std;
   return rr.addToStandard ? std.concat(rr.rules) : rr.rules;
 }

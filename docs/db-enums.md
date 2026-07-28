@@ -307,14 +307,16 @@ that had the previous default.
   value is already deducted everywhere downstream.
 
   **`roleRules[]` — per-role overrides.** `rules[]` above is the *standard* list,
-  applied to every worker. `roleRules` attaches an independent rule list to a
-  worker **role** (`users.role_id`): `[{roleId:<int>, addToStandard:<bool>,
-  rules:[…same rule shape…]}]`. A worker's effective list is
-  `addToStandard ? standard.concat(role.rules) : role.rules`; a worker whose
-  `role_id` has no section (or is null, or points at a deleted role) uses the
-  standard list. Absent/empty → today's behavior exactly. Normalized by
-  `parseRoleRules` (drops entries without an integer `roleId`; `addToStandard`
-  defaults true; each list runs through `parseRules`). The effective list feeds
+  applied to every worker. `roleRules` attaches an independent rule list to one or
+  more worker **roles** (`users.role_id`): `[{roleIds:[<int>…], addToStandard:<bool>,
+  rules:[…same rule shape…]}]`. A section can cover **multiple roles**; the legacy
+  single `roleId:<int>` is still accepted and folded into `roleIds`. A worker's
+  effective list is `addToStandard ? standard.concat(role.rules) : role.rules`; a
+  worker whose `role_id` is in no section (or is null, or points at a deleted role)
+  uses the standard list. Absent/empty → today's behavior exactly. Normalized by
+  `parseRoleRules` (coerces ids to ints, de-dupes, drops entries with no valid id;
+  `addToStandard` defaults true; each list runs through `parseRules`). A role
+  belongs to at most one section (the builder disables an already-claimed role). The effective list feeds
   BOTH the rounding transform and the OT config, so a role's `ot_tier`/premium
   rules take effect — resolved per worker via `effectiveRulesForRole` /
   `otConfigByRoleFactory` and carried to every pay site by threading each

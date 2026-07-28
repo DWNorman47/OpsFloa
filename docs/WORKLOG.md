@@ -106,7 +106,20 @@ real paycheck until David merges to prod.
 
 ---
 
-## 2026-07-27 — Payroll assignment layer: rulesets → roles + role deductions
+## 2026-07-27 — Hours & Pay Rules ▸ Role Rules: multi-role selector
+
+Each Role Rules section covered exactly one role (a single `<select>`). Made it
+cover **multiple roles**: `roleRules[].roleId` (single) → `roleIds` (array), with a
+chip multi-select mirroring Paycheck Rules / role deductions. Roles claimed by
+another section render disabled (a role stays in at most one section so its
+effective rule list is unambiguous); the builder title joins the selected role
+names. Legacy single `roleId` is still accepted and folded into `roleIds`
+everywhere (server `parseRoleRules` + `effectiveRulesForRole`, client
+`policyToForm`/`formToPolicy`), so existing saved policies round-trip untouched;
+`effectiveRulesForRole` now matches `roleIds.includes(workerRoleId)`. Renamed the
+picker label Role → Roles, added a "used elsewhere" tooltip (EN+ES). Updated the
+role-rules tests (output is `roleIds`; added multi-role parse + match cases) and
+the db-enums note. 1144 pass.
 
 The link that turns Paycheck Rules into an actual payroll run is **role**, per
 David. Two pieces (config/storage; the pay engine that consumes them is still later):
