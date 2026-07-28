@@ -38,6 +38,7 @@ function toForm(r) {
     name: r.name || '',
     roles: Array.isArray(r.roles) ? r.roles : [],
     frequency: s.frequency || 'biweekly',
+    periodBasis: s.periodBasis || 'work_week',
     payWeekday: s.payWeekday == null ? 4 : s.payWeekday,
     anchorDate: s.anchorDate || '',
     day1: s.daysOfMonth && s.daysOfMonth[0] != null ? String(s.daysOfMonth[0]) : '15',
@@ -70,6 +71,7 @@ function fromForm(f) {
     roles: Array.isArray(f.roles) ? f.roles : [],
     schedule: {
       frequency: f.frequency,
+      periodBasis: f.periodBasis || 'work_week',
       payWeekday: Number(f.payWeekday),
       anchorDate: /^\d{4}-\d{2}-\d{2}$/.test(f.anchorDate) ? f.anchorDate : null,
       daysOfMonth: [dInt(f.day1), dInt(f.day2)].filter(x => x != null),
@@ -242,6 +244,15 @@ export default function PaycheckRulesSettings({ settings, onSettingsUpdated }) {
                       <input type="checkbox" checked={f.lastDay} onChange={e => patchRule(f.id, { lastDay: e.target.checked })} /> {t.pcrLastDay}
                     </label>
                   </div>
+                </Field>
+              )}
+              {(f.frequency === 'weekly' || f.frequency === 'biweekly') && (
+                <Field label={t.pcrPeriodBasis} hint={t.pcrPeriodBasisHint}>
+                  <select style={s.input} value={f.periodBasis} onChange={e => patchRule(f.id, { periodBasis: e.target.value })}>
+                    <option value="work_week">{t.pcrBasisWorkWeek}</option>
+                    <option value="prior_cycle">{t.pcrBasisPriorCycle}</option>
+                    <option value="on_payday">{t.pcrBasisOnPayday}</option>
+                  </select>
                 </Field>
               )}
               <Field label={t.pcrWeekendShift}>

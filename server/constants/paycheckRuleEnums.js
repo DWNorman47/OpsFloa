@@ -11,6 +11,9 @@
  */
 
 const PAYCHECK_FREQUENCIES = ['weekly', 'biweekly', 'semimonthly', 'monthly'];
+// How a weekly/biweekly pay period relates to its pay date (semimonthly/monthly are
+// calendar spans and ignore this). See server/utils/payPeriods.js periodBounds().
+const PERIOD_BASES         = ['work_week', 'prior_cycle', 'on_payday'];
 const DEDUCTION_TIMINGS    = ['every', 'grouped'];
 const GROUP_BY             = ['pair', 'month'];
 const GROUP_APPLY_ON       = ['first', 'second', 'last'];
@@ -48,6 +51,7 @@ function normalizeRuleset(r, i) {
     roles: [...new Set((Array.isArray(r.roles) ? r.roles : []).filter(x => typeof x === 'number' || typeof x === 'string'))].slice(0, 200),
     schedule: {
       frequency: oneOf(sched.frequency, PAYCHECK_FREQUENCIES, 'biweekly'),
+      periodBasis: oneOf(sched.periodBasis, PERIOD_BASES, 'work_week'),
       payWeekday: clampWeekday(sched.payWeekday),
       anchorDate: isYmd(sched.anchorDate) ? sched.anchorDate : null,
       daysOfMonth,
@@ -92,6 +96,7 @@ function normalizePaycheckRules(raw) {
 
 module.exports = {
   PAYCHECK_FREQUENCIES,
+  PERIOD_BASES,
   DEDUCTION_TIMINGS,
   GROUP_BY,
   GROUP_APPLY_ON,

@@ -8,9 +8,18 @@
  * "every other Thursday, deduct on the 2nd check of each pair" or "15th & 30th,
  * deduct on the 30th, combined." See docs/plans/paycheck-rules.md.
  *
- * A pay date landing on a weekend can shift to the business day before/after; the
- * PERIOD boundaries follow the natural schedule (only the pay date shifts).
+ * A pay date landing on a weekend can shift to the business day before/after; a
+ * check is included when its ACTUAL (shifted) pay date is in [from, to].
+ *
+ * PERIOD BASIS (weekly/biweekly only — semimonthly/monthly periods are calendar
+ * spans). How the pay period a check covers relates to its pay date:
+ *   - `work_week`   two/one full work weeks ending on the last work-week-end BEFORE
+ *                   the payday (aligns to the OT week; pay in arrears). Needs weekStart.
+ *   - `prior_cycle` the previous whole cycle: the span ending one cycle before payday.
+ *   - `on_payday`   the span ending ON the payday (the original behavior).
  */
+
+const { PERIOD_BASES } = require('../constants/paycheckRuleEnums');
 
 const DAY = 86400000;
 const ms = isoStr => { const [y, m, d] = isoStr.split('-').map(Number); return Date.UTC(y, m - 1, d); };
@@ -27,45 +36,81 @@ function shiftWeekend(t, mode) {
   if (wd === 0) return mode === 'before' ? addDays(t, -2) : addDays(t, 1); // Sun → Fri / Mon
   return t;
 }
-const period = (startT, endT, payT, shift) =>
-  ({ periodStart: iso(startT), periodEnd: iso(endT), payDate: iso(shiftWeekend(payT, shift)) });
 
-function weekly(sc, from, to) {
+/**
+ * The [start, end] of the pay period a check covers, given its (unshifted) payday,
+ * the span (13 for biweekly, 6 for weekly = days back from end), the basis, and
+ * which weekday the work week starts on. Period alignment follows the scheduled
+ * payday; only the check DATE weekend-shifts, never the period.
+ */
+function periodBounds(payT, span, basis, weekStart) {
+  if (basis === 'prior_cycle') { const end = addDays(payT, -(span + 1)); return { startT: addDays(end, -span), endT: end }; }
+  if (basis === 'work_week') {
+    const weekEndDow = ((Number(weekStart) || 1) + 6) % 7; // Mon start → Sun end
+    let back = (weekday(payT) - weekEndDow + 7) % 7;
+    if (back === 0) back = 7; // land on the PRIOR week-end, strictly before payday
+    const end = addDays(payT, -back);
+    return { startT: addDays(end, -span), endT: end };
+  }
+  return { startT: addDays(payT, -span), endT: payT }; // on_payday
+}
+
+const makePeriod = (payT, span, basis, weekStart, shift) => {
+  const { startT, endT } = periodBounds(payT, span, basis, weekStart);
+  return { periodStart: iso(startT), periodEnd: iso(endT), payDate: iso(shiftWeekend(payT, shift)) };
+};
+
+// Scan a few days past each edge so a weekend-shifted pay date near the boundary is
+// still tested; inclusion is always by the actual (shifted) pay date vs [from, to].
+const PAD = 4 * DAY;
+
+function weekly(sc, from, to, basis, weekStart) {
   const pw = Number(sc.payWeekday);
-  const end = ms(to);
-  let t = ms(from);
-  while (weekday(t) !== pw && t <= end) t = addDays(t, 1);
+  const fromT = ms(from), toT = ms(to);
+  let t = addDays(fromT, -4);
+  while (weekday(t) !== pw) t = addDays(t, 1);
   const out = [];
-  for (; t <= end; t = addDays(t, 7)) out.push(period(addDays(t, -6), t, t, sc.weekendShift));
+  for (; t <= toT + PAD; t = addDays(t, 7)) {
+    const payT = shiftWeekend(t, sc.weekendShift);
+    if (payT >= fromT && payT <= toT) out.push(makePeriod(t, 6, basis, weekStart, sc.weekendShift));
+  }
   return out;
 }
 
-function biweekly(sc, from, to) {
+function biweekly(sc, from, to, basis, weekStart) {
   if (!sc.anchorDate) return []; // the anchor sets both cadence and weekday
   const anchor = ms(sc.anchorDate), fromT = ms(from), toT = ms(to);
   let t = anchor + Math.floor((fromT - anchor) / (14 * DAY)) * 14 * DAY;
-  while (t < fromT) t = addDays(t, 14);
+  while (t < fromT - PAD) t = addDays(t, 14);
   const out = [];
-  for (; t <= toT; t = addDays(t, 14)) out.push(period(addDays(t, -13), t, t, sc.weekendShift));
+  for (; t <= toT + PAD; t = addDays(t, 14)) {
+    const payT = shiftWeekend(t, sc.weekendShift);
+    if (payT >= fromT && payT <= toT) out.push(makePeriod(t, 13, basis, weekStart, sc.weekendShift));
+  }
   return out;
 }
 
+// Semimonthly/monthly periods are calendar spans (1st–15th, 16th–end, whole month),
+// so the basis doesn't apply; iterate a month past each edge so a boundary weekend
+// shift is still caught, and include by the shifted pay date.
 function semimonthly(sc, from, to) {
   const days = [...new Set((sc.daysOfMonth || []).map(Number).filter(x => x >= 1 && x <= 31))].sort((a, b) => a - b).slice(0, 2);
   if (!days.length) return [];
   const fromT = ms(from), toT = ms(to);
   let [y, m] = ymParts(from);
+  m--; if (m < 1) { m = 12; y--; }
   const [ty, tm] = ymParts(to);
+  let ey = ty, em = tm + 1; if (em > 12) { em = 1; ey++; }
   const out = [];
-  while (y < ty || (y === ty && m <= tm)) {
+  while (y < ey || (y === ey && m <= em)) {
     const last = lastDom(y, m);
     const uniq = [...new Set(days.map(x => Math.min(x, last)))].sort((a, b) => a - b);
     uniq.forEach((day, idx) => {
-      const payT = Date.UTC(y, m - 1, day);
+      const payT = shiftWeekend(Date.UTC(y, m - 1, day), sc.weekendShift);
       if (payT < fromT || payT > toT) return;
       const startDay = idx === 0 ? 1 : uniq[idx - 1] + 1;
       const isLast = idx === uniq.length - 1;
-      out.push(period(Date.UTC(y, m - 1, startDay), Date.UTC(y, m - 1, isLast ? last : day), payT, sc.weekendShift));
+      out.push({ periodStart: iso(Date.UTC(y, m - 1, startDay)), periodEnd: iso(Date.UTC(y, m - 1, isLast ? last : day)), payDate: iso(payT) });
     });
     m++; if (m > 12) { m = 1; y++; }
   }
@@ -75,25 +120,31 @@ function semimonthly(sc, from, to) {
 function monthly(sc, from, to) {
   const fromT = ms(from), toT = ms(to);
   let [y, m] = ymParts(from);
+  m--; if (m < 1) { m = 12; y--; }
   const [ty, tm] = ymParts(to);
+  let ey = ty, em = tm + 1; if (em > 12) { em = 1; ey++; }
   const out = [];
-  while (y < ty || (y === ty && m <= tm)) {
+  while (y < ey || (y === ey && m <= em)) {
     const last = lastDom(y, m);
     const day = sc.dayOfMonth === 'last' ? last : Math.min(Number(sc.dayOfMonth) || last, last);
-    const payT = Date.UTC(y, m - 1, day);
-    if (payT >= fromT && payT <= toT) out.push(period(Date.UTC(y, m - 1, 1), Date.UTC(y, m - 1, last), payT, sc.weekendShift));
+    const payT = shiftWeekend(Date.UTC(y, m - 1, day), sc.weekendShift);
+    if (payT >= fromT && payT <= toT) out.push({ periodStart: iso(Date.UTC(y, m - 1, 1)), periodEnd: iso(Date.UTC(y, m - 1, last)), payDate: iso(payT) });
     m++; if (m > 12) { m = 1; y++; }
   }
   return out;
 }
 
-/** The paychecks a ruleset's schedule issues with a pay date in [from, to]. */
-function generatePeriods(schedule, from, to) {
+/**
+ * The paychecks a ruleset's schedule issues with a pay date in [from, to].
+ * `weekStart` (0=Sun … 6=Sat, default Mon) drives the `work_week` period basis.
+ */
+function generatePeriods(schedule, from, to, weekStart = 1) {
   const sc = schedule || {};
   if (ms(to) < ms(from)) return [];
+  const basis = PERIOD_BASES.includes(sc.periodBasis) ? sc.periodBasis : 'work_week';
   switch (sc.frequency) {
-    case 'weekly': return weekly(sc, from, to);
-    case 'biweekly': return biweekly(sc, from, to);
+    case 'weekly': return weekly(sc, from, to, basis, weekStart);
+    case 'biweekly': return biweekly(sc, from, to, basis, weekStart);
     case 'semimonthly': return semimonthly(sc, from, to);
     case 'monthly': return monthly(sc, from, to);
     default: return [];

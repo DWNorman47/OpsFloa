@@ -3259,6 +3259,7 @@ router.get('/overtime-report', requireAdmin, requirePerm('view_reports'), requir
 // price each, and combine → exempt → deduct. Shared by the live GET + finalize snapshot.
 async function computePayrollRun(companyId, from, to) {
     const s = await getSettings(companyId);
+    const weekStart = parseInt(s.week_start ?? 1, 10); // drives the work_week period basis
     const rulesets = normalizePaycheckRules(s.paycheck_rules).rulesets;
     const companyDeds = parseCompanyDeductions(s.deductions);
     const workers = await pool.query(
@@ -3296,7 +3297,7 @@ async function computePayrollRun(companyId, from, to) {
       if (periodsByRuleset[key]) return periodsByRuleset[key];
       let grouped;
       if (!ruleset) grouped = [{ periodStart: from, periodEnd: to, payDate: to, groupKey: '0', deductionsApply: true }];
-      else grouped = groupPeriods(generatePeriods(ruleset.schedule, from, to), ruleset.deductions || {});
+      else grouped = groupPeriods(generatePeriods(ruleset.schedule, from, to, weekStart), ruleset.deductions || {});
       periodsByRuleset[key] = grouped;
       return grouped;
     };
@@ -3314,7 +3315,7 @@ async function computePayrollRun(companyId, from, to) {
     for (const r of ready) {
       if (!r.ruleset || r.periods.length > 0 || noticedRulesets.has(r.ruleset.id)) continue;
       noticedRulesets.add(r.ruleset.id);
-      const wide = generatePeriods(r.ruleset.schedule, shiftIso(from, -400), shiftIso(to, 400));
+      const wide = generatePeriods(r.ruleset.schedule, shiftIso(from, -400), shiftIso(to, 400), weekStart);
       notices.push({ ruleset_id: r.ruleset.id, ruleset_name: r.ruleset.name || null, reason: wide.length ? 'out_of_range' : 'schedule_incomplete' });
     }
 
@@ -3373,13 +3374,14 @@ router.get('/payroll-run', requireAdmin, requirePerm('view_reports'), requireCer
 router.get('/payroll-periods', requireAdmin, requirePerm('view_reports'), requireCertifiedPayrollAddon, async (req, res) => {
   try {
     const s = await getSettings(req.user.company_id);
+    const weekStart = parseInt(s.week_start ?? 1, 10);
     const rulesets = normalizePaycheckRules(s.paycheck_rules).rulesets;
     const todayIso = new Date().toISOString().slice(0, 10);
     const shiftIso = (isoStr, days) => { const dt = new Date(isoStr + 'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate() + days); return dt.toISOString().slice(0, 10); };
     const fromIso = shiftIso(todayIso, -430); // ~14 months of history
     const seen = new Map();
     for (const rs of rulesets) {
-      for (const p of generatePeriods(rs.schedule, fromIso, todayIso)) {
+      for (const p of generatePeriods(rs.schedule, fromIso, todayIso, weekStart)) {
         const key = `${p.payDate}|${p.periodStart}|${p.periodEnd}`;
         if (!seen.has(key)) seen.set(key, { pay_date: p.payDate, period_start: p.periodStart, period_end: p.periodEnd });
       }
@@ -3402,13 +3404,17 @@ router.post('/payroll-run/finalize', requireAdmin, requirePerm('view_reports'), 
     if (errors.length) return res.status(400).json({ error: 'Fix the setup errors before finalizing', code: 'setup_errors', errors });
     if (!rows.length) return res.status(400).json({ error: 'No paychecks in that range to finalize' });
     const tot = rows.reduce((a, r) => ({ g: a.g + centsOf(r.gross), d: a.d + centsOf(r.deduction_total), n: a.n + centsOf(r.net) }), { g: 0, d: 0, n: 0 });
+    // Record the actual pay-period span (from the checks), not the query window — with
+    // arrears bases the window is just a pay-date bracket, not the period covered.
+    const periodFrom = rows.reduce((mn, r) => (r.period_start < mn ? r.period_start : mn), rows[0].period_start);
+    const periodTo = rows.reduce((mx, r) => (r.period_end > mx ? r.period_end : mx), rows[0].period_end);
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       const run = await client.query(
         `INSERT INTO payroll_runs (company_id, period_from, period_to, status, check_count, gross_cents, deduction_cents, net_cents, created_by)
          VALUES ($1,$2,$3,'finalized',$4,$5,$6,$7,$8) RETURNING id`,
-        [companyId, from, to, rows.length, tot.g, tot.d, tot.n, req.user.id]
+        [companyId, periodFrom, periodTo, rows.length, tot.g, tot.d, tot.n, req.user.id]
       );
       const runId = run.rows[0].id;
       for (const r of rows) {

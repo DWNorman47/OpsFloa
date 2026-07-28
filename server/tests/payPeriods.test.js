@@ -9,16 +9,34 @@ const dates = ps => ps.map(p => p.payDate);
 const isWeekend = s => [0, 6].includes(new Date(s + 'T00:00:00Z').getUTCDay());
 
 describe('generatePeriods', () => {
-  test('weekly — a pay date each week on the pay weekday; period is the 7 days ending on it', () => {
-    const ps = generatePeriods({ frequency: 'weekly', payWeekday: 4, weekendShift: 'none' }, '2026-01-01', '2026-01-31');
+  test('weekly on_payday — a pay date each week on the pay weekday; period is the 7 days ending on it', () => {
+    const ps = generatePeriods({ frequency: 'weekly', periodBasis: 'on_payday', payWeekday: 4, weekendShift: 'none' }, '2026-01-01', '2026-01-31');
     expect(dates(ps)).toEqual(['2026-01-01', '2026-01-08', '2026-01-15', '2026-01-22', '2026-01-29']); // Thursdays
     expect(ps[1]).toMatchObject({ periodStart: '2026-01-02', periodEnd: '2026-01-08' });
   });
 
-  test('biweekly — every other week from the anchor (David: every other Thursday)', () => {
-    const ps = generatePeriods({ frequency: 'biweekly', anchorDate: '2026-01-08', weekendShift: 'none' }, '2026-01-01', '2026-02-28');
+  test('biweekly on_payday — every other week from the anchor (David: every other Thursday)', () => {
+    const ps = generatePeriods({ frequency: 'biweekly', periodBasis: 'on_payday', anchorDate: '2026-01-08', weekendShift: 'none' }, '2026-01-01', '2026-02-28');
     expect(dates(ps)).toEqual(['2026-01-08', '2026-01-22', '2026-02-05', '2026-02-19']); // 14-day spacing
     expect(ps[0]).toMatchObject({ periodStart: '2025-12-26', periodEnd: '2026-01-08' });
+  });
+
+  test('biweekly work_week (default) — period is the two full work weeks ending the Sunday before payday', () => {
+    // Thursday paydays Jul 2 & Jul 16; Mon-start work week → periods end the prior Sunday.
+    const ps = generatePeriods({ frequency: 'biweekly', anchorDate: '2026-07-02', weekendShift: 'none' }, '2026-07-16', '2026-07-16', 1);
+    expect(ps).toEqual([{ periodStart: '2026-06-29', periodEnd: '2026-07-12', payDate: '2026-07-16' }]);
+  });
+
+  test('biweekly prior_cycle — payday covers the previous completed 14-day cycle', () => {
+    const ps = generatePeriods({ frequency: 'biweekly', periodBasis: 'prior_cycle', anchorDate: '2026-07-02', weekendShift: 'none' }, '2026-07-16', '2026-07-16');
+    expect(ps).toEqual([{ periodStart: '2026-06-19', periodEnd: '2026-07-02', payDate: '2026-07-16' }]);
+  });
+
+  test('inclusion is by the actual (shifted) pay date, so a single-day pay-date window isolates one check', () => {
+    // Anchor Jul 4 (Sat); with weekendShift after, the pay date is Mon Jul 6. Bracketing
+    // the shifted date returns exactly that check even though the raw payday is Jul 4.
+    const ps = generatePeriods({ frequency: 'biweekly', periodBasis: 'on_payday', anchorDate: '2026-07-04', weekendShift: 'after' }, '2026-07-06', '2026-07-06');
+    expect(dates(ps)).toEqual(['2026-07-06']);
   });
 
   test('biweekly with no anchor yields nothing (the anchor sets the cadence)', () => {

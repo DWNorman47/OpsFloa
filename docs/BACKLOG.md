@@ -104,14 +104,13 @@ that holds the exhaustive detail.
 
 ## 🧭 Design flaws — raised, set aside for later
 
-- **Payroll run keys on "pay date in window", users think "work period".** The Run
-  Payroll date inputs read PERIOD FROM/TO, but the engine only emits a check when the
-  ruleset's *pay date* lands inside the range. So a monthly/month-end payday just past
-  `to` (or an incomplete schedule) yields nothing for work that's clearly in-window.
-  Mitigated 2026-07-28 with per-ruleset `notices` (schedule_incomplete vs
-  out_of_range) so the empty case explains itself. Deeper fixes if it keeps biting:
-  (a) resolve periods by work-overlap instead of pay-date containment, or (b) snap the
-  picked range to whole pay groups / suggest the right range. (2026-07-28)
+- ~~**Payroll run keys on "pay date in window", users think "work period".**~~ **Largely
+  addressed 2026-07-28.** The tab now leads with a pay-period **dropdown** (not a raw
+  range), and each check's period comes from a selectable `periodBasis` (work_week /
+  prior_cycle / on_payday, default work_week) so the period aligns to the work week and
+  pays in arrears. The custom range + `notices` remain for edge cases. *Remaining thread:*
+  with **multiple different schedules** the dropdown unions them into one list — if
+  multi-schedule becomes common, scope the dropdown per schedule.
 - **"Included workers" (15) is duplicated between client and Stripe.** The Business
   base price bundles 15 seats; the client hardcodes `INCLUDED_WORKERS = 15` in
   `BillingPanel.jsx` to compute the per-worker overage sent to checkout. If the

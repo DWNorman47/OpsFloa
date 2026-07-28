@@ -352,6 +352,9 @@ that had the previous default.
   `server/constants/paycheckRuleEnums.js` and clamped on read by
   `normalizePaycheckRules` (never throws):
   `schedule.frequency` = `weekly` \| `biweekly` \| `semimonthly` \| `monthly`;
+  `schedule.periodBasis` = `work_week` \| `prior_cycle` \| `on_payday` (weekly/biweekly
+  only — how the period a check covers relates to its pay date; default `work_week`,
+  which uses `week_start` to align to the work week; see `server/utils/payPeriods.js`);
   `schedule.weekendShift` = `none` \| `before` \| `after`;
   `deductions.timing` = `every` \| `grouped`;
   `deductions.group.by` = `pair` \| `month`;

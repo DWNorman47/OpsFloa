@@ -72,7 +72,9 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
   const selectPeriod = (key) => {
     setPeriodKey(key);
     const p = (periods || []).find(x => periodKeyOf(x) === key);
-    if (p) { setFrom(p.period_start); setTo(p.pay_date); run(p.period_start, p.pay_date); }
+    // Bracket by pay date — the run resolves each check's actual period (which, with
+    // arrears bases, starts before the pay date) from the schedule itself.
+    if (p) { setFrom(p.pay_date); setTo(p.pay_date); run(p.pay_date, p.pay_date); }
   };
 
   // Load the schedule's pay periods once; auto-select + run the latest.
@@ -85,8 +87,8 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
       if (list.length) {
         const p = list[0];
         setPeriodKey(periodKeyOf(p));
-        setFrom(p.period_start); setTo(p.pay_date);
-        run(p.period_start, p.pay_date);
+        setFrom(p.pay_date); setTo(p.pay_date);
+        run(p.pay_date, p.pay_date);
       } else {
         setCustomRange(true);
       }

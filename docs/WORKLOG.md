@@ -23,6 +23,38 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-28 — Payroll run: selectable pay-period basis (fix "period ends on payday")
+
+**David:** for an every-other-Thursday payday (Jul 16), the period showed Fri Jul 3 –
+Thu Jul 16 — he didn't think a check should pay *through* its own payday. Right: the
+biweekly engine defined the period as the 14 days **ending on** the payday, with no
+notion of a processing lag or work-week alignment. He wanted all three real-world
+models selectable, defaulting to the work-week one.
+
+Added `schedule.periodBasis` to the ruleset (weekly/biweekly; semimonthly/monthly are
+calendar spans and ignore it):
+- **`work_week`** (new default) — full work week(s) ending on the last work-week-end
+  **before** payday, using the company `week_start`. Jul 16 → **Jun 29 – Jul 12**.
+  Aligns pay periods with the same week boundary overtime already uses; pays in arrears.
+- **`prior_cycle`** — the previous completed cycle. Jul 16 → Jun 19 – Jul 2.
+- **`on_payday`** — the old behavior (period ends on payday).
+
+Engine work in `server/utils/payPeriods.js`: a `periodBounds(payday, span, basis,
+weekStart)` helper the frequencies share, `weekStart` threaded from settings through
+every `generatePeriods` caller (admin run, period list, notice probe, worker stubs).
+
+**Two correctness things fixed along the way:**
+- **Inclusion is now by the ACTUAL (weekend-shifted) pay date**, not the raw payday.
+  This is what makes the dropdown's single-pay-date window (`from=to=payDate`) isolate
+  exactly one check even under a weekend shift and arrears basis. The run resolves each
+  check's real period from the schedule, so the window is just a pay-date bracket.
+- **Finalize now records the real pay-period span** (min/max of the checks' periods),
+  not the query window — otherwise an arrears run would store a one-day "period."
+
+Default flips existing biweekly rulesets to `work_week`, so numbers shift to the
+correct two weeks — intended. `docs/db-enums.md` updated; +3 payPeriods tests
+(work_week, prior_cycle, shifted-inclusion). Editor gets a "Pay period covers" dropdown.
+
 ## 2026-07-28 — Payroll run: pay-period dropdown replaces the raw date range
 
 **David's point:** if payroll has set periods, why ask for an arbitrary date range?

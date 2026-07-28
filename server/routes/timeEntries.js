@@ -339,7 +339,8 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
       const ruleset = resolved.ruleset;
       const toIso = new Date().toISOString().slice(0, 10);
       const fromIso = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
-      const grouped = groupPeriods(generatePeriods(ruleset.schedule, fromIso, toIso), ruleset.deductions || {});
+      const weekStart = parseInt(settings.week_start ?? 1, 10); // drives the work_week period basis
+      const grouped = groupPeriods(generatePeriods(ruleset.schedule, fromIso, toIso, weekStart), ruleset.deductions || {});
       const companyDeds = parseCompanyDeductions(settings.deductions);
       const wdRows = await pool.query('SELECT id, name, kind, value, cap_amount, active FROM worker_deductions WHERE user_id = $1 AND company_id = $2 AND active = true', [userId, companyId]);
       const deds = [...deductionsForRole(companyDeds, worker.role_id), ...normalizeWorkerDeductions(wdRows.rows)];
