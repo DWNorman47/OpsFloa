@@ -106,6 +106,18 @@ real paycheck until David merges to prod.
 
 ---
 
+## 2026-07-27 — Payroll: worker self-service stub rewired to the ruleset engine
+
+The worker's own pay stub (Account page) now uses the **same engine** as the admin
+run when the company has Advanced Payroll and the worker's role maps to exactly one
+ruleset: `/time-entries/pay-stubs` generates the worker's pay periods from their
+ruleset (last ~120 days), prices each via `workerStatement`, and runs the group
+combine → exempt → deduct math — returning `{mode:'ruleset', stubs:[…]}` (per check),
+which `PayStubView` renders with the shared `PayStub` component. Everything else
+(no add-on, no/ambiguous ruleset) falls through to the **unchanged legacy**
+company-pay-period stub (still a bare array), so nothing regresses. Worker and admin
+now see identical numbers. 1168 pass.
+
 ## 2026-07-27 — Payroll: pay stubs from the run (itemized, printable)
 
 Turned the register from net figures into actual **pay stubs**. `applyGroupDeductions`

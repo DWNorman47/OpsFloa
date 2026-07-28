@@ -308,7 +308,11 @@ router.delete('/:id', requireAuth, async (req, res) => {
 });
 
 const { loadSettings } = require('../utils/paidHours');
-const { workerPeriodStatements } = require('../utils/payStatement');
+const { workerPeriodStatements, workerStatement } = require('../utils/payStatement');
+const { normalizePaycheckRules } = require('../constants/paycheckRuleEnums');
+const { resolveRuleset, deductionsForRole, applyGroupDeductions } = require('../utils/paycheckRun');
+const { generatePeriods, groupPeriods } = require('../utils/payPeriods');
+const { parseCompanyDeductions, normalizeWorkerDeductions } = require('../utils/deductions');
 const { weekRange } = require('../utils/weekBounds');
 
 // GET /time-entries/pay-stubs — worker's pay periods with aggregated hours
@@ -316,15 +320,55 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
   const userId = req.user.id;
   const companyId = req.user.company_id;
   try {
-    const [periods, workerRow, settings] = await Promise.all([
-      pool.query('SELECT * FROM pay_periods WHERE company_id = $1 ORDER BY period_start DESC', [companyId]),
+    const [workerRow, settings, companyRow] = await Promise.all([
       pool.query('SELECT id, overtime_rule, hourly_rate, rate_type, guaranteed_weekly_hours, role_id FROM users WHERE id = $1', [userId]),
       loadSettings(companyId),
+      pool.query('SELECT subscription_status, addon_advanced_payroll, addon_certified_payroll FROM companies WHERE id = $1', [companyId]),
     ]);
     const worker = workerRow.rows[0] || {};
-    // Price each pay period through the one shared engine (fetch-once per span) so
-    // the worker's own stub can't disagree with the invoice/report. Money used to
-    // be recomputed on the client from a simplified formula — now it comes priced.
+    const co = companyRow.rows[0] || {};
+    const advanced = co.subscription_status === 'exempt' || co.subscription_status === 'trial' || co.addon_advanced_payroll || co.addon_certified_payroll;
+
+    // Ruleset-driven per-check stubs when Advanced Payroll is on and the worker's role
+    // maps to exactly one Paycheck ruleset — the SAME engine + numbers as the admin
+    // run. Anything else (no add-on, no/ambiguous ruleset) falls back to the legacy
+    // company-pay-period stub below, so nothing regresses for those companies.
+    const rulesets = normalizePaycheckRules(settings.paycheck_rules).rulesets;
+    const resolved = advanced ? resolveRuleset(rulesets, worker.role_id) : { error: 'not_advanced' };
+    if (advanced && !resolved.error && resolved.ruleset) {
+      const ruleset = resolved.ruleset;
+      const toIso = new Date().toISOString().slice(0, 10);
+      const fromIso = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
+      const grouped = groupPeriods(generatePeriods(ruleset.schedule, fromIso, toIso), ruleset.deductions || {});
+      const companyDeds = parseCompanyDeductions(settings.deductions);
+      const wdRows = await pool.query('SELECT id, name, kind, value, cap_amount, active FROM worker_deductions WHERE user_id = $1 AND company_id = $2 AND active = true', [userId, companyId]);
+      const deds = [...deductionsForRole(companyDeds, worker.role_id), ...normalizeWorkerDeductions(wdRows.rows)];
+      const withStmt = [];
+      for (const p of grouped) {
+        const st = await workerStatement({ companyId, worker, settings, from: p.periodStart, to: p.periodEnd });
+        withStmt.push({ ...p, gross: st.totals.grossWages, _st: st });
+      }
+      const n2 = x => parseFloat((x || 0).toFixed(2));
+      const stubs = applyGroupDeductions(withStmt, deds, ruleset).map((p, i) => {
+        const st = withStmt[i]._st;
+        return {
+          id: `${ruleset.id}-${p.payDate}`,
+          pay_date: p.payDate, period_start: p.periodStart, period_end: p.periodEnd,
+          ruleset_name: ruleset.name, deducts: !!p.deductionsApply,
+          gross: n2(p.gross), exempt: p.exempt, combined_gross: p.combinedGross,
+          deduction_total: p.deductionTotal, net: p.net,
+          deduction_lines: (p.lines || []).map(l => ({ name: l.name, amount: l.amount })),
+          rate: st.rates.rate,
+          hours: { regular: n2(st.hours.regular), overtime: n2(st.hours.overtime), prevailing: n2(st.hours.prevailing), night: n2(st.hours.night), sick: n2(st.hours.sick), vacation: n2(st.hours.vacation), total: n2(st.hours.total) },
+          cost: { regular: st.cost.regular, overtime: st.cost.overtime, prevailing: st.cost.prevailing, night: st.cost.night, sick: st.cost.sick, vacation: st.cost.vacation, guarantee: st.cost.guarantee },
+        };
+      }).reverse(); // most recent first
+      return res.json({ mode: 'ruleset', stubs });
+    }
+
+    // Legacy: the company's pay_periods, priced through the one shared engine so the
+    // worker's stub can't disagree with the invoice/report.
+    const periods = await pool.query('SELECT * FROM pay_periods WHERE company_id = $1 ORDER BY period_start DESC', [companyId]);
     const priced = await workerPeriodStatements({ companyId, worker, settings, periods: periods.rows });
     const n2 = x => parseFloat((x || 0).toFixed(2));
     const result = priced.map(({ period, statement: st }) => ({

@@ -5,6 +5,7 @@ import { langToLocale } from '../utils';
 import { useMoney } from '../hooks/useMoney';
 
 import { silentError } from '../errorReporter';
+import PayStub from './PayStub';
 function fmtDate(str, locale = 'en-US') {
   const d = new Date(String(str).substring(0, 10) + 'T00:00:00');
   return d.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
@@ -283,16 +284,36 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
 export default function PayStubView({ user, settings, companyInfo }) {
   const t = useT();
   const [stubs, setStubs] = useState([]);
+  const [checks, setChecks] = useState(null); // ruleset-mode per-check stubs (Advanced Payroll)
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     api.get('/time-entries/pay-stubs')
-      .then(r => setStubs(r.data))
+      .then(r => {
+        if (Array.isArray(r.data)) { setStubs(r.data); setChecks(null); }     // legacy
+        else { setChecks(r.data.stubs || []); setStubs([]); }                  // ruleset-driven
+      })
       .catch(silentError('paystubview'))
       .finally(() => setLoading(false));
   }, []);
 
   if (loading) return null;
+
+  // Ruleset-driven stubs (Advanced Payroll): one PayStub per paycheck.
+  if (checks) {
+    if (checks.length === 0) return (
+      <div style={s.empty}><div style={s.emptyTitle}>{t.payStubs}</div><p style={s.emptyMsg}>{t.noPayPeriodsYet}</p></div>
+    );
+    return (
+      <div style={s.wrap}>
+        <div style={s.heading}>{t.payStubs}</div>
+        <div style={{ ...s.list, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {checks.map(c => <PayStub key={c.id} check={c} currency={settings?.currency ?? 'USD'} workerName={user?.full_name} />)}
+        </div>
+      </div>
+    );
+  }
+
   if (stubs.length === 0) return (
     <div style={s.empty}>
       <div style={s.emptyTitle}>{t.payStubs}</div>
