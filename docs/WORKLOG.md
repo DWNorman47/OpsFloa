@@ -106,7 +106,181 @@ real paycheck until David merges to prod.
 
 ---
 
-## 2026-07-27 — Tool-app PWA: "new version available" reload prompt
+## 2026-07-27 — Payroll: pay-period generation + multi-check combining (the $11k case)
+
+The run now does the real thing — David's signature case computes exactly.
+`server/utils/payPeriods.js` (pure, UTC-deterministic, 10 tests) turns a ruleset's
+**schedule** into the paychecks it issues in a window: weekly, **biweekly from an
+anchor** (every other Thursday), **semimonthly** (15th & 30th, "30" clamping to the
+last day of short months), monthly ("last"), with a **weekend shift**. `groupPeriods`
+groups them (pair / calendar month) and flags which check the deductions land on
+(first/second/last).
+
+The run endpoint (`/admin/payroll-run`) now: resolves each worker's ruleset from
+role (0/>1 still a flagged setup error), **generates their pay periods** in [from,to],
+fetches gross **per period** (one `companyStatements` per distinct range), then
+`applyGroupDeductions` (paycheckRun.js) **combines each group's gross, subtracts the
+exempt ONCE, and deducts on the flagged check** — `computeRuleNet` grew a `baseGross`
+arg so the deduction base is the group total while the net comes off each check's own
+gross. Register is one row per (worker, check), sorted by pay date; `PayrollRun.jsx`
+gained Pay-date + Period columns. New tests pin the combine ("two $6k checks, $11k
+exempt, deduct on the 2nd → 10% of $1,000 on check 2"). 1168 pass.
+
+## 2026-07-27 — PDF toolkit: add images as pages + choose the download name
+
+- **Images → pages.** The file picker + drop now accept **JPG/PNG**; each image
+  becomes a one-page source that flows through the same grid (thumbnail, reorder,
+  rotate, delete, extract, full-size view) as PDF pages. `buildPdf` embeds images via
+  pdf-lib `embedJpg/embedPng`, sized to the picture, with a **canvas re-encode
+  fallback** for a mislabeled/unusual format. Sources are now tagged `kind: 'pdf' |
+  'image'`; the thumbnail, viewer, and build paths branch on it.
+- **Choose the output name.** A filename box in the toolbar (seeded from the source
+  name / "combined", never clobbering a typed value) drives both Download and Extract;
+  `outName()` sanitizes it and appends `.pdf`.
+
+Self-contained in the tool-app (app.js + index.html); no `?v` (SW precache revisions
+it). 1156 pass.
+
+## 2026-07-27 — PDF toolkit: export no longer crashes on odd PDFs + full-size viewer
+
+**Bug** ("expected instance of e, but got undefined" on download/export): traced to
+pdf-lib. The clean-PDF path is fine (verified in node against the actual
+`pdf-lib.min.js`), so it's PDF-specific — a page that pdf.js renders but pdf-lib's
+object copier can't copy (dangling ref / protection) hit an internal instance
+assertion and sank the whole export. Fix: `buildPdf` now copies each page in its own
+try/catch and, when a page can't be copied, **falls back to rasterizing it via pdf.js**
+(the renderer that already drew the thumbnail) and embedding the image — so the
+download always succeeds. Loads with `throwOnInvalidObject:false`; a missing source or
+truly unusable page is counted, and the toast reports exactly what happened
+("Saved … N couldn't be copied and were saved as images"). No more cryptic crash.
+
+**Feature:** click any page thumbnail to open it **full size** in an overlay (pdf.js
+rendered to fit the viewport, honoring the page's rotation; click-away / ✕ / Esc to
+close). Self-contained in `app.js` (no index.html/CSS change). pdftools isn't on the
+`?v` scheme — the SW precache revisions it and the update-check banner prompts a
+reload. 1156 pass.
+
+The pay engine's first run. `server/utils/paycheckRun.js` (pure, 12 tests) +
+`GET /admin/payroll-run` + `PayrollRun.jsx` (the centerpiece of the Payroll tab):
+pick a period, and each worker's Paycheck ruleset is resolved **from their role**.
+
+- **Tie-breaker (David's call):** a role that matches **zero or more than one**
+  ruleset — or a worker with **no role** — is a **flagged setup error**, listed
+  prominently ("N workers need setup…") and excluded from the register. Never a
+  silent guess. (`resolveRuleset` → `{ruleset}` | `{error}`.)
+- **Money math:** gross comes from the existing pay-statement engine
+  (`companyStatements`); deductions = company-wide + the worker's **role-scoped** +
+  their **personal** rows, run through the ruleset's **exempt → deduct → cap →
+  min-net** (`computeRuleNet`, in dollars to match the statement engine; ruleset
+  cents ÷ 100 on the way in). Register shows gross · deductions · net + totals.
+- Gated on Advanced Payroll (via the `requireCertifiedPayrollAddon` alias — same
+  gate, already in every test mock, so no churn).
+
+**Scope (stated in the UI):** computes the selected period as ONE check. A ruleset's
+`combineGroup` (sum a pair/month of checks before the exempt, deduct on one) needs
+generated pay periods from the schedule — the next increment. 1156 pass.
+
+Each Role Rules section covered exactly one role (a single `<select>`). Made it
+cover **multiple roles**: `roleRules[].roleId` (single) → `roleIds` (array), with a
+chip multi-select mirroring Paycheck Rules / role deductions. Roles claimed by
+another section render disabled (a role stays in at most one section so its
+effective rule list is unambiguous); the builder title joins the selected role
+names. Legacy single `roleId` is still accepted and folded into `roleIds`
+everywhere (server `parseRoleRules` + `effectiveRulesForRole`, client
+`policyToForm`/`formToPolicy`), so existing saved policies round-trip untouched;
+`effectiveRulesForRole` now matches `roleIds.includes(workerRoleId)`. Renamed the
+picker label Role → Roles, added a "used elsewhere" tooltip (EN+ES). Updated the
+role-rules tests (output is `roleIds`; added multi-role parse + match cases) and
+the db-enums note. 1144 pass.
+
+The link that turns Paycheck Rules into an actual payroll run is **role**, per
+David. Two pieces (config/storage; the pay engine that consumes them is still later):
+
+- **Rulesets select the roles they apply to.** Each ruleset carries `roles: []`
+  (role ids). Builder: a chip multi-select of the company's roles (fetched from
+  `GET /admin/roles`, same as HoursRules), and the summary line now leads with the
+  role names (or "No roles"). A worker will get their ruleset from their role.
+- **Role deductions in Payroll Deductions.** Each deduction carries an optional
+  `roleIds: []` — **empty = all employees** (the original company-wide behavior),
+  non-empty = only workers in those roles. `DeductionListEditor` grew an opt-in
+  "Applies to" chip row (All employees / roles), enabled by a new `roles` prop —
+  omitted in the per-worker context (those are already worker-scoped). `normalize
+  Deduction` now preserves `roleIds` (de-duped, primitives only); the per-worker PUT
+  route maps fixed fields so the unused `roleIds` is harmlessly ignored there.
+
+Both normalizers keep the fields as-is (role ids may be int or uuid), de-dupe, and
+cap the array. EN+ES i18n; db-enums updated for both shapes; tests pin the role
+normalization on rulesets + deductions. 1142 pass.
+
+Packaged the advanced payroll stuff behind a paid add-on, **Advanced Payroll**, per
+David's call. Free (base plan) in Reports: the hours register (regular/OT/prevailing)
++ timesheet export — **moved the OT report + export back to Reports** (undoing that
+part of the previous Payroll-tab commit). Paid (Advanced Payroll): the Payroll tab
+(WH-347 / certified payroll), and the Paycheck Rules settings section. Certified
+payroll is **folded in** — WH-347 was its own superadmin-only add-on; no one had
+purchased it, so it collapses into Advanced Payroll.
+
+Entitlement plumbing (`addon_advanced_payroll`, the "N places"):
+- Migration 0155: new boolean column, backfilled from `addon_certified_payroll`.
+- `auth.js buildSessionUser`: SELECT + surface it on the session user.
+- `middleware/auth.js`: `requireCertifiedPayrollAddon` now OR-gates on
+  `addon_advanced_payroll || addon_certified_payroll` (kept the export name so the
+  ~25 test mocks + route refs don't churn; added a `requireAdvancedPayrollAddon`
+  alias). Error code → `advanced_payroll_required`.
+- `usePlan()`: `hasAdvancedPayroll`; `hasCertifiedPayroll` now aliases it (certified
+  is a capability of advanced), so existing cp_* gates keep working.
+- Superadmin: PATCH plumbing + list SELECTs + the toggle relabeled "Advanced
+  Payroll add-on" (writes the new flag).
+- `UpgradePrompt` learns `advanced_payroll`; Payroll tab shows it when off; Paycheck
+  Rules section shows an upsell when off. EN+ES i18n.
+
+Fixed a latent bug along the way: the WH-347 panel gated on `hasQbo` (wrong) — now
+`hasAdvancedPayroll`. Superadmin-toggleable now; **Stripe self-serve is a follow-up**
+(model on takeoff). Paycheck Rules save is client-gated for now (inert without the
+engine). 1140 pass, i18n parity, build clean.
+
+Added a **Payroll** tab to Time Clock ▸ Workforce (`WorkforcePanel` in
+AdminDashboard.jsx), between Reports and Time Off, gated on the same `view_reports`
+permission. Rather than invent new surfaces, it collects the three payroll tools
+that were buried as collapsible sections inside the Reports tab and **moves** them
+here (no duplication): the **Overtime / payroll register** (per-worker hours + net
+pay), **Certified Payroll** (WH-347), and the **Payroll export** (CSV for the
+payroll processor). Reports now stays focused on worker + project analytics.
+
+Kept the existing plan gates (OT/export → Starter, certified payroll → QBO) and the
+collapsible-section pattern + localStorage keys, so nothing regresses. Relabeled the
+certified-payroll section header from "Payroll" → **"Certified Payroll"**
+(`certifiedPayrollLabel`) so it doesn't clash with the tab name. Added a short intro
+line with a link to Administration ▸ Workspace (where Paycheck Rules + Deductions
+live). New i18n: `tabPayroll`, `payrollTabIntro`, `payrollTabConfigure`,
+`certifiedPayrollLabel` (EN+ES, parity green). 1140 pass.
+
+Built a **Paycheck Rules** section (Administration ▸ Workspace, beside Hours & Rules
+/ Deductions), modeled on the Deductions/Hours-rules pattern. Admins build named
+**rulesets**; each has a pay **schedule** (weekly / biweekly / semi-monthly /
+monthly — with pay weekday + anchor date for biweekly, two days-of-month for
+semi-monthly, day-of-month/last for monthly, and a weekend-shift) and a
+**deductions** block (timing every/grouped; group by pair or calendar month; apply
+to first/second/last check; combine the group; an **exempt amount** subtracted
+before deducting; an optional cap by amount or percent; a min-net floor; scope
+all/selected deductions). David's two examples drop out as **presets**: "Every other
+Thursday" (biweekly, grouped by pair, apply second, combine, exempt $11k) and "15th
+& 30th" (semi-monthly, grouped by month, apply last, combine, exempt $11k).
+
+Scope this phase = builder + storage only. Assigning rulesets to employee types and
+the actual pay-engine math are explicitly **later** (documented in
+`docs/plans/paycheck-rules.md`).
+
+Pieces: `server/constants/paycheckRuleEnums.js` (frozen enum sets +
+`normalizePaycheckRules` that clamps every field on read, never throws — same
+posture as `hoursRules.parsePolicy`); new `paycheck_rules` string setting
+(settingsDefaults `STRING_KEYS`/defaults, the duplicate PATCH allowlist in
+`admin.js`, and a shape+size validation block — the two-allowlist gotcha the
+architecture map flagged); `PaycheckRulesSettings.jsx` (list + add/duplicate/delete,
+per-ruleset editor with conditional fields, plain-English summary, presets, dollar
+inputs ↔ cents); mounted in AdministrationPage under the existing `manage_settings`
+gate; EN+ES i18n (`pcr*`, parity test green); `docs/db-enums.md` row for every
+fixed-value field. Normalizer tests pin the clamping. 1140 pass.
 
 The real reason the takeoff fixes "weren't there": the installed PWA tool window
 kept running the old build. Confirmed the cause — the built SW precache manifest
@@ -128,6 +302,9 @@ Bootstrap caveat: existing installs still on the old index.html don't reference 
 new script yet, so they need ONE manual refresh to land on this version; every
 deploy after that prompts automatically. Verified the built sw.js precaches the new
 script. 1131 pass.
+
+Follow-up: wired the same script into `pdftools/index.html` too (also precached —
+same staleness gap), so every tool-app now surfaces the reload prompt.
 
 ---
 

@@ -14,6 +14,9 @@ const pool = require('../db');
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 function isValidEmail(email) { return EMAIL_RE.test(String(email).trim()); }
 const { requireAdmin, requirePlan, requireCertifiedPayrollAddon, requirePerm } = require('../middleware/auth');
+const { normalizePaycheckRules } = require('../constants/paycheckRuleEnums');
+const { resolveRuleset, deductionsForRole, applyGroupDeductions } = require('../utils/paycheckRun');
+const { generatePeriods, groupPeriods } = require('../utils/payPeriods');
 const { PERMISSIONS, PERMISSION_KEYS, BUILTIN_ROLES, getUserPermissions } = require('../permissions');
 const { coerceBody } = require('../middleware/coerce');
 const { logFailure } = require('../failureLog');
@@ -195,7 +198,7 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
   // couldn't update them. Added during 2026-04-30 audit pass.
   const adminNumericKeys = ['shift_reminder_hour', 'pto_annual_days', 'cycle_count_audit_pct', 'cycle_count_reconcile_threshold'];
   const numericKeys = [...rateKeys, ...notifKeys, ...adminNumericKeys, 'overtime_threshold', 'media_retention_days', 'qbo_bill_terms_days', 'week_start', 'work_week_end', 'regular_shift_hours', 'sick_pay_pct', 'vacation_pay_pct'];
-  const stringKeys = ['overtime_rule', 'overtime_rate_method', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules', 'deductions'];
+  const stringKeys = ['overtime_rule', 'overtime_rate_method', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules', 'deductions', 'paycheck_rules'];
   const allowed = [...numericKeys, ...stringKeys, ...FEATURE_KEYS];
   const companyId = req.user.company_id;
   try {
@@ -263,6 +266,15 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
             let parsed;
             try { parsed = JSON.parse(val); } catch { return res.status(400).json({ error: 'deductions must be valid JSON' }); }
             if (!parsed || typeof parsed !== 'object') return res.status(400).json({ error: 'deductions must be a JSON object or array' });
+          }
+          if (key === 'paycheck_rules' && val !== '') {
+            // A JSON policy of named paycheck rulesets; normalizePaycheckRules
+            // clamps every field on read, so only shape + size are guarded here.
+            if (String(val).length > 60000) return res.status(400).json({ error: 'paycheck_rules is too large' });
+            let parsed;
+            try { parsed = JSON.parse(val); } catch { return res.status(400).json({ error: 'paycheck_rules must be valid JSON' }); }
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+              return res.status(400).json({ error: 'paycheck_rules must be a JSON object' });
           }
           await pool.query(
             'INSERT INTO settings (company_id, key, value) VALUES ($1, $2, $3) ON CONFLICT (company_id, key) DO UPDATE SET value = $3',
@@ -3239,6 +3251,92 @@ router.get('/overtime-report', requireAdmin, requirePerm('view_reports'), requir
       };
     });
     res.json(rows);
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
+// GET /admin/payroll-run — the ruleset-driven payroll register for a pay period.
+// Resolves each worker's Paycheck ruleset from their role (0 or >1 match → a flagged
+// SETUP ERROR, never a guess), computes gross from the pay engine, then applies the
+// role's deductions + the ruleset's exempt/cap/min-net math → net. Advanced Payroll.
+// requireCertifiedPayrollAddon IS the Advanced Payroll gate (folded in; see 0155).
+router.get('/payroll-run', requireAdmin, requirePerm('view_reports'), requireCertifiedPayrollAddon, async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) return res.status(400).json({ error: 'from and to required' });
+  const companyId = req.user.company_id;
+  try {
+    const s = await getSettings(companyId);
+    const rulesets = normalizePaycheckRules(s.paycheck_rules).rulesets;
+    const companyDeds = parseCompanyDeductions(s.deductions);
+    const workers = await pool.query(
+      `SELECT u.id, u.full_name, u.invoice_name, u.hourly_rate, u.rate_type, u.overtime_rule, u.role_id, u.guaranteed_weekly_hours, r.name AS role_name
+         FROM users u LEFT JOIN roles r ON r.id = u.role_id
+        WHERE u.company_id = $1 AND u.role = 'worker' AND u.active = true
+        ORDER BY u.full_name`,
+      [companyId]
+    );
+    const wd = await pool.query(
+      'SELECT user_id, id, name, kind, value, cap_amount, active FROM worker_deductions WHERE company_id = $1 AND active = true',
+      [companyId]
+    );
+    const wdByUser = {};
+    wd.rows.forEach(r => { (wdByUser[r.user_id] = wdByUser[r.user_id] || []).push(r); });
+
+    // Resolve each worker's ruleset from their role (0/>1 = a flagged setup error).
+    const ready = [];
+    const errors = [];
+    for (const w of workers.rows) {
+      const name = w.invoice_name || w.full_name;
+      const resolved = resolveRuleset(rulesets, w.role_id);
+      if (resolved.error) {
+        errors.push({ worker_id: w.id, worker_name: name, role_name: w.role_name || null, reason: resolved.error, matches: resolved.matches || null });
+        continue;
+      }
+      ready.push({ w, name, ruleset: resolved.ruleset });
+    }
+
+    // Generate + group the pay periods each ruleset issues in [from, to] (once per
+    // ruleset). A null ruleset (none configured) → the whole window is one check.
+    const periodsByRuleset = {};
+    const periodsFor = ruleset => {
+      const key = ruleset ? ruleset.id : '__none__';
+      if (periodsByRuleset[key]) return periodsByRuleset[key];
+      let grouped;
+      if (!ruleset) grouped = [{ periodStart: from, periodEnd: to, payDate: to, groupKey: '0', deductionsApply: true }];
+      else grouped = groupPeriods(generatePeriods(ruleset.schedule, from, to), ruleset.deductions || {});
+      periodsByRuleset[key] = grouped;
+      return grouped;
+    };
+    ready.forEach(r => { r.periods = periodsFor(r.ruleset); });
+
+    // Gross per worker for each distinct period range (one companyStatements call each).
+    const rangeKeys = new Set();
+    ready.forEach(r => r.periods.forEach(p => rangeKeys.add(p.periodStart + '|' + p.periodEnd)));
+    const grossByRange = {};
+    for (const rk of rangeKeys) {
+      const [ps, pe] = rk.split('|');
+      const sts = await companyStatements({ companyId, workers: workers.rows, settings: s, from: ps, to: pe });
+      const m = new Map();
+      workers.rows.forEach(w => { const st = sts.get(w.id); m.set(w.id, st ? st.totals.grossWages : 0); });
+      grossByRange[rk] = m;
+    }
+
+    // One row per (worker, check): combine each group, exempt once, deduct on the flagged check.
+    const rows = [];
+    for (const r of ready) {
+      const deds = [...deductionsForRole(companyDeds, r.w.role_id), ...normalizeWorkerDeductions(wdByUser[r.w.id])];
+      const withGross = r.periods.map(p => ({ ...p, gross: grossByRange[p.periodStart + '|' + p.periodEnd].get(r.w.id) || 0 }));
+      for (const p of applyGroupDeductions(withGross, deds, r.ruleset)) {
+        rows.push({
+          worker_id: r.w.id, worker_name: r.name, role_name: r.w.role_name || null,
+          ruleset_name: r.ruleset ? r.ruleset.name : null,
+          pay_date: p.payDate, period_start: p.periodStart, period_end: p.periodEnd, deducts: !!p.deductionsApply,
+          gross: p.gross, deduction_total: p.deductionTotal, net: p.net,
+        });
+      }
+    }
+    rows.sort((a, b) => (a.pay_date < b.pay_date ? -1 : a.pay_date > b.pay_date ? 1 : a.worker_name.localeCompare(b.worker_name)));
+
+    res.json({ from, to, rows, errors, ruleset_count: rulesets.length });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 

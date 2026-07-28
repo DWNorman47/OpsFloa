@@ -90,8 +90,14 @@ function policyToForm(raw) {
   f.rules = Array.isArray(p.rules) ? p.rules : [];
   f.roleRules = Array.isArray(p.roleRules)
     ? p.roleRules
-        .filter(r => r && r.roleId != null)
-        .map(r => ({ roleId: Number(r.roleId), addToStandard: r.addToStandard !== false, rules: Array.isArray(r.rules) ? r.rules : [] }))
+        .map(r => ({
+          // roleIds is the new multi-role shape; fold in the legacy single roleId.
+          roleIds: (Array.isArray(r.roleIds) ? r.roleIds : (r.roleId != null ? [r.roleId] : []))
+            .map(Number).filter(Number.isInteger),
+          addToStandard: r.addToStandard !== false,
+          rules: Array.isArray(r.rules) ? r.rules : [],
+        }))
+        .filter(r => r.roleIds.length > 0)
     : [];
   const sh = p.standardHours || {};
   const days = Object.keys(sh).filter(k => sh[k] && sh[k].start);
@@ -172,8 +178,12 @@ function formToPolicy(f) {
     };
   }
   const roleRules = (Array.isArray(f.roleRules) ? f.roleRules : [])
-    .filter(r => r && r.roleId != null && Number.isFinite(Number(r.roleId)))
-    .map(r => ({ roleId: Number(r.roleId), addToStandard: r.addToStandard !== false, rules: Array.isArray(r.rules) ? r.rules : [] }));
+    .map(r => ({
+      roleIds: [...new Set((Array.isArray(r.roleIds) ? r.roleIds : []).map(Number).filter(Number.isInteger))],
+      addToStandard: r.addToStandard !== false,
+      rules: Array.isArray(r.rules) ? r.rules : [],
+    }))
+    .filter(r => r.roleIds.length > 0); // a section with no roles selected is dropped
   return {
     version: 1,
     enabled: !!f.enabled,
@@ -210,13 +220,18 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
   // A preset rewrites only Standard Rules/Hours; role sections are preserved.
   const applyPreset = (key) => { if (PRESETS[key]) { setForm(f => ({ ...PRESETS[key](), roleRules: f.roleRules })); setSaved(false); } };
 
-  const roleName = (id) => roles.find(r => r.id === Number(id))?.name || t.hrRolePickerLabel;
-  const usedRoleIds = new Set(form.roleRules.map(r => Number(r.roleId)));
+  const roleName = (id) => roles.find(r => r.id === Number(id))?.name || `#${id}`;
+  // Every role id already claimed by any section — a role belongs to at most one
+  // section so its effective rule list stays unambiguous.
+  const usedRoleIds = new Set(form.roleRules.flatMap(r => r.roleIds || []));
   const addableRoles = roles.filter(r => !usedRoleIds.has(r.id));
   const addRoleSection = () => {
-    const next = addableRoles[0];
-    if (!next) return;
-    set('roleRules', [...form.roleRules, { roleId: next.id, addToStandard: true, rules: [] }]);
+    if (addableRoles.length === 0) return;
+    set('roleRules', [...form.roleRules, { roleIds: [], addToStandard: true, rules: [] }]);
+  };
+  const toggleSectionRole = (idx, rid) => {
+    const cur = form.roleRules[idx].roleIds || [];
+    updateRoleSection(idx, { roleIds: cur.includes(rid) ? cur.filter(x => x !== rid) : [...cur, rid] });
   };
   const updateRoleSection = (idx, patch) =>
     set('roleRules', form.roleRules.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
@@ -321,43 +336,53 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
               </button>
             </div>
 
-            {form.roleRules.map((rr, idx) => (
-              <div key={idx} style={s.roleCard}>
-                <div style={s.roleHead}>
-                  <div style={s.field}>
-                    <label style={s.label}>{t.hrRolePickerLabel}</label>
-                    <select
-                      style={s.input}
-                      value={String(rr.roleId)}
-                      onChange={e => updateRoleSection(idx, { roleId: Number(e.target.value) })}
-                    >
-                      {/* Current role always listed even if since-deleted, so its
-                          id round-trips; other options exclude already-added roles. */}
-                      {!roles.some(r => r.id === Number(rr.roleId)) && (
-                        <option value={String(rr.roleId)}>{`#${rr.roleId}`}</option>
-                      )}
-                      {roles
-                        .filter(r => r.id === Number(rr.roleId) || !usedRoleIds.has(r.id))
-                        .map(r => <option key={r.id} value={String(r.id)}>{r.name}</option>)}
-                    </select>
+            {form.roleRules.map((rr, idx) => {
+              const selected = rr.roleIds || [];
+              // Roles claimed by OTHER sections — shown disabled here so a role
+              // can't land in two sections (its effective rule list must be unique).
+              const otherUsed = new Set(form.roleRules.flatMap((x, i) => (i === idx ? [] : (x.roleIds || []))));
+              const titleNames = selected.map(roleName).join(', ') || t.hrRolePickerLabel;
+              const orphanIds = selected.filter(id => !roles.some(r => r.id === id)); // role since-deleted
+              return (
+                <div key={idx} style={s.roleCard}>
+                  <div style={s.roleHead}>
+                    <div style={{ ...s.field, flex: 1 }}>
+                      <label style={s.label}>{t.hrRolePickerLabel}</label>
+                      <div style={s.chipRow}>
+                        {roles.map(r => {
+                          const on = selected.includes(r.id);
+                          const disabled = !on && otherUsed.has(r.id);
+                          return (
+                            <button key={r.id} type="button" disabled={disabled}
+                              title={disabled ? t.hrRoleUsedElsewhere : undefined}
+                              style={{ ...(on ? s.chipOn : s.chip), ...(disabled ? s.chipDisabled : {}) }}
+                              onClick={() => toggleSectionRole(idx, r.id)}>{r.name}</button>
+                          );
+                        })}
+                        {/* saved-but-since-deleted roles still round-trip as a chip */}
+                        {orphanIds.map(id => (
+                          <button key={id} type="button" style={s.chipOn} onClick={() => toggleSectionRole(idx, id)}>{`#${id}`}</button>
+                        ))}
+                      </div>
+                    </div>
+                    <button type="button" style={s.tierRemove} onClick={() => removeRoleSection(idx)} aria-label={t.hrRemoveRoleRules}>×</button>
                   </div>
-                  <button type="button" style={s.tierRemove} onClick={() => removeRoleSection(idx)} aria-label={t.hrRemoveRoleRules}>×</button>
+
+                  <label style={s.checkRow}>
+                    <input type="checkbox" checked={rr.addToStandard !== false} onChange={e => updateRoleSection(idx, { addToStandard: e.target.checked })} />
+                    <span>{t.hrRoleAddOnTop}</span>
+                  </label>
+                  <p style={s.hint}>{rr.addToStandard !== false ? t.hrRoleAddOnTopHint : t.hrRoleOverwriteHint}</p>
+
+                  <HoursRuleBuilder
+                    rules={rr.rules}
+                    onChange={rs => updateRoleSection(idx, { rules: rs })}
+                    title={titleNames}
+                    help={t.hrRoleRulesBuilderHelp}
+                  />
                 </div>
-
-                <label style={s.checkRow}>
-                  <input type="checkbox" checked={rr.addToStandard !== false} onChange={e => updateRoleSection(idx, { addToStandard: e.target.checked })} />
-                  <span>{t.hrRoleAddOnTop}</span>
-                </label>
-                <p style={s.hint}>{rr.addToStandard !== false ? t.hrRoleAddOnTopHint : t.hrRoleOverwriteHint}</p>
-
-                <HoursRuleBuilder
-                  rules={rr.rules}
-                  onChange={rs => updateRoleSection(idx, { rules: rs })}
-                  title={roleName(rr.roleId)}
-                  help={t.hrRoleRulesBuilderHelp}
-                />
-              </div>
-            ))}
+              );
+            })}
           </section>
         </>
       )}
@@ -410,6 +435,10 @@ const s = {
   addTier: { background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', borderRadius: 7, padding: '6px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', marginTop: 4 },
   roleCard: { marginTop: 14, padding: 14, background: '#f8fafc', border: '1px solid #eef0f2', borderRadius: 10 },
   roleHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 12, marginBottom: 10, flexWrap: 'wrap' },
+  chipRow: { display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 2 },
+  chip: { background: '#fff', color: '#374151', border: '1px solid #d1d5db', borderRadius: 999, padding: '4px 12px', fontSize: 12.5, cursor: 'pointer' },
+  chipOn: { background: '#059669', color: '#fff', border: '1px solid #059669', borderRadius: 999, padding: '4px 12px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' },
+  chipDisabled: { opacity: 0.4, cursor: 'not-allowed' },
   edge: { marginTop: 12, padding: 12, background: '#f8fafc', borderRadius: 8 },
   edgeTitle: { fontSize: 13, fontWeight: 700, color: '#334155', marginBottom: 8 },
   checkRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: '#374151', cursor: 'pointer' },

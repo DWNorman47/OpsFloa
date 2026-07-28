@@ -87,7 +87,7 @@ function signToken(user) {
 async function buildSessionUser(baseUser) {
   const [companyRes, userRes] = await Promise.all([
     pool.query(
-      `SELECT name, plan, subscription_status, addon_qbo, addon_certified_payroll, addon_takeoff, addon_planroom, addon_storm, addon_roof,
+      `SELECT name, plan, subscription_status, addon_qbo, addon_certified_payroll, addon_advanced_payroll, addon_takeoff, addon_planroom, addon_storm, addon_roof,
               trial_ends_at, slug, accepts_service_requests, client_portal_pro_interest
        FROM companies WHERE id = $1`,
       [baseUser.company_id]
@@ -134,6 +134,7 @@ async function buildSessionUser(baseUser) {
     subscription_status: effectiveSubscriptionStatus(company),
     addon_qbo: company.addon_qbo || false,
     addon_certified_payroll: company.addon_certified_payroll || false,
+    addon_advanced_payroll: company.addon_advanced_payroll || false,
     addon_takeoff: company.addon_takeoff || false,
     addon_planroom: company.addon_planroom || false,
     addon_storm: company.addon_storm || false,

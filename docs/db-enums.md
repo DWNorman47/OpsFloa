@@ -307,14 +307,16 @@ that had the previous default.
   value is already deducted everywhere downstream.
 
   **`roleRules[]` — per-role overrides.** `rules[]` above is the *standard* list,
-  applied to every worker. `roleRules` attaches an independent rule list to a
-  worker **role** (`users.role_id`): `[{roleId:<int>, addToStandard:<bool>,
-  rules:[…same rule shape…]}]`. A worker's effective list is
-  `addToStandard ? standard.concat(role.rules) : role.rules`; a worker whose
-  `role_id` has no section (or is null, or points at a deleted role) uses the
-  standard list. Absent/empty → today's behavior exactly. Normalized by
-  `parseRoleRules` (drops entries without an integer `roleId`; `addToStandard`
-  defaults true; each list runs through `parseRules`). The effective list feeds
+  applied to every worker. `roleRules` attaches an independent rule list to one or
+  more worker **roles** (`users.role_id`): `[{roleIds:[<int>…], addToStandard:<bool>,
+  rules:[…same rule shape…]}]`. A section can cover **multiple roles**; the legacy
+  single `roleId:<int>` is still accepted and folded into `roleIds`. A worker's
+  effective list is `addToStandard ? standard.concat(role.rules) : role.rules`; a
+  worker whose `role_id` is in no section (or is null, or points at a deleted role)
+  uses the standard list. Absent/empty → today's behavior exactly. Normalized by
+  `parseRoleRules` (coerces ids to ints, de-dupes, drops entries with no valid id;
+  `addToStandard` defaults true; each list runs through `parseRules`). A role
+  belongs to at most one section (the builder disables an already-claimed role). The effective list feeds
   BOTH the rounding transform and the OT config, so a role's `ot_tier`/premium
   rules take effect — resolved per worker via `effectiveRulesForRole` /
   `otConfigByRoleFactory` and carried to every pay site by threading each
@@ -323,7 +325,10 @@ that had the previous default.
 
 - `deductions` (JSON list, default `''`) — company-wide payroll deductions for
   the per-worker **pay stub** (gross wages → net). Shape `{ items: [{ id, name,
-  kind, value, cap }] }` (a bare array is also accepted). `kind` is `percent` (of
+  kind, value, cap, roleIds }] }` (a bare array is also accepted). `roleIds` is an
+  optional array of role ids the deduction is scoped to — **empty/absent = all
+  employees** (the original company-wide behavior); non-empty = only workers in
+  those roles ("role deductions"). `kind` is `percent` (of
   gross wages, optional `cap` = max amount per period) or `fixed` (flat amount) —
   same vocabulary as the `worker_deductions.kind` column above. `''`/empty = no
   deductions, so the stub stays gross-only for companies that never configure it.
@@ -335,6 +340,26 @@ that had the previous default.
   from. Consumed by `GET /admin/workers/:id/entries` (→ `payStubTotals`) and the
   pay-stub PDF. **Not** a tax engine: it applies configured rates, it does not
   compute statutory brackets/ceilings.
+
+- `paycheck_rules` (JSON policy, default `''`) — named **paycheck rulesets** (pay
+  schedule + how/when deductions apply), built in Administration ▸ Workspace ▸
+  Paycheck Rules. Shape `{ version, rulesets: [{ id, name, roles, schedule,
+  deductions, notes }] }`; money in **cents**. `roles` is the array of role ids the
+  ruleset applies to (a worker gets their ruleset from their role; empty = unassigned). Every fixed-value field lives inside the JSON
+  (not a DB column, same posture as `hours_rules`), with the allowed sets frozen in
+  `server/constants/paycheckRuleEnums.js` and clamped on read by
+  `normalizePaycheckRules` (never throws):
+  `schedule.frequency` = `weekly` \| `biweekly` \| `semimonthly` \| `monthly`;
+  `schedule.weekendShift` = `none` \| `before` \| `after`;
+  `deductions.timing` = `every` \| `grouped`;
+  `deductions.group.by` = `pair` \| `month`;
+  `deductions.group.applyOn` = `first` \| `second` \| `last`;
+  `deductions.cap.type` = `none` \| `amount` \| `percent`;
+  `deductions.scope` = `all` \| `selected`.
+  Validated on write for **shape (JSON object) + size (≤ 60 KB)** in PATCH
+  `/admin/settings`. `''`/empty = none configured, so existing companies are
+  unaffected. **Not yet consumed** — assigning rulesets to employee types and the
+  pay-engine math land later (see `docs/plans/paycheck-rules.md`).
 
 ### Module visibility flags (`module_*`, boolean, in `FEATURE_KEYS`)
 
