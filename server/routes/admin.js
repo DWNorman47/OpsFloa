@@ -3302,6 +3302,22 @@ async function computePayrollRun(companyId, from, to) {
     };
     ready.forEach(r => { r.periods = periodsFor(r.ruleset); });
 
+    // A ready worker whose ruleset issues no paycheck with a pay date in [from,to]
+    // would otherwise vanish behind a misleading "no pay". Surface WHY, once per
+    // ruleset: probe a wide window to tell an incomplete/broken schedule (never
+    // issues — e.g. biweekly with no anchor date, semimonthly with no pay days)
+    // from one whose pay date simply falls outside the selected range (e.g. a
+    // month-end pay date past `to`).
+    const shiftIso = (isoStr, days) => { const dt = new Date(isoStr + 'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate() + days); return dt.toISOString().slice(0, 10); };
+    const notices = [];
+    const noticedRulesets = new Set();
+    for (const r of ready) {
+      if (!r.ruleset || r.periods.length > 0 || noticedRulesets.has(r.ruleset.id)) continue;
+      noticedRulesets.add(r.ruleset.id);
+      const wide = generatePeriods(r.ruleset.schedule, shiftIso(from, -400), shiftIso(to, 400));
+      notices.push({ ruleset_id: r.ruleset.id, ruleset_name: r.ruleset.name || null, reason: wide.length ? 'out_of_range' : 'schedule_incomplete' });
+    }
+
     // A worker's full statement for each distinct period range (one call each) — the
     // stub needs the hours/cost breakdown, not just the gross.
     const rangeKeys = new Set();
@@ -3334,7 +3350,7 @@ async function computePayrollRun(companyId, from, to) {
       }
     }
     rows.sort((a, b) => (a.pay_date < b.pay_date ? -1 : a.pay_date > b.pay_date ? 1 : a.worker_name.localeCompare(b.worker_name)));
-    return { from, to, rows, errors, ruleset_count: rulesets.length };
+    return { from, to, rows, errors, notices, ruleset_count: rulesets.length };
 }
 
 const centsOf = v => Math.round((Number(v) || 0) * 100);

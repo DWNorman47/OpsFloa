@@ -23,6 +23,38 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-28 — Payroll run "no workers with pay" was a misdiagnosis
+
+**Symptom (David):** ran payroll for a period workers clearly worked, got "No
+workers with pay in this period."
+
+**Root cause:** the run resolves each worker's ruleset, then asks the ruleset's
+*schedule* for the paychecks whose **pay date** lands in [from, to]. When that set is
+empty, no rows — and the message blamed "no pay" when the real cause is the
+schedule. Two ways a ready worker yields zero periods:
+- **Incomplete schedule** → the ruleset *never* issues a check. Biggest trap: a
+  **biweekly ruleset with no anchor date** (`payPeriods.biweekly` returns [] without
+  one), and biweekly is the *default* frequency, so a half-configured ruleset is
+  silently inert. Same for semimonthly with no pay days.
+- **Pay date outside the range** → e.g. a monthly/month-end pay date past a `to` of
+  the 28th. The work is in-window but the *paycheck* isn't.
+
+**Fix — make the run explain itself.** `computePayrollRun` now returns a `notices[]`:
+for each ruleset that resolved workers but issued nothing, it probes a wide (±400d)
+window to tell the two cases apart and tags `schedule_incomplete` vs `out_of_range`.
+The Payroll tab renders an amber panel naming the ruleset and what to do (fix the
+schedule vs widen the dates) instead of the flat "no pay." Also added an inline
+"set an anchor date" warning in the Paycheck Rules editor so a biweekly ruleset
+can't look configured while being inert.
+
+**Judgment call / finding:** the run is keyed on **pay date in window**, but the
+inputs read "PERIOD FROM/TO" and users think in *work* period. That mismatch is the
+real UX sharp edge (the footnote about "cover whole groups" was papering over it).
+I kept the pay-date model (David's design — grouped deductions need real pay dates)
+but the notices now make the mismatch legible. If it keeps biting, the deeper
+options are: (a) resolve periods by work overlap instead of pay-date containment, or
+(b) auto-suggest a range that snaps to whole pay groups. Parked as a design note.
+
 ## 2026-07-28 — Billing bug: Business checkout overcharged for extra workers ⚠️
 
 **Symptom (David):** buying Business with extra members shows the right price in

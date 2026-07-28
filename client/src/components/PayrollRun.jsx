@@ -116,6 +116,19 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
 
           {data.ruleset_count === 0 && <p style={s.note}>{t.pcrRunNoRulesets}</p>}
 
+          {data.notices?.length > 0 && (
+            <div style={s.noticeBox}>
+              <div style={s.noticeHead}>⚠ {t.pcrRunNoticeHead}</div>
+              <ul style={s.errorList}>
+                {data.notices.map(n => (
+                  <li key={n.ruleset_id} style={s.noticeItem}>
+                    <strong>{n.ruleset_name || t.pcrRunUnnamedRuleset}</strong> — {n.reason === 'schedule_incomplete' ? t.pcrRunNoticeIncomplete : t.pcrRunNoticeOutOfRange}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {data.rows.length > 0 ? (
             <div style={s.tableWrap}>
               <table style={s.table}>
@@ -167,7 +180,7 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
                 </tfoot>
               </table>
             </div>
-          ) : data.errors.length === 0 && <p style={s.note}>{t.pcrRunEmpty}</p>}
+          ) : (data.errors.length === 0 && !(data.notices?.length) && <p style={s.note}>{t.pcrRunEmpty}</p>)}
 
           {data.rows.length > 0 && (
             <div style={s.finalizeRow}>
@@ -205,6 +218,9 @@ const s = {
   errorList: { margin: '0 0 8px', paddingLeft: 20 },
   errorItem: { fontSize: 13, color: '#7f1d1d', marginBottom: 3, lineHeight: 1.5 },
   errorHint: { fontSize: 12, color: '#b91c1c', margin: 0 },
+  noticeBox: { background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, padding: '14px 16px', marginBottom: 16 },
+  noticeHead: { fontSize: 14, fontWeight: 700, color: '#92400e', marginBottom: 8 },
+  noticeItem: { fontSize: 13, color: '#78350f', marginBottom: 3, lineHeight: 1.5 },
   note: { fontSize: 13, color: '#6b7280', margin: '4px 0 12px' },
   muted: { color: '#9ca3af' },
   tableWrap: { overflowX: 'auto' },

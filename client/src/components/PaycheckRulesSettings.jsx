@@ -222,6 +222,7 @@ export default function PaycheckRulesSettings({ settings, onSettingsUpdated }) {
               {f.frequency === 'biweekly' && (
                 <Field label={t.pcrAnchorDate} hint={t.pcrAnchorHint}>
                   <input type="date" style={s.input} value={f.anchorDate} onChange={e => patchRule(f.id, { anchorDate: e.target.value })} />
+                  {!f.anchorDate && <div style={{ fontSize: 12, color: '#b45309', marginTop: 4 }}>⚠ {t.pcrAnchorRequired}</div>}
                 </Field>
               )}
               {f.frequency === 'semimonthly' && (
