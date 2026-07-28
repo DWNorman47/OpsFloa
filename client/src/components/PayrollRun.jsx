@@ -22,8 +22,10 @@ const REASON_KEY = {
 function today() { return new Date().toLocaleDateString('en-CA'); }
 function monthStart() { const d = new Date(); d.setDate(1); return d.toLocaleDateString('en-CA'); }
 const periodKeyOf = p => `${p.pay_date}|${p.period_start}|${p.period_end}`;
-const fmtDay = iso => { const [y, m, d] = iso.split('-'); return new Date(Date.UTC(+y, +m - 1, +d)).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); };
-const fmtFull = iso => { const [y, m, d] = iso.split('-'); return new Date(Date.UTC(+y, +m - 1, +d)).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); };
+// Dates are UTC-midnight ISO strings; format them in UTC too, or a viewer west of
+// UTC sees every date shifted a day earlier than the run actually uses.
+const fmtDay = iso => { const [y, m, d] = iso.split('-'); return new Date(Date.UTC(+y, +m - 1, +d)).toLocaleDateString(undefined, { timeZone: 'UTC', month: 'short', day: 'numeric' }); };
+const fmtFull = iso => { const [y, m, d] = iso.split('-'); return new Date(Date.UTC(+y, +m - 1, +d)).toLocaleDateString(undefined, { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric' }); };
 
 export default function PayrollRun({ currency = 'USD', onFinalized }) {
   const t = useT();
