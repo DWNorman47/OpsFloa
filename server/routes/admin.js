@@ -3752,7 +3752,11 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_reports'), requ
       projectPrevRate = pr.rows[0]?.prevailing_wage_rate != null ? parseFloat(pr.rows[0].prevailing_wage_rate) : null;
     }
 
-    const conditions = ['te.company_id = $1', 'te.work_date >= $2', 'te.work_date <= $3'];
+    // Approved only — a signed WH-347 certifies hours actually paid, and the rest of
+    // the pay engine (invoices, payroll run, pay stubs, worker reports) already counts
+    // approved entries only. Without this, certified payroll silently includes pending
+    // (unvetted) hours that show up nowhere else.
+    const conditions = ['te.company_id = $1', 'te.work_date >= $2', 'te.work_date <= $3', "te.status = 'approved'"];
     const values = [companyId, weekStart, week_end];
     let idx = 4;
     if (project_id) { conditions.push(`te.project_id = $${idx++}`); values.push(parseInt(project_id)); }

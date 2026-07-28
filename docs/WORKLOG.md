@@ -23,6 +23,23 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-28 — Certified Payroll counted unapproved hours (inconsistent with all other pay)
+
+**David:** the Certified Payroll report showed Marcus Chen 8h 15m / $297 for the
+week, but his Team Member Report for the same range showed "No entries."
+
+**Root cause:** every pay surface — worker reports, invoices, payroll run, pay stubs
+(`workerStatement`/`companyStatements`) — filters `time_entries.status = 'approved'`,
+and new entries are created **pending**. The `GET /admin/certified-payroll` query was
+the **only** one with no status filter, so it counted pending (unapproved) hours that
+appear nowhere else. Marcus's entry was pending → on the WH-347, not on his report.
+
+**Fix:** added `te.status = 'approved'` to the certified-payroll query. A signed
+WH-347 certifies hours actually paid; it should never include unvetted hours, and it
+now matches the rest of payroll. Practical effect on the demo (all-pending entries):
+certified payroll now reads empty until entries are approved — which is correct and
+consistent with the worker report, instead of the two silently disagreeing.
+
 ## 2026-07-28 — Payroll run: selectable pay-period basis (fix "period ends on payday")
 
 **David:** for an every-other-Thursday payday (Jul 16), the period showed Fri Jul 3 –
