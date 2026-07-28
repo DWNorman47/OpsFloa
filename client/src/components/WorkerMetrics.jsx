@@ -191,14 +191,17 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
       const h = ((new Date(`1970-01-01T${e.end_time}`) - new Date(`1970-01-01T${e.start_time}`)) / 3600000).toFixed(2);
       return [e.work_date?.toString().substring(0, 10), 'Time', e.project_name || '', e.wage_type, e.start_time, e.end_time, ...(showOtCol ? [(e.overtime_hours || 0).toFixed(2)] : []), h, ''];
     });
-    const g = billData.summary;
-    const guaranteeRows = (g && g.guarantee_shortfall_hours > 0)
-      ? [['', 'Guarantee top-up', '', 'Weekly-hours guarantee', '', '', ...(showOtCol ? [''] : []), Number(g.guarantee_shortfall_hours).toFixed(2), g.guarantee_cost]]
-      : [];
+    const g = billData.summary || {};
+    const pad = showOtCol ? [''] : [];
+    const derivedRows = [
+      ...(g.guarantee_shortfall_hours > 0 ? [['', 'Guarantee top-up', '', 'Weekly-hours guarantee', '', '', ...pad, Number(g.guarantee_shortfall_hours).toFixed(2), g.guarantee_cost]] : []),
+      ...(g.sick_hours > 0 ? [['', 'Sick leave', '', 'Paid leave', '', '', ...pad, Number(g.sick_hours).toFixed(2), g.sick_cost]] : []),
+      ...(g.vacation_hours > 0 ? [['', 'Vacation leave', '', 'Paid leave', '', '', ...pad, Number(g.vacation_hours).toFixed(2), g.vacation_cost]] : []),
+    ];
     const reimbRows = (billData.reimbursements || []).map(r => [
       r.expense_date?.toString().substring(0, 10), 'Expense', r.project_name || '', r.category || r.description || '', '', '', ...(showOtCol ? [''] : []), '', r.amount,
     ]);
-    downloadCSV([headers, ...timeRows, ...guaranteeRows, ...reimbRows], `${worker.username}-${from || 'all'}-to-${to || 'all'}.csv`);
+    downloadCSV([headers, ...timeRows, ...derivedRows, ...reimbRows], `${worker.username}-${from || 'all'}-to-${to || 'all'}.csv`);
   };
 
   const PRESETS = [
@@ -293,7 +296,7 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
           {billData && hasResults && (
             <div style={{ marginTop: 16 }}>
               {/* ── Time entries ── */}
-              {(billData.entries.length > 0 || s.guarantee_shortfall_hours > 0) && (
+              {(billData.entries.length > 0 || s.guarantee_shortfall_hours > 0 || s.sick_hours > 0 || s.vacation_hours > 0) && (
                 <div style={styles.section}>
                   <div style={styles.sectionTitle}>{t.trTimeEntries}</div>
                   {billData.entries.map((e, idx) => {
@@ -339,6 +342,31 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
                           </div>
                         </div>
                       )}
+                    </div>
+                  )}
+                  {/* Paid leave — traceable rows, expandable to the per-day detail + rule. */}
+                  {s.sick_hours > 0 && (
+                    <div>
+                      <div style={{ ...styles.line, ...styles.lineClickable }} onClick={() => toggleLine('sick')}>
+                        <span style={styles.lineDate}>—</span>
+                        <span style={styles.lineMid}>{t.pdfSickHours || 'Sick'} · {formatCurrency(s.sick_cost, currency)}</span>
+                        <span style={styles.lineTimes} />
+                        <span style={styles.lineHours}>{fmtHours(s.sick_hours)}</span>
+                        <span style={styles.lineChev}>{openLine === 'sick' ? '▾' : '▸'}</span>
+                      </div>
+                      {openLine === 'sick' && <LeaveDetail rows={(billData.leave_detail || []).filter(d => d.type === 'sick')} t={t} policyRaw={policyRaw} goto={goto} />}
+                    </div>
+                  )}
+                  {s.vacation_hours > 0 && (
+                    <div>
+                      <div style={{ ...styles.line, ...styles.lineClickable }} onClick={() => toggleLine('vacation')}>
+                        <span style={styles.lineDate}>—</span>
+                        <span style={styles.lineMid}>{t.pdfVacationHours || 'Vacation'} · {formatCurrency(s.vacation_cost, currency)}</span>
+                        <span style={styles.lineTimes} />
+                        <span style={styles.lineHours}>{fmtHours(s.vacation_hours)}</span>
+                        <span style={styles.lineChev}>{openLine === 'vacation' ? '▾' : '▸'}</span>
+                      </div>
+                      {openLine === 'vacation' && <LeaveDetail rows={(billData.leave_detail || []).filter(d => d.type === 'vacation')} t={t} policyRaw={policyRaw} goto={goto} />}
                     </div>
                   )}
                 </div>
@@ -387,18 +415,8 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
                       detail={<div style={styles.trace}><div style={styles.traceItem}><span>{detailText}</span><button style={styles.traceLink} onClick={() => goto('/administration#workspace')}>{t.trViewSetting} →</button></div></div>} />
                   );
                 })()}
-                {s.sick_hours > 0 && (
-                  <SummaryLine label={t.pdfSickHours || 'Sick'} value={`${fmtHours(s.sick_hours)} · ${formatCurrency(s.sick_cost, currency)}`}
-                    open={openLine === 'sick'} onToggle={() => toggleLine('sick')}
-                    detail={<LeaveDetail rows={(billData.leave_detail || []).filter(d => d.type === 'sick')} t={t} policyRaw={policyRaw} goto={goto} />} />
-                )}
-                {s.vacation_hours > 0 && (
-                  <SummaryLine label={t.pdfVacationHours || 'Vacation'} value={`${fmtHours(s.vacation_hours)} · ${formatCurrency(s.vacation_cost, currency)}`}
-                    open={openLine === 'vacation'} onToggle={() => toggleLine('vacation')}
-                    detail={<LeaveDetail rows={(billData.leave_detail || []).filter(d => d.type === 'vacation')} t={t} policyRaw={policyRaw} goto={goto} />} />
-                )}
-                {/* Guarantee top-up is a Time-Entries row above (traceable to its rule),
-                    not a summary line — it must not add hours into the summary. */}
+                {/* Guarantee top-up + paid leave are traceable Time-Entries rows above,
+                    not summary lines — the summary must not add hours without a matching entry. */}
                 <SummaryLine label={t.totalHours || 'Total hours'} value={fmtHours((s.total_hours || 0) + (s.guarantee_shortfall_hours || 0) + (s.sick_hours || 0) + (s.vacation_hours || 0))} strong />
                 {(s.deductions || []).length > 0 && (
                   <>

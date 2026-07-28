@@ -41,10 +41,16 @@ Server already keeps `hours.regular` (worked) and `hours.guaranteeShortfall` sep
 so Regular was never actually inflated in current code — the folded "12h" was the old
 cached client. Client-only change (`WorkerMetrics.jsx` + i18n).
 
-Follow-up if he wants full parity: mirror the same treatment in the **bill PDF**
-(`BillPDF.jsx` still shows guarantee as a summary line) and give **leave** (sick/
-vacation) the same Time-Entries-row treatment (today they're summary lines with a
-leave-detail expander).
+**Follow-ups done same day** (David: "Sure"):
+- **Leave (sick/vacation)** now render as traceable Time-Entries rows too (hours · cost,
+  expandable to the per-day `LeaveDetail`), removed from the PAY SUMMARY. CSV export
+  includes them.
+- **Bill PDF** (`BillPDF.jsx`): guarantee top-up + sick/vacation are now itemized as
+  rows in the entry table (hours), and their **hours** lines are removed from the
+  summary — the pay breakdown stays in the totals (a bill needs its cost itemization).
+  Regular in the PDF was already worked-only (never folded).
+Night differential stays a summary cost line on purpose — it's a premium on hours
+already counted (worked), so it adds cost, not hours.
 
 ## 2026-07-28 — Certified Payroll dropped overtime under premium OT policies
 

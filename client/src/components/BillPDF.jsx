@@ -181,6 +181,25 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
           );
         })}
 
+        {/* Derived pay lines (guarantee top-up, paid leave) — itemized as rows so their
+            hours trace here, not folded into a summary total. Pay stays in the totals below. */}
+        {[
+          summary.guarantee_shortfall_hours > 0 && { label: t.guaranteeTopupLabel || 'Weekly-hours guarantee top-up', hours: summary.guarantee_shortfall_hours },
+          summary.sick_hours > 0 && { label: t.pdfSickHours || 'Sick', hours: summary.sick_hours },
+          summary.vacation_hours > 0 && { label: t.pdfVacationHours || 'Vacation', hours: summary.vacation_hours },
+        ].filter(Boolean).map((d, i) => (
+          <View key={`d${i}`} style={s.tableRow} wrap={false}>
+            <Text style={[s.td, { width: colDate }]}>—</Text>
+            {showProject && <Text style={[s.td, { width: colProject }]} />}
+            <Text style={[s.td, { width: colDesc, color: '#6b7280' }]}>{d.label}</Text>
+            <Text style={[s.td, { width: colIn }]} />
+            <Text style={[s.td, { width: colOut }]} />
+            {showRateType && <Text style={[s.td, { width: colType }]} />}
+            {showOtCol && <Text style={[s.td, { width: colOt, textAlign: 'right', color: '#9ca3af' }]}>—</Text>}
+            <Text style={[s.td, { width: colHours, textAlign: 'right', fontWeight: 'bold' }]}>{fmtH(d.hours)}</Text>
+          </View>
+        ))}
+
         {/* Reimbursements table */}
         {reimbursements.length > 0 && (
           <View style={s.reimbSection}>
@@ -227,26 +246,8 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
                 <Text style={s.sumVal}>{fmtH(summary.prevailing_hours)}</Text>
               </View>
             )}
-            {summary.guarantee_shortfall_hours > 0 && (
-              <View style={s.sumRow}>
-                <Text style={[s.sumLabel, { color: '#2563eb' }]}>
-                  {(t.pdfMinGuarantee || 'Minimum Guarantee ({n}/period shortfall)').replace('{n}', fmtH(summary.guarantee_min_hours))}
-                </Text>
-                <Text style={[s.sumVal, { color: '#2563eb' }]}>+{fmtH(summary.guarantee_shortfall_hours)}</Text>
-              </View>
-            )}
-            {summary.sick_hours > 0 && (
-              <View style={s.sumRow}>
-                <Text style={s.sumLabel}>{t.pdfSickHours || 'Sick Hours'}</Text>
-                <Text style={s.sumVal}>{fmtH(summary.sick_hours)}</Text>
-              </View>
-            )}
-            {summary.vacation_hours > 0 && (
-              <View style={s.sumRow}>
-                <Text style={s.sumLabel}>{t.pdfVacationHours || 'Vacation Hours'}</Text>
-                <Text style={s.sumVal}>{fmtH(summary.vacation_hours)}</Text>
-              </View>
-            )}
+            {/* Guarantee top-up + paid-leave hours are itemized as rows in the entry
+                table above (not repeated here); their pay stays in the totals below. */}
             <View style={[s.sumRow, s.sumDivider]}>
               <Text style={[s.sumLabel, s.sumBold]}>{t.totalHours || 'Total Hours'}</Text>
               <Text style={[s.sumVal, s.sumBold]}>{fmtH((summary.total_hours || 0) + (summary.guarantee_shortfall_hours || 0) + (summary.sick_hours || 0) + (summary.vacation_hours || 0))}</Text>
