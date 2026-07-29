@@ -3,7 +3,7 @@ const pool = require('../db');
 const logger = require('../logger');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { requireAuth, requireAdmin, requirePerm } = require('../middleware/auth');
 const qbo = require('../services/qbo');
 const { encrypt } = require('../services/encryption');
 // Every punch this file bills from must be the PAID punch, not the raw one.
@@ -16,6 +16,8 @@ const { roundEntriesFromSettings, otConfigFromSettings } = require('../utils/hou
 const { otBandsCost, nightPremiumCost, nightHoursForEntry } = require('../utils/payCalculations');
 const { rateAwarePay, hasSimpleOtConfig } = require('../utils/rateAwareOvertime');
 const { applySettingsRows, ADMIN_SETTINGS_DEFAULTS } = require('../settingsDefaults');
+const { companyStatements } = require('../utils/payStatement');
+const { isValidIsoDate, dateRangeDays } = require('../utils/payPeriods');
 
 const { logAudit } = require('../auditLog');
 
@@ -1022,64 +1024,66 @@ router.post('/push-bills', requireAdmin, async (req, res) => {
 
 // POST /api/qbo/push-payroll — push a payroll journal entry for a date range
 // Body: { from, to, debit_account_id, credit_account_id }
-router.post('/push-payroll', requireAdmin, async (req, res) => {
+router.post('/push-payroll', requireAdmin, requirePerm('manage_integrations'), requirePerm('manage_pay_periods'), requirePerm('view_worker_wages'), async (req, res) => {
   const { from, to, debit_account_id, credit_account_id } = req.body;
   if (!debit_account_id || !credit_account_id) {
     return res.status(400).json({ error: 'debit_account_id and credit_account_id are required' });
   }
   if (!from || !to) return res.status(400).json({ error: 'from and to date range are required' });
+  if (!isValidIsoDate(from) || !isValidIsoDate(to) || from > to) {
+    return res.status(400).json({ error: 'from and to must be valid dates in ascending order', code: 'invalid_date_range' });
+  }
+  if (dateRangeDays(from, to) > 366) {
+    return res.status(400).json({ error: 'Payroll journal range cannot exceed 366 days', code: 'date_range_too_large' });
+  }
 
   const companyId = req.user.company_id;
   try {
     const company = await pool.query('SELECT qbo_realm_id FROM companies WHERE id = $1', [companyId]);
     if (!company.rows[0]?.qbo_realm_id) return res.status(400).json({ error: 'QuickBooks not connected' });
 
-    // Calculate total labor cost for approved entries in the range
-    const settings = await pool.query(
-      'SELECT key, value FROM settings WHERE company_id = $1 AND key IN (\'default_hourly_rate\', \'prevailing_wage_rate\')',
+    const payrollSettings = await loadSettings(companyId);
+    const workers = await pool.query(
+      `SELECT id, full_name, invoice_name, hourly_rate, rate_type, overtime_rule,
+              role_id, guaranteed_weekly_hours
+         FROM users
+        WHERE company_id = $1 AND role = 'worker' AND active = true
+        ORDER BY full_name`,
       [companyId]
     );
-    const defaultRate = parseFloat(settings.rows.find(r => r.key === 'default_hourly_rate')?.value || 30);
-    const prevRate = parseFloat(settings.rows.find(r => r.key === 'prevailing_wage_rate')?.value || 45);
-
-    const entriesRes = await pool.query(
-      `SELECT te.work_date, te.start_time, te.end_time, te.break_minutes, te.wage_type,
-              te.user_id, u.default_hourly_rate, u.role_id
-       FROM time_entries te
-       JOIN users u ON te.user_id = u.id
-       WHERE te.company_id = $1
-         AND te.status = 'approved'
-         AND te.work_date >= $2::date
-         AND te.work_date <= $3::date`,
-      [companyId, from, to]
+    const statements = await companyStatements({
+      companyId,
+      workers: workers.rows,
+      settings: payrollSettings,
+      from,
+      to,
+    });
+    const payable = workers.rows
+      .map(worker => ({ worker, statement: statements.get(worker.id) }))
+      .filter(row => row.statement && row.statement.totals.grossWages > 0);
+    const totalCents = payable.reduce(
+      (sum, row) => sum + Math.round(row.statement.totals.grossWages * 100),
+      0
     );
-    const payrollRoleById = {};
-    entriesRes.rows.forEach(e => { payrollRoleById[e.user_id] = e.role_id; });
-    const entries = { rows: roundEntriesFromSettings(entriesRes.rows, await loadSettings(companyId), { workerRoleById: payrollRoleById }) };
+    if (totalCents <= 0) return res.status(400).json({ error: 'No approved payroll found for this date range' });
 
-    let totalCost = 0;
-    for (const e of entries.rows) {
-      let ms = new Date(`1970-01-01T${e.end_time}`) - new Date(`1970-01-01T${e.start_time}`);
-      if (ms < 0) ms += 86400000;
-      const hours = Math.max(0, ms / 3600000 - (e.break_minutes || 0) / 60);
-      const rate = e.wage_type === 'prevailing' ? prevRate : (e.default_hourly_rate || defaultRate);
-      totalCost += hours * rate;
-    }
-
-    if (totalCost <= 0) return res.status(400).json({ error: 'No approved entries found for this date range' });
-
-    const description = `Payroll ${from} – ${to} (${entries.rowCount} entries)`;
+    const totalCost = totalCents / 100;
+    const description = `Payroll ${from} – ${to} (${payable.length} workers)`;
+    // Intuit guarantees write idempotency for a repeated requestid. Keep the key
+    // period-scoped so changing accounts and retrying cannot post the same payroll twice.
+    const requestId = `ops-pay-${crypto.createHash('sha256').update(`${companyId}|${from}|${to}`).digest('hex').slice(0, 32)}`;
     const entry = await qbo.createJournalEntry(companyId, {
       txnDate: to,
       description,
       debitAccountId: debit_account_id,
       creditAccountId: credit_account_id,
       amount: totalCost,
+      requestId,
     });
 
     logAudit(companyId, req.user.id, req.user.full_name, 'qbo.payroll_journal_pushed', 'qbo_journal', entry?.Id || null, description,
-      { amount: totalCost, from, to, entries: entries.rowCount });
-    res.json({ entry_id: entry?.Id, amount: totalCost, entries: entries.rowCount, description });
+      { amount: totalCost, from, to, workers: payable.length, request_id: requestId });
+    res.json({ entry_id: entry?.Id, amount: totalCost, workers: payable.length, request_id: requestId, description });
   } catch (err) {
     logger.error({ err }, 'catch block error');
     const status = err.code === 'qbo_auth_expired' ? 401 : 500;

@@ -28,6 +28,18 @@ const weekday = t => new Date(t).getUTCDay();            // 0=Sun … 6=Sat
 const addDays = (t, n) => t + n * DAY;
 const lastDom = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate(); // m 1-12
 const ymParts = isoStr => isoStr.split('-').map(Number);
+const monthKey = (y, m) => `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}`;
+
+function isValidIsoDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const t = ms(value);
+  return Number.isFinite(t) && iso(t) === value;
+}
+
+function dateRangeDays(from, to) {
+  if (!isValidIsoDate(from) || !isValidIsoDate(to) || ms(to) < ms(from)) return null;
+  return Math.floor((ms(to) - ms(from)) / DAY) + 1;
+}
 
 function shiftWeekend(t, mode) {
   if (mode !== 'before' && mode !== 'after') return t;
@@ -127,7 +139,13 @@ function semimonthly(sc, from, to) {
       // Absolute half-month index → floor(seq/2) is the calendar month, so pair grouping
       // pairs a month's two checks (the 15th & 30th) regardless of the generation window.
       const seq = y * 24 + (m - 1) * 2 + idx;
-      out.push({ periodStart: iso(Date.UTC(y, m - 1, startDay)), periodEnd: iso(Date.UTC(y, m - 1, isLast ? last : day)), payDate: iso(payT), seq });
+      out.push({
+        periodStart: iso(Date.UTC(y, m - 1, startDay)),
+        periodEnd: iso(Date.UTC(y, m - 1, isLast ? last : day)),
+        payDate: iso(payT),
+        seq,
+        groupMonth: monthKey(y, m),
+      });
     });
     m++; if (m > 12) { m = 1; y++; }
   }
@@ -146,7 +164,15 @@ function monthly(sc, from, to) {
     const day = sc.dayOfMonth === 'last' ? last : Math.min(Number(sc.dayOfMonth) || last, last);
     const payT = shiftWeekend(Date.UTC(y, m - 1, day), sc.weekendShift);
     // Absolute month index — window-independent, so pair grouping pairs the same two months.
-    if (payT >= fromT && payT <= toT) out.push({ periodStart: iso(Date.UTC(y, m - 1, 1)), periodEnd: iso(Date.UTC(y, m - 1, last)), payDate: iso(payT), seq: y * 12 + (m - 1) });
+    if (payT >= fromT && payT <= toT) {
+      out.push({
+        periodStart: iso(Date.UTC(y, m - 1, 1)),
+        periodEnd: iso(Date.UTC(y, m - 1, last)),
+        payDate: iso(payT),
+        seq: y * 12 + (m - 1),
+        groupMonth: monthKey(y, m),
+      });
+    }
     m++; if (m > 12) { m = 1; y++; }
   }
   return out;
@@ -158,6 +184,7 @@ function monthly(sc, from, to) {
  */
 function generatePeriods(schedule, from, to, weekStart = 1) {
   const sc = schedule || {};
+  if (!isValidIsoDate(from) || !isValidIsoDate(to)) return [];
   if (ms(to) < ms(from)) return [];
   const basis = PERIOD_BASES.includes(sc.periodBasis) ? sc.periodBasis : 'work_week';
   switch (sc.frequency) {
@@ -186,7 +213,9 @@ function groupPeriods(periods, { timing = 'grouped', groupBy = 'pair', applyOn =
   if (timing === 'every') { rows.forEach((p, i) => { p.groupKey = String(i); p.deductionsApply = true; }); return rows; }
   if (groupBy === 'month') {
     const byMonth = {};
-    rows.forEach(p => { const k = p.payDate.slice(0, 7); (byMonth[k] = byMonth[k] || []).push(p); });
+    // Semimonthly/monthly checks belong to their scheduled calendar month even
+    // when a weekend shift moves the actual pay date into the next month.
+    rows.forEach(p => { const k = p.groupMonth || p.payDate.slice(0, 7); (byMonth[k] = byMonth[k] || []).push(p); });
     Object.entries(byMonth).forEach(([k, g]) => { g.forEach(p => { p.groupKey = k; }); markApply(g, applyOn); });
   } else if (rows.length && rows.every(p => Number.isInteger(p.seq))) {
     // Anchor-stable pairing: pair by ABSOLUTE cycle index (floor(seq/2)), not array
@@ -206,4 +235,4 @@ function groupPeriods(periods, { timing = 'grouped', groupBy = 'pair', applyOn =
   return rows;
 }
 
-module.exports = { generatePeriods, groupPeriods };
+module.exports = { generatePeriods, groupPeriods, isValidIsoDate, dateRangeDays };

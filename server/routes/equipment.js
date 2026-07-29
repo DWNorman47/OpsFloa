@@ -4,6 +4,7 @@ const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { logAudit } = require('../auditLog');
 const { EQUIPMENT_KINDS, RENTAL_RATE_UNITS, EQUIPMENT_MAINTENANCE_KINDS } = require('../constants/equipmentEnums');
 const { uploadBase64 } = require('../r2');
+const { projectBelongsToCompany, userBelongsToCompany } = require('../utils/tenantRefs');
 
 // Upload an optional base64 condition photo (data URL) to R2, returning its URL
 // (or null). Done before opening a transaction so the DB connection isn't held
@@ -187,6 +188,9 @@ router.post('/:id/hours', requireAuth, async (req, res) => {
       [req.params.id, companyId]
     );
     if (item.rowCount === 0) return res.status(404).json({ error: 'Equipment not found' });
+    if (!(await projectBelongsToCompany(pool, project_id, companyId))) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
 
     const full = await pool.query(
       `WITH inserted AS (
@@ -266,6 +270,17 @@ router.post('/:id/checkout', requireAuth, async (req, res) => {
   const { user_id, project_id, due_at } = req.body;
   const notes = req.body.notes?.trim() || null;
   const companyId = req.user.company_id;
+  try {
+    if (!(await userBelongsToCompany(pool, user_id, companyId))) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    if (!(await projectBelongsToCompany(pool, project_id, companyId))) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+  } catch (err) {
+    req.log.error({ err }, 'route error');
+    return res.status(500).json({ error: 'Server error' });
+  }
   let checkout_photo_url = req.body.checkout_photo_url?.trim() || null;
   try { checkout_photo_url = (await uploadPhoto(req.body.checkout_photo)) || checkout_photo_url; }
   catch (err) { req.log.error({ err }, 'photo upload'); return res.status(400).json({ error: 'Photo upload failed' }); }

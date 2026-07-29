@@ -241,7 +241,10 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
     setSaving(true); setError('');
     try {
       const policy = formToPolicy(form);
-      const r = await api.patch('/admin/settings', { hours_rules: JSON.stringify(policy) });
+      const r = await api.patch('/admin/settings', {
+        hours_rules: JSON.stringify(policy),
+        expected_settings: { hours_rules: settings?.hours_rules || '' },
+      });
       onSettingsUpdated?.(r.data);
       await invalidateCache?.('settings');
       setSaved(true);

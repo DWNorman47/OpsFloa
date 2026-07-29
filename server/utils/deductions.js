@@ -36,7 +36,12 @@ function normalizeDeduction(raw) {
   const capRaw = raw.cap != null ? raw.cap : raw.cap_amount; // JSON uses `cap`, DB row uses `cap_amount`
   const cap = Number(capRaw);
   return {
-    id: raw.id != null ? String(raw.id) : '',
+    // Stable fallback for externally inserted settings rows that predate client-
+    // generated ids. Selected-scope rules can now refer to these instead of
+    // silently dropping every id-less deduction.
+    id: raw.id != null && String(raw.id).trim()
+      ? String(raw.id).trim().slice(0, 120)
+      : `legacy:${name.slice(0, 80)}:${kind}:${value}`,
     name: name.slice(0, 120),
     kind,
     value,
@@ -44,7 +49,12 @@ function normalizeDeduction(raw) {
     // Role scope: role IDs this deduction applies to. Empty/absent = ALL employees
     // (company-wide, the original behavior). Non-empty = only workers in those
     // roles. Per-worker DB rows never carry this (they're already worker-scoped).
-    roleIds: [...new Set((Array.isArray(raw.roleIds) ? raw.roleIds : []).filter(x => typeof x === 'number' || typeof x === 'string'))].slice(0, 200),
+    roleIds: [...new Set(
+      (Array.isArray(raw.roleIds) ? raw.roleIds : [])
+        .filter(x => (typeof x === 'number' || typeof x === 'string') && String(x).trim() !== '')
+        .map(Number)
+        .filter(x => Number.isInteger(x) && x > 0)
+    )].slice(0, 200),
   };
 }
 

@@ -292,14 +292,15 @@ async function getUserPermissions(user) {
   // (which translates to the new keys via LEGACY_TO_NEW).
   if (user.role === 'admin') {
     if (!user.admin_permissions) {
-      return new Set(Object.values(LEGACY_TO_NEW));
+      return new Set(ADMIN_PERMISSIONS);
     }
-    const granted = new Set();
+    const granted = new Set(WORKER_PERMISSIONS);
     for (const [legacyKey, newKey] of Object.entries(LEGACY_TO_NEW)) {
       if (user.admin_permissions[legacyKey] === true) granted.add(newKey);
     }
     return granted;
   }
+  if (user.role === 'worker') return new Set(WORKER_PERMISSIONS);
   return new Set();
 }
 

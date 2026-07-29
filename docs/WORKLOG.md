@@ -23,6 +23,63 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-29 - Second-pass app and payroll repairs
+
+- Fixed the punch-list PATCH route's missing `project_id` binding and added route-level
+  tenant/reference regression coverage.
+- Serialized payroll paid/void mutations with row locks and transactions, and made the
+  client payroll run/history/certified-report views ignore stale responses. Finalization
+  now uses the exact period and ruleset that produced the displayed register.
+- Rebuilt QuickBooks payroll posting on the canonical payroll engine, protected it with
+  payroll/wage permissions and a bounded date range, and added a stable Intuit request ID
+  so retries cannot duplicate a journal entry.
+- Split WH-347 output by worker classification while preserving week-wide overtime,
+  corrected displayed OT/classification details, kept signatures current after signing,
+  and escaped dynamic print-window content in pay stubs and certified payroll.
+- Protected wage-bearing payroll reads, blocked legacy permission edits for role-managed
+  workers, constrained conflict-protected settings saves to one document, validated real
+  schedule dates, and bounded expensive payroll/report ranges.
+- Added server ESLint enforcement plus focused transaction, race, authorization,
+  classification, date-range, print-escaping, and QuickBooks regression tests.
+
+Verification: all 158 migrations passed static and replay/idempotency lint; 1,220 server
+tests and 263 client tests passed; server/client ESLint and the production/PWA build
+passed. Server production dependencies audit clean. Client audit retains two high
+findings for React Router server-action/RSC behavior; OpsFloa is browser-only, and the
+older React-18-compatible Router release reintroduces a larger set of redirect/SSR
+advisories, while Router 8 requires React 19.
+
+---
+
+## 2026-07-28 — App repair and payroll hardening
+
+- Closed cross-company reference holes on equipment, field reports, punch lists, and
+  daily reports; also fixed the daily-report missing-target transaction rollback and
+  aligned legacy permission resolution.
+- Hardened payroll periods and finalization: strict date validation, ruleset-scoped
+  period choices/runs, zero-check suppression, a per-company finalize lock, and
+  overlapping worker-period rejection. Migration `0158` records the ruleset on payroll
+  runs and makes finalized-run uniqueness ruleset-aware.
+- Reconciled WH-347 calculations with payroll: all-project reports use each project's
+  prevailing rate, displayed OT/prevailing rates derive from actual costs, daily-rate
+  workers no longer receive hourly night differential, and line-item OT now reconciles
+  when a minimum-daily floor crosses the threshold.
+- Tightened payroll authorization: read-only reports, certified payroll, payroll
+  mutation, signatures, fringes, and SSN operations now use their dedicated permissions;
+  clients hide controls users cannot execute.
+- Made payroll settings resistant to stale concurrent saves and normalized deterministic
+  IDs for legacy id-less deductions and role scopes.
+- Updated the client build/test toolchain for Vite 8 and retained React Router 7 because
+  the patched Router 8 line requires React 19 while the current PDF, mapping, and charting
+  dependencies support React 18. The remaining client audit advisory applies to Router
+  server actions/RSC, which this browser-only Vite app does not use.
+
+Verification: migration lint/replay passed for 158 migrations; 1,206 server tests and
+260 client tests passed; ESLint and the production/PWA build passed. Server production
+dependency audit is clean.
+
+---
+
 ## 2026-07-28 — Fixed the flagged WH-347 + deductions issues
 
 David gave the go-ahead on the compliance-document items I'd parked for his call. Fixed

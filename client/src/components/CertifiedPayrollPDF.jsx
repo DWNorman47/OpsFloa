@@ -26,6 +26,12 @@ function fmtHours(h) {
 function fmtMoney(n) {
   return n == null ? '' : n.toFixed(2);
 }
+export function overtimeDisplayRate(worker) {
+  const hours = Number(worker?.overtime_total);
+  const cost = Number(worker?.overtime_cost);
+  if (hours > 0 && Number.isFinite(cost)) return cost / hours;
+  return (Number(worker?.rate) || 0) * (Number(worker?.overtime_multiplier) || 1.5);
+}
 function fmtDate(s) {
   if (!s) return '';
   const d = new Date(s + 'T00:00:00');
@@ -119,7 +125,7 @@ export default function CertifiedPayrollPDF({ report, settings }) {
 
           {/* Worker rows — straight / OT sub-rows */}
           {workers.map((w, i) => (
-            <WorkerBlock key={w.worker_id} w={w} alt={i % 2 === 1} />
+            <WorkerBlock key={w.worker_key || w.worker_id} w={w} alt={i % 2 === 1} />
           ))}
         </View>
 
@@ -180,7 +186,7 @@ function WorkerBlock({ w, alt }) {
   const rows = [];
   if ((w.regular_total || 0) > 0) rows.push({ tag: 'S', days: w.regular_days || {}, total: w.regular_total, rate: w.rate });
   if ((w.prevailing_total || 0) > 0) rows.push({ tag: 'S', days: w.prevailing_days || {}, total: w.prevailing_total, rate: w.prevailing_rate });
-  if ((w.overtime_total || 0) > 0) rows.push({ tag: 'O', days: w.ot_days || {}, total: w.overtime_total, rate: (w.rate || 0) * (w.overtime_multiplier || 1.5) });
+  if ((w.overtime_total || 0) > 0) rows.push({ tag: 'O', days: w.ot_days || {}, total: w.overtime_total, rate: overtimeDisplayRate(w) });
   if (rows.length === 0) rows.push({ tag: 'S', days: {}, total: 0, rate: w.rate });
   return (
     <>

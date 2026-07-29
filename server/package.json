@@ -6,7 +6,8 @@
     "start": "node migrate.js && node index.js",
     "dev": "nodemon index.js",
     "test": "jest",
-    "verify": "jest",
+    "lint": "eslint .",
+    "verify": "eslint . && jest",
     "lint:migrations": "node scripts/lintMigrations.js",
     "seed:demo": "node scripts/seed-demo-data.js",
     "wipe:demo-storage": "node scripts/wipe-demo-storage.js"
@@ -40,6 +41,8 @@
     "web-push": "^3.6.7"
   },
   "devDependencies": {
+    "eslint": "^10.5.0",
+    "globals": "^17.6.0",
     "jest": "^29.0.0",
     "nodemon": "^3.0.1",
     "pino-pretty": "^13.1.3",

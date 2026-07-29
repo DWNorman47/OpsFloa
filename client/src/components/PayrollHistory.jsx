@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../api';
 import { useT } from '../hooks/useT';
 import { formatCurrency } from '../utils';
 import { silentError } from '../errorReporter';
+import { usePerm } from '../hooks/usePerm';
 import PayStub from './PayStub';
 
 /**
@@ -14,12 +15,14 @@ import PayStub from './PayStub';
  */
 export default function PayrollHistory({ currency = 'USD', refreshKey }) {
   const t = useT();
+  const canManagePayroll = usePerm('manage_pay_periods');
   const money = cents => formatCurrency((Number(cents) || 0) / 100, currency);
   const [runs, setRuns] = useState([]);
   const [openId, setOpenId] = useState(null);
   const [detail, setDetail] = useState(null); // { run, checks }
   const [openCheck, setOpenCheck] = useState(null);
   const [busy, setBusy] = useState(false);
+  const detailRequest = useRef(0);
 
   const load = useCallback(() => {
     api.get('/admin/payroll-runs').then(r => setRuns(r.data || [])).catch(silentError('payroll-history'));
@@ -27,13 +30,23 @@ export default function PayrollHistory({ currency = 'USD', refreshKey }) {
   useEffect(() => { load(); }, [load, refreshKey]);
 
   const loadDetail = async (id) => {
-    try { const r = await api.get(`/admin/payroll-runs/${id}`); setDetail(r.data); }
-    catch (e) { silentError('payroll-history')(e); }
+    const requestId = ++detailRequest.current;
+    try {
+      const r = await api.get(`/admin/payroll-runs/${id}`);
+      if (requestId === detailRequest.current) setDetail(r.data);
+    } catch (e) {
+      if (requestId === detailRequest.current) silentError('payroll-history')(e);
+    }
   };
 
   const openRun = (id) => {
     setOpenCheck(null);
-    if (openId === id) { setOpenId(null); setDetail(null); return; }
+    if (openId === id) {
+      detailRequest.current += 1;
+      setOpenId(null);
+      setDetail(null);
+      return;
+    }
     setOpenId(id); setDetail(null); loadDetail(id);
   };
 
@@ -50,7 +63,15 @@ export default function PayrollHistory({ currency = 'USD', refreshKey }) {
   const voidRun = async (id) => {
     if (!window.confirm(t.pcrHistVoidConfirm)) return;
     setBusy(true);
-    try { await api.post(`/admin/payroll-runs/${id}/void`, {}); load(); if (openId === id) { setOpenId(null); setDetail(null); } }
+    try {
+      await api.post(`/admin/payroll-runs/${id}/void`, {});
+      load();
+      if (openId === id) {
+        detailRequest.current += 1;
+        setOpenId(null);
+        setDetail(null);
+      }
+    }
     catch (e) { silentError('payroll-history')(e); } finally { setBusy(false); }
   };
 
@@ -93,10 +114,10 @@ export default function PayrollHistory({ currency = 'USD', refreshKey }) {
             {open && detail && detail.run.id === run.id && (
               <div style={s.runBody}>
                 <div style={s.actions}>
-                  {!voided && detail.checks.some(c => c.status !== 'paid') && (
+                  {canManagePayroll && !voided && detail.checks.some(c => c.status !== 'paid') && (
                     <button style={s.actBtn} disabled={busy} onClick={() => markAllPaid(run.id)}>{t.pcrHistMarkAllPaid}</button>
                   )}
-                  {!voided && (
+                  {canManagePayroll && !voided && (
                     <button style={{ ...s.actBtn, color: '#b91c1c', borderColor: '#fecaca', background: '#fff' }} disabled={busy} onClick={() => voidRun(run.id)}>{t.pcrHistVoid}</button>
                   )}
                 </div>
@@ -129,7 +150,9 @@ export default function PayrollHistory({ currency = 'USD', refreshKey }) {
                                   ? <span style={s.paidChip}>{t.pcrHistPaidBadge}</span>
                                   : voided
                                     ? <span style={s.muted}>—</span>
-                                    : <button style={s.tinyBtn} disabled={busy} onClick={() => markOnePaid(run.id, c.id)}>{t.pcrHistMarkPaid}</button>}
+                                    : canManagePayroll
+                                      ? <button style={s.tinyBtn} disabled={busy} onClick={() => markOnePaid(run.id, c.id)}>{t.pcrHistMarkPaid}</button>
+                                      : <span style={s.muted}>—</span>}
                               </td>
                             </tr>
                             {co && (

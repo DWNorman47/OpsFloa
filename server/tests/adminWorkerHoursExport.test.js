@@ -83,3 +83,129 @@ describe('GET /admin/export/worker-hours', () => {
     expect(entriesParams).toContainEqual([5, 6]);
   });
 });
+
+describe('GET /admin/certified-payroll classification attribution', () => {
+  test('emits separate rows when one worker performs multiple classifications', async () => {
+    const base = {
+      user_id: 5,
+      project_id: 10,
+      worker_name: 'Alex Rivera',
+      hourly_rate: '30',
+      rate_type: 'hourly',
+      classification: 'Laborer',
+      role_id: 4,
+      overtime_rule: 'daily',
+      start_time: '08:00',
+      end_time: '12:00',
+      break_minutes: 0,
+      wage_type: 'regular',
+      overtime_hours_override: null,
+      project_prevailing_wage_rate: null,
+    };
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ name: 'Builder Co' }] })
+      .mockResolvedValueOnce({ rows: [
+        { ...base, work_date: '2026-07-20', entry_classification: 'Operator' },
+        { ...base, work_date: '2026-07-21', entry_classification: 'Laborer' },
+      ] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(makeApp())
+      .get('/api/admin/certified-payroll?week_end=2026-07-26');
+
+    expect(res.status).toBe(200);
+    expect(res.body.workers).toHaveLength(2);
+    expect(res.body.workers.map(row => row.classification).sort()).toEqual(['Laborer', 'Operator']);
+    expect(res.body.workers.reduce((sum, row) => sum + row.total, 0)).toBe(8);
+    expect(new Set(res.body.workers.map(row => row.worker_key)).size).toBe(2);
+  });
+});
+
+describe('PATCH /admin/workers/:id/permissions', () => {
+  test('refuses legacy permission edits for a role-backed admin', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ '?column?': 1 }] });
+
+    const res = await request(makeApp())
+      .patch('/api/admin/workers/9/permissions')
+      .send({ admin_permissions: { view_reports: false } });
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('role_managed_permissions');
+    expect(pool.query.mock.calls[0][0]).toContain('role_id IS NULL');
+  });
+});
+
+describe('payroll date validation', () => {
+  test.each([
+    '/api/admin/payroll-run?from=not-a-date&to=2026-06-30',
+    '/api/admin/payroll-run?from=2026-07-01&to=2026-06-30',
+    '/api/admin/payroll-export?from=2026-02-30&to=2026-03-01',
+    '/api/admin/overtime-report?from=2026-07-01&to=2026-06-30',
+    '/api/admin/certified-payroll?week_end=2026-02-30',
+  ])('rejects invalid dates before querying the database: %s', async path => {
+    const res = await request(makeApp()).get(path);
+    expect(res.status).toBe(400);
+    expect(res.body.code).toMatch(/^invalid_date/);
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  test('finalize rejects an invalid range before computing payroll', async () => {
+    const res = await request(makeApp())
+      .post('/api/admin/payroll-run/finalize')
+      .send({ from: '2026-07-01', to: '2026-06-30' });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_date_range');
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    '/api/admin/payroll-run?from=2020-01-01&to=2026-06-30',
+    '/api/admin/payroll-export?from=2020-01-01&to=2026-06-30',
+    '/api/admin/overtime-report?from=2020-01-01&to=2026-06-30',
+  ])('rejects excessive payroll/report ranges: %s', async path => {
+    const res = await request(makeApp()).get(path);
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('date_range_too_large');
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+});
+
+describe('payroll settings optimistic concurrency', () => {
+  test('rejects a stale deduction-policy save instead of overwriting another admin', async () => {
+    const current = '{"version":1,"items":[{"id":"new","name":"New","kind":"fixed","value":10}]}';
+    const stale = '{"version":1,"items":[]}';
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ key: 'deductions', value: current }] })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+    const res = await request(makeApp())
+      .patch('/api/admin/settings')
+      .send({
+        deductions: '{"version":1,"items":[{"id":"mine","name":"Mine","kind":"fixed","value":5}]}',
+        expected_settings: { deductions: stale },
+      });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: 'settings_conflict', key: 'deductions' });
+    expect(pool.query.mock.calls[1][0]).toMatch(/WHERE settings\.value = \$4/);
+  });
+
+  test('rejects a mixed CAS batch before any partial setting can be written', async () => {
+    const res = await request(makeApp())
+      .patch('/api/admin/settings')
+      .send({
+        deductions: '{"version":1,"items":[]}',
+        overtime_threshold: 9,
+        expected_settings: { deductions: '' },
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_settings_batch');
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+});

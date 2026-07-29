@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const pool = require('../db');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { projectBelongsToCompany } = require('../utils/tenantRefs');
 
 // Fetch a full report with all sub-tables
 async function getFullReport(id, companyId) {
@@ -122,6 +123,10 @@ router.post('/', requireAuth, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    if (!(await projectBelongsToCompany(client, project_id, companyId))) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Project not found' });
+    }
 
     const result = await client.query(
       `INSERT INTO daily_reports
@@ -213,7 +218,10 @@ router.patch('/:id', requireAuth, async (req, res) => {
     const existing = await client.query(
       'SELECT * FROM daily_reports WHERE id=$1 AND company_id=$2', [req.params.id, companyId]
     );
-    if (existing.rowCount === 0) return res.status(404).json({ error: 'Report not found' });
+    if (existing.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Report not found' });
+    }
 
     // Ownership check: workers may only edit their own reports
     if (!isAdmin && existing.rows[0].created_by !== req.user.id) {

@@ -3,6 +3,7 @@ import api from '../api';
 import { useT } from '../hooks/useT';
 import { invalidateCache } from '../offlineDb';
 import { silentError } from '../errorReporter';
+import { deductionId } from '../utils/deductions';
 
 /**
  * Paycheck Rules — named rulesets describing WHEN paychecks are issued (pay
@@ -26,7 +27,7 @@ function companyDeductions(raw) {
   try {
     const o = typeof raw === 'string' ? JSON.parse(raw) : raw;
     const items = Array.isArray(o) ? o : (o && Array.isArray(o.items) ? o.items : []);
-    return items.map(it => ({ id: it.id, name: it.name })).filter(d => d.id && d.name);
+    return items.map(it => ({ id: deductionId(it), name: it.name })).filter(d => d.id && d.name);
   } catch { return []; }
 }
 
@@ -183,7 +184,10 @@ export default function PaycheckRulesSettings({ settings, onSettingsUpdated }) {
     setSaving(true); setError('');
     try {
       const policy = { version: 1, rulesets: rules.map(fromForm) };
-      const r = await api.patch('/admin/settings', { paycheck_rules: JSON.stringify(policy) });
+      const r = await api.patch('/admin/settings', {
+        paycheck_rules: JSON.stringify(policy),
+        expected_settings: { paycheck_rules: settings?.paycheck_rules || '' },
+      });
       onSettingsUpdated?.(r.data);
       await invalidateCache?.('settings');
       setSaved(true);

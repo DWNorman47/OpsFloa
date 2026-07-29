@@ -34,45 +34,13 @@ that holds the exhaustive detail.
   approved-plan (4a/4b/4c) election — needs a data-model decision on where that election lives
   (per-company? per-project? per-fringe) before it can be built. `CertifiedPayrollPDF.jsx`,
   `certifiedPayroll.js`. (2026-07-28)
-- **Deductions — residual gaps.** Fixed 2026-07-28: a single percent is clamped to ≤100%; the
-  legacy stub path (`payStubTotals`) now caps total deductions at gross so net can't go negative
-  and re-allocates the lines to foot; `newDeduction` ids are now unique within the list. **Still
-  open:** (b) company deduction saves are last-write-wins — the whole `deductions` JSON is PATCHed
-  with a dead `version:1` the server never checks, so two admins editing concurrently clobber each
-  other (needs optimistic concurrency on the generic `/settings` PATCH, not a one-off). (c) A
-  company deduction stored with **no id** (external/SQL-written data only — the client heals ids on
-  load) normalizes to `id:''` and is silently dropped by any `scope:'selected'` ruleset.
-  `server/utils/deductions.js`, `client/src/components/DeductionsSettings.jsx`. (2026-07-28)
-- **Grouped payroll: multi-schedule group windows can overlap** (`admin.js`
-  `/payroll-periods` + `computePayrollRun`). The Payroll dropdown offers one
-  entry per *group* and runs the group's whole pay-date window so a grouped
-  ruleset's exempt combines once (fixed 2026-07-28). This is clean for a company
-  with **one** paycheck ruleset (the common case). With **multiple rulesets on
-  different cadences**, running ruleset A's group window `[from,to]` can pull in a
-  *partial* group for ruleset B (its checks that happen to land in that window
-  without its siblings), so B's exempt could combine over an incomplete group. Fix
-  = run/finalize per-ruleset (segment the window by ruleset) rather than one shared
-  `[from,to]`. **Related display-only nit:** the dropdown dedups group entries by
-  `run_from|run_to`, so two rulesets sharing a window collapse to one option and the
-  `×N` badge / period label reflect only the first (the *run* still covers both — no
-  money lost). Low-stakes until a customer runs two differing schedules. (2026-07-28)
 - **Certified payroll: single prevailing rate + flat OT on premium configs**
   (`admin.js` WH-347 route). One `prevRate` for all prevailing hours (no
-  per-classification/per-project rate table), and premium OT configs still price
+  per-classification rate table), and premium OT configs still price
   OT flat (`otBandsCost` at `otMult`) rather than the full band math on the
-  prevailing base. Night differential is now included in `gross_pay` (fixed
-  2026-07-28); classification-level prevailing rates remain a gap. **Per-project rate
-  in all-projects mode:** run without a `project_id` and every prevailing hour is
-  priced at the company `prevailing_wage_rate`, while `buildPayStatement` prices each
-  entry at its own project's rate (`loadProjectRateMap`/`projectRateMap`). So a
-  multi-project all-projects WH-347 diverges from the paycheck; the report's entries
-  SELECT would need `te.project_id` + the same rate map. Single-project mode (the normal
-  Davis-Bacon case) is correct. **Minor:** the WH-347 SQL doesn't select `rate_type`,
-  so a *daily-rate* worker with a night_diff rule gets the night premium in `gross_pay`
-  where `buildPayStatement` gates it off for daily-rate — but the WH-347 already prices
-  daily-rate as-if-hourly throughout, so it's one more small divergence on an
-  already-divergent, very rare path. (`overtime_hours_override` now honored — fixed
-  2026-07-28.) (2026-07-28)
+  prevailing base. Per-project prevailing rates in all-projects mode and the daily-rate
+  night-differential mismatch were fixed 2026-07-29; classification-level prevailing
+  rates remain a data-model gap. (`overtime_hours_override` is honored.) (2026-07-28)
 - **Server error strings aren't bilingual** (systemic, not payroll-specific). Server
   routes return English `error` messages (e.g. the payroll conflict 409s:
   `already_finalized`, `has_paid_checks`, "Run is voided"); the client toasts/render
@@ -80,15 +48,12 @@ that holds the exhaustive detail.
   checks parity of keys that exist, so it can't catch a never-keyed server string. Fix
   pattern: return a machine `code` (the payroll 409s already do) and have the client map
   known codes to bilingual `t.*` messages. Worth doing app-wide, not one-off. (2026-07-28)
-- **Finalize's period key blocks supplemental / partial-worker runs** (`admin.js`
-  finalize + migration `0157`). The idempotency key is `(company_id, period_from,
-  period_to)` where the dates are the min/max of the run's check periods. That's
-  right for "finalize the whole period once" (the only flow today), but a second
-  *legitimate* run for the same span — an off-cycle correction check, or finalizing
-  a second subset of workers after a first subset — would collide on the unique index
-  and get a false 409. When supplemental/subset runs become a feature, add a run
-  discriminator to the key (pay-date window or a run sequence), not just the span.
-  (2026-07-28)
+- **Supplemental / partial-worker payroll runs need explicit semantics.** Migration
+  `0158` scopes finalized-run idempotency by ruleset, so different schedules can safely
+  use the same date span. The app still intentionally finalizes a whole ruleset period
+  at once and rejects overlapping worker/date checks. A future off-cycle correction or
+  partial-worker flow needs its own run type and adjustment/reversal rules rather than
+  bypassing the overlap guard. (2026-07-28)
 - **Ruleset total cap trims deduction lines pro-rata on the stub** (`paycheckRun.js`
   `computeRuleNet`). When a ruleset `cap`/min-net floor trims the total, the itemized
   lines are scaled proportionally across ALL lines so they foot (net + total are
@@ -181,28 +146,19 @@ that holds the exhaustive detail.
 
 ## 🧭 Design flaws — raised, set aside for later
 
-- **Per-entry OT column can under-foot the summary OT when a min-daily floor exceeds the
-  OT threshold** (pre-existing, surfaced by the 2026-07-28 pay-engine audit). `computeOT`
-  bands worked hours first then tops up to the floor, but `annotateEntryOvertime`
-  (`payCalculations.js`) skips per-entry OT entirely when a day's worked hours are below
-  the floor. So with e.g. minDaily 10, OT threshold 8, worked 9h → summary OT = 1h but the
-  sum of per-entry `overtime_hours` = 0. **Gross is unaffected** (money uses computeOT/
-  otBands); only the line-item OT column disagrees with the summary. Narrow (needs
-  minDaily > threshold). Fix: mirror the band-first-then-floor logic in
-  `annotateEntryOvertime`. (2026-07-28)
 - **Should the minimum-daily floor appear on the WH-347 at all?** Certified Payroll now
   includes worked-day min-daily floor hours in the regular total AND the day columns (they
   reconcile as of 2026-07-28). But a min-daily floor is *reporting-time* pay, not hours
   worked on the project — arguably it shouldn't be on a WH-347's hours-worked columns. Left
   as-is (matches the pay stub's gross), but a prevailing-wage compliance call worth
   confirming before relying on it. (2026-07-28)
-- ~~**Payroll run keys on "pay date in window", users think "work period".**~~ **Largely
-  addressed 2026-07-28.** The tab now leads with a pay-period **dropdown** (not a raw
+- ~~**Payroll run keys on "pay date in window", users think "work period".**~~ **Resolved
+  2026-07-28.** The tab now leads with a pay-period **dropdown** (not a raw
   range), and each check's period comes from a selectable `periodBasis` (work_week /
   prior_cycle / on_payday, default work_week) so the period aligns to the work week and
-  pays in arrears. The custom range + `notices` remain for edge cases. *Remaining thread:*
-  with **multiple different schedules** the dropdown unions them into one list — if
-  multi-schedule becomes common, scope the dropdown per schedule.
+  pays in arrears. The custom range + `notices` remain for edge cases. Multiple schedules
+  are now listed and computed per ruleset, so one cadence cannot pull a partial group
+  from another.
 - **"Included workers" (15) is duplicated between client and Stripe.** The Business
   base price bundles 15 seats; the client hardcodes `INCLUDED_WORKERS = 15` in
   `BillingPanel.jsx` to compute the per-worker overage sent to checkout. If the

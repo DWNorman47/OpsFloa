@@ -233,7 +233,7 @@ export function WorkforcePanel() {
             { id: 'live', label: t.tabLive, dot: chatUnread && settings?.feature_chat !== false ? '#3b82f6' : null },
             ...(canDo('approve_entries') ? [{ id: 'approvals', label: t.tabApprovals, dot: pendingCount > 0 ? '#f59e0b' : null }] : []),
             ...(canDo('view_reports') ? [{ id: 'reports', label: t.tabReports }] : []),
-            ...(canDo('view_reports') ? [{ id: 'payroll', label: t.tabPayroll }] : []),
+            ...(canDo('view_reports') && canDo('view_worker_wages') ? [{ id: 'payroll', label: t.tabPayroll }] : []),
             ...(settings?.feature_pto !== false ? [{ id: 'timeoff', label: t.tabTimeOff }] : []),
             ...(settings?.feature_reimbursements !== false ? [{ id: 'expenses', label: t.tabExpenses, dot: pendingReimbursements > 0 ? '#f59e0b' : null }] : []),
             ...(settings?.feature_scheduling !== false ? [{ id: 'manage', label: t.tabManage }] : []),
@@ -352,7 +352,9 @@ export function WorkforcePanel() {
                 </p>
                 <Suspense fallback={<TabLoader />}><PayrollRun currency={settings?.currency ?? 'USD'} onFinalized={() => setPayrollHistoryKey(k => k + 1)} /></Suspense>
                 <Suspense fallback={<TabLoader />}><PayrollHistory currency={settings?.currency ?? 'USD'} refreshKey={payrollHistoryKey} /></Suspense>
-                <Suspense fallback={<TabLoader />}><CertifiedPayroll projects={projects} settings={settings} requireSignature={settings?.cp_require_signature !== false} wh347Format={settings?.cp_wh347_format !== false} /></Suspense>
+                {canDo('view_certified_payroll') && (
+                  <Suspense fallback={<TabLoader />}><CertifiedPayroll projects={projects} settings={settings} requireSignature={settings?.cp_require_signature !== false} wh347Format={settings?.cp_wh347_format !== false} /></Suspense>
+                )}
               </>
             ) : (
               <UpgradePrompt requiredPlan="advanced_payroll" feature={t.tabPayroll} />

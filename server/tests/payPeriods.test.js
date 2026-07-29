@@ -4,7 +4,7 @@
  * combine checks for a shared exempt threshold.
  */
 
-const { generatePeriods, groupPeriods } = require('../utils/payPeriods');
+const { generatePeriods, groupPeriods, dateRangeDays } = require('../utils/payPeriods');
 const dates = ps => ps.map(p => p.payDate);
 const isWeekend = s => [0, 6].includes(new Date(s + 'T00:00:00Z').getUTCDay());
 
@@ -54,8 +54,8 @@ describe('generatePeriods', () => {
   test('semimonthly — 15th & 30th; "30" clamps to the last day in a short month', () => {
     const ps = generatePeriods({ frequency: 'semimonthly', daysOfMonth: [15, 30], weekendShift: 'none' }, '2026-02-01', '2026-02-28');
     expect(ps).toEqual([
-      { periodStart: '2026-02-01', periodEnd: '2026-02-15', payDate: '2026-02-15', seq: 48626 },
-      { periodStart: '2026-02-16', periodEnd: '2026-02-28', payDate: '2026-02-28', seq: 48627 }, // 30 → Feb 28
+      { periodStart: '2026-02-01', periodEnd: '2026-02-15', payDate: '2026-02-15', seq: 48626, groupMonth: '2026-02' },
+      { periodStart: '2026-02-16', periodEnd: '2026-02-28', payDate: '2026-02-28', seq: 48627, groupMonth: '2026-02' }, // 30 → Feb 28
     ]);
   });
 
@@ -74,6 +74,20 @@ describe('generatePeriods', () => {
 
   test('out-of-order window → empty', () => {
     expect(generatePeriods({ frequency: 'weekly', payWeekday: 1 }, '2026-02-01', '2026-01-01')).toEqual([]);
+  });
+
+  test('invalid calendar dates return empty instead of entering the generator loop', () => {
+    expect(generatePeriods({ frequency: 'weekly', payWeekday: 1 }, 'not-a-date', '2026-02-01')).toEqual([]);
+    expect(generatePeriods({ frequency: 'weekly', payWeekday: 1 }, '2026-02-30', '2026-03-01')).toEqual([]);
+  });
+});
+
+describe('dateRangeDays', () => {
+  test('counts inclusive calendar days and rejects invalid or reversed ranges', () => {
+    expect(dateRangeDays('2026-01-01', '2026-01-01')).toBe(1);
+    expect(dateRangeDays('2026-01-01', '2026-01-31')).toBe(31);
+    expect(dateRangeDays('2026-02-01', '2026-01-31')).toBeNull();
+    expect(dateRangeDays('2026-02-30', '2026-03-01')).toBeNull();
   });
 });
 
@@ -94,6 +108,18 @@ describe('groupPeriods — which check the deductions land on', () => {
     expect(g.map(p => `${p.payDate}:${p.deductionsApply}`)).toEqual([
       '2026-02-15:false', '2026-02-28:true', '2026-03-15:false', '2026-03-30:true',
     ]);
+  });
+
+  test('month grouping stays with the scheduled month when weekend shift crosses month-end', () => {
+    const ps = generatePeriods(
+      { frequency: 'semimonthly', daysOfMonth: [15, 30], weekendShift: 'after' },
+      '2027-01-01',
+      '2027-02-28'
+    );
+    const g = groupPeriods(ps, { timing: 'grouped', groupBy: 'month', applyOn: 'last' });
+    const january = g.filter(p => p.groupKey === '2027-01');
+    expect(january.map(p => p.periodStart)).toEqual(['2027-01-01', '2027-01-16']);
+    expect(january.map(p => p.deductionsApply)).toEqual([false, true]);
   });
 
   test("timing 'every' → every check deducts, no grouping", () => {

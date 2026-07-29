@@ -4,6 +4,7 @@ import { useT } from '../hooks/useT';
 import { invalidateCache } from '../offlineDb';
 import { silentError } from '../errorReporter';
 import DeductionListEditor, { newDeduction } from './DeductionListEditor';
+import { deductionId } from '../utils/deductions';
 
 /**
  * Company-wide payroll deductions (social security, taxes, etc.). Edits the
@@ -22,7 +23,7 @@ function parseItems(raw) {
   try { obj = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { return []; }
   const items = Array.isArray(obj) ? obj : (obj && Array.isArray(obj.items) ? obj.items : []);
   return items.map(it => ({
-    id: it.id || newDeduction().id,
+    id: deductionId(it) || newDeduction().id,
     name: String(it.name == null ? '' : it.name),
     kind: KINDS.includes(it.kind) ? it.kind : 'percent',
     value: it.value != null ? String(it.value) : '',
@@ -83,7 +84,10 @@ export default function DeductionsSettings({ settings, onSettingsUpdated }) {
     if (msg) { setError(msg); setSaved(false); return; }
     setSaving(true); setError('');
     try {
-      const r = await api.patch('/admin/settings', { deductions: JSON.stringify(toPolicy(items)) });
+      const r = await api.patch('/admin/settings', {
+        deductions: JSON.stringify(toPolicy(items)),
+        expected_settings: { deductions: settings?.deductions || '' },
+      });
       onSettingsUpdated?.(r.data);
       await invalidateCache?.('settings');
       setSaved(true);

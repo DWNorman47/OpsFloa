@@ -9,6 +9,7 @@ import WorkerFringes from './WorkerFringes';
 import WorkerSsn from './WorkerSsn';
 import EmptyState from './EmptyState';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
+import { usePerm } from '../hooks/usePerm';
 
 import { silentError } from '../errorReporter';
 function WorkerDocuments({ workerId }) {
@@ -201,6 +202,7 @@ function RoleBadge({ worker, role, availableRoles, workerLabel }) {
 }
 
 export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted, onWorkerUpdated, onWorkerRestored, defaultRate = 0, defaultTempPassword = '', showRate = true, identityEditable = true, currency = 'USD', currentUser = null, qboConnected = false, trackClassifications = false, trackFringes = false, collectSsn = false, workerLabel = 'Worker' }) {
+  const canViewCertifiedPayroll = usePerm('view_certified_payroll');
   const toast = useToast();
   const t = useT();
   const rateTypes = [
@@ -1146,7 +1148,7 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
                     )}
 
                     {/* ── Permissions section (admin-role workers only, visible to full-access admins) ── */}
-                    {w.role === 'admin' && !currentUser?.admin_permissions && (
+                    {w.role === 'admin' && !w.role_id && !currentUser?.admin_permissions && (
                       <div style={s.section}>
                         <div style={s.sectionHeader}>
                           <span style={s.sectionTitle}>{t.mwPermissions}</span>
@@ -1268,12 +1270,12 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
                     )}
 
                     {/* ── Certified Payroll SSN last-4 ── */}
-                    {!isEditing && collectSsn && w.role === 'worker' && (
+                    {!isEditing && canViewCertifiedPayroll && collectSsn && w.role === 'worker' && (
                       <WorkerSsn userId={w.id} />
                     )}
 
                     {/* ── Certified Payroll fringe benefits ── */}
-                    {!isEditing && trackFringes && w.role === 'worker' && (
+                    {!isEditing && canViewCertifiedPayroll && trackFringes && w.role === 'worker' && (
                       <WorkerFringes userId={w.id} currency={currency} />
                     )}
 

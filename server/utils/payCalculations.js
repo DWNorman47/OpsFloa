@@ -541,7 +541,8 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
  * Within a bucket, regular hours are filled chronologically (earliest entries
  * first) up to the OT boundary; the remainder is overtime — the standard "hours
  * after the threshold are the overtime" reading. Non-'regular' wage types, and
- * short days topped up by a minimum-daily floor, get 0.
+ * floor-generated hours are regular, but worked hours still retain any overtime
+ * earned above the threshold.
  */
 function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig = null) {
   // overtime_reason records WHY each entry's OT applies, so the pay statement can
@@ -610,8 +611,6 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
     // 0 and no clamp), so this matches the prior behaviour exactly.
     const residOf = e => windowRules.length ? Math.max(0, entryDuration(e) - windowSumOf.get(e)) : entryDuration(e);
     const residualTotal = es.reduce((s, e) => s + residOf(e), 0);
-    const minD = minDailyForBucket(otConfig, rule, dk);
-    if (minD > 0 && residualTotal < minD) continue; // residual floored to regular; window OT stays as seeded
     // regular/OT split point for THIS bucket (tiers only re-price above it) — per
     // bucket so a date-scoped ot_tier rule moves the boundary on its days.
     let regLeft = bandsForBucket(rule, threshold, otConfig, dk)[0].afterHours;

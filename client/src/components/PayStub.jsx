@@ -1,6 +1,7 @@
 import React from 'react';
 import { useT } from '../hooks/useT';
 import { formatCurrency, fmtHours } from '../utils';
+import { escapeHtml } from '../utils/html';
 
 /**
  * One pay stub, rendered from a "check" (a row of the payroll run / the worker's
@@ -73,9 +74,14 @@ export default function PayStub({ check, currency = 'USD', workerName }) {
 // A standalone print window with the same figures.
 export function printStub(check, workerName, currency, t) {
   const money = v => formatCurrency(v || 0, currency);
+  const safe = escapeHtml;
   const h = check.hours || {}, c = check.cost || {};
   const earn = [];
-  const add = (label, hrs, amt) => { if ((amt || 0) !== 0 || (hrs || 0) !== 0) earn.push(`<tr><td>${label}${hrs != null ? ` · ${fmtHours(hrs)}` : ''}</td><td class="r">${money(amt)}</td></tr>`); };
+  const add = (label, hrs, amt) => {
+    if ((amt || 0) !== 0 || (hrs || 0) !== 0) {
+      earn.push(`<tr><td>${safe(label)}${hrs != null ? ` · ${safe(fmtHours(hrs))}` : ''}</td><td class="r">${safe(money(amt))}</td></tr>`);
+    }
+  };
   add(t.regularLabel, h.regular, c.regular);
   add(t.overtimeLabel, h.overtime, c.overtime);
   add(t.prevailingLabel, h.prevailing, c.prevailing);
@@ -83,23 +89,24 @@ export function printStub(check, workerName, currency, t) {
   add(t.pdfSickHours || 'Sick', h.sick, c.sick);
   add(t.pdfVacationHours || 'Vacation', h.vacation, c.vacation);
   add(t.stubGuarantee, null, c.guarantee); // guarantee top-up — omitting it made printed earnings not foot to gross
-  const dedRows = (check.deduction_lines || []).map(l => `<tr><td>${l.name}</td><td class="r neg">−${money(l.amount)}</td></tr>`).join('') || `<tr><td colspan="2" class="muted">${t.stubNoDeductions}</td></tr>`;
+  const dedRows = (check.deduction_lines || []).map(l => `<tr><td>${safe(l.name)}</td><td class="r neg">−${safe(money(l.amount))}</td></tr>`).join('')
+    || `<tr><td colspan="2" class="muted">${safe(t.stubNoDeductions)}</td></tr>`;
   const win = window.open('', '_blank');
   if (!win) return;
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${t.stubTitle} — ${workerName} — ${check.pay_date}</title>
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${safe(t.stubTitle)} — ${safe(workerName)} — ${safe(check.pay_date)}</title>
     <style>body{font-family:system-ui,sans-serif;margin:32px;color:#111;font-size:13px;max-width:560px}
     h1{font-size:18px;margin:0 0 2px}.meta{color:#555;margin:2px 0 18px}
     table{width:100%;border-collapse:collapse;margin-bottom:14px}td{padding:5px 2px;border-bottom:1px solid #eee}
     .r{text-align:right}.neg{color:#b91c1c}.muted{color:#9ca3af}.sec{font-weight:700;text-transform:uppercase;font-size:11px;letter-spacing:.5px;color:#6b7280;margin:16px 0 4px}
     .tot td{font-weight:700;border-bottom:2px solid #111}.net{font-size:16px;font-weight:800;display:flex;justify-content:space-between;margin-top:12px}</style>
     </head><body>
-    <h1>${t.stubTitle}</h1>
-    <div class="meta">${workerName}${check.role_name ? ` · ${check.role_name}` : ''}<br>${t.pcrRunPayDate}: <b>${check.pay_date}</b> · ${t.pcrRunPeriod}: ${check.period_start} – ${check.period_end}</div>
-    <div class="sec">${t.stubEarnings}</div>
-    <table>${earn.join('')}<tr class="tot"><td>${t.stubGross}</td><td class="r">${money(check.gross)}</td></tr></table>
-    <div class="sec">${t.stubDeductions}</div>
-    <table>${dedRows}<tr class="tot"><td>${t.stubDeductionTotal}</td><td class="r neg">${check.deduction_total > 0 ? `−${money(check.deduction_total)}` : '—'}</td></tr></table>
-    <div class="net"><span>${t.stubNet}</span><span>${money(check.net)}</span></div>
+    <h1>${safe(t.stubTitle)}</h1>
+    <div class="meta">${safe(workerName)}${check.role_name ? ` · ${safe(check.role_name)}` : ''}<br>${safe(t.pcrRunPayDate)}: <b>${safe(check.pay_date)}</b> · ${safe(t.pcrRunPeriod)}: ${safe(check.period_start)} – ${safe(check.period_end)}</div>
+    <div class="sec">${safe(t.stubEarnings)}</div>
+    <table>${earn.join('')}<tr class="tot"><td>${safe(t.stubGross)}</td><td class="r">${safe(money(check.gross))}</td></tr></table>
+    <div class="sec">${safe(t.stubDeductions)}</div>
+    <table>${dedRows}<tr class="tot"><td>${safe(t.stubDeductionTotal)}</td><td class="r neg">${check.deduction_total > 0 ? `−${safe(money(check.deduction_total))}` : '—'}</td></tr></table>
+    <div class="net"><span>${safe(t.stubNet)}</span><span>${safe(money(check.net))}</span></div>
     </body></html>`);
   win.document.close();
   win.print();

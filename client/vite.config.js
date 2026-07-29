@@ -82,11 +82,19 @@ export default defineConfig({
     sourcemap: sentryPlugins.length > 0,
     rollupOptions: {
       output: {
-        manualChunks: {
+        manualChunks: (id) => {
           // Stable vendor libs — cached long-term separately from app code
-          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
-          'vendor-leaflet': ['leaflet', 'react-leaflet'],
-          'vendor-charts': ['recharts'],
+          if (!id.includes('node_modules')) return undefined;
+          if (/[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom)[\\/]/.test(id)) {
+            return 'vendor-react';
+          }
+          if (/[\\/]node_modules[\\/](leaflet|react-leaflet)[\\/]/.test(id)) {
+            return 'vendor-leaflet';
+          }
+          if (/[\\/]node_modules[\\/]recharts[\\/]/.test(id)) {
+            return 'vendor-charts';
+          }
+          return undefined;
         },
         // Corporate web filters commonly block any asset URL containing
         // "admin", which silently 404'd the lazily-loaded admin/superadmin

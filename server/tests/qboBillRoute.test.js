@@ -16,6 +16,7 @@ jest.mock('../middleware/auth', () => {
   return {
     requireAuth:  (req, _res, next) => { req.user = user; next(); },
     requireAdmin: (req, _res, next) => { req.user = user; next(); },
+    requirePerm: () => (_req, _res, next) => next(),
   };
 });
 
@@ -33,11 +34,13 @@ jest.mock('../services/qbo', () => ({
 }));
 
 jest.mock('../auditLog', () => ({ logAudit: jest.fn() }));
+jest.mock('../utils/payStatement', () => ({ companyStatements: jest.fn() }));
 
 const express = require('express');
 const request = require('supertest');
 const pool    = require('../db');
 const qbo     = require('../services/qbo');
+const { companyStatements } = require('../utils/payStatement');
 const qboRoute = require('../routes/qbo');
 
 function makeApp() {
@@ -231,6 +234,65 @@ describe('POST /api/qbo/push-bills-preview', () => {
     expect(g.overtime_premium).toBeCloseTo(0);
     expect(g.night_premium).toBeCloseTo(7 * 45 * 0.25); // 78.75
     expect(g.total).toBeCloseTo(8 * 45 + 7 * 45 * 0.25);
+  });
+});
+
+describe('POST /api/qbo/push-payroll', () => {
+  beforeEach(() => {
+    pool.query.mockReset();
+    qbo.createJournalEntry.mockReset();
+    companyStatements.mockReset();
+  });
+
+  test('posts canonical gross payroll with a stable Intuit request ID', async () => {
+    const worker = {
+      id: 10,
+      full_name: 'Alex Rivera',
+      invoice_name: null,
+      hourly_rate: 20,
+      rate_type: 'hourly',
+      overtime_rule: 'weekly',
+      role_id: 4,
+      guaranteed_weekly_hours: 0,
+    };
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ qbo_realm_id: 'realm-1' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [worker] });
+    companyStatements.mockResolvedValueOnce(new Map([
+      [10, { totals: { grossWages: 950 } }],
+    ]));
+    qbo.createJournalEntry.mockResolvedValueOnce({ Id: 'JE-1' });
+
+    const res = await request(makeApp())
+      .post('/api/qbo/push-payroll')
+      .send({
+        from: '2026-04-01',
+        to: '2026-04-07',
+        debit_account_id: 'expense-1',
+        credit_account_id: 'liability-1',
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ entry_id: 'JE-1', amount: 950, workers: 1 });
+    expect(qbo.createJournalEntry).toHaveBeenCalledWith('company-uuid-1', expect.objectContaining({
+      amount: 950,
+      requestId: expect.stringMatching(/^ops-pay-[a-f0-9]{32}$/),
+    }));
+  });
+
+  test('rejects an excessive date range before querying QuickBooks', async () => {
+    const res = await request(makeApp())
+      .post('/api/qbo/push-payroll')
+      .send({
+        from: '2024-01-01',
+        to: '2026-01-01',
+        debit_account_id: 'expense-1',
+        credit_account_id: 'liability-1',
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('date_range_too_large');
+    expect(pool.query).not.toHaveBeenCalled();
   });
 });
 

@@ -54,14 +54,19 @@ describe('parseCompanyDeductions', () => {
     expect(total).toBe(2000); // 100% of 2000, not 3000
   });
 
-  test('role scope: roleIds kept (de-duped, primitives only); absent = all employees', () => {
+  test('role scope: roleIds normalized to integer DB keys; absent = all employees', () => {
     const raw = JSON.stringify({ items: [
       { id: 'a', name: 'Union dues', kind: 'fixed', value: 20, roleIds: [3, 3, 'x', null, {}] },
       { id: 'b', name: 'Social Security', kind: 'percent', value: 6 }, // no roleIds → company-wide
     ] });
     const list = parseCompanyDeductions(raw);
-    expect(list[0].roleIds).toEqual([3, 'x']); // de-duped, non-primitives dropped
+    expect(list[0].roleIds).toEqual([3]);      // de-duped, invalid ids dropped
     expect(list[1].roleIds).toEqual([]);        // absent → all employees
+  });
+
+  test('an id-less legacy deduction receives a deterministic selectable id', () => {
+    const [deduction] = parseCompanyDeductions([{ name: 'Union dues', kind: 'fixed', value: 20 }]);
+    expect(deduction.id).toBe('legacy:Union dues:fixed:20');
   });
 });
 

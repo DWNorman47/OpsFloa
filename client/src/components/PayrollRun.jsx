@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '../api';
 import { useT } from '../hooks/useT';
 import { formatCurrency } from '../utils';
 import { silentError } from '../errorReporter';
+import { usePerm } from '../hooks/usePerm';
 import PayStub from './PayStub';
 
 /**
@@ -25,7 +26,7 @@ function monthStart() { const d = new Date(); d.setDate(1); return d.toLocaleDat
 // spans it (so a grouped ruleset's exempt combines across the group instead of
 // applying per-check). Fall back to the pay date for older payloads / lone checks.
 const runWin = p => ({ f: p.run_from || p.pay_date, tt: p.run_to || p.pay_date });
-const periodKeyOf = p => { const { f, tt } = runWin(p); return `${f}|${tt}`; };
+const periodKeyOf = p => { const { f, tt } = runWin(p); return `${p.ruleset_id || ''}|${f}|${tt}`; };
 // Dates are UTC-midnight ISO strings; format them in UTC too, or a viewer west of
 // UTC sees every date shifted a day earlier than the run actually uses.
 const fmtDay = iso => { const [y, m, d] = iso.split('-'); return new Date(Date.UTC(+y, +m - 1, +d)).toLocaleDateString(undefined, { timeZone: 'UTC', month: 'short', day: 'numeric' }); };
@@ -33,6 +34,7 @@ const fmtFull = iso => { const [y, m, d] = iso.split('-'); return new Date(Date.
 
 export default function PayrollRun({ currency = 'USD', onFinalized }) {
   const t = useT();
+  const canManagePayroll = usePerm('manage_pay_periods');
   const [from, setFrom] = useState(monthStart);
   const [to, setTo] = useState(today);
   const [data, setData] = useState(null);
@@ -45,14 +47,21 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
   // configured → fall back to a custom date range.
   const [periods, setPeriods] = useState(null);
   const [periodKey, setPeriodKey] = useState('');
+  const [rulesetId, setRulesetId] = useState(null);
+  const [rulesetOptions, setRulesetOptions] = useState([]);
   const [customRange, setCustomRange] = useState(false);
+  const runRequest = useRef(0);
   const money = v => formatCurrency(v, currency);
 
   const finalize = async () => {
     if (!data || !data.rows.length || data.errors.length) return;
     setFinalizing(true); setFinalizeMsg('');
     try {
-      await api.post('/admin/payroll-run/finalize', { from, to }, { suppressToast: true }); // shown inline as finalizeMsg
+      await api.post('/admin/payroll-run/finalize', {
+        from: data.from,
+        to: data.to,
+        ruleset_id: data.ruleset_id,
+      }, { suppressToast: true }); // shown inline as finalizeMsg
       setFinalizeMsg(t.pcrRunFinalized);
       onFinalized && onFinalized();
     } catch (err) {
@@ -61,16 +70,22 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
   };
 
   // Explicit args so a just-picked period runs without waiting for state to settle.
-  const run = async (f = from, tt = to) => {
+  const run = async (f = from, tt = to, rs = rulesetId) => {
     if (!f || !tt) return;
-    setError(''); setFinalizeMsg(''); setLoading(true);
+    const requestId = ++runRequest.current;
+    setError(''); setFinalizeMsg(''); setData(null); setLoading(true);
     try {
-      const r = await api.get(`/admin/payroll-run?from=${f}&to=${tt}`, { suppressToast: true }); // shown inline as `error`
-      setData(r.data);
+      const rsParam = rs ? `&ruleset_id=${encodeURIComponent(rs)}` : '';
+      const r = await api.get(`/admin/payroll-run?from=${f}&to=${tt}${rsParam}`, { suppressToast: true }); // shown inline as `error`
+      if (requestId === runRequest.current) setData(r.data);
     } catch (err) {
-      setError(err?.response?.data?.error || t.pcrRunFailed);
-      silentError('payroll-run')(err);
-    } finally { setLoading(false); }
+      if (requestId === runRequest.current) {
+        setError(err?.response?.data?.error || t.pcrRunFailed);
+        silentError('payroll-run')(err);
+      }
+    } finally {
+      if (requestId === runRequest.current) setLoading(false);
+    }
   };
 
   const selectPeriod = (key) => {
@@ -79,7 +94,11 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
     // Run the group's whole pay-date window so grouped deductions combine correctly;
     // the run resolves each check's actual period (arrears bases start before the pay
     // date) from the schedule itself.
-    if (p) { const { f, tt } = runWin(p); setFrom(f); setTo(tt); run(f, tt); }
+    if (p) {
+      const { f, tt } = runWin(p);
+      setFrom(f); setTo(tt); setRulesetId(p.ruleset_id || null);
+      run(f, tt, p.ruleset_id || null);
+    }
   };
 
   // Load the schedule's pay periods once; auto-select + run the latest.
@@ -89,12 +108,14 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
       if (!alive) return;
       const list = r.data?.periods || [];
       setPeriods(list);
+      setRulesetOptions(r.data?.rulesets || []);
       if (list.length) {
         const p = list[0];
         setPeriodKey(periodKeyOf(p));
+        setRulesetId(p.ruleset_id || null);
         const { f, tt } = runWin(p);
         setFrom(f); setTo(tt);
-        run(f, tt);
+        run(f, tt, p.ruleset_id || null);
       } else {
         setCustomRange(true);
       }
@@ -137,7 +158,8 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
                 const k = periodKeyOf(p);
                 // A grouped run covers >1 check; mark it (×N) so the span is obvious.
                 const grp = p.check_count > 1 ? `  ×${p.check_count}` : '';
-                return <option key={k} value={k}>{`${t.pcrRunPayLabel} ${fmtFull(p.pay_date)}  ·  ${fmtDay(p.period_start)} – ${fmtDay(p.period_end)}${grp}`}</option>;
+                const ruleset = p.ruleset_name ? `${p.ruleset_name} · ` : '';
+                return <option key={k} value={k}>{`${ruleset}${t.pcrRunPayLabel} ${fmtFull(p.pay_date)}  ·  ${fmtDay(p.period_start)} – ${fmtDay(p.period_end)}${grp}`}</option>;
               })}
             </select>
           </div>
@@ -147,10 +169,18 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
               <input type="date" style={s.input} value={from} onChange={e => { setFrom(e.target.value); setData(null); }} /></div>
             <div style={s.field}><label style={s.label}>{t.pcrRunTo}</label>
               <input type="date" style={s.input} value={to} onChange={e => { setTo(e.target.value); setData(null); }} /></div>
+            {rulesetOptions.length > 0 && (
+              <div style={s.field}><label style={s.label}>{t.pcrRuleset}</label>
+                <select style={s.input} value={rulesetId || ''} onChange={e => { setRulesetId(e.target.value || null); setData(null); }}>
+                  {rulesetOptions.length > 1 && <option value="">{t.pcrChooseRuleset}</option>}
+                  {rulesetOptions.map(rs => <option key={rs.id} value={rs.id}>{rs.name || t.pcrUnnamed}</option>)}
+                </select>
+              </div>
+            )}
           </>
         )}
-        <button style={{ ...s.runBtn, ...((loading || !from || !to) ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
-          onClick={() => run()} disabled={loading || !from || !to}>{loading ? t.loading : t.pcrRunGo}</button>
+        <button style={{ ...s.runBtn, ...((loading || !from || !to || (rulesetOptions.length > 1 && !rulesetId)) ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
+          onClick={() => run()} disabled={loading || !from || !to || (rulesetOptions.length > 1 && !rulesetId)}>{loading ? t.loading : t.pcrRunGo}</button>
         <button style={{ ...s.csvBtn, ...((!data || !data.rows.length) ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
           onClick={downloadCsv} disabled={!data || !data.rows.length}>{t.pcrRunCsv}</button>
       </div>
@@ -248,7 +278,7 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
             </div>
           ) : (data.errors.length === 0 && !(data.notices?.length) && <p style={s.note}>{t.pcrRunEmpty}</p>)}
 
-          {data.rows.length > 0 && (
+          {canManagePayroll && !loading && data.rows.length > 0 && (
             <div style={s.finalizeRow}>
               <button
                 style={{ ...s.finalizeBtn, ...((finalizing || data.errors.length > 0) ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}

@@ -6,6 +6,7 @@ const { sendPushToCompanyAdmins } = require('../push');
 const { uploadBase64, getPresignedUploadUrl, deleteByUrl } = require('../r2');
 const { checkStorageLimit, incrementStorage, decrementStorage } = require('../storage');
 const { logAudit } = require('../auditLog');
+const { projectBelongsToCompany } = require('../utils/tenantRefs');
 
 // GET /field-reports — worker gets own; admin gets full company feed
 router.get('/', requireAuth, async (req, res) => {
@@ -65,6 +66,9 @@ router.post('/', requireAuth, async (req, res) => {
   if (notes && notes.length > 2000) return res.status(400).json({ error: 'notes too long (max 2000 characters)' });
   const companyId = req.user.company_id;
   try {
+    if (!(await projectBelongsToCompany(pool, project_id, companyId))) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
     // Estimate total upload size from base64 payloads for limit check
     const estimatedBytes = photos.reduce((sum, p) => {
       if (p.url?.startsWith('data:')) {
@@ -171,6 +175,9 @@ router.patch('/:id', requireAuth, async (req, res) => {
     const isAdmin = req.user.role === 'admin' || req.user.role === 'super_admin';
     if (!isAdmin && report.user_id !== req.user.id) return res.status(403).json({ error: 'Not your report' });
     if (!isAdmin && report.status === 'reviewed') return res.status(403).json({ error: 'Reviewed reports cannot be edited' });
+    if (project_id !== undefined && !(await projectBelongsToCompany(pool, project_id, companyId))) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
 
     const result = await pool.query(
       `UPDATE field_reports SET title = $1, notes = $2, project_id = $3 WHERE id = $4 RETURNING *`,
