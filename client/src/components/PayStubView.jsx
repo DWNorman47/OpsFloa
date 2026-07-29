@@ -134,6 +134,17 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
               </thead>
               <tbody>
                 {stub.entries.map(e => {
+                  if (e.synthetic) {
+                    // Rule-generated hours (guarantee / floor / leave) — no clock times.
+                    const synLabel = { guarantee: t.floorGuaranteeLabel, min_daily: t.floorMinDailyLabel, weekly_guarantee: t.guaranteeTopupLabel, sick: t.pdfSickHours || 'Sick', vacation: t.pdfVacationHours || 'Vacation' }[e.kind] || e.kind;
+                    return (
+                      <tr key={e.id} style={s.tr}>
+                        <td style={s.td}>{fmtDate(e.work_date_str || e.work_date, locale)}</td>
+                        <td style={{ ...s.td, color: '#6b7280' }} colSpan={5}>{synLabel}</td>
+                        <td style={{ ...s.td, textAlign: 'right', fontWeight: 600 }}>{fmtH(Number(e.hours) || 0)}</td>
+                      </tr>
+                    );
+                  }
                   const h = netHours(e.start_time, e.end_time, e.break_minutes);
                   const isPrev = e.wage_type === 'prevailing';
                   return (
