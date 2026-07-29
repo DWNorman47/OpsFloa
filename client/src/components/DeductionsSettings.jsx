@@ -81,12 +81,12 @@ export default function DeductionsSettings({ settings, onSettingsUpdated }) {
       <p style={s.desc}>{t.dedDesc}</p>
       <DeductionListEditor items={items} onChange={change} roles={roles} />
       <p style={s.note}>{t.dedNote}</p>
-      {error && <p role="alert" style={s.error}>{error}</p>}
       <div style={s.actions}>
-        <button style={{ ...s.saveBtn, ...(saving ? { opacity: 0.6 } : {}) }} onClick={save} disabled={saving}>
+        {saved && <span style={s.savedMsg}>{t.dedSaved}</span>}
+        {error && <span role="alert" style={s.error}>{error}</span>}
+        <button style={{ ...s.saveBtn, ...(saving ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={save} disabled={saving}>
           {saving ? t.dedSaving : t.dedSave}
         </button>
-        {saved && <span style={s.savedMsg}>{t.dedSaved}</span>}
       </div>
     </div>
   );
@@ -96,8 +96,8 @@ const s = {
   card: { background: '#fff', borderRadius: 12, padding: 20, boxShadow: '0 2px 12px rgba(0,0,0,0.06)' },
   desc: { fontSize: 13, color: '#6b7280', margin: '0 0 14px', lineHeight: 1.5, maxWidth: 620 },
   note: { fontSize: 12, color: '#475569', margin: '10px 0 0', lineHeight: 1.5, maxWidth: 620, background: '#f8fafc', border: '1px solid #eef0f2', borderRadius: 6, padding: '7px 11px' },
-  error: { color: '#ef4444', fontSize: 13, marginTop: 12 },
-  actions: { display: 'flex', alignItems: 'center', gap: 14, marginTop: 18 },
-  saveBtn: { background: '#059669', color: '#fff', border: 'none', padding: '10px 22px', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' },
+  error: { color: '#e53e3e', fontSize: 13 },
+  actions: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, padding: '12px 20px', borderTop: '1px solid #f3f4f6', background: '#fafafa', borderBottomLeftRadius: 12, borderBottomRightRadius: 12, margin: '20px -20px -20px' },
+  saveBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '7px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   savedMsg: { fontSize: 13, color: '#059669', fontWeight: 600 },
 };
