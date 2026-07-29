@@ -3866,13 +3866,21 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_reports'), requ
         // flat hours and reported zero overtime — understating OT hours and gross.
         const threshold = parseFloat(s.overtime_threshold) || 8;
         const reg = w.items.filter(e => e.wage_type === 'regular');
-        const { regularHours: rh, overtimeHours: oh, otBands } = computeOT(reg, w.overtime_rule, threshold, s.week_start, otConfig);
+        const { regularHours: rh, overtimeHours: oh, otBands, floorDetail: floorDet } = computeOT(reg, w.overtime_rule, threshold, s.week_start, otConfig);
         annotateEntryOvertime(reg, w.overtime_rule, threshold, s.week_start, otConfig);
         for (const e of reg) {
           const h = dur(e), dk = dayKeyOf(e);
           const otH = Math.min(Math.max(0, e.overtime_hours || 0), h);
           if (otH) ot_days[dk] = +(ot_days[dk] + otH).toFixed(2);
           regular_days[dk] = +(regular_days[dk] + (h - otH)).toFixed(2);
+        }
+        // A minimum-daily floor tops a short worked day up to its minimum; those hours are
+        // in rh but not on any entry above, so add them to their day column — otherwise the
+        // day cells wouldn't sum to the regular total. (No-clock-in guarantees don't fire
+        // here: computeOT is called without a date range.)
+        for (const f of (floorDet || [])) {
+          const dk = DAY_KEYS[new Date(f.date + 'T00:00:00').getDay()];
+          regular_days[dk] = +(regular_days[dk] + f.hours).toFixed(2);
         }
         regular_total = rh; overtime_total = oh;
         regular_cost = rh * w.rate;

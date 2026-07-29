@@ -23,6 +23,36 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-28 — Review pass on the synthetic-entry work (2 audits) + fixes
+
+Audited the session's pay-engine changes with two parallel review agents.
+
+**Found + fixed — legacy pay stub crashed (severe).** `PayStubView` (the worker stub
+for companies WITHOUT the Advanced/Certified Payroll add-on — the common case) mapped
+statement `entries` with no `synthetic` guard, so a period with paid leave / weekly-
+guarantee / floor / no-clock-in guarantee gave a synthetic row with null clock times
+and `fmtTime(null).split()` threw, blanking the stub. Money was never wrong (totals come
+from the summary). Added the same guard `BillPDF`/`WorkerMetrics` already had.
+
+**Found + fixed — Certified Payroll day columns didn't foot to the regular total** when a
+worked-day min-daily floor applied (my earlier premium-OT fix set `regular_total = rh`,
+which includes the floor, but the day cells were summed from entries only). Now attributes
+`computeOT`'s `floorDetail` to the day columns so they reconcile.
+
+**Verified clean:** no double-count anywhere — the payroll run, overtime report, and
+payroll CSV read only aggregate totals, never `.entries`; gross/net provably identical
+with or without the synthetic rows; `floorDetail` captures the floor hours exactly (no
+double-add across worked-day floor vs no-clock-in guarantee; multiple rules resolve to one
+Math.max). Only two client renderers ever get statement entries and both guard synthetics.
+
+**Parked (pre-existing, narrow) → BACKLOG:** per-entry OT column can under-foot summary OT
+when a min-daily floor exceeds the OT threshold; and the open compliance question of
+whether a min-daily floor belongs on a WH-347 at all.
+
+**Process note:** a `git add -A` in the stub-fix commit swept 3 temporary review-harness
+files into the repo — removed them in a follow-up. Be surgical with `git add` when agent
+scratch files may be in the tree.
+
 ## 2026-07-28 — Rule-generated hours are now real entry rows (min-daily / no-clock-in guarantee)
 
 **David (sharpened the rule):** *"Every time hours are added, they need to be added to

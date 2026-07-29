@@ -104,6 +104,21 @@ that holds the exhaustive detail.
 
 ## 🧭 Design flaws — raised, set aside for later
 
+- **Per-entry OT column can under-foot the summary OT when a min-daily floor exceeds the
+  OT threshold** (pre-existing, surfaced by the 2026-07-28 pay-engine audit). `computeOT`
+  bands worked hours first then tops up to the floor, but `annotateEntryOvertime`
+  (`payCalculations.js`) skips per-entry OT entirely when a day's worked hours are below
+  the floor. So with e.g. minDaily 10, OT threshold 8, worked 9h → summary OT = 1h but the
+  sum of per-entry `overtime_hours` = 0. **Gross is unaffected** (money uses computeOT/
+  otBands); only the line-item OT column disagrees with the summary. Narrow (needs
+  minDaily > threshold). Fix: mirror the band-first-then-floor logic in
+  `annotateEntryOvertime`. (2026-07-28)
+- **Should the minimum-daily floor appear on the WH-347 at all?** Certified Payroll now
+  includes worked-day min-daily floor hours in the regular total AND the day columns (they
+  reconcile as of 2026-07-28). But a min-daily floor is *reporting-time* pay, not hours
+  worked on the project — arguably it shouldn't be on a WH-347's hours-worked columns. Left
+  as-is (matches the pay stub's gross), but a prevailing-wage compliance call worth
+  confirming before relying on it. (2026-07-28)
 - ~~**Payroll run keys on "pay date in window", users think "work period".**~~ **Largely
   addressed 2026-07-28.** The tab now leads with a pay-period **dropdown** (not a raw
   range), and each check's period comes from a selectable `periodBasis` (work_week /
