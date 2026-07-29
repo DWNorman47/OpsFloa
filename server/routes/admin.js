@@ -3453,7 +3453,9 @@ router.post('/payroll-run/finalize', requireAdmin, requirePerm('view_reports'), 
       await client.query('BEGIN');
       // Idempotency: a non-void run already covering this exact period means someone
       // finalized it (double-submit, or two admins). Don't silently create a duplicate —
-      // point them at the existing run so they void it first if they mean to re-run.
+      // point them at the existing run so they void it first if they mean to re-run. This
+      // SELECT is the friendly fast path; the partial unique index (migration 0157) is the
+      // real guard against a concurrent race, caught as a 409 in the catch below.
       const dup = await client.query(
         "SELECT id FROM payroll_runs WHERE company_id = $1 AND period_from = $2 AND period_to = $3 AND status <> 'void' LIMIT 1",
         [companyId, periodFrom, periodTo]
@@ -3477,7 +3479,12 @@ router.post('/payroll-run/finalize', requireAdmin, requirePerm('view_reports'), 
       await client.query('COMMIT');
       await logAudit(companyId, req.user.id, req.user.full_name, 'payroll.finalized', 'payroll_run', String(runId), null, { from, to, checks: rows.length });
       res.json({ run_id: runId });
-    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; }
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      // Lost the concurrent race to another finalize of the same period (unique index).
+      if (e && e.code === '23505') return res.status(409).json({ error: 'This pay period is already finalized', code: 'already_finalized' });
+      throw e;
+    }
     finally { client.release(); }
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });

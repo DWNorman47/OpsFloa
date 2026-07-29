@@ -23,6 +23,46 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-28 — Third (large) review pass — audit of the batch-3 fixes
+
+Reviewed the just-committed grouped-deduction fixes (`05c7c0d`) with 5 parallel
+agents. The rewrite held up (no new severe money miscalc in the single-ruleset path),
+but four confirmed issues were worth fixing now. All fixed + verified; suite green
+(server **1179**, +8 new tests; client 256; build ok).
+
+**Worker stub could disagree with the finalized paycheck (pair grouping).** Pair
+grouping keyed off array position, so the admin run (group window), the worker's
+rolling 120-day stub, and the period dropdown (`firstWork−45d`) could pair the *same*
+check differently → a different net on one surface. Fixed at the root: `generatePeriods`
+now stamps an **absolute, window-independent `seq`** on weekly/biweekly checks, and
+`groupPeriods` pairs by `floor(seq/2)` instead of array index. Verified the same check
+pairs identically across two different windows. This also retires the parked
+"offered pair boundaries depend on the window" caveat — pairing is now anchored to the
+schedule.
+
+**Deduction-line reconciliation had two edge bugs.** The cent-footing block I added in
+batch 3 used a float guard (`abs(rawSum−dedTotal) >= 0.01`) that *skipped* genuine
+1-cent trims, and dumped the whole rounding residual on the last line, which could go
+**negative** with many sub-cent lines. Rewrote it in integer cents with largest-remainder
+allocation: every line stays within `[0, its own raw]`, and the lines always foot to the
+capped total. Pinned with tests (incl. the exact negative-line and skipped-cent cases).
+
+**Finalize idempotency was check-then-act with no DB guard.** The SELECT-before-INSERT
+races: two concurrent finalizes both see zero rows and both insert duplicate runs.
+Added a partial unique index `(company_id, period_from, period_to) WHERE status<>'void'`
+(migration `0157`, which first voids any pre-existing dupes so boot can't fail), and the
+route now catches the `23505` violation as a clean 409. The SELECT stays as the friendly
+fast path.
+
+**Added tests for the money logic** that batch 3 left unpinned: `groupOpts`,
+`combineGroup:false`, line reconciliation, anchor-stable pairing, and the `week_start=0`
+(Sunday) work_week normalization.
+
+**Parked → BACKLOG (money correct; policy/rare):** multi-ruleset group-window overlap
+(+ the dropdown dedup cosmetic); ruleset caps trim deduction lines pro-rata on the stub
+(garnishment shows reduced — a which-line-does-a-cap-attach-to policy call); WH-347
+daily-rate + night_diff on the already-as-if-hourly path.
+
 ## 2026-07-28 — Second (large) review pass — grouped-deduction engine hardened
 
 A 5-agent audit of the whole session's pay/deduction work surfaced a cluster of

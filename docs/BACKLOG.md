@@ -22,7 +22,7 @@ that holds the exhaustive detail.
 ## 🔧 Bugs — set aside for later
 
 - **Grouped payroll: multi-schedule group windows can overlap** (`admin.js`
-  `/payroll-periods` + `computePayrollRun`). The Payroll dropdown now offers one
+  `/payroll-periods` + `computePayrollRun`). The Payroll dropdown offers one
   entry per *group* and runs the group's whole pay-date window so a grouped
   ruleset's exempt combines once (fixed 2026-07-28). This is clean for a company
   with **one** paycheck ruleset (the common case). With **multiple rulesets on
@@ -30,22 +30,28 @@ that holds the exhaustive detail.
   *partial* group for ruleset B (its checks that happen to land in that window
   without its siblings), so B's exempt could combine over an incomplete group. Fix
   = run/finalize per-ruleset (segment the window by ruleset) rather than one shared
-  `[from,to]`. Low-stakes until a customer runs two differing schedules. (2026-07-28)
-- **Pair grouping uses window-index parity, not the schedule anchor**
-  (`payPeriods.js` `groupPeriods`). For `groupBy:'pair'`, which two checks pair is
-  decided by their index in the generated window, and the window's start
-  (`/payroll-periods` uses `firstWork − 45d`) sets the parity. The *money* is now
-  correct (we run the exact offered group window, so it re-groups to the same
-  pair), but the *offered* pair boundaries aren't anchored to the biweekly
-  `anchorDate`, so which checks pair could differ from an admin's mental model.
-  Make pair grouping anchor-relative: `pairIndex = floor(((payDate − anchor)/14d)/2)`.
-  (2026-07-28)
+  `[from,to]`. **Related display-only nit:** the dropdown dedups group entries by
+  `run_from|run_to`, so two rulesets sharing a window collapse to one option and the
+  `×N` badge / period label reflect only the first (the *run* still covers both — no
+  money lost). Low-stakes until a customer runs two differing schedules. (2026-07-28)
 - **Certified payroll: single prevailing rate + flat OT on premium configs**
   (`admin.js` WH-347 route). One `prevRate` for all prevailing hours (no
   per-classification/per-project rate table), and premium OT configs still price
   OT flat (`otBandsCost` at `otMult`) rather than the full band math on the
   prevailing base. Night differential is now included in `gross_pay` (fixed
-  2026-07-28); classification-level prevailing rates remain a gap. (2026-07-28)
+  2026-07-28); classification-level prevailing rates remain a gap. **Minor:** the
+  WH-347 SQL doesn't select `rate_type`, so a *daily-rate* worker with a night_diff
+  rule gets the night premium in `gross_pay` where `buildPayStatement` gates it off
+  for daily-rate — but the WH-347 already prices daily-rate as-if-hourly throughout,
+  so it's one more small divergence on an already-divergent, very rare path. (2026-07-28)
+- **Ruleset total cap trims deduction lines pro-rata on the stub** (`paycheckRun.js`
+  `computeRuleNet`). When a ruleset `cap`/min-net floor trims the total, the itemized
+  lines are scaled proportionally across ALL lines so they foot (net + total are
+  always correct). That means a mandatory line (garnishment, child support) shows as
+  *reduced* on the stub instead of the discretionary lines being trimmed first —
+  which line a cap legally attaches to is a policy question. If it matters, add a
+  per-line priority so caps trim discretionary lines before mandatory ones. Stub
+  display only. (2026-07-28)
 
 - **Project merge doesn't move financial records** (`admin.js`
   `POST /projects/:id/merge-into/:target_id`). The re-point list only covers

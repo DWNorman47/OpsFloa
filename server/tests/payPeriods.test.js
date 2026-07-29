@@ -24,12 +24,20 @@ describe('generatePeriods', () => {
   test('biweekly work_week (default) — period is the two full work weeks ending the Sunday before payday', () => {
     // Thursday paydays Jul 2 & Jul 16; Mon-start work week → periods end the prior Sunday.
     const ps = generatePeriods({ frequency: 'biweekly', anchorDate: '2026-07-02', weekendShift: 'none' }, '2026-07-16', '2026-07-16', 1);
-    expect(ps).toEqual([{ periodStart: '2026-06-29', periodEnd: '2026-07-12', payDate: '2026-07-16' }]);
+    expect(ps).toEqual([{ periodStart: '2026-06-29', periodEnd: '2026-07-12', payDate: '2026-07-16', seq: 1 }]);
+  });
+
+  test('biweekly work_week normalizes week_start=0 (Sunday) — NOT treated as Monday', () => {
+    // The old `Number(0) || 1` bug read a Sunday-start week as Monday, misaligning every
+    // period. Sunday-start → work week ends Saturday, so the period ends Jul 11 (Sat),
+    // one day before the Monday-start result (Jul 12).
+    const ps = generatePeriods({ frequency: 'biweekly', anchorDate: '2026-07-02', weekendShift: 'none' }, '2026-07-16', '2026-07-16', 0);
+    expect(ps).toEqual([{ periodStart: '2026-06-28', periodEnd: '2026-07-11', payDate: '2026-07-16', seq: 1 }]);
   });
 
   test('biweekly prior_cycle — payday covers the previous completed 14-day cycle', () => {
     const ps = generatePeriods({ frequency: 'biweekly', periodBasis: 'prior_cycle', anchorDate: '2026-07-02', weekendShift: 'none' }, '2026-07-16', '2026-07-16');
-    expect(ps).toEqual([{ periodStart: '2026-06-19', periodEnd: '2026-07-02', payDate: '2026-07-16' }]);
+    expect(ps).toEqual([{ periodStart: '2026-06-19', periodEnd: '2026-07-02', payDate: '2026-07-16', seq: 1 }]);
   });
 
   test('inclusion is by the actual (shifted) pay date, so a single-day pay-date window isolates one check', () => {
@@ -91,5 +99,19 @@ describe('groupPeriods — which check the deductions land on', () => {
   test("timing 'every' → every check deducts, no grouping", () => {
     const g = groupPeriods(biweekly, { timing: 'every' });
     expect(g.every(p => p.deductionsApply)).toBe(true);
+  });
+
+  test('pair grouping is anchor-stable — the same two checks pair regardless of the window', () => {
+    const opts = { timing: 'grouped', groupBy: 'pair', applyOn: 'second' };
+    const sched = { frequency: 'biweekly', anchorDate: '2026-01-08', weekendShift: 'none' };
+    // Two windows with different left edges (the 2nd would flip pair parity under the old
+    // array-index pairing). Feb 19 must pair with Feb 05 and deduct in BOTH.
+    const wide = groupPeriods(generatePeriods(sched, '2026-01-01', '2026-04-30', 1), opts);
+    const narrow = groupPeriods(generatePeriods(sched, '2026-02-01', '2026-04-30', 1), opts);
+    const partner = (rows, pay) => rows.filter(p => p.groupKey === rows.find(x => x.payDate === pay).groupKey).map(p => p.payDate);
+    expect(partner(wide, '2026-02-19')).toEqual(['2026-02-05', '2026-02-19']);
+    expect(partner(narrow, '2026-02-19')).toEqual(['2026-02-05', '2026-02-19']);
+    expect(wide.find(p => p.payDate === '2026-02-19').deductionsApply).toBe(true);
+    expect(narrow.find(p => p.payDate === '2026-02-19').deductionsApply).toBe(true);
   });
 });

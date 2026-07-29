@@ -58,9 +58,16 @@ function periodBounds(payT, span, basis, weekStart) {
   return { startT: addDays(payT, -span), endT: payT }; // on_payday
 }
 
-const makePeriod = (payT, span, basis, weekStart, shift) => {
+// `seq` is an ABSOLUTE, window-independent check index (weekly/biweekly only) so pair
+// grouping anchors to the schedule, not to wherever the generation window starts.
+// Without it, which two checks pair depends on the array's first element, so the
+// admin run (group window), the worker stub (rolling 120d), and the period dropdown
+// (firstWork−45d) could pair the SAME check differently → different net on one stub.
+const makePeriod = (payT, span, basis, weekStart, shift, seq) => {
   const { startT, endT } = periodBounds(payT, span, basis, weekStart);
-  return { periodStart: iso(startT), periodEnd: iso(endT), payDate: iso(shiftWeekend(payT, shift)) };
+  const p = { periodStart: iso(startT), periodEnd: iso(endT), payDate: iso(shiftWeekend(payT, shift)) };
+  if (Number.isInteger(seq)) p.seq = seq;
+  return p;
 };
 
 // Scan a few days past each edge so a weekend-shifted pay date near the boundary is
@@ -76,7 +83,9 @@ function weekly(sc, from, to, basis, weekStart) {
   const out = [];
   for (; t <= toT + PAD; t = addDays(t, 7)) {
     const payT = shiftWeekend(t, sc.weekendShift);
-    if (payT >= fromT && payT <= toT) out.push(makePeriod(t, 6, basis, weekStart, sc.weekendShift));
+    // Absolute week index off the epoch — all paydays share a weekday, so this is a
+    // stable +1 sequence independent of the window's first check.
+    if (payT >= fromT && payT <= toT) out.push(makePeriod(t, 6, basis, weekStart, sc.weekendShift, Math.round(t / (7 * DAY))));
   }
   return out;
 }
@@ -89,7 +98,8 @@ function biweekly(sc, from, to, basis, weekStart) {
   const out = [];
   for (; t <= toT + PAD; t = addDays(t, 14)) {
     const payT = shiftWeekend(t, sc.weekendShift);
-    if (payT >= fromT && payT <= toT) out.push(makePeriod(t, 13, basis, weekStart, sc.weekendShift));
+    // Absolute cycle index off the anchor — stable regardless of the window edge.
+    if (payT >= fromT && payT <= toT) out.push(makePeriod(t, 13, basis, weekStart, sc.weekendShift, Math.round((t - anchor) / (14 * DAY))));
   }
   return out;
 }
@@ -174,7 +184,15 @@ function groupPeriods(periods, { timing = 'grouped', groupBy = 'pair', applyOn =
     const byMonth = {};
     rows.forEach(p => { const k = p.payDate.slice(0, 7); (byMonth[k] = byMonth[k] || []).push(p); });
     Object.entries(byMonth).forEach(([k, g]) => { g.forEach(p => { p.groupKey = k; }); markApply(g, applyOn); });
+  } else if (rows.length && rows.every(p => Number.isInteger(p.seq))) {
+    // Anchor-stable pairing: pair by ABSOLUTE cycle index (floor(seq/2)), not array
+    // position, so the same two checks always pair regardless of the window. The
+    // group key is the absolute pair number, so it's identical across every surface.
+    const byPair = new Map();
+    rows.forEach(p => { const k = Math.floor(p.seq / 2); (byPair.get(k) || byPair.set(k, []).get(k)).push(p); });
+    for (const [k, g] of byPair) { g.sort((a, b) => a.seq - b.seq); g.forEach(p => { p.groupKey = String(k); }); markApply(g, applyOn); }
   } else {
+    // Fallback (semimonthly/monthly pair grouping, or seq-less periods): array pairing.
     for (let i = 0; i < rows.length; i += 2) {
       const g = rows.slice(i, i + 2);
       g.forEach(p => { p.groupKey = String(i / 2 | 0); });

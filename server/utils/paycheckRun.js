@@ -79,15 +79,22 @@ function computeRuleNet(gross, deductions, ruleset, baseGross) {
   dedTotal = round2(dedTotal);
 
   // The stub itemizes these lines AND shows the total; when a cap or the min-net floor
-  // trims the raw sum, scale the lines proportionally so they foot to what was actually
-  // deducted (an itemization that doesn't add up to its own total is worse than none).
-  let outLines = lines;
-  const rawSum = round2((lines || []).reduce((a, l) => a + (Number(l.amount) || 0), 0));
-  if (rawSum > 0 && Math.abs(rawSum - dedTotal) >= 0.01) {
-    const f = dedTotal / rawSum;
-    outLines = lines.map(l => ({ ...l, amount: round2((Number(l.amount) || 0) * f) }));
-    const resid = round2(dedTotal - outLines.reduce((a, l) => a + l.amount, 0));
-    if (resid !== 0 && outLines.length) outLines[outLines.length - 1].amount = round2(outLines[outLines.length - 1].amount + resid);
+  // trims the raw sum, allocate the actual deducted total across the lines so they foot.
+  // Work in integer cents with largest-remainder allocation: every line stays 0..its own
+  // raw amount (dedTotal ≤ rawTotal always), so no line goes negative or exceeds itself —
+  // a plain proportional scale + dump-residual-on-last could make the last line negative.
+  let outLines = lines || [];
+  const totalCents = Math.round(dedTotal * 100);
+  const rawCents = outLines.map(l => Math.round((Number(l.amount) || 0) * 100));
+  const rawTotalCents = rawCents.reduce((a, c) => a + c, 0);
+  if (rawTotalCents > 0 && rawTotalCents !== totalCents) {
+    const exact = rawCents.map(c => (c * totalCents) / rawTotalCents);
+    const alloc = exact.map(Math.floor);
+    let rem = totalCents - alloc.reduce((a, c) => a + c, 0); // 0..lines-1, non-negative since totalCents ≤ rawTotalCents
+    // Hand the leftover cents to the lines with the largest fractional remainder.
+    const order = exact.map((v, i) => [v - Math.floor(v), i]).sort((a, b) => b[0] - a[0]).map(x => x[1]);
+    for (let k = 0; k < rem && k < order.length; k++) alloc[order[k]] += 1;
+    outLines = outLines.map((l, i) => ({ ...l, amount: alloc[i] / 100 }));
   }
   return { gross: g, exempt, base, lines: outLines, deductionTotal: dedTotal, net: round2(g - dedTotal) };
 }
