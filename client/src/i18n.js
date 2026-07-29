@@ -638,7 +638,7 @@ const translations = {
     dedCapNone: 'none',
     dedRemove: 'Remove deduction',
     dedAdd: '+ Add deduction',
-    dedSave: 'Save deductions',
+    dedSave: 'Save Deductions',
     dedSaving: 'Saving…',
     dedSaved: 'Saved',
     // Paycheck Rules — pay schedule + deduction rulesets
@@ -773,7 +773,7 @@ const translations = {
     pcrPresetEveryOtherFriday: 'Every other Friday',
     pcrPresetBiweekly: 'Every other Thursday',
     pcrPresetSemimonthly: '15th & 30th',
-    pcrSave: 'Save paycheck rules',
+    pcrSave: 'Save Paycheck Rules',
     pcrSaving: 'Saving…',
     pcrSaved: 'Saved',
     pcrSaveFailed: 'Could not save. Please try again.',
@@ -810,7 +810,7 @@ const translations = {
     hrClockOut: 'Clock-out',
     hrTransparency: 'Show workers actual and paid times',
     hrTransparencyHint: 'When on, timesheets show both the real punch and the paid (rounded) time. When off, only the paid time is shown.',
-    hrSave: 'Save rules',
+    hrSave: 'Save Rules',
     hrSaving: 'Saving…',
     hrSaved: 'Saved',
     // ── Rule builder ──
