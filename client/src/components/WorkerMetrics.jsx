@@ -7,14 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { handlePdfError } from '../pdfError';
 import { renderTraceItem, renderLeaveDetail } from '../utils/reportTrace';
 import DeductionListEditor from './DeductionListEditor';
-
-function downloadCSV(rows, filename) {
-  const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
-  URL.revokeObjectURL(url);
-}
+import { downloadCsv } from '../utils/csv';
 
 const fmtDate = d => d.toLocaleDateString('en-CA'); // YYYY-MM-DD, local
 const sundayOf = d => { const x = new Date(d); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - x.getDay()); return x; };
@@ -201,7 +194,7 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
     const reimbRows = (billData.reimbursements || []).map(r => [
       r.expense_date?.toString().substring(0, 10), 'Expense', r.project_name || '', r.category || r.description || '', '', '', ...(showOtCol ? [''] : []), '', r.amount,
     ]);
-    downloadCSV([headers, ...timeRows, ...reimbRows], `${worker.username}-${from || 'all'}-to-${to || 'all'}.csv`);
+    downloadCsv([headers, ...timeRows, ...reimbRows], `${worker.username}-${from || 'all'}-to-${to || 'all'}.csv`);
   };
 
   const PRESETS = [

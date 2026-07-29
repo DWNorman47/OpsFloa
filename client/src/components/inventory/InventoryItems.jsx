@@ -10,6 +10,7 @@ const ImportItemsModal = lazy(() => import('./ImportItemsModal'));
 
 import { silentError } from '../../errorReporter';
 import { safeLocal } from '../../utils/safeStorage';
+import { csvCell } from '../../utils/csv';
 const DEFAULT_UNITS = ['each', 'box', 'bag', 'bundle', 'pallet', 'lb', 'kg', 'ft', 'm', 'sq ft', 'gal', 'L', 'roll', 'sheet', 'piece', 'other'];
 // Maps known internal unit VALUES to their translation key (prefix `invit`). Custom/unknown units render as-is.
 const UNIT_LABELS = {
@@ -52,11 +53,6 @@ function readNumberPref(key, fallback, allowed) {
   } catch {
     return fallback;
   }
-}
-
-function csvCell(value) {
-  const text = value == null ? '' : String(value);
-  return `"${text.replace(/"/g, '""')}"`;
 }
 
 function ItemForm({ item, onSave, onCancel, activeUnits = DEFAULT_UNITS, knownUnits = DEFAULT_UNITS }) {

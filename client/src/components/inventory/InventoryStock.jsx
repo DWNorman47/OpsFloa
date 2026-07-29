@@ -11,6 +11,7 @@ import InventoryColumnPicker from './InventoryColumnPicker';
 
 import { silentError } from '../../errorReporter';
 import { safeLocal } from '../../utils/safeStorage';
+import { csvCell } from '../../utils/csv';
 function formatBin(area_name, rack_name, bay_name, compartment_name) {
   return [area_name, rack_name, bay_name, compartment_name]
     .filter(Boolean).join(' > ') || null;
@@ -57,11 +58,6 @@ function readNumberPref(key, fallback, allowed) {
   } catch {
     return fallback;
   }
-}
-
-function csvCell(value) {
-  const text = value == null ? '' : String(value);
-  return `"${text.replace(/"/g, '""')}"`;
 }
 
 // History Panel
@@ -584,7 +580,7 @@ export default function InventoryStock({ isAdmin, locations, projects, onStockCh
       return;
     }
     const header = [t.invTxColItem, t.colSku, t.colCategory, t.invValColLocation, t.invStockColBin,
-      t.invTxColQty, t.colUnit, t.colUnitCost, t.invValColTotalValue, t.invStockColStatus].join(',');
+      t.invTxColQty, t.colUnit, t.colUnitCost, t.invValColTotalValue, t.invStockColStatus].map(csvCell).join(',');
     const rows = rowsForExport.map(row => {
       const qty = parseFloat(row.quantity);
       const cost = parseFloat(row.unit_cost);

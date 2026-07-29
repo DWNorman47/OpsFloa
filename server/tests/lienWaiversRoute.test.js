@@ -86,6 +86,48 @@ describe('POST /api/projects/:projectId/lien-waivers', () => {
       });
     expect(res.status).toBe(404);
   });
+
+  test('400 when a linked PO belongs to another project', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 10, name: 'Project A' }] })
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ id: 22, project_id: 11, subcontractor_id: 7 }],
+      });
+    const res = await request(makeApp())
+      .post('/api/projects/10/lien-waivers')
+      .send({
+        direction: 'from_sub',
+        waiver_type: 'conditional_progress',
+        amount_cents: 1000,
+        through_date: '2026-07-01',
+        signer_name: 'Jane',
+        signer_company: 'Co',
+        subcontractor_id: 7,
+        subcontract_po_id: 22,
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid subcontract_po_id');
+  });
+
+  test('400 when a linked invoice belongs to another project', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 10, name: 'Project A' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ project_id: 11 }] });
+    const res = await request(makeApp())
+      .post('/api/projects/10/lien-waivers')
+      .send({
+        direction: 'from_us',
+        waiver_type: 'conditional_progress',
+        amount_cents: 1000,
+        through_date: '2026-07-01',
+        signer_name: 'Jane',
+        signer_company: 'Co',
+        invoice_id: 55,
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid invoice_id');
+  });
 });
 
 describe('PATCH /api/lien-waivers/:id', () => {
@@ -95,6 +137,19 @@ describe('PATCH /api/lien-waivers/:id', () => {
       .patch('/api/lien-waivers/5')
       .send({ amount_cents: 1000 });
     expect(res.status).toBe(409);
+  });
+
+  test('400 on an impossible through date instead of surfacing a database error', async () => {
+    pool.query.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [{ id: 5, status: 'draft', direction: 'from_us' }],
+    });
+    const res = await request(makeApp())
+      .patch('/api/lien-waivers/5')
+      .send({ through_date: '2026-02-30' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/valid YYYY-MM-DD/);
+    expect(pool.query).toHaveBeenCalledTimes(1);
   });
 });
 

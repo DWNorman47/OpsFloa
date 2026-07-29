@@ -1,14 +1,15 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import api from '../api';
-import { clearCache } from '../offlineDb';
+import { clearCache, clearPendingSyncs, currentOfflineScope } from '../offlineDb';
 import { safeSession, safeLocal } from '../utils/safeStorage';
 
 export const AuthContext = createContext(null);
 
 function clearOfflineQueue() {
   if (!('serviceWorker' in navigator)) return;
+  const scope = currentOfflineScope();
   navigator.serviceWorker.ready
-    .then(reg => reg.active?.postMessage({ type: 'CLEAR_QUEUE' }))
+    .then(reg => reg.active?.postMessage({ type: 'CLEAR_QUEUE', scope }))
     .catch(() => {});
 }
 
@@ -95,7 +96,7 @@ export function AuthProvider({ children }) {
   }, [user]);
 
   const login = async (username, password, company_name) => {
-    await clearCache();
+    await Promise.all([clearCache(), clearPendingSyncs()]);
     clearOfflineQueue();
     const r = await api.post('/auth/login', { username, password, company_name }, { suppressToast: true });
     if (r.data.mfa_required) {
@@ -111,7 +112,7 @@ export function AuthProvider({ children }) {
   };
 
   const loginWithToken = async token => {
-    await clearCache();
+    await Promise.all([clearCache(), clearPendingSyncs()]);
     clearOfflineQueue();
     safeLocal.setItem('tc_token', token);
     const me = await api.get('/auth/me');
@@ -122,7 +123,7 @@ export function AuthProvider({ children }) {
   };
 
   const confirmMfa = async (mfa_token, code) => {
-    await clearCache();
+    await Promise.all([clearCache(), clearPendingSyncs()]);
     clearOfflineQueue();
     const r = await api.post('/auth/mfa/confirm', { mfa_token, code });
     storeSession(safeLocal, r.data.token, r.data.user);
@@ -132,6 +133,7 @@ export function AuthProvider({ children }) {
 
   const logout = () => {
     clearCache();
+    clearPendingSyncs();
     clearOfflineQueue();
     // Clear both stores so an impersonation tab logging out doesn't leave
     // the super admin's localStorage token alive for a future page load,

@@ -9,6 +9,21 @@ const QUEUE_STORE = 'punches';
 
 // ── IndexedDB helpers ──────────────────────────────────────────────────────────
 
+function authScope(auth) {
+  try {
+    const token = String(auth || '').replace(/^Bearer\s+/i, '');
+    const payloadPart = token.split('.')[1];
+    if (!payloadPart) return null;
+    const normalized = payloadPart.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    const payload = JSON.parse(atob(padded));
+    if (payload.id == null || payload.company_id == null) return null;
+    return `${payload.company_id}:${payload.id}`;
+  } catch {
+    return null;
+  }
+}
+
 function openQueueDB() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(QUEUE_DB, 2);
@@ -84,6 +99,7 @@ async function handleOfflineableRequest(event, type) {
       url: event.request.url,
       body,
       auth,
+      scope: authScope(auth),
       queued_at: new Date().toISOString(),
     });
     await broadcastQueueCount();
@@ -96,15 +112,7 @@ async function handleOfflineableRequest(event, type) {
 
 // ── Replay queue ───────────────────────────────────────────────────────────────
 
-// Ask the first available page client for the user's current auth header.
-// Falls back to null if no client is open or the request times out, in which
-// case the caller uses whatever was captured at enqueue time. This prevents
-// queued requests from being permanently bound to a token that has since
-// expired or been replaced — the original failure mode where re-logging in
-// didn't help because the queue still carried the dead header.
-async function getFreshAuth() {
-  const clients = await self.clients.matchAll({ includeUncontrolled: true });
-  if (clients.length === 0) return null;
+function getClientAuth(client) {
   return new Promise(resolve => {
     const channel = new MessageChannel();
     const timer = setTimeout(() => resolve(null), 1500);
@@ -112,8 +120,18 @@ async function getFreshAuth() {
       clearTimeout(timer);
       resolve(event.data?.auth || null);
     };
-    clients[0].postMessage({ type: 'GET_AUTH' }, [channel.port2]);
+    client.postMessage({ type: 'GET_AUTH' }, [channel.port2]);
   });
+}
+
+// A browser may have a normal and impersonation tab open at once. Only accept
+// a refreshed token for the same company/user that originally queued the item.
+async function getFreshAuth(scope) {
+  if (!scope) return null;
+  const clients = await self.clients.matchAll({ includeUncontrolled: true });
+  if (clients.length === 0) return null;
+  const candidates = await Promise.all(clients.map(getClientAuth));
+  return candidates.find(auth => authScope(auth) === scope) || null;
 }
 
 async function replayQueue() {
@@ -122,15 +140,20 @@ async function replayQueue() {
   let authFailed = false;
   let partialFailure = false;
 
-  // Refresh the auth header once per replay batch. If a page is open, use
-  // its current token; otherwise fall back to whatever was captured at
-  // enqueue. Faster than asking per-item and good enough — the user can't
-  // really log out and back in mid-replay.
-  const freshAuth = await getFreshAuth();
+  const freshAuthByScope = new Map();
 
   for (const item of items) {
     try {
+      const scope = item.scope || authScope(item.auth);
+      if (scope && !freshAuthByScope.has(scope)) {
+        freshAuthByScope.set(scope, await getFreshAuth(scope));
+      }
+      const freshAuth = scope ? freshAuthByScope.get(scope) : null;
       const auth = freshAuth || item.auth;
+      if (scope && authScope(auth) !== scope) {
+        authFailed = true;
+        continue;
+      }
       const res = await fetch(item.url, {
         method: item.method || 'POST',
         headers: {
@@ -264,8 +287,12 @@ self.addEventListener('message', event => {
   }
   if (event.data?.type === 'CLEAR_QUEUE') {
     event.waitUntil((async () => {
+      const scope = event.data.scope;
+      if (!scope) return;
       const items = await getAllQueued();
-      for (const item of items) await dequeue(item.id);
+      for (const item of items) {
+        if ((item.scope || authScope(item.auth)) === scope) await dequeue(item.id);
+      }
       await broadcastQueueCount();
     })());
   }

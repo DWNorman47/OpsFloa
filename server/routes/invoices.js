@@ -2,7 +2,8 @@ const router  = require('express').Router();
 const crypto  = require('crypto');
 const pool    = require('../db');
 const logger  = require('../logger');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { requireAuth } = require('../middleware/auth');
+const { requireCommercialAccess } = require('../middleware/commercialAccess');
 const { logAudit } = require('../auditLog');
 const {
   INVOICE_STATUSES,
@@ -191,7 +192,7 @@ async function createInvoice(client, companyId, userId, fields, lines, { source 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
 // GET /invoices — list with filters
-router.get('/', requireAuth, async (req, res) => {
+router.get('/', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const { status, project_id, client_id, q } = req.query;
   const page  = Math.max(1, parseInt(req.query.page) || 1);
@@ -234,7 +235,7 @@ router.get('/', requireAuth, async (req, res) => {
 });
 
 // POST /invoices — create a draft from scratch (with optional initial lines)
-router.post('/', requireAdmin, async (req, res) => {
+router.post('/', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const fields = readHeaderFields(req.body);
   if (!fields.client_name_snapshot) return res.status(400).json({ error: 'client_name_snapshot is required' });
@@ -264,7 +265,7 @@ router.post('/', requireAdmin, async (req, res) => {
 });
 
 // POST /invoices/from-estimate/:estimateId — draft invoice from an accepted estimate
-router.post('/from-estimate/:estimateId', requireAdmin, async (req, res) => {
+router.post('/from-estimate/:estimateId', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const client = await pool.connect();
   try {
@@ -304,7 +305,7 @@ router.post('/from-estimate/:estimateId', requireAdmin, async (req, res) => {
 // POST /invoices/from-project/:projectId — draft invoice prefilled from the
 // project's approved labor (one line at labor cost) + its expenses (a line each),
 // editable before send. The T&M path — bill at cost, mark up on the draft.
-router.post('/from-project/:projectId', requireAdmin, async (req, res) => {
+router.post('/from-project/:projectId', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const projRes = await pool.query(
@@ -362,7 +363,7 @@ router.post('/from-project/:projectId', requireAdmin, async (req, res) => {
 });
 
 // GET /invoices/:id
-router.get('/:id', requireAuth, async (req, res) => {
+router.get('/:id', requireAuth, requireCommercialAccess, async (req, res) => {
   try {
     const full = await loadInvoiceFull(req.user.company_id, req.params.id);
     if (!full) return res.status(404).json({ error: 'Invoice not found' });
@@ -376,7 +377,7 @@ router.get('/:id', requireAuth, async (req, res) => {
 });
 
 // PATCH /invoices/:id — header fields; draft only
-router.patch('/:id', requireAdmin, async (req, res) => {
+router.patch('/:id', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const fields = readHeaderFields(req.body);
   for (const k of ['tax_pct', 'retainage_pct']) {
@@ -413,7 +414,7 @@ router.patch('/:id', requireAdmin, async (req, res) => {
 });
 
 // PUT /invoices/:id/lines — bulk replace; draft only
-router.put('/:id/lines', requireAdmin, async (req, res) => {
+router.put('/:id/lines', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   if (!Array.isArray(req.body.lines)) return res.status(400).json({ error: 'lines must be an array' });
   const lines = [];
@@ -490,7 +491,7 @@ async function emailInvoiceToClient({ invoice, token, companyName, currency, rep
 // POST /invoices/:id/send — draft → sent; mint a public token, freeze lines,
 // and email the client the link (best-effort). Returns the raw token too so the
 // admin can copy the /i/<token> link (and share it manually if there's no email).
-router.post('/:id/send', requireAdmin, async (req, res) => {
+router.post('/:id/send', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const client = await pool.connect();
   try {
@@ -549,7 +550,7 @@ router.post('/:id/send', requireAdmin, async (req, res) => {
 // again (so the admin can re-copy it). Returns the STORED token, so it matches
 // the link already emailed and never rotates. Legacy invoices sent before the
 // token was stored mint one on first call (which rotates that one link only).
-router.post('/:id/link', requireAdmin, async (req, res) => {
+router.post('/:id/link', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const headRes = await pool.query('SELECT status, response_token FROM invoices WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
@@ -568,7 +569,7 @@ router.post('/:id/link', requireAdmin, async (req, res) => {
 });
 
 // POST /invoices/:id/payments — record a full/partial payment; recompute status.
-router.post('/:id/payments', requireAdmin, async (req, res) => {
+router.post('/:id/payments', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const amount = typeof req.body.amount_cents === 'number' ? req.body.amount_cents : parseInt(req.body.amount_cents, 10);
   // Must be a whole number of cents — a fractional value would 500 on the BIGINT
@@ -603,7 +604,7 @@ router.post('/:id/payments', requireAdmin, async (req, res) => {
 });
 
 // POST /invoices/:id/void — cancel an invoice (any status). Payments stay for the record.
-router.post('/:id/void', requireAdmin, async (req, res) => {
+router.post('/:id/void', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const client = await pool.connect();
   try {

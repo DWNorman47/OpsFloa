@@ -20,6 +20,9 @@ jest.mock('../middleware/auth', () => ({
   hasAdminPermission:           () => true,
   requireSuperAdmin:            (req, _res, next) => { req.user = mockCurrentUser; next(); },
 }));
+jest.mock('../middleware/financialAccess', () => ({
+  requireProjectFinancialAccess: (req, _res, next) => next(),
+}));
 
 jest.mock('../db', () => ({ query: jest.fn() }));
 jest.mock('../auditLog', () => ({ logAudit: jest.fn() }));

@@ -12,6 +12,9 @@ jest.mock('../middleware/auth', () => ({
   requireAdmin: (req, _res, next) => { req.user = mockCurrentUser; next(); },
   requirePlan:  () => (req, _res, next) => { req.user = mockCurrentUser; next(); },
 }));
+jest.mock('../middleware/commercialAccess', () => ({
+  requireCommercialAccess: (req, _res, next) => next(),
+}));
 
 jest.mock('../db', () => {
   const queryMock = jest.fn();

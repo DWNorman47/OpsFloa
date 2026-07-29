@@ -23,6 +23,60 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-29 - Commercial access and export safety pass
+
+- Closed worker-readable API gaps across estimates, invoices, change orders, sub-POs,
+  project financials, portfolio/WIP reporting, subcontractors, submittals, closeout, and
+  lien waivers. Server gates now match the admin/module permissions presented by the UI;
+  the previously unauthenticated estimate plan-PDF read is protected as well.
+- Split project financial access from portfolio reporting access so project admins retain
+  their project financial tab while company-wide profit/WIP data requires reporting access.
+- Preserved settings-only Sales access after the Projects consolidation, hid project/work
+  tabs from Sales-only users, and made Work Orders hash navigation survive reloads.
+- Added tenant ownership validation for submittal assignees and relationship validation for
+  lien-waiver POs, payments, subcontractors, invoices, and projects. Draft waiver date edits
+  now use the same strict date and range checks as creation.
+- Replaced browser-local CSV encoders with one formula-injection-safe encoder across payroll,
+  worker/project reports, schedules, haul tickets, billing, and inventory exports. WIP export
+  now uses the authenticated API client and surfaces HTTP failures instead of downloading an
+  error response as a CSV.
+
+Verification: all 159 migrations passed static and replay/idempotency lint; 1,244
+server tests and 275 client tests passed; server/client ESLint and the production/PWA
+build passed. Server production dependencies audit clean. Client audit retains the two
+documented high React Router RSC/server-action findings; those modes are not used by
+this browser-only app, and the available forced downgrade is not a compatible fix.
+
+---
+
+## 2026-07-29 - Inventory, invoice, and offline integrity pass
+
+- Required inventory visibility on inventory reads and worker stock transactions, while
+  preserving cost visibility for inventory managers. Added company/item/location/project
+  validation across stock movements, bins, item UOMs, locations, and purchase orders;
+  issue transactions now validate and decrement the selected source bin.
+- Serialized PO numbering and receiving, added company-scoped PO-number uniqueness, and
+  made cycle-count submission one locked transaction so invalid/final submissions cannot
+  consume assignments or partially change count state.
+- Replaced the dashboard's independent payroll math with the canonical server pay-statement
+  engine for the displayed week, including approved entries, role/project rates, guarantees,
+  leave, premiums, and reimbursements. Free-plan period limits are enforced server-side.
+- Escaped invoice and inventory-label print content and restricted embedded signatures to
+  raster image data URLs.
+- Scoped IndexedDB caches and count queues by company/user, resumed queued counts on an
+  already-online mount, preserved submissions on auth/transient failures, and bound service
+  worker replay/clearing to the account that originally queued each request.
+- Added focused route and client regression coverage for the new permission, tenant,
+  transaction, canonical-pay, and offline-account boundaries.
+
+Verification: all 159 migrations passed static and replay/idempotency lint; 1,228
+server tests and 266 client tests passed; server/client ESLint and the production/PWA
+build passed. Server production dependencies audit clean. Client audit retains the two
+documented high React Router RSC/server-action findings; those modes are not used by
+this browser-only app, and the suggested forced downgrade reintroduces other advisories.
+
+---
+
 ## 2026-07-29 - Second-pass app and payroll repairs
 
 - Fixed the punch-list PATCH route's missing `project_id` binding and added route-level

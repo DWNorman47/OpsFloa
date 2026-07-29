@@ -13,6 +13,7 @@ import {
 import { silentError } from '../errorReporter';
 import { labelSg } from '../companyLabels';
 import { startOfWeek as computeStartOfWeek } from '../utils/weekBounds';
+import { downloadCsv } from '../utils/csv';
 // Local wrapper so existing call sites don't need a weekStart arg threaded
 // through; the setting is read per-render inside the component.
 function startOfWeekFor(date, ws) { return computeStartOfWeek(date, ws ?? 1); }
@@ -88,11 +89,7 @@ function exportCSV(shifts, days, workerLabel = 'Worker') {
     s.cant_make_it_note || '',
     s.recurrence_group_id || '',
   ]);
-  const csv = [header, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-  a.download = `schedule-${days[0].toLocaleDateString('en-CA')}.csv`;
-  a.click();
+  downloadCsv([header, ...rows], `schedule-${days[0].toLocaleDateString('en-CA')}.csv`);
 }
 
 function SummaryView({ shifts, days, workerLabel = 'Worker', locale = 'en-US' }) {

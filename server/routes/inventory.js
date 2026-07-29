@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const pool = require('../db');
 const logger = require('../logger');
-const { requireAuth, requirePerm } = require('../middleware/auth');
+const { requireAuth, requirePerm, hasPerm } = require('../middleware/auth');
 const { escapeHtml } = require('../utils/htmlEscape');
 const { formatCurrency, companyCurrency } = require('../currency');
 const { uploadBase64 } = require('../r2');
@@ -21,7 +21,7 @@ const TXN_COERCE = coerceBody({
 });
 
 // GET /api/inventory/units — active units for this company
-router.get('/units', requireAuth, async (req, res) => {
+router.get('/units', requireAuth, requireInventoryView, async (req, res) => {
   try {
     const all = await getAdvancedSettings(req.user.company_id);
     const cfg = all.item_units;
@@ -41,6 +41,96 @@ router.get('/units', requireAuth, async (req, res) => {
 
 function isAdmin(req) {
   return req.user.role === 'admin' || req.user.role === 'super_admin';
+}
+
+async function requireInventoryView(req, res, next) {
+  try {
+    const canManage = await hasPerm(req, 'manage_inventory');
+    const canView = canManage || await hasPerm(req, 'view_inventory');
+    if (!canView) return res.status(403).json({ error: 'Permission denied', code: 'missing_permission' });
+    req.canManageInventory = canManage;
+    next();
+  } catch (err) {
+    req.log?.error({ err }, 'inventory permission check failed');
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+async function validateProjectRef(client, companyId, projectId) {
+  if (!projectId) return true;
+  const result = await client.query(
+    'SELECT id FROM projects WHERE id=$1 AND company_id=$2',
+    [projectId, companyId]
+  );
+  return result.rowCount > 0;
+}
+
+async function validateBinRefs(client, companyId, locationId, bin = {}) {
+  const ids = {
+    area_id: bin.area_id ? parseInt(bin.area_id) : null,
+    rack_id: bin.rack_id ? parseInt(bin.rack_id) : null,
+    bay_id: bin.bay_id ? parseInt(bin.bay_id) : null,
+    compartment_id: bin.compartment_id ? parseInt(bin.compartment_id) : null,
+  };
+  if (Object.values(ids).some(v => v !== null && (!Number.isInteger(v) || v <= 0))) return false;
+
+  let areaId = ids.area_id;
+  let rackId = ids.rack_id;
+  let bayId = ids.bay_id;
+
+  if (ids.compartment_id) {
+    const r = await client.query(
+      `SELECT c.bay_id, b.rack_id, r.area_id, a.location_id
+         FROM inventory_compartments c
+         JOIN inventory_bays b ON b.id=c.bay_id
+         JOIN inventory_racks r ON r.id=b.rack_id
+         JOIN inventory_areas a ON a.id=r.area_id
+        WHERE c.id=$1 AND c.company_id=$2`,
+      [ids.compartment_id, companyId]
+    );
+    if (!r.rowCount || (locationId && Number(r.rows[0].location_id) !== Number(locationId))) return false;
+    if (bayId && Number(r.rows[0].bay_id) !== bayId) return false;
+    if (rackId && Number(r.rows[0].rack_id) !== rackId) return false;
+    if (areaId && Number(r.rows[0].area_id) !== areaId) return false;
+    bayId ||= Number(r.rows[0].bay_id);
+    rackId ||= Number(r.rows[0].rack_id);
+    areaId ||= Number(r.rows[0].area_id);
+  }
+  if (bayId) {
+    const r = await client.query(
+      `SELECT b.rack_id, r.area_id, a.location_id
+         FROM inventory_bays b
+         JOIN inventory_racks r ON r.id=b.rack_id
+         JOIN inventory_areas a ON a.id=r.area_id
+        WHERE b.id=$1 AND b.company_id=$2`,
+      [bayId, companyId]
+    );
+    if (!r.rowCount || (locationId && Number(r.rows[0].location_id) !== Number(locationId))) return false;
+    if (rackId && Number(r.rows[0].rack_id) !== rackId) return false;
+    if (areaId && Number(r.rows[0].area_id) !== areaId) return false;
+    rackId ||= Number(r.rows[0].rack_id);
+    areaId ||= Number(r.rows[0].area_id);
+  }
+  if (rackId) {
+    const r = await client.query(
+      `SELECT r.area_id, a.location_id
+         FROM inventory_racks r
+         JOIN inventory_areas a ON a.id=r.area_id
+        WHERE r.id=$1 AND r.company_id=$2`,
+      [rackId, companyId]
+    );
+    if (!r.rowCount || (locationId && Number(r.rows[0].location_id) !== Number(locationId))) return false;
+    if (areaId && Number(r.rows[0].area_id) !== areaId) return false;
+    areaId ||= Number(r.rows[0].area_id);
+  }
+  if (areaId) {
+    const r = await client.query(
+      'SELECT location_id FROM inventory_areas WHERE id=$1 AND company_id=$2',
+      [areaId, companyId]
+    );
+    if (!r.rowCount || (locationId && Number(r.rows[0].location_id) !== Number(locationId))) return false;
+  }
+  return true;
 }
 
 // Apply a signed quantity delta to inventory_stock atomically.
@@ -176,13 +266,13 @@ async function processPhotos(photos, companyId) {
 // GET /api/inventory/items
 // Paginated when ?limit=N&offset=M → returns { items, total }
 // Without limit → returns array (capped at 500, for dropdowns)
-router.get('/items', requireAuth, async (req, res) => {
+router.get('/items', requireAuth, requireInventoryView, async (req, res) => {
   const { search, name_search, sku_search, category, active = 'true', limit, offset, sort = 'name', dir = 'asc' } = req.query;
   const paginate = limit !== undefined;
   const pageLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 500);
   const pageOffset = Math.max(parseInt(offset) || 0, 0);
   const companyId = req.user.company_id;
-  const admin = isAdmin(req);
+  const admin = req.canManageInventory;
   try {
     const conditions = ['company_id = $1'];
     const values = [companyId];
@@ -391,7 +481,7 @@ router.delete('/items/:id', requireAuth, requirePerm('manage_inventory'), async 
 });
 
 // GET /api/inventory/items/categories  — distinct categories for filter dropdowns
-router.get('/items/categories', requireAuth, async (req, res) => {
+router.get('/items/categories', requireAuth, requireInventoryView, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT DISTINCT category FROM inventory_items WHERE company_id=$1 AND category IS NOT NULL ORDER BY category`,
@@ -425,7 +515,7 @@ router.get('/uom-conversions', requireAuth, requirePerm('manage_inventory'), asy
 });
 
 // GET /api/inventory/items/:id/uoms
-router.get('/items/:id/uoms', requireAuth, async (req, res) => {
+router.get('/items/:id/uoms', requireAuth, requireInventoryView, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const item = await pool.query('SELECT id FROM inventory_items WHERE id=$1 AND company_id=$2', [req.params.id, companyId]);
@@ -477,8 +567,8 @@ router.patch('/items/:id/uoms/:uomId', requireAuth, requirePerm('manage_inventor
   const { unit, unit_spec, factor, is_base, active } = req.body;
   try {
     const existing = await pool.query(
-      'SELECT u.id FROM inventory_item_uoms u JOIN inventory_items i ON u.item_id=i.id WHERE u.id=$1 AND i.company_id=$2',
-      [req.params.uomId, companyId]
+      'SELECT u.id FROM inventory_item_uoms u JOIN inventory_items i ON u.item_id=i.id WHERE u.id=$1 AND i.company_id=$2 AND u.item_id=$3',
+      [req.params.uomId, companyId, req.params.id]
     );
     if (existing.rowCount === 0) return res.status(404).json({ error: 'UOM not found' });
     const client = await pool.connect();
@@ -494,7 +584,7 @@ router.patch('/items/:id/uoms/:uomId', requireAuth, requirePerm('manage_inventor
       if (is_base  !== undefined) { sets.push(`is_base=$${idx++}`);   vals.push(!!is_base); }
       if (active   !== undefined) { sets.push(`active=$${idx++}`);    vals.push(!!active); }
       if (sets.length === 0) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'No fields to update' }); }
-      await client.query(`UPDATE inventory_item_uoms SET ${sets.join(',')} WHERE id=$1`, vals);
+      await client.query(`UPDATE inventory_item_uoms SET ${sets.join(',')} WHERE id=$1 AND item_id=$${idx}`, [...vals, req.params.id]);
       await client.query('COMMIT');
       const all = await pool.query('SELECT * FROM inventory_item_uoms WHERE item_id=$1 ORDER BY is_base DESC, factor', [req.params.id]);
       res.json(all.rows);
@@ -511,8 +601,8 @@ router.delete('/items/:id/uoms/:uomId', requireAuth, requirePerm('manage_invento
   const companyId = req.user.company_id;
   try {
     const existing = await pool.query(
-      'SELECT u.id FROM inventory_item_uoms u JOIN inventory_items i ON u.item_id=i.id WHERE u.id=$1 AND i.company_id=$2',
-      [req.params.uomId, companyId]
+      'SELECT u.id FROM inventory_item_uoms u JOIN inventory_items i ON u.item_id=i.id WHERE u.id=$1 AND i.company_id=$2 AND u.item_id=$3',
+      [req.params.uomId, companyId, req.params.id]
     );
     if (existing.rowCount === 0) return res.status(404).json({ error: 'UOM not found' });
     const inStock = await pool.query('SELECT 1 FROM inventory_stock WHERE uom_id=$1 LIMIT 1', [req.params.uomId]);
@@ -533,7 +623,7 @@ router.delete('/items/:id/uoms/:uomId', requireAuth, requirePerm('manage_invento
 // ── Locations ─────────────────────────────────────────────────────────────────
 
 // GET /api/inventory/locations
-router.get('/locations', requireAuth, async (req, res) => {
+router.get('/locations', requireAuth, requireInventoryView, async (req, res) => {
   const { active = 'true' } = req.query;
   const companyId = req.user.company_id;
   try {
@@ -563,6 +653,9 @@ router.post('/locations', requireAuth, requirePerm('manage_inventory'), async (r
   if (address && address.trim().length > 500) return res.status(400).json({ error: 'address too long (max 500 characters)' });
   const companyId = req.user.company_id;
   try {
+    if (!await validateProjectRef(pool, companyId, project_id)) {
+      return res.status(400).json({ error: 'project_id not found for this company' });
+    }
     const result = await pool.query(
       `INSERT INTO inventory_locations (company_id, name, type, project_id, notes, address)
        VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
@@ -579,6 +672,9 @@ router.patch('/locations/:id', requireAuth, requirePerm('manage_inventory'), asy
   try {
     const existing = await pool.query('SELECT id FROM inventory_locations WHERE id=$1 AND company_id=$2', [req.params.id, companyId]);
     if (existing.rowCount === 0) return res.status(404).json({ error: 'Location not found' });
+    if (project_id !== undefined && !await validateProjectRef(pool, companyId, project_id)) {
+      return res.status(400).json({ error: 'project_id not found for this company' });
+    }
     if (name !== undefined && name.trim().length > 255) return res.status(400).json({ error: 'name too long (max 255 characters)' });
     if (notes !== undefined && notes && notes.trim().length > 1000) return res.status(400).json({ error: 'notes too long (max 1000 characters)' });
     if (address !== undefined && address && address.trim().length > 500) return res.status(400).json({ error: 'address too long (max 500 characters)' });
@@ -628,14 +724,14 @@ router.delete('/locations/:id', requireAuth, requirePerm('manage_inventory'), as
 // ── Stock ─────────────────────────────────────────────────────────────────────
 
 // GET /api/inventory/stock
-router.get('/stock', requireAuth, async (req, res) => {
+router.get('/stock', requireAuth, requireInventoryView, async (req, res) => {
   const {
     location_id, item_id, search, item_search, sku_search,
     area_search, rack_search, bay_search, compartment_search, bin_search,
     category, status, sort = 'location', dir = 'asc', limit = 500, offset = 0
   } = req.query;
   const companyId = req.user.company_id;
-  const admin = isAdmin(req);
+  const admin = req.canManageInventory;
   try {
     const conditions = ['s.company_id = $1'];
     const values = [companyId]; let idx = 2;
@@ -761,13 +857,13 @@ router.get('/stock/low', requireAuth, requirePerm('manage_inventory'), async (re
 // ── Transactions ──────────────────────────────────────────────────────────────
 
 // POST /api/inventory/transactions
-router.post('/transactions', requireAuth, TXN_COERCE, async (req, res) => {
+router.post('/transactions', requireAuth, requireInventoryView, TXN_COERCE, async (req, res) => {
   const { type, item_id, quantity, from_location_id, to_location_id, project_id, notes, reference_no, unit_cost,
           area_id, rack_id, bay_id, compartment_id,
           uom_id, to_uom_id, to_quantity,
           supplier_id, lot_number } = req.body;
   const companyId = req.user.company_id;
-  const admin = isAdmin(req);
+  const admin = req.canManageInventory;
 
   if (!type) return res.status(400).json({ error: 'type required' });
   if (!['receive','issue','transfer','adjust','convert'].includes(type)) return res.status(400).json({ error: 'Invalid type' });
@@ -817,6 +913,15 @@ router.post('/transactions', requireAuth, TXN_COERCE, async (req, res) => {
       const loc = await client.query('SELECT id FROM inventory_locations WHERE id=$1 AND company_id=$2', [to_location_id, companyId]);
       if (loc.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'to_location not found' }); }
     }
+    if (!await validateProjectRef(client, companyId, project_id)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'project_id not found for this company' });
+    }
+    const binLocationId = ['issue', 'convert'].includes(type) ? from_location_id : to_location_id;
+    if (!await validateBinRefs(client, companyId, binLocationId, { area_id, rack_id, bay_id, compartment_id })) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Inventory bin does not belong to the selected location/company' });
+    }
 
     const absQty = Math.abs(qty);
     const snapshotCost = unit_cost != null ? parseFloat(unit_cost) : item.rows[0].unit_cost;
@@ -854,7 +959,8 @@ router.post('/transactions', requireAuth, TXN_COERCE, async (req, res) => {
        resolvedUomId, resolvedToUomId, toQty, resolvedSupplierId, lot_number?.trim() || null]
     );
 
-    // Update stock — bin FK IDs apply to the destination slot
+    // Update stock — bin IDs identify the affected slot (source for issue,
+    // destination for receive/transfer/adjust/convert).
     const bin = { area_id, rack_id, bay_id, compartment_id };
     if (type === 'receive') {
       await applyStockDelta(client, companyId, item_id, to_location_id, absQty, bin, resolvedUomId);
@@ -864,7 +970,7 @@ router.post('/transactions', requireAuth, TXN_COERCE, async (req, res) => {
       const { uomId: issueUomId, qty: issueQty } = await autoConvertIssueUom(
         client, companyId, item_id, from_location_id, resolvedUomId, absQty
       );
-      await applyStockDelta(client, companyId, item_id, from_location_id, -issueQty, {}, issueUomId);
+      await applyStockDelta(client, companyId, item_id, from_location_id, -issueQty, bin, issueUomId);
     }
     if (type === 'transfer') {
       // from_location is optional — skipping the debit when unknown lets users
@@ -911,14 +1017,14 @@ router.post('/transactions', requireAuth, TXN_COERCE, async (req, res) => {
 });
 
 // GET /api/inventory/transactions
-router.get('/transactions', requireAuth, async (req, res) => {
+router.get('/transactions', requireAuth, requireInventoryView, async (req, res) => {
   const {
     item_id, location_id, from_location_id, to_location_id, type, project_id, from, to,
     supplier_id, lot_number, search, item_search, by_search, notes_search,
     sort = 'date', dir = 'desc', limit = 50, offset = 0,
   } = req.query;
   const companyId = req.user.company_id;
-  const admin = isAdmin(req);
+  const admin = req.canManageInventory;
   try {
     const conditions = ['t.company_id = $1'];
     const values = [companyId]; let idx = 2;
@@ -1165,7 +1271,7 @@ router.post('/cycle-counts', requireAuth, requirePerm('manage_inventory'), async
 });
 
 // GET /api/inventory/cycle-counts/my-assignments — worker's pending assignments across all active counts
-router.get('/cycle-counts/my-assignments', requireAuth, async (req, res) => {
+router.get('/cycle-counts/my-assignments', requireAuth, requireInventoryView, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const result = await pool.query(
@@ -1668,7 +1774,7 @@ router.patch('/cycle-counts/:id/workers/:userId/lines', requireAuth, requirePerm
 
 // POST /api/inventory/cycle-counts/:id/submit — worker submits a count, audit, or reconcile
 // Body: { line_id, role, counted_qty, counted_uom_id, notes }
-router.post('/cycle-counts/:id/submit', requireAuth, async (req, res) => {
+router.post('/cycle-counts/:id/submit', requireAuth, requireInventoryView, async (req, res) => {
   const companyId = req.user.company_id;
   const { line_id, role, counted_qty, counted_uom_id, notes } = req.body;
   const VALID_ROLES = ['counter', 'auditor', 'reconciler'];
@@ -1679,18 +1785,78 @@ router.post('/cycle-counts/:id/submit', requireAuth, async (req, res) => {
   if (isNaN(qty) || qty < 0) return res.status(400).json({ error: 'counted_qty must be a non-negative number' });
   const notesTrimmed = notes?.trim()?.slice(0, 500) || null;
   const resolvedCountedUomId = counted_uom_id != null ? parseInt(counted_uom_id) : null;
+  if (resolvedCountedUomId != null && (!Number.isInteger(resolvedCountedUomId) || resolvedCountedUomId <= 0)) {
+    return res.status(400).json({ error: 'counted_uom_id must be a valid integer' });
+  }
 
+  const client = await pool.connect();
+  let committed = false;
   try {
+    await client.query('BEGIN');
     // Verify count belongs to company and is active
-    const cc = await pool.query(
-      'SELECT * FROM inventory_cycle_counts WHERE id=$1 AND company_id=$2',
+    const cc = await client.query(
+      'SELECT * FROM inventory_cycle_counts WHERE id=$1 AND company_id=$2 FOR UPDATE',
       [req.params.id, companyId]
     );
-    if (cc.rowCount === 0) return res.status(404).json({ error: 'Cycle count not found' });
-    if (cc.rows[0].status !== 'in_progress') return res.status(409).json({ error: 'Count is not in progress' });
+    if (cc.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Cycle count not found' });
+    }
+    if (cc.rows[0].status !== 'in_progress') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Count is not in progress' });
+    }
+
+    const lineRow = await client.query(
+      `SELECT l.*, i.name as item_name
+       FROM inventory_cycle_count_lines l
+       JOIN inventory_items i ON l.item_id = i.id
+       WHERE l.id=$1 AND l.cycle_count_id=$2 AND i.company_id=$3
+       FOR UPDATE OF l`,
+      [lineId, req.params.id, companyId]
+    );
+    if (lineRow.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Line not found' });
+    }
+    const line = lineRow.rows[0];
+    const SUBMIT_FINAL = ['accepted', 'reconciled', 'overridden', 'audited'];
+    if (SUBMIT_FINAL.includes(line.line_status)) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Line is already in a final state and cannot be re-submitted' });
+    }
+
+    let countedFactor = 1;
+    if (resolvedCountedUomId != null) {
+      const countedUom = await client.query(
+        `SELECT factor FROM inventory_item_uoms
+         WHERE id=$1 AND item_id=$2 AND company_id=$3`,
+        [resolvedCountedUomId, line.item_id, companyId]
+      );
+      if (countedUom.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Counted UOM does not belong to this item' });
+      }
+      countedFactor = parseFloat(countedUom.rows[0].factor);
+    }
+
+    let stockFactor = 1;
+    if (line.stock_uom_id != null) {
+      const stockUom = await client.query(
+        `SELECT factor FROM inventory_item_uoms
+         WHERE id=$1 AND item_id=$2 AND company_id=$3`,
+        [line.stock_uom_id, line.item_id, companyId]
+      );
+      if (stockUom.rowCount === 0) throw new Error('Cycle count line has an invalid stock UOM');
+      stockFactor = parseFloat(stockUom.rows[0].factor);
+    }
+    if (!Number.isFinite(countedFactor) || !Number.isFinite(stockFactor) || stockFactor === 0) {
+      throw new Error('Cycle count line has an invalid UOM conversion factor');
+    }
+    const variance = qty * (countedFactor / stockFactor) - parseFloat(line.expected_qty);
 
     // Atomically claim the assignment — prevents duplicate submissions from concurrent requests
-    const assignment = await pool.query(
+    const assignment = await client.query(
       `UPDATE inventory_count_assignments
        SET status='submitted', counted_qty=$1, counted_uom_id=$2, notes=$3, submitted_at=NOW()
        WHERE line_id=$4 AND cycle_count_id=$5 AND user_id=$6 AND role=$7 AND status='pending'
@@ -1699,60 +1865,28 @@ router.post('/cycle-counts/:id/submit', requireAuth, async (req, res) => {
     );
     if (assignment.rowCount === 0) {
       // Distinguish "no assignment" from "already submitted"
-      const exists = await pool.query(
+      const exists = await client.query(
         `SELECT status FROM inventory_count_assignments
          WHERE line_id=$1 AND cycle_count_id=$2 AND user_id=$3 AND role=$4`,
         [lineId, req.params.id, req.user.id, role]
       );
+      await client.query('ROLLBACK');
       if (exists.rowCount === 0) return res.status(403).json({ error: 'No assignment found for this line/role' });
       return res.status(409).json({ error: 'Already submitted' });
     }
 
-    // Fetch line for UOM variance computation
-    const lineRow = await pool.query(
-      `SELECT l.*, i.name as item_name
-       FROM inventory_cycle_count_lines l
-       JOIN inventory_items i ON l.item_id = i.id
-       WHERE l.id=$1 AND l.cycle_count_id=$2`,
-      [lineId, req.params.id]
-    );
-    if (lineRow.rowCount === 0) return res.status(404).json({ error: 'Line not found' });
-    const line = lineRow.rows[0];
-
-    // Reject if line is already in a final state (e.g. admin override) to prevent overwriting it
-    const SUBMIT_FINAL = ['accepted', 'reconciled', 'overridden', 'audited'];
-    if (SUBMIT_FINAL.includes(line.line_status)) {
-      return res.status(409).json({ error: 'Line is already in a final state and cannot be re-submitted' });
-    }
-
-    // Compute variance in stock UOM units
-    let variance = qty - parseFloat(line.expected_qty);
-    if (resolvedCountedUomId && resolvedCountedUomId !== line.stock_uom_id) {
-      const uomRow = await pool.query(
-        `SELECT cu.factor as counted_factor, su.factor as stock_factor
-         FROM inventory_item_uoms cu, inventory_item_uoms su
-         WHERE cu.id=$1 AND su.id=$2`,
-        [resolvedCountedUomId, line.stock_uom_id]
-      );
-      if (uomRow.rowCount > 0) {
-        const { counted_factor, stock_factor } = uomRow.rows[0];
-        const qtyInStockUom = qty * (parseFloat(counted_factor) / parseFloat(stock_factor));
-        variance = qtyInStockUom - parseFloat(line.expected_qty);
-      }
-    }
-
     // Update line counted values and status
     let newLineStatus = line.line_status;
-    const settingsRows = await pool.query('SELECT key, value FROM settings WHERE company_id=$1', [companyId]);
+    const settingsRows = await client.query('SELECT key, value FROM settings WHERE company_id=$1', [companyId]);
     const settings = applySettingsRows(settingsRows.rows, ADMIN_SETTINGS_DEFAULTS);
 
     if (role === 'counter') {
       // Update the line's counted values
-      await pool.query(
+      await client.query(
         `UPDATE inventory_cycle_count_lines
          SET counted_qty=$1, counted_uom_id=$2, counted_by=$3, counted_at=NOW(), variance=$4
-         WHERE id=$5`,
-        [qty, resolvedCountedUomId, req.user.id, variance, lineId]
+         WHERE id=$5 AND cycle_count_id=$6`,
+        [qty, resolvedCountedUomId, req.user.id, variance, lineId, req.params.id]
       );
 
       // Decide: sample for audit?
@@ -1761,7 +1895,7 @@ router.post('/cycle-counts/:id/submit', requireAuth, async (req, res) => {
 
       if (shouldAudit) {
         // Find an auditor for this count who is not the counter (prefer different location)
-        const auditors = await pool.query(
+        const auditors = await client.query(
           `SELECT user_id FROM inventory_count_workers
            WHERE cycle_count_id=$1 AND 'auditor' = ANY(roles) AND user_id != $2
            ORDER BY RANDOM() LIMIT 1`,
@@ -1769,7 +1903,7 @@ router.post('/cycle-counts/:id/submit', requireAuth, async (req, res) => {
         );
         if (auditors.rowCount > 0) {
           const auditorId = auditors.rows[0].user_id;
-          await pool.query(
+          await client.query(
             `INSERT INTO inventory_count_assignments (line_id, cycle_count_id, user_id, role)
              VALUES ($1,$2,$3,'auditor')
              ON CONFLICT (line_id, role) DO UPDATE SET user_id=$3, status='pending', submitted_at=NULL`,
@@ -1801,12 +1935,12 @@ router.post('/cycle-counts/:id/submit', requireAuth, async (req, res) => {
 
       if (exceeds) {
         // Find a reconciler who is not the counter or auditor of this line
-        const counterAssignment = await pool.query(
+        const counterAssignment = await client.query(
           `SELECT user_id FROM inventory_count_assignments WHERE line_id=$1 AND role='counter'`,
           [lineId]
         );
         const counterUserId = counterAssignment.rows[0]?.user_id;
-        const reconcilers = await pool.query(
+        const reconcilers = await client.query(
           `SELECT user_id FROM inventory_count_workers
            WHERE cycle_count_id=$1 AND 'reconciler' = ANY(roles)
              AND user_id != $2 AND user_id != $3
@@ -1814,7 +1948,7 @@ router.post('/cycle-counts/:id/submit', requireAuth, async (req, res) => {
           [req.params.id, req.user.id, counterUserId || 0]
         );
         if (reconcilers.rowCount > 0) {
-          await pool.query(
+          await client.query(
             `INSERT INTO inventory_count_assignments (line_id, cycle_count_id, user_id, role)
              VALUES ($1,$2,$3,'reconciler')
              ON CONFLICT (line_id, role) DO UPDATE SET user_id=$3, status='pending', submitted_at=NULL`,
@@ -1830,33 +1964,52 @@ router.post('/cycle-counts/:id/submit', requireAuth, async (req, res) => {
 
     } else if (role === 'reconciler') {
       // Update variance with reconciler's count
-      await pool.query(
+      await client.query(
         `UPDATE inventory_cycle_count_lines
          SET counted_qty=$1, counted_uom_id=$2, variance=$3
-         WHERE id=$4`,
-        [qty, resolvedCountedUomId, variance, lineId]
+         WHERE id=$4 AND cycle_count_id=$5`,
+        [qty, resolvedCountedUomId, variance, lineId, req.params.id]
       );
       newLineStatus = 'reconciled';
     }
 
-    await pool.query(
-      `UPDATE inventory_cycle_count_lines SET line_status=$1 WHERE id=$2`,
-      [newLineStatus, lineId]
+    await client.query(
+      `UPDATE inventory_cycle_count_lines SET line_status=$1 WHERE id=$2 AND cycle_count_id=$3`,
+      [newLineStatus, lineId, req.params.id]
     );
+    await client.query('COMMIT');
+    committed = true;
 
     // Check for auto-complete
     let autoCompleted = false;
     if (['accepted', 'reconciled', 'overridden', 'audited'].includes(newLineStatus)) {
-      autoCompleted = await checkAutoComplete(companyId, parseInt(req.params.id), req.user.id);
+      try {
+        autoCompleted = await checkAutoComplete(companyId, parseInt(req.params.id), req.user.id);
+      } catch (autoCompleteError) {
+        req.log.error({ err: autoCompleteError }, 'cycle count auto-complete failed after submission');
+      }
     }
 
     const updatedLine = await pool.query(
       `SELECT l.*, i.name as item_name FROM inventory_cycle_count_lines l
-       JOIN inventory_items i ON l.item_id = i.id WHERE l.id=$1`,
-      [lineId]
+       JOIN inventory_items i ON l.item_id = i.id
+       WHERE l.id=$1 AND l.cycle_count_id=$2 AND i.company_id=$3`,
+      [lineId, req.params.id, companyId]
     );
     res.json({ line: updatedLine.rows[0], auto_completed: autoCompleted });
-  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+  } catch (err) {
+    if (!committed) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackErr) {
+        req.log.error({ err: rollbackErr }, 'cycle count submission rollback failed');
+      }
+    }
+    req.log.error({ err }, 'route error');
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
+  }
 });
 
 // POST /api/inventory/cycle-counts/:id/lines/:lineId/override — admin override a line's final value
@@ -1866,6 +2019,12 @@ router.post('/cycle-counts/:id/lines/:lineId/override', requireAuth, requirePerm
   const qty = parseFloat(counted_qty);
   if (isNaN(qty) || qty < 0) return res.status(400).json({ error: 'counted_qty must be a non-negative number' });
   const notesTrimmed = notes?.trim()?.slice(0, 500) || null;
+  if (counted_uom_id != null) {
+    const parsedUomId = parseInt(counted_uom_id);
+    if (!Number.isInteger(parsedUomId) || parsedUomId <= 0) {
+      return res.status(400).json({ error: 'counted_uom_id must be a valid integer' });
+    }
+  }
   try {
     const cc = await pool.query(
       'SELECT * FROM inventory_cycle_counts WHERE id=$1 AND company_id=$2',
@@ -1882,17 +2041,32 @@ router.post('/cycle-counts/:id/lines/:lineId/override', requireAuth, requirePerm
     const line = lineRow.rows[0];
 
     const resolvedUomId = counted_uom_id != null ? parseInt(counted_uom_id) : line.stock_uom_id;
-    let variance = qty - parseFloat(line.expected_qty);
-    if (resolvedUomId && resolvedUomId !== line.stock_uom_id) {
-      const uomRow = await pool.query(
-        `SELECT cu.factor as cf, su.factor as sf FROM inventory_item_uoms cu, inventory_item_uoms su
-         WHERE cu.id=$1 AND su.id=$2`,
-        [resolvedUomId, line.stock_uom_id]
+    let countedFactor = 1;
+    if (resolvedUomId != null) {
+      const countedUom = await pool.query(
+        `SELECT factor FROM inventory_item_uoms
+         WHERE id=$1 AND item_id=$2 AND company_id=$3`,
+        [resolvedUomId, line.item_id, companyId]
       );
-      if (uomRow.rowCount > 0) {
-        variance = qty * (parseFloat(uomRow.rows[0].cf) / parseFloat(uomRow.rows[0].sf)) - parseFloat(line.expected_qty);
+      if (countedUom.rowCount === 0) {
+        return res.status(400).json({ error: 'Counted UOM does not belong to this item' });
       }
+      countedFactor = parseFloat(countedUom.rows[0].factor);
     }
+    let stockFactor = 1;
+    if (line.stock_uom_id != null) {
+      const stockUom = await pool.query(
+        `SELECT factor FROM inventory_item_uoms
+         WHERE id=$1 AND item_id=$2 AND company_id=$3`,
+        [line.stock_uom_id, line.item_id, companyId]
+      );
+      if (stockUom.rowCount === 0) throw new Error('Cycle count line has an invalid stock UOM');
+      stockFactor = parseFloat(stockUom.rows[0].factor);
+    }
+    if (!Number.isFinite(countedFactor) || !Number.isFinite(stockFactor) || stockFactor === 0) {
+      throw new Error('Cycle count line has an invalid UOM conversion factor');
+    }
+    const variance = qty * (countedFactor / stockFactor) - parseFloat(line.expected_qty);
 
     await pool.query(
       `UPDATE inventory_cycle_count_lines
@@ -2153,11 +2327,21 @@ router.delete('/suppliers/:id', requireAuth, requirePerm('manage_inventory'), as
 // Generate next PO number for a company: PO-YYYY-NNNN
 async function nextPONumber(client, companyId) {
   const year = new Date().getFullYear();
-  const res = await client.query(
-    `SELECT COUNT(*) FROM purchase_orders WHERE company_id=$1 AND po_number LIKE $2`,
-    [companyId, `PO-${year}-%`]
+  await client.query(
+    'SELECT pg_advisory_xact_lock(hashtext($1))',
+    [`inventory_po_number:${companyId}:${year}`]
   );
-  const seq = parseInt(res.rows[0].count) + 1;
+  const res = await client.query(
+    `SELECT COALESCE(MAX(
+       CASE WHEN po_number ~ $2
+            THEN SUBSTRING(po_number FROM '[0-9]+$')::int
+            ELSE 0 END
+     ), 0) AS last_number
+       FROM purchase_orders
+      WHERE company_id=$1`,
+    [companyId, `^PO-${year}-[0-9]+$`]
+  );
+  const seq = parseInt(res.rows[0].last_number, 10) + 1;
   return `PO-${year}-${String(seq).padStart(4, '0')}`;
 }
 
@@ -2231,6 +2415,20 @@ router.post('/purchase-orders', requireAuth, requirePerm('manage_inventory'), as
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    if (supplier_id) {
+      const supplier = await client.query(
+        'SELECT id FROM inventory_suppliers WHERE id=$1 AND company_id=$2',
+        [supplier_id, companyId]
+      );
+      if (!supplier.rowCount) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Supplier not found' }); }
+    }
+    if (to_location_id) {
+      const location = await client.query(
+        'SELECT id FROM inventory_locations WHERE id=$1 AND company_id=$2',
+        [to_location_id, companyId]
+      );
+      if (!location.rowCount) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Location not found' }); }
+    }
     const poNumber = await nextPONumber(client, companyId);
     const poResult = await client.query(
       `INSERT INTO purchase_orders
@@ -2253,6 +2451,13 @@ router.post('/purchase-orders', requireAuth, requirePerm('manage_inventory'), as
         [parseInt(line.item_id), companyId]
       );
       if (itemCheck.rowCount === 0) continue;
+      if (line.uom_id) {
+        const uomCheck = await client.query(
+          'SELECT id FROM inventory_item_uoms WHERE id=$1 AND item_id=$2 AND company_id=$3',
+          [parseInt(line.uom_id), parseInt(line.item_id), companyId]
+        );
+        if (!uomCheck.rowCount) continue;
+      }
       await client.query(
         `INSERT INTO purchase_order_lines (po_id, item_id, qty_ordered, unit_cost, uom_id, notes)
          VALUES ($1,$2,$3,$4,$5,$6)`,
@@ -2311,6 +2516,20 @@ router.patch('/purchase-orders/:id', requireAuth, requirePerm('manage_inventory'
       [req.params.id, companyId]
     );
     if (existing.rowCount === 0) return res.status(404).json({ error: 'PO not found' });
+    if (supplier_id) {
+      const supplier = await pool.query(
+        'SELECT id FROM inventory_suppliers WHERE id=$1 AND company_id=$2',
+        [supplier_id, companyId]
+      );
+      if (!supplier.rowCount) return res.status(400).json({ error: 'Supplier not found' });
+    }
+    if (to_location_id) {
+      const location = await pool.query(
+        'SELECT id FROM inventory_locations WHERE id=$1 AND company_id=$2',
+        [to_location_id, companyId]
+      );
+      if (!location.rowCount) return res.status(400).json({ error: 'Location not found' });
+    }
     const cur = existing.rows[0];
     if (['received', 'cancelled'].includes(cur.status) && status === undefined) {
       return res.status(400).json({ error: `Cannot edit a ${cur.status} PO` });
@@ -2381,6 +2600,13 @@ router.post('/purchase-orders/:id/lines', requireAuth, requirePerm('manage_inven
     if (po.rows[0].status !== 'draft') return res.status(409).json({ error: 'Can only add lines to a draft PO' });
     const item = await pool.query('SELECT id FROM inventory_items WHERE id=$1 AND company_id=$2', [item_id, companyId]);
     if (item.rowCount === 0) return res.status(404).json({ error: 'Item not found' });
+    if (uom_id) {
+      const uom = await pool.query(
+        'SELECT id FROM inventory_item_uoms WHERE id=$1 AND item_id=$2 AND company_id=$3',
+        [uom_id, item_id, companyId]
+      );
+      if (!uom.rowCount) return res.status(400).json({ error: 'UOM does not belong to this item/company' });
+    }
     await pool.query(
       `INSERT INTO purchase_order_lines (po_id, item_id, qty_ordered, unit_cost, uom_id, notes)
        VALUES ($1,$2,$3,$4,$5,$6)`,
@@ -2415,6 +2641,16 @@ router.patch('/purchase-orders/:id/lines/:lineId', requireAuth, requirePerm('man
     }
     if (unit_cost !== undefined && unit_cost !== null) {
       if (isNaN(parseFloat(unit_cost))) return res.status(400).json({ error: 'unit_cost must be a number' });
+    }
+    if (uom_id) {
+      const uom = await pool.query(
+        `SELECT u.id
+           FROM purchase_order_lines pol
+           JOIN inventory_item_uoms u ON u.id=$1 AND u.item_id=pol.item_id AND u.company_id=$2
+          WHERE pol.id=$3 AND pol.po_id=$4`,
+        [uom_id, companyId, req.params.lineId, req.params.id]
+      );
+      if (!uom.rowCount) return res.status(400).json({ error: 'UOM does not belong to this PO line item/company' });
     }
     const sets = [], vals = [req.params.lineId]; let idx = 2;
     if (qty_ordered !== undefined) { sets.push(`qty_ordered=$${idx++}`); vals.push(parseFloat(qty_ordered)); }
@@ -2472,7 +2708,7 @@ router.post('/purchase-orders/:id/receive', requireAuth, requirePerm('manage_inv
   try {
     await client.query('BEGIN');
     const po = await client.query(
-      'SELECT id, status, company_id FROM purchase_orders WHERE id=$1 AND company_id=$2',
+      'SELECT id, status, company_id FROM purchase_orders WHERE id=$1 AND company_id=$2 FOR UPDATE',
       [req.params.id, companyId]
     );
     if (po.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'PO not found' }); }
@@ -2491,8 +2727,9 @@ router.post('/purchase-orders/:id/receive', requireAuth, requirePerm('manage_inv
         `SELECT pol.*, ii.unit_cost AS catalog_cost
          FROM purchase_order_lines pol
          JOIN inventory_items ii ON pol.item_id = ii.id
-         WHERE pol.id=$1 AND pol.po_id=$2`,
-        [entry.line_id, req.params.id]
+         WHERE pol.id=$1 AND pol.po_id=$2 AND ii.company_id=$3
+         FOR UPDATE OF pol`,
+        [entry.line_id, req.params.id, companyId]
       );
       if (lineResult.rowCount === 0) continue;
       const line = lineResult.rows[0];
@@ -2513,8 +2750,8 @@ router.post('/purchase-orders/:id/receive', requireAuth, requirePerm('manage_inv
       await applyStockDelta(client, companyId, line.item_id, location_id, actualQty, {}, line.uom_id || null);
       // Update line qty_received
       await client.query(
-        'UPDATE purchase_order_lines SET qty_received = qty_received + $1 WHERE id=$2',
-        [actualQty, entry.line_id]
+        'UPDATE purchase_order_lines SET qty_received = qty_received + $1 WHERE id=$2 AND po_id=$3',
+        [actualQty, entry.line_id, req.params.id]
       );
       receivedItemIds.add(line.item_id);
     }
@@ -2540,8 +2777,8 @@ router.post('/purchase-orders/:id/receive', requireAuth, requirePerm('manage_inv
        FROM purchase_orders po
        LEFT JOIN inventory_suppliers sup ON po.supplier_id = sup.id
        LEFT JOIN inventory_locations loc ON po.to_location_id = loc.id
-       WHERE po.id=$1`,
-      [req.params.id]
+       WHERE po.id=$1 AND po.company_id=$2`,
+      [req.params.id, companyId]
     );
     const updatedLines = await pool.query(
       `SELECT pol.*, i.name AS item_name, i.sku, i.unit

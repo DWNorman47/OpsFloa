@@ -78,19 +78,6 @@ export default function MyCount() {
     if (mounted.current) setPendingCount(syncs.length);
   }, []);
 
-  useEffect(() => {
-    load();
-    loadPendingCount();
-    const handleOnline  = () => { setOffline(false); drainQueue(); };
-    const handleOffline = () => setOffline(true);
-    window.addEventListener('online',  handleOnline);
-    window.addEventListener('offline', handleOffline);
-    return () => {
-      window.removeEventListener('online',  handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, [load, loadPendingCount]);
-
   // Drain the offline sync queue when we come back online.
   // Uses a ref guard so the online event handler (captured at mount) always sees the current lock.
   const drainQueue = useCallback(async () => {
@@ -111,12 +98,12 @@ export default function MyCount() {
           await removePendingSync(sync.id);
         } catch (e) {
           const status = e.response?.status;
-          if (status && status >= 400 && status < 500) {
-            // 4xx = permanent client error (already submitted, no assignment, etc.)
+          if ([400, 404, 409, 422].includes(status)) {
+            // Validation/not-found/conflict errors are permanent for this queued item.
             // Remove from queue so it doesn't block subsequent items on every reconnect
             await removePendingSync(sync.id);
           } else {
-            // Network error or 5xx — stop and retry next time
+            // Network, auth/permission, rate-limit, or 5xx error — preserve the item.
             break;
           }
         }
@@ -130,6 +117,23 @@ export default function MyCount() {
       }
     }
   }, [load, loadPendingCount]);
+
+  useEffect(() => {
+    load();
+    loadPendingCount();
+    if (navigator.onLine) drainQueue();
+    const handleOnline = () => {
+      setOffline(false);
+      drainQueue();
+    };
+    const handleOffline = () => setOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [drainQueue, load, loadPendingCount]);
 
   const getState = (assignmentId) => submitStates[assignmentId] || { qty: '', notes: '', submitting: false, submitted: false, error: '' };
   const setState = (assignmentId, patch) => setSubmitStates(prev => ({

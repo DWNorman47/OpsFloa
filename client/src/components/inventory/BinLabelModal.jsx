@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { useT } from '../../hooks/useT';
 import { useModalA11y } from '../../hooks/useModalA11y';
+import { escapeHtml } from '../../utils/html';
 
 // QR payload format: {"app":"opsfloa","bin":"area","id":42,"name":"Zone A"}
 // Scanned by the Count tab to auto-set the active bin context.
@@ -41,12 +42,14 @@ export default function BinLabelModal({ item, binType, onClose }) {
 
   const printLabel = () => {
     if (!qrDataUrl) return;
+    const safe = escapeHtml;
     const parentLine = item.parent_name
-      ? `<div style="font-size:13px;color:#6b7280;margin-bottom:4px;">${item.parent_name}</div>`
+      ? `<div style="font-size:13px;color:#6b7280;margin-bottom:4px;">${safe(item.parent_name)}</div>`
       : '';
     const win = window.open('', '_blank', 'width=380,height=480');
+    if (!win) return;
     win.document.write(`<!DOCTYPE html><html><head>
-      <title>${typeName}: ${item.name}</title>
+      <title>${safe(typeName)}: ${safe(item.name)}</title>
       <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: system-ui, sans-serif; display: flex; align-items: center;
@@ -65,11 +68,11 @@ export default function BinLabelModal({ item, binType, onClose }) {
       </style>
     </head><body>
       <div class="label">
-        <div class="type">${typeName}</div>
-        <div class="name">${item.name}</div>
+        <div class="type">${safe(typeName)}</div>
+        <div class="name">${safe(item.name)}</div>
         ${parentLine}
-        <img class="qr" src="${qrDataUrl}" alt="QR Code" />
-        <div class="footer">OpsFloa ${t.invblInventory} · ID ${item.id}</div>
+        <img class="qr" src="${safe(qrDataUrl)}" alt="QR Code" />
+        <div class="footer">OpsFloa ${safe(t.invblInventory)} · ID ${safe(item.id)}</div>
       </div>
       <script>window.onload = () => { window.print(); }<\/script>
     </body></html>`);

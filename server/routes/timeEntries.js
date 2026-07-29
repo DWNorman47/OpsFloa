@@ -311,9 +311,66 @@ const { loadSettings } = require('../utils/paidHours');
 const { workerPeriodStatements, workerStatement } = require('../utils/payStatement');
 const { normalizePaycheckRules } = require('../constants/paycheckRuleEnums');
 const { resolveRuleset, deductionsForRole, applyGroupDeductions, groupOpts } = require('../utils/paycheckRun');
-const { generatePeriods, groupPeriods } = require('../utils/payPeriods');
+const { generatePeriods, groupPeriods, isValidIsoDate, dateRangeDays } = require('../utils/payPeriods');
 const { parseCompanyDeductions, normalizeWorkerDeductions } = require('../utils/deductions');
 const { weekRange } = require('../utils/weekBounds');
+
+// GET /time-entries/invoice-statement — canonical worker pay statement for one bounded period
+router.get('/invoice-statement', requireAuth, async (req, res) => {
+  const { from, to } = req.query;
+  if (!isValidIsoDate(from) || !isValidIsoDate(to)) {
+    return res.status(400).json({ error: 'from and to must be valid YYYY-MM-DD dates' });
+  }
+  const days = dateRangeDays(from, to);
+  if (days == null || days > 31) {
+    return res.status(400).json({ error: 'Invoice period must be between 1 and 31 days' });
+  }
+
+  const companyId = req.user.company_id;
+  try {
+    const [workerRow, settings, companyRow] = await Promise.all([
+      pool.query(
+        `SELECT id, full_name, email, invoice_name, hourly_rate, rate_type,
+                overtime_rule, role_id, guaranteed_weekly_hours
+         FROM users
+         WHERE id=$1 AND company_id=$2`,
+        [req.user.id, companyId]
+      ),
+      loadSettings(companyId),
+      pool.query(
+        'SELECT plan, subscription_status, trial_ends_at FROM companies WHERE id=$1',
+        [companyId]
+      ),
+    ]);
+    if (workerRow.rowCount === 0) return res.status(404).json({ error: 'Worker not found' });
+
+    const company = companyRow.rows[0] || {};
+    const trialActive = company.subscription_status === 'trial'
+      && (!company.trial_ends_at || new Date(company.trial_ends_at) >= new Date());
+    if (company.plan === 'free' && !trialActive) {
+      const allowed = weekRange(settings.week_start ?? 1, -1);
+      if (from !== allowed.from || to !== allowed.to) {
+        return res.status(403).json({
+          error: 'Free-plan invoice export is limited to the latest completed week',
+          allowed_period: allowed,
+        });
+      }
+    }
+
+    const statement = await workerStatement({
+      companyId,
+      worker: workerRow.rows[0],
+      settings,
+      from,
+      to,
+      explain: true,
+    });
+    res.json(statement);
+  } catch (err) {
+    req.log.error({ err }, 'invoice statement route error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
 // GET /time-entries/pay-stubs — worker's pay periods with aggregated hours
 router.get('/pay-stubs', requireAuth, async (req, res) => {

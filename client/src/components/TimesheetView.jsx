@@ -41,13 +41,27 @@ function netHours(start, end, breakMinutes) {
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-export default function TimesheetView({ entries, language, projects = [], onRefresh, weekStart: companyWeekStart = 1 }) {
+export default function TimesheetView({
+  entries,
+  language,
+  projects = [],
+  onRefresh,
+  weekStart: companyWeekStart = 1,
+  selectedWeekStart = null,
+  onSelectedWeekStartChange,
+}) {
   const t = getT(language);
   const locale = langToLocale(language);
-  const [weekStart, setWeekStart] = useState(() => startOfWeekFor(new Date(), companyWeekStart));
+  const [internalWeekStart, setInternalWeekStart] = useState(() => startOfWeekFor(new Date(), companyWeekStart));
   const [selectedEntry, setSelectedEntry] = useState(null);
   const [copying, setCopying] = useState(false);
   const [copyMsg, setCopyMsg] = useState('');
+  const weekStart = selectedWeekStart || internalWeekStart;
+  const setWeekStart = updater => {
+    const next = typeof updater === 'function' ? updater(weekStart) : updater;
+    if (selectedWeekStart && onSelectedWeekStartChange) onSelectedWeekStartChange(next);
+    else setInternalWeekStart(next);
+  };
 
   const prevWeek = () => setWeekStart(d => addDays(d, -7));
   const nextWeek = () => setWeekStart(d => addDays(d, 7));

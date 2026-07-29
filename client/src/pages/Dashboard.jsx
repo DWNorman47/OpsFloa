@@ -21,6 +21,8 @@ import { userCanSeeModule } from '../modulePermissions';
 
 import { silentError } from '../errorReporter';
 import { safeLocal } from '../utils/safeStorage';
+import { escapeHtml } from '../utils/html';
+import { startOfWeek as computeStartOfWeek, toYMD } from '../utils/weekBounds';
 // Secondary tabs — lazy-loaded on first visit
 const TimesheetView    = lazy(() => import('../components/TimesheetView'));
 const WorkerSummary    = lazy(() => import('../components/WorkerSummary'));
@@ -106,6 +108,11 @@ export default function Dashboard() {
   const [entryView, setEntryView] = useState('list');
   const [shiftPrefill, setShiftPrefill] = useState(null);
   const [chatUnread, setChatUnread] = useState(false);
+  const [timesheetWeekStart, setTimesheetWeekStart] = useState(() => computeStartOfWeek(new Date(), 1));
+
+  useEffect(() => {
+    if (settings) setTimesheetWeekStart(computeStartOfWeek(new Date(), settings.week_start ?? 1));
+  }, [settings?.week_start]);
 
   const handleFillFromShift = shift => {
     setShiftPrefill(shift);
@@ -230,24 +237,39 @@ export default function Dashboard() {
     setEntriesVersion(v => v + 1);
   };
 
-  const handleExportPDF = (signatureDataUrl) => {
+  const handleExportPDF = async (signatureDataUrl) => {
     const win = window.open('', '_blank');
-    const workerName = user?.full_name || '';
-    const workerEmail = user?.email || '';
-    let sorted = [...entries].sort((a, b) => a.work_date.localeCompare(b.work_date));
+    if (!win) return;
 
-    // Free plan: export is limited to the latest completed Mon–Sun week
+    let periodStartDate = new Date(timesheetWeekStart);
     if (settings?.plan === 'free' && settings?.subscription_status !== 'trial') {
-      const today = new Date();
-      const dow = today.getDay();
-      const lastSun = new Date(today); lastSun.setDate(today.getDate() - (dow === 0 ? 7 : dow));
-      const lastMon = new Date(lastSun); lastMon.setDate(lastSun.getDate() - 6);
-      const ws = lastMon.toLocaleDateString('en-CA');
-      const we = lastSun.toLocaleDateString('en-CA');
-      sorted = sorted.filter(e => { const d = String(e.work_date).substring(0, 10); return d >= ws && d <= we; });
+      periodStartDate = computeStartOfWeek(new Date(), settings?.week_start ?? 1);
+      periodStartDate.setDate(periodStartDate.getDate() - 7);
+    }
+    const periodEndDate = new Date(periodStartDate);
+    periodEndDate.setDate(periodEndDate.getDate() + 6);
+    const from = toYMD(periodStartDate);
+    const to = toYMD(periodEndDate);
+
+    let statement;
+    try {
+      statement = (await api.get('/time-entries/invoice-statement', { params: { from, to } })).data;
+    } catch (err) {
+      silentError(err, 'invoice statement export');
+      win.document.write('<!doctype html><title>Invoice unavailable</title><p>Unable to prepare this invoice. Please close this window and try again.</p>');
+      win.document.close();
+      return;
     }
 
-    const fmtTime = s => { const [h, m] = s.split(':'); const hr = parseInt(h); return `${hr % 12 || 12}:${m} ${hr < 12 ? 'AM' : 'PM'}`; };
+    const workerName = statement.worker?.invoice_name || statement.worker?.full_name || user?.full_name || '';
+    const workerEmail = statement.worker?.email || user?.email || '';
+    const sorted = [...(statement.entries || [])].sort((a, b) => String(a.work_date).localeCompare(String(b.work_date)));
+    const fmtTime = s => {
+      if (!s) return '—';
+      const [h, m] = s.split(':');
+      const hr = parseInt(h);
+      return `${hr % 12 || 12}:${m} ${hr < 12 ? 'AM' : 'PM'}`;
+    };
     const locale = langToLocale(user?.language);
     const fmtDate = d => new Date(d.substring(0, 10) + 'T00:00:00').toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
     const fmtDateShort = d => new Date(d.substring(0, 10) + 'T00:00:00').toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -255,9 +277,8 @@ export default function Dashboard() {
     const fmtMoney = v => formatCurrency(v, settings?.currency ?? 'USD');
 
     // Pay period
-    const dates = sorted.map(e => e.work_date);
-    const periodStart = dates.length ? fmtDateShort(dates[0]) : '—';
-    const periodEnd = dates.length ? fmtDateShort(dates[dates.length - 1]) : '—';
+    const periodStart = fmtDateShort(from);
+    const periodEnd = fmtDateShort(to);
 
     // Invoice metadata
     const now = new Date();
@@ -274,91 +295,66 @@ export default function Dashboard() {
       ci.contact_email || '',
     ].filter(Boolean);
 
-    // Feature flags
+    const safe = escapeHtml;
     const showProject = settings?.feature_project_integration !== false;
-    const overtimeEnabled = settings?.feature_overtime !== false;
-
-    // Rates
-    const workerRate = parseFloat(user?.hourly_rate) || parseFloat(settings?.default_hourly_rate) || 0;
-    const prevRate = parseFloat(settings?.prevailing_wage_rate) || 0;
-    const showRateType = prevRate > 0;
-    const otMultiplier = parseFloat(settings?.overtime_multiplier) || 1.5;
-    const otRule = settings?.overtime_rule || 'daily';
-    const otThreshold = parseFloat(settings?.overtime_threshold) || 8;
-
-    // For weekly OT: track cumulative regular hours per ISO week
-    const weeklyAccum = {};
-    const getWeekKey = dateStr => {
-      const d = new Date(dateStr.substring(0, 10) + 'T00:00:00');
-      const day = d.getDay();
-      const monday = new Date(d); monday.setDate(d.getDate() - ((day + 6) % 7));
-      return monday.toLocaleDateString('en-CA');
-    };
-
-    // Build table rows + accumulate totals
-    let regularHours = 0, overtimeHours = 0, prevailingHours = 0;
-    let regularPay = 0, overtimePay = 0, prevailingPay = 0;
+    const { hours = {}, cost = {}, rates = {}, totals = {} } = statement;
+    const regularHours = Number(hours.regular) || 0;
+    const overtimeHours = Number(hours.overtime) || 0;
+    const prevailingHours = Number(hours.prevailing) || 0;
+    const paidHours = regularHours + overtimeHours + prevailingHours
+      + (Number(hours.guaranteeShortfall) || 0) + (Number(hours.sick) || 0) + (Number(hours.vacation) || 0);
+    const showRateType = prevailingHours > 0;
 
     const rows = sorted.map(e => {
-      let ms = new Date(`1970-01-01T${e.end_time}`) - new Date(`1970-01-01T${e.start_time}`);
-      if (ms < 0) ms += 86400000;
-      const h = Math.max(0, ms / 3600000 - (e.break_minutes || 0) / 60);
-      const isPrev = e.wage_type === 'prevailing';
-
-      if (isPrev) {
-        prevailingHours += h;
-        prevailingPay += h * prevRate;
-      } else if (overtimeEnabled) {
-        let regH = 0, otH = 0;
-        if (otRule === 'daily') {
-          regH = Math.min(h, otThreshold);
-          otH = Math.max(0, h - otThreshold);
-        } else {
-          const wk = getWeekKey(e.work_date);
-          const prior = weeklyAccum[wk] || 0;
-          weeklyAccum[wk] = prior + h;
-          if (prior >= otThreshold) { otH = h; }
-          else if (prior + h > otThreshold) { regH = otThreshold - prior; otH = h - regH; }
-          else { regH = h; }
-        }
-        regularHours += regH;
-        overtimeHours += otH;
-        regularPay += regH * workerRate;
-        overtimePay += otH * workerRate * otMultiplier;
-      } else {
-        regularHours += h;
-        regularPay += h * workerRate;
+      let h = Number(e.hours);
+      if (!Number.isFinite(h)) {
+        let ms = new Date(`1970-01-01T${e.end_time}`) - new Date(`1970-01-01T${e.start_time}`);
+        if (ms < 0) ms += 86400000;
+        h = Math.max(0, ms / 3600000 - (e.break_minutes || 0) / 60);
       }
-
+      const isPrev = e.wage_type === 'prevailing';
+      const syntheticLabel = {
+        guarantee: t.floorGuaranteeLabel || 'Guaranteed hours',
+        min_daily: t.minGuaranteeLabel || 'Minimum guarantee',
+        weekly_guarantee: t.guaranteeTopupLabel || 'Weekly-hours guarantee top-up',
+        sick: t.sickLeave || 'Sick leave',
+        vacation: t.vacationLeave || 'Vacation leave',
+      }[e.kind];
       const badge = isPrev
-        ? `<span style="background:#d97706;color:#fff;padding:1px 7px;border-radius:4px;font-size:10px;font-weight:700">${t.prevailing}</span>`
-        : `<span style="background:#2563eb;color:#fff;padding:1px 7px;border-radius:4px;font-size:10px;font-weight:700">${t.regular}</span>`;
+        ? `<span style="background:#d97706;color:#fff;padding:1px 7px;border-radius:4px;font-size:10px;font-weight:700">${safe(t.prevailing)}</span>`
+        : `<span style="background:#2563eb;color:#fff;padding:1px 7px;border-radius:4px;font-size:10px;font-weight:700">${safe(t.regular)}</span>`;
       return `<tr>
-        <td>${fmtDate(e.work_date)}</td>
-        ${showProject ? `<td>${e.project_name || '—'}</td>` : ''}
-        <td style="color:#6b7280">${e.notes || ''}</td>
-        <td>${fmtTime(e.start_time)}</td>
-        <td>${fmtTime(e.end_time)}</td>
+        <td>${safe(fmtDate(e.work_date))}</td>
+        ${showProject ? `<td>${safe(e.project_name || '—')}</td>` : ''}
+        <td style="color:#6b7280">${safe(syntheticLabel || e.notes || '')}</td>
+        <td>${safe(fmtTime(e.start_time))}</td>
+        <td>${safe(fmtTime(e.end_time))}</td>
         ${showRateType ? `<td>${badge}</td>` : ''}
-        <td style="text-align:right;font-weight:600">${fmtH(h)}</td>
+        <td style="text-align:right;font-weight:600">${safe(fmtH(h))}</td>
       </tr>`;
     }).join('');
 
-    const totalHours = regularHours + overtimeHours + prevailingHours;
-    const totalPay = regularPay + overtimePay + prevailingPay;
-
-    // Summary rows
     const sumRows = [
-      regularHours > 0 ? `<tr><td>${t.regularHours}</td><td style="text-align:right">${fmtH(regularHours)}</td></tr>` : '',
-      overtimeEnabled && overtimeHours > 0 ? `<tr><td>${t.overtimeHours}</td><td style="text-align:right">${fmtH(overtimeHours)}</td></tr>` : '',
-      prevailingHours > 0 ? `<tr><td>${t.prevailingHours}</td><td style="text-align:right">${fmtH(prevailingHours)}</td></tr>` : '',
-      `<tr style="border-top:1px solid #e5e7eb;font-weight:600"><td>${t.totalHours}</td><td style="text-align:right">${fmtH(totalHours)}</td></tr>`,
-      workerRate > 0 && regularHours > 0 ? `<tr><td>${t.regularPay} (${fmtMoney(workerRate)}/hr)</td><td style="text-align:right">${fmtMoney(regularPay)}</td></tr>` : '',
-      overtimeEnabled && overtimeHours > 0 && workerRate > 0 ? `<tr><td>${t.overtimePay} (${otMultiplier}×)</td><td style="text-align:right">${fmtMoney(overtimePay)}</td></tr>` : '',
-      prevRate > 0 && prevailingHours > 0 ? `<tr><td>${t.prevailingPay} (${fmtMoney(prevRate)}/hr)</td><td style="text-align:right">${fmtMoney(prevailingPay)}</td></tr>` : '',
+      regularHours > 0 ? `<tr><td>${safe(t.regularHours)}</td><td style="text-align:right">${safe(fmtH(regularHours))}</td></tr>` : '',
+      overtimeHours > 0 ? `<tr><td>${safe(t.overtimeHours)}</td><td style="text-align:right">${safe(fmtH(overtimeHours))}</td></tr>` : '',
+      prevailingHours > 0 ? `<tr><td>${safe(t.prevailingHours)}</td><td style="text-align:right">${safe(fmtH(prevailingHours))}</td></tr>` : '',
+      `<tr style="border-top:1px solid #e5e7eb;font-weight:600"><td>${safe(t.totalHours)}</td><td style="text-align:right">${safe(fmtH(paidHours))}</td></tr>`,
+      cost.regular > 0 ? `<tr><td>${safe(t.regularPay)} (${safe(fmtMoney(rates.rate))}/hr)</td><td style="text-align:right">${safe(fmtMoney(cost.regular))}</td></tr>` : '',
+      cost.overtime > 0 ? `<tr><td>${safe(t.overtimePay)} (${safe(rates.overtimeMultiplier)}×)</td><td style="text-align:right">${safe(fmtMoney(cost.overtime))}</td></tr>` : '',
+      cost.prevailing > 0 ? `<tr><td>${safe(t.prevailingPay)}</td><td style="text-align:right">${safe(fmtMoney(cost.prevailing))}</td></tr>` : '',
+      cost.night > 0 ? `<tr><td>${safe(t.nightDiffLabel || 'Night differential')}</td><td style="text-align:right">${safe(fmtMoney(cost.night))}</td></tr>` : '',
+      cost.guarantee > 0 ? `<tr><td>${safe(t.guaranteeTopupLabel || 'Weekly-hours guarantee top-up')}</td><td style="text-align:right">${safe(fmtMoney(cost.guarantee))}</td></tr>` : '',
+      cost.sick > 0 ? `<tr><td>${safe(t.sickLeave || 'Sick leave')}</td><td style="text-align:right">${safe(fmtMoney(cost.sick))}</td></tr>` : '',
+      cost.vacation > 0 ? `<tr><td>${safe(t.vacationLeave || 'Vacation leave')}</td><td style="text-align:right">${safe(fmtMoney(cost.vacation))}</td></tr>` : '',
+      totals.reimbursementTotal > 0 ? `<tr><td>${safe(t.reimbursementsTitle || 'Reimbursements')}</td><td style="text-align:right">${safe(fmtMoney(totals.reimbursementTotal))}</td></tr>` : '',
     ].filter(Boolean).join('');
+    const totalPay = Number(totals.totalCost) || 0;
 
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Invoice — ${workerName}</title><style>
+    const safeSignature = typeof signatureDataUrl === 'string'
+      && /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(signatureDataUrl)
+      ? signatureDataUrl
+      : null;
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Invoice — ${safe(workerName)}</title><style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:system-ui,-apple-system,sans-serif;color:#111;font-size:13px;padding:40px;background:#fff}
 .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:36px}
@@ -392,64 +388,64 @@ tr:last-child td{border-bottom:none}
 <div class="header">
   <div>
     <div class="brand">Ops Flow Assist</div>
-    <div class="brand-sub">${t.employeeTimeInvoice}</div>
+    <div class="brand-sub">${safe(t.employeeTimeInvoice)}</div>
   </div>
   <div>
-    <div class="inv-title">${t.invoiceLabel}</div>
+    <div class="inv-title">${safe(t.invoiceLabel)}</div>
     <div class="inv-meta">
-      ${t.pdfInvoiceNo}<strong>${invoiceNo}</strong><br>
-      ${t.pdfInvoiceDate}<strong>${invoiceDate}</strong>
+      ${safe(t.pdfInvoiceNo)}<strong>${safe(invoiceNo)}</strong><br>
+      ${safe(t.pdfInvoiceDate)}<strong>${safe(invoiceDate)}</strong>
     </div>
   </div>
 </div>
 
 <div class="parties">
   <div>
-    <div class="party-label">${t.from}</div>
-    <div class="party-name">${workerName}</div>
-    <div class="party-detail">${workerEmail}</div>
+    <div class="party-label">${safe(t.from)}</div>
+    <div class="party-name">${safe(workerName)}</div>
+    <div class="party-detail">${safe(workerEmail)}</div>
   </div>
   <div>
-    <div class="party-label">${t.billTo}</div>
-    <div class="party-detail">${billToLines.map((l, i) => i === 0 ? `<span class="party-name">${l}</span>` : l).join('<br>')}</div>
+    <div class="party-label">${safe(t.billTo)}</div>
+    <div class="party-detail">${billToLines.map((l, i) => i === 0 ? `<span class="party-name">${safe(l)}</span>` : safe(l)).join('<br>')}</div>
   </div>
 </div>
 
 <div class="period-bar">
-  <span class="period-label">${t.payPeriod}</span>
-  <span class="period-val">${periodStart} – ${periodEnd}</span>
+  <span class="period-label">${safe(t.payPeriod)}</span>
+  <span class="period-val">${safe(periodStart)} – ${safe(periodEnd)}</span>
 </div>
 
 <table>
   <thead><tr>
-    <th>${t.date}</th>${showProject ? `<th>Project</th>` : ''}<th>${t.descriptionLabel}</th><th>${t.clockIn}</th><th>${t.clockOut}</th>${showRateType ? `<th>${t.rateTypeLabel}</th>` : ''}<th style="text-align:right">${t.hours}</th>
+    <th>${safe(t.date)}</th>${showProject ? '<th>Project</th>' : ''}<th>${safe(t.descriptionLabel)}</th><th>${safe(t.clockIn)}</th><th>${safe(t.clockOut)}</th>${showRateType ? `<th>${safe(t.rateTypeLabel)}</th>` : ''}<th style="text-align:right">${safe(t.hours)}</th>
   </tr></thead>
   <tbody>${rows}</tbody>
 </table>
 
 <div class="summary-wrap">
   <div class="thank-you">
-    ${t.thankYouInvoice}
+    ${safe(t.thankYouInvoice)}
   </div>
   <div class="sum-table">
     <table style="width:100%;border-collapse:collapse">
       ${sumRows}
-      <tr class="total-row"><td>${t.totalDue}</td><td style="text-align:right">${totalPay > 0 ? fmtMoney(totalPay) : '—'}</td></tr>
+      <tr class="total-row"><td>${safe(t.totalDue)}</td><td style="text-align:right">${safe(totalPay > 0 ? fmtMoney(totalPay) : '—')}</td></tr>
     </table>
   </div>
 </div>
 
-${signatureDataUrl ? `
+${safeSignature ? `
 <div style="margin-top:24px;padding-top:16px;border-top:1px solid #e5e7eb;display:flex;justify-content:flex-end">
   <div style="text-align:center">
-    <img src="${signatureDataUrl}" style="height:60px;display:block;margin-bottom:4px" />
-    <div style="font-size:11px;color:#9ca3af;border-top:1px solid #d1d5db;padding-top:4px;min-width:200px">${workerName} — ${t.pdfDigitalSignature}</div>
+    <img src="${safe(safeSignature)}" style="height:60px;display:block;margin-bottom:4px" />
+    <div style="font-size:11px;color:#9ca3af;border-top:1px solid #d1d5db;padding-top:4px;min-width:200px">${safe(workerName)} — ${safe(t.pdfDigitalSignature)}</div>
   </div>
 </div>` : ''}
 
 <div class="footer">
-  <span>${t.pdfGeneratedBy}</span>
-  <span>${invoiceDate}</span>
+  <span>${safe(t.pdfGeneratedBy)}</span>
+  <span>${safe(invoiceDate)}</span>
 </div>
 
 </body></html>`;
@@ -593,7 +589,15 @@ ${signatureDataUrl ? `
             </div>
             {refreshError && <p style={{ color: '#b45309', background: '#fef3c7', border: '1px solid #fde68a', borderRadius: 6, padding: '8px 12px', fontSize: 13, margin: '0 0 8px' }}>{t.loadError} <button onClick={() => { setRefreshError(false); refreshEntries(); }} style={{ textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer', color: '#b45309' }}>{t.retry}</button></p>}
             {loadError ? <p style={{ color: '#dc2626', padding: '12px' }}>{t.loadError} <button onClick={fetchData} style={{ textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626' }}>{t.retry}</button></p> : loading ? <p>{t.loadingEntries}</p> : entryView === 'timesheet' ? (
-              <TimesheetView entries={entries} language={user?.language} projects={projects} onRefresh={refreshEntries} weekStart={settings?.week_start ?? 1} />
+              <TimesheetView
+                entries={entries}
+                language={user?.language}
+                projects={projects}
+                onRefresh={refreshEntries}
+                weekStart={settings?.week_start ?? 1}
+                selectedWeekStart={timesheetWeekStart}
+                onSelectedWeekStartChange={setTimesheetWeekStart}
+              />
             ) : (
               <EntryList entries={entries} onDeleted={handleEntryDeleted} onUpdated={handleEntryUpdated} t={t} language={user?.language} currentUserId={user?.id} projects={projects} onRefresh={refreshEntries} />
             )}

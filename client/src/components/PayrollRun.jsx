@@ -5,6 +5,7 @@ import { formatCurrency } from '../utils';
 import { silentError } from '../errorReporter';
 import { usePerm } from '../hooks/usePerm';
 import PayStub from './PayStub';
+import { downloadCsv as saveCsv } from '../utils/csv';
 
 /**
  * Payroll Run — the ruleset-driven register for a pay period. Each worker's
@@ -130,19 +131,12 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
   const downloadCsv = () => {
     if (!data || !data.rows.length) return;
     const cols = ['Pay date', 'Worker', 'Role', 'Ruleset', 'Period start', 'Period end', 'Regular hrs', 'OT hrs', 'Prevailing hrs', 'Gross', 'Deductions', 'Net'];
-    const esc = v => { const str = String(v == null ? '' : v); return /[",\n]/.test(str) ? '"' + str.replace(/"/g, '""') + '"' : str; };
-    const lines = [cols.join(',')];
-    data.rows.forEach(r => {
+    const rows = data.rows.map(r => {
       const h = r.hours || {};
-      lines.push([r.pay_date, r.worker_name, r.role_name || '', r.ruleset_name || '', r.period_start, r.period_end,
-        h.regular || 0, h.overtime || 0, h.prevailing || 0, r.gross, r.deduction_total, r.net].map(esc).join(','));
+      return [r.pay_date, r.worker_name, r.role_name || '', r.ruleset_name || '', r.period_start, r.period_end,
+        h.regular || 0, h.overtime || 0, h.prevailing || 0, r.gross, r.deduction_total, r.net];
     });
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `payroll_${from}_${to}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    saveCsv([cols, ...rows], `payroll_${from}_${to}.csv`);
   };
 
   return (

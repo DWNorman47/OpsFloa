@@ -2,7 +2,8 @@ const router  = require('express').Router();
 const crypto  = require('crypto');
 const pool    = require('../db');
 const logger  = require('../logger');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { requireAuth } = require('../middleware/auth');
+const { requireCommercialAccess } = require('../middleware/commercialAccess');
 const { logAudit } = require('../auditLog');
 const { uploadBase64, deleteByUrl, getBytesByUrl } = require('../r2');
 const {
@@ -98,9 +99,9 @@ async function loadEstimateFull(companyId, estimateId) {
     'SELECT * FROM estimate_lines WHERE estimate_id = $1 ORDER BY sort_order, id',
     [estimateId]
   );
-  // Never leak the share-token secrets in the general estimate payload (GET /:id
-  // is requireAuth, so any company user can read it). The raw link is handed out
-  // only by the explicit, admin-only POST /:id/link, and the one-time send card.
+  // Never leak the share-token secrets in the general estimate payload. The raw
+  // link is handed out only by the explicit permission-gated POST /:id/link and
+  // the one-time send card.
   const { response_token, response_token_hash, ...head } = headRes.rows[0];
   return { ...head, lines: linesRes.rows };
 }
@@ -152,7 +153,7 @@ async function recordAudit({ estimateId, action, actorKind, actorUserId, actorIp
 // ── Routes ────────────────────────────────────────────────────────────────────
 
 // GET /estimates — list with filters
-router.get('/', requireAuth, async (req, res) => {
+router.get('/', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const { status, client_id, q } = req.query;
   const page  = Math.max(1, parseInt(req.query.page) || 1);
@@ -197,7 +198,7 @@ router.get('/', requireAuth, async (req, res) => {
 });
 
 // POST /estimates — create a draft (with optional initial lines)
-router.post('/', requireAdmin, async (req, res) => {
+router.post('/', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const fields = readHeaderFields(req.body);
   if (!fields.project_name) return res.status(400).json({ error: 'project_name is required' });
@@ -269,7 +270,7 @@ router.post('/', requireAdmin, async (req, res) => {
 });
 
 // GET /estimates/:id
-router.get('/:id', requireAuth, async (req, res) => {
+router.get('/:id', requireAuth, requireCommercialAccess, async (req, res) => {
   try {
     const full = await loadEstimateFull(req.user.company_id, req.params.id);
     if (!full) return res.status(404).json({ error: 'Estimate not found' });
@@ -286,7 +287,7 @@ router.get('/:id', requireAuth, async (req, res) => {
 });
 
 // PATCH /estimates/:id — header fields only; draft only
-router.patch('/:id', requireAdmin, async (req, res) => {
+router.patch('/:id', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const headRes = await pool.query(
@@ -340,7 +341,7 @@ router.patch('/:id', requireAdmin, async (req, res) => {
 
 // POST /estimates/:id/plan-pdf — attach a plan PDF/image (base64 through the
 // server → R2, so no R2-CORS setup is needed). Replaces any existing attachment.
-router.post('/:id/plan-pdf', requireAdmin, async (req, res) => {
+router.post('/:id/plan-pdf', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const { dataUrl, name } = req.body || {};
   if (!dataUrl || !/^data:(application\/pdf|image\/(png|jpe?g|webp));base64,/i.test(dataUrl)) {
@@ -361,7 +362,7 @@ router.post('/:id/plan-pdf', requireAdmin, async (req, res) => {
 
 // GET /estimates/:id/plan-pdf — the attached plan proxied from R2 as base64,
 // so Plan Room can open it without R2 CORS on reads (like /api/live/:id/pdf).
-router.get('/:id/plan-pdf', async (req, res) => {
+router.get('/:id/plan-pdf', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const { rows } = await pool.query(
@@ -374,7 +375,7 @@ router.get('/:id/plan-pdf', async (req, res) => {
 });
 
 // DELETE /estimates/:id/plan-pdf — remove the attached plan
-router.delete('/:id/plan-pdf', requireAdmin, async (req, res) => {
+router.delete('/:id/plan-pdf', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const own = await pool.query('SELECT plan_pdf_url FROM estimates WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
@@ -386,7 +387,7 @@ router.delete('/:id/plan-pdf', requireAdmin, async (req, res) => {
 });
 
 // PUT /estimates/:id/lines — bulk replace; draft only
-router.put('/:id/lines', requireAdmin, async (req, res) => {
+router.put('/:id/lines', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   if (!Array.isArray(req.body.lines)) return res.status(400).json({ error: 'lines must be an array' });
   const lines = [];
@@ -436,7 +437,7 @@ router.put('/:id/lines', requireAdmin, async (req, res) => {
 // freezes the line items, recomputes totals one last time. Email sending
 // is wired in the email Phase (this commit returns the raw token to the
 // admin for now so they can preview the URL).
-router.post('/:id/send', requireAdmin, async (req, res) => {
+router.post('/:id/send', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const client = await pool.connect();
   try {
@@ -492,7 +493,7 @@ router.post('/:id/send', requireAdmin, async (req, res) => {
 // the stored token; estimates sent before the token was stored (legacy) mint a
 // fresh one on first call — which rotates the link, so any previously-shared URL
 // for that estimate stops working. New sends keep a stable link (no rotation).
-router.post('/:id/link', requireAdmin, async (req, res) => {
+router.post('/:id/link', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const client = await pool.connect();
   try {
@@ -531,7 +532,7 @@ router.post('/:id/link', requireAdmin, async (req, res) => {
 });
 
 // POST /estimates/:id/withdraw — admin cancels (draft or sent)
-router.post('/:id/withdraw', requireAdmin, async (req, res) => {
+router.post('/:id/withdraw', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const headRes = await pool.query(
@@ -564,7 +565,7 @@ router.post('/:id/withdraw', requireAdmin, async (req, res) => {
 // row AND seeds project_budget_categories with one row per category
 // summed from the estimate lines. The shared MONEY_CATEGORIES vocabulary
 // is what makes this seamless — same column values, no mapping table.
-router.post('/:id/convert', requireAdmin, async (req, res) => {
+router.post('/:id/convert', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const client = await pool.connect();
   try {
