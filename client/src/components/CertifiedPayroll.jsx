@@ -111,11 +111,12 @@ export default function CertifiedPayroll({ projects, settings, requireSignature 
       if (w.regular_total > 0) lines.push({ label: t.regular, days: w.regular_days, total: w.regular_total, rate: `$${w.rate.toFixed(2)}/hr`, cost: w.regular_cost });
       if (w.prevailing_total > 0) lines.push({ label: t.prevailing, days: w.prevailing_days, total: w.prevailing_total, rate: `$${w.prevailing_rate.toFixed(2)}/hr`, cost: w.prevailing_cost });
       if (w.overtime_total > 0) lines.push({ label: t.overtime, days: w.ot_days, total: w.overtime_total, rate: `${w.overtime_multiplier}×`, cost: w.overtime_cost });
+      if ((w.night_premium || 0) > 0) lines.push({ label: t.nightDiffLabel, days: {}, total: null, rate: '—', cost: w.night_premium }); // additive $ premium so cost cells sum to gross
       return lines.map((ln, i) => `<tr>
         <td>${i === 0 ? w.worker_name : ''}</td>
         <td>${ln.label}</td>
         ${DAY_KEYS.map(d => `<td>${ln.days[d] || '—'}</td>`).join('')}
-        <td><strong>${fmtH(ln.total)}</strong></td>
+        <td><strong>${ln.total != null ? fmtH(ln.total) : '—'}</strong></td>
         <td>${ln.rate}</td>
         <td>$${(ln.cost || 0).toFixed(2)}</td>
       </tr>`);
@@ -247,12 +248,15 @@ export default function CertifiedPayroll({ projects, settings, requireSignature 
                     if (w.regular_total > 0) lines.push({ k: 'reg', label: t.regular, days: w.regular_days, total: w.regular_total, rate: `$${w.rate.toFixed(2)}`, cost: w.regular_cost });
                     if (w.prevailing_total > 0) lines.push({ k: 'prev', label: t.prevailing, days: w.prevailing_days, total: w.prevailing_total, rate: `$${w.prevailing_rate.toFixed(2)}`, cost: w.prevailing_cost, bg: '#fffbeb', color: '#92400e' });
                     if (w.overtime_total > 0) lines.push({ k: 'ot', label: t.overtime, days: w.ot_days, total: w.overtime_total, rate: `${w.overtime_multiplier}×`, cost: w.overtime_cost, bg: '#eef2ff', color: '#3730a3' });
+                    // Night differential is an additive $ premium (its hours already sit in the
+                    // Regular row), so show cost only. Without it the cost cells don't sum to gross.
+                    if ((w.night_premium || 0) > 0) lines.push({ k: 'night', label: t.nightDiffLabel, days: {}, total: null, rate: '—', cost: w.night_premium, bg: '#f5f3ff', color: '#5b21b6' });
                     return lines.map((ln, i) => (
                       <tr key={`${w.worker_id}-${ln.k}`} style={{ ...styles.tr, ...(ln.bg ? { background: ln.bg } : {}) }}>
                         <td style={styles.nameTd}>{i === 0 ? w.worker_name : ''}</td>
                         <td style={{ ...styles.td, ...styles.classTd, ...(ln.color ? { color: ln.color, fontWeight: 600 } : {}) }}>{ln.label}</td>
                         {DAY_KEYS.map(d => <td key={d} style={styles.dayTd}>{ln.days[d] || '—'}</td>)}
-                        <td style={{ ...styles.td, fontWeight: 700 }}>{fmtH(ln.total)}</td>
+                        <td style={{ ...styles.td, fontWeight: 700 }}>{ln.total != null ? fmtH(ln.total) : '—'}</td>
                         <td style={styles.td}>{ln.rate}</td>
                         <td style={styles.td}>${(ln.cost || 0).toFixed(2)}</td>
                       </tr>

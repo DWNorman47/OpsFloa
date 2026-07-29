@@ -154,12 +154,14 @@ router.put('/workers/:id/ssn', requireAdmin, requireCertifiedPayrollAddon, async
   }
 });
 
-// Helper for the report generator — not exposed as a route.
-async function loadSsnLast4(userIds) {
+// Helper for the report generator — not exposed as a route. `companyId` scopes the
+// lookup so a caller can never decrypt another tenant's SSN last-4 (defence in depth;
+// callers already pass company-scoped ids, but PII shouldn't rely on that).
+async function loadSsnLast4(userIds, companyId) {
   if (!userIds.length) return {};
   const { rows } = await pool.query(
-    'SELECT id, ssn_last4_enc FROM users WHERE id = ANY($1::int[])',
-    [userIds]
+    'SELECT id, ssn_last4_enc FROM users WHERE id = ANY($1::int[]) AND company_id = $2',
+    [userIds, companyId]
   );
   const out = {};
   for (const r of rows) {

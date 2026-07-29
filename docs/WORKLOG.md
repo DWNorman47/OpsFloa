@@ -23,6 +23,43 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-28 — Fifth review pass — client UX + certified payroll
+
+Pointed this pass at the two surfaces the prior four barely touched: the client payroll
+UI and the certified-payroll (WH-347) surface. The batch-5 fixes re-audited **clean**.
+Certified payroll — genuinely under-reviewed — was where the real issues were. Fixed +
+verified (server 1180, client 256, build ok).
+
+**WH-347 ignored manual OT overrides (money-of-record on a legal doc).** The report's
+entries SELECT omitted `te.overtime_hours_override`, so a manually-set OT figure was
+dropped and OT recomputed automatically — the certified document then disagreed with the
+invoice/pay stub (which all honor the override via the shared engine). Added the column.
+
+**Certified-payroll on-screen + print understated gross.** The table/print rendered
+reg/prevailing/OT cost lines but no night-premium line, so the visible costs didn't sum to
+`gross_pay` (which the PDF shows correctly, night premium included). Added a night line to
+both so they foot.
+
+**SSN last-4 lookup wasn't company-scoped.** `loadSsnLast4` selected by id only; safe today
+(callers pass company-scoped ids) but a latent cross-tenant PII path. Added `company_id`.
+
+**WH-347 week window was timezone-fragile.** `weekStart` was derived via local `Date` +
+`toISOString` while `week_end` is used verbatim — on a non-UTC host that makes the 7-day
+window 8 days. Made it UTC throughout. (Latent — Render is UTC — but removed.)
+
+**Double toast** on the payroll register: finalize/run render the error inline AND the
+global 4xx interceptor toasted it. Passed `{ suppressToast: true }` per api.js's own
+documented pattern.
+
+**Parked → BACKLOG:** per-project prevailing rate in all-projects WH-347 mode (single-
+project is correct; the pay statement already has the project rate map); server error
+strings aren't bilingual (systemic — a Spanish user sees English 4xx text; fix is to map
+machine `code`s to `t.*` app-wide). The min-daily OT day-column reconciliation an agent
+re-flagged is the same already-parked per-entry-OT-under-foot item.
+
+**Read:** the batch-5 audit returning clean while the certified-payroll trace found five
+real issues confirms the pattern — point fresh eyes at un-reviewed surfaces, not the same diff.
+
 ## 2026-07-28 — Fourth review pass — whole-path trace found new issues
 
 This pass widened the lens (the diff-focused passes were converging): one agent on

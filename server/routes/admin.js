@@ -3821,9 +3821,11 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_reports'), requ
   if (!week_end) return res.status(400).json({ error: 'week_end required' });
   const companyId = req.user.company_id;
 
-  const weekEndDate = new Date(week_end + 'T00:00:00');
-  const weekStartDate = new Date(weekEndDate);
-  weekStartDate.setDate(weekStartDate.getDate() - 6);
+  // UTC throughout: `week_end` is used verbatim as a date string, so derive weekStart in
+  // UTC too. Parsing 'T00:00:00' (local) + toISOString() (UTC) would shift weekStart a day
+  // early on a non-UTC host, making `work_date >= weekStart` a 7→8-day window.
+  const weekStartDate = new Date(week_end + 'T00:00:00Z');
+  weekStartDate.setUTCDate(weekStartDate.getUTCDate() - 6);
   const weekStart = weekStartDate.toISOString().substring(0, 10);
 
   try {
@@ -3851,6 +3853,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_reports'), requ
       `SELECT te.user_id, COALESCE(u.invoice_name, u.full_name) as worker_name, u.hourly_rate, u.classification, u.role_id, u.overtime_rule,
               to_char(te.work_date, 'YYYY-MM-DD') as work_date,
               te.start_time, te.end_time, te.break_minutes, te.wage_type,
+              te.overtime_hours_override,
               te.classification AS entry_classification
        FROM time_entries te
        JOIN users u ON te.user_id = u.id
@@ -3967,7 +3970,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_reports'), requ
     const { loadSsnLast4 } = require('./certifiedPayroll');
     const [fringesRows, ssnMap] = await Promise.all([
       userIds.length ? pool.query('SELECT user_id, category, rate_per_hour FROM worker_fringes WHERE user_id = ANY($1::int[])', [userIds]) : Promise.resolve({ rows: [] }),
-      s.cp_collect_ssn !== false ? loadSsnLast4(userIds) : {},
+      s.cp_collect_ssn !== false ? loadSsnLast4(userIds, companyId) : {},
     ]);
     const fringesByUser = {};
     for (const r of fringesRows.rows) {

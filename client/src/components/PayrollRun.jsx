@@ -52,7 +52,7 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
     if (!data || !data.rows.length || data.errors.length) return;
     setFinalizing(true); setFinalizeMsg('');
     try {
-      await api.post('/admin/payroll-run/finalize', { from, to });
+      await api.post('/admin/payroll-run/finalize', { from, to }, { suppressToast: true }); // shown inline as finalizeMsg
       setFinalizeMsg(t.pcrRunFinalized);
       onFinalized && onFinalized();
     } catch (err) {
@@ -65,7 +65,7 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
     if (!f || !tt) return;
     setError(''); setFinalizeMsg(''); setLoading(true);
     try {
-      const r = await api.get(`/admin/payroll-run?from=${f}&to=${tt}`);
+      const r = await api.get(`/admin/payroll-run?from=${f}&to=${tt}`, { suppressToast: true }); // shown inline as `error`
       setData(r.data);
     } catch (err) {
       setError(err?.response?.data?.error || t.pcrRunFailed);

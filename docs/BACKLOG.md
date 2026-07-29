@@ -39,11 +39,25 @@ that holds the exhaustive detail.
   per-classification/per-project rate table), and premium OT configs still price
   OT flat (`otBandsCost` at `otMult`) rather than the full band math on the
   prevailing base. Night differential is now included in `gross_pay` (fixed
-  2026-07-28); classification-level prevailing rates remain a gap. **Minor:** the
-  WH-347 SQL doesn't select `rate_type`, so a *daily-rate* worker with a night_diff
-  rule gets the night premium in `gross_pay` where `buildPayStatement` gates it off
-  for daily-rate — but the WH-347 already prices daily-rate as-if-hourly throughout,
-  so it's one more small divergence on an already-divergent, very rare path. (2026-07-28)
+  2026-07-28); classification-level prevailing rates remain a gap. **Per-project rate
+  in all-projects mode:** run without a `project_id` and every prevailing hour is
+  priced at the company `prevailing_wage_rate`, while `buildPayStatement` prices each
+  entry at its own project's rate (`loadProjectRateMap`/`projectRateMap`). So a
+  multi-project all-projects WH-347 diverges from the paycheck; the report's entries
+  SELECT would need `te.project_id` + the same rate map. Single-project mode (the normal
+  Davis-Bacon case) is correct. **Minor:** the WH-347 SQL doesn't select `rate_type`,
+  so a *daily-rate* worker with a night_diff rule gets the night premium in `gross_pay`
+  where `buildPayStatement` gates it off for daily-rate — but the WH-347 already prices
+  daily-rate as-if-hourly throughout, so it's one more small divergence on an
+  already-divergent, very rare path. (`overtime_hours_override` now honored — fixed
+  2026-07-28.) (2026-07-28)
+- **Server error strings aren't bilingual** (systemic, not payroll-specific). Server
+  routes return English `error` messages (e.g. the payroll conflict 409s:
+  `already_finalized`, `has_paid_checks`, "Run is voided"); the client toasts/render
+  them verbatim, so a Spanish-locale user sees English on any 4xx. `i18n.test` only
+  checks parity of keys that exist, so it can't catch a never-keyed server string. Fix
+  pattern: return a machine `code` (the payroll 409s already do) and have the client map
+  known codes to bilingual `t.*` messages. Worth doing app-wide, not one-off. (2026-07-28)
 - **Finalize's period key blocks supplemental / partial-worker runs** (`admin.js`
   finalize + migration `0157`). The idempotency key is `(company_id, period_from,
   period_to)` where the dates are the min/max of the run's check periods. That's
