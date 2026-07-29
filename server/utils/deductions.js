@@ -96,7 +96,24 @@ function computeDeductions(grossWages, deductions) {
 function payStubTotals(grossWages, reimbursements, deductions) {
   const gross = Math.round((Number(grossWages) || 0) * 100) / 100;
   const reimb = Math.round((Number(reimbursements) || 0) * 100) / 100;
-  const { lines, total } = computeDeductions(gross, deductions);
+  let { lines, total } = computeDeductions(gross, deductions);
+  // Deductions can never exceed gross wages — payroll doesn't claw back pay. A single
+  // percent is already clamped to ≤100% (normalizeDeduction), but MULTIPLE deductions can
+  // still sum past gross, and this legacy path (unlike the advanced-payroll ruleset) has no
+  // min-net floor. Cap the withheld total at gross and re-allocate the itemized lines in
+  // integer cents (largest-remainder) so net stays ≥ 0 and the lines still foot.
+  if (total > gross && total > 0) {
+    const grossC = Math.round(gross * 100);
+    const rawC = lines.map(l => Math.round((Number(l.amount) || 0) * 100));
+    const rawTot = rawC.reduce((a, c) => a + c, 0);
+    const exact = rawC.map(c => (c * grossC) / rawTot);
+    const alloc = exact.map(Math.floor);
+    const rem = grossC - alloc.reduce((a, c) => a + c, 0);
+    const order = exact.map((v, i) => [v - Math.floor(v), i]).sort((a, b) => b[0] - a[0]).map(x => x[1]);
+    for (let k = 0; k < rem && k < order.length; k++) alloc[order[k]] += 1;
+    lines = lines.map((l, i) => ({ ...l, amount: alloc[i] / 100 }));
+    total = gross;
+  }
   const net = Math.round((gross - total + reimb) * 100) / 100;
   return { gross_wages: gross, deductions: lines, deductions_total: total, reimbursement_total: reimb, net_pay: net };
 }

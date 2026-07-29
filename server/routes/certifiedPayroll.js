@@ -226,8 +226,25 @@ router.post('/signatures', requireAdmin, requireCertifiedPayrollAddon, async (re
   const title = (signer_title || '').trim().slice(0, 200) || null;
 
   try {
-    // Upsert — one signature per (company, project, week). Re-signing overwrites
-    // with the new snapshot; history lives in the audit log.
+    // A signature scoped to a project must reference one this company owns (the GET,
+    // fringes and SSN paths all validate ownership; keep this consistent).
+    if (project_id) {
+      const proj = await pool.query('SELECT 1 FROM projects WHERE id = $1 AND company_id = $2', [project_id, req.user.company_id]);
+      if (!proj.rowCount) return res.status(404).json({ error: 'Project not found' });
+    }
+
+    // A WH-347 signature is a legal record. Re-signing replaces the row in place, so
+    // BEFORE overwriting, snapshot the prior signer/signature/compliance text into the
+    // audit trail — otherwise the originally certified artifact is unrecoverable.
+    const prior = await pool.query(
+      `SELECT signer_name, signer_title, signature_data, compliance_text, signed_at
+         FROM certified_payroll_signatures
+        WHERE company_id = $1 AND project_id IS NOT DISTINCT FROM $2 AND week_ending = $3`,
+      [req.user.company_id, project_id || null, week_ending]
+    );
+
+    // Upsert — one CURRENT signature per (company, project, week); replaced ones live in
+    // the audit log (logged below).
     const ip = req.ip || req.headers['x-forwarded-for'] || null;
     const { rows } = await pool.query(
       `INSERT INTO certified_payroll_signatures
@@ -245,6 +262,12 @@ router.post('/signatures', requireAdmin, requireCertifiedPayrollAddon, async (re
       [req.user.company_id, project_id || null, week_ending, req.user.id, name, title, sig, DEFAULT_COMPLIANCE_TEXT, ip]
     );
     await logAudit(req.user.company_id, req.user.id, req.user.full_name, 'certified_payroll.signed', 'signature', rows[0].id, `${name} · ${week_ending}`, { project_id: project_id || null });
+    // Preserve the replaced certification as its own audit record (full snapshot).
+    if (prior.rowCount) {
+      const p = prior.rows[0];
+      await logAudit(req.user.company_id, req.user.id, req.user.full_name, 'certified_payroll.signature_replaced', 'signature', rows[0].id, `${p.signer_name} · ${week_ending}`,
+        { project_id: project_id || null, replaced: { signer_name: p.signer_name, signer_title: p.signer_title, signature_data: p.signature_data, compliance_text: p.compliance_text, signed_at: p.signed_at } });
+    }
     res.json({ signature: rows[0] });
   } catch (err) {
     logger.error({ err }, 'catch block error');

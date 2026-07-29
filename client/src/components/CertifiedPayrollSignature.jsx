@@ -129,7 +129,7 @@ export default function CertifiedPayrollSignature({
           disabled={saving}
           style={{ ...styles.signBtn, ...(saving ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
         >
-          {saving ? 'Signing…' : existing ? 'Re-sign' : 'Sign'}
+          {saving ? t.cpsSigning : existing ? t.cpsResign : t.cpsSign}
         </button>
       </div>
     </ModalShell>

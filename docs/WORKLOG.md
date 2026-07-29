@@ -23,6 +23,37 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-28 — Fixed the flagged WH-347 + deductions issues
+
+David gave the go-ahead on the compliance-document items I'd parked for his call. Fixed
++ verified (server 1183, client 256, build ok).
+
+**WH-347 PDF / signatures:**
+- The PDF now prints the **signed `compliance_text` snapshot** (the exact wording attested
+  to), falling back to a server-provided `default_compliance_text` template when unsigned —
+  instead of hardcoded clauses (whose clause 3 was truncated). One source of truth.
+- **Regular and prevailing hours print as separate rows** at their own rates (was one merged
+  straight-time row at a single rate, hiding the split); the **OT row now shows the OT rate**
+  (base × multiplier) instead of a blank cell. GROSS stays the weekly total on the first row.
+- **Re-signing preserves history**: before overwriting, the prior signer/signature/compliance/
+  date is snapshotted into the audit log (`certified_payroll.signature_replaced`) — the
+  original certified artifact is now recoverable.
+- POST /signatures **verifies the project belongs to the company** (was missing, unlike the
+  read paths); the certification **date renders in UTC** (was viewer-local → off-by-one near a
+  day boundary); sign-modal buttons are **bilingual** (`cps*` keys).
+
+**Deductions:**
+- The legacy stub path (`payStubTotals`, no min-net floor) now **caps total deductions at
+  gross** and re-allocates the itemized lines (integer-cent largest-remainder) so **net can't
+  go negative** when multiple deductions sum past 100%. Reimbursements still pay on top.
+- `newDeduction` ids are now **unique within the list** (collision would have over-deducted a
+  scope:'selected' pick).
+
+**Left in BACKLOG (need a decision, not a bug):** WH-347 fringe cash-vs-approved-plan
+(4a/4b/4c) election needs a data model; night/OT premium stays folded into gross (inherent to
+the S/O form); company-deduction saves are still last-write-wins (needs optimistic concurrency
+on the generic /settings PATCH).
+
 ## 2026-07-28 — Sixth review pass — deductions editors + WH-347 PDF/signature
 
 Aimed at the last un-reviewed surfaces: the deductions editors and the WH-347 PDF +

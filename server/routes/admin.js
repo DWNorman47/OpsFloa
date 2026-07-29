@@ -3967,7 +3967,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_reports'), requ
     // Pull fringes and SSN last-4 (both gated by feature flags; the CP addon
     // being off silently yields empty values).
     const userIds = Object.keys(workerMap).map(Number);
-    const { loadSsnLast4 } = require('./certifiedPayroll');
+    const { loadSsnLast4, DEFAULT_COMPLIANCE_TEXT } = require('./certifiedPayroll');
     const [fringesRows, ssnMap] = await Promise.all([
       userIds.length ? pool.query('SELECT user_id, category, rate_per_hour FROM worker_fringes WHERE user_id = ANY($1::int[])', [userIds]) : Promise.resolve({ rows: [] }),
       s.cp_collect_ssn !== false ? loadSsnLast4(userIds, companyId) : {},
@@ -4017,6 +4017,9 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_reports'), requ
       project: projectName,
       workers,
       signature: sigRes.rows[0] || null,
+      // The PDF renders the signed compliance_text when present, else this template —
+      // one source of truth so the printed statement is exactly the text that gets signed.
+      default_compliance_text: DEFAULT_COMPLIANCE_TEXT,
       settings: {
         cp_track_classifications: s.cp_track_classifications !== false,
         cp_track_fringes:         s.cp_track_fringes !== false,

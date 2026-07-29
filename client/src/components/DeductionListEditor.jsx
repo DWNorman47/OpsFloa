@@ -24,7 +24,14 @@ export default function DeductionListEditor({ items, onChange, roles }) {
   const t = useT();
   const update = (id, patch) => onChange(items.map(it => (it.id === id ? { ...it, ...patch } : it)));
   const remove = (id) => onChange(items.filter(it => it.id !== id));
-  const add = () => onChange([...items, newDeduction()]);
+  const add = () => {
+    // Guarantee a unique id within the list — two colliding random ids would both match a
+    // single scope:'selected' pick in a paycheck ruleset and over-deduct.
+    const used = new Set(items.map(it => it.id));
+    let d = newDeduction();
+    while (used.has(d.id)) d = newDeduction();
+    onChange([...items, d]);
+  };
   const toggleRole = (it, rid) => {
     const cur = it.roleIds || [];
     update(it.id, { roleIds: cur.includes(rid) ? cur.filter(x => x !== rid) : [...cur, rid] });

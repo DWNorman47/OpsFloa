@@ -134,6 +134,25 @@ describe('payStubTotals', () => {
     expect(r.net_pay).toBeCloseTo(1500);
   });
 
+  test('deductions summing past gross are capped at gross — net never goes negative', () => {
+    const list = [
+      { id: 'a', name: 'Tax', kind: 'percent', value: 60, cap: null },      // 60% of 2000 = 1200
+      { id: 'b', name: 'Garnishment', kind: 'fixed', value: 1500, cap: null }, // + 1500 = 2700 > gross
+    ];
+    const r = payStubTotals(2000, 0, list);
+    expect(r.deductions_total).toBe(2000);                 // capped at gross, not 2700
+    expect(r.net_pay).toBe(0);                             // never negative
+    const linesSum = Math.round(r.deductions.reduce((a, l) => a + l.amount, 0) * 100) / 100;
+    expect(linesSum).toBe(2000);                           // itemized lines still foot to the capped total
+    expect(r.deductions.every(l => l.amount >= 0)).toBe(true);
+  });
+
+  test('reimbursements are still paid on top of a fully-consumed gross', () => {
+    const list = [{ id: 'a', name: 'Tax', kind: 'percent', value: 100, cap: null }];
+    const r = payStubTotals(1000, 150, list); // 100% deducted, $150 reimbursement added back
+    expect(r.net_pay).toBe(150);
+  });
+
   test('company ++ per-worker deductions stack', () => {
     const company = parseCompanyDeductions(JSON.stringify({ items: [
       { id: 'a', name: 'Social Security', kind: 'percent', value: 3.5 },
