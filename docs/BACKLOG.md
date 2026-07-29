@@ -44,6 +44,15 @@ that holds the exhaustive detail.
   rule gets the night premium in `gross_pay` where `buildPayStatement` gates it off
   for daily-rate — but the WH-347 already prices daily-rate as-if-hourly throughout,
   so it's one more small divergence on an already-divergent, very rare path. (2026-07-28)
+- **Finalize's period key blocks supplemental / partial-worker runs** (`admin.js`
+  finalize + migration `0157`). The idempotency key is `(company_id, period_from,
+  period_to)` where the dates are the min/max of the run's check periods. That's
+  right for "finalize the whole period once" (the only flow today), but a second
+  *legitimate* run for the same span — an off-cycle correction check, or finalizing
+  a second subset of workers after a first subset — would collide on the unique index
+  and get a false 409. When supplemental/subset runs become a feature, add a run
+  discriminator to the key (pay-date window or a run sequence), not just the span.
+  (2026-07-28)
 - **Ruleset total cap trims deduction lines pro-rata on the stub** (`paycheckRun.js`
   `computeRuleNet`). When a ruleset `cap`/min-net floor trims the total, the itemized
   lines are scaled proportionally across ALL lines so they foot (net + total are

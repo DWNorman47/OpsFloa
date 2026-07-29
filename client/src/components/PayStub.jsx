@@ -82,6 +82,7 @@ export function printStub(check, workerName, currency, t) {
   add(t.nightDiffLabel, h.night, c.night);
   add(t.pdfSickHours || 'Sick', h.sick, c.sick);
   add(t.pdfVacationHours || 'Vacation', h.vacation, c.vacation);
+  add(t.stubGuarantee, null, c.guarantee); // guarantee top-up — omitting it made printed earnings not foot to gross
   const dedRows = (check.deduction_lines || []).map(l => `<tr><td>${l.name}</td><td class="r neg">−${money(l.amount)}</td></tr>`).join('') || `<tr><td colspan="2" class="muted">${t.stubNoDeductions}</td></tr>`;
   const win = window.open('', '_blank');
   if (!win) return;

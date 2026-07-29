@@ -124,7 +124,10 @@ function semimonthly(sc, from, to) {
       if (payT < fromT || payT > toT) return;
       const startDay = idx === 0 ? 1 : uniq[idx - 1] + 1;
       const isLast = idx === uniq.length - 1;
-      out.push({ periodStart: iso(Date.UTC(y, m - 1, startDay)), periodEnd: iso(Date.UTC(y, m - 1, isLast ? last : day)), payDate: iso(payT) });
+      // Absolute half-month index → floor(seq/2) is the calendar month, so pair grouping
+      // pairs a month's two checks (the 15th & 30th) regardless of the generation window.
+      const seq = y * 24 + (m - 1) * 2 + idx;
+      out.push({ periodStart: iso(Date.UTC(y, m - 1, startDay)), periodEnd: iso(Date.UTC(y, m - 1, isLast ? last : day)), payDate: iso(payT), seq });
     });
     m++; if (m > 12) { m = 1; y++; }
   }
@@ -142,7 +145,8 @@ function monthly(sc, from, to) {
     const last = lastDom(y, m);
     const day = sc.dayOfMonth === 'last' ? last : Math.min(Number(sc.dayOfMonth) || last, last);
     const payT = shiftWeekend(Date.UTC(y, m - 1, day), sc.weekendShift);
-    if (payT >= fromT && payT <= toT) out.push({ periodStart: iso(Date.UTC(y, m - 1, 1)), periodEnd: iso(Date.UTC(y, m - 1, last)), payDate: iso(payT) });
+    // Absolute month index — window-independent, so pair grouping pairs the same two months.
+    if (payT >= fromT && payT <= toT) out.push({ periodStart: iso(Date.UTC(y, m - 1, 1)), periodEnd: iso(Date.UTC(y, m - 1, last)), payDate: iso(payT), seq: y * 12 + (m - 1) });
     m++; if (m > 12) { m = 1; y++; }
   }
   return out;

@@ -54,8 +54,8 @@ describe('generatePeriods', () => {
   test('semimonthly — 15th & 30th; "30" clamps to the last day in a short month', () => {
     const ps = generatePeriods({ frequency: 'semimonthly', daysOfMonth: [15, 30], weekendShift: 'none' }, '2026-02-01', '2026-02-28');
     expect(ps).toEqual([
-      { periodStart: '2026-02-01', periodEnd: '2026-02-15', payDate: '2026-02-15' },
-      { periodStart: '2026-02-16', periodEnd: '2026-02-28', payDate: '2026-02-28' }, // 30 → Feb 28
+      { periodStart: '2026-02-01', periodEnd: '2026-02-15', payDate: '2026-02-15', seq: 48626 },
+      { periodStart: '2026-02-16', periodEnd: '2026-02-28', payDate: '2026-02-28', seq: 48627 }, // 30 → Feb 28
     ]);
   });
 
@@ -113,5 +113,19 @@ describe('groupPeriods — which check the deductions land on', () => {
     expect(partner(narrow, '2026-02-19')).toEqual(['2026-02-05', '2026-02-19']);
     expect(wide.find(p => p.payDate === '2026-02-19').deductionsApply).toBe(true);
     expect(narrow.find(p => p.payDate === '2026-02-19').deductionsApply).toBe(true);
+  });
+
+  test('semimonthly pair grouping pairs a month together, window-independent (seq, not array index)', () => {
+    const opts = { timing: 'grouped', groupBy: 'pair', applyOn: 'second' };
+    const sched = { frequency: 'semimonthly', daysOfMonth: [15, 30], weekendShift: 'none' };
+    const partner = (rows, pay) => rows.filter(p => p.groupKey === rows.find(x => x.payDate === pay).groupKey).map(p => p.payDate);
+    // Different left edges would flip array-index parity; with seq the 15th & 30th of a
+    // month always pair and the 30th (the 'second') deducts.
+    const a = groupPeriods(generatePeriods(sched, '2026-01-01', '2026-04-30'), opts);
+    const b = groupPeriods(generatePeriods(sched, '2026-01-16', '2026-04-30'), opts);
+    expect(partner(a, '2026-03-15')).toEqual(['2026-03-15', '2026-03-30']);
+    expect(partner(b, '2026-03-15')).toEqual(['2026-03-15', '2026-03-30']);
+    expect(a.find(p => p.payDate === '2026-03-30').deductionsApply).toBe(true);
+    expect(b.find(p => p.payDate === '2026-03-30').deductionsApply).toBe(true);
   });
 });

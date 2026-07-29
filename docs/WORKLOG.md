@@ -23,6 +23,43 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-28 — Fourth review pass — whole-path trace found new issues
+
+This pass widened the lens (the diff-focused passes were converging): one agent on
+the batch-4 diff, one tracing a worker's dollars across ALL surfaces end-to-end, one
+modelling the finalize→paid→void lifecycle as a state machine. That found **five real
+issues no diff-review would catch** — all fixed + verified (server 1180; client 256; build ok).
+
+**Void could silently double-pay (most severe).** `/void` never checked for already-paid
+checks, and the unique index excludes void rows — so an admin could void a *paid* run,
+re-finalize the same period, and pay everyone a second time, with the original
+disbursement hidden under `status='void'`. Void now refuses (409) when any check is paid,
+and the UPDATE re-checks atomically (`NOT EXISTS paid`) so a check can't be paid mid-void.
+
+**`/paid` was check-then-act (TOCTOU).** The run-status SELECT and the paid UPDATE were
+separate queries; a concurrent void between them stamped paid on a voided run. The UPDATE
+now re-checks run status atomically via an `EXISTS` guard.
+
+**Worker stub disagreed with the finalized/paid net (traceability break).** The stub
+recomputes grouping over a rolling 120-day window; a pair straddling that edge lost its
+earlier member, so the visible check deducted on its OWN gross instead of the pair's —
+e.g. stub showed net $1600 for a check the company paid $1200. The stub now generates a
+padded window (180d back) so boundary groups are complete, then drops the padding from the
+displayed stubs. Verified the boundary check now matches the run ($1200).
+
+**Semimonthly/monthly still array-paired.** The batch-4 anchor-stable `seq` covered only
+weekly/biweekly; calendar schedules still paired by array index, so the admin run and the
+stub could pair a 15th/30th differently. Gave semimonthly (`y*24+(m-1)*2+idx`) and monthly
+(`y*12+(m-1)`) an absolute `seq` too — pairing is now window-independent for every frequency,
+and a semimonthly month's two checks always pair (deduct on the 30th).
+
+**Printed pay stub omitted the guarantee line.** `printStub` added regular/OT/prevailing/
+night/sick/vacation but not the weekly-guarantee top-up (the on-screen stub shows it), so a
+printed stub with a guarantee didn't foot to its own gross. Added the line.
+
+**Parked → BACKLOG:** finalize's `(company, period_from, period_to)` key would false-409 a
+supplemental / partial-worker run for the same span (not a built flow yet).
+
 ## 2026-07-28 — Third (large) review pass — audit of the batch-3 fixes
 
 Reviewed the just-committed grouped-deduction fixes (`05c7c0d`) with 5 parallel

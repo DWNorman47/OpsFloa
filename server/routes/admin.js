@@ -3520,8 +3520,12 @@ router.post('/payroll-runs/:id/paid', requireAdmin, requirePerm('view_reports'),
     if (!run.rowCount) return res.status(404).json({ error: 'Not found' });
     if (run.rows[0].status === 'void') return res.status(409).json({ error: 'Run is voided' });
     // Only 'pending' checks flip to paid — never re-stamp paid_at on an already-paid check.
-    if (all) await pool.query("UPDATE payroll_run_checks SET status = 'paid', paid_at = NOW() WHERE run_id = $1 AND status = 'pending'", [req.params.id]);
-    else if (Array.isArray(check_ids) && check_ids.length) await pool.query("UPDATE payroll_run_checks SET status = 'paid', paid_at = NOW() WHERE run_id = $1 AND id = ANY($2::int[]) AND status = 'pending'", [req.params.id, check_ids]);
+    // The UPDATE re-checks the run status ATOMICALLY (the EXISTS below): the SELECT above
+    // is just for the friendly 404/409, but a concurrent void could slip in between it and
+    // this write, so the write itself refuses a run that is now voided.
+    const notVoid = "AND EXISTS (SELECT 1 FROM payroll_runs r WHERE r.id = payroll_run_checks.run_id AND r.company_id = $2 AND r.status <> 'void')";
+    if (all) await pool.query(`UPDATE payroll_run_checks SET status = 'paid', paid_at = NOW() WHERE run_id = $1 AND status = 'pending' ${notVoid}`, [req.params.id, req.user.company_id]);
+    else if (Array.isArray(check_ids) && check_ids.length) await pool.query(`UPDATE payroll_run_checks SET status = 'paid', paid_at = NOW() WHERE run_id = $1 AND status = 'pending' AND id = ANY($3::int[]) ${notVoid}`, [req.params.id, req.user.company_id, check_ids]);
     else return res.status(400).json({ error: 'all or check_ids required' });
     res.json({ ok: true });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
@@ -3530,8 +3534,19 @@ router.post('/payroll-runs/:id/paid', requireAdmin, requirePerm('view_reports'),
 // POST /admin/payroll-runs/:id/void — void a finalized run.
 router.post('/payroll-runs/:id/void', requireAdmin, requirePerm('view_reports'), requireCertifiedPayrollAddon, async (req, res) => {
   try {
-    const r = await pool.query("UPDATE payroll_runs SET status = 'void' WHERE id = $1 AND company_id = $2 RETURNING id", [req.params.id, req.user.company_id]);
-    if (!r.rowCount) return res.status(404).json({ error: 'Not found' });
+    const run = await pool.query('SELECT id FROM payroll_runs WHERE id = $1 AND company_id = $2', [req.params.id, req.user.company_id]);
+    if (!run.rowCount) return res.status(404).json({ error: 'Not found' });
+    // Refuse to void a run that already has PAID checks: the unique index excludes void
+    // rows, so a voided run's period can be re-finalized and re-paid — voiding a paid run
+    // opens a silent double-pay path and hides the original disbursement. The UPDATE's
+    // NOT EXISTS re-checks atomically so a check can't be paid mid-void.
+    const paid = await pool.query("SELECT 1 FROM payroll_run_checks WHERE run_id = $1 AND status = 'paid' LIMIT 1", [req.params.id]);
+    if (paid.rowCount) return res.status(409).json({ error: 'This run has checks already marked paid — voiding it would hide money that was already paid out.', code: 'has_paid_checks' });
+    const r = await pool.query(
+      "UPDATE payroll_runs SET status = 'void' WHERE id = $1 AND company_id = $2 AND NOT EXISTS (SELECT 1 FROM payroll_run_checks c WHERE c.run_id = payroll_runs.id AND c.status = 'paid') RETURNING id",
+      [req.params.id, req.user.company_id]
+    );
+    if (!r.rowCount) return res.status(409).json({ error: 'This run has checks already marked paid — voiding it would hide money that was already paid out.', code: 'has_paid_checks' });
     res.json({ ok: true });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });

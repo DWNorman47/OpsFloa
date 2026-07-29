@@ -337,10 +337,18 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
     const resolved = advanced ? resolveRuleset(rulesets, worker.role_id) : { error: 'not_advanced' };
     if (advanced && !resolved.error && resolved.ruleset) {
       const ruleset = resolved.ruleset;
+      const DAY = 86400000;
       const toIso = new Date().toISOString().slice(0, 10);
-      const fromIso = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
+      const displayFromIso = new Date(Date.now() - 120 * DAY).toISOString().slice(0, 10);
+      // Generate a wider window than we DISPLAY so a group straddling the display edge is
+      // COMPLETE. Grouping (esp. a pair's combined-gross deduction) is only correct when a
+      // group has all its checks; a rolling window that clipped a pair's earlier member made
+      // the visible check deduct on its own gross instead of the pair's — disagreeing with
+      // the finalized/paid net. Pad 60d back (covers a biweekly pair, a semimonthly month,
+      // and a monthly pair), group, then drop the padding from the DISPLAYED stubs below.
+      const genFromIso = new Date(Date.now() - 180 * DAY).toISOString().slice(0, 10);
       const weekStart = parseInt(settings.week_start ?? 1, 10); // drives the work_week period basis
-      const grouped = groupPeriods(generatePeriods(ruleset.schedule, fromIso, toIso, weekStart), groupOpts(ruleset.deductions));
+      const grouped = groupPeriods(generatePeriods(ruleset.schedule, genFromIso, toIso, weekStart), groupOpts(ruleset.deductions));
       const companyDeds = parseCompanyDeductions(settings.deductions);
       const wdRows = await pool.query('SELECT id, name, kind, value, cap_amount, active FROM worker_deductions WHERE user_id = $1 AND company_id = $2 AND active = true', [userId, companyId]);
       // Honor the ruleset's deduction scope (see computePayrollRun): 'selected' restricts
@@ -372,7 +380,8 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
           hours: { regular: n2(st.hours.regular), overtime: n2(st.hours.overtime), prevailing: n2(st.hours.prevailing), night: n2(st.hours.night), sick: n2(st.hours.sick), vacation: n2(st.hours.vacation), total: n2(st.hours.total) },
           cost: { regular: st.cost.regular, overtime: st.cost.overtime, prevailing: st.cost.prevailing, night: st.cost.night, sick: st.cost.sick, vacation: st.cost.vacation, guarantee: st.cost.guarantee },
         };
-      }).reverse(); // most recent first
+      }).filter(s => s.pay_date >= displayFromIso) // drop the padding — those older periods only existed to complete boundary groups
+        .reverse(); // most recent first
       return res.json({ mode: 'ruleset', stubs });
     }
 
