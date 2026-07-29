@@ -46,7 +46,10 @@ function shiftWeekend(t, mode) {
 function periodBounds(payT, span, basis, weekStart) {
   if (basis === 'prior_cycle') { const end = addDays(payT, -(span + 1)); return { startT: addDays(end, -span), endT: end }; }
   if (basis === 'work_week') {
-    const weekEndDow = ((Number(weekStart) || 1) + 6) % 7; // Mon start → Sun end
+    // Normalize like weekBounds.normWeekStart — `Number(0) || 1` would wrongly treat
+    // Sunday-start (week_start = 0, the US default) as Monday, misaligning every period.
+    const ws = Number.isFinite(Number(weekStart)) ? (((Number(weekStart) % 7) + 7) % 7) : 1;
+    const weekEndDow = (ws + 6) % 7; // work-week end = day before the start (Mon start → Sun end)
     let back = (weekday(payT) - weekEndDow + 7) % 7;
     if (back === 0) back = 7; // land on the PRIOR week-end, strictly before payday
     const end = addDays(payT, -back);
@@ -66,6 +69,7 @@ const PAD = 4 * DAY;
 
 function weekly(sc, from, to, basis, weekStart) {
   const pw = Number(sc.payWeekday);
+  if (!Number.isInteger(pw) || pw < 0 || pw > 6) return []; // guard: a non-weekday would spin forever
   const fromT = ms(from), toT = ms(to);
   let t = addDays(fromT, -4);
   while (weekday(t) !== pw) t = addDays(t, 1);

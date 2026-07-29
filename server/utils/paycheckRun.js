@@ -77,7 +77,19 @@ function computeRuleNet(gross, deductions, ruleset, baseGross) {
   if (g - dedTotal < minNet) dedTotal = Math.max(0, round2(g - minNet));
 
   dedTotal = round2(dedTotal);
-  return { gross: g, exempt, base, lines, deductionTotal: dedTotal, net: round2(g - dedTotal) };
+
+  // The stub itemizes these lines AND shows the total; when a cap or the min-net floor
+  // trims the raw sum, scale the lines proportionally so they foot to what was actually
+  // deducted (an itemization that doesn't add up to its own total is worse than none).
+  let outLines = lines;
+  const rawSum = round2((lines || []).reduce((a, l) => a + (Number(l.amount) || 0), 0));
+  if (rawSum > 0 && Math.abs(rawSum - dedTotal) >= 0.01) {
+    const f = dedTotal / rawSum;
+    outLines = lines.map(l => ({ ...l, amount: round2((Number(l.amount) || 0) * f) }));
+    const resid = round2(dedTotal - outLines.reduce((a, l) => a + l.amount, 0));
+    if (resid !== 0 && outLines.length) outLines[outLines.length - 1].amount = round2(outLines[outLines.length - 1].amount + resid);
+  }
+  return { gross: g, exempt, base, lines: outLines, deductionTotal: dedTotal, net: round2(g - dedTotal) };
 }
 
 /**
@@ -88,15 +100,31 @@ function computeRuleNet(gross, deductions, ruleset, baseGross) {
  * group net to their own gross. Returns the periods with { deductionTotal, net, base }.
  */
 function applyGroupDeductions(periods, deductions, ruleset) {
+  // combineGroup (default true): exempt + deductions figure on the group's SUMMED gross.
+  // When explicitly off, each flagged check figures on its own gross (no combining).
+  const combine = !(ruleset && ruleset.deductions && ruleset.deductions.combineGroup === false);
   const combined = {};
   for (const p of periods) combined[p.groupKey] = round2((combined[p.groupKey] || 0) + (p.gross || 0));
   return periods.map(p => {
     if (p.deductionsApply) {
-      const c = computeRuleNet(p.gross || 0, deductions, ruleset, combined[p.groupKey]);
-      return { ...p, deductionTotal: c.deductionTotal, net: c.net, base: c.base, exempt: c.exempt, combinedGross: round2(combined[p.groupKey]), lines: c.lines };
+      const baseGross = combine ? combined[p.groupKey] : (p.gross || 0);
+      const c = computeRuleNet(p.gross || 0, deductions, ruleset, baseGross);
+      return { ...p, deductionTotal: c.deductionTotal, net: c.net, base: c.base, exempt: c.exempt, combinedGross: round2(baseGross), lines: c.lines };
     }
     return { ...p, deductionTotal: 0, net: round2(p.gross || 0), base: 0, exempt: 0, combinedGross: p.gross || 0, lines: [] };
   });
 }
 
-module.exports = { resolveRuleset, deductionsForRole, computeRuleNet, applyGroupDeductions };
+/**
+ * Flatten a normalized ruleset's nested `deductions.{timing, group:{by, applyOn}}` into
+ * the flat `{timing, groupBy, applyOn}` shape groupPeriods expects. Without this, callers
+ * passing `ruleset.deductions` straight in leave groupBy/applyOn undefined, so EVERY
+ * grouped ruleset silently falls back to pair/second (month + first/last never take).
+ */
+function groupOpts(deductions) {
+  const d = deductions || {};
+  const g = d.group || {};
+  return { timing: d.timing, groupBy: g.by, applyOn: g.applyOn };
+}
+
+module.exports = { resolveRuleset, deductionsForRole, computeRuleNet, applyGroupDeductions, groupOpts };

@@ -21,7 +21,11 @@ const REASON_KEY = {
 
 function today() { return new Date().toLocaleDateString('en-CA'); }
 function monthStart() { const d = new Date(); d.setDate(1); return d.toLocaleDateString('en-CA'); }
-const periodKeyOf = p => `${p.pay_date}|${p.period_start}|${p.period_end}`;
+// A period entry is a whole GROUP now; run_from/run_to is the pay-date window that
+// spans it (so a grouped ruleset's exempt combines across the group instead of
+// applying per-check). Fall back to the pay date for older payloads / lone checks.
+const runWin = p => ({ f: p.run_from || p.pay_date, tt: p.run_to || p.pay_date });
+const periodKeyOf = p => { const { f, tt } = runWin(p); return `${f}|${tt}`; };
 // Dates are UTC-midnight ISO strings; format them in UTC too, or a viewer west of
 // UTC sees every date shifted a day earlier than the run actually uses.
 const fmtDay = iso => { const [y, m, d] = iso.split('-'); return new Date(Date.UTC(+y, +m - 1, +d)).toLocaleDateString(undefined, { timeZone: 'UTC', month: 'short', day: 'numeric' }); };
@@ -72,9 +76,10 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
   const selectPeriod = (key) => {
     setPeriodKey(key);
     const p = (periods || []).find(x => periodKeyOf(x) === key);
-    // Bracket by pay date — the run resolves each check's actual period (which, with
-    // arrears bases, starts before the pay date) from the schedule itself.
-    if (p) { setFrom(p.pay_date); setTo(p.pay_date); run(p.pay_date, p.pay_date); }
+    // Run the group's whole pay-date window so grouped deductions combine correctly;
+    // the run resolves each check's actual period (arrears bases start before the pay
+    // date) from the schedule itself.
+    if (p) { const { f, tt } = runWin(p); setFrom(f); setTo(tt); run(f, tt); }
   };
 
   // Load the schedule's pay periods once; auto-select + run the latest.
@@ -87,8 +92,9 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
       if (list.length) {
         const p = list[0];
         setPeriodKey(periodKeyOf(p));
-        setFrom(p.pay_date); setTo(p.pay_date);
-        run(p.pay_date, p.pay_date);
+        const { f, tt } = runWin(p);
+        setFrom(f); setTo(tt);
+        run(f, tt);
       } else {
         setCustomRange(true);
       }
@@ -129,7 +135,9 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
             <select style={s.input} value={periodKey} onChange={e => selectPeriod(e.target.value)}>
               {periods.map(p => {
                 const k = periodKeyOf(p);
-                return <option key={k} value={k}>{`${t.pcrRunPayLabel} ${fmtFull(p.pay_date)}  ·  ${fmtDay(p.period_start)} – ${fmtDay(p.period_end)}`}</option>;
+                // A grouped run covers >1 check; mark it (×N) so the span is obvious.
+                const grp = p.check_count > 1 ? `  ×${p.check_count}` : '';
+                return <option key={k} value={k}>{`${t.pcrRunPayLabel} ${fmtFull(p.pay_date)}  ·  ${fmtDay(p.period_start)} – ${fmtDay(p.period_end)}${grp}`}</option>;
               })}
             </select>
           </div>

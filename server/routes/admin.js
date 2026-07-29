@@ -15,7 +15,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 function isValidEmail(email) { return EMAIL_RE.test(String(email).trim()); }
 const { requireAdmin, requirePlan, requireCertifiedPayrollAddon, requirePerm } = require('../middleware/auth');
 const { normalizePaycheckRules } = require('../constants/paycheckRuleEnums');
-const { resolveRuleset, deductionsForRole, applyGroupDeductions } = require('../utils/paycheckRun');
+const { resolveRuleset, deductionsForRole, applyGroupDeductions, groupOpts } = require('../utils/paycheckRun');
 const { generatePeriods, groupPeriods } = require('../utils/payPeriods');
 const { PERMISSIONS, PERMISSION_KEYS, BUILTIN_ROLES, getUserPermissions } = require('../permissions');
 const { coerceBody } = require('../middleware/coerce');
@@ -3297,7 +3297,7 @@ async function computePayrollRun(companyId, from, to) {
       if (periodsByRuleset[key]) return periodsByRuleset[key];
       let grouped;
       if (!ruleset) grouped = [{ periodStart: from, periodEnd: to, payDate: to, groupKey: '0', deductionsApply: true }];
-      else grouped = groupPeriods(generatePeriods(ruleset.schedule, from, to, weekStart), ruleset.deductions || {});
+      else grouped = groupPeriods(generatePeriods(ruleset.schedule, from, to, weekStart), groupOpts(ruleset.deductions));
       periodsByRuleset[key] = grouped;
       return grouped;
     };
@@ -3333,7 +3333,17 @@ async function computePayrollRun(companyId, from, to) {
     // One row (stub) per (worker, check): combine each group, exempt once, deduct on the flagged check.
     const rows = [];
     for (const r of ready) {
-      const deds = [...deductionsForRole(companyDeds, r.w.role_id), ...normalizeWorkerDeductions(wdByUser[r.w.id])];
+      // A ruleset can restrict which COMPANY deductions apply (scope 'selected' +
+      // the picked ids from the settings checklist). Worker-specific rows (loans,
+      // garnishments) are a per-worker obligation, not part of that pick, so they
+      // always apply. Default scope 'all' → no filtering.
+      let coDeds = deductionsForRole(companyDeds, r.w.role_id);
+      const dcfg = r.ruleset && r.ruleset.deductions;
+      if (dcfg && dcfg.scope === 'selected') {
+        const sel = new Set(dcfg.selectedDeductionIds || []);
+        coDeds = coDeds.filter(d => sel.has(d.id));
+      }
+      const deds = [...coDeds, ...normalizeWorkerDeductions(wdByUser[r.w.id])];
       const withGross = r.periods.map(p => { const st = stmtFor(p.periodStart + '|' + p.periodEnd, r.w.id); return { ...p, gross: st ? st.totals.grossWages : 0 }; });
       for (const p of applyGroupDeductions(withGross, deds, r.ruleset)) {
         const st = stmtFor(p.periodStart + '|' + p.periodEnd, r.w.id);
@@ -3391,17 +3401,33 @@ router.get('/payroll-periods', requireAdmin, requirePerm('view_reports'), requir
     // period ends); the overlap filter below trims periods with no hours either side.
     const genFrom = shiftIso(firstWork, -45); // lead so the boundary period is generated
     const genTo = todayIso;
+    // Offer one entry per GROUP, not per check. A grouped ruleset combines a pair/month
+    // of checks behind one exempt threshold; the run must span the WHOLE group or the
+    // exempt is wrongly applied per-check. Each entry carries run_from/run_to = the
+    // group's pay-date window (running exactly that window re-groups identically, since
+    // it contains exactly the group's checks). timing 'every' → each check is its own
+    // group → run_from = run_to = pay_date (unchanged behavior).
     const seen = new Map();
     for (const rs of rulesets) {
-      for (const p of generatePeriods(rs.schedule, genFrom, genTo, weekStart)) {
-        // Keep only periods that actually overlap the work timeline [firstWork, lastWork].
-        if (p.periodEnd < firstWork || p.periodStart > lastWork) continue;
-        const key = `${p.payDate}|${p.periodStart}|${p.periodEnd}`;
-        if (!seen.has(key)) seen.set(key, { pay_date: p.payDate, period_start: p.periodStart, period_end: p.periodEnd });
+      const gen = generatePeriods(rs.schedule, genFrom, genTo, weekStart)
+        .filter(p => !(p.periodEnd < firstWork || p.periodStart > lastWork));
+      const grouped = groupPeriods(gen, groupOpts(rs.deductions));
+      const byGroup = new Map();
+      for (const p of grouped) { (byGroup.get(p.groupKey) || byGroup.set(p.groupKey, []).get(p.groupKey)).push(p); }
+      for (const g of byGroup.values()) {
+        if (!g.length) continue;
+        const payDates = g.map(p => p.payDate).sort();
+        const runFrom = payDates[0], runTo = payDates[payDates.length - 1];
+        const periodStart = g.reduce((mn, p) => (p.periodStart < mn ? p.periodStart : mn), g[0].periodStart);
+        const periodEnd = g.reduce((mx, p) => (p.periodEnd > mx ? p.periodEnd : mx), g[0].periodEnd);
+        // Represent the group by the check the deductions actually land on (else the latest).
+        const flagged = g.find(p => p.deductionsApply) || g[g.length - 1];
+        const key = `${runFrom}|${runTo}`;
+        if (!seen.has(key)) seen.set(key, { pay_date: flagged.payDate, period_start: periodStart, period_end: periodEnd, run_from: runFrom, run_to: runTo, check_count: g.length });
       }
     }
     const periods = [...seen.values()]
-      .sort((a, b) => (a.pay_date < b.pay_date ? 1 : a.pay_date > b.pay_date ? -1 : 0))
+      .sort((a, b) => (a.run_to < b.run_to ? 1 : a.run_to > b.run_to ? -1 : 0))
       .slice(0, 60);
     res.json({ periods });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
@@ -3425,6 +3451,14 @@ router.post('/payroll-run/finalize', requireAdmin, requirePerm('view_reports'), 
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      // Idempotency: a non-void run already covering this exact period means someone
+      // finalized it (double-submit, or two admins). Don't silently create a duplicate —
+      // point them at the existing run so they void it first if they mean to re-run.
+      const dup = await client.query(
+        "SELECT id FROM payroll_runs WHERE company_id = $1 AND period_from = $2 AND period_to = $3 AND status <> 'void' LIMIT 1",
+        [companyId, periodFrom, periodTo]
+      );
+      if (dup.rowCount) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'This pay period is already finalized', code: 'already_finalized', run_id: dup.rows[0].id }); }
       const run = await client.query(
         `INSERT INTO payroll_runs (company_id, period_from, period_to, status, check_count, gross_cents, deduction_cents, net_cents, created_by)
          VALUES ($1,$2,$3,'finalized',$4,$5,$6,$7,$8) RETURNING id`,
@@ -3475,10 +3509,12 @@ router.get('/payroll-runs/:id', requireAdmin, requirePerm('view_reports'), requi
 router.post('/payroll-runs/:id/paid', requireAdmin, requirePerm('view_reports'), requireCertifiedPayrollAddon, async (req, res) => {
   const { all, check_ids } = req.body || {};
   try {
-    const run = await pool.query('SELECT id FROM payroll_runs WHERE id = $1 AND company_id = $2', [req.params.id, req.user.company_id]);
+    const run = await pool.query('SELECT id, status FROM payroll_runs WHERE id = $1 AND company_id = $2', [req.params.id, req.user.company_id]);
     if (!run.rowCount) return res.status(404).json({ error: 'Not found' });
+    if (run.rows[0].status === 'void') return res.status(409).json({ error: 'Run is voided' });
+    // Only 'pending' checks flip to paid — never re-stamp paid_at on an already-paid check.
     if (all) await pool.query("UPDATE payroll_run_checks SET status = 'paid', paid_at = NOW() WHERE run_id = $1 AND status = 'pending'", [req.params.id]);
-    else if (Array.isArray(check_ids) && check_ids.length) await pool.query("UPDATE payroll_run_checks SET status = 'paid', paid_at = NOW() WHERE run_id = $1 AND id = ANY($2::int[])", [req.params.id, check_ids]);
+    else if (Array.isArray(check_ids) && check_ids.length) await pool.query("UPDATE payroll_run_checks SET status = 'paid', paid_at = NOW() WHERE run_id = $1 AND id = ANY($2::int[]) AND status = 'pending'", [req.params.id, check_ids]);
     else return res.status(400).json({ error: 'all or check_ids required' });
     res.json({ ok: true });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
@@ -3844,7 +3880,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_reports'), requ
       const dayKeyOf = e => DAY_KEYS[new Date(e.work_date + 'T00:00:00').getDay()];
       const dur = e => Math.max(0, hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60);
       let regular_total = 0, prevailing_total = 0, overtime_total = 0;
-      let regular_cost = 0, prevailing_cost = 0, overtime_cost = 0;
+      let regular_cost = 0, prevailing_cost = 0, overtime_cost = 0, night_premium = 0;
 
       if (hasSimpleOtConfig(otConfig)) {
         const baseRateOf = e => (e.wage_type === 'prevailing' ? prevRate : w.rate);
@@ -3885,6 +3921,10 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_reports'), requ
         regular_total = rh; overtime_total = oh;
         regular_cost = rh * w.rate;
         overtime_cost = otBandsCost(otBands, w.rate, otMult);
+        // Night differential is an additive premium on regular hours worked in the
+        // night window — same source as buildPayStatement's night_premium. Without
+        // this, gross_pay understated pay for any worker with a night_diff rule.
+        if (otConfig && otConfig.nightDifferential) night_premium = nightPremiumCost(reg, otConfig.nightDifferential, w.rate);
         for (const e of w.items.filter(e => e.wage_type === 'prevailing')) {
           const h = dur(e), dk = dayKeyOf(e);
           prevailing_days[dk] = +(prevailing_days[dk] + h).toFixed(2);
@@ -3895,6 +3935,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_reports'), requ
         regular_days, prevailing_days, ot_days,
         regular_total: +regular_total.toFixed(2), prevailing_total: +prevailing_total.toFixed(2), overtime_total: +overtime_total.toFixed(2),
         regular_cost: +regular_cost.toFixed(2), prevailing_cost: +prevailing_cost.toFixed(2), overtime_cost: +overtime_cost.toFixed(2),
+        night_premium: +night_premium.toFixed(2),
       };
     };
 
@@ -3928,7 +3969,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_reports'), requ
         ssn_last4: ssnMap[w.worker_id] || null,
         fringes,
         fringe_total_per_hour: +fringeTotalPerHour.toFixed(4),
-        gross_pay: +(c.regular_cost + c.prevailing_cost + c.overtime_cost).toFixed(2),
+        gross_pay: +(c.regular_cost + c.prevailing_cost + c.overtime_cost + (c.night_premium || 0)).toFixed(2),
       };
     });
 

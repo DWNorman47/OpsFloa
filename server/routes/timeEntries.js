@@ -310,7 +310,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
 const { loadSettings } = require('../utils/paidHours');
 const { workerPeriodStatements, workerStatement } = require('../utils/payStatement');
 const { normalizePaycheckRules } = require('../constants/paycheckRuleEnums');
-const { resolveRuleset, deductionsForRole, applyGroupDeductions } = require('../utils/paycheckRun');
+const { resolveRuleset, deductionsForRole, applyGroupDeductions, groupOpts } = require('../utils/paycheckRun');
 const { generatePeriods, groupPeriods } = require('../utils/payPeriods');
 const { parseCompanyDeductions, normalizeWorkerDeductions } = require('../utils/deductions');
 const { weekRange } = require('../utils/weekBounds');
@@ -340,10 +340,19 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
       const toIso = new Date().toISOString().slice(0, 10);
       const fromIso = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
       const weekStart = parseInt(settings.week_start ?? 1, 10); // drives the work_week period basis
-      const grouped = groupPeriods(generatePeriods(ruleset.schedule, fromIso, toIso, weekStart), ruleset.deductions || {});
+      const grouped = groupPeriods(generatePeriods(ruleset.schedule, fromIso, toIso, weekStart), groupOpts(ruleset.deductions));
       const companyDeds = parseCompanyDeductions(settings.deductions);
       const wdRows = await pool.query('SELECT id, name, kind, value, cap_amount, active FROM worker_deductions WHERE user_id = $1 AND company_id = $2 AND active = true', [userId, companyId]);
-      const deds = [...deductionsForRole(companyDeds, worker.role_id), ...normalizeWorkerDeductions(wdRows.rows)];
+      // Honor the ruleset's deduction scope (see computePayrollRun): 'selected' restricts
+      // the company deductions to the picked ids; worker rows always apply. Keeps the
+      // worker's stub identical to the admin run.
+      let coDeds = deductionsForRole(companyDeds, worker.role_id);
+      const dcfg = ruleset.deductions;
+      if (dcfg && dcfg.scope === 'selected') {
+        const sel = new Set(dcfg.selectedDeductionIds || []);
+        coDeds = coDeds.filter(d => sel.has(d.id));
+      }
+      const deds = [...coDeds, ...normalizeWorkerDeductions(wdRows.rows)];
       const withStmt = [];
       for (const p of grouped) {
         const st = await workerStatement({ companyId, worker, settings, from: p.periodStart, to: p.periodEnd });

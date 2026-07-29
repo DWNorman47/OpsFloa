@@ -23,6 +23,50 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-28 — Second (large) review pass — grouped-deduction engine hardened
+
+A 5-agent audit of the whole session's pay/deduction work surfaced a cluster of
+money bugs in the grouped-deduction + payroll-run path. Fixed nine; the fixes are
+verified by targeted harnesses and the full suite (server 1171 / client 256, green).
+
+**Severe — the dropdown never combined grouped deductions.** Selecting a pay period
+ran `from = to = payDate` (a single-day window), so a grouped ruleset only ever saw
+*one* check per group — the exempt (David's "combine the pair, minus $11,000") was
+applied to **every** check instead of once per group. Fix: `/payroll-periods` now
+offers one entry **per group** carrying the group's whole pay-date window, and the
+run spans that window. Because the window contains exactly the group's checks, the
+run re-groups them identically (so pair grouping is anchor-stable *for the run*
+without needing a schema change). Verified end-to-end: a biweekly pair now deducts
+10% of (16000 − 11000) = **$500 once**, on the 2nd check only.
+
+**High — grouped config read at the wrong nesting.** `groupBy`/`applyOn` live under
+`deductions.group.{by,applyOn}` but the callers passed `ruleset.deductions` straight
+to `groupPeriods`, which reads them flat — so **every** grouped ruleset silently fell
+back to pair/second (month + first/last never took). Added `groupOpts()` to flatten
+nested→flat; wired both callers (admin run + worker stub).
+
+**High — night differential missing from certified-payroll gross.** WH-347 `gross_pay`
+summed regular+prevailing+overtime but not the night premium, understating pay for any
+worker with a `night_diff` rule. Now adds `nightPremiumCost` (same source as the pay
+statement) on the premium-OT path.
+
+**Medium/low, also fixed:** `combineGroup:false` was ignored (now each flagged check
+figures on its own gross when combining is off); snapshot deduction *lines* were the
+raw pre-cap amounts while the total was capped, so a stub's itemization didn't foot —
+now scaled to the actual deducted total; finalize wasn't idempotent (double-submit
+made duplicate runs) — now 409s on an existing non-void run for the same period;
+`/paid` could mark a **voided** run paid and re-stamp already-paid checks — now blocked
++ `status='pending'` guarded; ruleset deduction **scope** (`selected` + picked ids) was
+normalized but never read, so a restricted ruleset still applied every deduction — now
+filters the company deductions (worker rows always apply) on both the admin run and the
+worker stub; overnight entries showed **0h** in Team Member Report + its CSV (the span
+helpers didn't wrap past midnight like `netHours`) — now wrapped.
+
+**Parked → BACKLOG (money is correct; these are refinements/edge):** multi-ruleset
+group windows can overlap when two schedules differ (clean for one ruleset); offered
+pair boundaries aren't anchored to the biweekly `anchorDate`; WH-347 still uses a single
+prevailing rate + flat OT on premium configs.
+
 ## 2026-07-28 — Review pass on the synthetic-entry work (2 audits) + fixes
 
 Audited the session's pay-engine changes with two parallel review agents.

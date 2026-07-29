@@ -21,6 +21,32 @@ that holds the exhaustive detail.
 
 ## 🔧 Bugs — set aside for later
 
+- **Grouped payroll: multi-schedule group windows can overlap** (`admin.js`
+  `/payroll-periods` + `computePayrollRun`). The Payroll dropdown now offers one
+  entry per *group* and runs the group's whole pay-date window so a grouped
+  ruleset's exempt combines once (fixed 2026-07-28). This is clean for a company
+  with **one** paycheck ruleset (the common case). With **multiple rulesets on
+  different cadences**, running ruleset A's group window `[from,to]` can pull in a
+  *partial* group for ruleset B (its checks that happen to land in that window
+  without its siblings), so B's exempt could combine over an incomplete group. Fix
+  = run/finalize per-ruleset (segment the window by ruleset) rather than one shared
+  `[from,to]`. Low-stakes until a customer runs two differing schedules. (2026-07-28)
+- **Pair grouping uses window-index parity, not the schedule anchor**
+  (`payPeriods.js` `groupPeriods`). For `groupBy:'pair'`, which two checks pair is
+  decided by their index in the generated window, and the window's start
+  (`/payroll-periods` uses `firstWork − 45d`) sets the parity. The *money* is now
+  correct (we run the exact offered group window, so it re-groups to the same
+  pair), but the *offered* pair boundaries aren't anchored to the biweekly
+  `anchorDate`, so which checks pair could differ from an admin's mental model.
+  Make pair grouping anchor-relative: `pairIndex = floor(((payDate − anchor)/14d)/2)`.
+  (2026-07-28)
+- **Certified payroll: single prevailing rate + flat OT on premium configs**
+  (`admin.js` WH-347 route). One `prevRate` for all prevailing hours (no
+  per-classification/per-project rate table), and premium OT configs still price
+  OT flat (`otBandsCost` at `otMult`) rather than the full band math on the
+  prevailing base. Night differential is now included in `gross_pay` (fixed
+  2026-07-28); classification-level prevailing rates remain a gap. (2026-07-28)
+
 - **Project merge doesn't move financial records** (`admin.js`
   `POST /projects/:id/merge-into/:target_id`). The re-point list only covers
   operational tables (time entries, reports, RFIs, …), not the financial /
