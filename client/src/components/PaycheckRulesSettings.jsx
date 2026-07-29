@@ -398,7 +398,7 @@ function Field({ label, hint, children }) {
 }
 
 const s = {
-  card: { background: '#fff', borderRadius: 12, padding: 20, boxShadow: '0 2px 12px rgba(0,0,0,0.06)' },
+  card: {},
   desc: { fontSize: 13, color: '#6b7280', margin: '0 0 14px', lineHeight: 1.5, maxWidth: 640 },
   ruleset: { border: '1px solid #e5e7eb', borderRadius: 10, marginBottom: 12, overflow: 'hidden' },
   rsHeader: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: '#f9fafb' },
@@ -428,7 +428,7 @@ const s = {
   presetBtn: { background: 'none', border: '1px solid #d1d5db', borderRadius: 7, padding: '6px 11px', fontSize: 12, cursor: 'pointer', color: '#374151' },
   note: { fontSize: 12, color: '#475569', margin: '14px 0 0', lineHeight: 1.5, maxWidth: 640, background: '#f8fafc', border: '1px solid #eef0f2', borderRadius: 6, padding: '7px 11px' },
   error: { color: '#e53e3e', fontSize: 13 },
-  actions: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, padding: '12px 20px', borderTop: '1px solid #f3f4f6', background: '#fafafa', borderBottomLeftRadius: 12, borderBottomRightRadius: 12, margin: '20px -20px -20px' },
+  actions: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, padding: '12px 20px', borderTop: '1px solid #f3f4f6', background: '#fafafa', margin: '16px -20px 0' },
   saveBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '7px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   savedMsg: { fontSize: 13, color: '#059669', fontWeight: 600 },
 };

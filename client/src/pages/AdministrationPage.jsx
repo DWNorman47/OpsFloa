@@ -948,7 +948,7 @@ const styles = {
   subsectionIcon: { fontSize: 20, lineHeight: 1 },
   subsectionTitle: { fontSize: 14, fontWeight: 700, color: '#111827' },
   subsectionSub: { fontSize: 12, color: '#6b7280', marginTop: 1 },
-  subsectionBody: { padding: '14px 20px 18px' },
+  subsectionBody: { padding: '16px 20px 0' },
   subsectionChevron: { fontSize: 11, color: '#6b7280' },
   languageTrigger: { width: '100%', border: 'none', background: '#fff', padding: 16, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, textAlign: 'left' },
   languageTriggerCopy: { display: 'flex', flexDirection: 'column', gap: 4 },
