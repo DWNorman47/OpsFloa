@@ -178,15 +178,34 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
   // hours" day, or a minimum-daily floor topping up a short worked day. Their hours are
   // already inside regularHours (computeOT) — these rows don't add pay, they just make
   // every paid hour a visible, traceable line instead of a hidden bump in Regular.
-  const floorEntries = floorDetail.map(f => ({
-    synthetic: true, kind: f.kind, id: `floor-${f.kind}-${f.date}`,
-    work_date: f.date, work_date_str: f.date,
-    project_name: null, start_time: null, end_time: null, break_minutes: 0,
-    hours: f.hours, wage_type: 'regular', overtime_hours: 0,
+  const mkSynthetic = (o) => ({
+    synthetic: true, project_name: null, start_time: null, end_time: null,
+    break_minutes: 0, wage_type: 'regular', overtime_hours: 0, ...o,
+    work_date_str: o.work_date,
+  });
+  const syntheticEntries = floorDetail.map(f => mkSynthetic({
+    kind: f.kind, id: `floor-${f.kind}-${f.date}`, work_date: f.date, hours: f.hours,
     explain: [{ code: f.kind === 'guarantee' ? 'guarantee_day' : 'min_daily_floor', hours: f.hours }],
   }));
-  const outEntries = floorEntries.length
-    ? [...paid, ...floorEntries].sort((a, b) => {
+  // Weekly-hours guarantee top-up and paid leave are also rule-generated hours, not
+  // clocked time — same rule: they only get paid if they're an entry. `cost` is set on
+  // these (their category isn't inside Regular) so each row is self-reconciling.
+  const periodEnd = to || (paid.length ? paid[paid.length - 1].work_date : from) || null;
+  if (guaranteeShortfall > 0) syntheticEntries.push(mkSynthetic({
+    kind: 'weekly_guarantee', id: 'wk-guarantee', work_date: periodEnd,
+    hours: guaranteeShortfall, cost: guaranteeCost,
+    explain: [{ code: 'weekly_guarantee', minHours: guaranteeMinHours, weeks: guaranteeWeeks, hours: guaranteeShortfall }],
+  }));
+  if (sickHours > 0) syntheticEntries.push(mkSynthetic({
+    kind: 'sick', id: 'leave-sick', work_date: periodEnd, hours: sickHours, cost: sickCost,
+    explain: [{ code: 'leave', leaveType: 'sick', hours: sickHours }],
+  }));
+  if (vacationHours > 0) syntheticEntries.push(mkSynthetic({
+    kind: 'vacation', id: 'leave-vacation', work_date: periodEnd, hours: vacationHours, cost: vacationCost,
+    explain: [{ code: 'leave', leaveType: 'vacation', hours: vacationHours }],
+  }));
+  const outEntries = syntheticEntries.length
+    ? [...paid, ...syntheticEntries].sort((a, b) => {
         const d = String(a.work_date).localeCompare(String(b.work_date));
         return d !== 0 ? d : String(a.start_time || '99:99').localeCompare(String(b.start_time || '99:99'));
       })

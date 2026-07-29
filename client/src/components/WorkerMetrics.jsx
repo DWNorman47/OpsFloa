@@ -187,25 +187,19 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
   const exportCSV = () => {
     const showOtCol = overtimeEnabled && settings?.report_daily_ot_column !== false;
     const headers = ['Date', 'Type', 'Project', 'Category / Wage Type', 'Start', 'End', ...(showOtCol ? ['Overtime'] : []), 'Hours', 'Amount'];
+    const SYN_CSV = { guarantee: 'Guaranteed hours (no clock-in)', min_daily: 'Minimum daily top-up', weekly_guarantee: 'Weekly-hours guarantee top-up', sick: 'Sick leave', vacation: 'Vacation leave' };
     const timeRows = billData.entries.map(e => {
       if (e.synthetic) {
-        const label = e.kind === 'guarantee' ? 'Guaranteed hours (no clock-in)' : 'Minimum daily top-up';
-        return [e.work_date?.toString().substring(0, 10), 'Guarantee', label, e.wage_type, '', '', ...(showOtCol ? ['0.00'] : []), Number(e.hours).toFixed(2), ''];
+        // Rule-generated hours (floor / guarantee / leave) are entries now — one CSV row each.
+        return [e.work_date?.toString().substring(0, 10), 'Rule hours', SYN_CSV[e.kind] || e.kind, e.wage_type, '', '', ...(showOtCol ? ['0.00'] : []), Number(e.hours).toFixed(2), e.cost != null ? e.cost : ''];
       }
       const h = ((new Date(`1970-01-01T${e.end_time}`) - new Date(`1970-01-01T${e.start_time}`)) / 3600000).toFixed(2);
       return [e.work_date?.toString().substring(0, 10), 'Time', e.project_name || '', e.wage_type, e.start_time, e.end_time, ...(showOtCol ? [(e.overtime_hours || 0).toFixed(2)] : []), h, ''];
     });
-    const g = billData.summary || {};
-    const pad = showOtCol ? [''] : [];
-    const derivedRows = [
-      ...(g.guarantee_shortfall_hours > 0 ? [['', 'Guarantee top-up', '', 'Weekly-hours guarantee', '', '', ...pad, Number(g.guarantee_shortfall_hours).toFixed(2), g.guarantee_cost]] : []),
-      ...(g.sick_hours > 0 ? [['', 'Sick leave', '', 'Paid leave', '', '', ...pad, Number(g.sick_hours).toFixed(2), g.sick_cost]] : []),
-      ...(g.vacation_hours > 0 ? [['', 'Vacation leave', '', 'Paid leave', '', '', ...pad, Number(g.vacation_hours).toFixed(2), g.vacation_cost]] : []),
-    ];
     const reimbRows = (billData.reimbursements || []).map(r => [
       r.expense_date?.toString().substring(0, 10), 'Expense', r.project_name || '', r.category || r.description || '', '', '', ...(showOtCol ? [''] : []), '', r.amount,
     ]);
-    downloadCSV([headers, ...timeRows, ...derivedRows, ...reimbRows], `${worker.username}-${from || 'all'}-to-${to || 'all'}.csv`);
+    downloadCSV([headers, ...timeRows, ...reimbRows], `${worker.username}-${from || 'all'}-to-${to || 'all'}.csv`);
   };
 
   const PRESETS = [
@@ -217,6 +211,28 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
 
   const s = billData?.summary;
   const hasResults = billData && (billData.entries.length > 0 || (billData.reimbursements || []).length > 0 || (s?.sick_hours > 0) || (s?.vacation_hours > 0) || (s?.guarantee_shortfall_hours > 0));
+
+  // Labels + expandable "why" for engine-generated (synthetic) entry rows — the hours
+  // a rule adds without a clock-in (floor / guarantee / paid leave).
+  const SYN_LABELS = {
+    guarantee: t.floorGuaranteeLabel, min_daily: t.floorMinDailyLabel,
+    weekly_guarantee: t.guaranteeTopupLabel, sick: t.pdfSickHours || 'Sick', vacation: t.pdfVacationHours || 'Vacation',
+  };
+  const syntheticTrace = (e) => {
+    if (e.kind === 'sick' || e.kind === 'vacation')
+      return <LeaveDetail rows={(billData.leave_detail || []).filter(d => d.type === e.kind)} t={t} policyRaw={policyRaw} goto={goto} />;
+    let text, link = '/administration#workspace';
+    if (e.kind === 'weekly_guarantee') {
+      const ex = (e.explain && e.explain[0]) || {};
+      text = (t.trGuaranteeTopup || 'Guaranteed {min}h over {weeks} wk; worked {worked} — topped up {short} × {rate} = {cost}.')
+        .replace('{min}', fmtHours(ex.minHours)).replace('{weeks}', ex.weeks).replace('{worked}', fmtHours(s.total_hours))
+        .replace('{short}', fmtHours(e.hours)).replace('{rate}', formatCurrency(s.rate, currency)).replace('{cost}', formatCurrency(e.cost, currency));
+      link = '/team';
+    } else {
+      text = e.kind === 'guarantee' ? t.floorGuaranteeTrace : t.floorMinDailyTrace;
+    }
+    return <div style={styles.trace}><div style={styles.traceItem}><span>{text}</span><button style={styles.traceLink} onClick={() => goto(link)}>{t.trViewSetting} →</button></div></div>;
+  };
 
   // A trace expander row: renders the engine's explain items for one line.
   const Trace = ({ items }) => {
@@ -306,76 +322,23 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
                   {billData.entries.map((e, idx) => {
                     const key = `e${idx}`;
                     const hasTrace = Array.isArray(e.explain) && e.explain.length > 0;
-                    const synLabel = e.synthetic ? (e.kind === 'guarantee' ? t.floorGuaranteeLabel : t.floorMinDailyLabel) : null;
+                    const synLabel = e.synthetic ? (SYN_LABELS[e.kind] || t.floorMinDailyLabel) : null;
                     return (
                       <div key={e.id ?? idx}>
                         <div style={{ ...styles.line, ...(hasTrace ? styles.lineClickable : {}) }} onClick={() => hasTrace && toggleLine(key)}>
                           <span style={styles.lineDate}>{e.work_date?.toString().substring(0, 10)}</span>
-                          <span style={styles.lineMid}>{e.synthetic ? synLabel : <>{e.project_name || '—'}{e.wage_type === 'prevailing' ? ` · ${t.prevailingLabel}` : ''}</>}</span>
+                          <span style={styles.lineMid}>{e.synthetic
+                            ? <>{synLabel}{e.cost != null ? ` · ${formatCurrency(e.cost, currency)}` : ''}</>
+                            : <>{e.project_name || '—'}{e.wage_type === 'prevailing' ? ` · ${t.prevailingLabel}` : ''}</>}</span>
                           <span style={styles.lineTimes}>{e.synthetic ? '' : `${(e.start_time || '').slice(0, 5)}–${(e.end_time || '').slice(0, 5)}`}</span>
                           {overtimeEnabled && !e.synthetic && (e.overtime_hours || 0) > 0 && <span style={styles.otBadge}>{t.otHrs} {fmtHours(e.overtime_hours)}</span>}
                           <span style={styles.lineHours}>{fmtHours(dur(e))}</span>
                           <span style={styles.lineChev}>{hasTrace ? (openLine === key ? '▾' : '▸') : ''}</span>
                         </div>
-                        {openLine === key && hasTrace && (e.synthetic
-                          ? <div style={styles.trace}><div style={styles.traceItem}><span>{e.kind === 'guarantee' ? t.floorGuaranteeTrace : t.floorMinDailyTrace}</span><button style={styles.traceLink} onClick={() => goto('/administration#workspace')}>{t.trViewSetting} →</button></div></div>
-                          : <Trace items={e.explain} />)}
+                        {openLine === key && hasTrace && (e.synthetic ? syntheticTrace(e) : <Trace items={e.explain} />)}
                       </div>
                     );
                   })}
-                  {/* Guaranteed-weekly-hours top-up: a derived line, not a clocked entry.
-                      Shown here (not folded into a summary total) so every paid hour traces
-                      to a row + the rule that produced it. */}
-                  {s.guarantee_shortfall_hours > 0 && (
-                    <div>
-                      <div style={{ ...styles.line, ...styles.lineClickable }} onClick={() => toggleLine('guarantee')}>
-                        <span style={styles.lineDate}>—</span>
-                        <span style={styles.lineMid}>{t.guaranteeTopupLabel} · {formatCurrency(s.guarantee_cost, currency)}</span>
-                        <span style={styles.lineTimes} />
-                        <span style={styles.lineHours}>{fmtHours(s.guarantee_shortfall_hours)}</span>
-                        <span style={styles.lineChev}>{openLine === 'guarantee' ? '▾' : '▸'}</span>
-                      </div>
-                      {openLine === 'guarantee' && (
-                        <div style={styles.trace}>
-                          <div style={styles.traceItem}>
-                            <span>{(t.trGuaranteeTopup || 'Guaranteed {min}h over {weeks} wk; worked {worked}h — topped up {short}h × {rate} = {cost}.')
-                              .replace('{min}', fmtHours(s.guarantee_min_hours))
-                              .replace('{weeks}', s.guarantee_weeks)
-                              .replace('{worked}', fmtHours(s.total_hours))
-                              .replace('{short}', fmtHours(s.guarantee_shortfall_hours))
-                              .replace('{rate}', formatCurrency(s.rate, currency))
-                              .replace('{cost}', formatCurrency(s.guarantee_cost, currency))}</span>
-                            <button style={styles.traceLink} onClick={() => goto('/team')}>{t.trViewSetting} →</button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {/* Paid leave — traceable rows, expandable to the per-day detail + rule. */}
-                  {s.sick_hours > 0 && (
-                    <div>
-                      <div style={{ ...styles.line, ...styles.lineClickable }} onClick={() => toggleLine('sick')}>
-                        <span style={styles.lineDate}>—</span>
-                        <span style={styles.lineMid}>{t.pdfSickHours || 'Sick'} · {formatCurrency(s.sick_cost, currency)}</span>
-                        <span style={styles.lineTimes} />
-                        <span style={styles.lineHours}>{fmtHours(s.sick_hours)}</span>
-                        <span style={styles.lineChev}>{openLine === 'sick' ? '▾' : '▸'}</span>
-                      </div>
-                      {openLine === 'sick' && <LeaveDetail rows={(billData.leave_detail || []).filter(d => d.type === 'sick')} t={t} policyRaw={policyRaw} goto={goto} />}
-                    </div>
-                  )}
-                  {s.vacation_hours > 0 && (
-                    <div>
-                      <div style={{ ...styles.line, ...styles.lineClickable }} onClick={() => toggleLine('vacation')}>
-                        <span style={styles.lineDate}>—</span>
-                        <span style={styles.lineMid}>{t.pdfVacationHours || 'Vacation'} · {formatCurrency(s.vacation_cost, currency)}</span>
-                        <span style={styles.lineTimes} />
-                        <span style={styles.lineHours}>{fmtHours(s.vacation_hours)}</span>
-                        <span style={styles.lineChev}>{openLine === 'vacation' ? '▾' : '▸'}</span>
-                      </div>
-                      {openLine === 'vacation' && <LeaveDetail rows={(billData.leave_detail || []).filter(d => d.type === 'vacation')} t={t} policyRaw={policyRaw} goto={goto} />}
-                    </div>
-                  )}
                 </div>
               )}
 

@@ -159,9 +159,13 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
         {entries.map(e => {
           const h = e.synthetic ? (Number(e.hours) || 0) : netHours(e.start_time, e.end_time, e.break_minutes);
           const isPrev = e.wage_type === 'prevailing';
-          const desc = e.synthetic
-            ? (e.kind === 'guarantee' ? (t.floorGuaranteeLabel || 'Guaranteed hours (no clock-in)') : (t.floorMinDailyLabel || 'Minimum daily top-up'))
-            : (e.notes || '');
+          const synLabels = {
+            guarantee: t.floorGuaranteeLabel || 'Guaranteed hours (no clock-in)',
+            min_daily: t.floorMinDailyLabel || 'Minimum daily top-up',
+            weekly_guarantee: t.guaranteeTopupLabel || 'Weekly-hours guarantee top-up',
+            sick: t.pdfSickHours || 'Sick', vacation: t.pdfVacationHours || 'Vacation',
+          };
+          const desc = e.synthetic ? (synLabels[e.kind] || e.kind) : (e.notes || '');
           return (
             <View key={e.id} style={s.tableRow} wrap={false}>
               <Text style={[s.td, { width: colDate }]}>{fmtDate(e.work_date_str || e.work_date, locale)}</Text>
@@ -183,25 +187,6 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
             </View>
           );
         })}
-
-        {/* Derived pay lines (guarantee top-up, paid leave) — itemized as rows so their
-            hours trace here, not folded into a summary total. Pay stays in the totals below. */}
-        {[
-          summary.guarantee_shortfall_hours > 0 && { label: t.guaranteeTopupLabel || 'Weekly-hours guarantee top-up', hours: summary.guarantee_shortfall_hours },
-          summary.sick_hours > 0 && { label: t.pdfSickHours || 'Sick', hours: summary.sick_hours },
-          summary.vacation_hours > 0 && { label: t.pdfVacationHours || 'Vacation', hours: summary.vacation_hours },
-        ].filter(Boolean).map((d, i) => (
-          <View key={`d${i}`} style={s.tableRow} wrap={false}>
-            <Text style={[s.td, { width: colDate }]}>—</Text>
-            {showProject && <Text style={[s.td, { width: colProject }]} />}
-            <Text style={[s.td, { width: colDesc, color: '#6b7280' }]}>{d.label}</Text>
-            <Text style={[s.td, { width: colIn }]} />
-            <Text style={[s.td, { width: colOut }]} />
-            {showRateType && <Text style={[s.td, { width: colType }]} />}
-            {showOtCol && <Text style={[s.td, { width: colOt, textAlign: 'right', color: '#9ca3af' }]}>—</Text>}
-            <Text style={[s.td, { width: colHours, textAlign: 'right', fontWeight: 'bold' }]}>{fmtH(d.hours)}</Text>
-          </View>
-        ))}
 
         {/* Reimbursements table */}
         {reimbursements.length > 0 && (

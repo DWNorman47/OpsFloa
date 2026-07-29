@@ -45,10 +45,14 @@ that lists entries: Team Member Report, bill PDF, CSV. **No pay changes** — th
 were always in `regularHours`; gross/net identical. When no floor rules apply, zero
 synthetic entries (behavior unchanged; all 1171 tests green).
 
-**Still to unify (same pattern):** the weekly `guaranteeShortfall` and sick/vacation
-leave currently render as summary-derived rows (added earlier today), not synthetic
-entries. They should become entries too for full consistency — not in this company's
-data, so deferred, but it's the same mechanism.
+**Unified (same session, "the word"):** the weekly `guaranteeShortfall` and sick/
+vacation leave are now synthetic entries too — `buildPayStatement` emits a
+`weekly_guarantee` entry (dated period-end) and one `sick`/`vacation` entry each
+(hours + cost, the leave one expandable to the per-day `LeaveDetail`). Removed their
+summary-derived rows from the report + the duplicate CSV/PDF blocks. So **every** paid
+hour — worked, floor, no-clock-in guarantee, weekly guarantee, leave — is now an entry
+row; the summary only rolls up cost. Verified end-to-end: worked+floor+guarantee+sick+
+vacation → 5 entry rows, gross reconciles exactly ($1444 in the harness), unchanged.
 
 ## 2026-07-28 — Guarantee top-up is now a traceable Time-Entries row (not a summary total)
 
