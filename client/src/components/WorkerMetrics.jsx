@@ -193,7 +193,7 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
         // Rule-generated hours (floor / guarantee / leave) are entries now — one CSV row each.
         return [e.work_date?.toString().substring(0, 10), 'Rule hours', SYN_CSV[e.kind] || e.kind, e.wage_type, '', '', ...(showOtCol ? ['0.00'] : []), Number(e.hours).toFixed(2), e.cost != null ? e.cost : ''];
       }
-      const h = ((new Date(`1970-01-01T${e.end_time}`) - new Date(`1970-01-01T${e.start_time}`)) / 3600000).toFixed(2);
+      const h = Math.max(0, ((new Date(`1970-01-01T${e.end_time}`) - new Date(`1970-01-01T${e.start_time}`)) / 3600000) - (Number(e.break_minutes) || 0) / 60).toFixed(2);
       return [e.work_date?.toString().substring(0, 10), 'Time', e.project_name || '', e.wage_type, e.start_time, e.end_time, ...(showOtCol ? [(e.overtime_hours || 0).toFixed(2)] : []), h, ''];
     });
     const reimbRows = (billData.reimbursements || []).map(r => [
@@ -250,7 +250,12 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
     );
   };
 
-  const dur = e => (e.synthetic ? (Number(e.hours) || 0) : ((new Date(`1970-01-01T${e.end_time}`) - new Date(`1970-01-01T${e.start_time}`)) / 3600000));
+  // Paid hours for a row: clock span MINUS the logged break (the break comes off paid
+  // time). Synthetic rows already carry their net hours. The break itself is in the
+  // entry's expand trace (break_logged), so the difference from the span is traceable.
+  const dur = e => (e.synthetic
+    ? (Number(e.hours) || 0)
+    : Math.max(0, ((new Date(`1970-01-01T${e.end_time}`) - new Date(`1970-01-01T${e.start_time}`)) / 3600000) - (Number(e.break_minutes) || 0) / 60));
 
   return (
     <div style={styles.panelCard}>
