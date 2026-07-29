@@ -21,6 +21,38 @@ that holds the exhaustive detail.
 
 ## 🔧 Bugs — set aside for later
 
+- **⚠️ WH-347 PDF / Statement of Compliance — needs David's call (compliance document).**
+  Surfaced in the 6th review pass; NOT changed unilaterally because it's a signed federal
+  form. (a) The PDF prints **hardcoded** compliance clauses, not the `compliance_text`
+  snapshot that was actually signed (`certified_payroll_signatures.compliance_text`, returned
+  by the report route) — and the hardcoded clause (3) is truncated vs `DEFAULT_COMPLIANCE_TEXT`
+  (drops the "or if no such recognized agency exists…" branch). Render the signed snapshot.
+  (b) Gross includes night premium / OT premium that aren't shown as line items — inherent to
+  the WH-347 S/O format (gross is the weekly total), but worth confirming David is OK with it.
+  (c) Regular + prevailing hours are merged into one straight row at a single rate, hiding the
+  prevailing/non-prevailing split (matters in all-projects/mixed weeks). (d) OT sub-row shows
+  hours but blank rate/amount. (e) Fringes shown as one combined $/hr with no cash-vs-approved-
+  plan (4a/4b/4c) election. (f) Re-signing **upserts in place** (`ON CONFLICT DO UPDATE`),
+  destroying the prior signature's `signature_data`/`compliance_text` — the original certified
+  artifact becomes unrecoverable (audit only logs name+week). (g) POST /signatures doesn't
+  verify `project_id` belongs to the caller's company (inert — no cross-tenant read — but
+  inconsistent with the GET/fringes/SSN ownership checks). (h) Cert date rendered with
+  `new Date(signed_at).toLocaleDateString()` (viewer-local) can print a date one day off near a
+  UTC boundary; a legal attestation date should be fixed (render UTC). (i) Sign-modal buttons
+  ("Sign"/"Re-sign"/"Signing…") are hardcoded English. `client/src/components/CertifiedPayrollPDF.jsx`,
+  `CertifiedPayrollSignature.jsx`, `server/routes/certifiedPayroll.js`. (2026-07-28)
+- **Deductions — residual gaps from the 6th-pass review.** (a) **Multiple** deductions can
+  still sum to >100% of gross; the ruleset path floors at `minNet`, but the legacy stub path
+  (`payStubTotals`) has **no floor**, so net can go negative (each single percent is now
+  clamped to ≤100 — fixed 2026-07-28 — but the sum isn't). (b) Company deduction saves are
+  last-write-wins: the whole `deductions` JSON is PATCHed with a dead `version:1` the server
+  never checks, so two admins editing concurrently silently clobber each other. (c) A company
+  deduction stored with **no id** (external/SQL-written data) normalizes to `id:''` and is
+  silently dropped by any `scope:'selected'` ruleset (the client heals ids on load, so only
+  externally-written data is exposed). (d) `newDeduction` ids are `Math.random` base-36 (~1e-7
+  collision); two colliding ids would both match a single `selectedDeductionIds` pick and
+  over-deduct. `server/utils/deductions.js`, `client/src/components/DeductionsSettings.jsx`,
+  `DeductionListEditor.jsx`. (2026-07-28)
 - **Grouped payroll: multi-schedule group windows can overlap** (`admin.js`
   `/payroll-periods` + `computePayrollRun`). The Payroll dropdown offers one
   entry per *group* and runs the group's whole pay-date window so a grouped

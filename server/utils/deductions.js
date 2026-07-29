@@ -26,8 +26,13 @@ function normalizeDeduction(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const kind = DEDUCTION_KINDS.includes(raw.kind) ? raw.kind : null;
   const name = String(raw.name == null ? '' : raw.name).trim();
-  const value = Number(raw.value);
+  let value = Number(raw.value);
   if (!kind || !name || !Number.isFinite(value) || value < 0) return null;
+  // A percent deduction can never exceed 100% of gross. A >100 typo (or a fixed dollar
+  // amount switched to percent, carrying its value over) would otherwise drive net pay
+  // NEGATIVE on the legacy stub path (payStubTotals has no min-net floor). Clamp as the
+  // universal safety net — every deduction that reaches computeDeductions passes here.
+  if (kind === 'percent' && value > 100) value = 100;
   const capRaw = raw.cap != null ? raw.cap : raw.cap_amount; // JSON uses `cap`, DB row uses `cap_amount`
   const cap = Number(capRaw);
   return {

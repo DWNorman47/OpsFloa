@@ -40,6 +40,20 @@ describe('parseCompanyDeductions', () => {
     expect(parseCompanyDeductions(JSON.stringify([{ name: 'X', kind: 'fixed', value: 10 }]))).toHaveLength(1);
   });
 
+  test('a percent deduction over 100% is clamped to 100 (never drives net negative)', () => {
+    const list = parseCompanyDeductions(JSON.stringify({ items: [
+      { id: 'a', name: 'Fat finger', kind: 'percent', value: 150 }, // 150% typo
+      { id: 'b', name: 'Fine', kind: 'percent', value: 60 },
+      { id: 'c', name: 'Fixed big', kind: 'fixed', value: 5000 },   // fixed is NOT clamped
+    ] }));
+    expect(list.find(d => d.id === 'a').value).toBe(100); // clamped
+    expect(list.find(d => d.id === 'b').value).toBe(60);  // untouched
+    expect(list.find(d => d.id === 'c').value).toBe(5000); // fixed amounts are not percentages
+    // A single 100% clamp means one deduction can take at most the whole check, never more.
+    const { total } = computeDeductions(2000, [list.find(d => d.id === 'a')]);
+    expect(total).toBe(2000); // 100% of 2000, not 3000
+  });
+
   test('role scope: roleIds kept (de-duped, primitives only); absent = all employees', () => {
     const raw = JSON.stringify({ items: [
       { id: 'a', name: 'Union dues', kind: 'fixed', value: 20, roleIds: [3, 3, 'x', null, {}] },

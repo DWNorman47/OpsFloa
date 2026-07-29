@@ -52,7 +52,8 @@ export default function DeductionListEditor({ items, onChange, roles }) {
             </div>
             <div style={s.fieldNarrow}>
               <label style={s.label}>{it.kind === 'percent' ? t.dedValuePercent : t.dedValueFixed}</label>
-              <input style={s.inputNarrow} type="number" min="0" step={it.kind === 'percent' ? '0.05' : '0.01'}
+              <input style={s.inputNarrow} type="number" min="0" max={it.kind === 'percent' ? '100' : undefined}
+                step={it.kind === 'percent' ? '0.05' : '0.01'}
                 value={it.value} onChange={e => update(it.id, { value: e.target.value })} />
             </div>
             {it.kind === 'percent' && (

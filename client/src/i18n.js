@@ -779,6 +779,9 @@ const translations = {
     pcrSaveFailed: 'Could not save. Please try again.',
     pcrWeekdays: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
     dedSaveFailed: 'Could not save deductions.',
+    dedErrName: 'Every deduction needs a name.',
+    dedErrValue: 'Enter a valid amount (0 or more) for each deduction.',
+    dedErrPercent: "A percentage deduction can't exceed 100%.",
     dedWorkerBtn: 'Deductions',
     dedWorkerNote: 'Deductions for this employee only (loans, advances, garnishments), added on top of the company-wide deductions.',
 
@@ -5231,6 +5234,9 @@ const translations = {
     pcrSaveFailed: 'No se pudo guardar. Inténtalo de nuevo.',
     pcrWeekdays: ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'],
     dedSaveFailed: 'No se pudieron guardar las deducciones.',
+    dedErrName: 'Cada deducción necesita un nombre.',
+    dedErrValue: 'Ingresa un monto válido (0 o más) para cada deducción.',
+    dedErrPercent: 'Una deducción porcentual no puede superar el 100 %.',
     dedWorkerBtn: 'Deducciones',
     dedWorkerNote: 'Deducciones solo para este empleado (préstamos, adelantos, embargos), agregadas sobre las deducciones de toda la empresa.',
 

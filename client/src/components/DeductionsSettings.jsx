@@ -61,7 +61,26 @@ export default function DeductionsSettings({ settings, onSettingsUpdated }) {
 
   const change = (next) => { setItems(next); setSaved(false); };
 
+  // A partially-filled row (a name OR a value but not a valid pair) would be silently
+  // dropped by toPolicy while the UI still says "Saved" — so the admin thinks a deduction
+  // is configured when it isn't. Block the save and say which row is wrong. A fully-blank
+  // row (just-added, untouched) is fine to ignore.
+  const validate = (rows) => {
+    for (const it of rows) {
+      const hasName = String(it.name).trim() !== '';
+      const hasValue = String(it.value).trim() !== '';
+      if (!hasName && !hasValue) continue;
+      if (!hasName) return t.dedErrName;
+      const v = parseFloat(it.value);
+      if (!Number.isFinite(v) || v < 0) return t.dedErrValue;
+      if (it.kind === 'percent' && v > 100) return t.dedErrPercent;
+    }
+    return '';
+  };
+
   const save = async () => {
+    const msg = validate(items);
+    if (msg) { setError(msg); setSaved(false); return; }
     setSaving(true); setError('');
     try {
       const r = await api.patch('/admin/settings', { deductions: JSON.stringify(toPolicy(items)) });

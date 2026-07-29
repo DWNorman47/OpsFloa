@@ -23,6 +23,36 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-28 — Sixth review pass — deductions editors + WH-347 PDF/signature
+
+Aimed at the last un-reviewed surfaces: the deductions editors and the WH-347 PDF +
+signature flow. Batch-6 re-audited **clean**. Fixed the money-critical deductions gap;
+the WH-347 findings are compliance-document decisions parked for David (see below).
+
+**Money-critical — a percent deduction had no ≤100% bound.** A 150% typo (or a fixed
+amount switched to Percent, carrying its value over) drove net pay **negative** on the
+legacy stub path (no min-net floor there). Clamped percent to ≤100 in the shared
+normalizer (`deductions.js` — the one chokepoint every deduction passes through), added
+`max="100"` on the client input, and pinned it with a test.
+
+**Deductions saved silently dropped bad rows while showing "Saved".** A row with a name
+but no value (or vice-versa) was filtered out by `toPolicy`, yet the UI confirmed success —
+so the admin thought a deduction existed when it didn't. Now the save is blocked with a
+specific error (which row, why); added `dedErr*` EN/ES keys.
+
+**WH-347 PDF + signature → BACKLOG (flagged for David, not changed).** This is a signed
+federal form, so I did not alter it unilaterally. Real items to decide on: the PDF prints
+**hardcoded** compliance clauses instead of the `compliance_text` that was actually signed
+(and the hardcoded clause 3 is truncated); night/OT premium in gross isn't itemized
+(inherent to the S/O format, but confirm); regular+prevailing merged into one row hides the
+split; re-signing **overwrites** the prior signature (original artifact unrecoverable); cert
+date renders in viewer-local time (off-by-one near a UTC boundary); sign-modal buttons are
+English-only. Full list in BACKLOG. SSN handling, signature week/project scoping, and
+tenancy on the read paths all checked **clean**.
+
+**Also parked:** deductions can still sum to >100% on the floor-less legacy path; company
+deduction saves are last-write-wins (dead `version` field); Math.random id collision (~1e-7).
+
 ## 2026-07-28 — Fifth review pass — client UX + certified payroll
 
 Pointed this pass at the two surfaces the prior four barely touched: the client payroll
