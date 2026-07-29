@@ -367,6 +367,11 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
   const otByMult = new Map();
   const addOt = (hours, mult) => { if (hours > 0) otByMult.set(mult, (otByMult.get(mult) || 0) + hours); };
   let autoReg = 0;
+  // Rule-generated regular hours that aren't worked clock time: a minimum-daily
+  // floor topping up a short worked day, or a "guarantee N paid hours" rule that
+  // pays a day with no clock-in. Collected per day so the pay statement can show
+  // each as its own traceable line instead of folding it invisibly into Regular.
+  const floorDetail = []; // [{ date, hours, kind: 'min_daily' | 'guarantee' }]
 
   // 7th-consecutive-day premium (daily rule only): when a worker worked all 7
   // days of a workweek, that week's chronologically-last worked day is paid
@@ -453,7 +458,9 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
         });
         const minD = minDailyForBucket(otConfig, rule, dk);
         if (minD > 0 && h < minD) {
-          autoReg += (minD - h);                  // reporting-time floor: pay the shortfall as regular
+          const add = minD - h;
+          autoReg += add;                         // reporting-time floor: pay the shortfall as regular
+          floorDetail.push({ date: dk, hours: +add.toFixed(2), kind: 'min_daily' });
         }
       }
     });
@@ -492,7 +499,10 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
           }
           if (gate) floor = Math.max(floor, parseFloat(r.hours) || 0);
         }
-        if (floor > 0) autoReg += floor;   // guaranteed regular hours (no OT)
+        if (floor > 0) {
+          autoReg += floor;                // guaranteed regular hours (no OT)
+          floorDetail.push({ date: dk, hours: +floor.toFixed(2), kind: 'guarantee' });
+        }
       }
     }
   }
@@ -513,6 +523,11 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
     regularHours:  overrideReg + autoReg,
     overtimeHours,
     otBands,
+    // Rule-generated (non-worked) regular hours, per day, so callers can break them
+    // out of Regular as their own traceable lines. floorHours is their sum; it is a
+    // SUBSET of regularHours (already included above) — never add it on top.
+    floorDetail,
+    floorHours: +floorDetail.reduce((s, f) => s + f.hours, 0).toFixed(2),
   };
 }
 

@@ -188,6 +188,10 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
     const showOtCol = overtimeEnabled && settings?.report_daily_ot_column !== false;
     const headers = ['Date', 'Type', 'Project', 'Category / Wage Type', 'Start', 'End', ...(showOtCol ? ['Overtime'] : []), 'Hours', 'Amount'];
     const timeRows = billData.entries.map(e => {
+      if (e.synthetic) {
+        const label = e.kind === 'guarantee' ? 'Guaranteed hours (no clock-in)' : 'Minimum daily top-up';
+        return [e.work_date?.toString().substring(0, 10), 'Guarantee', label, e.wage_type, '', '', ...(showOtCol ? ['0.00'] : []), Number(e.hours).toFixed(2), ''];
+      }
       const h = ((new Date(`1970-01-01T${e.end_time}`) - new Date(`1970-01-01T${e.start_time}`)) / 3600000).toFixed(2);
       return [e.work_date?.toString().substring(0, 10), 'Time', e.project_name || '', e.wage_type, e.start_time, e.end_time, ...(showOtCol ? [(e.overtime_hours || 0).toFixed(2)] : []), h, ''];
     });
@@ -230,7 +234,7 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
     );
   };
 
-  const dur = e => ((new Date(`1970-01-01T${e.end_time}`) - new Date(`1970-01-01T${e.start_time}`)) / 3600000);
+  const dur = e => (e.synthetic ? (Number(e.hours) || 0) : ((new Date(`1970-01-01T${e.end_time}`) - new Date(`1970-01-01T${e.start_time}`)) / 3600000));
 
   return (
     <div style={styles.panelCard}>
@@ -302,17 +306,20 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
                   {billData.entries.map((e, idx) => {
                     const key = `e${idx}`;
                     const hasTrace = Array.isArray(e.explain) && e.explain.length > 0;
+                    const synLabel = e.synthetic ? (e.kind === 'guarantee' ? t.floorGuaranteeLabel : t.floorMinDailyLabel) : null;
                     return (
                       <div key={e.id ?? idx}>
                         <div style={{ ...styles.line, ...(hasTrace ? styles.lineClickable : {}) }} onClick={() => hasTrace && toggleLine(key)}>
                           <span style={styles.lineDate}>{e.work_date?.toString().substring(0, 10)}</span>
-                          <span style={styles.lineMid}>{e.project_name || '—'}{e.wage_type === 'prevailing' ? ` · ${t.prevailingLabel}` : ''}</span>
-                          <span style={styles.lineTimes}>{(e.start_time || '').slice(0, 5)}–{(e.end_time || '').slice(0, 5)}</span>
-                          {overtimeEnabled && (e.overtime_hours || 0) > 0 && <span style={styles.otBadge}>{t.otHrs} {fmtHours(e.overtime_hours)}</span>}
+                          <span style={styles.lineMid}>{e.synthetic ? synLabel : <>{e.project_name || '—'}{e.wage_type === 'prevailing' ? ` · ${t.prevailingLabel}` : ''}</>}</span>
+                          <span style={styles.lineTimes}>{e.synthetic ? '' : `${(e.start_time || '').slice(0, 5)}–${(e.end_time || '').slice(0, 5)}`}</span>
+                          {overtimeEnabled && !e.synthetic && (e.overtime_hours || 0) > 0 && <span style={styles.otBadge}>{t.otHrs} {fmtHours(e.overtime_hours)}</span>}
                           <span style={styles.lineHours}>{fmtHours(dur(e))}</span>
                           <span style={styles.lineChev}>{hasTrace ? (openLine === key ? '▾' : '▸') : ''}</span>
                         </div>
-                        {openLine === key && hasTrace && <Trace items={e.explain} />}
+                        {openLine === key && hasTrace && (e.synthetic
+                          ? <div style={styles.trace}><div style={styles.traceItem}><span>{e.kind === 'guarantee' ? t.floorGuaranteeTrace : t.floorMinDailyTrace}</span><button style={styles.traceLink} onClick={() => goto('/administration#workspace')}>{t.trViewSetting} →</button></div></div>
+                          : <Trace items={e.explain} />)}
                       </div>
                     );
                   })}

@@ -23,6 +23,33 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-28 — Rule-generated hours are now real entry rows (min-daily / no-clock-in guarantee)
+
+**David (sharpened the rule):** *"Every time hours are added, they need to be added to
+time entries first. Period."* → [[feedback_traceability]].
+
+**The bug he hit:** a worker's report showed **Regular 12h** from a single 8h Friday
+entry. Root cause (after two wrong turns — it was never a deploy issue): the company's
+**"Sat — guarantee at least 4 paid hours (even without a clock-in)"** rule. Alex worked
+Friday, so the engine granted **4h for Saturday with no clock-in** and added them
+straight into Regular (`computeOT`: `autoReg += floor`) — **no Saturday entry existed
+at all**, so 4 paid hours were completely invisible. Reproduced exactly: `regular 12,
+total 12.25, cost $396`.
+
+**Fix — materialize them as entries.** `computeOT` now returns `floorDetail` (per-day
+rule-generated hours: min-daily floor top-ups + no-clock-in guarantees). `buildPayStatement`
+turns each into a **synthetic entry row** (`{synthetic, kind, work_date, hours, explain}`)
+appended to the statement's `entries`, sorted by date. So the Saturday 4h shows as its
+own row ("Guaranteed hours (no clock-in)"), expandable to the rule. Rendered everywhere
+that lists entries: Team Member Report, bill PDF, CSV. **No pay changes** — the hours
+were always in `regularHours`; gross/net identical. When no floor rules apply, zero
+synthetic entries (behavior unchanged; all 1171 tests green).
+
+**Still to unify (same pattern):** the weekly `guaranteeShortfall` and sick/vacation
+leave currently render as summary-derived rows (added earlier today), not synthetic
+entries. They should become entries too for full consistency — not in this company's
+data, so deferred, but it's the same mechanism.
+
 ## 2026-07-28 — Guarantee top-up is now a traceable Time-Entries row (not a summary total)
 
 **David (standing rule, reinforced):** everything in Team Member Reports must be

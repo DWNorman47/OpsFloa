@@ -59,6 +59,9 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
   let regularHours, overtimeHours, prevailingHours, totalHours;
   let regularCostRaw, overtimeCostRaw, prevailingCostRaw;
   let overtimeBands = []; // [{hours, mult}] — how many OT hours at which multiplier
+  // Rule-generated regular hours (min-daily floor / no-clock-in guarantee), per day —
+  // materialized below as real entry rows so no paid hour is invisible.
+  let floorDetail = [];
 
   if (rateType !== 'daily' && hasSimpleOtConfig(otConfig)) {
     // ── Rate-aware path ─────────────────────────────────────────────────────
@@ -83,6 +86,7 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     const ot = computeOT(paid, rule, threshold, weekStart, otConfig, { from, to });
     annotateEntryOvertime(paid, rule, threshold, weekStart, otConfig);
     regularHours = ot.regularHours; overtimeHours = ot.overtimeHours;
+    floorDetail = ot.floorDetail || [];
     prevailingHours = 0; prevailingCostRaw = 0;
     for (const e of paid) {
       if (e.wage_type !== 'prevailing') continue;
@@ -170,10 +174,28 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     };
   }
 
+  // Materialize rule-generated hours as ENTRY ROWS: a no-clock-in "guarantee N paid
+  // hours" day, or a minimum-daily floor topping up a short worked day. Their hours are
+  // already inside regularHours (computeOT) — these rows don't add pay, they just make
+  // every paid hour a visible, traceable line instead of a hidden bump in Regular.
+  const floorEntries = floorDetail.map(f => ({
+    synthetic: true, kind: f.kind, id: `floor-${f.kind}-${f.date}`,
+    work_date: f.date, work_date_str: f.date,
+    project_name: null, start_time: null, end_time: null, break_minutes: 0,
+    hours: f.hours, wage_type: 'regular', overtime_hours: 0,
+    explain: [{ code: f.kind === 'guarantee' ? 'guarantee_day' : 'min_daily_floor', hours: f.hours }],
+  }));
+  const outEntries = floorEntries.length
+    ? [...paid, ...floorEntries].sort((a, b) => {
+        const d = String(a.work_date).localeCompare(String(b.work_date));
+        return d !== 0 ? d : String(a.start_time || '99:99').localeCompare(String(b.start_time || '99:99'));
+      })
+    : paid;
+
   return {
     worker,
     period: { from: from || null, to: to || null },
-    entries: paid,
+    entries: outEntries,
     reimbursements: reimbursements || [],
     hours: {
       regular: regularHours, overtime: overtimeHours, prevailing: prevailingHours,

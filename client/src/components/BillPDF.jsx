@@ -157,23 +157,26 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
           <Text style={[s.th, { width: colHours, textAlign: 'right' }]}>{t.pdfHoursCol || 'Hours'}</Text>
         </View>
         {entries.map(e => {
-          const h = netHours(e.start_time, e.end_time, e.break_minutes);
+          const h = e.synthetic ? (Number(e.hours) || 0) : netHours(e.start_time, e.end_time, e.break_minutes);
           const isPrev = e.wage_type === 'prevailing';
+          const desc = e.synthetic
+            ? (e.kind === 'guarantee' ? (t.floorGuaranteeLabel || 'Guaranteed hours (no clock-in)') : (t.floorMinDailyLabel || 'Minimum daily top-up'))
+            : (e.notes || '');
           return (
             <View key={e.id} style={s.tableRow} wrap={false}>
               <Text style={[s.td, { width: colDate }]}>{fmtDate(e.work_date_str || e.work_date, locale)}</Text>
-              {showProject && <Text style={[s.td, { width: colProject }]}>{e.project_name || '—'}</Text>}
-              <Text style={[s.td, { width: colDesc, color: '#6b7280' }]}>{e.notes || ''}</Text>
-              <Text style={[s.td, { width: colIn }]}>{fmtTime(e.start_time)}</Text>
-              <Text style={[s.td, { width: colOut }]}>{fmtTime(e.end_time)}</Text>
+              {showProject && <Text style={[s.td, { width: colProject }]}>{e.synthetic ? '' : (e.project_name || '—')}</Text>}
+              <Text style={[s.td, { width: colDesc, color: '#6b7280' }]}>{desc}</Text>
+              <Text style={[s.td, { width: colIn }]}>{e.synthetic ? '' : fmtTime(e.start_time)}</Text>
+              <Text style={[s.td, { width: colOut }]}>{e.synthetic ? '' : fmtTime(e.end_time)}</Text>
               {showRateType && (
                 <Text style={[s.td, { width: colType, color: isPrev ? '#d97706' : '#2563eb', fontWeight: 'bold' }]}>
-                  {isPrev ? (t.prevailingLabel || 'Prevailing') : (t.regularLabel || 'Regular')}
+                  {e.synthetic ? '' : (isPrev ? (t.prevailingLabel || 'Prevailing') : (t.regularLabel || 'Regular'))}
                 </Text>
               )}
               {showOtCol && (
-                <Text style={[s.td, { width: colOt, textAlign: 'right' }, e.overtime_hours > 0 ? {} : { color: '#9ca3af' }]}>
-                  {e.overtime_hours > 0 ? fmtH(e.overtime_hours) : '—'}
+                <Text style={[s.td, { width: colOt, textAlign: 'right' }, (!e.synthetic && e.overtime_hours > 0) ? {} : { color: '#9ca3af' }]}>
+                  {!e.synthetic && e.overtime_hours > 0 ? fmtH(e.overtime_hours) : '—'}
                 </Text>
               )}
               <Text style={[s.td, { width: colHours, textAlign: 'right', fontWeight: 'bold' }]}>{fmtH(h)}</Text>
