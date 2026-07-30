@@ -134,6 +134,34 @@ dependency audit is clean.
 
 ---
 
+## 2026-07-29 — Plan Room: fix the 40-page-document slowdown
+
+Report: loading a ~40-page set slows the Plan Room "far too much." Traced every
+page-count-scaling path (main render, thumbnail rail, page picker, vector index, autosave
+are all already lazy/bounded). Found and fixed three offenders in
+`client/public/tool-apps/planroom/app.js`:
+
+1. **Sheet manager rendered ALL N thumbnails eagerly, and re-rendered every one on each
+   reorder/remove click** (`renderSheetMgr`). Unlike the page picker, it had no
+   IntersectionObserver — opening "Manage sheets" on a 40-page set fired 40 concurrent pdf.js
+   page renders, and every ▲/▼/✕ click tore the list down and re-rendered all 40. Now
+   lazy (render a row's thumbnail when it scrolls into view) + a per-open canvas cache so
+   reorders reuse thumbnails instead of re-rendering. Also count markups-per-page once per
+   rebuild instead of once per row.
+2. **`paint()` filtered the entire `state.markups` array every animation frame** — O(all
+   markups) per frame during pan/zoom, which bites a large multi-sheet takeoff. Added a
+   per-page cache (`currentPageMarkups`) invalidated by a rev counter bumped in the
+   `markupsChanged` funnel (+ array-ref/length guards); `markupShown` stays in the loop
+   since layer toggles change it live. Per-frame cost is now O(current-page markups).
+3. **Redundant full-file buffer copy on open** (`openFromBytes`) — `keep = buf.slice(0)`
+   was allocated even on the reopen/finalize paths (`persist:false`) that never use it, a
+   wasted full-file allocation on a big set. Now copied only when persisting.
+
+Bumped the planroom cache-bust to `?v=80` (app.js + styles.css, per house rule). Static
+tool-app assets have no automated coverage — syntax-checked (acorn) + reviewed; worth a
+browser spot-check (open a multi-page doc → Manage Sheets → reorder is snappy, markups still
+draw). `client/dist` is gitignored (build output), so only `public/` changed.
+
 ## 2026-07-29 — Reviewed the pulled "hardening" commits + fixed 3 issues
 
 Pulled two large commits from another contributor ("Harden payroll workflows and tenant
