@@ -3557,6 +3557,9 @@ router.post('/payroll-run/finalize', requireAdmin, requirePerm('manage_pay_perio
     if (computed.code === 'ruleset_required') {
       return res.status(400).json({ error: 'Choose a paycheck ruleset before finalizing', code: 'ruleset_required' });
     }
+    if (computed.ruleset_count === 0) {
+      return res.status(400).json({ error: 'Configure a paycheck ruleset before finalizing', code: 'ruleset_required' });
+    }
     const { rows, errors } = computed;
     if (errors.length) return res.status(400).json({ error: 'Fix the setup errors before finalizing', code: 'setup_errors', errors });
     if (!rows.length) return res.status(400).json({ error: 'No paychecks in that range to finalize' });

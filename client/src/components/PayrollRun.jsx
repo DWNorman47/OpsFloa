@@ -43,6 +43,7 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
   const [error, setError] = useState('');
   const [openRow, setOpenRow] = useState(null);
   const [finalizing, setFinalizing] = useState(false);
+  const [confirmingFinalize, setConfirmingFinalize] = useState(false);
   const [finalizeMsg, setFinalizeMsg] = useState('');
   // Pay periods from the ruleset schedule(s). null = still loading; [] = none
   // configured → fall back to a custom date range.
@@ -55,7 +56,7 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
   const money = v => formatCurrency(v, currency);
 
   const finalize = async () => {
-    if (!data || !data.rows.length || data.errors.length) return;
+    if (!data || !data.rows.length || data.errors.length || data.ruleset_count === 0) return;
     setFinalizing(true); setFinalizeMsg('');
     try {
       await api.post('/admin/payroll-run/finalize', {
@@ -64,6 +65,7 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
         ruleset_id: data.ruleset_id,
       }, { suppressToast: true }); // shown inline as finalizeMsg
       setFinalizeMsg(t.pcrRunFinalized);
+      setConfirmingFinalize(false);
       onFinalized && onFinalized();
     } catch (err) {
       setFinalizeMsg(err?.response?.data?.error || t.pcrRunFailed);
@@ -74,7 +76,7 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
   const run = async (f = from, tt = to, rs = rulesetId) => {
     if (!f || !tt) return;
     const requestId = ++runRequest.current;
-    setError(''); setFinalizeMsg(''); setData(null); setLoading(true);
+    setError(''); setFinalizeMsg(''); setConfirmingFinalize(false); setData(null); setLoading(true);
     try {
       const rsParam = rs ? `&ruleset_id=${encodeURIComponent(rs)}` : '';
       const r = await api.get(`/admin/payroll-run?from=${f}&to=${tt}${rsParam}`, { suppressToast: true }); // shown inline as `error`
@@ -237,10 +239,17 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
                   {data.rows.map((r, i) => {
                     const key = `${r.worker_id}-${r.pay_date}-${i}`;
                     const open = openRow === key;
+                    const toggleRow = () => setOpenRow(open ? null : key);
                     return (
                       <React.Fragment key={key}>
                         <tr style={{ ...s.tr, cursor: 'pointer', ...(open ? { background: '#f0f9ff' } : {}) }}
-                          onClick={() => setOpenRow(open ? null : key)} title={t.pcrRunViewStub}>
+                          onClick={toggleRow}
+                          onKeyDown={e => {
+                            if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
+                            e.preventDefault();
+                            toggleRow();
+                          }}
+                          tabIndex={0} aria-expanded={open} title={t.pcrRunViewStub}>
                           <td style={s.td}>{open ? '▾ ' : '▸ '}{r.pay_date}</td>
                           <td style={s.tdName}>{r.worker_name}{r.role_name ? <span style={s.muted}> · {r.role_name}</span> : ''}</td>
                           <td style={s.td}>{r.ruleset_name || <span style={s.muted}>{r.has_ruleset ? t.pcrRunUnnamedRuleset : t.pcrRunNoRule}</span>}</td>
@@ -274,13 +283,33 @@ export default function PayrollRun({ currency = 'USD', onFinalized }) {
 
           {canManagePayroll && !loading && data.rows.length > 0 && (
             <div style={s.finalizeRow}>
-              <button
-                style={{ ...s.finalizeBtn, ...((finalizing || data.errors.length > 0) ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
-                onClick={finalize} disabled={finalizing || data.errors.length > 0}
-                title={data.errors.length > 0 ? t.pcrRunFinalizeBlocked : undefined}>
-                {finalizing ? t.pcrRunFinalizing : t.pcrRunFinalize}
-              </button>
-              <span style={s.finalizeHint}>{data.errors.length > 0 ? t.pcrRunFinalizeBlocked : t.pcrRunFinalizeHint}</span>
+              {!confirmingFinalize ? (
+                <button
+                  type="button"
+                  style={{ ...s.finalizeBtn, ...((finalizing || data.errors.length > 0 || data.ruleset_count === 0) ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+                  onClick={() => setConfirmingFinalize(true)}
+                  disabled={finalizing || data.errors.length > 0 || data.ruleset_count === 0}
+                  title={data.errors.length > 0 ? t.pcrRunFinalizeBlocked : data.ruleset_count === 0 ? t.pcrRunRulesetRequiredFinalize : undefined}>
+                  {t.pcrRunFinalize}
+                </button>
+              ) : (
+                <div style={s.confirmFinalize} role="group" aria-label={t.pcrRunFinalizeConfirm}>
+                  <span style={s.confirmText}>{t.pcrRunFinalizeConfirm}</span>
+                  <button type="button" style={s.cancelBtn} onClick={() => setConfirmingFinalize(false)} disabled={finalizing}>{t.cancel}</button>
+                  <button type="button" style={s.finalizeBtn} onClick={finalize} disabled={finalizing}>
+                    {finalizing ? t.pcrRunFinalizing : t.pcrRunFinalizeConfirmAction}
+                  </button>
+                </div>
+              )}
+              {!confirmingFinalize && (
+                <span style={s.finalizeHint}>
+                  {data.errors.length > 0
+                    ? t.pcrRunFinalizeBlocked
+                    : data.ruleset_count === 0
+                      ? t.pcrRunRulesetRequiredFinalize
+                      : t.pcrRunFinalizeHint}
+                </span>
+              )}
               {finalizeMsg && <span style={s.finalizeMsg}>{finalizeMsg}</span>}
             </div>
           )}
@@ -324,6 +353,9 @@ const s = {
   tdNum: { padding: '7px 10px', textAlign: 'right', fontSize: 13, color: '#374151', whiteSpace: 'nowrap' },
   totalRow: { borderTop: '2px solid #e5e7eb', background: '#f9fafb' },
   finalizeRow: { display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginTop: 16 },
+  confirmFinalize: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' },
+  confirmText: { fontSize: 13, fontWeight: 600, color: '#374151' },
+  cancelBtn: { background: '#fff', color: '#374151', border: '1px solid #d1d5db', padding: '8px 16px', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   finalizeBtn: { background: '#0f766e', color: '#fff', border: 'none', padding: '9px 22px', borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: 'pointer' },
   finalizeHint: { fontSize: 12, color: '#6b7280', maxWidth: 380, lineHeight: 1.4 },
   finalizeMsg: { fontSize: 13, fontWeight: 600, color: '#0f766e' },

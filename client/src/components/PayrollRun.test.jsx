@@ -47,6 +47,7 @@ const runData = (rulesetId, day, worker) => ({
   }],
   errors: [],
   notices: [],
+  ruleset_count: 2,
 });
 
 describe('PayrollRun request binding', () => {
@@ -84,11 +85,30 @@ describe('PayrollRun request binding', () => {
     await act(async () => pendingRuns[1].resolve({ data: runData('r2', '20', 'Worker B') }));
     expect(await screen.findByText('Worker B')).toBeInTheDocument();
     fireEvent.click(screen.getByText('pcrRunFinalize'));
+    expect(api.post).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText('pcrRunFinalizeConfirmAction'));
 
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(
       '/admin/payroll-run/finalize',
       { from: '2026-07-20', to: '2026-07-20', ruleset_id: 'r2' },
       { suppressToast: true }
     ));
+  });
+
+  test('does not allow a run without paycheck rulesets to be finalized', async () => {
+    api.get.mockImplementation(url => {
+      if (url === '/admin/payroll-periods') {
+        return Promise.resolve({ data: { periods: [], rulesets: [] } });
+      }
+      return Promise.resolve({ data: { ...runData(null, '20', 'Worker A'), ruleset_count: 0 } });
+    });
+
+    render(<PayrollRun currency="USD" />);
+    fireEvent.click(await screen.findByText('pcrRunGo'));
+
+    const finalizeButton = await screen.findByText('pcrRunFinalize');
+    expect(finalizeButton).toBeDisabled();
+    expect(screen.getByText('pcrRunRulesetRequiredFinalize')).toBeInTheDocument();
+    expect(api.post).not.toHaveBeenCalled();
   });
 });

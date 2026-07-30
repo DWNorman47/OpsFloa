@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../api';
 import { useT } from '../hooks/useT';
-import { formatCurrency } from '../utils';
+import { dateOnlyStr, formatCurrency } from '../utils';
 import { silentError } from '../errorReporter';
 import { usePerm } from '../hooks/usePerm';
 import PayStub from './PayStub';
@@ -22,6 +22,7 @@ export default function PayrollHistory({ currency = 'USD', refreshKey }) {
   const [detail, setDetail] = useState(null); // { run, checks }
   const [openCheck, setOpenCheck] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   const detailRequest = useRef(0);
 
   const load = useCallback(() => {
@@ -41,6 +42,7 @@ export default function PayrollHistory({ currency = 'USD', refreshKey }) {
 
   const openRun = (id) => {
     setOpenCheck(null);
+    setError('');
     if (openId === id) {
       detailRequest.current += 1;
       setOpenId(null);
@@ -62,7 +64,7 @@ export default function PayrollHistory({ currency = 'USD', refreshKey }) {
   };
   const voidRun = async (id) => {
     if (!window.confirm(t.pcrHistVoidConfirm)) return;
-    setBusy(true);
+    setBusy(true); setError('');
     try {
       await api.post(`/admin/payroll-runs/${id}/void`, {});
       load();
@@ -72,7 +74,10 @@ export default function PayrollHistory({ currency = 'USD', refreshKey }) {
         setDetail(null);
       }
     }
-    catch (e) { silentError('payroll-history')(e); } finally { setBusy(false); }
+    catch (e) {
+      setError(e?.response?.data?.error || t.pcrHistVoidFailed);
+      silentError('payroll-history')(e);
+    } finally { setBusy(false); }
   };
 
   // Rebuild a PayStub-shaped check from the snapshot row.
@@ -80,7 +85,7 @@ export default function PayrollHistory({ currency = 'USD', refreshKey }) {
     const d = c.detail || {};
     return {
       worker_name: c.worker_name, role_name: c.role_name, ruleset_name: c.ruleset_name,
-      pay_date: c.pay_date, period_start: c.period_start, period_end: c.period_end,
+      pay_date: dateOnlyStr(c.pay_date), period_start: dateOnlyStr(c.period_start), period_end: dateOnlyStr(c.period_end),
       gross: (Number(c.gross_cents) || 0) / 100, deduction_total: (Number(c.deduction_cents) || 0) / 100,
       net: (Number(c.net_cents) || 0) / 100,
       hours: d.hours, cost: d.cost, deduction_lines: d.deduction_lines || [],
@@ -98,10 +103,16 @@ export default function PayrollHistory({ currency = 'USD', refreshKey }) {
         const open = openId === run.id;
         const voided = run.status === 'void';
         const allPaid = run.paid_count >= run.check_count;
+        const toggleRun = () => openRun(run.id);
         return (
           <div key={run.id} style={{ ...s.runCard, ...(voided ? { opacity: 0.62 } : {}) }}>
-            <div style={s.runHead} onClick={() => openRun(run.id)}>
-              <span style={s.runPeriod}>{open ? '▾' : '▸'} <strong>{run.period_from} – {run.period_to}</strong></span>
+            <div style={s.runHead} onClick={toggleRun} role="button" tabIndex={0} aria-expanded={open}
+              onKeyDown={e => {
+                if (e.key !== 'Enter' && e.key !== ' ') return;
+                e.preventDefault();
+                toggleRun();
+              }}>
+              <span style={s.runPeriod}>{open ? '▾' : '▸'} <strong>{dateOnlyStr(run.period_from)} – {dateOnlyStr(run.period_to)}</strong></span>
               <span style={s.runMeta}>{run.check_count} {t.pcrHistChecks} · {run.paid_count}/{run.check_count} {t.pcrHistPaidWord}</span>
               <span style={s.runNet}>{money(run.net_cents)}</span>
               {voided
@@ -118,9 +129,14 @@ export default function PayrollHistory({ currency = 'USD', refreshKey }) {
                     <button style={s.actBtn} disabled={busy} onClick={() => markAllPaid(run.id)}>{t.pcrHistMarkAllPaid}</button>
                   )}
                   {canManagePayroll && !voided && (
-                    <button style={{ ...s.actBtn, color: '#b91c1c', borderColor: '#fecaca', background: '#fff' }} disabled={busy} onClick={() => voidRun(run.id)}>{t.pcrHistVoid}</button>
+                    <button style={{ ...s.actBtn, color: '#b91c1c', borderColor: '#fecaca', background: '#fff' }}
+                      disabled={busy || run.paid_count > 0}
+                      title={run.paid_count > 0 ? t.pcrHistVoidPaidBlocked : undefined}
+                      onClick={() => voidRun(run.id)}>{t.pcrHistVoid}</button>
                   )}
+                  {canManagePayroll && !voided && run.paid_count > 0 && <span style={s.actionNote}>{t.pcrHistVoidPaidBlocked}</span>}
                 </div>
+                {error && <div role="alert" style={s.error}>{error}</div>}
                 <div style={s.tableWrap}>
                   <table style={s.table}>
                     <thead>
@@ -136,11 +152,18 @@ export default function PayrollHistory({ currency = 'USD', refreshKey }) {
                     <tbody>
                       {detail.checks.map(c => {
                         const co = openCheck === c.id;
+                        const toggleCheck = () => setOpenCheck(co ? null : c.id);
                         return (
                           <React.Fragment key={c.id}>
                             <tr style={{ ...s.tr, cursor: 'pointer', ...(co ? { background: '#f0f9ff' } : {}) }}
-                              onClick={() => setOpenCheck(co ? null : c.id)} title={t.pcrRunViewStub}>
-                              <td style={s.td}>{co ? '▾ ' : '▸ '}{c.pay_date}</td>
+                              onClick={toggleCheck}
+                              onKeyDown={e => {
+                                if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
+                                e.preventDefault();
+                                toggleCheck();
+                              }}
+                              tabIndex={0} aria-expanded={co} title={t.pcrRunViewStub}>
+                              <td style={s.td}>{co ? '▾ ' : '▸ '}{dateOnlyStr(c.pay_date)}</td>
                               <td style={s.tdName}>{c.worker_name}{c.role_name ? <span style={s.muted}> · {c.role_name}</span> : ''}</td>
                               <td style={s.tdNum}>{money(c.gross_cents)}</td>
                               <td style={{ ...s.tdNum, color: c.deduction_cents > 0 ? '#b91c1c' : undefined }}>{c.deduction_cents > 0 ? `−${money(c.deduction_cents)}` : '—'}</td>
@@ -191,6 +214,8 @@ const s = {
   pendBadge: { fontSize: 11, fontWeight: 700, color: '#92400e', background: '#fef3c7', borderRadius: 20, padding: '2px 10px' },
   runBody: { borderTop: '1px solid #f3f4f6', padding: '12px 14px', background: '#fcfcfd' },
   actions: { display: 'flex', gap: 10, marginBottom: 10, flexWrap: 'wrap' },
+  actionNote: { alignSelf: 'center', color: '#6b7280', fontSize: 12 },
+  error: { marginBottom: 10, padding: '8px 10px', border: '1px solid #fecaca', borderRadius: 7, background: '#fef2f2', color: '#b91c1c', fontSize: 12 },
   actBtn: { background: '#0f766e', color: '#fff', border: '1px solid transparent', padding: '6px 14px', borderRadius: 7, fontSize: 12, fontWeight: 700, cursor: 'pointer' },
   tableWrap: { overflowX: 'auto' },
   table: { width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 600 },

@@ -4,9 +4,8 @@
  * Detection is deliberately simple and server-driven: poll a tiny version.json
  * (emitted at build time, never precached) and compare its version to the build
  * running in this tab (__APP_VERSION__). If they differ, a newer deploy is live
- * and a reload will pick it up. This avoids the service-worker lifecycle
- * (updatefound / controllerchange / precache), which is entangled with caching
- * and non-deterministic builds and produced false positives.
+ * and a reload will pick it up. The service worker waits instead of taking over
+ * a running tab; the reload action explicitly activates a waiting worker.
  *
  * Polls on an interval and whenever the tab regains focus/visibility. Can't get
  * stuck: once you reload onto the new build the versions match and it clears.
@@ -17,6 +16,68 @@ import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
 
 const CHECK_INTERVAL_MS = 10 * 60 * 1000; // every 10 minutes
+
+export async function activateUpdateAndReload(reload = () => window.location.reload()) {
+  if (!('serviceWorker' in navigator)) {
+    reload();
+    return;
+  }
+
+  let registration;
+  try {
+    registration = await navigator.serviceWorker.getRegistration();
+  } catch {
+    reload();
+    return;
+  }
+
+  if (typeof registration?.update === 'function') {
+    try { await registration.update(); } catch { /* reload still works without an update check */ }
+  }
+
+  let waiting = registration?.waiting;
+  const installing = registration?.installing;
+  if (!waiting && installing) {
+    await new Promise(resolve => {
+      let settled = false;
+      let timeout;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (timeout) clearTimeout(timeout);
+        installing.removeEventListener('statechange', onStateChange);
+        resolve();
+      };
+      const onStateChange = () => {
+        if (['installed', 'activated', 'redundant'].includes(installing.state)) finish();
+      };
+      installing.addEventListener('statechange', onStateChange);
+      onStateChange();
+      if (!settled) timeout = setTimeout(finish, 1500);
+    });
+    waiting = registration.waiting || (installing.state === 'installed' ? installing : null);
+  }
+
+  if (!waiting) {
+    reload();
+    return;
+  }
+
+  let finished = false;
+  let fallback;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    if (fallback) clearTimeout(fallback);
+    reload();
+  };
+  const onStateChange = () => {
+    if (waiting.state === 'activated') finish();
+  };
+  waiting.addEventListener('statechange', onStateChange);
+  waiting.postMessage({ type: 'SKIP_WAITING' });
+  if (!finished) fallback = setTimeout(finish, 2000);
+}
 
 export default function UpdatePrompt() {
   const t = useT();
@@ -42,14 +103,12 @@ export default function UpdatePrompt() {
 
   useEffect(() => {
     if (!currentVersion) return undefined;
-    // Don't race first paint; check shortly after load, then poll + on focus.
-    const initial = setTimeout(check, 8000);
+    check();
     const interval = setInterval(check, CHECK_INTERVAL_MS);
     const onVisible = () => { if (document.visibilityState === 'visible') check(); };
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', check);
     return () => {
-      clearTimeout(initial);
       clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', check);
@@ -69,7 +128,7 @@ export default function UpdatePrompt() {
       <a href="/changelog" target="_blank" rel="noopener noreferrer" style={styles.whatsNew}>
         {t.updateWhatsNew}
       </a>
-      <button type="button" style={styles.reloadBtn} onClick={() => { try { window.location.reload(); } catch { /* ignore */ } }}>
+      <button type="button" style={styles.reloadBtn} onClick={() => activateUpdateAndReload()}>
         {t.updateReload}
       </button>
       <button type="button" style={styles.dismissBtn} onClick={() => setDismissed(newVersion)} aria-label={t.updateDismissAria}>
