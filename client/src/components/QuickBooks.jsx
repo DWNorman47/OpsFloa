@@ -987,7 +987,7 @@ export default function QuickBooks({ workers, projects, onWorkersImported, onPro
 
           {/* ── Payroll journal entry ── */}
           <CollapsibleSection title={t.qbPushPayrollJournal} storageKey="push-payroll">
-            <p style={styles.hint}>Creates a journal entry in QuickBooks for the total labor cost of approved time entries in a date range. Select the wage expense account to debit and the liability or bank account to credit.</p>
+            <p style={styles.hint}>Creates an idempotent QuickBooks journal for gross payroll in the selected date range using the same approved-time, overtime, premium, guarantee, daily-rate, and prevailing-rate calculations as OpsFloa payroll.</p>
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 14 }}>
               <div>
                 <label htmlFor="qbo-pay-from" style={styles.label}>From</label>
@@ -1028,7 +1028,7 @@ export default function QuickBooks({ workers, projects, onWorkersImported, onPro
             {payResult && (
               <div style={styles.resultBox}>
                 <p style={{ margin: 0, fontWeight: 600, color: '#166534' }}>
-                  Journal entry created — ${payResult.amount?.toFixed(2)} across {payResult.entries} entries.
+                Journal entry created — ${payResult.amount?.toFixed(2)} across {payResult.workers} workers.
                 </p>
                 <p style={{ margin: '4px 0 0', fontSize: 13, color: '#6b7280' }}>{payResult.description}</p>
               </div>

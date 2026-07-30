@@ -3,6 +3,7 @@ import api from '../api';
 import { useT } from '../hooks/useT';
 import { invalidateCache } from '../offlineDb';
 import { silentError } from '../errorReporter';
+import { deductionId } from '../utils/deductions';
 
 /**
  * Paycheck Rules — named rulesets describing WHEN paychecks are issued (pay
@@ -26,7 +27,7 @@ function companyDeductions(raw) {
   try {
     const o = typeof raw === 'string' ? JSON.parse(raw) : raw;
     const items = Array.isArray(o) ? o : (o && Array.isArray(o.items) ? o.items : []);
-    return items.map(it => ({ id: it.id, name: it.name })).filter(d => d.id && d.name);
+    return items.map(it => ({ id: deductionId(it), name: it.name })).filter(d => d.id && d.name);
   } catch { return []; }
 }
 
@@ -38,6 +39,7 @@ function toForm(r) {
     name: r.name || '',
     roles: Array.isArray(r.roles) ? r.roles : [],
     frequency: s.frequency || 'biweekly',
+    periodBasis: s.periodBasis || 'work_week',
     payWeekday: s.payWeekday == null ? 4 : s.payWeekday,
     anchorDate: s.anchorDate || '',
     day1: s.daysOfMonth && s.daysOfMonth[0] != null ? String(s.daysOfMonth[0]) : '15',
@@ -70,6 +72,7 @@ function fromForm(f) {
     roles: Array.isArray(f.roles) ? f.roles : [],
     schedule: {
       frequency: f.frequency,
+      periodBasis: f.periodBasis || 'work_week',
       payWeekday: Number(f.payWeekday),
       anchorDate: /^\d{4}-\d{2}-\d{2}$/.test(f.anchorDate) ? f.anchorDate : null,
       daysOfMonth: [dInt(f.day1), dInt(f.day2)].filter(x => x != null),
@@ -94,6 +97,22 @@ function fromForm(f) {
   };
 }
 
+// The weekend-shift only matters when a pay date can actually land on Sat/Sun.
+// Weekly/biweekly paydays are a FIXED weekday (the pay weekday, or the anchor's
+// weekday), so they only hit a weekend if that weekday IS a weekend. Semimonthly/
+// monthly are calendar days that drift across weekdays, so it can always matter.
+function paydayCanHitWeekend(f) {
+  if (f.frequency === 'semimonthly' || f.frequency === 'monthly') return true;
+  if (f.frequency === 'weekly') return f.payWeekday === 0 || f.payWeekday === 6;
+  if (f.frequency === 'biweekly') {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(f.anchorDate || '')) return false;
+    const [y, m, d] = f.anchorDate.split('-').map(Number);
+    const wd = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+    return wd === 0 || wd === 6;
+  }
+  return false;
+}
+
 function parse(raw) {
   if (!raw) return [];
   try {
@@ -102,7 +121,17 @@ function parse(raw) {
   } catch { return []; }
 }
 
+// Most recent occurrence of a weekday (0=Sun … 6=Sat) as a local YYYY-MM-DD — seeds a
+// biweekly anchor so an "every other <day>" preset actually lands on that day.
+function lastWeekdayIso(dow) {
+  const d = new Date();
+  d.setDate(d.getDate() - ((d.getDay() - dow + 7) % 7));
+  return d.toLocaleDateString('en-CA');
+}
+
 const PRESETS = {
+  everyFriday: () => ({ ...toForm({}), id: rid(), frequency: 'weekly', payWeekday: 5, periodBasis: 'work_week', _open: true }),
+  everyOtherFriday: () => ({ ...toForm({}), id: rid(), frequency: 'biweekly', payWeekday: 5, anchorDate: lastWeekdayIso(5), periodBasis: 'work_week', _open: true }),
   biweekly: () => ({ ...toForm({}), id: rid(), frequency: 'biweekly', payWeekday: 4, timing: 'grouped', groupBy: 'pair', applyOn: 'second', combineGroup: true, exemptAmount: '11000', _open: true }),
   semimonthly: () => ({ ...toForm({}), id: rid(), frequency: 'semimonthly', day1: '15', day2: '30', timing: 'grouped', groupBy: 'month', applyOn: 'last', combineGroup: true, exemptAmount: '11000', _open: true }),
 };
@@ -155,7 +184,10 @@ export default function PaycheckRulesSettings({ settings, onSettingsUpdated }) {
     setSaving(true); setError('');
     try {
       const policy = { version: 1, rulesets: rules.map(fromForm) };
-      const r = await api.patch('/admin/settings', { paycheck_rules: JSON.stringify(policy) });
+      const r = await api.patch('/admin/settings', {
+        paycheck_rules: JSON.stringify(policy),
+        expected_settings: { paycheck_rules: settings?.paycheck_rules || '' },
+      });
       onSettingsUpdated?.(r.data);
       await invalidateCache?.('settings');
       setSaved(true);
@@ -222,6 +254,7 @@ export default function PaycheckRulesSettings({ settings, onSettingsUpdated }) {
               {f.frequency === 'biweekly' && (
                 <Field label={t.pcrAnchorDate} hint={t.pcrAnchorHint}>
                   <input type="date" style={s.input} value={f.anchorDate} onChange={e => patchRule(f.id, { anchorDate: e.target.value })} />
+                  {!f.anchorDate && <div style={{ fontSize: 12, color: '#b45309', marginTop: 4 }}>⚠ {t.pcrAnchorRequired}</div>}
                 </Field>
               )}
               {f.frequency === 'semimonthly' && (
@@ -243,13 +276,24 @@ export default function PaycheckRulesSettings({ settings, onSettingsUpdated }) {
                   </div>
                 </Field>
               )}
-              <Field label={t.pcrWeekendShift}>
-                <select style={s.input} value={f.weekendShift} onChange={e => patchRule(f.id, { weekendShift: e.target.value })}>
-                  <option value="none">{t.pcrShiftNone}</option>
-                  <option value="before">{t.pcrShiftBefore}</option>
-                  <option value="after">{t.pcrShiftAfter}</option>
-                </select>
-              </Field>
+              {(f.frequency === 'weekly' || f.frequency === 'biweekly') && (
+                <Field label={t.pcrPeriodBasis} hint={t.pcrPeriodBasisHint}>
+                  <select style={s.input} value={f.periodBasis} onChange={e => patchRule(f.id, { periodBasis: e.target.value })}>
+                    <option value="work_week">{t.pcrBasisWorkWeek}</option>
+                    <option value="prior_cycle">{t.pcrBasisPriorCycle}</option>
+                    <option value="on_payday">{t.pcrBasisOnPayday}</option>
+                  </select>
+                </Field>
+              )}
+              {paydayCanHitWeekend(f) && (
+                <Field label={t.pcrWeekendShift}>
+                  <select style={s.input} value={f.weekendShift} onChange={e => patchRule(f.id, { weekendShift: e.target.value })}>
+                    <option value="none">{t.pcrShiftNone}</option>
+                    <option value="before">{t.pcrShiftBefore}</option>
+                    <option value="after">{t.pcrShiftAfter}</option>
+                  </select>
+                </Field>
+              )}
 
               {/* ── Deductions ── */}
               <div style={s.sectionLabel}>{t.pcrDeductions}</div>
@@ -329,17 +373,19 @@ export default function PaycheckRulesSettings({ settings, onSettingsUpdated }) {
       <div style={s.addRow}>
         <button type="button" style={s.addBtn} onClick={() => addRule()}>+ {t.pcrAddRuleset}</button>
         <span style={s.presetLabel}>{t.pcrPreset}</span>
+        <button type="button" style={s.presetBtn} onClick={() => addRule(PRESETS.everyFriday())}>{t.pcrPresetEveryFriday}</button>
+        <button type="button" style={s.presetBtn} onClick={() => addRule(PRESETS.everyOtherFriday())}>{t.pcrPresetEveryOtherFriday}</button>
         <button type="button" style={s.presetBtn} onClick={() => addRule(PRESETS.biweekly())}>{t.pcrPresetBiweekly}</button>
         <button type="button" style={s.presetBtn} onClick={() => addRule(PRESETS.semimonthly())}>{t.pcrPresetSemimonthly}</button>
       </div>
 
       <p style={s.note}>{t.pcrNote}</p>
-      {error && <p role="alert" style={s.error}>{error}</p>}
       <div style={s.actions}>
-        <button style={{ ...s.saveBtn, ...(saving ? { opacity: 0.6 } : {}) }} onClick={save} disabled={saving}>
+        {saved && <span style={s.savedMsg}>{t.pcrSaved}</span>}
+        {error && <span role="alert" style={s.error}>{error}</span>}
+        <button style={{ ...s.saveBtn, ...(saving ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={save} disabled={saving}>
           {saving ? t.pcrSaving : t.pcrSave}
         </button>
-        {saved && <span style={s.savedMsg}>{t.pcrSaved}</span>}
       </div>
     </div>
   );
@@ -356,7 +402,7 @@ function Field({ label, hint, children }) {
 }
 
 const s = {
-  card: { background: '#fff', borderRadius: 12, padding: 20, boxShadow: '0 2px 12px rgba(0,0,0,0.06)' },
+  card: {},
   desc: { fontSize: 13, color: '#6b7280', margin: '0 0 14px', lineHeight: 1.5, maxWidth: 640 },
   ruleset: { border: '1px solid #e5e7eb', borderRadius: 10, marginBottom: 12, overflow: 'hidden' },
   rsHeader: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: '#f9fafb' },
@@ -385,8 +431,8 @@ const s = {
   presetLabel: { fontSize: 12, color: '#9ca3af' },
   presetBtn: { background: 'none', border: '1px solid #d1d5db', borderRadius: 7, padding: '6px 11px', fontSize: 12, cursor: 'pointer', color: '#374151' },
   note: { fontSize: 12, color: '#475569', margin: '14px 0 0', lineHeight: 1.5, maxWidth: 640, background: '#f8fafc', border: '1px solid #eef0f2', borderRadius: 6, padding: '7px 11px' },
-  error: { color: '#ef4444', fontSize: 13, marginTop: 12 },
-  actions: { display: 'flex', alignItems: 'center', gap: 14, marginTop: 18 },
-  saveBtn: { background: '#059669', color: '#fff', border: 'none', padding: '10px 22px', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' },
+  error: { color: '#e53e3e', fontSize: 13 },
+  actions: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, padding: '12px 20px', borderTop: '1px solid #f3f4f6', background: '#fafafa', margin: '16px -20px 0' },
+  saveBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '7px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   savedMsg: { fontSize: 13, color: '#059669', fontWeight: 600 },
 };

@@ -61,6 +61,12 @@ describe('normalizeRuleset — field clamping', () => {
     expect(r.deductions.selectedDeductionIds).toEqual(['d1', 'd2']);
   });
 
+  test('anchor date must be a real calendar date', () => {
+    expect(normalizeRuleset({ schedule: { anchorDate: '2026-02-29' } }, 0).schedule.anchorDate).toBeNull();
+    expect(normalizeRuleset({ schedule: { anchorDate: '2026-99-99' } }, 0).schedule.anchorDate).toBeNull();
+    expect(normalizeRuleset({ schedule: { anchorDate: '2028-02-29' } }, 0).schedule.anchorDate).toBe('2028-02-29');
+  });
+
   test('semi-monthly days: clamps to valid days-of-month, keeps at most two', () => {
     const r = normalizeRuleset({ schedule: { frequency: 'semimonthly', daysOfMonth: [15, 30, 40, 0] } }, 0);
     expect(r.schedule.daysOfMonth).toEqual([15, 30]); // 40 and 0 dropped, capped at 2
@@ -76,8 +82,8 @@ describe('normalizeRuleset — field clamping', () => {
     expect(normalizeRuleset({ deductions: { combineGroup: false } }, 0).deductions.combineGroup).toBe(false);
   });
 
-  test('roles: applies-to list is kept, de-duped, non-primitives dropped', () => {
-    expect(normalizeRuleset({ roles: [1, 2, 2, 'x', null, {}, 3] }, 0).roles).toEqual([1, 2, 'x', 3]);
+  test('roles: applies-to list is normalized to integer DB keys and de-duped', () => {
+    expect(normalizeRuleset({ roles: [1, '2', 2, 'x', null, {}, 3] }, 0).roles).toEqual([1, 2, 3]);
     expect(normalizeRuleset({}, 0).roles).toEqual([]);        // missing → empty (unassigned)
     expect(normalizeRuleset({ roles: 'nope' }, 0).roles).toEqual([]); // non-array → empty
   });

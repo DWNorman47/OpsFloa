@@ -5,6 +5,7 @@ import { langToLocale } from '../utils';
 import { useMoney } from '../hooks/useMoney';
 
 import { silentError } from '../errorReporter';
+import PayStub from './PayStub';
 function fmtDate(str, locale = 'en-US') {
   const d = new Date(String(str).substring(0, 10) + 'T00:00:00');
   return d.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
@@ -133,6 +134,17 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
               </thead>
               <tbody>
                 {stub.entries.map(e => {
+                  if (e.synthetic) {
+                    // Rule-generated hours (guarantee / floor / leave) — no clock times.
+                    const synLabel = { guarantee: t.floorGuaranteeLabel, min_daily: t.floorMinDailyLabel, weekly_guarantee: t.guaranteeTopupLabel, sick: t.pdfSickHours || 'Sick', vacation: t.pdfVacationHours || 'Vacation' }[e.kind] || e.kind;
+                    return (
+                      <tr key={e.id} style={s.tr}>
+                        <td style={s.td}>{fmtDate(e.work_date_str || e.work_date, locale)}</td>
+                        <td style={{ ...s.td, color: '#6b7280' }} colSpan={5}>{synLabel}</td>
+                        <td style={{ ...s.td, textAlign: 'right', fontWeight: 600 }}>{fmtH(Number(e.hours) || 0)}</td>
+                      </tr>
+                    );
+                  }
                   const h = netHours(e.start_time, e.end_time, e.break_minutes);
                   const isPrev = e.wage_type === 'prevailing';
                   return (
@@ -283,16 +295,36 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
 export default function PayStubView({ user, settings, companyInfo }) {
   const t = useT();
   const [stubs, setStubs] = useState([]);
+  const [checks, setChecks] = useState(null); // ruleset-mode per-check stubs (Advanced Payroll)
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     api.get('/time-entries/pay-stubs')
-      .then(r => setStubs(r.data))
+      .then(r => {
+        if (Array.isArray(r.data)) { setStubs(r.data); setChecks(null); }     // legacy
+        else { setChecks(r.data.stubs || []); setStubs([]); }                  // ruleset-driven
+      })
       .catch(silentError('paystubview'))
       .finally(() => setLoading(false));
   }, []);
 
   if (loading) return null;
+
+  // Ruleset-driven stubs (Advanced Payroll): one PayStub per paycheck.
+  if (checks) {
+    if (checks.length === 0) return (
+      <div style={s.empty}><div style={s.emptyTitle}>{t.payStubs}</div><p style={s.emptyMsg}>{t.noPayPeriodsYet}</p></div>
+    );
+    return (
+      <div style={s.wrap}>
+        <div style={s.heading}>{t.payStubs}</div>
+        <div style={{ ...s.list, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {checks.map(c => <PayStub key={c.id} check={c} currency={settings?.currency ?? 'USD'} workerName={user?.full_name} />)}
+        </div>
+      </div>
+    );
+  }
+
   if (stubs.length === 0) return (
     <div style={s.empty}>
       <div style={s.emptyTitle}>{t.payStubs}</div>

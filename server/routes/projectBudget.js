@@ -6,7 +6,8 @@
 
 const router = require('express').Router();
 const pool   = require('../db');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { requireAuth } = require('../middleware/auth');
+const { requireProjectFinancialAccess } = require('../middleware/financialAccess');
 const { logAudit } = require('../auditLog');
 const { MONEY_CATEGORIES } = require('../constants/projectMoneyEnums');
 
@@ -19,7 +20,7 @@ async function assertProjectInCompany(companyId, projectId) {
 }
 
 // GET /projects/:id/budget — list category rows + the legacy total.
-router.get('/projects/:id/budget', requireAuth, async (req, res) => {
+router.get('/projects/:id/budget', requireAuth, requireProjectFinancialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const project = await assertProjectInCompany(companyId, req.params.id);
@@ -47,7 +48,7 @@ router.get('/projects/:id/budget', requireAuth, async (req, res) => {
 });
 
 // PUT /projects/:id/budget — bulk replace the seven category rows.
-router.put('/projects/:id/budget', requireAdmin, async (req, res) => {
+router.put('/projects/:id/budget', requireAuth, requireProjectFinancialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   if (!Array.isArray(req.body.categories)) {
     return res.status(400).json({ error: 'categories must be an array' });

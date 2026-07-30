@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { useT } from '../../hooks/useT';
 import { useModalA11y } from '../../hooks/useModalA11y';
+import { escapeHtml } from '../../utils/html';
 
 // QR payload format: {"app":"opsfloa","item":true,"id":42,"sku":"SKU123","name":"2x4 Lumber"}
 // Scanned by the Count tab to auto-jump to that item in the count list.
@@ -33,8 +34,10 @@ export default function ItemLabelModal({ item, onClose }) {
   const printLabel = () => {
     if (!qrDataUrl) return;
     const win = window.open('', '_blank', 'width=380,height=480');
+    if (!win) return;
+    const safe = escapeHtml;
     win.document.write(`<!DOCTYPE html><html><head>
-      <title>${t.invilItem}: ${item.name}</title>
+      <title>${safe(t.invilItem)}: ${safe(item.name)}</title>
       <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: system-ui, sans-serif; display: flex; align-items: center;
@@ -54,11 +57,11 @@ export default function ItemLabelModal({ item, onClose }) {
       </style>
     </head><body>
       <div class="label">
-        <div class="type">${t.invilItemType}</div>
-        <div class="name">${item.name}</div>
-        ${item.sku ? `<div class="sku">${item.sku}</div>` : ''}
-        <img class="qr" src="${qrDataUrl}" alt="QR Code" />
-        <div class="footer">OpsFloa ${t.invilInventory} · ID ${item.id}</div>
+        <div class="type">${safe(t.invilItemType)}</div>
+        <div class="name">${safe(item.name)}</div>
+        ${item.sku ? `<div class="sku">${safe(item.sku)}</div>` : ''}
+        <img class="qr" src="${safe(qrDataUrl)}" alt="QR Code" />
+        <div class="footer">OpsFloa ${safe(t.invilInventory)} · ID ${safe(item.id)}</div>
       </div>
       <script>window.onload = () => { window.print(); }<\/script>
     </body></html>`);

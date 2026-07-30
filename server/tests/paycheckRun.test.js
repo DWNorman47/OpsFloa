@@ -3,7 +3,7 @@
  * deduction scoping, and the per-check deduction math (exempt → deduct → cap → floor).
  */
 
-const { resolveRuleset, deductionsForRole, computeRuleNet, applyGroupDeductions } = require('../utils/paycheckRun');
+const { resolveRuleset, deductionsForRole, computeRuleNet, applyGroupDeductions, groupOpts } = require('../utils/paycheckRun');
 
 describe('resolveRuleset — assignment by role, errors are surfaced not guessed', () => {
   const RS = [{ id: 'a', name: 'A', roles: [1, 2] }, { id: 'b', name: 'B', roles: [3] }];
@@ -97,5 +97,58 @@ describe('applyGroupDeductions — combine the group, exempt once, deduct on the
     expect(c2.base).toBe(1000);          // 12000 combined − 11000 exempt
     expect(c2.deductionTotal).toBe(100); // 10% of 1000
     expect(c2.net).toBe(5900);           // 6000 − 100
+  });
+
+  test('combineGroup:false → the flagged check figures on its OWN gross, not the pair', () => {
+    const ded = [{ id: 'x', name: 'Tax', kind: 'percent', value: 10, cap: null }];
+    const rs = { deductions: { exemptAmountCents: 100000, combineGroup: false } }; // $1,000 exempt
+    const [, c2] = applyGroupDeductions([
+      { groupKey: '0', deductionsApply: false, gross: 3000 },
+      { groupKey: '0', deductionsApply: true, gross: 3000 },
+    ], ded, rs);
+    expect(c2.base).toBe(2000);          // own 3000 − 1000 exempt (NOT the combined 6000)
+    expect(c2.deductionTotal).toBe(200); // 10% of 2000
+  });
+});
+
+describe('groupOpts — flatten nested deductions.group.{by,applyOn} → flat for groupPeriods', () => {
+  test('maps the nested shape', () => {
+    expect(groupOpts({ timing: 'grouped', group: { by: 'month', applyOn: 'last' } }))
+      .toEqual({ timing: 'grouped', groupBy: 'month', applyOn: 'last' });
+  });
+  test('missing group → undefined groupBy/applyOn (never crashes)', () => {
+    expect(groupOpts({ timing: 'every' })).toEqual({ timing: 'every', groupBy: undefined, applyOn: undefined });
+    expect(groupOpts(undefined)).toEqual({ timing: undefined, groupBy: undefined, applyOn: undefined });
+  });
+});
+
+describe('computeRuleNet — itemized lines always foot to the (capped) total, never negative', () => {
+  const sum = ls => Math.round(ls.reduce((a, l) => a + l.amount, 0) * 100) / 100;
+
+  test('a total cap trims the lines proportionally; they still sum to the total', () => {
+    const ded = [
+      { id: 'a', name: 'A', kind: 'fixed', value: 3.33, cap: null },
+      { id: 'b', name: 'B', kind: 'fixed', value: 3.33, cap: null },
+      { id: 'c', name: 'C', kind: 'fixed', value: 3.34, cap: null },
+    ];
+    const c = computeRuleNet(1000, ded, { deductions: { cap: { type: 'amount', valueCents: 500 } } });
+    expect(c.deductionTotal).toBe(5);
+    expect(sum(c.lines)).toBe(5);                     // foots exactly
+    expect(c.lines.every(l => l.amount >= 0)).toBe(true);
+  });
+
+  test('a 1-cent trim near the float boundary is not skipped', () => {
+    const ded = [{ id: 'x', name: 'X', kind: 'fixed', value: 0.29, cap: null }];
+    const c = computeRuleNet(1000, ded, { deductions: { cap: { type: 'amount', valueCents: 28 } } });
+    expect(c.deductionTotal).toBe(0.28);
+    expect(sum(c.lines)).toBe(0.28);
+  });
+
+  test('many sub-cent lines under a hard cap never produce a negative line', () => {
+    const ded = Array.from({ length: 4 }, (_, i) => ({ id: String(i), name: 'd' + i, kind: 'fixed', value: 0.01, cap: null }));
+    const c = computeRuleNet(1000, ded, { deductions: { cap: { type: 'amount', valueCents: 2 } } });
+    expect(c.deductionTotal).toBe(0.02);
+    expect(sum(c.lines)).toBe(0.02);
+    expect(c.lines.every(l => l.amount >= 0)).toBe(true); // was [.01,.01,.01,-.01] before the fix
   });
 });

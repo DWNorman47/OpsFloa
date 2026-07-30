@@ -22,7 +22,11 @@ vi.mock('../api', () => {
     setApiToastHandler: vi.fn(),
   };
 });
-vi.mock('../offlineDb', () => ({ clearCache: vi.fn(() => Promise.resolve()) }));
+vi.mock('../offlineDb', () => ({
+  clearCache: vi.fn(() => Promise.resolve()),
+  clearPendingSyncs: vi.fn(() => Promise.resolve()),
+  currentOfflineScope: vi.fn(() => 'co-1:1'),
+}));
 
 import { AuthProvider, useAuth } from './AuthContext';
 

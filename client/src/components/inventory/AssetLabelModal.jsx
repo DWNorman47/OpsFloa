@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { useT } from '../../hooks/useT';
 import { useModalA11y } from '../../hooks/useModalA11y';
+import { escapeHtml } from '../../utils/html';
 
 // QR payload: {"app":"opsfloa","asset":true,"id":42,"name":"Compactor","unit":"CMP-3"}
 // Stick the printed tag on the tool; scanning it identifies the asset.
@@ -30,8 +31,10 @@ export default function AssetLabelModal({ asset, onClose }) {
   const printLabel = () => {
     if (!qrDataUrl) return;
     const win = window.open('', '_blank', 'width=380,height=480');
+    if (!win) return;
+    const safe = escapeHtml;
     win.document.write(`<!DOCTYPE html><html><head>
-      <title>${t.eqLabelType}: ${asset.name}</title>
+      <title>${safe(t.eqLabelType)}: ${safe(asset.name)}</title>
       <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: system-ui, sans-serif; display: flex; align-items: center;
@@ -48,11 +51,11 @@ export default function AssetLabelModal({ asset, onClose }) {
       </style>
     </head><body>
       <div class="label">
-        <div class="type">${t.eqLabelType}</div>
-        <div class="name">${asset.name}</div>
-        ${asset.unit_number ? `<div class="unit">${asset.unit_number}</div>` : ''}
-        <img class="qr" src="${qrDataUrl}" alt="QR Code" />
-        <div class="footer">OpsFloa ${t.eqLabelType} · ID ${asset.id}</div>
+        <div class="type">${safe(t.eqLabelType)}</div>
+        <div class="name">${safe(asset.name)}</div>
+        ${asset.unit_number ? `<div class="unit">${safe(asset.unit_number)}</div>` : ''}
+        <img class="qr" src="${safe(qrDataUrl)}" alt="QR Code" />
+        <div class="footer">OpsFloa ${safe(t.eqLabelType)} · ID ${safe(asset.id)}</div>
       </div>
       <script>window.onload = () => { window.print(); }<\/script>
     </body></html>`);

@@ -5,6 +5,10 @@
 const router = require('express').Router();
 const pool   = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const {
+  requireProjectFinancialAccess,
+  requireFinancialReportsAccess,
+} = require('../middleware/financialAccess');
 const { csvCell } = require('../utils/csv');
 const { loadSettings, laborCostCents, LABOR_ENTRY_COLUMNS } = require('../utils/paidHours');
 
@@ -149,7 +153,7 @@ function pctOrNull(num, den, decimals = 1) {
 
 // ── P&L: per-project ──────────────────────────────────────────────────────────
 
-router.get('/projects/:id/pnl', requireAuth, async (req, res) => {
+router.get('/projects/:id/pnl', requireAuth, requireProjectFinancialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const project = await assertProjectInCompany(companyId, req.params.id);
@@ -188,7 +192,7 @@ router.get('/projects/:id/pnl', requireAuth, async (req, res) => {
 
 // ── P&L: portfolio summary ────────────────────────────────────────────────────
 
-router.get('/projects/pnl-summary', requireAuth, async (req, res) => {
+router.get('/projects/pnl-summary', requireAuth, requireFinancialReportsAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const projRes = await pool.query(
@@ -229,7 +233,7 @@ router.get('/projects/pnl-summary', requireAuth, async (req, res) => {
 
 // ── WIP report ────────────────────────────────────────────────────────────────
 
-router.get('/wip-report', requireAuth, async (req, res) => {
+router.get('/wip-report', requireAuth, requireFinancialReportsAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const include = (req.query.include || 'active').toString();
   // as_of is accepted as a YYYY-MM-DD string but in this minimal v1 we
@@ -308,7 +312,7 @@ router.get('/wip-report', requireAuth, async (req, res) => {
 });
 
 // CSV export — minimal, no XLSX dep. Same shape as the JSON.
-router.get('/wip-report/export', requireAuth, async (req, res) => {
+router.get('/wip-report/export', requireAuth, requireFinancialReportsAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const projRes = await pool.query(

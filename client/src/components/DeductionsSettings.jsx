@@ -4,6 +4,7 @@ import { useT } from '../hooks/useT';
 import { invalidateCache } from '../offlineDb';
 import { silentError } from '../errorReporter';
 import DeductionListEditor, { newDeduction } from './DeductionListEditor';
+import { deductionId } from '../utils/deductions';
 
 /**
  * Company-wide payroll deductions (social security, taxes, etc.). Edits the
@@ -22,7 +23,7 @@ function parseItems(raw) {
   try { obj = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { return []; }
   const items = Array.isArray(obj) ? obj : (obj && Array.isArray(obj.items) ? obj.items : []);
   return items.map(it => ({
-    id: it.id || newDeduction().id,
+    id: deductionId(it) || newDeduction().id,
     name: String(it.name == null ? '' : it.name),
     kind: KINDS.includes(it.kind) ? it.kind : 'percent',
     value: it.value != null ? String(it.value) : '',
@@ -61,10 +62,32 @@ export default function DeductionsSettings({ settings, onSettingsUpdated }) {
 
   const change = (next) => { setItems(next); setSaved(false); };
 
+  // A partially-filled row (a name OR a value but not a valid pair) would be silently
+  // dropped by toPolicy while the UI still says "Saved" — so the admin thinks a deduction
+  // is configured when it isn't. Block the save and say which row is wrong. A fully-blank
+  // row (just-added, untouched) is fine to ignore.
+  const validate = (rows) => {
+    for (const it of rows) {
+      const hasName = String(it.name).trim() !== '';
+      const hasValue = String(it.value).trim() !== '';
+      if (!hasName && !hasValue) continue;
+      if (!hasName) return t.dedErrName;
+      const v = parseFloat(it.value);
+      if (!Number.isFinite(v) || v < 0) return t.dedErrValue;
+      if (it.kind === 'percent' && v > 100) return t.dedErrPercent;
+    }
+    return '';
+  };
+
   const save = async () => {
+    const msg = validate(items);
+    if (msg) { setError(msg); setSaved(false); return; }
     setSaving(true); setError('');
     try {
-      const r = await api.patch('/admin/settings', { deductions: JSON.stringify(toPolicy(items)) });
+      const r = await api.patch('/admin/settings', {
+        deductions: JSON.stringify(toPolicy(items)),
+        expected_settings: { deductions: settings?.deductions || '' },
+      });
       onSettingsUpdated?.(r.data);
       await invalidateCache?.('settings');
       setSaved(true);
@@ -81,23 +104,23 @@ export default function DeductionsSettings({ settings, onSettingsUpdated }) {
       <p style={s.desc}>{t.dedDesc}</p>
       <DeductionListEditor items={items} onChange={change} roles={roles} />
       <p style={s.note}>{t.dedNote}</p>
-      {error && <p role="alert" style={s.error}>{error}</p>}
       <div style={s.actions}>
-        <button style={{ ...s.saveBtn, ...(saving ? { opacity: 0.6 } : {}) }} onClick={save} disabled={saving}>
+        {saved && <span style={s.savedMsg}>{t.dedSaved}</span>}
+        {error && <span role="alert" style={s.error}>{error}</span>}
+        <button style={{ ...s.saveBtn, ...(saving ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={save} disabled={saving}>
           {saving ? t.dedSaving : t.dedSave}
         </button>
-        {saved && <span style={s.savedMsg}>{t.dedSaved}</span>}
       </div>
     </div>
   );
 }
 
 const s = {
-  card: { background: '#fff', borderRadius: 12, padding: 20, boxShadow: '0 2px 12px rgba(0,0,0,0.06)' },
+  card: {},
   desc: { fontSize: 13, color: '#6b7280', margin: '0 0 14px', lineHeight: 1.5, maxWidth: 620 },
   note: { fontSize: 12, color: '#475569', margin: '10px 0 0', lineHeight: 1.5, maxWidth: 620, background: '#f8fafc', border: '1px solid #eef0f2', borderRadius: 6, padding: '7px 11px' },
-  error: { color: '#ef4444', fontSize: 13, marginTop: 12 },
-  actions: { display: 'flex', alignItems: 'center', gap: 14, marginTop: 18 },
-  saveBtn: { background: '#059669', color: '#fff', border: 'none', padding: '10px 22px', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' },
+  error: { color: '#e53e3e', fontSize: 13 },
+  actions: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, padding: '12px 20px', borderTop: '1px solid #f3f4f6', background: '#fafafa', margin: '16px -20px 0' },
+  saveBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '7px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   savedMsg: { fontSize: 13, color: '#059669', fontWeight: 600 },
 };

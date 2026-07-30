@@ -20,6 +20,7 @@ import WorkOrdersPanel from '../components/WorkOrdersPanel';
 import { useHasAnyPerm } from '../hooks/usePerm';
 import { labelSg, labelPl } from '../companyLabels';
 import { safeLocal } from '../utils/safeStorage';
+import { downloadCsv } from '../utils/csv';
 
 function punchColor(status) {
   return { open: '#f59e0b', in_progress: '#3b82f6', resolved: '#059669', closed: '#9ca3af' }[status] || '#9ca3af';
@@ -546,14 +547,7 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
         parseFloat(e.total_cost || 0).toFixed(2),
       ]);
     });
-    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${project.name.replace(/[^a-z0-9]/gi, '_')}_billing.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadCsv(rows, `${project.name.replace(/[^a-z0-9]/gi, '_')}_billing.csv`);
   };
 
   const budgetHours = parseFloat(project.budget_hours || 0);
@@ -1949,11 +1943,13 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
 // Reuse the perms the standalone Sales module used so these tabs only show for
 // users who could see Sales before the consolidation.
 const SALES_TAB_PERMS = ['manage_projects', 'manage_settings'];
-const PROJECT_TAB_IDS = ['projects', 'estimates', 'invoices', 'change_orders', 'pos'];
+const PROJECT_TAB_PERMS = ['view_projects', 'manage_projects', 'manage_project_visibility'];
+const PROJECT_TAB_IDS = ['projects', 'work_orders', 'estimates', 'invoices', 'change_orders', 'pos'];
 
 export default function ProjectsPage() {
   const t = useT();
   const hasSalesPerm = useHasAnyPerm(SALES_TAB_PERMS);
+  const hasProjectPerm = useHasAnyPerm(PROJECT_TAB_PERMS);
   // Tab can be deep-linked via the URL hash (e.g. /projects#estimates), which
   // is how the retired /sales and /change-orders routes land here.
   const [mainTab, setMainTab] = useState(() => {
@@ -2021,6 +2017,7 @@ export default function ProjectsPage() {
   // project work; the Projects module itself is gated upstream (route + switcher).
   const canSeeSales = hasSalesPerm;
   const canSeePOs = hasSalesPerm;
+  const canSeeProjectWork = hasProjectPerm;
   // A company can hide the tab it doesn't use — but never both (that would empty
   // the module). If both are flagged, we ignore the flags and show both.
   let hideProjects = settings?.hide_projects_tab === true || settings?.hide_projects_tab === '1';
@@ -2028,8 +2025,8 @@ export default function ProjectsPage() {
   if (hideProjects && hideWorkOrders) { hideProjects = false; hideWorkOrders = false; }
 
   const tabs = [
-    ...(hideProjects ? [] : [{ id: 'projects', label: 'Projects' }]),
-    ...(hideWorkOrders ? [] : [{ id: 'work_orders', label: 'Work Orders' }]),
+    ...(!canSeeProjectWork || hideProjects ? [] : [{ id: 'projects', label: 'Projects' }]),
+    ...(!canSeeProjectWork || hideWorkOrders ? [] : [{ id: 'work_orders', label: 'Work Orders' }]),
     ...(canSeeSales ? [
       { id: 'estimates', label: t.estList },
       { id: 'invoices', label: t.invList },
@@ -2042,8 +2039,8 @@ export default function ProjectsPage() {
   const tabAllowed = (id) => {
     if (id === 'estimates' || id === 'invoices' || id === 'change_orders') return canSeeSales;
     if (id === 'pos') return canSeePOs;
-    if (id === 'projects') return !hideProjects;
-    if (id === 'work_orders') return !hideWorkOrders;
+    if (id === 'projects') return canSeeProjectWork && !hideProjects;
+    if (id === 'work_orders') return canSeeProjectWork && !hideWorkOrders;
     return true;
   };
   const activeTab = tabAllowed(mainTab) ? mainTab : ((tabs[0] && tabs[0].id) || 'projects');

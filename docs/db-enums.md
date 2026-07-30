@@ -59,6 +59,8 @@ For each column we record:
 | `users.worker_type` | `employee`, `contractor`, `subcontractor`, `owner` | **enforced** (CHECK in `0071`) | `server/routes/admin.js:1217` | Display + report filtering on worker profile. |
 | `worker_deductions.kind` | `percent`, `fixed` | **enforced** (CHECK `chk_worker_deductions_kind` in `0143`) | `server/constants/deductionEnums.js` (`DEDUCTION_KINDS`), `server/utils/deductions.js`, `server/routes/admin.js` (PUT `/workers/:id/deductions`) | Per-worker pay-stub deduction lines (loans, garnishments, worker-specific tax). `percent` = % of gross wages (optional `cap_amount`); `fixed` = flat amount. Same vocabulary as the company-wide `deductions` settings JSON. Applied on the per-worker pay stub → net pay. |
 | `reimbursements.status` | `pending`, `approved`, `rejected` | **enforced** (CHECK in `0071`) | `server/routes/reimbursements.js` | Financial workflow. |
+| `payroll_runs.status` | `finalized`, `void` | **enforced** (CHECK in `0156`) | `server/constants/payrollEnums.js` (`PAYROLL_RUN_STATUSES`), `server/routes/admin.js` (finalize / `/void`) | A finalized run is a locked snapshot of a live payroll run (Advanced Payroll). `void` retires it from the payable set while keeping the record. |
+| `payroll_run_checks.status` | `pending`, `paid` | **enforced** (CHECK in `0156`) | `server/constants/payrollEnums.js` (`PAYROLL_CHECK_STATUSES`), `server/routes/admin.js` (`/paid`) | Per-check paid state inside a finalized run. `paid` stamps `paid_at`. |
 | `settings.value` (key=`overtime_rule`) | `daily`, `weekly` | **app-only** | `server/routes/admin.js` PATCH validation | Company-wide overtime calc. |
 | `settings.value` (key=`overtime_rate_method`) | `rate_when_worked`, `weighted_average` | **app-only** | `server/constants/payEnums.js` (`OVERTIME_RATE_METHODS`), `server/routes/admin.js` PATCH validation | How OT is priced when a worker earns >1 base rate in a period. `rate_when_worked` (default): each OT hour at the rate it earned. `weighted_average`: FLSA blended regular rate. Consumed by `server/utils/rateAwareOvertime.js`. |
 | `settings.value` (key=`invoice_signature`) | `none`, `optional`, `required` | **app-only** | `server/routes/admin.js` PATCH validation | Whether workers must sign invoices before exporting. |
@@ -350,6 +352,9 @@ that had the previous default.
   `server/constants/paycheckRuleEnums.js` and clamped on read by
   `normalizePaycheckRules` (never throws):
   `schedule.frequency` = `weekly` \| `biweekly` \| `semimonthly` \| `monthly`;
+  `schedule.periodBasis` = `work_week` \| `prior_cycle` \| `on_payday` (weekly/biweekly
+  only — how the period a check covers relates to its pay date; default `work_week`,
+  which uses `week_start` to align to the work week; see `server/utils/payPeriods.js`);
   `schedule.weekendShift` = `none` \| `before` \| `after`;
   `deductions.timing` = `every` \| `grouped`;
   `deductions.group.by` = `pair` \| `month`;

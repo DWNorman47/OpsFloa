@@ -241,7 +241,10 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
     setSaving(true); setError('');
     try {
       const policy = formToPolicy(form);
-      const r = await api.patch('/admin/settings', { hours_rules: JSON.stringify(policy) });
+      const r = await api.patch('/admin/settings', {
+        hours_rules: JSON.stringify(policy),
+        expected_settings: { hours_rules: settings?.hours_rules || '' },
+      });
       onSettingsUpdated?.(r.data);
       await invalidateCache?.('settings');
       setSaved(true);
@@ -262,7 +265,6 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
     <div style={s.card}>
       <div style={s.headRow}>
         <div>
-          <h3 style={s.title}>{t.hrTitle}</h3>
           <p style={s.sub}>{t.hrDesc}</p>
           <p style={s.glossary}>{t.hrGlossary}</p>
         </div>
@@ -387,12 +389,12 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
         </>
       )}
 
-      {error && <p role="alert" style={s.error}>{error}</p>}
       <div style={s.actions}>
-        <button style={{ ...s.saveBtn, ...(saving ? { opacity: 0.6 } : {}) }} onClick={save} disabled={saving}>
+        {saved && <span style={s.savedMsg}>{t.hrSaved}</span>}
+        {error && <span role="alert" style={s.error}>{error}</span>}
+        <button style={{ ...s.saveBtn, ...(saving ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={save} disabled={saving}>
           {saving ? t.hrSaving : t.hrSave}
         </button>
-        {saved && <span style={s.savedMsg}>{t.hrSaved}</span>}
       </div>
     </div>
   );
@@ -408,7 +410,7 @@ function Field({ label, children }) {
 }
 
 const s = {
-  card: { background: '#fff', borderRadius: 12, padding: 24, boxShadow: '0 2px 12px rgba(0,0,0,0.06)', marginBottom: 24 },
+  card: {},
   headRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' },
   title: { fontSize: 17, fontWeight: 700, margin: 0 },
   sub: { fontSize: 13, color: '#6b7280', margin: '6px 0 0', lineHeight: 1.5, maxWidth: 560 },
@@ -442,8 +444,8 @@ const s = {
   edge: { marginTop: 12, padding: 12, background: '#f8fafc', borderRadius: 8 },
   edgeTitle: { fontSize: 13, fontWeight: 700, color: '#334155', marginBottom: 8 },
   checkRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: '#374151', cursor: 'pointer' },
-  error: { color: '#ef4444', fontSize: 13, marginTop: 12 },
-  actions: { display: 'flex', alignItems: 'center', gap: 14, marginTop: 20 },
-  saveBtn: { background: '#059669', color: '#fff', border: 'none', padding: '10px 22px', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' },
+  error: { color: '#e53e3e', fontSize: 13 },
+  actions: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, padding: '12px 20px', borderTop: '1px solid #f3f4f6', background: '#fafafa', margin: '16px -20px 0' },
+  saveBtn: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '7px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   savedMsg: { fontSize: 13, color: '#059669', fontWeight: 600 },
 };

@@ -11,6 +11,9 @@
  */
 
 const PAYCHECK_FREQUENCIES = ['weekly', 'biweekly', 'semimonthly', 'monthly'];
+// How a weekly/biweekly pay period relates to its pay date (semimonthly/monthly are
+// calendar spans and ignore this). See server/utils/payPeriods.js periodBounds().
+const PERIOD_BASES         = ['work_week', 'prior_cycle', 'on_payday'];
 const DEDUCTION_TIMINGS    = ['every', 'grouped'];
 const GROUP_BY             = ['pair', 'month'];
 const GROUP_APPLY_ON       = ['first', 'second', 'last'];
@@ -26,7 +29,11 @@ const clampWeekday = v => { const n = parseInt(v, 10); return Number.isFinite(n)
 const clampDay = (v, fallback = null) => { const n = parseInt(v, 10); return Number.isFinite(n) && n >= 1 && n <= 31 ? n : fallback; };
 const clampPct = v => { const n = Number(v); return Number.isFinite(n) && n >= 0 && n <= 100 ? n : 0; };
 const nonNegCents = v => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= 0 ? n : 0; };
-const isYmd = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+const isYmd = v => {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const date = new Date(`${v}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === v;
+};
 
 function normalizeRuleset(r, i) {
   if (!r || typeof r !== 'object') return null;
@@ -43,11 +50,17 @@ function normalizeRuleset(r, i) {
   return {
     id: (typeof r.id === 'string' && r.id) ? r.id.slice(0, 40) : `pr_${i}`,
     name: String(r.name == null ? '' : r.name).slice(0, 120),
-    // Role IDs this ruleset applies to (a worker's role → their ruleset). Empty =
-    // not yet assigned. Kept as-is (role ids may be int or uuid) and de-duped.
-    roles: [...new Set((Array.isArray(r.roles) ? r.roles : []).filter(x => typeof x === 'number' || typeof x === 'string'))].slice(0, 200),
+    // Role IDs are integer database keys. Normalize JSON strings so a restored or
+    // externally written setting still matches users.role_id with strict equality.
+    roles: [...new Set(
+      (Array.isArray(r.roles) ? r.roles : [])
+        .filter(x => (typeof x === 'number' || typeof x === 'string') && String(x).trim() !== '')
+        .map(Number)
+        .filter(x => Number.isInteger(x) && x > 0)
+    )].slice(0, 200),
     schedule: {
       frequency: oneOf(sched.frequency, PAYCHECK_FREQUENCIES, 'biweekly'),
+      periodBasis: oneOf(sched.periodBasis, PERIOD_BASES, 'work_week'),
       payWeekday: clampWeekday(sched.payWeekday),
       anchorDate: isYmd(sched.anchorDate) ? sched.anchorDate : null,
       daysOfMonth,
@@ -92,6 +105,7 @@ function normalizePaycheckRules(raw) {
 
 module.exports = {
   PAYCHECK_FREQUENCIES,
+  PERIOD_BASES,
   DEDUCTION_TIMINGS,
   GROUP_BY,
   GROUP_APPLY_ON,

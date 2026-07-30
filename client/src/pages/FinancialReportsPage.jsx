@@ -16,7 +16,7 @@ import TabBar from '../components/TabBar';
 import { AnalyticsPanel } from './AnalyticsPage';
 import { silentError } from '../errorReporter';
 import { useCents } from '../hooks/useMoney';
-import { safeLocal, safeSession } from '../utils/safeStorage';
+import { downloadBlob } from '../utils/csv';
 
 function marginColor(pct) {
   if (pct == null) return '#6b7280';
@@ -139,24 +139,13 @@ function WipTab() {
       .finally(() => setLoading(false));
   }, []);
 
-  function downloadCsv() {
-    const url = `${api.defaults.baseURL}/wip-report/export`;
-    // Authenticated download — open via fetch with header so the API
-    // Authorization cookie isn't required.
-    const token = safeSession.getItem('tc_token') || safeLocal.getItem('tc_token');
-    fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-      .then(r => r.blob())
-      .then(blob => {
-        const objectUrl = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = objectUrl;
-        a.download = `wip-report-${new Date().toISOString().slice(0, 10)}.csv`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(objectUrl);
-      })
-      .catch(silentError);
+  async function downloadCsv() {
+    try {
+      const response = await api.get('/wip-report/export', { responseType: 'blob' });
+      downloadBlob(response.data, `wip-report-${new Date().toISOString().slice(0, 10)}.csv`);
+    } catch (err) {
+      silentError('wip-report-export')(err);
+    }
   }
 
   if (loading) return <SkeletonList rows={4} />;

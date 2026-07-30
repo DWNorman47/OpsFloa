@@ -63,6 +63,39 @@ describe('POST /api/projects/:projectId/submittals', () => {
       .send({ title: 'Insulation', submittal_number: 'SUB-A-001' });
     expect(res.status).toBe(404);
   });
+
+  test('400 when responsible user belongs to another company', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 10, name: 'Project' }] })
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const res = await request(makeApp())
+      .post('/api/projects/10/submittals')
+      .send({
+        title: 'Insulation',
+        submittal_number: 'SUB-A-001',
+        responsible_user_id: 99,
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid responsible_user_id');
+    expect(pool.query).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('PATCH /api/submittals/:id', () => {
+  test('400 when responsible subcontractor belongs to another company', async () => {
+    pool.query
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ id: 7, status: 'draft', submittal_number: 'SUB-A-001' }],
+      })
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const res = await request(makeApp())
+      .patch('/api/submittals/7')
+      .send({ responsible_sub_id: 88 });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid responsible_sub_id');
+    expect(pool.query).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('POST /api/submittals/:id/send-internal', () => {

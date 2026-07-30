@@ -21,6 +21,48 @@ that holds the exhaustive detail.
 
 ## 🔧 Bugs — set aside for later
 
+- **WH-347 PDF / Statement of Compliance — mostly fixed 2026-07-28; two items remain.**
+  Fixed: (a) the PDF now renders the signed `compliance_text` snapshot (falls back to the
+  server `default_compliance_text` template when unsigned); (c) regular vs prevailing print as
+  separate rows at their own rates; (d) the OT row shows the OT rate (base × multiplier); (f)
+  re-signing snapshots the replaced signature into the audit log (`certified_payroll.signature_replaced`,
+  full signer/signature/compliance/date); (g) POST /signatures verifies project ownership; (h)
+  cert date renders in UTC (stable for every viewer); (i) sign-modal buttons are bilingual.
+  **Still open:** (b) gross still includes night/OT premium without an itemized line — this is
+  inherent to the WH-347 S/O format (gross = weekly total), left as-is deliberately; flag if a
+  reviewer wants it itemized. (e) Fringes still print as one combined $/hr with no cash-vs-
+  approved-plan (4a/4b/4c) election — needs a data-model decision on where that election lives
+  (per-company? per-project? per-fringe) before it can be built. `CertifiedPayrollPDF.jsx`,
+  `certifiedPayroll.js`. (2026-07-28)
+- **Certified payroll: single prevailing rate + flat OT on premium configs**
+  (`admin.js` WH-347 route). One `prevRate` for all prevailing hours (no
+  per-classification rate table), and premium OT configs still price
+  OT flat (`otBandsCost` at `otMult`) rather than the full band math on the
+  prevailing base. Per-project prevailing rates in all-projects mode and the daily-rate
+  night-differential mismatch were fixed 2026-07-29; classification-level prevailing
+  rates remain a data-model gap. (`overtime_hours_override` is honored.) (2026-07-28)
+- **Server error strings aren't bilingual** (systemic, not payroll-specific). Server
+  routes return English `error` messages (e.g. the payroll conflict 409s:
+  `already_finalized`, `has_paid_checks`, "Run is voided"); the client toasts/render
+  them verbatim, so a Spanish-locale user sees English on any 4xx. `i18n.test` only
+  checks parity of keys that exist, so it can't catch a never-keyed server string. Fix
+  pattern: return a machine `code` (the payroll 409s already do) and have the client map
+  known codes to bilingual `t.*` messages. Worth doing app-wide, not one-off. (2026-07-28)
+- **Supplemental / partial-worker payroll runs need explicit semantics.** Migration
+  `0158` scopes finalized-run idempotency by ruleset, so different schedules can safely
+  use the same date span. The app still intentionally finalizes a whole ruleset period
+  at once and rejects overlapping worker/date checks. A future off-cycle correction or
+  partial-worker flow needs its own run type and adjustment/reversal rules rather than
+  bypassing the overlap guard. (2026-07-28)
+- **Ruleset total cap trims deduction lines pro-rata on the stub** (`paycheckRun.js`
+  `computeRuleNet`). When a ruleset `cap`/min-net floor trims the total, the itemized
+  lines are scaled proportionally across ALL lines so they foot (net + total are
+  always correct). That means a mandatory line (garnishment, child support) shows as
+  *reduced* on the stub instead of the discretionary lines being trimmed first —
+  which line a cap legally attaches to is a policy question. If it matters, add a
+  per-line priority so caps trim discretionary lines before mandatory ones. Stub
+  display only. (2026-07-28)
+
 - **Project merge doesn't move financial records** (`admin.js`
   `POST /projects/:id/merge-into/:target_id`). The re-point list only covers
   operational tables (time entries, reports, RFIs, …), not the financial /
@@ -104,6 +146,26 @@ that holds the exhaustive detail.
 
 ## 🧭 Design flaws — raised, set aside for later
 
+- **Should the minimum-daily floor appear on the WH-347 at all?** Certified Payroll now
+  includes worked-day min-daily floor hours in the regular total AND the day columns (they
+  reconcile as of 2026-07-28). But a min-daily floor is *reporting-time* pay, not hours
+  worked on the project — arguably it shouldn't be on a WH-347's hours-worked columns. Left
+  as-is (matches the pay stub's gross), but a prevailing-wage compliance call worth
+  confirming before relying on it. (2026-07-28)
+- ~~**Payroll run keys on "pay date in window", users think "work period".**~~ **Resolved
+  2026-07-28.** The tab now leads with a pay-period **dropdown** (not a raw
+  range), and each check's period comes from a selectable `periodBasis` (work_week /
+  prior_cycle / on_payday, default work_week) so the period aligns to the work week and
+  pays in arrears. The custom range + `notices` remain for edge cases. Multiple schedules
+  are now listed and computed per ruleset, so one cadence cannot pull a partial group
+  from another.
+- **"Included workers" (15) is duplicated between client and Stripe.** The Business
+  base price bundles 15 seats; the client hardcodes `INCLUDED_WORKERS = 15` in
+  `BillingPanel.jsx` to compute the per-worker overage sent to checkout. If the
+  Stripe base ever bundles a different count, the constant silently drifts and we
+  over/undercharge (this exact drift caused the 2026-07-28 overcharge bug). Fix:
+  surface `included_workers` in the `/stripe/plans` payload so there's one source of
+  truth and the server can also sanity-check the quantity. (2026-07-28)
 - ~~**Company-share conflict model is fork-only.**~~ **RESOLVED 2026-07-14.** The
   conflict dialog is now 3-way (Keep both / Overwrite theirs / Cancel), and a
   **manual, admin-releasable lock** (migration 0138) lets a user reserve a shared

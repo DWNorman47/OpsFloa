@@ -9,6 +9,7 @@ import { formatDate } from '../../utils';
 import { SkeletonList } from '../Skeleton';
 import ModalShell from '../ModalShell';
 import { labelSg, labelPl } from '../../companyLabels';
+import { downloadCsv } from '../../utils/csv';
 
 import { silentError } from '../../errorReporter';
 function useCountTypes(t) {
@@ -333,22 +334,15 @@ function CycleCountDetail({ count, settings, onBack, onComplete }) {
       const counted  = l.counted_qty != null ? parseFloat(l.counted_qty) : '';
       const variance = l.variance != null ? l.variance : (counted !== '' ? counted - expected : '');
       return [
-        `"${l.item_name.replace(/"/g, '""')}"`,
+        l.item_name,
         l.sku || '',
         l.unit,
         expected,
         counted,
         variance,
-      ].join(',');
+      ];
     });
-    const csv = [header.join(','), ...rows].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = `variance-report-${count.id}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadCsv([header, ...rows], `variance-report-${count.id}.csv`);
   };
 
   const FINAL_LINE_STATUSES = ['accepted', 'reconciled', 'overridden', 'audited'];

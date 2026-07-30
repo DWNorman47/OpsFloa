@@ -14,7 +14,7 @@ const pool = require('../db');
 const {
   PERMISSIONS, PERMISSION_KEYS, BUILTIN_ROLES,
   WORKER_PERMISSIONS, ADMIN_PERMISSIONS, OWNER_PERMISSIONS,
-  hasPerm, requirePerm,
+  hasPerm, requirePerm, getUserPermissions,
 } = require('../permissions');
 
 describe('permission catalog', () => {
@@ -149,6 +149,31 @@ describe('hasPerm — legacy fallback', () => {
     // No admin-tier access
     expect(await hasPerm(user, 'manage_workers')).toBe(false);
     expect(await hasPerm(user, 'approve_entries')).toBe(false);
+  });
+});
+
+describe('getUserPermissions — legacy fallback', () => {
+  test('unrestricted legacy admin receives the complete Admin permission set', async () => {
+    const user = { id: 1, role: 'admin', role_id: null, admin_permissions: null };
+    expect(await getUserPermissions(user)).toEqual(new Set(ADMIN_PERMISSIONS));
+  });
+
+  test('restricted legacy admin receives worker baseline plus enabled legacy permissions', async () => {
+    const user = {
+      id: 1,
+      role: 'admin',
+      role_id: null,
+      admin_permissions: { approve_entries: true, manage_workers: false },
+    };
+    const permissions = await getUserPermissions(user);
+    expect(permissions.has('clock_self')).toBe(true);
+    expect(permissions.has('approve_entries')).toBe(true);
+    expect(permissions.has('manage_workers')).toBe(false);
+  });
+
+  test('legacy worker receives the Worker permission set', async () => {
+    const user = { id: 2, role: 'worker', role_id: null };
+    expect(await getUserPermissions(user)).toEqual(new Set(WORKER_PERMISSIONS));
   });
 });
 

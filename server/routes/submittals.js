@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const pool   = require('../db');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { requireAdmin } = require('../middleware/auth');
 const { logAudit } = require('../auditLog');
 const { getPresignedUploadUrl } = require('../r2');
 const {
@@ -28,6 +28,24 @@ async function assertSubmittalInCompany(companyId, submittalId) {
   return r.rows[0] || null;
 }
 
+async function validateResponsibleParties(companyId, userId, subId) {
+  if (userId) {
+    const user = await pool.query(
+      'SELECT 1 FROM users WHERE id = $1 AND company_id = $2',
+      [userId, companyId]
+    );
+    if (user.rowCount === 0) return 'invalid responsible_user_id';
+  }
+  if (subId) {
+    const sub = await pool.query(
+      'SELECT 1 FROM subcontractors WHERE id = $1 AND company_id = $2',
+      [subId, companyId]
+    );
+    if (sub.rowCount === 0) return 'invalid responsible_sub_id';
+  }
+  return null;
+}
+
 async function recordAudit({ submittalId, action, actorUserId, details }) {
   try {
     await pool.query(
@@ -40,7 +58,7 @@ async function recordAudit({ submittalId, action, actorUserId, details }) {
 
 // ── List ──────────────────────────────────────────────────────────────────────
 
-router.get('/submittals', requireAuth, async (req, res) => {
+router.get('/submittals', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   const { project_id, status, spec_section, q } = req.query;
   const page  = Math.max(1, parseInt(req.query.page) || 1);
@@ -88,7 +106,7 @@ router.get('/submittals', requireAuth, async (req, res) => {
   }
 });
 
-router.get('/submittals/overdue', requireAuth, async (req, res) => {
+router.get('/submittals/overdue', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   const withinDays = Math.min(120, Math.max(1, parseInt(req.query.within_days) || 14));
   try {
@@ -120,6 +138,12 @@ router.post('/projects/:projectId/submittals', requireAdmin, async (req, res) =>
   try {
     const project = await assertProjectInCompany(companyId, req.params.projectId);
     if (!project) return res.status(404).json({ error: 'Project not found' });
+    const responsibleError = await validateResponsibleParties(
+      companyId,
+      req.body.responsible_user_id,
+      req.body.responsible_sub_id
+    );
+    if (responsibleError) return res.status(400).json({ error: responsibleError });
     const r = await pool.query(
       `INSERT INTO submittals
          (company_id, project_id, submittal_number, spec_section, title, description,
@@ -153,7 +177,7 @@ router.post('/projects/:projectId/submittals', requireAdmin, async (req, res) =>
   }
 });
 
-router.get('/submittals/:id', requireAuth, async (req, res) => {
+router.get('/submittals/:id', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const s = await assertSubmittalInCompany(companyId, req.params.id);
@@ -177,6 +201,12 @@ router.patch('/submittals/:id', requireAdmin, async (req, res) => {
     if (!['draft', 'pending_internal'].includes(s.status)) {
       return res.status(409).json({ error: `Cannot edit a submittal in '${s.status}' status` });
     }
+    const responsibleError = await validateResponsibleParties(
+      companyId,
+      req.body.responsible_user_id,
+      req.body.responsible_sub_id
+    );
+    if (responsibleError) return res.status(400).json({ error: responsibleError });
     const fields = [];
     const params = [];
     let idx = 1;

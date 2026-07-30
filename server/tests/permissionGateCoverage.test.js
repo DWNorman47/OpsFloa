@@ -54,6 +54,7 @@ jest.mock('stripe', () => jest.fn(() => ({})));
 const express = require('express');
 const request = require('supertest');
 const adminRouter = require('../routes/admin');
+const certifiedPayrollRouter = require('../routes/certifiedPayroll');
 const clockRouter = require('../routes/clock');
 const stripeRouter = require('../routes/stripe');
 const { PERMISSION_KEYS } = require('../permissions');
@@ -67,9 +68,10 @@ function gatedRoutes(router) {
     const path = layer.route.path;
     for (const method of Object.keys(layer.route.methods)) {
       const stack = layer.route.stack;
-      const tagged = stack.find(s => s.handle && s.handle.__permissionKey);
-      if (tagged) {
-        out.push({ method: method.toUpperCase(), path, key: tagged.handle.__permissionKey });
+      const tagged = stack.filter(s => s.handle && s.handle.__permissionKey);
+      if (tagged.length) {
+        const keys = tagged.map(s => s.handle.__permissionKey);
+        out.push({ method: method.toUpperCase(), path, key: keys[0], keys });
       }
     }
   }
@@ -114,12 +116,42 @@ describe('Permission gate coverage', () => {
     expect(outRoute?.key).toBe('clock_self');
   });
 
+  test('payroll money mutations require manage_pay_periods, not read-only reports access', () => {
+    const routes = gatedRoutes(adminRouter);
+    for (const path of ['/payroll-run/finalize', '/payroll-runs/:id/paid', '/payroll-runs/:id/void']) {
+      expect(routes.find(r => r.path === path && r.method === 'POST')?.key).toBe('manage_pay_periods');
+    }
+  });
+
+  test('payroll reads require both report and wage access', () => {
+    const routes = gatedRoutes(adminRouter);
+    for (const path of ['/payroll-run', '/payroll-runs', '/payroll-runs/:id', '/payroll-export']) {
+      const route = routes.find(r => r.path === path && r.method === 'GET');
+      expect(route?.keys).toEqual(expect.arrayContaining(['view_reports', 'view_worker_wages']));
+    }
+  });
+
+  test('certified payroll reads and legal writes use their dedicated permissions', () => {
+    const adminRoutes = gatedRoutes(adminRouter);
+    expect(adminRoutes.find(r => r.path === '/certified-payroll' && r.method === 'GET')?.key)
+      .toBe('view_certified_payroll');
+    expect(adminRoutes.find(r => r.path === '/certified-payroll/weeks' && r.method === 'GET')?.key)
+      .toBe('view_certified_payroll');
+
+    const certifiedRoutes = gatedRoutes(certifiedPayrollRouter);
+    expect(certifiedRoutes.find(r => r.path === '/signatures' && r.method === 'GET')?.key)
+      .toBe('view_certified_payroll');
+    expect(certifiedRoutes.find(r => r.path === '/signatures' && r.method === 'POST')?.key)
+      .toBe('manage_pay_periods');
+  });
+
   test('every gated route registers a tagged middleware (no silent passthrough)', () => {
     // Sanity: any route we expect to be gated MUST have requirePerm in its
     // chain. The 403 enforcement itself is verified by permissions.test.js
     // (unit-level on requirePerm directly).
     const all = [
       ...gatedRoutes(adminRouter),
+      ...gatedRoutes(certifiedPayrollRouter),
       ...gatedRoutes(clockRouter),
       ...gatedRoutes(stripeRouter),
     ];

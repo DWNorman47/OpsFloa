@@ -2,6 +2,7 @@ const router = require('express').Router();
 const pool = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { sendPushToUser } = require('../push');
+const { projectBelongsToCompany, userBelongsToCompany } = require('../utils/tenantRefs');
 const {
   PUNCHLIST_STATUSES: VALID_STATUSES,
   PUNCHLIST_PRIORITIES: VALID_PRIORITIES,
@@ -66,6 +67,12 @@ router.post('/', requireAuth, async (req, res) => {
   const companyId = req.user.company_id;
 
   try {
+    if (!(await projectBelongsToCompany(pool, project_id, companyId))) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    if (!(await userBelongsToCompany(pool, assigned_to, companyId))) {
+      return res.status(404).json({ error: 'Assignee not found' });
+    }
     const result = await pool.query(
       `INSERT INTO punchlist_items
          (company_id, project_id, title, description, location, priority, assigned_to, created_by, phase)
@@ -100,7 +107,7 @@ router.post('/', requireAuth, async (req, res) => {
 // PATCH /punchlist/:id
 router.patch('/:id', requireAuth, async (req, res) => {
   const companyId = req.user.company_id;
-  const { priority, status, assigned_to, phase } = req.body;
+  const { project_id, priority, status, assigned_to, phase } = req.body;
   const title = req.body.title !== undefined ? (req.body.title?.trim() || null) : undefined;
   const description = req.body.description !== undefined ? (req.body.description?.trim() || null) : undefined;
   const location = req.body.location !== undefined ? (req.body.location?.trim() || null) : undefined;
@@ -118,21 +125,28 @@ router.patch('/:id', requireAuth, async (req, res) => {
     if (clientUpdatedAt && new Date(existing.rows[0].updated_at).getTime() !== new Date(clientUpdatedAt).getTime()) {
       return res.status(409).json({ error: 'conflict' });
     }
+    if (project_id !== undefined && !(await projectBelongsToCompany(pool, project_id, companyId))) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    if (assigned_to !== undefined && !(await userBelongsToCompany(pool, assigned_to, companyId))) {
+      return res.status(404).json({ error: 'Assignee not found' });
+    }
 
     const resolvedAt = status === 'verified' && existing.rows[0].status !== 'verified'
       ? new Date() : existing.rows[0].resolved_at;
 
     await pool.query(
       `UPDATE punchlist_items SET
-         title=COALESCE($1, title), description=COALESCE($2, description),
-         location=COALESCE($3, location), priority=COALESCE($4, priority),
-         status=COALESCE($5, status), assigned_to=$6,
-         resolved_at=$7, updated_at=NOW(), phase=$8
-       WHERE id=$9`,
+          title=COALESCE($1, title), description=COALESCE($2, description),
+          location=COALESCE($3, location), priority=COALESCE($4, priority),
+          status=COALESCE($5, status), assigned_to=$6,
+          resolved_at=$7, updated_at=NOW(), phase=$8, project_id=$9
+        WHERE id=$10`,
       [title, description, location, priority, status,
        assigned_to !== undefined ? (assigned_to || null) : existing.rows[0].assigned_to,
        resolvedAt,
        phase !== undefined ? (phase || null) : existing.rows[0].phase,
+       project_id !== undefined ? (project_id || null) : existing.rows[0].project_id,
        req.params.id]
     );
 

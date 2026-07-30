@@ -23,6 +23,686 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-07-29 - Commercial access and export safety pass
+
+- Closed worker-readable API gaps across estimates, invoices, change orders, sub-POs,
+  project financials, portfolio/WIP reporting, subcontractors, submittals, closeout, and
+  lien waivers. Server gates now match the admin/module permissions presented by the UI;
+  the previously unauthenticated estimate plan-PDF read is protected as well.
+- Split project financial access from portfolio reporting access so project admins retain
+  their project financial tab while company-wide profit/WIP data requires reporting access.
+- Preserved settings-only Sales access after the Projects consolidation, hid project/work
+  tabs from Sales-only users, and made Work Orders hash navigation survive reloads.
+- Added tenant ownership validation for submittal assignees and relationship validation for
+  lien-waiver POs, payments, subcontractors, invoices, and projects. Draft waiver date edits
+  now use the same strict date and range checks as creation.
+- Replaced browser-local CSV encoders with one formula-injection-safe encoder across payroll,
+  worker/project reports, schedules, haul tickets, billing, and inventory exports. WIP export
+  now uses the authenticated API client and surfaces HTTP failures instead of downloading an
+  error response as a CSV.
+
+Verification: all 159 migrations passed static and replay/idempotency lint; 1,244
+server tests and 275 client tests passed; server/client ESLint and the production/PWA
+build passed. Server production dependencies audit clean. Client audit retains the two
+documented high React Router RSC/server-action findings; those modes are not used by
+this browser-only app, and the available forced downgrade is not a compatible fix.
+
+---
+
+## 2026-07-29 - Inventory, invoice, and offline integrity pass
+
+- Required inventory visibility on inventory reads and worker stock transactions, while
+  preserving cost visibility for inventory managers. Added company/item/location/project
+  validation across stock movements, bins, item UOMs, locations, and purchase orders;
+  issue transactions now validate and decrement the selected source bin.
+- Serialized PO numbering and receiving, added company-scoped PO-number uniqueness, and
+  made cycle-count submission one locked transaction so invalid/final submissions cannot
+  consume assignments or partially change count state.
+- Replaced the dashboard's independent payroll math with the canonical server pay-statement
+  engine for the displayed week, including approved entries, role/project rates, guarantees,
+  leave, premiums, and reimbursements. Free-plan period limits are enforced server-side.
+- Escaped invoice and inventory-label print content and restricted embedded signatures to
+  raster image data URLs.
+- Scoped IndexedDB caches and count queues by company/user, resumed queued counts on an
+  already-online mount, preserved submissions on auth/transient failures, and bound service
+  worker replay/clearing to the account that originally queued each request.
+- Added focused route and client regression coverage for the new permission, tenant,
+  transaction, canonical-pay, and offline-account boundaries.
+
+Verification: all 159 migrations passed static and replay/idempotency lint; 1,228
+server tests and 266 client tests passed; server/client ESLint and the production/PWA
+build passed. Server production dependencies audit clean. Client audit retains the two
+documented high React Router RSC/server-action findings; those modes are not used by
+this browser-only app, and the suggested forced downgrade reintroduces other advisories.
+
+---
+
+## 2026-07-29 - Second-pass app and payroll repairs
+
+- Fixed the punch-list PATCH route's missing `project_id` binding and added route-level
+  tenant/reference regression coverage.
+- Serialized payroll paid/void mutations with row locks and transactions, and made the
+  client payroll run/history/certified-report views ignore stale responses. Finalization
+  now uses the exact period and ruleset that produced the displayed register.
+- Rebuilt QuickBooks payroll posting on the canonical payroll engine, protected it with
+  payroll/wage permissions and a bounded date range, and added a stable Intuit request ID
+  so retries cannot duplicate a journal entry.
+- Split WH-347 output by worker classification while preserving week-wide overtime,
+  corrected displayed OT/classification details, kept signatures current after signing,
+  and escaped dynamic print-window content in pay stubs and certified payroll.
+- Protected wage-bearing payroll reads, blocked legacy permission edits for role-managed
+  workers, constrained conflict-protected settings saves to one document, validated real
+  schedule dates, and bounded expensive payroll/report ranges.
+- Added server ESLint enforcement plus focused transaction, race, authorization,
+  classification, date-range, print-escaping, and QuickBooks regression tests.
+
+Verification: all 158 migrations passed static and replay/idempotency lint; 1,220 server
+tests and 263 client tests passed; server/client ESLint and the production/PWA build
+passed. Server production dependencies audit clean. Client audit retains two high
+findings for React Router server-action/RSC behavior; OpsFloa is browser-only, and the
+older React-18-compatible Router release reintroduces a larger set of redirect/SSR
+advisories, while Router 8 requires React 19.
+
+---
+
+## 2026-07-28 — App repair and payroll hardening
+
+- Closed cross-company reference holes on equipment, field reports, punch lists, and
+  daily reports; also fixed the daily-report missing-target transaction rollback and
+  aligned legacy permission resolution.
+- Hardened payroll periods and finalization: strict date validation, ruleset-scoped
+  period choices/runs, zero-check suppression, a per-company finalize lock, and
+  overlapping worker-period rejection. Migration `0158` records the ruleset on payroll
+  runs and makes finalized-run uniqueness ruleset-aware.
+- Reconciled WH-347 calculations with payroll: all-project reports use each project's
+  prevailing rate, displayed OT/prevailing rates derive from actual costs, daily-rate
+  workers no longer receive hourly night differential, and line-item OT now reconciles
+  when a minimum-daily floor crosses the threshold.
+- Tightened payroll authorization: read-only reports, certified payroll, payroll
+  mutation, signatures, fringes, and SSN operations now use their dedicated permissions;
+  clients hide controls users cannot execute.
+- Made payroll settings resistant to stale concurrent saves and normalized deterministic
+  IDs for legacy id-less deductions and role scopes.
+- Updated the client build/test toolchain for Vite 8 and retained React Router 7 because
+  the patched Router 8 line requires React 19 while the current PDF, mapping, and charting
+  dependencies support React 18. The remaining client audit advisory applies to Router
+  server actions/RSC, which this browser-only Vite app does not use.
+
+Verification: migration lint/replay passed for 158 migrations; 1,206 server tests and
+260 client tests passed; ESLint and the production/PWA build passed. Server production
+dependency audit is clean.
+
+---
+
+## 2026-07-29 — Plan Room: fix the 40-page-document slowdown
+
+Report: loading a ~40-page set slows the Plan Room "far too much." Traced every
+page-count-scaling path (main render, thumbnail rail, page picker, vector index, autosave
+are all already lazy/bounded). Found and fixed three offenders in
+`client/public/tool-apps/planroom/app.js`:
+
+1. **Sheet manager rendered ALL N thumbnails eagerly, and re-rendered every one on each
+   reorder/remove click** (`renderSheetMgr`). Unlike the page picker, it had no
+   IntersectionObserver — opening "Manage sheets" on a 40-page set fired 40 concurrent pdf.js
+   page renders, and every ▲/▼/✕ click tore the list down and re-rendered all 40. Now
+   lazy (render a row's thumbnail when it scrolls into view) + a per-open canvas cache so
+   reorders reuse thumbnails instead of re-rendering. Also count markups-per-page once per
+   rebuild instead of once per row.
+2. **`paint()` filtered the entire `state.markups` array every animation frame** — O(all
+   markups) per frame during pan/zoom, which bites a large multi-sheet takeoff. Added a
+   per-page cache (`currentPageMarkups`) invalidated by a rev counter bumped in the
+   `markupsChanged` funnel (+ array-ref/length guards); `markupShown` stays in the loop
+   since layer toggles change it live. Per-frame cost is now O(current-page markups).
+3. **Redundant full-file buffer copy on open** (`openFromBytes`) — `keep = buf.slice(0)`
+   was allocated even on the reopen/finalize paths (`persist:false`) that never use it, a
+   wasted full-file allocation on a big set. Now copied only when persisting.
+
+Bumped the planroom cache-bust to `?v=80` (app.js + styles.css, per house rule). Static
+tool-app assets have no automated coverage — syntax-checked (acorn) + reviewed; worth a
+browser spot-check (open a multi-page doc → Manage Sheets → reorder is snappy, markups still
+draw). `client/dist` is gitignored (build output), so only `public/` changed.
+
+## 2026-07-29 — Reviewed the pulled "hardening" commits + fixed 3 issues
+
+Pulled two large commits from another contributor ("Harden payroll workflows and tenant
+references", "Harden commercial and data integrity workflows" — 106 files). Reviewed with
+4 parallel agents. Mostly solid — the inventory rewrite is properly transactional, migration
+0159 de-dups before its unique index, the new client utils are correct, the access-control
+middleware is a clean tightening, and the new `ruleset_id` payroll scoping actually **closes**
+the multi-schedule grouping-overlap I'd backlogged. Found + fixed three real problems:
+
+- **Silent unpaid worker (money).** The new per-ruleset scoping (`computePayrollRun`) skipped
+  any worker not in the selected ruleset's roles *before* the setup-error check — so a worker
+  whose role maps to **no** ruleset (or a null role) was silently dropped from every run with
+  no error, where before it raised `no_ruleset`/`no_role` and blocked finalize. Reordered:
+  resolve the ruleset first (setup errors always surface + block), then scope out only workers
+  who resolve cleanly to a *different* ruleset. Restores the "never a silent guess" invariant.
+- **Cross-tenant FK on invoices + estimates.** The same slice hardened change-orders/subs/
+  lien-waivers to validate body FK ownership but **missed** invoices and estimates — a
+  company-A admin could POST/PATCH with company-B's `client_id`/`project_id` and leak the
+  foreign client's data. Added `clientBelongsToCompany` to `tenantRefs` and validated
+  `project_id`/`client_id` on invoice create+update and `client_id` on estimate create+update
+  (null allowed). The from-estimate/from-project paths derive from company-scoped sources, so
+  they're covered transitively.
+- **Lien-waiver regression.** The `invoice_id` check was tightened to require an exact project
+  match, which broke linking a **null-project** (from-scratch) invoice. Relaxed to allow a
+  null-project invoice (company-wide) while still rejecting a cross-company or different-project
+  one. Pinned with a test; the different-project rejection test still holds.
+
+Tests added: invoice client_id rejection, lien-waiver null-project accept. `npm install` in
+server was needed — the pulled commit added eslint to the server verify script. Full suite
+green (server 1246, client 275, eslint + build).
+
+## 2026-07-28 — Fixed the flagged WH-347 + deductions issues
+
+David gave the go-ahead on the compliance-document items I'd parked for his call. Fixed
++ verified (server 1183, client 256, build ok).
+
+**WH-347 PDF / signatures:**
+- The PDF now prints the **signed `compliance_text` snapshot** (the exact wording attested
+  to), falling back to a server-provided `default_compliance_text` template when unsigned —
+  instead of hardcoded clauses (whose clause 3 was truncated). One source of truth.
+- **Regular and prevailing hours print as separate rows** at their own rates (was one merged
+  straight-time row at a single rate, hiding the split); the **OT row now shows the OT rate**
+  (base × multiplier) instead of a blank cell. GROSS stays the weekly total on the first row.
+- **Re-signing preserves history**: before overwriting, the prior signer/signature/compliance/
+  date is snapshotted into the audit log (`certified_payroll.signature_replaced`) — the
+  original certified artifact is now recoverable.
+- POST /signatures **verifies the project belongs to the company** (was missing, unlike the
+  read paths); the certification **date renders in UTC** (was viewer-local → off-by-one near a
+  day boundary); sign-modal buttons are **bilingual** (`cps*` keys).
+
+**Deductions:**
+- The legacy stub path (`payStubTotals`, no min-net floor) now **caps total deductions at
+  gross** and re-allocates the itemized lines (integer-cent largest-remainder) so **net can't
+  go negative** when multiple deductions sum past 100%. Reimbursements still pay on top.
+- `newDeduction` ids are now **unique within the list** (collision would have over-deducted a
+  scope:'selected' pick).
+
+**Left in BACKLOG (need a decision, not a bug):** WH-347 fringe cash-vs-approved-plan
+(4a/4b/4c) election needs a data model; night/OT premium stays folded into gross (inherent to
+the S/O form); company-deduction saves are still last-write-wins (needs optimistic concurrency
+on the generic /settings PATCH).
+
+## 2026-07-28 — Sixth review pass — deductions editors + WH-347 PDF/signature
+
+Aimed at the last un-reviewed surfaces: the deductions editors and the WH-347 PDF +
+signature flow. Batch-6 re-audited **clean**. Fixed the money-critical deductions gap;
+the WH-347 findings are compliance-document decisions parked for David (see below).
+
+**Money-critical — a percent deduction had no ≤100% bound.** A 150% typo (or a fixed
+amount switched to Percent, carrying its value over) drove net pay **negative** on the
+legacy stub path (no min-net floor there). Clamped percent to ≤100 in the shared
+normalizer (`deductions.js` — the one chokepoint every deduction passes through), added
+`max="100"` on the client input, and pinned it with a test.
+
+**Deductions saved silently dropped bad rows while showing "Saved".** A row with a name
+but no value (or vice-versa) was filtered out by `toPolicy`, yet the UI confirmed success —
+so the admin thought a deduction existed when it didn't. Now the save is blocked with a
+specific error (which row, why); added `dedErr*` EN/ES keys.
+
+**WH-347 PDF + signature → BACKLOG (flagged for David, not changed).** This is a signed
+federal form, so I did not alter it unilaterally. Real items to decide on: the PDF prints
+**hardcoded** compliance clauses instead of the `compliance_text` that was actually signed
+(and the hardcoded clause 3 is truncated); night/OT premium in gross isn't itemized
+(inherent to the S/O format, but confirm); regular+prevailing merged into one row hides the
+split; re-signing **overwrites** the prior signature (original artifact unrecoverable); cert
+date renders in viewer-local time (off-by-one near a UTC boundary); sign-modal buttons are
+English-only. Full list in BACKLOG. SSN handling, signature week/project scoping, and
+tenancy on the read paths all checked **clean**.
+
+**Also parked:** deductions can still sum to >100% on the floor-less legacy path; company
+deduction saves are last-write-wins (dead `version` field); Math.random id collision (~1e-7).
+
+## 2026-07-28 — Fifth review pass — client UX + certified payroll
+
+Pointed this pass at the two surfaces the prior four barely touched: the client payroll
+UI and the certified-payroll (WH-347) surface. The batch-5 fixes re-audited **clean**.
+Certified payroll — genuinely under-reviewed — was where the real issues were. Fixed +
+verified (server 1180, client 256, build ok).
+
+**WH-347 ignored manual OT overrides (money-of-record on a legal doc).** The report's
+entries SELECT omitted `te.overtime_hours_override`, so a manually-set OT figure was
+dropped and OT recomputed automatically — the certified document then disagreed with the
+invoice/pay stub (which all honor the override via the shared engine). Added the column.
+
+**Certified-payroll on-screen + print understated gross.** The table/print rendered
+reg/prevailing/OT cost lines but no night-premium line, so the visible costs didn't sum to
+`gross_pay` (which the PDF shows correctly, night premium included). Added a night line to
+both so they foot.
+
+**SSN last-4 lookup wasn't company-scoped.** `loadSsnLast4` selected by id only; safe today
+(callers pass company-scoped ids) but a latent cross-tenant PII path. Added `company_id`.
+
+**WH-347 week window was timezone-fragile.** `weekStart` was derived via local `Date` +
+`toISOString` while `week_end` is used verbatim — on a non-UTC host that makes the 7-day
+window 8 days. Made it UTC throughout. (Latent — Render is UTC — but removed.)
+
+**Double toast** on the payroll register: finalize/run render the error inline AND the
+global 4xx interceptor toasted it. Passed `{ suppressToast: true }` per api.js's own
+documented pattern.
+
+**Parked → BACKLOG:** per-project prevailing rate in all-projects WH-347 mode (single-
+project is correct; the pay statement already has the project rate map); server error
+strings aren't bilingual (systemic — a Spanish user sees English 4xx text; fix is to map
+machine `code`s to `t.*` app-wide). The min-daily OT day-column reconciliation an agent
+re-flagged is the same already-parked per-entry-OT-under-foot item.
+
+**Read:** the batch-5 audit returning clean while the certified-payroll trace found five
+real issues confirms the pattern — point fresh eyes at un-reviewed surfaces, not the same diff.
+
+## 2026-07-28 — Fourth review pass — whole-path trace found new issues
+
+This pass widened the lens (the diff-focused passes were converging): one agent on
+the batch-4 diff, one tracing a worker's dollars across ALL surfaces end-to-end, one
+modelling the finalize→paid→void lifecycle as a state machine. That found **five real
+issues no diff-review would catch** — all fixed + verified (server 1180; client 256; build ok).
+
+**Void could silently double-pay (most severe).** `/void` never checked for already-paid
+checks, and the unique index excludes void rows — so an admin could void a *paid* run,
+re-finalize the same period, and pay everyone a second time, with the original
+disbursement hidden under `status='void'`. Void now refuses (409) when any check is paid,
+and the UPDATE re-checks atomically (`NOT EXISTS paid`) so a check can't be paid mid-void.
+
+**`/paid` was check-then-act (TOCTOU).** The run-status SELECT and the paid UPDATE were
+separate queries; a concurrent void between them stamped paid on a voided run. The UPDATE
+now re-checks run status atomically via an `EXISTS` guard.
+
+**Worker stub disagreed with the finalized/paid net (traceability break).** The stub
+recomputes grouping over a rolling 120-day window; a pair straddling that edge lost its
+earlier member, so the visible check deducted on its OWN gross instead of the pair's —
+e.g. stub showed net $1600 for a check the company paid $1200. The stub now generates a
+padded window (180d back) so boundary groups are complete, then drops the padding from the
+displayed stubs. Verified the boundary check now matches the run ($1200).
+
+**Semimonthly/monthly still array-paired.** The batch-4 anchor-stable `seq` covered only
+weekly/biweekly; calendar schedules still paired by array index, so the admin run and the
+stub could pair a 15th/30th differently. Gave semimonthly (`y*24+(m-1)*2+idx`) and monthly
+(`y*12+(m-1)`) an absolute `seq` too — pairing is now window-independent for every frequency,
+and a semimonthly month's two checks always pair (deduct on the 30th).
+
+**Printed pay stub omitted the guarantee line.** `printStub` added regular/OT/prevailing/
+night/sick/vacation but not the weekly-guarantee top-up (the on-screen stub shows it), so a
+printed stub with a guarantee didn't foot to its own gross. Added the line.
+
+**Parked → BACKLOG:** finalize's `(company, period_from, period_to)` key would false-409 a
+supplemental / partial-worker run for the same span (not a built flow yet).
+
+## 2026-07-28 — Third (large) review pass — audit of the batch-3 fixes
+
+Reviewed the just-committed grouped-deduction fixes (`05c7c0d`) with 5 parallel
+agents. The rewrite held up (no new severe money miscalc in the single-ruleset path),
+but four confirmed issues were worth fixing now. All fixed + verified; suite green
+(server **1179**, +8 new tests; client 256; build ok).
+
+**Worker stub could disagree with the finalized paycheck (pair grouping).** Pair
+grouping keyed off array position, so the admin run (group window), the worker's
+rolling 120-day stub, and the period dropdown (`firstWork−45d`) could pair the *same*
+check differently → a different net on one surface. Fixed at the root: `generatePeriods`
+now stamps an **absolute, window-independent `seq`** on weekly/biweekly checks, and
+`groupPeriods` pairs by `floor(seq/2)` instead of array index. Verified the same check
+pairs identically across two different windows. This also retires the parked
+"offered pair boundaries depend on the window" caveat — pairing is now anchored to the
+schedule.
+
+**Deduction-line reconciliation had two edge bugs.** The cent-footing block I added in
+batch 3 used a float guard (`abs(rawSum−dedTotal) >= 0.01`) that *skipped* genuine
+1-cent trims, and dumped the whole rounding residual on the last line, which could go
+**negative** with many sub-cent lines. Rewrote it in integer cents with largest-remainder
+allocation: every line stays within `[0, its own raw]`, and the lines always foot to the
+capped total. Pinned with tests (incl. the exact negative-line and skipped-cent cases).
+
+**Finalize idempotency was check-then-act with no DB guard.** The SELECT-before-INSERT
+races: two concurrent finalizes both see zero rows and both insert duplicate runs.
+Added a partial unique index `(company_id, period_from, period_to) WHERE status<>'void'`
+(migration `0157`, which first voids any pre-existing dupes so boot can't fail), and the
+route now catches the `23505` violation as a clean 409. The SELECT stays as the friendly
+fast path.
+
+**Added tests for the money logic** that batch 3 left unpinned: `groupOpts`,
+`combineGroup:false`, line reconciliation, anchor-stable pairing, and the `week_start=0`
+(Sunday) work_week normalization.
+
+**Parked → BACKLOG (money correct; policy/rare):** multi-ruleset group-window overlap
+(+ the dropdown dedup cosmetic); ruleset caps trim deduction lines pro-rata on the stub
+(garnishment shows reduced — a which-line-does-a-cap-attach-to policy call); WH-347
+daily-rate + night_diff on the already-as-if-hourly path.
+
+## 2026-07-28 — Second (large) review pass — grouped-deduction engine hardened
+
+A 5-agent audit of the whole session's pay/deduction work surfaced a cluster of
+money bugs in the grouped-deduction + payroll-run path. Fixed nine; the fixes are
+verified by targeted harnesses and the full suite (server 1171 / client 256, green).
+
+**Severe — the dropdown never combined grouped deductions.** Selecting a pay period
+ran `from = to = payDate` (a single-day window), so a grouped ruleset only ever saw
+*one* check per group — the exempt (David's "combine the pair, minus $11,000") was
+applied to **every** check instead of once per group. Fix: `/payroll-periods` now
+offers one entry **per group** carrying the group's whole pay-date window, and the
+run spans that window. Because the window contains exactly the group's checks, the
+run re-groups them identically (so pair grouping is anchor-stable *for the run*
+without needing a schema change). Verified end-to-end: a biweekly pair now deducts
+10% of (16000 − 11000) = **$500 once**, on the 2nd check only.
+
+**High — grouped config read at the wrong nesting.** `groupBy`/`applyOn` live under
+`deductions.group.{by,applyOn}` but the callers passed `ruleset.deductions` straight
+to `groupPeriods`, which reads them flat — so **every** grouped ruleset silently fell
+back to pair/second (month + first/last never took). Added `groupOpts()` to flatten
+nested→flat; wired both callers (admin run + worker stub).
+
+**High — night differential missing from certified-payroll gross.** WH-347 `gross_pay`
+summed regular+prevailing+overtime but not the night premium, understating pay for any
+worker with a `night_diff` rule. Now adds `nightPremiumCost` (same source as the pay
+statement) on the premium-OT path.
+
+**Medium/low, also fixed:** `combineGroup:false` was ignored (now each flagged check
+figures on its own gross when combining is off); snapshot deduction *lines* were the
+raw pre-cap amounts while the total was capped, so a stub's itemization didn't foot —
+now scaled to the actual deducted total; finalize wasn't idempotent (double-submit
+made duplicate runs) — now 409s on an existing non-void run for the same period;
+`/paid` could mark a **voided** run paid and re-stamp already-paid checks — now blocked
++ `status='pending'` guarded; ruleset deduction **scope** (`selected` + picked ids) was
+normalized but never read, so a restricted ruleset still applied every deduction — now
+filters the company deductions (worker rows always apply) on both the admin run and the
+worker stub; overnight entries showed **0h** in Team Member Report + its CSV (the span
+helpers didn't wrap past midnight like `netHours`) — now wrapped.
+
+**Parked → BACKLOG (money is correct; these are refinements/edge):** multi-ruleset
+group windows can overlap when two schedules differ (clean for one ruleset); offered
+pair boundaries aren't anchored to the biweekly `anchorDate`; WH-347 still uses a single
+prevailing rate + flat OT on premium configs.
+
+## 2026-07-28 — Review pass on the synthetic-entry work (2 audits) + fixes
+
+Audited the session's pay-engine changes with two parallel review agents.
+
+**Found + fixed — legacy pay stub crashed (severe).** `PayStubView` (the worker stub
+for companies WITHOUT the Advanced/Certified Payroll add-on — the common case) mapped
+statement `entries` with no `synthetic` guard, so a period with paid leave / weekly-
+guarantee / floor / no-clock-in guarantee gave a synthetic row with null clock times
+and `fmtTime(null).split()` threw, blanking the stub. Money was never wrong (totals come
+from the summary). Added the same guard `BillPDF`/`WorkerMetrics` already had.
+
+**Found + fixed — Certified Payroll day columns didn't foot to the regular total** when a
+worked-day min-daily floor applied (my earlier premium-OT fix set `regular_total = rh`,
+which includes the floor, but the day cells were summed from entries only). Now attributes
+`computeOT`'s `floorDetail` to the day columns so they reconcile.
+
+**Verified clean:** no double-count anywhere — the payroll run, overtime report, and
+payroll CSV read only aggregate totals, never `.entries`; gross/net provably identical
+with or without the synthetic rows; `floorDetail` captures the floor hours exactly (no
+double-add across worked-day floor vs no-clock-in guarantee; multiple rules resolve to one
+Math.max). Only two client renderers ever get statement entries and both guard synthetics.
+
+**Parked (pre-existing, narrow) → BACKLOG:** per-entry OT column can under-foot summary OT
+when a min-daily floor exceeds the OT threshold; and the open compliance question of
+whether a min-daily floor belongs on a WH-347 at all.
+
+**Process note:** a `git add -A` in the stub-fix commit swept 3 temporary review-harness
+files into the repo — removed them in a follow-up. Be surgical with `git add` when agent
+scratch files may be in the tree.
+
+## 2026-07-28 — Rule-generated hours are now real entry rows (min-daily / no-clock-in guarantee)
+
+**David (sharpened the rule):** *"Every time hours are added, they need to be added to
+time entries first. Period."* → [[feedback_traceability]].
+
+**The bug he hit:** a worker's report showed **Regular 12h** from a single 8h Friday
+entry. Root cause (after two wrong turns — it was never a deploy issue): the company's
+**"Sat — guarantee at least 4 paid hours (even without a clock-in)"** rule. Alex worked
+Friday, so the engine granted **4h for Saturday with no clock-in** and added them
+straight into Regular (`computeOT`: `autoReg += floor`) — **no Saturday entry existed
+at all**, so 4 paid hours were completely invisible. Reproduced exactly: `regular 12,
+total 12.25, cost $396`.
+
+**Fix — materialize them as entries.** `computeOT` now returns `floorDetail` (per-day
+rule-generated hours: min-daily floor top-ups + no-clock-in guarantees). `buildPayStatement`
+turns each into a **synthetic entry row** (`{synthetic, kind, work_date, hours, explain}`)
+appended to the statement's `entries`, sorted by date. So the Saturday 4h shows as its
+own row ("Guaranteed hours (no clock-in)"), expandable to the rule. Rendered everywhere
+that lists entries: Team Member Report, bill PDF, CSV. **No pay changes** — the hours
+were always in `regularHours`; gross/net identical. When no floor rules apply, zero
+synthetic entries (behavior unchanged; all 1171 tests green).
+
+**Unified (same session, "the word"):** the weekly `guaranteeShortfall` and sick/
+vacation leave are now synthetic entries too — `buildPayStatement` emits a
+`weekly_guarantee` entry (dated period-end) and one `sick`/`vacation` entry each
+(hours + cost, the leave one expandable to the per-day `LeaveDetail`). Removed their
+summary-derived rows from the report + the duplicate CSV/PDF blocks. So **every** paid
+hour — worked, floor, no-clock-in guarantee, weekly guarantee, leave — is now an entry
+row; the summary only rolls up cost. Verified end-to-end: worked+floor+guarantee+sick+
+vacation → 5 entry rows, gross reconciles exactly ($1444 in the harness), unchanged.
+
+## 2026-07-28 — Guarantee top-up is now a traceable Time-Entries row (not a summary total)
+
+**David (standing rule, reinforced):** everything in Team Member Reports must be
+traceable — any "why is this amount X?" answerable from there, no hours folded into a
+summary total without a matching clickable entry. Saved as [[feedback_traceability]].
+
+The weekly-hours **guarantee top-up** was showing only as a PAY SUMMARY line (and on a
+stale cached client, folded into "Regular 12h"). Now it's a row in **TIME ENTRIES**:
+`Weekly-hours guarantee top-up · $<cost>` … `<hours>`, expandable to the rule
+("Guaranteed {min}h over {weeks} wk; worked {worked} — topped up {short} × {rate} =
+{cost}") + a "View setting →" link to the worker's guarantee config. Removed the
+guarantee line from PAY SUMMARY so the summary never adds hours without a traceable
+source; Total Hours/Cost still reconcile. CSV export gets the same top-up row.
+
+Server already keeps `hours.regular` (worked) and `hours.guaranteeShortfall` separate,
+so Regular was never actually inflated in current code — the folded "12h" was the old
+cached client. Client-only change (`WorkerMetrics.jsx` + i18n).
+
+**Follow-ups done same day** (David: "Sure"):
+- **Leave (sick/vacation)** now render as traceable Time-Entries rows too (hours · cost,
+  expandable to the per-day `LeaveDetail`), removed from the PAY SUMMARY. CSV export
+  includes them.
+- **Bill PDF** (`BillPDF.jsx`): guarantee top-up + sick/vacation are now itemized as
+  rows in the entry table (hours), and their **hours** lines are removed from the
+  summary — the pay breakdown stays in the totals (a bill needs its cost itemization).
+  Regular in the PDF was already worked-only (never folded).
+Night differential stays a summary cost line on purpose — it's a premium on hours
+already counted (worked), so it adds cost, not hours.
+
+## 2026-07-28 — Certified Payroll dropped overtime under premium OT policies
+
+**David:** Certified Payroll and a worker's Team Member Report disagreed for the same
+week — and the report's total (12h15m) didn't match its one visible entry (8h45m).
+
+Traced both engines (subagent). Findings:
+
+- **8h45m vs 8h15m is not a bug.** Both pay paths subtract the 30-min break once →
+  8.25h worked. The entry row just displays raw elapsed (8h45m); the pay math uses 8.25h.
+- **The 12h15m is a `guaranteed_weekly_hours` top-up** (~4h) on top of 8.25h worked.
+  The server keeps it separate (`hours.regular` vs `hours.guaranteeShortfall`) and the
+  **current** Team Member UI already shows it as its own "Minimum guarantee" line
+  ([WorkerMetrics.jsx:368]). The screenshot showing it folded into "Regular 12h" is a
+  **stale cached client** — nothing to fix server-side; a hard refresh shows the split.
+- **Real bug — Certified Payroll's `computeWorker` dropped overtime entirely** whenever
+  the company's `hours_rules` isn't a "simple" OT config (`hasSimpleOtConfig` false →
+  tiers / rest-day / night / min-daily). Its premium branch summed flat hours with
+  **zero OT**, so the WH-347 understated OT hours and gross (Alex: $264 instead of $268;
+  0 OT instead of 15m). Every other surface (pay statement, project bill) runs the real
+  OT engine.
+
+**Fix:** the premium branch now uses the same engine as the project bill /
+buildPayStatement — `computeOT` + `annotateEntryOvertime` + `otBandsCost` on the
+regular entries (prevailing stays flat), bucketing the per-entry OT into the day
+columns. So the WH-347 shows the same regular/OT split and gross the rest of payroll
+does. (Only affected companies with a premium hours-rules policy; simple/absent configs
+already went through `splitRateAware` and were correct.)
+
+## 2026-07-28 — Certified Payroll counted unapproved hours (inconsistent with all other pay)
+
+**David:** the Certified Payroll report showed Marcus Chen 8h 15m / $297 for the
+week, but his Team Member Report for the same range showed "No entries."
+
+**Root cause:** every pay surface — worker reports, invoices, payroll run, pay stubs
+(`workerStatement`/`companyStatements`) — filters `time_entries.status = 'approved'`,
+and new entries are created **pending**. The `GET /admin/certified-payroll` query was
+the **only** one with no status filter, so it counted pending (unapproved) hours that
+appear nowhere else. Marcus's entry was pending → on the WH-347, not on his report.
+
+**Fix:** added `te.status = 'approved'` to the certified-payroll query. A signed
+WH-347 certifies hours actually paid; it should never include unvetted hours, and it
+now matches the rest of payroll. Practical effect on the demo (all-pending entries):
+certified payroll now reads empty until entries are approved — which is correct and
+consistent with the worker report, instead of the two silently disagreeing.
+
+## 2026-07-28 — Payroll run: selectable pay-period basis (fix "period ends on payday")
+
+**David:** for an every-other-Thursday payday (Jul 16), the period showed Fri Jul 3 –
+Thu Jul 16 — he didn't think a check should pay *through* its own payday. Right: the
+biweekly engine defined the period as the 14 days **ending on** the payday, with no
+notion of a processing lag or work-week alignment. He wanted all three real-world
+models selectable, defaulting to the work-week one.
+
+Added `schedule.periodBasis` to the ruleset (weekly/biweekly; semimonthly/monthly are
+calendar spans and ignore it):
+- **`work_week`** (new default) — full work week(s) ending on the last work-week-end
+  **before** payday, using the company `week_start`. Jul 16 → **Jun 29 – Jul 12**.
+  Aligns pay periods with the same week boundary overtime already uses; pays in arrears.
+- **`prior_cycle`** — the previous completed cycle. Jul 16 → Jun 19 – Jul 2.
+- **`on_payday`** — the old behavior (period ends on payday).
+
+Engine work in `server/utils/payPeriods.js`: a `periodBounds(payday, span, basis,
+weekStart)` helper the frequencies share, `weekStart` threaded from settings through
+every `generatePeriods` caller (admin run, period list, notice probe, worker stubs).
+
+**Two correctness things fixed along the way:**
+- **Inclusion is now by the ACTUAL (weekend-shifted) pay date**, not the raw payday.
+  This is what makes the dropdown's single-pay-date window (`from=to=payDate`) isolate
+  exactly one check even under a weekend shift and arrears basis. The run resolves each
+  check's real period from the schedule, so the window is just a pay-date bracket.
+- **Finalize now records the real pay-period span** (min/max of the checks' periods),
+  not the query window — otherwise an arrears run would store a one-day "period."
+
+Default flips existing biweekly rulesets to `work_week`, so numbers shift to the
+correct two weeks — intended. `docs/db-enums.md` updated; +3 payPeriods tests
+(work_week, prior_cycle, shifted-inclusion). Editor gets a "Pay period covers" dropdown.
+
+## 2026-07-28 — Payroll run: pay-period dropdown replaces the raw date range
+
+**David's point:** if payroll has set periods, why ask for an arbitrary date range?
+Right — the range was the wrong control and the source of the pay-date-in-window
+confusion from earlier today.
+
+**What shipped:** the Payroll tab now leads with a **Pay period** dropdown built from
+the ruleset schedule(s), newest first, and auto-selects + loads the latest on open.
+New `GET /admin/payroll-periods` derives the real periods server-side (only place that
+knows the schedule math), unions across rulesets, dedupes by pay date + period, caps
+at 60, no future periods. Picking one sets the range to that period and runs. A
+"Use a custom date range instead" toggle keeps the old two-date inputs for the cases
+that need them (grouped deductions spanning a month, odd reconciliations); companies
+with no rulesets fall straight to the range.
+
+**Also fixed a mislabel the screenshot exposed:** workers on an *unnamed* ruleset
+showed "No ruleset" — identical to the genuinely-null case. Rows now carry
+`has_ruleset`, so an unnamed-but-real ruleset reads "Unnamed ruleset". (Nudge: name
+your rulesets — the dropdown/label lean on it.)
+
+**Caveat I made a call on:** with multiple *different* pay schedules there's no single
+global period list. I union them into one dropdown labeled by date — clean for the
+common single-schedule shop, and for multi-schedule the earlier `notices` explain any
+worker whose schedule has no check in the picked period. If multi-schedule becomes
+common, the next step is scoping the dropdown per schedule. Parked in BACKLOG next to
+the pay-date-vs-work-period note.
+
+## 2026-07-28 — Payroll run "no workers with pay" was a misdiagnosis
+
+**Symptom (David):** ran payroll for a period workers clearly worked, got "No
+workers with pay in this period."
+
+**Root cause:** the run resolves each worker's ruleset, then asks the ruleset's
+*schedule* for the paychecks whose **pay date** lands in [from, to]. When that set is
+empty, no rows — and the message blamed "no pay" when the real cause is the
+schedule. Two ways a ready worker yields zero periods:
+- **Incomplete schedule** → the ruleset *never* issues a check. Biggest trap: a
+  **biweekly ruleset with no anchor date** (`payPeriods.biweekly` returns [] without
+  one), and biweekly is the *default* frequency, so a half-configured ruleset is
+  silently inert. Same for semimonthly with no pay days.
+- **Pay date outside the range** → e.g. a monthly/month-end pay date past a `to` of
+  the 28th. The work is in-window but the *paycheck* isn't.
+
+**Fix — make the run explain itself.** `computePayrollRun` now returns a `notices[]`:
+for each ruleset that resolved workers but issued nothing, it probes a wide (±400d)
+window to tell the two cases apart and tags `schedule_incomplete` vs `out_of_range`.
+The Payroll tab renders an amber panel naming the ruleset and what to do (fix the
+schedule vs widen the dates) instead of the flat "no pay." Also added an inline
+"set an anchor date" warning in the Paycheck Rules editor so a biweekly ruleset
+can't look configured while being inert.
+
+**Judgment call / finding:** the run is keyed on **pay date in window**, but the
+inputs read "PERIOD FROM/TO" and users think in *work* period. That mismatch is the
+real UX sharp edge (the footnote about "cover whole groups" was papering over it).
+I kept the pay-date model (David's design — grouped deductions need real pay dates)
+but the notices now make the mismatch legible. If it keeps biting, the deeper
+options are: (a) resolve periods by work overlap instead of pay-date containment, or
+(b) auto-suggest a range that snaps to whole pay groups. Parked as a design note.
+
+## 2026-07-28 — Billing bug: Business checkout overcharged for extra workers ⚠️
+
+**Symptom (David):** buying Business with extra members shows the right price in
+the app but a higher one on Stripe. Example: 28 team members → app says $610/yr,
+Stripe checkout said **$910/yr**.
+
+**Root cause:** `client/src/components/BillingPanel.jsx` sent the per-worker Stripe
+line item a quantity of `workerCount` (the *full* team size, 28) instead of the
+overage beyond the 15 included in the base plan (28 − 15 = **13**). The base price
+already bundles 15 seats, so Stripe billed 15 twice: base ($350, incl. 15) + 28
+extra × $20 = $910. Correct is base + 13 × $20 = $610. The *display* math was right
+all along (it used `businessOverage`); only the two checkout calls used the raw
+count. The server (`/stripe/checkout`) just passes `worker_count` through as the
+quantity — its contract is "extras only", which the client was violating.
+
+**Fix:** both checkout call sites now send `businessOverage` (= max(0, workerCount
+− INCLUDED_WORKERS)). Hoisted `INCLUDED_WORKERS = 15` to module scope with a comment
+tying it to the seats built into `STRIPE_PRICE_BUSINESS_BASE`, and moved the
+`businessOverage` computation up next to the state so the earlier `subscribeSelectedPlan`
+handler shares the one value (no duplicated formula, no use-before-declare).
+
+⚠️ **Remediation — check existing subs.** Anyone who bought Business-with-extras
+through this flow *before* today was overcharged (billed for total workers, not
+extras). Worth auditing Stripe for business subscriptions where the Additional
+Worker quantity equals total team size instead of team−15, and correcting/crediting.
+
+⚠️ **Note:** `INCLUDED_WORKERS = 15` is a client constant that must stay in lockstep
+with whatever seat count is baked into the Stripe base price. If that base ever
+changes, this constant has to change with it — the server has no notion of "included
+workers" to cross-check against. Candidate to move into the `/stripe/plans` payload
+later so there's one source of truth. Parked in BACKLOG.
+
+## 2026-07-27 — Payroll run: CSV export + finalize/record a run
+
+The Payroll tab could compute a run live but couldn't *do* anything with it. Two
+pieces, bundled:
+
+- **CSV export** — a "Download CSV" button on the live register writes one row per
+  check (pay date, worker, role, ruleset, period, regular/OT/prevailing hrs,
+  gross/deductions/net) for a payroll processor. Client-only, no server round-trip.
+- **Finalize/record** — "Finalize run" snapshots the live register into two new
+  tables (`payroll_runs` + `payroll_run_checks`, migration `0156`, money in CENTS).
+  A finalized run *stops recomputing* — it's a locked record of what was paid, so a
+  later time-entry or rule edit doesn't retroactively change a run you already cut
+  checks for. Each check carries a `detail` JSONB stub snapshot so its pay stub
+  renders exactly as finalized. New **Finalized runs** panel below the register:
+  expand a run → checks, mark one/all paid, or void the whole run.
+
+Findings / calls:
+
+- **Refactored, didn't duplicate.** The live `GET /payroll-run` handler became a
+  pure `computePayrollRun(companyId, from, to)` helper; the GET route and the new
+  `POST /payroll-run/finalize` both call it, so the finalize snapshot is *exactly*
+  what the register showed — no second code path to drift.
+- **Finalize refuses on setup errors.** If any worker still has the 0-or-many
+  ruleset flag, finalize 400s with `code:'setup_errors'` rather than recording a
+  partial/guessed run — same never-guess rule as the live register.
+- **Gate reuse.** All routes sit behind `requireCertifiedPayrollAddon` (which is the
+  Advanced Payroll gate post-`0155`) — no new middleware, so no test-mock churn.
+- **No new tests.** The routes are thin DB wrappers over the already-tested
+  `computePayrollRun`; the two status columns are CHECK-constrained (`0156` +
+  `docs/db-enums.md`). Verify stays green at 1168 server / 256 client. ⚠️ If you want
+  belt-and-suspenders coverage on the finalize→paid→void lifecycle, that's a good
+  follow-up but needs the DB-mock harness the other admin route tests use.
+
 ## 2026-07-26 — Rate-aware overtime: the WH-347 / certified payroll (increment 4)
 
 The compliance form now shows real overtime. End-to-end:
@@ -105,6 +785,28 @@ statement is the next increment (build-order step 3 in the plan). Nothing hits a
 real paycheck until David merges to prod.
 
 ---
+
+## 2026-07-27 — Payroll: worker self-service stub rewired to the ruleset engine
+
+The worker's own pay stub (Account page) now uses the **same engine** as the admin
+run when the company has Advanced Payroll and the worker's role maps to exactly one
+ruleset: `/time-entries/pay-stubs` generates the worker's pay periods from their
+ruleset (last ~120 days), prices each via `workerStatement`, and runs the group
+combine → exempt → deduct math — returning `{mode:'ruleset', stubs:[…]}` (per check),
+which `PayStubView` renders with the shared `PayStub` component. Everything else
+(no add-on, no/ambiguous ruleset) falls through to the **unchanged legacy**
+company-pay-period stub (still a bare array), so nothing regresses. Worker and admin
+now see identical numbers. 1168 pass.
+
+## 2026-07-27 — Payroll: pay stubs from the run (itemized, printable)
+
+Turned the register from net figures into actual **pay stubs**. `applyGroupDeductions`
+now returns the itemized `lines` + `exempt`/`combinedGross`; the run endpoint keeps
+each period's full statement so every check row carries its **hours/cost breakdown**
++ **itemized deduction lines**. New reusable `PayStub.jsx` renders one stub —
+earnings (regular/OT/prevailing/night/leave), gross, each deduction line (with a "on
+the group total − exempt" note when combined), net — plus a clean **print** window.
+In the Payroll tab, each register row now **expands to its stub**. Bilingual. 1168 pass.
 
 ## 2026-07-27 — Payroll: pay-period generation + multi-check combining (the $11k case)
 

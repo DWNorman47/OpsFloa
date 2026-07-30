@@ -429,6 +429,27 @@ function WorkspaceSettingGroup({ title, body, children, defaultOpen = false }) {
   );
 }
 
+// Collapsible subsection styled like the Company Settings subsections (icon + title +
+// subtitle + ▶/▼), for nesting inside a WorkspaceSettingGroup.
+function PayrollSubsection({ icon, title, sub, children, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const toggle = () => setOpen(v => !v);
+  return (
+    <div style={styles.subsectionCard}>
+      <div style={styles.subsectionHeader} onClick={toggle} role="button" tabIndex={0}
+        aria-expanded={open} onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), toggle())}>
+        <span style={styles.subsectionIcon}>{icon}</span>
+        <div style={{ flex: 1 }}>
+          <div style={styles.subsectionTitle}>{title}</div>
+          <div style={styles.subsectionSub}>{sub}</div>
+        </div>
+        <span style={styles.subsectionChevron}>{open ? '▼' : '▶'}</span>
+      </div>
+      {open && <div style={styles.subsectionBody}>{children}</div>}
+    </div>
+  );
+}
+
 // ── Account Tab ───────────────────────────────────────────────────────────────
 
 function AccountTab() {
@@ -781,32 +802,30 @@ export default function AdministrationPage() {
               <ManageRates settings={settings} onSettingsUpdated={setSettings} />
             </WorkspaceSettingGroup>
             <WorkspaceSettingGroup
-              title={t.hrTitle}
-              body={t.hrGroupBody}
+              title={t.admpPayrollSettingsTitle}
+              body={t.admpPayrollSettingsBody}
             >
-              <HoursRulesSettings settings={settings} onSettingsUpdated={setSettings} />
-            </WorkspaceSettingGroup>
-            <WorkspaceSettingGroup
-              title={t.dedGroupTitle}
-              body={t.dedGroupBody}
-            >
-              <DeductionsSettings settings={settings} onSettingsUpdated={setSettings} />
-            </WorkspaceSettingGroup>
-            <WorkspaceSettingGroup
-              title={t.pcrGroupTitle}
-              body={t.pcrGroupBody}
-            >
-              {plan.hasAdvancedPayroll ? (
-                <PaycheckRulesSettings settings={settings} onSettingsUpdated={setSettings} />
-              ) : (
-                <div style={{ background: '#f9fafb', border: '2px dashed #d1d5db', borderRadius: 10, padding: 24, textAlign: 'center' }}>
-                  <div style={{ fontSize: 24, marginBottom: 8 }}>🔒</div>
-                  <div style={{ fontWeight: 700, color: '#111827', marginBottom: 6 }}>{t.pcrUpgradeTitle}</div>
-                  <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 14, maxWidth: 480, marginLeft: 'auto', marginRight: 'auto' }}>{t.pcrUpgradeBody}</div>
-                  <button style={{ background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '9px 20px', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: 'pointer' }}
-                    onClick={() => { window.location.href = '/administration#billing'; }}>{t.viewPlans}</button>
-                </div>
-              )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <PayrollSubsection icon="🕒" title={t.hrTitle} sub={t.hrGroupBody}>
+                  <HoursRulesSettings settings={settings} onSettingsUpdated={setSettings} />
+                </PayrollSubsection>
+                <PayrollSubsection icon="🧾" title={t.dedGroupTitle} sub={t.dedGroupBody}>
+                  <DeductionsSettings settings={settings} onSettingsUpdated={setSettings} />
+                </PayrollSubsection>
+                <PayrollSubsection icon="📅" title={t.pcrGroupTitle} sub={t.pcrGroupBody}>
+                  {plan.hasAdvancedPayroll ? (
+                    <PaycheckRulesSettings settings={settings} onSettingsUpdated={setSettings} />
+                  ) : (
+                    <div style={{ background: '#f9fafb', border: '2px dashed #d1d5db', borderRadius: 10, padding: 24, textAlign: 'center' }}>
+                      <div style={{ fontSize: 24, marginBottom: 8 }}>🔒</div>
+                      <div style={{ fontWeight: 700, color: '#111827', marginBottom: 6 }}>{t.pcrUpgradeTitle}</div>
+                      <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 14, maxWidth: 480, marginLeft: 'auto', marginRight: 'auto' }}>{t.pcrUpgradeBody}</div>
+                      <button style={{ background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '9px 20px', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: 'pointer' }}
+                        onClick={() => { window.location.href = '/administration#billing'; }}>{t.viewPlans}</button>
+                    </div>
+                  )}
+                </PayrollSubsection>
+              </div>
             </WorkspaceSettingGroup>
             <WorkspaceSettingGroup
               title={t.admpAdvancedControlsTitle}
@@ -924,6 +943,13 @@ const styles = {
   languageCard: { background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10, padding: 0, boxShadow: '0 1px 4px rgba(15,23,42,0.04)', overflow: 'hidden' },
   settingGroupCard: { background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10, padding: 0, boxShadow: '0 1px 4px rgba(15,23,42,0.04)', overflow: 'hidden' },
   settingGroupBody: { padding: '0 16px 16px' },
+  subsectionCard: { background: '#fff', borderRadius: 12, boxShadow: '0 1px 6px rgba(0,0,0,0.07)', overflow: 'hidden' },
+  subsectionHeader: { display: 'flex', alignItems: 'center', gap: 12, padding: '14px 20px', borderBottom: '1px solid #f3f4f6', background: '#fafafa', cursor: 'pointer' },
+  subsectionIcon: { fontSize: 20, lineHeight: 1 },
+  subsectionTitle: { fontSize: 14, fontWeight: 700, color: '#111827' },
+  subsectionSub: { fontSize: 12, color: '#6b7280', marginTop: 1 },
+  subsectionBody: { padding: '16px 20px 0' },
+  subsectionChevron: { fontSize: 11, color: '#6b7280' },
   languageTrigger: { width: '100%', border: 'none', background: '#fff', padding: 16, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, textAlign: 'left' },
   languageTriggerCopy: { display: 'flex', flexDirection: 'column', gap: 4 },
   languageTitle: { fontSize: 17, fontWeight: 800, color: '#111827' },

@@ -906,8 +906,23 @@ function redo() {
 els.btnUndo.addEventListener('click', undo);
 els.btnRedo.addEventListener('click', redo);
 
+// Bumped on every markup MEMBERSHIP change (add / remove / undo / page-reassign) — all of
+// which funnel through markupsChanged. Lets paint() cache the current page's markups instead
+// of filtering the whole array every frame. (In-place edits — dragging a point — mutate the
+// same objects the cached list already references, so they still draw live.)
+let markupsRev = 0;
+let _pageMkCache = { page: -1, rev: -1, ref: null, len: -1, list: [] };
+function currentPageMarkups() {
+  const c = _pageMkCache;
+  if (c.page === state.page && c.rev === markupsRev && c.ref === state.markups && c.len === state.markups.length) return c.list;
+  const list = state.markups.filter(m => m.page === state.page);
+  _pageMkCache = { page: state.page, rev: markupsRev, ref: state.markups, len: state.markups.length, list };
+  return list;
+}
+
 // every mutation funnels through here: redraw, refresh lists, autosave
 function markupsChanged() {
+  markupsRev++;
   renderMarkupList();
   if (typeof renderRoofPanel === 'function') renderRoofPanel();
   if (typeof renderRoofReport === 'function') renderRoofReport();
@@ -1648,7 +1663,9 @@ function paint(ctx) {
     } else if (state.doc) ensurePage(other);
   }
   if (heatGrid && state.page === heatGrid.page && layers.takeoff) drawHeat(ctx);
-  for (const m of state.markups) if (m.page === state.page && markupShown(m)) drawMarkup(ctx, m);
+  // Only the current page's markups (cached — see currentPageMarkups); markupShown stays in
+  // the loop because layer toggles change it without a markup mutation.
+  for (const m of currentPageMarkups()) if (markupShown(m)) drawMarkup(ctx, m);
   // The disturbance boundary applies to BOTH surfaces — when it lives on the other
   // earthwork sheet, project it onto this one through the alignment so it shows on
   // existing AND proposed (always, independent of the Ghost toggle).
@@ -1759,7 +1776,10 @@ async function renderThumb(btn) {
 
 async function openFromBytes(buf, name, type, { persist = true } = {}) {
   setMsg(`Loading ${name}…`);
-  const keep = buf.slice(0); // pdf.js detaches the buffer it opens
+  // pdf.js detaches the buffer it opens, so we hand it a copy. Only make the SECOND copy
+  // (kept for local storage) when we're actually going to persist — the reopen/finalize
+  // paths pass persist:false and never used it, wasting a full-file allocation on big sets.
+  const keep = persist ? buf.slice(0) : null;
   try {
     state.doc = await openDoc(new Uint8Array(buf), { type });
   } catch (err) {
@@ -1983,14 +2003,36 @@ function pickPlans() { $('filePlans').click(); }
  * assignments — so nothing lands on the wrong sheet. Removing a sheet drops
  * its markups. */
 let sheetPlan = null; // [{ page, removed }] in display order
-const markupCountOnPage = p => state.markups.filter(m => m.page === p).length;
+let sheetMgrObs = null;
+const sheetThumb = new Map(); // page -> rendered <canvas>, reused across reorders (per open)
 function renderSheetMgr() {
   const list = $('sheetMgrList');
   list.innerHTML = '';
+  if (sheetMgrObs) sheetMgrObs.disconnect();
+  // Count markups per page ONCE, not once per row (was O(markups × pages) on every rebuild).
+  const counts = {};
+  for (const m of state.markups) counts[m.page] = (counts[m.page] || 0) + 1;
+  // Render a sheet's thumbnail only when its row scrolls into view (like the page picker),
+  // and cache it — a reorder/remove click rebuilds the list but REUSES the cached canvases
+  // instead of re-rendering all N sheets through pdf.js every click (the 40-page slowdown).
+  sheetMgrObs = new IntersectionObserver(entries => {
+    for (const en of entries) {
+      if (!en.isIntersecting) continue;
+      sheetMgrObs.unobserve(en.target);
+      const p = +en.target.dataset.page;
+      if (sheetThumb.has(p)) continue;
+      const th = en.target.querySelector('.sheet-thumb');
+      state.doc.baseSize(p).then(b => state.doc.renderPage(p, Math.min(1, 128 / b.width))).then(cv => {
+        sheetThumb.set(p, cv);
+        if (th && th.isConnected) { th.innerHTML = ''; th.appendChild(cv); }
+      }).catch(() => {});
+    }
+  }, { root: list, rootMargin: '250px' });
   sheetPlan.forEach((s, i) => {
     const row = document.createElement('div');
     row.className = 'proj-row' + (s.removed ? ' sheet-removed' : '');
-    const n = markupCountOnPage(s.page);
+    row.dataset.page = s.page;
+    const n = counts[s.page] || 0;
     row.innerHTML =
       '<div class="sheet-thumb"></div>' +
       `<div class="grow"><div class="name">Sheet ${s.page}</div><div class="meta">${n} markup${n === 1 ? '' : 's'}${s.removed ? ' · will be removed' : ''}</div></div>` +
@@ -2001,12 +2043,14 @@ function renderSheetMgr() {
     row.querySelector('[data-act="down"]').addEventListener('click', () => { if (i < sheetPlan.length - 1) { [sheetPlan[i + 1], sheetPlan[i]] = [sheetPlan[i], sheetPlan[i + 1]]; renderSheetMgr(); } });
     row.querySelector('[data-act="del"]').addEventListener('click', () => { s.removed = !s.removed; renderSheetMgr(); });
     list.appendChild(row);
-    const th = row.querySelector('.sheet-thumb');
-    state.doc.baseSize(s.page).then(b => state.doc.renderPage(s.page, Math.min(1, 128 / b.width))).then(cv => { th.innerHTML = ''; th.appendChild(cv); }).catch(() => {});
+    const cached = sheetThumb.get(s.page);
+    if (cached) row.querySelector('.sheet-thumb').appendChild(cached); // reuse — no re-render
+    else sheetMgrObs.observe(row);
   });
 }
 function openSheetMgr() {
   if (!state.doc || state.doc.numPages < 1) return;
+  sheetThumb.clear(); // fresh thumbnails for the current doc
   sheetPlan = [];
   for (let p = 1; p <= state.doc.numPages; p++) sheetPlan.push({ page: p, removed: false });
   renderSheetMgr();

@@ -12,6 +12,9 @@ jest.mock('../middleware/auth', () => ({
   requireAdmin: (req, _res, next) => { req.user = mockCurrentUser; next(); },
   requirePlan:  () => (req, _res, next) => { req.user = mockCurrentUser; next(); },
 }));
+jest.mock('../middleware/commercialAccess', () => ({
+  requireCommercialAccess: (req, _res, next) => next(),
+}));
 
 jest.mock('../db', () => {
   const queryMock = jest.fn();
@@ -76,6 +79,16 @@ describe('POST /api/invoices', () => {
       .send({ client_name_snapshot: 'Acme', tax_pct: 150 });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/tax_pct/);
+  });
+
+  test('rejects a client_id that belongs to another company (tenant isolation)', async () => {
+    setUser();
+    pool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // clients ownership check fails
+    const res = await request(makeApp())
+      .post('/api/invoices')
+      .send({ client_name_snapshot: 'Acme', client_id: 55, tax_pct: 0, retainage_pct: 0, lines: [] });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid client_id');
   });
 });
 

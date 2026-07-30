@@ -77,7 +77,26 @@ function computeRuleNet(gross, deductions, ruleset, baseGross) {
   if (g - dedTotal < minNet) dedTotal = Math.max(0, round2(g - minNet));
 
   dedTotal = round2(dedTotal);
-  return { gross: g, exempt, base, lines, deductionTotal: dedTotal, net: round2(g - dedTotal) };
+
+  // The stub itemizes these lines AND shows the total; when a cap or the min-net floor
+  // trims the raw sum, allocate the actual deducted total across the lines so they foot.
+  // Work in integer cents with largest-remainder allocation: every line stays 0..its own
+  // raw amount (dedTotal ≤ rawTotal always), so no line goes negative or exceeds itself —
+  // a plain proportional scale + dump-residual-on-last could make the last line negative.
+  let outLines = lines || [];
+  const totalCents = Math.round(dedTotal * 100);
+  const rawCents = outLines.map(l => Math.round((Number(l.amount) || 0) * 100));
+  const rawTotalCents = rawCents.reduce((a, c) => a + c, 0);
+  if (rawTotalCents > 0 && rawTotalCents !== totalCents) {
+    const exact = rawCents.map(c => (c * totalCents) / rawTotalCents);
+    const alloc = exact.map(Math.floor);
+    let rem = totalCents - alloc.reduce((a, c) => a + c, 0); // 0..lines-1, non-negative since totalCents ≤ rawTotalCents
+    // Hand the leftover cents to the lines with the largest fractional remainder.
+    const order = exact.map((v, i) => [v - Math.floor(v), i]).sort((a, b) => b[0] - a[0]).map(x => x[1]);
+    for (let k = 0; k < rem && k < order.length; k++) alloc[order[k]] += 1;
+    outLines = outLines.map((l, i) => ({ ...l, amount: alloc[i] / 100 }));
+  }
+  return { gross: g, exempt, base, lines: outLines, deductionTotal: dedTotal, net: round2(g - dedTotal) };
 }
 
 /**
@@ -88,15 +107,31 @@ function computeRuleNet(gross, deductions, ruleset, baseGross) {
  * group net to their own gross. Returns the periods with { deductionTotal, net, base }.
  */
 function applyGroupDeductions(periods, deductions, ruleset) {
+  // combineGroup (default true): exempt + deductions figure on the group's SUMMED gross.
+  // When explicitly off, each flagged check figures on its own gross (no combining).
+  const combine = !(ruleset && ruleset.deductions && ruleset.deductions.combineGroup === false);
   const combined = {};
   for (const p of periods) combined[p.groupKey] = round2((combined[p.groupKey] || 0) + (p.gross || 0));
   return periods.map(p => {
     if (p.deductionsApply) {
-      const c = computeRuleNet(p.gross || 0, deductions, ruleset, combined[p.groupKey]);
-      return { ...p, deductionTotal: c.deductionTotal, net: c.net, base: c.base };
+      const baseGross = combine ? combined[p.groupKey] : (p.gross || 0);
+      const c = computeRuleNet(p.gross || 0, deductions, ruleset, baseGross);
+      return { ...p, deductionTotal: c.deductionTotal, net: c.net, base: c.base, exempt: c.exempt, combinedGross: round2(baseGross), lines: c.lines };
     }
-    return { ...p, deductionTotal: 0, net: round2(p.gross || 0), base: 0 };
+    return { ...p, deductionTotal: 0, net: round2(p.gross || 0), base: 0, exempt: 0, combinedGross: p.gross || 0, lines: [] };
   });
 }
 
-module.exports = { resolveRuleset, deductionsForRole, computeRuleNet, applyGroupDeductions };
+/**
+ * Flatten a normalized ruleset's nested `deductions.{timing, group:{by, applyOn}}` into
+ * the flat `{timing, groupBy, applyOn}` shape groupPeriods expects. Without this, callers
+ * passing `ruleset.deductions` straight in leave groupBy/applyOn undefined, so EVERY
+ * grouped ruleset silently falls back to pair/second (month + first/last never take).
+ */
+function groupOpts(deductions) {
+  const d = deductions || {};
+  const g = d.group || {};
+  return { timing: d.timing, groupBy: g.by, applyOn: g.applyOn };
+}
+
+module.exports = { resolveRuleset, deductionsForRole, computeRuleNet, applyGroupDeductions, groupOpts };

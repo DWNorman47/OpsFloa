@@ -2,7 +2,8 @@ const router  = require('express').Router();
 const crypto  = require('crypto');
 const pool    = require('../db');
 const logger  = require('../logger');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { requireAuth } = require('../middleware/auth');
+const { requireCommercialAccess } = require('../middleware/commercialAccess');
 const { logAudit } = require('../auditLog');
 const {
   CHANGE_ORDER_STATUSES,
@@ -116,7 +117,7 @@ async function recomputeTotals(client, coId) {
 
 // ── List + create ────────────────────────────────────────────────────────────
 
-router.get('/change-orders', requireAuth, async (req, res) => {
+router.get('/change-orders', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const { status, project_id, q } = req.query;
   const page  = Math.max(1, parseInt(req.query.page) || 1);
@@ -161,7 +162,7 @@ router.get('/change-orders', requireAuth, async (req, res) => {
   }
 });
 
-router.post('/projects/:projectId/change-orders', requireAdmin, async (req, res) => {
+router.post('/projects/:projectId/change-orders', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const description = (req.body.description || '').toString().trim();
   if (!description) return res.status(400).json({ error: 'description is required' });
@@ -227,7 +228,7 @@ router.post('/projects/:projectId/change-orders', requireAdmin, async (req, res)
   }
 });
 
-router.get('/change-orders/:id', requireAuth, async (req, res) => {
+router.get('/change-orders/:id', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const full = await loadCoFull(companyId, req.params.id);
@@ -239,7 +240,7 @@ router.get('/change-orders/:id', requireAuth, async (req, res) => {
   }
 });
 
-router.patch('/change-orders/:id', requireAdmin, async (req, res) => {
+router.patch('/change-orders/:id', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const co = await assertCoInCompany(companyId, req.params.id);
@@ -286,7 +287,7 @@ router.patch('/change-orders/:id', requireAdmin, async (req, res) => {
   }
 });
 
-router.put('/change-orders/:id/lines', requireAdmin, async (req, res) => {
+router.put('/change-orders/:id/lines', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   if (!Array.isArray(req.body.lines)) return res.status(400).json({ error: 'lines must be an array' });
   const lines = [];
@@ -328,7 +329,7 @@ router.put('/change-orders/:id/lines', requireAdmin, async (req, res) => {
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 
-router.post('/change-orders/:id/send', requireAdmin, async (req, res) => {
+router.post('/change-orders/:id/send', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const client = await pool.connect();
   try {
@@ -367,7 +368,7 @@ router.post('/change-orders/:id/send', requireAdmin, async (req, res) => {
   }
 });
 
-router.post('/change-orders/:id/withdraw', requireAdmin, async (req, res) => {
+router.post('/change-orders/:id/withdraw', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const co = await assertCoInCompany(companyId, req.params.id);

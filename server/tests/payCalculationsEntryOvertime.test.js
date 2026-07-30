@@ -76,6 +76,15 @@ describe('annotateEntryOvertime — allocation details', () => {
     annotateEntryOvertime(entries, 'daily', 8, 1);
     expect(entries[0].overtime_hours).toBeCloseTo(5); // clamped to total
   });
+
+  test('minimum-daily floor does not erase overtime already earned by worked hours', () => {
+    const entries = [e('2026-01-05', '08:00', '17:00')]; // 9h worked, floor 10h, daily OT after 8h
+    const cfg = { minDailyHours: 10, minDailyRules: [], tierRules: [], windowRules: [] };
+    annotateEntryOvertime(entries, 'daily', 8, 1, cfg);
+    const summary = computeOT([e('2026-01-05', '08:00', '17:00')], 'daily', 8, 1, cfg);
+    expect(entries[0].overtime_hours).toBe(1);
+    expect(sumOt(entries)).toBe(summary.overtimeHours);
+  });
 });
 
 describe('annotateEntryOvertime — overtime_reason (traceability)', () => {

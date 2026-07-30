@@ -4,6 +4,7 @@
 const router = require('express').Router();
 const pool   = require('../db');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { requireCommercialAccess } = require('../middleware/commercialAccess');
 const { logAudit } = require('../auditLog');
 const {
   SUBCONTRACTOR_DOC_TYPES,
@@ -42,7 +43,7 @@ async function assertPoInCompany(companyId, poId) {
 
 // ── Subcontractors directory ─────────────────────────────────────────────────
 
-router.get('/subcontractors', requireAuth, async (req, res) => {
+router.get('/subcontractors', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   const { archived, scope_specialty, q } = req.query;
   const page  = Math.max(1, parseInt(req.query.page) || 1);
@@ -118,7 +119,7 @@ router.post('/subcontractors', requireAdmin, async (req, res) => {
 // makes it worth collecting. Mirrors /lien-waivers/outstanding: a small feed the
 // page can show as a banner rather than making someone open every sub to find
 // the one whose COI died.
-router.get('/subcontractors/compliance', requireAuth, async (req, res) => {
+router.get('/subcontractors/compliance', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   const days = Math.min(365, Math.max(1, parseInt(req.query.within_days, 10) || 30));
   try {
@@ -148,7 +149,7 @@ router.get('/subcontractors/compliance', requireAuth, async (req, res) => {
   }
 });
 
-router.get('/subcontractors/:id', requireAuth, async (req, res) => {
+router.get('/subcontractors/:id', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const sub = await assertSubInCompany(companyId, req.params.id);
@@ -288,7 +289,7 @@ router.get('/subcontractors/:id/documents/upload-url', requireAdmin, async (req,
 
 // ── Sub POs ──────────────────────────────────────────────────────────────────
 
-router.get('/subcontract-pos', requireAuth, async (req, res) => {
+router.get('/subcontract-pos', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const { status, subcontractor_id, project_id, q } = req.query;
   const page  = Math.max(1, parseInt(req.query.page) || 1);
@@ -331,7 +332,7 @@ router.get('/subcontract-pos', requireAuth, async (req, res) => {
   }
 });
 
-router.post('/projects/:projectId/subcontract-pos', requireAdmin, async (req, res) => {
+router.post('/projects/:projectId/subcontract-pos', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const { subcontractor_id, scope_of_work, retainage_pct, notes } = req.body;
   const amount_cents = typeof req.body.amount_cents === 'number'
@@ -377,7 +378,7 @@ router.post('/projects/:projectId/subcontract-pos', requireAdmin, async (req, re
   }
 });
 
-router.get('/subcontract-pos/:id', requireAuth, async (req, res) => {
+router.get('/subcontract-pos/:id', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const po = await assertPoInCompany(companyId, req.params.id);
@@ -394,7 +395,7 @@ router.get('/subcontract-pos/:id', requireAuth, async (req, res) => {
   }
 });
 
-router.patch('/subcontract-pos/:id', requireAdmin, async (req, res) => {
+router.patch('/subcontract-pos/:id', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const po = await assertPoInCompany(companyId, req.params.id);
@@ -434,7 +435,7 @@ router.patch('/subcontract-pos/:id', requireAdmin, async (req, res) => {
   }
 });
 
-router.post('/subcontract-pos/:id/issue', requireAdmin, async (req, res) => {
+router.post('/subcontract-pos/:id/issue', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const po = await assertPoInCompany(companyId, req.params.id);
@@ -454,7 +455,7 @@ router.post('/subcontract-pos/:id/issue', requireAdmin, async (req, res) => {
   }
 });
 
-router.post('/subcontract-pos/:id/cancel', requireAdmin, async (req, res) => {
+router.post('/subcontract-pos/:id/cancel', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const po = await assertPoInCompany(companyId, req.params.id);
@@ -477,7 +478,7 @@ router.post('/subcontract-pos/:id/cancel', requireAdmin, async (req, res) => {
   }
 });
 
-router.delete('/subcontract-pos/:id', requireAdmin, async (req, res) => {
+router.delete('/subcontract-pos/:id', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const po = await assertPoInCompany(companyId, req.params.id);
@@ -497,7 +498,7 @@ router.delete('/subcontract-pos/:id', requireAdmin, async (req, res) => {
 
 // ── Sub PO payments ──────────────────────────────────────────────────────────
 
-router.get('/subcontract-pos/:id/payments', requireAuth, async (req, res) => {
+router.get('/subcontract-pos/:id/payments', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const po = await assertPoInCompany(companyId, req.params.id);
@@ -513,7 +514,7 @@ router.get('/subcontract-pos/:id/payments', requireAuth, async (req, res) => {
   }
 });
 
-router.post('/subcontract-pos/:id/payments', requireAdmin, async (req, res) => {
+router.post('/subcontract-pos/:id/payments', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const { paid_date, invoice_ref, notes } = req.body;
   const amount_cents = typeof req.body.amount_cents === 'number'
@@ -583,7 +584,7 @@ router.post('/subcontract-pos/:id/payments', requireAdmin, async (req, res) => {
   }
 });
 
-router.delete('/subcontract-pos/:poId/payments/:paymentId', requireAdmin, async (req, res) => {
+router.delete('/subcontract-pos/:poId/payments/:paymentId', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const client = await pool.connect();
   try {

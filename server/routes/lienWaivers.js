@@ -2,8 +2,9 @@ const router  = require('express').Router();
 const crypto  = require('crypto');
 const pool    = require('../db');
 const logger  = require('../logger');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { requireAdmin } = require('../middleware/auth');
 const { logAudit } = require('../auditLog');
+const { isValidIsoDate } = require('../utils/payPeriods');
 const {
   LIEN_WAIVER_DIRECTIONS,
   LIEN_WAIVER_TYPES,
@@ -13,6 +14,18 @@ const {
 } = require('../constants/lienWaiverEnums');
 
 const sha256 = s => crypto.createHash('sha256').update(s).digest('hex');
+
+function throughDateError(value) {
+  if (!isValidIsoDate(value)) return 'through_date must be a valid YYYY-MM-DD date';
+  const throughDate = new Date(`${value}T00:00:00Z`);
+  const earliest = new Date();
+  earliest.setUTCFullYear(earliest.getUTCFullYear() - 5);
+  const latest = new Date();
+  latest.setUTCDate(latest.getUTCDate() + 30);
+  if (throughDate < earliest) return 'through_date is more than 5 years in the past';
+  if (throughDate > latest) return 'through_date is more than 30 days in the future';
+  return null;
+}
 
 // The sign link's token hash is internal — never return it in an API payload
 // (matches how estimates/invoices/CO strip their response_token_hash).
@@ -39,7 +52,7 @@ async function assertWaiverInCompany(companyId, waiverId) {
 
 // ── List ─────────────────────────────────────────────────────────────────────
 
-router.get('/lien-waivers', requireAuth, async (req, res) => {
+router.get('/lien-waivers', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   const { project_id, direction, status, waiver_type } = req.query;
   const page  = Math.max(1, parseInt(req.query.page) || 1);
@@ -87,7 +100,7 @@ router.get('/lien-waivers', requireAuth, async (req, res) => {
   }
 });
 
-router.get('/lien-waivers/outstanding', requireAuth, async (req, res) => {
+router.get('/lien-waivers/outstanding', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     // Outstanding = sub-PO payments that require a waiver but haven't received one.
@@ -130,20 +143,8 @@ router.post('/projects/:projectId/lien-waivers', requireAdmin, async (req, res) 
   // legitimate); refusal of dates beyond that prevents accidental
   // "release all future claims through 2099" signatures. Past dates
   // are bounded at 5 years back as a sanity floor.
-  const throughDateObj = new Date(`${through_date}T00:00:00Z`);
-  if (Number.isNaN(throughDateObj.getTime())) {
-    return res.status(400).json({ error: 'through_date must be a valid YYYY-MM-DD date' });
-  }
-  const earliestThrough = new Date();
-  earliestThrough.setUTCFullYear(earliestThrough.getUTCFullYear() - 5);
-  const latestThrough = new Date();
-  latestThrough.setUTCDate(latestThrough.getUTCDate() + 30);
-  if (throughDateObj < earliestThrough) {
-    return res.status(400).json({ error: 'through_date is more than 5 years in the past' });
-  }
-  if (throughDateObj > latestThrough) {
-    return res.status(400).json({ error: 'through_date is more than 30 days in the future' });
-  }
+  const dateError = throughDateError(through_date);
+  if (dateError) return res.status(400).json({ error: dateError });
   if (!signer_name || !signer_name.toString().trim())     return res.status(400).json({ error: 'signer_name required' });
   if (!signer_company || !signer_company.toString().trim()) return res.status(400).json({ error: 'signer_company required' });
   if (direction === 'from_sub' && !subcontractor_id) return res.status(400).json({ error: 'subcontractor_id required for from_sub direction' });
@@ -156,26 +157,63 @@ router.post('/projects/:projectId/lien-waivers', requireAdmin, async (req, res) 
     // payment / sub / invoice — and the mark-signed + public sign flows
     // later flip waiver_received on the linked payment by id, which would
     // be a cross-tenant write. Verify each belongs to this company first.
-    const ownsInCompany = async (table, id) => {
-      if (!id) return true;
-      const chk = await pool.query(`SELECT 1 FROM ${table} WHERE id = $1 AND company_id = $2`, [id, companyId]);
-      return chk.rowCount > 0;
-    };
-    if (!(await ownsInCompany('subcontract_pos', subcontract_po_id)))
-      return res.status(400).json({ error: 'invalid subcontract_po_id' });
-    if (!(await ownsInCompany('subcontractors', subcontractor_id)))
-      return res.status(400).json({ error: 'invalid subcontractor_id' });
-    if (!(await ownsInCompany('invoices', invoice_id)))
-      return res.status(400).json({ error: 'invalid invoice_id' });
+    let linkedPo = null;
+    if (subcontract_po_id) {
+      const poCheck = await pool.query(
+        'SELECT id, project_id, subcontractor_id FROM subcontract_pos WHERE id = $1 AND company_id = $2',
+        [subcontract_po_id, companyId]
+      );
+      linkedPo = poCheck.rows[0] || null;
+      if (!linkedPo || String(linkedPo.project_id) !== String(req.params.projectId)) {
+        return res.status(400).json({ error: 'invalid subcontract_po_id' });
+      }
+    }
+    if (subcontractor_id) {
+      const subCheck = await pool.query(
+        'SELECT 1 FROM subcontractors WHERE id = $1 AND company_id = $2',
+        [subcontractor_id, companyId]
+      );
+      if (subCheck.rowCount === 0) return res.status(400).json({ error: 'invalid subcontractor_id' });
+    }
+    if (invoice_id) {
+      const invoiceCheck = await pool.query(
+        'SELECT project_id FROM invoices WHERE id = $1 AND company_id = $2',
+        [invoice_id, companyId]
+      );
+      const invProj = invoiceCheck.rows[0]?.project_id;
+      // Reject only a cross-company invoice or one tied to a DIFFERENT project. A
+      // null-project (company-wide, from-scratch) invoice attaches to any project's waiver.
+      if (invoiceCheck.rowCount === 0 || (invProj != null && String(invProj) !== String(req.params.projectId))) {
+        return res.status(400).json({ error: 'invalid invoice_id' });
+      }
+    }
     // sub_payment_id has no company_id of its own — verify via its parent PO.
     if (sub_payment_id) {
       const payChk = await pool.query(
-        `SELECT 1 FROM subcontract_po_payments pp
+        `SELECT po.id AS po_id, po.project_id, po.subcontractor_id
+           FROM subcontract_po_payments pp
            JOIN subcontract_pos po ON po.id = pp.po_id
           WHERE pp.id = $1 AND po.company_id = $2`,
         [sub_payment_id, companyId]
       );
-      if (payChk.rowCount === 0) return res.status(400).json({ error: 'invalid sub_payment_id' });
+      const paymentPo = payChk.rows[0];
+      if (
+        !paymentPo ||
+        String(paymentPo.project_id) !== String(req.params.projectId) ||
+        (linkedPo && String(paymentPo.po_id) !== String(linkedPo.id))
+      ) {
+        return res.status(400).json({ error: 'invalid sub_payment_id' });
+      }
+      if (subcontractor_id && String(paymentPo.subcontractor_id) !== String(subcontractor_id)) {
+        return res.status(400).json({ error: 'sub_payment_id does not belong to subcontractor_id' });
+      }
+    }
+    if (
+      linkedPo &&
+      subcontractor_id &&
+      String(linkedPo.subcontractor_id) !== String(subcontractor_id)
+    ) {
+      return res.status(400).json({ error: 'subcontract_po_id does not belong to subcontractor_id' });
     }
 
     const r = await pool.query(
@@ -205,7 +243,7 @@ router.post('/projects/:projectId/lien-waivers', requireAdmin, async (req, res) 
   }
 });
 
-router.get('/lien-waivers/:id', requireAuth, async (req, res) => {
+router.get('/lien-waivers/:id', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const lw = await assertWaiverInCompany(companyId, req.params.id);
@@ -235,7 +273,11 @@ router.patch('/lien-waivers/:id', requireAdmin, async (req, res) => {
       if (!Number.isFinite(v) || v < 0) return res.status(400).json({ error: 'invalid amount_cents' });
       fields.push(`amount_cents = $${idx++}`); params.push(v);
     }
-    if (req.body.through_date !== undefined) { fields.push(`through_date = $${idx++}`); params.push(req.body.through_date); }
+    if (req.body.through_date !== undefined) {
+      const dateError = throughDateError(req.body.through_date);
+      if (dateError) return res.status(400).json({ error: dateError });
+      fields.push(`through_date = $${idx++}`); params.push(req.body.through_date);
+    }
     if (req.body.signer_name !== undefined) {
       const v = (req.body.signer_name || '').toString().trim();
       if (!v) return res.status(400).json({ error: 'signer_name cannot be empty' });

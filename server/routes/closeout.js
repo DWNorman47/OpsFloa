@@ -6,7 +6,7 @@
 
 const router = require('express').Router();
 const pool   = require('../db');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { requireAdmin } = require('../middleware/auth');
 const { logAudit } = require('../auditLog');
 const {
   CLOSEOUT_STATUSES,
@@ -54,7 +54,7 @@ async function ensureTemplate(companyId) {
   }
 }
 
-router.get('/closeout-template', requireAuth, async (req, res) => {
+router.get('/closeout-template', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     await ensureTemplate(companyId);
@@ -228,7 +228,7 @@ async function effectiveItemStatus(companyId, projectId, item) {
 
 // ── Closeout CRUD ─────────────────────────────────────────────────────────────
 
-router.get('/projects/:id/closeout', requireAuth, async (req, res) => {
+router.get('/projects/:id/closeout', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const project = await assertProjectInCompany(companyId, req.params.id);
@@ -493,7 +493,7 @@ router.patch('/closeout-items/:id', requireAdmin, async (req, res) => {
 
 // ── Warranty-expiring query (dashboard tile) ──────────────────────────────────
 
-router.get('/warranties-expiring', requireAuth, async (req, res) => {
+router.get('/warranties-expiring', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   const within = Math.min(365, Math.max(1, parseInt(req.query.within_days) || 60));
   try {
