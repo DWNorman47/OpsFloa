@@ -15,7 +15,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 function isValidEmail(email) { return EMAIL_RE.test(String(email).trim()); }
 const { requireAdmin, requirePlan, requireCertifiedPayrollAddon, requirePerm } = require('../middleware/auth');
 const { normalizePaycheckRules } = require('../constants/paycheckRuleEnums');
-const { resolveRuleset, deductionsForRole, applyGroupDeductions, groupOpts } = require('../utils/paycheckRun');
+const { resolveRuleset, rulesetsForActiveRoles, deductionsForRole, applyGroupDeductions, groupOpts } = require('../utils/paycheckRun');
 const { generatePeriods, groupPeriods, isValidIsoDate, dateRangeDays } = require('../utils/payPeriods');
 const { PERMISSIONS, PERMISSION_KEYS, BUILTIN_ROLES, getUserPermissions } = require('../permissions');
 const { coerceBody } = require('../middleware/coerce');
@@ -3473,8 +3473,9 @@ router.get('/payroll-run', requireAdmin, requirePerm('view_reports'), requirePer
 // GET /admin/payroll-periods — the actual pay periods the company's ruleset
 // schedule(s) issue, newest first. This is what the Payroll tab offers instead of a
 // raw date range, so the run lines up with real paychecks. Union across rulesets
-// (deduped by pay date + period); no future periods (you run payroll after a period
-// closes). Empty when no rulesets are configured — the tab falls back to a range.
+// assigned to active worker roles (deduped by pay date + period); no future periods
+// (you run payroll after a period closes). Empty when no applicable rulesets are
+// configured — the tab falls back to a range.
 router.get('/payroll-periods', requireAdmin, requirePerm('view_reports'), requireCertifiedPayrollAddon, async (req, res) => {
   try {
     const s = await getSettings(req.user.company_id);
@@ -3482,14 +3483,21 @@ router.get('/payroll-periods', requireAdmin, requirePerm('view_reports'), requir
     const rulesets = normalizePaycheckRules(s.paycheck_rules).rulesets;
     // Bound to real work — don't offer empty periods from before anyone logged hours
     // (or after the last hours). No time entries at all → no periods to run.
-    const bounds = await pool.query(
-      "SELECT to_char(MIN(work_date), 'YYYY-MM-DD') AS first, to_char(MAX(work_date), 'YYYY-MM-DD') AS last FROM time_entries WHERE company_id = $1",
-      [req.user.company_id]
-    );
+    const [bounds, activeWorkerRoles] = await Promise.all([
+      pool.query(
+        "SELECT to_char(MIN(work_date), 'YYYY-MM-DD') AS first, to_char(MAX(work_date), 'YYYY-MM-DD') AS last FROM time_entries WHERE company_id = $1",
+        [req.user.company_id]
+      ),
+      pool.query(
+        "SELECT DISTINCT role_id FROM users WHERE company_id = $1 AND role = 'worker' AND active = true AND role_id IS NOT NULL",
+        [req.user.company_id]
+      ),
+    ]);
     const firstWork = bounds.rows[0] && bounds.rows[0].first;
     const lastWork = bounds.rows[0] && bounds.rows[0].last;
     const rulesetOptions = rulesets.map(rs => ({ id: rs.id, name: rs.name || null }));
     if (!firstWork) return res.json({ periods: [], rulesets: rulesetOptions });
+    const scheduledRulesets = rulesetsForActiveRoles(rulesets, activeWorkerRoles.rows.map(row => row.role_id));
     const todayIso = new Date().toISOString().slice(0, 10);
     const shiftIso = (isoStr, days) => { const dt = new Date(isoStr + 'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate() + days); return dt.toISOString().slice(0, 10); };
     // Generate up to today (a period's pay date can fall a few days after its work
@@ -3504,7 +3512,7 @@ router.get('/payroll-periods', requireAdmin, requirePerm('view_reports'), requir
     // it contains exactly the group's checks). timing 'every' → each check is its own
     // group → run_from = run_to = pay_date (unchanged behavior).
     const seen = new Map();
-    for (const rs of rulesets) {
+    for (const rs of scheduledRulesets) {
       const gen = generatePeriods(rs.schedule, genFrom, genTo, weekStart)
         .filter(p => !(p.periodEnd < firstWork || p.periodStart > lastWork));
       const grouped = groupPeriods(gen, groupOpts(rs.deductions));

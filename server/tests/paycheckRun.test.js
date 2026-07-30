@@ -3,7 +3,14 @@
  * deduction scoping, and the per-check deduction math (exempt → deduct → cap → floor).
  */
 
-const { resolveRuleset, deductionsForRole, computeRuleNet, applyGroupDeductions, groupOpts } = require('../utils/paycheckRun');
+const {
+  resolveRuleset,
+  rulesetsForActiveRoles,
+  deductionsForRole,
+  computeRuleNet,
+  applyGroupDeductions,
+  groupOpts,
+} = require('../utils/paycheckRun');
 
 describe('resolveRuleset — assignment by role, errors are surfaced not guessed', () => {
   const RS = [{ id: 'a', name: 'A', roles: [1, 2] }, { id: 'b', name: 'B', roles: [3] }];
@@ -150,5 +157,32 @@ describe('computeRuleNet — itemized lines always foot to the (capped) total, n
     expect(c.deductionTotal).toBe(0.02);
     expect(sum(c.lines)).toBe(0.02);
     expect(c.lines.every(l => l.amount >= 0)).toBe(true); // was [.01,.01,.01,-.01] before the fix
+  });
+});
+
+describe('rulesetsForActiveRoles - payroll period choices', () => {
+  const RS = [
+    { id: 'weekly', roles: [1] },
+    { id: 'biweekly', roles: [2, 3] },
+    { id: 'unused', roles: [9] },
+  ];
+
+  test('excludes rulesets that are not assigned to an active worker role', () => {
+    expect(rulesetsForActiveRoles(RS, [1, 3]).map(r => r.id)).toEqual(['weekly', 'biweekly']);
+  });
+
+  test('retains overlapping rulesets so setup errors remain visible', () => {
+    const overlapping = [{ id: 'a', roles: [1] }, { id: 'b', roles: [1, 2] }];
+    expect(rulesetsForActiveRoles(overlapping, [1]).map(r => r.id)).toEqual(['a', 'b']);
+  });
+
+  test('normalizes duplicate and string role ids from query-like input', () => {
+    expect(rulesetsForActiveRoles(RS, ['2', 2, null]).map(r => r.id)).toEqual(['biweekly']);
+  });
+
+  test('handles empty or malformed inputs without inventing periods', () => {
+    expect(rulesetsForActiveRoles(RS, [])).toEqual([]);
+    expect(rulesetsForActiveRoles(null, [1])).toEqual([]);
+    expect(rulesetsForActiveRoles([{ id: 'bad', roles: null }], [1])).toEqual([]);
   });
 });

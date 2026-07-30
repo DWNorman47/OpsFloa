@@ -39,6 +39,22 @@ function resolveRuleset(rulesets, roleId) {
 }
 
 /**
+ * Rulesets whose role assignments match at least one active worker role.
+ * Overlapping rulesets are intentionally retained so the payroll run can surface
+ * the multiple-ruleset setup error instead of hiding either schedule.
+ */
+function rulesetsForActiveRoles(rulesets, roleIds) {
+  const activeRoles = new Set(
+    (Array.isArray(roleIds) ? roleIds : [])
+      .map(Number)
+      .filter(id => Number.isInteger(id) && id > 0)
+  );
+  return (Array.isArray(rulesets) ? rulesets : []).filter(ruleset =>
+    Array.isArray(ruleset.roles) && ruleset.roles.some(roleId => activeRoles.has(Number(roleId)))
+  );
+}
+
+/**
  * Company/role-scoped deductions that apply to a worker of `roleId`. A deduction
  * with empty roleIds is company-wide; otherwise it applies only to its roles.
  * (Per-worker rows stack on top — the caller concatenates them.)
@@ -134,4 +150,4 @@ function groupOpts(deductions) {
   return { timing: d.timing, groupBy: g.by, applyOn: g.applyOn };
 }
 
-module.exports = { resolveRuleset, deductionsForRole, computeRuleNet, applyGroupDeductions, groupOpts };
+module.exports = { resolveRuleset, rulesetsForActiveRoles, deductionsForRole, computeRuleNet, applyGroupDeductions, groupOpts };
