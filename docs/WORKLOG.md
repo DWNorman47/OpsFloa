@@ -134,6 +134,37 @@ dependency audit is clean.
 
 ---
 
+## 2026-07-29 — Reviewed the pulled "hardening" commits + fixed 3 issues
+
+Pulled two large commits from another contributor ("Harden payroll workflows and tenant
+references", "Harden commercial and data integrity workflows" — 106 files). Reviewed with
+4 parallel agents. Mostly solid — the inventory rewrite is properly transactional, migration
+0159 de-dups before its unique index, the new client utils are correct, the access-control
+middleware is a clean tightening, and the new `ruleset_id` payroll scoping actually **closes**
+the multi-schedule grouping-overlap I'd backlogged. Found + fixed three real problems:
+
+- **Silent unpaid worker (money).** The new per-ruleset scoping (`computePayrollRun`) skipped
+  any worker not in the selected ruleset's roles *before* the setup-error check — so a worker
+  whose role maps to **no** ruleset (or a null role) was silently dropped from every run with
+  no error, where before it raised `no_ruleset`/`no_role` and blocked finalize. Reordered:
+  resolve the ruleset first (setup errors always surface + block), then scope out only workers
+  who resolve cleanly to a *different* ruleset. Restores the "never a silent guess" invariant.
+- **Cross-tenant FK on invoices + estimates.** The same slice hardened change-orders/subs/
+  lien-waivers to validate body FK ownership but **missed** invoices and estimates — a
+  company-A admin could POST/PATCH with company-B's `client_id`/`project_id` and leak the
+  foreign client's data. Added `clientBelongsToCompany` to `tenantRefs` and validated
+  `project_id`/`client_id` on invoice create+update and `client_id` on estimate create+update
+  (null allowed). The from-estimate/from-project paths derive from company-scoped sources, so
+  they're covered transitively.
+- **Lien-waiver regression.** The `invoice_id` check was tightened to require an exact project
+  match, which broke linking a **null-project** (from-scratch) invoice. Relaxed to allow a
+  null-project invoice (company-wide) while still rejecting a cross-company or different-project
+  one. Pinned with a test; the different-project rejection test still holds.
+
+Tests added: invoice client_id rejection, lien-waiver null-project accept. `npm install` in
+server was needed — the pulled commit added eslint to the server verify script. Full suite
+green (server 1246, client 275, eslint + build).
+
 ## 2026-07-28 — Fixed the flagged WH-347 + deductions issues
 
 David gave the go-ahead on the compliance-document items I'd parked for his call. Fixed

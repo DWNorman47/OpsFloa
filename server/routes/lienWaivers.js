@@ -180,10 +180,10 @@ router.post('/projects/:projectId/lien-waivers', requireAdmin, async (req, res) 
         'SELECT project_id FROM invoices WHERE id = $1 AND company_id = $2',
         [invoice_id, companyId]
       );
-      if (
-        invoiceCheck.rowCount === 0 ||
-        String(invoiceCheck.rows[0].project_id) !== String(req.params.projectId)
-      ) {
+      const invProj = invoiceCheck.rows[0]?.project_id;
+      // Reject only a cross-company invoice or one tied to a DIFFERENT project. A
+      // null-project (company-wide, from-scratch) invoice attaches to any project's waiver.
+      if (invoiceCheck.rowCount === 0 || (invProj != null && String(invProj) !== String(req.params.projectId))) {
         return res.status(400).json({ error: 'invalid invoice_id' });
       }
     }

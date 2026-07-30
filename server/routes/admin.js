@@ -3346,15 +3346,19 @@ async function computePayrollRun(companyId, from, to, rulesetId = null) {
     const errors = [];
     const selectedRuleset = rulesetId == null ? null : rulesets.find(r => r.id === String(rulesetId));
     for (const w of workers.rows) {
-      // A dropdown period belongs to one ruleset. Scope the run to the workers
-      // assigned to it so another cadence cannot be pulled in as a partial group.
-      if (rulesetId != null && (!selectedRuleset || !selectedRuleset.roles.includes(w.role_id))) continue;
       const name = w.invoice_name || w.full_name;
       const resolved = resolveRuleset(rulesets, w.role_id);
       if (resolved.error) {
+        // A role mapping to 0 or >1 ruleset is a setup error the admin must fix — surface it
+        // regardless of which ruleset is selected. Scoping the run must NEVER silently drop a
+        // worker with hours: an unmapped/roleless worker would otherwise go unpaid with no signal.
         errors.push({ worker_id: w.id, worker_name: name, role_name: w.role_name || null, reason: resolved.error, matches: resolved.matches || null });
         continue;
       }
+      // A dropdown period belongs to one ruleset. Scope the run to its own workers so another
+      // cadence can't be pulled in as a partial group — but only skip a worker who resolves
+      // CLEANLY to a different ruleset (setup errors were already surfaced above).
+      if (rulesetId != null && (!resolved.ruleset || resolved.ruleset.id !== String(rulesetId))) continue;
       ready.push({ w, name, ruleset: resolved.ruleset });
     }
 

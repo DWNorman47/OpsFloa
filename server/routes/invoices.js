@@ -16,6 +16,7 @@ const {
 const { loadSettings, laborCostCents, LABOR_ENTRY_COLUMNS } = require('../utils/paidHours');
 const { sendEmail } = require('../email');
 const { escapeHtml } = require('../utils/htmlEscape');
+const { projectBelongsToCompany, clientBelongsToCompany } = require('../utils/tenantRefs');
 
 // Frontend base URL for the client-facing link in the send email — the same env
 // the auth / invite emails use. Trailing slash trimmed so `${APP_URL}/i/<token>`
@@ -249,6 +250,10 @@ router.post('/', requireAuth, requireCommercialAccess, async (req, res) => {
     if (!n) return res.status(400).json({ error: `invalid line at index ${i}` });
     lines.push(n);
   }
+  // A referenced project/client must belong to this company (null is allowed — scratch
+  // invoices need no project). Without this the row could point at another tenant's client.
+  if (!(await projectBelongsToCompany(pool, fields.project_id, companyId))) return res.status(400).json({ error: 'invalid project_id' });
+  if (!(await clientBelongsToCompany(pool, fields.client_id, companyId))) return res.status(400).json({ error: 'invalid client_id' });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -384,6 +389,8 @@ router.patch('/:id', requireAuth, requireCommercialAccess, async (req, res) => {
     if (fields[k] === null) return res.status(400).json({ error: `${k} out of range` });
   }
   if (!fields.client_name_snapshot) return res.status(400).json({ error: 'client_name_snapshot is required' });
+  if (!(await projectBelongsToCompany(pool, fields.project_id, companyId))) return res.status(400).json({ error: 'invalid project_id' });
+  if (!(await clientBelongsToCompany(pool, fields.client_id, companyId))) return res.status(400).json({ error: 'invalid client_id' });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');

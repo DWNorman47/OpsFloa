@@ -6,6 +6,7 @@ const { requireAuth } = require('../middleware/auth');
 const { requireCommercialAccess } = require('../middleware/commercialAccess');
 const { logAudit } = require('../auditLog');
 const { uploadBase64, deleteByUrl, getBytesByUrl } = require('../r2');
+const { clientBelongsToCompany } = require('../utils/tenantRefs');
 const {
   ESTIMATE_STATUSES,
   ESTIMATE_FROZEN_STATUSES,
@@ -213,6 +214,9 @@ router.post('/', requireAuth, requireCommercialAccess, async (req, res) => {
     if (!n) return res.status(400).json({ error: `invalid line at index ${i}` });
     lines.push(n);
   }
+  // A referenced client must belong to this company (null allowed — an estimate can carry
+  // just a name snapshot). Guards against persisting another tenant's client_id.
+  if (!(await clientBelongsToCompany(pool, fields.client_id, companyId))) return res.status(400).json({ error: 'invalid client_id' });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -304,6 +308,7 @@ router.patch('/:id', requireAuth, requireCommercialAccess, async (req, res) => {
     }
     if (!fields.project_name) return res.status(400).json({ error: 'project_name is required' });
     if (!fields.client_name_snapshot) return res.status(400).json({ error: 'client_name_snapshot is required' });
+    if (!(await clientBelongsToCompany(pool, fields.client_id, companyId))) return res.status(400).json({ error: 'invalid client_id' });
     const client = await pool.connect();
     try {
       await client.query('BEGIN');

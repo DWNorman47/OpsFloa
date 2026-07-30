@@ -80,6 +80,16 @@ describe('POST /api/invoices', () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/tax_pct/);
   });
+
+  test('rejects a client_id that belongs to another company (tenant isolation)', async () => {
+    setUser();
+    pool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // clients ownership check fails
+    const res = await request(makeApp())
+      .post('/api/invoices')
+      .send({ client_name_snapshot: 'Acme', client_id: 55, tax_pct: 0, retainage_pct: 0, lines: [] });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid client_id');
+  });
 });
 
 // ── PATCH /invoices/:id — frozen once sent ────────────────────────────────────

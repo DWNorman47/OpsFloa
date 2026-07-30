@@ -128,6 +128,25 @@ describe('POST /api/projects/:projectId/lien-waivers', () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('invalid invoice_id');
   });
+
+  test('allows a null-project (from-scratch) invoice to be linked to any project waiver', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 10, name: 'Project A' }] }) // project lookup
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ project_id: null }] })          // invoice: no project
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 99 }] });                   // INSERT RETURNING
+    const res = await request(makeApp())
+      .post('/api/projects/10/lien-waivers')
+      .send({
+        direction: 'from_us',
+        waiver_type: 'conditional_progress',
+        amount_cents: 1000,
+        through_date: '2026-07-01',
+        signer_name: 'Jane',
+        signer_company: 'Co',
+        invoice_id: 55,
+      });
+    expect(res.status).toBe(201);
+  });
 });
 
 describe('PATCH /api/lien-waivers/:id', () => {

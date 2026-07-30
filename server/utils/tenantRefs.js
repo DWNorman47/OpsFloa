@@ -16,4 +16,13 @@ async function userBelongsToCompany(db, userId, companyId) {
   return result.rowCount > 0;
 }
 
-module.exports = { projectBelongsToCompany, userBelongsToCompany };
+async function clientBelongsToCompany(db, clientId, companyId) {
+  if (clientId == null || clientId === '') return true;
+  const result = await db.query(
+    'SELECT 1 FROM clients WHERE id = $1 AND company_id = $2',
+    [clientId, companyId]
+  );
+  return result.rowCount > 0;
+}
+
+module.exports = { projectBelongsToCompany, userBelongsToCompany, clientBelongsToCompany };
