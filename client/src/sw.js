@@ -197,6 +197,17 @@ async function replayQueue() {
 
 // ── Service worker lifecycle ───────────────────────────────────────────────────
 
+// Take control of already-open pages as soon as this worker activates, so the offline
+// fetch handler (which queues clock / time-entry POSTs when the network is down) works
+// on a device's FIRST session and right after an error-recovery hard reset — otherwise
+// the worker doesn't control that already-loaded document until the next reload, and an
+// offline punch made in that window is lost instead of queued. This does NOT force a
+// waiting worker to activate early: skipWaiting stays message-gated (SKIP_WAITING below)
+// for the prompt-to-update model, so it can't cause an update loop.
+self.addEventListener('activate', event => {
+  event.waitUntil(self.clients.claim());
+});
+
 // ── Push notifications ─────────────────────────────────────────────────────────
 
 self.addEventListener('push', event => {

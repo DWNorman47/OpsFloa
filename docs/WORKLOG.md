@@ -134,6 +134,26 @@ dependency audit is clean.
 
 ---
 
+## 2026-07-30 — Reviewed "Fix critical staging workflows" pull + restored SW clients.claim()
+
+Reviewed David's commit e1b73d8d (payroll UI finalize-confirm + void-disabled-when-paid,
+workOrders tenant-ref validation, timeEntries date-range bounds, SW prompt-to-update rewrite,
+migration 0160). Suite green. Most of it is good — the payroll UI changes complete the
+void-when-paid + finalize-safety UX flagged in earlier passes, and workOrders now validates
+project/client/assignee ownership (same cross-tenant gap fixed for invoices/estimates).
+
+**Fixed one regression:** the SW rewrite to prompt-to-update (good — kills the auto-skipWaiting
+update loop) also dropped `clients.claim()` on activate. Without it a freshly-registered worker
+doesn't control the already-loaded page until the next reload, so on a device's FIRST session
+(or right after an error-recovery hard reset) the offline fetch handler that queues clock/
+time-entry POSTs never runs — an offline punch in that window is lost instead of queued. Re-added
+`self.clients.claim()` on activate; safe because skipWaiting stays message-gated, so it can't
+force a waiting worker to activate early or reintroduce the loop.
+
+Left as-is (acceptable given the deliberate prompt-to-update design): the stale-bundle crash
+recovery net (`bundleVersionMismatch`) is now mostly dead for the update case; and a reload
+clicked in the brief window before the new worker registers wastes one reload (self-corrects).
+
 ## 2026-07-29 — Plan Room: fix the 40-page-document slowdown
 
 Report: loading a ~40-page set slows the Plan Room "far too much." Traced every
