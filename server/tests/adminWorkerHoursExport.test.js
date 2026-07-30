@@ -163,6 +163,21 @@ describe('payroll date validation', () => {
     expect(pool.query).not.toHaveBeenCalled();
   });
 
+  test('finalize rejects a run when no paycheck rulesets are configured', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [] }) // settings
+      .mockResolvedValueOnce({ rows: [] }) // workers
+      .mockResolvedValueOnce({ rows: [] }); // worker deductions
+
+    const res = await request(makeApp())
+      .post('/api/admin/payroll-run/finalize')
+      .send({ from: '2026-07-01', to: '2026-07-31' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('ruleset_required');
+    expect(res.body.error).toMatch(/Configure a paycheck ruleset/);
+  });
+
   test.each([
     '/api/admin/payroll-run?from=2020-01-01&to=2026-06-30',
     '/api/admin/payroll-export?from=2020-01-01&to=2026-06-30',

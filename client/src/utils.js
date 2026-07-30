@@ -6,6 +6,23 @@ export function localDateStr(d = new Date()) {
   return d.toLocaleDateString('en-CA'); // en-CA produces YYYY-MM-DD
 }
 
+/**
+ * Preserve a database DATE as a calendar date instead of treating a serialized
+ * UTC midnight as an instant that can move to the previous local day.
+ */
+export function dateOnlyStr(value) {
+  if (value == null || value === '') return '';
+  return String(value).substring(0, 10);
+}
+
+export function formatDateOnly(value, locale = 'en-US', opts) {
+  const raw = dateOnlyStr(value);
+  if (!raw) return '';
+  const date = new Date(`${raw}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleDateString(locale, opts);
+}
+
 // Maps ISO 4217 currency codes to a locale that produces the correct local symbol
 const CURRENCY_LOCALES = {
   USD: 'en-US', CAD: 'en-CA', EUR: 'de-DE', GBP: 'en-GB',

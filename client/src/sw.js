@@ -197,11 +197,6 @@ async function replayQueue() {
 
 // ── Service worker lifecycle ───────────────────────────────────────────────────
 
-self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', event => {
-  event.waitUntil(self.clients.claim());
-});
-
 // ── Push notifications ─────────────────────────────────────────────────────────
 
 self.addEventListener('push', event => {
@@ -279,6 +274,9 @@ self.addEventListener('fetch', event => {
 const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'unknown';
 
 self.addEventListener('message', event => {
+  if (event.data?.type === 'SKIP_WAITING') {
+    event.waitUntil(self.skipWaiting());
+  }
   if (event.data?.type === 'REPLAY_QUEUE') {
     event.waitUntil(replayQueue());
   }

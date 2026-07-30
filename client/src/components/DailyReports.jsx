@@ -3,7 +3,7 @@ import api from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { useOffline } from '../contexts/OfflineContext';
 import { useT } from '../hooks/useT';
-import { langToLocale } from '../utils';
+import { formatDateOnly, langToLocale } from '../utils';
 import { labelSg, labelPl } from '../companyLabels';
 import { SkeletonList } from './Skeleton';
 import Pagination from './Pagination';
@@ -19,11 +19,7 @@ const WEATHER_KEYS = [
 ];
 
 function fmtDate(str, locale = 'en-US') {
-  if (!str) return '';
-  const dateText = String(str);
-  const date = dateText.includes('T') ? new Date(dateText) : new Date(`${dateText}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return dateText;
-  return date.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  return formatDateOnly(str, locale, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function emptyRow(type) {

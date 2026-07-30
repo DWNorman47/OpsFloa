@@ -10,7 +10,7 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act } from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
-import UpdatePrompt from '../UpdatePrompt';
+import UpdatePrompt, { activateUpdateAndReload } from '../UpdatePrompt';
 
 // UpdatePrompt uses useT → useAuth; stub the context so we don't need a provider.
 vi.mock('../../contexts/AuthContext', () => ({
@@ -71,5 +71,28 @@ describe('<UpdatePrompt />', () => {
     await triggerCheck();
     fireEvent.click(screen.getByLabelText(/dismiss/i));
     expect(screen.queryByText(/new version of OpsFloa is ready/i)).not.toBeInTheDocument();
+  });
+
+  test('activates a waiting service worker before reloading', async () => {
+    const original = Object.getOwnPropertyDescriptor(navigator, 'serviceWorker');
+    const waiting = new EventTarget();
+    waiting.state = 'installed';
+    waiting.postMessage = vi.fn(message => {
+      expect(message).toEqual({ type: 'SKIP_WAITING' });
+      waiting.state = 'activated';
+      waiting.dispatchEvent(new Event('statechange'));
+    });
+    Object.defineProperty(navigator, 'serviceWorker', {
+      configurable: true,
+      value: { getRegistration: vi.fn().mockResolvedValue({ waiting }) },
+    });
+    const reload = vi.fn();
+
+    await activateUpdateAndReload(reload);
+
+    expect(waiting.postMessage).toHaveBeenCalledOnce();
+    expect(reload).toHaveBeenCalledOnce();
+    if (original) Object.defineProperty(navigator, 'serviceWorker', original);
+    else delete navigator.serviceWorker;
   });
 });

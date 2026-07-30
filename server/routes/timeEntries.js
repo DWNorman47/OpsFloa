@@ -10,6 +10,7 @@ const { coerceBody } = require('../middleware/coerce');
 const { logFailure } = require('../failureLog');
 const { SETTINGS_DEFAULTS, applySettingsRows } = require('../settingsDefaults');
 const { entryInstants } = require('../utils/timeFormat');
+const { generatePeriods, groupPeriods, isValidIsoDate, dateRangeDays } = require('../utils/payPeriods');
 const rateLimit = require('express-rate-limit');
 const { userOrIpKey } = require('../middleware/rateLimitKey');
 
@@ -33,6 +34,15 @@ const entryWriteLimiter = rateLimit({
 
 // Get current user's entries
 router.get('/', requireAuth, async (req, res) => {
+  const { from, to } = req.query;
+  const hasRange = from != null || to != null;
+  if (hasRange && (!isValidIsoDate(from) || !isValidIsoDate(to) || from > to)) {
+    return res.status(400).json({ error: 'from and to must be valid dates in ascending order', code: 'invalid_date_range' });
+  }
+  if (hasRange && dateRangeDays(from, to) > 366) {
+    return res.status(400).json({ error: 'Time entry range cannot exceed 366 days', code: 'date_range_too_large' });
+  }
+
   try {
     const co = await pool.query(
       'SELECT plan, subscription_status, trial_ends_at FROM companies WHERE id = $1',
@@ -41,15 +51,17 @@ router.get('/', requireAuth, async (req, res) => {
     const { plan, subscription_status, trial_ends_at } = co.rows[0] || {};
     const trialActive = subscription_status === 'trial' && (!trial_ends_at || new Date(trial_ends_at) >= new Date());
     const isFree = plan === 'free' && !trialActive;
-    const dateClause = isFree ? `AND te.work_date >= CURRENT_DATE - INTERVAL '90 days'` : '';
+    const freeDateClause = isFree ? `AND te.work_date >= CURRENT_DATE - INTERVAL '90 days'` : '';
+    const rangeClause = hasRange ? 'AND te.work_date BETWEEN $2 AND $3' : '';
+    const values = hasRange ? [req.user.id, from, to] : [req.user.id];
 
     const result = await pool.query(
       `SELECT te.*, p.name as project_name
        FROM time_entries te
        LEFT JOIN projects p ON te.project_id = p.id
-       WHERE te.user_id = $1 ${dateClause}
+       WHERE te.user_id = $1 ${freeDateClause} ${rangeClause}
        ORDER BY te.work_date DESC, te.start_time DESC`,
-      [req.user.id]
+      values
     );
     res.json(result.rows);
   } catch (err) {
@@ -311,7 +323,6 @@ const { loadSettings } = require('../utils/paidHours');
 const { workerPeriodStatements, workerStatement } = require('../utils/payStatement');
 const { normalizePaycheckRules } = require('../constants/paycheckRuleEnums');
 const { resolveRuleset, deductionsForRole, applyGroupDeductions, groupOpts } = require('../utils/paycheckRun');
-const { generatePeriods, groupPeriods, isValidIsoDate, dateRangeDays } = require('../utils/payPeriods');
 const { parseCompanyDeductions, normalizeWorkerDeductions } = require('../utils/deductions');
 const { weekRange } = require('../utils/weekBounds');
 
@@ -482,7 +493,12 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
 // POST /time-entries/sign-off — worker signs off on their entries for a date range
 router.post('/sign-off', requireAuth, async (req, res) => {
   const { from, to } = req.body;
-  if (!from || !to) return res.status(400).json({ error: 'from and to required' });
+  if (!isValidIsoDate(from) || !isValidIsoDate(to) || from > to) {
+    return res.status(400).json({ error: 'from and to must be valid dates in ascending order', code: 'invalid_date_range' });
+  }
+  if (dateRangeDays(from, to) > 366) {
+    return res.status(400).json({ error: 'Sign-off range cannot exceed 366 days', code: 'date_range_too_large' });
+  }
   try {
     const result = await pool.query(
       `UPDATE time_entries SET worker_signed_at = NOW()
@@ -491,17 +507,18 @@ router.post('/sign-off', requireAuth, async (req, res) => {
        RETURNING id`,
       [req.user.id, from, to]
     );
-    // Notify admin that worker signed off
-    const admin = await pool.query(
-      `SELECT u.id FROM users u WHERE u.company_id = $1 AND u.role = 'admin' AND u.active = true LIMIT 1`,
-      [req.user.company_id]
-    );
-    if (admin.rowCount > 0) {
-      const adminId = admin.rows[0].id;
-      const signTitle = `${req.user.full_name} signed their timesheet`;
-      const signBody = `${result.rowCount} entr${result.rowCount === 1 ? 'y' : 'ies'} ready for review`;
-      sendPushToUser(adminId, { title: signTitle, body: signBody, url: '/workforce#approvals' });
-      createInboxItem(adminId, req.user.company_id, 'signoff', signTitle, signBody, '/workforce#approvals');
+    if (result.rowCount > 0) {
+      const admin = await pool.query(
+        `SELECT u.id FROM users u WHERE u.company_id = $1 AND u.role = 'admin' AND u.active = true LIMIT 1`,
+        [req.user.company_id]
+      );
+      if (admin.rowCount > 0) {
+        const adminId = admin.rows[0].id;
+        const signTitle = `${req.user.full_name} signed their timesheet`;
+        const signBody = `${result.rowCount} entr${result.rowCount === 1 ? 'y' : 'ies'} ready for review`;
+        sendPushToUser(adminId, { title: signTitle, body: signBody, url: '/workforce#approvals' });
+        createInboxItem(adminId, req.user.company_id, 'signoff', signTitle, signBody, '/workforce#approvals');
+      }
     }
     res.json({ signed: result.rowCount });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }

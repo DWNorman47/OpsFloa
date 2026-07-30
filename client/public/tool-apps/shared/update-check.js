@@ -6,19 +6,34 @@
  * signal, so after a deploy it silently stayed on the old version (the takeoff
  * "why didn't my fix show up" case).
  *
- * Because the tool is served FROM the precache, the service-worker lifecycle is
- * the accurate signal: when a newer worker takes control (`controllerchange`), the
- * code in this window is stale and a reload will load the new precached build. We
- * also nudge the browser to look for a new worker while the window sits open
- * (it otherwise only checks on navigation). Self-contained, no dependencies. */
+ * Because the tool is served FROM the precache, a waiting service worker is the
+ * accurate signal that a new tool build is ready. We nudge the browser to check
+ * while the window sits open, then let the user activate and reload deliberately.
+ * Self-contained, no dependencies. */
 (function () {
   if (!('serviceWorker' in navigator)) return;
 
-  // Whether a worker already controlled this page at load. A controllerchange
-  // with NO prior controller is just the first install claiming the page — not an
-  // update — so we only prompt when there was already a controller.
-  var hadController = !!navigator.serviceWorker.controller;
   var shown = false;
+  var registration = null;
+
+  function activateAndReload() {
+    var waiting = registration && registration.waiting;
+    if (!waiting) {
+      try { location.reload(); } catch (e) { /* ignore */ }
+      return;
+    }
+    var done = false;
+    var finish = function () {
+      if (done) return;
+      done = true;
+      try { location.reload(); } catch (e) { /* ignore */ }
+    };
+    waiting.addEventListener('statechange', function () {
+      if (waiting.state === 'activated') finish();
+    });
+    waiting.postMessage({ type: 'SKIP_WAITING' });
+    setTimeout(finish, 2000);
+  }
 
   function showBanner() {
     if (shown || !document.body) return;
@@ -42,7 +57,7 @@
     reload.textContent = 'Reload';
     reload.style.cssText = 'background:#2563eb;color:#fff;border:none;padding:6px 14px;border-radius:7px;' +
       'font:700 13px system-ui,sans-serif;cursor:pointer';
-    reload.addEventListener('click', function () { try { location.reload(); } catch (e) { /* ignore */ } });
+    reload.addEventListener('click', activateAndReload);
 
     var dismiss = document.createElement('button');
     dismiss.type = 'button';
@@ -55,18 +70,19 @@
     document.body.appendChild(bar);
   }
 
-  // A newer worker took control → this window is running stale code; reload loads
-  // the new precached build.
-  navigator.serviceWorker.addEventListener('controllerchange', function () {
-    if (hadController) showBanner();
-  });
-
   // Actively check for a new deploy while the window is open: on load, on an
-  // interval, and whenever the tab/window regains focus. reg.update() re-fetches
-  // sw.js (served max-age=0); a changed worker then skipWaiting()s and claims the
-  // page, firing the controllerchange above.
+  // interval, and whenever the tab/window regains focus.
   navigator.serviceWorker.getRegistration().then(function (reg) {
     if (!reg) return;
+    registration = reg;
+    if (reg.waiting) showBanner();
+    reg.addEventListener('updatefound', function () {
+      var installing = reg.installing;
+      if (!installing) return;
+      installing.addEventListener('statechange', function () {
+        if (installing.state === 'installed' && navigator.serviceWorker.controller) showBanner();
+      });
+    });
     var check = function () { try { reg.update(); } catch (e) { /* ignore */ } };
     setInterval(check, 10 * 60 * 1000); // every 10 min
     window.addEventListener('focus', check);

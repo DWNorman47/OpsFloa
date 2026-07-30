@@ -236,7 +236,8 @@ export default function AppSwitcher({ currentApp = 'timeclock', userRole, featur
 
   return (
     <div ref={ref} style={styles.wrap}>
-      <button style={styles.trigger} onClick={() => setOpen(o => !o)}>
+      <button type="button" style={styles.trigger} onClick={() => setOpen(o => !o)}
+        aria-label={labelFor(current)} aria-haspopup="menu" aria-expanded={open}>
         <div style={{ ...styles.appIcon, background: current.bg }}>{current.icon}</div>
         <span style={styles.appName} className="app-switcher-name">{labelFor(current)}</span>
         <svg style={{ ...styles.chevron, transform: open ? 'rotate(180deg)' : 'none' }}
@@ -246,9 +247,10 @@ export default function AppSwitcher({ currentApp = 'timeclock', userRole, featur
       </button>
 
       {open && (
-        <div style={styles.dropdown}>
+        <div style={styles.dropdown} role="menu">
           {visibleApps.map(app => (
             <button
+              type="button"
               key={app.id}
               style={{
                 ...styles.item,
@@ -256,6 +258,7 @@ export default function AppSwitcher({ currentApp = 'timeclock', userRole, featur
                 ...(app.soon ? styles.itemSoon : {}),
               }}
               onClick={() => navigate(app)}
+              role="menuitem"
             >
               <div style={{ ...styles.itemIcon, background: app.soon ? '#e5e7eb' : app.bg }}>
                 {app.icon}
