@@ -114,6 +114,9 @@ const findBuiltinRole = (roles, legacyRole = 'worker') => {
   return roles.find(role => role.is_builtin && role.name === roleName) || null;
 };
 
+export const resolveWorkerRoleId = (worker, roles = []) =>
+  worker?.role_id ?? findBuiltinRole(roles, worker?.role)?.id ?? null;
+
 const createAddForm = (defaultRate, defaultTempPassword, roles = []) => {
   const defaultRole = findBuiltinRole(roles, 'worker');
   return {
@@ -426,7 +429,7 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
   const startEditInfo = w => {
     setEditingId(w.id); setEditSection('info');
     setEditWorkerUpdatedAt(w.updated_at || null);
-    setEditInfoForm({ full_name: w.full_name, invoice_name: w.invoice_name || '', email: w.email || '', role: w.role, role_id: w.role_id ?? null, language: w.language || 'English', worker_type: w.worker_type || 'employee', classification: w.classification || '' });
+    setEditInfoForm({ full_name: w.full_name, invoice_name: w.invoice_name || '', email: w.email || '', role: w.role, role_id: resolveWorkerRoleId(w, availableRoles), language: w.language || 'English', worker_type: w.worker_type || 'employee', classification: w.classification || '' });
     // Snapshot the original role_id so saveInfo knows whether to fire the
     // separate /admin/workers/:id/role call (which has the last-Owner check).
     setOriginalRoleId(w.role_id ?? null);

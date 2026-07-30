@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useT } from '../hooks/useT';
 
-export default function LiveKPIs() {
+export default function LiveKPIs({ refreshToken = 0 }) {
   const t = useT();
   const [kpis, setKpis] = useState(null);
   const [error, setError] = useState('');
@@ -16,7 +16,7 @@ export default function LiveKPIs() {
     load();
     const timer = setInterval(load, 300000);
     return () => clearInterval(timer);
-  }, []);
+  }, [refreshToken]);
 
   // Single card with internal cells, not four separate cards — the four-card
   // layout was reading as four buttons and users were clicking them
