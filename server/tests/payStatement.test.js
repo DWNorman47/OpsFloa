@@ -54,6 +54,48 @@ describe('buildPayStatement — hours + reconciliation', () => {
   });
 });
 
+describe('buildPayStatement — unpaid worker earns nothing (hours still tracked)', () => {
+  test('all wage costs + totals are zero, hours still computed, reimbursement still repaid', () => {
+    const st = build({
+      worker: worker({ worker_type: 'unpaid', guaranteed_weekly_hours: 40 }),
+      entries: [entry({ end_time: '18:00:00' })], // 10h → would be 8 reg + 2 OT = $330 if paid
+      reimbursements: [{ amount: 25 }],
+      leave: { sick: 8, vacation: 8 },
+      deductions: [{ id: 'x', name: 'Tax', kind: 'percent', value: 10 }],
+    });
+    // Hours are still tracked
+    expect(st.hours.regular).toBeCloseTo(8);
+    expect(st.hours.overtime).toBeCloseTo(2);
+    expect(st.hours.total).toBeGreaterThan(0);
+    // Every wage cost is zero (regular, OT, prevailing, night, guarantee, leave)
+    for (const k of ['regular', 'overtime', 'prevailing', 'night', 'guarantee', 'sick', 'vacation']) {
+      expect(st.cost[k]).toBe(0);
+    }
+    // Zero wages, zero deductions; the reimbursement (expense repayment) is still owed
+    expect(st.totals.grossWages).toBe(0);
+    expect(st.totals.deductionsTotal).toBe(0);
+    expect(st.totals.netWages).toBe(0);
+    expect(st.deductions).toEqual([]);
+    expect(st.totals.reimbursementTotal).toBe(25);
+    expect(st.totals.netPay).toBe(25); // only the reimbursement, no wages
+  });
+
+  test('prevailing hours also earn nothing for an unpaid worker', () => {
+    const st = build({
+      worker: worker({ worker_type: 'unpaid' }),
+      entries: [entry({ wage_type: 'prevailing', project_id: null })], // 8h prevailing @ $45 if paid
+    });
+    expect(st.hours.prevailing).toBeCloseTo(8);
+    expect(st.cost.prevailing).toBe(0);
+    expect(st.totals.grossWages).toBe(0);
+  });
+
+  test('a paid worker with the same inputs DOES earn (guards against over-zeroing)', () => {
+    const st = build({ worker: worker({ worker_type: 'employee' }), entries: [entry({ end_time: '18:00:00' })] });
+    expect(st.totals.grossWages).toBe(330);
+  });
+});
+
 describe('buildPayStatement — the reconciled decisions', () => {
   test('prevailing priced per-project, company rate as fallback', () => {
     const fallback = build({ entries: [entry({ wage_type: 'prevailing', project_id: null })] }); // 8h

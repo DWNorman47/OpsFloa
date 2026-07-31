@@ -134,6 +134,117 @@ dependency audit is clean.
 
 ---
 
+## 2026-07-31 — Billing: in-app plan change (starter ↔ business), no second subscription
+
+Follow-up to the double-subscription guard: give subscribed companies real in-app upgrade/
+downgrade buttons that modify the EXISTING subscription instead of creating a parallel one
+(and instead of just erroring / sending them to the Stripe portal).
+
+- **`POST /stripe/change-plan { plan }`** (`stripe.js`): retrieves the live subscription and,
+  in ONE atomic `subscriptions.update`, swaps the base-plan price on the existing base item,
+  keeps every add-on (listed by id so it can't be dropped whether Stripe merges or replaces
+  the item set), and adds/updates/removes the per-worker seat item. Keeps the billing interval
+  (annual stays annual). Business seats = `max(0, activeWorkers − 15)` computed server-side
+  (authoritative, not a client estimate). Prorated (`create_prorations`). Guards: no live sub →
+  400; already on the target plan → 400; add-ons-only sub (no base) → 400; **downgrade to
+  Starter refused if active workers exceed Starter's cap** (10 + bonus_seats). DB `plan`
+  reflected immediately; the `customer.subscription.updated` webhook re-confirms plan + MRR.
+- **Client** (`BillingPanel.jsx`): for an already-active company the Starter/Business cards now
+  read "Switch to X" and call `changePlan()` (confirm dialog → POST /change-plan → refresh
+  status) instead of `/checkout`. Trial/free companies still checkout as before; downgrade-to-
+  Free stays a portal cancel (unchanged). `billingSwitchToPlan` / `billingChangePlanConfirm` /
+  `billingChangePlanFailed` EN+ES.
+- **Tests:** `stripeChangePlanRoute.test.js` (10) — upgrade adds the right seat overage +
+  preserves the add-on, ≤15 workers adds no seat item, downgrade removes the seat item +
+  preserves the add-on, downgrade blocked over cap (and bonus seats raise it), annual uses
+  annual prices, already-on-plan / no-sub / add-ons-only / bad-plan all rejected without a
+  Stripe write. Suite green (server 1285).
+
+## 2026-07-31 — Billing: prevent accidental double subscription / double add-on
+
+A customer bought their subscription twice → refund + lost Stripe fees. Root cause found in
+`server/routes/stripe.js`: **`POST /stripe/checkout` had NO guard** — it minted a fresh Stripe
+subscription every call. So a company that was already subscribed (clicked Subscribe again, or
+clicked a *different* plan — the client's plan buttons hit /checkout, not a plan-change flow)
+got a SECOND parallel subscription that billed alongside the first.
+
+- **The fix:** a `liveSubscription()` helper retrieves the company's Stripe subscription and
+  returns it only if genuinely live (active/trialing/past_due/unpaid) — **verified against
+  Stripe, not the DB flag**, so a webhook lag can't let a duplicate through and a stale id for
+  a canceled sub doesn't wrongly block a re-subscribe. `/checkout` now 409s (`has_subscription`)
+  when a live subscription exists, directing the admin to Manage billing to change plan / add-ons.
+- **`/checkout-addon`** already blocked a second subscription via the DB flag but only for
+  `active`/`past_due` — added `trial` so a company with a pre-purchased *trialing* base plan
+  can't create a second sub through the add-on door either.
+- **Add-ons** were already double-safe: `/addon` is idempotent (skips an add-on already on the
+  sub), `/checkout` and `/checkout-addon` de-dupe line items, and both add-on paths require /
+  route to the single existing subscription.
+- **Client** (`BillingPanel.jsx`): the buttons already disable during an in-flight redirect;
+  added a function-level `if (redirecting) return` guard on `checkout`/`checkoutAddons` so a
+  fast double-click can't open two checkout sessions.
+- **Tests:** new `stripeCheckoutRoute.test.js` — live sub → 409, trialing → 409, canceled/
+  missing id → allowed, fresh company → allowed (no Stripe call). Suite green (server 1275).
+
+Note: an already-subscribed company clicking a *different* plan now gets the 409 "manage from
+Billing" message rather than a second subscription. If you want in-app plan *changes* (vs the
+Stripe portal), that's a separate follow-up — the portal already changes the existing sub safely.
+
+## 2026-07-31 — Role management: split managing roles vs ADMIN roles
+
+David: create/edit/delete roles and create/edit/delete ADMIN roles should be distinct —
+Owner gets both, Admin gets the first by default.
+
+`manage_roles` was a single Owner-only permission. Split it:
+- **`manage_roles`** = create/edit/delete NON-admin (worker-tier) roles → now in
+  ADMIN_PERMISSIONS (Admin + Owner).
+- **`manage_admin_roles`** = create/edit/delete ADMIN-tier roles (parent_role 'admin':
+  the built-in Admin/Owner + any custom admin role) → Owner only.
+
+- **permissions.js:** new catalog entry; `manage_roles` moved to ADMIN_PERMISSIONS,
+  `manage_admin_roles` added to OWNER_PERMISSIONS. Migration `0162` grants the new defaults
+  to existing companies' built-in Admin/Owner (custom roles snapshot at creation, by design).
+- **Routes** (`POST/PATCH/DELETE /admin/roles`): keep the `manage_roles` base gate, and
+  additionally require `manage_admin_roles` when the target role's `parent_role === 'admin'`.
+  Used `getUserPermissions` (already computed for the escalation guard, and the resolver the
+  route tests mock) rather than a second `hasPerm` DB round-trip. Added `parent_role` to the
+  PATCH lookup so the tier is known.
+- **Client** (`ManageRoles.jsx`): the "+ New admin role" button is hidden without
+  `manage_admin_roles`, and expanding an admin-tier role renders read-only (inputs/checkboxes
+  disabled, Save/Delete replaced with "Only an Owner can create or edit admin roles"). Admins
+  keep full create/edit/delete on worker-tier roles. `mrolesAdminLocked` EN/ES.
+- **Tests:** permission-default tests updated to the new split (manage_roles is Admin-tier;
+  manage_admin_roles is the Owner-only one); route tests for the tier gate on
+  create/edit/delete + a manage_roles admin still creating a worker-tier role. Suite green
+  (server 1269, client 288).
+
+## 2026-07-31 — New Team Member Type: "Unpaid" (excluded from all pay)
+
+David: "Team Member Type should include Unpaid." Confirmed (via a question) that it means
+EXCLUDE FROM PAY — an unpaid member is still tracked (time clock, scheduling, hours reports)
+but earns nothing and appears on no pay surface.
+
+`worker_type` was purely categorical (QBO routing + display); it never touched the pay
+engine. Added `'unpaid'` as a 5th value and wired the exclusion:
+
+- **Foundation:** `'unpaid'` in `USER_WORKER_TYPES` (userEnums.js); migration `0161` extends
+  the `0071` CHECK; replaced 4 hardcoded `VALID_WORKER_TYPES` arrays (admin.js ×3, qbo.js)
+  with the shared constant; `docs/db-enums.md` updated; UI option + `mwTypeUnpaid` (EN/ES).
+- **Central fail-safe:** `buildPayStatement` (the one statement all four pay surfaces + the
+  payroll run render) forces every wage RATE to 0 and drops guarantee/leave/deductions/
+  per-project prevailing for an unpaid worker → all pay math yields $0 while **hours are
+  still computed** (dual-use: the Team Member Report keeps its hours, the invoice shows
+  "hours worked, $0"). Reimbursements (expense repayment ≠ wages) are left intact. Gated on
+  the flag directly — a `|| 45` fallback was turning a zeroed prevailing rate back to $45
+  (caught by a test). `worker_type` added to the 3 single-worker pay SELECTs so the guard fires.
+- **List-level exclusion** so unpaid workers don't even render a $0 row: overtime report,
+  `computePayrollRun`, payroll CSV, certified payroll (WH-347), scheduled pay email, the
+  payroll-periods role probe, and the QBO payroll journal.
+- **QBO time sync** skips unpaid labor (auto-sync on approve, /qbo/push, gatherBillData
+  vendor bills, retry-error) — they earn nothing to sync.
+- **Tests:** unpaid worker → all wage costs/totals 0, hours still tracked, reimbursement
+  still repaid, prevailing also $0; plus a guard-against-over-zeroing (a paid worker with
+  the same inputs still earns). Suite green (server 1261, client 288).
+
 ## 2026-07-30 — Reviewed "Fix critical staging workflows" pull + restored SW clients.claim()
 
 Reviewed David's commit e1b73d8d (payroll UI finalize-confirm + void-disabled-when-paid,

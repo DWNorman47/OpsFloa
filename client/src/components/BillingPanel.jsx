@@ -97,6 +97,7 @@ export default function BillingPanel() {
   }, []);
 
   const checkout = async (priceId, opts = {}) => {
+    if (redirecting) return; // a checkout is already in flight — don't open a second one
     if (!priceId) { setBillingError(t.stripeNotConfigured); return; }
     setBillingError('');
     setRedirecting(priceId);
@@ -144,6 +145,27 @@ export default function BillingPanel() {
     }
   };
 
+  // Switch the base plan on the EXISTING subscription (starter <-> business), prorated —
+  // never a second subscription. Only for already-subscribed companies; the server computes
+  // the per-worker seat count from the live headcount and preserves every add-on.
+  const changePlan = async (target) => {
+    if (redirecting) return;
+    const label = target === 'business' ? t.planBusiness : t.planStarter;
+    if (!window.confirm((t.billingChangePlanConfirm || 'Switch your plan to {plan}? Your next invoice is prorated for the rest of this billing period.').replace('{plan}', label))) return;
+    setBillingError('');
+    setRedirecting('change-' + target);
+    try {
+      await api.post('/stripe/change-plan', { plan: target });
+      const r = await api.get('/stripe/status');
+      setStatus(r.data);
+      updateUser?.({ plan: target });
+    } catch (err) {
+      setBillingError(err.response?.data?.error || t.billingChangePlanFailed || 'Could not change the plan.');
+    } finally {
+      setRedirecting(null);
+    }
+  };
+
   // One-click: add a paid add-on to the EXISTING subscription (prorated item),
   // then reflect it immediately in the billing status + the auth session (so
   // gated tools appear without a reload).
@@ -170,6 +192,7 @@ export default function BillingPanel() {
   // subscription whose line items are those add-ons (so buying both puts them
   // on one subscription/one invoice). Server: /stripe/checkout-addon.
   const checkoutAddons = async (addons) => {
+    if (redirecting) return; // a checkout is already in flight — don't open a second one
     if (!addons.length) return;
     setBillingError('');
     setRedirecting('buy-addons');
@@ -482,13 +505,16 @@ export default function BillingPanel() {
               ]}
               btnLabel={
                 currentPlan === 'starter' && isActive ? t.currentPlan
+                  : isActive ? (t.billingSwitchToPlan || 'Switch to {plan}').replace('{plan}', t.planStarter)
                   : isTrial ? (selectedPlan === 'starter' ? t.billingPlanSelected.replace('{plan}', t.planStarter) : t.billingChoosePlan.replace('{plan}', t.planStarter))
                   : annual ? t.billingSubscribeAnnual.replace('{price}', `$${plans?.starter.annual ?? 200}`) : t.billingSubscribeMonthly.replace('{price}', `$${plans?.starter.monthly ?? 20}`)
               }
               disabled={!!redirecting || (currentPlan === 'starter' && isActive)}
               onSelect={() => isTrial
                 ? setSelectedPlan('starter')
-                : checkout(annual ? plans?.starter.annual_price_id : plans?.starter.monthly_price_id)
+                : isActive
+                  ? changePlan('starter')
+                  : checkout(annual ? plans?.starter.annual_price_id : plans?.starter.monthly_price_id)
               }
               t={t}
             />
@@ -531,18 +557,21 @@ export default function BillingPanel() {
               ]}
               btnLabel={
                 currentPlan === 'business' && isActive ? t.currentPlan
+                  : isActive ? (t.billingSwitchToPlan || 'Switch to {plan}').replace('{plan}', t.planBusiness)
                   : isTrial ? (selectedPlan === 'business' ? t.billingPlanSelected.replace('{plan}', t.planBusiness) : t.billingChoosePlan.replace('{plan}', t.planBusiness))
                   : annual ? t.billingSubscribeAnnual.replace('{price}', `$${businessAnnualTotal}`) : t.billingSubscribeMonthly.replace('{price}', `$${businessMonthly}`)
               }
               disabled={!!redirecting || (currentPlan === 'business' && isActive)}
               onSelect={() => isTrial
                 ? setSelectedPlan('business')
-                : checkout(
-                  annual ? plans?.business.base_annual_price_id : plans?.business.base_monthly_price_id,
-                  annual
-                    ? { worker_price_id: plans?.business.worker_annual_price_id, worker_count: businessOverage }
-                    : { worker_price_id: plans?.business.worker_monthly_price_id, worker_count: businessOverage }
-                )
+                : isActive
+                  ? changePlan('business')
+                  : checkout(
+                    annual ? plans?.business.base_annual_price_id : plans?.business.base_monthly_price_id,
+                    annual
+                      ? { worker_price_id: plans?.business.worker_annual_price_id, worker_count: businessOverage }
+                      : { worker_price_id: plans?.business.worker_monthly_price_id, worker_count: businessOverage }
+                  )
               }
               t={t}
             />

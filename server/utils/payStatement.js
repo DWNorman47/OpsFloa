@@ -41,12 +41,29 @@ const cents = n => Math.round((Number(n) || 0) * 100) / 100;
  * @param opts.explain           attach settings_used / leaveDetail + per-entry OT/wage notes
  */
 function buildPayStatement({ worker, entries, reimbursements = [], leave = { sick: 0, vacation: 0 }, deductions = [], otConfig = null, projectRateMap = {}, settings = {}, from = null, to = null, explain = false }) {
+  // 'unpaid' team members are tracked (hours are still computed from their entries) but
+  // earn NOTHING. Force every wage RATE to 0 and drop the pay artifacts (guarantee top-up,
+  // leave, deductions, per-project prevailing rates) so ALL pay math below yields $0 —
+  // regular, OT, prevailing, night premium — without special-casing each surface. This is
+  // the single fail-safe every pay surface flows through (the batch routes also list-exclude
+  // them so they don't render a $0 row). Reimbursements are expense REPAYMENT, not wages, so
+  // they're left intact (an unpaid worker who fronted money is still owed it). Local reassigns
+  // only — the caller's objects are never mutated.
+  const unpaid = !!(worker && worker.worker_type === 'unpaid');
+  if (unpaid) {
+    worker = { ...worker, guaranteed_weekly_hours: 0 };
+    leave = { sick: 0, vacation: 0 };
+    deductions = [];
+    projectRateMap = {}; // prevailing entries fall back to prevRate, which is 0 below
+  }
   const rule = otRuleFromSettings(settings, worker.overtime_rule);
   const threshold = parseFloat(settings.overtime_threshold) || 8;
   const weekStart = settings.week_start;
   const otMult = parseFloat(settings.overtime_multiplier) || 1.5;
-  const prevRate = parseFloat(settings.prevailing_wage_rate) || 45;
-  const rate = parseFloat(worker.hourly_rate) || parseFloat(settings.default_hourly_rate) || 0;
+  // Gate rate/prevRate on `unpaid` directly — a `... || 45`/`... || 0` fallback would turn a
+  // zeroed setting back into the default (0 is falsy), leaking prevailing pay.
+  const prevRate = unpaid ? 0 : (parseFloat(settings.prevailing_wage_rate) || 45);
+  const rate = unpaid ? 0 : (parseFloat(worker.hourly_rate) || parseFloat(settings.default_hourly_rate) || 0);
   const rateType = worker.rate_type || 'hourly';
   const paid = entries || [];
 

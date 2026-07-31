@@ -112,7 +112,7 @@ async function sendWeeklyPayrollReport(companyId, companyName) {
         AND te.company_id = $1
         AND te.work_date BETWEEN $2 AND $3
         AND te.status != 'rejected'
-      WHERE u.company_id = $1 AND u.role = 'worker' AND u.active = true`,
+      WHERE u.company_id = $1 AND u.role = 'worker' AND u.active = true AND u.worker_type <> 'unpaid'`,
     [companyId, from, to]
   );
 

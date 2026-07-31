@@ -42,6 +42,7 @@ const PERMISSIONS = [
   { key: 'view_worker_wages', group: 'workers', label: 'See other workers\' pay rates' },
   { key: 'manage_workers', group: 'workers', label: 'Invite / edit / remove workers' },
   { key: 'manage_roles', group: 'workers', label: 'Create / edit / delete roles' },
+  { key: 'manage_admin_roles', group: 'workers', label: 'Create / edit / delete admin roles' },
   { key: 'assign_roles', group: 'workers', label: 'Assign a role to a user' },
 
   // Projects
@@ -117,7 +118,9 @@ const WORKER_PERMISSIONS = [
 ];
 
 // Admin: Worker's set plus admin-specific, minus Owner-only
-// (manage_billing, manage_roles, delete_company).
+// (manage_billing, manage_admin_roles, delete_company). Admin CAN create/edit/delete
+// non-admin (worker-tier) roles via manage_roles; managing ADMIN-tier roles is gated
+// separately by manage_admin_roles (Owner-only) at the /roles endpoints.
 const ADMIN_PERMISSIONS = [
   ...WORKER_PERMISSIONS,
   'clock_in_others',
@@ -127,6 +130,7 @@ const ADMIN_PERMISSIONS = [
   'view_workers_list',
   'view_worker_wages',
   'manage_workers',
+  'manage_roles',
   'assign_roles',
   'manage_projects',
   'manage_project_visibility',
@@ -142,11 +146,12 @@ const ADMIN_PERMISSIONS = [
   'manage_inventory',
 ];
 
-// Owner: everything.
+// Owner: everything. manage_roles is inherited from ADMIN; Owner additionally gets
+// manage_admin_roles (create/edit/delete ADMIN-tier roles), manage_billing, delete_company.
 const OWNER_PERMISSIONS = [
   ...ADMIN_PERMISSIONS,
   'manage_billing',
-  'manage_roles',
+  'manage_admin_roles',
   'delete_company',
 ];
 
