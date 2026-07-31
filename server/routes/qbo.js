@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs');
 const { requireAuth, requireAdmin, requirePerm } = require('../middleware/auth');
 const qbo = require('../services/qbo');
 const { encrypt } = require('../services/encryption');
+const { USER_WORKER_TYPES } = require('../constants/userEnums');
 // Every punch this file bills from must be the PAID punch, not the raw one.
 // qbo.js never imported the hours-rules engine, so a company with a policy
 // enabled would have had OpsFloa's own invoice and its QuickBooks bill disagree
@@ -427,6 +428,10 @@ router.post('/push', requireAdmin, async (req, res) => {
         alreadySynced++;
         continue;
       }
+      if (entry.worker_type === 'unpaid') {
+        skipped.push({ entry_id: entry.id, reason: `Worker "${entry.worker_name}" is unpaid — labor is not synced to QuickBooks` });
+        continue;
+      }
       const usesVendor = entry.worker_type === 'contractor' || entry.worker_type === 'subcontractor';
       const mappedId = usesVendor ? entry.qbo_vendor_id : entry.qbo_employee_id;
       if (!mappedId) {
@@ -485,7 +490,7 @@ router.post('/import/workers', requireAdmin, async (req, res) => {
   const tempPassword = settings.default_temp_password || crypto.randomBytes(5).toString('hex');
   const hash = await bcrypt.hash(tempPassword, 10);
 
-  const VALID_WORKER_TYPES = ['employee', 'contractor', 'subcontractor', 'owner'];
+  const VALID_WORKER_TYPES = USER_WORKER_TYPES;
   const imported = [];
   const skipped = [];
 
@@ -691,6 +696,7 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
           AND ($3::date IS NULL OR te.work_date <= $3::date)
           AND ($4::int[] IS NULL OR te.user_id = ANY($4::int[]))
           AND u.qbo_vendor_id IS NOT NULL
+          AND u.worker_type <> 'unpaid'
         ORDER BY te.user_id, te.work_date, te.start_time`,
       [companyId, from || null, to || null, ids]
     ),
@@ -1047,7 +1053,7 @@ router.post('/push-payroll', requireAdmin, requirePerm('manage_integrations'), r
       `SELECT id, full_name, invoice_name, hourly_rate, rate_type, overtime_rule,
               role_id, guaranteed_weekly_hours
          FROM users
-        WHERE company_id = $1 AND role = 'worker' AND active = true
+        WHERE company_id = $1 AND role = 'worker' AND active = true AND worker_type <> 'unpaid'
         ORDER BY full_name`,
       [companyId]
     );
@@ -1141,6 +1147,7 @@ router.post('/retry-error/:id', requireAdmin, async (req, res) => {
       if (!entry.rows.length) return res.status(404).json({ error: 'Time entry not found' });
       const retryRow = entry.rows[0];
       const [e] = roundEntriesFromSettings(entry.rows, await loadSettings(companyId), { workerRoleById: { [retryRow.user_id]: retryRow.role_id } });
+      if (e.worker_type === 'unpaid') return res.status(400).json({ error: 'Worker is unpaid — labor is not synced to QuickBooks' });
       const usesVendor = e.worker_type === 'contractor' || e.worker_type === 'subcontractor';
       const mappedId = usesVendor ? e.qbo_vendor_id : e.qbo_employee_id;
       if (!mappedId) return res.status(400).json({ error: 'Worker has no QBO mapping — set it in QuickBooks settings first' });

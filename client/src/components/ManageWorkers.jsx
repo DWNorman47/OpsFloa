@@ -158,6 +158,7 @@ const workerTypeLabel = (type, t) => ({
   contractor:    t.mwTypeContractor,
   subcontractor: t.mwTypeSubcontractor,
   owner:         t.mwTypeOwner,
+  unpaid:        t.mwTypeUnpaid,
 }[type] || type);
 
 const permLabels = (t) => [
@@ -711,6 +712,7 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
                     <option value="employee">{t.mwTypeEmployee}</option>
                     <option value="contractor">{t.mwTypeContractor}</option>
                     <option value="subcontractor">{t.mwTypeSubcontractor}</option>
+                    <option value="unpaid">{t.mwTypeUnpaid}</option>
                     <option value="owner">{t.mwTypeOwner}</option>
                   </select>
                 </div>
@@ -820,6 +822,7 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
                         <option value="employee">{t.mwTypeEmployee}</option>
                         <option value="contractor">{t.mwTypeContractor}</option>
                         <option value="subcontractor">{t.mwTypeSubcontractor}</option>
+                    <option value="unpaid">{t.mwTypeUnpaid}</option>
                         <option value="owner">{t.mwTypeOwner}</option>
                       </select>
                     </div>
@@ -937,6 +940,7 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
                                   <option value="employee">{t.mwTypeEmployee}</option>
                                   <option value="contractor">{t.mwTypeContractor}</option>
                                   <option value="subcontractor">{t.mwTypeSubcontractor}</option>
+                    <option value="unpaid">{t.mwTypeUnpaid}</option>
                                   <option value="owner">{t.mwTypeOwner}</option>
                                 </select>
                               </div>

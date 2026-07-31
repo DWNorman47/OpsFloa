@@ -134,6 +134,34 @@ dependency audit is clean.
 
 ---
 
+## 2026-07-31 — New Team Member Type: "Unpaid" (excluded from all pay)
+
+David: "Team Member Type should include Unpaid." Confirmed (via a question) that it means
+EXCLUDE FROM PAY — an unpaid member is still tracked (time clock, scheduling, hours reports)
+but earns nothing and appears on no pay surface.
+
+`worker_type` was purely categorical (QBO routing + display); it never touched the pay
+engine. Added `'unpaid'` as a 5th value and wired the exclusion:
+
+- **Foundation:** `'unpaid'` in `USER_WORKER_TYPES` (userEnums.js); migration `0161` extends
+  the `0071` CHECK; replaced 4 hardcoded `VALID_WORKER_TYPES` arrays (admin.js ×3, qbo.js)
+  with the shared constant; `docs/db-enums.md` updated; UI option + `mwTypeUnpaid` (EN/ES).
+- **Central fail-safe:** `buildPayStatement` (the one statement all four pay surfaces + the
+  payroll run render) forces every wage RATE to 0 and drops guarantee/leave/deductions/
+  per-project prevailing for an unpaid worker → all pay math yields $0 while **hours are
+  still computed** (dual-use: the Team Member Report keeps its hours, the invoice shows
+  "hours worked, $0"). Reimbursements (expense repayment ≠ wages) are left intact. Gated on
+  the flag directly — a `|| 45` fallback was turning a zeroed prevailing rate back to $45
+  (caught by a test). `worker_type` added to the 3 single-worker pay SELECTs so the guard fires.
+- **List-level exclusion** so unpaid workers don't even render a $0 row: overtime report,
+  `computePayrollRun`, payroll CSV, certified payroll (WH-347), scheduled pay email, the
+  payroll-periods role probe, and the QBO payroll journal.
+- **QBO time sync** skips unpaid labor (auto-sync on approve, /qbo/push, gatherBillData
+  vendor bills, retry-error) — they earn nothing to sync.
+- **Tests:** unpaid worker → all wage costs/totals 0, hours still tracked, reimbursement
+  still repaid, prevailing also $0; plus a guard-against-over-zeroing (a paid worker with
+  the same inputs still earns). Suite green (server 1261, client 288).
+
 ## 2026-07-30 — Reviewed "Fix critical staging workflows" pull + restored SW clients.claim()
 
 Reviewed David's commit e1b73d8d (payroll UI finalize-confirm + void-disabled-when-paid,

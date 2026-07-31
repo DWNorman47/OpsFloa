@@ -342,7 +342,7 @@ router.get('/invoice-statement', requireAuth, async (req, res) => {
     const [workerRow, settings, companyRow] = await Promise.all([
       pool.query(
         `SELECT id, full_name, email, invoice_name, hourly_rate, rate_type,
-                overtime_rule, role_id, guaranteed_weekly_hours
+                overtime_rule, role_id, guaranteed_weekly_hours, worker_type
          FROM users
          WHERE id=$1 AND company_id=$2`,
         [req.user.id, companyId]
@@ -389,7 +389,7 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const [workerRow, settings, companyRow] = await Promise.all([
-      pool.query('SELECT id, overtime_rule, hourly_rate, rate_type, guaranteed_weekly_hours, role_id FROM users WHERE id = $1', [userId]),
+      pool.query('SELECT id, overtime_rule, hourly_rate, rate_type, guaranteed_weekly_hours, role_id, worker_type FROM users WHERE id = $1', [userId]),
       loadSettings(companyId),
       pool.query('SELECT subscription_status, addon_advanced_payroll, addon_certified_payroll FROM companies WHERE id = $1', [companyId]),
     ]);
