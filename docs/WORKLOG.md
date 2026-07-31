@@ -134,6 +134,32 @@ dependency audit is clean.
 
 ---
 
+## 2026-07-31 — Billing: in-app plan change (starter ↔ business), no second subscription
+
+Follow-up to the double-subscription guard: give subscribed companies real in-app upgrade/
+downgrade buttons that modify the EXISTING subscription instead of creating a parallel one
+(and instead of just erroring / sending them to the Stripe portal).
+
+- **`POST /stripe/change-plan { plan }`** (`stripe.js`): retrieves the live subscription and,
+  in ONE atomic `subscriptions.update`, swaps the base-plan price on the existing base item,
+  keeps every add-on (listed by id so it can't be dropped whether Stripe merges or replaces
+  the item set), and adds/updates/removes the per-worker seat item. Keeps the billing interval
+  (annual stays annual). Business seats = `max(0, activeWorkers − 15)` computed server-side
+  (authoritative, not a client estimate). Prorated (`create_prorations`). Guards: no live sub →
+  400; already on the target plan → 400; add-ons-only sub (no base) → 400; **downgrade to
+  Starter refused if active workers exceed Starter's cap** (10 + bonus_seats). DB `plan`
+  reflected immediately; the `customer.subscription.updated` webhook re-confirms plan + MRR.
+- **Client** (`BillingPanel.jsx`): for an already-active company the Starter/Business cards now
+  read "Switch to X" and call `changePlan()` (confirm dialog → POST /change-plan → refresh
+  status) instead of `/checkout`. Trial/free companies still checkout as before; downgrade-to-
+  Free stays a portal cancel (unchanged). `billingSwitchToPlan` / `billingChangePlanConfirm` /
+  `billingChangePlanFailed` EN+ES.
+- **Tests:** `stripeChangePlanRoute.test.js` (10) — upgrade adds the right seat overage +
+  preserves the add-on, ≤15 workers adds no seat item, downgrade removes the seat item +
+  preserves the add-on, downgrade blocked over cap (and bonus seats raise it), annual uses
+  annual prices, already-on-plan / no-sub / add-ons-only / bad-plan all rejected without a
+  Stripe write. Suite green (server 1285).
+
 ## 2026-07-31 — Billing: prevent accidental double subscription / double add-on
 
 A customer bought their subscription twice → refund + lost Stripe fees. Root cause found in
