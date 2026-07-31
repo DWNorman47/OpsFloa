@@ -72,6 +72,7 @@ export function WorkforcePanel() {
   const [pendingCount, setPendingCount] = useState(0);
   const [pendingReimbursements, setPendingReimbursements] = useState(0);
   const [chatUnread, setChatUnread] = useState(false);
+  const [liveKpiRefreshToken, setLiveKpiRefreshToken] = useState(0);
   const [collapsedSections, setCollapsedSections] = useState(() => {
     try { return JSON.parse(safeLocal.getItem('opsfloa_report_sections') || '{}'); } catch { return {}; }
   });
@@ -188,6 +189,12 @@ export function WorkforcePanel() {
   const handleProjectDeleted = id => setProjects(prev => prev.filter(p => p.id !== id));
   const handleProjectUpdated = p  => setProjects(prev => prev.map(x => x.id === p.id ? p : x));
   const handleProjectRestored= p  => setProjects(prev => [...prev, p]);
+  const refreshLiveMetrics = () => {
+    setLiveKpiRefreshToken(token => token + 1);
+    api.get('/admin/kpis')
+      .then(r => setPendingCount(r.data.pending_approvals ?? 0))
+      .catch(silentError('admindashboard'));
+  };
 
   const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
   const workerLabelPlural = labelPl(settings?.label_worker, 'worker', user?.language);
@@ -257,20 +264,20 @@ export function WorkforcePanel() {
             {workers.filter(w => w.role === 'worker').length === 0 && (
               <OnboardingChecklist workers={workers} projects={projects} settings={settings} />
             )}
-            <LiveKPIs />
+            <LiveKPIs refreshToken={liveKpiRefreshToken} />
             {plan.isBusiness && settings?.feature_broadcast !== false ? <BroadcastMessage /> : null}
             {settings?.feature_chat !== false ? (
               <div style={styles.liveLayout} className="live-layout">
                 <div style={styles.liveMain}>
                   <Suspense fallback={<TabLoader />}>
-                    <LiveWorkers timezone={settings?.company_timezone ?? ''} showInactiveAlerts={settings?.feature_inactive_alerts !== false} projects={projects} settings={settings} />
+                    <LiveWorkers timezone={settings?.company_timezone ?? ''} showInactiveAlerts={settings?.feature_inactive_alerts !== false} projects={projects} settings={settings} onWorkforceChange={refreshLiveMetrics} />
                   </Suspense>
                 </div>
                 <div style={styles.liveChat}><CompanyChat workers={workers} settings={settings} /></div>
               </div>
             ) : (
               <Suspense fallback={<TabLoader />}>
-                <LiveWorkers timezone={settings?.company_timezone ?? ''} showInactiveAlerts={settings?.feature_inactive_alerts !== false} projects={projects} settings={settings} />
+                <LiveWorkers timezone={settings?.company_timezone ?? ''} showInactiveAlerts={settings?.feature_inactive_alerts !== false} projects={projects} settings={settings} onWorkforceChange={refreshLiveMetrics} />
               </Suspense>
             )}
           </>
