@@ -9,6 +9,22 @@ function getStripe() {
   return new Stripe(process.env.STRIPE_SECRET_KEY);
 }
 
+// A company may have at most ONE subscription. Returns the company's live Stripe
+// subscription (active / trialing / past_due / unpaid) or null. Verified against
+// Stripe — NOT just the DB flag — so a webhook lag can't let a second checkout
+// through, and a stale id for a canceled sub doesn't wrongly block a re-subscribe.
+// This is the guard that stops a company accidentally buying a SECOND parallel
+// subscription (which would double-bill them until someone notices + refunds).
+async function liveSubscription(stripe, subscriptionId) {
+  if (!subscriptionId) return null;
+  try {
+    const sub = await stripe.subscriptions.retrieve(subscriptionId);
+    return ['active', 'trialing', 'past_due', 'unpaid'].includes(sub.status) ? sub : null;
+  } catch (err) {
+    return null; // not found / deleted → no live subscription
+  }
+}
+
 // Sum monthly revenue in cents from Stripe subscription items (normalises annual → monthly)
 function calcMrrCents(items) {
   return items.reduce((sum, item) => {
@@ -140,6 +156,17 @@ router.post('/checkout', requireAdmin, requirePerm('manage_billing'), async (req
     );
     const c = company.rows[0];
     if (!c) return res.status(404).json({ error: 'Company not found' });
+
+    // Refuse a SECOND subscription. A company that already has a live subscription must
+    // change their plan / add add-ons from Manage billing (the portal, or /addon) — a fresh
+    // checkout would create a parallel subscription and double-bill them. This is the guard
+    // that prevents the accidental double-purchase.
+    if (await liveSubscription(stripe, c.stripe_subscription_id)) {
+      return res.status(409).json({
+        error: 'You already have an active subscription. Change your plan or add add-ons from Manage billing instead of subscribing again.',
+        code: 'has_subscription',
+      });
+    }
 
     // Takeoff is a layer on top of Plan Room — it can't be bought without it.
     // Allowed only if Plan Room is already owned or is in this same checkout.
@@ -372,8 +399,9 @@ router.post('/checkout-addon', requireAdmin, requirePerm('manage_billing'), asyn
     // If they already have a LIVE subscription, adding an add-on there is the
     // right path (one prorated line item, one invoice) — a second subscription
     // would double the billing relationship. Route them to /addon. A stale
-    // subscription_id from a canceled sub is fine: only active/past_due block.
-    if (c.stripe_subscription_id && ['active', 'past_due'].includes(c.subscription_status)) {
+    // subscription_id from a canceled/expired sub is fine: only live states block
+    // ('trial' = a trialing sub that was pre-purchased, also live).
+    if (c.stripe_subscription_id && ['active', 'past_due', 'trial'].includes(c.subscription_status)) {
       return res.status(400).json({ error: 'You already have a subscription — add this from your plan instead.', code: 'has_subscription' });
     }
 

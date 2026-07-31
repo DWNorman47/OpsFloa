@@ -97,6 +97,7 @@ export default function BillingPanel() {
   }, []);
 
   const checkout = async (priceId, opts = {}) => {
+    if (redirecting) return; // a checkout is already in flight — don't open a second one
     if (!priceId) { setBillingError(t.stripeNotConfigured); return; }
     setBillingError('');
     setRedirecting(priceId);
@@ -170,6 +171,7 @@ export default function BillingPanel() {
   // subscription whose line items are those add-ons (so buying both puts them
   // on one subscription/one invoice). Server: /stripe/checkout-addon.
   const checkoutAddons = async (addons) => {
+    if (redirecting) return; // a checkout is already in flight — don't open a second one
     if (!addons.length) return;
     setBillingError('');
     setRedirecting('buy-addons');

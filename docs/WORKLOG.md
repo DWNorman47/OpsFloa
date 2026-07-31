@@ -134,6 +134,35 @@ dependency audit is clean.
 
 ---
 
+## 2026-07-31 — Billing: prevent accidental double subscription / double add-on
+
+A customer bought their subscription twice → refund + lost Stripe fees. Root cause found in
+`server/routes/stripe.js`: **`POST /stripe/checkout` had NO guard** — it minted a fresh Stripe
+subscription every call. So a company that was already subscribed (clicked Subscribe again, or
+clicked a *different* plan — the client's plan buttons hit /checkout, not a plan-change flow)
+got a SECOND parallel subscription that billed alongside the first.
+
+- **The fix:** a `liveSubscription()` helper retrieves the company's Stripe subscription and
+  returns it only if genuinely live (active/trialing/past_due/unpaid) — **verified against
+  Stripe, not the DB flag**, so a webhook lag can't let a duplicate through and a stale id for
+  a canceled sub doesn't wrongly block a re-subscribe. `/checkout` now 409s (`has_subscription`)
+  when a live subscription exists, directing the admin to Manage billing to change plan / add-ons.
+- **`/checkout-addon`** already blocked a second subscription via the DB flag but only for
+  `active`/`past_due` — added `trial` so a company with a pre-purchased *trialing* base plan
+  can't create a second sub through the add-on door either.
+- **Add-ons** were already double-safe: `/addon` is idempotent (skips an add-on already on the
+  sub), `/checkout` and `/checkout-addon` de-dupe line items, and both add-on paths require /
+  route to the single existing subscription.
+- **Client** (`BillingPanel.jsx`): the buttons already disable during an in-flight redirect;
+  added a function-level `if (redirecting) return` guard on `checkout`/`checkoutAddons` so a
+  fast double-click can't open two checkout sessions.
+- **Tests:** new `stripeCheckoutRoute.test.js` — live sub → 409, trialing → 409, canceled/
+  missing id → allowed, fresh company → allowed (no Stripe call). Suite green (server 1275).
+
+Note: an already-subscribed company clicking a *different* plan now gets the 409 "manage from
+Billing" message rather than a second subscription. If you want in-app plan *changes* (vs the
+Stripe portal), that's a separate follow-up — the portal already changes the existing sub safely.
+
 ## 2026-07-31 — Role management: split managing roles vs ADMIN roles
 
 David: create/edit/delete roles and create/edit/delete ADMIN roles should be distinct —
