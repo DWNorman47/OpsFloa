@@ -27,29 +27,121 @@ async function insertDemoUser(client, companyId, roleId, role, username, fullNam
   return rows[0];
 }
 
+// The full company-data delete, in parent-correct order so no FK RESTRICT fires,
+// ending with the company row itself. Runs inside the caller's transaction.
+//
+// Shared by the superadmin company wipe and the demo-workspace reset so the two
+// can't drift. A divergence is exactly how the demo reset ended up missing the
+// booking tables (0113): its own short list deleted `users` while seeded
+// `appointments` still pointed at them (assigned_user_id ON DELETE RESTRICT), so
+// the next reset would 500. Deleting 0 rows is a harmless no-op for any table a
+// given company never used, so running the full sequence against the demo is safe.
+async function purgeCompanyRows(client, id) {
+  // ── Leaf tables (children of things we're about to delete) ──────────────
+  await client.query(`DELETE FROM field_report_photos WHERE report_id IN (SELECT id FROM field_reports WHERE company_id = $1)`, [id]);
+  await client.query(`DELETE FROM entry_messages              WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM equipment_hours             WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM company_chat                WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM incident_reports            WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM sub_reports                 WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM rfis                        WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM inspections                 WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM inspection_templates        WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM safety_checklist_submissions WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM safety_checklist_templates  WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM field_reports               WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM daily_reports               WHERE company_id = $1`, [id]); // cascades report_manpower/equipment/materials
+  await client.query(`DELETE FROM punchlist_items             WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM safety_talks                WHERE company_id = $1`, [id]); // cascades signoffs/attachments/quiz
+
+  // ── Timekeeping ─────────────────────────────────────────────────────────
+  await client.query(`DELETE FROM time_entries                WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM active_clock                WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM pay_periods                 WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM shifts                      WHERE company_id = $1`, [id]);
+
+  // ── Worker-level records ────────────────────────────────────────────────
+  await client.query(`DELETE FROM worker_documents            WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM worker_availability         WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM worker_fringes              WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM certified_payroll_signatures WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM time_off_requests           WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM reimbursements              WHERE company_id = $1`, [id]);
+
+  // ── Inventory (order matters: transactions & cycle counts reference items/locations via RESTRICT) ──
+  await client.query(`DELETE FROM inventory_transactions      WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM inventory_cycle_counts      WHERE company_id = $1`, [id]); // cascades cycle_count_lines + worker assignments
+  await client.query(`DELETE FROM purchase_orders             WHERE company_id = $1`, [id]); // cascades purchase_order_lines
+  await client.query(`DELETE FROM inventory_items             WHERE company_id = $1`, [id]); // cascades stock, item_uoms
+  await client.query(`DELETE FROM inventory_locations         WHERE company_id = $1`, [id]); // cascades areas → racks → bays → compartments
+  await client.query(`DELETE FROM inventory_suppliers         WHERE company_id = $1`, [id]);
+
+  // ── Project-level records ───────────────────────────────────────────────
+  await client.query(`DELETE FROM project_documents           WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM invoices                    WHERE company_id = $1`, [id]); // cascades invoice_lines/payments/audit
+  await client.query(`DELETE FROM project_invoices            WHERE company_id = $1`, [id]); // dormant QBO mirror (retired; kept as backup)
+
+  // Project sub-ledgers whose project_id FK is ON DELETE RESTRICT (subcontract
+  // POs from 0107 + the 0114 audit-followup tables). These MUST be deleted
+  // before `DELETE FROM projects` below, or that delete raises an FK violation
+  // and the whole wipe rolls back (500 — the company can never be deleted).
+  // subcontract_pos first (subcontractors' subcontractor_id is also RESTRICT);
+  // each parent CASCADEs its own children.
+  await client.query(`DELETE FROM subcontract_pos            WHERE company_id = $1`, [id]); // cascades subcontract_po_payments
+  await client.query(`DELETE FROM subcontractors            WHERE company_id = $1`, [id]); // cascades subcontractor_documents
+  await client.query(`DELETE FROM lien_waivers              WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM change_orders             WHERE company_id = $1`, [id]); // cascades change_order_lines
+  await client.query(`DELETE FROM submittals                WHERE company_id = $1`, [id]); // cascades submittal children
+  await client.query(`DELETE FROM project_closeouts         WHERE company_id = $1`, [id]); // cascades project_closeout_items
+  await client.query(`DELETE FROM project_expenses          WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM project_budget_categories WHERE project_id IN (SELECT id FROM projects WHERE company_id = $1)`, [id]); // no company_id column
+  await client.query(`DELETE FROM estimates                 WHERE company_id = $1`, [id]); // cascades estimate_lines/audit; frees converted_project_id
+
+  // ── Support / SaaS surfaces ─────────────────────────────────────────────
+  await client.query(`DELETE FROM service_requests            WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM qbo_sync_errors             WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM client_errors               WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM inbox                       WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM push_subscriptions          WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM audit_log                   WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM equipment_items             WHERE company_id = $1`, [id]);
+
+  // ── Booking module (0113) ───────────────────────────────────────────────
+  // appointments.assigned_user_id AND .appointment_type_id are both ON DELETE
+  // RESTRICT, so appointments must go before users (below) and appointment_types.
+  await client.query(`DELETE FROM appointments                WHERE company_id = $1`, [id]); // cascades appointment_audit
+  await client.query(`DELETE FROM appointment_types           WHERE company_id = $1`, [id]); // cascades appointment_type_users/_shift_types
+  await client.query(`DELETE FROM shift_types                 WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM bookable_windows            WHERE user_id IN (SELECT id FROM users WHERE company_id = $1)`, [id]); // no company_id; also CASCADEs from users
+
+  // impersonation_log has a constraint bug: super_admin_id is NOT NULL
+  // REFERENCES users(id) ON DELETE SET NULL, which is contradictory. If
+  // any user in this company is referenced as super_admin_id, the
+  // DELETE FROM users below would fail. Clear out any rows referencing
+  // users in this company — and any rows where this company was the
+  // impersonation target — before the user delete fires.
+  await client.query(
+    `DELETE FROM impersonation_log
+      WHERE company_id = $1
+         OR super_admin_id IN (SELECT id FROM users WHERE company_id = $1)`,
+    [id]
+  );
+
+  // ── Base entities ───────────────────────────────────────────────────────
+  await client.query(`DELETE FROM clients                     WHERE company_id = $1`, [id]); // cascades client_documents
+  await client.query(`DELETE FROM projects                    WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM advanced_settings           WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM settings                    WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM role_permissions            WHERE role_id IN (SELECT id FROM roles WHERE company_id = $1)`, [id]);
+  await client.query(`DELETE FROM users                       WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM roles                       WHERE company_id = $1`, [id]);
+  await client.query(`DELETE FROM companies                   WHERE id = $1`, [id]);
+}
+
 async function deleteDemoWorkspace(client) {
   const { rows } = await client.query('SELECT id FROM companies WHERE slug = $1', [DEMO_COMPANY_SLUG]);
   for (const { id } of rows) {
-    await client.query(`DELETE FROM inventory_count_assignments WHERE cycle_count_id IN (SELECT id FROM inventory_cycle_counts WHERE company_id = $1)`, [id]);
-    await client.query(`DELETE FROM inventory_count_workers WHERE cycle_count_id IN (SELECT id FROM inventory_cycle_counts WHERE company_id = $1)`, [id]);
-    await client.query(`DELETE FROM inventory_cycle_count_lines WHERE cycle_count_id IN (SELECT id FROM inventory_cycle_counts WHERE company_id = $1)`, [id]);
-    await client.query(`DELETE FROM inventory_cycle_counts WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM inventory_transactions WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM inventory_stock WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM inventory_items WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM inventory_locations WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM safety_checklist_submissions WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM safety_checklist_templates WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM daily_reports WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM active_clock WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM time_entries WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM clients WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM projects WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM settings WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM role_permissions WHERE role_id IN (SELECT id FROM roles WHERE company_id = $1)`, [id]);
-    await client.query(`DELETE FROM users WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM roles WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM companies WHERE id = $1`, [id]);
+    await purgeCompanyRows(client, id);
   }
 }
 
@@ -248,7 +340,7 @@ router.get('/companies', requireSuperAdmin, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT c.id, c.name, c.slug, c.active, c.created_at, c.plan, c.subscription_status,
-              c.trial_ends_at, c.mrr_cents, c.affiliate_id, c.addon_qbo, c.addon_certified_payroll, c.addon_takeoff, c.addon_planroom, c.addon_storm, c.bonus_seats,
+              c.trial_ends_at, c.mrr_cents, c.affiliate_id, c.addon_qbo, c.addon_certified_payroll, c.addon_advanced_payroll, c.addon_takeoff, c.addon_planroom, c.addon_storm, c.addon_roof, c.bonus_seats,
               a.name AS affiliate_name,
               COUNT(DISTINCT u.id) FILTER (WHERE u.role = 'worker' AND u.active = true) AS worker_count,
               COUNT(DISTINCT u.id) FILTER (WHERE u.role = 'admin' AND u.active = true) AS admin_count,
@@ -259,7 +351,7 @@ router.get('/companies', requireSuperAdmin, async (req, res) => {
        LEFT JOIN time_entries te ON te.company_id = c.id
        LEFT JOIN affiliates a ON c.affiliate_id = a.id
        GROUP BY c.id, c.name, c.slug, c.active, c.created_at, c.plan, c.subscription_status,
-                c.trial_ends_at, c.mrr_cents, c.affiliate_id, c.addon_qbo, c.addon_certified_payroll, c.addon_takeoff, c.addon_planroom, c.addon_storm, c.bonus_seats, a.name
+                c.trial_ends_at, c.mrr_cents, c.affiliate_id, c.addon_qbo, c.addon_certified_payroll, c.addon_advanced_payroll, c.addon_takeoff, c.addon_planroom, c.addon_storm, c.addon_roof, c.bonus_seats, a.name
        ORDER BY c.created_at DESC`
     );
     res.json(result.rows);
@@ -307,13 +399,13 @@ router.post('/demo-workspace', requireSuperAdmin, async (req, res) => {
 
 // PATCH /superadmin/companies/:id — update any combination of fields
 router.patch('/companies/:id', requireSuperAdmin, async (req, res) => {
-  const { active, affiliate_id, subscription_status, plan, name, trial_ends_at, addon_qbo, addon_certified_payroll, addon_takeoff, addon_planroom, addon_storm, bonus_seats } = req.body;
+  const { active, affiliate_id, subscription_status, plan, name, trial_ends_at, addon_qbo, addon_certified_payroll, addon_advanced_payroll, addon_takeoff, addon_planroom, addon_storm, addon_roof, bonus_seats } = req.body;
   if (
     active === undefined && affiliate_id === undefined &&
     subscription_status === undefined && plan === undefined &&
     name === undefined && trial_ends_at === undefined &&
-    addon_qbo === undefined && addon_certified_payroll === undefined &&
-    addon_takeoff === undefined && addon_planroom === undefined && addon_storm === undefined && bonus_seats === undefined
+    addon_qbo === undefined && addon_certified_payroll === undefined && addon_advanced_payroll === undefined &&
+    addon_takeoff === undefined && addon_planroom === undefined && addon_storm === undefined && addon_roof === undefined && bonus_seats === undefined
   ) return res.status(400).json({ error: 'No fields to update' });
 
   const VALID_STATUSES = COMPANY_SUBSCRIPTION_STATUSES;
@@ -343,14 +435,16 @@ router.patch('/companies/:id', requireSuperAdmin, async (req, res) => {
     if (trial_ends_at !== undefined)       { fields.push(`trial_ends_at = $${idx++}`);        values.push(trial_ends_at || null); }
     if (addon_qbo !== undefined)           { fields.push(`addon_qbo = $${idx++}`);            values.push(!!addon_qbo); }
     if (addon_certified_payroll !== undefined) { fields.push(`addon_certified_payroll = $${idx++}`); values.push(!!addon_certified_payroll); }
+    if (addon_advanced_payroll !== undefined) { fields.push(`addon_advanced_payroll = $${idx++}`); values.push(!!addon_advanced_payroll); }
     if (addon_takeoff !== undefined)       { fields.push(`addon_takeoff = $${idx++}`);        values.push(!!addon_takeoff); }
     if (addon_planroom !== undefined)      { fields.push(`addon_planroom = $${idx++}`);       values.push(!!addon_planroom); }
     if (addon_storm !== undefined)         { fields.push(`addon_storm = $${idx++}`);          values.push(!!addon_storm); }
+    if (addon_roof !== undefined)          { fields.push(`addon_roof = $${idx++}`);           values.push(!!addon_roof); }
     if (bonus_seats !== undefined)         { fields.push(`bonus_seats = $${idx++}`);          values.push(bonusSeatsVal); }
     values.push(req.params.id);
     const result = await pool.query(
       `UPDATE companies SET ${fields.join(', ')} WHERE id = $${idx}
-       RETURNING id, name, slug, active, affiliate_id, subscription_status, plan, trial_ends_at, addon_qbo, addon_certified_payroll, addon_takeoff, addon_planroom, addon_storm, bonus_seats`,
+       RETURNING id, name, slug, active, affiliate_id, subscription_status, plan, trial_ends_at, addon_qbo, addon_certified_payroll, addon_advanced_payroll, addon_takeoff, addon_planroom, addon_storm, addon_roof, bonus_seats`,
       values
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Company not found' });
@@ -442,78 +536,9 @@ router.delete('/companies/:id', requireSuperAdmin, async (req, res) => {
       }
     }
 
-    // ── Leaf tables (children of things we're about to delete) ──────────────
-    await client.query(`DELETE FROM field_report_photos WHERE report_id IN (SELECT id FROM field_reports WHERE company_id = $1)`, [id]);
-    await client.query(`DELETE FROM entry_messages              WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM equipment_hours             WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM company_chat                WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM incident_reports            WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM sub_reports                 WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM rfis                        WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM inspections                 WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM inspection_templates        WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM safety_checklist_submissions WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM safety_checklist_templates  WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM field_reports               WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM daily_reports               WHERE company_id = $1`, [id]); // cascades report_manpower/equipment/materials
-    await client.query(`DELETE FROM punchlist_items             WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM safety_talks                WHERE company_id = $1`, [id]); // cascades signoffs/attachments/quiz
-
-    // ── Timekeeping ─────────────────────────────────────────────────────────
-    await client.query(`DELETE FROM time_entries                WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM active_clock                WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM pay_periods                 WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM shifts                      WHERE company_id = $1`, [id]);
-
-    // ── Worker-level records ────────────────────────────────────────────────
-    await client.query(`DELETE FROM worker_documents            WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM worker_availability         WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM worker_fringes              WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM certified_payroll_signatures WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM time_off_requests           WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM reimbursements              WHERE company_id = $1`, [id]);
-
-    // ── Inventory (order matters: transactions & cycle counts reference items/locations via RESTRICT) ──
-    await client.query(`DELETE FROM inventory_transactions      WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM inventory_cycle_counts      WHERE company_id = $1`, [id]); // cascades cycle_count_lines + worker assignments
-    await client.query(`DELETE FROM purchase_orders             WHERE company_id = $1`, [id]); // cascades purchase_order_lines
-    await client.query(`DELETE FROM inventory_items             WHERE company_id = $1`, [id]); // cascades stock, item_uoms
-    await client.query(`DELETE FROM inventory_locations         WHERE company_id = $1`, [id]); // cascades areas → racks → bays → compartments
-    await client.query(`DELETE FROM inventory_suppliers         WHERE company_id = $1`, [id]);
-
-    // ── Project-level records ───────────────────────────────────────────────
-    await client.query(`DELETE FROM project_documents           WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM project_invoices            WHERE company_id = $1`, [id]);
-
-    // ── Support / SaaS surfaces ─────────────────────────────────────────────
-    await client.query(`DELETE FROM service_requests            WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM qbo_sync_errors             WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM client_errors               WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM inbox                       WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM push_subscriptions          WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM audit_log                   WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM equipment_items             WHERE company_id = $1`, [id]);
-
-    // impersonation_log has a constraint bug: super_admin_id is NOT NULL
-    // REFERENCES users(id) ON DELETE SET NULL, which is contradictory. If
-    // any user in this company is referenced as super_admin_id, the
-    // DELETE FROM users below would fail. Clear out any rows referencing
-    // users in this company — and any rows where this company was the
-    // impersonation target — before the user delete fires.
-    await client.query(
-      `DELETE FROM impersonation_log
-        WHERE company_id = $1
-           OR super_admin_id IN (SELECT id FROM users WHERE company_id = $1)`,
-      [id]
-    );
-
-    // ── Base entities ───────────────────────────────────────────────────────
-    await client.query(`DELETE FROM clients                     WHERE company_id = $1`, [id]); // cascades client_documents
-    await client.query(`DELETE FROM projects                    WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM advanced_settings           WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM settings                    WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM users                       WHERE company_id = $1`, [id]);
-    await client.query(`DELETE FROM companies                   WHERE id = $1`, [id]);
+    // Delete every company-rooted table in FK-safe order (shared with the demo
+    // reset so the two lists can't drift), ending with the company row itself.
+    await purgeCompanyRows(client, id);
 
     await client.query('COMMIT');
 
@@ -584,6 +609,11 @@ router.post('/companies/:id/impersonate', requireSuperAdmin, async (req, res) =>
         // language switcher) so a super-admin's view changes never persist to
         // the real user's saved preferences.
         imp: true,
+        // Who started it. requireAuth re-checks this super-admin is still active
+        // and still super_admin on every request, so a fired/demoted super-admin
+        // loses their live impersonation sessions immediately (the token itself
+        // carries no tv, so the normal active-check would otherwise skip it).
+        imp_by: req.user.id,
       },
       process.env.JWT_SECRET,
       { expiresIn: '4h' }
@@ -659,7 +689,12 @@ router.get('/companies/:id/export', requireSuperAdmin, async (req, res) => {
     'inventory_items', 'inventory_item_uoms', 'inventory_stock',
     'inventory_transactions', 'inventory_cycle_counts', 'inventory_cycle_count_lines',
     'inventory_suppliers', 'purchase_orders', 'purchase_order_lines',
-    'project_documents', 'project_invoices', 'service_requests',
+    'project_documents', 'project_invoices', 'invoices', 'service_requests',
+    'estimates',
+    'subcontract_pos', 'subcontractors', 'lien_waivers', 'change_orders',
+    'submittals', 'project_closeouts', 'project_expenses',
+    'appointments', 'appointment_types', 'shift_types',
+    'roles', 'qbo_sync_errors', 'client_errors',
     'audit_log', 'inbox', 'push_subscriptions', 'company_chat',
   ];
 

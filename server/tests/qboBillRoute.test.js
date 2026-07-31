@@ -16,6 +16,7 @@ jest.mock('../middleware/auth', () => {
   return {
     requireAuth:  (req, _res, next) => { req.user = user; next(); },
     requireAdmin: (req, _res, next) => { req.user = user; next(); },
+    requirePerm: () => (_req, _res, next) => next(),
   };
 });
 
@@ -33,11 +34,13 @@ jest.mock('../services/qbo', () => ({
 }));
 
 jest.mock('../auditLog', () => ({ logAudit: jest.fn() }));
+jest.mock('../utils/payStatement', () => ({ companyStatements: jest.fn() }));
 
 const express = require('express');
 const request = require('supertest');
 const pool    = require('../db');
 const qbo     = require('../services/qbo');
+const { companyStatements } = require('../utils/payStatement');
 const qboRoute = require('../routes/qbo');
 
 function makeApp() {
@@ -76,6 +79,18 @@ function otDaily({ threshold = 8, multiplier = 1.5 } = {}) {
       { key: 'overtime_rule', value: 'daily' },
       { key: 'overtime_threshold', value: String(threshold) },
       { key: 'overtime_multiplier', value: String(multiplier) },
+    ],
+  };
+}
+// Daily OT + a night differential premium in the hours_rules policy — exercises the
+// per-band path so QBO bills the night premium as its own line (it used to omit it).
+function otNight({ threshold = 8, multiplier = 1.5, pct = 25, fromHour = 19, toHour = 5 } = {}) {
+  return {
+    rows: [
+      { key: 'overtime_rule', value: 'daily' },
+      { key: 'overtime_threshold', value: String(threshold) },
+      { key: 'overtime_multiplier', value: String(multiplier) },
+      { key: 'hours_rules', value: JSON.stringify({ enabled: true, premiums: { nightDifferential: { pct, fromHour, toHour } } }) },
     ],
   };
 }
@@ -201,6 +216,83 @@ describe('POST /api/qbo/push-bills-preview', () => {
     expect(g.overtime_hours).toBe(0);
     expect(g.overtime_premium).toBe(0);
     expect(g.total).toBeCloseTo(12 * 45);
+  });
+
+  test('bills a night differential premium as its own amount (was omitted before)', async () => {
+    // 22:00–06:00 = 8h (no daily OT); window 19:00–05:00 covers 22:00–05:00 = 7h.
+    pool.query
+      .mockResolvedValueOnce(otNight({ pct: 25, fromHour: 19, toHour: 5 }))
+      .mockResolvedValueOnce({ rows: [timeRow({ id: 1, start_time: '22:00:00', end_time: '06:00:00' })] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(makeApp())
+      .post('/api/qbo/push-bills-preview')
+      .send({ from: '2026-04-01', to: '2026-04-30' });
+
+    const g = res.body.groups[0];
+    expect(g.hours).toBeCloseTo(8);
+    expect(g.overtime_premium).toBeCloseTo(0);
+    expect(g.night_premium).toBeCloseTo(7 * 45 * 0.25); // 78.75
+    expect(g.total).toBeCloseTo(8 * 45 + 7 * 45 * 0.25);
+  });
+});
+
+describe('POST /api/qbo/push-payroll', () => {
+  beforeEach(() => {
+    pool.query.mockReset();
+    qbo.createJournalEntry.mockReset();
+    companyStatements.mockReset();
+  });
+
+  test('posts canonical gross payroll with a stable Intuit request ID', async () => {
+    const worker = {
+      id: 10,
+      full_name: 'Alex Rivera',
+      invoice_name: null,
+      hourly_rate: 20,
+      rate_type: 'hourly',
+      overtime_rule: 'weekly',
+      role_id: 4,
+      guaranteed_weekly_hours: 0,
+    };
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ qbo_realm_id: 'realm-1' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [worker] });
+    companyStatements.mockResolvedValueOnce(new Map([
+      [10, { totals: { grossWages: 950 } }],
+    ]));
+    qbo.createJournalEntry.mockResolvedValueOnce({ Id: 'JE-1' });
+
+    const res = await request(makeApp())
+      .post('/api/qbo/push-payroll')
+      .send({
+        from: '2026-04-01',
+        to: '2026-04-07',
+        debit_account_id: 'expense-1',
+        credit_account_id: 'liability-1',
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ entry_id: 'JE-1', amount: 950, workers: 1 });
+    expect(qbo.createJournalEntry).toHaveBeenCalledWith('company-uuid-1', expect.objectContaining({
+      amount: 950,
+      requestId: expect.stringMatching(/^ops-pay-[a-f0-9]{32}$/),
+    }));
+  });
+
+  test('rejects an excessive date range before querying QuickBooks', async () => {
+    const res = await request(makeApp())
+      .post('/api/qbo/push-payroll')
+      .send({
+        from: '2024-01-01',
+        to: '2026-01-01',
+        debit_account_id: 'expense-1',
+        credit_account_id: 'liability-1',
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('date_range_too_large');
+    expect(pool.query).not.toHaveBeenCalled();
   });
 });
 
@@ -357,5 +449,28 @@ describe('POST /api/qbo/push-bills', () => {
     expect(call.lines[1]).toMatchObject({ type: 'item', qty: 2 });
     expect(call.lines[1].unitPrice).toBeCloseTo(45 * 0.5);
     expect(call.lines[1].description).toMatch(/Overtime premium/);
+  });
+
+  test('pushes a night differential premium line', async () => {
+    pool.query
+      .mockResolvedValueOnce(mockSettings())
+      .mockResolvedValueOnce({ rows: [{ qbo_realm_id: 'realm-1' }] })
+      .mockResolvedValueOnce(otNight({ pct: 25, fromHour: 19, toHour: 5 }))
+      .mockResolvedValueOnce({ rows: [timeRow({ start_time: '22:00:00', end_time: '06:00:00' })] }) // 8h, 7h in window
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1 });
+
+    qbo.createBill.mockResolvedValueOnce({ Id: 'BILL-NIGHT-1' });
+
+    const res = await request(makeApp())
+      .post('/api/qbo/push-bills')
+      .send({ from: '2026-04-01', to: '2026-04-30' });
+
+    expect(res.status).toBe(200);
+    const call = qbo.createBill.mock.calls[0][1];
+    const nightLine = call.lines.find(l => /Night differential/.test(l.description || ''));
+    expect(nightLine).toBeTruthy();
+    expect(nightLine.qty).toBeCloseTo(7);
+    expect(nightLine.unitPrice).toBeCloseTo(45 * 0.25); // 11.25
   });
 });

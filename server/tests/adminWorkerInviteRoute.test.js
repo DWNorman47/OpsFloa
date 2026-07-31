@@ -113,3 +113,25 @@ describe('POST /admin/workers/invite', () => {
     ]);
   });
 });
+
+describe('PATCH /admin/workers/:id — username conflict is scoped per company', () => {
+  beforeEach(() => {
+    pool.query.mockReset();
+    mockCurrentUser = { id: 1, company_id: 'co-1', role: 'admin', full_name: 'Test Admin' };
+  });
+
+  test('the conflict check filters by company_id (usernames are unique per company)', async () => {
+    // First query the route runs when a username is supplied is the conflict
+    // check. Return a hit so it 409s early — no need to mock the whole update.
+    pool.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 99 }] });
+
+    const res = await request(makeApp())
+      .patch('/api/admin/workers/7')
+      .send({ username: 'Leo.Martinez' });
+
+    expect(res.status).toBe(409);
+    const conflictCall = pool.query.mock.calls[0];
+    expect(conflictCall[0]).toContain('company_id');            // scoped to the tenant, not global
+    expect(conflictCall[1]).toEqual(['leo.martinez', 'co-1', '7']); // lowercased, company-scoped, excludes self
+  });
+});

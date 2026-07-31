@@ -40,6 +40,33 @@ async function requireAuth(req, res, next) {
       // DB hiccup — fail closed for safety.
       return res.status(503).json({ error: 'Auth service temporarily unavailable' });
     }
+  } else if (payload.imp) {
+    // Impersonation ("Login as") tokens carry no tv, so the block above skips
+    // them — but over the token's 4h life either party can change:
+    //   - the impersonated user could be deactivated (offboarded), and must
+    //     lose access immediately, not at token expiry;
+    //   - the super-admin who started the session could be deactivated or
+    //     demoted, and their live impersonation must end at once.
+    try {
+      const { rows } = await pool.query(
+        `SELECT
+           (SELECT active FROM users WHERE id = $1)      AS target_active,
+           (SELECT active FROM users WHERE id = $2)      AS imp_active,
+           (SELECT role   FROM users WHERE id = $2)      AS imp_role`,
+        [payload.id, payload.imp_by ?? null]
+      );
+      const row = rows[0] || {};
+      if (row.target_active === false) {
+        return res.status(401).json({ error: 'Account deactivated' });
+      }
+      // imp_by is absent on tokens minted before this claim existed; only
+      // enforce the impersonator check when the token carries it.
+      if (payload.imp_by != null && (row.imp_active !== true || row.imp_role !== 'super_admin')) {
+        return res.status(401).json({ error: 'Impersonation session ended' });
+      }
+    } catch (err) {
+      return res.status(503).json({ error: 'Auth service temporarily unavailable' });
+    }
   }
 
   req.user = payload;
@@ -148,12 +175,16 @@ async function requireProAddon(req, res, next) {
   }
 }
 
-// Gate a route to the Certified Payroll add-on. Same trial/exempt bypass as
-// requireProAddon; otherwise requires companies.addon_certified_payroll.
+// Gate WH-347 / certified-payroll routes to the ADVANCED PAYROLL add-on. Certified
+// payroll was folded into Advanced Payroll (see migration 0155), so this OR-gates on
+// the new flag and the legacy certified one. Same trial/exempt bypass as
+// requireProAddon. The export name stays `requireCertifiedPayrollAddon` so the many
+// route references + test mocks don't churn; `requireAdvancedPayrollAddon` is an
+// alias for new call sites.
 async function requireCertifiedPayrollAddon(req, res, next) {
   try {
     const r = await pool.query(
-      'SELECT plan, subscription_status, addon_certified_payroll, trial_ends_at FROM companies WHERE id = $1',
+      'SELECT plan, subscription_status, addon_certified_payroll, addon_advanced_payroll, trial_ends_at FROM companies WHERE id = $1',
       [req.user.company_id]
     );
     const company = r.rows[0];
@@ -168,17 +199,18 @@ async function requireCertifiedPayrollAddon(req, res, next) {
       return res.status(403).json({ error: 'Subscription required', code: 'subscription_required' });
     }
 
-    if (company.subscription_status === 'exempt' || company.subscription_status === 'trial' || company.addon_certified_payroll) {
+    if (company.subscription_status === 'exempt' || company.subscription_status === 'trial' || company.addon_advanced_payroll || company.addon_certified_payroll) {
       req.company = company;
       return next();
     }
 
-    return res.status(403).json({ error: 'Certified Payroll add-on required', code: 'certified_payroll_required' });
+    return res.status(403).json({ error: 'Advanced Payroll add-on required', code: 'advanced_payroll_required' });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
   }
 }
+const requireAdvancedPayrollAddon = requireCertifiedPayrollAddon; // alias — same gate
 
 async function requireTakeoffAddon(req, res, next) {
   try {
@@ -211,13 +243,13 @@ async function requireTakeoffAddon(req, res, next) {
 }
 
 // Any plan-tools add-on unlocks the shared library routes (/api/takeoffs
-// serves both the sitework takeoff tool and Plan Room, list-filtered by the
-// data.app marker). M6 of docs/plans/plan-viewer-markup.md adds the
+// serves the Plan Room takeoff library, list-filtered by the data.app
+// marker). M6 of docs/plans/plan-viewer-markup.md adds the
 // addon_planroom column + flag to this check when that SKU lands.
 async function requirePlanToolsAddon(req, res, next) {
   try {
     const r = await pool.query(
-      'SELECT plan, subscription_status, addon_takeoff, addon_planroom, trial_ends_at FROM companies WHERE id = $1',
+      'SELECT plan, subscription_status, addon_takeoff, addon_planroom, addon_roof, trial_ends_at FROM companies WHERE id = $1',
       [req.user.company_id]
     );
     const company = r.rows[0];
@@ -230,7 +262,7 @@ async function requirePlanToolsAddon(req, res, next) {
     if (company.subscription_status === 'canceled' || company.subscription_status === 'trial_expired') {
       return res.status(403).json({ error: 'Subscription required', code: 'subscription_required' });
     }
-    if (company.subscription_status === 'exempt' || company.subscription_status === 'trial' || company.addon_takeoff || company.addon_planroom) {
+    if (company.subscription_status === 'exempt' || company.subscription_status === 'trial' || company.addon_takeoff || company.addon_planroom || company.addon_roof) {
       req.company = company;
       return next();
     }
@@ -266,7 +298,7 @@ function requirePermission(key) {
 const { hasPerm, requirePerm } = require('../permissions');
 
 module.exports = {
-  requireAuth, requireAdmin, requireSuperAdmin, requirePlan, requireProAddon, requireCertifiedPayrollAddon, requireTakeoffAddon, requirePlanToolsAddon,
+  requireAuth, requireAdmin, requireSuperAdmin, requirePlan, requireProAddon, requireCertifiedPayrollAddon, requireAdvancedPayrollAddon, requireTakeoffAddon, requirePlanToolsAddon,
   hasAdminPermission, requirePermission,
   hasPerm, requirePerm,
 };

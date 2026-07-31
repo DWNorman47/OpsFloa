@@ -987,7 +987,7 @@ export default function QuickBooks({ workers, projects, onWorkersImported, onPro
 
           {/* ── Payroll journal entry ── */}
           <CollapsibleSection title={t.qbPushPayrollJournal} storageKey="push-payroll">
-            <p style={styles.hint}>Creates a journal entry in QuickBooks for the total labor cost of approved time entries in a date range. Select the wage expense account to debit and the liability or bank account to credit.</p>
+            <p style={styles.hint}>Creates an idempotent QuickBooks journal for gross payroll in the selected date range using the same approved-time, overtime, premium, guarantee, daily-rate, and prevailing-rate calculations as OpsFloa payroll.</p>
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 14 }}>
               <div>
                 <label htmlFor="qbo-pay-from" style={styles.label}>From</label>
@@ -1028,7 +1028,7 @@ export default function QuickBooks({ workers, projects, onWorkersImported, onPro
             {payResult && (
               <div style={styles.resultBox}>
                 <p style={{ margin: 0, fontWeight: 600, color: '#166534' }}>
-                  Journal entry created — ${payResult.amount?.toFixed(2)} across {payResult.entries} entries.
+                Journal entry created — ${payResult.amount?.toFixed(2)} across {payResult.workers} workers.
                 </p>
                 <p style={{ margin: '4px 0 0', fontSize: 13, color: '#6b7280' }}>{payResult.description}</p>
               </div>
@@ -1206,7 +1206,7 @@ export default function QuickBooks({ workers, projects, onWorkersImported, onPro
             {billPreview && billPreview.length === 0 && (
               <p style={{ marginTop: 12, fontSize: 13, color: '#6b7280' }}>Nothing to bill in that range.</p>
             )}
-            {billPreview && billPreview.length > 0 && (
+            {billPreview && billPreview.length > 0 && (() => { const anyBillNight = billPreview.some(g => (g.night_premium || 0) > 0); return (
               <div style={{ marginTop: 16, overflowX: 'auto' }}>
                 <table style={styles.table}>
                   <thead>
@@ -1217,6 +1217,7 @@ export default function QuickBooks({ workers, projects, onWorkersImported, onPro
                       <th style={{ ...styles.th, textAlign: 'right' }}>Labor $</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>OT hrs</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>OT premium $</th>
+                      {anyBillNight && <th style={{ ...styles.th, textAlign: 'right' }}>Night $</th>}
                       <th style={{ ...styles.th, textAlign: 'right' }}>Reimb. $</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>{t.qbBillTotal}</th>
                     </tr>
@@ -1248,12 +1249,13 @@ export default function QuickBooks({ workers, projects, onWorkersImported, onPro
                             <td style={{ ...styles.td, textAlign: 'right' }}>${g.labor_amount.toFixed(2)}</td>
                             <td style={{ ...styles.td, textAlign: 'right', color: g.overtime_hours > 0 ? '#92400e' : '#9ca3af' }}>{(g.overtime_hours || 0).toFixed(2)}</td>
                             <td style={{ ...styles.td, textAlign: 'right', color: g.overtime_premium > 0 ? '#92400e' : '#9ca3af' }}>${(g.overtime_premium || 0).toFixed(2)}</td>
+                            {anyBillNight && <td style={{ ...styles.td, textAlign: 'right', color: (g.night_premium || 0) > 0 ? '#7c3aed' : '#9ca3af' }}>${(g.night_premium || 0).toFixed(2)}</td>}
                             <td style={{ ...styles.td, textAlign: 'right' }}>${g.reimb_amount.toFixed(2)}</td>
                             <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>${g.total.toFixed(2)}</td>
                           </tr>
                           {open && (
                             <tr>
-                              <td colSpan={8} style={{ ...styles.td, background: '#f9fafb', padding: '12px 16px' }}>
+                              <td colSpan={anyBillNight ? 9 : 8} style={{ ...styles.td, background: '#f9fafb', padding: '12px 16px' }}>
                                 {g.time_entry_rows?.length > 0 && (
                                   <div style={{ marginBottom: g.reimbursement_rows?.length ? 14 : 0 }}>
                                     <div style={{ fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.3 }}>
@@ -1331,6 +1333,11 @@ export default function QuickBooks({ workers, projects, onWorkersImported, onPro
                       <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>
                         ${billPreview.reduce((s, g) => s + (g.overtime_premium || 0), 0).toFixed(2)}
                       </td>
+                      {anyBillNight && (
+                        <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>
+                          ${billPreview.reduce((s, g) => s + (g.night_premium || 0), 0).toFixed(2)}
+                        </td>
+                      )}
                       <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>
                         ${billPreview.reduce((s, g) => s + g.reimb_amount, 0).toFixed(2)}
                       </td>
@@ -1341,7 +1348,7 @@ export default function QuickBooks({ workers, projects, onWorkersImported, onPro
                   </tbody>
                 </table>
               </div>
-            )}
+            ); })()}
 
             {/* Result */}
             {billResult && (

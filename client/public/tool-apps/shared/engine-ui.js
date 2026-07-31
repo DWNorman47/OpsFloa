@@ -14,9 +14,29 @@ export function fmt(n, d = 0) {
   return n.toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });
 }
 
+// ISO 4217 code → a locale that renders that currency's LOCAL symbol (Intl takes
+// the symbol from the locale, not the code: en-US + HNL → "HNL 1,234.50", es-HN +
+// HNL → "L 1,234.50"). Mirror of client/src/utils.js CURRENCY_LOCALES — keep in sync.
+const CURRENCY_LOCALES = {
+  USD: 'en-US', CAD: 'en-CA', EUR: 'de-DE', GBP: 'en-GB',
+  MXN: 'es-MX', HNL: 'es-HN', GTQ: 'es-GT', NIO: 'es-NI',
+  BZD: 'en-BZ', CRC: 'es-CR', PAB: 'es-PA',
+};
+
+// The company currency reaches this static tool-app via localStorage (written by
+// the React app's SettingsContext); default to USD before it's set or if blocked.
+function currentCurrency() {
+  try { return localStorage.getItem('tc_currency') || 'USD'; } catch { return 'USD'; }
+}
+
 export function money(n) {
-  return '$' + (Math.round((n || 0) * 100) / 100)
-    .toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const amt = Math.round((n || 0) * 100) / 100;
+  const cur = currentCurrency();
+  try {
+    return new Intl.NumberFormat(CURRENCY_LOCALES[cur] || 'en-US', { style: 'currency', currency: cur, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amt);
+  } catch {
+    return '$' + amt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
 }
 
 export function esc(s) {

@@ -27,6 +27,8 @@ process.env.STRIPE_PRICE_PLANROOM_ANNUAL = 'price_planroom_y';
 process.env.STRIPE_PRICE_TAKEOFF = 'price_takeoff_m';
 process.env.STRIPE_PRICE_TAKEOFF_ANNUAL = 'price_takeoff_y';
 process.env.STRIPE_PRICE_STORM = 'price_storm_m';
+process.env.STRIPE_PRICE_ROOF = 'price_roof_m';
+process.env.STRIPE_PRICE_ROOF_ANNUAL = 'price_roof_y';
 process.env.APP_URL = 'https://app.test';
 
 const express = require('express');
@@ -174,6 +176,41 @@ describe('Takeoff requires Plan Room', () => {
     const res = await post({ addons: ['takeoff'] });
     expect(res.status).toBe(200);
     expect(mockSessionCreate.mock.calls[0][0].line_items).toEqual([{ price: 'price_takeoff_m', quantity: 1 }]);
+  });
+});
+
+// Roof Measurement is standalone-sellable (unlike Storm) but rides on Plan Room —
+// the standalone roof door is Plan Room + Roof.
+describe('Roof Measurement requires Plan Room', () => {
+  test('Roof alone, Plan Room not owned → rejected', async () => {
+    pool.query.mockResolvedValue({ rows: [companyRow()] }); // addon_planroom: false
+    const res = await post({ addons: ['roof'] });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('planroom_required');
+    expect(mockSessionCreate).not.toHaveBeenCalled();
+  });
+
+  test('Roof + Plan Room together → allowed, one subscription with both items', async () => {
+    pool.query.mockResolvedValue({ rows: [companyRow()] });
+    const res = await post({ addons: ['roof', 'planroom'] });
+    expect(res.status).toBe(200);
+    expect(mockSessionCreate.mock.calls[0][0].line_items).toEqual([
+      { price: 'price_roof_m', quantity: 1 },
+      { price: 'price_planroom_m', quantity: 1 },
+    ]);
+  });
+
+  test('Roof alone but Plan Room already owned → allowed', async () => {
+    pool.query.mockResolvedValue({ rows: [companyRow({ addon_planroom: true })] });
+    const res = await post({ addon: 'roof' });
+    expect(res.status).toBe(200);
+    expect(mockSessionCreate.mock.calls[0][0].line_items).toEqual([{ price: 'price_roof_m', quantity: 1 }]);
+  });
+
+  test('annual uses the annual roof price', async () => {
+    pool.query.mockResolvedValue({ rows: [companyRow({ addon_planroom: true })] });
+    await post({ addon: 'roof', annual: true });
+    expect(mockSessionCreate.mock.calls[0][0].line_items).toEqual([{ price: 'price_roof_y', quantity: 1 }]);
   });
 });
 

@@ -56,6 +56,47 @@ describe('minimum daily hours (reporting-time floor)', () => {
     expect(r.regularHours).toBeCloseTo(8, 5);
     expect(r.overtimeHours).toBeCloseTo(2, 5);
   });
+
+  test('a floor ABOVE the OT threshold still preserves worked overtime', () => {
+    // minDaily 10 > threshold 8; worked 9 → 8 reg + 1 OT (worked), then topped up
+    // 1h to the floor as regular = 9 reg / 1 OT. The old code paid 10 reg / 0 OT.
+    const r = computeOT([hDay(MON, 9)], 'daily', 8, 1, { minDailyHours: 10 });
+    expect(r.regularHours).toBeCloseTo(9, 5);
+    expect(r.overtimeHours).toBeCloseTo(1, 5);
+  });
+});
+
+describe('break longer than the shift', () => {
+  test('a break exceeding the shift clamps the day to 0, not negative', () => {
+    // 1h shift, 2h break → duration would be −1h; must not subtract from pay.
+    const r = computeOT([entry(MON, '08:00:00', '09:00:00', { break_minutes: 120 })], 'daily', 8, 1, {});
+    expect(r.regularHours).toBeCloseTo(0, 5);
+    expect(r.overtimeHours).toBeCloseTo(0, 5);
+  });
+});
+
+describe('work_date as a pg Date, not a string', () => {
+  // A DATE column comes back from node-postgres as a JS Date at local midnight,
+  // never a 'YYYY-MM-DD' string. Every date-scoped rule (rest day, OT tiers,
+  // min-daily) keys off the weekday, so it must read a Date exactly like the
+  // string form — String(aDate).substring(0,10) yields "Sun Jul 05", which the
+  // weekday parse rejects, silently no-op'ing the rule on every pay surface.
+  const dSun = new Date(2026, 6, 5); // Sun Jul 5 2026, local midnight
+  const dMon = new Date(2026, 6, 6); // Mon Jul 6 2026
+  const hDayD = (d, hours) => entry(d, '00:00:00', `${String(hours).padStart(2, '0')}:00:00`);
+
+  test('rest-day premium fires for a Date work_date', () => {
+    const r = computeOT([hDayD(dSun, 6)], 'daily', 8, 1, { restDay: { mult: 2, days: [0] } });
+    expect(r.regularHours).toBeCloseTo(0, 5);
+    expect(r.overtimeHours).toBeCloseTo(6, 5);
+    expect(r.otBands).toEqual([{ hours: 6, mult: 2 }]);
+  });
+
+  test('a Date weekday is not treated as the Sunday rest day', () => {
+    const r = computeOT([hDayD(dMon, 8)], 'daily', 8, 1, { restDay: { mult: 2, days: [0] } });
+    expect(r.regularHours).toBeCloseTo(8, 5);
+    expect(r.overtimeHours).toBeCloseTo(0, 5);
+  });
 });
 
 describe('night-shift differential', () => {
@@ -76,5 +117,14 @@ describe('night-shift differential', () => {
   });
   test('no config → zero premium', () => {
     expect(nightPremiumCost([entry(MON, '22:00:00', '06:00:00')], null, 10)).toBe(0);
+  });
+  test('prevailing hours get NO baseRate night premium (wrong rate)', () => {
+    // Prevailing hours are priced at the prevailing rate elsewhere; a baseRate
+    // night premium must not be layered on them.
+    const prevailing = [entry(MON, '22:00:00', '06:00:00', { wage_type: 'prevailing' })];
+    expect(nightPremiumCost(prevailing, { fromHour: 19, toHour: 5, pct: 25 }, 10)).toBe(0);
+    // A regular entry in the same window still gets it.
+    const regular = [entry(MON, '22:00:00', '06:00:00')];
+    expect(nightPremiumCost(regular, { fromHour: 19, toHour: 5, pct: 25 }, 10)).toBeCloseTo(7 * 10 * 0.25, 5);
   });
 });

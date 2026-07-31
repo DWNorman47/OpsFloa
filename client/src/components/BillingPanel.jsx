@@ -5,6 +5,12 @@ import { useAuth } from '../contexts/AuthContext';
 import { SkeletonList } from './Skeleton';
 
 import { silentError } from '../errorReporter';
+
+// Workers bundled into the Business base price. The per-worker Stripe line item
+// is billed for workers BEYOND this — so checkout must send (team size − this),
+// not the full team size. Must match the seats built into STRIPE_PRICE_BUSINESS_BASE.
+const INCLUDED_WORKERS = 15;
+
 function daysLeft(dateStr) {
   if (!dateStr) return 0;
   return Math.max(0, Math.ceil((new Date(dateStr) - new Date()) / 86400000));
@@ -74,9 +80,14 @@ export default function BillingPanel() {
   const [addTakeoff, setAddTakeoff] = useState(false);
   const [addPlanroom, setAddPlanroom] = useState(false);
   const [addStorm, setAddStorm] = useState(false);
+  const [addRoof, setAddRoof] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [workerInputMode, setWorkerInputMode] = useState('slider');
   const [workerDraft, setWorkerDraft] = useState('');
+
+  // Additional workers to bill (beyond the base plan's included seats). This is
+  // the Stripe per-worker quantity — NOT the total team size.
+  const businessOverage = Math.max(0, workerCount - INCLUDED_WORKERS);
 
   useEffect(() => {
     Promise.all([api.get('/stripe/status'), api.get('/stripe/plans')])
@@ -108,6 +119,10 @@ export default function BillingPanel() {
         ...(addStorm && plans?.storm ? {
           add_storm: true,
           storm_price_id: annual ? plans.storm.annual_price_id : plans.storm.monthly_price_id,
+        } : {}),
+        ...(addRoof && plans?.roof ? {
+          add_roof: true,
+          roof_price_id: annual ? plans.roof.annual_price_id : plans.roof.monthly_price_id,
         } : {}),
       });
       window.location.href = r.data.url;
@@ -142,6 +157,7 @@ export default function BillingPanel() {
       if (addon === 'takeoff') updateUser?.({ addon_takeoff: true });
       if (addon === 'planroom') updateUser?.({ addon_planroom: true });
       if (addon === 'storm') updateUser?.({ addon_storm: true });
+      if (addon === 'roof') updateUser?.({ addon_roof: true });
       if (addon === 'qbo') updateUser?.({ addon_qbo: true });
     } catch (err) {
       setBillingError(err.response?.data?.error || 'Could not add the add-on.');
@@ -177,6 +193,7 @@ export default function BillingPanel() {
       if (addon === 'takeoff') updateUser?.({ addon_takeoff: false });
       if (addon === 'planroom') updateUser?.({ addon_planroom: false });
       if (addon === 'storm') updateUser?.({ addon_storm: false });
+      if (addon === 'roof') updateUser?.({ addon_roof: false });
       if (addon === 'qbo') updateUser?.({ addon_qbo: false });
     } catch (err) {
       setBillingError(err.response?.data?.error || 'Could not remove the add-on.');
@@ -193,8 +210,8 @@ export default function BillingPanel() {
       checkout(
         annual ? plans?.business.base_annual_price_id : plans?.business.base_monthly_price_id,
         annual
-          ? { worker_price_id: plans?.business.worker_annual_price_id, worker_count: workerCount }
-          : { worker_price_id: plans?.business.worker_monthly_price_id, worker_count: workerCount }
+          ? { worker_price_id: plans?.business.worker_annual_price_id, worker_count: businessOverage }
+          : { worker_price_id: plans?.business.worker_monthly_price_id, worker_count: businessOverage }
       );
     }
   };
@@ -207,6 +224,7 @@ export default function BillingPanel() {
   const hasTakeoff = status?.addon_takeoff;
   const hasPlanroom = status?.addon_planroom;
   const hasStorm = status?.addon_storm;
+  const hasRoof = status?.addon_roof;
   const isActive = sub === 'active';
   const isTrial = sub === 'trial';
   const isTrialExpired = sub === 'trial_expired';
@@ -219,12 +237,15 @@ export default function BillingPanel() {
     { key: 'planroom', title: 'Plan Room', owned: hasPlanroom, plan: plans?.planroom, desc: 'View, mark up, and measure plan sets in the browser, with a company library and live share sessions.' },
     { key: 'takeoff', title: 'Takeoff', owned: hasTakeoff, plan: plans?.takeoff, desc: 'Turn Plan Room measurements into priced, branded trade takeoffs and bids — earthwork, drywall, roofing, and more. Requires Plan Room.' },
     { key: 'storm', title: 'Storm/Utility', owned: hasStorm, plan: plans?.storm, desc: 'Deep underground-utility takeoff — pipe schedule, structure depth, invert-driven trench depth, and spoil/backfill netting.' },
+    { key: 'roof', title: 'Roof Measurement', owned: hasRoof, plan: plans?.roof, desc: 'Trace a roof on an aerial and get a branded measurement report — squares, pitch, edges, and penetrations. Requires Plan Room.' },
     { key: 'qbo', title: 'QuickBooks Online', owned: hasQbo, plan: plans?.qbo, desc: 'Push invoices to QuickBooks and keep their payment status in sync.' },
   ];
-  // Storm/Utility is built but its math isn't verified yet — keep it OFF the
-  // menu (no buy option) until then; owned companies can still manage/turn it
-  // off. Flip to true to open it for sale.
-  const STORM_SELLABLE = false;
+  // Storm/Utility and Roof Measurement are on sale. Both need their Stripe price
+  // IDs configured (STRIPE_PRICE_STORM / STRIPE_PRICE_ROOF, + _ANNUAL) or the buy
+  // cards stay hidden (they're gated on plans?.x?.monthly_price_id). Set back to
+  // false to pull either off the menu; owned companies keep managing it either way.
+  const STORM_SELLABLE = true;
+  const ROOF_SELLABLE = true;
 
   // Shown in place of an add-on's buy option when you already have it (in the
   // plan-selection state) — a Turn-off action so an owned add-on is managed in
@@ -247,8 +268,49 @@ export default function BillingPanel() {
     </div>
   );
 
-  const INCLUDED_WORKERS = 15;
-  const businessOverage = Math.max(0, workerCount - INCLUDED_WORKERS);
+  // One node in the Plan Room → Takeoff → Storm / Roof add-on hierarchy. Indented
+  // to its depth and left-barred when nested, so "what rides on what" reads at a
+  // glance. Renders the owned state, the buy checkbox, or nothing (not on the menu
+  // / price not yet configured in Stripe).
+  const addonTile = (a) => {
+    const priceId = plans?.[a.key]?.monthly_price_id;
+    if (!a.owned && (!a.sellable || !priceId)) return null;
+    const nested = a.depth > 0;
+    const base = { ...s.addonTile, ...(nested ? s.addonTileNested : null) };
+    return (
+      <div key={a.key} style={{ marginLeft: a.depth * 22, marginBottom: 10 }}>
+        {a.owned ? (
+          <div style={base}>
+            <div style={s.addonHead}>
+              <span style={s.addonName}>{a.title}</span>
+              <span style={s.activePill}>active</span>
+              <span style={{ flex: 1 }} />
+              <button
+                style={{ ...s.removeBtn, ...(redirecting ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
+                onClick={() => removeAddon(a.key)}
+                disabled={!!redirecting}
+              >
+                {redirecting === 'rmaddon-' + a.key ? 'Turning off…' : 'Turn off'}
+              </button>
+            </div>
+            <div style={s.addonDesc}>{a.desc}</div>
+          </div>
+        ) : (
+          <label style={{ ...base, ...(a.checked ? s.addonTileOn : null), display: 'block', cursor: 'pointer' }}>
+            <div style={s.addonHead}>
+              <input type="checkbox" checked={a.checked} onChange={a.onChange}
+                style={{ accentColor: '#d97706', width: 16, height: 16, flexShrink: 0 }} />
+              <span style={s.addonName}>{a.title}</span>
+              {a.needs && <span style={s.needsChip}>needs {a.needs}</span>}
+              <span style={{ flex: 1 }} />
+              <span style={s.addonPrice}>{nested ? '+' : ''}${a.price ?? '—'}<span style={s.perMo}> /mo</span></span>
+            </div>
+            <div style={{ ...s.addonDesc, paddingLeft: 26 }}>{a.desc}</div>
+          </label>
+        )}
+      </div>
+    );
+  };
 
   const BASE_MONTHLY = plans?.business.base_monthly ?? 35;
   const PER_WORKER_MONTHLY = plans?.business.per_worker_monthly ?? 2;
@@ -326,10 +388,13 @@ export default function BillingPanel() {
             }
             if (!a.plan?.monthly_price_id) return null;
             if (a.key === 'storm' && !STORM_SELLABLE) return null; // built, not yet on the menu
-            // Takeoff is a layer on Plan Room. One-click adds a single item, so
-            // it can't add Plan Room in the same step — require it first.
-            const needsPlanroom = a.key === 'takeoff' && !hasPlanroom;
-            const blocked = !!redirecting || needsPlanroom;
+            if (a.key === 'roof' && !ROOF_SELLABLE) return null;  // built, not yet on the menu
+            // Takeoff and Roof Measurement are layers on Plan Room; Storm is a layer
+            // on Takeoff. One-click adds a single item, so the layer beneath must
+            // already be owned — require it first.
+            const needsPlanroom = (a.key === 'takeoff' || a.key === 'roof') && !hasPlanroom;
+            const needsTakeoff = a.key === 'storm' && !hasTakeoff;
+            const blocked = !!redirecting || needsPlanroom || needsTakeoff;
             return (
               <div key={a.key} style={{ ...s.addonCard, marginTop: 14, marginBottom: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
@@ -347,7 +412,7 @@ export default function BillingPanel() {
                   </button>
                 </div>
                 <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.5, marginTop: 6 }}>
-                  {a.desc} {needsPlanroom ? t.billingTakeoffNeedsPlanroom : 'Prorated onto your current subscription — no re-checkout.'}
+                  {a.desc} {needsTakeoff ? 'Add the Takeoff add-on first — Storm/Utility rides on it.' : needsPlanroom ? (a.key === 'roof' ? 'Add Plan Room first — Roof Measurement rides on it.' : t.billingTakeoffNeedsPlanroom) : 'Prorated onto your current subscription — no re-checkout.'}
                 </div>
               </div>
             );
@@ -475,8 +540,8 @@ export default function BillingPanel() {
                 : checkout(
                   annual ? plans?.business.base_annual_price_id : plans?.business.base_monthly_price_id,
                   annual
-                    ? { worker_price_id: plans?.business.worker_annual_price_id, worker_count: workerCount }
-                    : { worker_price_id: plans?.business.worker_monthly_price_id, worker_count: workerCount }
+                    ? { worker_price_id: plans?.business.worker_annual_price_id, worker_count: businessOverage }
+                    : { worker_price_id: plans?.business.worker_monthly_price_id, worker_count: businessOverage }
                 )
               }
               t={t}
@@ -568,51 +633,40 @@ export default function BillingPanel() {
           )}
           {hasQbo && ownedAddonCard('qbo', 'QuickBooks Online')}
 
-          {!hasPlanroom && plans?.planroom?.monthly_price_id && (
-            <div style={s.addonCard}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                {/* Dropping Plan Room drops Takeoff, which rides on top of it. */}
-                <input type="checkbox" checked={addPlanroom} onChange={e => { const v = e.target.checked; setAddPlanroom(v); if (!v && !hasPlanroom) setAddTakeoff(false); }}
-                  style={{ accentColor: '#d97706', width: 16, height: 16 }} />
-                <span style={s.addonTitle}>
-                  + Plan Room add-on &nbsp;
-                  <span style={{ fontSize: 18, fontWeight: 800, color: '#d97706' }}>${plans?.planroom?.monthly ?? '—'}</span>
-                  <span style={{ fontSize: 13, color: '#6b7280' }}>/mo</span>
-                </span>
-              </label>
-              <div style={{ paddingLeft: 26, fontSize: 12, color: '#6b7280', lineHeight: 1.5, marginTop: 6 }}>
-                View, mark up, and measure plan sets right in the browser — clouds, callouts, lengths, areas, counts — with a company library, live share sessions, and flattened-PDF export.
-              </div>
-            </div>
-          )}
-          {hasPlanroom && ownedAddonCard('planroom', 'Plan Room')}
+          {/* Add-ons in dependency order so the layering reads visually — indented
+              and left-barred: Plan Room → Takeoff → Storm/Utility, with Roof
+              Measurement branching off Plan Room. Each renders its owned state, its
+              buy checkbox, or nothing (not on the menu / price not yet configured). */}
+          {(() => {
+            const nodes = [
+              { key: 'planroom', depth: 0, title: 'Plan Room', needs: null,
+                owned: hasPlanroom, sellable: true, price: plans?.planroom?.monthly, checked: addPlanroom,
+                desc: 'View, mark up, and measure plan sets in the browser — clouds, callouts, lengths, areas, counts — with a company library, live share sessions, and flattened-PDF export.',
+                onChange: e => { const v = e.target.checked; setAddPlanroom(v); if (!v && !hasPlanroom) { setAddTakeoff(false); setAddStorm(false); setAddRoof(false); } } },
+              { key: 'takeoff', depth: 1, title: 'Takeoff', needs: 'Plan Room',
+                owned: hasTakeoff, sellable: true, price: plans?.takeoff?.monthly, checked: addTakeoff,
+                desc: 'Turn Plan Room measurements into priced, branded trade takeoffs and bids — earthwork, drywall, roofing, framing, siding, and more.',
+                onChange: e => { const v = e.target.checked; setAddTakeoff(v); if (v && !hasPlanroom) setAddPlanroom(true); if (!v && !hasTakeoff) setAddStorm(false); } },
+              { key: 'storm', depth: 2, title: 'Storm/Utility', needs: 'Takeoff',
+                owned: hasStorm, sellable: STORM_SELLABLE, price: plans?.storm?.monthly, checked: addStorm,
+                desc: 'Deep underground-utility takeoff — pipe schedule, structure depth, invert-driven trench depth, and spoil/backfill netting.',
+                onChange: e => { const v = e.target.checked; setAddStorm(v); if (v && !hasTakeoff) { setAddTakeoff(true); if (!hasPlanroom) setAddPlanroom(true); } } },
+              { key: 'roof', depth: 1, title: 'Roof Measurement', needs: 'Plan Room',
+                owned: hasRoof, sellable: ROOF_SELLABLE, price: plans?.roof?.monthly, checked: addRoof,
+                desc: 'Trace a roof on an aerial and get a branded measurement report — squares, pitch, edges, and penetrations.',
+                onChange: e => { const v = e.target.checked; setAddRoof(v); if (v && !hasPlanroom) setAddPlanroom(true); } },
+            ];
+            return <div style={{ marginBottom: 14 }}>{nodes.map(addonTile)}</div>;
+          })()}
 
-          {!hasTakeoff && plans?.takeoff?.monthly_price_id && (
-            <div style={s.addonCard}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                {/* Takeoff rides on Plan Room — checking it pulls Plan Room in. */}
-                <input type="checkbox" checked={addTakeoff} onChange={e => { const v = e.target.checked; setAddTakeoff(v); if (v && !hasPlanroom) setAddPlanroom(true); }}
-                  style={{ accentColor: '#d97706', width: 16, height: 16 }} />
-                <span style={s.addonTitle}>
-                  + Takeoff add-on &nbsp;
-                  <span style={{ fontSize: 18, fontWeight: 800, color: '#d97706' }}>${plans?.takeoff?.monthly ?? '—'}</span>
-                  <span style={{ fontSize: 13, color: '#6b7280' }}>/mo</span>
-                </span>
-              </label>
-              <div style={{ paddingLeft: 26, fontSize: 12, color: '#6b7280', lineHeight: 1.5, marginTop: 6 }}>
-                Turn Plan Room measurements into priced, branded trade takeoffs and bids — earthwork, drywall, roofing, framing, siding, and more.
-                {!hasPlanroom && <span style={{ display: 'block', marginTop: 4, color: '#92400e', fontWeight: 600 }}>{t.billingTakeoffIncludesPlanroom}</span>}
-              </div>
-            </div>
-          )}
-
-          {/* Buy the checked add-ons without a plan — one subscription for
-              whichever of Plan Room / Takeoff are ticked above. The same
+          {/* Buy the ticked add-ons with no base plan — one subscription for
+              whichever of Plan Room / Takeoff / Roof are checked above. The same
               checkboxes still bundle into a plan if one is chosen. */}
-          {((!hasPlanroom && plans?.planroom?.monthly_price_id) || (!hasTakeoff && plans?.takeoff?.monthly_price_id)) && (() => {
+          {((!hasPlanroom && plans?.planroom?.monthly_price_id) || (!hasTakeoff && plans?.takeoff?.monthly_price_id) || (ROOF_SELLABLE && !hasRoof && plans?.roof?.monthly_price_id)) && (() => {
             const picks = [
               addPlanroom && !hasPlanroom && plans?.planroom?.monthly_price_id && 'planroom',
               addTakeoff && !hasTakeoff && plans?.takeoff?.monthly_price_id && 'takeoff',
+              addRoof && !hasRoof && plans?.roof?.monthly_price_id && 'roof',
             ].filter(Boolean);
             const busy = redirecting === 'buy-addons';
             return (
@@ -628,25 +682,6 @@ export default function BillingPanel() {
               </div>
             );
           })()}
-          {hasTakeoff && ownedAddonCard('takeoff', 'Takeoff')}
-
-          {STORM_SELLABLE && !hasStorm && plans?.storm?.monthly_price_id && (
-            <div style={s.addonCard}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                <input type="checkbox" checked={addStorm} onChange={e => setAddStorm(e.target.checked)}
-                  style={{ accentColor: '#d97706', width: 16, height: 16 }} />
-                <span style={s.addonTitle}>
-                  + Storm/Utility add-on &nbsp;
-                  <span style={{ fontSize: 18, fontWeight: 800, color: '#d97706' }}>${plans?.storm?.monthly ?? '—'}</span>
-                  <span style={{ fontSize: 13, color: '#6b7280' }}>/mo</span>
-                </span>
-              </label>
-              <div style={{ paddingLeft: 26, fontSize: 12, color: '#6b7280', lineHeight: 1.5, marginTop: 6 }}>
-                Deep underground-utility takeoff — pipe schedule, structure depth, invert-driven trench depth, and spoil/backfill netting.
-              </div>
-            </div>
-          )}
-          {hasStorm && ownedAddonCard('storm', 'Storm/Utility')}
 
           <ClientPortalProPlaceholder />
 
@@ -773,6 +808,17 @@ const s = {
   workerUpdateBtn: { padding: '7px 14px', background: '#8b5cf6', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: 'pointer', flexShrink: 0 },
   addonCard: { border: '2px solid #fde68a', borderRadius: 10, padding: '14px 16px', background: '#fffbeb', marginBottom: 16 },
   addonTitle: { fontSize: 15, fontWeight: 700, color: '#92400e' },
+  // Nested add-on hierarchy (Plan Room → Takeoff → Storm / Roof)
+  addonTile: { border: '2px solid #fde68a', borderRadius: 10, padding: '11px 14px', background: '#fffbeb', transition: 'border-color .12s, background .12s' },
+  addonTileNested: { borderLeft: '4px solid #f59e0b' },
+  addonTileOn: { borderColor: '#f59e0b', background: '#fef3c7', boxShadow: '0 1px 5px rgba(217,119,6,.16)' },
+  addonHead: { display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' },
+  addonName: { fontSize: 15, fontWeight: 700, color: '#92400e' },
+  addonPrice: { fontSize: 17, fontWeight: 800, color: '#b45309', whiteSpace: 'nowrap' },
+  perMo: { fontSize: 12, fontWeight: 600, color: '#a16207' },
+  needsChip: { fontSize: 10.5, fontWeight: 700, color: '#92400e', background: '#fde68a', borderRadius: 20, padding: '2px 8px', textTransform: 'uppercase', letterSpacing: '.3px' },
+  activePill: { fontSize: 10.5, fontWeight: 700, color: '#065f46', background: '#d1fae5', borderRadius: 20, padding: '2px 8px', textTransform: 'uppercase', letterSpacing: '.3px' },
+  addonDesc: { fontSize: 12, color: '#78716c', lineHeight: 1.5, marginTop: 6 },
   buyAloneRow: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 16 },
   buyAloneBtn: { padding: '9px 18px', background: '#d97706', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: 'pointer' },
   buyAloneHint: { fontSize: 12, color: '#6b7280' },

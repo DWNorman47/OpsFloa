@@ -1,10 +1,19 @@
 const FEATURE_KEYS = ['feature_scheduling', 'feature_analytics', 'feature_public', 'feature_chat', 'feature_prevailing_wage', 'feature_reimbursements', 'feature_pto', 'module_field', 'module_timeclock', 'module_work', 'module_inventory', 'module_tools', 'module_analytics', 'module_team', 'module_financial_reports', 'feature_project_integration', 'feature_overtime', 'feature_geolocation', 'feature_inactive_alerts', 'feature_overtime_alerts', 'feature_broadcast', 'feature_media_gallery', 'feature_admin_edit_time', 'feature_worker_edit_time', 'show_worker_wages', 'notification_use_work_hours', 'media_delete_on_project_archive', 'notify_timeoff_requests', 'notify_budget_alerts', 'notify_entry_submitted', 'report_weekly_payroll', 'report_weekly_low_stock', 'report_monthly_valuation', 'report_daily_ot_column', 'qbo_auto_push', 'qbo_auto_push_expenses', 'qbo_auto_create_customers', 'notify_qbo_disconnect', 'cp_track_classifications', 'cp_track_fringes', 'cp_collect_ssn', 'cp_require_signature', 'cp_compute_deductions', 'cp_wh347_format', 'hide_work_orders_tab', 'hide_projects_tab'];
-const STRING_KEYS = ['overtime_rule', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'cycle_count_reconcile_threshold_type', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules', 'deductions'];
+const STRING_KEYS = ['overtime_rule', 'overtime_rate_method', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'cycle_count_reconcile_threshold_type', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules', 'deductions', 'paycheck_rules'];
 
 // Defaults available to all authenticated users
 const SETTINGS_DEFAULTS = {
   prevailing_wage_rate: 45, default_hourly_rate: 30, overtime_multiplier: 1.5,
   overtime_rule: 'daily', overtime_threshold: 8,
+  // How OT is priced when a worker earns more than one base rate in a period.
+  // See server/constants/payEnums.js. Default = each OT hour at the rate it earned.
+  overtime_rate_method: 'rate_when_worked',
+  // Company Standards → Regular Shift: the fallback hours a full sick/vacation day
+  // pays when the worker has no shift scheduled and no weekday leave-value rule.
+  regular_shift_hours: 8,
+  // Paid-leave rate as a percent of the worker's base rate (sick and vacation
+  // separately). 100 = full base rate (the prior, unchanged behaviour).
+  sick_pay_pct: 100, vacation_pay_pct: 100,
   // feature_chat and feature_broadcast start OFF — both are optional
   // engagement features most teams don't enable on day one. Migration
   // 0095 backfilled '1' for existing companies so the flip is a no-op
@@ -51,6 +60,9 @@ const SETTINGS_DEFAULTS = {
   cp_compute_deductions: false,     // Strategy A — OpsFloa computes fed/state/FICA withholdings (OFF by default; payroll processor handles this)
   media_retention_days: 0,
   week_start: 1, // 0=Sunday, 1=Monday, …, 6=Saturday (OpsFloa's default pay-period start)
+  // The last day of the company's work week (0=Sun … 6=Sat), Sunday by default.
+  // Distinct from week_start, which begins the pay/OT week.
+  work_week_end: 0,
   currency: 'USD', invoice_signature: 'optional', default_temp_password: '', global_required_checklist_template_id: '',
   label_client: 'Customer', label_worker: 'Team Member', label_field: 'Field Work',
   setup_questionnaire_completed_at: '',
@@ -63,6 +75,11 @@ const SETTINGS_DEFAULTS = {
   // so the pay stub stays gross-only for companies that never configure it.
   // Applied to gross wages on the per-worker pay stub. See server/utils/deductions.js.
   deductions: '',
+  // Named PAYCHECK RULESETS (pay schedule + how/when deductions apply) as a JSON
+  // policy `{ version, rulesets: [...] }`. Empty = none configured, so nothing
+  // changes for existing companies. Assigned to employee types + consumed by the
+  // pay engine later. See server/constants/paycheckRuleEnums.js + docs/plans/paycheck-rules.md.
+  paycheck_rules: '',
 };
 
 // Admin-only defaults (superset of SETTINGS_DEFAULTS)

@@ -6,7 +6,7 @@
 
 const router = require('express').Router();
 const pool   = require('../db');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { requireAdmin } = require('../middleware/auth');
 const { logAudit } = require('../auditLog');
 const {
   CLOSEOUT_STATUSES,
@@ -54,7 +54,7 @@ async function ensureTemplate(companyId) {
   }
 }
 
-router.get('/closeout-template', requireAuth, async (req, res) => {
+router.get('/closeout-template', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     await ensureTemplate(companyId);
@@ -180,10 +180,12 @@ async function computeAutoStatus(companyId, projectId, item) {
   }
   if (item.auto_source === 'invoices' && item.category === 'final_invoice') {
     try {
+      // Native invoices are the single source of truth — QBO-synced invoices now
+      // live here too (project_invoices was unified in). Zero invoices →
+      // 'in_progress' (not a permanent block — the item's manual-waive is the
+      // escape hatch for projects that never invoice here).
       const r = await pool.query(
-        `SELECT COUNT(*) AS done
-           FROM project_invoices
-          WHERE project_id = $1 AND payment_status = 'paid'`,
+        `SELECT COUNT(*) AS done FROM invoices WHERE project_id = $1 AND status = 'paid'`,
         [projectId]
       );
       return parseInt(r.rows[0].done, 10) > 0 ? 'done' : 'in_progress';
@@ -191,20 +193,42 @@ async function computeAutoStatus(companyId, projectId, item) {
   }
   if (item.auto_source === 'invoices' && item.category === 'retainage_release') {
     try {
+      // Retainage is native-only modeling (project_invoices has no retainage
+      // column). Done only when invoices EXIST and none still hold retainage —
+      // the old SUM(balance) over project_invoices returned 0 (→ 'done') for
+      // every non-QBO project, which had zero rows: a false positive.
       const r = await pool.query(
-        `SELECT COALESCE(SUM(balance), 0) AS open_balance
-           FROM project_invoices WHERE project_id = $1`,
+        `SELECT COUNT(*) AS n, COALESCE(SUM(retainage_held_cents), 0) AS held
+           FROM invoices WHERE project_id = $1 AND status <> 'void'`,
         [projectId]
       );
-      return parseFloat(r.rows[0].open_balance) === 0 ? 'done' : 'in_progress';
+      const n = parseInt(r.rows[0].n, 10);
+      if (n === 0) return 'in_progress';               // nothing invoiced → not released
+      return parseInt(r.rows[0].held, 10) === 0 ? 'done' : 'in_progress';
     } catch { return null; }
   }
   return null;
 }
 
+// An item's effective status: a manual waive/N-A override if set, else its
+// computed auto-status (for auto_source items), else the stored status. The GET
+// read path layers the same computation in; the transition gate uses this so the
+// two never disagree about whether an item is "done".
+async function effectiveItemStatus(companyId, projectId, item) {
+  // A manual waive / N-A override wins over the auto compute — the escape hatch
+  // for an auto item that won't reach 'done' on its own (e.g. billed outside
+  // OpsFloa, or paid via QBO where the mirror row stays 'sent').
+  if (item.status === 'waived' || item.status === 'n_a') return item.status;
+  if (item.auto_source) {
+    const auto = await computeAutoStatus(companyId, projectId, item);
+    if (auto) return auto;
+  }
+  return item.status;
+}
+
 // ── Closeout CRUD ─────────────────────────────────────────────────────────────
 
-router.get('/projects/:id/closeout', requireAuth, async (req, res) => {
+router.get('/projects/:id/closeout', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const project = await assertProjectInCompany(companyId, req.params.id);
@@ -226,7 +250,8 @@ router.get('/projects/:id/closeout', requireAuth, async (req, res) => {
     for (const it of itemsRes.rows) {
       let status = it.status;
       let computedAuto = null;
-      if (it.auto_source) {
+      // A manual waive / N-A override wins over the auto compute (see effectiveItemStatus).
+      if (it.auto_source && it.status !== 'waived' && it.status !== 'n_a') {
         computedAuto = await computeAutoStatus(companyId, req.params.id, it);
         if (computedAuto) status = computedAuto;
       }
@@ -350,35 +375,42 @@ router.post('/projects/:id/closeout/transition', requireAdmin, async (req, res) 
     );
     if (closeoutRes.rowCount === 0) return res.status(404).json({ error: 'Closeout not opened yet' });
     const co = closeoutRes.rows[0];
-    // Substantial requires punchlist done + final inspection done.
+    // Substantial requires punchlist done + final inspection done. Auto-source
+    // items (punchlist) are never persisted past 'pending' — their real status
+    // is computed on read — so the gate MUST compute it here too, else it reads
+    // a stale 'pending' and 409s even when the source module says done.
     if (to === 'substantially_complete') {
       const r = await pool.query(
-        `SELECT category, status FROM project_closeout_items
+        `SELECT category, status, auto_source FROM project_closeout_items
           WHERE closeout_id = $1 AND category IN ('punchlist','final_inspection')`,
         [co.id]
       );
-      const byCat = Object.fromEntries(r.rows.map(it => [it.category, it.status]));
-      // Evaluate items with auto-source via the same compute path.
       for (const cat of ['punchlist', 'final_inspection']) {
         const item = r.rows.find(i => i.category === cat);
         if (!item) continue;
-        if (!CLOSEOUT_ITEM_DONE_STATUSES.includes(item.status)) {
+        const status = await effectiveItemStatus(companyId, req.params.id, item);
+        if (!CLOSEOUT_ITEM_DONE_STATUSES.includes(status)) {
           return res.status(409).json({ error: `Cannot transition to substantially_complete: ${cat} item not done` });
         }
       }
     }
     if (to === 'final_complete') {
+      // Same compute-on-read fix: a pure SQL count over stored `status` treats
+      // every auto item as 'pending' (they're never written past that), so
+      // final_complete was unreachable for EVERY company. Compute each required
+      // item's effective status before deciding it's still missing.
       const r = await pool.query(
-        `SELECT COUNT(*) AS missing
-           FROM project_closeout_items
-          WHERE closeout_id = $1 AND required = true
-            AND status NOT IN ('done','waived','n_a')`,
+        `SELECT category, status, auto_source FROM project_closeout_items
+          WHERE closeout_id = $1 AND required = true`,
         [co.id]
       );
-      if (parseInt(r.rows[0].missing, 10) > 0) {
-        return res.status(409).json({
-          error: 'Cannot transition to final_complete: required items still pending',
-        });
+      for (const item of r.rows) {
+        const status = await effectiveItemStatus(companyId, req.params.id, item);
+        if (!CLOSEOUT_ITEM_DONE_STATUSES.includes(status)) {
+          return res.status(409).json({
+            error: 'Cannot transition to final_complete: required items still pending',
+          });
+        }
       }
     }
     const subDate = (to === 'substantially_complete' && !co.substantial_completion_date)
@@ -421,7 +453,14 @@ router.patch('/closeout-items/:id', requireAdmin, async (req, res) => {
     if (checkRes.rowCount === 0) return res.status(404).json({ error: 'Checklist item not found' });
     const item = checkRes.rows[0];
     if (item.auto_source) {
-      return res.status(409).json({ error: 'Auto-computed items cannot be toggled directly' });
+      // Auto items normally compute their status, but allow an explicit manual
+      // OVERRIDE — waive / mark N/A (the closeout escape hatch), or reset to
+      // 'pending' to hand control back to the auto compute. Anything else must
+      // come from the source module.
+      const s = req.body.status;
+      if (s !== undefined && !['waived', 'n_a', 'pending'].includes(s)) {
+        return res.status(409).json({ error: 'Auto-computed items can only be waived, marked N/A, or reset to pending' });
+      }
     }
     const fields = [];
     const params = [];
@@ -454,7 +493,7 @@ router.patch('/closeout-items/:id', requireAdmin, async (req, res) => {
 
 // ── Warranty-expiring query (dashboard tile) ──────────────────────────────────
 
-router.get('/warranties-expiring', requireAuth, async (req, res) => {
+router.get('/warranties-expiring', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   const within = Math.min(365, Math.max(1, parseInt(req.query.within_days) || 60));
   try {

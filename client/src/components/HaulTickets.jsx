@@ -5,6 +5,7 @@ import { useT } from '../hooks/useT';
 import { usePlan } from '../hooks/usePlan';
 import { langToLocale } from '../utils';
 import { SkeletonList } from './Skeleton';
+import { downloadCsv } from '../utils/csv';
 
 const UNITS = ['CY', 'tons', 'loads'];
 const DIRECTIONS = ['export', 'import'];
@@ -196,18 +197,12 @@ export default function HaulTickets({ projects = [] }) {
   }, [tickets, t]);
 
   const exportCsv = () => {
-    const q = s => '"' + String(s == null ? '' : s).replace(/"/g, '""') + '"';
-    const rows = [['Date', 'Job', 'Ticket #', 'Hauler', 'Material', 'Qty', 'Unit', 'Direction', 'Notes'].map(q).join(',')];
+    const rows = [['Date', 'Job', 'Ticket #', 'Hauler', 'Material', 'Qty', 'Unit', 'Direction', 'Notes']];
     for (const tk of tickets) {
       rows.push([tk.ticket_date, tk.project_name || '', tk.ticket_no || '', tk.hauler || '',
-        tk.material || '', tk.qty, tk.unit, tk.direction, tk.notes || ''].map(q).join(','));
+        tk.material || '', tk.qty, tk.unit, tk.direction, tk.notes || '']);
     }
-    const blob = new Blob([rows.join('\r\n')], { type: 'text/csv' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `haul-tickets-${today}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    downloadCsv(rows, `haul-tickets-${today}.csv`);
   };
 
   const projName = tk => tk.project_name || t.haulNoProject;

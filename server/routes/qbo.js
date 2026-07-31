@@ -3,7 +3,7 @@ const pool = require('../db');
 const logger = require('../logger');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { requireAuth, requireAdmin, requirePerm } = require('../middleware/auth');
 const qbo = require('../services/qbo');
 const { encrypt } = require('../services/encryption');
 // Every punch this file bills from must be the PAID punch, not the raw one.
@@ -11,10 +11,13 @@ const { encrypt } = require('../services/encryption');
 // enabled would have had OpsFloa's own invoice and its QuickBooks bill disagree
 // about the same day. Rounding is applied at each point entries are fetched, so
 // the four separate hour calculations below can't drift apart again.
-const { loadSettings, computePaid } = require('../utils/paidHours');
-const { roundEntriesFromSettings } = require('../utils/hoursRules');
-const { otBandsCost } = require('../utils/payCalculations');
+const { loadSettings, computePaid, otRuleFromSettings } = require('../utils/paidHours');
+const { roundEntriesFromSettings, otConfigFromSettings } = require('../utils/hoursRules');
+const { otBandsCost, nightPremiumCost, nightHoursForEntry } = require('../utils/payCalculations');
+const { rateAwarePay, hasSimpleOtConfig } = require('../utils/rateAwareOvertime');
 const { applySettingsRows, ADMIN_SETTINGS_DEFAULTS } = require('../settingsDefaults');
+const { companyStatements } = require('../utils/payStatement');
+const { isValidIsoDate, dateRangeDays } = require('../utils/payPeriods');
 
 const { logAudit } = require('../auditLog');
 
@@ -224,13 +227,33 @@ router.post('/invoices', requireAdmin, async (req, res) => {
       docNumber: doc_number || null,
       txnDate: txn_date || null,
     });
-    // Persist invoice record if project_id provided
+    // Mirror the pushed invoice into the NATIVE invoices table (source='qbo',
+    // keyed by qbo_invoice_id) — project_invoices is retired. Fire-and-forget:
+    // the QBO invoice already exists, so a mirror hiccup must not fail the push.
+    // Number scheme 'QBO-<qboId>' is distinct from the migration's 'QBO-IMP-'.
     if (invoice?.Id && project_id) {
+      const cents = Math.round(parsed * 100);
       pool.query(
-        `INSERT INTO project_invoices (company_id, project_id, qbo_invoice_id, doc_number, amount, txn_date, balance, payment_status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'unpaid')`,
-        [req.user.company_id, project_id, invoice.Id, invoice.DocNumber || null, parsed,
-         txn_date || new Date().toLocaleDateString('en-CA'), parsed]
+        `WITH ins AS (
+           INSERT INTO invoices
+             (company_id, project_id, invoice_number, client_name_snapshot, status,
+              subtotal_cents, tax_cents, total_cents, issue_date, qbo_invoice_id,
+              qbo_doc_number, source, created_by)
+           SELECT $1,
+                  -- Scope project_id + the client-name snapshot to the caller's
+                  -- company: a foreign project_id resolves to NULL / the fallback
+                  -- name rather than linking to (or leaking) another tenant's data.
+                  (SELECT p2.id FROM projects p2 WHERE p2.id = $2 AND p2.company_id = $1),
+                  'QBO-' || $3,
+                  COALESCE((SELECT NULLIF(cl.name, '') FROM projects p JOIN clients cl ON cl.id = p.client_id WHERE p.id = $2 AND p.company_id = $1), 'QuickBooks'),
+                  'sent', $4, 0, $4, $5, $3, $6, 'qbo', $7
+           RETURNING id, company_id
+         )
+         INSERT INTO invoice_lines (invoice_id, category, sort_order, description, qty, unit_cost_cents, total_cents)
+         SELECT id, 'other', 0, $8, 1, $4, $4 FROM ins`,
+        [req.user.company_id, project_id, invoice.Id, cents,
+         txn_date || new Date().toLocaleDateString('en-CA'), invoice.DocNumber || null, req.user.id,
+         description || `QuickBooks invoice ${invoice.DocNumber || invoice.Id}`]
       ).catch(err => logger.error({ err }, '[QBO invoice save]'));
     }
     logAudit(req.user.company_id, req.user.id, req.user.full_name, 'qbo.invoice_created', 'qbo_invoice', invoice?.Id || null, invoice?.DocNumber || null,
@@ -246,11 +269,25 @@ router.post('/invoices', requireAdmin, async (req, res) => {
 // GET /api/qbo/invoices/project/:projectId — list saved invoices for a project
 router.get('/invoices/project/:projectId', requireAdmin, async (req, res) => {
   try {
+    // Read the native invoices that carry a QBO link, mapped back to the shape
+    // the Projects QBO panel expects ({ doc_number, amount, balance, payment_status }).
     const { rows } = await pool.query(
-      `SELECT id, qbo_invoice_id, doc_number, amount, txn_date, balance, payment_status, created_at, last_checked_at
-       FROM project_invoices
-       WHERE company_id = $1 AND project_id = $2
-       ORDER BY created_at DESC`,
+      `SELECT i.id,
+              i.qbo_invoice_id,
+              i.qbo_doc_number AS doc_number,
+              (i.total_cents / 100.0) AS amount,
+              i.issue_date AS txn_date,
+              GREATEST(0, i.total_cents - COALESCE(pay.paid, 0)) / 100.0 AS balance,
+              CASE i.status WHEN 'paid' THEN 'paid' WHEN 'partial' THEN 'partial' ELSE 'unpaid' END AS payment_status,
+              i.created_at,
+              (SELECT MAX(created_at) FROM invoice_payments p2 WHERE p2.invoice_id = i.id) AS last_checked_at
+         FROM invoices i
+         LEFT JOIN (
+           SELECT invoice_id, SUM(amount_cents) AS paid FROM invoice_payments GROUP BY invoice_id
+         ) pay ON pay.invoice_id = i.id
+        WHERE i.company_id = $1 AND i.project_id = $2 AND i.qbo_invoice_id IS NOT NULL
+          AND i.status <> 'void'
+        ORDER BY i.created_at DESC`,
       [req.user.company_id, req.params.projectId]
     );
     res.json(rows);
@@ -272,13 +309,46 @@ router.post('/invoices/:invoiceId/check-payment', requireAdmin, async (req, res)
     if (balance <= 0) payment_status = 'paid';
     else if (balance < totalAmt) payment_status = 'partial';
     else payment_status = 'unpaid';
+    // Native status: 'sent' means fully unpaid (the QBO UI still labels it 'unpaid').
+    const nativeStatus = balance <= 0 ? 'paid' : (balance < totalAmt ? 'partial' : 'sent');
+    const paidCents = Math.round(Math.max(0, totalAmt - balance) * 100);
 
-    await pool.query(
-      `UPDATE project_invoices
-       SET balance = $1, payment_status = $2, last_checked_at = NOW()
-       WHERE qbo_invoice_id = $3 AND company_id = $4`,
-      [balance, payment_status, req.params.invoiceId, req.user.company_id]
-    );
+    // Refresh the native invoice(s) linked to this QBO invoice: update the total
+    // + status and re-sync the imported payment (delete-then-insert keeps
+    // check-payment idempotent — QBO stays the source of truth for the amount).
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const inv = await client.query(
+        // Exclude 'void' — a voided invoice must not be resurrected into AR by a
+        // later check-payment.
+        "SELECT id FROM invoices WHERE qbo_invoice_id = $1 AND company_id = $2 AND status <> 'void'",
+        [req.params.invoiceId, req.user.company_id]
+      );
+      for (const row of inv.rows) {
+        await client.query(
+          'UPDATE invoices SET total_cents = $1, subtotal_cents = $1, status = $2, updated_at = NOW() WHERE id = $3',
+          [Math.round(totalAmt * 100), nativeStatus, row.id]
+        );
+        await client.query(
+          `DELETE FROM invoice_payments WHERE invoice_id = $1 AND method = 'other' AND notes = 'QuickBooks payment (imported)'`,
+          [row.id]
+        );
+        if (paidCents > 0) {
+          await client.query(
+            `INSERT INTO invoice_payments (invoice_id, company_id, amount_cents, paid_date, method, notes)
+             VALUES ($1, $2, $3, CURRENT_DATE, 'other', 'QuickBooks payment (imported)')`,
+            [row.id, req.user.company_id, paidCents]
+          );
+        }
+      }
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
 
     res.json({ qbo_invoice_id: req.params.invoiceId, balance, payment_status, total: totalAmt });
   } catch (err) {
@@ -620,7 +690,8 @@ async function gatherBillData(companyId, { from, to, workerIds, force }, setting
           AND ($2::date IS NULL OR te.work_date >= $2::date)
           AND ($3::date IS NULL OR te.work_date <= $3::date)
           AND ($4::int[] IS NULL OR te.user_id = ANY($4::int[]))
-          AND u.qbo_vendor_id IS NOT NULL`,
+          AND u.qbo_vendor_id IS NOT NULL
+        ORDER BY te.user_id, te.work_date, te.start_time`,
       [companyId, from || null, to || null, ids]
     ),
     pool.query(
@@ -727,9 +798,10 @@ async function getOvertimeSettings(companyId) {
  * be added on top of the straight hours × base_rate already billed per entry.
  */
 function computeGroupOvertime(group, ot) {
-  const rule = group.overtimeRule || ot.rule;
+  // Honor "Allow overtime = off" (feature_overtime) the same as the pay engine.
+  const rule = otRuleFromSettings(ot.settings, group.overtimeRule || ot.rule);
   if (rule === 'none' || !group.timeEntries.length) {
-    return { overtimeHours: 0, overtimePremium: 0, rule };
+    return { overtimeHours: 0, overtimePremium: 0, nightHours: 0, nightPremium: 0, rule };
   }
   // These punches are already the paid ones — gatherBillData rounds at fetch.
   const entries = group.timeEntries.map(te => ({
@@ -739,14 +811,35 @@ function computeGroupOvertime(group, ot) {
     wage_type:     te.wageType,
     break_minutes: te.breakMinutes,
   }));
+  const otConfig = otConfigFromSettings(ot.settings, group.roleId ?? null);
+  if (hasSimpleOtConfig(otConfig)) {
+    // ALL worked hours (incl. prevailing) count toward the threshold — before,
+    // prevailing hours never earned OT here. QBO bills labor flat at the worker's
+    // rate, so OT is priced at that same rate; the premium is what's added on top
+    // of the straight time already billed per entry.
+    const method = ot.settings.overtime_rate_method === 'weighted_average' ? 'weighted_average' : 'rate_when_worked';
+    const ra = rateAwarePay(entries, { rule, threshold: ot.threshold, weekStart: ot.weekStart, otMult: ot.multiplier, baseRateOf: () => group.hourlyRate, method });
+    const premium = ra.cost - (ra.straightHours + ra.overtimeHours) * group.hourlyRate;
+    // Simple configs never carry a night differential (that routes to the per-band path).
+    return { overtimeHours: ra.overtimeHours, overtimePremium: premium, nightHours: 0, nightPremium: 0, rule };
+  }
+  // Premium OT configs (tiers / rest-day / 7th-day / window / night): keep the
+  // per-band path — OT on regular only, tiers billed at their own multipliers.
   const { overtimeHours, otBands } = computePaid(entries, ot.settings, { rule, roleId: group.roleId ?? null });
-  // Premium = what the OT hours cost at their own multipliers, minus the
-  // straight time already billed per entry. Priced off otBands rather than one
-  // flat multiplier, so a tiered policy (8h @1.5×, 12h @2×) bills its tiers
-  // instead of flattening them to the company default.
   const premium = otBandsCost(otBands, group.hourlyRate, ot.multiplier)
                 - overtimeHours * group.hourlyRate;
-  return { overtimeHours, overtimePremium: premium, rule };
+  // Night differential is billed as its own premium line (before, QBO omitted it
+  // entirely — a night-shift company's bill underpaid by the night premium).
+  let nightHours = 0, nightPremium = 0;
+  const nd = otConfig && otConfig.nightDifferential;
+  if (nd) {
+    const npct = parseFloat(nd.pct) || 0, nfrom = parseFloat(nd.fromHour), nto = parseFloat(nd.toHour);
+    if (npct && Number.isFinite(nfrom) && Number.isFinite(nto)) {
+      nightPremium = nightPremiumCost(entries, nd, group.hourlyRate);
+      for (const e of entries) if (e.wage_type === 'regular') nightHours += nightHoursForEntry(e, nfrom, nto);
+    }
+  }
+  return { overtimeHours, overtimePremium: premium, nightHours, nightPremium, rule };
 }
 
 // POST /api/qbo/push-bills-preview — dry-run summary of what would be billed
@@ -762,7 +855,7 @@ router.post('/push-bills-preview', requireAdmin, async (req, res) => {
       const laborHours = g.timeEntries.reduce((s, t) => s + t.hours, 0);
       const laborAmount = laborHours * g.hourlyRate;
       const reimbAmount = g.reimbursements.reduce((s, r) => s + r.amount, 0);
-      const { overtimeHours, overtimePremium } = computeGroupOvertime(g, ot);
+      const { overtimeHours, overtimePremium, nightHours, nightPremium } = computeGroupOvertime(g, ot);
       return {
         user_id: g.userId,
         full_name: g.fullName,
@@ -772,6 +865,8 @@ router.post('/push-bills-preview', requireAdmin, async (req, res) => {
         labor_amount: parseFloat(laborAmount.toFixed(2)),
         overtime_hours: parseFloat(overtimeHours.toFixed(2)),
         overtime_premium: parseFloat(overtimePremium.toFixed(2)),
+        night_hours: parseFloat((nightHours || 0).toFixed(2)),
+        night_premium: parseFloat((nightPremium || 0).toFixed(2)),
         reimbursements: g.reimbursements.length,
         reimb_amount: parseFloat(reimbAmount.toFixed(2)),
         time_entry_rows: g.timeEntries.map(te => ({
@@ -789,7 +884,7 @@ router.post('/push-bills-preview', requireAdmin, async (req, res) => {
           project_name: r.projectName,
           description: r.description,
         })),
-        total: parseFloat((laborAmount + overtimePremium + reimbAmount).toFixed(2)),
+        total: parseFloat((laborAmount + overtimePremium + nightPremium + reimbAmount).toFixed(2)),
       };
     });
     res.json({ groups: result, overtime: { rule: ot.rule, threshold: ot.threshold, multiplier: ot.multiplier } });
@@ -866,7 +961,7 @@ router.post('/push-bills', requireAdmin, async (req, res) => {
       // Overtime premium: an extra item-based line that covers the (multiplier-1)
       // uplift on OT hours. The per-entry lines above price straight hours at
       // the base rate; this line makes the contractor whole for their OT shifts.
-      const { overtimeHours, overtimePremium } = computeGroupOvertime(g, ot);
+      const { overtimeHours, overtimePremium, nightHours, nightPremium } = computeGroupOvertime(g, ot);
       if (overtimeHours > 0 && overtimePremium > 0) {
         lines.push({
           type: 'item',
@@ -874,6 +969,16 @@ router.post('/push-bills', requireAdmin, async (req, res) => {
           qty: parseFloat(overtimeHours.toFixed(2)),
           unitPrice: parseFloat((g.hourlyRate * (ot.multiplier - 1)).toFixed(4)),
           description: `Overtime premium — ${ot.multiplier}× on ${overtimeHours.toFixed(2)} h (${ot.rule}, threshold ${ot.threshold} h)`,
+        });
+      }
+      // Night differential — its own premium line (was previously never billed).
+      if (nightHours > 0 && nightPremium > 0) {
+        lines.push({
+          type: 'item',
+          itemId: laborItemId,
+          qty: parseFloat(nightHours.toFixed(2)),
+          unitPrice: parseFloat((nightPremium / nightHours).toFixed(4)),
+          description: `Night differential premium on ${nightHours.toFixed(2)} h`,
         });
       }
 
@@ -919,64 +1024,66 @@ router.post('/push-bills', requireAdmin, async (req, res) => {
 
 // POST /api/qbo/push-payroll — push a payroll journal entry for a date range
 // Body: { from, to, debit_account_id, credit_account_id }
-router.post('/push-payroll', requireAdmin, async (req, res) => {
+router.post('/push-payroll', requireAdmin, requirePerm('manage_integrations'), requirePerm('manage_pay_periods'), requirePerm('view_worker_wages'), async (req, res) => {
   const { from, to, debit_account_id, credit_account_id } = req.body;
   if (!debit_account_id || !credit_account_id) {
     return res.status(400).json({ error: 'debit_account_id and credit_account_id are required' });
   }
   if (!from || !to) return res.status(400).json({ error: 'from and to date range are required' });
+  if (!isValidIsoDate(from) || !isValidIsoDate(to) || from > to) {
+    return res.status(400).json({ error: 'from and to must be valid dates in ascending order', code: 'invalid_date_range' });
+  }
+  if (dateRangeDays(from, to) > 366) {
+    return res.status(400).json({ error: 'Payroll journal range cannot exceed 366 days', code: 'date_range_too_large' });
+  }
 
   const companyId = req.user.company_id;
   try {
     const company = await pool.query('SELECT qbo_realm_id FROM companies WHERE id = $1', [companyId]);
     if (!company.rows[0]?.qbo_realm_id) return res.status(400).json({ error: 'QuickBooks not connected' });
 
-    // Calculate total labor cost for approved entries in the range
-    const settings = await pool.query(
-      'SELECT key, value FROM settings WHERE company_id = $1 AND key IN (\'default_hourly_rate\', \'prevailing_wage_rate\')',
+    const payrollSettings = await loadSettings(companyId);
+    const workers = await pool.query(
+      `SELECT id, full_name, invoice_name, hourly_rate, rate_type, overtime_rule,
+              role_id, guaranteed_weekly_hours
+         FROM users
+        WHERE company_id = $1 AND role = 'worker' AND active = true
+        ORDER BY full_name`,
       [companyId]
     );
-    const defaultRate = parseFloat(settings.rows.find(r => r.key === 'default_hourly_rate')?.value || 30);
-    const prevRate = parseFloat(settings.rows.find(r => r.key === 'prevailing_wage_rate')?.value || 45);
-
-    const entriesRes = await pool.query(
-      `SELECT te.work_date, te.start_time, te.end_time, te.break_minutes, te.wage_type,
-              te.user_id, u.default_hourly_rate, u.role_id
-       FROM time_entries te
-       JOIN users u ON te.user_id = u.id
-       WHERE te.company_id = $1
-         AND te.status = 'approved'
-         AND te.work_date >= $2::date
-         AND te.work_date <= $3::date`,
-      [companyId, from, to]
+    const statements = await companyStatements({
+      companyId,
+      workers: workers.rows,
+      settings: payrollSettings,
+      from,
+      to,
+    });
+    const payable = workers.rows
+      .map(worker => ({ worker, statement: statements.get(worker.id) }))
+      .filter(row => row.statement && row.statement.totals.grossWages > 0);
+    const totalCents = payable.reduce(
+      (sum, row) => sum + Math.round(row.statement.totals.grossWages * 100),
+      0
     );
-    const payrollRoleById = {};
-    entriesRes.rows.forEach(e => { payrollRoleById[e.user_id] = e.role_id; });
-    const entries = { rows: roundEntriesFromSettings(entriesRes.rows, await loadSettings(companyId), { workerRoleById: payrollRoleById }) };
+    if (totalCents <= 0) return res.status(400).json({ error: 'No approved payroll found for this date range' });
 
-    let totalCost = 0;
-    for (const e of entries.rows) {
-      let ms = new Date(`1970-01-01T${e.end_time}`) - new Date(`1970-01-01T${e.start_time}`);
-      if (ms < 0) ms += 86400000;
-      const hours = Math.max(0, ms / 3600000 - (e.break_minutes || 0) / 60);
-      const rate = e.wage_type === 'prevailing' ? prevRate : (e.default_hourly_rate || defaultRate);
-      totalCost += hours * rate;
-    }
-
-    if (totalCost <= 0) return res.status(400).json({ error: 'No approved entries found for this date range' });
-
-    const description = `Payroll ${from} – ${to} (${entries.rowCount} entries)`;
+    const totalCost = totalCents / 100;
+    const description = `Payroll ${from} – ${to} (${payable.length} workers)`;
+    // Intuit guarantees write idempotency for a repeated requestid. Keep the key
+    // period-scoped so changing accounts and retrying cannot post the same payroll twice.
+    const requestId = `ops-pay-${crypto.createHash('sha256').update(`${companyId}|${from}|${to}`).digest('hex').slice(0, 32)}`;
     const entry = await qbo.createJournalEntry(companyId, {
       txnDate: to,
       description,
       debitAccountId: debit_account_id,
       creditAccountId: credit_account_id,
       amount: totalCost,
+      requestId,
     });
 
     logAudit(companyId, req.user.id, req.user.full_name, 'qbo.payroll_journal_pushed', 'qbo_journal', entry?.Id || null, description,
-      { amount: totalCost, from, to, entries: entries.rowCount });
-    res.json({ entry_id: entry?.Id, amount: totalCost, entries: entries.rowCount, description });
+      { amount: totalCost, from, to, workers: payable.length, request_id: requestId });
+    res.json({ entry_id: entry?.Id, amount: totalCost, workers: payable.length, request_id: requestId, description });
   } catch (err) {
     logger.error({ err }, 'catch block error');
     const status = err.code === 'qbo_auth_expired' ? 401 : 500;

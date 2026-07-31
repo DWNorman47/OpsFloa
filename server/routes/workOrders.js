@@ -14,25 +14,54 @@ const {
   WORK_ORDER_PRIORITIES, WORK_ORDER_PRIORITY_DEFAULT,
 } = require('../constants/workOrderEnums');
 
-// Coerce '' / undefined to null for optional FK / value columns.
+// Coerce '' / undefined to null for optional value columns.
 const nn = v => (v === '' || v === undefined ? null : v);
 const num = v => (v === '' || v === null || v === undefined ? null : Number(v));
+const int = v => {
+  if (v === '' || v === null || v === undefined) return null;
+  const parsed = Number(v);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : NaN;
+};
 
 function readBody(b) {
   const status = WORK_ORDER_STATUSES.includes(b.status) ? b.status : WORK_ORDER_STATUS_DEFAULT;
   const priority = WORK_ORDER_PRIORITIES.includes(b.priority) ? b.priority : WORK_ORDER_PRIORITY_DEFAULT;
   return {
     title: String(b.title || '').trim(),
-    project_id: nn(b.project_id),
-    client_id: nn(b.client_id),
+    project_id: int(b.project_id),
+    client_id: int(b.client_id),
     address: nn(b.address),
     status,
     priority,
-    assigned_to: nn(b.assigned_to),
+    assigned_to: int(b.assigned_to),
     scheduled_at: nn(b.scheduled_at),
     description: nn(b.description),
     amount: num(b.amount),
   };
+}
+
+function bodyError(wo) {
+  if (!wo.title) return 'A title is required.';
+  if ([wo.project_id, wo.client_id, wo.assigned_to].some(Number.isNaN)) return 'Invalid project, customer, or assignee.';
+  if (wo.amount !== null && (!Number.isFinite(wo.amount) || wo.amount < 0)) return 'Amount must be zero or greater.';
+  return '';
+}
+
+async function referenceError(companyId, wo) {
+  const refs = [
+    ['projects', wo.project_id, 'Project'],
+    ['clients', wo.client_id, 'Customer'],
+    ['users', wo.assigned_to, 'Assignee'],
+  ];
+  for (const [table, id, label] of refs) {
+    if (id === null) continue;
+    const { rowCount } = await pool.query(
+      `SELECT 1 FROM ${table} WHERE id = $1 AND company_id = $2`,
+      [id, companyId],
+    );
+    if (!rowCount) return `${label} not found.`;
+  }
+  return '';
 }
 
 // GET /  — list (optional ?status= & ?project_id= filters)
@@ -87,8 +116,11 @@ router.get('/:id', async (req, res) => {
 // POST /  — create (managers/dispatchers)
 router.post('/', requirePerm('manage_projects'), async (req, res) => {
   const wo = readBody(req.body || {});
-  if (!wo.title) return res.status(400).json({ error: 'A title is required.' });
+  const invalid = bodyError(wo);
+  if (invalid) return res.status(400).json({ error: invalid });
   try {
+    const invalidReference = await referenceError(req.user.company_id, wo);
+    if (invalidReference) return res.status(400).json({ error: invalidReference });
     const { rows } = await pool.query(
       `INSERT INTO work_orders
          (company_id, project_id, client_id, title, address, status, priority,
@@ -110,8 +142,11 @@ router.post('/', requirePerm('manage_projects'), async (req, res) => {
 // PATCH /:id  — update (managers/dispatchers)
 router.patch('/:id', requirePerm('manage_projects'), async (req, res) => {
   const wo = readBody(req.body || {});
-  if (!wo.title) return res.status(400).json({ error: 'A title is required.' });
+  const invalid = bodyError(wo);
+  if (invalid) return res.status(400).json({ error: invalid });
   try {
+    const invalidReference = await referenceError(req.user.company_id, wo);
+    if (invalidReference) return res.status(400).json({ error: invalidReference });
     const { rows } = await pool.query(
       `UPDATE work_orders SET
          project_id=$1, client_id=$2, title=$3, address=$4, status=$5, priority=$6,

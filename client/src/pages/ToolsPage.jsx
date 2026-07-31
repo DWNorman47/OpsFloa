@@ -12,25 +12,18 @@ import DocQATool from '../components/DocQATool';
 import RedFlagScannerTool from '../components/RedFlagScannerTool';
 import CalculatorsTool from '../components/CalculatorsTool';
 import EmailDrafterTool from '../components/EmailDrafterTool';
+import CrewCardTool from '../components/CrewCardTool';
 
-const SITEWORK_TOOL_URL = '/tool-apps/sitework/index.html';
 const PLANROOM_TOOL_URL = '/tool-apps/planroom/index.html';
 const PDFTOOLS_TOOL_URL = '/tool-apps/pdftools/index.html';
 
-// Sitework Takeoff is retired in favour of Plan Room but NOT deleted — flip this
-// to true to bring its tab + card back. While false the tab is hidden for
-// everyone (even Takeoff-add-on owners) and any #sitework / #excavation deep link
-// falls through to Plan Room. The tool-app files under /tool-apps/sitework/ are
-// left untouched.
-const SHOW_SITEWORK = false;
-
-// Default to Plan Room (the daily-use base tool, always visible). The old
-// excavation tool was removed; its legacy '#excavation' deep links land on sitework.
+// Default to Plan Room (the daily-use base tool). Any hash that isn't a real tab
+// — a typo, or a stale bookmark like the retired #sitework — falls back to Plan
+// Room instead of rendering an empty page. Keep in sync with the `tabs` array below.
+const KNOWN_TABS = ['planroom', 'transcription', 'summarizer', 'docqa', 'redflags', 'calcs', 'emaildraft', 'crewcard', 'pdftools'];
 function resolveTab() {
   const h = window.location.hash.replace('#', '');
-  if (!h) return 'planroom';
-  if (h === 'excavation') return 'sitework';
-  return h;
+  return KNOWN_TABS.includes(h) ? h : 'planroom';
 }
 
 export default function ToolsPage() {
@@ -39,14 +32,8 @@ export default function ToolsPage() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState(resolveTab);
 
-  // Sitework Takeoff is a paid add-on — visible only to companies that own it
-  // (or during trial / while exempt, matching the server's requireTakeoffAddon).
-  const hasTakeoff = !!(user?.addon_takeoff || ['exempt', 'trial'].includes(user?.subscription_status));
-  // Sitework shows only when the retirement flag is off AND the company owns the add-on.
-  const showSitework = SHOW_SITEWORK && hasTakeoff;
-  // Plan Room is the $40 base tier — a daily-use horizontal tool. Unlike the
-  // vertical takeoff (hidden without the add-on), its tab is always visible so
-  // the whole company can discover it; unowned, it shows a locked card.
+  // Plan Room is the $40 base tier — a daily-use horizontal tool; its tab is
+  // always visible so the whole company can discover it (unowned → locked card).
   const hasPlanroom = !!(user?.addon_planroom || ['exempt', 'trial'].includes(user?.subscription_status));
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
 
@@ -64,15 +51,6 @@ export default function ToolsPage() {
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
-
-  // If they land on the (hidden) Sitework tab — retired, or without the add-on —
-  // move them to Plan Room (always visible), not off into an unrelated tool.
-  useEffect(() => {
-    if (user && !showSitework && tab === 'sitework') {
-      setTab('planroom');
-      history.replaceState(null, '', '#planroom');
-    }
-  }, [user, showSitework, tab]);
 
   const switchTab = next => {
     setTab(next);
@@ -104,13 +82,13 @@ export default function ToolsPage() {
 
   const tabs = [
     { id: 'planroom', label: 'Plan Room' },
-    ...(showSitework ? [{ id: 'sitework', label: 'Sitework Takeoff' }] : []),
     { id: 'transcription', label: 'Transcription' },
     { id: 'summarizer', label: 'Summarizer' },
     { id: 'docqa', label: 'Doc Q&A' },
   { id: 'redflags', label: 'Red-Flag Scanner' },
   { id: 'calcs', label: 'Calculators' },
     { id: 'emaildraft', label: 'Email Drafter' },
+    { id: 'crewcard', label: 'Crew Cards' },
     { id: 'pdftools', label: 'PDF Toolkit' },
   ];
 
@@ -180,40 +158,11 @@ export default function ToolsPage() {
         </PageSection>
       )}
 
-      {tab === 'sitework' && showSitework && (
-        <PageSection
-          eyebrow="Sitework"
-          title="Sitework Takeoff Estimator"
-          description="Take off quantities from civil plan sets — earthwork cut/fill, paving, concrete, utilities, and site items — and turn them into a priced, branded bid."
-          actions={(
-            <a className="ops-button-primary" href={SITEWORK_TOOL_URL} target="_blank" rel="noopener noreferrer">
-              Open in new tab
-            </a>
-          )}
-        >
-          <a className="tools-card" href={SITEWORK_TOOL_URL} target="_blank" rel="noopener noreferrer">
-            <span className="tools-card-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="4" y="3" width="16" height="18" rx="2" />
-                <path d="M8 8h8" />
-                <path d="M8 12h8" />
-                <path d="M8 16h5" />
-              </svg>
-            </span>
-            <span className="tools-card-copy">
-              <strong>Sitework Takeoff Estimator</strong>
-              <span>Load a PDF plan set and take off earthwork, paving, concrete, utilities, and site quantities — then build a priced, branded bid. Work saves in the browser for this device.</span>
-            </span>
-            <span className="tools-card-action">Open</span>
-          </a>
-        </PageSection>
-      )}
-
       {tab === 'transcription' && (
         <PageSection
           eyebrow="Transcription"
-          title="Voice transcription"
-          description="Upload a meeting or call recording and get back a transcript that separates who said what. Rename speakers, jump the audio to any line, and copy or download the text."
+          title="Voice transcription, minutes & daily logs"
+          description="Upload a meeting, call, or jobsite recording and get back a transcript that separates who said what. Then turn it into meeting minutes — or walk the site talking and turn a voice memo into a structured daily log (work done, deliveries, delays, action items)."
         >
           <TranscriptionTool />
         </PageSection>
@@ -266,6 +215,16 @@ export default function ToolsPage() {
           description="Turn a few notes into a polished email or text — payment reminders, quote follow-ups, running-late messages — in the tone you pick."
         >
           <EmailDrafterTool />
+        </PageSection>
+      )}
+
+      {tab === 'crewcard' && (
+        <PageSection
+          eyebrow="Crew"
+          title="Bilingual crew task cards"
+          description="Type the day's tasks in English and hand your crew a clean Spanish task card. Keep it bilingual to check the translation, or switch to Spanish-only for the printout."
+        >
+          <CrewCardTool />
         </PageSection>
       )}
 

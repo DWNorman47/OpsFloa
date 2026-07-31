@@ -21,17 +21,76 @@ that holds the exhaustive detail.
 
 ## 🔧 Bugs — set aside for later
 
-- **The hours-rules engine reaches 4 of the 10 paths that turn hours into
-  money** (2026-07-16). Verified while building the rule builder; table of all
-  ten in `docs/plans/hours-rules-builder.md`. `qbo.js:727` and
-  `jobs/scheduledReports.js:125` don't import `hoursRules` at all;
-  `admin.js:1709` hardcodes `'daily'` and ignores the worker's own overtime
-  rule; `projectSpend.js`/`projectReports.js` are raw SQL that bypasses the
-  engine; `WorkerSummary.jsx` and `Tests.jsx` are hand-copied client mirrors.
-  **Turn a policy on today and the invoice, the worker's screen and what lands
-  in QuickBooks disagree.** Harmless while no company has a policy enabled —
-  which is why it hasn't bitten — and a blocker the moment one does. This is
-  M4b in the plan.
+- **WH-347 PDF / Statement of Compliance — mostly fixed 2026-07-28; two items remain.**
+  Fixed: (a) the PDF now renders the signed `compliance_text` snapshot (falls back to the
+  server `default_compliance_text` template when unsigned); (c) regular vs prevailing print as
+  separate rows at their own rates; (d) the OT row shows the OT rate (base × multiplier); (f)
+  re-signing snapshots the replaced signature into the audit log (`certified_payroll.signature_replaced`,
+  full signer/signature/compliance/date); (g) POST /signatures verifies project ownership; (h)
+  cert date renders in UTC (stable for every viewer); (i) sign-modal buttons are bilingual.
+  **Still open:** (b) gross still includes night/OT premium without an itemized line — this is
+  inherent to the WH-347 S/O format (gross = weekly total), left as-is deliberately; flag if a
+  reviewer wants it itemized. (e) Fringes still print as one combined $/hr with no cash-vs-
+  approved-plan (4a/4b/4c) election — needs a data-model decision on where that election lives
+  (per-company? per-project? per-fringe) before it can be built. `CertifiedPayrollPDF.jsx`,
+  `certifiedPayroll.js`. (2026-07-28)
+- **Certified payroll: single prevailing rate + flat OT on premium configs**
+  (`admin.js` WH-347 route). One `prevRate` for all prevailing hours (no
+  per-classification rate table), and premium OT configs still price
+  OT flat (`otBandsCost` at `otMult`) rather than the full band math on the
+  prevailing base. Per-project prevailing rates in all-projects mode and the daily-rate
+  night-differential mismatch were fixed 2026-07-29; classification-level prevailing
+  rates remain a data-model gap. (`overtime_hours_override` is honored.) (2026-07-28)
+- **Server error strings aren't bilingual** (systemic, not payroll-specific). Server
+  routes return English `error` messages (e.g. the payroll conflict 409s:
+  `already_finalized`, `has_paid_checks`, "Run is voided"); the client toasts/render
+  them verbatim, so a Spanish-locale user sees English on any 4xx. `i18n.test` only
+  checks parity of keys that exist, so it can't catch a never-keyed server string. Fix
+  pattern: return a machine `code` (the payroll 409s already do) and have the client map
+  known codes to bilingual `t.*` messages. Worth doing app-wide, not one-off. (2026-07-28)
+- **Supplemental / partial-worker payroll runs need explicit semantics.** Migration
+  `0158` scopes finalized-run idempotency by ruleset, so different schedules can safely
+  use the same date span. The app still intentionally finalizes a whole ruleset period
+  at once and rejects overlapping worker/date checks. A future off-cycle correction or
+  partial-worker flow needs its own run type and adjustment/reversal rules rather than
+  bypassing the overlap guard. (2026-07-28)
+- **Ruleset total cap trims deduction lines pro-rata on the stub** (`paycheckRun.js`
+  `computeRuleNet`). When a ruleset `cap`/min-net floor trims the total, the itemized
+  lines are scaled proportionally across ALL lines so they foot (net + total are
+  always correct). That means a mandatory line (garnishment, child support) shows as
+  *reduced* on the stub instead of the discretionary lines being trimmed first —
+  which line a cap legally attaches to is a policy question. If it matters, add a
+  per-line priority so caps trim discretionary lines before mandatory ones. Stub
+  display only. (2026-07-28)
+
+- **Project merge doesn't move financial records** (`admin.js`
+  `POST /projects/:id/merge-into/:target_id`). The re-point list only covers
+  operational tables (time entries, reports, RFIs, …), not the financial /
+  audit-followup ledgers — change orders, subcontract POs, submittals, closeouts,
+  expenses, budgets, lien waivers (all `project_id` FK **RESTRICT**) or invoices /
+  estimates (**SET NULL**). So merging a source with any of those would 500 on the
+  final `DELETE FROM projects` (RESTRICT) or silently orphan the money (SET NULL).
+  **Guarded 2026-07-25:** the endpoint now pre-checks and returns a clean 409
+  instead of 500ing / orphaning. **Still TODO:** actually *support* merging those —
+  non-trivial because `project_closeouts` / `project_budget_categories` are unique
+  per project, so it needs real merge semantics (combine vs. keep-target), not just
+  a re-point. The hardcoded re-point list is also inherently fragile (this is how
+  it went stale); a schema-driven "re-point every table with a project_id FK" would
+  be more durable. (Found during the invoice review; same FK class as the superadmin
+  wipe bug that was fixed.)
+
+- ~~**The hours-rules engine reaches 4 of the 10 paths that turn hours into
+  money**~~ **RESOLVED (money-of-record) 2026-07-25.** Every path that produces a
+  number a company acts on now runs through the shared engine: the four worker-pay
+  surfaces (invoice, overtime report, payroll CSV, pay stubs) render one
+  `buildPayStatement` (`server/utils/payStatement.js`); `qbo.js`,
+  `jobs/scheduledReports.js`, `projectReports.js` and project metrics (`admin.js`,
+  via `computePaid` with the worker's own OT rule — the hardcoded `'daily'` is
+  gone) use `paidHours`/the engine; `projectSpend.js` is retired. So turning on a
+  policy no longer makes the invoice, payroll and QuickBooks disagree. **Remaining
+  (low-stakes, display-only):** `WorkerSummary.jsx` (a worker's own dashboard
+  glance) and `Tests.jsx` (QA harness) still compute pay independently — not the
+  money of record; fold onto a server number if they ever drift.
 - **Stale CSP hash blocks the inline auth-guard script on stage**
   (`client/public/tool-apps/sitework/index.html:9`). The Content-Security-Policy
   is set by the frontend host (Vercel), not the Express server, and it isn't
@@ -50,32 +109,18 @@ that holds the exhaustive detail.
   - Slow initial loads (Time Clock / Inventory / Team) that look stuck.
   - A11y: tab/shell controls lack accessible names; invalid public links mix
     "Not Found / Unauthorized" wording. (filed 2026-07-11)
-- **Tool-apps still print `$` regardless of the company currency**
-  (`client/public/tool-apps/shared/engine-ui.js:18` `money()`, and the sitework
-  tool's own copy). Everything else — app, PDFs, public client pages, report
-  emails — was fixed in the 2026-07-16 currency sweep, but the static tool-apps
-  are sandboxed: they're plain HTML served from `public/`, outside React, with no
-  access to `SettingsContext` or `GET /api/settings`. The Plan Room bid tables
-  consume the shared `money()`, so Plan Room + sitework both show dollars to an
-  HNL company. Fix needs a delivery mechanism — most likely piggyback the
-  existing `tc_addons` localStorage bridge that `AuthContext` already writes for
-  add-on gating, and have `engine-ui.money()` read the code from there. Note
-  Intl reads the symbol off the LOCALE, not the currency code, so it needs the
-  locale map too (`server/currency.js` / `client/src/utils.js`). **Sitework is
-  off-limits** — do Plan Room + the shared engine only, or the sitework copy
-  diverges. (2026-07-16)
-- **Newer takeoff kinds skip the `NEEDS_SCALE` guard** (`planroom/app.js:239`).
-  `NEEDS_SCALE` blocks a tool on an uncalibrated sheet and sends you to 📏.
-  Roofing/earthwork/drywall kinds are registered, but the flooring and framing
-  packs never added theirs: `froom`, `ftrans`, `fwall`, `fsheath` all produce
-  LF/SF, so on an uncalibrated sheet they trace happily and silently return 0 —
-  a wrong bid rather than an error. (ESC's `escline`/`escarea` are registered
-  correctly.) One-line fix, but verify no flow depends on tracing pre-scale.
-  (2026-07-16)
-- **`fopening` missing from `POINT_KINDS`** (`planroom/app.js:1945`). It's a
-  count kind drawn as dots, but `POINT_KINDS` drives rubber-band suppression,
-  the draft label, and the minimum-point count — so unlike its twin `dopening`
-  it wrongly rubber-bands and needs 2 clicks instead of 1. (2026-07-16)
+- ~~**Tool-apps still print `$` regardless of the company currency**~~
+  **RESOLVED (Plan Room) 2026-07-25.** `SettingsContext` now writes a
+  `tc_currency` localStorage key (mirroring the `tc_addons` bridge), and the
+  shared `engine-ui.money()` reads it and formats in the company currency via a
+  locale map (mirror of `client/src/utils.js`), USD fallback. Plan Room bid tables
+  now respect the currency. **Sitework's own `money()` copy is intentionally left
+  on `$`** (off-limits); it'll diverge until the sitework port, which is accepted.
+- ~~**Newer takeoff kinds skip the `NEEDS_SCALE` guard**~~ **RESOLVED
+  2026-07-25.** `froom`/`ftrans`/`fwall`/`fsheath` added to `NEEDS_SCALE` — they
+  now block + nudge to 📏 on an uncalibrated sheet instead of silently returning 0.
+- ~~**`fopening` missing from `POINT_KINDS`**~~ **RESOLVED 2026-07-25.** Added, so
+  it behaves like its twin `dopening` (single click, no rubber-band).
 - **Closeout is broken for companies without QuickBooks, in both directions.**
   `project_invoices` is a **QBO mirror** — only `server/routes/qbo.js` ever
   writes it — so a company without QBO connected has **zero rows**. Both
@@ -101,6 +146,26 @@ that holds the exhaustive detail.
 
 ## 🧭 Design flaws — raised, set aside for later
 
+- **Should the minimum-daily floor appear on the WH-347 at all?** Certified Payroll now
+  includes worked-day min-daily floor hours in the regular total AND the day columns (they
+  reconcile as of 2026-07-28). But a min-daily floor is *reporting-time* pay, not hours
+  worked on the project — arguably it shouldn't be on a WH-347's hours-worked columns. Left
+  as-is (matches the pay stub's gross), but a prevailing-wage compliance call worth
+  confirming before relying on it. (2026-07-28)
+- ~~**Payroll run keys on "pay date in window", users think "work period".**~~ **Resolved
+  2026-07-28.** The tab now leads with a pay-period **dropdown** (not a raw
+  range), and each check's period comes from a selectable `periodBasis` (work_week /
+  prior_cycle / on_payday, default work_week) so the period aligns to the work week and
+  pays in arrears. The custom range + `notices` remain for edge cases. Multiple schedules
+  are now listed and computed per ruleset, so one cadence cannot pull a partial group
+  from another.
+- **"Included workers" (15) is duplicated between client and Stripe.** The Business
+  base price bundles 15 seats; the client hardcodes `INCLUDED_WORKERS = 15` in
+  `BillingPanel.jsx` to compute the per-worker overage sent to checkout. If the
+  Stripe base ever bundles a different count, the constant silently drifts and we
+  over/undercharge (this exact drift caused the 2026-07-28 overcharge bug). Fix:
+  surface `included_workers` in the `/stripe/plans` payload so there's one source of
+  truth and the server can also sanity-check the quantity. (2026-07-28)
 - ~~**Company-share conflict model is fork-only.**~~ **RESOLVED 2026-07-14.** The
   conflict dialog is now 3-way (Keep both / Overwrite theirs / Cancel), and a
   **manual, admin-releasable lock** (migration 0138) lets a user reserve a shared
@@ -110,6 +175,31 @@ that holds the exhaustive detail.
   fresh local project each time, so copying the same cloud takeoff twice yields two
   local projects both linked to it. Minor; could reuse the already-linked local
   project instead. (2026-07-11)
+- **Rate-aware overtime (prevailing / multi-rate / international).** → **spec:
+  `docs/plans/rate-aware-overtime.md`** (broadened from the WH-347-only
+  `certified-payroll-ot.md`). David's goal: one adaptable engine for any use case
+  (Oregon excavator mixing prevailing + civilian jobs in a day, Kentucky call
+  center, Honduras elevator co) with no jurisdiction hardcoded. The one real gap is
+  multi-rate hours never earning OT; fix is rate-aware "rate-when-worked" pricing,
+  engine-wide, with a plain-English scenario matrix as the spec + a cross-surface
+  reconcile invariant. Method note: rate-when-worked (generalizes worldwide);
+  weighted-average is a future US toggle. Audited 2026-07-26 and the scope got
+  *clearer and bigger*: the WH-347 report (`GET /admin/certified-payroll`,
+  `admin.js:3454`) computes **no overtime at all** — regular *and* prevailing — it
+  bucket-sums raw hours and grosses `hours × rate` flat, bypassing
+  `buildPayStatement`. So any >40h week on a compliance form is understated. The
+  audit *resolved* the decision I was worried about: the stored rate is **base-only
+  with fringe modeled separately** (`worker_fringes`), so "OT on the base rate,
+  fringe paid straight" needs **no schema change**. Remaining decisions collapse to
+  "reuse the company's existing OT config for the threshold" and "route the report
+  through `annotateEntryOvertime` for a per-day ST/OT split." **Config-driven, not a
+  50-state ruleset** — the engine's OT config is company+role only (no
+  per-project/classification), so it's a **two-phase** build: P1 route through the
+  shared engine (broad by construction), P2 a per-project OT override for jobs whose
+  wage determination differs from the company rule. Gate is now an **archetype test
+  matrix** (federal / CA-daily / no-state-law) + reconcile-to-`buildPayStatement`,
+  not one customer's form. Inline break-clamp bug fixed 2026-07-26. (Found review
+  batch 6; audited + broadened on request.)
 - ~~**Raw `localStorage`/`sessionStorage` still used in feature components.**~~
   **RESOLVED 2026-07-20.** Swept 72 calls across 23 post-login files onto
   `safeSession`/`safeLocal`; `debugBundle` reads storage inside its try now. Every
@@ -125,14 +215,16 @@ that holds the exhaustive detail.
 - **Wall Dig button** — hidden "for now" in the takeoff tool; bring it back, remove
   it, or leave it hidden? (2026-07-10)
 
-- **Native invoices, or QuickBooks forever?** ⚠️ **The biggest one on this list.**
-  `project_invoices` is a QBO *mirror* — only `routes/qbo.js` ever writes it, so a
-  company without QBO connected has **zero rows**. This blocks sub pay-apps
-  entirely, and it is **already breaking closeout today** (see the two closeout
-  bugs above). Either invent a native invoice/AR concept, or make QBO a hard
-  dependency of project billing and say so out loud. Nothing in the money category
-  should be built before this is decided. See `docs/plans/gc-tools.md`.
-  (2026-07-16)
+- ~~**Native invoices, or QuickBooks forever?**~~ **DECIDED 2026-07-25 — native
+  invoices; QuickBooks is an optional extra, never a dependency.** OpsFloa gets its
+  own invoice / accounts-receivable concept so a company that never connects
+  QuickBooks can still invoice, record payment, and close out. QBO stays a **sync
+  layer on top** — the mirror is fine, it just can't be the *source of truth*.
+  This unblocks the two closeout bugs above (read OpsFloa's own invoices instead of
+  an empty QBO mirror), sub pay-applications, and invoicing straight off a service
+  work order. **Next:** scope the native-invoice build (data model → create / track
+  / mark paid → how the existing QBO mirror coexists) before any other money-category
+  work. See `docs/plans/gc-tools.md`. → memory: project_native_invoices_decision.
 - **Do you want GC customers at all?** Everything OpsFloa does today assumes a
   contractor who **self-performs**. A GC coordinates *other people* — different
   buyer, different anxiety, the one who pays Procore ($10k+/yr). Worth entering
@@ -220,6 +312,16 @@ that holds the exhaustive detail.
 
 ## 📌 Planned / ready-to-build
 *Scoped with a plan; just not started.*
+
+- **Drop the dormant `project_invoices` table** — migration `0150` unified the
+  QBO mirror into native `invoices` (data copied, `lien_waivers` FK repointed,
+  `qbo.js`/`projectReports`/`closeout`/`lienWaivers` all read native). The old
+  table is left **dormant as a rollback backup** — no code reads/writes it except
+  the superadmin company-wipe. Once verified in production (create a QBO invoice,
+  check-payment, confirm AR + closeout read right), add a one-line migration
+  `DROP TABLE project_invoices` and remove the dormant delete in `superadmin.js`
+  + its `expectedTables` entry. Until then, `project_invoices` holds a duplicate
+  copy of the pre-migration rows.
 
 - **Plan Room platform (MASTER PLAN)** — `docs/plans/plan-viewer-markup.md`
   (2026-07-11, two tiers, **money-first sequencing**). **Base add-on ~$40/mo**

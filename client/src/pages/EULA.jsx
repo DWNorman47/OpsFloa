@@ -11,7 +11,7 @@ export default function EULA() {
       <div style={styles.container}>
         <a href="/" style={styles.back}>← Back to OpsFloa</a>
         <h1 style={styles.h1}>End-User License Agreement</h1>
-        <p style={styles.updated}>Last updated: March 21, 2025</p>
+        <p style={styles.updated}>Last updated: July 22, 2026</p>
 
         <p style={styles.p}>This End-User License Agreement ("Agreement") is a legal agreement between you and OpsFloa ("Company," "we," "us") governing your use of the OpsFloa software and services available at opsfloa.com ("Service"). By accessing or using the Service, you agree to be bound by this Agreement.</p>
 
@@ -50,16 +50,20 @@ export default function EULA() {
         <h2 style={styles.h2}>9. Disclaimer of Warranties</h2>
         <p style={styles.p}>The Service is provided "as is" and "as available" without warranties of any kind, express or implied, including fitness for a particular purpose or uninterrupted availability. We do not warrant that the Service will be error-free.</p>
 
-        <h2 style={styles.h2}>10. Limitation of Liability</h2>
+        <h2 style={styles.h2}>10. Customer Responsibilities; No Payroll, Tax, or Legal Advice</h2>
+        <p style={styles.p}>OpsFloa is a software tool. It is not a payroll provider, professional employer organization, accountant, tax preparer, or legal advisor, and it does not provide payroll, tax, accounting, or legal advice. Features that calculate hours, overtime, pay, deductions, or taxes, or that generate invoices, estimates, or compliance documents (including certified payroll), are provided to assist you, and their outputs are estimates you must review and verify.</p>
+        <p style={styles.p}>You are solely responsible for the data you enter and the settings you choose, and for ensuring that the amounts you pay, withhold, or report comply with all applicable wage-and-hour, tax, labor, and other laws in every jurisdiction where you operate. You should confirm figures with a qualified accountant, payroll professional, or attorney before relying on them. To the fullest extent permitted by law, we are not responsible or liable for pay, tax, or compliance decisions you make using the Service.</p>
+
+        <h2 style={styles.h2}>11. Limitation of Liability</h2>
         <p style={styles.p}>To the fullest extent permitted by law, OpsFloa's total liability for any claims arising under this Agreement shall not exceed the fees you paid in the three months preceding the claim. We are not liable for indirect, incidental, consequential, or punitive damages.</p>
 
-        <h2 style={styles.h2}>11. Governing Law</h2>
+        <h2 style={styles.h2}>12. Governing Law</h2>
         <p style={styles.p}>This Agreement is governed by the laws of the State of Texas, without regard to conflict of law principles. Any disputes shall be resolved in the courts of Texas.</p>
 
-        <h2 style={styles.h2}>12. Changes to This Agreement</h2>
+        <h2 style={styles.h2}>13. Changes to This Agreement</h2>
         <p style={styles.p}>We may update this Agreement from time to time. Continued use of the Service after notice of changes constitutes acceptance. We will provide at least 14 days' notice of material changes.</p>
 
-        <h2 style={styles.h2}>13. Contact</h2>
+        <h2 style={styles.h2}>14. Contact</h2>
         <p style={styles.p}>Questions about this Agreement? Contact us at <a href="mailto:info@opsfloa.com" style={styles.link}>info@opsfloa.com</a>.</p>
       </div>
     </div>

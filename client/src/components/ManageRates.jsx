@@ -78,7 +78,12 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
     overtime_multiplier: String(settings?.overtime_multiplier ?? 1.5),
     overtime_rule: settings?.overtime_rule ?? 'daily',
     overtime_threshold: String(settings?.overtime_threshold ?? 8),
+    overtime_rate_method: settings?.overtime_rate_method ?? 'rate_when_worked',
+    regular_shift_hours: String(settings?.regular_shift_hours ?? 8),
+    sick_pay_pct: String(settings?.sick_pay_pct ?? 100),
+    vacation_pay_pct: String(settings?.vacation_pay_pct ?? 100),
     week_start: String(settings?.week_start ?? 1),
+    work_week_end: String(settings?.work_week_end ?? 0),
     notification_inactive_days: String(settings?.notification_inactive_days ?? 3),
     notification_use_work_hours: settings?.notification_use_work_hours ?? true,
     notification_start_hour: String(settings?.notification_start_hour ?? 6),
@@ -169,7 +174,12 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
       overtime_multiplier: String(settings.overtime_multiplier ?? 1.5),
       overtime_rule: settings.overtime_rule ?? 'daily',
       overtime_threshold: String(settings.overtime_threshold ?? 8),
+      overtime_rate_method: settings.overtime_rate_method ?? 'rate_when_worked',
+      regular_shift_hours: String(settings.regular_shift_hours ?? 8),
+      sick_pay_pct: String(settings.sick_pay_pct ?? 100),
+      vacation_pay_pct: String(settings.vacation_pay_pct ?? 100),
       week_start: String(settings.week_start ?? 1),
+      work_week_end: String(settings.work_week_end ?? 0),
       notification_inactive_days: String(settings.notification_inactive_days ?? 3),
       notification_use_work_hours: settings.notification_use_work_hours ?? true,
       notification_start_hour: String(settings.notification_start_hour ?? 6),
@@ -239,7 +249,12 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
         overtime_multiplier: parseFloat(form.overtime_multiplier),
         overtime_rule: form.overtime_rule,
         overtime_threshold: parseFloat(form.overtime_threshold),
+        overtime_rate_method: form.overtime_rate_method,
+        regular_shift_hours: parseFloat(form.regular_shift_hours),
+        sick_pay_pct: parseFloat(form.sick_pay_pct),
+        vacation_pay_pct: parseFloat(form.vacation_pay_pct),
         week_start: parseInt(form.week_start, 10),
+        work_week_end: parseInt(form.work_week_end, 10),
         notification_inactive_days: parseFloat(form.notification_inactive_days),
         notification_use_work_hours: form.notification_use_work_hours,
         notification_start_hour: parseFloat(form.notification_start_hour),
@@ -703,6 +718,55 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
           </div>
           <div style={styles.row}>
             <div>
+              <div style={styles.label}>{t.mrWorkWeekEnd}</div>
+              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrWorkWeekDesc}</div>
+            </div>
+            <div style={styles.inputGroup}>
+              <select style={{ ...styles.input, width: 'auto', textAlign: 'left' }} value={form.work_week_end} onChange={e => set('work_week_end', e.target.value)}>
+                <option value="0">{t.daySunday}</option>
+                <option value="1">{t.dayMonday}</option>
+                <option value="2">{t.dayTuesday}</option>
+                <option value="3">{t.dayWednesday}</option>
+                <option value="4">{t.dayThursday}</option>
+                <option value="5">{t.dayFriday}</option>
+                <option value="6">{t.daySaturday}</option>
+              </select>
+            </div>
+          </div>
+          <div style={styles.row}>
+            <div>
+              <div style={styles.label}>{t.mrRegularShift}</div>
+              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrRegularShiftDesc}</div>
+            </div>
+            <div style={styles.inputGroup}>
+              <input style={{ ...styles.input, width: 90 }} type="number" min="1" max="24" step="0.5"
+                value={form.regular_shift_hours} onChange={e => set('regular_shift_hours', e.target.value)} />
+              <span style={{ fontSize: 13, color: '#6b7280', marginLeft: 6 }}>{t.hoursShort}</span>
+            </div>
+          </div>
+          <div style={styles.row}>
+            <div>
+              <div style={styles.label}>{t.mrSickPayRate}</div>
+              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrLeavePayRateDesc}</div>
+            </div>
+            <div style={styles.inputGroup}>
+              <input style={{ ...styles.input, width: 90 }} type="number" min="0" max="100" step="1"
+                value={form.sick_pay_pct} onChange={e => set('sick_pay_pct', e.target.value)} />
+              <span style={{ fontSize: 13, color: '#6b7280', marginLeft: 6 }}>{t.mrPctOfBase}</span>
+            </div>
+          </div>
+          <div style={styles.row}>
+            <div>
+              <div style={styles.label}>{t.mrVacationPayRate}</div>
+            </div>
+            <div style={styles.inputGroup}>
+              <input style={{ ...styles.input, width: 90 }} type="number" min="0" max="100" step="1"
+                value={form.vacation_pay_pct} onChange={e => set('vacation_pay_pct', e.target.value)} />
+              <span style={{ fontSize: 13, color: '#6b7280', marginLeft: 6 }}>{t.mrPctOfBase}</span>
+            </div>
+          </div>
+          <div style={styles.row}>
+            <div>
               <div style={styles.label}>{t.mrCompanyTimezone}</div>
               <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrCompanyTimezoneDesc}</div>
             </div>
@@ -833,6 +897,15 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
             <div style={styles.inputGroup}>
               <input style={styles.input} type="number" min="1" step="0.5" value={form.overtime_threshold} onChange={e => set('overtime_threshold', e.target.value)} required />
               <span style={styles.suffix}>{t.ratesHrs}</span>
+            </div>
+          </div>
+          <div style={styles.row}>
+            <label style={styles.label}>{t.ratesRateMethod}<HelpTip text={t.ratesRateMethodHelp} /></label>
+            <div style={styles.inputGroup}>
+              <select style={{ ...styles.input, width: 'auto', textAlign: 'left' }} value={form.overtime_rate_method} onChange={e => set('overtime_rate_method', e.target.value)}>
+                <option value="rate_when_worked">{t.ratesRateWhenWorked}</option>
+                <option value="weighted_average">{t.ratesWeightedAverage}</option>
+              </select>
             </div>
           </div>
           <div style={styles.row}>

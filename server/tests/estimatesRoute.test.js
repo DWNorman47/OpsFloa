@@ -17,6 +17,9 @@ jest.mock('../middleware/auth', () => ({
   hasAdminPermission:           () => true,
   requireSuperAdmin:            (req, _res, next) => { req.user = mockCurrentUser; next(); },
 }));
+jest.mock('../middleware/commercialAccess', () => ({
+  requireCommercialAccess: (req, _res, next) => next(),
+}));
 
 jest.mock('../db', () => {
   const queryMock = jest.fn();
@@ -317,7 +320,10 @@ describe('POST /api/public/estimates/accept/:token', () => {
 
 describe('POST /api/public/estimates/decline/:token', () => {
   test('rejects with 404 when token does not match', async () => {
-    pool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    pool.query
+      .mockResolvedValueOnce({})                        // BEGIN
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // SELECT ... FOR UPDATE
+      .mockResolvedValueOnce({});                       // ROLLBACK
     const res = await request(makeApp())
       .post('/api/public/estimates/decline/sometoken')
       .send({});
@@ -325,10 +331,29 @@ describe('POST /api/public/estimates/decline/:token', () => {
   });
 
   test('rejects with 409 when not in sent', async () => {
-    pool.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, status: 'declined' }] });
+    pool.query
+      .mockResolvedValueOnce({})                                                     // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, status: 'declined' }] }) // SELECT ... FOR UPDATE
+      .mockResolvedValueOnce({});                                                    // ROLLBACK
     const res = await request(makeApp())
       .post('/api/public/estimates/decline/sometoken')
       .send({});
     expect(res.status).toBe(409);
+  });
+
+  test('declines a sent estimate under a row lock (FOR UPDATE + COMMIT)', async () => {
+    pool.query
+      .mockResolvedValueOnce({})                                                  // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, status: 'sent' }] }) // SELECT ... FOR UPDATE
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })                           // UPDATE ... declined
+      .mockResolvedValueOnce({})                                                  // COMMIT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] });                          // estimate_audit INSERT
+    const res = await request(makeApp())
+      .post('/api/public/estimates/decline/sometoken')
+      .send({ reason: 'too pricey' });
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    const sel = pool.query.mock.calls.find(c => /SELECT id, status FROM estimates/.test(c[0]));
+    expect(sel[0]).toMatch(/FOR UPDATE/);
   });
 });

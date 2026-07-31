@@ -4,6 +4,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
 import api from '../api';
+import LegalFooter from '../components/LegalFooter';
 import { safeLocal } from '../utils/safeStorage';
 
 export default function Register() {
@@ -16,6 +17,7 @@ export default function Register() {
   const [saving, setSaving] = useState(false);
   const [confirming, setConfirming] = useState(null); // email address waiting for confirmation
   const [resendState, setResendState] = useState('idle'); // 'idle' | 'sending' | 'sent'
+  const [accepted, setAccepted] = useState(false); // clickwrap: Terms + Privacy
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -39,7 +41,7 @@ export default function Register() {
     setSaving(true);
     const full_name = [form.first_name, form.middle_name, form.last_name].filter(Boolean).join(' ');
     try {
-      const r = await api.post('/auth/register', { ...form, full_name, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }, { suppressToast: true });
+      const r = await api.post('/auth/register', { ...form, full_name, accepted_terms: accepted, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }, { suppressToast: true });
       if (r.data.pending_confirmation) { setConfirming(r.data.email); return; }
       await loginWithToken(r.data.token);
       try { const saved = JSON.parse(safeLocal.getItem('tc_companies') || '[]'); safeLocal.setItem('tc_companies', JSON.stringify([form.company_name.trim(), ...saved.filter(c => c.toLowerCase() !== form.company_name.trim().toLowerCase())])); } catch {}
@@ -153,14 +155,24 @@ export default function Register() {
             required
             minLength={8}
           />
+          <label style={styles.agree}>
+            <input type="checkbox" checked={accepted} onChange={e => setAccepted(e.target.checked)} required style={{ marginTop: 2 }} />
+            <span>
+              {t.registerAgreePre}{' '}
+              <a href="/eula" target="_blank" rel="noopener noreferrer" style={styles.link}>{t.registerAgreeEula}</a>{' '}
+              {t.registerAgreeAnd}{' '}
+              <a href="/privacy" target="_blank" rel="noopener noreferrer" style={styles.link}>{t.registerAgreePrivacy}</a>.
+            </span>
+          </label>
           {error && <p role="alert" style={styles.error}>{error}</p>}
-          <button style={styles.btn} type="submit" disabled={saving}>
+          <button style={{ ...styles.btn, ...(saving || !accepted ? { opacity: 0.6, cursor: 'not-allowed' } : {}) }} type="submit" disabled={saving || !accepted}>
             {saving ? t.registerCreating : t.registerCreateBtn}
           </button>
         </form>
         <p style={styles.loginLink}>
           {t.registerAlreadyHaveAccount} <Link to="/login" style={styles.link}>{t.registerLogIn}</Link>
         </p>
+        <LegalFooter />
       </div>
     </div>
   );
@@ -176,6 +188,7 @@ const styles = {
   input: { padding: '10px 12px', border: '1px solid #ddd', borderRadius: 8, fontSize: 14 },
   error: { color: '#e53e3e', fontSize: 13, margin: '4px 0 0' },
   btn: { marginTop: 16, padding: '11px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: 15, cursor: 'pointer' },
+  agree: { display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 16, fontSize: 12.5, color: '#4b5563', lineHeight: 1.5, cursor: 'pointer' },
   loginLink: { marginTop: 20, textAlign: 'center', fontSize: 13, color: '#666' },
   link: { color: 'var(--ops-page-accent)', fontWeight: 600, textDecoration: 'none' },
   hint: { fontWeight: 400, color: '#6b7280', fontSize: 12 },

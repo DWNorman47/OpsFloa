@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '../api';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
+import { usePerm } from '../hooks/usePerm';
 import { langToLocale } from '../utils';
+import { escapeHtml } from '../utils/html';
 import CertifiedPayrollSignature from './CertifiedPayrollSignature';
 
 const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
@@ -28,6 +30,7 @@ function lastSunday() {
 export default function CertifiedPayroll({ projects, settings, requireSignature = false, wh347Format = false }) {
   const t = useT();
   const { user } = useAuth();
+  const canSignPayroll = usePerm('manage_pay_periods');
   const locale = langToLocale(user?.language);
   const workerLabel = settings?.label_worker || 'Team Member';
   const [showSignModal, setShowSignModal] = useState(false);
@@ -47,7 +50,7 @@ export default function CertifiedPayroll({ projects, settings, requireSignature 
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `WH-347_${data.week_end}${projectId ? `_proj-${projectId}` : ''}.pdf`;
+      a.download = `WH-347_${data.week_end}${data.project_id ? `_proj-${data.project_id}` : ''}.pdf`;
       document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -58,59 +61,87 @@ export default function CertifiedPayroll({ projects, settings, requireSignature 
     }
   };
   const [weekEnd, setWeekEnd] = useState(lastSunday());
+  const [weeks, setWeeks] = useState(null); // null=loading, []=none (fall back to date input)
   const [projectId, setProjectId] = useState('');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const reportRequest = useRef(0);
+
+  // Valid week-ending dates (aligned to the work week, bounded to real hours). Default
+  // to the most recent so the picker can't sit on an arbitrary mid-week day.
+  useEffect(() => {
+    let alive = true;
+    api.get('/admin/certified-payroll/weeks').then(r => {
+      if (!alive) return;
+      const list = r.data?.weeks || [];
+      setWeeks(list);
+      if (list.length) setWeekEnd(list[0]);
+    }).catch(() => { if (alive) setWeeks([]); });
+    return () => { alive = false; };
+  }, []);
+
+  // Week span for one week-ending ISO date, formatted in UTC (the dates are UTC-midnight
+  // ISO strings — formatting in local time would shift them a day west of UTC).
+  const fmtWeekOption = (endIso) => {
+    const end = new Date(endIso + 'T00:00:00Z');
+    const start = new Date(end); start.setUTCDate(start.getUTCDate() - 6);
+    const o = { month: 'short', day: 'numeric', timeZone: 'UTC' };
+    return `${start.toLocaleDateString(locale, o)} – ${end.toLocaleDateString(locale, { ...o, year: 'numeric' })}`;
+  };
 
   const generate = async () => {
+    const requestId = ++reportRequest.current;
+    const requestedWeek = weekEnd;
+    const requestedProject = projectId;
     setError('');
+    setData(null);
     setLoading(true);
     try {
-      const params = new URLSearchParams({ week_end: weekEnd });
-      if (projectId) params.set('project_id', projectId);
+      const params = new URLSearchParams({ week_end: requestedWeek });
+      if (requestedProject) params.set('project_id', requestedProject);
       const r = await api.get(`/admin/certified-payroll?${params}`);
-      setData(r.data);
+      if (requestId === reportRequest.current) setData(r.data);
     } catch {
-      setError(t.failedLoadReport);
+      if (requestId === reportRequest.current) setError(t.failedLoadReport);
     } finally {
-      setLoading(false);
+      if (requestId === reportRequest.current) setLoading(false);
     }
+  };
+
+  const invalidateReport = () => {
+    reportRequest.current += 1;
+    setLoading(false);
+    setData(null);
+    setError('');
   };
 
   const printReport = () => {
     if (!data) return;
     const win = window.open('', '_blank');
-    const headerRow = `<tr><th>${workerLabel}</th><th>Classification</th>${DAY_LABELS.map(d => `<th>${d}</th>`).join('')}<th>Total</th><th>Rate</th><th>Gross</th></tr>`;
+    if (!win) return;
+    const safe = escapeHtml;
+    const headerRow = `<tr><th>${safe(workerLabel)}</th><th>Classification</th>${DAY_LABELS.map(d => `<th>${safe(d)}</th>`).join('')}<th>Total</th><th>Rate</th><th>Gross</th></tr>`;
 
     const workerRows = data.workers.flatMap(w => {
-      const rows = [];
-      if (w.regular_total > 0) {
-        rows.push(`<tr>
-          <td rowspan="${w.prevailing_total > 0 ? 1 : 1}">${w.worker_name}</td>
-          <td>Regular</td>
-          ${DAY_KEYS.map(d => `<td>${w.regular_days[d] || '—'}</td>`).join('')}
-          <td><strong>${fmtH(w.regular_total)}</strong></td>
-          <td>$${w.rate.toFixed(2)}/hr</td>
-          <td>$${(w.regular_total * w.rate).toFixed(2)}</td>
-        </tr>`);
-      }
-      if (w.prevailing_total > 0) {
-        rows.push(`<tr>
-          ${w.regular_total === 0 ? `<td>${w.worker_name}</td>` : '<td></td>'}
-          <td>Prevailing</td>
-          ${DAY_KEYS.map(d => `<td>${w.prevailing_days[d] || '—'}</td>`).join('')}
-          <td><strong>${fmtH(w.prevailing_total)}</strong></td>
-          <td>$${w.prevailing_rate.toFixed(2)}/hr</td>
-          <td>$${(w.prevailing_total * w.prevailing_rate).toFixed(2)}</td>
-        </tr>`);
-      }
-      return rows;
+      const lines = [];
+      if (w.regular_total > 0) lines.push({ label: t.regular, days: w.regular_days, total: w.regular_total, rate: `$${w.rate.toFixed(2)}/hr`, cost: w.regular_cost });
+      if (w.prevailing_total > 0) lines.push({ label: t.prevailing, days: w.prevailing_days, total: w.prevailing_total, rate: `$${w.prevailing_rate.toFixed(2)}/hr`, cost: w.prevailing_cost });
+      if (w.overtime_total > 0) lines.push({ label: t.overtime, days: w.ot_days, total: w.overtime_total, rate: `$${(w.overtime_cost / w.overtime_total).toFixed(2)}/hr`, cost: w.overtime_cost });
+      if ((w.night_premium || 0) > 0) lines.push({ label: t.nightDiffLabel, days: {}, total: null, rate: '—', cost: w.night_premium }); // additive $ premium so cost cells sum to gross
+      return lines.map((ln, i) => `<tr>
+        <td>${i === 0 ? safe(w.worker_name) : ''}</td>
+        <td>${safe(`${w.classification || ''}${w.classification ? ' · ' : ''}${ln.label}`)}</td>
+        ${DAY_KEYS.map(d => `<td>${safe(ln.days[d] || '—')}</td>`).join('')}
+        <td><strong>${safe(ln.total != null ? fmtH(ln.total) : '—')}</strong></td>
+        <td>${safe(ln.rate)}</td>
+        <td>$${safe((ln.cost || 0).toFixed(2))}</td>
+      </tr>`);
     }).join('');
 
     win.document.write(`<!DOCTYPE html><html><head>
       <meta charset="utf-8">
-      <title>Payroll — Week Ending ${data.week_end}</title>
+      <title>Payroll — Week Ending ${safe(data.week_end)}</title>
       <style>
         body { font-family: system-ui, sans-serif; margin: 24px; color: #111; font-size: 12px; }
         h1 { font-size: 16px; margin: 0 0 4px; }
@@ -128,16 +159,16 @@ export default function CertifiedPayroll({ projects, settings, requireSignature 
     </head><body>
       <h1>Payroll Report</h1>
       <div class="meta">
-        <div><strong>Contractor:</strong> ${data.contractor}</div>
-        <div><strong>Week ending:</strong> ${fmtDate(data.week_end, locale)}</div>
-        <div><strong>Project:</strong> ${data.project || `All project`}</div>
-        <div><strong>Week starting:</strong> ${fmtDate(data.week_start, locale)}</div>
+        <div><strong>Contractor:</strong> ${safe(data.contractor)}</div>
+        <div><strong>Week ending:</strong> ${safe(fmtDate(data.week_end, locale))}</div>
+        <div><strong>Project:</strong> ${safe(data.project || 'All projects')}</div>
+        <div><strong>Week starting:</strong> ${safe(fmtDate(data.week_start, locale))}</div>
       </div>
       <table>
         <thead>${headerRow}</thead>
         <tbody>${workerRows || '<tr><td colspan="12" style="text-align:center;color:#9ca3af;padding:16px">No entries for this period</td></tr>'}</tbody>
       </table>
-      <p class="footer">${new Date().toLocaleDateString(locale, { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+      <p class="footer">${safe(new Date().toLocaleDateString(locale, { year: 'numeric', month: 'long', day: 'numeric' }))}</p>
     </body></html>`);
     win.document.close();
     win.print();
@@ -153,11 +184,17 @@ export default function CertifiedPayroll({ projects, settings, requireSignature 
       <div style={styles.controls}>
         <div style={styles.field}>
           <label htmlFor="cp-week-end" style={styles.label}>{t.weekEnding}</label>
-          <input id="cp-week-end" style={styles.input} type="date" value={weekEnd} onChange={e => { setWeekEnd(e.target.value); setData(null); }} />
+          {weeks && weeks.length > 0 ? (
+            <select id="cp-week-end" style={styles.input} value={weekEnd} onChange={e => { invalidateReport(); setWeekEnd(e.target.value); }}>
+              {weeks.map(w => <option key={w} value={w}>{fmtWeekOption(w)}</option>)}
+            </select>
+          ) : (
+            <input id="cp-week-end" style={styles.input} type="date" value={weekEnd} onChange={e => { invalidateReport(); setWeekEnd(e.target.value); }} />
+          )}
         </div>
         <div style={styles.field}>
           <label htmlFor="cp-project" style={styles.label}>Project optional</label>
-          <select id="cp-project" style={styles.input} value={projectId} onChange={e => { setProjectId(e.target.value); setData(null); }}>
+          <select id="cp-project" style={styles.input} value={projectId} onChange={e => { invalidateReport(); setProjectId(e.target.value); }}>
             <option value="">All project</option>
             {(projects || []).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
@@ -178,7 +215,7 @@ export default function CertifiedPayroll({ projects, settings, requireSignature 
               <div style={styles.metaLine}><strong>Period:</strong> {fmtDate(data.week_start, locale)} – {fmtDate(data.week_end, locale)}</div>
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {requireSignature && (
+              {requireSignature && canSignPayroll && (
                 <button style={styles.signBtn} onClick={() => setShowSignModal(true)}>
                   📝 Sign
                 </button>
@@ -197,10 +234,11 @@ export default function CertifiedPayroll({ projects, settings, requireSignature 
           </div>
           {showSignModal && (
             <CertifiedPayrollSignature
-              projectId={projectId || null}
-              weekEnding={weekEnd}
+              projectId={data.project_id || null}
+              weekEnding={data.week_end}
               defaultName={user?.full_name || ''}
               onClose={() => setShowSignModal(false)}
+              onSigned={signature => setData(current => current ? { ...current, signature } : current)}
             />
           )}
 
@@ -221,28 +259,28 @@ export default function CertifiedPayroll({ projects, settings, requireSignature 
                 </thead>
                 <tbody>
                   {data.workers.flatMap(w => {
-                    const rows = [];
-                    if (w.regular_total > 0) rows.push(
-                      <tr key={`${w.worker_id}-reg`} style={styles.tr}>
-                        <td style={styles.nameTd}>{w.worker_name}</td>
-                        <td style={{ ...styles.td, ...styles.classTd }}>{t.regular}</td>
-                        {DAY_KEYS.map(d => <td key={d} style={styles.dayTd}>{w.regular_days[d] || '—'}</td>)}
-                        <td style={{ ...styles.td, fontWeight: 700 }}>{fmtH(w.regular_total)}</td>
-                        <td style={styles.td}>${w.rate.toFixed(2)}</td>
-                        <td style={styles.td}>${(w.regular_total * w.rate).toFixed(2)}</td>
+                    // Straight-time Regular + Prevailing rows, then a combined
+                    // Overtime row. Costs come from the server (OT-aware) — the
+                    // client no longer recomputes hours × rate flat.
+                    const lines = [];
+                    if (w.regular_total > 0) lines.push({ k: 'reg', label: t.regular, days: w.regular_days, total: w.regular_total, rate: `$${w.rate.toFixed(2)}`, cost: w.regular_cost });
+                    if (w.prevailing_total > 0) lines.push({ k: 'prev', label: t.prevailing, days: w.prevailing_days, total: w.prevailing_total, rate: `$${w.prevailing_rate.toFixed(2)}`, cost: w.prevailing_cost, bg: '#fffbeb', color: '#92400e' });
+                    if (w.overtime_total > 0) lines.push({ k: 'ot', label: t.overtime, days: w.ot_days, total: w.overtime_total, rate: `$${(w.overtime_cost / w.overtime_total).toFixed(2)}`, cost: w.overtime_cost, bg: '#eef2ff', color: '#3730a3' });
+                    // Night differential is an additive $ premium (its hours already sit in the
+                    // Regular row), so show cost only. Without it the cost cells don't sum to gross.
+                    if ((w.night_premium || 0) > 0) lines.push({ k: 'night', label: t.nightDiffLabel, days: {}, total: null, rate: '—', cost: w.night_premium, bg: '#f5f3ff', color: '#5b21b6' });
+                    return lines.map((ln, i) => (
+                      <tr key={`${w.worker_key || w.worker_id}-${ln.k}`} style={{ ...styles.tr, ...(ln.bg ? { background: ln.bg } : {}) }}>
+                        <td style={styles.nameTd}>{i === 0 ? w.worker_name : ''}</td>
+                        <td style={{ ...styles.td, ...styles.classTd, ...(ln.color ? { color: ln.color, fontWeight: 600 } : {}) }}>
+                          {w.classification ? `${w.classification} · ${ln.label}` : ln.label}
+                        </td>
+                        {DAY_KEYS.map(d => <td key={d} style={styles.dayTd}>{ln.days[d] || '—'}</td>)}
+                        <td style={{ ...styles.td, fontWeight: 700 }}>{ln.total != null ? fmtH(ln.total) : '—'}</td>
+                        <td style={styles.td}>{ln.rate}</td>
+                        <td style={styles.td}>${(ln.cost || 0).toFixed(2)}</td>
                       </tr>
-                    );
-                    if (w.prevailing_total > 0) rows.push(
-                      <tr key={`${w.worker_id}-prev`} style={{ ...styles.tr, background: '#fffbeb' }}>
-                        <td style={styles.nameTd}>{w.regular_total === 0 ? w.worker_name : ''}</td>
-                        <td style={{ ...styles.td, ...styles.classTd, color: '#92400e', fontWeight: 600 }}>{t.prevailing}</td>
-                        {DAY_KEYS.map(d => <td key={d} style={styles.dayTd}>{w.prevailing_days[d] || '—'}</td>)}
-                        <td style={{ ...styles.td, fontWeight: 700 }}>{fmtH(w.prevailing_total)}</td>
-                        <td style={styles.td}>${w.prevailing_rate.toFixed(2)}</td>
-                        <td style={styles.td}>${(w.prevailing_total * w.prevailing_rate).toFixed(2)}</td>
-                      </tr>
-                    );
-                    return rows;
+                    ));
                   })}
                 </tbody>
               </table>

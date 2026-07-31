@@ -157,23 +157,30 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
           <Text style={[s.th, { width: colHours, textAlign: 'right' }]}>{t.pdfHoursCol || 'Hours'}</Text>
         </View>
         {entries.map(e => {
-          const h = netHours(e.start_time, e.end_time, e.break_minutes);
+          const h = e.synthetic ? (Number(e.hours) || 0) : netHours(e.start_time, e.end_time, e.break_minutes);
           const isPrev = e.wage_type === 'prevailing';
+          const synLabels = {
+            guarantee: t.floorGuaranteeLabel || 'Guaranteed hours (no clock-in)',
+            min_daily: t.floorMinDailyLabel || 'Minimum daily top-up',
+            weekly_guarantee: t.guaranteeTopupLabel || 'Weekly-hours guarantee top-up',
+            sick: t.pdfSickHours || 'Sick', vacation: t.pdfVacationHours || 'Vacation',
+          };
+          const desc = e.synthetic ? (synLabels[e.kind] || e.kind) : (e.notes || '');
           return (
             <View key={e.id} style={s.tableRow} wrap={false}>
               <Text style={[s.td, { width: colDate }]}>{fmtDate(e.work_date_str || e.work_date, locale)}</Text>
-              {showProject && <Text style={[s.td, { width: colProject }]}>{e.project_name || '—'}</Text>}
-              <Text style={[s.td, { width: colDesc, color: '#6b7280' }]}>{e.notes || ''}</Text>
-              <Text style={[s.td, { width: colIn }]}>{fmtTime(e.start_time)}</Text>
-              <Text style={[s.td, { width: colOut }]}>{fmtTime(e.end_time)}</Text>
+              {showProject && <Text style={[s.td, { width: colProject }]}>{e.synthetic ? '' : (e.project_name || '—')}</Text>}
+              <Text style={[s.td, { width: colDesc, color: '#6b7280' }]}>{desc}</Text>
+              <Text style={[s.td, { width: colIn }]}>{e.synthetic ? '' : fmtTime(e.start_time)}</Text>
+              <Text style={[s.td, { width: colOut }]}>{e.synthetic ? '' : fmtTime(e.end_time)}</Text>
               {showRateType && (
                 <Text style={[s.td, { width: colType, color: isPrev ? '#d97706' : '#2563eb', fontWeight: 'bold' }]}>
-                  {isPrev ? (t.prevailingLabel || 'Prevailing') : (t.regularLabel || 'Regular')}
+                  {e.synthetic ? '' : (isPrev ? (t.prevailingLabel || 'Prevailing') : (t.regularLabel || 'Regular'))}
                 </Text>
               )}
               {showOtCol && (
-                <Text style={[s.td, { width: colOt, textAlign: 'right' }, e.overtime_hours > 0 ? {} : { color: '#9ca3af' }]}>
-                  {e.overtime_hours > 0 ? fmtH(e.overtime_hours) : '—'}
+                <Text style={[s.td, { width: colOt, textAlign: 'right' }, (!e.synthetic && e.overtime_hours > 0) ? {} : { color: '#9ca3af' }]}>
+                  {!e.synthetic && e.overtime_hours > 0 ? fmtH(e.overtime_hours) : '—'}
                 </Text>
               )}
               <Text style={[s.td, { width: colHours, textAlign: 'right', fontWeight: 'bold' }]}>{fmtH(h)}</Text>
@@ -227,17 +234,11 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
                 <Text style={s.sumVal}>{fmtH(summary.prevailing_hours)}</Text>
               </View>
             )}
-            {summary.guarantee_shortfall_hours > 0 && (
-              <View style={s.sumRow}>
-                <Text style={[s.sumLabel, { color: '#2563eb' }]}>
-                  {(t.pdfMinGuarantee || 'Minimum Guarantee ({n}/period shortfall)').replace('{n}', fmtH(summary.guarantee_min_hours))}
-                </Text>
-                <Text style={[s.sumVal, { color: '#2563eb' }]}>+{fmtH(summary.guarantee_shortfall_hours)}</Text>
-              </View>
-            )}
+            {/* Guarantee top-up + paid-leave hours are itemized as rows in the entry
+                table above (not repeated here); their pay stays in the totals below. */}
             <View style={[s.sumRow, s.sumDivider]}>
               <Text style={[s.sumLabel, s.sumBold]}>{t.totalHours || 'Total Hours'}</Text>
-              <Text style={[s.sumVal, s.sumBold]}>{fmtH((summary.total_hours || 0) + (summary.guarantee_shortfall_hours || 0))}</Text>
+              <Text style={[s.sumVal, s.sumBold]}>{fmtH((summary.total_hours || 0) + (summary.guarantee_shortfall_hours || 0) + (summary.sick_hours || 0) + (summary.vacation_hours || 0))}</Text>
             </View>
             {summary.rate > 0 && summary.regular_hours > 0 && (
               <View style={[s.sumRow, s.sumDivider]}>
@@ -247,7 +248,7 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
             )}
             {overtimeEnabled && summary.overtime_hours > 0 && summary.rate > 0 && (
               <View style={s.sumRow}>
-                <Text style={s.sumLabel}>{(t.pdfOvertimePayMult || 'Overtime Pay ({mult}×)').replace('{mult}', summary.overtime_multiplier)}</Text>
+                <Text style={s.sumLabel}>{(t.pdfOvertimePayHrs || 'Overtime Pay ({hrs} hrs)').replace('{hrs}', Number(summary.overtime_hours).toFixed(2))}</Text>
                 <Text style={s.sumVal}>{fmtMoney(summary.overtime_cost)}</Text>
               </View>
             )}
@@ -257,12 +258,30 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
                 <Text style={s.sumVal}>{fmtMoney(summary.prevailing_cost)}</Text>
               </View>
             )}
+            {summary.night_cost > 0 && (
+              <View style={s.sumRow}>
+                <Text style={s.sumLabel}>{(t.nightDiffLabel || 'Night differential')}{summary.night_hours > 0 ? ` (${Number(summary.night_hours).toFixed(2)} hrs)` : ''}</Text>
+                <Text style={s.sumVal}>{fmtMoney(summary.night_cost)}</Text>
+              </View>
+            )}
             {summary.guarantee_shortfall_hours > 0 && summary.rate > 0 && (
               <View style={s.sumRow}>
                 <Text style={[s.sumLabel, { color: '#2563eb' }]}>
                   {(t.pdfMinGuaranteePay || 'Minimum Guarantee ({hrs} @ {rate}/hr)').replace('{hrs}', fmtH(summary.guarantee_shortfall_hours)).replace('{rate}', fmtMoney(summary.rate))}
                 </Text>
                 <Text style={[s.sumVal, { color: '#2563eb' }]}>{fmtMoney(summary.guarantee_cost || 0)}</Text>
+              </View>
+            )}
+            {summary.sick_hours > 0 && summary.rate > 0 && (
+              <View style={s.sumRow}>
+                <Text style={s.sumLabel}>{(t.pdfSickPayRate || 'Sick Pay ({rate}/hr)').replace('{rate}', fmtMoney(summary.sick_rate ?? summary.rate))}</Text>
+                <Text style={s.sumVal}>{fmtMoney(summary.sick_cost)}</Text>
+              </View>
+            )}
+            {summary.vacation_hours > 0 && summary.rate > 0 && (
+              <View style={s.sumRow}>
+                <Text style={s.sumLabel}>{(t.pdfVacationPayRate || 'Vacation Pay ({rate}/hr)').replace('{rate}', fmtMoney(summary.vacation_rate ?? summary.rate))}</Text>
+                <Text style={s.sumVal}>{fmtMoney(summary.vacation_cost)}</Text>
               </View>
             )}
             {hasDeductions && (

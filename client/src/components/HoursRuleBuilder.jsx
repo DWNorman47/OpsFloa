@@ -59,6 +59,10 @@ function blankRule() {
     mult: '1.5',
     // premium fields (rest_day reuses mult; others below)
     minHours: '4',
+    minRequiresClockin: true,   // min_daily: floor only on days worked (default)
+    minActiveWindow: 'week',    // when clock-in not required: worked-that-week vs. -that-period gate
+    sickHours: '8',             // sick_value (Time Off Value): paid hours a full leave day is worth
+    leaveApplies: 'both',       // sick_value: which leave it values — sick | vacation | both
     firstHours: '8',
     firstMult: '1.5',
     afterMult: '2',
@@ -155,7 +159,19 @@ export function describeRule(r, t) {
       return `${when} — ${t.hrSumOtTier.replace('{n}', r.afterHours).replace('{per}', per).replace('{mult}', r.mult)}`;
     }
     case 'rest_day': return `${when} — ${t.hrSumRestDay.replace('{mult}', r.mult)}`;
-    case 'min_daily': return `${when} — ${t.hrSumMinDaily.replace('{n}', r.hours)}`;
+    case 'min_daily': {
+      const ncMap = {
+        period: t.hrSumMinNoClockinPeriod,
+        every_weekday: t.hrSumMinNoClockinEveryWeekday,
+        every_other_day: t.hrSumMinNoClockinEveryOtherDay,
+      };
+      const nc = r.requiresClockin === false ? ` ${ncMap[r.activeWindow] || t.hrSumMinNoClockinWeek}` : '';
+      return `${when} — ${t.hrSumMinDaily.replace('{n}', r.hours)}${nc}`;
+    }
+    case 'sick_value': {
+      const applies = { sick: t.hrLeaveSick, vacation: t.hrLeaveVacation }[r.applies] || t.hrLeaveBoth;
+      return `${when} — ${t.hrSumSickValue.replace('{n}', r.hours).replace('{leave}', applies)}`;
+    }
     case 'seventh_day': return `${when} — ${t.hrSumSeventh.replace('{a}', r.firstMult).replace('{b}', r.afterMult)}`;
     case 'night_diff': return `${when} — ${t.hrSumNight.replace('{pct}', r.pct).replace('{from}', r.fromHour).replace('{to}', r.toHour)}`;
     case 'window_mult': {
@@ -196,11 +212,25 @@ export default function HoursRuleBuilder({ rules, onChange, title, help }) {
   // Load an existing rule into the draft. A stored rule only carries the fields
   // its type uses, so merge it onto a blank draft to fill the rest (keeping its
   // id so commit replaces it, not appends a copy).
+  // A few rule types store a value under a name that differs from the draft input
+  // it's edited through (the engine wants `hours`, the input is `minHours`/
+  // `sickHours`). Map those back so editing a saved rule shows its real values.
+  const draftFieldsFromRule = (rule) => {
+    switch (rule.type) {
+      case 'min_daily': return rule.hours != null ? { minHours: String(rule.hours) } : {};
+      case 'sick_value': return {
+        ...(rule.hours != null ? { sickHours: String(rule.hours) } : {}),
+        leaveApplies: rule.applies || 'both',
+      };
+      default: return {};
+    }
+  };
   const edit = (rule) => setDraft({
     ...blankRule(),
     ...rule,
     when: { ...(rule.when || { kind: 'every_day' }) },
     trigger: { ...blankRule().trigger, ...(rule.trigger || {}) },
+    ...draftFieldsFromRule(rule),
   });
   const editing = !!draft && rules.some(r => r.id === draft.id);
 
@@ -353,6 +383,7 @@ export default function HoursRuleBuilder({ rules, onChange, title, help }) {
               <option value="ot_tier">{t.hrType_ot_tier}</option>
               <option value="rest_day">{t.hrType_rest_day}</option>
               <option value="min_daily">{t.hrType_min_daily}</option>
+              <option value="sick_value">{t.hrType_sick_value}</option>
               <option value="seventh_day">{t.hrType_seventh_day}</option>
               <option value="night_diff">{t.hrType_night_diff}</option>
               <option value="window_mult">{t.hrType_window_mult}</option>
@@ -552,7 +583,42 @@ export default function HoursRuleBuilder({ rules, onChange, title, help }) {
               <Field label={t.hrMinDaily}>
                 <input style={s.input} type="number" min="0.5" step="0.5" value={draft.minHours} onChange={e => setD('minHours', e.target.value)} />
               </Field>
-              <p style={s.hint}>{t.hrMinRuleHint}</p>
+              <label style={s.checkRow}>
+                <input type="checkbox" checked={draft.minRequiresClockin} onChange={e => setD('minRequiresClockin', e.target.checked)} />
+                <span>{t.hrMinRequiresClockin}</span>
+              </label>
+              {!draft.minRequiresClockin && (
+                <Field label={t.hrMinActiveWindow}>
+                  {/* The "every weekday / every other day that week" gates only make
+                      sense for a specific-day rule, so hide them when this applies
+                      every day (and fall back to "that week" for display). */}
+                  <select style={s.input}
+                    value={draft.when?.kind === 'every_day' && (draft.minActiveWindow === 'every_weekday' || draft.minActiveWindow === 'every_other_day') ? 'week' : draft.minActiveWindow}
+                    onChange={e => setD('minActiveWindow', e.target.value)}>
+                    <option value="week">{t.hrMinActiveWindowWeek}</option>
+                    <option value="period">{t.hrMinActiveWindowPeriod}</option>
+                    {draft.when?.kind !== 'every_day' && <option value="every_weekday">{t.hrMinActiveWindowEveryWeekday}</option>}
+                    {draft.when?.kind !== 'every_day' && <option value="every_other_day">{t.hrMinActiveWindowEveryOtherDay}</option>}
+                  </select>
+                </Field>
+              )}
+              <p style={s.hint}>{draft.minRequiresClockin ? t.hrMinRuleHint : t.hrMinNoClockinHint}</p>
+            </>
+          )}
+
+          {draft.type === 'sick_value' && (
+            <>
+              <Field label={t.hrLeaveApplies}>
+                <select style={s.input} value={draft.leaveApplies} onChange={e => setD('leaveApplies', e.target.value)}>
+                  <option value="both">{t.hrLeaveBoth}</option>
+                  <option value="sick">{t.hrLeaveSick}</option>
+                  <option value="vacation">{t.hrLeaveVacation}</option>
+                </select>
+              </Field>
+              <Field label={t.hrSickValue}>
+                <input style={s.input} type="number" min="0.5" step="0.5" value={draft.sickHours} onChange={e => setD('sickHours', e.target.value)} />
+              </Field>
+              <p style={s.hint}>{t.hrSickRuleHint}</p>
             </>
           )}
 
@@ -667,8 +733,20 @@ function coerceDraft(d) {
     case 'rest_day':
       out.mult = parseFloat(d.mult) || 1.5;
       break;
-    case 'min_daily':
+    case 'min_daily': {
       out.hours = parseFloat(d.minHours) || 0;
+      out.requiresClockin = d.minRequiresClockin !== false;
+      // The specific-day gates only apply when the rule targets specific days.
+      const specific = d.when && d.when.kind !== 'every_day';
+      const aw = d.minActiveWindow;
+      out.activeWindow = aw === 'period' ? 'period'
+        : ((aw === 'every_weekday' || aw === 'every_other_day') && specific) ? aw
+        : 'week';
+      break;
+    }
+    case 'sick_value':
+      out.hours = parseFloat(d.sickHours) || 0;
+      out.applies = ['sick', 'vacation', 'both'].includes(d.leaveApplies) ? d.leaveApplies : 'both';
       break;
     case 'seventh_day':
       out.firstHours = parseFloat(d.firstHours) || 0;
@@ -728,6 +806,7 @@ const s = {
   chip: { padding: '5px 11px', border: '1px solid #d1d5db', background: '#fff', borderRadius: 999, fontSize: 12, cursor: 'pointer', color: '#6b7280' },
   chipOn: { background: 'var(--ops-page-accent, #059669)', borderColor: 'transparent', color: '#fff', fontWeight: 600 },
   hint: { fontSize: 11.5, color: '#6b7280', margin: 0, lineHeight: 1.45 },
+  checkRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#374151', cursor: 'pointer' },
   err: { fontSize: 12, color: '#b91c1c', margin: 0, fontWeight: 600 },
   preview: { fontSize: 12.5, color: '#065f46', background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 6, padding: '7px 10px' },
   actions: { display: 'flex', gap: 8, marginTop: 2 },

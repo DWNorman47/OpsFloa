@@ -10,6 +10,7 @@ const { coerceBody } = require('../middleware/coerce');
 const { logFailure } = require('../failureLog');
 const { SETTINGS_DEFAULTS, applySettingsRows } = require('../settingsDefaults');
 const { entryInstants } = require('../utils/timeFormat');
+const { generatePeriods, groupPeriods, isValidIsoDate, dateRangeDays } = require('../utils/payPeriods');
 const rateLimit = require('express-rate-limit');
 const { userOrIpKey } = require('../middleware/rateLimitKey');
 
@@ -33,6 +34,15 @@ const entryWriteLimiter = rateLimit({
 
 // Get current user's entries
 router.get('/', requireAuth, async (req, res) => {
+  const { from, to } = req.query;
+  const hasRange = from != null || to != null;
+  if (hasRange && (!isValidIsoDate(from) || !isValidIsoDate(to) || from > to)) {
+    return res.status(400).json({ error: 'from and to must be valid dates in ascending order', code: 'invalid_date_range' });
+  }
+  if (hasRange && dateRangeDays(from, to) > 366) {
+    return res.status(400).json({ error: 'Time entry range cannot exceed 366 days', code: 'date_range_too_large' });
+  }
+
   try {
     const co = await pool.query(
       'SELECT plan, subscription_status, trial_ends_at FROM companies WHERE id = $1',
@@ -41,15 +51,17 @@ router.get('/', requireAuth, async (req, res) => {
     const { plan, subscription_status, trial_ends_at } = co.rows[0] || {};
     const trialActive = subscription_status === 'trial' && (!trial_ends_at || new Date(trial_ends_at) >= new Date());
     const isFree = plan === 'free' && !trialActive;
-    const dateClause = isFree ? `AND te.work_date >= CURRENT_DATE - INTERVAL '90 days'` : '';
+    const freeDateClause = isFree ? `AND te.work_date >= CURRENT_DATE - INTERVAL '90 days'` : '';
+    const rangeClause = hasRange ? 'AND te.work_date BETWEEN $2 AND $3' : '';
+    const values = hasRange ? [req.user.id, from, to] : [req.user.id];
 
     const result = await pool.query(
       `SELECT te.*, p.name as project_name
        FROM time_entries te
        LEFT JOIN projects p ON te.project_id = p.id
-       WHERE te.user_id = $1 ${dateClause}
+       WHERE te.user_id = $1 ${freeDateClause} ${rangeClause}
        ORDER BY te.work_date DESC, te.start_time DESC`,
-      [req.user.id]
+      values
     );
     res.json(result.rows);
   } catch (err) {
@@ -307,93 +319,173 @@ router.delete('/:id', requireAuth, async (req, res) => {
   }
 });
 
-const { hoursWorked, computeOT } = require('../utils/payCalculations');
-const { computePaid } = require('../utils/paidHours');
+const { loadSettings } = require('../utils/paidHours');
+const { workerPeriodStatements, workerStatement } = require('../utils/payStatement');
+const { normalizePaycheckRules } = require('../constants/paycheckRuleEnums');
+const { resolveRuleset, deductionsForRole, applyGroupDeductions, groupOpts } = require('../utils/paycheckRun');
+const { parseCompanyDeductions, normalizeWorkerDeductions } = require('../utils/deductions');
 const { weekRange } = require('../utils/weekBounds');
+
+// GET /time-entries/invoice-statement — canonical worker pay statement for one bounded period
+router.get('/invoice-statement', requireAuth, async (req, res) => {
+  const { from, to } = req.query;
+  if (!isValidIsoDate(from) || !isValidIsoDate(to)) {
+    return res.status(400).json({ error: 'from and to must be valid YYYY-MM-DD dates' });
+  }
+  const days = dateRangeDays(from, to);
+  if (days == null || days > 31) {
+    return res.status(400).json({ error: 'Invoice period must be between 1 and 31 days' });
+  }
+
+  const companyId = req.user.company_id;
+  try {
+    const [workerRow, settings, companyRow] = await Promise.all([
+      pool.query(
+        `SELECT id, full_name, email, invoice_name, hourly_rate, rate_type,
+                overtime_rule, role_id, guaranteed_weekly_hours
+         FROM users
+         WHERE id=$1 AND company_id=$2`,
+        [req.user.id, companyId]
+      ),
+      loadSettings(companyId),
+      pool.query(
+        'SELECT plan, subscription_status, trial_ends_at FROM companies WHERE id=$1',
+        [companyId]
+      ),
+    ]);
+    if (workerRow.rowCount === 0) return res.status(404).json({ error: 'Worker not found' });
+
+    const company = companyRow.rows[0] || {};
+    const trialActive = company.subscription_status === 'trial'
+      && (!company.trial_ends_at || new Date(company.trial_ends_at) >= new Date());
+    if (company.plan === 'free' && !trialActive) {
+      const allowed = weekRange(settings.week_start ?? 1, -1);
+      if (from !== allowed.from || to !== allowed.to) {
+        return res.status(403).json({
+          error: 'Free-plan invoice export is limited to the latest completed week',
+          allowed_period: allowed,
+        });
+      }
+    }
+
+    const statement = await workerStatement({
+      companyId,
+      worker: workerRow.rows[0],
+      settings,
+      from,
+      to,
+      explain: true,
+    });
+    res.json(statement);
+  } catch (err) {
+    req.log.error({ err }, 'invoice statement route error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
 // GET /time-entries/pay-stubs — worker's pay periods with aggregated hours
 router.get('/pay-stubs', requireAuth, async (req, res) => {
   const userId = req.user.id;
   const companyId = req.user.company_id;
   try {
-    const [periods, settingsRows, workerRow] = await Promise.all([
-      pool.query('SELECT * FROM pay_periods WHERE company_id = $1 ORDER BY period_start DESC', [companyId]),
-      pool.query('SELECT key, value FROM settings WHERE company_id = $1', [companyId]),
-      pool.query('SELECT overtime_rule, hourly_rate, rate_type, guaranteed_weekly_hours, role_id FROM users WHERE id = $1', [userId]),
+    const [workerRow, settings, companyRow] = await Promise.all([
+      pool.query('SELECT id, overtime_rule, hourly_rate, rate_type, guaranteed_weekly_hours, role_id FROM users WHERE id = $1', [userId]),
+      loadSettings(companyId),
+      pool.query('SELECT subscription_status, addon_advanced_payroll, addon_certified_payroll FROM companies WHERE id = $1', [companyId]),
     ]);
-    const s = { overtime_threshold: 8, default_hourly_rate: 0 };
-    settingsRows.rows.forEach(r => {
-      if (r.key === 'overtime_threshold') s.overtime_threshold = parseFloat(r.value);
-      if (r.key === 'default_hourly_rate') s.default_hourly_rate = parseFloat(r.value);
-      if (r.key === 'hours_rules') s.hours_rules = r.value;
-    });
-    const workerData = workerRow.rows[0] || {};
-    const workerOTRule = workerData.overtime_rule || 'daily';
-    const guaranteedWeeklyHours = workerData.guaranteed_weekly_hours ? parseFloat(workerData.guaranteed_weekly_hours) : null;
+    const worker = workerRow.rows[0] || {};
+    const co = companyRow.rows[0] || {};
+    const advanced = co.subscription_status === 'exempt' || co.subscription_status === 'trial' || co.addon_advanced_payroll || co.addon_certified_payroll;
 
-    const result = [];
-    if (periods.rows.length > 0) {
-      const minDate = periods.rows[periods.rows.length - 1].period_start;
-      const maxDate = periods.rows[0].period_end;
-      const allEntries = await pool.query(
-        `SELECT te.*, p.name as project_name,
-                to_char(te.work_date, 'YYYY-MM-DD') as work_date_str
-         FROM time_entries te LEFT JOIN projects p ON te.project_id = p.id
-         WHERE te.user_id = $1 AND te.status = 'approved' AND te.work_date >= $2 AND te.work_date <= $3
-         ORDER BY te.work_date, te.start_time`,
-        [userId, minDate, maxDate]
-      );
-
-      for (const period of periods.rows) {
-        const ps = period.period_start.toString().substring(0, 10);
-        const pe = period.period_end.toString().substring(0, 10);
-        const entries = allEntries.rows.filter(e => e.work_date_str >= ps && e.work_date_str <= pe);
-        if (entries.length === 0) continue;
-
-        // Apply the company's hours rules to the raw punches before computing
-        // hours; paid entries carry raw_* fields for display. Through the
-        // shared pipeline so the worker's own screen can't disagree with the
-        // invoice — this used to round but drop the tiered-overtime config, so
-        // a company on CA-style tiers saw one number here and another on a bill.
-        const { paid: paidEntries, regularHours, overtimeHours } =
-          computePaid(entries, s, { rule: workerOTRule, roleId: workerData.role_id ?? null });
-        let prevailingHours = 0, totalMileage = 0;
-        for (const e of paidEntries) {
-          if (e.wage_type === 'prevailing') {
-            prevailingHours += hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60;
-          }
-          if (e.mileage) totalMileage += parseFloat(e.mileage);
-        }
-
-        const totalHours = regularHours + overtimeHours + prevailingHours;
-        // Guarantee shortfall: scale by how many weeks are in this pay period
-        let guaranteeShortfall = 0, guaranteeMinHours = 0;
-        if (guaranteedWeeklyHours) {
-          const ps = new Date(String(period.period_start).substring(0, 10) + 'T00:00:00');
-          const pe = new Date(String(period.period_end).substring(0, 10) + 'T00:00:00');
-          const days = Math.round((pe - ps) / (1000 * 60 * 60 * 24)) + 1;
-          const weeks = Math.max(1, Math.round(days / 7));
-          guaranteeMinHours = +(guaranteedWeeklyHours * weeks).toFixed(2);
-          guaranteeShortfall = +Math.max(0, guaranteeMinHours - totalHours).toFixed(2);
-        }
-        result.push({
-          id: period.id,
-          period_start: period.period_start,
-          period_end: period.period_end,
-          label: period.label,
-          entries: paidEntries,
-          summary: {
-            regular_hours: +regularHours.toFixed(2),
-            overtime_hours: +overtimeHours.toFixed(2),
-            prevailing_hours: +prevailingHours.toFixed(2),
-            total_mileage: +totalMileage.toFixed(1),
-            guarantee_shortfall_hours: guaranteeShortfall,
-            guarantee_min_hours: guaranteeMinHours,
-            guaranteed_weekly_hours: guaranteedWeeklyHours,
-          },
-        });
+    // Ruleset-driven per-check stubs when Advanced Payroll is on and the worker's role
+    // maps to exactly one Paycheck ruleset — the SAME engine + numbers as the admin
+    // run. Anything else (no add-on, no/ambiguous ruleset) falls back to the legacy
+    // company-pay-period stub below, so nothing regresses for those companies.
+    const rulesets = normalizePaycheckRules(settings.paycheck_rules).rulesets;
+    const resolved = advanced ? resolveRuleset(rulesets, worker.role_id) : { error: 'not_advanced' };
+    if (advanced && !resolved.error && resolved.ruleset) {
+      const ruleset = resolved.ruleset;
+      const DAY = 86400000;
+      const toIso = new Date().toISOString().slice(0, 10);
+      const displayFromIso = new Date(Date.now() - 120 * DAY).toISOString().slice(0, 10);
+      // Generate a wider window than we DISPLAY so a group straddling the display edge is
+      // COMPLETE. Grouping (esp. a pair's combined-gross deduction) is only correct when a
+      // group has all its checks; a rolling window that clipped a pair's earlier member made
+      // the visible check deduct on its own gross instead of the pair's — disagreeing with
+      // the finalized/paid net. Pad 60d back (covers a biweekly pair, a semimonthly month,
+      // and a monthly pair), group, then drop the padding from the DISPLAYED stubs below.
+      const genFromIso = new Date(Date.now() - 180 * DAY).toISOString().slice(0, 10);
+      const weekStart = parseInt(settings.week_start ?? 1, 10); // drives the work_week period basis
+      const grouped = groupPeriods(generatePeriods(ruleset.schedule, genFromIso, toIso, weekStart), groupOpts(ruleset.deductions));
+      const companyDeds = parseCompanyDeductions(settings.deductions);
+      const wdRows = await pool.query('SELECT id, name, kind, value, cap_amount, active FROM worker_deductions WHERE user_id = $1 AND company_id = $2 AND active = true', [userId, companyId]);
+      // Honor the ruleset's deduction scope (see computePayrollRun): 'selected' restricts
+      // the company deductions to the picked ids; worker rows always apply. Keeps the
+      // worker's stub identical to the admin run.
+      let coDeds = deductionsForRole(companyDeds, worker.role_id);
+      const dcfg = ruleset.deductions;
+      if (dcfg && dcfg.scope === 'selected') {
+        const sel = new Set(dcfg.selectedDeductionIds || []);
+        coDeds = coDeds.filter(d => sel.has(d.id));
       }
+      const deds = [...coDeds, ...normalizeWorkerDeductions(wdRows.rows)];
+      const withStmt = [];
+      for (const p of grouped) {
+        const st = await workerStatement({ companyId, worker, settings, from: p.periodStart, to: p.periodEnd });
+        withStmt.push({ ...p, gross: st.totals.grossWages, _st: st });
+      }
+      const n2 = x => parseFloat((x || 0).toFixed(2));
+      const stubs = applyGroupDeductions(withStmt, deds, ruleset).map((p, i) => {
+        const st = withStmt[i]._st;
+        return {
+          id: `${ruleset.id}-${p.payDate}`,
+          pay_date: p.payDate, period_start: p.periodStart, period_end: p.periodEnd,
+          ruleset_name: ruleset.name, deducts: !!p.deductionsApply,
+          gross: n2(p.gross), exempt: p.exempt, combined_gross: p.combinedGross,
+          deduction_total: p.deductionTotal, net: p.net,
+          deduction_lines: (p.lines || []).map(l => ({ name: l.name, amount: l.amount })),
+          rate: st.rates.rate,
+          hours: { regular: n2(st.hours.regular), overtime: n2(st.hours.overtime), prevailing: n2(st.hours.prevailing), night: n2(st.hours.night), sick: n2(st.hours.sick), vacation: n2(st.hours.vacation), total: n2(st.hours.total) },
+          cost: { regular: st.cost.regular, overtime: st.cost.overtime, prevailing: st.cost.prevailing, night: st.cost.night, sick: st.cost.sick, vacation: st.cost.vacation, guarantee: st.cost.guarantee },
+        };
+      }).filter(s => s.pay_date >= displayFromIso) // drop the padding — those older periods only existed to complete boundary groups
+        .reverse(); // most recent first
+      return res.json({ mode: 'ruleset', stubs });
     }
+
+    // Legacy: the company's pay_periods, priced through the one shared engine so the
+    // worker's stub can't disagree with the invoice/report.
+    const periods = await pool.query('SELECT * FROM pay_periods WHERE company_id = $1 ORDER BY period_start DESC', [companyId]);
+    const priced = await workerPeriodStatements({ companyId, worker, settings, periods: periods.rows });
+    const n2 = x => parseFloat((x || 0).toFixed(2));
+    const result = priced.map(({ period, statement: st }) => ({
+      id: period.id,
+      period_start: period.period_start,
+      period_end: period.period_end,
+      label: period.label,
+      entries: st.entries,
+      summary: {
+        regular_hours: n2(st.hours.regular),
+        overtime_hours: n2(st.hours.overtime),
+        prevailing_hours: n2(st.hours.prevailing),
+        night_hours: n2(st.hours.night),
+        total_mileage: parseFloat((st.hours.mileage || 0).toFixed(1)),
+        guarantee_shortfall_hours: st.hours.guaranteeShortfall,
+        guarantee_min_hours: st.hours.guaranteeMin,
+        guaranteed_weekly_hours: worker.guaranteed_weekly_hours ? parseFloat(worker.guaranteed_weekly_hours) : null,
+        sick_hours: n2(st.hours.sick),
+        vacation_hours: n2(st.hours.vacation),
+        // Priced by the shared engine (the stub used to recompute these on the client).
+        rate: st.rates.rate,
+        regular_cost: st.cost.regular, overtime_cost: st.cost.overtime, prevailing_cost: st.cost.prevailing,
+        night_cost: st.cost.night,
+        guarantee_cost: st.cost.guarantee, sick_cost: st.cost.sick, vacation_cost: st.cost.vacation,
+        sick_rate: st.cost.sickRate, vacation_rate: st.cost.vacationRate,
+        overtime_multiplier: st.rates.overtimeMultiplier, prevailing_wage_rate: st.rates.prevailingWageRate,
+        gross_wages: st.totals.grossWages, deductions: st.deductions,
+        deductions_total: st.totals.deductionsTotal, net_pay: st.totals.netWages,
+      },
+    }));
     res.json(result);
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
@@ -401,7 +493,12 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
 // POST /time-entries/sign-off — worker signs off on their entries for a date range
 router.post('/sign-off', requireAuth, async (req, res) => {
   const { from, to } = req.body;
-  if (!from || !to) return res.status(400).json({ error: 'from and to required' });
+  if (!isValidIsoDate(from) || !isValidIsoDate(to) || from > to) {
+    return res.status(400).json({ error: 'from and to must be valid dates in ascending order', code: 'invalid_date_range' });
+  }
+  if (dateRangeDays(from, to) > 366) {
+    return res.status(400).json({ error: 'Sign-off range cannot exceed 366 days', code: 'date_range_too_large' });
+  }
   try {
     const result = await pool.query(
       `UPDATE time_entries SET worker_signed_at = NOW()
@@ -410,17 +507,18 @@ router.post('/sign-off', requireAuth, async (req, res) => {
        RETURNING id`,
       [req.user.id, from, to]
     );
-    // Notify admin that worker signed off
-    const admin = await pool.query(
-      `SELECT u.id FROM users u WHERE u.company_id = $1 AND u.role = 'admin' AND u.active = true LIMIT 1`,
-      [req.user.company_id]
-    );
-    if (admin.rowCount > 0) {
-      const adminId = admin.rows[0].id;
-      const signTitle = `${req.user.full_name} signed their timesheet`;
-      const signBody = `${result.rowCount} entr${result.rowCount === 1 ? 'y' : 'ies'} ready for review`;
-      sendPushToUser(adminId, { title: signTitle, body: signBody, url: '/workforce#approvals' });
-      createInboxItem(adminId, req.user.company_id, 'signoff', signTitle, signBody, '/workforce#approvals');
+    if (result.rowCount > 0) {
+      const admin = await pool.query(
+        `SELECT u.id FROM users u WHERE u.company_id = $1 AND u.role = 'admin' AND u.active = true LIMIT 1`,
+        [req.user.company_id]
+      );
+      if (admin.rowCount > 0) {
+        const adminId = admin.rows[0].id;
+        const signTitle = `${req.user.full_name} signed their timesheet`;
+        const signBody = `${result.rowCount} entr${result.rowCount === 1 ? 'y' : 'ies'} ready for review`;
+        sendPushToUser(adminId, { title: signTitle, body: signBody, url: '/workforce#approvals' });
+        createInboxItem(adminId, req.user.company_id, 'signoff', signTitle, signBody, '/workforce#approvals');
+      }
     }
     res.json({ signed: result.rowCount });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
@@ -451,12 +549,15 @@ router.post('/copy-last-week', requireAuth, async (req, res) => {
        WHERE user_id=$1 AND company_id=$2 AND work_date BETWEEN $3 AND $4`,
       [req.user.id, companyId, thisWk.from, thisWk.to]
     );
-    const existingDates = new Set(existing.rows.map(r => r.work_date?.toString().substring(0, 10)));
+    // work_date is a pg Date (local midnight); toLocaleDateString('en-CA') gives
+    // 'YYYY-MM-DD'. The old .toString().substring(0,10) yielded "Mon Jul 20" →
+    // new Date("Mon Jul 20T00:00:00") = Invalid Date → insert "Invalid Date" → 500.
+    const toISO = d => new Date(d).toLocaleDateString('en-CA');
+    const existingDates = new Set(existing.rows.map(r => r.work_date && toISO(r.work_date)));
 
     const created = [];
-    const toISO = d => d.toLocaleDateString('en-CA');
     for (const e of lastWeek.rows) {
-      const lastDate = new Date(e.work_date.toString().substring(0, 10) + 'T00:00:00');
+      const lastDate = new Date(toISO(e.work_date) + 'T00:00:00');
       const thisDate = new Date(lastDate);
       thisDate.setDate(lastDate.getDate() + 7);
       const thisDateStr = toISO(thisDate);

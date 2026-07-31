@@ -1,5 +1,5 @@
 /**
- * Company-shared takeoff projects (sitework takeoff tool).
+ * Company-shared takeoff projects (Plan Room takeoff library).
  *
  * Single source of truth per takeoff; teammates open / edit / save it one at a
  * time. `version` gives optimistic-concurrency conflict detection so a stale
@@ -15,9 +15,9 @@ const isAdmin = req => req.user.role === 'admin' || req.user.role === 'super_adm
 
 // GET /  — this company's shared projects (metadata only, newest edit first).
 // The table serves every plan tool; rows carry a data.app marker. ?app=<marker>
-// filters to one tool's library. No param = the sitework takeoff tool (its
-// shipped client predates the marker filter and must keep working unchanged),
-// so the default excludes other tools' rows rather than requiring the param.
+// filters to one tool's library. No param defaults to the legacy unmarked rows
+// (from the now-retired sitework client, which predated the marker filter), so
+// the default excludes other tools' rows rather than requiring the param.
 router.get('/', async (req, res) => {
   try {
     const app = req.query.app ? String(req.query.app) : null;

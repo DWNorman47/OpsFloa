@@ -46,10 +46,22 @@ describe('parseRoleRules — validation & normalization', () => {
         'nope',                                                     // dropped
       ],
     }));
-    expect(p.roleRules.map(r => r.roleId)).toEqual([5, 7]);
+    expect(p.roleRules.map(r => r.roleIds)).toEqual([[5], [7]]); // legacy single roleId → [roleId]
     expect(p.roleRules[0].addToStandard).toBe(true);
     expect(p.roleRules[1].addToStandard).toBe(false);
     expect(p.roleRules[1].rules.map(r => r.id)).toEqual(['rclip']);
+  });
+
+  test('accepts multi-role roleIds, folds in the legacy roleId, de-dupes', () => {
+    const p = parsePolicy(JSON.stringify({
+      enabled: true,
+      roleRules: [
+        { roleIds: [5, 7, 7], rules: [] },   // multi-role, de-duped
+        { roleId: 9, rules: [] },            // legacy single → [9]
+        { roleIds: ['x', 3.5], rules: [] },  // no valid integer id → dropped
+      ],
+    }));
+    expect(p.roleRules.map(r => r.roleIds)).toEqual([[5, 7], [9]]);
   });
 
   test('a missing or non-array roleRules is an empty list, never a throw', () => {
@@ -74,6 +86,12 @@ describe('effectiveRulesForRole — the concat/replace decision', () => {
   });
   test('a role with no section falls back to standard', () => {
     expect(effectiveRulesForRole(p, 30).map(r => r.id)).toEqual(['clip']);
+  });
+  test('a section covering multiple roles matches each of them', () => {
+    const pm = policy([{ roleIds: [10, 11], addToStandard: true, rules: [LUNCH] }]);
+    expect(effectiveRulesForRole(pm, 10).map(r => r.id)).toEqual(['clip', 'lunch']);
+    expect(effectiveRulesForRole(pm, 11).map(r => r.id)).toEqual(['clip', 'lunch']);
+    expect(effectiveRulesForRole(pm, 12).map(r => r.id)).toEqual(['clip']); // not covered
   });
   test('null role_id (super_admin/legacy) falls back to standard', () => {
     expect(effectiveRulesForRole(p, null).map(r => r.id)).toEqual(['clip']);

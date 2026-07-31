@@ -26,16 +26,35 @@ function normalizeDeduction(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const kind = DEDUCTION_KINDS.includes(raw.kind) ? raw.kind : null;
   const name = String(raw.name == null ? '' : raw.name).trim();
-  const value = Number(raw.value);
+  let value = Number(raw.value);
   if (!kind || !name || !Number.isFinite(value) || value < 0) return null;
+  // A percent deduction can never exceed 100% of gross. A >100 typo (or a fixed dollar
+  // amount switched to percent, carrying its value over) would otherwise drive net pay
+  // NEGATIVE on the legacy stub path (payStubTotals has no min-net floor). Clamp as the
+  // universal safety net — every deduction that reaches computeDeductions passes here.
+  if (kind === 'percent' && value > 100) value = 100;
   const capRaw = raw.cap != null ? raw.cap : raw.cap_amount; // JSON uses `cap`, DB row uses `cap_amount`
   const cap = Number(capRaw);
   return {
-    id: raw.id != null ? String(raw.id) : '',
+    // Stable fallback for externally inserted settings rows that predate client-
+    // generated ids. Selected-scope rules can now refer to these instead of
+    // silently dropping every id-less deduction.
+    id: raw.id != null && String(raw.id).trim()
+      ? String(raw.id).trim().slice(0, 120)
+      : `legacy:${name.slice(0, 80)}:${kind}:${value}`,
     name: name.slice(0, 120),
     kind,
     value,
     cap: Number.isFinite(cap) && cap > 0 ? cap : null,
+    // Role scope: role IDs this deduction applies to. Empty/absent = ALL employees
+    // (company-wide, the original behavior). Non-empty = only workers in those
+    // roles. Per-worker DB rows never carry this (they're already worker-scoped).
+    roleIds: [...new Set(
+      (Array.isArray(raw.roleIds) ? raw.roleIds : [])
+        .filter(x => (typeof x === 'number' || typeof x === 'string') && String(x).trim() !== '')
+        .map(Number)
+        .filter(x => Number.isInteger(x) && x > 0)
+    )].slice(0, 200),
   };
 }
 
@@ -87,7 +106,24 @@ function computeDeductions(grossWages, deductions) {
 function payStubTotals(grossWages, reimbursements, deductions) {
   const gross = Math.round((Number(grossWages) || 0) * 100) / 100;
   const reimb = Math.round((Number(reimbursements) || 0) * 100) / 100;
-  const { lines, total } = computeDeductions(gross, deductions);
+  let { lines, total } = computeDeductions(gross, deductions);
+  // Deductions can never exceed gross wages — payroll doesn't claw back pay. A single
+  // percent is already clamped to ≤100% (normalizeDeduction), but MULTIPLE deductions can
+  // still sum past gross, and this legacy path (unlike the advanced-payroll ruleset) has no
+  // min-net floor. Cap the withheld total at gross and re-allocate the itemized lines in
+  // integer cents (largest-remainder) so net stays ≥ 0 and the lines still foot.
+  if (total > gross && total > 0) {
+    const grossC = Math.round(gross * 100);
+    const rawC = lines.map(l => Math.round((Number(l.amount) || 0) * 100));
+    const rawTot = rawC.reduce((a, c) => a + c, 0);
+    const exact = rawC.map(c => (c * grossC) / rawTot);
+    const alloc = exact.map(Math.floor);
+    const rem = grossC - alloc.reduce((a, c) => a + c, 0);
+    const order = exact.map((v, i) => [v - Math.floor(v), i]).sort((a, b) => b[0] - a[0]).map(x => x[1]);
+    for (let k = 0; k < rem && k < order.length; k++) alloc[order[k]] += 1;
+    lines = lines.map((l, i) => ({ ...l, amount: alloc[i] / 100 }));
+    total = gross;
+  }
   const net = Math.round((gross - total + reimb) * 100) / 100;
   return { gross_wages: gross, deductions: lines, deductions_total: total, reimbursement_total: reimb, net_pay: net };
 }

@@ -8,10 +8,11 @@
 const router = require('express').Router();
 const pool   = require('../db');
 const logger = require('../logger');
-const { requireAuth, requireAdmin, requireCertifiedPayrollAddon } = require('../middleware/auth');
+const { requireAuth, requireAdmin, requireCertifiedPayrollAddon, requirePerm } = require('../middleware/auth');
 const { getAdvancedSettings } = require('./admin');
 const { encrypt, decrypt } = require('../services/encryption');
 const { logAudit } = require('../auditLog');
+const { isValidIsoDate } = require('../utils/payPeriods');
 
 // GET /api/certified-payroll/classifications — resolved list of job classes
 // (default ∖ suppressed ∪ custom). Admins use this for dropdowns whether or
@@ -36,7 +37,7 @@ router.get('/classifications', requireAuth, async (req, res) => {
 const FRINGE_CATEGORIES = ['health', 'pension', 'vacation', 'apprenticeship', 'other'];
 
 // GET /api/certified-payroll/workers/:id/fringes — per-worker fringe rates
-router.get('/workers/:id/fringes', requireAdmin, requireCertifiedPayrollAddon, async (req, res) => {
+router.get('/workers/:id/fringes', requireAdmin, requirePerm('view_certified_payroll'), requireCertifiedPayrollAddon, async (req, res) => {
   try {
     // Make sure the target user belongs to this company before returning PII-adjacent data.
     const ok = await pool.query('SELECT 1 FROM users WHERE id = $1 AND company_id = $2', [req.params.id, req.user.company_id]);
@@ -54,7 +55,7 @@ router.get('/workers/:id/fringes', requireAdmin, requireCertifiedPayrollAddon, a
 });
 
 // PUT /api/certified-payroll/workers/:id/fringes — upsert the full set
-router.put('/workers/:id/fringes', requireAdmin, requireCertifiedPayrollAddon, async (req, res) => {
+router.put('/workers/:id/fringes', requireAdmin, requirePerm('manage_workers'), requireCertifiedPayrollAddon, async (req, res) => {
   const companyId = req.user.company_id;
   const userId = req.params.id;
   const incoming = Array.isArray(req.body.fringes) ? req.body.fringes : [];
@@ -110,7 +111,7 @@ router.put('/workers/:id/fringes', requireAdmin, requireCertifiedPayrollAddon, a
 // never log it. To change the value, admins re-enter the last 4 digits.
 
 // GET /api/certified-payroll/workers/:id/ssn — presence check only
-router.get('/workers/:id/ssn', requireAdmin, requireCertifiedPayrollAddon, async (req, res) => {
+router.get('/workers/:id/ssn', requireAdmin, requirePerm('view_certified_payroll'), requireCertifiedPayrollAddon, async (req, res) => {
   try {
     const { rows } = await pool.query(
       'SELECT ssn_last4_enc FROM users WHERE id = $1 AND company_id = $2',
@@ -125,7 +126,7 @@ router.get('/workers/:id/ssn', requireAdmin, requireCertifiedPayrollAddon, async
 });
 
 // PUT /api/certified-payroll/workers/:id/ssn { ssn_last4 } — set or clear
-router.put('/workers/:id/ssn', requireAdmin, requireCertifiedPayrollAddon, async (req, res) => {
+router.put('/workers/:id/ssn', requireAdmin, requirePerm('manage_workers'), requireCertifiedPayrollAddon, async (req, res) => {
   const raw = String(req.body.ssn_last4 || '').replace(/\D/g, '');
   try {
     const ok = await pool.query('SELECT id FROM users WHERE id = $1 AND company_id = $2', [req.params.id, req.user.company_id]);
@@ -154,12 +155,14 @@ router.put('/workers/:id/ssn', requireAdmin, requireCertifiedPayrollAddon, async
   }
 });
 
-// Helper for the report generator — not exposed as a route.
-async function loadSsnLast4(userIds) {
+// Helper for the report generator — not exposed as a route. `companyId` scopes the
+// lookup so a caller can never decrypt another tenant's SSN last-4 (defence in depth;
+// callers already pass company-scoped ids, but PII shouldn't rely on that).
+async function loadSsnLast4(userIds, companyId) {
   if (!userIds.length) return {};
   const { rows } = await pool.query(
-    'SELECT id, ssn_last4_enc FROM users WHERE id = ANY($1::int[])',
-    [userIds]
+    'SELECT id, ssn_last4_enc FROM users WHERE id = ANY($1::int[]) AND company_id = $2',
+    [userIds, companyId]
   );
   const out = {};
   for (const r of rows) {
@@ -186,15 +189,19 @@ const DEFAULT_COMPLIANCE_TEXT = [
 ].join('\n\n');
 
 // GET /api/certified-payroll/signatures?project_id=&week_ending= — most recent signature for this report, if any
-router.get('/signatures', requireAdmin, requireCertifiedPayrollAddon, async (req, res) => {
+router.get('/signatures', requireAdmin, requirePerm('view_certified_payroll'), requireCertifiedPayrollAddon, async (req, res) => {
   const { project_id, week_ending } = req.query;
-  if (!week_ending || !/^\d{4}-\d{2}-\d{2}$/.test(week_ending)) {
+  if (!isValidIsoDate(week_ending)) {
     return res.status(400).json({ error: 'week_ending (YYYY-MM-DD) is required' });
+  }
+  const projectId = project_id == null || project_id === '' ? null : Number(project_id);
+  if (project_id && (!Number.isInteger(projectId) || projectId <= 0)) {
+    return res.status(400).json({ error: 'project_id must be a positive integer' });
   }
   try {
     const params = [req.user.company_id, week_ending];
     let projectClause = 'AND project_id IS NULL';
-    if (project_id) { params.push(project_id); projectClause = `AND project_id = $${params.length}`; }
+    if (projectId) { params.push(projectId); projectClause = `AND project_id = $${params.length}`; }
     const { rows } = await pool.query(
       `SELECT id, signer_user_id, signer_name, signer_title, compliance_text, signed_at
          FROM certified_payroll_signatures
@@ -211,10 +218,14 @@ router.get('/signatures', requireAdmin, requireCertifiedPayrollAddon, async (req
 });
 
 // POST /api/certified-payroll/signatures { project_id?, week_ending, signer_name, signer_title?, signature_data }
-router.post('/signatures', requireAdmin, requireCertifiedPayrollAddon, async (req, res) => {
+router.post('/signatures', requireAdmin, requirePerm('manage_pay_periods'), requireCertifiedPayrollAddon, async (req, res) => {
   const { project_id, week_ending, signer_name, signer_title, signature_data } = req.body;
-  if (!week_ending || !/^\d{4}-\d{2}-\d{2}$/.test(week_ending)) {
+  if (!isValidIsoDate(week_ending)) {
     return res.status(400).json({ error: 'week_ending (YYYY-MM-DD) is required' });
+  }
+  const projectId = project_id == null || project_id === '' ? null : Number(project_id);
+  if (project_id && (!Number.isInteger(projectId) || projectId <= 0)) {
+    return res.status(400).json({ error: 'project_id must be a positive integer' });
   }
   const name = (signer_name || '').trim();
   const sig = (signature_data || '').trim();
@@ -224,8 +235,25 @@ router.post('/signatures', requireAdmin, requireCertifiedPayrollAddon, async (re
   const title = (signer_title || '').trim().slice(0, 200) || null;
 
   try {
-    // Upsert — one signature per (company, project, week). Re-signing overwrites
-    // with the new snapshot; history lives in the audit log.
+    // A signature scoped to a project must reference one this company owns (the GET,
+    // fringes and SSN paths all validate ownership; keep this consistent).
+    if (projectId) {
+      const proj = await pool.query('SELECT 1 FROM projects WHERE id = $1 AND company_id = $2', [projectId, req.user.company_id]);
+      if (!proj.rowCount) return res.status(404).json({ error: 'Project not found' });
+    }
+
+    // A WH-347 signature is a legal record. Re-signing replaces the row in place, so
+    // BEFORE overwriting, snapshot the prior signer/signature/compliance text into the
+    // audit trail — otherwise the originally certified artifact is unrecoverable.
+    const prior = await pool.query(
+      `SELECT signer_name, signer_title, signature_data, compliance_text, signed_at
+         FROM certified_payroll_signatures
+        WHERE company_id = $1 AND project_id IS NOT DISTINCT FROM $2 AND week_ending = $3`,
+      [req.user.company_id, projectId, week_ending]
+    );
+
+    // Upsert — one CURRENT signature per (company, project, week); replaced ones live in
+    // the audit log (logged below).
     const ip = req.ip || req.headers['x-forwarded-for'] || null;
     const { rows } = await pool.query(
       `INSERT INTO certified_payroll_signatures
@@ -240,9 +268,15 @@ router.post('/signatures', requireAdmin, requireCertifiedPayrollAddon, async (re
              ip_address     = EXCLUDED.ip_address,
              signed_at      = NOW()
        RETURNING id, signer_user_id, signer_name, signer_title, compliance_text, signed_at`,
-      [req.user.company_id, project_id || null, week_ending, req.user.id, name, title, sig, DEFAULT_COMPLIANCE_TEXT, ip]
+      [req.user.company_id, projectId, week_ending, req.user.id, name, title, sig, DEFAULT_COMPLIANCE_TEXT, ip]
     );
-    await logAudit(req.user.company_id, req.user.id, req.user.full_name, 'certified_payroll.signed', 'signature', rows[0].id, `${name} · ${week_ending}`, { project_id: project_id || null });
+    await logAudit(req.user.company_id, req.user.id, req.user.full_name, 'certified_payroll.signed', 'signature', rows[0].id, `${name} · ${week_ending}`, { project_id: projectId });
+    // Preserve the replaced certification as its own audit record (full snapshot).
+    if (prior.rowCount) {
+      const p = prior.rows[0];
+      await logAudit(req.user.company_id, req.user.id, req.user.full_name, 'certified_payroll.signature_replaced', 'signature', rows[0].id, `${p.signer_name} · ${week_ending}`,
+        { project_id: projectId, replaced: { signer_name: p.signer_name, signer_title: p.signer_title, signature_data: p.signature_data, compliance_text: p.compliance_text, signed_at: p.signed_at } });
+    }
     res.json({ signature: rows[0] });
   } catch (err) {
     logger.error({ err }, 'catch block error');

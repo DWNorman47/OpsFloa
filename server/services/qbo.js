@@ -341,7 +341,7 @@ async function createCustomer(companyId, { displayName }) {
   return data.Customer;
 }
 
-async function createJournalEntry(companyId, { txnDate, description, debitAccountId, creditAccountId, amount }) {
+async function createJournalEntry(companyId, { txnDate, description, debitAccountId, creditAccountId, amount, requestId }) {
   const body = {
     TxnDate: txnDate || new Date().toLocaleDateString('en-CA'),
     PrivateNote: description || '',
@@ -360,7 +360,9 @@ async function createJournalEntry(companyId, { txnDate, description, debitAccoun
       },
     ],
   };
-  const data = await qboPost(companyId, '/journalentry?minorversion=65', body);
+  const params = new URLSearchParams({ minorversion: '65' });
+  if (requestId) params.set('requestid', String(requestId).slice(0, 50));
+  const data = await qboPost(companyId, `/journalentry?${params.toString()}`, body);
   return data.JournalEntry;
 }
 

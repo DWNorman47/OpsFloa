@@ -687,15 +687,15 @@ export default function SuperAdmin() {
                           </label>
                         </div>
                         <div style={styles.controlGroup}>
-                          <span style={styles.controlLabel}>Certified Payroll add-on</span>
+                          <span style={styles.controlLabel}>Advanced Payroll add-on</span>
                           <label style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
                             <input
                               type="checkbox"
-                              checked={!!c.addon_certified_payroll}
-                              onChange={e => patchCompany(c.id, { addon_certified_payroll: e.target.checked })}
+                              checked={!!(c.addon_advanced_payroll || c.addon_certified_payroll)}
+                              onChange={e => patchCompany(c.id, { addon_advanced_payroll: e.target.checked })}
                               disabled={working === c.id}
                             />
-                            {c.addon_certified_payroll ? 'On' : 'Off'}
+                            {(c.addon_advanced_payroll || c.addon_certified_payroll) ? 'On' : 'Off'}
                           </label>
                         </div>
                         <div style={styles.controlGroup}>
@@ -732,6 +732,18 @@ export default function SuperAdmin() {
                               disabled={working === c.id}
                             />
                             {c.addon_storm ? 'On' : 'Off'}
+                          </label>
+                        </div>
+                        <div style={styles.controlGroup}>
+                          <span style={styles.controlLabel}>Roof Measurement add-on</span>
+                          <label style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+                            <input
+                              type="checkbox"
+                              checked={!!c.addon_roof}
+                              onChange={e => patchCompany(c.id, { addon_roof: e.target.checked })}
+                              disabled={working === c.id}
+                            />
+                            {c.addon_roof ? 'On' : 'Off'}
                           </label>
                         </div>
                         <div style={styles.controlGroup}>

@@ -39,6 +39,35 @@ describe('parseCompanyDeductions', () => {
   test('also accepts a bare array', () => {
     expect(parseCompanyDeductions(JSON.stringify([{ name: 'X', kind: 'fixed', value: 10 }]))).toHaveLength(1);
   });
+
+  test('a percent deduction over 100% is clamped to 100 (never drives net negative)', () => {
+    const list = parseCompanyDeductions(JSON.stringify({ items: [
+      { id: 'a', name: 'Fat finger', kind: 'percent', value: 150 }, // 150% typo
+      { id: 'b', name: 'Fine', kind: 'percent', value: 60 },
+      { id: 'c', name: 'Fixed big', kind: 'fixed', value: 5000 },   // fixed is NOT clamped
+    ] }));
+    expect(list.find(d => d.id === 'a').value).toBe(100); // clamped
+    expect(list.find(d => d.id === 'b').value).toBe(60);  // untouched
+    expect(list.find(d => d.id === 'c').value).toBe(5000); // fixed amounts are not percentages
+    // A single 100% clamp means one deduction can take at most the whole check, never more.
+    const { total } = computeDeductions(2000, [list.find(d => d.id === 'a')]);
+    expect(total).toBe(2000); // 100% of 2000, not 3000
+  });
+
+  test('role scope: roleIds normalized to integer DB keys; absent = all employees', () => {
+    const raw = JSON.stringify({ items: [
+      { id: 'a', name: 'Union dues', kind: 'fixed', value: 20, roleIds: [3, 3, 'x', null, {}] },
+      { id: 'b', name: 'Social Security', kind: 'percent', value: 6 }, // no roleIds → company-wide
+    ] });
+    const list = parseCompanyDeductions(raw);
+    expect(list[0].roleIds).toEqual([3]);      // de-duped, invalid ids dropped
+    expect(list[1].roleIds).toEqual([]);        // absent → all employees
+  });
+
+  test('an id-less legacy deduction receives a deterministic selectable id', () => {
+    const [deduction] = parseCompanyDeductions([{ name: 'Union dues', kind: 'fixed', value: 20 }]);
+    expect(deduction.id).toBe('legacy:Union dues:fixed:20');
+  });
 });
 
 describe('normalizeWorkerDeductions', () => {
@@ -108,6 +137,25 @@ describe('payStubTotals', () => {
     expect(r.deductions).toEqual([]);
     expect(r.deductions_total).toBe(0);
     expect(r.net_pay).toBeCloseTo(1500);
+  });
+
+  test('deductions summing past gross are capped at gross — net never goes negative', () => {
+    const list = [
+      { id: 'a', name: 'Tax', kind: 'percent', value: 60, cap: null },      // 60% of 2000 = 1200
+      { id: 'b', name: 'Garnishment', kind: 'fixed', value: 1500, cap: null }, // + 1500 = 2700 > gross
+    ];
+    const r = payStubTotals(2000, 0, list);
+    expect(r.deductions_total).toBe(2000);                 // capped at gross, not 2700
+    expect(r.net_pay).toBe(0);                             // never negative
+    const linesSum = Math.round(r.deductions.reduce((a, l) => a + l.amount, 0) * 100) / 100;
+    expect(linesSum).toBe(2000);                           // itemized lines still foot to the capped total
+    expect(r.deductions.every(l => l.amount >= 0)).toBe(true);
+  });
+
+  test('reimbursements are still paid on top of a fully-consumed gross', () => {
+    const list = [{ id: 'a', name: 'Tax', kind: 'percent', value: 100, cap: null }];
+    const r = payStubTotals(1000, 150, list); // 100% deducted, $150 reimbursement added back
+    expect(r.net_pay).toBe(150);
   });
 
   test('company ++ per-worker deductions stack', () => {

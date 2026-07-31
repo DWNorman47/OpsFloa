@@ -87,18 +87,102 @@ describe('POST /api/projects/:id/closeout/transition', () => {
     expect(res.body.error).toMatch(/punchlist/);
   });
 
-  test('409 when transitioning to final_complete with required items pending', async () => {
+  test('409 when transitioning to final_complete with a required manual item pending', async () => {
     pool.query
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, name: 'Test' }] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{
         id: 99, project_id: 42, status: 'substantially_complete',
         substantial_completion_date: '2026-05-01', final_completion_date: null,
       }] })
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ missing: '3' }] });  // 3 required items still pending
+      .mockResolvedValueOnce({ rowCount: 1, rows: [                        // required items
+        { category: 'as_builts', status: 'pending', auto_source: null },  // manual, not done
+      ] });
     const res = await request(makeApp())
       .post('/api/projects/42/closeout/transition')
       .send({ to_status: 'final_complete' });
     expect(res.status).toBe(409);
+  });
+
+  // The bug this phase fixes: an auto item is never persisted past 'pending', so
+  // a gate that read the stored status blocked final_complete for EVERY company.
+  // The gate now computes the effective status; an unpaid final invoice blocks.
+  test('409 to final_complete when the auto final_invoice item is not paid (computed, not stored)', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, name: 'Test' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{
+        id: 99, project_id: 42, status: 'substantially_complete',
+        substantial_completion_date: '2026-05-01', final_completion_date: null,
+      }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [
+        { category: 'final_invoice', status: 'pending', auto_source: 'invoices' },
+      ] })
+      .mockResolvedValueOnce({ rows: [{ done: '0' }] }); // computeAutoStatus: no paid invoice
+    const res = await request(makeApp())
+      .post('/api/projects/42/closeout/transition')
+      .send({ to_status: 'final_complete' });
+    expect(res.status).toBe(409);
+  });
+
+  // Compute-on-read makes substantial reachable: punchlist has no open items, so
+  // its auto status computes 'done' even though the stored row is still 'pending'.
+  test('substantially_complete succeeds when punchlist auto-computes done', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, name: 'Test' }] })       // project
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{                                  // closeout
+        id: 99, project_id: 42, status: 'in_progress',
+        substantial_completion_date: null, final_completion_date: null,
+      }] })
+      .mockResolvedValueOnce({ rowCount: 2, rows: [                                   // gate items
+        { category: 'punchlist',        status: 'pending', auto_source: 'punchlist' },
+        { category: 'final_inspection', status: 'done',    auto_source: null },
+      ] })
+      .mockResolvedValueOnce({ rows: [{ open_count: '0', total: '5' }] })             // punchlist compute → done
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 99, status: 'substantially_complete' }] }); // UPDATE
+    const res = await request(makeApp())
+      .post('/api/projects/42/closeout/transition')
+      .send({ to_status: 'substantially_complete' });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('substantially_complete');
+  });
+});
+
+// The auto-status source repoint (project_invoices → native invoices), exercised
+// through the GET read path where auto items are computed.
+describe('closeout auto-status from native invoices', () => {
+  function getWithSingleItem(item, computeRows) {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, name: 'Test' }] })          // project
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 99, project_id: 42 }] })         // closeout
+      .mockResolvedValueOnce({ rowCount: 1, rows: [item] })                               // items
+      .mockResolvedValueOnce({ rows: computeRows });                                       // computeAutoStatus
+    return request(makeApp()).get('/api/projects/42/closeout');
+  }
+
+  test('final_invoice is done when a native invoice is paid', async () => {
+    const res = await getWithSingleItem(
+      { id: 1, category: 'final_invoice', status: 'pending', auto_source: 'invoices' },
+      [{ done: '1' }]
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.items[0].status).toBe('done');
+  });
+
+  test('retainage_release is NOT falsely done when there are zero invoices', async () => {
+    const res = await getWithSingleItem(
+      { id: 1, category: 'retainage_release', status: 'pending', auto_source: 'invoices' },
+      [{ n: '0', held: '0' }]  // no invoices → must not report done
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.items[0].status).toBe('in_progress');
+  });
+
+  test('retainage_release is done when invoices exist and hold no retainage', async () => {
+    const res = await getWithSingleItem(
+      { id: 1, category: 'retainage_release', status: 'pending', auto_source: 'invoices' },
+      [{ n: '2', held: '0' }]  // invoices exist, nothing withheld
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.items[0].status).toBe('done');
   });
 });
 
@@ -121,6 +205,18 @@ describe('PATCH /api/closeout-items/:id', () => {
       .send({ status: 'done' });
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/auto-computed/i);
+  });
+
+  // The escape hatch: an auto item CAN be manually waived (overrides the compute).
+  test('an auto_source item can be manually waived', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 7, project_id: 42, closeout_id: 99, status: 'pending', auto_source: 'invoices' }] }) // ownership check
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 7, status: 'waived' }] }); // UPDATE ... RETURNING *
+    const res = await request(makeApp())
+      .patch('/api/closeout-items/7')
+      .send({ status: 'waived' });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('waived');
   });
 
   test('400 on invalid status', async () => {

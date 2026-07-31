@@ -179,7 +179,7 @@ export default function ProjectBillPDF({ data, currency = 'USD', companyInfo = {
           )}
           {summary.overtime_hours > 0 && (
             <View style={s.costRow}>
-              <Text style={{ color: '#374151' }}>{(t.pdfOvertimeLabor || 'Overtime — {hrs} hrs × {mult}x').replace('{hrs}', summary.overtime_hours.toFixed(2)).replace('{mult}', summary.overtime_multiplier)}</Text>
+              <Text style={{ color: '#374151' }}>{(t.pdfOvertimeLabor || 'Overtime — {hrs} hrs').replace('{hrs}', summary.overtime_hours.toFixed(2))}</Text>
               <Text style={{ color: '#dc2626', fontWeight: 'bold' }}>{formatCurrency(summary.overtime_cost, currency)}</Text>
             </View>
           )}
@@ -187,6 +187,12 @@ export default function ProjectBillPDF({ data, currency = 'USD', companyInfo = {
             <View style={s.costRow}>
               <Text style={{ color: '#374151' }}>{(t.pdfPrevailingWage || 'Prevailing wage — {hrs} hrs @ {rate}/hr').replace('{hrs}', summary.prevailing_hours.toFixed(2)).replace('{rate}', formatCurrency(summary.prevailing_wage_rate, currency))}</Text>
               <Text style={{ color: '#d97706', fontWeight: 'bold' }}>{formatCurrency(summary.prevailing_cost, currency)}</Text>
+            </View>
+          )}
+          {summary.night_cost > 0 && (
+            <View style={s.costRow}>
+              <Text style={{ color: '#374151' }}>{(t.nightDiffLabel || 'Night differential')}{summary.night_hours > 0 ? ` — ${Number(summary.night_hours).toFixed(2)} hrs` : ''}</Text>
+              <Text style={{ color: '#7c3aed', fontWeight: 'bold' }}>{formatCurrency(summary.night_cost, currency)}</Text>
             </View>
           )}
           <View style={s.totalRow}>

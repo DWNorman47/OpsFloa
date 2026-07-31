@@ -11,7 +11,8 @@
 
 const router = require('express').Router();
 const pool   = require('../db');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { requireAuth } = require('../middleware/auth');
+const { requireProjectFinancialAccess } = require('../middleware/financialAccess');
 const { logAudit } = require('../auditLog');
 const { MONEY_CATEGORIES } = require('../constants/projectMoneyEnums');
 const { loadSettings, laborCostCents, LABOR_ENTRY_COLUMNS } = require('../utils/paidHours');
@@ -128,7 +129,7 @@ async function materialsSpentAndCommitted(projectId) {
 }
 
 // GET /projects/:id/spend — current spend snapshot.
-router.get('/projects/:id/spend', requireAuth, async (req, res) => {
+router.get('/projects/:id/spend', requireAuth, requireProjectFinancialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const project = await assertProjectInCompany(companyId, req.params.id);
@@ -213,7 +214,7 @@ router.get('/projects/:id/spend', requireAuth, async (req, res) => {
 
 // ── Project expenses CRUD (the "manual cost not from another source" bucket)
 
-router.get('/projects/:id/expenses', requireAuth, async (req, res) => {
+router.get('/projects/:id/expenses', requireAuth, requireProjectFinancialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const project = await assertProjectInCompany(companyId, req.params.id);
@@ -229,7 +230,7 @@ router.get('/projects/:id/expenses', requireAuth, async (req, res) => {
   }
 });
 
-router.post('/projects/:id/expenses', requireAdmin, async (req, res) => {
+router.post('/projects/:id/expenses', requireAuth, requireProjectFinancialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const { description, vendor, paid_date, receipt_url, notes } = req.body;
   const category = req.body.category;
@@ -273,7 +274,7 @@ router.post('/projects/:id/expenses', requireAdmin, async (req, res) => {
   }
 });
 
-router.delete('/projects/:projectId/expenses/:id', requireAdmin, async (req, res) => {
+router.delete('/projects/:projectId/expenses/:id', requireAuth, requireProjectFinancialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const r = await pool.query(

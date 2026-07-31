@@ -1,14 +1,15 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import api from '../api';
-import { clearCache } from '../offlineDb';
+import { clearCache, clearPendingSyncs, currentOfflineScope } from '../offlineDb';
 import { safeSession, safeLocal } from '../utils/safeStorage';
 
 export const AuthContext = createContext(null);
 
 function clearOfflineQueue() {
   if (!('serviceWorker' in navigator)) return;
+  const scope = currentOfflineScope();
   navigator.serviceWorker.ready
-    .then(reg => reg.active?.postMessage({ type: 'CLEAR_QUEUE' }))
+    .then(reg => reg.active?.postMessage({ type: 'CLEAR_QUEUE', scope }))
     .catch(() => {});
 }
 
@@ -82,16 +83,20 @@ export function AuthProvider({ children }) {
           takeoff: !!user.addon_takeoff,
           planroom: !!user.addon_planroom,
           storm: !!user.addon_storm,
+          roof: !!user.addon_roof,
           status: user.subscription_status || null,
         }));
+        if (user.company_name) localStorage.setItem('tc_company', user.company_name);
+        else localStorage.removeItem('tc_company');
       } else {
         localStorage.removeItem('tc_addons');
+        localStorage.removeItem('tc_company');
       }
     } catch { /* storage blocked */ }
   }, [user]);
 
   const login = async (username, password, company_name) => {
-    await clearCache();
+    await Promise.all([clearCache(), clearPendingSyncs()]);
     clearOfflineQueue();
     const r = await api.post('/auth/login', { username, password, company_name }, { suppressToast: true });
     if (r.data.mfa_required) {
@@ -107,7 +112,7 @@ export function AuthProvider({ children }) {
   };
 
   const loginWithToken = async token => {
-    await clearCache();
+    await Promise.all([clearCache(), clearPendingSyncs()]);
     clearOfflineQueue();
     safeLocal.setItem('tc_token', token);
     const me = await api.get('/auth/me');
@@ -118,7 +123,7 @@ export function AuthProvider({ children }) {
   };
 
   const confirmMfa = async (mfa_token, code) => {
-    await clearCache();
+    await Promise.all([clearCache(), clearPendingSyncs()]);
     clearOfflineQueue();
     const r = await api.post('/auth/mfa/confirm', { mfa_token, code });
     storeSession(safeLocal, r.data.token, r.data.user);
@@ -128,6 +133,7 @@ export function AuthProvider({ children }) {
 
   const logout = () => {
     clearCache();
+    clearPendingSyncs();
     clearOfflineQueue();
     // Clear both stores so an impersonation tab logging out doesn't leave
     // the super admin's localStorage token alive for a future page load,
@@ -136,11 +142,26 @@ export function AuthProvider({ children }) {
     safeLocal.removeItem('tc_user');
     safeSession.removeItem('tc_token');
     safeSession.removeItem('tc_user');
+    // Drop the cached clocked-in flag so a fresh login starts on the personal
+    // clock, not Workforce (Dashboard re-sets it once clock status loads).
+    safeLocal.removeItem('tc_clocked_in');
     setUser(null);
     setFirstLogin(false);
   };
 
-  const updateUser = patch => setUser(u => ({ ...u, ...patch }));
+  const updateUser = patch => setUser(u => {
+    if (!u) return u;
+    const next = { ...u, ...patch };
+    // Persist the merged user to the active token store. Without this, updateUser
+    // touched only React state, so a cleared flag (e.g. needs_terms after accepting
+    // the Terms) was lost on reload — the stale tc_user cache (used on offline /
+    // /auth/me-failure bootstraps) kept re-showing the clickwrap gate every time.
+    try {
+      const store = safeSession.getItem('tc_token') ? safeSession : safeLocal;
+      store.setItem('tc_user', JSON.stringify(next));
+    } catch { /* storage blocked */ }
+    return next;
+  });
   const clearFirstLogin = () => setFirstLogin(false);
 
   return (

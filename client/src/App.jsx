@@ -5,6 +5,7 @@ import { safeSession } from './utils/safeStorage';
 import InstallPrompt from './components/InstallPrompt';
 import UpdatePrompt from './components/UpdatePrompt';
 import WelcomeModal from './components/WelcomeModal';
+import TermsGate from './components/TermsGate';
 import SkipLink from './components/SkipLink';
 import { ToastProvider } from './contexts/ToastContext';
 import { OfflineProvider } from './contexts/OfflineContext';
@@ -37,6 +38,7 @@ const Tests             = lazy(() => import('./pages/Tests'));
 const Changelog         = lazy(() => import('./pages/Changelog'));
 const HelpPage          = lazy(() => import('./pages/HelpPage'));
 const PublicEstimatePage = lazy(() => import('./pages/PublicEstimatePage'));
+const PublicInvoicePage = lazy(() => import('./pages/PublicInvoicePage'));
 const FinancialReportsPage = lazy(() => import('./pages/FinancialReportsPage'));
 const PublicChangeOrderPage = lazy(() => import('./pages/PublicChangeOrderPage'));
 const SubmittalsPage    = lazy(() => import('./pages/SubmittalsPage'));
@@ -164,6 +166,7 @@ function AppRoutes() {
       <Route path="/r/:slug" element={<ServiceRequest />} />
       <Route path="/companies/:slug" element={<PublicCompanyProfilePage />} />
       <Route path="/e/:token" element={<PublicEstimatePage />} />
+      <Route path="/i/:token" element={<PublicInvoicePage />} />
       <Route path="/co/:token" element={<PublicChangeOrderPage />} />
       <Route path="/lien-waiver-sign/:token" element={<PublicLienWaiverSignPage />} />
       <Route path="/book/:companySlug" element={<PublicBookingPage />} />
@@ -183,7 +186,7 @@ function AppRoutes() {
           old PWA bookmarks still work. HashRedirect preserves the #tab. */}
       <Route path="/dashboard" element={<HashRedirect to="/timeclock" />} />
       <Route path="/field" element={<PrivateRoute moduleId="field"><FieldPage /></PrivateRoute>} />
-      <Route path="/work" element={<PrivateRoute adminOnly moduleId="projects"><ProjectsPage /></PrivateRoute>} />
+      <Route path="/work" element={<PrivateRoute adminOnly moduleId={['projects', 'sales']}><ProjectsPage /></PrivateRoute>} />
       <Route path="/projects" element={<HashRedirect to="/work" />} />
       <Route path="/administration" element={<PrivateRoute adminOnly moduleId="administration"><AdministrationPage /></PrivateRoute>} />
       {/* Analytics is now the Performance tab of the Reports module. */}
@@ -262,9 +265,8 @@ function AppRoutes() {
   // overwrite the super admin's tc_token in their original SuperAdmin tab,
   // and the next /superadmin/* request from there would 403.
   safeSession.setItem('tc_token', token);
-  // Intentionally do NOT clear the IndexedDB cache here — the super admin
-  // impersonating a user wants to reproduce exactly what the user sees,
-  // including stale-cache artifacts. Clearing it would mask diagnostic bugs.
+  // IndexedDB API records are scoped by company + user, so this tab cannot
+  // reuse the super admin's cached data while impersonating another account.
   // Strip the query param so normal auth flow runs from here
   window.history.replaceState({}, '', window.location.pathname);
 })();
@@ -278,6 +280,7 @@ export default function App() {
             <SettingsProvider>
               <SkipLink />
               <WelcomeModal />
+              <TermsGate />
               <AppRoutes />
               <InstallPrompt />
               <UpdatePrompt />

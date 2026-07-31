@@ -4,6 +4,9 @@
   "scripts": {
     "install:all": "cd server && npm install && cd ../client && npm install",
     "dev:server": "cd server && npm run dev",
-    "dev:client": "cd client && npm run dev"
+    "dev:client": "cd client && npm run dev",
+    "verify": "cd server && npm run verify && cd ../client && npm run verify",
+    "verify:server": "cd server && npm run verify",
+    "verify:client": "cd client && npm run verify"
   }
 }

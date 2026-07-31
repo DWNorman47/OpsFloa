@@ -76,4 +76,51 @@ describe('annotateEntryOvertime — allocation details', () => {
     annotateEntryOvertime(entries, 'daily', 8, 1);
     expect(entries[0].overtime_hours).toBeCloseTo(5); // clamped to total
   });
+
+  test('minimum-daily floor does not erase overtime already earned by worked hours', () => {
+    const entries = [e('2026-01-05', '08:00', '17:00')]; // 9h worked, floor 10h, daily OT after 8h
+    const cfg = { minDailyHours: 10, minDailyRules: [], tierRules: [], windowRules: [] };
+    annotateEntryOvertime(entries, 'daily', 8, 1, cfg);
+    const summary = computeOT([e('2026-01-05', '08:00', '17:00')], 'daily', 8, 1, cfg);
+    expect(entries[0].overtime_hours).toBe(1);
+    expect(sumOt(entries)).toBe(summary.overtimeHours);
+  });
+});
+
+describe('annotateEntryOvertime — overtime_reason (traceability)', () => {
+  test('over-threshold OT names the daily/weekly rule', () => {
+    const daily = [e('2026-01-05', '08:00', '18:00')]; // 10h, 2h over daily-8
+    annotateEntryOvertime(daily, 'daily', 8, 1);
+    expect(daily[0].overtime_reason).toBe('daily');
+
+    const weekly = ['2026-01-05', '2026-01-06', '2026-01-07', '2026-01-08', '2026-01-09']
+      .map(d => e(d, '08:00', '17:00')); // 5×9 = 45h, 5h over weekly-40
+    annotateEntryOvertime(weekly, 'weekly', 40, 1);
+    expect(weekly.some(x => x.overtime_reason === 'weekly')).toBe(true);
+  });
+
+  test('a manual override is tagged "override", not the daily rule (the Leo Martinez case)', () => {
+    // 08:00–17:00 with a 30-min break = 8.5h paid; override sets the whole shift as OT.
+    const entries = [e('2026-01-05', '08:00', '17:00', { break_minutes: 30, overtime_hours_override: 8.5 })];
+    annotateEntryOvertime(entries, 'daily', 8, 1);
+    expect(entries[0].overtime_hours).toBeCloseTo(8.5);
+    expect(entries[0].overtime_reason).toBe('override'); // NOT 'daily'
+  });
+
+  test('rest day and 7th consecutive day are tagged', () => {
+    const rest = [e('2026-01-04', '08:00', '14:00')]; // 2026-01-04 is a Sunday
+    annotateEntryOvertime(rest, 'daily', 8, 1, { restDay: { mult: 2, days: [0] } });
+    expect(rest[0].overtime_reason).toBe('rest_day');
+
+    const week = ['2026-01-05','2026-01-06','2026-01-07','2026-01-08','2026-01-09','2026-01-10','2026-01-11']
+      .map(d => e(d, '08:00', '12:00')); // Mon–Sun, all 7 days
+    annotateEntryOvertime(week, 'daily', 8, 1, { seventhDay: { enabled: true, firstHoursThreshold: 8, firstMult: 1.5, afterMult: 2 } });
+    expect(week.some(x => x.overtime_reason === 'seventh_day')).toBe(true);
+  });
+
+  test('no OT → no reason', () => {
+    const entries = [e('2026-01-05', '08:00', '16:00')]; // exactly 8h
+    annotateEntryOvertime(entries, 'daily', 8, 1);
+    expect(entries[0].overtime_reason).toBeNull();
+  });
 });

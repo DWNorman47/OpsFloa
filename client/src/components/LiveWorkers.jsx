@@ -46,7 +46,7 @@ function ElapsedTimer({ clockInTime }) {
   return <span style={styles.elapsed}>{formatElapsed(clockInTime)}</span>;
 }
 
-export default function LiveWorkers({ timezone = '', showInactiveAlerts = true, projects = [], settings = null }) {
+export default function LiveWorkers({ timezone = '', showInactiveAlerts = true, projects = [], settings = null, onWorkforceChange = null }) {
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
@@ -188,6 +188,7 @@ export default function LiveWorkers({ timezone = '', showInactiveAlerts = true, 
       await api.post(`/admin/clock-out/${userId}`, {});
       setActionError('');
       fetchActive();
+      onWorkforceChange?.();
     } catch {
       setActionError(t.actionFailed);
     } finally {
@@ -220,6 +221,7 @@ export default function LiveWorkers({ timezone = '', showInactiveAlerts = true, 
       setClockInUserId(''); setClockInProjectId(''); setClockInNotes('');
       setActionError('');
       fetchActive();
+      onWorkforceChange?.();
     } catch (err) {
       setActionError(err?.response?.data?.error || t.actionFailed);
     } finally {

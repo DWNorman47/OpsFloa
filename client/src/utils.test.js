@@ -1,5 +1,19 @@
 import { describe, test, expect } from 'vitest';
-import { fmtHours, localDateStr, formatCurrency, currencySymbol, formatInTz } from './utils';
+import { dateOnlyStr, fmtHours, formatDateOnly, localDateStr, formatCurrency, currencySymbol, formatInTz } from './utils';
+
+describe('date-only values', () => {
+  test('strips the time from a serialized database DATE', () => {
+    expect(dateOnlyStr('2026-07-30T00:00:00.000Z')).toBe('2026-07-30');
+  });
+
+  test('formats a serialized database DATE without a timezone day shift', () => {
+    expect(formatDateOnly(
+      '2026-07-30T00:00:00.000Z',
+      'en-US',
+      { month: 'short', day: 'numeric', year: 'numeric' },
+    )).toBe('Jul 30, 2026');
+  });
+});
 
 describe('fmtHours', () => {
   test('whole hours', () => {

@@ -5,6 +5,7 @@ import { langToLocale } from '../utils';
 import { useMoney } from '../hooks/useMoney';
 
 import { silentError } from '../errorReporter';
+import PayStub from './PayStub';
 function fmtDate(str, locale = 'en-US') {
   const d = new Date(String(str).substring(0, 10) + 'T00:00:00');
   return d.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
@@ -39,22 +40,26 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
   const [open, setOpen] = useState(defaultOpen);
 
   const label = stub.label || `${fmtDateShort(stub.period_start, locale)} – ${fmtDateShort(stub.period_end, locale)}`;
-  const { regular_hours, overtime_hours, prevailing_hours, total_mileage,
-          guarantee_shortfall_hours = 0, guarantee_min_hours = 0 } = stub.summary;
+  // All money is priced by the shared server engine now (was recomputed here from
+  // a simplified formula that ignored per-project prevailing, OT tiers, night
+  // premium, leave and deductions — so a tiered-OT company saw a different number
+  // on the stub than on the invoice).
+  const {
+    regular_hours, overtime_hours, prevailing_hours, total_mileage,
+    guarantee_shortfall_hours = 0, guarantee_min_hours = 0,
+    sick_hours = 0, vacation_hours = 0,
+    regular_cost = 0, overtime_cost = 0, prevailing_cost = 0, guarantee_cost = 0,
+    night_hours = 0, night_cost = 0,
+    sick_cost = 0, vacation_cost = 0, gross_wages = 0,
+    deductions = [], net_pay = 0,
+    rate: workerRate = 0, overtime_multiplier: otMult = 1.5,
+    prevailing_wage_rate: prevRate = 0, sick_rate = 0, vacation_rate = 0,
+  } = stub.summary;
   const totalHours = regular_hours + overtime_hours + prevailing_hours;
-
-  const workerRate = parseFloat(user?.hourly_rate) || parseFloat(settings?.default_hourly_rate) || 0;
-  const prevRate = parseFloat(settings?.prevailing_wage_rate) || 0;
-  const otMult = parseFloat(settings?.overtime_multiplier) || 1.5;
   const overtimeEnabled = settings?.feature_overtime !== false;
-
-  const regularPay = regular_hours * workerRate;
-  const overtimePay = overtimeEnabled ? overtime_hours * workerRate * otMult : 0;
-  const prevailingPay = prevailing_hours * prevRate;
-  const guaranteePay = guarantee_shortfall_hours > 0 ? guarantee_shortfall_hours * workerRate : 0;
-  const totalPay = regularPay + overtimePay + prevailingPay + guaranteePay;
-  const showPay = workerRate > 0 || prevRate > 0;
-  const billedHours = totalHours + guarantee_shortfall_hours;
+  const hasDeductions = Array.isArray(deductions) && deductions.length > 0;
+  const showPay = gross_wages > 0;
+  const billedHours = totalHours + guarantee_shortfall_hours + sick_hours + vacation_hours;
 
   const ci = companyInfo || {};
   const billToLines = [
@@ -74,7 +79,7 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
             <span style={s.chip}>{fmtH(billedHours)} {t.totalChip}</span>
             {prevailing_hours > 0 && <span style={{ ...s.chip, background: '#fef3c7', color: '#b45309' }}>{fmtH(prevailing_hours)} {t.prevailingLabel}</span>}
             {total_mileage > 0 && <span style={s.chip}>{total_mileage} {t.miChip}</span>}
-            {showPay && totalPay > 0 && <span style={{ ...s.chip, background: '#d1fae5', color: '#065f46' }}>{fmtMoney(totalPay)}</span>}
+            {showPay && <span style={{ ...s.chip, background: '#d1fae5', color: '#065f46' }}>{fmtMoney(gross_wages)}</span>}
           </div>
         </div>
         <span style={s.chevron}>{open ? '▾' : '▸'}</span>
@@ -129,6 +134,17 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
               </thead>
               <tbody>
                 {stub.entries.map(e => {
+                  if (e.synthetic) {
+                    // Rule-generated hours (guarantee / floor / leave) — no clock times.
+                    const synLabel = { guarantee: t.floorGuaranteeLabel, min_daily: t.floorMinDailyLabel, weekly_guarantee: t.guaranteeTopupLabel, sick: t.pdfSickHours || 'Sick', vacation: t.pdfVacationHours || 'Vacation' }[e.kind] || e.kind;
+                    return (
+                      <tr key={e.id} style={s.tr}>
+                        <td style={s.td}>{fmtDate(e.work_date_str || e.work_date, locale)}</td>
+                        <td style={{ ...s.td, color: '#6b7280' }} colSpan={5}>{synLabel}</td>
+                        <td style={{ ...s.td, textAlign: 'right', fontWeight: 600 }}>{fmtH(Number(e.hours) || 0)}</td>
+                      </tr>
+                    );
+                  }
                   const h = netHours(e.start_time, e.end_time, e.break_minutes);
                   const isPrev = e.wage_type === 'prevailing';
                   return (
@@ -189,40 +205,83 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
                   <span>+{fmtH(guarantee_shortfall_hours)}</span>
                 </div>
               )}
+              {sick_hours > 0 && (
+                <div style={s.sumRow}><span>{t.pdfSickHours}</span><span>{fmtH(sick_hours)}</span></div>
+              )}
+              {vacation_hours > 0 && (
+                <div style={s.sumRow}><span>{t.pdfVacationHours}</span><span>{fmtH(vacation_hours)}</span></div>
+              )}
               <div style={{ ...s.sumRow, borderTop: '1px solid #e5e7eb', fontWeight: 700 }}>
                 <span>{t.totalHours}</span>
                 <span>{fmtH(billedHours)}</span>
               </div>
               {showPay && (
                 <>
-                  {regular_hours > 0 && workerRate > 0 && (
+                  {regular_hours > 0 && regular_cost > 0 && (
                     <div style={{ ...s.sumRow, borderTop: '1px solid #e5e7eb' }}>
                       <span>{t.regularPay} ({fmtMoney(workerRate)}/hr)</span>
-                      <span>{fmtMoney(regularPay)}</span>
+                      <span>{fmtMoney(regular_cost)}</span>
                     </div>
                   )}
-                  {overtimeEnabled && overtime_hours > 0 && workerRate > 0 && (
+                  {overtimeEnabled && overtime_hours > 0 && overtime_cost > 0 && (
                     <div style={s.sumRow}>
                       <span>{t.overtimePay} ({otMult}×)</span>
-                      <span>{fmtMoney(overtimePay)}</span>
+                      <span>{fmtMoney(overtime_cost)}</span>
                     </div>
                   )}
-                  {prevailing_hours > 0 && prevRate > 0 && (
+                  {prevailing_hours > 0 && prevailing_cost > 0 && (
                     <div style={s.sumRow}>
                       <span>{t.prevailingPay} ({fmtMoney(prevRate)}/hr)</span>
-                      <span>{fmtMoney(prevailingPay)}</span>
+                      <span>{fmtMoney(prevailing_cost)}</span>
                     </div>
                   )}
-                  {guarantee_shortfall_hours > 0 && workerRate > 0 && (
+                  {night_cost > 0 && (
+                    <div style={s.sumRow}>
+                      <span>{t.nightDiffLabel || 'Night differential'}{night_hours > 0 ? ` (${fmtH(night_hours)})` : ''}</span>
+                      <span>{fmtMoney(night_cost)}</span>
+                    </div>
+                  )}
+                  {guarantee_shortfall_hours > 0 && guarantee_cost > 0 && (
                     <div style={{ ...s.sumRow, color: '#2563eb' }}>
                       <span>{t.minimumGuaranteePay.replace('{hours}', fmtH(guarantee_shortfall_hours)).replace('{rate}', `${fmtMoney(workerRate)}/hr`)}</span>
-                      <span>{fmtMoney(guaranteePay)}</span>
+                      <span>{fmtMoney(guarantee_cost)}</span>
                     </div>
                   )}
-                  <div style={s.sumTotal}>
-                    <span>{t.totalDue}</span>
-                    <span>{fmtMoney(totalPay)}</span>
-                  </div>
+                  {sick_hours > 0 && sick_cost > 0 && (
+                    <div style={s.sumRow}>
+                      <span>{(t.pdfSickPayRate || 'Sick Pay ({rate}/hr)').replace('{rate}', fmtMoney(sick_rate))}</span>
+                      <span>{fmtMoney(sick_cost)}</span>
+                    </div>
+                  )}
+                  {vacation_hours > 0 && vacation_cost > 0 && (
+                    <div style={s.sumRow}>
+                      <span>{(t.pdfVacationPayRate || 'Vacation Pay ({rate}/hr)').replace('{rate}', fmtMoney(vacation_rate))}</span>
+                      <span>{fmtMoney(vacation_cost)}</span>
+                    </div>
+                  )}
+                  {hasDeductions ? (
+                    <>
+                      <div style={{ ...s.sumRow, borderTop: '1px solid #e5e7eb', fontWeight: 700 }}>
+                        <span>{t.pdfGrossWages}</span>
+                        <span>{fmtMoney(gross_wages)}</span>
+                      </div>
+                      {deductions.map((d, i) => (
+                        <div key={i} style={{ ...s.sumRow, color: '#b91c1c' }}>
+                          <span>{d.name}{d.kind === 'percent' ? ` (${d.value}%)` : ''}</span>
+                          <span>−{fmtMoney(d.amount)}</span>
+                        </div>
+                      ))}
+                      <div style={s.sumTotal}>
+                        <span>{t.netPayCol}</span>
+                        <span>{fmtMoney(net_pay)}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <div style={s.sumTotal}>
+                      <span>{t.totalDue}</span>
+                      <span>{fmtMoney(gross_wages)}</span>
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -236,16 +295,36 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
 export default function PayStubView({ user, settings, companyInfo }) {
   const t = useT();
   const [stubs, setStubs] = useState([]);
+  const [checks, setChecks] = useState(null); // ruleset-mode per-check stubs (Advanced Payroll)
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     api.get('/time-entries/pay-stubs')
-      .then(r => setStubs(r.data))
+      .then(r => {
+        if (Array.isArray(r.data)) { setStubs(r.data); setChecks(null); }     // legacy
+        else { setChecks(r.data.stubs || []); setStubs([]); }                  // ruleset-driven
+      })
       .catch(silentError('paystubview'))
       .finally(() => setLoading(false));
   }, []);
 
   if (loading) return null;
+
+  // Ruleset-driven stubs (Advanced Payroll): one PayStub per paycheck.
+  if (checks) {
+    if (checks.length === 0) return (
+      <div style={s.empty}><div style={s.emptyTitle}>{t.payStubs}</div><p style={s.emptyMsg}>{t.noPayPeriodsYet}</p></div>
+    );
+    return (
+      <div style={s.wrap}>
+        <div style={s.heading}>{t.payStubs}</div>
+        <div style={{ ...s.list, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {checks.map(c => <PayStub key={c.id} check={c} currency={settings?.currency ?? 'USD'} workerName={user?.full_name} />)}
+        </div>
+      </div>
+    );
+  }
+
   if (stubs.length === 0) return (
     <div style={s.empty}>
       <div style={s.emptyTitle}>{t.payStubs}</div>

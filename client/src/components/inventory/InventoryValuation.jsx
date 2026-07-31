@@ -7,6 +7,7 @@ import { useCurrency } from '../../contexts/SettingsContext';
 import { SkeletonList } from '../Skeleton';
 import ColumnHeaderMenu from './ColumnHeaderMenu';
 import { safeLocal } from '../../utils/safeStorage';
+import { downloadCsv } from '../../utils/csv';
 
 const VAL_PAGE = 200;
 const VAL_MOBILE_VIEW_PREF_KEY = 'inventory_valuation_mobile_view';
@@ -98,23 +99,16 @@ export default function InventoryValuation({ locations }) {
   const downloadCSV = () => {
     if (!data) return;
     const rows = visibleItems.map(item => [
-      `"${item.name.replace(/"/g, '""')}"`,
+      item.name,
       item.sku || '',
       item.category || '',
       item.unit,
       parseFloat(item.total_qty).toFixed(2),
       item.unit_cost != null ? parseFloat(item.unit_cost).toFixed(2) : '',
       parseFloat(item.total_value).toFixed(2),
-    ].join(','));
-    const header = [t.invValColItem, t.colSku, t.colCategory, t.colUnit, t.invValColOnHand, t.colUnitCost, t.invValColTotalValue].join(',');
-    const csv = [header, ...rows].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `inventory-valuation-${new Date().toISOString().slice(0,10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    ]);
+    const header = [t.invValColItem, t.colSku, t.colCategory, t.colUnit, t.invValColOnHand, t.colUnitCost, t.invValColTotalValue];
+    downloadCsv([header, ...rows], `inventory-valuation-${new Date().toISOString().slice(0,10)}.csv`);
   };
 
   const activeLocations = locations.filter(l => l.active);

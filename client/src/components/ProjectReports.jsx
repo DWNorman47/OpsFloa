@@ -6,14 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { SkeletonList } from './Skeleton';
 import { handlePdfError } from '../pdfError';
 import { labelSg, labelPl } from '../companyLabels';
-
-function downloadCSV(rows, filename) {
-  const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
-  URL.revokeObjectURL(url);
-}
+import { downloadCsv } from '../utils/csv';
 
 function defaultDates() {
   const today = new Date();
@@ -183,7 +176,7 @@ function ProjectCard({ project: p, currency = 'USD', workerLabel = 'Worker', wor
                     const h = ((new Date(`1970-01-01T${e.end_time}`) - new Date(`1970-01-01T${e.start_time}`)) / 3600000).toFixed(2);
                     return [e.work_date?.toString().substring(0,10), e.worker_name, e.wage_type, e.start_time, e.end_time, h];
                   });
-                  downloadCSV([headers, ...rows], `${p.name.replace(/\s+/g,'-')}-${from||'all'}-to-${to||'all'}.csv`);
+                  downloadCsv([headers, ...rows], `${p.name.replace(/\s+/g,'-')}-${from||'all'}-to-${to||'all'}.csv`);
                 }}>{t.exportCSV}</button>
                 <button style={{ ...styles.pdfBtn, ...(pdfGenerating ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={downloadPDF} disabled={pdfGenerating}>
                   {pdfGenerating ? t.preparingPDF : t.downloadPDF}

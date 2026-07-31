@@ -187,4 +187,57 @@ router.post('/draft-email', async (req, res) => {
   }));
 });
 
+// --- Bilingual crew task cards -------------------------------------------
+
+// "Speak English. Your crew reads Spanish." A foreman jots the day's tasks in
+// English; the crew gets a clean Spanish task card. Default is bilingual so the
+// foreman can eyeball the translation against what they wrote — that trust is
+// the whole reason they'll use it instead of guessing at Spanish themselves.
+const CREW_CARD_SYSTEM =
+  "You create clear task cards for a construction crew, translating a foreman's " +
+  'English notes into simple, plain worksite Spanish — neutral Latin American ' +
+  'Spanish, the way a crew lead actually talks: clear, direct, respectful, not ' +
+  'formal textbook Spanish. Use short imperative instructions. Use trade terms a ' +
+  'working crew recognizes; when a term is regional, choose the most widely ' +
+  'understood one. Do NOT invent tasks, quantities, measurements, names, ' +
+  'addresses, or times that are not in the notes — when a specific is missing ' +
+  'but clearly needed, leave a bracketed placeholder like [cantidad] or [hora] ' +
+  'rather than making one up.\n\n' +
+  'Output GitHub-flavored markdown using ONLY these shapes: "## " headings, ' +
+  '"- " bullets, and **bold**. Structure the card as:\n' +
+  '- A "## " title line — use the job/site name if one is given, otherwise ' +
+  '"Tareas del día".\n' +
+  '- "## Tareas" — one bullet per task, in the order given.\n' +
+  '- "## Materiales y herramientas" — ONLY if materials or tools are mentioned.\n' +
+  '- "## Seguridad" — ONLY if a safety point is mentioned or a task plainly ' +
+  'requires one (e.g. arnés for work at height); keep it to a line or two.\n\n' +
+  'Keep the card to what the crew needs to do the work — no greeting, no ' +
+  'preamble, no closing remarks. Headings stay in Spanish as shown above.';
+
+router.post('/crew-card', async (req, res) => {
+  const tasks = String((req.body && req.body.tasks) || '').trim();
+  const job = String((req.body && req.body.job) || '').trim().slice(0, 120);
+  // Default to bilingual — only false when the client explicitly asks for
+  // Spanish-only.
+  const bilingual = !(req.body && req.body.bilingual === false);
+  if (tasks.length < 5) {
+    return res.status(400).json({ error: 'Add the tasks or notes you want on the crew card.' });
+  }
+  const jobLine = job ? `Job / site name: ${job}\n` : '';
+  const mode = bilingual
+    ? 'Make the card BILINGUAL: for every title, task, and note, write the ' +
+      'Spanish first and then the English in parentheses on the same line, e.g. ' +
+      '"- Instalar la manta de control de erosión (Install the erosion-control blanket)". ' +
+      'Section headings stay Spanish-only.'
+    : 'Make the card SPANISH ONLY — do not include the English.';
+  await runAi(req, res, async () => ({
+    result: await anthropic.generate({
+      system: CREW_CARD_SYSTEM,
+      prompt: `${jobLine}${mode}\n\nForeman's tasks / notes (English):\n\n${tasks.slice(0, MAX_INPUT)}`,
+      maxTokens: 1200,
+    }),
+    clipped: tasks.length > MAX_INPUT,
+  }));
+});
+
 module.exports = router;

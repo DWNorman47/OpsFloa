@@ -6,7 +6,7 @@
 const { weekBucketKey } = require('./weekBounds');
 // One-way dependency (hoursRules has no requires, so no cycle): ot_tier rules are
 // `when`-scoped, so a bucket's bands can depend on its date.
-const { ruleMatchesDate } = require('./hoursRules');
+const { ruleMatchesDate, ymd } = require('./hoursRules');
 
 /** Decimal hours between two HH:MM[:SS] strings. Handles midnight-crossing shifts. */
 function hoursWorked(start, end) {
@@ -16,7 +16,9 @@ function hoursWorked(start, end) {
 }
 
 function entryDuration(e) {
-  return hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60;
+  // Clamp at 0: a break longer than the shift (bad/hostile input) would otherwise
+  // yield a negative duration that subtracts from paid hours — and thus from pay.
+  return Math.max(0, hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60);
 }
 
 /** Day of week (0=Sun … 6=Sat) for a YYYY-MM-DD key, timezone-independent. */
@@ -24,6 +26,127 @@ function weekdayOfDate(dk) {
   const m = String(dk).substring(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) return null;
   return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay();
+}
+
+/** YYYY-MM-DD keys from `from` to `to` inclusive (UTC, TZ-independent). Bounded
+ *  so a stray range can't loop unbounded. */
+function eachDateKey(from, to) {
+  const out = [];
+  const mf = String(from).substring(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const mt = String(to).substring(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!mf || !mt) return out;
+  let d = Date.UTC(+mf[1], +mf[2] - 1, +mf[3]);
+  const end = Date.UTC(+mt[1], +mt[2] - 1, +mt[3]);
+  for (let i = 0; d <= end && i < 2000; i++, d += 86400000) {
+    out.push(new Date(d).toISOString().substring(0, 10));
+  }
+  return out;
+}
+
+/** The 7 YYYY-MM-DD keys of the weekStart-aligned week that contains `dk`. */
+function weekDaysOf(dk, weekStart) {
+  const m = String(dk).substring(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return [];
+  const base = Date.UTC(+m[1], +m[2] - 1, +m[3]);
+  const wd = new Date(base).getUTCDay();               // 0=Sun … 6=Sat
+  const back = (((wd - weekStart) % 7) + 7) % 7;        // days since the week's start
+  const start = base - back * 86400000;
+  const out = [];
+  for (let i = 0; i < 7; i++) out.push(new Date(start + i * 86400000).toISOString().substring(0, 10));
+  return out;
+}
+const isWeekdayKey = (dk) => { const w = weekdayOfDate(dk); return w >= 1 && w <= 5; };
+
+/** Total scheduled hours per YYYY-MM-DD from a worker's shifts (sum of shift
+ *  durations that day; shifts carry no break). */
+function shiftHoursByDate(shifts) {
+  const m = new Map();
+  for (const sh of shifts || []) {
+    if (!sh || sh.shift_date == null) continue;
+    const dk = String(sh.shift_date).substring(0, 10);
+    m.set(dk, (m.get(dk) || 0) + hoursWorked(sh.start_time, sh.end_time));
+  }
+  return m;
+}
+
+/**
+ * Paid sick + vacation hours over a pay period, valued SCHEDULE-first. For each
+ * APPROVED sick/vacation request:
+ *   - `hours` set (a partial day) → pay exactly that many hours;
+ *   - otherwise (a full day) each day is worth, in order: the worker's SCHEDULED
+ *     shift hours that day → the weekday leave-value rule → the company Regular
+ *     Shift default. Days are clipped to [from,to] and de-duped per type.
+ * Returns { sick, vacation } totals; no requests / no range → { 0, 0 }.
+ *
+ * @param requests       [{ type:'sick'|'vacation', hours:number|null, start_date, end_date }]
+ * @param shiftsByDate   Map(YYYY-MM-DD → scheduled hours) from shiftHoursByDate
+ * @param leaveRules     the Time Off Value rules; each carries `applies`
+ *                       ('sick' | 'vacation' | 'both') selecting which leave it values
+ * @param regularShiftHours  company Regular Shift default (last-resort hours)
+ */
+function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours, from, to, detail = null) {
+  const totals = { sick: 0, vacation: 0 };
+  if (!from || !to) return totals;
+  const f = String(from).substring(0, 10), t = String(to).substring(0, 10);
+  const rules = Array.isArray(leaveRules) ? leaveRules : [];
+  const def = parseFloat(regularShiftHours) || 0;
+  const seen = { sick: new Set(), vacation: new Set() }; // full-day de-dup, per type
+  const ruleAppliesTo = (r, type) => { const a = r.applies || 'both'; return a === 'both' || a === type; };
+  // How a full day is valued, plus WHY (for the explain trace).
+  const dayValue = (dk, type) => {
+    const sched = (shiftsByDate && shiftsByDate.get(dk)) || 0;
+    if (sched > 0) return { hours: sched, source: 'schedule' };            // 1) scheduled shift hours
+    let best = 0, bestRule = null;
+    for (const r of rules) if (ruleAppliesTo(r, type) && ruleMatchesDate(r, dk)) { const h = parseFloat(r.hours) || 0; if (h > best) { best = h; bestRule = r.id; } }
+    if (best > 0) return { hours: best, source: 'rule', ruleId: bestRule };  // 2) Time Off Value rule
+    return { hours: def, source: 'default' };                               // 3) Regular Shift default
+  };
+  for (const req of requests || []) {
+    if (!req) continue;
+    const type = req.type === 'vacation' ? 'vacation' : 'sick';
+    if (req.hours != null && req.hours !== '') {           // partial → pay the logged hours
+      // Count the lump only in the period that contains its start date. The
+      // fetch query returns any request overlapping [from,to], so a partial
+      // straddling a pay-period boundary would otherwise be paid IN FULL in both
+      // periods (this loader runs once per period for per-worker pay stubs).
+      const anchor = req.start_date != null ? String(req.start_date).substring(0, 10) : null;
+      if (anchor != null && (anchor < f || anchor > t)) continue;
+      const h = parseFloat(req.hours) || 0;
+      totals[type] += h;
+      if (detail) detail.push({ type, date: anchor, hours: h, source: 'partial' });
+      continue;
+    }
+    if (req.start_date == null || req.end_date == null) continue;
+    const s = String(req.start_date).substring(0, 10), e = String(req.end_date).substring(0, 10);
+    for (const dk of eachDateKey(s < f ? f : s, e > t ? t : e)) {
+      if (seen[type].has(dk)) continue;                    // dedup overlapping requests
+      seen[type].add(dk);
+      const v = dayValue(dk, type);
+      totals[type] += v.hours;
+      if (detail) detail.push({ type, date: dk, hours: v.hours, source: v.source, ...(v.ruleId ? { ruleId: v.ruleId } : {}) });
+    }
+  }
+  return totals;
+}
+
+/**
+ * How many hours short of the weekly-hours guarantee a period ran. The guarantee
+ * scales by whole weeks in [from,to]; a shortfall tops the period up to the floor.
+ * No guarantee configured (0/absent) → all zeros. (Lifted from admin.js so every
+ * pay surface shares one definition.)
+ */
+function computeGuaranteeShortfall(totalHours, guaranteedWeeklyHours, fromDate, toDate) {
+  if (!guaranteedWeeklyHours || parseFloat(guaranteedWeeklyHours) <= 0) return { shortfall: 0, minHours: 0, weeks: 0 };
+  let weeks = 1;
+  if (fromDate && toDate) {
+    const f = new Date(String(fromDate).substring(0, 10) + 'T00:00:00');
+    const t = new Date(String(toDate).substring(0, 10) + 'T00:00:00');
+    const days = Math.round((t - f) / (1000 * 60 * 60 * 24)) + 1;
+    weeks = Math.max(1, Math.round(days / 7));
+  }
+  const minHours = parseFloat(guaranteedWeeklyHours) * weeks;
+  const shortfall = Math.max(0, minHours - totalHours);
+  return { shortfall: +shortfall.toFixed(2), minHours: +minHours.toFixed(2), weeks };
 }
 
 /** Minutes since midnight from an "HH:MM[:SS]" string (null-safe). */
@@ -64,7 +187,12 @@ function nightPremiumCost(entries, nightCfg, baseRate) {
   if (!pct) return 0;
   const from = parseFloat(nightCfg.fromHour), to = parseFloat(nightCfg.toHour);
   if (!Number.isFinite(from) || !Number.isFinite(to)) return 0;
-  return entries.reduce((c, e) => c + nightHoursForEntry(e, from, to) * baseRate * (pct / 100), 0);
+  // Only 'regular' hours are priced at baseRate. Prevailing hours carry their own
+  // (prevailing) rate and leave has no punch, so applying a baseRate night premium
+  // to them would pay the differential at the wrong rate.
+  return entries.reduce((c, e) => e.wage_type === 'regular'
+    ? c + nightHoursForEntry(e, from, to) * baseRate * (pct / 100)
+    : c, 0);
 }
 
 /** "YYYY-MM-DD" shifted by `k` days, timezone-independent. Null on a bad key. */
@@ -96,7 +224,7 @@ function windowHoursForEntry(e, windowRules) {
   let en = hmToMin(e.end_time);
   if (s == null || en == null) return new Map();
   if (en <= s) en += 1440;                       // overnight shift (end == start → 0-length)
-  const d0 = String(e.work_date).substring(0, 10);
+  const d0 = ymd(e.work_date);
 
   // Collect covered [lo, hi, mult] segments in minutes-from-work_date-midnight.
   const segs = [];
@@ -218,7 +346,7 @@ function minDailyForBucket(otConfig, rule, dk) {
  * @param {object} [otConfig=null] - tiered-OT config {dailyBands, weeklyBands}; null = single tier
  * @returns {{regularHours:number, overtimeHours:number, otBands:Array<{hours:number,mult:number|null}>}}
  */
-function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null) {
+function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, range = null) {
   const regular = entries.filter(e => e.wage_type === 'regular');
 
   // Partition entries with an explicit override out of the automatic calc.
@@ -239,6 +367,11 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null) {
   const otByMult = new Map();
   const addOt = (hours, mult) => { if (hours > 0) otByMult.set(mult, (otByMult.get(mult) || 0) + hours); };
   let autoReg = 0;
+  // Rule-generated regular hours that aren't worked clock time: a minimum-daily
+  // floor topping up a short worked day, or a "guarantee N paid hours" rule that
+  // pays a day with no clock-in. Collected per day so the pay statement can show
+  // each as its own traceable line instead of folding it invisibly into Regular.
+  const floorDetail = []; // [{ date, hours, kind: 'min_daily' | 'guarantee' }]
 
   // 7th-consecutive-day premium (daily rule only): when a worker worked all 7
   // days of a workweek, that week's chronologically-last worked day is paid
@@ -285,7 +418,7 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null) {
     auto.forEach(e => {
       const key = rule === 'weekly'
         ? weekBucketKey(e.work_date, weekStart)
-        : e.work_date.toString().substring(0, 10);
+        : ymd(e.work_date);
       buckets[key] = (buckets[key] || 0) + residualOf.get(e);
     });
 
@@ -311,19 +444,67 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null) {
         seventhFirst += Math.min(h, firstT);
         seventhRest  += Math.max(0, h - firstT);
       } else {
+        // Band the actually-worked hours FIRST so overtime is preserved, THEN
+        // top the day up to the reporting-time floor with regular hours. The old
+        // code dumped the whole floor into regular whenever h < minD, which
+        // erased genuine OT on any day where the floor exceeded the OT threshold
+        // (e.g. minDaily 10, threshold 8, worked 9 → paid 10 reg / 0 OT instead
+        // of 9 reg + 1 OT). For the usual floor <= threshold this is identical.
+        const bb = bandsForBucket(rule, threshold, otConfig, dk);
+        autoReg += Math.min(h, bb[0].afterHours);
+        bb.forEach((b, i) => {
+          const upper = i + 1 < bb.length ? bb[i + 1].afterHours : Infinity;
+          addOt(Math.max(0, Math.min(h, upper) - b.afterHours), b.mult);
+        });
         const minD = minDailyForBucket(otConfig, rule, dk);
         if (minD > 0 && h < minD) {
-          autoReg += minD;                        // short day topped up to the floor
-        } else {
-          const bb = bandsForBucket(rule, threshold, otConfig, dk);
-          autoReg += Math.min(h, bb[0].afterHours);
-          bb.forEach((b, i) => {
-            const upper = i + 1 < bb.length ? bb[i + 1].afterHours : Infinity;
-            addOt(Math.max(0, Math.min(h, upper) - b.afterHours), b.mult);
-          });
+          const add = minD - h;
+          autoReg += add;                         // reporting-time floor: pay the shortfall as regular
+          floorDetail.push({ date: dk, hours: +add.toFixed(2), kind: 'min_daily' });
         }
       }
     });
+
+    // Minimum-daily guarantee WITHOUT a clock-in: a min_daily rule flagged
+    // requiresClockin === false also grants its floor on matching days in the pay
+    // period that have NO worked bucket ("guaranteed hours"). Gated so it isn't
+    // paid to someone absent the whole window — the worker must have clocked in
+    // that 'week' (activeWindow 'week') or anywhere in the 'period' ('period').
+    // Worked days are already floored above; this only fills the empty ones, and
+    // only when the caller passes the pay-period `range` (no range → unchanged).
+    const minDailyRules = (otConfig && Array.isArray(otConfig.minDailyRules)) ? otConfig.minDailyRules : [];
+    const noClockRules = minDailyRules.filter(r => r.requiresClockin === false && (parseFloat(r.hours) || 0) > 0);
+    if (rule === 'daily' && noClockRules.length && range && range.from && range.to) {
+      const activeWeeks = new Set(Object.keys(buckets).map(dk => weekBucketKey(dk, weekStart)));
+      const workedAnyInPeriod = Object.keys(buckets).length > 0;
+      for (const dk of eachDateKey(range.from, range.to)) {
+        if (buckets[dk] != null) continue;                          // worked day — floored above
+        if (restDays && restDays.has(weekdayOfDate(dk))) continue;  // don't guarantee a rest day
+        let floor = 0;
+        for (const r of noClockRules) {
+          if (!ruleMatchesDate(r, dk)) continue;
+          let gate;
+          if (r.activeWindow === 'period') {
+            gate = workedAnyInPeriod;
+          } else if (r.activeWindow === 'every_weekday' || r.activeWindow === 'every_other_day') {
+            // Empty day D qualifies only if the worker clocked in on the OTHER days
+            // of D's week: every weekday (Mon–Fri) except D, or every day except D.
+            const weekdaysOnly = r.activeWindow === 'every_weekday';
+            gate = weekDaysOf(dk, weekStart).every(d =>
+              d === dk                                   // D itself is the day being filled — irrelevant
+              || (weekdaysOnly && !isWeekdayKey(d))      // weekends don't count for the weekday gate
+              || buckets[d] != null);                    // otherwise that day must have been worked
+          } else {
+            gate = activeWeeks.has(weekBucketKey(dk, weekStart)); // 'week'
+          }
+          if (gate) floor = Math.max(floor, parseFloat(r.hours) || 0);
+        }
+        if (floor > 0) {
+          autoReg += floor;                // guaranteed regular hours (no OT)
+          floorDetail.push({ date: dk, hours: +floor.toFixed(2), kind: 'guarantee' });
+        }
+      }
+    }
   }
 
   const otBands = [...otByMult.entries()]
@@ -342,6 +523,11 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null) {
     regularHours:  overrideReg + autoReg,
     overtimeHours,
     otBands,
+    // Rule-generated (non-worked) regular hours, per day, so callers can break them
+    // out of Regular as their own traceable lines. floorHours is their sum; it is a
+    // SUBSET of regularHours (already included above) — never add it on top.
+    floorDetail,
+    floorHours: +floorDetail.reduce((s, f) => s + f.hours, 0).toFixed(2),
   };
 }
 
@@ -355,10 +541,13 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null) {
  * Within a bucket, regular hours are filled chronologically (earliest entries
  * first) up to the OT boundary; the remainder is overtime — the standard "hours
  * after the threshold are the overtime" reading. Non-'regular' wage types, and
- * short days topped up by a minimum-daily floor, get 0.
+ * floor-generated hours are regular, but worked hours still retain any overtime
+ * earned above the threshold.
  */
 function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig = null) {
-  for (const e of entries) e.overtime_hours = 0; // default for prevailing / non-regular
+  // overtime_reason records WHY each entry's OT applies, so the pay statement can
+  // explain it truthfully instead of blanket-labelling everything "over Nh daily".
+  for (const e of entries) { e.overtime_hours = 0; e.overtime_reason = null; } // default (prevailing / non-regular)
   const regular = entries.filter(e => e.wage_type === 'regular');
 
   // Per-entry admin override: OT = clamped override, carved out of the auto calc.
@@ -367,6 +556,7 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
     if (e.overtime_hours_override != null) {
       const total = entryDuration(e);
       e.overtime_hours = Math.max(0, Math.min(total, parseFloat(e.overtime_hours_override)));
+      e.overtime_reason = e.overtime_hours > 0 ? 'override' : null;
     } else {
       auto.push(e);
     }
@@ -385,6 +575,7 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
     if (windowRules.length) for (const h of windowHoursForEntry(e, windowRules).values()) ws += h;
     windowSumOf.set(e, ws);
     e.overtime_hours = ws;
+    e.overtime_reason = ws > 0 ? 'window' : null;
   }
   if (rule === 'none') return entries; // no daily/weekly OT; window OT (if any) already set
 
@@ -395,7 +586,7 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
   // bucket by day (daily) or workweek (weekly); entries stay in chronological order
   const buckets = new Map();
   for (const e of auto) {
-    const key = rule === 'weekly' ? weekBucketKey(e.work_date, weekStart) : String(e.work_date).substring(0, 10);
+    const key = rule === 'weekly' ? weekBucketKey(e.work_date, weekStart) : ymd(e.work_date);
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key).push(e);
   }
@@ -409,8 +600,10 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
   }
 
   for (const [dk, es] of buckets) {
-    if ((restDays && restDays.has(weekdayOfDate(dk))) || (sd && seventhKeys.has(dk))) {
-      for (const e of es) e.overtime_hours = entryDuration(e); // whole day is OT (window hours included)
+    const isRest = restDays && restDays.has(weekdayOfDate(dk));
+    if (isRest || (sd && seventhKeys.has(dk))) {
+      const reason = isRest ? 'rest_day' : 'seventh_day';
+      for (const e of es) { e.overtime_hours = entryDuration(e); e.overtime_reason = e.overtime_hours > 0 ? reason : null; } // whole day is OT
       continue;
     }
     // Window hours are already carved out; only the residual drives the reg/OT
@@ -418,15 +611,18 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
     // 0 and no clamp), so this matches the prior behaviour exactly.
     const residOf = e => windowRules.length ? Math.max(0, entryDuration(e) - windowSumOf.get(e)) : entryDuration(e);
     const residualTotal = es.reduce((s, e) => s + residOf(e), 0);
-    const minD = minDailyForBucket(otConfig, rule, dk);
-    if (minD > 0 && residualTotal < minD) continue; // residual floored to regular; window OT stays as seeded
     // regular/OT split point for THIS bucket (tiers only re-price above it) — per
     // bucket so a date-scoped ot_tier rule moves the boundary on its days.
     let regLeft = bandsForBucket(rule, threshold, otConfig, dk)[0].afterHours;
     for (const e of es) {
       const resid = residOf(e);
       const r = Math.max(0, Math.min(resid, regLeft));
-      e.overtime_hours = windowSumOf.get(e) + (resid - r); // window OT + residual OT
+      const thresholdOt = resid - r;
+      e.overtime_hours = windowSumOf.get(e) + thresholdOt; // window OT + residual OT
+      // Over-threshold OT names the rule; if the entry's only OT is window hours,
+      // keep the 'window' reason seeded above.
+      e.overtime_reason = thresholdOt > 0 ? (rule === 'weekly' ? 'weekly' : 'daily')
+        : (windowSumOf.get(e) > 0 ? 'window' : null);
       regLeft -= r;
     }
   }
@@ -457,7 +653,7 @@ function otBandsCost(otBands, baseRate, defaultMult) {
  */
 function computeDailyPayCosts(entries, overtimeRule, threshold, dailyRate, overtimeMultiplier, otConfig = null) {
   const regular = entries.filter(e => e.wage_type === 'regular');
-  const days = new Set(regular.map(e => e.work_date.toString().substring(0, 10))).size;
+  const days = new Set(regular.map(e => ymd(e.work_date))).size;
   if (overtimeRule === 'none') {
     return { regularCost: days * dailyRate, overtimeCost: 0 };
   }
@@ -468,4 +664,4 @@ function computeDailyPayCosts(entries, overtimeRule, threshold, dailyRate, overt
   };
 }
 
-module.exports = { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, resolveBands, nightHoursForEntry, nightPremiumCost, windowHoursForEntry };
+module.exports = { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, resolveBands, nightHoursForEntry, nightPremiumCost, windowHoursForEntry, shiftHoursByDate, computeLeaveHours, computeGuaranteeShortfall };

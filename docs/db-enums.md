@@ -59,7 +59,10 @@ For each column we record:
 | `users.worker_type` | `employee`, `contractor`, `subcontractor`, `owner` | **enforced** (CHECK in `0071`) | `server/routes/admin.js:1217` | Display + report filtering on worker profile. |
 | `worker_deductions.kind` | `percent`, `fixed` | **enforced** (CHECK `chk_worker_deductions_kind` in `0143`) | `server/constants/deductionEnums.js` (`DEDUCTION_KINDS`), `server/utils/deductions.js`, `server/routes/admin.js` (PUT `/workers/:id/deductions`) | Per-worker pay-stub deduction lines (loans, garnishments, worker-specific tax). `percent` = % of gross wages (optional `cap_amount`); `fixed` = flat amount. Same vocabulary as the company-wide `deductions` settings JSON. Applied on the per-worker pay stub → net pay. |
 | `reimbursements.status` | `pending`, `approved`, `rejected` | **enforced** (CHECK in `0071`) | `server/routes/reimbursements.js` | Financial workflow. |
+| `payroll_runs.status` | `finalized`, `void` | **enforced** (CHECK in `0156`) | `server/constants/payrollEnums.js` (`PAYROLL_RUN_STATUSES`), `server/routes/admin.js` (finalize / `/void`) | A finalized run is a locked snapshot of a live payroll run (Advanced Payroll). `void` retires it from the payable set while keeping the record. |
+| `payroll_run_checks.status` | `pending`, `paid` | **enforced** (CHECK in `0156`) | `server/constants/payrollEnums.js` (`PAYROLL_CHECK_STATUSES`), `server/routes/admin.js` (`/paid`) | Per-check paid state inside a finalized run. `paid` stamps `paid_at`. |
 | `settings.value` (key=`overtime_rule`) | `daily`, `weekly` | **app-only** | `server/routes/admin.js` PATCH validation | Company-wide overtime calc. |
+| `settings.value` (key=`overtime_rate_method`) | `rate_when_worked`, `weighted_average` | **app-only** | `server/constants/payEnums.js` (`OVERTIME_RATE_METHODS`), `server/routes/admin.js` PATCH validation | How OT is priced when a worker earns >1 base rate in a period. `rate_when_worked` (default): each OT hour at the rate it earned. `weighted_average`: FLSA blended regular rate. Consumed by `server/utils/rateAwareOvertime.js`. |
 | `settings.value` (key=`invoice_signature`) | `none`, `optional`, `required` | **app-only** | `server/routes/admin.js` PATCH validation | Whether workers must sign invoices before exporting. |
 | `settings.value` (key=`currency`) | ISO 4217: `USD`, `CAD`, `EUR`, `GBP`, `MXN`, `HNL`, `GTQ`, `NIO`, `BZD`, `CRC`, `PAB` | **app-only** (shape only — see note) | `server/routes/admin.js:200` PATCH regex; dropdown `client/src/components/ManageRates.jsx`; locale maps `client/src/utils.js` + `server/currency.js` | Display currency for every money figure: app, PDFs, public client pages, report emails. |
 
@@ -93,7 +96,7 @@ For each column we record:
 | `time_off_requests.status` | `pending`, `approved`, `denied` | **enforced** (CHECK in `0071`) | `server/routes/timeOff.js:101,159` | PTO approval workflow. |
 | `time_off_requests.type` | `vacation`, `sick`, `personal`, `other` | **enforced** (CHECK in `0071`) | `server/routes/timeOff.js:9` | PTO categorization for reports. |
 | `qbo_sync_errors.entity_type` | `time_entry`, `reimbursement` | **enforced** (CHECK in `0071`) | `server/services/qbo.js` (writes only) | Discriminator for the QBO error log. |
-| `project_invoices.payment_status` | `unknown`, `paid`, `partial`, `unpaid` | **enforced** (CHECK in `0071`) | (verify route) | Invoice payment tracking. |
+| `project_invoices.payment_status` | `unknown`, `paid`, `partial`, `unpaid` | **enforced** (CHECK in `0071`) | (verify route) | **DORMANT** — the QBO mirror was unified into native `invoices` in `0150` (rows copied, `lien_waivers` FK repointed). No code reads/writes `project_invoices` anymore; the table is kept as a rollback backup and dropped in a follow-up migration. QBO invoices now live in `invoices` (`source='qbo'`). |
 | `estimates.status` | `draft`, `sent`, `accepted`, `declined`, `expired`, `withdrawn` | **enforced** (CHECK in `0104`) | `server/constants/projectMoneyEnums.js`, `server/routes/estimates.js` | Pre-work quote lifecycle. Sent/accepted/declined/expired are frozen — edits must duplicate to a new estimate. |
 | `estimate_lines.category` | `labor`, `materials`, `equipment`, `subs`, `overhead`, `contingency`, `other` | **enforced** (CHECK in `0104`) | `server/constants/projectMoneyEnums.js` (`MONEY_CATEGORIES`) | The shared category vocabulary that runs through estimate → budget → spend → P&L. Same seven values reused on `project_budget_categories.category`, `change_order_lines.category`, `project_expenses.category` (forthcoming). Keep them in lockstep. |
 | `project_budget_categories.category` | (same 7 values) | **enforced** (CHECK in `0105`) | `server/constants/projectMoneyEnums.js` (`MONEY_CATEGORIES`), `server/routes/projectBudget.js`, `server/routes/estimates.js` (convert) | Phase 2 of project money flow. One row per category per project. Backfill in 0105 puts existing `projects.budget_dollars` into the `labor` bucket. `projects.budget_dollars` stays populated in lockstep with the sum for one release while reads migrate, then drops in a later migration. |
@@ -103,6 +106,10 @@ For each column we record:
 | `change_orders.status` | `draft`, `sent`, `accepted`, `declined`, `withdrawn` | **enforced** (CHECK in `0109`) | `server/constants/projectMoneyEnums.js` (`CHANGE_ORDER_STATUSES`), `server/routes/changeOrders.js` | Mid-project scope adjustments. Narrower lifecycle than estimates: no `expired` (COs don't time out) and no `converted` (CO never creates a new project; on accept it bumps the existing project's budget categories). `budget_applied_at` column on the row is the idempotency flag so a re-fire can't double-bump. |
 | `change_order_lines.category` | (same 7 values) | **enforced** (CHECK in `0109`) | `server/constants/projectMoneyEnums.js` (`MONEY_CATEGORIES`), `server/routes/changeOrders.js` | Shared category vocabulary again — accepting a CO sums these by category and increments the matching `project_budget_categories.budget_cents` rows. |
 | `inventory_items.default_estimate_category` | (same 7 values, nullable) | **enforced** (CHECK in `0108`) | `server/constants/projectMoneyEnums.js`, `server/routes/catalog.js` | Per-item hint for the estimate-line picker — selecting a catalog item pre-fills the line's category. Defaults to `materials` at fill time if null. |
+| `invoices.status` | `draft`, `sent`, `partial`, `paid`, `void` | **enforced** (CHECK in `0149`) | `server/constants/projectMoneyEnums.js` (`INVOICE_STATUSES`), `server/routes/invoices.js` | Native owner-side invoice lifecycle. `partial`/`paid` derive from recorded `invoice_payments`; `void` cancels. Distinct from `project_invoices.payment_status` (a QBO-mirror field). Sent/partial/paid/void freeze line edits (`INVOICE_FROZEN_STATUSES`) — correct by voiding + reissuing. |
+| `invoices.source` | `scratch`, `estimate`, `project`, `qbo` | **enforced** (CHECK in `0149`, widened in `0150`) | `server/constants/projectMoneyEnums.js`, `server/routes/invoices.js`, `server/routes/qbo.js` | Which creation path produced it — blank, copied from an accepted estimate, generated from project time + expenses, or synced from QuickBooks (`qbo`, carries `qbo_invoice_id`). |
+| `invoice_lines.category` | (same 7 values) | **enforced** (CHECK in `0149`) | `server/constants/projectMoneyEnums.js` (`MONEY_CATEGORIES`) | The shared money-flow category vocabulary again — same seven as estimate/budget/CO/expense lines. |
+| `invoice_payments.method` | `check`, `card`, `cash`, `ach`, `other` | **enforced** (CHECK in `0149`) | `server/constants/projectMoneyEnums.js` (`INVOICE_PAYMENT_METHODS`), `server/routes/invoices.js` | How a recorded payment came in. Payments sum to derive the invoice's partial/paid status + open balance. |
 | `submittals.status` | `draft`, `pending_internal`, `sent_to_reviewer`, `approved`, `approved_as_noted`, `revise_resubmit`, `rejected`, `closed`, `void` | **enforced** (CHECK in `0110`) | `server/constants/submittalEnums.js`, `server/routes/submittals.js` | Submittal lifecycle: draft → pending_internal → sent_to_reviewer → one of four stamps. `approved_as_noted` = approved with redline corrections. Revisions create a new row with `superseded_by_id` on the old row pointing forward. |
 | `submittal_documents.kind` | `submission`, `stamped_return`, `spec`, `reference`, `other` | **enforced** (CHECK in `0110`) | `server/constants/submittalEnums.js`, `server/routes/submittals.js` | Distinguishes the original submission from the stamped return so UI can show side-by-side comparison. |
 | `submittal_audit.action` | `created`, `sent_internal`, `sent_reviewer`, `stamp_received`, `revised`, `closed`, `voided`, `document_added`, `document_removed` | **enforced** (CHECK in `0110`) | `server/constants/submittalEnums.js`, `server/routes/submittals.js` | Module-specific audit (separate from the global audit_log so the trail survives even if the module is later dropped). |
@@ -121,13 +128,15 @@ For each column we record:
 | `estimates.send_email_status` + `change_orders.send_email_status` + `lien_waivers.send_email_status` | `pending`, `sent`, `failed` (nullable) | **enforced** (CHECK in `0114`) | `server/routes/{estimates,changeOrders,lienWaivers}.js` send handlers | Tracks whether the post-send confirmation email actually reached the recipient. `pending` is the just-claimed state set inside the same TX as the status flip; the email path patches to `sent` or `failed` after SendGrid responds. Lets admins spot booking/CO/waiver entities where the client never got the link. |
 | `estimate_audit.action` | `created`, `sent`, `accepted`, `declined`, `expired`, `withdrawn`, `converted` | **enforced** (CHECK in `0104`) | `server/constants/projectMoneyEnums.js`, `server/routes/estimates.js` | Audit trail. Public client actions (accept/decline) write rows with `actor_kind='client'`; cron-driven (expire) write `'system'`. |
 | `estimate_audit.actor_kind` | `admin`, `client`, `system` | **enforced** (CHECK in `0104`) | `server/constants/projectMoneyEnums.js`, `server/routes/estimates.js` | Distinguishes a public token-keyed action (no `actor_user_id`) from a logged-in admin or a background job. |
+| `invoice_audit.action` | `created`, `sent`, `payment`, `voided` | **enforced** (CHECK in `0149`) | `server/constants/projectMoneyEnums.js` (`INVOICE_AUDIT_ACTIONS`), `server/routes/invoices.js` | Audit trail for native invoices. A public token-page payment writes `actor_kind='client'`. |
+| `invoice_audit.actor_kind` | `admin`, `client`, `system` | **enforced** (CHECK in `0149`) | `server/constants/projectMoneyEnums.js`, `server/routes/invoices.js` | Same as `estimate_audit` — distinguishes a public token action from an admin or background job. |
 | `recordings.status` | `uploaded`, `processing`, `completed`, `failed` | **enforced** (CHECK in `0123`) | `server/constants/recordingEnums.js`, `server/routes/recordings.js`, `server/jobs/transcriptionPoller.js` | Voice-transcription lifecycle (Tools module). `uploaded` → `processing` on successful AssemblyAI submit; the poller flips to `completed`/`failed` and is guarded by `AND status = 'processing'` so a stale poll can't clobber a retry. `failed` is retryable. |
 | `recordings.media_kind` | `audio`, `video` | **enforced** (CHECK in `0124`) | `server/constants/recordingEnums.js`, `server/routes/recordings.js`, `server/jobs/transcriptionPoller.js` | Derived from the upload content type at claim time. `video` files are staged in R2 only for AssemblyAI to fetch — the poller deletes them and refunds storage after the transcript is stored, stamping `media_deleted_at` (the claim guard against double delete/refund vs the DELETE route). `audio` files are kept for in-transcript playback. |
 | `equipment_items.status` | `available`, `checked_out`, `maintenance`, `retired` | **enforced** (CHECK in `0125`) | `server/constants/equipmentEnums.js`, `server/routes/equipment.js` | Asset custody state (Inventory → Equipment). A cache of the open-checkout truth: `available ⇄ checked_out` is flipped inside the same TX as the `equipment_checkouts` insert/return (the partial unique index `idx_equipment_checkout_open` is the real backstop). `retired` is a terminal state distinct from the `active=false` soft-delete. |
 | `equipment_items.kind` | `heavy`, `vehicle`, `trailer`, `power_tool`, `hand_tool`, `safety`, `other` (nullable) | **enforced** (CHECK in `0125`) | `server/constants/equipmentEnums.js`, `server/routes/equipment.js` | Category for filtering/labeling an asset. Nullable, so CHECK is `IS NULL OR ...`. |
 | `equipment_items.rental_rate_unit` | `day`, `week`, `month` (nullable) | **enforced** (CHECK in `0125`) | `server/constants/equipmentEnums.js`, `server/routes/equipment.js` | The billing period for a rental's `rental_rate`. Only meaningful when `is_rental=true`. |
 | `equipment_maintenance_logs.kind` | `service`, `repair`, `inspection`, `other` | **enforced** (CHECK in `0125`) | `server/constants/equipmentEnums.js`, `server/routes/equipment.js` | Type of a discrete maintenance record (distinct from the `equipment_hours` usage log). |
-| `live_sessions.tool` | `planroom`, `sitework`, `roofing` | **enforced** (CHECK in `0134`) | `server/constants/liveSessionEnums.js`, `server/routes/liveSessions.js` | Which plan tool hosts an ephemeral live-collab session. The session layer syncs opaque JSON, so Plan Room ships first; `sitework`/`roofing` are reserved for the "go live on a takeoff" flip. |
+| `live_sessions.tool` | `planroom`, `sitework`, `roofing` | **enforced** (CHECK in `0134`) | `server/constants/liveSessionEnums.js`, `server/routes/liveSessions.js` | Which plan tool hosts an ephemeral live-collab session. The session layer syncs opaque JSON, so Plan Room ships first; `roofing` is reserved for the "go live on a takeoff" flip. `sitework` is **vestigial** — that standalone tool was retired and removed from the repo, so no new sitework sessions occur; the value is left in the CHECK to avoid a migration (harmless). |
 | `live_sessions.status` | `active`, `ended` | **enforced** (CHECK in `0134`) | `server/constants/liveSessionEnums.js`, `server/routes/liveSessions.js` | Session lifecycle. `active` until the host ends it or the idle sweeper closes it; `ended` rows keep their final `state` snapshot for the host to reclaim. |
 | `haul_tickets.unit` | `CY`, `tons`, `loads` | **enforced** (CHECK in `0137`) | `server/constants/haulEnums.js`, `server/routes/haulTickets.js` | How a haul load is measured (production/haul log). NOT NULL DEFAULT `CY`, so plain `IN (...)` CHECK. Reconciliation nets actuals by unit against the takeoff estimate. |
 | `haul_tickets.direction` | `export`, `import` | **enforced** (CHECK in `0137`) | `server/constants/haulEnums.js`, `server/routes/haulTickets.js` | Haul-off leaving the site (`export`) vs material brought in (`import`). NOT NULL DEFAULT `export`. Lets estimate-vs-actual reconciliation net export against import. |
@@ -300,14 +309,16 @@ that had the previous default.
   value is already deducted everywhere downstream.
 
   **`roleRules[]` — per-role overrides.** `rules[]` above is the *standard* list,
-  applied to every worker. `roleRules` attaches an independent rule list to a
-  worker **role** (`users.role_id`): `[{roleId:<int>, addToStandard:<bool>,
-  rules:[…same rule shape…]}]`. A worker's effective list is
-  `addToStandard ? standard.concat(role.rules) : role.rules`; a worker whose
-  `role_id` has no section (or is null, or points at a deleted role) uses the
-  standard list. Absent/empty → today's behavior exactly. Normalized by
-  `parseRoleRules` (drops entries without an integer `roleId`; `addToStandard`
-  defaults true; each list runs through `parseRules`). The effective list feeds
+  applied to every worker. `roleRules` attaches an independent rule list to one or
+  more worker **roles** (`users.role_id`): `[{roleIds:[<int>…], addToStandard:<bool>,
+  rules:[…same rule shape…]}]`. A section can cover **multiple roles**; the legacy
+  single `roleId:<int>` is still accepted and folded into `roleIds`. A worker's
+  effective list is `addToStandard ? standard.concat(role.rules) : role.rules`; a
+  worker whose `role_id` is in no section (or is null, or points at a deleted role)
+  uses the standard list. Absent/empty → today's behavior exactly. Normalized by
+  `parseRoleRules` (coerces ids to ints, de-dupes, drops entries with no valid id;
+  `addToStandard` defaults true; each list runs through `parseRules`). A role
+  belongs to at most one section (the builder disables an already-claimed role). The effective list feeds
   BOTH the rounding transform and the OT config, so a role's `ot_tier`/premium
   rules take effect — resolved per worker via `effectiveRulesForRole` /
   `otConfigByRoleFactory` and carried to every pay site by threading each
@@ -316,7 +327,10 @@ that had the previous default.
 
 - `deductions` (JSON list, default `''`) — company-wide payroll deductions for
   the per-worker **pay stub** (gross wages → net). Shape `{ items: [{ id, name,
-  kind, value, cap }] }` (a bare array is also accepted). `kind` is `percent` (of
+  kind, value, cap, roleIds }] }` (a bare array is also accepted). `roleIds` is an
+  optional array of role ids the deduction is scoped to — **empty/absent = all
+  employees** (the original company-wide behavior); non-empty = only workers in
+  those roles ("role deductions"). `kind` is `percent` (of
   gross wages, optional `cap` = max amount per period) or `fixed` (flat amount) —
   same vocabulary as the `worker_deductions.kind` column above. `''`/empty = no
   deductions, so the stub stays gross-only for companies that never configure it.
@@ -328,6 +342,29 @@ that had the previous default.
   from. Consumed by `GET /admin/workers/:id/entries` (→ `payStubTotals`) and the
   pay-stub PDF. **Not** a tax engine: it applies configured rates, it does not
   compute statutory brackets/ceilings.
+
+- `paycheck_rules` (JSON policy, default `''`) — named **paycheck rulesets** (pay
+  schedule + how/when deductions apply), built in Administration ▸ Workspace ▸
+  Paycheck Rules. Shape `{ version, rulesets: [{ id, name, roles, schedule,
+  deductions, notes }] }`; money in **cents**. `roles` is the array of role ids the
+  ruleset applies to (a worker gets their ruleset from their role; empty = unassigned). Every fixed-value field lives inside the JSON
+  (not a DB column, same posture as `hours_rules`), with the allowed sets frozen in
+  `server/constants/paycheckRuleEnums.js` and clamped on read by
+  `normalizePaycheckRules` (never throws):
+  `schedule.frequency` = `weekly` \| `biweekly` \| `semimonthly` \| `monthly`;
+  `schedule.periodBasis` = `work_week` \| `prior_cycle` \| `on_payday` (weekly/biweekly
+  only — how the period a check covers relates to its pay date; default `work_week`,
+  which uses `week_start` to align to the work week; see `server/utils/payPeriods.js`);
+  `schedule.weekendShift` = `none` \| `before` \| `after`;
+  `deductions.timing` = `every` \| `grouped`;
+  `deductions.group.by` = `pair` \| `month`;
+  `deductions.group.applyOn` = `first` \| `second` \| `last`;
+  `deductions.cap.type` = `none` \| `amount` \| `percent`;
+  `deductions.scope` = `all` \| `selected`.
+  Validated on write for **shape (JSON object) + size (≤ 60 KB)** in PATCH
+  `/admin/settings`. `''`/empty = none configured, so existing companies are
+  unaffected. **Not yet consumed** — assigning rulesets to employee types and the
+  pay-engine math land later (see `docs/plans/paycheck-rules.md`).
 
 ### Module visibility flags (`module_*`, boolean, in `FEATURE_KEYS`)
 

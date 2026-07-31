@@ -26,10 +26,22 @@ function fmtHours(h) {
 function fmtMoney(n) {
   return n == null ? '' : n.toFixed(2);
 }
+export function overtimeDisplayRate(worker) {
+  const hours = Number(worker?.overtime_total);
+  const cost = Number(worker?.overtime_cost);
+  if (hours > 0 && Number.isFinite(cost)) return cost / hours;
+  return (Number(worker?.rate) || 0) * (Number(worker?.overtime_multiplier) || 1.5);
+}
 function fmtDate(s) {
   if (!s) return '';
   const d = new Date(s + 'T00:00:00');
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+// A signature's date must be fixed, not shift with whoever opens the PDF. `signed_at` is
+// a UTC timestamp — render it in UTC so the attestation date is stable for every viewer.
+function fmtSignedDate(ts) {
+  if (!ts) return '';
+  return new Date(ts).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 const styles = StyleSheet.create({
@@ -67,8 +79,11 @@ const styles = StyleSheet.create({
 
 export default function CertifiedPayrollPDF({ report, settings }) {
   if (!report) return null;
-  const { contractor, project, week_start, week_end, workers = [], signature } = report;
+  const { contractor, project, week_start, week_end, workers = [], signature, default_compliance_text } = report;
   const workerLabel = settings?.label_worker || 'Team Member';
+  // Print the exact text that was signed; fall back to the current template when unsigned.
+  const complianceParas = String(signature?.compliance_text || default_compliance_text || '')
+    .split('\n\n').map(p => p.trim()).filter(Boolean);
 
   return (
     <Document>
@@ -110,7 +125,7 @@ export default function CertifiedPayrollPDF({ report, settings }) {
 
           {/* Worker rows — straight / OT sub-rows */}
           {workers.map((w, i) => (
-            <WorkerBlock key={w.worker_id} w={w} alt={i % 2 === 1} />
+            <WorkerBlock key={w.worker_key || w.worker_id} w={w} alt={i % 2 === 1} />
           ))}
         </View>
 
@@ -121,35 +136,15 @@ export default function CertifiedPayrollPDF({ report, settings }) {
       <Page size="LETTER" style={styles.page}>
         <Text style={styles.complianceTitle}>Statement of Compliance</Text>
         <Text style={styles.complianceP}>
-          Date: {signature ? new Date(signature.signed_at).toLocaleDateString() : '____________'}
+          Date: {signature ? fmtSignedDate(signature.signed_at) : '____________'}
         </Text>
         <Text style={styles.complianceP}>
-          I, <Text style={{ fontWeight: 'bold' }}>{signature?.signer_name || '_________________________'}</Text>
-          {signature?.signer_title ? ` (${signature.signer_title})` : ''}, do hereby state:
+          Contractor: <Text style={{ fontWeight: 'bold' }}>{contractor}</Text>
+          {'  ·  '}Project: {project || 'referenced project'}
+          {'  ·  '}Payroll period: {fmtDate(week_start)} – {fmtDate(week_end)}
         </Text>
-        <Text style={styles.complianceP}>
-          (1) That I pay or supervise the payment of the persons employed by {contractor} on the{' '}
-          {project || 'referenced project'}; that during the payroll period commencing on {fmtDate(week_start)} and
-          ending on {fmtDate(week_end)}, all persons employed on said project have been paid the full weekly wages
-          earned; that no rebates have been or will be made either directly or indirectly to or on behalf of said
-          contractor from the full weekly wages earned by any person; and that no deductions have been made either
-          directly or indirectly from the full wages earned by any person other than permissible deductions as defined
-          in Regulations, Part 3 (29 CFR Subtitle A).
-        </Text>
-        <Text style={styles.complianceP}>
-          (2) That any payrolls otherwise under this contract required to be submitted for the above period are
-          correct and complete; that the wage rates for laborers or mechanics contained therein are not less than the
-          applicable wage rates contained in any wage determination incorporated into the contract; that the
-          classifications set forth therein for each laborer or mechanic conform with the work performed.
-        </Text>
-        <Text style={styles.complianceP}>
-          (3) That any apprentices employed in the above period are duly registered in a bona fide apprenticeship
-          program registered with a State apprenticeship agency recognized by the Bureau of Apprenticeship and
-          Training, United States Department of Labor.
-        </Text>
-        <Text style={styles.complianceP}>
-          (4) That fringe benefits have been paid as specified in the contract.
-        </Text>
+        {/* The exact text that was signed (or the current template when unsigned). */}
+        {complianceParas.map((p, i) => <Text key={i} style={styles.complianceP}>{p}</Text>)}
 
         <View style={styles.sigBox}>
           <View style={{ width: 260 }}>
@@ -165,7 +160,7 @@ export default function CertifiedPayrollPDF({ report, settings }) {
           <View style={{ width: 120 }}>
             <View style={styles.sigLine} />
             <Text style={styles.sigLabel}>Date</Text>
-            {signature && <Text style={styles.sigDate}>{new Date(signature.signed_at).toLocaleDateString()}</Text>}
+            {signature && <Text style={styles.sigDate}>{fmtSignedDate(signature.signed_at)}</Text>}
           </View>
         </View>
 
@@ -182,38 +177,40 @@ export default function CertifiedPayrollPDF({ report, settings }) {
 }
 
 function WorkerBlock({ w, alt }) {
-  // Two sub-rows per worker: straight (S) and overtime (O). Current data
-  // doesn't split OT from straight in the /certified-payroll response;
-  // until that's done we put all hours on the S row and leave O blank.
+  // One straight-time (S) row per wage type present: regular and prevailing carry their
+  // OWN rate, so merging them onto a single line at one rate (as it used to) hid the
+  // prevailing/non-prevailing split a WH-347 exists to certify. A separate overtime (O)
+  // row shows the OT premium rate (base × multiplier). GROSS is the worker's weekly total
+  // and appears once, on the first row.
+  const rowStyle = alt ? styles.workerRowAlt : styles.workerRow;
+  const rows = [];
+  if ((w.regular_total || 0) > 0) rows.push({ tag: 'S', days: w.regular_days || {}, total: w.regular_total, rate: w.rate });
+  if ((w.prevailing_total || 0) > 0) rows.push({ tag: 'S', days: w.prevailing_days || {}, total: w.prevailing_total, rate: w.prevailing_rate });
+  if ((w.overtime_total || 0) > 0) rows.push({ tag: 'O', days: w.ot_days || {}, total: w.overtime_total, rate: overtimeDisplayRate(w) });
+  if (rows.length === 0) rows.push({ tag: 'S', days: {}, total: 0, rate: w.rate });
   return (
     <>
-      <View style={alt ? styles.workerRowAlt : styles.workerRow}>
-        <View style={styles.cellName}>
-          <Text style={{ fontWeight: 'bold' }}>{w.worker_name}</Text>
-          {w.fringe_total_per_hour > 0 && (
-            <Text style={{ fontSize: 6, color: '#666', marginTop: 1 }}>
-              Fringe: ${w.fringe_total_per_hour.toFixed(4)}/hr
-            </Text>
-          )}
+      {rows.map((r, i) => (
+        <View key={i} style={rowStyle}>
+          <View style={styles.cellName}>
+            {i === 0 ? (
+              <>
+                <Text style={{ fontWeight: 'bold' }}>{w.worker_name}</Text>
+                {w.fringe_total_per_hour > 0 && (
+                  <Text style={{ fontSize: 6, color: '#666', marginTop: 1 }}>Fringe: ${w.fringe_total_per_hour.toFixed(4)}/hr</Text>
+                )}
+              </>
+            ) : <Text style={{ fontSize: 6, color: '#666' }}>{' '}</Text>}
+          </View>
+          <Text style={styles.cellSsn}>{i === 0 && w.ssn_last4 ? `***-**-${w.ssn_last4}` : ' '}</Text>
+          <Text style={styles.cellClass}>{i === 0 ? (w.classification || '') : ' '}</Text>
+          <Text style={styles.cellOtSt}>{r.tag}</Text>
+          {DAY_KEYS.map(k => <Text key={k} style={styles.cellDay}>{fmtHours(r.days[k] || 0)}</Text>)}
+          <Text style={styles.cellTotal}>{fmtHours(r.total)}</Text>
+          <Text style={styles.cellRate}>${fmtMoney(r.rate)}</Text>
+          <Text style={styles.cellGross}>{i === 0 ? `$${fmtMoney(w.gross_pay)}` : ' '}</Text>
         </View>
-        <Text style={styles.cellSsn}>{w.ssn_last4 ? `***-**-${w.ssn_last4}` : ''}</Text>
-        <Text style={styles.cellClass}>{w.classification || ''}</Text>
-        <Text style={styles.cellOtSt}>S</Text>
-        {DAY_KEYS.map(k => <Text key={k} style={styles.cellDay}>{fmtHours(w.regular_days[k] + (w.prevailing_days[k] || 0))}</Text>)}
-        <Text style={styles.cellTotal}>{fmtHours(w.total)}</Text>
-        <Text style={styles.cellRate}>${fmtMoney(w.rate)}</Text>
-        <Text style={styles.cellGross}>${fmtMoney(w.gross_pay)}</Text>
-      </View>
-      <View style={alt ? styles.workerRowAlt : styles.workerRow}>
-        <View style={styles.cellName}><Text style={{ fontSize: 6, color: '#666' }}>{' '}</Text></View>
-        <Text style={styles.cellSsn}> </Text>
-        <Text style={styles.cellClass}> </Text>
-        <Text style={styles.cellOtSt}>O</Text>
-        {DAY_KEYS.map(k => <Text key={k} style={styles.cellDay}> </Text>)}
-        <Text style={styles.cellTotal}> </Text>
-        <Text style={styles.cellRate}> </Text>
-        <Text style={styles.cellGross}> </Text>
-      </View>
+      ))}
     </>
   );
 }

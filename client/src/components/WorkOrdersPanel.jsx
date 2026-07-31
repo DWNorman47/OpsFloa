@@ -36,6 +36,10 @@ const fmtWhen = ts => {
   return isNaN(d) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 };
 
+export const workOrderDisplayName = record => (
+  record?.name || record?.full_name || record?.invoice_name || record?.username || ''
+);
+
 export default function WorkOrdersPanel() {
   const canManage = usePerm('manage_projects');
   const { user } = useAuth();
@@ -64,7 +68,7 @@ export default function WorkOrdersPanel() {
     api.get('/admin/workers').then(r => setWorkers(r.data || [])).catch(silentError('wo workers'));
   }, []);
 
-  const nameOf = (list, id) => { const m = list.find(x => String(x.id) === String(id)); return m ? m.name : ''; };
+  const nameOf = (list, id) => workOrderDisplayName(list.find(x => String(x.id) === String(id)));
 
   const openNew = () => { setForm(BLANK); setEditing({}); setError(''); };
   const openEdit = wo => {
@@ -200,7 +204,7 @@ export default function WorkOrdersPanel() {
               <label>Assigned to
                 <select style={styles.input} value={form.assigned_to} disabled={lockAll} onChange={e => setForm(f => ({ ...f, assigned_to: e.target.value }))}>
                   <option value="">Unassigned</option>
-                  {workers.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                  {workers.map(w => <option key={w.id} value={w.id}>{workOrderDisplayName(w)}</option>)}
                 </select>
               </label>
               <label>Scheduled
