@@ -4618,8 +4618,9 @@ router.delete('/workers/:id/documents/:docId', requireAdmin, async (req, res) =>
 //   - GET  /roles, /permissions/catalog: requireAdmin only — anyone with the
 //     admin dashboard needs to see the role list to pick from it. The picker
 //     itself is still gated by assign_roles at the assign endpoint.
-//   - POST/PATCH/DELETE /roles: requirePerm('manage_roles') — Owner-only
-//     by default, but Owner can delegate by granting the perm to another role.
+//   - POST/PATCH/DELETE /roles: requirePerm('manage_roles') — Admin + Owner by default.
+//     Managing an ADMIN-tier role (parent_role === 'admin') ADDITIONALLY requires
+//     manage_admin_roles (Owner-only by default). Both are delegable via role_permissions.
 //   - PATCH /workers/:id/role: requirePerm('assign_roles') — usually all admins.
 //
 // Privilege-escalation guard: when creating or editing a role, the requester
@@ -4701,8 +4702,13 @@ router.post('/roles', requireAdmin, requirePerm('manage_roles'), async (req, res
   for (const p of permissions) {
     if (!PERMISSION_KEYS.has(p)) return res.status(400).json({ error: `Unknown permission: ${p}` });
   }
-  // Privilege-escalation guard
   const requesterPerms = await getUserPermissions(req.user);
+  // Creating an ADMIN-tier role needs manage_admin_roles (Owner by default); manage_roles
+  // (Admin) only covers non-admin roles.
+  if (parent_role === 'admin' && !requesterPerms.has('manage_admin_roles')) {
+    return res.status(403).json({ error: 'Only an Owner can create admin roles', code: 'admin_role_forbidden' });
+  }
+  // Privilege-escalation guard
   for (const p of permissions) {
     if (!requesterPerms.has(p)) {
       return res.status(403).json({
@@ -4749,17 +4755,22 @@ router.patch('/roles/:id', requireAdmin, requirePerm('manage_roles'), async (req
   const { name, description, permissions } = req.body || {};
   try {
     const existing = await pool.query(
-      'SELECT id, is_builtin, name FROM roles WHERE id = $1 AND company_id = $2',
+      'SELECT id, is_builtin, name, parent_role FROM roles WHERE id = $1 AND company_id = $2',
       [req.params.id, req.user.company_id]
     );
     if (existing.rowCount === 0) return res.status(404).json({ error: 'Role not found' });
     const role = existing.rows[0];
+    const requesterPerms = await getUserPermissions(req.user);
+    // Editing an ADMIN-tier role (built-in Admin/Owner or a custom admin role) needs
+    // manage_admin_roles; manage_roles (Admin) only covers non-admin roles.
+    if (role.parent_role === 'admin' && !requesterPerms.has('manage_admin_roles')) {
+      return res.status(403).json({ error: 'Only an Owner can edit admin roles', code: 'admin_role_forbidden' });
+    }
 
     if (Array.isArray(permissions)) {
       for (const p of permissions) {
         if (!PERMISSION_KEYS.has(p)) return res.status(400).json({ error: `Unknown permission: ${p}` });
       }
-      const requesterPerms = await getUserPermissions(req.user);
       for (const p of permissions) {
         if (!requesterPerms.has(p)) {
           return res.status(403).json({
@@ -4845,6 +4856,11 @@ router.delete('/roles/:id', requireAdmin, requirePerm('manage_roles'), async (re
     );
     if (existing.rowCount === 0) return res.status(404).json({ error: 'Role not found' });
     const role = existing.rows[0];
+    // Deleting an ADMIN-tier custom role needs manage_admin_roles; manage_roles (Admin)
+    // only covers non-admin roles.
+    if (role.parent_role === 'admin' && !(await getUserPermissions(req.user)).has('manage_admin_roles')) {
+      return res.status(403).json({ error: 'Only an Owner can delete admin roles', code: 'admin_role_forbidden' });
+    }
     if (role.is_builtin) return res.status(400).json({ error: 'Cannot delete a built-in role' });
 
     const fallbackName = role.parent_role === 'worker' ? 'Worker' : 'Admin';

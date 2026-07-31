@@ -42,6 +42,12 @@ export default function ManageRoles() {
     return out;
   }, [catalog]);
 
+  // Managing ADMIN-tier roles (built-in Admin/Owner + custom admin roles) needs the
+  // manage_admin_roles permission (Owner by default). Admins with only manage_roles can
+  // create/edit/delete non-admin roles and VIEW admin roles read-only. The server enforces
+  // the same at the /roles endpoints; this just surfaces it up front.
+  const canAdminRoles = myPerms.has('manage_admin_roles');
+
   const load = async () => {
     setLoading(true); setError('');
     try {
@@ -162,7 +168,7 @@ export default function ManageRoles() {
         </div>
         <div style={styles.newBtnGroup}>
           <button style={styles.newBtn} onClick={() => startCreate('worker')}>{t.mrolesNewWorker || '+ New worker role'}</button>
-          <button style={styles.newBtn} onClick={() => startCreate('admin')}>{t.mrolesNewAdmin || '+ New admin role'}</button>
+          {canAdminRoles && <button style={styles.newBtn} onClick={() => startCreate('admin')}>{t.mrolesNewAdmin || '+ New admin role'}</button>}
         </div>
       </div>
 
@@ -196,6 +202,7 @@ export default function ManageRoles() {
         {roles.map(role => {
           const isOwn = role.id === user?.role_id;
           const isExpanded = expandedId === role.id;
+          const lockedAdmin = role.parent_role === 'admin' && !canAdminRoles; // view-only for non-owners
           return (
             <div key={role.id} style={{ ...styles.roleCard, ...(isExpanded ? styles.roleCardExpanded : {}) }}>
               <button style={styles.roleHeader} onClick={() => startEditExisting(role)}>
@@ -222,11 +229,18 @@ export default function ManageRoles() {
                     grouped={grouped}
                     myPerms={myPerms}
                     nameLocked={role.is_builtin}
+                    readOnly={lockedAdmin}
                     onNameChange={v => setDraftRole({ ...draftRole, name: v })}
                     onDescriptionChange={v => setDraftRole({ ...draftRole, description: v })}
                     onTogglePerm={togglePerm}
                   />
                   <div style={styles.editActions}>
+                    {lockedAdmin ? (
+                      <>
+                        <span style={styles.lockNote}>{t.mrolesAdminLocked || 'Only an Owner can edit admin roles.'}</span>
+                        <button style={styles.cancelBtn} onClick={() => { setExpandedId(null); setDraftRole(null); }}>{t.close || 'Close'}</button>
+                      </>
+                    ) : (<>
                     <button style={styles.cancelBtn} onClick={() => { setExpandedId(null); setDraftRole(null); }}>{t.cancel || 'Cancel'}</button>
                     <button style={styles.saveBtn} disabled={saving} onClick={save}>
                       {saving ? (t.saving || 'Saving…') : (t.save || 'Save')}
@@ -249,6 +263,7 @@ export default function ManageRoles() {
                         <button style={styles.deleteBtn} onClick={() => setPendingDeleteId(role.id)}>{t.mrolesDeleteBtn || 'Delete role'}</button>
                       )
                     )}
+                    </>)}
                   </div>
                 </div>
               )}
@@ -260,25 +275,26 @@ export default function ManageRoles() {
   );
 }
 
-function RoleEditor({ t, draft, grouped, myPerms, nameLocked, onNameChange, onDescriptionChange, onTogglePerm }) {
+function RoleEditor({ t, draft, grouped, myPerms, nameLocked, readOnly = false, onNameChange, onDescriptionChange, onTogglePerm }) {
   return (
     <div style={styles.editorWrap}>
       <div style={styles.fieldRow}>
         <label style={styles.label}>{t.mrolesFieldName || 'Name'}</label>
         <input
-          style={{ ...styles.input, ...(nameLocked ? { background: '#f3f4f6', color: '#6b7280' } : {}) }}
+          style={{ ...styles.input, ...((nameLocked || readOnly) ? { background: '#f3f4f6', color: '#6b7280' } : {}) }}
           value={draft.name}
           onChange={e => onNameChange(e.target.value)}
-          disabled={nameLocked}
+          disabled={nameLocked || readOnly}
           maxLength={60}
         />
       </div>
       <div style={styles.fieldRow}>
         <label style={styles.label}>{t.mrolesFieldDescription || 'Description'}</label>
         <input
-          style={styles.input}
+          style={{ ...styles.input, ...(readOnly ? { background: '#f3f4f6', color: '#6b7280' } : {}) }}
           value={draft.description}
           onChange={e => onDescriptionChange(e.target.value)}
+          disabled={readOnly}
           maxLength={300}
         />
       </div>
@@ -294,7 +310,7 @@ function RoleEditor({ t, draft, grouped, myPerms, nameLocked, onNameChange, onDe
                   <input
                     type="checkbox"
                     checked={checked}
-                    disabled={!grantable && !checked}
+                    disabled={readOnly || (!grantable && !checked)}
                     onChange={() => onTogglePerm(p.key)}
                   />
                   <span style={styles.permLabel}>{p.label}</span>
@@ -345,6 +361,7 @@ const styles = {
   permLabel: { flex: 1 },
   escalateHint: { color: '#b45309', cursor: 'help' },
   editActions: { display: 'flex', gap: 8, marginTop: 14, alignItems: 'center', flexWrap: 'wrap' },
+  lockNote: { fontSize: 12, color: '#6b7280', fontStyle: 'italic' },
   modalTitle: { fontSize: 16, fontWeight: 700, margin: '0 0 14px', color: '#111827' },
   modalActions: { display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 },
   cancelBtn: { padding: '8px 14px', background: 'none', border: '1px solid #e5e7eb', color: '#6b7280', borderRadius: 7, fontSize: 13, cursor: 'pointer' },

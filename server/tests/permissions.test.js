@@ -50,13 +50,20 @@ describe('permission catalog', () => {
     }
   });
 
-  test('Owner-only perms exist: manage_billing, manage_roles, delete_company', () => {
+  test('Owner-only perms exist: manage_billing, manage_admin_roles, delete_company', () => {
     expect(OWNER_PERMISSIONS).toContain('manage_billing');
-    expect(OWNER_PERMISSIONS).toContain('manage_roles');
+    expect(OWNER_PERMISSIONS).toContain('manage_admin_roles');
     expect(OWNER_PERMISSIONS).toContain('delete_company');
     expect(ADMIN_PERMISSIONS).not.toContain('manage_billing');
-    expect(ADMIN_PERMISSIONS).not.toContain('manage_roles');
+    expect(ADMIN_PERMISSIONS).not.toContain('manage_admin_roles');
     expect(ADMIN_PERMISSIONS).not.toContain('delete_company');
+  });
+
+  test('Admin manages non-admin roles (manage_roles); managing admin roles is Owner-only', () => {
+    expect(ADMIN_PERMISSIONS).toContain('manage_roles');       // Admin can create/edit/delete non-admin roles
+    expect(OWNER_PERMISSIONS).toContain('manage_roles');       // inherited by Owner
+    expect(ADMIN_PERMISSIONS).not.toContain('manage_admin_roles');
+    expect(OWNER_PERMISSIONS).toContain('manage_admin_roles'); // only Owner manages admin-tier roles
   });
 });
 
@@ -124,10 +131,11 @@ describe('hasPerm — legacy fallback', () => {
     expect(await hasPerm(user, 'assign_roles')).toBe(true);
     expect(await hasPerm(user, 'clock_self')).toBe(true);
     expect(await hasPerm(user, 'view_workers_list')).toBe(true);
+    expect(await hasPerm(user, 'manage_roles')).toBe(true); // Admin-tier now — manages non-admin roles
     // Owner-only perms still denied — those weren't part of the legacy admin.
     expect(await hasPerm(user, 'manage_billing')).toBe(false);
     expect(await hasPerm(user, 'delete_company')).toBe(false);
-    expect(await hasPerm(user, 'manage_roles')).toBe(false);
+    expect(await hasPerm(user, 'manage_admin_roles')).toBe(false);
   });
 
   test('restricted legacy admin: legacy 5 + worker baseline, nothing else admin-tier', async () => {

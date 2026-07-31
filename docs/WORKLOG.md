@@ -134,6 +134,34 @@ dependency audit is clean.
 
 ---
 
+## 2026-07-31 — Role management: split managing roles vs ADMIN roles
+
+David: create/edit/delete roles and create/edit/delete ADMIN roles should be distinct —
+Owner gets both, Admin gets the first by default.
+
+`manage_roles` was a single Owner-only permission. Split it:
+- **`manage_roles`** = create/edit/delete NON-admin (worker-tier) roles → now in
+  ADMIN_PERMISSIONS (Admin + Owner).
+- **`manage_admin_roles`** = create/edit/delete ADMIN-tier roles (parent_role 'admin':
+  the built-in Admin/Owner + any custom admin role) → Owner only.
+
+- **permissions.js:** new catalog entry; `manage_roles` moved to ADMIN_PERMISSIONS,
+  `manage_admin_roles` added to OWNER_PERMISSIONS. Migration `0162` grants the new defaults
+  to existing companies' built-in Admin/Owner (custom roles snapshot at creation, by design).
+- **Routes** (`POST/PATCH/DELETE /admin/roles`): keep the `manage_roles` base gate, and
+  additionally require `manage_admin_roles` when the target role's `parent_role === 'admin'`.
+  Used `getUserPermissions` (already computed for the escalation guard, and the resolver the
+  route tests mock) rather than a second `hasPerm` DB round-trip. Added `parent_role` to the
+  PATCH lookup so the tier is known.
+- **Client** (`ManageRoles.jsx`): the "+ New admin role" button is hidden without
+  `manage_admin_roles`, and expanding an admin-tier role renders read-only (inputs/checkboxes
+  disabled, Save/Delete replaced with "Only an Owner can create or edit admin roles"). Admins
+  keep full create/edit/delete on worker-tier roles. `mrolesAdminLocked` EN/ES.
+- **Tests:** permission-default tests updated to the new split (manage_roles is Admin-tier;
+  manage_admin_roles is the Owner-only one); route tests for the tier gate on
+  create/edit/delete + a manage_roles admin still creating a worker-tier role. Suite green
+  (server 1269, client 288).
+
 ## 2026-07-31 — New Team Member Type: "Unpaid" (excluded from all pay)
 
 David: "Team Member Type should include Unpaid." Confirmed (via a question) that it means
