@@ -210,13 +210,6 @@ that holds the exhaustive detail.
 ## ❓ Open questions / decisions for you
 *Blocked on your call before anyone builds.*
 
-- **Are Office AI tools + recordings base-Business or a Tools add-on?** (2026-07-31)
-  During the audit I gated `/api/office` and `/api/recordings` on
-  `requirePlanToolsAddon` (they were `requirePlan('business')` only, unlike the sibling
-  AI features `/api/jumpstart`, `/api/takeoffs`, `/api/live`, which all require the
-  add-on). Assumed intent = they belong to the paid Tools add-on. **If they were meant
-  to be included in the base Business plan, revert those two lines in
-  `server/index.js`.** One-line change either way.
 - **Equipment-maintenance alert re-fires daily.** (2026-07-31) While an item stays
   past its maintenance interval, the 8am job re-sends the same push + inbox alert every
   day. The audit fixed the *retry-resend* (per-company try/catch so a mid-batch error

@@ -4260,13 +4260,15 @@ esbuild "service was stopped"; both pass cleanly with `--maxWorkers=2` / vitest
   can't escape to `runJob`, whose whole-job retry re-alerts every company already
   processed this run.
 
-### Decisions only you can make
-- **Office AI tools now gated on the plan-tools add-on.** `/api/office` and
-  `/api/recordings` were mounted with `requirePlan('business')` only — no
-  `requirePlanToolsAddon`, unlike `/api/jumpstart`, `/api/takeoffs`, `/api/live`. I
-  gated them to match (they're the same class of AI Tools-module feature). **If Office
-  tools / recordings were meant to be included in the base Business plan, revert those
-  two lines in `server/index.js`** — one-line change. Filed in BACKLOG.
+### Backed out (my mistake)
+- I briefly gated `/api/office` + `/api/recordings` on `requirePlanToolsAddon` to
+  match `/api/jumpstart`/`takeoffs`/`live`, assuming they were the same class of
+  feature. They aren't: `requirePlanToolsAddon` only unlocks on
+  `addon_takeoff`/`addon_planroom`/`addon_roof` (the **Plan Room / takeoff family**).
+  jumpstart belongs there (it's a first-draft *takeoff*); the Office AI tools and
+  meeting recordings don't — gating them there would force a Takeoff-add-on purchase to
+  use an unrelated summarizer. **Reverted** — they stay `requirePlan('business')` +
+  aiGate metering, as before. David caught it.
 
 ### Filed, not forgotten
 - Equipment-maintenance alert still **re-fires daily** while an item stays overdue
