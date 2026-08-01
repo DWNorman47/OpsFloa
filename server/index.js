@@ -244,9 +244,10 @@ app.use('/api/punchlist', requireAuth, requirePlan('business'), require('./route
 app.use('/api/inspections', requireAuth, requirePlan('business'), require('./routes/inspections'));
 app.use('/api/safety-talks', requireAuth, requirePlan('business'), require('./routes/safetyTalks'));
 app.use('/api/safety-checklists', requireAuth, requirePlan('business'), require('./routes/safetyChecklists'));
-// Voice transcription tool (Tools module) — upload audio, diarized transcript
-app.use('/api/recordings', requireAuth, requirePlan('business'), require('./routes/recordings'));
-app.use('/api/office', requireAuth, requirePlan('business'), require('./routes/officeTools'));
+// Voice transcription + Office AI tools (Tools module) — gated to the plan-tools
+// add-on like the other AI Tools-module features (jumpstart/takeoffs/live), metered by runAi.
+app.use('/api/recordings', requireAuth, requirePlan('business'), requirePlanToolsAddon, require('./routes/recordings'));
+app.use('/api/office', requireAuth, requirePlan('business'), requirePlanToolsAddon, require('./routes/officeTools'));
 // AI Jump Start — vision-model first-draft takeoff for Plan Room. Gated to the
 // plan-tools add-on (same as the takeoff layer it drafts into), metered by runAi.
 app.use('/api/jumpstart', requireAuth, requirePlan('business'), requirePlanToolsAddon, require('./routes/jumpstart'));

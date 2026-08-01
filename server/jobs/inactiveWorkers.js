@@ -1,5 +1,6 @@
 const cron = require('node-cron');
 const pool = require('../db');
+const logger = require('../logger');
 const { sendPushToCompanyAdmins } = require('../push');
 const { sendEmail } = require('../email');
 const { createInboxItemBatch } = require('../routes/inbox');
@@ -32,7 +33,9 @@ async function checkInactiveWorkers() {
     for (const company of companies.rows) {
       const { id: companyId, name: companyName, inactive_days, feature_inactive_alerts } = company;
       if (feature_inactive_alerts === '0') continue;
-
+      // Isolate each company: a single company's failure must not abort the batch or throw
+      // to runJob, whose whole-job retry would re-alert every company already processed.
+      try {
       // Workers with no entry or last entry older than threshold
       const inactive = await pool.query(`
         SELECT u.id, u.full_name, MAX(te.work_date) as last_entry_date
@@ -111,6 +114,9 @@ async function checkInactiveWorkers() {
             </p>
           </div>`
         );
+      }
+      } catch (err) {
+        logger.error({ err, companyId }, 'inactiveWorkers: company failed, continuing');
       }
     }
 }

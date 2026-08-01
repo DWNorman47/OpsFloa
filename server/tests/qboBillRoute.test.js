@@ -398,6 +398,8 @@ describe('POST /api/qbo/push-bills', () => {
     const call = qbo.createBill.mock.calls[0][1];
     expect(call.vendorId).toBe('V-1');
     expect(call.dueDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // Idempotency key so a double-submit dedupes at Intuit instead of creating two bills.
+    expect(call.requestId).toMatch(/^ops-bill-[a-f0-9]{32}$/);
     expect(call.lines).toHaveLength(2);
     expect(call.lines[0]).toMatchObject({ type: 'item',    itemId: 'ITEM-LABOR', qty: 8, unitPrice: 45 });
     expect(call.lines[1]).toMatchObject({ type: 'account', accountId: 'ACCT-42', amount: 25.5 });

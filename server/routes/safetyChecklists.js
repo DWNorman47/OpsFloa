@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const pool = require('../db');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { projectBelongsToCompany } = require('../utils/tenantRefs');
 
 // ── Templates ──────────────────────────────────────────────────────────────────
 
@@ -106,6 +107,11 @@ router.post('/', requireAuth, async (req, res) => {
       [template_id, req.user.company_id]
     );
     if (tmpl.rowCount === 0) return res.status(404).json({ error: 'Template not found' });
+    // A supplied project must belong to this company — else a foreign project_id is stored and
+    // its name leaked back via the projects JOIN below.
+    if (project_id != null && project_id !== '' && !(await projectBelongsToCompany(pool, project_id, req.user.company_id))) {
+      return res.status(400).json({ error: 'Invalid project' });
+    }
     const result = await pool.query(
       `INSERT INTO safety_checklist_submissions
          (company_id, template_id, template_name, project_id, submitted_by, submitted_by_name, check_date, answers, notes)

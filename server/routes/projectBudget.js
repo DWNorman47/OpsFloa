@@ -7,7 +7,7 @@
 const router = require('express').Router();
 const pool   = require('../db');
 const { requireAuth } = require('../middleware/auth');
-const { requireProjectFinancialAccess } = require('../middleware/financialAccess');
+const { requireProjectFinancialAccess, requireProjectFinancialWrite } = require('../middleware/financialAccess');
 const { logAudit } = require('../auditLog');
 const { MONEY_CATEGORIES } = require('../constants/projectMoneyEnums');
 
@@ -48,7 +48,7 @@ router.get('/projects/:id/budget', requireAuth, requireProjectFinancialAccess, a
 });
 
 // PUT /projects/:id/budget — bulk replace the seven category rows.
-router.put('/projects/:id/budget', requireAuth, requireProjectFinancialAccess, async (req, res) => {
+router.put('/projects/:id/budget', requireAuth, requireProjectFinancialWrite, async (req, res) => {
   const companyId = req.user.company_id;
   if (!Array.isArray(req.body.categories)) {
     return res.status(400).json({ error: 'categories must be an array' });

@@ -437,10 +437,13 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
         let totalHours = 0;
         if (rule === 'weekly') {
           const weekRows = await pool.query(
+            // Bucket by the company's week_start (DATE_TRUNC('week') is always Monday and would
+            // misgroup the alert for non-Monday weeks); matches the pay engine's week definition.
             `SELECT start_time, end_time, break_minutes FROM time_entries
              WHERE user_id = $1 AND wage_type = 'regular'
-               AND DATE_TRUNC('week', work_date::date) = DATE_TRUNC('week', $2::date)`,
-            [req.user.id, workDate]
+               AND (work_date::date - ((EXTRACT(DOW FROM work_date::date)::int - $3 + 7) % 7))
+                 = ($2::date - ((EXTRACT(DOW FROM $2::date)::int - $3 + 7) % 7))`,
+            [req.user.id, workDate, parseInt(s.week_start ?? 1, 10)]
           );
           const newEntryHours = calcH(closedEntry.start_time, closedEntry.end_time, closedEntry.break_minutes);
           totalHours = weekRows.rows.reduce((sum, r) => sum + calcH(r.start_time, r.end_time, r.break_minutes), 0);
@@ -595,15 +598,16 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
           let totalHours = 0;
 
           if (rule === 'weekly') {
-            // Sum this ISO week (Mon–Sun). Include break_minutes so
-            // entries with logged breaks don't inflate the weekly total
-            // and trigger spurious OT alerts for workers who haven't
-            // actually crossed the 40h paid-hours line.
+            // Sum this week (bucketed by the company's week_start, matching the pay engine —
+            // DATE_TRUNC('week') is always Monday and would misgroup non-Monday weeks). Include
+            // break_minutes so entries with logged breaks don't inflate the weekly total and
+            // trigger spurious OT alerts for workers who haven't crossed the 40h paid-hours line.
             const allWeekRows = await pool.query(
               `SELECT start_time, end_time, break_minutes FROM time_entries
                WHERE user_id = $1 AND wage_type = 'regular'
-                 AND DATE_TRUNC('week', work_date::date) = DATE_TRUNC('week', $2::date)`,
-              [req.user.id, workDate]
+                 AND (work_date::date - ((EXTRACT(DOW FROM work_date::date)::int - $3 + 7) % 7))
+                   = ($2::date - ((EXTRACT(DOW FROM $2::date)::int - $3 + 7) % 7))`,
+              [req.user.id, workDate, parseInt(s.week_start ?? 1, 10)]
             );
             const allEntries = allWeekRows.rows;
             const newEntry = entryResult.rows[0];

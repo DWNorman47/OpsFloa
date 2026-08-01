@@ -119,6 +119,7 @@ router.post('/', requireAuth, async (req, res) => {
   const tempVal = weather_temp != null && weather_temp !== '' ? parseFloat(weather_temp) : null;
   if (tempVal !== null && isNaN(tempVal)) return res.status(400).json({ error: 'weather_temp must be a number' });
   const companyId = req.user.company_id;
+  const isAdmin = req.user.role === 'admin' || req.user.role === 'super_admin';
 
   const client = await pool.connect();
   try {
@@ -126,6 +127,19 @@ router.post('/', requireAuth, async (req, res) => {
     if (!(await projectBelongsToCompany(client, project_id, companyId))) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Project not found' });
+    }
+
+    // The upsert below (ON CONFLICT DO UPDATE) would silently overwrite an existing report for
+    // the same project+date. PATCH enforces ownership; POST must too, or a worker could clobber
+    // a coworker's/admin's report through this path. (IS NOT DISTINCT FROM handles null project_id.)
+    const dupe = await client.query(
+      `SELECT created_by FROM daily_reports
+       WHERE company_id = $1 AND project_id IS NOT DISTINCT FROM $2 AND report_date = $3`,
+      [companyId, project_id || null, report_date]
+    );
+    if (dupe.rowCount > 0 && !isAdmin && dupe.rows[0].created_by !== req.user.id) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'A report for this project and date already exists' });
     }
 
     const result = await client.query(
@@ -199,6 +213,11 @@ router.patch('/:id', requireAuth, async (req, res) => {
   const isAdmin = req.user.role === 'admin' || req.user.role === 'super_admin';
   const { superintendent, weather_condition, weather_temp, work_performed, delays_issues,
           visitor_log, status, manpower = [], equipment = [], materials = [] } = req.body;
+  // Only replace a sub-table when its array was actually sent. Otherwise a partial PATCH
+  // (e.g. status-only) would DELETE every manpower/equipment/materials row for the report.
+  const hasManpower  = req.body.manpower  !== undefined;
+  const hasEquipment = req.body.equipment !== undefined;
+  const hasMaterials = req.body.materials !== undefined;
 
   // Validate status value and enforce transition rules
   const VALID_STATUSES = ['draft', 'submitted', 'reviewed'];
@@ -265,29 +284,35 @@ router.patch('/:id', requireAuth, async (req, res) => {
       if (m.description && m.description.length > 500) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Material description too long (max 500 characters)' }); }
     }
 
-    await client.query('DELETE FROM daily_report_manpower WHERE report_id=$1', [req.params.id]);
-    for (const m of manpower) {
-      if (!m.trade && !m.worker_count) continue;
-      await client.query(
-        'INSERT INTO daily_report_manpower (report_id, trade, worker_count, hours, notes) VALUES ($1,$2,$3,$4,$5)',
-        [req.params.id, m.trade, parseInt(m.worker_count) || 1, m.hours, m.notes]
-      );
+    if (hasManpower) {
+      await client.query('DELETE FROM daily_report_manpower WHERE report_id=$1', [req.params.id]);
+      for (const m of manpower) {
+        if (!m.trade && !m.worker_count) continue;
+        await client.query(
+          'INSERT INTO daily_report_manpower (report_id, trade, worker_count, hours, notes) VALUES ($1,$2,$3,$4,$5)',
+          [req.params.id, m.trade, parseInt(m.worker_count) || 1, m.hours, m.notes]
+        );
+      }
     }
-    await client.query('DELETE FROM daily_report_equipment WHERE report_id=$1', [req.params.id]);
-    for (const e of equipment) {
-      if (!e.name) continue;
-      await client.query(
-        'INSERT INTO daily_report_equipment (report_id, name, quantity, hours) VALUES ($1,$2,$3,$4)',
-        [req.params.id, e.name, parseInt(e.quantity) || 1, e.hours]
-      );
+    if (hasEquipment) {
+      await client.query('DELETE FROM daily_report_equipment WHERE report_id=$1', [req.params.id]);
+      for (const e of equipment) {
+        if (!e.name) continue;
+        await client.query(
+          'INSERT INTO daily_report_equipment (report_id, name, quantity, hours) VALUES ($1,$2,$3,$4)',
+          [req.params.id, e.name, parseInt(e.quantity) || 1, e.hours]
+        );
+      }
     }
-    await client.query('DELETE FROM daily_report_materials WHERE report_id=$1', [req.params.id]);
-    for (const m of materials) {
-      if (!m.description) continue;
-      await client.query(
-        'INSERT INTO daily_report_materials (report_id, description, quantity) VALUES ($1,$2,$3)',
-        [req.params.id, m.description, m.quantity || null]
-      );
+    if (hasMaterials) {
+      await client.query('DELETE FROM daily_report_materials WHERE report_id=$1', [req.params.id]);
+      for (const m of materials) {
+        if (!m.description) continue;
+        await client.query(
+          'INSERT INTO daily_report_materials (report_id, description, quantity) VALUES ($1,$2,$3)',
+          [req.params.id, m.description, m.quantity || null]
+        );
+      }
     }
 
     await client.query('COMMIT');
