@@ -39,7 +39,18 @@ function clearStoredSession(tokenStore) {
 }
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
+  // Seed from the cached session synchronously. Without this, `user` is null until
+  // /auth/me resolves (up to 10s), and the effect below blanks `tc_addons` for that
+  // whole window — which shows Takeoff as locked in the Plan Room tool-app (it reads
+  // tc_addons from localStorage). /auth/me still refreshes the user right after.
+  const [user, setUser] = useState(() => {
+    try {
+      const store = safeSession.getItem('tc_token') ? safeSession : safeLocal;
+      if (!store.getItem('tc_token')) return null;
+      const cached = store.getItem('tc_user');
+      return cached ? JSON.parse(cached) : null;
+    } catch { return null; }
+  });
   const [loading, setLoading] = useState(true);
   const [firstLogin, setFirstLogin] = useState(false);
 
@@ -65,6 +76,7 @@ export function AuthProvider({ children }) {
       .catch(err => {
         if (isAuthFailure(err)) {
           clearStoredSession(tokenStore);
+          setUser(null); // token is dead — drop the cache-seeded user so we reflect logout
           return;
         }
         const cached = readCachedUser(tokenStore);
@@ -88,12 +100,15 @@ export function AuthProvider({ children }) {
         }));
         if (user.company_name) localStorage.setItem('tc_company', user.company_name);
         else localStorage.removeItem('tc_company');
-      } else {
+      } else if (!loading) {
+        // Only clear on a genuine logout — NOT during the /auth/me validation window
+        // (user null, still loading), where blanking tc_addons momentarily locks
+        // Takeoff in an open Plan Room tab.
         localStorage.removeItem('tc_addons');
         localStorage.removeItem('tc_company');
       }
     } catch { /* storage blocked */ }
-  }, [user]);
+  }, [user, loading]);
 
   const login = async (username, password, company_name) => {
     await Promise.all([clearCache(), clearPendingSyncs()]);

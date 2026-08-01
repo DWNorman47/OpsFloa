@@ -1,5 +1,6 @@
 const cron = require('node-cron');
 const pool = require('../db');
+const logger = require('../logger');
 const { sendPushToCompanyAdmins } = require('../push');
 const { createInboxItem } = require('../routes/inbox');
 const { runJob } = require('./runJob');
@@ -13,7 +14,9 @@ async function checkEquipmentMaintenance() {
 
     for (const company of companies.rows) {
       const { id: companyId } = company;
-
+      // Isolate each company: one company's failure must not abort the batch, and must not
+      // throw out to runJob — a whole-job retry would re-alert every company already processed.
+      try {
       // Find equipment that has reached or exceeded its maintenance interval
       const overdue = await pool.query(`
         SELECT e.id,
@@ -49,6 +52,9 @@ async function checkEquipmentMaintenance() {
       );
       for (const a of adminRows.rows) {
         createInboxItem(a.id, companyId, 'equipment_maintenance', alertTitle, alertBody, '/inventory#eq-assets');
+      }
+      } catch (err) {
+        logger.error({ err, companyId }, 'equipmentMaintenance: company failed, continuing');
       }
     }
 }

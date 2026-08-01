@@ -16,9 +16,10 @@ function isValidEmail(email) { return EMAIL_RE.test(String(email).trim()); }
 const { requireAdmin, requirePlan, requireCertifiedPayrollAddon, requirePerm } = require('../middleware/auth');
 const { normalizePaycheckRules } = require('../constants/paycheckRuleEnums');
 const { USER_WORKER_TYPES } = require('../constants/userEnums');
+const { projectBelongsToCompany } = require('../utils/tenantRefs');
 const { resolveRuleset, rulesetsForActiveRoles, deductionsForRole, applyGroupDeductions, groupOpts } = require('../utils/paycheckRun');
 const { generatePeriods, groupPeriods, isValidIsoDate, dateRangeDays } = require('../utils/payPeriods');
-const { PERMISSIONS, PERMISSION_KEYS, BUILTIN_ROLES, getUserPermissions } = require('../permissions');
+const { PERMISSIONS, PERMISSION_KEYS, BUILTIN_ROLES, getUserPermissions, hasPerm } = require('../permissions');
 const { coerceBody } = require('../middleware/coerce');
 const { logFailure } = require('../failureLog');
 const { sendPushToUser, sendPushToAllWorkers } = require('../push');
@@ -545,6 +546,12 @@ router.post('/clock-in', requireAdmin, requirePerm('manage_workers'), async (req
       [user_id, companyId]
     );
     if (workerRow.rowCount === 0) return res.status(404).json({ error: 'Worker not found' });
+    // The project must belong to this company — else a foreign project_id would be stored
+    // and its wage_type baked into the resulting time entry (corrupting pay), and its name
+    // leaked in the response.
+    if (project_id != null && project_id !== '' && !(await projectBelongsToCompany(pool, project_id, companyId))) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
 
     const result = await pool.query(
       `INSERT INTO active_clock (user_id, company_id, project_id, clock_in_time, work_date, notes, clock_source, clocked_in_by)
@@ -961,7 +968,11 @@ router.get('/workers', requireAdmin, async (req, res) => {
       LIMIT 500`,
       queryParams
     );
-    res.json(result.rows);
+    // Redact pay rates from admins who lack view_worker_wages (the directory itself
+    // stays visible — only the dollar rate is hidden). Hours are not wage data.
+    const canSeeWages = await hasPerm(req, 'view_worker_wages');
+    const rows = canSeeWages ? result.rows : result.rows.map(r => ({ ...r, hourly_rate: null }));
+    res.json(rows);
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });
@@ -1049,7 +1060,7 @@ router.post('/workers/:id/entries', requireAdmin, requirePerm('manage_workers'),
   }
 });
 
-router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
+router.get('/workers/:id/entries', requireAdmin, requirePerm('view_worker_wages'), async (req, res) => {
   const { from, to } = req.query;
   const companyId = req.user.company_id;
   try {
@@ -4376,17 +4387,16 @@ router.post('/projects/:id/rfis', requireAdmin, async (req, res) => {
   try {
     const projCheck = await pool.query('SELECT id FROM projects WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
     if (projCheck.rowCount === 0) return res.status(404).json({ error: 'Project not found' });
-    const maxNum = await pool.query(
-      'SELECT COALESCE(MAX(rfi_number), 0) + 1 AS next FROM rfis WHERE project_id = $1 AND company_id = $2',
-      [req.params.id, companyId]
-    );
-    const rfi_number = maxNum.rows[0].next;
     const today = new Date().toLocaleDateString('en-CA');
+    // rfi_number is unique per COMPANY (uq_rfis_company_number), not per project — so number
+    // company-wide, matching POST /rfis. A per-project MAX made every 2nd+ project's first RFI
+    // collide on rfi_number=1 and 500. The inline subquery also makes it atomic against
+    // concurrent creates (read-then-insert could otherwise duplicate a number).
     const result = await pool.query(
       `INSERT INTO rfis (company_id, project_id, rfi_number, subject, description, directed_to, submitted_by, date_submitted, date_due, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'open')
+       VALUES ($1, $2, (SELECT COALESCE(MAX(rfi_number),0)+1 FROM rfis WHERE company_id=$1), $3, $4, $5, $6, $7, $8, 'open')
        RETURNING id, rfi_number, subject, status, directed_to, date_submitted, date_due`,
-      [companyId, req.params.id, rfi_number, subject.trim(), description || null,
+      [companyId, req.params.id, subject.trim(), description || null,
        directed_to || null, req.user.full_name, date_submitted || today, date_due || null]
     );
     res.status(201).json(result.rows[0]);

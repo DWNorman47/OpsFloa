@@ -56,7 +56,7 @@ router.get('/status', requireAdmin, async (req, res) => {
 });
 
 // GET /api/qbo/connect — returns the Intuit OAuth URL to redirect the user to
-router.get('/connect', requireAdmin, async (req, res) => {
+router.get('/connect', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
   if (!process.env.QBO_CLIENT_ID || !process.env.QBO_REDIRECT_URI) {
     return res.status(503).json({ error: 'QuickBooks integration not configured' });
   }
@@ -103,7 +103,7 @@ async function oauthCallback(req, res) {
 router.get('/callback', oauthCallback);
 
 // DELETE /api/qbo/disconnect
-router.delete('/disconnect', requireAdmin, async (req, res) => {
+router.delete('/disconnect', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
   try {
     await pool.query(
       `UPDATE companies
@@ -157,7 +157,7 @@ router.get('/vendors', requireAdmin, async (req, res) => {
 });
 
 // PATCH /api/qbo/workers/:id/mapping — save QBO employee or vendor ID for a worker
-router.patch('/workers/:id/mapping', requireAdmin, async (req, res) => {
+router.patch('/workers/:id/mapping', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
   const { qbo_employee_id, qbo_vendor_id } = req.body;
   try {
     if (qbo_vendor_id !== undefined) {
@@ -179,7 +179,7 @@ router.patch('/workers/:id/mapping', requireAdmin, async (req, res) => {
 });
 
 // PATCH /api/qbo/projects/:id/mapping — save QBO customer ID and/or class ID for a project
-router.patch('/projects/:id/mapping', requireAdmin, async (req, res) => {
+router.patch('/projects/:id/mapping', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
   const { qbo_customer_id, qbo_class_id } = req.body;
   const fields = [];
   const vals = [];
@@ -212,7 +212,7 @@ router.get('/items', requireAdmin, async (req, res) => {
 
 // POST /api/qbo/invoices — push a billing invoice to QBO
 // Body: { customer_id, item_id, amount, description, doc_number, txn_date, project_id }
-router.post('/invoices', requireAdmin, async (req, res) => {
+router.post('/invoices', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
   const { customer_id, item_id, amount, description, doc_number, txn_date, project_id } = req.body;
   if (!customer_id || !item_id || amount == null) {
     return res.status(400).json({ error: 'customer_id, item_id, and amount are required' });
@@ -227,6 +227,9 @@ router.post('/invoices', requireAdmin, async (req, res) => {
       description: description || '',
       docNumber: doc_number || null,
       txnDate: txn_date || null,
+      // Dedup an accidental double-submit of the same invoice at Intuit (no source-row id
+      // here, so key off the invoice's own fields).
+      requestId: `ops-inv-${crypto.createHash('sha256').update(`${req.user.company_id}|${customer_id}|${item_id}|${parsed}|${doc_number || ''}|${txn_date || ''}`).digest('hex').slice(0, 32)}`,
     });
     // Mirror the pushed invoice into the NATIVE invoices table (source='qbo',
     // keyed by qbo_invoice_id) — project_invoices is retired. Fire-and-forget:
@@ -299,7 +302,7 @@ router.get('/invoices/project/:projectId', requireAdmin, async (req, res) => {
 });
 
 // POST /api/qbo/invoices/:invoiceId/check-payment — refresh payment status from QBO
-router.post('/invoices/:invoiceId/check-payment', requireAdmin, async (req, res) => {
+router.post('/invoices/:invoiceId/check-payment', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
   try {
     const invoice = await qbo.getInvoice(req.user.company_id, req.params.invoiceId);
     if (!invoice) return res.status(404).json({ error: 'Invoice not found in QuickBooks' });
@@ -373,7 +376,7 @@ router.get('/accounts', requireAdmin, async (req, res) => {
 
 // POST /api/qbo/expenses — push a reimbursement expense to QBO
 // Body: { bank_account_id, expense_account_id, vendor_id, amount, description, txn_date }
-router.post('/expenses', requireAdmin, async (req, res) => {
+router.post('/expenses', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
   const { bank_account_id, expense_account_id, vendor_id, amount, description, txn_date } = req.body;
   if (!bank_account_id || !expense_account_id || amount == null) {
     return res.status(400).json({ error: 'bank_account_id, expense_account_id, and amount are required' });
@@ -388,6 +391,8 @@ router.post('/expenses', requireAdmin, async (req, res) => {
       amount: parsed,
       description: description || '',
       txnDate: txn_date || null,
+      // Dedup an accidental double-submit of the same one-off expense at Intuit.
+      requestId: `ops-exp-${crypto.createHash('sha256').update(`${req.user.company_id}|${bank_account_id}|${expense_account_id}|${vendor_id || ''}|${parsed}|${txn_date || ''}`).digest('hex').slice(0, 32)}`,
     });
     res.json(purchase);
   } catch (err) {
@@ -399,7 +404,7 @@ router.post('/expenses', requireAdmin, async (req, res) => {
 
 // POST /api/qbo/push — push time entries to QBO for a date range
 // Body: { from, to, force } — force=true re-pushes already-synced entries
-router.post('/push', requireAdmin, async (req, res) => {
+router.post('/push', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
   const { from, to, force } = req.body;
   const companyId = req.user.company_id;
   try {
@@ -457,6 +462,9 @@ router.post('/push', requireAdmin, async (req, res) => {
           workDate,
           hours,
           description: entry.notes || '',
+          // One activity per time entry — a double-click sends the same key so Intuit
+          // dedupes instead of creating a duplicate.
+          requestId: `ops-ta-${entry.id}`,
         });
         // Record the QB activity ID to prevent future duplicates
         await pool.query(
@@ -479,7 +487,7 @@ router.post('/push', requireAdmin, async (req, res) => {
 });
 
 // POST /api/qbo/import/workers — create OpsFloa workers from QB employees/vendors
-router.post('/import/workers', requireAdmin, async (req, res) => {
+router.post('/import/workers', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
   const companyId = req.user.company_id;
   const { workers } = req.body; // [{ display_name, email, qbo_employee_id, qbo_vendor_id, worker_type }]
   if (!Array.isArray(workers) || workers.length === 0) return res.status(400).json({ error: 'workers array required' });
@@ -531,7 +539,7 @@ router.post('/import/workers', requireAdmin, async (req, res) => {
 });
 
 // POST /api/qbo/import/projects — create OpsFloa projects from QB customers
-router.post('/import/projects', requireAdmin, async (req, res) => {
+router.post('/import/projects', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
   const companyId = req.user.company_id;
   const { projects } = req.body; // [{ name, qbo_customer_id }]
   if (!Array.isArray(projects) || projects.length === 0) return res.status(400).json({ error: 'projects array required' });
@@ -589,7 +597,7 @@ router.get('/errors', requireAdmin, async (req, res) => {
 });
 
 // DELETE /api/qbo/errors — dismiss all sync errors for this company
-router.delete('/errors', requireAdmin, async (req, res) => {
+router.delete('/errors', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
   try {
     await pool.query('DELETE FROM qbo_sync_errors WHERE company_id = $1', [req.user.company_id]);
     res.json({ cleared: true });
@@ -600,7 +608,7 @@ router.delete('/errors', requireAdmin, async (req, res) => {
 });
 
 // DELETE /api/qbo/errors/:id — dismiss a single sync error
-router.delete('/errors/:id', requireAdmin, async (req, res) => {
+router.delete('/errors/:id', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
   try {
     await pool.query('DELETE FROM qbo_sync_errors WHERE id = $1 AND company_id = $2', [req.params.id, req.user.company_id]);
     res.json({ cleared: true });
@@ -612,7 +620,7 @@ router.delete('/errors/:id', requireAdmin, async (req, res) => {
 
 // POST /api/qbo/push-expenses — push approved reimbursements to QBO for a date range
 // Body: { from, to, force }
-router.post('/push-expenses', requireAdmin, async (req, res) => {
+router.post('/push-expenses', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
   const { from, to, force } = req.body;
   const companyId = req.user.company_id;
   try {
@@ -653,6 +661,8 @@ router.post('/push-expenses', requireAdmin, async (req, res) => {
           amount: parseFloat(r.amount),
           description: r.description || r.category || 'Expense reimbursement',
           txnDate,
+          // One purchase per reimbursement — a double-click dedupes at Intuit.
+          requestId: `ops-pur-${r.id}`,
         });
         await pool.query(
           'UPDATE reimbursements SET qbo_purchase_id = $1, qbo_synced_at = NOW() WHERE id = $2',
@@ -902,7 +912,7 @@ router.post('/push-bills-preview', requireAdmin, async (req, res) => {
 
 // POST /api/qbo/push-bills — create one QBO Bill per vendor
 // Body: { from, to, worker_ids, force }
-router.post('/push-bills', requireAdmin, async (req, res) => {
+router.post('/push-bills', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
   const { from, to, worker_ids, force } = req.body;
   const companyId = req.user.company_id;
   try {
@@ -997,6 +1007,10 @@ router.post('/push-bills', requireAdmin, async (req, res) => {
           dueDate,
           memo: `OpsFloa bill ${from || ''}–${to || ''} for ${g.fullName}`.trim(),
           lines,
+          // Idempotency for accidental double-submit: one bill per vendor+range. A deliberate
+          // force re-push is meant to create a fresh bill, so it carries no dedup key.
+          requestId: force ? undefined
+            : `ops-bill-${crypto.createHash('sha256').update(`${companyId}|${g.vendorId}|${from || ''}|${to || ''}`).digest('hex').slice(0, 32)}`,
         });
         const billId = bill?.Id || 'synced';
         const timeIds = g.timeEntries.map(t => t.id);

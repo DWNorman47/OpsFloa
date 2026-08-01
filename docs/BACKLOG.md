@@ -210,6 +210,14 @@ that holds the exhaustive detail.
 ## ❓ Open questions / decisions for you
 *Blocked on your call before anyone builds.*
 
+- **Equipment-maintenance alert re-fires daily.** (2026-07-31) While an item stays
+  past its maintenance interval, the 8am job re-sends the same push + inbox alert every
+  day. The audit fixed the *retry-resend* (per-company try/catch so a mid-batch error
+  no longer makes `runJob` re-alert everyone), but send-once-until-serviced needs a
+  dedup stamp — e.g. an `equipment_items.maintenance_alerted_at` column, reset when
+  hours reset or maintenance is logged. Migration + logic; is a daily reminder actually
+  undesirable, or fine as a nag?
+
 - **Presigned R2 upload** — pull the trigger now, or stay on the 64 MB base64
   bandaid until plans actually exceed the ceiling? (see Improvements) (2026-07-10)
 - **Wall Dig button** — hidden "for now" in the takeoff tool; bring it back, remove
@@ -265,6 +273,15 @@ that holds the exhaustive detail.
 
 ## 🚀 Ideas — new features or tools
 
+- **Standalone AI-tools SKU (Office AI + recordings).** (2026-07-31) Sell the Office
+  AI tools (summarizer, doc Q&A, contract red-flag scanner, email drafter) and meeting
+  recordings as their own add-on, buyable **without** Business or Plan Room. For now
+  they stay tied to Business (`requirePlan('business')` on `/api/office` +
+  `/api/recordings`). The path is clean when you want it: the AI quota is already flat
+  (300/mo per company, plan-independent, `OFFICE_AI_MONTHLY_LIMIT`) and the Tools page
+  shows on the per-company `module_tools` toggle, so a new SKU is just an `addon_ai`
+  column + `requireAiToolsAddon` middleware + a Stripe price + a BillingPanel card —
+  no metering rework. (Decided 2026-07-31: leave on Business for now, likely SKU later.)
 - **Plan Room: Wall Dig takeoff (sitework pack Q4, deferred).** Retaining-wall /
   footing excavation — a trench swept along a traced line, net export vs. reused
   backfill after concrete + aggregate fill the hole; the ▚ Wall variant reads

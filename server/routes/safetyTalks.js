@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const pool = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { projectBelongsToCompany } = require('../utils/tenantRefs');
 const { sendPushToAllWorkers } = require('../push');
 const { getPresignedUploadUrl } = require('../r2');
 const { checkStorageLimit, incrementStorage, decrementStorage } = require('../storage');
@@ -101,6 +102,11 @@ router.post('/', requireAuth, async (req, res) => {
   if (given_by && given_by.length > 255) return res.status(400).json({ error: 'given_by too long (max 255 characters)' });
   if (!talk_date) return res.status(400).json({ error: 'talk_date required' });
   const companyId = req.user.company_id;
+  // A supplied project must belong to this company — else a foreign project_id is stored and
+  // its name leaked back via the projects JOIN on read.
+  if (project_id != null && project_id !== '' && !(await projectBelongsToCompany(pool, project_id, companyId))) {
+    return res.status(400).json({ error: 'Invalid project' });
+  }
 
   const client = await pool.connect();
   try {
@@ -167,6 +173,9 @@ router.patch('/:id', requireAuth, async (req, res) => {
   if (title !== undefined && title && title.length > 200) return res.status(400).json({ error: 'title too long (max 200 characters)' });
   if (content !== undefined && content && content.length > 5000) return res.status(400).json({ error: 'content too long (max 5000 characters)' });
   if (given_by !== undefined && given_by && given_by.length > 255) return res.status(400).json({ error: 'given_by too long (max 255 characters)' });
+  if (project_id != null && project_id !== '' && !(await projectBelongsToCompany(pool, project_id, companyId))) {
+    return res.status(400).json({ error: 'Invalid project' });
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');

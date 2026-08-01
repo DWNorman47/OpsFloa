@@ -8,6 +8,16 @@ const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const { logAudit } = require('../auditLog');
 const { weekRange } = require('../utils/weekBounds');
 
+// node-pg returns a DATE column as a Date at local midnight — interpolating it raw yields
+// "Thu Jul 30 2026 00:00:00 GMT…" and .toString().substring(0,10) yields "Thu Jul 30" (no
+// year). Format to YYYY-MM-DD from the local parts (round-trips since the Date was built at
+// local midnight from those parts). Passes strings through unchanged.
+function fmtShiftDate(d) {
+  if (!d) return '';
+  if (typeof d === 'string') return d.slice(0, 10);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 // Cap shift writes per user. Admins legitimately create shifts in bursts
 // (weekly scheduling), so the ceiling is higher than chat but still prevents
 // runaway scripts or a compromised account from flooding the table.
@@ -70,7 +80,7 @@ router.post('/admin', requireAdmin, shiftWriteLimiter, async (req, res) => {
     const shift = full.rows[0];
     logAudit(companyId, req.user.id, req.user.full_name, 'shift.created', 'shift', shift.id, shift.worker_name,
       { user_id, shift_date, start_time, end_time, project_id: project_id || null });
-    const shiftBody = `${shift.shift_date} · ${shift.start_time.substring(0, 5)}–${shift.end_time.substring(0, 5)}${shift.project_name ? ' · ' + shift.project_name : ''}`;
+    const shiftBody = `${fmtShiftDate(shift.shift_date)} · ${shift.start_time.substring(0, 5)}–${shift.end_time.substring(0, 5)}${shift.project_name ? ' · ' + shift.project_name : ''}`;
     sendPushToUser(user_id, { title: 'New shift assigned', body: shiftBody, url: '/timeclock' });
     createInboxItem(user_id, companyId, 'shift_assigned', 'New shift assigned', shiftBody, '/timeclock#schedule');
     res.status(201).json(shift);
@@ -109,7 +119,7 @@ router.patch('/admin/:id', requireAdmin, shiftWriteLimiter, async (req, res) => 
     const shift = full.rows[0];
     logAudit(companyId, req.user.id, req.user.full_name, 'shift.edited', 'shift', shift.id, shift.worker_name,
       { shift_date, start_time, end_time, project_id: project_id || null });
-    const updBody = `${shift.shift_date?.toString().substring(0,10)} · ${start_time.substring(0,5)}–${end_time.substring(0,5)}`;
+    const updBody = `${fmtShiftDate(shift.shift_date)} · ${start_time.substring(0,5)}–${end_time.substring(0,5)}`;
     sendPushToUser(shift.user_id, { title: 'Shift updated', body: updBody, url: '/timeclock' });
     createInboxItem(shift.user_id, req.user.company_id, 'shift_updated', 'Shift updated', updBody, '/timeclock#schedule');
     res.json(shift);
@@ -130,7 +140,7 @@ router.delete('/admin/:id', requireAdmin, shiftWriteLimiter, async (req, res) =>
     await pool.query('DELETE FROM shifts WHERE id = $1 AND company_id = $2', [req.params.id, req.user.company_id]);
     logAudit(req.user.company_id, req.user.id, req.user.full_name, 'shift.deleted', 'shift', req.params.id, shift.worker_name,
       { shift_date: shift.shift_date, user_id: shift.user_id });
-    const cancelBody = `${shift.shift_date?.toString().substring(0, 10)} · ${shift.start_time.substring(0, 5)}–${shift.end_time.substring(0, 5)}${shift.project_name ? ' · ' + shift.project_name : ''}`;
+    const cancelBody = `${fmtShiftDate(shift.shift_date)} · ${shift.start_time.substring(0, 5)}–${shift.end_time.substring(0, 5)}${shift.project_name ? ' · ' + shift.project_name : ''}`;
     sendPushToUser(shift.user_id, { title: 'Shift cancelled', body: cancelBody, url: '/timeclock' });
     createInboxItem(shift.user_id, req.user.company_id, 'shift_cancelled', 'Shift cancelled', cancelBody, '/timeclock#schedule');
     res.json({ deleted: true });
@@ -150,7 +160,7 @@ router.patch('/:id/cant-make-it', requireAuth, shiftWriteLimiter, async (req, re
     if (result.rowCount === 0) return res.status(404).json({ error: 'Shift not found' });
     const shift = result.rows[0];
     if (cant_make_it) {
-      const dateStr = shift.shift_date?.toString().substring(0, 10) || '';
+      const dateStr = fmtShiftDate(shift.shift_date);
       const timeStr = shift.start_time?.substring(0, 5) || '';
       const cantBody = `${req.user.full_name} can't make their shift on ${dateStr} · ${timeStr}`;
       sendPushToCompanyAdmins(req.user.company_id, {

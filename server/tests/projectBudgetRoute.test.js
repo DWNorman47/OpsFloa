@@ -21,6 +21,7 @@ jest.mock('../middleware/auth', () => ({
 }));
 jest.mock('../middleware/financialAccess', () => ({
   requireProjectFinancialAccess: (req, _res, next) => next(),
+  requireProjectFinancialWrite: (req, _res, next) => next(),
 }));
 
 jest.mock('../db', () => {

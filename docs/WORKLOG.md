@@ -4183,3 +4183,94 @@ need `ANTHROPIC_API_KEY`.
 ⚠️ **Five open items in `docs/BACKLOG.md`** — the two closeout/QBO bugs above,
 tool-apps still hardcoding `'$'`, flooring/framing missing from `NEEDS_SCALE`,
 and `fopening` missing from `POINT_KINDS`.
+
+## 2026-07-31 — Security & correctness audit — fixed everything
+
+Broad audit of the whole server, then fixed all confirmed findings. No schema
+changes (no migration), so `docs/db-enums.md` is untouched. Server: 1287 tests
+green (101 suites). Client: eslint clean, 288 tests, build OK. (Both suites flake
+under back-to-back runs on this box — jest worker `VirtualAlloc`/`spawn` OOM and
+esbuild "service was stopped"; both pass cleanly with `--maxWorkers=2` / vitest
+`--no-file-parallelism`. Not code failures.)
+
+**Tenant isolation / IDOR**
+- `timeEntries /:id/messages` (GET+POST): scoped the entry lookup to owner-or-admin
+  — a worker could read/post on a coworker's entry thread by enumerating the id.
+- `catalog/*`: added `requireCommercialAccess` — supplier cost / sell price / markup
+  were readable by any authenticated worker.
+- `booking /appointments`: non-admins are now scoped to their own assigned rows;
+  the full list leaked every client's name/email/phone/notes to any worker.
+- **Cross-tenant `project_id` on write** — validate belongs-to-company on
+  incidents, reimbursements (both POSTs), safetyChecklists, safetyTalks (POST+PATCH),
+  subReports (POST+PATCH), rfis (POST+PATCH), and admin `/clock-in`. Clock-in was the
+  real bug: a foreign `project_id` baked that project's `wage_type` into the entry
+  (corrupting pay). The rest only leaked a foreign project **name** via an unscoped
+  JOIN. **Judgment:** skipped `inspections` — its `project_id` is UUID while
+  `projects.id` is INTEGER, so the JOIN never matches (no leak) and the int-keyed
+  helper would throw on a UUID.
+
+**Correctness**
+- **RFI numbering**: admin `POST /projects/:id/rfis` numbered **per-project** but the
+  unique constraint is **per-company** (`uq_rfis_company_number`), so every 2nd+
+  project's first RFI (number 1) collided → 500. Switched to a company-wide atomic
+  inline subquery, matching the schema and the sibling `POST /rfis`. **Judgment:**
+  fixed the code, not the constraint — company-wide is the intended model (the unique
+  index, the constraint, and `rfis.js` all agree); loosening the constraint would let
+  the two create paths mint duplicate numbers.
+- **Daily reports**: POST's `ON CONFLICT DO UPDATE` let a worker silently overwrite a
+  coworker's report for the same project+date (PATCH enforced ownership, POST didn't)
+  → added an owner guard. PATCH deleted+reinserted all sub-tables unconditionally, so a
+  status-only PATCH wiped manpower/equipment/materials → now only touches a sub-table
+  when its array is actually sent. Both covered by new tests.
+- **OT alert week bucket** (`clock.js`, both switch + clock-out paths): used
+  `DATE_TRUNC('week')` (always Monday), ignoring company `week_start` — misfired the
+  weekly-OT *alert* for non-Monday weeks. Now buckets by `week_start` like the pay
+  engine. (Alert only; pay was already correct.)
+- **Shift push/inbox dates** (`shifts.js`): interpolated a node-pg `Date` raw →
+  "Thu Jul 30 2026 00:00:00 GMT…" in one spot and "Thu Jul 30" (no year) in three
+  others. Added `fmtShiftDate` → `YYYY-MM-DD` from local parts (TZ-safe). Verified
+  node-pg returns DATE as a Date object here (no `setTypeParser`).
+- **Email injection** (`auth.js` 417/527): `full_name` interpolated unescaped into two
+  confirmation emails — wrapped in the `escapeHtml` the rest of the file already uses.
+
+**AuthZ / permission tiers** (custom admin roles could bypass granular perms)
+- QBO mutation/action routes now require `manage_integrations` (only `/push-payroll`
+  did); read-only lookup GETs left as-is.
+- Project budget/expense **writes** now require `manage_projects`
+  (`requireProjectFinancialWrite`) — the old gate accepted view-only `view_projects`.
+- Company chat gated on `view_company_chat` / `send_company_chat` (was `requireAuth`
+  only, ignoring those perms).
+- Worker wages: `/workers` list nulls `hourly_rate` for admins without
+  `view_worker_wages`; `/workers/:id/entries` (full pay statement) now requires it.
+
+**Resilience / idempotency**
+- **QBO double-send**: threaded Intuit's `requestid` idempotency key through
+  `createBill`/`createPurchase`/`pushTimeActivity`/`createInvoice` (deterministic per
+  source row/range), so a double-click dedupes at Intuit. **Judgment:** chose this over
+  an advisory lock — the lock needs `pool.connect` (not in the route-test mocks) and
+  would break the strict `pool.query` call-count assertions, and can't be verified
+  without a real DB. `requestid` mirrors the existing `push-payroll` pattern and is
+  test-assertable.
+- **QBO token-refresh race**: concurrent refreshes both send the rotating refresh
+  token; the first invalidates it, the second's `invalid_grant` then **disconnected the
+  company**. Added a per-company in-flight-promise coalescer (single-process guard —
+  matches the Render deployment; multi-instance would need a DB lock).
+- **Cron jobs**: per-company `try/catch` in equipmentMaintenance / inactiveWorkers /
+  scheduledReports so one company's error can't abort the batch — and, more importantly,
+  can't escape to `runJob`, whose whole-job retry re-alerts every company already
+  processed this run.
+
+### Backed out (my mistake)
+- I briefly gated `/api/office` + `/api/recordings` on `requirePlanToolsAddon` to
+  match `/api/jumpstart`/`takeoffs`/`live`, assuming they were the same class of
+  feature. They aren't: `requirePlanToolsAddon` only unlocks on
+  `addon_takeoff`/`addon_planroom`/`addon_roof` (the **Plan Room / takeoff family**).
+  jumpstart belongs there (it's a first-draft *takeoff*); the Office AI tools and
+  meeting recordings don't — gating them there would force a Takeoff-add-on purchase to
+  use an unrelated summarizer. **Reverted** — they stay `requirePlan('business')` +
+  aiGate metering, as before. David caught it.
+
+### Filed, not forgotten
+- Equipment-maintenance alert still **re-fires daily** while an item stays overdue
+  (no send-once-until-serviced stamp — that needs a schema column; the per-company
+  try/catch fix here only stops the retry-resend). Filed in BACKLOG as a decision.

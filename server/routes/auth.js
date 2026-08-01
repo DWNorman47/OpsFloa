@@ -414,7 +414,7 @@ router.post('/register', authLimiter, async (req, res) => {
       html: `
         <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
           <h2 style="color:#1a56db;margin-bottom:8px">Confirm your email</h2>
-          <p style="color:#444;margin-bottom:24px">Hi ${full_name}, click below to confirm your email and activate your OpsFloa account.</p>
+          <p style="color:#444;margin-bottom:24px">Hi ${escapeHtml(full_name)}, click below to confirm your email and activate your OpsFloa account.</p>
           <a href="${confirmUrl}" style="display:inline-block;background:#1a56db;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700">Confirm email</a>
           <p style="color:#999;font-size:13px;margin-top:24px">This link expires in 24 hours.</p>
         </div>
@@ -524,7 +524,7 @@ router.post('/resend-confirmation', async (req, res) => {
         html: `
           <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
             <h2 style="color:#1a56db;margin-bottom:8px">Confirm your email</h2>
-            <p style="color:#444;margin-bottom:24px">Hi ${user.full_name}, here's a fresh confirmation link.</p>
+            <p style="color:#444;margin-bottom:24px">Hi ${escapeHtml(user.full_name)}, here's a fresh confirmation link.</p>
             <a href="${confirmUrl}" style="display:inline-block;background:#1a56db;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700">Confirm email</a>
             <p style="color:#999;font-size:13px;margin-top:24px">This link expires in 24 hours.</p>
           </div>

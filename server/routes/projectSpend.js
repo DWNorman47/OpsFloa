@@ -12,7 +12,7 @@
 const router = require('express').Router();
 const pool   = require('../db');
 const { requireAuth } = require('../middleware/auth');
-const { requireProjectFinancialAccess } = require('../middleware/financialAccess');
+const { requireProjectFinancialAccess, requireProjectFinancialWrite } = require('../middleware/financialAccess');
 const { logAudit } = require('../auditLog');
 const { MONEY_CATEGORIES } = require('../constants/projectMoneyEnums');
 const { loadSettings, laborCostCents, LABOR_ENTRY_COLUMNS } = require('../utils/paidHours');
@@ -230,7 +230,7 @@ router.get('/projects/:id/expenses', requireAuth, requireProjectFinancialAccess,
   }
 });
 
-router.post('/projects/:id/expenses', requireAuth, requireProjectFinancialAccess, async (req, res) => {
+router.post('/projects/:id/expenses', requireAuth, requireProjectFinancialWrite, async (req, res) => {
   const companyId = req.user.company_id;
   const { description, vendor, paid_date, receipt_url, notes } = req.body;
   const category = req.body.category;
@@ -274,7 +274,7 @@ router.post('/projects/:id/expenses', requireAuth, requireProjectFinancialAccess
   }
 });
 
-router.delete('/projects/:projectId/expenses/:id', requireAuth, requireProjectFinancialAccess, async (req, res) => {
+router.delete('/projects/:projectId/expenses/:id', requireAuth, requireProjectFinancialWrite, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const r = await pool.query(

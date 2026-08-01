@@ -5,10 +5,13 @@
 const router = require('express').Router();
 const pool   = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { requireCommercialAccess } = require('../middleware/commercialAccess');
 const { MONEY_CATEGORIES } = require('../constants/projectMoneyEnums');
 
+// The catalog is the estimate-line picker and exposes supplier cost / sell price /
+// markup, so it takes the same gate as estimates — not every authenticated worker.
 // GET /catalog/items — typeahead-friendly search.
-router.get('/catalog/items', requireAuth, async (req, res) => {
+router.get('/catalog/items', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   const q   = req.query.q?.toString().trim();
   const tag = req.query.tag?.toString().trim();
@@ -42,7 +45,7 @@ router.get('/catalog/items', requireAuth, async (req, res) => {
 });
 
 // GET /catalog/tags — distinct tag list for the picker chips.
-router.get('/catalog/tags', requireAuth, async (req, res) => {
+router.get('/catalog/tags', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const r = await pool.query(
@@ -63,7 +66,7 @@ router.get('/catalog/tags', requireAuth, async (req, res) => {
 // shape (description, unit, unit_cost_cents derived from sell_price_cents
 // or markup, category from default_estimate_category). Saves the client
 // from doing the markup math itself.
-router.get('/catalog/items/:id/estimate-line', requireAuth, async (req, res) => {
+router.get('/catalog/items/:id/estimate-line', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const r = await pool.query(

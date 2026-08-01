@@ -52,7 +52,22 @@ async function exchangeCode(code) {
   return r.data;
 }
 
-async function refreshAccessToken(companyId) {
+// Intuit rotates the refresh token on every refresh, so two concurrent refreshes for the
+// same company are fatal: the first invalidates the token the second is about to send, and
+// the second's invalid_grant then marks the company disconnected. Coalesce concurrent
+// refreshes per company into a single in-flight promise (single-process guard — matches the
+// current deployment; a DB lock would be needed for multi-instance).
+const inFlightRefresh = new Map();
+function refreshAccessToken(companyId) {
+  const existing = inFlightRefresh.get(companyId);
+  if (existing) return existing;
+  const p = doRefreshAccessToken(companyId);
+  inFlightRefresh.set(companyId, p);
+  // Clear the slot once settled so the next expiry triggers a fresh refresh.
+  return p.finally(() => inFlightRefresh.delete(companyId));
+}
+
+async function doRefreshAccessToken(companyId) {
   const result = await pool.query('SELECT qbo_refresh_token FROM companies WHERE id = $1', [companyId]);
   const refreshToken = decrypt(result.rows[0]?.qbo_refresh_token);
   if (!refreshToken) throw new Error('QuickBooks not connected');
@@ -134,15 +149,20 @@ async function qboGet(companyId, path) {
   }
 }
 
-async function qboPost(companyId, path, body) {
+async function qboPost(companyId, path, body, requestId) {
   const token = await getAccessToken(companyId);
   const realmResult = await pool.query('SELECT qbo_realm_id FROM companies WHERE id = $1', [companyId]);
   const realmId = decrypt(realmResult.rows[0].qbo_realm_id);
 
+  // Intuit dedupes creates that carry the same requestid, so a double-submit (or our own
+  // 429 retry) returns the original entity instead of a duplicate. Paths already end in
+  // ?minorversion=..., so append with &.
+  const fullPath = requestId ? `${path}&requestid=${encodeURIComponent(String(requestId).slice(0, 50))}` : path;
+
   let lastErr;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const r = await axios.post(`${QBO_BASE}/v3/company/${realmId}${path}`, body, {
+      const r = await axios.post(`${QBO_BASE}/v3/company/${realmId}${fullPath}`, body, {
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
       });
       const tid = r.headers['intuit_tid'];
@@ -190,7 +210,7 @@ async function listItems(companyId) {
   return data.QueryResponse?.Item || [];
 }
 
-async function createInvoice(companyId, { customerId, itemId, amount, description, docNumber, txnDate }) {
+async function createInvoice(companyId, { customerId, itemId, amount, description, docNumber, txnDate, requestId }) {
   const body = {
     CustomerRef: { value: String(customerId) },
     TxnDate: txnDate || new Date().toLocaleDateString('en-CA'),
@@ -208,7 +228,7 @@ async function createInvoice(companyId, { customerId, itemId, amount, descriptio
       },
     ],
   };
-  const data = await qboPost(companyId, '/invoice?minorversion=65', body);
+  const data = await qboPost(companyId, '/invoice?minorversion=65', body, requestId);
   return data.Invoice;
 }
 
@@ -217,7 +237,7 @@ async function listAccounts(companyId) {
   return data.QueryResponse?.Account || [];
 }
 
-async function createPurchase(companyId, { bankAccountId, expenseAccountId, vendorId, amount, description, txnDate }) {
+async function createPurchase(companyId, { bankAccountId, expenseAccountId, vendorId, amount, description, txnDate, requestId }) {
   const body = {
     PaymentType: 'Cash',
     AccountRef: { value: String(bankAccountId) },
@@ -234,7 +254,7 @@ async function createPurchase(companyId, { bankAccountId, expenseAccountId, vend
     ],
   };
   if (vendorId) body.EntityRef = { value: String(vendorId), type: 'Vendor' };
-  const data = await qboPost(companyId, '/purchase?minorversion=65', body);
+  const data = await qboPost(companyId, '/purchase?minorversion=65', body, requestId);
   return data.Purchase;
 }
 
@@ -247,7 +267,7 @@ async function createPurchase(companyId, { bankAccountId, expenseAccountId, vend
  *   | { type: 'account', accountId, amount,                 description, customerId?, classId? }
  * >
  */
-async function createBill(companyId, { vendorId, txnDate, dueDate, memo, lines }) {
+async function createBill(companyId, { vendorId, txnDate, dueDate, memo, lines, requestId }) {
   const qboLines = lines.map(l => {
     if (l.type === 'item') {
       const amount = parseFloat((l.qty * l.unitPrice).toFixed(2));
@@ -282,11 +302,11 @@ async function createBill(companyId, { vendorId, txnDate, dueDate, memo, lines }
     ...(memo ? { PrivateNote: memo } : {}),
     Line: qboLines,
   };
-  const data = await qboPost(companyId, '/bill?minorversion=65', body);
+  const data = await qboPost(companyId, '/bill?minorversion=65', body, requestId);
   return data.Bill;
 }
 
-async function pushTimeActivity(companyId, { employeeId, vendorId, customerId, classId, workDate, hours, description }) {
+async function pushTimeActivity(companyId, { employeeId, vendorId, customerId, classId, workDate, hours, description, requestId }) {
   const useVendor = !!vendorId;
   const body = {
     NameOf: useVendor ? 'Vendor' : 'Employee',
@@ -300,7 +320,7 @@ async function pushTimeActivity(companyId, { employeeId, vendorId, customerId, c
     Minutes: Math.round((hours % 1) * 60),
     Description: description || '',
   };
-  const data = await qboPost(companyId, '/timeactivity?minorversion=65', body);
+  const data = await qboPost(companyId, '/timeactivity?minorversion=65', body, requestId);
   return data.TimeActivity;
 }
 
