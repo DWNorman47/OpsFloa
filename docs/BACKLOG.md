@@ -273,6 +273,15 @@ that holds the exhaustive detail.
 
 ## 🚀 Ideas — new features or tools
 
+- **Standalone AI-tools SKU (Office AI + recordings).** (2026-07-31) Sell the Office
+  AI tools (summarizer, doc Q&A, contract red-flag scanner, email drafter) and meeting
+  recordings as their own add-on, buyable **without** Business or Plan Room. For now
+  they stay tied to Business (`requirePlan('business')` on `/api/office` +
+  `/api/recordings`). The path is clean when you want it: the AI quota is already flat
+  (300/mo per company, plan-independent, `OFFICE_AI_MONTHLY_LIMIT`) and the Tools page
+  shows on the per-company `module_tools` toggle, so a new SKU is just an `addon_ai`
+  column + `requireAiToolsAddon` middleware + a Stripe price + a BillingPanel card —
+  no metering rework. (Decided 2026-07-31: leave on Business for now, likely SKU later.)
 - **Plan Room: Wall Dig takeoff (sitework pack Q4, deferred).** Retaining-wall /
   footing excavation — a trench swept along a traced line, net export vs. reused
   backfill after concrete + aggregate fill the hole; the ▚ Wall variant reads
