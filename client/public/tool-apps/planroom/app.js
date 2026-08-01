@@ -3938,6 +3938,17 @@ function applyTakeoffGate() {
 let STORM_ON = false; // cached storm entitlement (refreshed in applyTakeoffGate); gates the M4 netting outputs
 let ROOF_ON = false;  // cached roof-measurement entitlement (refreshed in applyTakeoffGate)
 
+// Entitlements are bridged from the main app via localStorage (tc_addons) and can
+// arrive or change AFTER this tool loads — a slow /auth/me on login, or an add-on
+// bought in the other tab. Re-apply the gate when that key changes or the tab regains
+// focus, so Takeoff doesn't stay falsely locked until a manual reload.
+window.addEventListener('storage', e => {
+  if (e.key === 'tc_addons' || e.key === null) applyTakeoffGate();
+});
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) applyTakeoffGate();
+});
+
 /* trade mode: which takeoff trade's tools/panels/bid are in play */
 const TRADE_TOOLS = {
   roofing: ['plane', 'redge', 'ritem'],
