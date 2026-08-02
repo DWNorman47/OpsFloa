@@ -5622,7 +5622,6 @@ function parseEarthworkSpots(items) {
   let ambiguous = 0;
   const seen = {};
   for (const r of runs) {
-    if (BAD.test(r.str)) continue;
     const m = r.str.match(ELEV);
     if (!m) continue;
     const elev = parseFloat(m[1]);
@@ -5633,8 +5632,11 @@ function parseEarthworkSpots(items) {
     const paren = /\(\s*\d{2,4}\.\d{1,2}\s*\)/.test(r.str);
     const self = r.str.match(TAG);
     const tag = (self && self[1]) || tagNear(r.x, r.y);
-    if (paren) spots.push({ elev, surface: 'existing', tag: tag || null, at: { x: r.x, y: r.y } });
-    else if (tag && GRADE[tag]) spots.push({ elev, surface: GRADE[tag], tag, at: { x: r.x, y: r.y } });
+    // A grade signal (parens or an FS/FG/EG tag) wins — keep it even if a slope like
+    // "8.0%" happens to share the run. Only untagged numbers get the bearing/dim/slope
+    // filter, so "185.00"/"1.0%"/"100.14'" aren't mistaken for grades.
+    if (paren || (tag && GRADE[tag])) spots.push({ elev, surface: paren ? 'existing' : GRADE[tag], tag: tag || null, at: { x: r.x, y: r.y } });
+    else if (BAD.test(r.str)) continue;
     else if (tag && STRUCT[tag]) skipped.push({ elev, tag, at: { x: r.x, y: r.y } });
     else ambiguous++;
   }
@@ -5657,7 +5659,18 @@ async function runEarthworkExtract() {
     });
     const { spots, skipped, ambiguous } = parseEarthworkSpots(items);
     if (!spots.length) {
-      setMsg('No tagged spot elevations found on this sheet (looked for FS/FG/EG grades and (parens)).');
+      // Diagnose WHY nothing parsed: is there grade text in the drawing at all, or is
+      // this sheet's annotation vector/SHX graphics (not selectable text)? The notes and
+      // title block are usually real text and show up even when the plan labels don't.
+      const nonEmpty = items.filter(it => (it.str || '').trim());
+      const planArea = nonEmpty.filter(it => it.x < vp.width * 0.62); // left ~60% = the drawing
+      const sample = planArea.slice(0, 14).map(it => it.str).join(' | ');
+      try { console.log('[JumpStart earthwork] items:', items.length, 'nonEmpty:', nonEmpty.length, 'planArea:', planArea.length, planArea.slice(0, 100).map(it => it.str)); } catch (_) { /* no console */ }
+      const diag = planArea.length < 3
+        ? `The drawing area has almost no selectable text (${nonEmpty.length} text items total — mostly the notes/title block). This sheet's spot-grade labels are vector/SHX graphics, not text, so they can't be read from the PDF. Reading them would need OCR or geometry, not the text layer.`
+        : `Found ${planArea.length} text runs in the drawing but none matched a tagged grade. Sample of what's there: ${sample}`;
+      setMsg('Earthwork import: ' + diag);
+      alert('Earthwork spot import — nothing placed\n\n' + diag + '\n\nIf you can, also copy the browser console output (F12) — it lists the raw text the PDF exposed, which pins down the fix.');
       return;
     }
     const now = Date.now();
