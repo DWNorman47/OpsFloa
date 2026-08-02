@@ -5582,7 +5582,9 @@ async function pageHasTextLayer(p) {
 async function updateJumpStartVisibility() {
   const btn = $('btnJumpStart');
   if (!btn) return;
-  btn.hidden = !(await pageHasTextLayer(state.page));
+  // Parked for now — AI Jump Start stays hidden. To re-enable (only on pages with a
+  // readable text layer), restore: btn.hidden = !(await pageHasTextLayer(state.page));
+  btn.hidden = true;
 }
 
 // ── Earthwork: exact spot grades from the PDF text layer (deterministic) ─────────
