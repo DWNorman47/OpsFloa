@@ -23,6 +23,43 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-01 — AI Jump Start: deterministic earthwork spot import; button gated to vector PDFs
+
+Follow-up to the trade-aware rework. David ran the AI earthwork pass on a real
+grading sheet and got ~40 spot-elevation dots that were meaningless — different
+elevation *types* (FF floor, TG grate, FL flowline, FS grade) lumped together, all on
+one surface, no cut/fill, some misread. The realization: the tool was **photographing
+a vector PDF that already contains the exact data.** pdf.js is loaded, the doc wrapper
+keeps `raw` (the live PDF), and `renderPage()` was flattening it to a PNG for the
+vision model — throwing away selectable text at exact coordinates.
+
+- **Earthwork now reads the PDF text layer, not a picture** (`planroom/app.js`
+  `parseEarthworkSpots` + `runEarthworkExtract`). `page.getTextContent()` → every spot
+  grade with its exact position; `viewport.convertToViewportPoint` maps it into the
+  markup space; placed as `espot` markups. Deterministic — no server, no AI, no
+  metering, instant.
+- **Classifies from the drawing's own conventions** — `(parens)`/`EG` = existing,
+  `FS`/`FG`/`GB`/`TP` = proposed; `TG`/`FL`/`FF`/`LIP`… = structure/floor → reported
+  but NOT placed (not ground grades). Requires a disposition signal, so bearings/
+  dimensions/slopes ("185.00", "1.0%", "100.14'", "FF = 312.50") are never mistaken for
+  grades; untagged numbers are ignored, not guessed.
+- **Button gated to capability**: hidden by default; JS reveals it only on a page with
+  a real text layer (vector PDF). Scans/raster → no button (David's call: better
+  nothing than noise). Cache-bust v=83. Other trades still use the vision pass on
+  vector PDFs.
+
+Why this answers "why can you read it but the tool can't": comprehension was never the
+gap — precise coordinate *emission* is (weak for every vision model, me included). For
+a vector PDF you don't need the model to localize; the coordinates are in the file, so
+read them.
+
+Tests: `earthworkSpots.test.js` (tag/paren classification, structure-skip, bearing/dim
+exclusion, dedup, junk-safe) via the lift pattern. Server 1303 green; client build green.
+
+Limits: vector PDFs only. Cut/fill still needs both surfaces + contours — this seeds
+exact spot grades; contour vectorization (`getOperatorList`) is a possible next step.
+The earthwork path is now exact, so it carries no live-API caveat.
+
 ## 2026-08-01 — AI Jump Start: trade-aware + a real earthwork pass; re-enabled
 
 David flagged that Jump Start, run in the Earthwork (cut/fill) trade on an

@@ -1717,6 +1717,7 @@ async function setPage(p, { fit = false } = {}) {
   // (self-guards to a no-op when the panel is hidden).
   renderDirtPanel();
   updatePageUI();
+  updateJumpStartVisibility(); // show the button only on pages with a readable text layer
   await ensurePage(state.page);
   if (fit) { const b = await baseSize(state.page); vp.fitTo(b.width, b.height); }
   vp.requestDraw();
@@ -1803,7 +1804,7 @@ async function openFromBytes(buf, name, type, { persist = true } = {}) {
   }
   state.docName = name;
   state.docType = type || null;
-  pageCanvas.clear(); pageBase.clear(); inflight.clear();
+  pageCanvas.clear(); pageBase.clear(); inflight.clear(); pageHasText.clear();
   els.dropHint.classList.add('hidden');
   document.body.classList.add('has-doc');
   buildThumbs();
@@ -5121,7 +5122,7 @@ function resetDocState() {
   selectedId = null;
   cancelOverlay();
   undoStack.length = 0; redoStack.length = 0; updateUndoButtons();
-  pageCanvas.clear(); pageBase.clear(); inflight.clear();
+  pageCanvas.clear(); pageBase.clear(); inflight.clear(); pageHasText.clear();
   els.thumbRail.innerHTML = '';
   els.dropHint.classList.remove('hidden');
   document.body.classList.remove('has-doc');
@@ -5560,6 +5561,139 @@ async function apiEstimate(path, opts = {}) {
 // draft (counts, rough regions) as markups the estimator reviews. Everything
 // lands flagged ai:true in a distinct colour — a jump start, never authoritative.
 
+// ── Text-layer gate ────────────────────────────────────────────────────────────
+// Jump Start is only worth showing when it can actually deliver: a vector PDF with
+// a real text layer. On a scanned/raster page there's nothing to read reliably, so
+// the button stays hidden (set that way in index.html) rather than producing noise.
+const pageHasText = new Map(); // pageNum -> bool (cleared when a new doc loads)
+async function pageHasTextLayer(p) {
+  const pg = p || state.page;
+  if (!state.doc || state.doc.kind !== 'pdf' || !state.doc.raw) return false;
+  if (pageHasText.has(pg)) return pageHasText.get(pg);
+  let has = false;
+  try {
+    const page = await state.doc.raw.getPage(pg);
+    const tc = await page.getTextContent();
+    has = (tc.items || []).some(it => (it.str || '').trim().length > 0);
+  } catch (_) { has = false; }
+  pageHasText.set(pg, has);
+  return has;
+}
+async function updateJumpStartVisibility() {
+  const btn = $('btnJumpStart');
+  if (!btn) return;
+  btn.hidden = !(await pageHasTextLayer(state.page));
+}
+
+// ── Earthwork: exact spot grades from the PDF text layer (deterministic) ─────────
+// A vector grading PDF carries every spot elevation as real text at an exact
+// position — no vision model can match reading it straight from the file. `items`
+// are text runs in base-px page space: [{ str, x, y }]. Pure + self-contained so it
+// is unit-tested by lifting (tests/earthworkSpots.test.js).
+//
+// Only elevations with a disposition SIGNAL are placed — (parens)/EG = existing,
+// FS/FG/GB/TP = proposed — so bearings, dimensions and slopes ("185.00", "1.0%",
+// "100.14'") aren't mistaken for grades. Structure/floor elevations (TG/FL/FF/LIP…)
+// are reported but skipped: they aren't a ground surface for cut/fill.
+function parseEarthworkSpots(items) {
+  const ELEV = /\(?\b(\d{2,4}\.\d{1,2})\b\)?/;
+  const TAG = /\b(FFE|FS|FG|GB|TP|EG|EX|ME|TG|FL|LIP|HP|TC|TW|BW|INV|RIM|FF)\b/;
+  const GRADE = { FS: 'proposed', FG: 'proposed', GB: 'proposed', TP: 'proposed', EG: 'existing', EX: 'existing', ME: 'existing' };
+  const STRUCT = { FFE: 1, FF: 1, TG: 1, FL: 1, LIP: 1, HP: 1, TC: 1, TW: 1, BW: 1, INV: 1, RIM: 1 };
+  const BAD = /[%°"'=]|\bdia\b/i; // slopes, bearings, feet/inch dims, scale, drywell size
+
+  const runs = (Array.isArray(items) ? items : [])
+    .map(it => ({ str: ((it && it.str) || '').trim(), x: Number(it && it.x), y: Number(it && it.y) }))
+    .filter(it => it.str && Number.isFinite(it.x) && Number.isFinite(it.y));
+
+  const RADIUS2 = 50 * 50; // base px; a tag sits within ~a line of its number
+  const tagNear = (x, y) => {
+    let best = null, bd = RADIUS2;
+    for (const r of runs) {
+      const m = r.str.match(TAG);
+      if (!m) continue;
+      const dx = r.x - x, dy = r.y - y, d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = m[1]; }
+    }
+    return best;
+  };
+
+  const spots = [], skipped = [];
+  let ambiguous = 0;
+  const seen = {};
+  for (const r of runs) {
+    if (BAD.test(r.str)) continue;
+    const m = r.str.match(ELEV);
+    if (!m) continue;
+    const elev = parseFloat(m[1]);
+    if (!Number.isFinite(elev)) continue;
+    const key = Math.round(r.x) + ',' + Math.round(r.y) + ',' + m[1];
+    if (seen[key]) continue;
+    seen[key] = 1;
+    const paren = /\(\s*\d{2,4}\.\d{1,2}\s*\)/.test(r.str);
+    const self = r.str.match(TAG);
+    const tag = (self && self[1]) || tagNear(r.x, r.y);
+    if (paren) spots.push({ elev, surface: 'existing', tag: tag || null, at: { x: r.x, y: r.y } });
+    else if (tag && GRADE[tag]) spots.push({ elev, surface: GRADE[tag], tag, at: { x: r.x, y: r.y } });
+    else if (tag && STRUCT[tag]) skipped.push({ elev, tag, at: { x: r.x, y: r.y } });
+    else ambiguous++;
+  }
+  return { spots, skipped, ambiguous };
+}
+
+// Pull spot grades from the current page's PDF text layer and place them as espot
+// markups. Deterministic — no server, no AI, no metering.
+async function runEarthworkExtract() {
+  const btn = $('btnJumpStart');
+  try {
+    if (btn) btn.disabled = true;
+    setMsg('Reading spot elevations from the PDF…');
+    const page = await state.doc.raw.getPage(state.page);
+    const vp = page.getViewport({ scale: 1 }); // base-px space (matches baseSize / markup coords)
+    const tc = await page.getTextContent();
+    const items = (tc.items || []).map(it => {
+      const p = vp.convertToViewportPoint(it.transform[4], it.transform[5]); // PDF user space → base px (y-flipped)
+      return { str: it.str, x: p[0], y: p[1] };
+    });
+    const { spots, skipped, ambiguous } = parseEarthworkSpots(items);
+    if (!spots.length) {
+      setMsg('No tagged spot elevations found on this sheet (looked for FS/FG/EG grades and (parens)).');
+      return;
+    }
+    const now = Date.now();
+    const rid = () => 'ai' + Math.random().toString(36).slice(2, 10);
+    const marks = spots.map(s => ({
+      id: rid(), page: state.page, kind: 'espot', color: '#9333ea', width: 2,
+      pts: [{ x: s.at.x, y: s.at.y }], elev: s.elev,
+      surface: s.surface === 'proposed' || s.surface === 'existing' ? s.surface : curSurface,
+      ai: true, extracted: true, aiConfidence: 'high', created: now,
+    }));
+    const prev = snapshot();
+    state.markups.push(...marks);
+    pushUndo(prev);
+    markupsChanged();
+    earthworkExtractSummary(spots, skipped, ambiguous);
+  } catch (e) {
+    setMsg('Spot extraction failed: ' + (e && e.message ? e.message : e));
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function earthworkExtractSummary(spots, skipped, ambiguous) {
+  const by = { existing: 0, proposed: 0, unknown: 0 };
+  for (const s of spots) by[s.surface] = (by[s.surface] || 0) + 1;
+  const lines = [
+    `Imported ${spots.length} spot elevation${spots.length === 1 ? '' : 's'} straight from the PDF text — exact values and positions, not an AI guess.`,
+    `Surfaces: ${by.proposed} proposed (FS/FG), ${by.existing} existing ((parens)/EG)${by.unknown ? `, ${by.unknown} untagged (placed on the ${curSurface} surface — re-tag as needed)` : ''}.`,
+    skipped.length ? `Skipped ${skipped.length} structure/floor elevation${skipped.length === 1 ? '' : 's'} (TG/FL/FF/LIP…) — not ground grades.` : '',
+    ambiguous ? `Ignored ${ambiguous} untagged number${ambiguous === 1 ? '' : 's'} that couldn't be confirmed as a grade.` : '',
+    `Cut/fill still needs BOTH surfaces and the contours — this seeds the spot grades; set the other surface and trace contours, then run the cut/fill.`,
+  ].filter(Boolean);
+  setMsg(lines[0]);
+  alert('Earthwork spot import\n\n' + lines.join('\n\n'));
+}
+
 // Structured model result → Plan Room markups. Coordinates arrive NORMALIZED
 // [0,1] of the page image; dims is the page's base-px size, so normalized × dims
 // = base px (the markup coordinate space). Pure, so it's unit-tested by lifting.
@@ -5617,6 +5751,9 @@ async function apiJump(path, opts = {}) {
 
 async function runJumpStart() {
   if (!state.doc || !state.page) { setMsg('Open a plan first.'); return; }
+  // Earthwork reads exact spot grades from the PDF's text layer — deterministic, no
+  // AI. (The button only shows when a text layer exists, so raw is available here.)
+  if (state.trade === 'dirt') return runEarthworkExtract();
   const btn = $('btnJumpStart');
   // A/B knob: set localStorage.jumpstart_provider = 'gemini' to compare providers
   // on the same sheet. Absent → the server default (Anthropic/Opus).
