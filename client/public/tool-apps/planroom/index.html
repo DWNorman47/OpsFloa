@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plan Room</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="styles.css?v=81">
+<link rel="stylesheet" href="styles.css?v=86">
 <script>
 (() => {
   try {
@@ -31,8 +31,10 @@
 
   <div class="tb-group needs-doc">
     <button id="btnExport" class="btn" title="Download this project as one self-contained file — plans and markups embedded — so you can hand it to anyone">💾<span class="btn-label"> Save</span></button>
-    <!-- AI Jump Start hidden for now — kept in the DOM so its click wiring binds; re-enable by removing `hidden`. -->
-    <button id="btnJumpStart" class="btn" hidden title="AI Jump Start — draft this page's takeoff with AI (counts, rough regions, reads the scale &amp; labels). A first draft to review, not final.">✨<span class="btn-label"> AI Jump Start</span></button>
+    <!-- AI Jump Start — hidden by default; JS reveals it only on pages with a readable
+         text layer (vector PDF). Earthwork reads exact spot grades from that text layer;
+         other trades use the vision model. A draft to review, never final. -->
+    <button id="btnJumpStart" class="btn" hidden title="AI Jump Start — draft this page's takeoff for the selected trade. In Earthwork it imports exact spot elevations from the PDF; other trades use AI (counts, rough regions). A first draft to review, not final.">✨<span class="btn-label"> AI Jump Start</span></button>
     <button id="btnMenuToggle" class="btn tb-menu-toggle" title="Show / hide the rest of the toolbar" aria-expanded="true">☰</button>
   </div>
   <input type="file" id="fileImport" accept="application/json" hidden>
@@ -839,6 +841,6 @@
 </div>
 
 <script src="../shared/update-check.js?v=1"></script>
-<script type="module" src="app.js?v=81"></script>
+<script type="module" src="app.js?v=86"></script>
 </body>
 </html>

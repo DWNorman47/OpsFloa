@@ -23,6 +23,197 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-01 — AI Jump Start earthwork: contour geometry extraction (iteration 1)
+
+The spot grades on David's grading sheets are vector/SHX line-work, not text —
+confirmed by the diagnostic: the drawing's text layer held the contour integers
+303–337 and the notes/title block, but not one of the ~40 FS/TG decimal spots. So
+spot extraction can't work on these sheets. David chose to go after the **contours**
+instead — the better earthwork input anyway, and the lines ARE vector geometry with
+text elevation labels.
+
+- `extractPdfPolylines` (pure, unit-tested): walks pdf.js `getOperatorList()` with a
+  CTM stack (save/restore/transform/constructPath) and returns every polyline in
+  base-px page space. Béziers approximated by endpoints.
+- `runContourExtract` (dirt trade): keeps sheet-spanning polylines as candidate
+  contours, labels each from the nearest integer text (305, 312…), places them as
+  `contour` markups on the current surface; also grabs any text spot grades. Loose
+  classification on purpose — capped at 800, diagnosed to the console
+  (polylines/candidates/labeled), framed to the user as a first pass to eyeball and prune.
+
+ITERATION 1 — untestable here (needs the browser + the real PDF). The geometry math
+IS unit-tested (transform composition, save/restore, rectangle, curve endpoint), but
+whether the length filter cleanly separates contours from buildings/dimensions/the
+vector spot-text is unknown until David runs it. Expect to tune the filter next.
+Cache-bust v=85. pdf.js is 3.11.174 (exposes OPS + getOperatorList).
+
+## 2026-08-01 — AI Jump Start: deterministic earthwork spot import; button gated to vector PDFs
+
+Follow-up to the trade-aware rework. David ran the AI earthwork pass on a real
+grading sheet and got ~40 spot-elevation dots that were meaningless — different
+elevation *types* (FF floor, TG grate, FL flowline, FS grade) lumped together, all on
+one surface, no cut/fill, some misread. The realization: the tool was **photographing
+a vector PDF that already contains the exact data.** pdf.js is loaded, the doc wrapper
+keeps `raw` (the live PDF), and `renderPage()` was flattening it to a PNG for the
+vision model — throwing away selectable text at exact coordinates.
+
+- **Earthwork now reads the PDF text layer, not a picture** (`planroom/app.js`
+  `parseEarthworkSpots` + `runEarthworkExtract`). `page.getTextContent()` → every spot
+  grade with its exact position; `viewport.convertToViewportPoint` maps it into the
+  markup space; placed as `espot` markups. Deterministic — no server, no AI, no
+  metering, instant.
+- **Classifies from the drawing's own conventions** — `(parens)`/`EG` = existing,
+  `FS`/`FG`/`GB`/`TP` = proposed; `TG`/`FL`/`FF`/`LIP`… = structure/floor → reported
+  but NOT placed (not ground grades). Requires a disposition signal, so bearings/
+  dimensions/slopes ("185.00", "1.0%", "100.14'", "FF = 312.50") are never mistaken for
+  grades; untagged numbers are ignored, not guessed.
+- **Button gated to capability**: hidden by default; JS reveals it only on a page with
+  a real text layer (vector PDF). Scans/raster → no button (David's call: better
+  nothing than noise). Cache-bust v=83. Other trades still use the vision pass on
+  vector PDFs.
+
+Why this answers "why can you read it but the tool can't": comprehension was never the
+gap — precise coordinate *emission* is (weak for every vision model, me included). For
+a vector PDF you don't need the model to localize; the coordinates are in the file, so
+read them.
+
+Tests: `earthworkSpots.test.js` (tag/paren classification, structure-skip, bearing/dim
+exclusion, dedup, junk-safe) via the lift pattern. Server 1303 green; client build green.
+
+Limits: vector PDFs only. Cut/fill still needs both surfaces + contours — this seeds
+exact spot grades; contour vectorization (`getOperatorList`) is a possible next step.
+The earthwork path is now exact, so it carries no live-API caveat.
+
+## 2026-08-01 — AI Jump Start: trade-aware + a real earthwork pass; re-enabled
+
+David flagged that Jump Start, run in the Earthwork (cut/fill) trade on an
+existing-conditions sheet, came back as a tree count + a landscape blob — useless.
+Root cause: the button was **trade-blind**. The client sent only the page image; the
+server ran one static, generic "counts + rough regions + labels" prompt for every
+trade — and that prompt explicitly forbids contours/precise geometry, i.e. the
+essence of cut/fill. So it did a generic scan and mirrored the sheet's own callouts.
+(The button had been `hidden` since it first disappointed.)
+
+Reworked end to end:
+- **Trade-aware prompting** (`server/routes/jumpstart.js`): the client now sends
+  `state.trade`; the server validates it and appends a per-trade focus block so the
+  model targets that trade's quantities (roofing planes, striping stalls, landscape
+  counts, …) instead of a generic scan. Also tightened the base rules — keep opposite
+  dispositions in separate groups (no more "removed/protected" in one bucket), don't
+  double-represent an item as both a count and a region.
+- **Earthwork honesty** (M2): a new `earthwork` verdict — existing vs proposed
+  contours, `cutFillComputable` (forced false unless a proposed surface was actually
+  seen), and a reason. On an existing-conditions sheet the summary now leads with
+  "cut/fill can't be computed from this sheet — run me on the grading/proposed sheet"
+  instead of drawing a blob.
+- **Real dirt pass** (M3): in the dirt trade the model reads **spot elevations**
+  (value + best-guess existing/proposed surface) → placed as `espot` markups, and a
+  limits-of-disturbance region → an `ebound` boundary — both feed the manual cut/fill
+  flow. It does NOT trace contour polylines (unreliable on a raster) or invent
+  clearing blobs.
+- **Re-enabled the button** — removed `hidden` in `planroom/index.html`; cache-bust → v=82.
+
+Tests: extended `jumpstartParse.test.js` (spots + the proposed-required verdict) and
+`jumpstartToMarkups.test.js` (spots→espot, limits→ebound, non-dirt stays qarea).
+Server 1294 green; client build green.
+
+⚠️ **Reading quality is empirical and unverified here** — no vision-API key in this
+environment, so I could only test the plumbing and placement, not whether the model
+actually reads spot elevations / classifies surfaces well. That needs a real run on
+dev against a grading sheet; expect to tune the dirt prompt after seeing output.
+Contour-tracing → cut/fill *volumes* from a raster remains out of scope.
+
+## 2026-07-31 — Security & correctness audit — fixed everything
+
+Broad audit of the whole server, then fixed all confirmed findings. No schema
+changes (no migration), so `docs/db-enums.md` is untouched. Server: 1287 tests
+green (101 suites). Client: eslint clean, 288 tests, build OK. (Both suites flake
+under back-to-back runs on this box — jest worker `VirtualAlloc`/`spawn` OOM and
+esbuild "service was stopped"; both pass cleanly with `--maxWorkers=2` / vitest
+`--no-file-parallelism`. Not code failures.)
+
+**Tenant isolation / IDOR**
+- `timeEntries /:id/messages` (GET+POST): scoped the entry lookup to owner-or-admin
+  — a worker could read/post on a coworker's entry thread by enumerating the id.
+- `catalog/*`: added `requireCommercialAccess` — supplier cost / sell price / markup
+  were readable by any authenticated worker.
+- `booking /appointments`: non-admins are now scoped to their own assigned rows;
+  the full list leaked every client's name/email/phone/notes to any worker.
+- **Cross-tenant `project_id` on write** — validate belongs-to-company on
+  incidents, reimbursements (both POSTs), safetyChecklists, safetyTalks (POST+PATCH),
+  subReports (POST+PATCH), rfis (POST+PATCH), and admin `/clock-in`. Clock-in was the
+  real bug: a foreign `project_id` baked that project's `wage_type` into the entry
+  (corrupting pay). The rest only leaked a foreign project **name** via an unscoped
+  JOIN. **Judgment:** skipped `inspections` — its `project_id` is UUID while
+  `projects.id` is INTEGER, so the JOIN never matches (no leak) and the int-keyed
+  helper would throw on a UUID.
+
+**Correctness**
+- **RFI numbering**: admin `POST /projects/:id/rfis` numbered **per-project** but the
+  unique constraint is **per-company** (`uq_rfis_company_number`), so every 2nd+
+  project's first RFI (number 1) collided → 500. Switched to a company-wide atomic
+  inline subquery, matching the schema and the sibling `POST /rfis`. **Judgment:**
+  fixed the code, not the constraint — company-wide is the intended model (the unique
+  index, the constraint, and `rfis.js` all agree); loosening the constraint would let
+  the two create paths mint duplicate numbers.
+- **Daily reports**: POST's `ON CONFLICT DO UPDATE` let a worker silently overwrite a
+  coworker's report for the same project+date (PATCH enforced ownership, POST didn't)
+  → added an owner guard. PATCH deleted+reinserted all sub-tables unconditionally, so a
+  status-only PATCH wiped manpower/equipment/materials → now only touches a sub-table
+  when its array is actually sent. Both covered by new tests.
+- **OT alert week bucket** (`clock.js`, both switch + clock-out paths): used
+  `DATE_TRUNC('week')` (always Monday), ignoring company `week_start` — misfired the
+  weekly-OT *alert* for non-Monday weeks. Now buckets by `week_start` like the pay
+  engine. (Alert only; pay was already correct.)
+- **Shift push/inbox dates** (`shifts.js`): interpolated a node-pg `Date` raw →
+  "Thu Jul 30 2026 00:00:00 GMT…" in one spot and "Thu Jul 30" (no year) in three
+  others. Added `fmtShiftDate` → `YYYY-MM-DD` from local parts (TZ-safe). Verified
+  node-pg returns DATE as a Date object here (no `setTypeParser`).
+- **Email injection** (`auth.js` 417/527): `full_name` interpolated unescaped into two
+  confirmation emails — wrapped in the `escapeHtml` the rest of the file already uses.
+
+**AuthZ / permission tiers** (custom admin roles could bypass granular perms)
+- QBO mutation/action routes now require `manage_integrations` (only `/push-payroll`
+  did); read-only lookup GETs left as-is.
+- Project budget/expense **writes** now require `manage_projects`
+  (`requireProjectFinancialWrite`) — the old gate accepted view-only `view_projects`.
+- Company chat gated on `view_company_chat` / `send_company_chat` (was `requireAuth`
+  only, ignoring those perms).
+- Worker wages: `/workers` list nulls `hourly_rate` for admins without
+  `view_worker_wages`; `/workers/:id/entries` (full pay statement) now requires it.
+
+**Resilience / idempotency**
+- **QBO double-send**: threaded Intuit's `requestid` idempotency key through
+  `createBill`/`createPurchase`/`pushTimeActivity`/`createInvoice` (deterministic per
+  source row/range), so a double-click dedupes at Intuit. **Judgment:** chose this over
+  an advisory lock — the lock needs `pool.connect` (not in the route-test mocks) and
+  would break the strict `pool.query` call-count assertions, and can't be verified
+  without a real DB. `requestid` mirrors the existing `push-payroll` pattern and is
+  test-assertable.
+- **QBO token-refresh race**: concurrent refreshes both send the rotating refresh
+  token; the first invalidates it, the second's `invalid_grant` then **disconnected the
+  company**. Added a per-company in-flight-promise coalescer (single-process guard —
+  matches the Render deployment; multi-instance would need a DB lock).
+- **Cron jobs**: per-company `try/catch` in equipmentMaintenance / inactiveWorkers /
+  scheduledReports so one company's error can't abort the batch — and, more importantly,
+  can't escape to `runJob`, whose whole-job retry re-alerts every company already
+  processed this run.
+
+### Backed out (my mistake)
+- I briefly gated `/api/office` + `/api/recordings` on `requirePlanToolsAddon` to
+  match `/api/jumpstart`/`takeoffs`/`live`, assuming they were the same class of
+  feature. They aren't: `requirePlanToolsAddon` only unlocks on
+  `addon_takeoff`/`addon_planroom`/`addon_roof` (the **Plan Room / takeoff family**).
+  jumpstart belongs there (it's a first-draft *takeoff*); the Office AI tools and
+  meeting recordings don't — gating them there would force a Takeoff-add-on purchase to
+  use an unrelated summarizer. **Reverted** — they stay `requirePlan('business')` +
+  aiGate metering, as before. David caught it.
+
+### Filed, not forgotten
+- Equipment-maintenance alert still **re-fires daily** while an item stays overdue
+  (no send-once-until-serviced stamp — that needs a schema column; the per-company
+  try/catch fix here only stops the retry-resend). Filed in BACKLOG as a decision.
+
 ## 2026-07-29 - Commercial access and export safety pass
 
 - Closed worker-readable API gaps across estimates, invoices, change orders, sub-POs,
@@ -4183,94 +4374,3 @@ need `ANTHROPIC_API_KEY`.
 ⚠️ **Five open items in `docs/BACKLOG.md`** — the two closeout/QBO bugs above,
 tool-apps still hardcoding `'$'`, flooring/framing missing from `NEEDS_SCALE`,
 and `fopening` missing from `POINT_KINDS`.
-
-## 2026-07-31 — Security & correctness audit — fixed everything
-
-Broad audit of the whole server, then fixed all confirmed findings. No schema
-changes (no migration), so `docs/db-enums.md` is untouched. Server: 1287 tests
-green (101 suites). Client: eslint clean, 288 tests, build OK. (Both suites flake
-under back-to-back runs on this box — jest worker `VirtualAlloc`/`spawn` OOM and
-esbuild "service was stopped"; both pass cleanly with `--maxWorkers=2` / vitest
-`--no-file-parallelism`. Not code failures.)
-
-**Tenant isolation / IDOR**
-- `timeEntries /:id/messages` (GET+POST): scoped the entry lookup to owner-or-admin
-  — a worker could read/post on a coworker's entry thread by enumerating the id.
-- `catalog/*`: added `requireCommercialAccess` — supplier cost / sell price / markup
-  were readable by any authenticated worker.
-- `booking /appointments`: non-admins are now scoped to their own assigned rows;
-  the full list leaked every client's name/email/phone/notes to any worker.
-- **Cross-tenant `project_id` on write** — validate belongs-to-company on
-  incidents, reimbursements (both POSTs), safetyChecklists, safetyTalks (POST+PATCH),
-  subReports (POST+PATCH), rfis (POST+PATCH), and admin `/clock-in`. Clock-in was the
-  real bug: a foreign `project_id` baked that project's `wage_type` into the entry
-  (corrupting pay). The rest only leaked a foreign project **name** via an unscoped
-  JOIN. **Judgment:** skipped `inspections` — its `project_id` is UUID while
-  `projects.id` is INTEGER, so the JOIN never matches (no leak) and the int-keyed
-  helper would throw on a UUID.
-
-**Correctness**
-- **RFI numbering**: admin `POST /projects/:id/rfis` numbered **per-project** but the
-  unique constraint is **per-company** (`uq_rfis_company_number`), so every 2nd+
-  project's first RFI (number 1) collided → 500. Switched to a company-wide atomic
-  inline subquery, matching the schema and the sibling `POST /rfis`. **Judgment:**
-  fixed the code, not the constraint — company-wide is the intended model (the unique
-  index, the constraint, and `rfis.js` all agree); loosening the constraint would let
-  the two create paths mint duplicate numbers.
-- **Daily reports**: POST's `ON CONFLICT DO UPDATE` let a worker silently overwrite a
-  coworker's report for the same project+date (PATCH enforced ownership, POST didn't)
-  → added an owner guard. PATCH deleted+reinserted all sub-tables unconditionally, so a
-  status-only PATCH wiped manpower/equipment/materials → now only touches a sub-table
-  when its array is actually sent. Both covered by new tests.
-- **OT alert week bucket** (`clock.js`, both switch + clock-out paths): used
-  `DATE_TRUNC('week')` (always Monday), ignoring company `week_start` — misfired the
-  weekly-OT *alert* for non-Monday weeks. Now buckets by `week_start` like the pay
-  engine. (Alert only; pay was already correct.)
-- **Shift push/inbox dates** (`shifts.js`): interpolated a node-pg `Date` raw →
-  "Thu Jul 30 2026 00:00:00 GMT…" in one spot and "Thu Jul 30" (no year) in three
-  others. Added `fmtShiftDate` → `YYYY-MM-DD` from local parts (TZ-safe). Verified
-  node-pg returns DATE as a Date object here (no `setTypeParser`).
-- **Email injection** (`auth.js` 417/527): `full_name` interpolated unescaped into two
-  confirmation emails — wrapped in the `escapeHtml` the rest of the file already uses.
-
-**AuthZ / permission tiers** (custom admin roles could bypass granular perms)
-- QBO mutation/action routes now require `manage_integrations` (only `/push-payroll`
-  did); read-only lookup GETs left as-is.
-- Project budget/expense **writes** now require `manage_projects`
-  (`requireProjectFinancialWrite`) — the old gate accepted view-only `view_projects`.
-- Company chat gated on `view_company_chat` / `send_company_chat` (was `requireAuth`
-  only, ignoring those perms).
-- Worker wages: `/workers` list nulls `hourly_rate` for admins without
-  `view_worker_wages`; `/workers/:id/entries` (full pay statement) now requires it.
-
-**Resilience / idempotency**
-- **QBO double-send**: threaded Intuit's `requestid` idempotency key through
-  `createBill`/`createPurchase`/`pushTimeActivity`/`createInvoice` (deterministic per
-  source row/range), so a double-click dedupes at Intuit. **Judgment:** chose this over
-  an advisory lock — the lock needs `pool.connect` (not in the route-test mocks) and
-  would break the strict `pool.query` call-count assertions, and can't be verified
-  without a real DB. `requestid` mirrors the existing `push-payroll` pattern and is
-  test-assertable.
-- **QBO token-refresh race**: concurrent refreshes both send the rotating refresh
-  token; the first invalidates it, the second's `invalid_grant` then **disconnected the
-  company**. Added a per-company in-flight-promise coalescer (single-process guard —
-  matches the Render deployment; multi-instance would need a DB lock).
-- **Cron jobs**: per-company `try/catch` in equipmentMaintenance / inactiveWorkers /
-  scheduledReports so one company's error can't abort the batch — and, more importantly,
-  can't escape to `runJob`, whose whole-job retry re-alerts every company already
-  processed this run.
-
-### Backed out (my mistake)
-- I briefly gated `/api/office` + `/api/recordings` on `requirePlanToolsAddon` to
-  match `/api/jumpstart`/`takeoffs`/`live`, assuming they were the same class of
-  feature. They aren't: `requirePlanToolsAddon` only unlocks on
-  `addon_takeoff`/`addon_planroom`/`addon_roof` (the **Plan Room / takeoff family**).
-  jumpstart belongs there (it's a first-draft *takeoff*); the Office AI tools and
-  meeting recordings don't — gating them there would force a Takeoff-add-on purchase to
-  use an unrelated summarizer. **Reverted** — they stay `requirePlan('business')` +
-  aiGate metering, as before. David caught it.
-
-### Filed, not forgotten
-- Equipment-maintenance alert still **re-fires daily** while an item stays overdue
-  (no send-once-until-serviced stamp — that needs a schema column; the per-company
-  try/catch fix here only stops the retry-resend). Filed in BACKLOG as a decision.

@@ -367,8 +367,12 @@ router.post('/register', authLimiter, async (req, res) => {
     }
     const trialDays = parseInt(process.env.TRIAL_DAYS) || 14;
     const companyResult = await client.query(
-      `INSERT INTO companies (name, slug, subscription_status, trial_ends_at, registration_ip)
-       VALUES ($1, $2, 'trial', NOW() + ($3 || ' days')::INTERVAL, $4) RETURNING id`,
+      // Set plan explicitly to 'free' — a new trial company has no paid plan. Leaving it
+      // to the column default was tripping chk_companies_plan on the live DB (a NULL/invalid
+      // default), which 500'd every registration. 'free' is in the allowed set and is treated
+      // identically to NULL everywhere (company.plan || 'free').
+      `INSERT INTO companies (name, slug, plan, subscription_status, trial_ends_at, registration_ip)
+       VALUES ($1, $2, 'free', 'trial', NOW() + ($3 || ' days')::INTERVAL, $4) RETURNING id`,
       [company_name, slug, trialDays, registrationIp]
     );
     const companyId = companyResult.rows[0].id;
