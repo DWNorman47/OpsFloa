@@ -5582,9 +5582,13 @@ async function pageHasTextLayer(p) {
 async function updateJumpStartVisibility() {
   const btn = $('btnJumpStart');
   if (!btn) return;
-  // Parked for now — AI Jump Start stays hidden. To re-enable (only on pages with a
-  // readable text layer), restore: btn.hidden = !(await pageHasTextLayer(state.page));
-  btn.hidden = true;
+  // Parked for everyone EXCEPT the Developer company (David's test tenant) — there it
+  // shows on pages with a readable text layer so contour extraction can be tried.
+  // tc_company holds the logged-in user's company name (set by the React AuthContext).
+  let company = '';
+  try { company = (localStorage.getItem('tc_company') || '').trim().toLowerCase(); } catch (_) { /* storage blocked */ }
+  const isDevCompany = company === 'developer';
+  btn.hidden = !(isDevCompany && await pageHasTextLayer(state.page));
 }
 
 // ── Earthwork: exact spot grades from the PDF text layer (deterministic) ─────────
