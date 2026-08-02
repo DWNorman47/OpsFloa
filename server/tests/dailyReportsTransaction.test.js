@@ -47,3 +47,58 @@ test('rolls back before releasing the client when an update target is missing', 
   ]);
   expect(client.release).toHaveBeenCalledTimes(1);
 });
+
+test('POST refuses to overwrite a coworker\'s existing report for the same project+date', async () => {
+  // Worker 7 posts for a project+date already owned by worker 99 — the upsert would
+  // silently clobber it, so the ownership guard must 403 before any INSERT.
+  const client = {
+    query: jest.fn()
+      .mockResolvedValueOnce({})                                          // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ ok: 1 }] })          // projectBelongsToCompany
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ created_by: 99 }] }) // dupe owned by someone else
+      .mockResolvedValueOnce({}),                                         // ROLLBACK
+    release: jest.fn(),
+  };
+  pool.connect.mockResolvedValueOnce(client);
+
+  const res = await request(makeApp())
+    .post('/api/daily-reports')
+    .send({ project_id: 200, report_date: '2026-07-30' });
+
+  expect(res.status).toBe(403);
+  const stmts = client.query.mock.calls.map(c => c[0]);
+  expect(stmts).toContain('ROLLBACK');
+  expect(stmts.some(s => /INSERT INTO daily_reports/.test(s))).toBe(false);
+  expect(client.release).toHaveBeenCalledTimes(1);
+});
+
+test('PATCH without sub-table arrays leaves manpower/equipment/materials untouched', async () => {
+  // A status-only PATCH must not DELETE the report's sub-tables (the old code deleted
+  // unconditionally, wiping them whenever the arrays were omitted).
+  mockCurrentUser = { id: 7, company_id: 'co-1', role: 'admin' };
+  const client = {
+    query: jest.fn()
+      .mockResolvedValueOnce({})                                                             // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 5, created_by: 7, updated_at: '2026-07-30T00:00:00Z' }] }) // SELECT existing
+      .mockResolvedValueOnce({})                                                             // UPDATE daily_reports
+      .mockResolvedValueOnce({}),                                                            // COMMIT
+    release: jest.fn(),
+  };
+  pool.connect.mockResolvedValueOnce(client);
+  // getFullReport reads back via the pool (report + 3 sub-tables).
+  pool.query
+    .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 5 }] })
+    .mockResolvedValueOnce({ rows: [] })
+    .mockResolvedValueOnce({ rows: [] })
+    .mockResolvedValueOnce({ rows: [] });
+
+  const res = await request(makeApp())
+    .patch('/api/daily-reports/5')
+    .send({ status: 'reviewed' });
+
+  expect(res.status).toBe(200);
+  const stmts = client.query.mock.calls.map(c => c[0]);
+  expect(stmts.some(s => /DELETE FROM daily_report_manpower/.test(s))).toBe(false);
+  expect(stmts.some(s => /DELETE FROM daily_report_equipment/.test(s))).toBe(false);
+  expect(stmts.some(s => /DELETE FROM daily_report_materials/.test(s))).toBe(false);
+});

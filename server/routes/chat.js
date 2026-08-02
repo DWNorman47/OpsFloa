@@ -3,7 +3,7 @@ const pool = require('../db');
 const logger = require('../logger');
 const rateLimit = require('express-rate-limit');
 const { userOrIpKey } = require('../middleware/rateLimitKey');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requirePerm } = require('../middleware/auth');
 const { sendPushToUser, sendPushToCompanyAdmins } = require('../push');
 
 // Cap chat writes per user to prevent spam / scripted flooding.
@@ -22,7 +22,7 @@ const chatWriteLimiter = rateLimit({
 // Workers: always see their own thread
 // Admin: must pass worker_id to see that worker's thread;
 //        omit worker_id to get a list of workers with recent messages
-router.get('/', requireAuth, async (req, res) => {
+router.get('/', requireAuth, requirePerm('view_company_chat'), async (req, res) => {
   const companyId = req.user.company_id;
   const isAdmin = req.user.role === 'admin';
 
@@ -89,7 +89,7 @@ router.get('/', requireAuth, async (req, res) => {
 // POST /api/chat
 // Workers: send to their own thread (worker_id = self)
 // Admin: must provide worker_id in body
-router.post('/', requireAuth, chatWriteLimiter, async (req, res) => {
+router.post('/', requireAuth, requirePerm('send_company_chat'), chatWriteLimiter, async (req, res) => {
   const { worker_id } = req.body;
   const body = req.body.body?.trim() || '';
   if (!body) return res.status(400).json({ error: 'Message body required' });

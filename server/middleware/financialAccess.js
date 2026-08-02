@@ -37,6 +37,13 @@ const requireProjectFinancialAccess = requireAdminWithAnyPermission(
   'project financial permission check failed'
 );
 
+// Writes (setting a budget, adding/deleting a project expense) need the project-management
+// permission — view_projects alone is read-only and must not authorize mutation.
+const requireProjectFinancialWrite = requireAdminWithAnyPermission(
+  ['manage_projects'],
+  'project financial write permission check failed'
+);
+
 const requireFinancialReportsAccess = requireAdminWithAnyPermission(
   ['view_analytics', 'manage_settings'],
   'financial reports permission check failed'
@@ -44,5 +51,6 @@ const requireFinancialReportsAccess = requireAdminWithAnyPermission(
 
 module.exports = {
   requireProjectFinancialAccess,
+  requireProjectFinancialWrite,
   requireFinancialReportsAccess,
 };

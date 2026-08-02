@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const pool = require('../db');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { projectBelongsToCompany } = require('../utils/tenantRefs');
 const { sendPushToCompanyAdmins } = require('../push');
 const { logAudit } = require('../auditLog');
 const {
@@ -85,6 +86,11 @@ router.post('/', requireAuth, async (req, res) => {
   if (corrective_action && corrective_action.length > 2000) return res.status(400).json({ error: 'corrective_action too long (max 2000 characters)' });
 
   const companyId = req.user.company_id;
+  // A supplied project must belong to this company — else a foreign project_id is stored and
+  // its name leaked back via the projects JOIN in the response.
+  if (project_id != null && project_id !== '' && !(await projectBelongsToCompany(pool, project_id, companyId))) {
+    return res.status(400).json({ error: 'Invalid project' });
+  }
   try {
     const result = await pool.query(
       `INSERT INTO incident_reports

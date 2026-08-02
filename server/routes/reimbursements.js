@@ -5,6 +5,7 @@ const rateLimit = require('express-rate-limit');
 const { userOrIpKey } = require('../middleware/rateLimitKey');
 const pool = require('../db');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { projectBelongsToCompany } = require('../utils/tenantRefs');
 const { uploadBase64, deleteByUrl } = require('../r2');
 const { incrementStorage, decrementStorage, checkStorageLimit } = require('../storage');
 const { getAdvancedSettings, ADVANCED_DEFAULTS } = require('./admin');
@@ -87,6 +88,12 @@ router.post('/', reimbLimiter, coerceBody({ int: ['project_id'], float: ['miles'
     if (!amount) return res.status(400).json({ error: 'amount or miles is required' });
     amt = parseFloat(amount);
     if (isNaN(amt) || amt <= 0) return res.status(400).json({ error: 'amount must be a positive number' });
+  }
+
+  // A supplied project must belong to this company — else a foreign project_id is stored and
+  // its name leaked back via the projects JOIN on read.
+  if (project_id != null && project_id !== '' && !(await projectBelongsToCompany(pool, project_id, req.user.company_id))) {
+    return res.status(400).json({ error: 'Invalid project' });
   }
 
   let receiptUrl = null;
@@ -175,6 +182,10 @@ router.post('/admin', requireAdmin, async (req, res) => {
 
   const worker = await pool.query('SELECT id FROM users WHERE id = $1 AND company_id = $2', [user_id, req.user.company_id]).catch(() => null);
   if (!worker?.rows.length) return res.status(404).json({ error: 'Worker not found' });
+
+  if (project_id != null && project_id !== '' && !(await projectBelongsToCompany(pool, project_id, req.user.company_id))) {
+    return res.status(400).json({ error: 'Invalid project' });
+  }
 
   let receiptUrl = null;
   let receiptSizeBytes = null;

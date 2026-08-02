@@ -77,6 +77,45 @@ describe('markup shape', () => {
   });
 });
 
+describe('earthwork (dirt) placement', () => {
+  test('spot elevations become espot markups on the model-guessed surface', () => {
+    const out = jumpstartToMarkups(
+      { spots: [{ label: 'FG 512.5', elev: 512.5, surface: 'proposed', at: { x: 0.5, y: 0.5 } }] },
+      2, DIMS, { trade: 'dirt', curSurface: 'existing' }
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ kind: 'espot', page: 2, elev: 512.5, surface: 'proposed', ai: true });
+    expect(out[0].pts).toEqual([{ x: 500, y: 400 }]);
+  });
+
+  test('a spot with unknown surface falls back to the surface being worked', () => {
+    const out = jumpstartToMarkups(
+      { spots: [{ label: '510', elev: 510, surface: 'unknown', at: { x: 0.1, y: 0.1 } }] },
+      1, DIMS, { trade: 'dirt', curSurface: 'proposed' }
+    );
+    expect(out[0].surface).toBe('proposed');
+  });
+
+  test('a "limits of disturbance" region becomes an ebound boundary in dirt', () => {
+    const poly = [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.1 }, { x: 0.9, y: 0.9 }];
+    const out = jumpstartToMarkups(
+      { regions: [{ label: 'Limits of disturbance', confidence: 'low', polygon: poly }] },
+      1, DIMS, { trade: 'dirt', curSurface: 'existing' }
+    );
+    expect(out[0].kind).toBe('ebound');
+    expect(out[0].pts).toHaveLength(3);
+  });
+
+  test('the same region label in a non-dirt trade stays a plain area', () => {
+    const poly = [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.1 }, { x: 0.9, y: 0.9 }];
+    const out = jumpstartToMarkups(
+      { regions: [{ label: 'Limits of disturbance', confidence: 'low', polygon: poly }] },
+      1, DIMS, { trade: '', curSurface: 'existing' }
+    );
+    expect(out[0].kind).toBe('qarea');
+  });
+});
+
 describe('defensive', () => {
   test('empty result → no markups', () => {
     expect(jumpstartToMarkups({}, 1, DIMS)).toEqual([]);

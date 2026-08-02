@@ -779,6 +779,11 @@ router.get('/appointments', requireAuth, async (req, res) => {
   if (from) { params.push(from); conditions.push(`a.scheduled_at >= $${params.length}`); }
   if (to)   { params.push(to);   conditions.push(`a.scheduled_at < $${params.length}`); }
   if (user_id) { params.push(user_id); conditions.push(`a.assigned_user_id = $${params.length}`); }
+  // The full appointment list carries every client's PII (name/email/phone/notes), so only
+  // admins see all of it; a non-admin is scoped to appointments assigned to them.
+  if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+    params.push(req.user.id); conditions.push(`a.assigned_user_id = $${params.length}`);
+  }
   const where = conditions.join(' AND ');
   try {
     const [countRes, dataRes] = await Promise.all([

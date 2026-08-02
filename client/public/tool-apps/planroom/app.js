@@ -1717,6 +1717,7 @@ async function setPage(p, { fit = false } = {}) {
   // (self-guards to a no-op when the panel is hidden).
   renderDirtPanel();
   updatePageUI();
+  updateJumpStartVisibility(); // show the button only on pages with a readable text layer
   await ensurePage(state.page);
   if (fit) { const b = await baseSize(state.page); vp.fitTo(b.width, b.height); }
   vp.requestDraw();
@@ -1803,7 +1804,7 @@ async function openFromBytes(buf, name, type, { persist = true } = {}) {
   }
   state.docName = name;
   state.docType = type || null;
-  pageCanvas.clear(); pageBase.clear(); inflight.clear();
+  pageCanvas.clear(); pageBase.clear(); inflight.clear(); pageHasText.clear();
   els.dropHint.classList.add('hidden');
   document.body.classList.add('has-doc');
   buildThumbs();
@@ -3938,6 +3939,17 @@ function applyTakeoffGate() {
 let STORM_ON = false; // cached storm entitlement (refreshed in applyTakeoffGate); gates the M4 netting outputs
 let ROOF_ON = false;  // cached roof-measurement entitlement (refreshed in applyTakeoffGate)
 
+// Entitlements are bridged from the main app via localStorage (tc_addons) and can
+// arrive or change AFTER this tool loads — a slow /auth/me on login, or an add-on
+// bought in the other tab. Re-apply the gate when that key changes or the tab regains
+// focus, so Takeoff doesn't stay falsely locked until a manual reload.
+window.addEventListener('storage', e => {
+  if (e.key === 'tc_addons' || e.key === null) applyTakeoffGate();
+});
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) applyTakeoffGate();
+});
+
 /* trade mode: which takeoff trade's tools/panels/bid are in play */
 const TRADE_TOOLS = {
   roofing: ['plane', 'redge', 'ritem'],
@@ -5110,7 +5122,7 @@ function resetDocState() {
   selectedId = null;
   cancelOverlay();
   undoStack.length = 0; redoStack.length = 0; updateUndoButtons();
-  pageCanvas.clear(); pageBase.clear(); inflight.clear();
+  pageCanvas.clear(); pageBase.clear(); inflight.clear(); pageHasText.clear();
   els.thumbRail.innerHTML = '';
   els.dropHint.classList.remove('hidden');
   document.body.classList.remove('has-doc');
@@ -5549,13 +5561,248 @@ async function apiEstimate(path, opts = {}) {
 // draft (counts, rough regions) as markups the estimator reviews. Everything
 // lands flagged ai:true in a distinct colour — a jump start, never authoritative.
 
+// ── Text-layer gate ────────────────────────────────────────────────────────────
+// Jump Start is only worth showing when it can actually deliver: a vector PDF with
+// a real text layer. On a scanned/raster page there's nothing to read reliably, so
+// the button stays hidden (set that way in index.html) rather than producing noise.
+const pageHasText = new Map(); // pageNum -> bool (cleared when a new doc loads)
+async function pageHasTextLayer(p) {
+  const pg = p || state.page;
+  if (!state.doc || state.doc.kind !== 'pdf' || !state.doc.raw) return false;
+  if (pageHasText.has(pg)) return pageHasText.get(pg);
+  let has = false;
+  try {
+    const page = await state.doc.raw.getPage(pg);
+    const tc = await page.getTextContent();
+    has = (tc.items || []).some(it => (it.str || '').trim().length > 0);
+  } catch (_) { has = false; }
+  pageHasText.set(pg, has);
+  return has;
+}
+async function updateJumpStartVisibility() {
+  const btn = $('btnJumpStart');
+  if (!btn) return;
+  // Parked for now — AI Jump Start stays hidden. To re-enable (only on pages with a
+  // readable text layer), restore: btn.hidden = !(await pageHasTextLayer(state.page));
+  btn.hidden = true;
+}
+
+// ── Earthwork: exact spot grades from the PDF text layer (deterministic) ─────────
+// A vector grading PDF carries every spot elevation as real text at an exact
+// position — no vision model can match reading it straight from the file. `items`
+// are text runs in base-px page space: [{ str, x, y }]. Pure + self-contained so it
+// is unit-tested by lifting (tests/earthworkSpots.test.js).
+//
+// Only elevations with a disposition SIGNAL are placed — (parens)/EG = existing,
+// FS/FG/GB/TP = proposed — so bearings, dimensions and slopes ("185.00", "1.0%",
+// "100.14'") aren't mistaken for grades. Structure/floor elevations (TG/FL/FF/LIP…)
+// are reported but skipped: they aren't a ground surface for cut/fill.
+function parseEarthworkSpots(items) {
+  const ELEV = /\(?\b(\d{2,4}\.\d{1,2})\b\)?/;
+  const TAG = /\b(FFE|FS|FG|GB|TP|EG|EX|ME|TG|FL|LIP|HP|TC|TW|BW|INV|RIM|FF)\b/;
+  const GRADE = { FS: 'proposed', FG: 'proposed', GB: 'proposed', TP: 'proposed', EG: 'existing', EX: 'existing', ME: 'existing' };
+  const STRUCT = { FFE: 1, FF: 1, TG: 1, FL: 1, LIP: 1, HP: 1, TC: 1, TW: 1, BW: 1, INV: 1, RIM: 1 };
+  const BAD = /[%°"'=]|\bdia\b/i; // slopes, bearings, feet/inch dims, scale, drywell size
+
+  const runs = (Array.isArray(items) ? items : [])
+    .map(it => ({ str: ((it && it.str) || '').trim(), x: Number(it && it.x), y: Number(it && it.y) }))
+    .filter(it => it.str && Number.isFinite(it.x) && Number.isFinite(it.y));
+
+  const RADIUS2 = 50 * 50; // base px; a tag sits within ~a line of its number
+  const tagNear = (x, y) => {
+    let best = null, bd = RADIUS2;
+    for (const r of runs) {
+      const m = r.str.match(TAG);
+      if (!m) continue;
+      const dx = r.x - x, dy = r.y - y, d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = m[1]; }
+    }
+    return best;
+  };
+
+  const spots = [], skipped = [];
+  let ambiguous = 0;
+  const seen = {};
+  for (const r of runs) {
+    const m = r.str.match(ELEV);
+    if (!m) continue;
+    const elev = parseFloat(m[1]);
+    if (!Number.isFinite(elev)) continue;
+    const key = Math.round(r.x) + ',' + Math.round(r.y) + ',' + m[1];
+    if (seen[key]) continue;
+    seen[key] = 1;
+    const paren = /\(\s*\d{2,4}\.\d{1,2}\s*\)/.test(r.str);
+    const self = r.str.match(TAG);
+    const tag = (self && self[1]) || tagNear(r.x, r.y);
+    // A grade signal (parens or an FS/FG/EG tag) wins — keep it even if a slope like
+    // "8.0%" happens to share the run. Only untagged numbers get the bearing/dim/slope
+    // filter, so "185.00"/"1.0%"/"100.14'" aren't mistaken for grades.
+    if (paren || (tag && GRADE[tag])) spots.push({ elev, surface: paren ? 'existing' : GRADE[tag], tag: tag || null, at: { x: r.x, y: r.y } });
+    else if (BAD.test(r.str)) continue;
+    else if (tag && STRUCT[tag]) skipped.push({ elev, tag, at: { x: r.x, y: r.y } });
+    else ambiguous++;
+  }
+  return { spots, skipped, ambiguous };
+}
+
+// Walk a pdf.js operator list and pull out every stroked/filled polyline in base-px
+// page space. `OPS` is pdfjsLib.OPS (passed in so this is pure + unit-testable);
+// `base` is the scale-1 viewport.transform (the initial CTM). We track the CTM stack
+// (save/restore/transform) exactly as the renderer would, so coordinates land where
+// they draw. Bézier segments are approximated by their endpoints — fine for spotting
+// contour lines; we're not re-rendering. Contours arrive here mixed in with every
+// other line on the sheet (buildings, dims, and the vector spot-grade text); the
+// caller filters by length.
+function extractPdfPolylines(opList, OPS, base) {
+  const mul = (m, n) => [
+    m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1],
+    m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3],
+    m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5],
+  ];
+  const apply = (m, x, y) => ({ x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5] });
+  let ctm = base.slice();
+  const stack = [];
+  const out = [];
+  let cur = null;
+  const flush = () => { if (cur && cur.length >= 2) out.push(cur); cur = null; };
+  const fn = opList.fnArray || [], args = opList.argsArray || [];
+  for (let i = 0; i < fn.length; i++) {
+    const op = fn[i];
+    if (op === OPS.save) stack.push(ctm.slice());
+    else if (op === OPS.restore) { ctm = stack.pop() || ctm; }
+    else if (op === OPS.transform) ctm = mul(ctm, args[i]);
+    else if (op === OPS.constructPath) {
+      const a = args[i] || [];
+      const sub = a[0] || [], co = a[1] || [];
+      let j = 0;
+      for (let k = 0; k < sub.length; k++) {
+        const s = sub[k];
+        if (s === OPS.moveTo) { flush(); cur = [apply(ctm, co[j], co[j + 1])]; j += 2; }
+        else if (s === OPS.lineTo) { if (!cur) cur = []; cur.push(apply(ctm, co[j], co[j + 1])); j += 2; }
+        else if (s === OPS.curveTo) { if (!cur) cur = []; cur.push(apply(ctm, co[j + 4], co[j + 5])); j += 6; }
+        else if (s === OPS.curveTo2 || s === OPS.curveTo3) { if (!cur) cur = []; cur.push(apply(ctm, co[j + 2], co[j + 3])); j += 4; }
+        else if (s === OPS.rectangle) {
+          const x = co[j], y = co[j + 1], w = co[j + 2], h = co[j + 3]; j += 4;
+          flush(); cur = [apply(ctm, x, y), apply(ctm, x + w, y), apply(ctm, x + w, y + h), apply(ctm, x, y + h), apply(ctm, x, y)]; flush();
+        } else if (s === OPS.closePath) { if (cur && cur.length) cur.push(cur[0]); }
+      }
+      flush();
+    }
+  }
+  flush();
+  return out;
+}
+
+// Bounding-box diagonal of a polyline (base px) — the cheap "how big is this line"
+// used to separate sheet-spanning contours from glyph-sized and dimension linework.
+function polyDiag(pts) {
+  if (!pts || !pts.length) return 0;
+  let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  for (const p of pts) { if (p.x < minx) minx = p.x; if (p.x > maxx) maxx = p.x; if (p.y < miny) miny = p.y; if (p.y > maxy) maxy = p.y; }
+  return Math.hypot(maxx - minx, maxy - miny);
+}
+
+// Pull spot grades from the current page's PDF text layer and place them as espot
+// markups. Deterministic — no server, no AI, no metering.
+// Drop a polyline to at most `max` vertices (keeps the ends) so a 3000-point contour
+// doesn't bloat the markup store — the shape survives, the weight doesn't.
+function decimate(pts, max) {
+  if (!pts || pts.length <= max) return pts;
+  const out = [], step = pts.length / max;
+  for (let i = 0; i < pts.length; i += step) out.push(pts[Math.floor(i)]);
+  const last = pts[pts.length - 1];
+  if (out[out.length - 1] !== last) out.push(last);
+  return out;
+}
+
+// Earthwork extraction, ITERATION 1 (contours). The spot grades on these sheets are
+// vector/SHX line-work, not text — but the contour lines are real geometry and the
+// contour ELEVATIONS are real text. So: pull every polyline from the page, keep the
+// sheet-spanning ones as candidate contours, label each from the nearest integer, and
+// place them for review. Also grabs any text spot grades (cheap; usually none here).
+// Classification is deliberately loose — this is a first pass to eyeball, not final.
+async function runContourExtract() {
+  const btn = $('btnJumpStart');
+  try {
+    if (btn) btn.disabled = true;
+    setMsg('Extracting contours from the PDF…');
+    const page = await state.doc.raw.getPage(state.page);
+    const vp = page.getViewport({ scale: 1 }); // base-px space (matches baseSize / markup coords)
+    const OPS = pdfjsLib.OPS;
+    const [opList, tc] = await Promise.all([page.getOperatorList(), page.getTextContent()]);
+    const items = (tc.items || []).map(it => {
+      const p = vp.convertToViewportPoint(it.transform[4], it.transform[5]);
+      return { str: (it.str || '').trim(), x: p[0], y: p[1] };
+    });
+
+    // Vector polylines → sheet-spanning candidates (contours vs. glyph/dimension noise).
+    const sheetDiag = Math.hypot(vp.width, vp.height);
+    const all = extractPdfPolylines(opList, OPS, vp.transform);
+    let cand = all.filter(pl => pl.length >= 3 && polyDiag(pl) > sheetDiag * 0.08);
+    cand.sort((a, b) => polyDiag(b) - polyDiag(a));
+    if (cand.length > 800) cand = cand.slice(0, 800); // keep the longest
+
+    // Integer contour labels (e.g. 305, 312) placed on/near the lines.
+    const labels = items
+      .map(l => ({ x: l.x, y: l.y, elev: /^\d{2,4}$/.test(l.str) ? parseInt(l.str, 10) : null }))
+      .filter(l => l.elev != null && l.elev >= 50 && l.elev <= 9999);
+    const labelFor = (pts) => {
+      let best = null, bd = (sheetDiag * 0.04) ** 2;
+      const step = Math.max(1, Math.floor(pts.length / 40)); // sample vertices for speed
+      for (const L of labels) {
+        for (let i = 0; i < pts.length; i += step) {
+          const dx = L.x - pts[i].x, dy = L.y - pts[i].y, d = dx * dx + dy * dy;
+          if (d < bd) { bd = d; best = L.elev; }
+        }
+      }
+      return best;
+    };
+
+    const now = Date.now();
+    const rid = () => 'ai' + Math.random().toString(36).slice(2, 10);
+    let labeled = 0;
+    const marks = cand.map(pts => {
+      const elev = labelFor(pts);
+      if (elev != null) labeled++;
+      return { id: rid(), page: state.page, kind: 'contour', color: '#9333ea', width: 2, pts: decimate(pts, 300), elev, surface: curSurface, ai: true, extracted: true, aiConfidence: 'low', created: now };
+    });
+
+    // Any text spot grades too (harmless when there are none).
+    const { spots } = parseEarthworkSpots(items);
+    for (const s of spots) marks.push({ id: rid(), page: state.page, kind: 'espot', color: '#9333ea', width: 2, pts: [{ x: s.at.x, y: s.at.y }], elev: s.elev, surface: s.surface === 'proposed' || s.surface === 'existing' ? s.surface : curSurface, ai: true, extracted: true, aiConfidence: 'high', created: now });
+
+    try { console.log('[JumpStart contours] polylines:', all.length, 'candidates:', cand.length, 'labeled:', labeled, 'int-labels:', labels.length, 'spots:', spots.length); } catch (_) { /* no console */ }
+
+    if (!marks.length) {
+      const msg = `No sheet-spanning lines or spot grades found to extract (${all.length} polylines on the page, none long enough to be a contour). If the contours are raster/scanned rather than vector, they can't be pulled from the file.`;
+      setMsg('Contour extract: ' + msg);
+      alert('Earthwork contour extract — nothing placed\n\n' + msg);
+      return;
+    }
+    const prev = snapshot();
+    state.markups.push(...marks);
+    pushUndo(prev);
+    markupsChanged();
+    const diag = `Extracted ${cand.length} candidate contour line${cand.length === 1 ? '' : 's'} (${labeled} auto-labeled with an elevation)${spots.length ? ` and ${spots.length} spot grade${spots.length === 1 ? '' : 's'}` : ''}, all on the ${curSurface} surface. ITERATION 1 — verify which are really contours (delete buildings/dimensions it grabbed), fix any wrong elevations, then set the other surface and run cut/fill. Undo removes them all at once.`;
+    setMsg('Contour extract: ' + diag);
+    alert('Earthwork contour extract\n\n' + diag);
+  } catch (e) {
+    setMsg('Contour extraction failed: ' + (e && e.message ? e.message : e));
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 // Structured model result → Plan Room markups. Coordinates arrive NORMALIZED
 // [0,1] of the page image; dims is the page's base-px size, so normalized × dims
 // = base px (the markup coordinate space). Pure, so it's unit-tested by lifting.
-function jumpstartToMarkups(result, page, dims) {
+function jumpstartToMarkups(result, page, dims, opts) {
+  const o = opts || {};
   const r = result || {};
   const w = dims && dims.w, h = dims && dims.h;
   if (!(w > 0 && h > 0)) return [];
+  const trade = o.trade || '';
+  const defSurface = o.curSurface === 'proposed' ? 'proposed' : 'existing';
   const rid = () => 'ai' + Math.random().toString(36).slice(2, 10);
   const now = Date.now();
   const den = p => ({ x: p.x * w, y: p.y * h });
@@ -5573,10 +5820,21 @@ function jumpstartToMarkups(result, page, dims) {
   for (const rg of Array.isArray(r.regions) ? r.regions : []) {
     const pts = (Array.isArray(rg.polygon) ? rg.polygon : []).map(den);
     if (pts.length < 3) continue;
+    // In earthwork, a "limits of disturbance" region is the cut/fill boundary, not a
+    // generic area takeoff — place it as an ebound so it drives the grid.
+    const isLimits = trade === 'dirt' && /limit|disturb|grading/i.test(rg.label || '');
+    out.push(isLimits
+      ? { id: rid(), page, kind: 'ebound', pts, ai: true, aiConfidence: rg.confidence || 'low', created: now }
+      : { id: rid(), page, kind: 'qarea', pts, cfg: { label: rg.label || 'Area' }, ai: true, aiConfidence: rg.confidence || 'low', created: now });
+  }
+  // Earthwork spot elevations → espot markups on the surface the model guessed
+  // (falling back to the surface the estimator is currently working).
+  for (const s of Array.isArray(r.spots) ? r.spots : []) {
+    if (!s || !s.at || s.elev == null) continue;
+    const surface = (s.surface === 'existing' || s.surface === 'proposed') ? s.surface : defSurface;
     out.push({
-      id: rid(), page, kind: 'qarea', pts,
-      cfg: { label: rg.label || 'Area' },
-      ai: true, aiConfidence: rg.confidence || 'low', created: now,
+      id: rid(), page, kind: 'espot', color: '#9333ea', width: 2, pts: [den(s.at)],
+      elev: Number(s.elev), surface, ai: true, aiConfidence: 'low', created: now,
     });
   }
   return out;
@@ -5592,6 +5850,9 @@ async function apiJump(path, opts = {}) {
 
 async function runJumpStart() {
   if (!state.doc || !state.page) { setMsg('Open a plan first.'); return; }
+  // Earthwork pulls contour geometry (and any text spot grades) straight from the PDF —
+  // deterministic, no AI. (The button only shows on a real PDF, so raw is available.)
+  if (state.trade === 'dirt') return runContourExtract();
   const btn = $('btnJumpStart');
   // A/B knob: set localStorage.jumpstart_provider = 'gemini' to compare providers
   // on the same sheet. Absent → the server default (Anthropic/Opus).
@@ -5607,14 +5868,17 @@ async function runJumpStart() {
     const dataUrl = canvas.toDataURL('image/png');
     const imageBase64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
 
-    const res = await apiJump('/page', { method: 'POST', body: JSON.stringify({ imageBase64, mediaType: 'image/png', provider }) });
+    // Tell the model which trade we're working so it targets the right quantities
+    // (a generic scan is why earthwork used to come back as a tree-count blob).
+    const trade = state.trade || '';
+    const res = await apiJump('/page', { method: 'POST', body: JSON.stringify({ imageBase64, mediaType: 'image/png', provider, trade }) });
     if (res.status === 429) { setMsg('AI limit reached for this month.'); return; }
     if (res.status === 503) { setMsg('AI Jump Start isn’t configured yet (missing API key).'); return; }
     if (res.status === 413) { setMsg('This page is too large to send. Try a smaller sheet.'); return; }
     if (!res.ok) { setMsg('AI Jump Start failed — please try again.'); return; }
     const { result } = await res.json();
 
-    const markups = jumpstartToMarkups(result, state.page, { w: base.width, h: base.height });
+    const markups = jumpstartToMarkups(result, state.page, { w: base.width, h: base.height }, { trade, curSurface });
     if (markups.length) {
       const prev = snapshot();
       state.markups.push(...markups);
@@ -5632,13 +5896,34 @@ async function runJumpStart() {
 function jumpStartSummary(result, placed) {
   const r = result || {};
   const counts = (r.counts || []).map(c => `${c.points.length} ${c.label}`).join(', ');
+  const spotN = (r.spots || []).length;
   const scaleLine = r.scale && r.scale.found
     ? `Scale read: ${r.scale.text || (r.scale.feetPerInch + ' ft/in')} — this is a suggestion; confirm it by drawing your scale bar.`
     : 'No scale found on this sheet — set it manually.';
-  const lines = [
-    placed
+
+  // Earthwork verdict — the honest headline when cut/fill can't be computed from this
+  // sheet (e.g. an existing-conditions sheet with no proposed grade). This replaces the
+  // old behaviour of drawing a meaningless clearing blob.
+  const ew = r.earthwork;
+  let ewLine = '';
+  if (ew) {
+    if (ew.cutFillComputable) {
+      ewLine = `Earthwork: this sheet shows ${ew.existingContours ? 'existing' : 'no existing'} and proposed grade — cut/fill can be computed. Trace/confirm contours and the disturbance boundary, then run the cut/fill.`;
+    } else {
+      ewLine = `⚠ Earthwork: cut/fill can’t be computed from this sheet — ${ew.reason || 'it shows existing grade only, with no proposed (finished) grade to difference against.'} Run Jump Start on the grading/proposed sheet, or add the proposed surface, to get cut/fill.`;
+    }
+  }
+
+  const headline = ewLine && !ew.cutFillComputable
+    ? ewLine
+    : (placed
       ? `Drafted ${placed} AI markup${placed === 1 ? '' : 's'} (shown in purple). These are a first draft — review, edit, and delete what's wrong before trusting the quantities.`
-      : 'Nothing confidently markable on this page.',
+      : 'Nothing confidently markable on this page.');
+
+  const lines = [
+    headline,
+    ewLine && ewLine !== headline ? ewLine : '',
+    spotN ? `Read ${spotN} spot elevation${spotN === 1 ? '' : 's'} — placed on the ${curSurface} surface; re-tag any that belong to the other surface, and correct any misreads.` : '',
     counts && `Counts: ${counts}.`,
     (r.regions || []).length ? `${(r.regions || []).length} rough region(s) — reshape the vertices.` : '',
     scaleLine,

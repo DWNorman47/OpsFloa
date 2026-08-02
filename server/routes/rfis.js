@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const pool = require('../db');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { projectBelongsToCompany } = require('../utils/tenantRefs');
 
 const FULL_SELECT = `
   SELECT r.*, p.name AS project_name, u.full_name AS created_by_name
@@ -51,6 +52,11 @@ router.post('/', requireAdmin, async (req, res) => {
   if (submitted_by && submitted_by.length > 255) return res.status(400).json({ error: 'submitted_by too long (max 255 characters)' });
   if (description && description.length > 2000) return res.status(400).json({ error: 'description too long (max 2000 characters)' });
   const companyId = req.user.company_id;
+  // A supplied project must belong to this company — else a foreign project_id is stored and
+  // its name leaked back via the projects JOIN on read.
+  if (project_id != null && project_id !== '' && !(await projectBelongsToCompany(pool, project_id, companyId))) {
+    return res.status(400).json({ error: 'Invalid project' });
+  }
   try {
     // Auto-number atomically: subquery inside INSERT so concurrent requests can't
     // both read the same MAX and produce duplicate rfi_number values.
@@ -89,6 +95,10 @@ router.patch('/:id', requireAdmin, async (req, res) => {
     const existing = await pool.query('SELECT * FROM rfis WHERE id=$1 AND company_id=$2', [req.params.id, companyId]);
     if (existing.rowCount === 0) return res.status(404).json({ error: 'RFI not found' });
     const r = existing.rows[0];
+
+    if (project_id != null && project_id !== '' && !(await projectBelongsToCompany(pool, project_id, companyId))) {
+      return res.status(400).json({ error: 'Invalid project' });
+    }
 
     if (clientUpdatedAt && new Date(r.updated_at).getTime() !== new Date(clientUpdatedAt).getTime()) {
       return res.status(409).json({ error: 'conflict' });

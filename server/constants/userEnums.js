@@ -15,7 +15,11 @@ const USER_OVERTIME_RULE_DEFAULT = 'daily';
 const USER_LANGUAGES = Object.freeze(['English', 'Spanish']);
 const USER_LANGUAGE_DEFAULT = 'English';
 
-const USER_WORKER_TYPES = Object.freeze(['employee', 'contractor', 'subcontractor', 'owner']);
+// 'unpaid' is a real team member (tracked for time/scheduling/reports) who is NOT paid:
+// they are excluded from every pay surface — payroll runs, pay stubs, worker invoices,
+// the overtime report, payroll CSV, certified payroll, scheduled pay emails, and QBO time
+// sync. See buildPayStatement's guard (server/utils/payStatement.js) + the list filters.
+const USER_WORKER_TYPES = Object.freeze(['employee', 'contractor', 'subcontractor', 'owner', 'unpaid']);
 const USER_WORKER_TYPE_DEFAULT = 'employee';
 
 const USER_ROLES = Object.freeze(['worker', 'admin', 'super_admin']);

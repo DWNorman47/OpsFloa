@@ -15,9 +15,11 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 function isValidEmail(email) { return EMAIL_RE.test(String(email).trim()); }
 const { requireAdmin, requirePlan, requireCertifiedPayrollAddon, requirePerm } = require('../middleware/auth');
 const { normalizePaycheckRules } = require('../constants/paycheckRuleEnums');
+const { USER_WORKER_TYPES } = require('../constants/userEnums');
+const { projectBelongsToCompany } = require('../utils/tenantRefs');
 const { resolveRuleset, rulesetsForActiveRoles, deductionsForRole, applyGroupDeductions, groupOpts } = require('../utils/paycheckRun');
 const { generatePeriods, groupPeriods, isValidIsoDate, dateRangeDays } = require('../utils/payPeriods');
-const { PERMISSIONS, PERMISSION_KEYS, BUILTIN_ROLES, getUserPermissions } = require('../permissions');
+const { PERMISSIONS, PERMISSION_KEYS, BUILTIN_ROLES, getUserPermissions, hasPerm } = require('../permissions');
 const { coerceBody } = require('../middleware/coerce');
 const { logFailure } = require('../failureLog');
 const { sendPushToUser, sendPushToAllWorkers } = require('../push');
@@ -544,6 +546,12 @@ router.post('/clock-in', requireAdmin, requirePerm('manage_workers'), async (req
       [user_id, companyId]
     );
     if (workerRow.rowCount === 0) return res.status(404).json({ error: 'Worker not found' });
+    // The project must belong to this company — else a foreign project_id would be stored
+    // and its wage_type baked into the resulting time entry (corrupting pay), and its name
+    // leaked in the response.
+    if (project_id != null && project_id !== '' && !(await projectBelongsToCompany(pool, project_id, companyId))) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
 
     const result = await pool.query(
       `INSERT INTO active_clock (user_id, company_id, project_id, clock_in_time, work_date, notes, clock_source, clocked_in_by)
@@ -960,7 +968,11 @@ router.get('/workers', requireAdmin, async (req, res) => {
       LIMIT 500`,
       queryParams
     );
-    res.json(result.rows);
+    // Redact pay rates from admins who lack view_worker_wages (the directory itself
+    // stays visible — only the dollar rate is hidden). Hours are not wage data.
+    const canSeeWages = await hasPerm(req, 'view_worker_wages');
+    const rows = canSeeWages ? result.rows : result.rows.map(r => ({ ...r, hourly_rate: null }));
+    res.json(rows);
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });
@@ -1048,12 +1060,12 @@ router.post('/workers/:id/entries', requireAdmin, requirePerm('manage_workers'),
   }
 });
 
-router.get('/workers/:id/entries', requireAdmin, async (req, res) => {
+router.get('/workers/:id/entries', requireAdmin, requirePerm('view_worker_wages'), async (req, res) => {
   const { from, to } = req.query;
   const companyId = req.user.company_id;
   try {
     const userResult = await pool.query(
-      'SELECT id, full_name, invoice_name, username, email, hourly_rate, rate_type, overtime_rule, guaranteed_weekly_hours, role_id FROM users WHERE id = $1 AND role = $2 AND company_id = $3',
+      'SELECT id, full_name, invoice_name, username, email, hourly_rate, rate_type, overtime_rule, guaranteed_weekly_hours, role_id, worker_type FROM users WHERE id = $1 AND role = $2 AND company_id = $3',
       [req.params.id, 'worker', companyId]
     );
     if (userResult.rowCount === 0) return res.status(404).json({ error: 'Worker not found' });
@@ -1206,7 +1218,7 @@ router.post('/workers/invite', requireAdmin, requirePerm('manage_workers'), invi
   const companyId = req.user.company_id;
   const VALID_LANGUAGES = ['English', 'Spanish'];
   const VALID_OT_RULES = ['daily', 'weekly', 'none'];
-  const VALID_WORKER_TYPES = ['employee', 'contractor', 'subcontractor', 'owner'];
+  const VALID_WORKER_TYPES = USER_WORKER_TYPES;
   const assignedRole = role === 'admin' ? 'admin' : 'worker';
   const assignedLanguage = VALID_LANGUAGES.includes(language) ? language : 'English';
   const assignedRateType = ['hourly', 'daily'].includes(req.body.rate_type) ? req.body.rate_type : 'hourly';
@@ -1399,7 +1411,7 @@ router.post('/workers', requireAdmin, requirePerm('manage_workers'),
   const VALID_OT_RULES = ['daily', 'weekly', 'none'];
   const assignedRateType = ['hourly', 'daily'].includes(req.body.rate_type) ? req.body.rate_type : 'hourly';
   const assignedOTRule = VALID_OT_RULES.includes(req.body.overtime_rule) ? req.body.overtime_rule : 'daily';
-  const VALID_WORKER_TYPES = ['employee', 'contractor', 'subcontractor', 'owner'];
+  const VALID_WORKER_TYPES = USER_WORKER_TYPES;
   const assignedWorkerType = VALID_WORKER_TYPES.includes(req.body.worker_type) ? req.body.worker_type : 'employee';
 
   // Enforce worker count limit (admins don't count against the limit)
@@ -1503,7 +1515,7 @@ router.patch('/workers/:id', requireAdmin, requirePerm('manage_workers'),
   const assignedRole = role ? (role === 'admin' ? 'admin' : 'worker') : undefined;
   const VALID_RATE_TYPES = ['hourly', 'daily'];
   const VALID_OT_RULES = ['daily', 'weekly', 'none'];
-  const VALID_WORKER_TYPES = ['employee', 'contractor', 'subcontractor', 'owner'];
+  const VALID_WORKER_TYPES = USER_WORKER_TYPES;
   try {
     if (username) {
       const clean = username.toLowerCase().trim();
@@ -2974,6 +2986,7 @@ router.patch('/entries/:id/approve', requireAdmin, requirePerm('approve_entries'
         const worker = await pool.query('SELECT qbo_employee_id, qbo_vendor_id, worker_type FROM users WHERE id = $1', [entry.user_id]);
         const w = worker.rows[0];
         if (!w) return;
+        if (w.worker_type === 'unpaid') return; // unpaid workers' labor is not synced to QBO
         const usesVendor = w.worker_type === 'contractor' || w.worker_type === 'subcontractor';
         const mappedId = usesVendor ? w.qbo_vendor_id : w.qbo_employee_id;
         if (!mappedId) return;
@@ -3274,7 +3287,7 @@ router.get('/overtime-report', requireAdmin, requirePerm('view_reports'), requir
     const s = await getSettings(companyId);
     const workers = await pool.query(
       `SELECT u.id, u.full_name, u.invoice_name, u.hourly_rate, u.rate_type, u.overtime_rule, u.role_id, u.guaranteed_weekly_hours FROM users u
-       WHERE u.company_id = $1 AND u.role = 'worker' AND u.active = true
+       WHERE u.company_id = $1 AND u.role = 'worker' AND u.active = true AND u.worker_type <> 'unpaid'
        ORDER BY u.full_name`,
       [companyId]
     );
@@ -3330,7 +3343,7 @@ async function computePayrollRun(companyId, from, to, rulesetId = null) {
     const workers = await pool.query(
       `SELECT u.id, u.full_name, u.invoice_name, u.hourly_rate, u.rate_type, u.overtime_rule, u.role_id, u.guaranteed_weekly_hours, r.name AS role_name
          FROM users u LEFT JOIN roles r ON r.id = u.role_id
-        WHERE u.company_id = $1 AND u.role = 'worker' AND u.active = true
+        WHERE u.company_id = $1 AND u.role = 'worker' AND u.active = true AND u.worker_type <> 'unpaid'
         ORDER BY u.full_name`,
       [companyId]
     );
@@ -3489,7 +3502,7 @@ router.get('/payroll-periods', requireAdmin, requirePerm('view_reports'), requir
         [req.user.company_id]
       ),
       pool.query(
-        "SELECT DISTINCT role_id FROM users WHERE company_id = $1 AND role = 'worker' AND active = true AND role_id IS NOT NULL",
+        "SELECT DISTINCT role_id FROM users WHERE company_id = $1 AND role = 'worker' AND active = true AND worker_type <> 'unpaid' AND role_id IS NOT NULL",
         [req.user.company_id]
       ),
     ]);
@@ -3779,7 +3792,7 @@ router.get('/payroll-export', requireAdmin, requirePerm('view_reports'), require
     const s = await getSettings(companyId);
     const workers = await pool.query(
       `SELECT u.id, u.full_name, u.invoice_name, u.hourly_rate, u.rate_type, u.overtime_rule, u.role_id, u.guaranteed_weekly_hours FROM users u
-       WHERE u.company_id = $1 AND u.role = 'worker' AND u.active = true
+       WHERE u.company_id = $1 AND u.role = 'worker' AND u.active = true AND u.worker_type <> 'unpaid'
        ORDER BY u.full_name`,
       [companyId]
     );
@@ -4069,7 +4082,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
     // the pay engine (invoices, payroll run, pay stubs, worker reports) already counts
     // approved entries only. Without this, certified payroll silently includes pending
     // (unvetted) hours that show up nowhere else.
-    const conditions = ['te.company_id = $1', 'te.work_date >= $2', 'te.work_date <= $3', "te.status = 'approved'"];
+    const conditions = ['te.company_id = $1', 'te.work_date >= $2', 'te.work_date <= $3', "te.status = 'approved'", "u.worker_type <> 'unpaid'"];
     const values = [companyId, weekStart, week_end];
     let idx = 4;
     if (projectId) { conditions.push(`te.project_id = $${idx++}`); values.push(projectId); }
@@ -4374,17 +4387,16 @@ router.post('/projects/:id/rfis', requireAdmin, async (req, res) => {
   try {
     const projCheck = await pool.query('SELECT id FROM projects WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
     if (projCheck.rowCount === 0) return res.status(404).json({ error: 'Project not found' });
-    const maxNum = await pool.query(
-      'SELECT COALESCE(MAX(rfi_number), 0) + 1 AS next FROM rfis WHERE project_id = $1 AND company_id = $2',
-      [req.params.id, companyId]
-    );
-    const rfi_number = maxNum.rows[0].next;
     const today = new Date().toLocaleDateString('en-CA');
+    // rfi_number is unique per COMPANY (uq_rfis_company_number), not per project — so number
+    // company-wide, matching POST /rfis. A per-project MAX made every 2nd+ project's first RFI
+    // collide on rfi_number=1 and 500. The inline subquery also makes it atomic against
+    // concurrent creates (read-then-insert could otherwise duplicate a number).
     const result = await pool.query(
       `INSERT INTO rfis (company_id, project_id, rfi_number, subject, description, directed_to, submitted_by, date_submitted, date_due, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'open')
+       VALUES ($1, $2, (SELECT COALESCE(MAX(rfi_number),0)+1 FROM rfis WHERE company_id=$1), $3, $4, $5, $6, $7, $8, 'open')
        RETURNING id, rfi_number, subject, status, directed_to, date_submitted, date_due`,
-      [companyId, req.params.id, rfi_number, subject.trim(), description || null,
+      [companyId, req.params.id, subject.trim(), description || null,
        directed_to || null, req.user.full_name, date_submitted || today, date_due || null]
     );
     res.status(201).json(result.rows[0]);
@@ -4616,8 +4628,9 @@ router.delete('/workers/:id/documents/:docId', requireAdmin, async (req, res) =>
 //   - GET  /roles, /permissions/catalog: requireAdmin only — anyone with the
 //     admin dashboard needs to see the role list to pick from it. The picker
 //     itself is still gated by assign_roles at the assign endpoint.
-//   - POST/PATCH/DELETE /roles: requirePerm('manage_roles') — Owner-only
-//     by default, but Owner can delegate by granting the perm to another role.
+//   - POST/PATCH/DELETE /roles: requirePerm('manage_roles') — Admin + Owner by default.
+//     Managing an ADMIN-tier role (parent_role === 'admin') ADDITIONALLY requires
+//     manage_admin_roles (Owner-only by default). Both are delegable via role_permissions.
 //   - PATCH /workers/:id/role: requirePerm('assign_roles') — usually all admins.
 //
 // Privilege-escalation guard: when creating or editing a role, the requester
@@ -4699,8 +4712,13 @@ router.post('/roles', requireAdmin, requirePerm('manage_roles'), async (req, res
   for (const p of permissions) {
     if (!PERMISSION_KEYS.has(p)) return res.status(400).json({ error: `Unknown permission: ${p}` });
   }
-  // Privilege-escalation guard
   const requesterPerms = await getUserPermissions(req.user);
+  // Creating an ADMIN-tier role needs manage_admin_roles (Owner by default); manage_roles
+  // (Admin) only covers non-admin roles.
+  if (parent_role === 'admin' && !requesterPerms.has('manage_admin_roles')) {
+    return res.status(403).json({ error: 'Only an Owner can create admin roles', code: 'admin_role_forbidden' });
+  }
+  // Privilege-escalation guard
   for (const p of permissions) {
     if (!requesterPerms.has(p)) {
       return res.status(403).json({
@@ -4747,17 +4765,22 @@ router.patch('/roles/:id', requireAdmin, requirePerm('manage_roles'), async (req
   const { name, description, permissions } = req.body || {};
   try {
     const existing = await pool.query(
-      'SELECT id, is_builtin, name FROM roles WHERE id = $1 AND company_id = $2',
+      'SELECT id, is_builtin, name, parent_role FROM roles WHERE id = $1 AND company_id = $2',
       [req.params.id, req.user.company_id]
     );
     if (existing.rowCount === 0) return res.status(404).json({ error: 'Role not found' });
     const role = existing.rows[0];
+    const requesterPerms = await getUserPermissions(req.user);
+    // Editing an ADMIN-tier role (built-in Admin/Owner or a custom admin role) needs
+    // manage_admin_roles; manage_roles (Admin) only covers non-admin roles.
+    if (role.parent_role === 'admin' && !requesterPerms.has('manage_admin_roles')) {
+      return res.status(403).json({ error: 'Only an Owner can edit admin roles', code: 'admin_role_forbidden' });
+    }
 
     if (Array.isArray(permissions)) {
       for (const p of permissions) {
         if (!PERMISSION_KEYS.has(p)) return res.status(400).json({ error: `Unknown permission: ${p}` });
       }
-      const requesterPerms = await getUserPermissions(req.user);
       for (const p of permissions) {
         if (!requesterPerms.has(p)) {
           return res.status(403).json({
@@ -4843,6 +4866,11 @@ router.delete('/roles/:id', requireAdmin, requirePerm('manage_roles'), async (re
     );
     if (existing.rowCount === 0) return res.status(404).json({ error: 'Role not found' });
     const role = existing.rows[0];
+    // Deleting an ADMIN-tier custom role needs manage_admin_roles; manage_roles (Admin)
+    // only covers non-admin roles.
+    if (role.parent_role === 'admin' && !(await getUserPermissions(req.user)).has('manage_admin_roles')) {
+      return res.status(403).json({ error: 'Only an Owner can delete admin roles', code: 'admin_role_forbidden' });
+    }
     if (role.is_builtin) return res.status(400).json({ error: 'Cannot delete a built-in role' });
 
     const fallbackName = role.parent_role === 'worker' ? 'Worker' : 'Admin';

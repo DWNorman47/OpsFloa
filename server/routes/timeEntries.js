@@ -217,7 +217,13 @@ router.patch('/:id', requireAuth, async (req, res) => {
 // GET /time-entries/:id/messages
 router.get('/:id/messages', requireAuth, async (req, res) => {
   try {
-    const entry = await pool.query('SELECT id FROM time_entries WHERE id = $1 AND company_id = $2', [req.params.id, req.user.company_id]);
+    // Owner OR an admin only — a worker must not read/post on a coworker's entry thread
+    // (matches /messages/unread-count). time_entries.id is enumerable, so tenant scope alone
+    // would be a cross-worker IDOR.
+    const entry = await pool.query(
+      "SELECT id FROM time_entries WHERE id = $1 AND company_id = $2 AND (user_id = $3 OR $4 IN ('admin','super_admin'))",
+      [req.params.id, req.user.company_id, req.user.id, req.user.role]
+    );
     if (entry.rowCount === 0) return res.status(404).json({ error: 'Entry not found' });
     const result = await pool.query(
       `SELECT m.*, u.full_name as sender_name FROM entry_messages m
@@ -241,7 +247,13 @@ router.post('/:id/messages', requireAuth, async (req, res) => {
   if (!body?.trim()) return res.status(400).json({ error: 'Message body required' });
   if (body.length > 1000) return res.status(400).json({ error: 'Message must be 1000 characters or fewer' });
   try {
-    const entry = await pool.query('SELECT id FROM time_entries WHERE id = $1 AND company_id = $2', [req.params.id, req.user.company_id]);
+    // Owner OR an admin only — a worker must not read/post on a coworker's entry thread
+    // (matches /messages/unread-count). time_entries.id is enumerable, so tenant scope alone
+    // would be a cross-worker IDOR.
+    const entry = await pool.query(
+      "SELECT id FROM time_entries WHERE id = $1 AND company_id = $2 AND (user_id = $3 OR $4 IN ('admin','super_admin'))",
+      [req.params.id, req.user.company_id, req.user.id, req.user.role]
+    );
     if (entry.rowCount === 0) return res.status(404).json({ error: 'Entry not found' });
     const result = await pool.query(
       `INSERT INTO entry_messages (time_entry_id, company_id, sender_id, body)
@@ -342,7 +354,7 @@ router.get('/invoice-statement', requireAuth, async (req, res) => {
     const [workerRow, settings, companyRow] = await Promise.all([
       pool.query(
         `SELECT id, full_name, email, invoice_name, hourly_rate, rate_type,
-                overtime_rule, role_id, guaranteed_weekly_hours
+                overtime_rule, role_id, guaranteed_weekly_hours, worker_type
          FROM users
          WHERE id=$1 AND company_id=$2`,
         [req.user.id, companyId]
@@ -389,7 +401,7 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const [workerRow, settings, companyRow] = await Promise.all([
-      pool.query('SELECT id, overtime_rule, hourly_rate, rate_type, guaranteed_weekly_hours, role_id FROM users WHERE id = $1', [userId]),
+      pool.query('SELECT id, overtime_rule, hourly_rate, rate_type, guaranteed_weekly_hours, role_id, worker_type FROM users WHERE id = $1', [userId]),
       loadSettings(companyId),
       pool.query('SELECT subscription_status, addon_advanced_payroll, addon_certified_payroll FROM companies WHERE id = $1', [companyId]),
     ]);

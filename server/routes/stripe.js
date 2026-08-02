@@ -9,6 +9,22 @@ function getStripe() {
   return new Stripe(process.env.STRIPE_SECRET_KEY);
 }
 
+// A company may have at most ONE subscription. Returns the company's live Stripe
+// subscription (active / trialing / past_due / unpaid) or null. Verified against
+// Stripe — NOT just the DB flag — so a webhook lag can't let a second checkout
+// through, and a stale id for a canceled sub doesn't wrongly block a re-subscribe.
+// This is the guard that stops a company accidentally buying a SECOND parallel
+// subscription (which would double-bill them until someone notices + refunds).
+async function liveSubscription(stripe, subscriptionId) {
+  if (!subscriptionId) return null;
+  try {
+    const sub = await stripe.subscriptions.retrieve(subscriptionId);
+    return ['active', 'trialing', 'past_due', 'unpaid'].includes(sub.status) ? sub : null;
+  } catch (err) {
+    return null; // not found / deleted → no live subscription
+  }
+}
+
 // Sum monthly revenue in cents from Stripe subscription items (normalises annual → monthly)
 function calcMrrCents(items) {
   return items.reduce((sum, item) => {
@@ -140,6 +156,17 @@ router.post('/checkout', requireAdmin, requirePerm('manage_billing'), async (req
     );
     const c = company.rows[0];
     if (!c) return res.status(404).json({ error: 'Company not found' });
+
+    // Refuse a SECOND subscription. A company that already has a live subscription must
+    // change their plan / add add-ons from Manage billing (the portal, or /addon) — a fresh
+    // checkout would create a parallel subscription and double-bill them. This is the guard
+    // that prevents the accidental double-purchase.
+    if (await liveSubscription(stripe, c.stripe_subscription_id)) {
+      return res.status(409).json({
+        error: 'You already have an active subscription. Change your plan or add add-ons from Manage billing instead of subscribing again.',
+        code: 'has_subscription',
+      });
+    }
 
     // Takeoff is a layer on top of Plan Room — it can't be bought without it.
     // Allowed only if Plan Room is already owned or is in this same checkout.
@@ -315,6 +342,103 @@ router.post('/addon/remove', requireAdmin, requirePerm('manage_billing'), async 
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Failed to remove the add-on' }); }
 });
 
+// Base-plan + per-worker prices by interval, for in-app plan changes (starter <-> business).
+const BASE_PLAN_PRICE = {
+  starter:  { month: () => process.env.STRIPE_PRICE_STARTER,       year: () => process.env.STRIPE_PRICE_STARTER_ANNUAL },
+  business: { month: () => process.env.STRIPE_PRICE_BUSINESS_BASE, year: () => process.env.STRIPE_PRICE_BUSINESS_BASE_ANNUAL },
+};
+const BUSINESS_WORKER_PRICE = { month: () => process.env.STRIPE_PRICE_BUSINESS_WORKER, year: () => process.env.STRIPE_PRICE_BUSINESS_WORKER_ANNUAL };
+const BUSINESS_INCLUDED_WORKERS = 15; // business base includes this many; per-worker billed above it
+const STARTER_WORKER_LIMIT = 10;      // must match WORKER_LIMITS.starter in admin.js
+
+// POST /stripe/change-plan — switch the base plan (starter <-> business) on the company's
+// EXISTING subscription, prorated, NEVER creating a second one. Keeps the billing interval and
+// every add-on; business adds a per-worker seat item for team members above the included count,
+// starter drops it (and is refused if the company exceeds Starter's worker cap).
+router.post('/change-plan', requireAdmin, requirePerm('manage_billing'), async (req, res) => {
+  const target = req.body && req.body.plan;
+  if (target !== 'starter' && target !== 'business') {
+    return res.status(400).json({ error: 'plan must be "starter" or "business"' });
+  }
+  try {
+    const stripe = getStripe();
+    const r = await pool.query(
+      `SELECT stripe_subscription_id, bonus_seats,
+              (SELECT COUNT(*) FROM users WHERE company_id = $1 AND role = 'worker' AND active = true) AS worker_count
+         FROM companies WHERE id = $1`,
+      [req.user.company_id]
+    );
+    const row = r.rows[0];
+    const subId = row && row.stripe_subscription_id;
+    if (!subId) return res.status(400).json({ error: 'No active subscription — subscribe to a plan first.', code: 'no_subscription' });
+
+    const sub = await liveSubscription(stripe, subId);
+    if (!sub) return res.status(400).json({ error: 'Your subscription is not active.', code: 'no_subscription' });
+
+    // The base plan item = the item whose price maps to a real plan; the billing interval
+    // (all items on a subscription share it) comes from there.
+    const baseItem = sub.items.data.find(i => planFromPrice(i.price && i.price.id) !== 'free');
+    if (!baseItem) {
+      return res.status(400).json({ error: 'This subscription has no base plan to change (add-ons only).', code: 'no_base_plan' });
+    }
+    const interval = baseItem.price.recurring && baseItem.price.recurring.interval; // 'month' | 'year'
+    if (interval !== 'month' && interval !== 'year') return res.status(400).json({ error: 'Unsupported billing interval.' });
+
+    const currentPlan = planFromPrice(baseItem.price.id);
+    if (currentPlan === target) return res.status(400).json({ error: `You are already on the ${target} plan.`, code: 'already_on_plan' });
+
+    const newBasePrice = BASE_PLAN_PRICE[target][interval]();
+    if (!newBasePrice) return res.status(400).json({ error: 'The target plan price is not configured.' });
+
+    const workers = parseInt(row.worker_count, 10) || 0;
+
+    // Downgrading to Starter: its worker cap (plus any complimentary bonus seats) must hold.
+    if (target === 'starter') {
+      const cap = STARTER_WORKER_LIMIT + (parseInt(row.bonus_seats, 10) || 0);
+      if (workers > cap) {
+        return res.status(400).json({
+          error: `The Starter plan allows up to ${cap} team members, but you have ${workers}. Remove members first, or stay on Business.`,
+          code: 'worker_limit',
+        });
+      }
+    }
+
+    // ONE atomic items update: swap the base price, keep every add-on (id only), and add /
+    // update / remove the per-worker seat item. Listing every existing item explicitly makes
+    // this correct whether Stripe merges or replaces the items set — no add-on can be dropped.
+    const workerMonthly = BUSINESS_WORKER_PRICE.month();
+    const workerAnnual = BUSINESS_WORKER_PRICE.year();
+    const isWorkerItem = i => i.price && (i.price.id === workerMonthly || i.price.id === workerAnnual);
+    const existingWorker = sub.items.data.find(isWorkerItem);
+
+    const items = [];
+    for (const i of sub.items.data) {
+      if (i.id === baseItem.id) items.push({ id: i.id, price: newBasePrice });
+      else if (isWorkerItem(i)) continue; // handled below
+      else items.push({ id: i.id });      // preserve add-ons / any other item unchanged
+    }
+    if (target === 'business') {
+      const overage = Math.max(0, workers - BUSINESS_INCLUDED_WORKERS);
+      const workerPrice = interval === 'year' ? workerAnnual : workerMonthly;
+      if (overage > 0) {
+        if (!workerPrice) return res.status(400).json({ error: 'The per-worker price is not configured.' });
+        if (existingWorker) items.push({ id: existingWorker.id, price: workerPrice, quantity: overage });
+        else items.push({ price: workerPrice, quantity: overage });
+      } else if (existingWorker) {
+        items.push({ id: existingWorker.id, deleted: true });
+      }
+    } else if (existingWorker) {
+      items.push({ id: existingWorker.id, deleted: true }); // Starter has no per-worker item
+    }
+
+    await stripe.subscriptions.update(subId, { items, proration_behavior: 'create_prorations' });
+
+    // Reflect immediately; the customer.subscription.updated webhook re-confirms plan + mrr.
+    await pool.query('UPDATE companies SET plan = $1 WHERE id = $2', [target, req.user.company_id]);
+    res.json({ ok: true, plan: target });
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Failed to change the plan' }); }
+});
+
 // POST /stripe/checkout-addon — buy one or more add-ons with NO base plan.
 //
 // For a company that wants just Plan Room and/or the Takeoff add-on without
@@ -372,8 +496,9 @@ router.post('/checkout-addon', requireAdmin, requirePerm('manage_billing'), asyn
     // If they already have a LIVE subscription, adding an add-on there is the
     // right path (one prorated line item, one invoice) — a second subscription
     // would double the billing relationship. Route them to /addon. A stale
-    // subscription_id from a canceled sub is fine: only active/past_due block.
-    if (c.stripe_subscription_id && ['active', 'past_due'].includes(c.subscription_status)) {
+    // subscription_id from a canceled/expired sub is fine: only live states block
+    // ('trial' = a trialing sub that was pre-purchased, also live).
+    if (c.stripe_subscription_id && ['active', 'past_due', 'trial'].includes(c.subscription_status)) {
       return res.status(400).json({ error: 'You already have a subscription — add this from your plan instead.', code: 'has_subscription' });
     }
 

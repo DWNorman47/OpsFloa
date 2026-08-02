@@ -2,6 +2,7 @@ const pool = require('../db');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { seedBuiltinRoles } = require('../permissions');
+const { wallDateInTZ } = require('../utils/timeFormat');
 
 // Manual or scheduled seed for visual QA. It creates/fills only the named
 // fictional company. Dates roll forward so Demo Operations stays useful as a
@@ -11,6 +12,8 @@ const DEMO_ADMIN_USERNAME = process.env.DEMO_ADMIN_USERNAME || 'Admin';
 const DEMO_ADMIN_PASSWORD = process.env.DEMO_ADMIN_PASSWORD || 'Admin123';
 const DEMO_SEED_DATE = process.env.DEMO_SEED_DATE || new Date().toISOString().slice(0, 10);
 const TODAY = new Date(`${DEMO_SEED_DATE}T12:00:00Z`);
+const DEMO_TIMEZONE = 'America/Phoenix';
+const SEED_RUN_AT = new Date();
 
 if (Number.isNaN(TODAY.getTime())) {
   throw new Error('DEMO_SEED_DATE must be in YYYY-MM-DD format when provided.');
@@ -1301,20 +1304,21 @@ async function main() {
     for (let i = 0; i < Math.min(3, workers.length); i++) {
       const lat = 33.45 + (i / 100);
       const lng = -112.07 - (i / 100);
+      const clockInTime = new Date(SEED_RUN_AT.getTime() - (i + 1) * 15 * 60 * 1000);
       await upsertActiveClock(client, {
         company_id: companyId,
         user_id: workers[i].id,
         project_id: projectByIndex(i).id,
-        clock_in_time: isoTimestamp(0, 7 + i, 15),
+        clock_in_time: clockInTime.toISOString(),
         clock_in_lat: lat,
         clock_in_lng: lng,
-        work_date: isoDate(0),
+        work_date: wallDateInTZ(clockInTime, DEMO_TIMEZONE),
         notes: ['Route prep', 'Clinic turnover', 'Inventory staging'][i % 3],
-        timezone: 'America/Phoenix',
+        timezone: DEMO_TIMEZONE,
         clock_source: 'worker',
         current_lat: lat,
         current_lng: lng,
-        location_updated_at: isoTimestamp(0, 10 + i, 5),
+        location_updated_at: clockInTime.toISOString(),
       });
     }
 

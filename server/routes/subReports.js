@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const pool = require('../db');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { projectBelongsToCompany } = require('../utils/tenantRefs');
 
 // GET /sub-reports
 router.get('/', requireAdmin, async (req, res) => {
@@ -55,6 +56,9 @@ router.post('/', requireAdmin, async (req, res) => {
   const headcountVal = headcount != null && headcount !== '' ? parseInt(headcount) : null;
   if (headcountVal !== null && (isNaN(headcountVal) || headcountVal < 0)) return res.status(400).json({ error: 'headcount must be a non-negative integer' });
   const companyId = req.user.company_id;
+  if (project_id != null && project_id !== '' && !(await projectBelongsToCompany(pool, project_id, companyId))) {
+    return res.status(400).json({ error: 'Invalid project' });
+  }
   try {
     const result = await pool.query(
       `INSERT INTO sub_reports
@@ -93,6 +97,9 @@ router.patch('/:id', requireAdmin, async (req, res) => {
   const headcountVal = headcount != null && headcount !== '' ? parseInt(headcount) : null;
   if (headcountVal !== null && (isNaN(headcountVal) || headcountVal < 0)) return res.status(400).json({ error: 'headcount must be a non-negative integer' });
   const companyId = req.user.company_id;
+  if (project_id != null && project_id !== '' && !(await projectBelongsToCompany(pool, project_id, companyId))) {
+    return res.status(400).json({ error: 'Invalid project' });
+  }
   try {
     const result = await pool.query(
       `UPDATE sub_reports SET project_id=$1, report_date=$2, sub_company=$3, foreman_name=$4,

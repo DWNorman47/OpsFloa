@@ -112,7 +112,7 @@ async function sendWeeklyPayrollReport(companyId, companyName) {
         AND te.company_id = $1
         AND te.work_date BETWEEN $2 AND $3
         AND te.status != 'rejected'
-      WHERE u.company_id = $1 AND u.role = 'worker' AND u.active = true`,
+      WHERE u.company_id = $1 AND u.role = 'worker' AND u.active = true AND u.worker_type <> 'unpaid'`,
     [companyId, from, to]
   );
 
@@ -311,21 +311,31 @@ async function sendMonthlyValuationReport(companyId, companyName) {
 async function runWeeklyReports() {
   const companies = await activeCompanies();
   for (const { id, name } of companies) {
-    const [payroll, lowStock] = await Promise.all([
-      settingEnabled(id, 'report_weekly_payroll'),
-      settingEnabled(id, 'report_weekly_low_stock'),
-    ]);
-    // Per-company catches so one company's failure doesn't skip the rest.
-    if (payroll)   await sendWeeklyPayrollReport(id, name).catch(err => logger.error({ err, companyId: id }, 'weekly payroll report failed'));
-    if (lowStock)  await sendWeeklyLowStockReport(id, name).catch(err => logger.error({ err, companyId: id }, 'weekly low-stock report failed'));
+    // Whole per-company block is guarded: even a settingEnabled() DB error must not throw to
+    // runJob, whose whole-job retry would re-email every company already processed this run.
+    try {
+      const [payroll, lowStock] = await Promise.all([
+        settingEnabled(id, 'report_weekly_payroll'),
+        settingEnabled(id, 'report_weekly_low_stock'),
+      ]);
+      // Per-company catches so one company's failure doesn't skip the rest.
+      if (payroll)   await sendWeeklyPayrollReport(id, name).catch(err => logger.error({ err, companyId: id }, 'weekly payroll report failed'));
+      if (lowStock)  await sendWeeklyLowStockReport(id, name).catch(err => logger.error({ err, companyId: id }, 'weekly low-stock report failed'));
+    } catch (err) {
+      logger.error({ err, companyId: id }, 'weeklyReports: company failed, continuing');
+    }
   }
 }
 
 async function runMonthlyReports() {
   const companies = await activeCompanies();
   for (const { id, name } of companies) {
-    const valuation = await settingEnabled(id, 'report_monthly_valuation');
-    if (valuation) await sendMonthlyValuationReport(id, name).catch(err => logger.error({ err, companyId: id }, 'monthly valuation report failed'));
+    try {
+      const valuation = await settingEnabled(id, 'report_monthly_valuation');
+      if (valuation) await sendMonthlyValuationReport(id, name).catch(err => logger.error({ err, companyId: id }, 'monthly valuation report failed'));
+    } catch (err) {
+      logger.error({ err, companyId: id }, 'monthlyReports: company failed, continuing');
+    }
   }
 }
 

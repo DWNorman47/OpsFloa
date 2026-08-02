@@ -137,18 +137,40 @@ describe('POST /admin/roles', () => {
     expect(res.status).toBe(400);
   });
 
-  test('PRIVILEGE ESCALATION: non-Owner with manage_roles cannot grant manage_billing', async () => {
+  test('PRIVILEGE ESCALATION: manage_roles user cannot grant manage_billing (worker-tier role)', async () => {
     mockUserPermissions = new Set(['manage_roles', 'approve_entries']); // No manage_billing
     const res = await request(makeApp())
       .post('/api/admin/roles')
       .send({
-        name: 'BillingAdmin',
-        parent_role: 'admin',
+        name: 'BillingHelper',
+        parent_role: 'worker', // worker-tier so the escalation guard (not the tier gate) is what blocks
         permissions: ['manage_billing'],
       });
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('permission_escalation');
     expect(res.body.required).toBe('manage_billing');
+  });
+
+  test('TIER GATE: manage_roles (non-Owner) cannot CREATE an admin-tier role', async () => {
+    mockUserPermissions = new Set(['manage_roles', 'approve_entries']); // no manage_admin_roles
+    const res = await request(makeApp())
+      .post('/api/admin/roles')
+      .send({ name: 'Foreman', parent_role: 'admin', permissions: ['approve_entries'] });
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('admin_role_forbidden');
+  });
+
+  test('TIER GATE: manage_roles (non-Owner) CAN create a worker-tier role', async () => {
+    mockUserPermissions = new Set(['manage_roles', 'approve_entries']);
+    pool.query
+      .mockResolvedValueOnce({})                      // BEGIN
+      .mockResolvedValueOnce({ rows: [{ id: 202 }] }) // INSERT INTO roles
+      .mockResolvedValueOnce({})                      // INSERT permission
+      .mockResolvedValueOnce({});                     // COMMIT
+    const res = await request(makeApp())
+      .post('/api/admin/roles')
+      .send({ name: 'Lead', parent_role: 'worker', permissions: ['approve_entries'] });
+    expect(res.status).toBe(201);
   });
 
   test('Owner can grant manage_billing (has it themselves)', async () => {
@@ -241,6 +263,18 @@ describe('PATCH /admin/roles/:id', () => {
       .send({ name: 'X' });
     expect(res.status).toBe(404);
   });
+
+  test('TIER GATE: manage_roles (non-Owner) cannot EDIT an admin-tier role', async () => {
+    mockUserPermissions = new Set(['manage_roles']); // no manage_admin_roles
+    pool.query.mockResolvedValueOnce({
+      rowCount: 1, rows: [{ id: 60, is_builtin: true, name: 'Admin', parent_role: 'admin' }],
+    });
+    const res = await request(makeApp())
+      .patch('/api/admin/roles/60')
+      .send({ permissions: ['view_reports'] });
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('admin_role_forbidden');
+  });
 });
 
 // ── DELETE /admin/roles/:id ─────────────────────────────────────────────────
@@ -267,6 +301,16 @@ describe('DELETE /admin/roles/:id', () => {
     expect(res.status).toBe(200);
     expect(res.body.deleted).toBe(true);
     expect(res.body.fallback_role_id).toBe(50);
+  });
+
+  test('TIER GATE: manage_roles (non-Owner) cannot DELETE an admin-tier custom role', async () => {
+    mockUserPermissions = new Set(['manage_roles']); // no manage_admin_roles
+    pool.query.mockResolvedValueOnce({
+      rowCount: 1, rows: [{ id: 205, is_builtin: false, parent_role: 'admin' }],
+    });
+    const res = await request(makeApp()).delete('/api/admin/roles/205');
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('admin_role_forbidden');
   });
 });
 

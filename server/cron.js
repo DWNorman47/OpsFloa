@@ -5,6 +5,7 @@
 const pool = require('./db');
 const { sendPushToUser, sendPushToCompanyAdmins } = require('./push');
 const { createInboxItemBatch } = require('./routes/inbox');
+const { rolloverStaleDemoClocks } = require('./services/demoClockRollover');
 
 // A worker who has been clocked in this many hours without clocking out
 // is almost certainly forgotten — phone died, app uninstalled, drove home
@@ -189,9 +190,11 @@ async function sweepStaleActiveClock() {
               u.full_name AS worker_name, p.name AS project_name,
               EXTRACT(EPOCH FROM (NOW() - ac.clock_in_time)) / 3600 AS hours_clocked
          FROM active_clock ac
+         JOIN companies c ON c.id = ac.company_id
          JOIN users u ON u.id = ac.user_id
          LEFT JOIN projects p ON p.id = ac.project_id
-        WHERE ac.clock_in_time < NOW() - ($1 || ' hours')::INTERVAL
+        WHERE c.is_demo = false
+          AND ac.clock_in_time < NOW() - ($1 || ' hours')::INTERVAL
           AND ac.stale_alert_sent_at IS NULL`,
       [STALE_CLOCK_HOURS]
     );
@@ -234,6 +237,19 @@ async function sweepStaleActiveClock() {
   } catch (err) {
     console.error('[cron] sweepStaleActiveClock error:', err);
   }
+}
+
+async function maintainActiveClocks() {
+  try {
+    const rolledOver = await rolloverStaleDemoClocks();
+    if (rolledOver > 0) {
+      console.log(`[cron] Demo Operations: rolled over ${rolledOver} active clock(s)`);
+    }
+  } catch (err) {
+    console.error('[cron] rolloverStaleDemoClocks error:', err);
+  }
+
+  await sweepStaleActiveClock();
 }
 
 // ─── Booking reminders ──────────────────────────────────────────────────────
@@ -399,14 +415,14 @@ function startCron() {
   sendShiftReminders();
   sendSignoffReminders();
   expireOldTrials();
-  sweepStaleActiveClock();
+  maintainActiveClocks();
   sendBookingReminders();
   // Then run every hour (every 15 min for bookings — finer-grained since
   // a 1h reminder needs catching within a 15-min slot).
   setInterval(sendShiftReminders, 60 * 60 * 1000);
   setInterval(sendSignoffReminders, 60 * 60 * 1000);
   setInterval(expireOldTrials, 60 * 60 * 1000);
-  setInterval(sweepStaleActiveClock, 60 * 60 * 1000);
+  setInterval(maintainActiveClocks, 60 * 60 * 1000);
   setInterval(sendBookingReminders, 15 * 60 * 1000);
   console.log('[cron] Shift / sign-off / trial-expiry / stale-clock / booking-reminder crons started');
 }
