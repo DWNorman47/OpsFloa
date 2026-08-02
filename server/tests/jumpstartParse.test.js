@@ -55,7 +55,45 @@ describe('parseJumpstart normalises a good reply', () => {
   });
 
   test('adds a summary the client can headline', () => {
-    expect(out.summary).toEqual({ countGroups: 2, countPoints: 3, regions: 1, labels: 1 });
+    expect(out.summary).toEqual({ countGroups: 2, countPoints: 3, regions: 1, labels: 1, spots: 0 });
+  });
+
+  test('a generic (non-earthwork) reply has no spots or earthwork verdict', () => {
+    expect(out.spots).toEqual([]);
+    expect(out.earthwork).toBeNull();
+  });
+});
+
+describe('parseJumpstart — earthwork (dirt) fields', () => {
+  test('reads spot elevations with numeric elev and surface, dropping incomplete ones', () => {
+    const out = parseJumpstart(wrap({
+      spots: [
+        { label: 'FG 512.5', elev: 512.5, surface: 'proposed', at: { x: 0.2, y: 0.3 } },
+        { label: 'EG 511', elev: 511, surface: 'existing', at: { x: 0.4, y: 0.5 } },
+        { label: 'no point', elev: 500 },                          // no `at` → dropped
+        { label: 'no elev', surface: 'existing', at: { x: 0.1, y: 0.1 } }, // no elev → dropped
+        { label: 'bad surface', elev: 505, surface: 'sideways', at: { x: 0.6, y: 0.6 } }, // surface → unknown
+      ],
+    }));
+    expect(out.spots).toHaveLength(3);
+    expect(out.spots[0]).toEqual({ label: 'FG 512.5', elev: 512.5, surface: 'proposed', at: { x: 0.2, y: 0.3 } });
+    expect(out.spots[2].surface).toBe('unknown');
+    expect(out.summary.spots).toBe(3);
+  });
+
+  test('cutFillComputable is only true when a proposed surface was actually seen', () => {
+    const existingOnly = parseJumpstart(wrap({
+      earthwork: { existingContours: true, proposedContours: false, cutFillComputable: true, reason: 'existing conditions only' },
+    }));
+    // model claimed computable but there's no proposed grade → forced false
+    expect(existingOnly.earthwork.cutFillComputable).toBe(false);
+    expect(existingOnly.earthwork.existingContours).toBe(true);
+    expect(existingOnly.earthwork.reason).toBe('existing conditions only');
+
+    const both = parseJumpstart(wrap({
+      earthwork: { existingContours: true, proposedContours: true, cutFillComputable: true, reason: 'grading plan' },
+    }));
+    expect(both.earthwork.cutFillComputable).toBe(true);
   });
 });
 

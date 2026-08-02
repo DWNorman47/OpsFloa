@@ -5563,10 +5563,13 @@ async function apiEstimate(path, opts = {}) {
 // Structured model result → Plan Room markups. Coordinates arrive NORMALIZED
 // [0,1] of the page image; dims is the page's base-px size, so normalized × dims
 // = base px (the markup coordinate space). Pure, so it's unit-tested by lifting.
-function jumpstartToMarkups(result, page, dims) {
+function jumpstartToMarkups(result, page, dims, opts) {
+  const o = opts || {};
   const r = result || {};
   const w = dims && dims.w, h = dims && dims.h;
   if (!(w > 0 && h > 0)) return [];
+  const trade = o.trade || '';
+  const defSurface = o.curSurface === 'proposed' ? 'proposed' : 'existing';
   const rid = () => 'ai' + Math.random().toString(36).slice(2, 10);
   const now = Date.now();
   const den = p => ({ x: p.x * w, y: p.y * h });
@@ -5584,10 +5587,21 @@ function jumpstartToMarkups(result, page, dims) {
   for (const rg of Array.isArray(r.regions) ? r.regions : []) {
     const pts = (Array.isArray(rg.polygon) ? rg.polygon : []).map(den);
     if (pts.length < 3) continue;
+    // In earthwork, a "limits of disturbance" region is the cut/fill boundary, not a
+    // generic area takeoff — place it as an ebound so it drives the grid.
+    const isLimits = trade === 'dirt' && /limit|disturb|grading/i.test(rg.label || '');
+    out.push(isLimits
+      ? { id: rid(), page, kind: 'ebound', pts, ai: true, aiConfidence: rg.confidence || 'low', created: now }
+      : { id: rid(), page, kind: 'qarea', pts, cfg: { label: rg.label || 'Area' }, ai: true, aiConfidence: rg.confidence || 'low', created: now });
+  }
+  // Earthwork spot elevations → espot markups on the surface the model guessed
+  // (falling back to the surface the estimator is currently working).
+  for (const s of Array.isArray(r.spots) ? r.spots : []) {
+    if (!s || !s.at || s.elev == null) continue;
+    const surface = (s.surface === 'existing' || s.surface === 'proposed') ? s.surface : defSurface;
     out.push({
-      id: rid(), page, kind: 'qarea', pts,
-      cfg: { label: rg.label || 'Area' },
-      ai: true, aiConfidence: rg.confidence || 'low', created: now,
+      id: rid(), page, kind: 'espot', color: '#9333ea', width: 2, pts: [den(s.at)],
+      elev: Number(s.elev), surface, ai: true, aiConfidence: 'low', created: now,
     });
   }
   return out;
@@ -5618,14 +5632,17 @@ async function runJumpStart() {
     const dataUrl = canvas.toDataURL('image/png');
     const imageBase64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
 
-    const res = await apiJump('/page', { method: 'POST', body: JSON.stringify({ imageBase64, mediaType: 'image/png', provider }) });
+    // Tell the model which trade we're working so it targets the right quantities
+    // (a generic scan is why earthwork used to come back as a tree-count blob).
+    const trade = state.trade || '';
+    const res = await apiJump('/page', { method: 'POST', body: JSON.stringify({ imageBase64, mediaType: 'image/png', provider, trade }) });
     if (res.status === 429) { setMsg('AI limit reached for this month.'); return; }
     if (res.status === 503) { setMsg('AI Jump Start isn’t configured yet (missing API key).'); return; }
     if (res.status === 413) { setMsg('This page is too large to send. Try a smaller sheet.'); return; }
     if (!res.ok) { setMsg('AI Jump Start failed — please try again.'); return; }
     const { result } = await res.json();
 
-    const markups = jumpstartToMarkups(result, state.page, { w: base.width, h: base.height });
+    const markups = jumpstartToMarkups(result, state.page, { w: base.width, h: base.height }, { trade, curSurface });
     if (markups.length) {
       const prev = snapshot();
       state.markups.push(...markups);
@@ -5643,13 +5660,34 @@ async function runJumpStart() {
 function jumpStartSummary(result, placed) {
   const r = result || {};
   const counts = (r.counts || []).map(c => `${c.points.length} ${c.label}`).join(', ');
+  const spotN = (r.spots || []).length;
   const scaleLine = r.scale && r.scale.found
     ? `Scale read: ${r.scale.text || (r.scale.feetPerInch + ' ft/in')} — this is a suggestion; confirm it by drawing your scale bar.`
     : 'No scale found on this sheet — set it manually.';
-  const lines = [
-    placed
+
+  // Earthwork verdict — the honest headline when cut/fill can't be computed from this
+  // sheet (e.g. an existing-conditions sheet with no proposed grade). This replaces the
+  // old behaviour of drawing a meaningless clearing blob.
+  const ew = r.earthwork;
+  let ewLine = '';
+  if (ew) {
+    if (ew.cutFillComputable) {
+      ewLine = `Earthwork: this sheet shows ${ew.existingContours ? 'existing' : 'no existing'} and proposed grade — cut/fill can be computed. Trace/confirm contours and the disturbance boundary, then run the cut/fill.`;
+    } else {
+      ewLine = `⚠ Earthwork: cut/fill can’t be computed from this sheet — ${ew.reason || 'it shows existing grade only, with no proposed (finished) grade to difference against.'} Run Jump Start on the grading/proposed sheet, or add the proposed surface, to get cut/fill.`;
+    }
+  }
+
+  const headline = ewLine && !ew.cutFillComputable
+    ? ewLine
+    : (placed
       ? `Drafted ${placed} AI markup${placed === 1 ? '' : 's'} (shown in purple). These are a first draft — review, edit, and delete what's wrong before trusting the quantities.`
-      : 'Nothing confidently markable on this page.',
+      : 'Nothing confidently markable on this page.');
+
+  const lines = [
+    headline,
+    ewLine && ewLine !== headline ? ewLine : '',
+    spotN ? `Read ${spotN} spot elevation${spotN === 1 ? '' : 's'} — placed on the ${curSurface} surface; re-tag any that belong to the other surface, and correct any misreads.` : '',
     counts && `Counts: ${counts}.`,
     (r.regions || []).length ? `${(r.regions || []).length} rough region(s) — reshape the vertices.` : '',
     scaleLine,
