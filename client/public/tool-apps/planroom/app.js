@@ -5739,10 +5739,21 @@ async function runContourExtract() {
       return { str: (it.str || '').trim(), x: p[0], y: p[1] };
     });
 
-    // Vector polylines → sheet-spanning candidates (contours vs. glyph/dimension noise).
+    // Vector polylines → contour candidates. A contour is long, OPEN, WANDERING, and has
+    // an elevation label nearby. Everything else iteration 1 wrongly grabbed fails one of
+    // those: the border / title-block / legend / notes boxes and the building pad are
+    // CLOSED; property & section lines are STRAIGHT; frames and boxes have no elevation
+    // label. Requiring all four cleans it up.
     const sheetDiag = Math.hypot(vp.width, vp.height);
     const all = extractPdfPolylines(opList, OPS, vp.transform);
-    let cand = all.filter(pl => pl.length >= 3 && polyDiag(pl) > sheetDiag * 0.08);
+    const isClosed = (pl) => Math.hypot(pl[0].x - pl[pl.length - 1].x, pl[0].y - pl[pl.length - 1].y) < sheetDiag * 0.01;
+    const wanders = (pl) => { // path length vs. straight-line distance — contours curve, property lines don't
+      let len = 0;
+      for (let i = 1; i < pl.length; i++) len += Math.hypot(pl[i].x - pl[i - 1].x, pl[i].y - pl[i - 1].y);
+      const end = Math.hypot(pl[pl.length - 1].x - pl[0].x, pl[pl.length - 1].y - pl[0].y) || 1;
+      return len / end > 1.015;
+    };
+    let cand = all.filter(pl => pl.length >= 3 && polyDiag(pl) > sheetDiag * 0.08 && !isClosed(pl) && wanders(pl));
     cand.sort((a, b) => polyDiag(b) - polyDiag(a));
     if (cand.length > 800) cand = cand.slice(0, 800); // keep the longest
 
@@ -5764,21 +5775,25 @@ async function runContourExtract() {
 
     const now = Date.now();
     const rid = () => 'ai' + Math.random().toString(36).slice(2, 10);
-    let labeled = 0;
-    const marks = cand.map(pts => {
+    // Only keep a candidate that has a contour elevation nearby — this is what drops the
+    // boxes/frames/notes (nothing labels them) that cluttered iteration 1.
+    let unlabeled = 0;
+    const marks = [];
+    for (const pts of cand) {
       const elev = labelFor(pts);
-      if (elev != null) labeled++;
-      return { id: rid(), page: state.page, kind: 'contour', color: '#9333ea', width: 2, pts: decimate(pts, 300), elev, surface: curSurface, ai: true, extracted: true, aiConfidence: 'low', created: now };
-    });
+      if (elev == null) { unlabeled++; continue; }
+      marks.push({ id: rid(), page: state.page, kind: 'contour', color: '#9333ea', width: 2, pts: decimate(pts, 300), elev, surface: curSurface, ai: true, extracted: true, aiConfidence: 'low', created: now });
+    }
+    const placed = marks.length;
 
     // Any text spot grades too (harmless when there are none).
     const { spots } = parseEarthworkSpots(items);
     for (const s of spots) marks.push({ id: rid(), page: state.page, kind: 'espot', color: '#9333ea', width: 2, pts: [{ x: s.at.x, y: s.at.y }], elev: s.elev, surface: s.surface === 'proposed' || s.surface === 'existing' ? s.surface : curSurface, ai: true, extracted: true, aiConfidence: 'high', created: now });
 
-    try { console.log('[JumpStart contours] polylines:', all.length, 'candidates:', cand.length, 'labeled:', labeled, 'int-labels:', labels.length, 'spots:', spots.length); } catch (_) { /* no console */ }
+    try { console.log('[JumpStart contours] polylines:', all.length, 'geom-candidates:', cand.length, 'placed(labeled):', placed, 'unlabeled-dropped:', unlabeled, 'int-labels:', labels.length, 'spots:', spots.length); } catch (_) { /* no console */ }
 
     if (!marks.length) {
-      const msg = `No sheet-spanning lines or spot grades found to extract (${all.length} polylines on the page, none long enough to be a contour). If the contours are raster/scanned rather than vector, they can't be pulled from the file.`;
+      const msg = `No contours placed: ${all.length} polylines on the page, ${cand.length} long/open/wandering candidates, but ${unlabeled} of those had no elevation label nearby (needed to trust them as contours). If the contours are raster/scanned rather than vector, they can't be pulled from the file.`;
       setMsg('Contour extract: ' + msg);
       alert('Earthwork contour extract — nothing placed\n\n' + msg);
       return;
@@ -5787,7 +5802,7 @@ async function runContourExtract() {
     state.markups.push(...marks);
     pushUndo(prev);
     markupsChanged();
-    const diag = `Extracted ${cand.length} candidate contour line${cand.length === 1 ? '' : 's'} (${labeled} auto-labeled with an elevation)${spots.length ? ` and ${spots.length} spot grade${spots.length === 1 ? '' : 's'}` : ''}, all on the ${curSurface} surface. ITERATION 1 — verify which are really contours (delete buildings/dimensions it grabbed), fix any wrong elevations, then set the other surface and run cut/fill. Undo removes them all at once.`;
+    const diag = `Placed ${placed} contour line${placed === 1 ? '' : 's'} (long, open, wandering, and near an elevation label)${spots.length ? ` and ${spots.length} spot grade${spots.length === 1 ? '' : 's'}` : ''}, on the ${curSurface} surface. Dropped ${unlabeled} unlabeled long line${unlabeled === 1 ? '' : 's'} (borders/boxes/property lines). Verify the contour elevations, delete any strays, then set the other surface and run cut/fill. Undo removes them all at once.`;
     setMsg('Contour extract: ' + diag);
     alert('Earthwork contour extract\n\n' + diag);
   } catch (e) {
