@@ -5643,68 +5643,152 @@ function parseEarthworkSpots(items) {
   return { spots, skipped, ambiguous };
 }
 
+// Walk a pdf.js operator list and pull out every stroked/filled polyline in base-px
+// page space. `OPS` is pdfjsLib.OPS (passed in so this is pure + unit-testable);
+// `base` is the scale-1 viewport.transform (the initial CTM). We track the CTM stack
+// (save/restore/transform) exactly as the renderer would, so coordinates land where
+// they draw. Bézier segments are approximated by their endpoints — fine for spotting
+// contour lines; we're not re-rendering. Contours arrive here mixed in with every
+// other line on the sheet (buildings, dims, and the vector spot-grade text); the
+// caller filters by length.
+function extractPdfPolylines(opList, OPS, base) {
+  const mul = (m, n) => [
+    m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1],
+    m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3],
+    m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5],
+  ];
+  const apply = (m, x, y) => ({ x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5] });
+  let ctm = base.slice();
+  const stack = [];
+  const out = [];
+  let cur = null;
+  const flush = () => { if (cur && cur.length >= 2) out.push(cur); cur = null; };
+  const fn = opList.fnArray || [], args = opList.argsArray || [];
+  for (let i = 0; i < fn.length; i++) {
+    const op = fn[i];
+    if (op === OPS.save) stack.push(ctm.slice());
+    else if (op === OPS.restore) { ctm = stack.pop() || ctm; }
+    else if (op === OPS.transform) ctm = mul(ctm, args[i]);
+    else if (op === OPS.constructPath) {
+      const a = args[i] || [];
+      const sub = a[0] || [], co = a[1] || [];
+      let j = 0;
+      for (let k = 0; k < sub.length; k++) {
+        const s = sub[k];
+        if (s === OPS.moveTo) { flush(); cur = [apply(ctm, co[j], co[j + 1])]; j += 2; }
+        else if (s === OPS.lineTo) { if (!cur) cur = []; cur.push(apply(ctm, co[j], co[j + 1])); j += 2; }
+        else if (s === OPS.curveTo) { if (!cur) cur = []; cur.push(apply(ctm, co[j + 4], co[j + 5])); j += 6; }
+        else if (s === OPS.curveTo2 || s === OPS.curveTo3) { if (!cur) cur = []; cur.push(apply(ctm, co[j + 2], co[j + 3])); j += 4; }
+        else if (s === OPS.rectangle) {
+          const x = co[j], y = co[j + 1], w = co[j + 2], h = co[j + 3]; j += 4;
+          flush(); cur = [apply(ctm, x, y), apply(ctm, x + w, y), apply(ctm, x + w, y + h), apply(ctm, x, y + h), apply(ctm, x, y)]; flush();
+        } else if (s === OPS.closePath) { if (cur && cur.length) cur.push(cur[0]); }
+      }
+      flush();
+    }
+  }
+  flush();
+  return out;
+}
+
+// Bounding-box diagonal of a polyline (base px) — the cheap "how big is this line"
+// used to separate sheet-spanning contours from glyph-sized and dimension linework.
+function polyDiag(pts) {
+  if (!pts || !pts.length) return 0;
+  let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  for (const p of pts) { if (p.x < minx) minx = p.x; if (p.x > maxx) maxx = p.x; if (p.y < miny) miny = p.y; if (p.y > maxy) maxy = p.y; }
+  return Math.hypot(maxx - minx, maxy - miny);
+}
+
 // Pull spot grades from the current page's PDF text layer and place them as espot
 // markups. Deterministic — no server, no AI, no metering.
-async function runEarthworkExtract() {
+// Drop a polyline to at most `max` vertices (keeps the ends) so a 3000-point contour
+// doesn't bloat the markup store — the shape survives, the weight doesn't.
+function decimate(pts, max) {
+  if (!pts || pts.length <= max) return pts;
+  const out = [], step = pts.length / max;
+  for (let i = 0; i < pts.length; i += step) out.push(pts[Math.floor(i)]);
+  const last = pts[pts.length - 1];
+  if (out[out.length - 1] !== last) out.push(last);
+  return out;
+}
+
+// Earthwork extraction, ITERATION 1 (contours). The spot grades on these sheets are
+// vector/SHX line-work, not text — but the contour lines are real geometry and the
+// contour ELEVATIONS are real text. So: pull every polyline from the page, keep the
+// sheet-spanning ones as candidate contours, label each from the nearest integer, and
+// place them for review. Also grabs any text spot grades (cheap; usually none here).
+// Classification is deliberately loose — this is a first pass to eyeball, not final.
+async function runContourExtract() {
   const btn = $('btnJumpStart');
   try {
     if (btn) btn.disabled = true;
-    setMsg('Reading spot elevations from the PDF…');
+    setMsg('Extracting contours from the PDF…');
     const page = await state.doc.raw.getPage(state.page);
     const vp = page.getViewport({ scale: 1 }); // base-px space (matches baseSize / markup coords)
-    const tc = await page.getTextContent();
+    const OPS = pdfjsLib.OPS;
+    const [opList, tc] = await Promise.all([page.getOperatorList(), page.getTextContent()]);
     const items = (tc.items || []).map(it => {
-      const p = vp.convertToViewportPoint(it.transform[4], it.transform[5]); // PDF user space → base px (y-flipped)
-      return { str: it.str, x: p[0], y: p[1] };
+      const p = vp.convertToViewportPoint(it.transform[4], it.transform[5]);
+      return { str: (it.str || '').trim(), x: p[0], y: p[1] };
     });
-    const { spots, skipped, ambiguous } = parseEarthworkSpots(items);
-    if (!spots.length) {
-      // Diagnose WHY nothing parsed: is there grade text in the drawing at all, or is
-      // this sheet's annotation vector/SHX graphics (not selectable text)? The notes and
-      // title block are usually real text and show up even when the plan labels don't.
-      const nonEmpty = items.filter(it => (it.str || '').trim());
-      const planArea = nonEmpty.filter(it => it.x < vp.width * 0.62); // left ~60% = the drawing
-      const sample = planArea.slice(0, 14).map(it => it.str).join(' | ');
-      try { console.log('[JumpStart earthwork] items:', items.length, 'nonEmpty:', nonEmpty.length, 'planArea:', planArea.length, planArea.slice(0, 100).map(it => it.str)); } catch (_) { /* no console */ }
-      const diag = planArea.length < 3
-        ? `The drawing area has almost no selectable text (${nonEmpty.length} text items total — mostly the notes/title block). This sheet's spot-grade labels are vector/SHX graphics, not text, so they can't be read from the PDF. Reading them would need OCR or geometry, not the text layer.`
-        : `Found ${planArea.length} text runs in the drawing but none matched a tagged grade. Sample of what's there: ${sample}`;
-      setMsg('Earthwork import: ' + diag);
-      alert('Earthwork spot import — nothing placed\n\n' + diag + '\n\nIf you can, also copy the browser console output (F12) — it lists the raw text the PDF exposed, which pins down the fix.');
-      return;
-    }
+
+    // Vector polylines → sheet-spanning candidates (contours vs. glyph/dimension noise).
+    const sheetDiag = Math.hypot(vp.width, vp.height);
+    const all = extractPdfPolylines(opList, OPS, vp.transform);
+    let cand = all.filter(pl => pl.length >= 3 && polyDiag(pl) > sheetDiag * 0.08);
+    cand.sort((a, b) => polyDiag(b) - polyDiag(a));
+    if (cand.length > 800) cand = cand.slice(0, 800); // keep the longest
+
+    // Integer contour labels (e.g. 305, 312) placed on/near the lines.
+    const labels = items
+      .map(l => ({ x: l.x, y: l.y, elev: /^\d{2,4}$/.test(l.str) ? parseInt(l.str, 10) : null }))
+      .filter(l => l.elev != null && l.elev >= 50 && l.elev <= 9999);
+    const labelFor = (pts) => {
+      let best = null, bd = (sheetDiag * 0.04) ** 2;
+      const step = Math.max(1, Math.floor(pts.length / 40)); // sample vertices for speed
+      for (const L of labels) {
+        for (let i = 0; i < pts.length; i += step) {
+          const dx = L.x - pts[i].x, dy = L.y - pts[i].y, d = dx * dx + dy * dy;
+          if (d < bd) { bd = d; best = L.elev; }
+        }
+      }
+      return best;
+    };
+
     const now = Date.now();
     const rid = () => 'ai' + Math.random().toString(36).slice(2, 10);
-    const marks = spots.map(s => ({
-      id: rid(), page: state.page, kind: 'espot', color: '#9333ea', width: 2,
-      pts: [{ x: s.at.x, y: s.at.y }], elev: s.elev,
-      surface: s.surface === 'proposed' || s.surface === 'existing' ? s.surface : curSurface,
-      ai: true, extracted: true, aiConfidence: 'high', created: now,
-    }));
+    let labeled = 0;
+    const marks = cand.map(pts => {
+      const elev = labelFor(pts);
+      if (elev != null) labeled++;
+      return { id: rid(), page: state.page, kind: 'contour', color: '#9333ea', width: 2, pts: decimate(pts, 300), elev, surface: curSurface, ai: true, extracted: true, aiConfidence: 'low', created: now };
+    });
+
+    // Any text spot grades too (harmless when there are none).
+    const { spots } = parseEarthworkSpots(items);
+    for (const s of spots) marks.push({ id: rid(), page: state.page, kind: 'espot', color: '#9333ea', width: 2, pts: [{ x: s.at.x, y: s.at.y }], elev: s.elev, surface: s.surface === 'proposed' || s.surface === 'existing' ? s.surface : curSurface, ai: true, extracted: true, aiConfidence: 'high', created: now });
+
+    try { console.log('[JumpStart contours] polylines:', all.length, 'candidates:', cand.length, 'labeled:', labeled, 'int-labels:', labels.length, 'spots:', spots.length); } catch (_) { /* no console */ }
+
+    if (!marks.length) {
+      const msg = `No sheet-spanning lines or spot grades found to extract (${all.length} polylines on the page, none long enough to be a contour). If the contours are raster/scanned rather than vector, they can't be pulled from the file.`;
+      setMsg('Contour extract: ' + msg);
+      alert('Earthwork contour extract — nothing placed\n\n' + msg);
+      return;
+    }
     const prev = snapshot();
     state.markups.push(...marks);
     pushUndo(prev);
     markupsChanged();
-    earthworkExtractSummary(spots, skipped, ambiguous);
+    const diag = `Extracted ${cand.length} candidate contour line${cand.length === 1 ? '' : 's'} (${labeled} auto-labeled with an elevation)${spots.length ? ` and ${spots.length} spot grade${spots.length === 1 ? '' : 's'}` : ''}, all on the ${curSurface} surface. ITERATION 1 — verify which are really contours (delete buildings/dimensions it grabbed), fix any wrong elevations, then set the other surface and run cut/fill. Undo removes them all at once.`;
+    setMsg('Contour extract: ' + diag);
+    alert('Earthwork contour extract\n\n' + diag);
   } catch (e) {
-    setMsg('Spot extraction failed: ' + (e && e.message ? e.message : e));
+    setMsg('Contour extraction failed: ' + (e && e.message ? e.message : e));
   } finally {
     if (btn) btn.disabled = false;
   }
-}
-
-function earthworkExtractSummary(spots, skipped, ambiguous) {
-  const by = { existing: 0, proposed: 0, unknown: 0 };
-  for (const s of spots) by[s.surface] = (by[s.surface] || 0) + 1;
-  const lines = [
-    `Imported ${spots.length} spot elevation${spots.length === 1 ? '' : 's'} straight from the PDF text — exact values and positions, not an AI guess.`,
-    `Surfaces: ${by.proposed} proposed (FS/FG), ${by.existing} existing ((parens)/EG)${by.unknown ? `, ${by.unknown} untagged (placed on the ${curSurface} surface — re-tag as needed)` : ''}.`,
-    skipped.length ? `Skipped ${skipped.length} structure/floor elevation${skipped.length === 1 ? '' : 's'} (TG/FL/FF/LIP…) — not ground grades.` : '',
-    ambiguous ? `Ignored ${ambiguous} untagged number${ambiguous === 1 ? '' : 's'} that couldn't be confirmed as a grade.` : '',
-    `Cut/fill still needs BOTH surfaces and the contours — this seeds the spot grades; set the other surface and trace contours, then run the cut/fill.`,
-  ].filter(Boolean);
-  setMsg(lines[0]);
-  alert('Earthwork spot import\n\n' + lines.join('\n\n'));
 }
 
 // Structured model result → Plan Room markups. Coordinates arrive NORMALIZED
@@ -5764,9 +5848,9 @@ async function apiJump(path, opts = {}) {
 
 async function runJumpStart() {
   if (!state.doc || !state.page) { setMsg('Open a plan first.'); return; }
-  // Earthwork reads exact spot grades from the PDF's text layer — deterministic, no
-  // AI. (The button only shows when a text layer exists, so raw is available here.)
-  if (state.trade === 'dirt') return runEarthworkExtract();
+  // Earthwork pulls contour geometry (and any text spot grades) straight from the PDF —
+  // deterministic, no AI. (The button only shows on a real PDF, so raw is available.)
+  if (state.trade === 'dirt') return runContourExtract();
   const btn = $('btnJumpStart');
   // A/B knob: set localStorage.jumpstart_provider = 'gemini' to compare providers
   // on the same sheet. Absent → the server default (Anthropic/Opus).

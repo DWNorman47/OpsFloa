@@ -23,6 +23,30 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-01 — AI Jump Start earthwork: contour geometry extraction (iteration 1)
+
+The spot grades on David's grading sheets are vector/SHX line-work, not text —
+confirmed by the diagnostic: the drawing's text layer held the contour integers
+303–337 and the notes/title block, but not one of the ~40 FS/TG decimal spots. So
+spot extraction can't work on these sheets. David chose to go after the **contours**
+instead — the better earthwork input anyway, and the lines ARE vector geometry with
+text elevation labels.
+
+- `extractPdfPolylines` (pure, unit-tested): walks pdf.js `getOperatorList()` with a
+  CTM stack (save/restore/transform/constructPath) and returns every polyline in
+  base-px page space. Béziers approximated by endpoints.
+- `runContourExtract` (dirt trade): keeps sheet-spanning polylines as candidate
+  contours, labels each from the nearest integer text (305, 312…), places them as
+  `contour` markups on the current surface; also grabs any text spot grades. Loose
+  classification on purpose — capped at 800, diagnosed to the console
+  (polylines/candidates/labeled), framed to the user as a first pass to eyeball and prune.
+
+ITERATION 1 — untestable here (needs the browser + the real PDF). The geometry math
+IS unit-tested (transform composition, save/restore, rectangle, curve endpoint), but
+whether the length filter cleanly separates contours from buildings/dimensions/the
+vector spot-text is unknown until David runs it. Expect to tune the filter next.
+Cache-bust v=85. pdf.js is 3.11.174 (exposes OPS + getOperatorList).
+
 ## 2026-08-01 — AI Jump Start: deterministic earthwork spot import; button gated to vector PDFs
 
 Follow-up to the trade-aware rework. David ran the AI earthwork pass on a real
