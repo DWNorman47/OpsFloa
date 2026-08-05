@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import { fmtHours, formatCurrency } from '../utils';
@@ -54,6 +54,17 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
   const [dedSaving, setDedSaving] = useState(false);
   const [dedError, setDedError] = useState('');
   const [dedSaved, setDedSaved] = useState(false);
+  // This/last paycheck ranges for the presets — resolved server-side from the worker's
+  // pay schedule. null until loaded or when the worker has no applicable ruleset.
+  const [payPeriods, setPayPeriods] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    api.get(`/admin/workers/${worker.id}/pay-periods`, { suppressToast: true })
+      .then(r => { if (alive) setPayPeriods(r.data || null); })
+      .catch(() => { if (alive) setPayPeriods(null); }); // no schedule / no perm → just omit the presets
+    return () => { alive = false; };
+  }, [worker.id]);
 
   const policyRaw = settings?.hours_rules || null;
   const toggleLine = key => setOpenLine(cur => (cur === key ? null : key));
@@ -124,6 +135,10 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
   };
 
   const applyPreset = kind => {
+    // Paycheck presets come from the worker's real schedule (fetched); the rest are
+    // plain calendar math.
+    if (kind === 'thischeck' && payPeriods?.current) { setFrom(payPeriods.current.period_start); setTo(payPeriods.current.period_end); return; }
+    if (kind === 'lastcheck' && payPeriods?.previous) { setFrom(payPeriods.previous.period_start); setTo(payPeriods.previous.period_end); return; }
     const r = presetRange(kind);
     setFrom(r.from); setTo(r.to);
   };
@@ -199,6 +214,8 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
   };
 
   const PRESETS = [
+    ...(payPeriods?.current ? [{ kind: 'thischeck', label: t.presetThisPaycheck }] : []),
+    ...(payPeriods?.previous ? [{ kind: 'lastcheck', label: t.presetLastPaycheck }] : []),
     { kind: 'this', label: t.presetThisWeek },
     { kind: 'lastweek', label: t.presetLastWeek },
     { kind: 'twoweeks', label: t.presetLastTwoWeeks },
