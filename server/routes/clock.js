@@ -496,6 +496,72 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
 });
 
 // POST /api/clock/out
+// Recover a clock-OUT whose clock-IN was queued offline and never reached the server
+// (so there is no active_clock to close). Rather than 400 and lose the shift, rebuild
+// the completed time entry from the client's payload. Isolated from the normal /out
+// path so it can't affect it. Dedup + advisory-lock guarded against a racing replay.
+async function recoverLostClockOut(req, res) {
+  const companyId = req.user.company_id;
+  const { project_id, work_date, timezone, notes, local_clock_in, local_clock_out, break_minutes, mileage, lat, lng, clock_in_time } = req.body;
+  const recoverTs = clock_in_time ? new Date(clock_in_time) : null;
+  if (!recoverTs || isNaN(recoverTs)) {
+    // No clock-in evidence to rebuild from — behave as before.
+    logFailure(req, 'clock.out', 'not_clocked_in');
+    return res.status(400).json({ error: 'Not clocked in' });
+  }
+
+  // Resolve the project (wage_type + name), company-scoped and projects-enabled aware —
+  // a stale/foreign/disabled project just closes the shift without one.
+  let wage_type = 'regular', project_name = null, entryProjectId = null;
+  if (project_id) {
+    const feat = await pool.query(`SELECT value FROM settings WHERE company_id=$1 AND key='feature_project_integration'`, [companyId]);
+    const projectsEnabled = feat.rowCount === 0 || feat.rows[0].value !== '0';
+    if (projectsEnabled) {
+      const proj = await pool.query('SELECT wage_type, name FROM projects WHERE id = $1 AND company_id = $2', [project_id, companyId]);
+      if (proj.rowCount > 0) { wage_type = proj.rows[0].wage_type; project_name = proj.rows[0].name; entryProjectId = project_id; }
+    }
+  }
+  const clockOutTime = new Date();
+  const start_time = validLocalTime(local_clock_in) || wallClockInTZ(recoverTs, timezone);
+  const end_time = validLocalTime(local_clock_out) || wallClockInTZ(clockOutTime, timezone);
+  const wd = (work_date && /^\d{4}-\d{2}-\d{2}$/.test(work_date)) ? work_date : recoverTs.toISOString().slice(0, 10);
+  const cleanNotes = (typeof notes === 'string' ? notes.trim().slice(0, 500) : '') || null;
+
+  const txClient = await pool.connect();
+  try {
+    await txClient.query('BEGIN');
+    // Serialize concurrent recovery for this user; re-check dedup under the lock so a
+    // racing recovery (or a synced-then-closed shift) can't double-insert.
+    await txClient.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`clockout:${req.user.id}`]);
+    const dup = await txClient.query(
+      `SELECT * FROM time_entries WHERE user_id = $1
+         AND start_ts BETWEEN $2::timestamptz - interval '2 seconds' AND $2::timestamptz + interval '2 seconds' LIMIT 1`,
+      [req.user.id, recoverTs]
+    );
+    if (dup.rowCount > 0) {
+      await txClient.query('COMMIT');
+      return res.json({ ...dup.rows[0], project_name, already_recorded: true });
+    }
+    // Clear any active_clock that appeared in the meantime (the queued clock-in replayed)
+    // so the worker isn't left clocked in after we record the shift ourselves.
+    await txClient.query('DELETE FROM active_clock WHERE user_id = $1', [req.user.id]);
+    const ins = await txClient.query(
+      `INSERT INTO time_entries
+         (company_id, user_id, project_id, work_date, start_time, end_time, start_ts, end_ts, wage_type, notes,
+          clock_out_lat, clock_out_lng, break_minutes, mileage, timezone, clock_source, clocked_in_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'worker',NULL) RETURNING *`,
+      [companyId, req.user.id, entryProjectId, wd, start_time, end_time, recoverTs, clockOutTime, wage_type, cleanNotes,
+       lat || null, lng || null, parseInt(break_minutes) || 0, mileage != null ? parseFloat(mileage) : null, timezone || null]
+    );
+    await txClient.query('COMMIT');
+    logger.warn({ user_id: req.user.id }, 'clock.out recovered a shift whose offline clock-in never synced');
+    return res.json({ ...ins.rows[0], project_name, recovered: true });
+  } catch (err) {
+    await txClient.query('ROLLBACK');
+    throw err;
+  } finally { txClient.release(); }
+}
+
 router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerceBody({ float: ['break_minutes', 'mileage'] }), async (req, res) => {
   const { lat, lng, break_minutes, mileage, local_clock_in, local_clock_out } = req.body;
   if ((lat != null || lng != null) && !validCoords(lat, lng)) {
@@ -509,8 +575,10 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
       [req.user.id]
     );
     if (clockResult.rowCount === 0) {
-      logFailure(req, 'clock.out', 'not_clocked_in');
-      return res.status(400).json({ error: 'Not clocked in' });
+      // No active_clock — the clock-in may have been queued offline and never reached
+      // us before this (live) clock-out. Rebuild the shift from the payload instead of
+      // losing it (falls back to 400 when there's nothing to rebuild from).
+      return await recoverLostClockOut(req, res);
     }
     const clock = clockResult.rows[0];
 

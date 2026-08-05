@@ -1,7 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { useToast } from './ToastContext';
 
-import { silentError } from '../errorReporter';
 import { safeSession, safeLocal } from '../utils/safeStorage';
 export const OfflineContext = createContext(null);
 
@@ -28,11 +27,16 @@ export function OfflineProvider({ children }) {
   useEffect(() => {
     const handleOnline = () => {
       setIsOffline(false);
-      sendToSW({ type: 'REPLAY_QUEUE' });
+      // Fire ONE replay trigger, not both — two triggers used to run the SW replay
+      // concurrently (now also guarded by an in-flight lock in the SW). Prefer
+      // Background Sync (retries, survives page close); fall back to a direct message
+      // where it's unsupported (e.g. iOS Safari) or registration fails.
       if ('serviceWorker' in navigator && 'sync' in ServiceWorkerRegistration.prototype) {
-        navigator.serviceWorker.ready.then(reg => {
-          reg.sync.register('clock-queue-replay').catch(silentError('offlinecontext'));
-        });
+        navigator.serviceWorker.ready
+          .then(reg => reg.sync.register('clock-queue-replay'))
+          .catch(() => sendToSW({ type: 'REPLAY_QUEUE' }));
+      } else {
+        sendToSW({ type: 'REPLAY_QUEUE' });
       }
     };
     const handleOffline = () => setIsOffline(true);

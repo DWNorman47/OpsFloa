@@ -24,6 +24,7 @@ jest.mock('../logger', () => {
 jest.mock('../push', () => ({ sendPushToCompanyAdmins: jest.fn() }));
 jest.mock('../routes/inbox', () => ({ createInboxItem: jest.fn(), createInboxItemBatch: jest.fn() }));
 jest.mock('../email', () => ({ sendEmail: jest.fn() }));
+jest.mock('../failureLog', () => ({ logFailure: jest.fn() }));
 
 const express = require('express');
 const request = require('supertest');
@@ -72,4 +73,60 @@ test('with no matching closed entry, the guard does not short-circuit (proceeds 
   expect(res.status).toBe(201);
   const sql = pool.query.mock.calls.map(c => c[0]).join('\n');
   expect(sql).toMatch(/INSERT INTO active_clock/);
+});
+
+describe('POST /api/clock/out — recover a shift whose offline clock-in never synced', () => {
+  test('no active_clock + a clock_in_time in the payload → rebuild the entry instead of 400', async () => {
+    pool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // SELECT active_clock → none
+    const tx = {
+      query: jest.fn()
+        .mockResolvedValueOnce({})                                    // BEGIN
+        .mockResolvedValueOnce({})                                    // advisory lock
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] })             // dedup: no existing entry
+        .mockResolvedValueOnce({})                                    // DELETE any stray active_clock
+        .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 99, start_ts: '2026-08-05T14:00:00.000Z' }] }) // INSERT time_entries
+        .mockResolvedValueOnce({}),                                   // COMMIT
+      release: jest.fn(),
+    };
+    pool.connect.mockResolvedValueOnce(tx);
+
+    const res = await request(makeApp())
+      .post('/api/clock/out')
+      .send({ clock_in_time: '2026-08-05T14:00:00.000Z', local_clock_in: '07:00:00', local_clock_out: '15:00:00' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.recovered).toBe(true);
+    expect(tx.query.mock.calls.map(c => c[0]).join('\n')).toMatch(/INSERT INTO time_entries/);
+    expect(tx.release).toHaveBeenCalledTimes(1);
+  });
+
+  test('no active_clock + a shift already recorded for that instant → no duplicate, returns it', async () => {
+    pool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // SELECT active_clock → none
+    const tx = {
+      query: jest.fn()
+        .mockResolvedValueOnce({})                                    // BEGIN
+        .mockResolvedValueOnce({})                                    // advisory lock
+        .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42 }] })   // dedup: already recorded
+        .mockResolvedValueOnce({}),                                   // COMMIT
+      release: jest.fn(),
+    };
+    pool.connect.mockResolvedValueOnce(tx);
+
+    const res = await request(makeApp())
+      .post('/api/clock/out')
+      .send({ clock_in_time: '2026-08-05T14:00:00.000Z', local_clock_in: '07:00:00', local_clock_out: '15:00:00' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.already_recorded).toBe(true);
+    expect(tx.query.mock.calls.map(c => c[0]).join('\n')).not.toMatch(/INSERT INTO time_entries/);
+  });
+
+  test('no active_clock and nothing to rebuild from → still 400', async () => {
+    pool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // SELECT active_clock → none
+    const res = await request(makeApp())
+      .post('/api/clock/out')
+      .send({ local_clock_in: '07:00:00', local_clock_out: '15:00:00' }); // no clock_in_time
+    expect(res.status).toBe(400);
+    expect(pool.connect).not.toHaveBeenCalled();
+  });
 });

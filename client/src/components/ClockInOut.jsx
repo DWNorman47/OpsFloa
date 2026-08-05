@@ -315,8 +315,18 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
     try {
       const r = await api.post('/clock/in', { project_id: selectedProject, notes: notes || undefined, lat, lng, local_work_date, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, location_denied: loc.permissionDenied || false, clock_in_time });
       if (r.data?.offline) {
-        // Queued offline — show a pending state
-        const offlineStatus = { offline_queued: true, project_name: orderedProjects.find(p => p.id == selectedProject)?.name };
+        // Queued offline — show a pending state, but RETAIN the shift details so a later
+        // clock-out can (a) record the real clock-in time, and (b) let the server rebuild
+        // the shift if the queued clock-in still hasn't synced by then.
+        const offlineStatus = {
+          offline_queued: true,
+          clock_in_time,
+          project_id: selectedProject || null,
+          project_name: orderedProjects.find(p => p.id == selectedProject)?.name,
+          work_date: local_work_date,
+          notes: notes || null,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        };
         setStatus(offlineStatus);
         rememberProjectChoice(projectHistoryKey, selectedProject);
         setNotes('');
@@ -401,6 +411,13 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
         mileage: mileage ? parseFloat(mileage) : null,
         local_clock_in,
         local_clock_out,
+        // Recovery fields — used ONLY if the server has no active_clock (the clock-in
+        // was queued offline and outran this clock-out). Ignored on the normal path.
+        clock_in_time: status.clock_in_time || null,
+        project_id: status.project_id ?? null,
+        work_date: status.work_date || null,
+        timezone: status.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+        notes: status.notes || null,
       });
       if (r.data?.offline) {
         // Queued offline — stay "clocked in" locally until sync
