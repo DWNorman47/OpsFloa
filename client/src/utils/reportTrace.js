@@ -8,9 +8,11 @@ import { describeRule } from '../components/HoursRuleBuilder';
 // Where each source is configured. Deep-highlight isn't attempted (by design);
 // these open the right screen. Administration ▸ Workspace hosts both Company
 // Standards and Hours & Rules; a member's pay settings live on the Team page.
+// `?focus=` tells the Administration page which workspace group to open (collapsing
+// the rest) and scroll to, so "View" lands on the exact setting behind the rule.
 export const SETTINGS_LINKS = {
-  hours_rules: '/administration#workspace',
-  company_standards: '/administration#workspace',
+  hours_rules: '/administration?focus=hours_rules#workspace',
+  company_standards: '/administration?focus=company_standards#workspace',
   employee: '/team',
 };
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
 import { usePerm, useHasAnyPerm } from '../hooks/usePerm';
@@ -408,10 +408,23 @@ function WorkspaceLabels({ settings, onUpdated }) {
   );
 }
 
-function WorkspaceSettingGroup({ title, body, children, defaultOpen = false }) {
+function WorkspaceSettingGroup({ id, title, body, children, defaultOpen = false, focusGroup }) {
   const [open, setOpen] = useState(defaultOpen);
+  const ref = useRef(null);
+  // Deep-link focus (from a report's "View"): open ONLY the targeted group, collapse
+  // the rest (including a defaultOpen one), and scroll it into view. Runs once per
+  // focus; after that the admin toggles freely.
+  useEffect(() => {
+    if (!focusGroup) return;
+    const target = id === focusGroup;
+    setOpen(target);
+    if (target && ref.current) {
+      const el = ref.current;
+      setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+    }
+  }, [focusGroup, id]);
   return (
-    <section style={styles.settingGroupCard} className="workspace-setting-card">
+    <section ref={ref} style={styles.settingGroupCard} className="workspace-setting-card">
       <button
         type="button"
         style={styles.languageTrigger}
@@ -634,6 +647,19 @@ export default function AdministrationPage() {
   const [tab, setTab] = useState(ADMIN_TABS.includes(hashTab) ? hashTab : 'company');
   const switchTab = t => { setTab(t); history.replaceState(null, '', '#' + t); };
 
+  // Deep-link focus from a report's "View" (?focus=hours_rules|company_standards):
+  // which workspace group to open + scroll to. Read once, then dropped from the URL so
+  // a refresh doesn't re-force it.
+  const [focusKey] = useState(() => new URLSearchParams(window.location.search).get('focus'));
+  const focusGroup = { hours_rules: 'payroll', company_standards: 'company' }[focusKey] || null;
+  useEffect(() => {
+    if (!focusKey) return;
+    const params = new URLSearchParams(window.location.search);
+    params.delete('focus');
+    const qs = params.toString();
+    window.history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : '') + window.location.hash);
+  }, [focusKey]);
+
   // Shared state for ManageWorkers and QuickBooks
   const [workers, setWorkers] = useState([]);
   const [projects, setProjects] = useState([]);
@@ -795,6 +821,8 @@ export default function AdministrationPage() {
             </section>
             <WorkspaceLabels settings={settings} onUpdated={setSettings} />
             <WorkspaceSettingGroup
+              id="company"
+              focusGroup={focusGroup}
               title={t.admpCompanySettingsTitle}
               body={t.admpCompanySettingsBody}
               defaultOpen
@@ -802,11 +830,13 @@ export default function AdministrationPage() {
               <ManageRates settings={settings} onSettingsUpdated={setSettings} />
             </WorkspaceSettingGroup>
             <WorkspaceSettingGroup
+              id="payroll"
+              focusGroup={focusGroup}
               title={t.admpPayrollSettingsTitle}
               body={t.admpPayrollSettingsBody}
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <PayrollSubsection icon="🕒" title={t.hrTitle} sub={t.hrGroupBody}>
+                <PayrollSubsection icon="🕒" title={t.hrTitle} sub={t.hrGroupBody} defaultOpen={focusKey === 'hours_rules'}>
                   <HoursRulesSettings settings={settings} onSettingsUpdated={setSettings} />
                 </PayrollSubsection>
                 <PayrollSubsection icon="🧾" title={t.dedGroupTitle} sub={t.dedGroupBody}>
