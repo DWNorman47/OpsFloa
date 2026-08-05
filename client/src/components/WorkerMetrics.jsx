@@ -338,15 +338,21 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
 
           {billData && hasResults && (
             <div style={{ marginTop: 16 }}>
-              {/* ── Time entries (collapsible details, default collapsed) ── */}
+              {/* ── Details: time entries, expenses, pay summary, inputs — collapsed by default ── */}
+              <div style={styles.section}>
+                <div style={{ ...styles.line, ...styles.lineClickable }} onClick={() => setDetailsOpen(v => !v)}>
+                  <span style={styles.sectionTitle}>{t.trDetails}</span>
+                  <span style={styles.rowSpacer} />
+                  <span style={styles.lineChev}>{detailsOpen ? '▾' : '▸'}</span>
+                </div>
+                {detailsOpen && (
+                <div style={styles.detailsBody}>
+
+              {/* ── Time entries ── */}
               {(billData.entries.length > 0 || s.guarantee_shortfall_hours > 0 || s.sick_hours > 0 || s.vacation_hours > 0) && (
                 <div style={styles.section}>
-                  <div style={{ ...styles.line, ...styles.lineClickable }} onClick={() => setDetailsOpen(v => !v)}>
-                    <span style={styles.sectionTitle}>{t.trTimeEntries}</span>
-                    <span style={styles.rowSpacer} />
-                    <span style={styles.lineChev}>{detailsOpen ? '▾' : '▸'}</span>
-                  </div>
-                  {detailsOpen && billData.entries.map((e, idx) => {
+                  <div style={styles.sectionTitle}>{t.trTimeEntries}</div>
+                  {billData.entries.map((e, idx) => {
                     const key = `e${idx}`;
                     // Real entries always expand (clock in / out / total); synthetic rows
                     // expand only when they carry a trace.
@@ -441,6 +447,10 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
                 </div>
               )}
 
+                </div>
+                )}
+              </div>
+
               {/* ── Export / preview at the bottom ── */}
               <div style={styles.btnRow}>
                 <button style={{ ...styles.previewBtn, ...(pdfGenerating ? styles.disabled : {}) }} onClick={togglePreview} disabled={pdfGenerating}>{pdfGenerating ? t.preparing : showPreview ? t.hideBill : t.previewBill}</button>
@@ -534,6 +544,7 @@ const styles = {
   sectionTitle: { fontSize: 12, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 },
   line: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderBottom: '1px solid #f0f0f0', fontSize: 13.5 },
   lineClickable: { cursor: 'pointer' },
+  detailsBody: { marginTop: 4 },
   lineStrong: { fontWeight: 700 },
   lineDate: { fontVariantNumeric: 'tabular-nums', color: '#374151', minWidth: 84 },
   lineMid: { color: '#374151' },
