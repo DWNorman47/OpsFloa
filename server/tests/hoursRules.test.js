@@ -118,6 +118,28 @@ describe('Honduran overtime rule (toward_worker, 60m, grace 30)', () => {
   });
 });
 
+describe('clock-out grace window (against_worker, schedule) — leaving near the end counts as the end', () => {
+  // Scheduled end 16:00. A 10-min grace should forgive leaving up to 10 min early —
+  // the mirror of the late-arrival grace, and the fix for a clock-out being docked a
+  // full hour for a punch just short of the end.
+  const policy = parsePolicy(JSON.stringify({
+    enabled: true,
+    standardHours: stdHours(),
+    rounding: {
+      clockIn:  { reference: 'schedule', intervalMin: 60, graceMin: 10, direction: 'against_worker' },
+      clockOut: { reference: 'schedule', intervalMin: 60, graceMin: 10, direction: 'against_worker' },
+    },
+  }));
+  const exp = resolveExpected(policy, MON);
+  const outAt = (rawOut) => applyRounding('07:00', rawOut, exp, policy.rounding).end;
+
+  test('15:50 (10 min early, within grace) → counts as 16:00', () => { expect(outAt('15:50')).toBe('16:00:00'); });
+  test('15:59 (1 min early) → 16:00 (used to dock to 15:00)', () => { expect(outAt('15:59')).toBe('16:00:00'); });
+  test('15:49 (11 min early, past grace) → docked to 15:00', () => { expect(outAt('15:49')).toBe('15:00:00'); });
+  test('15:10 (well early) → docked to 15:00', () => { expect(outAt('15:10')).toBe('15:00:00'); });
+  test('staying late is still capped at the scheduled end (16:00)', () => { expect(outAt('16:30')).toBe('16:00:00'); });
+});
+
 describe('combined: the two headline examples end to end', () => {
   const policy = honduranPolicy();
   const exp = resolveExpected(policy, MON);
