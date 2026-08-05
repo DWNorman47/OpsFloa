@@ -30,6 +30,28 @@ export function findRuleById(hoursRules, id) {
   return inList(p.rules) || (Array.isArray(p.roleRules) ? p.roleRules.map(rr => inList(rr && rr.rules)).find(Boolean) : null) || null;
 }
 
+// Which phase of the shift an explain item belongs to, so the report can group the
+// trace as clock-in → clock-out → total. Rules attach to the edge they actually moved;
+// break, overtime and the wage type describe the whole shift.
+//   in    — rounding_in, clip_start, add/remove-time on the 'before' edge
+//   out   — rounding_out, clip_end, add/remove-time on the 'after' edge
+//   total — auto_break, break_logged, overtime, wage_type, anything else
+export function traceItemPhase(item) {
+  switch (item && item.code) {
+    case 'rounding_in':
+    case 'clip_start':
+      return 'in';
+    case 'rounding_out':
+    case 'clip_end':
+      return 'out';
+    case 'add_time':
+    case 'remove_time':
+      return item.edge === 'before' ? 'in' : 'out';
+    default:
+      return 'total';
+  }
+}
+
 // One explain item → { text, link } (or null to skip). `policyRaw` is the raw
 // hours_rules value; `t` is the i18n bag.
 export function renderTraceItem(item, { t, policyRaw }) {

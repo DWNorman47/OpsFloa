@@ -5,7 +5,7 @@ import { fmtHours, formatCurrency } from '../utils';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
 import { handlePdfError } from '../pdfError';
-import { renderTraceItem, renderLeaveDetail } from '../utils/reportTrace';
+import { renderTraceItem, renderLeaveDetail, traceItemPhase } from '../utils/reportTrace';
 import DeductionListEditor from './DeductionListEditor';
 import { downloadCsv } from '../utils/csv';
 
@@ -40,6 +40,7 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
   const [billData, setBillData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [openLine, setOpenLine] = useState(null); // 'e{idx}' | 'ot' | 'sick' | 'vacation' | 'guarantee' | 'deductions' | 'inputs'
+  const [detailsOpen, setDetailsOpen] = useState(false); // the per-entry breakdown is collapsed by default
   const [showPreview, setShowPreview] = useState(false);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [pdfGenerating, setPdfGenerating] = useState(false);
@@ -229,22 +230,6 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
     return <div style={styles.trace}><div style={styles.traceItem}><span>{text}</span><button style={styles.traceLink} onClick={() => goto(link)}>{t.trViewSetting} →</button></div></div>;
   };
 
-  // A trace expander row: renders the engine's explain items for one line.
-  const Trace = ({ items }) => {
-    const rendered = (items || []).map(it => renderTraceItem(it, { t, policyRaw })).filter(Boolean);
-    if (rendered.length === 0) return <div style={styles.traceEmpty}>{t.trNoRules}</div>;
-    return (
-      <div style={styles.trace}>
-        {rendered.map((r, i) => (
-          <div key={i} style={styles.traceItem}>
-            <span>{r.text}</span>
-            {r.link && <button style={styles.traceLink} onClick={() => goto(r.link)}>{t.trViewSetting} →</button>}
-          </div>
-        ))}
-      </div>
-    );
-  };
-
   // Paid hours for a row: clock span MINUS the logged break (the break comes off paid
   // time). Synthetic rows already carry their net hours. The break itself is in the
   // entry's expand trace (break_logged), so the difference from the span is traceable.
@@ -253,6 +238,41 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
     let ms = new Date(`1970-01-01T${e.end_time}`) - new Date(`1970-01-01T${e.start_time}`);
     if (ms < 0) ms += 86400000; // overnight shift (end past midnight) — same wrap as netHours
     return Math.max(0, ms / 3600000 - (Number(e.break_minutes) || 0) / 60);
+  };
+
+  // Structured per-entry trace: clock in → its rules, clock out → its rules, then the
+  // total with the type breakdown → its rules. Reads top-to-bottom like the shift ran.
+  const EntryTrace = ({ e }) => {
+    const items = Array.isArray(e.explain) ? e.explain : [];
+    const row = (it, i) => {
+      const r = renderTraceItem(it, { t, policyRaw });
+      if (!r) return null;
+      return (
+        <div key={i} style={styles.traceSub}>
+          <span>{r.text}</span>
+          {r.link && <button style={styles.traceLink} onClick={() => goto(r.link)}>{t.trViewSetting} →</button>}
+        </div>
+      );
+    };
+    const rowsFor = phase => items.filter(it => traceItemPhase(it) === phase).map(row).filter(Boolean);
+    const rawIn = (e.raw_start_time || e.start_time || '').slice(0, 5);
+    const rawOut = (e.raw_end_time || e.end_time || '').slice(0, 5);
+    const totalH = dur(e);
+    const ot = Number(e.overtime_hours) || 0;
+    const reg = Math.max(0, totalH - ot);
+    const parts = [`${fmtHours(reg)} ${t.trTypeRegular}`];
+    if (overtimeEnabled && ot > 0) parts.push(`${fmtHours(ot)} ${t.trTypeOvertime}`);
+    if (e.wage_type === 'prevailing') parts.push(t.trTypePrevailing);
+    return (
+      <div style={styles.trace}>
+        <div style={styles.traceHead}>{t.trHdrClockIn} · {rawIn}</div>
+        {rowsFor('in')}
+        <div style={styles.traceHead}>{t.trHdrClockOut} · {rawOut}</div>
+        {rowsFor('out')}
+        <div style={styles.traceHead}>{t.trHdrTotal} · {fmtHours(totalH)} ({parts.join(' · ')})</div>
+        {rowsFor('total')}
+      </div>
+    );
   };
 
   return (
@@ -318,17 +338,23 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
 
           {billData && hasResults && (
             <div style={{ marginTop: 16 }}>
-              {/* ── Time entries ── */}
+              {/* ── Time entries (collapsible details, default collapsed) ── */}
               {(billData.entries.length > 0 || s.guarantee_shortfall_hours > 0 || s.sick_hours > 0 || s.vacation_hours > 0) && (
                 <div style={styles.section}>
-                  <div style={styles.sectionTitle}>{t.trTimeEntries}</div>
-                  {billData.entries.map((e, idx) => {
+                  <div style={{ ...styles.line, ...styles.lineClickable }} onClick={() => setDetailsOpen(v => !v)}>
+                    <span style={styles.sectionTitle}>{t.trTimeEntries}</span>
+                    <span style={styles.rowSpacer} />
+                    <span style={styles.lineChev}>{detailsOpen ? '▾' : '▸'}</span>
+                  </div>
+                  {detailsOpen && billData.entries.map((e, idx) => {
                     const key = `e${idx}`;
-                    const hasTrace = Array.isArray(e.explain) && e.explain.length > 0;
+                    // Real entries always expand (clock in / out / total); synthetic rows
+                    // expand only when they carry a trace.
+                    const expandable = e.synthetic ? (Array.isArray(e.explain) && e.explain.length > 0) : true;
                     const synLabel = e.synthetic ? (SYN_LABELS[e.kind] || t.floorMinDailyLabel) : null;
                     return (
                       <div key={e.id ?? idx}>
-                        <div style={{ ...styles.line, ...(hasTrace ? styles.lineClickable : {}) }} onClick={() => hasTrace && toggleLine(key)}>
+                        <div style={{ ...styles.line, ...(expandable ? styles.lineClickable : {}) }} onClick={() => expandable && toggleLine(key)}>
                           <span style={styles.lineDate}>{e.work_date?.toString().substring(0, 10)}</span>
                           <span style={styles.lineMid}>{e.synthetic
                             ? <>{synLabel}{e.cost != null ? ` · ${formatCurrency(e.cost, currency)}` : ''}</>
@@ -336,9 +362,9 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
                           <span style={styles.lineTimes}>{e.synthetic ? '' : `${(e.start_time || '').slice(0, 5)}–${(e.end_time || '').slice(0, 5)}`}</span>
                           {overtimeEnabled && !e.synthetic && (e.overtime_hours || 0) > 0 && <span style={styles.otBadge}>{t.otHrs} {fmtHours(e.overtime_hours)}</span>}
                           <span style={styles.lineHours}>{fmtHours(dur(e))}</span>
-                          <span style={styles.lineChev}>{hasTrace ? (openLine === key ? '▾' : '▸') : ''}</span>
+                          <span style={styles.lineChev}>{expandable ? (openLine === key ? '▾' : '▸') : ''}</span>
                         </div>
-                        {openLine === key && hasTrace && (e.synthetic ? syntheticTrace(e) : <Trace items={e.explain} />)}
+                        {openLine === key && expandable && (e.synthetic ? syntheticTrace(e) : <EntryTrace e={e} />)}
                       </div>
                     );
                   })}
@@ -517,6 +543,8 @@ const styles = {
   otBadge: { fontSize: 11, fontWeight: 700, color: '#d97706', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '1px 6px' },
   trace: { background: '#fff', border: '1px solid #eef0f2', borderRadius: 8, padding: '8px 12px', margin: '2px 0 8px', display: 'flex', flexDirection: 'column', gap: 6 },
   traceItem: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: '#4b5563', lineHeight: 1.5 },
+  traceHead: { fontSize: 12.5, fontWeight: 700, color: '#374151', marginTop: 4 },
+  traceSub: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: '#4b5563', lineHeight: 1.5, paddingLeft: 14 },
   traceEmpty: { fontSize: 12.5, color: '#9ca3af', padding: '6px 12px' },
   traceLink: { marginLeft: 'auto', background: 'none', border: 'none', color: '#4338ca', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', padding: 0 },
   btnRow: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 18 },
