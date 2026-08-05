@@ -21,22 +21,6 @@ that holds the exhaustive detail.
 
 ## 🔧 Bugs — set aside for later
 
-- **Offline clock in/out — two hardening items left after the resurrection fix.**
-  (2026-08-05) The "clock-out undoes the time" root cause (a replayed offline clock-in
-  re-inserting `active_clock` after the shift was closed) is fixed server-side
-  (`clock.js` /in idempotency guard). Two related races remain, both touching the PWA
-  service worker / offline queue (delicate — didn't rush them into clock code):
-  (1) **Lost clock-out** — if a live clock-out outruns a still-queued clock-in, `/out`
-  returns 400 "Not clocked in" and the shift is never recorded (data loss, not just a
-  resurrection). Fix: when `/out` finds no `active_clock` but the client sends the
-  shift's `clock_in_time` (+ project_id), build the completed entry from the payload
-  instead of 400. Needs a small client change to send those on /out.
-  (2) **Double replay** — `OfflineContext.jsx:29-37` fires both `REPLAY_QUEUE` and a
-  background-sync registration on the same `online` event, and `sw.js` `replayQueue()`
-  has no in-flight lock, so the queue can replay concurrently (duplicate entries / the
-  resurrection the guard now catches). Fix: one trigger, plus a module-level replay lock
-  in `sw.js`. Lower urgency now that /in is idempotent, but worth doing.
-
 - **Leave + worked on the SAME day — verify no double-pay.** (2026-08-05) Reported as
   "sick/vacation aren't working"; David suspects it was a test where a sick day was
   entered for a day the employee *also* clocked in. The pay engine appends synthetic
