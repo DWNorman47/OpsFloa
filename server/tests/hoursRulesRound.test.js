@@ -61,6 +61,21 @@ describe('round rule — engine', () => {
   });
 });
 
+describe('round rule — clock-out grace window (clock-grid, against_worker)', () => {
+  // "Round by the hour, 10-minute grace." A clock-out within the grace of the hour
+  // counts as that hour instead of being floored down — the fix for 4:59 → 4:00.
+  const graceRule = () => parsePolicy(JSON.stringify({
+    enabled: true,
+    rules: [{ id: 'r1', type: 'round', when: { kind: 'every_day' }, edge: 'out', reference: 'clock', direction: 'against_worker', intervalMin: 60, graceMin: 10 }],
+  }));
+  const outAt = (end) => paid(graceRule(), entry({ start_time: '08:00:00', end_time: end })).end_time;
+
+  test('16:50 (10 min before the hour) → counts as 17:00', () => { expect(outAt('16:50:00')).toBe('17:00:00'); });
+  test('16:59 → 17:00 (used to floor to 16:00)', () => { expect(outAt('16:59:00')).toBe('17:00:00'); });
+  test('16:49 (11 min before, past the grace) → floors to 16:00', () => { expect(outAt('16:49:00')).toBe('16:00:00'); });
+  test('16:30 (well before) → floors to 16:00', () => { expect(outAt('16:30:00')).toBe('16:00:00'); });
+});
+
 describe('round rule — parse', () => {
   test('preserves the fields the builder emits', () => {
     const rules = parseRules([{ id: 'x', type: 'round', when: { kind: 'weekdays', days: [1, 2, 3, 4, 5] }, edge: 'out', reference: 'clock', direction: 'toward_worker', intervalMin: 15, graceMin: 5 }]);

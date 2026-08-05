@@ -936,10 +936,16 @@ function roundEdge(rawMin, expectedMin, cfg, edge) {
   // expected time. 'nearest' is the usual case (US quarter-hour rule);
   // against/toward bias the grid down/up.
   if (reference === 'clock') {
-    if (direction === 'nearest') return roundTo(rawMin, I);
-    // In the worker's favor = pay more time: earlier in, later out.
+    // In the worker's favor = pay more time: earlier in, later out. (Its own edge
+    // math; the grace window below would fight the intent, so it's excluded.)
     if (direction === 'toward_worker') return edge === 'in' ? floorTo(rawMin, I) : ceilTo(rawMin, I);
-    // Against the worker = pay less time: later in, earlier out.
+    // Grace window: a punch within the grace of an interval boundary COUNTS AS that
+    // boundary, so it's never rounded away from it. This is what makes "clock out at
+    // 4:50 with a 1h interval and a 10m grace" land on 5:00 instead of docking to 4:00.
+    const grid = roundTo(rawMin, I);
+    if (G > 0 && Math.abs(rawMin - grid) <= G) return grid;
+    if (direction === 'nearest') return grid;
+    // Against the worker = pay less time: later in, earlier out (outside the grace).
     return edge === 'in' ? ceilTo(rawMin, I) : floorTo(rawMin, I);
   }
 
@@ -978,9 +984,12 @@ function roundEdge(rawMin, expectedMin, cfg, edge) {
     if (over >= G && over > 0) return expectedMin + ceilTo(over, I);
     return expectedMin;
   }
-  // against_worker: leaving early docks down to the interval boundary; staying
-  // late is not paid (capped at the expected end).
-  if (over < 0) return expectedMin + floorTo(over, I);
+  // against_worker: leaving early by MORE than the grace docks down to the interval
+  // boundary; leaving WITHIN the grace (or staying late) counts as the scheduled
+  // end. This mirrors the clock-in grace so a 4:50 clock-out (10m early, 10m grace)
+  // counts as 5:00 instead of docking to 4:00.
+  const early = expectedMin - rawMin; // > 0 if they left early
+  if (early > G) return expectedMin - ceilTo(early, I);
   return expectedMin;
 }
 

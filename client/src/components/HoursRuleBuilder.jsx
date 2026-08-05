@@ -222,6 +222,11 @@ export default function HoursRuleBuilder({ rules, onChange, title, help }) {
         ...(rule.hours != null ? { sickHours: String(rule.hours) } : {}),
         leaveApplies: rule.applies || 'both',
       };
+      // A round rule stores its scope under `edge`, but the selector edits `roundEdge`.
+      // Without mapping it back, editing a saved rule resets the scope to the blank
+      // 'both' default and re-saves it as both — so "clock in only" never sticks (and
+      // clock-out keeps rounding, docking punches like 5:00 → 4:00).
+      case 'round': return rule.edge ? { roundEdge: rule.edge } : {};
       default: return {};
     }
   };
