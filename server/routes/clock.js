@@ -150,6 +150,26 @@ router.post('/in', requireAuth, requirePerm('clock_self'), clockLimiter, coerceB
     const parsedClockInTime = clock_in_time ? new Date(clock_in_time) : null;
     const clockInTs = parsedClockInTime && !isNaN(parsedClockInTime) ? parsedClockInTime : null;
 
+    // Idempotency against a RESURRECTED shift. A clock-in queued offline can replay
+    // after the shift has already been clocked out (a double queue-replay, or an out
+    // that outran the queued in). ON CONFLICT DO NOTHING below only no-ops when an
+    // active_clock still exists — once /out deleted it, the replayed in would re-insert
+    // a fresh active_clock and the closed shift would look "undone." If a completed
+    // time entry already exists for this exact clock-in instant, the shift is closed:
+    // return a no-op instead of resurrecting it. (±2s window tolerates ms rounding; one
+    // worker can't start two real shifts within 2 seconds.)
+    if (clockInTs) {
+      const closed = await pool.query(
+        `SELECT 1 FROM time_entries
+         WHERE user_id = $1 AND start_ts BETWEEN $2::timestamptz - interval '2 seconds'
+                                             AND $2::timestamptz + interval '2 seconds' LIMIT 1`,
+        [req.user.id, clockInTs]
+      );
+      if (closed.rowCount > 0) {
+        return res.status(200).json({ already_clocked_out: true });
+      }
+    }
+
     // DO NOTHING, not DO UPDATE: if the worker is already clocked in, an
     // ON CONFLICT DO UPDATE would silently OVERWRITE the in-progress shift —
     // its original clock_in_time and project gone, the morning's hours erased

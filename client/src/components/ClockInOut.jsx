@@ -146,8 +146,11 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
   const [status, setStatus] = useState(null); // null = loading, false = not clocked in, object = clocked in
   const [clockInForm, setClockInForm] = useState({ selectedProject: '', notes: '' });
   const { clearPersisted: clearClockInPersisted } = useFormPersist('clock-in', clockInForm, setClockInForm);
-  const selectedProject = clockInForm.selectedProject;
-  const notes = clockInForm.notes;
+  // Coerce to strings: a stale/older persisted blob (useFormPersist restores whatever
+  // JSON is under opsfloa_form_clock-in) could carry null/undefined, and `notes.length`
+  // in render would throw. Never let the restore crash the tab.
+  const selectedProject = clockInForm.selectedProject || '';
+  const notes = clockInForm.notes || '';
   const setSelectedProject = v => setClockInForm(f => ({ ...f, selectedProject: v }));
   const setNotes = v => setClockInForm(f => ({ ...f, notes: v }));
   const [elapsed, setElapsed] = useState(0);

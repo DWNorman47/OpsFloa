@@ -562,10 +562,13 @@ ${safeSignature ? `
 
         {tab === 'clock' && (
           loading ? <TabLoader /> : (
-            <>
+            // Wrapped like every sibling tab: a render-phase throw here (e.g. a stale
+            // persisted clock-in form) must degrade to an inline card, never blank the
+            // whole app — the "blank screen when they go to clock in" report.
+            <ErrorBoundary key="clock" mode="inline" label="Clock In/Out">
               <ClockInOut projects={projects} onEntryAdded={handleEntryAdded} onClockedIn={handleClockedIn} t={t} geolocationEnabled={settings?.feature_geolocation ?? false} projectsEnabled={settings?.feature_project_integration !== false} />
               <TimeEntryForm projects={projects} onEntryAdded={handleEntryAdded} t={t} prefill={shiftPrefill} projectsEnabled={settings?.feature_project_integration !== false} />
-            </>
+            </ErrorBoundary>
           )
         )}
 
