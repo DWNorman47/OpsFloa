@@ -651,14 +651,17 @@ export default function AdministrationPage() {
   // which workspace group to open + scroll to. Read once, then dropped from the URL so
   // a refresh doesn't re-force it.
   const [focusKey] = useState(() => new URLSearchParams(window.location.search).get('focus'));
+  // Optional rule id (?rule=…) to scroll to + flash inside Hours & Rules.
+  const [focusRuleId] = useState(() => new URLSearchParams(window.location.search).get('rule'));
   const focusGroup = { hours_rules: 'payroll', company_standards: 'company' }[focusKey] || null;
   useEffect(() => {
-    if (!focusKey) return;
+    if (!focusKey && !focusRuleId) return;
     const params = new URLSearchParams(window.location.search);
     params.delete('focus');
+    params.delete('rule');
     const qs = params.toString();
     window.history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : '') + window.location.hash);
-  }, [focusKey]);
+  }, [focusKey, focusRuleId]);
 
   // Shared state for ManageWorkers and QuickBooks
   const [workers, setWorkers] = useState([]);
@@ -837,7 +840,7 @@ export default function AdministrationPage() {
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <PayrollSubsection icon="🕒" title={t.hrTitle} sub={t.hrGroupBody} defaultOpen={focusKey === 'hours_rules'}>
-                  <HoursRulesSettings settings={settings} onSettingsUpdated={setSettings} />
+                  <HoursRulesSettings settings={settings} onSettingsUpdated={setSettings} highlightRuleId={focusRuleId} />
                 </PayrollSubsection>
                 <PayrollSubsection icon="🧾" title={t.dedGroupTitle} sub={t.dedGroupBody}>
                   <DeductionsSettings settings={settings} onSettingsUpdated={setSettings} />

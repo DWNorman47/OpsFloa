@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useT } from '../hooks/useT';
 
 /**
@@ -184,9 +184,27 @@ export function describeRule(r, t) {
 
 // ── Editor ───────────────────────────────────────────────────────────────────
 
-export default function HoursRuleBuilder({ rules, onChange, title, help }) {
+export default function HoursRuleBuilder({ rules, onChange, title, help, highlightRuleId }) {
   const t = useT();
   const [draft, setDraft] = useState(null);
+
+  // Deep-link from a report's "View": scroll the named rule into view and flash it
+  // once. Waits for the rule to actually be in this list (settings may load after
+  // mount) and fires a single time, so later edits don't re-trigger the flash. Only
+  // the builder that owns the rule reacts; the others no-op.
+  const hitRef = useRef(null);
+  const flashedRef = useRef(false);
+  const [flashing, setFlashing] = useState(false);
+  useEffect(() => {
+    if (flashedRef.current || !highlightRuleId) return;
+    if (!rules.some(r => r.id === highlightRuleId) || !hitRef.current) return;
+    flashedRef.current = true;
+    const el = hitRef.current;
+    setFlashing(true);
+    const a = setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), 140);
+    const b = setTimeout(() => setFlashing(false), 2400);
+    return () => { clearTimeout(a); clearTimeout(b); };
+  }, [highlightRuleId, rules]);
 
   // The engine refuses a policy where Add/Remove Time has no baseline to
   // measure from, so the option is closed off here rather than letting someone
@@ -262,13 +280,16 @@ export default function HoursRuleBuilder({ rules, onChange, title, help }) {
 
       {rules.length > 0 && (
         <div style={s.list}>
-          {rules.map(r => (
-            <div key={r.id} style={s.row}>
+          {rules.map(r => {
+            const hit = r.id === highlightRuleId;
+            return (
+            <div key={r.id} ref={hit ? hitRef : null} style={{ ...s.row, ...(hit && flashing ? s.rowFlash : {}) }}>
               <span style={s.rowText}>{describeRule(r, t)}</span>
               {!draft && <button style={s.editBtn} onClick={() => edit(r)}>{t.hrEdit}</button>}
               {!draft && <button style={s.delBtn} onClick={() => remove(r.id)} aria-label={t.hrRemoveRule}>×</button>}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -798,7 +819,9 @@ const s = {
   help: { fontSize: 12.5, color: '#6b7280', margin: '6px 0 12px', lineHeight: 1.5 },
   empty: { fontSize: 13, color: '#9ca3af', fontStyle: 'italic', margin: '8px 0' },
   list: { display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 },
-  row: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: '#f9fafb', border: '1px solid #eef0f2', borderRadius: 7 },
+  row: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: '#f9fafb', border: '1px solid #eef0f2', borderRadius: 7, transition: 'background .4s, box-shadow .4s, border-color .4s' },
+  // Deep-link flash — a warm highlight that fades out after landing on the rule.
+  rowFlash: { background: '#fef9c3', borderColor: '#facc15', boxShadow: '0 0 0 2px #fde047' },
   rowText: { flex: 1, fontSize: 13, color: '#374151' },
   editBtn: { background: 'none', border: '1px solid #d1d5db', color: '#374151', fontSize: 12, fontWeight: 600, lineHeight: 1, cursor: 'pointer', padding: '4px 10px', borderRadius: 6, flexShrink: 0 },
   delBtn: { background: 'none', border: 'none', color: '#9ca3af', fontSize: 18, lineHeight: 1, cursor: 'pointer', padding: '0 4px', flexShrink: 0 },

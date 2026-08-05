@@ -200,7 +200,7 @@ function formToPolicy(f) {
   };
 }
 
-export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
+export default function HoursRulesSettings({ settings, onSettingsUpdated, highlightRuleId }) {
   const t = useT();
   const [form, setForm] = useState(() => policyToForm(settings?.hours_rules));
   const [saving, setSaving] = useState(false);
@@ -338,7 +338,7 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
             <p style={s.hint}>{t.hrTransparencyHint}</p>
           </section>
 
-          <HoursRuleBuilder rules={form.rules} onChange={rs => set('rules', rs)} title={t.hrStandardRulesTitle} />
+          <HoursRuleBuilder rules={form.rules} onChange={rs => set('rules', rs)} title={t.hrStandardRulesTitle} highlightRuleId={highlightRuleId} />
 
           <section style={s.section}>
             <div style={s.headRow}>
@@ -394,6 +394,7 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
                     onChange={rs => updateRoleSection(idx, { rules: rs })}
                     title={titleNames}
                     help={t.hrRoleRulesBuilderHelp}
+                    highlightRuleId={highlightRuleId}
                   />
                 </div>
               );

@@ -16,6 +16,12 @@ export const SETTINGS_LINKS = {
   employee: '/team',
 };
 
+// The Hours & Rules link, optionally pointing at one rule so the page scrolls to and
+// flashes that exact row. `rule` rides alongside `focus` (both before the #hash).
+const hoursRulesLink = (ruleId) =>
+  ruleId ? `/administration?focus=hours_rules&rule=${encodeURIComponent(ruleId)}#workspace` : SETTINGS_LINKS.hours_rules;
+const firstId = (ids) => (Array.isArray(ids) ? ids.find(Boolean) : null);
+
 function minToHHMM(min) {
   const m = (((Number(min) || 0) % 1440) + 1440) % 1440;
   return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
@@ -68,23 +74,23 @@ export function renderTraceItem(item, { t, policyRaw }) {
       const which = item.code === 'rounding_in' ? t.trClockIn : t.trClockOut;
       const base = t.trRounding.replace('{which}', which).replace('{from}', hhmm(item.fromTime)).replace('{to}', hhmm(item.toTime));
       const via = item.ruleId ? ruleText(item.ruleId) : t.trRoundingGlobal;
-      return { text: withRule(base, via), link: SETTINGS_LINKS.hours_rules };
+      return { text: withRule(base, via), link: hoursRulesLink(item.ruleId) };
     }
     case 'clip_start':
     case 'clip_end': {
       const which = item.code === 'clip_start' ? t.trClockIn : t.trClockOut;
       const base = t.trClip.replace('{which}', which).replace('{to}', minToHHMM(item.toMin));
-      return { text: withRule(base, rulesText(item.ruleIds)), link: SETTINGS_LINKS.hours_rules };
+      return { text: withRule(base, rulesText(item.ruleIds)), link: hoursRulesLink(firstId(item.ruleIds)) };
     }
     case 'add_time':
     case 'remove_time': {
       const sign = item.deltaMin > 0 ? '+' : '−';
       const base = t.trAdjust.replace('{sign}', sign).replace('{n}', Math.abs(item.deltaMin));
-      return { text: withRule(base, rulesText(item.ruleIds)), link: SETTINGS_LINKS.hours_rules };
+      return { text: withRule(base, rulesText(item.ruleIds)), link: hoursRulesLink(firstId(item.ruleIds)) };
     }
     case 'auto_break': {
       const base = t.trBreak.replace('{n}', item.addedMin).replace('{total}', item.breakMin);
-      return { text: withRule(base, rulesText(item.ruleIds)), link: SETTINGS_LINKS.hours_rules };
+      return { text: withRule(base, rulesText(item.ruleIds)), link: hoursRulesLink(firstId(item.ruleIds)) };
     }
     case 'break_logged':
       // The break recorded on the entry itself (not from a rule) — no setting to link to.
@@ -92,7 +98,7 @@ export function renderTraceItem(item, { t, policyRaw }) {
     case 'overtime': {
       // Explain WHY the overtime applies, not a blanket "over Nh daily".
       const n = item.otHours;
-      let text, link = SETTINGS_LINKS.hours_rules;
+      let text, link = hoursRulesLink(item.ruleId);
       switch (item.reason) {
         case 'override':    text = t.trOvertimeOverride.replace('{n}', n); link = null; break; // per-entry, not a rule
         case 'rest_day':    text = t.trOvertimeRestDay.replace('{n}', n); break;
