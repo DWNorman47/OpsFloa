@@ -21,6 +21,19 @@ that holds the exhaustive detail.
 
 ## 🔧 Bugs — set aside for later
 
+- **Leave + worked on the SAME day — verify no double-pay.** (2026-08-05) Reported as
+  "sick/vacation aren't working"; David suspects it was a test where a sick day was
+  entered for a day the employee *also* clocked in. The pay engine appends synthetic
+  leave rows (sick/vacation) after computing worked gross (`payStatement.js`), so a
+  worker with 8h worked + an approved 8h sick day on one date could total 16h paid.
+  Confirm the intended behavior (does an approved leave day suppress/limit worked pay
+  that day, or stack?) and add a guard if needed. Set aside 2026-08-05 pending a real
+  repro. Related, found while tracing: (1) all-time views with no date range silently
+  drop leave (`paidHours.js:157/186` return 0 when from/to null while worked hours still
+  show); (2) `type IN ('sick','vacation')` (`paidHours.js:162/191`, `payStatement.js:412`)
+  never pays approved **Personal/Other** PTO — product decision; (3) daily/salary workers
+  misprice leave (`sickHours * rate` uses the daily rate).
+
 - **WH-347 PDF / Statement of Compliance — mostly fixed 2026-07-28; two items remain.**
   Fixed: (a) the PDF now renders the signed `compliance_text` snapshot (falls back to the
   server `default_compliance_text` template when unsigned); (c) regular vs prevailing print as
