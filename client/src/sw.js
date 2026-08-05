@@ -134,7 +134,19 @@ async function getFreshAuth(scope) {
   return candidates.find(auth => authScope(auth) === scope) || null;
 }
 
-async function replayQueue() {
+// The queue is replayed from two triggers (a REPLAY_QUEUE message and a Background
+// Sync event) and both can fire on one reconnect. Without a lock, two concurrent
+// passes read the same items with getAllQueued() and replay each one twice — which,
+// for a clock-in, could re-create a shift after it was clocked out. Coalesce concurrent
+// replays into a single in-flight pass.
+let replayInFlight = null;
+function replayQueue() {
+  if (replayInFlight) return replayInFlight;
+  replayInFlight = doReplayQueue().finally(() => { replayInFlight = null; });
+  return replayInFlight;
+}
+
+async function doReplayQueue() {
   const items = await getAllQueued();
   let replayed = 0;
   let authFailed = false;
