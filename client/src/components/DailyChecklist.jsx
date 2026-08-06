@@ -247,6 +247,12 @@ export default function DailyChecklist({ projects = [], settings = null }) {
     finally { setLoading(false); }
   }, [t, toast]);
 
+  // Projects load async in the parent; seed/repair the selection once they arrive so the
+  // panels (guarded on projectId) and the active-day fetch actually have a project.
+  useEffect(() => {
+    if (projects.length && !projects.some(p => p.id === projectId)) setProjectId(projects[0].id);
+  }, [projects, projectId]);
+
   useEffect(() => { loadActive(projectId); }, [projectId, loadActive]);
 
   const startDay = async (resolution) => {
