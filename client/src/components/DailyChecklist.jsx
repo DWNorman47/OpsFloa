@@ -138,16 +138,15 @@ function QueueRow({ day, t, toast, first, last, onChanged }) {
 
       {editing === 'when' && (
         <div style={styles.editBox}>
-          <label style={styles.radioRow}>
-            <input type="radio" checked={when.schedule_type === 'calendar'} onChange={() => setWhen(w => ({ ...w, schedule_type: 'calendar' }))} />
-            {t.dcScheduleCalendar}
-            {when.schedule_type === 'calendar' && <input type="date" style={styles.inlineInput} value={when.scheduled_date} onChange={e => setWhen(w => ({ ...w, scheduled_date: e.target.value }))} />}
-          </label>
-          <label style={styles.radioRow}>
-            <input type="radio" checked={when.schedule_type === 'ordinal'} onChange={() => setWhen(w => ({ ...w, schedule_type: 'ordinal' }))} />
-            {t.dcScheduleOrdinal}
-            {when.schedule_type === 'ordinal' && <input type="number" min={1} style={styles.inlineNum} value={when.ordinal_target} onChange={e => setWhen(w => ({ ...w, ordinal_target: e.target.value }))} />}
-          </label>
+          <div style={styles.whenRow}>
+            <select style={styles.kindSelect} value={when.schedule_type} onChange={e => setWhen(w => ({ ...w, schedule_type: e.target.value }))}>
+              <option value="calendar">{t.dcScheduleCalendar}</option>
+              <option value="ordinal">{t.dcScheduleOrdinal}</option>
+            </select>
+            {when.schedule_type === 'calendar'
+              ? <input type="date" style={styles.inlineInput} value={when.scheduled_date} onChange={e => setWhen(w => ({ ...w, scheduled_date: e.target.value }))} />
+              : <input type="number" min={1} style={styles.inlineNum} value={when.ordinal_target} onChange={e => setWhen(w => ({ ...w, ordinal_target: e.target.value }))} />}
+          </div>
           <div style={styles.rowEnd}>
             <button style={styles.linkBtnSm} onClick={() => setEditing(null)}>{t.dcCancel}</button>
             <button style={styles.btn} onClick={saveWhen}>{t.dcSavePlan}</button>
@@ -214,17 +213,14 @@ function DayManager({ projectId, t, toast, onQueueChanged }) {
   return (
     <div style={styles.panel}>
       <div style={styles.prepareGrid}>
-        <div style={styles.whenCol}>
-          <label style={styles.radioRow}>
-            <input type="radio" checked={form.schedule_type === 'calendar'} onChange={() => setForm(f => ({ ...f, schedule_type: 'calendar' }))} />
-            {t.dcScheduleCalendar}
-            {form.schedule_type === 'calendar' && <input type="date" style={styles.inlineInput} value={form.scheduled_date} onChange={e => setForm(f => ({ ...f, scheduled_date: e.target.value }))} />}
-          </label>
-          <label style={styles.radioRow}>
-            <input type="radio" checked={form.schedule_type === 'ordinal'} onChange={() => setForm(f => ({ ...f, schedule_type: 'ordinal' }))} />
-            {t.dcScheduleOrdinal}
-            {form.schedule_type === 'ordinal' && <input type="number" min={1} style={styles.inlineNum} value={form.ordinal_target} onChange={e => setForm(f => ({ ...f, ordinal_target: e.target.value }))} />}
-          </label>
+        <div style={styles.whenRow}>
+          <select style={styles.kindSelect} value={form.schedule_type} onChange={e => setForm(f => ({ ...f, schedule_type: e.target.value }))}>
+            <option value="calendar">{t.dcScheduleCalendar}</option>
+            <option value="ordinal">{t.dcScheduleOrdinal}</option>
+          </select>
+          {form.schedule_type === 'calendar'
+            ? <input type="date" style={styles.inlineInput} value={form.scheduled_date} onChange={e => setForm(f => ({ ...f, scheduled_date: e.target.value }))} />
+            : <input type="number" min={1} style={styles.inlineNum} value={form.ordinal_target} onChange={e => setForm(f => ({ ...f, ordinal_target: e.target.value }))} />}
         </div>
         <input style={styles.addInput} value={form.name} placeholder={t.dcDayNamePlaceholder} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
       </div>
@@ -496,6 +492,7 @@ const styles = {
   toggleHelp: { color: '#9ca3af', fontSize: 12 },
   // Day manager
   prepareGrid: { display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 8 },
+  whenRow: { display: 'flex', alignItems: 'center', gap: 8 },
   whenCol: { display: 'flex', flexDirection: 'column', gap: 4 },
   radioRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#374151' },
   inlineInput: { padding: '4px 8px', borderRadius: 6, border: '1px solid #d1d5db', fontSize: 13 },
