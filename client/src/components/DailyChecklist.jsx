@@ -148,10 +148,14 @@ function DayManager({ projectId, t, toast, onQueueChanged }) {
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
-    try { const r = await api.get(`/daily-checklist/projects/${projectId}/queue`); setQueue(r.data.days || []); onQueueChanged?.(r.data.days || []); }
+    try { const r = await api.get(`/daily-checklist/projects/${projectId}/queue`); setQueue(r.data.days || []); }
     catch { toast(t.dcQueueLoadFailed, 'error'); setQueue([]); }
-  }, [projectId, t, toast, onQueueChanged]);
-  useEffect(() => { load(); }, [load]);
+  }, [projectId, t, toast]);
+  useEffect(() => { load(); }, [load]); // mount only — does NOT touch the parent
+
+  // After a mutation, reload the queue AND tell the parent to refresh the active view
+  // (an edit may have merged items onto the running day).
+  const refresh = useCallback(async () => { await load(); onQueueChanged?.(); }, [load, onQueueChanged]);
 
   const create = async () => {
     setSaving(true);
@@ -164,14 +168,14 @@ function DayManager({ projectId, t, toast, onQueueChanged }) {
     try {
       await api.post(`/daily-checklist/projects/${projectId}/days`, body);
       setForm(f => ({ ...f, name: '', items: '' }));
-      await load();
+      await refresh();
     } catch { toast(t.dcPrepareFailed, 'error'); }
     finally { setSaving(false); }
   };
 
-  // onChanged doubles as the reorder handler: (dir, id) moves a row; no args = just reload.
+  // onChanged doubles as the reorder handler: (dir, id) moves a row; no args = reload+notify.
   const onChanged = async (dir, id) => {
-    if (!dir) return load();
+    if (!dir) return refresh();
     const ids = queue.map(d => d.id);
     const i = ids.indexOf(id);
     const j = dir === 'up' ? i - 1 : i + 1;
@@ -262,6 +266,11 @@ export default function DailyChecklist({ projects = [], settings = null, loading
 
   useEffect(() => { loadActive(projectId); }, [projectId, loadActive]);
 
+  // Stable so the Day Manager's effects don't re-fire every render (which thrashed the
+  // active card). Called only after a Day Manager mutation, to pick up items merged onto
+  // the running day.
+  const refreshActive = useCallback(() => { loadActive(projectId); }, [loadActive, projectId]);
+
   const startDay = async (resolution) => {
     setBusy(true);
     try {
@@ -339,7 +348,7 @@ export default function DailyChecklist({ projects = [], settings = null, loading
       )}
 
       {canManageRecurring && panel === 'recurring' && projectId && <RecurringEditor key={`r${projectId}`} projectId={projectId} t={t} toast={toast} />}
-      {canSchedule && panel === 'manager' && projectId && <DayManager key={`m${projectId}`} projectId={projectId} t={t} toast={toast} onQueueChanged={() => loadActive(projectId)} />}
+      {canSchedule && panel === 'manager' && projectId && <DayManager key={`m${projectId}`} projectId={projectId} t={t} toast={toast} onQueueChanged={refreshActive} />}
 
       {conflict ? (
         <div style={styles.conflictCard}>
