@@ -165,12 +165,22 @@ and **check-items** only. All are editable in the permission UI.
   (`module_field`).
 
 ## Phasing (within the in-scope work)
-- **Phase 1 — the daily loop.** Recurring template + Start-a-day (adhoc) + daily view +
-  check-off + complete + rollover + the two default permissions. Delivers a working
-  per-project daily checklist with no advance scheduling.
-- **Phase 2 — the day manager.** Prepare-ahead day plans (calendar + ordinal), the
-  reorderable pending queue, pause/reschedule, the ordinal/calendar conflict prompt, the
-  remaining permissions, and the optional clock-in auto-start setting.
+- **Phase 1 — the daily loop. SHIPPED.** Recurring template + Start-a-day (adhoc) + daily
+  view + check-off + complete + rollover + the two default permissions. Migration `0163`
+  (schema) + `0164` (perms). `routes/dailyChecklist.js`, `components/DailyChecklist.jsx`.
+- **Phase 2 — the day manager. SHIPPED.** Prepare-ahead day plans (calendar + ordinal)
+  with items, the reorderable pending/paused queue, reschedule/pause/delete, the
+  ordinal/calendar conflict prompt (use-either/merge), `daily_checklist_schedule_days`
+  (migration `0165`), and the optional `daily_checklist_clockin_autostart` trigger. Shared
+  start logic lives in `utils/dailyChecklistCore.js` (used by the route + the clock-in hook
+  in `routes/clock.js`). Start precedence: calendar-today → ordinal-N → top of queue →
+  adhoc; the auto-start trigger uses the same minus the prompt.
+
+## Deferred follow-ons (not built)
+- **Reference-pulled safety checklists** — safety lists attached to equipment/assets that
+  auto-append when the asset is referenced in the day. Needs an asset registry first.
+- **Portioning the project's general punchlist per day** — likely a soft day-tag on
+  general items rather than a hard partition.
 
 ## Open decisions
 All decided. The feature lives under the **Field** module (`module_field`).

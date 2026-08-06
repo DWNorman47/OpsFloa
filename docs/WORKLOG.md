@@ -4410,3 +4410,33 @@ eslint/i18n/build green.
 **Phase 2 (not started):** the day manager — calendar/ordinal day-plans, the reorderable
 pending queue, pause/reschedule, ordinal-vs-calendar conflict prompt, optional clock-in
 auto-start.
+
+---
+
+## Daily Checklist — Phase 2 (the day manager)
+
+Built the scheduling half of the Daily Checklist (`docs/plans/daily-checklist.md`). Both
+phases are now shipped.
+
+- **Prepare days ahead**: a manager creates pending day-plans on a **calendar date** or a
+  **work-day number** (ordinal), each with its own items. New perm
+  `daily_checklist_schedule_days` (admin-tier, migration `0165`).
+- **The queue**: pending + paused plans in a reorderable queue; overdue calendar plans are
+  lazily flipped to **paused** (no cron). Reschedule / edit-items / delete inline.
+- **Queue-aware start**: resumes a calendar plan dated today → an ordinal plan for this day
+  number → the top of the queue → else a fresh adhoc day, sliding the resumed plan onto
+  today with the next ordinal number and appending recurring + rollover (deduped) on top.
+- **Conflict prompt**: when a calendar plan and an ordinal plan both claim the same day and
+  differ, start returns `409 { conflict }` with each option's items; the UI offers
+  use-either / **merge** (merge unions them and retires the loser).
+- **Optional clock-in trigger**: `daily_checklist_clockin_autostart` (default off). When on,
+  the first clock-in on a project auto-starts the day — best-effort, in the clock-in's
+  post-response block, so it never delays/fails the clock-in.
+
+**Design note:** the shared start logic (assembly, overdue-pause, precedence) lives in
+`utils/dailyChecklistCore.js`, imported by both the route and the clock-in hook, so the
+manual and automatic paths can't drift. The auto-start path deliberately has no conflict
+prompt (a trigger can't ask) — calendar-today wins.
+
+**Verified:** 1354 server tests (added core + route Phase-2 cases) + client
+eslint/i18n/build green.
