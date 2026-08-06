@@ -38,6 +38,7 @@ export const MODULE_PERMISSIONS = {
     'submit_field_reports', 'manage_punchlist', 'manage_rfis',
     'manage_safety_checklists', 'manage_equipment',
     'manage_incidents', 'manage_inspections',
+    'daily_checklist_start_day', 'daily_checklist_check_items',
   ],
   inventory: [
     // Equipment tracking lives in the Inventory module now, so manage_equipment

@@ -1108,6 +1108,51 @@ router.get('/workers/:id/entries', requireAdmin, requirePerm('view_worker_wages'
   }
 });
 
+// GET /admin/workers/:id/pay-periods — the worker's CURRENT and PREVIOUS pay period,
+// as plain date ranges, so the report's "This/Last paycheck" presets line up with the
+// real paycheck for this worker's schedule. Resolved by role → ruleset (like the run).
+// Returns { current, previous } (each { period_start, period_end } or null). Both null
+// when the worker has no applicable ruleset/schedule — the client just omits the presets.
+router.get('/workers/:id/pay-periods', requireAdmin, requirePerm('view_worker_wages'), async (req, res) => {
+  const companyId = req.user.company_id;
+  try {
+    const u = await pool.query(
+      "SELECT role_id FROM users WHERE id = $1 AND role = 'worker' AND company_id = $2",
+      [req.params.id, companyId]
+    );
+    if (u.rowCount === 0) return res.status(404).json({ error: 'Worker not found' });
+
+    const s = await getSettings(companyId);
+    const rulesets = normalizePaycheckRules(s.paycheck_rules).rulesets;
+    // resolveRuleset returns { ruleset: null } when none are configured and { error }
+    // for no-role / no-match / ambiguous — every non-single case means "no presets".
+    const resolved = resolveRuleset(rulesets, u.rows[0].role_id);
+    const schedule = resolved.ruleset && resolved.ruleset.schedule;
+    if (!schedule || !schedule.frequency) return res.json({ current: null, previous: null });
+
+    const weekStart = parseInt(s.week_start ?? 1, 10);
+    // Generate a window around today wide enough to include the in-progress period
+    // (its pay date can be weeks out) and the one before it, whatever the frequency.
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const shiftIso = (isoStr, days) => { const dt = new Date(isoStr + 'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate() + days); return dt.toISOString().slice(0, 10); };
+    const periods = generatePeriods(schedule, shiftIso(todayIso, -120), shiftIso(todayIso, 45), weekStart)
+      .sort((a, b) => (a.periodStart < b.periodStart ? -1 : a.periodStart > b.periodStart ? 1 : 0));
+    // "Current" = the latest period already under way (started on/before today); "previous"
+    // = the one just before it. Falls back to the last period if today is past them all.
+    let curIdx = -1;
+    for (let i = 0; i < periods.length; i++) { if (periods[i].periodStart <= todayIso) curIdx = i; }
+    if (curIdx === -1) curIdx = periods.length - 1;
+    const asRange = p => (p ? { period_start: p.periodStart, period_end: p.periodEnd } : null);
+    res.json({
+      current: asRange(periods[curIdx]),
+      previous: asRange(curIdx > 0 ? periods[curIdx - 1] : null),
+    });
+  } catch (err) {
+    logger.error({ err }, 'catch block error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // GET /admin/workers/:id/deductions — this worker's OWN deduction lines (on top
 // of the company-wide list). Returns the full rows so the editor can round-trip.
 router.get('/workers/:id/deductions', requireAdmin, requirePerm('manage_workers'), async (req, res) => {

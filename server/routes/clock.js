@@ -8,6 +8,7 @@ const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const { applySettingsRows, SETTINGS_DEFAULTS } = require('../settingsDefaults');
 const { sendEmail } = require('../email');
 const { wallClockInTZ, validLocalTime, entryInstants } = require('../utils/timeFormat');
+const { autoStartDayTx } = require('../utils/dailyChecklistCore');
 const rateLimit = require('express-rate-limit');
 const { userOrIpKey } = require('../middleware/rateLimitKey');
 
@@ -231,6 +232,14 @@ router.post('/in', requireAuth, requirePerm('clock_self'), clockLimiter, coerceB
           else if (r.key === 'company_timezone') s[r.key] = r.value;
           else s[r.key] = parseFloat(r.value);
         });
+        // Optional Daily Checklist trigger: the first clock-in on a project auto-starts
+        // that day's checklist. Off by default; best-effort — never affects the clock-in.
+        if (project_id && allSettings.rows.find(r => r.key === 'daily_checklist_clockin_autostart')?.value === '1') {
+          try {
+            await autoStartDayTx(pool, { companyId, projectId: project_id, userId: req.user.id, workDate: local_work_date || null });
+          } catch (err) { logger.warn({ err }, 'daily checklist auto-start failed'); }
+        }
+
         const tz = timezone || s.company_timezone || 'UTC';
         const nowHour = parseInt(new Date().toLocaleString('en-US', { timeZone: tz, hour: 'numeric', hour12: false })) % 24;
         if (s.notification_use_work_hours && (nowHour < s.notification_start_hour || nowHour >= s.notification_end_hour)) {

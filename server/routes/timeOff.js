@@ -201,9 +201,14 @@ router.get('/balance', requireAuth, async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const [settingResult, usedResult] = await Promise.all([
-      pool.query(`SELECT value FROM settings WHERE company_id = $1 AND key = 'pto_annual_days'`, [companyId]),
+      pool.query(`SELECT key, value FROM settings WHERE company_id = $1 AND key IN ('pto_annual_days', 'regular_shift_hours')`, [companyId]),
+      // Full days count as whole calendar days; a partial-day request (hours set on a
+      // single day) counts as a FRACTION of a day — summed separately so we can divide
+      // by the company's day length in JS (avoids SQL divide-by-zero on a 0 setting).
       pool.query(
-        `SELECT COALESCE(SUM(end_date - start_date + 1), 0) AS used_days
+        `SELECT
+           COALESCE(SUM(CASE WHEN hours IS NOT NULL AND start_date = end_date THEN 0 ELSE (end_date - start_date + 1) END), 0) AS full_days,
+           COALESCE(SUM(CASE WHEN hours IS NOT NULL AND start_date = end_date THEN hours ELSE 0 END), 0) AS partial_hours
          FROM time_off_requests
          WHERE user_id = $1 AND company_id = $2
            AND status = 'approved'
@@ -211,9 +216,14 @@ router.get('/balance', requireAuth, async (req, res) => {
         [req.user.id, companyId]
       ),
     ]);
-    const annualDays = parseFloat(settingResult.rows[0]?.value ?? 0);
-    const usedDays = parseInt(usedResult.rows[0]?.used_days ?? 0);
-    res.json({ annual_days: annualDays, used_days: usedDays, remaining_days: Math.max(0, annualDays - usedDays) });
+    const settingVal = key => settingResult.rows.find(r => r.key === key)?.value;
+    const annualDays = parseFloat(settingVal('pto_annual_days') ?? 0) || 0;
+    const dayHours = parseFloat(settingVal('regular_shift_hours')) > 0 ? parseFloat(settingVal('regular_shift_hours')) : 8;
+    const fullDays = parseFloat(usedResult.rows[0]?.full_days ?? 0) || 0;
+    const partialHours = parseFloat(usedResult.rows[0]?.partial_hours ?? 0) || 0;
+    const round2 = v => Math.round(v * 100) / 100;
+    const usedDays = round2(fullDays + partialHours / dayHours);
+    res.json({ annual_days: annualDays, used_days: usedDays, remaining_days: round2(Math.max(0, annualDays - usedDays)) });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 

@@ -4374,3 +4374,98 @@ need `ANTHROPIC_API_KEY`.
 ⚠️ **Five open items in `docs/BACKLOG.md`** — the two closeout/QBO bugs above,
 tool-apps still hardcoding `'$'`, flooring/framing missing from `NEEDS_SCALE`,
 and `fopening` missing from `POINT_KINDS`.
+
+---
+
+## Daily Checklist — Phase 1 (per-project daily checklist)
+
+New Field-module feature: a per-project checklist that recurs each working day.
+Designed with David over several turns (`docs/plans/daily-checklist.md`) — the load-
+bearing idea is **ordinal worked-days**: Day 1 = the first day worked onsite, gaps
+allowed, and ordinal numbers are **spent only by days actually worked** (a scheduled
+no-show never burns "Day 3"). Generation is **lazy** — a day materializes when it's
+started, never pre-generated. Two follow-ons deferred: reference-pulled safety
+checklists (needs an asset registry) and per-day portioning of the general punchlist.
+
+**Phase 1 shipped** (the daily loop; the day-manager scheduling is Phase 2):
+- **Schema** (`0163`): `daily_checklist_recurring_items`, `daily_checklists` (full
+  lifecycle + scheduling columns so Phase 2 needs no migration), `daily_checklist_items`.
+  CHECK-enforced enums mirrored in `constants/dailyChecklistEnums.js` + `db-enums.md`;
+  partial unique index = one active day per project.
+- **Route** (`routes/dailyChecklist.js`): recurring template GET/PUT, idempotent
+  start-a-day (adhoc; assigns the ordinal `day_number` from prior worked days and
+  assembles recurring items + **unchecked rollover from the last completed day, deduped
+  by normalized text**), active-day view, history, item add/check/edit/delete, complete.
+- **Permissions** (`0164` backfill): `start_day` + `check_items` worker-tier,
+  `manage_recurring` + `complete_day` admin-tier.
+- **Client**: `DailyChecklist.jsx` in the Field › Daily group — start the day, check
+  items (rollover items badged "carried over"), add manual items, complete; managers get
+  an inline recurring-template editor. EN + ES.
+
+**Judgment calls:** rollover is computed **at next start** from the last completed day
+(not pushed at complete time) since the next day is lazy; a start that races another
+returns the winner (23505 → re-select). Verified: 1345 server tests + client
+eslint/i18n/build green.
+
+**Phase 2 (not started):** the day manager — calendar/ordinal day-plans, the reorderable
+pending queue, pause/reschedule, ordinal-vs-calendar conflict prompt, optional clock-in
+auto-start.
+
+---
+
+## Daily Checklist — Phase 2 (the day manager)
+
+Built the scheduling half of the Daily Checklist (`docs/plans/daily-checklist.md`). Both
+phases are now shipped.
+
+- **Prepare days ahead**: a manager creates pending day-plans on a **calendar date** or a
+  **work-day number** (ordinal), each with its own items. New perm
+  `daily_checklist_schedule_days` (admin-tier, migration `0165`).
+- **The queue**: pending + paused plans in a reorderable queue; overdue calendar plans are
+  lazily flipped to **paused** (no cron). Reschedule / edit-items / delete inline.
+- **Queue-aware start**: resumes a calendar plan dated today → an ordinal plan for this day
+  number → the top of the queue → else a fresh adhoc day, sliding the resumed plan onto
+  today with the next ordinal number and appending recurring + rollover (deduped) on top.
+- **Conflict prompt**: when a calendar plan and an ordinal plan both claim the same day and
+  differ, start returns `409 { conflict }` with each option's items; the UI offers
+  use-either / **merge** (merge unions them and retires the loser).
+- **Optional clock-in trigger**: `daily_checklist_clockin_autostart` (default off). When on,
+  the first clock-in on a project auto-starts the day — best-effort, in the clock-in's
+  post-response block, so it never delays/fails the clock-in.
+
+**Design note:** the shared start logic (assembly, overdue-pause, precedence) lives in
+`utils/dailyChecklistCore.js`, imported by both the route and the clock-in hook, so the
+manual and automatic paths can't drift. The auto-start path deliberately has no conflict
+prompt (a trigger can't ask) — calendar-today wins.
+
+**Verified:** 1354 server tests (added core + route Phase-2 cases) + client
+eslint/i18n/build green.
+
+---
+
+## PWA blank-screen recovery (boot watchdog)
+
+Symptom: the PWA often opened to a blank white screen that "does nothing". Diagnosis
+(full SW/boot audit): the SW caching is actually solid (atomic precache of index.html +
+entry chunks, cleanupOutdatedCaches, message-gated skipWaiting, layered chunk-error
+auto-reload, root + per-section ErrorBoundaries). The one uncovered path: if the **root
+entry bundle** fails to load/execute — classic case a stale HTTP-cached index.html after a
+deploy pointing at purged /assets chunk hashes — React never mounts, so none of that
+recovery installs (it all ships *inside* the failed bundle), and index.html has already
+hidden its static fallback the instant JS ran → permanent blank.
+
+Fixes (client-only):
+- **`client/public/bootwatch.js`** — a plain external script (runs even when the module
+  bundle 404s/throws; CSP-allowed via 'self', no inline hash). If React hasn't mounted
+  after 12s (detected by the #prehydrate fallback node still present), it reloads once to
+  fetch a fresh shell; if a reload already ran and it's still blank, it reveals the static
+  landing page (with a Log in link) instead of white. Referenced from `index.html` before
+  the module script.
+- **`client/vercel.json`** — `Cache-Control: public, max-age=0, must-revalidate` on the SPA
+  shell (negative-lookahead source excluding immutable /assets and the sw.js/manifest.json
+  blocks), so an HTTP-cached index.html can't outlive a deploy and the watchdog's reload
+  actually gets a fresh, consistent shell.
+
+Deeper options left for later (noted, not done): a Workbox NavigationRoute/navigateFallback
+so offline deep-links get the cached shell; auto (not just banner) reload on version
+mismatch.
