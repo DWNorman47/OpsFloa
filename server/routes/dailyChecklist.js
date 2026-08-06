@@ -97,6 +97,10 @@ router.put('/projects/:projectId/recurring', requirePerm('daily_checklist_manage
 router.get('/clock-in-prompt', async (req, res) => {
   const companyId = req.user.company_id;
   try {
+    // A company can turn the clock-in prompt off (default on).
+    const setting = await pool.query("SELECT value FROM settings WHERE company_id = $1 AND key = 'daily_checklist_clockin_prompt'", [companyId]);
+    if (setting.rows[0]?.value === '0') return res.json({ candidates: [] });
+
     // Projects the user can see — mirrors routes/projects.js visibility (admins bypass;
     // otherwise projects.visible_to_user_ids gates non-shared projects).
     const isAdmin = req.user.role === 'admin' || req.user.role === 'super_admin';

@@ -230,6 +230,7 @@ export default function Dashboard() {
   const dcPromptKey = () => `dc_clockin_prompt_${new Date().toLocaleDateString('en-CA')}`;
   const handleClockedIn = async clockStatus => {
     setHeaderClock(clockStatus); // worker clocked in
+    if (settings?.daily_checklist_clockin_prompt === false) return; // company turned it off
     // Offer to open a daily checklist for a project — once per day, best-effort.
     try {
       if (safeLocal.getItem(dcPromptKey())) return;

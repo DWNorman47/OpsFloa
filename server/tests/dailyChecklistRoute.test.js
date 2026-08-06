@@ -61,10 +61,24 @@ describe('GET /clock-in-prompt', () => {
   });
 
   test('empty when the user has no accessible projects', async () => {
-    pool.query.mockResolvedValueOnce({ rows: [] });
+    // settings query (no row → default on), then projects (none).
+    pool.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
     permissions.hasPerm.mockResolvedValue(true);
     const res = await request(makeApp()).get('/api/daily-checklist/clock-in-prompt');
     expect(res.body.candidates).toEqual([]);
+  });
+
+  test('empty (short-circuits) when the company turned the prompt off', async () => {
+    pool.query.mockImplementation(async (sql) => {
+      if (/daily_checklist_clockin_prompt/.test(sql)) return { rows: [{ value: '0' }] };
+      return { rows: [{ id: 1, name: 'Alpha' }] };
+    });
+    permissions.hasPerm.mockResolvedValue(true);
+    const res = await request(makeApp()).get('/api/daily-checklist/clock-in-prompt');
+    expect(res.body.candidates).toEqual([]);
+    expect(pool.query.mock.calls.map(c => c[0]).join('\n')).not.toMatch(/SELECT id, name FROM projects/);
   });
 });
 

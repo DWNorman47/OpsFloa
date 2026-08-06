@@ -98,6 +98,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
     feature_public: settings?.feature_public ?? true,
     feature_chat: settings?.feature_chat ?? false,
     feature_geolocation: settings?.feature_geolocation ?? true,
+    daily_checklist_clockin_prompt: settings?.daily_checklist_clockin_prompt ?? true,
     module_timeclock: settings?.module_timeclock ?? true,
     module_work: settings?.module_work ?? true,
     hide_work_orders_tab: settings?.hide_work_orders_tab ?? false,
@@ -194,6 +195,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
       feature_public: settings.feature_public ?? true,
       feature_chat: settings.feature_chat ?? false,
       feature_geolocation: settings.feature_geolocation ?? true,
+      daily_checklist_clockin_prompt: settings.daily_checklist_clockin_prompt ?? true,
       module_timeclock: settings.module_timeclock ?? true,
       module_work: settings.module_work ?? true,
       hide_work_orders_tab: settings.hide_work_orders_tab ?? false,
@@ -269,6 +271,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
         feature_public: form.feature_public,
         feature_chat: form.feature_chat,
         feature_geolocation: form.feature_geolocation,
+        daily_checklist_clockin_prompt: form.daily_checklist_clockin_prompt,
         module_timeclock: form.module_timeclock,
         module_work: form.module_work,
         hide_work_orders_tab: form.hide_work_orders_tab,
@@ -533,6 +536,18 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
               <span style={{ ...styles.toggleKnob, transform: form.feature_geolocation ? 'translateX(46px)' : 'translateX(0)' }} />
             </label>
           </div>
+          {form.module_field && (
+            <div style={styles.row}>
+              <div>
+                <div style={styles.label}>{t.mrFeatDcPrompt}</div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrFeatDcPromptDesc}</div>
+              </div>
+              <label style={{ ...styles.toggle, background: form.daily_checklist_clockin_prompt ? 'var(--ops-page-accent)' : '#d1d5db' }}>
+                <input type="checkbox" checked={form.daily_checklist_clockin_prompt} onChange={e => set('daily_checklist_clockin_prompt', e.target.checked)} style={{ display: 'none' }} />
+                <span style={{ ...styles.toggleKnob, transform: form.daily_checklist_clockin_prompt ? 'translateX(46px)' : 'translateX(0)' }} />
+              </label>
+            </div>
+          )}
           <div style={styles.row}>
             <div>
               <div style={styles.label}>{t.mrFeatBroadcast}</div>
