@@ -1,8 +1,18 @@
-import { precacheAndRoute, cleanupOutdatedCaches } from 'workbox-precaching';
+import { precacheAndRoute, cleanupOutdatedCaches, createHandlerBoundToURL } from 'workbox-precaching';
+import { NavigationRoute, registerRoute } from 'workbox-routing';
 
 // Injected by vite-plugin-pwa at build time
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
+
+// Serve the precached app shell for ALL page navigations (deep links + offline), not just
+// "/". Without this, a cold PWA launch or an offline navigation to e.g. /timeclock has no
+// cached shell and lands on a blank page. Only document navigations match NavigationRoute;
+// API calls and file requests aren't navigations, but exclude /api and version.json
+// defensively so they always hit the network.
+registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html'), {
+  denylist: [/^\/api\//, /^\/version\.json/],
+}));
 
 const QUEUE_DB = 'tc-offline-queue';
 const QUEUE_STORE = 'punches';

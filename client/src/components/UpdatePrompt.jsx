@@ -9,6 +9,10 @@
  *
  * Polls on an interval and whenever the tab regains focus/visibility. Can't get
  * stuck: once you reload onto the new build the versions match and it clears.
+ *
+ * The banner is the immediate manual option; the update is ALSO applied automatically at
+ * a safe moment — the next time the tab is hidden (backgrounded) — so stale builds don't
+ * linger, without ever reloading out from under an active user.
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
@@ -114,6 +118,24 @@ export default function UpdatePrompt() {
       window.removeEventListener('focus', check);
     };
   }, [check, currentVersion]);
+
+  // Auto-apply the update at a low-disruption moment: the next time the tab is hidden
+  // (backgrounded, or the PWA sent to the background). Reloading while hidden means an
+  // active user is never yanked mid-action and returns to the fresh build; logged-out
+  // users (who never see the banner) also get updated. The banner stays as the immediate
+  // manual option. Fires once per detected version.
+  useEffect(() => {
+    if (!newVersion) return undefined;
+    let applied = false;
+    const onHide = () => {
+      if (!applied && document.visibilityState === 'hidden') {
+        applied = true;
+        activateUpdateAndReload();
+      }
+    };
+    document.addEventListener('visibilitychange', onHide);
+    return () => document.removeEventListener('visibilitychange', onHide);
+  }, [newVersion]);
 
   // Show only when there's a newer version the user hasn't dismissed. If an even
   // newer one ships later, newVersion changes and it surfaces again.
