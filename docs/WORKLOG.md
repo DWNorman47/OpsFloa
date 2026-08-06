@@ -4440,3 +4440,32 @@ prompt (a trigger can't ask) — calendar-today wins.
 
 **Verified:** 1354 server tests (added core + route Phase-2 cases) + client
 eslint/i18n/build green.
+
+---
+
+## PWA blank-screen recovery (boot watchdog)
+
+Symptom: the PWA often opened to a blank white screen that "does nothing". Diagnosis
+(full SW/boot audit): the SW caching is actually solid (atomic precache of index.html +
+entry chunks, cleanupOutdatedCaches, message-gated skipWaiting, layered chunk-error
+auto-reload, root + per-section ErrorBoundaries). The one uncovered path: if the **root
+entry bundle** fails to load/execute — classic case a stale HTTP-cached index.html after a
+deploy pointing at purged /assets chunk hashes — React never mounts, so none of that
+recovery installs (it all ships *inside* the failed bundle), and index.html has already
+hidden its static fallback the instant JS ran → permanent blank.
+
+Fixes (client-only):
+- **`client/public/bootwatch.js`** — a plain external script (runs even when the module
+  bundle 404s/throws; CSP-allowed via 'self', no inline hash). If React hasn't mounted
+  after 12s (detected by the #prehydrate fallback node still present), it reloads once to
+  fetch a fresh shell; if a reload already ran and it's still blank, it reveals the static
+  landing page (with a Log in link) instead of white. Referenced from `index.html` before
+  the module script.
+- **`client/vercel.json`** — `Cache-Control: public, max-age=0, must-revalidate` on the SPA
+  shell (negative-lookahead source excluding immutable /assets and the sw.js/manifest.json
+  blocks), so an HTTP-cached index.html can't outlive a deploy and the watchdog's reload
+  actually gets a fresh, consistent shell.
+
+Deeper options left for later (noted, not done): a Workbox NavigationRoute/navigateFallback
+so offline deep-links get the cached shell; auto (not just banner) reload on version
+mismatch.

@@ -188,6 +188,9 @@
         <p>The product overview above is available without JavaScript. Creating an account and using the OpsFloA app requires JavaScript.</p>
       </div>
     </noscript>
+    <!-- Runs even if the module bundle below fails to load — reloads/reveals the fallback
+         so a broken boot can't leave a permanent blank screen. See public/bootwatch.js. -->
+    <script defer src="/bootwatch.js"></script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
