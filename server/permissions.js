@@ -74,6 +74,7 @@ const PERMISSIONS = [
   { key: 'daily_checklist_check_items', group: 'field', label: 'Daily checklist — check items' },
   { key: 'daily_checklist_manage_recurring', group: 'field', label: 'Daily checklist — recurring setup' },
   { key: 'daily_checklist_complete_day', group: 'field', label: 'Daily checklist — complete a day' },
+  { key: 'daily_checklist_schedule_days', group: 'field', label: 'Daily checklist — schedule days ahead' },
 
   // Inventory
   { key: 'view_inventory', group: 'inventory', label: 'View inventory' },
@@ -152,6 +153,7 @@ const ADMIN_PERMISSIONS = [
   'manage_inventory',
   'daily_checklist_manage_recurring',
   'daily_checklist_complete_day',
+  'daily_checklist_schedule_days',
 ];
 
 // Owner: everything. manage_roles is inherited from ADMIN; Owner additionally gets
