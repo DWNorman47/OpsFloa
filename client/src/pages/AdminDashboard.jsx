@@ -94,6 +94,14 @@ export function WorkforcePanel() {
 
   // Report section headers, so opening one can scroll to it instead of the page top.
   const sectionRefs = useRef({});
+  // Selecting a member drops the report panel in below the table; bounce the view down
+  // to it so the detail isn't off-screen. Fires on a *new* selection, not on deselect.
+  const reportPanelRef = useRef(null);
+  useEffect(() => {
+    if (!selectedReportWorker) return;
+    const id = setTimeout(() => reportPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+    return () => clearTimeout(id);
+  }, [selectedReportWorker]);
   const toggleSection = key => {
     const opening = !!collapsedSections[key]; // was collapsed → this click opens it
     setCollapsedSections(s => {
@@ -319,9 +327,11 @@ export function WorkforcePanel() {
                         </div>
                       )}
                       {sel && (
-                        <Suspense fallback={<TabLoader />}>
-                          <WorkerMetrics key={sel.id} worker={sel} currency={settings?.currency ?? 'USD'} companyInfo={companyInfo} overtimeEnabled={settings?.feature_overtime !== false} projectsEnabled={settings?.feature_project_integration !== false} projects={projects} settings={settings} />
-                        </Suspense>
+                        <div ref={reportPanelRef}>
+                          <Suspense fallback={<TabLoader />}>
+                            <WorkerMetrics key={sel.id} worker={sel} currency={settings?.currency ?? 'USD'} companyInfo={companyInfo} overtimeEnabled={settings?.feature_overtime !== false} projectsEnabled={settings?.feature_project_integration !== false} projects={projects} settings={settings} />
+                          </Suspense>
+                        </div>
                       )}
                     </>
                   );

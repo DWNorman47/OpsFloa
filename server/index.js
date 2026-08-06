@@ -241,6 +241,7 @@ app.use('/api/rfis', requireAuth, requirePlan('business'), require('./routes/rfi
 app.use('/api/daily-reports', requireAuth, requirePlan('business'), require('./routes/dailyReports'));
 app.use('/api/haul-tickets', requireAuth, requirePlan('business'), require('./routes/haulTickets'));
 app.use('/api/punchlist', requireAuth, requirePlan('business'), require('./routes/punchlist'));
+app.use('/api/daily-checklist', requireAuth, requirePlan('business'), require('./routes/dailyChecklist'));
 app.use('/api/inspections', requireAuth, requirePlan('business'), require('./routes/inspections'));
 app.use('/api/safety-talks', requireAuth, requirePlan('business'), require('./routes/safetyTalks'));
 app.use('/api/safety-checklists', requireAuth, requirePlan('business'), require('./routes/safetyChecklists'));

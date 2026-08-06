@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '../api';
 import { useT } from '../hooks/useT';
 import { invalidateCache } from '../offlineDb';
@@ -200,12 +200,25 @@ function formToPolicy(f) {
   };
 }
 
-export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
+export default function HoursRulesSettings({ settings, onSettingsUpdated, highlightRuleId }) {
   const t = useT();
   const [form, setForm] = useState(() => policyToForm(settings?.hours_rules));
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+
+  // The form seeds from `settings` lazily (above), which is right when this mounts
+  // after settings have loaded — the usual case, since the section is collapsed until
+  // opened. But a deep-link (report "View") forces the section open on page load, so we
+  // can mount while `settings` is still null and seed a blank/disabled form. Re-seed
+  // once real settings arrive after such a mount. Guarded so it fires only for that
+  // gap (mounted with no settings → first non-null), never clobbering later edits.
+  const hydrated = useRef(settings != null);
+  useEffect(() => {
+    if (hydrated.current || settings == null) return;
+    hydrated.current = true;
+    setForm(policyToForm(settings.hours_rules));
+  }, [settings]);
 
   // Company roles for the Role Rules picker + name labels. Empty on 403 (an
   // admin without role visibility just can't add role sections; the Standard
@@ -325,7 +338,7 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
             <p style={s.hint}>{t.hrTransparencyHint}</p>
           </section>
 
-          <HoursRuleBuilder rules={form.rules} onChange={rs => set('rules', rs)} title={t.hrStandardRulesTitle} />
+          <HoursRuleBuilder rules={form.rules} onChange={rs => set('rules', rs)} title={t.hrStandardRulesTitle} highlightRuleId={highlightRuleId} />
 
           <section style={s.section}>
             <div style={s.headRow}>
@@ -381,6 +394,7 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated }) {
                     onChange={rs => updateRoleSection(idx, { rules: rs })}
                     title={titleNames}
                     help={t.hrRoleRulesBuilderHelp}
+                    highlightRuleId={highlightRuleId}
                   />
                 </div>
               );
