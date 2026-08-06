@@ -213,13 +213,23 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
     downloadCsv([headers, ...timeRows, ...reimbRows], `${worker.username}-${from || 'all'}-to-${to || 'all'}.csv`);
   };
 
-  const PRESETS = [
-    ...(payPeriods?.current ? [{ kind: 'thischeck', label: t.presetThisPaycheck }] : []),
-    ...(payPeriods?.previous ? [{ kind: 'lastcheck', label: t.presetLastPaycheck }] : []),
+  const rangeKey = (from, to) => `${from}|${to}`;
+  // Ranges the paycheck presets already cover — a calendar preset landing on the exact
+  // same span (e.g. a biweekly check == "last two weeks") is redundant, so hide it.
+  const paycheckRanges = new Set([
+    ...(payPeriods?.current ? [rangeKey(payPeriods.current.period_start, payPeriods.current.period_end)] : []),
+    ...(payPeriods?.previous ? [rangeKey(payPeriods.previous.period_start, payPeriods.previous.period_end)] : []),
+  ]);
+  const calendarPresets = [
     { kind: 'this', label: t.presetThisWeek },
     { kind: 'lastweek', label: t.presetLastWeek },
     { kind: 'twoweeks', label: t.presetLastTwoWeeks },
     { kind: 'lastmonth', label: t.presetLastMonth },
+  ].filter(p => { const r = presetRange(p.kind); return !paycheckRanges.has(rangeKey(r.from, r.to)); });
+  const PRESETS = [
+    ...(payPeriods?.current ? [{ kind: 'thischeck', label: t.presetThisPaycheck }] : []),
+    ...(payPeriods?.previous ? [{ kind: 'lastcheck', label: t.presetLastPaycheck }] : []),
+    ...calendarPresets,
   ];
 
   const s = billData?.summary;
