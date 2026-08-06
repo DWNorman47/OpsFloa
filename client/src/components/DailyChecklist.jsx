@@ -38,8 +38,8 @@ function ItemListEditor({ items, onChange, t }) {
         </div>
       ))}
       <div style={styles.editorAdd}>
-        <button style={styles.linkBtnSm} onClick={() => add('check')}>+ {t.dcKindCheck}</button>
-        <button style={styles.linkBtnSm} onClick={() => add('text')}>+ {t.dcKindText}</button>
+        <button type="button" style={styles.addItemBtn} onClick={() => add('check')}>+ {t.dcKindCheck}</button>
+        <button type="button" style={styles.addItemBtn} onClick={() => add('text')}>+ {t.dcKindText}</button>
       </div>
     </div>
   );
@@ -481,7 +481,8 @@ const styles = {
   editorRow: { display: 'flex', alignItems: 'center', gap: 6 },
   kindSelect: { padding: '6px 8px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 13, background: '#fff' },
   editorInput: { flex: 1, padding: '7px 10px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 14 },
-  editorAdd: { display: 'flex', gap: 14, marginTop: 2 },
+  editorAdd: { display: 'flex', gap: 8, marginTop: 4 },
+  addItemBtn: { background: '#eef2ff', color: '#2563eb', border: '1px solid #c7d2fe', borderRadius: 8, padding: '6px 12px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   // Text-field item in the active day
   textItem: { flex: 1, display: 'flex', flexDirection: 'column', gap: 3 },
   textItemLabel: { fontSize: 13, fontWeight: 600, color: '#374151' },
