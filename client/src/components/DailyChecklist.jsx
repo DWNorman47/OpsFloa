@@ -217,7 +217,7 @@ function DayManager({ projectId, t, toast }) {
 }
 const swap = (arr, i, j) => { const a = arr.slice(); [a[i], a[j]] = [a[j], a[i]]; return a; };
 
-export default function DailyChecklist({ projects = [], settings = null }) {
+export default function DailyChecklist({ projects = [], settings = null, loading: projectsLoading = false }) {
   const t = useT();
   const toast = useToast();
   const canStart = usePerm('daily_checklist_start_day');
@@ -297,7 +297,9 @@ export default function DailyChecklist({ projects = [], settings = null }) {
     catch { setAutostart(!next); toast(t.dcAutostartFailed, 'error'); }
   };
 
-  if (projects.length === 0) return <p style={styles.empty}>{t.dcNoProjects}</p>;
+  // Projects load async in the parent — show a skeleton until they settle, so we don't flash
+  // "No projects yet" mid-load. Only claim empty once loading is done.
+  if (projects.length === 0) return projectsLoading ? <SkeletonList rows={4} /> : <p style={styles.empty}>{t.dcNoProjects}</p>;
   const doneCount = items.filter(i => i.checked).length;
 
   return (

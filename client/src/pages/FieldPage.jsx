@@ -214,7 +214,7 @@ export default function FieldPage() {
         <ErrorBoundary key={activeFieldTab} mode="inline" label={activeFieldTab}>
           <Suspense fallback={<TabLoader />}>
             {activeFieldTab === 'checklist-daily' ? (
-              <DailyChecklist projects={projects} settings={features} />
+              <DailyChecklist projects={projects} settings={features} loading={loading} />
             ) : activeFieldTab === 'daily' ? (
               <DailyReports projects={projects} settings={features} />
             ) : activeFieldTab === 'haul' ? (
