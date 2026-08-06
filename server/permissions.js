@@ -70,6 +70,10 @@ const PERMISSIONS = [
   { key: 'manage_incidents', group: 'field', label: 'Incident reports' },
   { key: 'manage_inspections', group: 'field', label: 'Inspections' },
   { key: 'manage_haul_tickets', group: 'field', label: 'Production / haul tickets' },
+  { key: 'daily_checklist_start_day', group: 'field', label: 'Daily checklist — start a day' },
+  { key: 'daily_checklist_check_items', group: 'field', label: 'Daily checklist — check items' },
+  { key: 'daily_checklist_manage_recurring', group: 'field', label: 'Daily checklist — recurring setup' },
+  { key: 'daily_checklist_complete_day', group: 'field', label: 'Daily checklist — complete a day' },
 
   // Inventory
   { key: 'view_inventory', group: 'inventory', label: 'View inventory' },
@@ -112,6 +116,8 @@ const WORKER_PERMISSIONS = [
   'manage_incidents',
   'manage_inspections',
   'manage_haul_tickets',
+  'daily_checklist_start_day',
+  'daily_checklist_check_items',
   'view_inventory',
   'view_company_chat',
   'send_company_chat',
@@ -144,6 +150,8 @@ const ADMIN_PERMISSIONS = [
   'manage_integrations',
   'send_broadcast',
   'manage_inventory',
+  'daily_checklist_manage_recurring',
+  'daily_checklist_complete_day',
 ];
 
 // Owner: everything. manage_roles is inherited from ADMIN; Owner additionally gets
