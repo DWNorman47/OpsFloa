@@ -6,6 +6,7 @@ import { langToLocale } from '../utils';
 import Pagination from './Pagination';
 import { SkeletonList } from './Skeleton';
 import FieldFilters from './FieldFilters';
+import { useConfirm } from './ConfirmDialog';
 
 import { silentError } from '../errorReporter';
 function fmtDate(str, locale = 'en-US') {
@@ -120,6 +121,7 @@ export default function PhotoGallery({ projects }) {
   const [filters, setFilters] = useState({});
   const [lightbox, setLightbox] = useState(null);
   const [deletingMedia, setDeletingMedia] = useState(false);
+  const { confirm, dialog } = useConfirm();
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const hasFilters = Boolean(filters.project_id || filters.from || filters.to);
@@ -152,7 +154,7 @@ export default function PhotoGallery({ projects }) {
 
   const deleteMedia = async (item) => {
     if (!item?.id || deletingMedia) return;
-    if (!window.confirm('Delete this media item?')) return;
+    if (!await confirm({ title: t.mediaDeleteTitle, body: t.mediaDeleteBody, confirmLabel: t.mediaDeleteConfirm, tone: 'danger' })) return;
     setDeletingMedia(true);
     try {
       await api.delete(`/field-reports/photos/${item.id}`);
@@ -240,6 +242,7 @@ export default function PhotoGallery({ projects }) {
           <Pagination page={page} pages={pages} onChange={setPage} />
         </>
       )}
+      {dialog}
     </div>
   );
 }
@@ -283,7 +286,9 @@ const styles = {
   navRow: { display: 'flex', alignItems: 'center', gap: 20, marginTop: 16 },
   navBtn: { background: 'rgba(255,255,255,0.15)', border: 'none', color: '#fff', fontSize: 24, width: 44, height: 44, borderRadius: '50%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' },
   navCount: { color: '#fff', fontSize: 13 },
-  exitBtn: { position: 'absolute', top: 16, right: 16, background: 'rgba(255,255,255,0.16)', border: '1px solid rgba(255,255,255,0.28)', color: '#fff', fontSize: 14, fontWeight: 800, borderRadius: 999, padding: '9px 16px', cursor: 'pointer', lineHeight: 1 },
-  deleteBtn: { position: 'absolute', top: 16, left: 16, background: 'rgba(220,38,38,0.9)', border: '1px solid rgba(255,255,255,0.24)', color: '#fff', fontSize: 14, fontWeight: 800, borderRadius: 999, padding: '9px 16px', cursor: 'pointer', lineHeight: 1 },
+  // Offset the top bar below the phone's status bar / notch (safe-area insets) so the
+  // buttons don't collide with the OS UI on mobile.
+  exitBtn: { position: 'absolute', top: 'calc(env(safe-area-inset-top, 0px) + 16px)', right: 'calc(env(safe-area-inset-right, 0px) + 16px)', background: 'rgba(255,255,255,0.16)', border: '1px solid rgba(255,255,255,0.28)', color: '#fff', fontSize: 14, fontWeight: 800, borderRadius: 999, padding: '9px 16px', cursor: 'pointer', lineHeight: 1 },
+  deleteBtn: { position: 'absolute', top: 'calc(env(safe-area-inset-top, 0px) + 16px)', left: 'calc(env(safe-area-inset-left, 0px) + 16px)', background: 'rgba(220,38,38,0.9)', border: '1px solid rgba(255,255,255,0.24)', color: '#fff', fontSize: 14, fontWeight: 800, borderRadius: 999, padding: '9px 16px', cursor: 'pointer', lineHeight: 1 },
   closeBtn: { display: 'none' },
 };
