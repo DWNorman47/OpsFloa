@@ -10,7 +10,7 @@ import { reportClientError } from '../errorReporter';
 import RetryBanner from '../components/RetryBanner';
 import ErrorBoundary from '../components/ErrorBoundary';
 
-const FIELD_TABS = ['notes', 'daily', 'haul', 'punchlist', 'safety', 'checklists', 'incident', 'gallery', 'subs', 'rfi', 'inspect'];
+const FIELD_TABS = ['notes', 'checklist-daily', 'daily', 'haul', 'punchlist', 'safety', 'checklists', 'incident', 'gallery', 'subs', 'rfi', 'inspect'];
 const FIELD_HASH_ALIASES = {
   today: 'notes',
   'work-notes': 'notes',
@@ -51,6 +51,7 @@ const PhotoGallery        = lazy(() => import('../components/PhotoGallery'));
 const SubReports          = lazy(() => import('../components/SubReports'));
 const RFITracking         = lazy(() => import('../components/RFITracking'));
 const InspectionChecklists = lazy(() => import('../components/InspectionChecklists'));
+const DailyChecklist      = lazy(() => import('../components/DailyChecklist'));
 
 function TabLoader() {
   return <div className="ops-loading-state">Loading...</div>;
@@ -132,6 +133,7 @@ export default function FieldPage() {
       label: isAdmin ? t.fldGroupDaily : t.fldGroupToday,
       items: [
         { id: 'notes', label: t.fieldTabNotes },
+        { id: 'checklist-daily', label: t.fieldTabDailyChecklist },
         ...(isAdmin ? [{ id: 'daily', label: t.fieldTabDaily }] : []),
         { id: 'haul', label: t.fieldTabHaul },
         ...(isAdmin && features.feature_media_gallery ? [{ id: 'gallery', label: t.fieldTabMedia }] : []),
@@ -211,7 +213,9 @@ export default function FieldPage() {
             recovered by navigating away from the broken tab. */}
         <ErrorBoundary key={activeFieldTab} mode="inline" label={activeFieldTab}>
           <Suspense fallback={<TabLoader />}>
-            {activeFieldTab === 'daily' ? (
+            {activeFieldTab === 'checklist-daily' ? (
+              <DailyChecklist projects={projects} settings={features} />
+            ) : activeFieldTab === 'daily' ? (
               <DailyReports projects={projects} settings={features} />
             ) : activeFieldTab === 'haul' ? (
               <HaulTickets projects={projects} settings={features} />
