@@ -142,15 +142,15 @@ function QueueRow({ day, t, toast, first, last, onChanged }) {
   );
 }
 
-function DayManager({ projectId, t, toast }) {
+function DayManager({ projectId, t, toast, onQueueChanged }) {
   const [queue, setQueue] = useState(null);
   const [form, setForm] = useState({ schedule_type: 'calendar', scheduled_date: localToday(), ordinal_target: 1, name: '', items: '' });
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
-    try { const r = await api.get(`/daily-checklist/projects/${projectId}/queue`); setQueue(r.data.days || []); }
+    try { const r = await api.get(`/daily-checklist/projects/${projectId}/queue`); setQueue(r.data.days || []); onQueueChanged?.(r.data.days || []); }
     catch { toast(t.dcQueueLoadFailed, 'error'); setQueue([]); }
-  }, [projectId, t, toast]);
+  }, [projectId, t, toast, onQueueChanged]);
   useEffect(() => { load(); }, [load]);
 
   const create = async () => {
@@ -234,15 +234,22 @@ export default function DailyChecklist({ projects = [], settings = null, loading
   const [busy, setBusy] = useState(false);
   const [newItem, setNewItem] = useState('');
   const [panel, setPanel] = useState(null); // 'recurring' | 'manager' | null
+  const [queued, setQueued] = useState([]); // prepared days waiting (shown on the Start card)
   const [conflict, setConflict] = useState(null);
   const [autostart, setAutostart] = useState(settings?.daily_checklist_clockin_autostart === true);
 
   const loadActive = useCallback(async (pid) => {
-    if (!pid) { setDay(null); setItems([]); return; }
+    if (!pid) { setDay(null); setItems([]); setQueued([]); return; }
     setLoading(true);
     try {
       const r = await api.get(`/daily-checklist/projects/${pid}/active`);
       setDay(r.data.day); setItems(r.data.items || []);
+      // With no active day, peek at the queue so the Start card can show what's prepared
+      // (starting resumes the top of the queue).
+      if (!r.data.day) {
+        try { const q = await api.get(`/daily-checklist/projects/${pid}/queue`); setQueued(q.data.days || []); }
+        catch { setQueued([]); }
+      } else setQueued([]);
     } catch { toast(t.dcLoadFailed, 'error'); }
     finally { setLoading(false); }
   }, [t, toast]);
@@ -324,7 +331,7 @@ export default function DailyChecklist({ projects = [], settings = null, loading
       )}
 
       {canManageRecurring && panel === 'recurring' && projectId && <RecurringEditor key={`r${projectId}`} projectId={projectId} t={t} toast={toast} />}
-      {canSchedule && panel === 'manager' && projectId && <DayManager key={`m${projectId}`} projectId={projectId} t={t} toast={toast} />}
+      {canSchedule && panel === 'manager' && projectId && <DayManager key={`m${projectId}`} projectId={projectId} t={t} toast={toast} onQueueChanged={days => { if (!day) setQueued(days); }} />}
 
       {conflict ? (
         <div style={styles.conflictCard}>
@@ -349,6 +356,13 @@ export default function DailyChecklist({ projects = [], settings = null, loading
       ) : !day ? (
         <div style={styles.startCard}>
           <p style={styles.startMsg}>{t.dcNoActiveDay}</p>
+          {queued.length > 0 && (
+            <p style={styles.queuedHint}>
+              {t.dcQueuedHint
+                .replace('{label}', queued[0].schedule_type === 'calendar' ? String(queued[0].scheduled_date || '').slice(0, 10) : t.dcDayLabel.replace('{n}', queued[0].ordinal_target))
+                .replace('{n}', queued[0].item_count)}
+            </p>
+          )}
           {canStart && <button style={{ ...styles.startBtn, ...(busy ? styles.btnOff : {}) }} onClick={() => startDay()} disabled={busy}>{busy ? t.dcStarting : t.dcStartDay}</button>}
         </div>
       ) : (
@@ -425,6 +439,7 @@ const styles = {
   // Start / day
   startCard: { textAlign: 'center', background: '#f9fafb', border: '1px dashed #d1d5db', borderRadius: 10, padding: '24px 16px' },
   startMsg: { color: '#6b7280', fontSize: 14, margin: '0 0 12px' },
+  queuedHint: { color: '#2563eb', fontSize: 13, fontWeight: 600, margin: '0 0 12px' },
   startBtn: { background: '#2563eb', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 18px', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
   dayCard: { background: '#fff', border: '1px solid #eef0f2', borderRadius: 10, padding: 14 },
   dayHead: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, marginBottom: 10 },
