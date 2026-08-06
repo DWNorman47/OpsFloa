@@ -16,10 +16,9 @@ const router = require('express').Router();
 const pool = require('../db');
 const { requirePerm } = require('../permissions');
 const { projectBelongsToCompany } = require('../utils/tenantRefs');
+const { MAX_TEXT, normText, pauseOverdueCalendar, appendAssembledItems } = require('../utils/dailyChecklistCore');
 
-const MAX_TEXT = 500;
 const cleanText = v => (typeof v === 'string' ? v.trim() : '');
-const normText = v => cleanText(v).toLowerCase();
 const isYmd = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v));
 
 // Load a day scoped to the company (null if it isn't theirs / doesn't exist).
@@ -36,51 +35,8 @@ async function loadItems(db, dayId) {
 }
 const isPosInt = v => Number.isInteger(v) && v > 0;
 
-// Insert the recurring template then the previous day's unchecked items onto `dayId`,
-// skipping any whose normalized text is already present (`seen`). `startOrder` continues
-// the item ordering after whatever items the day already has. Returns the next order index.
-async function appendAssembledItems(client, { dayId, companyId, projectId, seen, startOrder }) {
-  let order = startOrder;
-  const add = async (text, source) => {
-    const key = normText(text);
-    if (!key || seen.has(key)) return;
-    seen.add(key);
-    await client.query(
-      'INSERT INTO daily_checklist_items (daily_checklist_id, text, order_index, source) VALUES ($1, $2, $3, $4)',
-      [dayId, text.slice(0, MAX_TEXT), order++, source]
-    );
-  };
-  const recurring = await client.query(
-    'SELECT text FROM daily_checklist_recurring_items WHERE company_id = $1 AND project_id = $2 AND active = true ORDER BY order_index, id',
-    [companyId, projectId]
-  );
-  for (const row of recurring.rows) await add(row.text, 'recurring');
-
-  const prev = await client.query(
-    "SELECT id FROM daily_checklists WHERE company_id = $1 AND project_id = $2 AND status = 'completed' ORDER BY work_date DESC NULLS LAST, day_number DESC LIMIT 1",
-    [companyId, projectId]
-  );
-  if (prev.rows[0]) {
-    const carry = await client.query(
-      'SELECT text FROM daily_checklist_items WHERE daily_checklist_id = $1 AND checked = false ORDER BY order_index, id',
-      [prev.rows[0].id]
-    );
-    for (const row of carry.rows) await add(row.text, 'rollover');
-  }
-  return order;
-}
-
 // A pending/paused plan can only be edited/reordered/deleted before it's worked.
 const isPlannable = day => day && (day.status === 'pending' || day.status === 'paused');
-
-// Flip pending calendar plans whose date has passed to 'paused' (lazy, no cron). They
-// stay in the queue — resumable or reschedulable — they just no longer read as "on time".
-async function pauseOverdueCalendar(db, companyId, projectId) {
-  await db.query(
-    "UPDATE daily_checklists SET status = 'paused', updated_at = now() WHERE company_id = $1 AND project_id = $2 AND status = 'pending' AND schedule_type = 'calendar' AND scheduled_date < CURRENT_DATE",
-    [companyId, projectId]
-  );
-}
 
 // ── Recurring template ────────────────────────────────────────────────────────
 
