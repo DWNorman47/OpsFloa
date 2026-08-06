@@ -220,6 +220,48 @@ describe('day-plan management', () => {
     expect(res.status).toBe(400);
   });
 
+  test('preparing a plan that targets the active day merges its items into that day', async () => {
+    const inserted = [];
+    const client = {
+      query: jest.fn(async (sql, params) => {
+        if (/SELECT 1 FROM projects/.test(sql)) return { rowCount: 1, rows: [{}] };
+        if (/^\s*(BEGIN|COMMIT|ROLLBACK)/.test(sql)) return {};
+        if (/status = 'active'/.test(sql) && /day_number/.test(sql)) return { rows: [{ id: 77, work_date: '2026-08-05', day_number: 2 }] };
+        if (/SELECT text, order_index FROM daily_checklist_items/.test(sql)) return { rows: [{ text: 'Existing', order_index: 0 }] };
+        if (/INSERT INTO daily_checklist_items/.test(sql)) { inserted.push(params[1]); return { rows: [] }; }
+        if (/SELECT id, text, checked/.test(sql)) return { rows: [] };
+        return { rows: [] };
+      }),
+      release: jest.fn(),
+    };
+    pool.connect.mockResolvedValue(client);
+
+    const res = await request(makeApp())
+      .post('/api/daily-checklist/projects/7/days')
+      .send({ schedule_type: 'ordinal', ordinal_target: 2, items: [{ text: 'Existing' }, { text: 'New task' }] });
+
+    expect(res.status).toBe(200);
+    expect(res.body.merged_into_active).toBe(77);
+    expect(inserted).toEqual(['New task']); // 'Existing' deduped against the active day
+    // No pending plan was created — the items went onto the running day.
+    expect(client.query.mock.calls.map(c => c[0]).join('\n')).not.toMatch(/INSERT INTO daily_checklists/);
+  });
+
+  test('POST /days/:id/cancel cancels an active day', async () => {
+    pool.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, status: 'canceled' }] });
+    const res = await request(makeApp()).post('/api/daily-checklist/days/42/cancel').send({});
+    expect(res.status).toBe(200);
+    expect(res.body.day.status).toBe('canceled');
+  });
+
+  test('cancel 409s when the day is not active', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 42, status: 'completed' }] });
+    const res = await request(makeApp()).post('/api/daily-checklist/days/42/cancel').send({});
+    expect(res.status).toBe(409);
+  });
+
   test('reorder writes queue_order in array order', async () => {
     const client = {
       query: jest.fn(async (sql) => {

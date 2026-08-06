@@ -293,8 +293,16 @@ export default function DailyChecklist({ projects = [], settings = null, loading
     // eslint-disable-next-line no-alert
     if (!window.confirm(t.dcCompleteConfirm)) return;
     setBusy(true);
-    try { await api.post(`/daily-checklist/days/${day.id}/complete`, {}); setDay(null); setItems([]); toast(t.dcCompleted, 'success'); }
+    try { await api.post(`/daily-checklist/days/${day.id}/complete`, {}); setDay(null); setItems([]); toast(t.dcCompleted, 'success'); loadActive(projectId); }
     catch { toast(t.dcCompleteFailed, 'error'); }
+    finally { setBusy(false); }
+  };
+  const cancelDay = async () => {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(t.dcCancelConfirm)) return;
+    setBusy(true);
+    try { await api.post(`/daily-checklist/days/${day.id}/cancel`, {}); setDay(null); setItems([]); toast(t.dcCanceled, 'success'); loadActive(projectId); }
+    catch { toast(t.dcCancelFailed, 'error'); }
     finally { setBusy(false); }
   };
   const toggleAutostart = async () => {
@@ -331,7 +339,7 @@ export default function DailyChecklist({ projects = [], settings = null, loading
       )}
 
       {canManageRecurring && panel === 'recurring' && projectId && <RecurringEditor key={`r${projectId}`} projectId={projectId} t={t} toast={toast} />}
-      {canSchedule && panel === 'manager' && projectId && <DayManager key={`m${projectId}`} projectId={projectId} t={t} toast={toast} onQueueChanged={days => { if (!day) setQueued(days); }} />}
+      {canSchedule && panel === 'manager' && projectId && <DayManager key={`m${projectId}`} projectId={projectId} t={t} toast={toast} onQueueChanged={() => loadActive(projectId)} />}
 
       {conflict ? (
         <div style={styles.conflictCard}>
@@ -393,6 +401,7 @@ export default function DailyChecklist({ projects = [], settings = null, loading
           )}
           {canComplete && (
             <div style={styles.rowEnd}>
+              <button style={{ ...styles.cancelDayBtn, ...(busy ? styles.btnOff : {}) }} onClick={cancelDay} disabled={busy}>{t.dcCancelDay}</button>
               <button style={{ ...styles.completeBtn, ...(busy ? styles.btnOff : {}) }} onClick={completeDay} disabled={busy}>{t.dcCompleteDay}</button>
             </div>
           )}
@@ -456,6 +465,7 @@ const styles = {
   addInput: { flex: 1, padding: '8px 10px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 14, minWidth: 160 },
   btn: { background: '#2563eb', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 14px', fontSize: 14, fontWeight: 600, cursor: 'pointer' },
   completeBtn: { background: '#059669', color: '#fff', border: 'none', borderRadius: 8, padding: '9px 16px', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
+  cancelDayBtn: { background: '#fff', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 8, padding: '9px 16px', fontSize: 14, fontWeight: 600, cursor: 'pointer' },
   btnOff: { opacity: 0.55, cursor: 'not-allowed' },
   empty: { color: '#6b7280', fontSize: 14, padding: '8px 2px' },
   // Conflict

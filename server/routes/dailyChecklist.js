@@ -330,6 +330,25 @@ router.post('/days/:dayId/complete', requirePerm('daily_checklist_complete_day')
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
+// POST /days/:dayId/cancel — discard the active day. A canceled day is excluded from the
+// day-number count (see start), so it doesn't burn its ordinal — the next start re-numbers
+// from where it was and can pull a prepared day into that slot. Its items don't roll
+// forward. Use when a day was started by mistake or should be replaced by a prepared one.
+router.post('/days/:dayId/cancel', requirePerm('daily_checklist_complete_day'), async (req, res) => {
+  try {
+    const r = await pool.query(
+      "UPDATE daily_checklists SET status = 'canceled', updated_at = now() WHERE id = $1 AND company_id = $2 AND status = 'active' RETURNING *",
+      [req.params.dayId, req.user.company_id]
+    );
+    if (r.rowCount === 0) {
+      const day = await loadDay(pool, req.params.dayId, req.user.company_id);
+      if (!day) return res.status(404).json({ error: 'Day not found' });
+      return res.status(409).json({ error: 'Day is not active' });
+    }
+    res.json({ day: r.rows[0] });
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
 // ── Day manager: prepare days ahead (Phase 2) ─────────────────────────────────
 
 // Validate + normalize a plan's schedule fields. Returns { schedule_type, scheduled_date,
@@ -349,6 +368,35 @@ function normalizeSchedule(body) {
 }
 const planItems = body => (Array.isArray(body?.items) ? body.items : [])
   .map(it => cleanText(it?.text)).filter(Boolean).map(s => s.slice(0, MAX_TEXT)).slice(0, 200);
+
+// The active day IF the given schedule targets it — an ordinal plan whose number matches the
+// active day's day_number, or a calendar plan dated the same as its work_date. Preparing
+// items for the day that's already running should land ON it, not queue a plan that can
+// never activate (its slot is taken).
+async function activeDayMatching(db, companyId, projectId, schedule) {
+  const active = (await db.query(
+    "SELECT id, work_date, day_number FROM daily_checklists WHERE company_id = $1 AND project_id = $2 AND status = 'active'",
+    [companyId, projectId]
+  )).rows[0];
+  if (!active) return null;
+  const matches = schedule.schedule_type === 'ordinal'
+    ? Number(schedule.ordinal_target) === Number(active.day_number)
+    : String(schedule.scheduled_date).slice(0, 10) === String(active.work_date).slice(0, 10);
+  return matches ? active : null;
+}
+
+// Append item texts to a day, skipping ones already present (deduped by normalized text).
+async function appendTextsToDay(db, dayId, texts) {
+  const cur = await db.query('SELECT text, order_index FROM daily_checklist_items WHERE daily_checklist_id = $1', [dayId]);
+  const seen = new Set(cur.rows.map(r => normText(r.text)));
+  let order = cur.rows.reduce((m, r) => Math.max(m, r.order_index + 1), 0);
+  for (const text of texts) {
+    const key = normText(text);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    await db.query("INSERT INTO daily_checklist_items (daily_checklist_id, text, order_index, source) VALUES ($1, $2, $3, 'scheduled')", [dayId, text.slice(0, MAX_TEXT), order++]);
+  }
+}
 
 // GET /projects/:projectId/queue — the pending + paused day plans, in queue order.
 // Overdue calendar plans are lazily paused first so the list reflects reality.
@@ -396,6 +444,16 @@ router.post('/projects/:projectId/days', requirePerm('daily_checklist_schedule_d
       return res.status(404).json({ error: 'Project not found' });
     }
     await client.query('BEGIN');
+
+    // If this plan targets the day already running, add its items straight to that day
+    // instead of queuing a plan that could never activate.
+    const activeMatch = await activeDayMatching(client, companyId, projectId, sched);
+    if (activeMatch) {
+      await appendTextsToDay(client, activeMatch.id, items);
+      await client.query('COMMIT');
+      return res.json({ merged_into_active: activeMatch.id, items: await loadItems(client, activeMatch.id) });
+    }
+
     const q = await client.query(
       "SELECT COALESCE(MAX(queue_order), 0) + 1 AS n FROM daily_checklists WHERE company_id = $1 AND project_id = $2 AND status IN ('pending', 'paused')",
       [companyId, projectId]
@@ -463,8 +521,11 @@ router.put('/days/:dayId/plan-items', requirePerm('daily_checklist_schedule_days
     for (let i = 0; i < items.length; i++) {
       await client.query("INSERT INTO daily_checklist_items (daily_checklist_id, text, order_index, source) VALUES ($1, $2, $3, 'scheduled')", [day.id, items[i], i]);
     }
+    // If this plan targets the day that's already running, mirror its items onto it too.
+    const activeMatch = await activeDayMatching(client, req.user.company_id, day.project_id, day);
+    if (activeMatch && activeMatch.id !== day.id) await appendTextsToDay(client, activeMatch.id, items);
     await client.query('COMMIT');
-    res.json({ items: await loadItems(client, day.id) });
+    res.json({ items: await loadItems(client, day.id), ...(activeMatch ? { merged_into_active: activeMatch.id } : {}) });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' });
