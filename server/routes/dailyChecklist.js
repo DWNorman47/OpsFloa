@@ -28,12 +28,13 @@ async function loadDay(db, dayId, companyId) {
 }
 async function loadItems(db, dayId) {
   const r = await db.query(
-    'SELECT id, text, checked, order_index, source, checked_by, checked_at FROM daily_checklist_items WHERE daily_checklist_id = $1 ORDER BY order_index, id',
+    'SELECT id, text, kind, checked, value, order_index, source, checked_by, checked_at FROM daily_checklist_items WHERE daily_checklist_id = $1 ORDER BY order_index, id',
     [dayId]
   );
   return r.rows;
 }
 const isPosInt = v => Number.isInteger(v) && v > 0;
+const cleanKind = k => (k === 'text' ? 'text' : 'check');
 
 // A pending/paused plan can only be edited/reordered/deleted before it's worked.
 const isPlannable = day => day && (day.status === 'pending' || day.status === 'paused');
@@ -46,7 +47,7 @@ router.get('/projects/:projectId/recurring', async (req, res) => {
     if (!(await projectBelongsToCompany(pool, req.params.projectId, req.user.company_id)))
       return res.status(404).json({ error: 'Project not found' });
     const r = await pool.query(
-      'SELECT id, text, order_index, active FROM daily_checklist_recurring_items WHERE company_id = $1 AND project_id = $2 ORDER BY order_index, id',
+      'SELECT id, text, kind, order_index, active FROM daily_checklist_recurring_items WHERE company_id = $1 AND project_id = $2 ORDER BY order_index, id',
       [req.user.company_id, req.params.projectId]
     );
     res.json({ items: r.rows });
@@ -54,14 +55,14 @@ router.get('/projects/:projectId/recurring', async (req, res) => {
 });
 
 // PUT /projects/:projectId/recurring — replace the whole recurring list.
-// Body: { items: [{ text, active? }] } in display order.
+// Body: { items: [{ text, kind?, active? }] } in display order.
 router.put('/projects/:projectId/recurring', requirePerm('daily_checklist_manage_recurring'), async (req, res) => {
   const companyId = req.user.company_id;
   const projectId = req.params.projectId;
   const rows = (Array.isArray(req.body?.items) ? req.body.items : [])
-    .map(it => ({ text: cleanText(it?.text), active: it?.active !== false }))
+    .map(it => ({ text: cleanText(it?.text), kind: cleanKind(it?.kind), active: it?.active !== false }))
     .filter(it => it.text)
-    .map(it => ({ text: it.text.slice(0, MAX_TEXT), active: it.active }))
+    .map(it => ({ text: it.text.slice(0, MAX_TEXT), kind: it.kind, active: it.active }))
     .slice(0, 200);
   const client = await pool.connect();
   try {
@@ -73,13 +74,13 @@ router.put('/projects/:projectId/recurring', requirePerm('daily_checklist_manage
     await client.query('DELETE FROM daily_checklist_recurring_items WHERE company_id = $1 AND project_id = $2', [companyId, projectId]);
     for (let i = 0; i < rows.length; i++) {
       await client.query(
-        'INSERT INTO daily_checklist_recurring_items (company_id, project_id, text, order_index, active, created_by) VALUES ($1, $2, $3, $4, $5, $6)',
-        [companyId, projectId, rows[i].text, i, rows[i].active, req.user.id]
+        'INSERT INTO daily_checklist_recurring_items (company_id, project_id, text, kind, order_index, active, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+        [companyId, projectId, rows[i].text, rows[i].kind, i, rows[i].active, req.user.id]
       );
     }
     await client.query('COMMIT');
     const r = await client.query(
-      'SELECT id, text, order_index, active FROM daily_checklist_recurring_items WHERE company_id = $1 AND project_id = $2 ORDER BY order_index, id',
+      'SELECT id, text, kind, order_index, active FROM daily_checklist_recurring_items WHERE company_id = $1 AND project_id = $2 ORDER BY order_index, id',
       [companyId, projectId]
     );
     res.json({ items: r.rows });
@@ -221,12 +222,12 @@ router.post('/projects/:projectId/start', requirePerm('daily_checklist_start_day
 
     // Merge the other plan's items in, then retire it (merge resolution only).
     if (mergeFrom) {
-      const mi = await client.query('SELECT text FROM daily_checklist_items WHERE daily_checklist_id = $1 ORDER BY order_index, id', [mergeFrom.id]);
+      const mi = await client.query('SELECT text, kind FROM daily_checklist_items WHERE daily_checklist_id = $1 ORDER BY order_index, id', [mergeFrom.id]);
       for (const row of mi.rows) {
         const key = normText(row.text);
         if (!key || seen.has(key)) continue;
         seen.add(key);
-        await client.query("INSERT INTO daily_checklist_items (daily_checklist_id, text, order_index, source) VALUES ($1, $2, $3, 'scheduled')", [day.id, row.text.slice(0, MAX_TEXT), order++]);
+        await client.query("INSERT INTO daily_checklist_items (daily_checklist_id, text, kind, order_index, source) VALUES ($1, $2, $3, $4, 'scheduled')", [day.id, row.text.slice(0, MAX_TEXT), row.kind, order++]);
       }
       await client.query("UPDATE daily_checklists SET status = 'canceled', updated_at = now() WHERE id = $1", [mergeFrom.id]);
     }
@@ -253,9 +254,10 @@ router.post('/projects/:projectId/start', requirePerm('daily_checklist_start_day
 
 // ── Items on a day ──────────────────────────────────────────────────────────
 
-// POST /days/:dayId/items — add a manual item to the active day.
+// POST /days/:dayId/items — add a manual item (checkbox or text field) to the active day.
 router.post('/days/:dayId/items', requirePerm('daily_checklist_check_items'), async (req, res) => {
   const text = cleanText(req.body?.text).slice(0, MAX_TEXT);
+  const kind = cleanKind(req.body?.kind);
   if (!text) return res.status(400).json({ error: 'Text is required' });
   try {
     const day = await loadDay(pool, req.params.dayId, req.user.company_id);
@@ -263,18 +265,20 @@ router.post('/days/:dayId/items', requirePerm('daily_checklist_check_items'), as
     if (day.status !== 'active') return res.status(409).json({ error: 'Day is not active' });
     const ord = await pool.query('SELECT COALESCE(MAX(order_index), -1) + 1 AS n FROM daily_checklist_items WHERE daily_checklist_id = $1', [day.id]);
     const r = await pool.query(
-      "INSERT INTO daily_checklist_items (daily_checklist_id, text, order_index, source) VALUES ($1, $2, $3, 'manual') RETURNING id, text, checked, order_index, source",
-      [day.id, text, ord.rows[0].n]
+      "INSERT INTO daily_checklist_items (daily_checklist_id, text, kind, order_index, source) VALUES ($1, $2, $3, $4, 'manual') RETURNING id, text, kind, checked, value, order_index, source",
+      [day.id, text, kind, ord.rows[0].n]
     );
     res.status(201).json({ item: r.rows[0] });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
-// PATCH /days/:dayId/items/:itemId — check/uncheck or edit an item's text.
+// PATCH /days/:dayId/items/:itemId — check/uncheck a box, set a text field's value, or edit
+// the item's label. `checked` for check items, `value` for text items, `text` for the label.
 router.patch('/days/:dayId/items/:itemId', requirePerm('daily_checklist_check_items'), async (req, res) => {
   const hasChecked = typeof req.body?.checked === 'boolean';
+  const hasValue = typeof req.body?.value === 'string';
   const hasText = typeof req.body?.text === 'string';
-  if (!hasChecked && !hasText) return res.status(400).json({ error: 'Nothing to update' });
+  if (!hasChecked && !hasValue && !hasText) return res.status(400).json({ error: 'Nothing to update' });
   try {
     const day = await loadDay(pool, req.params.dayId, req.user.company_id);
     if (!day) return res.status(404).json({ error: 'Day not found' });
@@ -285,6 +289,7 @@ router.patch('/days/:dayId/items/:itemId', requirePerm('daily_checklist_check_it
       if (req.body.checked) { sets.push(`checked_by = $${vals.push(req.user.id)}`); sets.push('checked_at = now()'); }
       else { sets.push('checked_by = NULL'); sets.push('checked_at = NULL'); }
     }
+    if (hasValue) sets.push(`value = $${vals.push(req.body.value.slice(0, 2000))}`);
     if (hasText) {
       const text = cleanText(req.body.text).slice(0, MAX_TEXT);
       if (!text) return res.status(400).json({ error: 'Text cannot be empty' });
@@ -293,7 +298,7 @@ router.patch('/days/:dayId/items/:itemId', requirePerm('daily_checklist_check_it
     vals.push(req.params.itemId, day.id);
     const r = await pool.query(
       `UPDATE daily_checklist_items SET ${sets.join(', ')} WHERE id = $${vals.length - 1} AND daily_checklist_id = $${vals.length}
-       RETURNING id, text, checked, order_index, source, checked_by, checked_at`,
+       RETURNING id, text, kind, checked, value, order_index, source, checked_by, checked_at`,
       vals
     );
     if (r.rowCount === 0) return res.status(404).json({ error: 'Item not found' });
@@ -366,8 +371,12 @@ function normalizeSchedule(body) {
   }
   return { error: 'schedule_type must be calendar or ordinal' };
 }
+// Parse a template/plan item list into { text, kind } rows (blank-text rows dropped).
 const planItems = body => (Array.isArray(body?.items) ? body.items : [])
-  .map(it => cleanText(it?.text)).filter(Boolean).map(s => s.slice(0, MAX_TEXT)).slice(0, 200);
+  .map(it => ({ text: cleanText(it?.text), kind: cleanKind(it?.kind) }))
+  .filter(it => it.text)
+  .map(it => ({ text: it.text.slice(0, MAX_TEXT), kind: it.kind }))
+  .slice(0, 200);
 
 // The active day IF the given schedule targets it — an ordinal plan whose number matches the
 // active day's day_number, or a calendar plan dated the same as its work_date. Preparing
@@ -385,16 +394,16 @@ async function activeDayMatching(db, companyId, projectId, schedule) {
   return matches ? active : null;
 }
 
-// Append item texts to a day, skipping ones already present (deduped by normalized text).
-async function appendTextsToDay(db, dayId, texts) {
+// Append { text, kind } items to a day, skipping ones already present (deduped by text).
+async function appendItemsToDay(db, dayId, items) {
   const cur = await db.query('SELECT text, order_index FROM daily_checklist_items WHERE daily_checklist_id = $1', [dayId]);
   const seen = new Set(cur.rows.map(r => normText(r.text)));
   let order = cur.rows.reduce((m, r) => Math.max(m, r.order_index + 1), 0);
-  for (const text of texts) {
-    const key = normText(text);
+  for (const it of items) {
+    const key = normText(it.text);
     if (!key || seen.has(key)) continue;
     seen.add(key);
-    await db.query("INSERT INTO daily_checklist_items (daily_checklist_id, text, order_index, source) VALUES ($1, $2, $3, 'scheduled')", [dayId, text.slice(0, MAX_TEXT), order++]);
+    await db.query("INSERT INTO daily_checklist_items (daily_checklist_id, text, kind, order_index, source) VALUES ($1, $2, $3, $4, 'scheduled')", [dayId, it.text.slice(0, MAX_TEXT), cleanKind(it.kind), order++]);
   }
 }
 
@@ -449,7 +458,7 @@ router.post('/projects/:projectId/days', requirePerm('daily_checklist_schedule_d
     // instead of queuing a plan that could never activate.
     const activeMatch = await activeDayMatching(client, companyId, projectId, sched);
     if (activeMatch) {
-      await appendTextsToDay(client, activeMatch.id, items);
+      await appendItemsToDay(client, activeMatch.id, items);
       await client.query('COMMIT');
       return res.json({ merged_into_active: activeMatch.id, items: await loadItems(client, activeMatch.id) });
     }
@@ -465,7 +474,7 @@ router.post('/projects/:projectId/days', requirePerm('daily_checklist_schedule_d
     );
     const day = ins.rows[0];
     for (let i = 0; i < items.length; i++) {
-      await client.query("INSERT INTO daily_checklist_items (daily_checklist_id, text, order_index, source) VALUES ($1, $2, $3, 'scheduled')", [day.id, items[i], i]);
+      await client.query("INSERT INTO daily_checklist_items (daily_checklist_id, text, kind, order_index, source) VALUES ($1, $2, $3, $4, 'scheduled')", [day.id, items[i].text, items[i].kind, i]);
     }
     await client.query('COMMIT');
     res.status(201).json({ day, items: await loadItems(client, day.id) });
@@ -519,11 +528,11 @@ router.put('/days/:dayId/plan-items', requirePerm('daily_checklist_schedule_days
     await client.query('BEGIN');
     await client.query('DELETE FROM daily_checklist_items WHERE daily_checklist_id = $1', [day.id]);
     for (let i = 0; i < items.length; i++) {
-      await client.query("INSERT INTO daily_checklist_items (daily_checklist_id, text, order_index, source) VALUES ($1, $2, $3, 'scheduled')", [day.id, items[i], i]);
+      await client.query("INSERT INTO daily_checklist_items (daily_checklist_id, text, kind, order_index, source) VALUES ($1, $2, $3, $4, 'scheduled')", [day.id, items[i].text, items[i].kind, i]);
     }
     // If this plan targets the day that's already running, mirror its items onto it too.
     const activeMatch = await activeDayMatching(client, req.user.company_id, day.project_id, day);
-    if (activeMatch && activeMatch.id !== day.id) await appendTextsToDay(client, activeMatch.id, items);
+    if (activeMatch && activeMatch.id !== day.id) await appendItemsToDay(client, activeMatch.id, items);
     await client.query('COMMIT');
     res.json({ items: await loadItems(client, day.id), ...(activeMatch ? { merged_into_active: activeMatch.id } : {}) });
   } catch (err) {

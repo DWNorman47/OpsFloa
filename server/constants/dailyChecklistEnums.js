@@ -30,6 +30,12 @@ const DAILY_CHECKLIST_SCHEDULE_TYPE_DEFAULT = 'adhoc';
 const DAILY_CHECKLIST_ITEM_SOURCES = Object.freeze(['recurring', 'scheduled', 'manual', 'rollover']);
 const DAILY_CHECKLIST_ITEM_SOURCE_DEFAULT = 'manual';
 
+// daily_checklist_recurring_items.kind + daily_checklist_items.kind — how an item behaves.
+//   check — a checkbox (uses `checked`)
+//   text  — a free-text field the worker fills in (uses `value`)
+const DAILY_CHECKLIST_ITEM_KINDS = Object.freeze(['check', 'text']);
+const DAILY_CHECKLIST_ITEM_KIND_DEFAULT = 'check';
+
 module.exports = {
   DAILY_CHECKLIST_STATUSES,
   DAILY_CHECKLIST_STATUS_DEFAULT,
@@ -37,4 +43,6 @@ module.exports = {
   DAILY_CHECKLIST_SCHEDULE_TYPE_DEFAULT,
   DAILY_CHECKLIST_ITEM_SOURCES,
   DAILY_CHECKLIST_ITEM_SOURCE_DEFAULT,
+  DAILY_CHECKLIST_ITEM_KINDS,
+  DAILY_CHECKLIST_ITEM_KIND_DEFAULT,
 };

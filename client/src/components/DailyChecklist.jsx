@@ -17,38 +17,64 @@ import { SkeletonList } from './Skeleton';
 // Local YYYY-MM-DD — the worker's "today", so the day is dated in their timezone.
 const localToday = () => new Date().toLocaleDateString('en-CA');
 
+// Structured editor for a template/plan item list: each row is a checkbox or a text field.
+// `items` is [{ text, kind }]; onChange gets the next array.
+function ItemListEditor({ items, onChange, t }) {
+  const set = (i, patch) => onChange(items.map((it, j) => (j === i ? { ...it, ...patch } : it)));
+  const add = kind => onChange([...items, { text: '', kind }]);
+  const remove = i => onChange(items.filter((_, j) => j !== i));
+  return (
+    <div style={styles.editorList}>
+      {items.map((it, i) => (
+        <div key={i} style={styles.editorRow}>
+          <select style={styles.kindSelect} value={it.kind || 'check'} onChange={e => set(i, { kind: e.target.value })}>
+            <option value="check">{t.dcKindCheck}</option>
+            <option value="text">{t.dcKindText}</option>
+          </select>
+          <input style={styles.editorInput} value={it.text}
+            placeholder={it.kind === 'text' ? t.dcTextLabelPlaceholder : t.dcItemPlaceholder}
+            onChange={e => set(i, { text: e.target.value })} />
+          <button style={styles.removeBtn} onClick={() => remove(i)} aria-label={t.dcRemove}>×</button>
+        </div>
+      ))}
+      <div style={styles.editorAdd}>
+        <button style={styles.linkBtnSm} onClick={() => add('check')}>+ {t.dcKindCheck}</button>
+        <button style={styles.linkBtnSm} onClick={() => add('text')}>+ {t.dcKindText}</button>
+      </div>
+    </div>
+  );
+}
+const toEditRows = rows => (rows || []).map(i => ({ text: i.text, kind: i.kind || 'check' }));
+const toSaveRows = rows => rows.filter(it => it.text.trim()).map(it => ({ text: it.text.trim(), kind: it.kind || 'check' }));
+
 function RecurringEditor({ projectId, t, toast }) {
-  const [text, setText] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [items, setItems] = useState(null); // [{ text, kind }] | null while loading
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    setLoading(true); setSaved(false);
+    setSaved(false);
     api.get(`/daily-checklist/projects/${projectId}/recurring`)
-      .then(r => { if (alive) setText((r.data.items || []).map(i => i.text).join('\n')); })
-      .catch(() => { if (alive) toast(t.dcLoadFailed, 'error'); })
-      .finally(() => { if (alive) setLoading(false); });
+      .then(r => { if (alive) setItems(toEditRows(r.data.items)); })
+      .catch(() => { if (alive) { toast(t.dcLoadFailed, 'error'); setItems([]); } });
     return () => { alive = false; };
   }, [projectId, t, toast]);
 
   const save = async () => {
     setSaving(true); setSaved(false);
-    const items = text.split('\n').map(s => s.trim()).filter(Boolean).map(s => ({ text: s }));
     try {
-      await api.put(`/daily-checklist/projects/${projectId}/recurring`, { items });
+      await api.put(`/daily-checklist/projects/${projectId}/recurring`, { items: toSaveRows(items) });
       setSaved(true);
     } catch { toast(t.dcRecurringSaveFailed, 'error'); }
     finally { setSaving(false); }
   };
 
-  if (loading) return <div style={styles.panel}><SkeletonList rows={3} /></div>;
+  if (items === null) return <div style={styles.panel}><SkeletonList rows={3} /></div>;
   return (
     <div style={styles.panel}>
       <p style={styles.help}>{t.dcRecurringHelp}</p>
-      <textarea style={styles.textarea} rows={5} value={text} placeholder={t.dcRecurringPlaceholder}
-        onChange={e => { setText(e.target.value); setSaved(false); }} />
+      <ItemListEditor items={items} onChange={v => { setItems(v); setSaved(false); }} t={t} />
       <div style={styles.rowEnd}>
         {saved && <span style={styles.savedMsg}>{t.dcRecurringSaved}</span>}
         <button style={{ ...styles.btn, ...(saving ? styles.btnOff : {}) }} onClick={save} disabled={saving}>
@@ -62,19 +88,18 @@ function RecurringEditor({ projectId, t, toast }) {
 // One prepared day in the queue — inline reschedule / edit-items / reorder / delete.
 function QueueRow({ day, t, toast, first, last, onChanged }) {
   const [editing, setEditing] = useState(null); // 'items' | 'when' | null
-  const [itemsText, setItemsText] = useState('');
+  const [itemsArr, setItemsArr] = useState([]);
   const [when, setWhen] = useState({ schedule_type: day.schedule_type, scheduled_date: day.scheduled_date || localToday(), ordinal_target: day.ordinal_target || 1 });
 
   const openItems = async () => {
     try {
       const r = await api.get(`/daily-checklist/days/${day.id}`);
-      setItemsText((r.data.items || []).map(i => i.text).join('\n'));
+      setItemsArr(toEditRows(r.data.items));
       setEditing('items');
     } catch { toast(t.dcLoadFailed, 'error'); }
   };
   const saveItems = async () => {
-    const items = itemsText.split('\n').map(s => s.trim()).filter(Boolean).map(s => ({ text: s }));
-    try { await api.put(`/daily-checklist/days/${day.id}/plan-items`, { items }); setEditing(null); onChanged(); }
+    try { await api.put(`/daily-checklist/days/${day.id}/plan-items`, { items: toSaveRows(itemsArr) }); setEditing(null); onChanged(); }
     catch { toast(t.dcPlanSaveFailed, 'error'); }
   };
   const saveWhen = async () => {
@@ -131,7 +156,7 @@ function QueueRow({ day, t, toast, first, last, onChanged }) {
       )}
       {editing === 'items' && (
         <div style={styles.editBox}>
-          <textarea style={styles.textarea} rows={4} value={itemsText} placeholder={t.dcPlanItemsPlaceholder} onChange={e => setItemsText(e.target.value)} />
+          <ItemListEditor items={itemsArr} onChange={setItemsArr} t={t} />
           <div style={styles.rowEnd}>
             <button style={styles.linkBtnSm} onClick={() => setEditing(null)}>{t.dcCancel}</button>
             <button style={styles.btn} onClick={saveItems}>{t.dcSavePlan}</button>
@@ -144,7 +169,7 @@ function QueueRow({ day, t, toast, first, last, onChanged }) {
 
 function DayManager({ projectId, t, toast, onQueueChanged }) {
   const [queue, setQueue] = useState(null);
-  const [form, setForm] = useState({ schedule_type: 'calendar', scheduled_date: localToday(), ordinal_target: 1, name: '', items: '' });
+  const [form, setForm] = useState({ schedule_type: 'calendar', scheduled_date: localToday(), ordinal_target: 1, name: '', items: [] });
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
@@ -163,11 +188,11 @@ function DayManager({ projectId, t, toast, onQueueChanged }) {
       schedule_type: form.schedule_type,
       ...(form.schedule_type === 'calendar' ? { scheduled_date: form.scheduled_date } : { ordinal_target: Number(form.ordinal_target) }),
       name: form.name.trim() || undefined,
-      items: form.items.split('\n').map(s => s.trim()).filter(Boolean).map(s => ({ text: s })),
+      items: toSaveRows(form.items),
     };
     try {
       await api.post(`/daily-checklist/projects/${projectId}/days`, body);
-      setForm(f => ({ ...f, name: '', items: '' }));
+      setForm(f => ({ ...f, name: '', items: [] }));
       await refresh();
     } catch { toast(t.dcPrepareFailed, 'error'); }
     finally { setSaving(false); }
@@ -203,7 +228,7 @@ function DayManager({ projectId, t, toast, onQueueChanged }) {
         </div>
         <input style={styles.addInput} value={form.name} placeholder={t.dcDayNamePlaceholder} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
       </div>
-      <textarea style={styles.textarea} rows={3} value={form.items} placeholder={t.dcPlanItemsPlaceholder} onChange={e => setForm(f => ({ ...f, items: e.target.value }))} />
+      <ItemListEditor items={form.items} onChange={items => setForm(f => ({ ...f, items }))} t={t} />
       <div style={styles.rowEnd}>
         <button style={{ ...styles.btn, ...(saving ? styles.btnOff : {}) }} onClick={create} disabled={saving}>{t.dcCreateDay}</button>
       </div>
@@ -237,6 +262,7 @@ export default function DailyChecklist({ projects = [], settings = null, loading
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [newItem, setNewItem] = useState('');
+  const [newItemKind, setNewItemKind] = useState('check');
   const [panel, setPanel] = useState(null); // 'recurring' | 'manager' | null
   const [queued, setQueued] = useState([]); // prepared days waiting (shown on the Start card)
   const [conflict, setConflict] = useState(null);
@@ -291,8 +317,14 @@ export default function DailyChecklist({ projects = [], settings = null, loading
   const addItem = async () => {
     const text2 = newItem.trim();
     if (!text2 || !day) return;
-    try { const r = await api.post(`/daily-checklist/days/${day.id}/items`, { text: text2 }); setItems(prev => [...prev, r.data.item]); setNewItem(''); }
+    try { const r = await api.post(`/daily-checklist/days/${day.id}/items`, { text: text2, kind: newItemKind }); setItems(prev => [...prev, r.data.item]); setNewItem(''); }
     catch { toast(t.dcAddFailed, 'error'); }
+  };
+  // Text-field items: type freely (local), save on blur.
+  const setItemValueLocal = (item, value) => setItems(prev => prev.map(i => (i.id === item.id ? { ...i, value } : i)));
+  const saveItemValue = async (item, value) => {
+    try { await api.patch(`/daily-checklist/days/${day.id}/items/${item.id}`, { value }); }
+    catch { toast(t.dcUpdateFailed, 'error'); }
   };
   const removeItem = async (item) => {
     try { await api.delete(`/daily-checklist/days/${day.id}/items/${item.id}`); setItems(prev => prev.filter(i => i.id !== item.id)); }
@@ -324,7 +356,9 @@ export default function DailyChecklist({ projects = [], settings = null, loading
   // Projects load async in the parent — show a skeleton until they settle, so we don't flash
   // "No projects yet" mid-load. Only claim empty once loading is done.
   if (projects.length === 0) return projectsLoading ? <SkeletonList rows={4} /> : <p style={styles.empty}>{t.dcNoProjects}</p>;
-  const doneCount = items.filter(i => i.checked).length;
+  // "Done" spans both kinds: a checked box or a filled-in text field.
+  const isDone = it => (it.kind === 'text' ? !!(it.value && it.value.trim()) : it.checked);
+  const doneCount = items.filter(isDone).length;
 
   return (
     <div style={styles.wrap}>
@@ -392,10 +426,20 @@ export default function DailyChecklist({ projects = [], settings = null, loading
             <ul style={styles.list}>
               {items.map(item => (
                 <li key={item.id} style={styles.item}>
-                  <label style={styles.itemLabel}>
-                    <input type="checkbox" checked={item.checked} disabled={!canCheck} onChange={() => toggleItem(item)} />
-                    <span style={{ ...styles.itemText, ...(item.checked ? styles.itemChecked : {}) }}>{item.text}</span>
-                  </label>
+                  {item.kind === 'text' ? (
+                    <div style={styles.textItem}>
+                      <span style={styles.textItemLabel}>{item.text}</span>
+                      <input style={styles.textItemInput} value={item.value || ''} disabled={!canCheck}
+                        placeholder={t.dcTextValuePlaceholder}
+                        onChange={e => setItemValueLocal(item, e.target.value)}
+                        onBlur={e => canCheck && saveItemValue(item, e.target.value)} />
+                    </div>
+                  ) : (
+                    <label style={styles.itemLabel}>
+                      <input type="checkbox" checked={item.checked} disabled={!canCheck} onChange={() => toggleItem(item)} />
+                      <span style={{ ...styles.itemText, ...(item.checked ? styles.itemChecked : {}) }}>{item.text}</span>
+                    </label>
+                  )}
                   {item.source === 'rollover' && <span style={styles.badge}>{t.dcCarriedOver}</span>}
                   {canCheck && <button style={styles.removeBtn} onClick={() => removeItem(item)} aria-label={t.dcRemove}>×</button>}
                 </li>
@@ -404,7 +448,11 @@ export default function DailyChecklist({ projects = [], settings = null, loading
           )}
           {canCheck && (
             <div style={styles.addRow}>
-              <input style={styles.addInput} value={newItem} placeholder={t.dcAddItemPlaceholder} onChange={e => setNewItem(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addItem(); }} />
+              <select style={styles.kindSelect} value={newItemKind} onChange={e => setNewItemKind(e.target.value)}>
+                <option value="check">{t.dcKindCheck}</option>
+                <option value="text">{t.dcKindText}</option>
+              </select>
+              <input style={styles.addInput} value={newItem} placeholder={newItemKind === 'text' ? t.dcTextLabelPlaceholder : t.dcAddItemPlaceholder} onChange={e => setNewItem(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addItem(); }} />
               <button style={styles.btn} onClick={addItem}>{t.dcAdd}</button>
             </div>
           )}
@@ -432,6 +480,16 @@ const styles = {
   help: { fontSize: 12.5, color: '#6b7280', margin: '0 0 8px' },
   panel: { background: '#f9fafb', border: '1px solid #eef0f2', borderRadius: 10, padding: 12 },
   textarea: { width: '100%', boxSizing: 'border-box', borderRadius: 8, border: '1px solid #d1d5db', padding: 10, fontSize: 14, fontFamily: 'inherit', resize: 'vertical' },
+  // Structured item editor
+  editorList: { display: 'flex', flexDirection: 'column', gap: 6 },
+  editorRow: { display: 'flex', alignItems: 'center', gap: 6 },
+  kindSelect: { padding: '6px 8px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 13, background: '#fff' },
+  editorInput: { flex: 1, padding: '7px 10px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 14 },
+  editorAdd: { display: 'flex', gap: 14, marginTop: 2 },
+  // Text-field item in the active day
+  textItem: { flex: 1, display: 'flex', flexDirection: 'column', gap: 3 },
+  textItemLabel: { fontSize: 13, fontWeight: 600, color: '#374151' },
+  textItemInput: { padding: '6px 9px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 14 },
   rowEnd: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, marginTop: 8 },
   savedMsg: { color: '#059669', fontSize: 13, fontWeight: 600 },
   toggleRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#374151', flexWrap: 'wrap' },

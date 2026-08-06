@@ -39,7 +39,7 @@ describe('POST /projects/:id/start', () => {
         if (/FROM daily_checklist_recurring_items/.test(sql)) return { rows: [{ text: 'Check fire extinguisher' }, { text: 'Sweep site' }] };
         if (/status = 'completed' ORDER BY/.test(sql)) return { rows: [{ id: 50 }] };     // previous completed day
         if (/checked = false/.test(sql)) return { rows: [{ text: 'Sweep site' }, { text: 'Fix rail on level 2' }] }; // 'Sweep site' dups recurring
-        if (/INSERT INTO daily_checklist_items/.test(sql)) { inserted.push({ text: params[1], source: params[3] }); return { rows: [] }; }
+        if (/INSERT INTO daily_checklist_items/.test(sql)) { inserted.push({ text: params[1], source: params[4] }); return { rows: [] }; }
         if (/SELECT id, text, checked/.test(sql)) return { rows: inserted.map((it, i) => ({ id: i + 1, ...it, checked: false, order_index: i })) };
         return { rows: [] };
       }),
@@ -173,7 +173,7 @@ describe('POST /projects/:id/start — queue resume + conflict', () => {
         if (/SELECT text, order_index FROM daily_checklist_items/.test(sql)) return { rows: [{ text: 'Prepared A', order_index: 0 }] }; // plan's item
         if (/FROM daily_checklist_recurring_items/.test(sql)) return { rows: [{ text: 'Prepared A' }, { text: 'Recurring B' }] };
         if (/status = 'completed' ORDER BY/.test(sql)) return { rows: [] };
-        if (/INSERT INTO daily_checklist_items/.test(sql)) { inserted.push({ text: params[1], source: params[3] }); return { rows: [] }; }
+        if (/INSERT INTO daily_checklist_items/.test(sql)) { inserted.push({ text: params[1], source: params[4] }); return { rows: [] }; }
         if (/SELECT id, text, checked/.test(sql)) return { rows: [] };
         return { rows: [] };
       }),
