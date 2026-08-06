@@ -2,6 +2,7 @@ import React, { lazy, Suspense, useState, useEffect, useRef } from 'react';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { useAuth } from '../contexts/AuthContext';
 import ClockInOut from '../components/ClockInOut';
+import DailyChecklistClockInPrompt from '../components/DailyChecklistClockInPrompt';
 import TimeEntryForm from '../components/TimeEntryForm';
 import EntryList from '../components/EntryList';
 import UpcomingShifts from '../components/UpcomingShifts';
@@ -88,6 +89,7 @@ export default function Dashboard() {
   const [refreshError, setRefreshError] = useState(false);
   const [showSignatureModal, setShowSignatureModal] = useState(false);
   const [headerClock, setHeaderClock] = useState(null); // null=loading, false=not clocked in, {clock_in_time}=clocked in
+  const [dcPrompt, setDcPrompt] = useState(null); // daily-checklist candidates to offer after a clock-in
   const [headerElapsed, setHeaderElapsed] = useState(0);
   const headerTimerRef = useRef(null);
   const [entriesVersion, setEntriesVersion] = useState(0);
@@ -225,8 +227,21 @@ export default function Dashboard() {
     setHeaderClock(false); // worker clocked out
   };
 
-  const handleClockedIn = clockStatus => {
+  const dcPromptKey = () => `dc_clockin_prompt_${new Date().toLocaleDateString('en-CA')}`;
+  const handleClockedIn = async clockStatus => {
     setHeaderClock(clockStatus); // worker clocked in
+    // Offer to open a daily checklist for a project — once per day, best-effort.
+    try {
+      if (safeLocal.getItem(dcPromptKey())) return;
+      const r = await api.get('/daily-checklist/clock-in-prompt', { suppressToast: true });
+      const candidates = r.data?.candidates || [];
+      if (candidates.length) setDcPrompt(candidates);
+      else safeLocal.setItem(dcPromptKey(), '1'); // nothing to offer → don't re-ask today
+    } catch { /* prompt is optional; ignore failures */ }
+  };
+  const dismissDcPrompt = () => {
+    try { safeLocal.setItem(dcPromptKey(), '1'); } catch { /* private mode */ }
+    setDcPrompt(null);
   };
   const handleEntryDeleted = id => {
     setEntries(prev => prev.filter(e => e.id !== id));
@@ -571,6 +586,8 @@ ${safeSignature ? `
             </ErrorBoundary>
           )
         )}
+
+        {dcPrompt && <DailyChecklistClockInPrompt candidates={dcPrompt} onClose={dismissDcPrompt} />}
 
         {tab === 'timesheet' && (
           <ErrorBoundary key="timesheet" mode="inline" label="Timesheet">

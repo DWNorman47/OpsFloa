@@ -252,7 +252,11 @@ export default function DailyChecklist({ projects = [], settings = null, loading
   const canSchedule = usePerm('daily_checklist_schedule_days');
   const canManageSettings = usePerm('manage_settings');
 
-  const [projectId, setProjectId] = useState(projects[0]?.id ?? '');
+  // ?project=<id> (e.g. from the clock-in prompt) preselects that project; else the first.
+  const [projectId, setProjectId] = useState(() => {
+    const p = Number(new URLSearchParams(window.location.search).get('project'));
+    return (Number.isInteger(p) && p > 0) ? p : (projects[0]?.id ?? '');
+  });
   const [day, setDay] = useState(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -285,6 +289,15 @@ export default function DailyChecklist({ projects = [], settings = null, loading
   useEffect(() => {
     if (projects.length && !projects.some(p => p.id === projectId)) setProjectId(projects[0].id);
   }, [projects, projectId]);
+
+  // Drop the ?project= param once consumed so a refresh doesn't re-force it (mirrors the
+  // Administration ?focus= pattern); the selection is already seeded above.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has('project')) return;
+    params.delete('project');
+    window.history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : '') + window.location.hash);
+  }, []);
 
   useEffect(() => { loadActive(projectId); }, [projectId, loadActive]);
 
