@@ -1348,6 +1348,16 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
                 </div>
               </div>
 
+              {(settings?.prevailing_wage_rate ?? 0) > 0 && (
+                <div style={pf.field}>
+                  <label style={pf.label}>{t.wageType}</label>
+                  <select style={pf.input} value={editForm.wage_type} onChange={e => setEditForm(f => ({ ...f, wage_type: e.target.value }))}>
+                    <option value="regular">{t.regular}</option>
+                    <option value="prevailing">{t.prevailing}</option>
+                  </select>
+                </div>
+              )}
+
               <div style={pf.field}>
                 <label style={pf.label}>{t.descriptionLabel}</label>
                 <textarea style={pf.textarea} rows={3} value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} placeholder={t.scopeOfWorkPh} />
