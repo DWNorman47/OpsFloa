@@ -91,17 +91,20 @@ function ItemListEditor({ items, onChange, t, toast }) {
   };
 
   return (
-    <div style={styles.editorList} tabIndex={0} onKeyDown={onKeyDown}>
+    <div style={styles.editorList} tabIndex={0} onKeyDown={onKeyDown}
+      onDragOver={e => { if (dragFrom.current != null) e.preventDefault(); }}
+      onDrop={() => { moveTo(dragFrom.current, dropAt); setDropAt(null); }}>
       {items.map((it, i) => (
         <React.Fragment key={i}>
           {dropAt === i && dragFrom.current != null && <div style={styles.dropLine} />}
           <div style={{ ...styles.editorRow, ...(selected.has(i) ? styles.editorRowSel : {}) }}
             onDragOver={e => { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setDropAt(e.clientY > r.top + r.height / 2 ? i + 1 : i); }}
-            onDrop={() => { moveTo(dragFrom.current, dropAt); setDropAt(null); }}
             onContextMenu={e => { e.preventDefault(); if (!selected.has(i)) toggleSelect(i); setMenu({ x: e.clientX, y: e.clientY }); }}>
-            <button type="button" style={styles.dragHandle} title={t.dcRowHint} aria-pressed={selected.has(i)}
-              draggable onDragStart={() => { dragFrom.current = i; }} onDragEnd={() => { dragFrom.current = null; setDropAt(null); }}
-              onClick={e => selectClick(e, i)}>⋮⋮</button>
+            <span style={styles.dragHandle} title={t.dcRowHint} role="button" tabIndex={0} aria-pressed={selected.has(i)}
+              draggable onDragStart={e => { dragFrom.current = i; e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', String(i)); } catch { /* ignore */ } }}
+              onDragEnd={() => { dragFrom.current = null; setDropAt(null); }}
+              onClick={e => selectClick(e, i)}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSelect(i); anchor.current = i; } }}>⋮⋮</span>
           <select style={styles.kindSelect} value={it.kind || 'check'} onChange={e => set(i, { kind: e.target.value })}>
             <option value="check">{t.dcKindCheck}</option>
             <option value="text">{t.dcKindText}</option>
