@@ -131,7 +131,7 @@ function ProjectCard({ project, metrics, settings, onClick }) {
 
 // ── Project Detail Panel ──────────────────────────────────────────────────────
 
-function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, onProjectUpdated, onProjectArchived }) {
+function ProjectDetail({ project, metrics, settings, companyInfo = {}, allProjects = [], onClose, onProjectUpdated, onProjectArchived }) {
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
@@ -155,6 +155,10 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
     geo_lat: project.geo_lat != null ? String(project.geo_lat) : '',
     geo_lng: project.geo_lng != null ? String(project.geo_lng) : '',
     geo_radius_ft: project.geo_radius_ft != null ? String(project.geo_radius_ft) : '',
+    hour_limit_mode: project.hour_limit_mode || 'off',
+    daily_hour_limit: project.daily_hour_limit != null ? String(project.daily_hour_limit) : '',
+    weekly_hour_limit: project.weekly_hour_limit != null ? String(project.weekly_hour_limit) : '',
+    hour_limit_overflow_project_id: project.hour_limit_overflow_project_id ? String(project.hour_limit_overflow_project_id) : '',
   });
   const [editSaving, setEditSaving] = useState(false);
   const [editMsg, setEditMsg] = useState('');
@@ -464,6 +468,11 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
         description: editForm.description || null,
         progress_pct: editForm.progress_pct !== '' ? parseInt(editForm.progress_pct, 10) : null,
         wage_type: editForm.wage_type,
+        hour_limit_mode: editForm.hour_limit_mode,
+        daily_hour_limit: editForm.daily_hour_limit !== '' ? parseFloat(editForm.daily_hour_limit) : null,
+        weekly_hour_limit: editForm.weekly_hour_limit !== '' ? parseFloat(editForm.weekly_hour_limit) : null,
+        hour_limit_overflow_project_id: (editForm.hour_limit_mode === 'hard' && editForm.hour_limit_overflow_project_id)
+          ? parseInt(editForm.hour_limit_overflow_project_id, 10) : null,
         updated_at: project.updated_at,
       };
       if (geoCount === 3) {
@@ -480,7 +489,7 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
       setEditMsg('Saved');
       setTimeout(() => setEditMsg(''), 2000);
     } catch (err) {
-      setEditMsg(err.response?.status === 409 ? 'Modified by someone else — refresh first' : 'Failed to save');
+      setEditMsg(err.response?.status === 409 ? 'Modified by someone else — refresh first' : (err.response?.data?.error || 'Failed to save'));
     } finally { setEditSaving(false); }
   };
 
@@ -1425,6 +1434,50 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, onClose, 
                 {geoError && <p style={{ fontSize: 12, color: '#dc2626', margin: '6px 0 0' }}>{geoError}</p>}
               </div>
 
+              <div style={pf.field}>
+                <label style={pf.label}>⏱️ {t.hourLimitTitle}</label>
+                <select
+                  style={pf.input}
+                  value={editForm.hour_limit_mode}
+                  onChange={e => setEditForm(f => ({ ...f, hour_limit_mode: e.target.value }))}
+                >
+                  <option value="off">{t.hourLimitOff}</option>
+                  <option value="warn">{t.hourLimitWarn}</option>
+                  <option value="hard">{t.hourLimitHard}</option>
+                </select>
+                {editForm.hour_limit_mode !== 'off' && (
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                    <input
+                      style={{ ...pf.input, flex: '1 1 130px', minWidth: 0 }}
+                      type="number" min="0" step="0.5"
+                      placeholder={t.hourLimitDaily}
+                      value={editForm.daily_hour_limit}
+                      onChange={e => setEditForm(f => ({ ...f, daily_hour_limit: e.target.value }))}
+                    />
+                    <input
+                      style={{ ...pf.input, flex: '1 1 130px', minWidth: 0 }}
+                      type="number" min="0" step="1"
+                      placeholder={t.hourLimitWeekly}
+                      value={editForm.weekly_hour_limit}
+                      onChange={e => setEditForm(f => ({ ...f, weekly_hour_limit: e.target.value }))}
+                    />
+                  </div>
+                )}
+                {editForm.hour_limit_mode === 'hard' && (
+                  <select
+                    style={{ ...pf.input, marginTop: 8 }}
+                    value={editForm.hour_limit_overflow_project_id}
+                    onChange={e => setEditForm(f => ({ ...f, hour_limit_overflow_project_id: e.target.value }))}
+                  >
+                    <option value="">{t.hourLimitOverflowNone}</option>
+                    {allProjects.filter(op => op.id !== project.id && op.active !== false).map(op => (
+                      <option key={op.id} value={op.id}>{op.name}</option>
+                    ))}
+                  </select>
+                )}
+                <div style={{ fontSize: 12, color: '#6b7280', marginTop: 6, lineHeight: 1.5 }}>{t.hourLimitHint}</div>
+              </div>
+
               {editMsg && (
                 <p style={{ fontSize: 13, margin: 0, color: editMsg === 'Saved' || editMsg.includes('complete') ? '#059669' : '#dc2626', fontWeight: 600 }}>{editMsg}</p>
               )}
@@ -2201,6 +2254,7 @@ export default function ProjectsPage() {
                 metrics={metrics[selected.id]}
                 settings={settings}
                 companyInfo={companyInfo}
+                allProjects={projects}
                 onClose={() => setSelected(null)}
                 onProjectUpdated={updated => {
                   setProjects(prev => prev.map(p => p.id === updated.id ? { ...p, ...updated } : p));
