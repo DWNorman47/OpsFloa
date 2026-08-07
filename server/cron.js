@@ -6,6 +6,7 @@ const pool = require('./db');
 const { sendPushToUser, sendPushToCompanyAdmins } = require('./push');
 const { createInboxItemBatch } = require('./routes/inbox');
 const { rolloverStaleDemoClocks } = require('./services/demoClockRollover');
+const { reconcileStaleHourLimits } = require('./utils/projectHourLimits');
 
 // A worker who has been clocked in this many hours without clocking out
 // is almost certainly forgotten — phone died, app uninstalled, drove home
@@ -250,6 +251,17 @@ async function maintainActiveClocks() {
   }
 
   await sweepStaleActiveClock();
+
+  // Backstop for per-project hard hour limits. The lazy observers
+  // (/clock/status, /admin/active-clocks) enforce these in real time; this
+  // hourly pass just catches a shift nobody looked at. See
+  // server/utils/projectHourLimits.js.
+  try {
+    const acted = await reconcileStaleHourLimits();
+    if (acted > 0) console.log(`[cron] hour-limit backstop: reconciled ${acted} action(s)`);
+  } catch (err) {
+    console.error('[cron] hour-limit backstop error:', err);
+  }
 }
 
 // ─── Booking reminders ──────────────────────────────────────────────────────
