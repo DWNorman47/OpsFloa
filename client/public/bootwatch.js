@@ -29,8 +29,11 @@
     return !document.getElementById('prehydrate');
   }
 
-  // Clear caches + unregister any service worker, then reload with fresh assets. IndexedDB
-  // (the offline queue) is deliberately left intact.
+  // Do what a MANUAL HARD REFRESH does: drop the SW's caches, unregister the service worker,
+  // AND force a fresh copy of the shell past the HTTP disk cache — then reload. A plain
+  // location.reload() honors a stale-but-cacheable index.html (an entry cached before the
+  // must-revalidate header existed) and re-serves the same broken shell, which is why only a
+  // manual hard refresh fixed it. IndexedDB (the offline queue) is left intact.
   function hardResetAndReload() {
     var jobs = [];
     try {
@@ -47,12 +50,15 @@
         }));
       }
     } catch (e) { /* ignore */ }
+    // cache:'reload' fetches from the network ignoring the HTTP cache AND overwrites the
+    // cached entry — so the following location.reload() serves the FRESH shell.
+    try { jobs.push(fetch(window.location.href, { cache: 'reload' }).catch(function () {})); } catch (e) { /* ignore */ }
 
     var reloaded = false;
     var go = function () { if (reloaded) return; reloaded = true; window.location.reload(); };
     Promise.all(jobs).then(go, go);
-    // Don't hang forever if the cache / SW APIs stall.
-    window.setTimeout(go, 3000);
+    // Don't hang forever if the cache / SW / fetch APIs stall.
+    window.setTimeout(go, 4000);
   }
 
   window.setTimeout(function () {
