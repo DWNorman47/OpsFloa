@@ -1,18 +1,28 @@
-import { precacheAndRoute, cleanupOutdatedCaches, createHandlerBoundToURL } from 'workbox-precaching';
+import { precacheAndRoute, cleanupOutdatedCaches, matchPrecache } from 'workbox-precaching';
 import { NavigationRoute, registerRoute } from 'workbox-routing';
 
 // Injected by vite-plugin-pwa at build time
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
 
-// Serve the precached app shell for ALL page navigations (deep links + offline), not just
-// "/". Without this, a cold PWA launch or an offline navigation to e.g. /timeclock has no
-// cached shell and lands on a blank page. Only document navigations match NavigationRoute;
-// API calls and file requests aren't navigations, but exclude /api and version.json
-// defensively so they always hit the network.
-registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html'), {
-  denylist: [/^\/api\//, /^\/version\.json/],
-}));
+// Navigations are network-FIRST: always fetch the freshest index.html from the network (it
+// references the CURRENT asset hashes), so a new tab or a reload can never boot a stale
+// PRECACHED shell — the recurring blank-screen cause. Fall back to the precached shell only
+// when the network is unavailable (offline), which keeps offline / deep-link launches
+// working. API + version.json are never navigations but are excluded defensively.
+registerRoute(new NavigationRoute(async ({ url }) => {
+  try {
+    return await fetch(url.href, { cache: 'no-cache' }); // revalidate → always the current shell
+  } catch (err) {
+    return (await matchPrecache('/index.html')) || Response.error();
+  }
+}, { denylist: [/^\/api\//, /^\/version\.json/] }));
+
+// Activate a new deploy's worker immediately instead of waiting for a manual update — a
+// waiting worker serving the OLD precache across a deploy is what left new tabs / reloads on
+// a stale shell. The network-first shell above + the app's chunk-error auto-reload make a
+// mid-session asset swap safe; the offline queue in IndexedDB is untouched.
+self.addEventListener('install', () => self.skipWaiting());
 
 const QUEUE_DB = 'tc-offline-queue';
 const QUEUE_STORE = 'punches';
@@ -220,12 +230,12 @@ async function doReplayQueue() {
 // ── Service worker lifecycle ───────────────────────────────────────────────────
 
 // Take control of already-open pages as soon as this worker activates, so the offline
-// fetch handler (which queues clock / time-entry POSTs when the network is down) works
-// on a device's FIRST session and right after an error-recovery hard reset — otherwise
-// the worker doesn't control that already-loaded document until the next reload, and an
-// offline punch made in that window is lost instead of queued. This does NOT force a
-// waiting worker to activate early: skipWaiting stays message-gated (SKIP_WAITING below)
-// for the prompt-to-update model, so it can't cause an update loop.
+// fetch handler (which queues clock / time-entry POSTs when the network is down) works on a
+// device's FIRST session and right after an error-recovery hard reset — otherwise the worker
+// doesn't control that already-loaded document until the next reload, and an offline punch
+// made in that window is lost instead of queued. Paired with skipWaiting on install above,
+// a new deploy's worker takes over promptly (the navigations it serves are network-first,
+// so it can't pin a stale shell).
 self.addEventListener('activate', event => {
   event.waitUntil(self.clients.claim());
 });
