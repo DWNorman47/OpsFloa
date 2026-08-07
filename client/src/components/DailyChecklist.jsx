@@ -32,11 +32,24 @@ function ItemListEditor({ items, onChange, t, toast }) {
   const [selected, setSelected] = useState(() => new Set()); // selected row indices
   const [menu, setMenu] = useState(null); // { x, y } context menu position
   const dragFrom = useRef(null);
+  const anchor = useRef(null); // last plain-clicked row, for shift-click ranges
 
   const set = (i, patch) => onChange(items.map((it, j) => (j === i ? { ...it, ...patch } : it)));
   const add = kind => onChange([...items, { text: '', kind, carryover: false }]);
-  const remove = i => { onChange(items.filter((_, j) => j !== i)); setSelected(new Set()); };
+  const remove = i => { onChange(items.filter((_, j) => j !== i)); setSelected(new Set()); anchor.current = null; };
   const toggleSelect = i => setSelected(s => { const n = new Set(s); if (n.has(i)) n.delete(i); else n.add(i); return n; });
+
+  // Plain click toggles a row (and anchors it); shift-click selects the whole range from the
+  // anchor to the clicked row.
+  const selectClick = (e, i) => {
+    if (e.shiftKey && anchor.current != null) {
+      const lo = Math.min(anchor.current, i), hi = Math.max(anchor.current, i);
+      setSelected(s => { const n = new Set(s); for (let k = lo; k <= hi; k++) n.add(k); return n; });
+    } else {
+      toggleSelect(i);
+      anchor.current = i;
+    }
+  };
 
   const move = (from, to) => {
     if (from == null || to == null || from === to) return;
@@ -44,7 +57,7 @@ function ItemListEditor({ items, onChange, t, toast }) {
     const [m] = next.splice(from, 1);
     next.splice(to > from ? to - 1 : to, 0, m);
     onChange(next);
-    setSelected(new Set()); // indices shifted
+    setSelected(new Set()); anchor.current = null; // indices shifted
   };
 
   const copySelected = () => {
@@ -82,7 +95,7 @@ function ItemListEditor({ items, onChange, t, toast }) {
           onContextMenu={e => { e.preventDefault(); if (!selected.has(i)) toggleSelect(i); setMenu({ x: e.clientX, y: e.clientY }); }}>
           <button type="button" style={styles.dragHandle} title={t.dcRowHint} aria-pressed={selected.has(i)}
             draggable onDragStart={() => { dragFrom.current = i; }} onDragEnd={() => { dragFrom.current = null; }}
-            onClick={() => toggleSelect(i)}>⋮⋮</button>
+            onClick={e => selectClick(e, i)}>⋮⋮</button>
           <select style={styles.kindSelect} value={it.kind || 'check'} onChange={e => set(i, { kind: e.target.value })}>
             <option value="check">{t.dcKindCheck}</option>
             <option value="text">{t.dcKindText}</option>
