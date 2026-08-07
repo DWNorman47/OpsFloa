@@ -60,6 +60,8 @@ export default defineConfig({
           '**/*.map',
           'version.json', // polled live; must never be precached/served stale
           '**/version.json',
+          'bootwatch.js', // the blank-screen recovery watchdog: never precache it, so the
+          '**/bootwatch.js', // newest recovery logic is always fetched fresh (must-revalidate)
           '**/react-pdf.browser-*.js',
           '**/ImportItemsModal-*.js',
           '**/vendor-charts-*.js',

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../api';
 import { useT } from '../hooks/useT';
 import { useToast } from '../contexts/ToastContext';
@@ -17,16 +17,94 @@ import { SkeletonList } from './Skeleton';
 // Local YYYY-MM-DD — the worker's "today", so the day is dated in their timezone.
 const localToday = () => new Date().toLocaleDateString('en-CA');
 
-// Structured editor for a template/plan item list: each row is a checkbox or a text field.
-// `items` is [{ text, kind }]; onChange gets the next array.
-function ItemListEditor({ items, onChange, t }) {
+// Cross-tab, same-origin clipboard for checklist rows (structured), so rows copied in one
+// project's day manager paste into another's — even the impersonate new tab. The system
+// clipboard gets the plain-text labels too, for pasting elsewhere.
+const ROW_CLIP_KEY = 'opsfloa_dc_rows';
+const readRowClip = () => { try { const r = JSON.parse(localStorage.getItem(ROW_CLIP_KEY) || 'null'); return Array.isArray(r) ? r : []; } catch { return []; } };
+
+// Structured editor for a template/plan item list. Each row is a checkbox or a text field,
+// and can be marked "carryover" — a carryover row is recurring (belongs to the project's
+// standing template, shows every day) vs a one-off for the day being prepared. Rows can be
+// dragged to reorder, clicked (on the grip) to select, and copied/pasted across projects.
+// `items` is [{ text, kind, carryover }]; onChange gets the next array.
+function ItemListEditor({ items, onChange, t, toast }) {
+  const [selected, setSelected] = useState(() => new Set()); // selected row indices
+  const [menu, setMenu] = useState(null); // { x, y } context menu position
+  const [dropAt, setDropAt] = useState(null); // insertion index shown while dragging
+  const dragFrom = useRef(null);
+  const anchor = useRef(null); // last plain-clicked row, for shift-click ranges
+
   const set = (i, patch) => onChange(items.map((it, j) => (j === i ? { ...it, ...patch } : it)));
-  const add = kind => onChange([...items, { text: '', kind }]);
-  const remove = i => onChange(items.filter((_, j) => j !== i));
+  const add = kind => onChange([...items, { text: '', kind, carryover: false }]);
+  const remove = i => { onChange(items.filter((_, j) => j !== i)); setSelected(new Set()); anchor.current = null; };
+  const toggleSelect = i => setSelected(s => { const n = new Set(s); if (n.has(i)) n.delete(i); else n.add(i); return n; });
+
+  // Plain click toggles a row (and anchors it); shift-click selects the whole range from the
+  // anchor to the clicked row.
+  const selectClick = (e, i) => {
+    if (e.shiftKey && anchor.current != null) {
+      const lo = Math.min(anchor.current, i), hi = Math.max(anchor.current, i);
+      setSelected(s => { const n = new Set(s); for (let k = lo; k <= hi; k++) n.add(k); return n; });
+    } else {
+      toggleSelect(i);
+      anchor.current = i;
+    }
+  };
+
+  // Move the dragged row to an insertion index (0..length, i.e. "before row N").
+  const moveTo = (from, insertAt) => {
+    if (from == null || insertAt == null) return;
+    const idx = insertAt > from ? insertAt - 1 : insertAt;
+    if (idx === from) return;
+    const next = items.slice();
+    const [m] = next.splice(from, 1);
+    next.splice(idx, 0, m);
+    onChange(next);
+    setSelected(new Set()); anchor.current = null; // indices shifted
+  };
+
+  const copySelected = () => {
+    const rows = [...selected].sort((a, b) => a - b).map(i => items[i]).filter(it => it && it.text.trim())
+      .map(it => ({ text: it.text.trim(), kind: it.kind || 'check', carryover: !!it.carryover }));
+    if (!rows.length) return;
+    try { localStorage.setItem(ROW_CLIP_KEY, JSON.stringify(rows)); } catch { /* private mode */ }
+    try { navigator.clipboard?.writeText(rows.map(r => r.text).join('\n')); } catch { /* ignore */ }
+    toast(t.dcCopied.replace('{n}', rows.length), 'success');
+    setMenu(null);
+  };
+  const pasteRows = () => {
+    const rows = readRowClip();
+    if (!rows.length) { toast(t.dcNothingToPaste, 'error'); setMenu(null); return; }
+    onChange([...items, ...rows.map(r => ({ text: String(r.text || '').slice(0, 500), kind: r.kind === 'text' ? 'text' : 'check', carryover: !!r.carryover }))]);
+    toast(t.dcPasted.replace('{n}', rows.length), 'success');
+    setMenu(null);
+  };
+
+  // Ctrl/Cmd+C copies the selection, Ctrl/Cmd+V pastes — but only when the focus isn't in a
+  // text field (so normal text copy/paste still works while editing a row).
+  const onKeyDown = e => {
+    const editing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+    if (editing || !(e.ctrlKey || e.metaKey)) return;
+    if ((e.key === 'c' || e.key === 'C') && selected.size) { e.preventDefault(); copySelected(); }
+    else if (e.key === 'v' || e.key === 'V') { e.preventDefault(); pasteRows(); }
+  };
+
   return (
-    <div style={styles.editorList}>
+    <div style={styles.editorList} tabIndex={0} onKeyDown={onKeyDown}
+      onDragOver={e => { if (dragFrom.current != null) e.preventDefault(); }}
+      onDrop={() => { moveTo(dragFrom.current, dropAt); setDropAt(null); }}>
       {items.map((it, i) => (
-        <div key={i} style={styles.editorRow}>
+        <React.Fragment key={i}>
+          {dropAt === i && dragFrom.current != null && <div style={styles.dropLine} />}
+          <div style={{ ...styles.editorRow, ...(selected.has(i) ? styles.editorRowSel : {}) }}
+            onDragOver={e => { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setDropAt(e.clientY > r.top + r.height / 2 ? i + 1 : i); }}
+            onContextMenu={e => { e.preventDefault(); if (!selected.has(i)) toggleSelect(i); setMenu({ x: e.clientX, y: e.clientY }); }}>
+            <span style={styles.dragHandle} title={t.dcRowHint} role="button" tabIndex={0} aria-pressed={selected.has(i)}
+              draggable onDragStart={e => { dragFrom.current = i; e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', String(i)); } catch { /* ignore */ } }}
+              onDragEnd={() => { dragFrom.current = null; setDropAt(null); }}
+              onClick={e => selectClick(e, i)}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSelect(i); anchor.current = i; } }}>⋮⋮</span>
           <select style={styles.kindSelect} value={it.kind || 'check'} onChange={e => set(i, { kind: e.target.value })}>
             <option value="check">{t.dcKindCheck}</option>
             <option value="text">{t.dcKindText}</option>
@@ -34,59 +112,42 @@ function ItemListEditor({ items, onChange, t }) {
           <input style={styles.editorInput} value={it.text}
             placeholder={it.kind === 'text' ? t.dcTextLabelPlaceholder : t.dcItemPlaceholder}
             onChange={e => set(i, { text: e.target.value })} />
-          <button style={styles.removeBtn} onClick={() => remove(i)} aria-label={t.dcRemove}>×</button>
-        </div>
+          <button type="button" title={t.dcCarryoverHint} aria-pressed={!!it.carryover}
+            style={{ ...styles.carryBtn, ...(it.carryover ? styles.carryBtnOn : {}) }}
+            onClick={() => set(i, { carryover: !it.carryover })}>
+            {t.dcCarryover}
+          </button>
+            <button type="button" style={styles.editorRemoveBtn} onClick={() => remove(i)} aria-label={t.dcRemove}>×</button>
+          </div>
+        </React.Fragment>
       ))}
-      <div style={styles.editorAdd}>
+      {dropAt === items.length && dragFrom.current != null && <div style={styles.dropLine} />}
+      <div style={styles.editorAdd}
+        onDragOver={e => { e.preventDefault(); setDropAt(items.length); }}
+        onDrop={() => { moveTo(dragFrom.current, dropAt); setDropAt(null); }}>
         <button type="button" style={styles.addItemBtn} onClick={() => add('check')}>+ {t.dcKindCheck}</button>
         <button type="button" style={styles.addItemBtn} onClick={() => add('text')}>+ {t.dcKindText}</button>
+        <button type="button" style={styles.addItemBtn} onClick={pasteRows}>{t.dcPaste}</button>
       </div>
+      {menu && (
+        <>
+          <div style={styles.menuScrim} onClick={() => setMenu(null)} onContextMenu={e => { e.preventDefault(); setMenu(null); }} />
+          <div style={{ ...styles.ctxMenu, top: menu.y, left: menu.x }}>
+            <button type="button" style={{ ...styles.ctxItem, ...(selected.size ? {} : styles.ctxItemOff) }} onClick={copySelected} disabled={!selected.size}>{t.dcCopy} ({selected.size})</button>
+            <button type="button" style={styles.ctxItem} onClick={pasteRows}>{t.dcPaste}</button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
-const toEditRows = rows => (rows || []).map(i => ({ text: i.text, kind: i.kind || 'check' }));
-const toSaveRows = rows => rows.filter(it => it.text.trim()).map(it => ({ text: it.text.trim(), kind: it.kind || 'check' }));
-
-function RecurringEditor({ projectId, t, toast }) {
-  const [items, setItems] = useState(null); // [{ text, kind }] | null while loading
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    setSaved(false);
-    api.get(`/daily-checklist/projects/${projectId}/recurring`)
-      .then(r => { if (alive) setItems(toEditRows(r.data.items)); })
-      .catch(() => { if (alive) { toast(t.dcLoadFailed, 'error'); setItems([]); } });
-    return () => { alive = false; };
-  }, [projectId, t, toast]);
-
-  const save = async () => {
-    setSaving(true); setSaved(false);
-    try {
-      await api.put(`/daily-checklist/projects/${projectId}/recurring`, { items: toSaveRows(items) });
-      setSaved(true);
-    } catch { toast(t.dcRecurringSaveFailed, 'error'); }
-    finally { setSaving(false); }
-  };
-
-  if (items === null) return <div style={styles.panel}><SkeletonList rows={3} /></div>;
-  return (
-    <div style={styles.panel}>
-      <p style={styles.help}>{t.dcRecurringHelp}</p>
-      <ItemListEditor items={items} onChange={v => { setItems(v); setSaved(false); }} t={t} />
-      <div style={styles.rowEnd}>
-        {saved && <span style={styles.savedMsg}>{t.dcRecurringSaved}</span>}
-        <button style={{ ...styles.btn, ...(saving ? styles.btnOff : {}) }} onClick={save} disabled={saving}>
-          {saving ? t.dcSaving : t.dcRecurringSave}
-        </button>
-      </div>
-    </div>
-  );
-}
+// carryover: force the flag (true for recurring rows loaded from the template); else honor
+// the row's own flag. Save keeps the flag so the server can split recurring vs one-off.
+const toEditRows = (rows, carryover = false) => (rows || []).map(i => ({ text: i.text, kind: i.kind || 'check', carryover: i.carryover === true || carryover }));
+const toSaveRows = rows => rows.filter(it => it.text.trim()).map(it => ({ text: it.text.trim(), kind: it.kind || 'check', carryover: !!it.carryover }));
 
 // One prepared day in the queue — inline reschedule / edit-items / reorder / delete.
-function QueueRow({ day, t, toast, first, last, onChanged }) {
+function QueueRow({ day, t, toast, first, last, onChanged, recurring }) {
   const [editing, setEditing] = useState(null); // 'items' | 'when' | null
   const [itemsArr, setItemsArr] = useState([]);
   const [when, setWhen] = useState({ schedule_type: day.schedule_type, scheduled_date: day.scheduled_date || localToday(), ordinal_target: day.ordinal_target || 1 });
@@ -94,7 +155,8 @@ function QueueRow({ day, t, toast, first, last, onChanged }) {
   const openItems = async () => {
     try {
       const r = await api.get(`/daily-checklist/days/${day.id}`);
-      setItemsArr(toEditRows(r.data.items));
+      // Show the project's recurring items (carryover) above this day's own one-offs.
+      setItemsArr([...(recurring || []), ...toEditRows(r.data.items, false)]);
       setEditing('items');
     } catch { toast(t.dcLoadFailed, 'error'); }
   };
@@ -155,7 +217,7 @@ function QueueRow({ day, t, toast, first, last, onChanged }) {
       )}
       {editing === 'items' && (
         <div style={styles.editBox}>
-          <ItemListEditor items={itemsArr} onChange={setItemsArr} t={t} />
+          <ItemListEditor items={itemsArr} onChange={setItemsArr} t={t} toast={toast} />
           <div style={styles.rowEnd}>
             <button style={styles.linkBtnSm} onClick={() => setEditing(null)}>{t.dcCancel}</button>
             <button style={styles.btn} onClick={saveItems}>{t.dcSavePlan}</button>
@@ -168,18 +230,31 @@ function QueueRow({ day, t, toast, first, last, onChanged }) {
 
 function DayManager({ projectId, t, toast, onQueueChanged }) {
   const [queue, setQueue] = useState(null);
-  const [form, setForm] = useState({ schedule_type: 'calendar', scheduled_date: localToday(), ordinal_target: 1, name: '', items: [] });
+  const [recurring, setRecurring] = useState([]); // recurring template as carryover rows
+  const [form, setForm] = useState({ schedule_type: 'calendar', scheduled_date: localToday(), ordinal_target: 1, name: '', items: null });
   const [saving, setSaving] = useState(false);
 
+  // Load the queue AND the recurring template (shown as carryover rows). Returns the fresh
+  // recurring rows so callers can reset the form to them.
   const load = useCallback(async () => {
-    try { const r = await api.get(`/daily-checklist/projects/${projectId}/queue`); setQueue(r.data.days || []); }
-    catch { toast(t.dcQueueLoadFailed, 'error'); setQueue([]); }
+    try {
+      const [q, rec] = await Promise.all([
+        api.get(`/daily-checklist/projects/${projectId}/queue`),
+        api.get(`/daily-checklist/projects/${projectId}/recurring`),
+      ]);
+      setQueue(q.data.days || []);
+      const recRows = toEditRows(rec.data.items, true);
+      setRecurring(recRows);
+      // Seed the prepare form with recurring rows the first time (before the user edits it).
+      setForm(f => (f.items === null ? { ...f, items: recRows } : f));
+      return recRows;
+    } catch { toast(t.dcQueueLoadFailed, 'error'); setQueue([]); return []; }
   }, [projectId, t, toast]);
   useEffect(() => { load(); }, [load]); // mount only — does NOT touch the parent
 
-  // After a mutation, reload the queue AND tell the parent to refresh the active view
-  // (an edit may have merged items onto the running day).
-  const refresh = useCallback(async () => { await load(); onQueueChanged?.(); }, [load, onQueueChanged]);
+  // After a mutation, reload AND tell the parent to refresh the active view (an edit may
+  // have merged items onto the running day).
+  const refresh = useCallback(async () => { const r = await load(); onQueueChanged?.(); return r; }, [load, onQueueChanged]);
 
   const create = async () => {
     setSaving(true);
@@ -187,12 +262,12 @@ function DayManager({ projectId, t, toast, onQueueChanged }) {
       schedule_type: form.schedule_type,
       ...(form.schedule_type === 'calendar' ? { scheduled_date: form.scheduled_date } : { ordinal_target: Number(form.ordinal_target) }),
       name: form.name.trim() || undefined,
-      items: toSaveRows(form.items),
+      items: toSaveRows(form.items || []),
     };
     try {
       await api.post(`/daily-checklist/projects/${projectId}/days`, body);
-      setForm(f => ({ ...f, name: '', items: [] }));
-      await refresh();
+      const recRows = await refresh();               // reload; recurring may have changed
+      setForm(f => ({ ...f, name: '', items: recRows })); // reset to just the recurring rows
     } catch { toast(t.dcPrepareFailed, 'error'); }
     finally { setSaving(false); }
   };
@@ -224,7 +299,7 @@ function DayManager({ projectId, t, toast, onQueueChanged }) {
         </div>
         <input style={styles.addInput} value={form.name} placeholder={t.dcDayNamePlaceholder} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
       </div>
-      <ItemListEditor items={form.items} onChange={items => setForm(f => ({ ...f, items }))} t={t} />
+      <ItemListEditor items={form.items || []} onChange={items => setForm(f => ({ ...f, items }))} t={t} toast={toast} />
       <div style={styles.rowEnd}>
         <button style={{ ...styles.btn, ...(saving ? styles.btnOff : {}) }} onClick={create} disabled={saving}>{t.dcCreateDay}</button>
       </div>
@@ -234,7 +309,7 @@ function DayManager({ projectId, t, toast, onQueueChanged }) {
         : queue.length === 0 ? <p style={styles.empty}>{t.dcQueueEmpty}</p>
           : <ul style={styles.queueList}>
             {queue.map((d, i) => (
-              <QueueRow key={d.id} day={d} t={t} toast={toast} first={i === 0} last={i === queue.length - 1} onChanged={onChanged} />
+              <QueueRow key={d.id} day={d} t={t} toast={toast} first={i === 0} last={i === queue.length - 1} onChanged={onChanged} recurring={recurring} />
             ))}
           </ul>}
     </div>
@@ -247,7 +322,6 @@ export default function DailyChecklist({ projects = [], settings = null, loading
   const toast = useToast();
   const canStart = usePerm('daily_checklist_start_day');
   const canCheck = usePerm('daily_checklist_check_items');
-  const canManageRecurring = usePerm('daily_checklist_manage_recurring');
   const canComplete = usePerm('daily_checklist_complete_day');
   const canSchedule = usePerm('daily_checklist_schedule_days');
   const canManageSettings = usePerm('manage_settings');
@@ -377,7 +451,6 @@ export default function DailyChecklist({ projects = [], settings = null, loading
           {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <span style={styles.headActions}>
-          {canManageRecurring && <button style={styles.linkBtn} onClick={() => setPanel(p => p === 'recurring' ? null : 'recurring')}>{panel === 'recurring' ? '▾' : '▸'} {t.dcManageRecurring}</button>}
           {canSchedule && <button style={styles.linkBtn} onClick={() => setPanel(p => p === 'manager' ? null : 'manager')}>{panel === 'manager' ? '▾' : '▸'} {t.dcDayManager}</button>}
         </span>
       </div>
@@ -390,7 +463,6 @@ export default function DailyChecklist({ projects = [], settings = null, loading
         </label>
       )}
 
-      {canManageRecurring && panel === 'recurring' && projectId && <RecurringEditor key={`r${projectId}`} projectId={projectId} t={t} toast={toast} />}
       {canSchedule && panel === 'manager' && projectId && <DayManager key={`m${projectId}`} projectId={projectId} t={t} toast={toast} onQueueChanged={refreshActive} />}
 
       {conflict ? (
@@ -491,9 +563,20 @@ const styles = {
   textarea: { width: '100%', boxSizing: 'border-box', borderRadius: 8, border: '1px solid #d1d5db', padding: 10, fontSize: 14, fontFamily: 'inherit', resize: 'vertical' },
   // Structured item editor
   editorList: { display: 'flex', flexDirection: 'column', gap: 6 },
-  editorRow: { display: 'flex', alignItems: 'center', gap: 6 },
+  editorRow: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', padding: '2px 4px', borderRadius: 7 },
+  editorRowSel: { background: '#eef2ff', boxShadow: 'inset 0 0 0 1px #c7d2fe' },
+  dropLine: { height: 2, background: '#2563eb', borderRadius: 2, margin: '1px 2px', pointerEvents: 'none' },
+  dragHandle: { background: 'none', border: 'none', color: '#9ca3af', cursor: 'grab', fontSize: 15, lineHeight: 1, padding: '2px 4px', letterSpacing: '-2px', userSelect: 'none' },
+  menuScrim: { position: 'fixed', inset: 0, zIndex: 3000 },
+  ctxMenu: { position: 'fixed', zIndex: 3001, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.16)', padding: 4, minWidth: 130, display: 'flex', flexDirection: 'column' },
+  ctxItem: { background: 'none', border: 'none', textAlign: 'left', padding: '7px 10px', borderRadius: 6, fontSize: 13, color: '#374151', cursor: 'pointer' },
+  ctxItemOff: { color: '#9ca3af', cursor: 'not-allowed' },
   kindSelect: { padding: '6px 8px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 13, background: '#fff' },
-  editorInput: { flex: 1, padding: '7px 10px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 14 },
+  editorInput: { flex: 1, minWidth: 100, padding: '7px 10px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 14 },
+  // Carryover toggle button — grayed out when off, accent-colored when on.
+  carryBtn: { background: '#f3f4f6', color: '#9ca3af', border: '1px solid #e5e7eb', borderRadius: 8, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' },
+  carryBtnOn: { background: '#eef2ff', color: '#2563eb', borderColor: '#c7d2fe' },
+  editorRemoveBtn: { background: '#fff', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 8, padding: '4px 11px', fontSize: 16, fontWeight: 700, lineHeight: 1, cursor: 'pointer' },
   editorAdd: { display: 'flex', gap: 8, marginTop: 4 },
   addItemBtn: { background: '#eef2ff', color: '#2563eb', border: '1px solid #c7d2fe', borderRadius: 8, padding: '6px 12px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   // Text-field item in the active day

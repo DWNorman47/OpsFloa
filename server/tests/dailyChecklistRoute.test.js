@@ -269,6 +269,38 @@ describe('day-plan management', () => {
     expect(res.body.day.id).toBe(77);
   });
 
+  test('carryover rows go to the recurring template; the rest stay on the day', async () => {
+    const recurringInserts = [], dayInserts = [];
+    const client = {
+      query: jest.fn(async (sql, params) => {
+        if (/SELECT 1 FROM projects/.test(sql)) return { rowCount: 1, rows: [{}] };
+        if (/^\s*(BEGIN|COMMIT|ROLLBACK)/.test(sql)) return {};
+        if (/DELETE FROM daily_checklist_recurring_items/.test(sql)) return {};
+        if (/INSERT INTO daily_checklist_recurring_items/.test(sql)) { recurringInserts.push(params[2]); return {}; }
+        if (/status = 'active'/.test(sql) && /day_number/.test(sql)) return { rows: [] }; // no active day
+        if (/MAX\(queue_order\)/.test(sql)) return { rows: [{ n: 1 }] };
+        if (/INSERT INTO daily_checklists/.test(sql)) return { rows: [{ id: 77 }] };
+        if (/INSERT INTO daily_checklist_items/.test(sql)) { dayInserts.push(params[1]); return { rows: [] }; }
+        if (/SELECT id, text, checked/.test(sql)) return { rows: [] };
+        return { rows: [] };
+      }),
+      release: jest.fn(),
+    };
+    pool.connect.mockResolvedValue(client);
+
+    const res = await request(makeApp())
+      .post('/api/daily-checklist/projects/7/days')
+      .send({ schedule_type: 'ordinal', ordinal_target: 3, items: [
+        { text: 'Safety walk', carryover: true },
+        { text: 'Fuel check', carryover: true },
+        { text: 'Pour footings', carryover: false },
+      ] });
+
+    expect(res.status).toBe(201);
+    expect(recurringInserts).toEqual(['Safety walk', 'Fuel check']); // carryover → recurring template
+    expect(dayInserts).toEqual(['Pour footings']);                   // one-off → this day only
+  });
+
   test('POST /days rejects a calendar plan with no date', async () => {
     const res = await request(makeApp())
       .post('/api/daily-checklist/projects/7/days')

@@ -427,12 +427,27 @@ function normalizeSchedule(body) {
   }
   return { error: 'schedule_type must be calendar or ordinal' };
 }
-// Parse a template/plan item list into { text, kind } rows (blank-text rows dropped).
+// Parse a template/plan item list into { text, kind, carryover } rows (blank-text dropped).
+// `carryover` marks a row as recurring — it belongs to the project's recurring template
+// rather than the one prepared day.
 const planItems = body => (Array.isArray(body?.items) ? body.items : [])
-  .map(it => ({ text: cleanText(it?.text), kind: cleanKind(it?.kind) }))
+  .map(it => ({ text: cleanText(it?.text), kind: cleanKind(it?.kind), carryover: it?.carryover === true }))
   .filter(it => it.text)
-  .map(it => ({ text: it.text.slice(0, MAX_TEXT), kind: it.kind }))
+  .map(it => ({ text: it.text.slice(0, MAX_TEXT), kind: it.kind, carryover: it.carryover }))
   .slice(0, 200);
+
+// Replace the project's recurring template with `items` (the carryover rows from a day
+// form). Full replace — the form always pre-loads the current recurring set, so what it
+// sends back IS the intended template.
+async function replaceRecurring(client, companyId, projectId, items, userId) {
+  await client.query('DELETE FROM daily_checklist_recurring_items WHERE company_id = $1 AND project_id = $2', [companyId, projectId]);
+  for (let i = 0; i < items.length; i++) {
+    await client.query(
+      'INSERT INTO daily_checklist_recurring_items (company_id, project_id, text, kind, order_index, active, created_by) VALUES ($1, $2, $3, $4, $5, true, $6)',
+      [companyId, projectId, items[i].text, items[i].kind, i, userId]
+    );
+  }
+}
 
 // The active day IF the given schedule targets it — an ordinal plan whose number matches the
 // active day's day_number, or a calendar plan dated the same as its work_date. Preparing
@@ -500,6 +515,8 @@ router.post('/projects/:projectId/days', requirePerm('daily_checklist_schedule_d
   const sched = normalizeSchedule(req.body);
   if (sched.error) return res.status(400).json({ error: sched.error });
   const items = planItems(req.body);
+  const recurring = items.filter(it => it.carryover);   // → the recurring template
+  const dayItems = items.filter(it => !it.carryover);   // → this one prepared day
   const name = cleanText(req.body?.name).slice(0, 200) || null;
   const notes = cleanText(req.body?.notes).slice(0, 2000) || null;
   const client = await pool.connect();
@@ -509,9 +526,11 @@ router.post('/projects/:projectId/days', requirePerm('daily_checklist_schedule_d
       return res.status(404).json({ error: 'Project not found' });
     }
     await client.query('BEGIN');
+    await replaceRecurring(client, companyId, projectId, recurring, req.user.id);
 
     // If this plan targets the day already running, add its items straight to that day
-    // instead of queuing a plan that could never activate.
+    // (both the one-offs and the just-set recurring rows) instead of queuing a plan that
+    // could never activate.
     const activeMatch = await activeDayMatching(client, companyId, projectId, sched);
     if (activeMatch) {
       await appendItemsToDay(client, activeMatch.id, items);
@@ -529,8 +548,9 @@ router.post('/projects/:projectId/days', requirePerm('daily_checklist_schedule_d
       [companyId, projectId, sched.schedule_type, sched.scheduled_date, sched.ordinal_target, q.rows[0].n, name, notes, req.user.id]
     );
     const day = ins.rows[0];
-    for (let i = 0; i < items.length; i++) {
-      await client.query("INSERT INTO daily_checklist_items (daily_checklist_id, text, kind, order_index, source) VALUES ($1, $2, $3, $4, 'scheduled')", [day.id, items[i].text, items[i].kind, i]);
+    // Only the day-specific rows are stored on the plan; recurring rows apply when it starts.
+    for (let i = 0; i < dayItems.length; i++) {
+      await client.query("INSERT INTO daily_checklist_items (daily_checklist_id, text, kind, order_index, source) VALUES ($1, $2, $3, $4, 'scheduled')", [day.id, dayItems[i].text, dayItems[i].kind, i]);
     }
     await client.query('COMMIT');
     res.status(201).json({ day, items: await loadItems(client, day.id) });
@@ -576,15 +596,18 @@ router.patch('/days/:dayId', requirePerm('daily_checklist_schedule_days'), async
 // PUT /days/:dayId/plan-items — replace a pending/paused plan's items.
 router.put('/days/:dayId/plan-items', requirePerm('daily_checklist_schedule_days'), async (req, res) => {
   const items = planItems(req.body);
+  const recurring = items.filter(it => it.carryover);
+  const dayItems = items.filter(it => !it.carryover);
   const client = await pool.connect();
   try {
     const day = await loadDay(client, req.params.dayId, req.user.company_id);
     if (!day) { client.release(); return res.status(404).json({ error: 'Day not found' }); }
     if (!isPlannable(day)) { client.release(); return res.status(409).json({ error: 'Only a pending or paused day can be edited' }); }
     await client.query('BEGIN');
+    await replaceRecurring(client, req.user.company_id, day.project_id, recurring, req.user.id);
     await client.query('DELETE FROM daily_checklist_items WHERE daily_checklist_id = $1', [day.id]);
-    for (let i = 0; i < items.length; i++) {
-      await client.query("INSERT INTO daily_checklist_items (daily_checklist_id, text, kind, order_index, source) VALUES ($1, $2, $3, $4, 'scheduled')", [day.id, items[i].text, items[i].kind, i]);
+    for (let i = 0; i < dayItems.length; i++) {
+      await client.query("INSERT INTO daily_checklist_items (daily_checklist_id, text, kind, order_index, source) VALUES ($1, $2, $3, $4, 'scheduled')", [day.id, dayItems[i].text, dayItems[i].kind, i]);
     }
     // If this plan targets the day that's already running, mirror its items onto it too.
     const activeMatch = await activeDayMatching(client, req.user.company_id, day.project_id, day);
