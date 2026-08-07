@@ -17,11 +17,13 @@ import { SkeletonList } from './Skeleton';
 // Local YYYY-MM-DD — the worker's "today", so the day is dated in their timezone.
 const localToday = () => new Date().toLocaleDateString('en-CA');
 
-// Structured editor for a template/plan item list: each row is a checkbox or a text field.
-// `items` is [{ text, kind }]; onChange gets the next array.
+// Structured editor for a template/plan item list. Each row is a checkbox or a text field,
+// and can be marked "carryover" — a carryover row is recurring (it belongs to the project's
+// standing template and shows up every day), vs a one-off for the day being prepared.
+// `items` is [{ text, kind, carryover }]; onChange gets the next array.
 function ItemListEditor({ items, onChange, t }) {
   const set = (i, patch) => onChange(items.map((it, j) => (j === i ? { ...it, ...patch } : it)));
-  const add = kind => onChange([...items, { text: '', kind }]);
+  const add = kind => onChange([...items, { text: '', kind, carryover: false }]);
   const remove = i => onChange(items.filter((_, j) => j !== i));
   return (
     <div style={styles.editorList}>
@@ -34,6 +36,10 @@ function ItemListEditor({ items, onChange, t }) {
           <input style={styles.editorInput} value={it.text}
             placeholder={it.kind === 'text' ? t.dcTextLabelPlaceholder : t.dcItemPlaceholder}
             onChange={e => set(i, { text: e.target.value })} />
+          <label style={styles.carryLabel} title={t.dcCarryoverHint}>
+            <input type="checkbox" checked={!!it.carryover} onChange={e => set(i, { carryover: e.target.checked })} />
+            {t.dcCarryover}
+          </label>
           <button style={styles.removeBtn} onClick={() => remove(i)} aria-label={t.dcRemove}>×</button>
         </div>
       ))}
@@ -44,49 +50,13 @@ function ItemListEditor({ items, onChange, t }) {
     </div>
   );
 }
-const toEditRows = rows => (rows || []).map(i => ({ text: i.text, kind: i.kind || 'check' }));
-const toSaveRows = rows => rows.filter(it => it.text.trim()).map(it => ({ text: it.text.trim(), kind: it.kind || 'check' }));
-
-function RecurringEditor({ projectId, t, toast }) {
-  const [items, setItems] = useState(null); // [{ text, kind }] | null while loading
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    setSaved(false);
-    api.get(`/daily-checklist/projects/${projectId}/recurring`)
-      .then(r => { if (alive) setItems(toEditRows(r.data.items)); })
-      .catch(() => { if (alive) { toast(t.dcLoadFailed, 'error'); setItems([]); } });
-    return () => { alive = false; };
-  }, [projectId, t, toast]);
-
-  const save = async () => {
-    setSaving(true); setSaved(false);
-    try {
-      await api.put(`/daily-checklist/projects/${projectId}/recurring`, { items: toSaveRows(items) });
-      setSaved(true);
-    } catch { toast(t.dcRecurringSaveFailed, 'error'); }
-    finally { setSaving(false); }
-  };
-
-  if (items === null) return <div style={styles.panel}><SkeletonList rows={3} /></div>;
-  return (
-    <div style={styles.panel}>
-      <p style={styles.help}>{t.dcRecurringHelp}</p>
-      <ItemListEditor items={items} onChange={v => { setItems(v); setSaved(false); }} t={t} />
-      <div style={styles.rowEnd}>
-        {saved && <span style={styles.savedMsg}>{t.dcRecurringSaved}</span>}
-        <button style={{ ...styles.btn, ...(saving ? styles.btnOff : {}) }} onClick={save} disabled={saving}>
-          {saving ? t.dcSaving : t.dcRecurringSave}
-        </button>
-      </div>
-    </div>
-  );
-}
+// carryover: force the flag (true for recurring rows loaded from the template); else honor
+// the row's own flag. Save keeps the flag so the server can split recurring vs one-off.
+const toEditRows = (rows, carryover = false) => (rows || []).map(i => ({ text: i.text, kind: i.kind || 'check', carryover: i.carryover === true || carryover }));
+const toSaveRows = rows => rows.filter(it => it.text.trim()).map(it => ({ text: it.text.trim(), kind: it.kind || 'check', carryover: !!it.carryover }));
 
 // One prepared day in the queue — inline reschedule / edit-items / reorder / delete.
-function QueueRow({ day, t, toast, first, last, onChanged }) {
+function QueueRow({ day, t, toast, first, last, onChanged, recurring }) {
   const [editing, setEditing] = useState(null); // 'items' | 'when' | null
   const [itemsArr, setItemsArr] = useState([]);
   const [when, setWhen] = useState({ schedule_type: day.schedule_type, scheduled_date: day.scheduled_date || localToday(), ordinal_target: day.ordinal_target || 1 });
@@ -94,7 +64,8 @@ function QueueRow({ day, t, toast, first, last, onChanged }) {
   const openItems = async () => {
     try {
       const r = await api.get(`/daily-checklist/days/${day.id}`);
-      setItemsArr(toEditRows(r.data.items));
+      // Show the project's recurring items (carryover) above this day's own one-offs.
+      setItemsArr([...(recurring || []), ...toEditRows(r.data.items, false)]);
       setEditing('items');
     } catch { toast(t.dcLoadFailed, 'error'); }
   };
@@ -168,18 +139,31 @@ function QueueRow({ day, t, toast, first, last, onChanged }) {
 
 function DayManager({ projectId, t, toast, onQueueChanged }) {
   const [queue, setQueue] = useState(null);
-  const [form, setForm] = useState({ schedule_type: 'calendar', scheduled_date: localToday(), ordinal_target: 1, name: '', items: [] });
+  const [recurring, setRecurring] = useState([]); // recurring template as carryover rows
+  const [form, setForm] = useState({ schedule_type: 'calendar', scheduled_date: localToday(), ordinal_target: 1, name: '', items: null });
   const [saving, setSaving] = useState(false);
 
+  // Load the queue AND the recurring template (shown as carryover rows). Returns the fresh
+  // recurring rows so callers can reset the form to them.
   const load = useCallback(async () => {
-    try { const r = await api.get(`/daily-checklist/projects/${projectId}/queue`); setQueue(r.data.days || []); }
-    catch { toast(t.dcQueueLoadFailed, 'error'); setQueue([]); }
+    try {
+      const [q, rec] = await Promise.all([
+        api.get(`/daily-checklist/projects/${projectId}/queue`),
+        api.get(`/daily-checklist/projects/${projectId}/recurring`),
+      ]);
+      setQueue(q.data.days || []);
+      const recRows = toEditRows(rec.data.items, true);
+      setRecurring(recRows);
+      // Seed the prepare form with recurring rows the first time (before the user edits it).
+      setForm(f => (f.items === null ? { ...f, items: recRows } : f));
+      return recRows;
+    } catch { toast(t.dcQueueLoadFailed, 'error'); setQueue([]); return []; }
   }, [projectId, t, toast]);
   useEffect(() => { load(); }, [load]); // mount only — does NOT touch the parent
 
-  // After a mutation, reload the queue AND tell the parent to refresh the active view
-  // (an edit may have merged items onto the running day).
-  const refresh = useCallback(async () => { await load(); onQueueChanged?.(); }, [load, onQueueChanged]);
+  // After a mutation, reload AND tell the parent to refresh the active view (an edit may
+  // have merged items onto the running day).
+  const refresh = useCallback(async () => { const r = await load(); onQueueChanged?.(); return r; }, [load, onQueueChanged]);
 
   const create = async () => {
     setSaving(true);
@@ -187,12 +171,12 @@ function DayManager({ projectId, t, toast, onQueueChanged }) {
       schedule_type: form.schedule_type,
       ...(form.schedule_type === 'calendar' ? { scheduled_date: form.scheduled_date } : { ordinal_target: Number(form.ordinal_target) }),
       name: form.name.trim() || undefined,
-      items: toSaveRows(form.items),
+      items: toSaveRows(form.items || []),
     };
     try {
       await api.post(`/daily-checklist/projects/${projectId}/days`, body);
-      setForm(f => ({ ...f, name: '', items: [] }));
-      await refresh();
+      const recRows = await refresh();               // reload; recurring may have changed
+      setForm(f => ({ ...f, name: '', items: recRows })); // reset to just the recurring rows
     } catch { toast(t.dcPrepareFailed, 'error'); }
     finally { setSaving(false); }
   };
@@ -224,7 +208,7 @@ function DayManager({ projectId, t, toast, onQueueChanged }) {
         </div>
         <input style={styles.addInput} value={form.name} placeholder={t.dcDayNamePlaceholder} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
       </div>
-      <ItemListEditor items={form.items} onChange={items => setForm(f => ({ ...f, items }))} t={t} />
+      <ItemListEditor items={form.items || []} onChange={items => setForm(f => ({ ...f, items }))} t={t} />
       <div style={styles.rowEnd}>
         <button style={{ ...styles.btn, ...(saving ? styles.btnOff : {}) }} onClick={create} disabled={saving}>{t.dcCreateDay}</button>
       </div>
@@ -234,7 +218,7 @@ function DayManager({ projectId, t, toast, onQueueChanged }) {
         : queue.length === 0 ? <p style={styles.empty}>{t.dcQueueEmpty}</p>
           : <ul style={styles.queueList}>
             {queue.map((d, i) => (
-              <QueueRow key={d.id} day={d} t={t} toast={toast} first={i === 0} last={i === queue.length - 1} onChanged={onChanged} />
+              <QueueRow key={d.id} day={d} t={t} toast={toast} first={i === 0} last={i === queue.length - 1} onChanged={onChanged} recurring={recurring} />
             ))}
           </ul>}
     </div>
@@ -247,7 +231,6 @@ export default function DailyChecklist({ projects = [], settings = null, loading
   const toast = useToast();
   const canStart = usePerm('daily_checklist_start_day');
   const canCheck = usePerm('daily_checklist_check_items');
-  const canManageRecurring = usePerm('daily_checklist_manage_recurring');
   const canComplete = usePerm('daily_checklist_complete_day');
   const canSchedule = usePerm('daily_checklist_schedule_days');
   const canManageSettings = usePerm('manage_settings');
@@ -377,7 +360,6 @@ export default function DailyChecklist({ projects = [], settings = null, loading
           {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <span style={styles.headActions}>
-          {canManageRecurring && <button style={styles.linkBtn} onClick={() => setPanel(p => p === 'recurring' ? null : 'recurring')}>{panel === 'recurring' ? '▾' : '▸'} {t.dcManageRecurring}</button>}
           {canSchedule && <button style={styles.linkBtn} onClick={() => setPanel(p => p === 'manager' ? null : 'manager')}>{panel === 'manager' ? '▾' : '▸'} {t.dcDayManager}</button>}
         </span>
       </div>
@@ -390,7 +372,6 @@ export default function DailyChecklist({ projects = [], settings = null, loading
         </label>
       )}
 
-      {canManageRecurring && panel === 'recurring' && projectId && <RecurringEditor key={`r${projectId}`} projectId={projectId} t={t} toast={toast} />}
       {canSchedule && panel === 'manager' && projectId && <DayManager key={`m${projectId}`} projectId={projectId} t={t} toast={toast} onQueueChanged={refreshActive} />}
 
       {conflict ? (
@@ -491,9 +472,10 @@ const styles = {
   textarea: { width: '100%', boxSizing: 'border-box', borderRadius: 8, border: '1px solid #d1d5db', padding: 10, fontSize: 14, fontFamily: 'inherit', resize: 'vertical' },
   // Structured item editor
   editorList: { display: 'flex', flexDirection: 'column', gap: 6 },
-  editorRow: { display: 'flex', alignItems: 'center', gap: 6 },
+  editorRow: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   kindSelect: { padding: '6px 8px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 13, background: '#fff' },
-  editorInput: { flex: 1, padding: '7px 10px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 14 },
+  editorInput: { flex: 1, minWidth: 100, padding: '7px 10px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 14 },
+  carryLabel: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#6b7280', whiteSpace: 'nowrap', cursor: 'pointer' },
   editorAdd: { display: 'flex', gap: 8, marginTop: 4 },
   addItemBtn: { background: '#eef2ff', color: '#2563eb', border: '1px solid #c7d2fe', borderRadius: 8, padding: '6px 12px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   // Text-field item in the active day
