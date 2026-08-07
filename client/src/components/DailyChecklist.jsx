@@ -36,11 +36,12 @@ function ItemListEditor({ items, onChange, t }) {
           <input style={styles.editorInput} value={it.text}
             placeholder={it.kind === 'text' ? t.dcTextLabelPlaceholder : t.dcItemPlaceholder}
             onChange={e => set(i, { text: e.target.value })} />
-          <label style={styles.carryLabel} title={t.dcCarryoverHint}>
-            <input type="checkbox" checked={!!it.carryover} onChange={e => set(i, { carryover: e.target.checked })} />
+          <button type="button" title={t.dcCarryoverHint} aria-pressed={!!it.carryover}
+            style={{ ...styles.carryBtn, ...(it.carryover ? styles.carryBtnOn : {}) }}
+            onClick={() => set(i, { carryover: !it.carryover })}>
             {t.dcCarryover}
-          </label>
-          <button style={styles.removeBtn} onClick={() => remove(i)} aria-label={t.dcRemove}>×</button>
+          </button>
+          <button type="button" style={styles.editorRemoveBtn} onClick={() => remove(i)}>{t.dcRemove}</button>
         </div>
       ))}
       <div style={styles.editorAdd}>
@@ -475,7 +476,10 @@ const styles = {
   editorRow: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   kindSelect: { padding: '6px 8px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 13, background: '#fff' },
   editorInput: { flex: 1, minWidth: 100, padding: '7px 10px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 14 },
-  carryLabel: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#6b7280', whiteSpace: 'nowrap', cursor: 'pointer' },
+  // Carryover toggle button — grayed out when off, accent-colored when on.
+  carryBtn: { background: '#f3f4f6', color: '#9ca3af', border: '1px solid #e5e7eb', borderRadius: 8, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' },
+  carryBtnOn: { background: '#eef2ff', color: '#2563eb', borderColor: '#c7d2fe' },
+  editorRemoveBtn: { background: '#fff', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 8, padding: '5px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' },
   editorAdd: { display: 'flex', gap: 8, marginTop: 4 },
   addItemBtn: { background: '#eef2ff', color: '#2563eb', border: '1px solid #c7d2fe', borderRadius: 8, padding: '6px 12px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   // Text-field item in the active day
