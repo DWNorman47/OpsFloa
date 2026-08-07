@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../api';
 import { useT } from '../hooks/useT';
 import { useToast } from '../contexts/ToastContext';
@@ -17,18 +17,72 @@ import { SkeletonList } from './Skeleton';
 // Local YYYY-MM-DD — the worker's "today", so the day is dated in their timezone.
 const localToday = () => new Date().toLocaleDateString('en-CA');
 
+// Cross-tab, same-origin clipboard for checklist rows (structured), so rows copied in one
+// project's day manager paste into another's — even the impersonate new tab. The system
+// clipboard gets the plain-text labels too, for pasting elsewhere.
+const ROW_CLIP_KEY = 'opsfloa_dc_rows';
+const readRowClip = () => { try { const r = JSON.parse(localStorage.getItem(ROW_CLIP_KEY) || 'null'); return Array.isArray(r) ? r : []; } catch { return []; } };
+
 // Structured editor for a template/plan item list. Each row is a checkbox or a text field,
-// and can be marked "carryover" — a carryover row is recurring (it belongs to the project's
-// standing template and shows up every day), vs a one-off for the day being prepared.
+// and can be marked "carryover" — a carryover row is recurring (belongs to the project's
+// standing template, shows every day) vs a one-off for the day being prepared. Rows can be
+// dragged to reorder, clicked (on the grip) to select, and copied/pasted across projects.
 // `items` is [{ text, kind, carryover }]; onChange gets the next array.
-function ItemListEditor({ items, onChange, t }) {
+function ItemListEditor({ items, onChange, t, toast }) {
+  const [selected, setSelected] = useState(() => new Set()); // selected row indices
+  const [menu, setMenu] = useState(null); // { x, y } context menu position
+  const dragFrom = useRef(null);
+
   const set = (i, patch) => onChange(items.map((it, j) => (j === i ? { ...it, ...patch } : it)));
   const add = kind => onChange([...items, { text: '', kind, carryover: false }]);
-  const remove = i => onChange(items.filter((_, j) => j !== i));
+  const remove = i => { onChange(items.filter((_, j) => j !== i)); setSelected(new Set()); };
+  const toggleSelect = i => setSelected(s => { const n = new Set(s); if (n.has(i)) n.delete(i); else n.add(i); return n; });
+
+  const move = (from, to) => {
+    if (from == null || to == null || from === to) return;
+    const next = items.slice();
+    const [m] = next.splice(from, 1);
+    next.splice(to > from ? to - 1 : to, 0, m);
+    onChange(next);
+    setSelected(new Set()); // indices shifted
+  };
+
+  const copySelected = () => {
+    const rows = [...selected].sort((a, b) => a - b).map(i => items[i]).filter(it => it && it.text.trim())
+      .map(it => ({ text: it.text.trim(), kind: it.kind || 'check', carryover: !!it.carryover }));
+    if (!rows.length) return;
+    try { localStorage.setItem(ROW_CLIP_KEY, JSON.stringify(rows)); } catch { /* private mode */ }
+    try { navigator.clipboard?.writeText(rows.map(r => r.text).join('\n')); } catch { /* ignore */ }
+    toast(t.dcCopied.replace('{n}', rows.length), 'success');
+    setMenu(null);
+  };
+  const pasteRows = () => {
+    const rows = readRowClip();
+    if (!rows.length) { toast(t.dcNothingToPaste, 'error'); setMenu(null); return; }
+    onChange([...items, ...rows.map(r => ({ text: String(r.text || '').slice(0, 500), kind: r.kind === 'text' ? 'text' : 'check', carryover: !!r.carryover }))]);
+    toast(t.dcPasted.replace('{n}', rows.length), 'success');
+    setMenu(null);
+  };
+
+  // Ctrl/Cmd+C copies the selection, Ctrl/Cmd+V pastes — but only when the focus isn't in a
+  // text field (so normal text copy/paste still works while editing a row).
+  const onKeyDown = e => {
+    const editing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+    if (editing || !(e.ctrlKey || e.metaKey)) return;
+    if ((e.key === 'c' || e.key === 'C') && selected.size) { e.preventDefault(); copySelected(); }
+    else if (e.key === 'v' || e.key === 'V') { e.preventDefault(); pasteRows(); }
+  };
+
   return (
-    <div style={styles.editorList}>
+    <div style={styles.editorList} tabIndex={0} onKeyDown={onKeyDown}>
       {items.map((it, i) => (
-        <div key={i} style={styles.editorRow}>
+        <div key={i} style={{ ...styles.editorRow, ...(selected.has(i) ? styles.editorRowSel : {}) }}
+          onDragOver={e => e.preventDefault()}
+          onDrop={() => move(dragFrom.current, i)}
+          onContextMenu={e => { e.preventDefault(); if (!selected.has(i)) toggleSelect(i); setMenu({ x: e.clientX, y: e.clientY }); }}>
+          <button type="button" style={styles.dragHandle} title={t.dcRowHint} aria-pressed={selected.has(i)}
+            draggable onDragStart={() => { dragFrom.current = i; }} onDragEnd={() => { dragFrom.current = null; }}
+            onClick={() => toggleSelect(i)}>⋮⋮</button>
           <select style={styles.kindSelect} value={it.kind || 'check'} onChange={e => set(i, { kind: e.target.value })}>
             <option value="check">{t.dcKindCheck}</option>
             <option value="text">{t.dcKindText}</option>
@@ -47,7 +101,17 @@ function ItemListEditor({ items, onChange, t }) {
       <div style={styles.editorAdd}>
         <button type="button" style={styles.addItemBtn} onClick={() => add('check')}>+ {t.dcKindCheck}</button>
         <button type="button" style={styles.addItemBtn} onClick={() => add('text')}>+ {t.dcKindText}</button>
+        <button type="button" style={styles.addItemBtn} onClick={pasteRows}>{t.dcPaste}</button>
       </div>
+      {menu && (
+        <>
+          <div style={styles.menuScrim} onClick={() => setMenu(null)} onContextMenu={e => { e.preventDefault(); setMenu(null); }} />
+          <div style={{ ...styles.ctxMenu, top: menu.y, left: menu.x }}>
+            <button type="button" style={{ ...styles.ctxItem, ...(selected.size ? {} : styles.ctxItemOff) }} onClick={copySelected} disabled={!selected.size}>{t.dcCopy} ({selected.size})</button>
+            <button type="button" style={styles.ctxItem} onClick={pasteRows}>{t.dcPaste}</button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -127,7 +191,7 @@ function QueueRow({ day, t, toast, first, last, onChanged, recurring }) {
       )}
       {editing === 'items' && (
         <div style={styles.editBox}>
-          <ItemListEditor items={itemsArr} onChange={setItemsArr} t={t} />
+          <ItemListEditor items={itemsArr} onChange={setItemsArr} t={t} toast={toast} />
           <div style={styles.rowEnd}>
             <button style={styles.linkBtnSm} onClick={() => setEditing(null)}>{t.dcCancel}</button>
             <button style={styles.btn} onClick={saveItems}>{t.dcSavePlan}</button>
@@ -209,7 +273,7 @@ function DayManager({ projectId, t, toast, onQueueChanged }) {
         </div>
         <input style={styles.addInput} value={form.name} placeholder={t.dcDayNamePlaceholder} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
       </div>
-      <ItemListEditor items={form.items || []} onChange={items => setForm(f => ({ ...f, items }))} t={t} />
+      <ItemListEditor items={form.items || []} onChange={items => setForm(f => ({ ...f, items }))} t={t} toast={toast} />
       <div style={styles.rowEnd}>
         <button style={{ ...styles.btn, ...(saving ? styles.btnOff : {}) }} onClick={create} disabled={saving}>{t.dcCreateDay}</button>
       </div>
@@ -473,7 +537,13 @@ const styles = {
   textarea: { width: '100%', boxSizing: 'border-box', borderRadius: 8, border: '1px solid #d1d5db', padding: 10, fontSize: 14, fontFamily: 'inherit', resize: 'vertical' },
   // Structured item editor
   editorList: { display: 'flex', flexDirection: 'column', gap: 6 },
-  editorRow: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  editorRow: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', padding: '2px 4px', borderRadius: 7 },
+  editorRowSel: { background: '#eef2ff', boxShadow: 'inset 0 0 0 1px #c7d2fe' },
+  dragHandle: { background: 'none', border: 'none', color: '#9ca3af', cursor: 'grab', fontSize: 15, lineHeight: 1, padding: '2px 4px', letterSpacing: '-2px', userSelect: 'none' },
+  menuScrim: { position: 'fixed', inset: 0, zIndex: 3000 },
+  ctxMenu: { position: 'fixed', zIndex: 3001, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.16)', padding: 4, minWidth: 130, display: 'flex', flexDirection: 'column' },
+  ctxItem: { background: 'none', border: 'none', textAlign: 'left', padding: '7px 10px', borderRadius: 6, fontSize: 13, color: '#374151', cursor: 'pointer' },
+  ctxItemOff: { color: '#9ca3af', cursor: 'not-allowed' },
   kindSelect: { padding: '6px 8px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 13, background: '#fff' },
   editorInput: { flex: 1, minWidth: 100, padding: '7px 10px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 14 },
   // Carryover toggle button — grayed out when off, accent-colored when on.
