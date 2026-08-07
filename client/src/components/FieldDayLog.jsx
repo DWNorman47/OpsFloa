@@ -7,6 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { langToLocale } from '../utils';
 import { SkeletonList } from './Skeleton';
 import { safeLocal } from '../utils/safeStorage';
+import { useConfirm } from './ConfirmDialog';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -143,6 +144,7 @@ export default function FieldDayLog({ projects, isAdmin }) {
 
   const [lightbox, setLightbox] = useState(null); // { photos, index }
   const [deletingPhoto, setDeletingPhoto] = useState(false);
+  const { confirm, dialog } = useConfirm();
   const loadSeqRef = useRef(0);
   const projectInitializedRef = useRef(false);
 
@@ -292,7 +294,7 @@ export default function FieldDayLog({ projects, isAdmin }) {
 
   const handleDeletePhoto = async (photo) => {
     if (!photo?.id || deletingPhoto) return;
-    if (!window.confirm('Delete this image?')) return;
+    if (!await confirm({ title: t.mediaDeleteTitle, body: t.mediaDeleteBody, confirmLabel: t.mediaDeleteConfirm, tone: 'danger' })) return;
     setDeletingPhoto(true);
     setError('');
     try {
@@ -553,6 +555,7 @@ export default function FieldDayLog({ projects, isAdmin }) {
           )}
         </>
       )}
+      {dialog}
     </div>
   );
 }
@@ -620,6 +623,7 @@ const s = {
   lbNav: { display: 'flex', alignItems: 'center', gap: 20, marginTop: 16 },
   lbBtn: { background: 'rgba(255,255,255,0.15)', border: 'none', color: '#fff', fontSize: 24, width: 44, height: 44, borderRadius: '50%', cursor: 'pointer' },
   lbCount: { color: '#fff', fontSize: 13 },
-  lbCloseBtn: { position: 'absolute', top: 16, right: 16, background: 'rgba(255,255,255,0.16)', color: '#fff', border: '1px solid rgba(255,255,255,0.28)', borderRadius: 999, padding: '9px 16px', fontSize: 14, fontWeight: 800, cursor: 'pointer', lineHeight: 1 },
-  lbDeleteBtn: { position: 'absolute', top: 16, left: 16, background: 'rgba(220,38,38,0.9)', color: '#fff', border: '1px solid rgba(255,255,255,0.24)', borderRadius: 999, padding: '9px 16px', fontSize: 14, fontWeight: 800, cursor: 'pointer', lineHeight: 1 },
+  // Offset below the status bar / notch (safe-area insets) so the buttons clear the OS UI.
+  lbCloseBtn: { position: 'absolute', top: 'calc(env(safe-area-inset-top, 0px) + 16px)', right: 'calc(env(safe-area-inset-right, 0px) + 16px)', background: 'rgba(255,255,255,0.16)', color: '#fff', border: '1px solid rgba(255,255,255,0.28)', borderRadius: 999, padding: '9px 16px', fontSize: 14, fontWeight: 800, cursor: 'pointer', lineHeight: 1 },
+  lbDeleteBtn: { position: 'absolute', top: 'calc(env(safe-area-inset-top, 0px) + 16px)', left: 'calc(env(safe-area-inset-left, 0px) + 16px)', background: 'rgba(220,38,38,0.9)', color: '#fff', border: '1px solid rgba(255,255,255,0.24)', borderRadius: 999, padding: '9px 16px', fontSize: 14, fontWeight: 800, cursor: 'pointer', lineHeight: 1 },
 };
