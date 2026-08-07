@@ -31,6 +31,7 @@ const readRowClip = () => { try { const r = JSON.parse(localStorage.getItem(ROW_
 function ItemListEditor({ items, onChange, t, toast }) {
   const [selected, setSelected] = useState(() => new Set()); // selected row indices
   const [menu, setMenu] = useState(null); // { x, y } context menu position
+  const [dropAt, setDropAt] = useState(null); // insertion index shown while dragging
   const dragFrom = useRef(null);
   const anchor = useRef(null); // last plain-clicked row, for shift-click ranges
 
@@ -51,11 +52,14 @@ function ItemListEditor({ items, onChange, t, toast }) {
     }
   };
 
-  const move = (from, to) => {
-    if (from == null || to == null || from === to) return;
+  // Move the dragged row to an insertion index (0..length, i.e. "before row N").
+  const moveTo = (from, insertAt) => {
+    if (from == null || insertAt == null) return;
+    const idx = insertAt > from ? insertAt - 1 : insertAt;
+    if (idx === from) return;
     const next = items.slice();
     const [m] = next.splice(from, 1);
-    next.splice(to > from ? to - 1 : to, 0, m);
+    next.splice(idx, 0, m);
     onChange(next);
     setSelected(new Set()); anchor.current = null; // indices shifted
   };
@@ -89,13 +93,15 @@ function ItemListEditor({ items, onChange, t, toast }) {
   return (
     <div style={styles.editorList} tabIndex={0} onKeyDown={onKeyDown}>
       {items.map((it, i) => (
-        <div key={i} style={{ ...styles.editorRow, ...(selected.has(i) ? styles.editorRowSel : {}) }}
-          onDragOver={e => e.preventDefault()}
-          onDrop={() => move(dragFrom.current, i)}
-          onContextMenu={e => { e.preventDefault(); if (!selected.has(i)) toggleSelect(i); setMenu({ x: e.clientX, y: e.clientY }); }}>
-          <button type="button" style={styles.dragHandle} title={t.dcRowHint} aria-pressed={selected.has(i)}
-            draggable onDragStart={() => { dragFrom.current = i; }} onDragEnd={() => { dragFrom.current = null; }}
-            onClick={e => selectClick(e, i)}>⋮⋮</button>
+        <React.Fragment key={i}>
+          {dropAt === i && dragFrom.current != null && <div style={styles.dropLine} />}
+          <div style={{ ...styles.editorRow, ...(selected.has(i) ? styles.editorRowSel : {}) }}
+            onDragOver={e => { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setDropAt(e.clientY > r.top + r.height / 2 ? i + 1 : i); }}
+            onDrop={() => { moveTo(dragFrom.current, dropAt); setDropAt(null); }}
+            onContextMenu={e => { e.preventDefault(); if (!selected.has(i)) toggleSelect(i); setMenu({ x: e.clientX, y: e.clientY }); }}>
+            <button type="button" style={styles.dragHandle} title={t.dcRowHint} aria-pressed={selected.has(i)}
+              draggable onDragStart={() => { dragFrom.current = i; }} onDragEnd={() => { dragFrom.current = null; setDropAt(null); }}
+              onClick={e => selectClick(e, i)}>⋮⋮</button>
           <select style={styles.kindSelect} value={it.kind || 'check'} onChange={e => set(i, { kind: e.target.value })}>
             <option value="check">{t.dcKindCheck}</option>
             <option value="text">{t.dcKindText}</option>
@@ -108,10 +114,14 @@ function ItemListEditor({ items, onChange, t, toast }) {
             onClick={() => set(i, { carryover: !it.carryover })}>
             {t.dcCarryover}
           </button>
-          <button type="button" style={styles.editorRemoveBtn} onClick={() => remove(i)} aria-label={t.dcRemove}>×</button>
-        </div>
+            <button type="button" style={styles.editorRemoveBtn} onClick={() => remove(i)} aria-label={t.dcRemove}>×</button>
+          </div>
+        </React.Fragment>
       ))}
-      <div style={styles.editorAdd}>
+      {dropAt === items.length && dragFrom.current != null && <div style={styles.dropLine} />}
+      <div style={styles.editorAdd}
+        onDragOver={e => { e.preventDefault(); setDropAt(items.length); }}
+        onDrop={() => { moveTo(dragFrom.current, dropAt); setDropAt(null); }}>
         <button type="button" style={styles.addItemBtn} onClick={() => add('check')}>+ {t.dcKindCheck}</button>
         <button type="button" style={styles.addItemBtn} onClick={() => add('text')}>+ {t.dcKindText}</button>
         <button type="button" style={styles.addItemBtn} onClick={pasteRows}>{t.dcPaste}</button>
@@ -552,6 +562,7 @@ const styles = {
   editorList: { display: 'flex', flexDirection: 'column', gap: 6 },
   editorRow: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', padding: '2px 4px', borderRadius: 7 },
   editorRowSel: { background: '#eef2ff', boxShadow: 'inset 0 0 0 1px #c7d2fe' },
+  dropLine: { height: 2, background: '#2563eb', borderRadius: 2, margin: '1px 2px', pointerEvents: 'none' },
   dragHandle: { background: 'none', border: 'none', color: '#9ca3af', cursor: 'grab', fontSize: 15, lineHeight: 1, padding: '2px 4px', letterSpacing: '-2px', userSelect: 'none' },
   menuScrim: { position: 'fixed', inset: 0, zIndex: 3000 },
   ctxMenu: { position: 'fixed', zIndex: 3001, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.16)', padding: 4, minWidth: 130, display: 'flex', flexDirection: 'column' },
