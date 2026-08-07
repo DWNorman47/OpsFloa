@@ -41,7 +41,7 @@ function ItemListEditor({ items, onChange, t }) {
             onClick={() => set(i, { carryover: !it.carryover })}>
             {t.dcCarryover}
           </button>
-          <button type="button" style={styles.editorRemoveBtn} onClick={() => remove(i)}>{t.dcRemove}</button>
+          <button type="button" style={styles.editorRemoveBtn} onClick={() => remove(i)} aria-label={t.dcRemove}>×</button>
         </div>
       ))}
       <div style={styles.editorAdd}>
@@ -479,7 +479,7 @@ const styles = {
   // Carryover toggle button — grayed out when off, accent-colored when on.
   carryBtn: { background: '#f3f4f6', color: '#9ca3af', border: '1px solid #e5e7eb', borderRadius: 8, padding: '5px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' },
   carryBtnOn: { background: '#eef2ff', color: '#2563eb', borderColor: '#c7d2fe' },
-  editorRemoveBtn: { background: '#fff', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 8, padding: '5px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' },
+  editorRemoveBtn: { background: '#fff', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 8, padding: '4px 11px', fontSize: 16, fontWeight: 700, lineHeight: 1, cursor: 'pointer' },
   editorAdd: { display: 'flex', gap: 8, marginTop: 4 },
   addItemBtn: { background: '#eef2ff', color: '#2563eb', border: '1px solid #c7d2fe', borderRadius: 8, padding: '6px 12px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   // Text-field item in the active day
