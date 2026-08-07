@@ -1,29 +1,58 @@
 /*
- * Boot watchdog — recovers the ONE blank-screen path the in-app recovery can't reach.
+ * Boot watchdog — recovers the blank-screen path the in-app recovery can't reach.
  *
  * All of the app's error handling (ErrorBoundary, chunk-load auto-reload, global handlers)
- * ships INSIDE the main entry bundle. If that bundle itself fails to load or execute — the
- * classic case is a stale HTTP-cached index.html after a deploy that points at /assets
- * chunk hashes the server has already purged — React never mounts, none of that recovery
- * code installs, and index.html has already hidden its static fallback the instant JS ran.
- * The result is a genuinely blank white screen that "does nothing".
+ * ships INSIDE the main entry bundle. If that bundle fails to load or execute — the classic
+ * case is a stale cached index.html (or a controlling service worker's precache) pointing
+ * at /assets chunk hashes the server has already purged after a deploy — React never mounts,
+ * none of that recovery installs, and index.html has already hidden its static fallback the
+ * instant JS ran. The result is a blank white screen that "does nothing".
  *
- * This is a plain (non-module) external script, so it runs even when the module bundle
- * 404s or throws. React clears #root on mount, removing the #prehydrate fallback node, so
- * that node still being present after a grace period means the app never booted. When that
- * happens we reload ONCE (to fetch a fresh shell); if a reload already ran and it's still
- * blank, we reveal the static landing page (with a Log in link) instead of a white screen.
+ * This is a plain (non-module) external script, so it runs even when the module bundle 404s
+ * or throws. React clears #root on mount, removing the #prehydrate fallback node, so that
+ * node still being present after a grace period means the app never booted. When that
+ * happens we do what a MANUAL HARD REFRESH does — clear Cache Storage and unregister the
+ * service worker, then reload — because a plain reload just re-serves the same stale cache.
+ * If even that doesn't help (a genuinely broken deploy), we reveal the static landing page
+ * (with a Log in link) instead of leaving a white screen.
  *
  * CSP: loaded from 'self' (see client/vercel.json script-src) — no inline hash to maintain.
+ * Not precached (see vite.config.js globIgnores) so the newest logic is always fetched.
  */
 (function () {
   var GRACE_MS = 12000;
   var COOLDOWN_MS = 60000;
-  var KEY = 'opsfloa_boot_reload_at';
+  var KEY = 'opsfloa_boot_reset_at';
 
   function booted() {
     // React removes the #prehydrate fallback from #root when it mounts.
     return !document.getElementById('prehydrate');
+  }
+
+  // Clear caches + unregister any service worker, then reload with fresh assets. IndexedDB
+  // (the offline queue) is deliberately left intact.
+  function hardResetAndReload() {
+    var jobs = [];
+    try {
+      if (window.caches && caches.keys) {
+        jobs.push(caches.keys().then(function (keys) {
+          return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+        }));
+      }
+    } catch (e) { /* ignore */ }
+    try {
+      if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+        jobs.push(navigator.serviceWorker.getRegistrations().then(function (regs) {
+          return Promise.all(regs.map(function (r) { return r.unregister(); }));
+        }));
+      }
+    } catch (e) { /* ignore */ }
+
+    var reloaded = false;
+    var go = function () { if (reloaded) return; reloaded = true; window.location.reload(); };
+    Promise.all(jobs).then(go, go);
+    // Don't hang forever if the cache / SW APIs stall.
+    window.setTimeout(go, 3000);
   }
 
   window.setTimeout(function () {
@@ -34,12 +63,11 @@
     var now = Date.now();
 
     if (now - last > COOLDOWN_MS) {
-      // First failure: grab a fresh index.html (must-revalidate, see vercel.json) and retry.
+      // First failure: hard-reset (like a manual hard refresh) and retry.
       try { window.sessionStorage.setItem(KEY, String(now)); } catch (e) { /* ignore */ }
-      window.location.reload();
+      hardResetAndReload();
     } else {
-      // A reload already happened and it's still blank — stop, and show the fallback
-      // content so the user can at least log in instead of staring at white.
+      // Already hard-reset recently and it's still blank — stop, and show the fallback.
       document.documentElement.classList.remove('js');
     }
   }, GRACE_MS);
