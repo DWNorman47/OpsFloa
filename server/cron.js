@@ -411,6 +411,16 @@ async function sendBookingReminders() {
 }
 
 function startCron() {
+  // Only run background jobs in production. Staging and dev are test
+  // environments: they don't need to email reminders, expire trials, or sweep
+  // clocks — and running these jobs (esp. the 15-min booking sweep) keeps their
+  // Neon compute awake around the clock for no benefit. Skipping them lets those
+  // branches' DBs stay suspended except during real use.
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`[cron] NODE_ENV=${process.env.NODE_ENV || 'development'} — background jobs disabled (production only)`);
+    return;
+  }
+
   // Run immediately on startup (catches any missed window from restart)
   sendShiftReminders();
   sendSignoffReminders();

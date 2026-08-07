@@ -4469,3 +4469,23 @@ Fixes (client-only):
 Deeper options left for later (noted, not done): a Workbox NavigationRoute/navigateFallback
 so offline deep-links get the cached shell; auto (not just banner) reload on version
 mismatch.
+
+## Cron: production-only background jobs (Neon compute)
+
+Investigated the Neon compute bill. Confirmed it's **Neon (DB), not Vercel** —
+Vercel is a static SPA with 0 functions. Two drivers: the nightly
+`sync-staging-db` full drop/restore (biggest single burst, why staging leads),
+and `server/cron.js` background jobs — chiefly `sendBookingReminders` on a
+**15-min** interval (others hourly) — which repeatedly wake each backend's Neon
+branch before it can auto-suspend.
+
+Full job inventory: `sendBookingReminders` (15 min), `sendShiftReminders` /
+`sendSignoffReminders` / `expireOldTrials` / `maintainActiveClocks` (hourly),
+all in `server/cron.js`; a per-connection SSE heartbeat in `liveSessions.js`
+(no DB); the GH Actions `sync-staging-db` (daily 4 AM).
+
+Fix: gated `startCron()` to `NODE_ENV === 'production'`. Staging/dev
+(`NODE_ENV=development`) are test envs that don't need reminders/trial-expiry/
+clock-sweeps, so their DBs can now stay suspended when idle. Left the staging
+sync untouched (David needs it). Compute savings realize once staging + prod
+backends redeploy.
