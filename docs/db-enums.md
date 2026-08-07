@@ -82,6 +82,7 @@ For each column we record:
 | Table.column | Allowed values | DB enforcement | App validation | Stakes |
 |---|---|---|---|---|
 | `projects.status` | `planning`, `in_progress`, `on_hold`, `completed` | **enforced** (CHECK in `0101`) | `server/constants/projectEnums.js`, `server/routes/admin.js:1679` | Project tracking dashboards. Caused the `0249ac4` bug — column is nullable, so the CHECK is `IS NULL OR ...`. |
+| `projects.hour_limit_mode` | `off`, `warn`, `hard` | **enforced** (CHECK in `0167`) | `server/constants/projectEnums.js` (`HOUR_LIMIT_MODES`), `server/routes/admin.js` (project create/update), `server/utils/projectHourLimits.js` | Per-project worker hour cap. `off` = no limit (default). `warn` = worker/admin warned when the daily/weekly limit is crossed, nothing blocked. `hard` = shift stopped, or switched to `hour_limit_overflow_project_id`, at the exact limit instant (deterministic limit-time, applied lazily on `/clock/status` + `/admin/active-clocks`); a fresh clock-in past the limit is blocked/redirected. Companion columns `daily_hour_limit` / `weekly_hour_limit` (NUMERIC, ≥0, either/both) and `hour_limit_overflow_project_id` (FK projects, hard-mode only). NOT NULL DEFAULT `off`. |
 | `work_orders.status` | `open`, `scheduled`, `in_progress`, `completed`, `canceled` | **enforced** (CHECK in `0127`) | `server/constants/workOrderEnums.js`, `server/routes/workOrders.js` | Work-order (dispatch/service) lifecycle. NOT NULL DEFAULT `open`, so plain `IN (...)` CHECK. Setting `completed` stamps `completed_at`. |
 | `work_orders.priority` | `low`, `normal`, `high`, `urgent` | **enforced** (CHECK in `0127`) | `server/constants/workOrderEnums.js`, `server/routes/workOrders.js` | Work-order dispatch priority. NOT NULL DEFAULT `normal`. |
 | `daily_reports.status` | `draft`, `submitted`, `reviewed` | **enforced** (CHECK in `0100`, was wrong in `0071`) | `server/routes/dailyReports.js:199` | Daily-report workflow + edit lock. `0071` had `approved` instead; `0100` corrects to `reviewed`. |
@@ -167,7 +168,7 @@ server (probably incomplete):
 `stale_active_clock`, `timeoff_request`, `timeoff_approved`,
 `timeoff_denied`, `shift_assigned`, `shift_updated`, `shift_cancelled`,
 `shift_cantmake`, `signoff`, `location_denied`, `overtime_alert`,
-`service_request`, `low_stock`, `equipment_maintenance`,
+`hour_limit_alert`, `service_request`, `low_stock`, `equipment_maintenance`,
 `equipment_rental_due`, `bid_due`, `sub_doc_expiring`.
 
 (The last three were already being written and were missing from this list —
