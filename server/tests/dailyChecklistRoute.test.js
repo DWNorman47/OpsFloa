@@ -8,7 +8,7 @@
  * layer); these tests exercise the handler logic.
  */
 
-jest.mock('../permissions', () => ({ requirePerm: () => (_req, _res, next) => next() }));
+jest.mock('../permissions', () => ({ requirePerm: () => (_req, _res, next) => next(), hasPerm: jest.fn() }));
 jest.mock('../db', () => ({ query: jest.fn(), connect: jest.fn() }));
 
 const express = require('express');
@@ -24,7 +24,63 @@ function makeApp() {
   return app;
 }
 
-beforeEach(() => { pool.query.mockReset(); pool.connect.mockReset(); });
+const permissions = require('../permissions');
+beforeEach(() => { pool.query.mockReset(); pool.connect.mockReset(); permissions.hasPerm.mockReset(); });
+
+describe('GET /clock-in-prompt', () => {
+  // projects (Alpha=1 active, Beta=2 startable) → active query → startable query.
+  function mockPrompt() {
+    pool.query.mockImplementation(async (sql) => {
+      if (/SELECT id, name FROM projects/.test(sql)) return { rows: [{ id: 1, name: 'Alpha' }, { id: 2, name: 'Beta' }] };
+      if (/status = 'active' AND project_id/.test(sql)) return { rows: [{ project_id: 1, day_id: 99 }] };
+      if (/daily_checklist_recurring_items/.test(sql)) return { rows: [{ project_id: 2 }] }; // startable union
+      return { rows: [] };
+    });
+  }
+
+  test('lists active-day projects for anyone, and startable ones when the user can start', async () => {
+    mockPrompt();
+    permissions.hasPerm.mockResolvedValue(true);
+    const res = await request(makeApp()).get('/api/daily-checklist/clock-in-prompt');
+    expect(res.status).toBe(200);
+    expect(res.body.candidates).toEqual([
+      { project_id: 1, project_name: 'Alpha', status: 'active', day_id: 99 },
+      { project_id: 2, project_name: 'Beta', status: 'startable' },
+    ]);
+  });
+
+  test('omits startable projects when the user cannot start a day', async () => {
+    mockPrompt();
+    permissions.hasPerm.mockResolvedValue(false);
+    const res = await request(makeApp()).get('/api/daily-checklist/clock-in-prompt');
+    expect(res.body.candidates).toEqual([
+      { project_id: 1, project_name: 'Alpha', status: 'active', day_id: 99 },
+    ]);
+    // The startable union query must not run when the user can't start.
+    expect(pool.query.mock.calls.map(c => c[0]).join('\n')).not.toMatch(/daily_checklist_recurring_items/);
+  });
+
+  test('empty when the user has no accessible projects', async () => {
+    // settings query (no row → default on), then projects (none).
+    pool.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    permissions.hasPerm.mockResolvedValue(true);
+    const res = await request(makeApp()).get('/api/daily-checklist/clock-in-prompt');
+    expect(res.body.candidates).toEqual([]);
+  });
+
+  test('empty (short-circuits) when the company turned the prompt off', async () => {
+    pool.query.mockImplementation(async (sql) => {
+      if (/daily_checklist_clockin_prompt/.test(sql)) return { rows: [{ value: '0' }] };
+      return { rows: [{ id: 1, name: 'Alpha' }] };
+    });
+    permissions.hasPerm.mockResolvedValue(true);
+    const res = await request(makeApp()).get('/api/daily-checklist/clock-in-prompt');
+    expect(res.body.candidates).toEqual([]);
+    expect(pool.query.mock.calls.map(c => c[0]).join('\n')).not.toMatch(/SELECT id, name FROM projects/);
+  });
+});
 
 describe('POST /projects/:id/start', () => {
   test('assembles recurring + rolled-over unchecked items, deduped by text', async () => {

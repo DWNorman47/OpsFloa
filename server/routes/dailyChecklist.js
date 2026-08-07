@@ -14,7 +14,7 @@
 
 const router = require('express').Router();
 const pool = require('../db');
-const { requirePerm } = require('../permissions');
+const { requirePerm, hasPerm } = require('../permissions');
 const { projectBelongsToCompany } = require('../utils/tenantRefs');
 const { MAX_TEXT, normText, pauseOverdueCalendar, appendAssembledItems } = require('../utils/dailyChecklistCore');
 
@@ -88,6 +88,62 @@ router.put('/projects/:projectId/recurring', requirePerm('daily_checklist_manage
     await client.query('ROLLBACK').catch(() => {});
     req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' });
   } finally { client.release(); }
+});
+
+// GET /clock-in-prompt — after a clock-in, which of the user's accessible projects have a
+// daily checklist worth opening: a project with an ACTIVE day (anyone who can see the
+// project), plus — for users who can start days — projects that are set up but not started
+// yet (a recurring template or a queued/paused day). Drives the post-clock-in prompt.
+router.get('/clock-in-prompt', async (req, res) => {
+  const companyId = req.user.company_id;
+  try {
+    // A company can turn the clock-in prompt off (default on).
+    const setting = await pool.query("SELECT value FROM settings WHERE company_id = $1 AND key = 'daily_checklist_clockin_prompt'", [companyId]);
+    if (setting.rows[0]?.value === '0') return res.json({ candidates: [] });
+
+    // Projects the user can see — mirrors routes/projects.js visibility (admins bypass;
+    // otherwise projects.visible_to_user_ids gates non-shared projects).
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'super_admin';
+    const vis = isAdmin ? '' : ' AND (visible_to_user_ids IS NULL OR COALESCE(array_length(visible_to_user_ids, 1), 0) = 0 OR $2 = ANY(visible_to_user_ids))';
+    const params = isAdmin ? [companyId] : [companyId, req.user.id];
+    const projs = await pool.query(
+      `SELECT id, name FROM projects WHERE active = true AND company_id = $1${vis} ORDER BY name LIMIT 500`,
+      params
+    );
+    if (projs.rows.length === 0) return res.json({ candidates: [] });
+    const ids = projs.rows.map(p => p.id);
+    const nameById = new Map(projs.rows.map(p => [p.id, p.name]));
+
+    const active = await pool.query(
+      "SELECT project_id, id AS day_id FROM daily_checklists WHERE company_id = $1 AND status = 'active' AND project_id = ANY($2)",
+      [companyId, ids]
+    );
+    const activeByProject = new Map(active.rows.map(r => [r.project_id, r.day_id]));
+
+    const candidates = [];
+    for (const pid of ids) {
+      if (activeByProject.has(pid)) candidates.push({ project_id: pid, project_name: nameById.get(pid), status: 'active', day_id: activeByProject.get(pid) });
+    }
+
+    // "Startable" projects only surface for users who can start a day.
+    if (await hasPerm(req, 'daily_checklist_start_day')) {
+      const notActive = ids.filter(pid => !activeByProject.has(pid));
+      if (notActive.length) {
+        const startable = await pool.query(
+          `SELECT DISTINCT project_id FROM (
+             SELECT project_id FROM daily_checklist_recurring_items WHERE company_id = $1 AND project_id = ANY($2) AND active = true
+             UNION
+             SELECT project_id FROM daily_checklists WHERE company_id = $1 AND project_id = ANY($2) AND status IN ('pending', 'paused')
+           ) s`,
+          [companyId, notActive]
+        );
+        for (const r of startable.rows) candidates.push({ project_id: r.project_id, project_name: nameById.get(r.project_id), status: 'startable' });
+      }
+    }
+
+    candidates.sort((a, b) => String(a.project_name).localeCompare(String(b.project_name)));
+    res.json({ candidates });
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
 // ── The day ───────────────────────────────────────────────────────────────────
