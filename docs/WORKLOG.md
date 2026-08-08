@@ -4469,3 +4469,57 @@ Fixes (client-only):
 Deeper options left for later (noted, not done): a Workbox NavigationRoute/navigateFallback
 so offline deep-links get the cached shell; auto (not just banner) reload on version
 mismatch.
+
+## Cron: production-only background jobs (Neon compute)
+
+Investigated the Neon compute bill. Confirmed it's **Neon (DB), not Vercel** —
+Vercel is a static SPA with 0 functions. Two drivers: the nightly
+`sync-staging-db` full drop/restore (biggest single burst, why staging leads),
+and `server/cron.js` background jobs — chiefly `sendBookingReminders` on a
+**15-min** interval (others hourly) — which repeatedly wake each backend's Neon
+branch before it can auto-suspend.
+
+Full job inventory: `sendBookingReminders` (15 min), `sendShiftReminders` /
+`sendSignoffReminders` / `expireOldTrials` / `maintainActiveClocks` (hourly),
+all in `server/cron.js`; a per-connection SSE heartbeat in `liveSessions.js`
+(no DB); the GH Actions `sync-staging-db` (daily 4 AM).
+
+Fix: gated `startCron()` to `NODE_ENV === 'production'`. Staging/dev
+(`NODE_ENV=development`) are test envs that don't need reminders/trial-expiry/
+clock-sweeps, so their DBs can now stay suspended when idle. Left the staging
+sync untouched (David needs it). Compute savings realize once staging + prod
+backends redeploy.
+
+## Per-project hour limits (hard cap / soft warn)
+
+New feature: a project can cap how many hours one worker logs on it per day
+and/or week. Admin chooses the mode per project (warn | hard), sets a daily
+and/or weekly limit, and — for hard — an optional overflow project to switch
+the worker into at the cap. Per-project only for now; the engine already takes
+caps off the project row so a per-worker-per-project override slots in later.
+
+Judgment calls:
+- **Deterministic limit-time + lazy reconcile** (David's framing). Rather than a
+  frequent server sweep or a fragile client timer, the limit instant is computed
+  from clock-in + prior hours + cap, and applied AS OF that instant whenever the
+  active clock is observed (worker /clock/status, admin /admin/active-clocks,
+  hourly prod cron backstop). Recorded hours never overshoot regardless of
+  whether any app was open. Same posture as sweepStaleActiveClock. This also means
+  the "auto-switch to secondary" IS a normal /switch timestamped at the limit —
+  no bespoke entry-splitting.
+- **Loop guard:** reconcile only switches into a project with spare capacity, and
+  each hop's clock-in strictly advances toward now, so mutual-overflow configs
+  (A→B→A) terminate instead of ping-ponging.
+- **Hours count all wage types** (a prevailing hour still counts against the cap),
+  unlike the OT alert which is regular-only.
+- **Running-shift limit uses gross elapsed** (breaks aren't known until clock-out);
+  documented as a known minor imprecision.
+- Warn-mode admin alert fires at clock-out only when THIS shift crossed the cap
+  (reuses the overtime-alert "prev<limit && total>=limit" edge so it fires once).
+- Client live banner reuses the existing per-second timer + a fire-once ref keyed
+  on (project, limit_ts); the server stays authoritative (client just refetches).
+
+Files: migration 0167, server/utils/projectHourLimits.js (+23 unit tests),
+clock.js (/in + /switch gates, /status reconcile, warn alert), admin.js
+(/active-clocks reconcile + project CRUD + validation), cron.js backstop,
+ManageProjects.jsx + ClockInOut.jsx + i18n. `npm run verify` green.

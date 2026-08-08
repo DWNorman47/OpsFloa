@@ -6,6 +6,7 @@ const pool = require('./db');
 const { sendPushToUser, sendPushToCompanyAdmins } = require('./push');
 const { createInboxItemBatch } = require('./routes/inbox');
 const { rolloverStaleDemoClocks } = require('./services/demoClockRollover');
+const { reconcileStaleHourLimits } = require('./utils/projectHourLimits');
 
 // A worker who has been clocked in this many hours without clocking out
 // is almost certainly forgotten — phone died, app uninstalled, drove home
@@ -250,6 +251,17 @@ async function maintainActiveClocks() {
   }
 
   await sweepStaleActiveClock();
+
+  // Backstop for per-project hard hour limits. The lazy observers
+  // (/clock/status, /admin/active-clocks) enforce these in real time; this
+  // hourly pass just catches a shift nobody looked at. See
+  // server/utils/projectHourLimits.js.
+  try {
+    const acted = await reconcileStaleHourLimits();
+    if (acted > 0) console.log(`[cron] hour-limit backstop: reconciled ${acted} action(s)`);
+  } catch (err) {
+    console.error('[cron] hour-limit backstop error:', err);
+  }
 }
 
 // ─── Booking reminders ──────────────────────────────────────────────────────
@@ -411,6 +423,16 @@ async function sendBookingReminders() {
 }
 
 function startCron() {
+  // Only run background jobs in production. Staging and dev are test
+  // environments: they don't need to email reminders, expire trials, or sweep
+  // clocks — and running these jobs (esp. the 15-min booking sweep) keeps their
+  // Neon compute awake around the clock for no benefit. Skipping them lets those
+  // branches' DBs stay suspended except during real use.
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`[cron] NODE_ENV=${process.env.NODE_ENV || 'development'} — background jobs disabled (production only)`);
+    return;
+  }
+
   // Run immediately on startup (catches any missed window from restart)
   sendShiftReminders();
   sendSignoffReminders();

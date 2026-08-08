@@ -9,6 +9,10 @@ const { applySettingsRows, SETTINGS_DEFAULTS } = require('../settingsDefaults');
 const { sendEmail } = require('../email');
 const { wallClockInTZ, validLocalTime, entryInstants } = require('../utils/timeFormat');
 const { autoStartDayTx } = require('../utils/dailyChecklistCore');
+const {
+  loadWeekStart, loadPriorHours, evaluateGate, pickOverflowTarget,
+  reconcileUserActiveClock, describeActiveLimit, calcH: hlCalcH, numOrNull,
+} = require('../utils/projectHourLimits');
 const rateLimit = require('express-rate-limit');
 const { userOrIpKey } = require('../middleware/rateLimitKey');
 
@@ -25,14 +29,34 @@ const clockLimiter = rateLimit({
 // GET /api/clock/status — returns active clock-in for this user, if any
 router.get('/status', requireAuth, async (req, res) => {
   try {
+    // Reconcile first: a worker reopening the app is one of the two "observers"
+    // that enforce a hard hour-limit lazily (the other is an admin viewing
+    // Workforce). If they're past the limit, this stops/switches them AS OF the
+    // limit instant so the status below already reflects the post-limit state.
+    try { await reconcileUserActiveClock(req.user.id); }
+    catch (recErr) { logger.warn({ err: recErr }, 'clock status reconcile failed'); }
+
     const result = await pool.query(
-      `SELECT ac.*, p.name as project_name, p.wage_type
+      `SELECT ac.*, p.name as project_name, p.wage_type,
+              p.hour_limit_mode, p.daily_hour_limit, p.weekly_hour_limit,
+              p.hour_limit_overflow_project_id
        FROM active_clock ac
        LEFT JOIN projects p ON ac.project_id = p.id
        WHERE ac.user_id = $1`,
       [req.user.id]
     );
-    res.json(result.rows[0] || null);
+    const row = result.rows[0] || null;
+    if (!row) return res.json(null);
+
+    let hour_limit = null;
+    try {
+      const weekStart = await loadWeekStart(pool, req.user.company_id);
+      hour_limit = await describeActiveLimit(pool, row, weekStart);
+    } catch (limErr) { logger.warn({ err: limErr }, 'describe active limit failed'); }
+
+    // Strip the raw cap columns from the payload; the client uses `hour_limit`.
+    const { hour_limit_mode, daily_hour_limit, weekly_hour_limit, hour_limit_overflow_project_id, ...clean } = row;
+    res.json({ ...clean, hour_limit });
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });
@@ -81,9 +105,14 @@ router.post('/in', requireAuth, requirePerm('clock_self'), clockLimiter, coerceB
 
     // Verify project and fetch everything needed in one query (reused below for response)
     let projName = null, projWageType = 'regular';
+    let effectiveProjectId = project_id;
+    let redirectedFromProjectId = null;
+    let hourWarning = null;
     if (project_id) {
       const proj = await pool.query(
-        'SELECT id, name, wage_type, geo_lat, geo_lng, geo_radius_ft, required_checklist_template_id FROM projects WHERE id = $1 AND company_id = $2 AND active = true',
+        `SELECT id, name, wage_type, geo_lat, geo_lng, geo_radius_ft, required_checklist_template_id,
+                hour_limit_mode, daily_hour_limit, weekly_hour_limit, hour_limit_overflow_project_id
+         FROM projects WHERE id = $1 AND company_id = $2 AND active = true`,
         [project_id, companyId]
       );
       if (proj.rowCount === 0) {
@@ -128,6 +157,40 @@ router.post('/in', requireAuth, requirePerm('clock_self'), clockLimiter, coerceB
             checklist_required: true,
             template_id: requiredChecklistId,
           });
+        }
+      }
+
+      // ── Per-project hour-limit gate ──────────────────────────────────────
+      // If the worker has already reached this project's daily/weekly cap:
+      // hard mode clocks them into the overflow project instead (when one is
+      // set and has capacity), else blocks; warn mode allows but flags it.
+      // The mid-shift crossing is handled lazily by reconcileUserActiveClock.
+      // See server/utils/projectHourLimits.js.
+      if (p.hour_limit_mode === 'hard' || p.hour_limit_mode === 'warn') {
+        const weekStart = await loadWeekStart(pool, companyId);
+        const prior = await loadPriorHours(pool, req.user.id, p.id, local_work_date || null, weekStart);
+        const gate = evaluateGate(p, prior);
+        if (gate.atLimit && gate.mode === 'hard') {
+          const target = await pickOverflowTarget(pool, {
+            userId: req.user.id, overflowProjectId: gate.overflowProjectId, sourceProjectId: p.id,
+            companyId, workDate: local_work_date || null, weekStart, atTs: new Date(),
+          });
+          if (target) {
+            redirectedFromProjectId = p.id;
+            effectiveProjectId = target.id;
+            projName = target.name;
+            projWageType = target.wage_type;
+          } else {
+            logFailure(req, 'clock.in', 'hour_limit_reached', { project_id: p.id, reason: gate.reason });
+            return res.status(403).json({
+              error: `You've reached the ${gate.limit}-hour ${gate.reason} limit on ${p.name}.`,
+              hour_limit_reached: true,
+              reason: gate.reason,
+              limit: gate.limit,
+            });
+          }
+        } else if (gate.atLimit && gate.mode === 'warn') {
+          hourWarning = { reason: gate.reason, limit: gate.limit, project_name: p.name };
         }
       }
     } else if (globalChecklistId) {
@@ -183,7 +246,7 @@ router.post('/in', requireAuth, requirePerm('clock_self'), clockLimiter, coerceB
        VALUES ($1, $2, $3, COALESCE($4::timestamptz, NOW()), $5, $6, COALESCE($7::date, CURRENT_DATE), $8, $9, $10, $11)
        ON CONFLICT (user_id) DO NOTHING
        RETURNING *`,
-      [req.user.id, companyId, project_id, clockInTs, lat || null, lng || null, local_work_date || null, notes || null, timezone || null, 'worker', null]
+      [req.user.id, companyId, effectiveProjectId, clockInTs, lat || null, lng || null, local_work_date || null, notes || null, timezone || null, 'worker', null]
     );
 
     if (result.rowCount === 0) {
@@ -207,7 +270,13 @@ router.post('/in', requireAuth, requirePerm('clock_self'), clockLimiter, coerceB
     const row = result.rows[0];
 
     // Respond immediately — all notifications are fire-and-forget
-    res.status(201).json({ ...row, project_name: projName, wage_type: projWageType });
+    res.status(201).json({
+      ...row,
+      project_name: projName,
+      wage_type: projWageType,
+      ...(redirectedFromProjectId ? { redirected_to_overflow: true, requested_project_id: redirectedFromProjectId } : {}),
+      ...(hourWarning ? { hour_warning: hourWarning } : {}),
+    });
 
     // Post-response notifications (never delay the worker)
     setImmediate(async () => {
@@ -234,9 +303,9 @@ router.post('/in', requireAuth, requirePerm('clock_self'), clockLimiter, coerceB
         });
         // Optional Daily Checklist trigger: the first clock-in on a project auto-starts
         // that day's checklist. Off by default; best-effort — never affects the clock-in.
-        if (project_id && allSettings.rows.find(r => r.key === 'daily_checklist_clockin_autostart')?.value === '1') {
+        if (effectiveProjectId && allSettings.rows.find(r => r.key === 'daily_checklist_clockin_autostart')?.value === '1') {
           try {
-            await autoStartDayTx(pool, { companyId, projectId: project_id, userId: req.user.id, workDate: local_work_date || null });
+            await autoStartDayTx(pool, { companyId, projectId: effectiveProjectId, userId: req.user.id, workDate: local_work_date || null });
           } catch (err) { logger.warn({ err }, 'daily checklist auto-start failed'); }
         }
 
@@ -299,7 +368,9 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
     }
 
     const targetResult = await pool.query(
-      'SELECT id, name, wage_type, geo_lat, geo_lng, geo_radius_ft, required_checklist_template_id FROM projects WHERE id = $1 AND company_id = $2 AND active = true',
+      `SELECT id, name, wage_type, geo_lat, geo_lng, geo_radius_ft, required_checklist_template_id,
+              hour_limit_mode, daily_hour_limit, weekly_hour_limit, hour_limit_overflow_project_id
+       FROM projects WHERE id = $1 AND company_id = $2 AND active = true`,
       [project_id, companyId]
     );
     if (targetResult.rowCount === 0) {
@@ -308,6 +379,24 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
     }
 
     const target = targetResult.rows[0];
+
+    // Per-project hour-limit gate: block switching INTO a project the worker has
+    // already maxed out for the day/week (hard mode). Warn mode allows it; the
+    // live banner + reconcile handle the crossing. (Mirror of the /in gate.)
+    if (target.hour_limit_mode === 'hard') {
+      const weekStart = await loadWeekStart(pool, companyId);
+      const prior = await loadPriorHours(pool, req.user.id, target.id, local_work_date || null, weekStart);
+      const gate = evaluateGate(target, prior);
+      if (gate.atLimit) {
+        logFailure(req, 'clock.switch', 'hour_limit_reached', { project_id: target.id, reason: gate.reason });
+        return res.status(403).json({
+          error: `You've reached the ${gate.limit}-hour ${gate.reason} limit on ${target.name}.`,
+          hour_limit_reached: true,
+          reason: gate.reason,
+          limit: gate.limit,
+        });
+      }
+    }
     if (target.geo_lat && target.geo_lng && target.geo_radius_ft) {
       if (!lat || !lng) {
         logFailure(req, 'clock.switch', 'geofence_missing_location', { project_id });
@@ -750,11 +839,57 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
         logger.warn({ err: alertErr }, 'overtime alert error');
       }
     });
+
+    // Warn-mode hour-limit alert — fire when THIS shift is the one that pushed the
+    // worker over a warn-mode project's daily/weekly cap. (Hard mode never gets
+    // here: the worker was already stopped/switched at the limit.)
+    setImmediate(async () => {
+      try {
+        if (!clock.project_id) return;
+        const projRow = await pool.query(
+          `SELECT name, hour_limit_mode, daily_hour_limit, weekly_hour_limit
+             FROM projects WHERE id = $1 AND company_id = $2`,
+          [clock.project_id, companyId]
+        );
+        const proj = projRow.rows[0];
+        if (!proj || proj.hour_limit_mode !== 'warn') return;
+        const dl = numOrNull(proj.daily_hour_limit);
+        const wl = numOrNull(proj.weekly_hour_limit);
+        if (dl == null && wl == null) return;
+
+        const weekStart = await loadWeekStart(pool, companyId);
+        // loadPriorHours now includes the just-committed shift → subtract it for "before".
+        const total = await loadPriorHours(pool, req.user.id, clock.project_id, clock.work_date, weekStart);
+        const shiftHours = hlCalcH(clockOutEntry.start_time, clockOutEntry.end_time, clockOutEntry.break_minutes);
+        const crossedDaily = dl != null && (total.daily - shiftHours) < dl && total.daily >= dl;
+        const crossedWeekly = wl != null && (total.weekly - shiftHours) < wl && total.weekly >= wl;
+        if (crossedDaily || crossedWeekly) {
+          const reason = crossedDaily ? 'daily' : 'weekly';
+          await _sendHourLimitAlert(req.user, companyId, proj.name, crossedDaily ? dl : wl,
+            crossedDaily ? total.daily : total.weekly, reason);
+        }
+      } catch (limErr) {
+        logger.warn({ err: limErr }, 'hour-limit warn alert error');
+      }
+    });
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });
   }
 });
+
+async function _sendHourLimitAlert(worker, companyId, projectName, limit, totalHours, rule) {
+  const workerName = worker.full_name || worker.username;
+  const over = Math.max(0, totalHours - limit).toFixed(1);
+  const title = `Hour limit: ${workerName}`;
+  const body = `${workerName} has logged ${totalHours.toFixed(1)}h on ${projectName} — over the ${limit}h ${rule} limit by ${over}h`;
+  await sendPushToCompanyAdmins(companyId, { title, body, url: '/workforce#reports' });
+  const adminRows = await pool.query(
+    `SELECT id FROM users WHERE company_id = $1 AND role IN ('admin','super_admin') AND active = true`,
+    [companyId]
+  );
+  createInboxItemBatch(adminRows.rows.map(a => a.id), companyId, 'hour_limit_alert', title, body, '/workforce#reports');
+}
 
 async function _sendOvertimeAlert(worker, companyId, projectName, totalHours, threshold, rule, settings) {
   const workerName = worker.full_name || worker.username;

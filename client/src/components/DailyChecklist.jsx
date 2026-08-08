@@ -231,7 +231,7 @@ function QueueRow({ day, t, toast, first, last, onChanged, recurring }) {
 function DayManager({ projectId, t, toast, onQueueChanged }) {
   const [queue, setQueue] = useState(null);
   const [recurring, setRecurring] = useState([]); // recurring template as carryover rows
-  const [form, setForm] = useState({ schedule_type: 'calendar', scheduled_date: localToday(), ordinal_target: 1, name: '', items: null });
+  const [form, setForm] = useState({ schedule_type: 'ordinal', scheduled_date: localToday(), ordinal_target: 1, name: '', items: null });
   const [saving, setSaving] = useState(false);
 
   // Load the queue AND the recurring template (shown as carryover rows). Returns the fresh

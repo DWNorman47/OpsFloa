@@ -39,6 +39,10 @@ export default function ManageProjects({ projects, onProjectAdded, onProjectDele
   const [editDescription, setEditDescription] = useState('');
   const [editStatus, setEditStatus] = useState('in_progress');
   const [editProgressPct, setEditProgressPct] = useState('');
+  const [editHourLimitMode, setEditHourLimitMode] = useState('off');
+  const [editDailyHourLimit, setEditDailyHourLimit] = useState('');
+  const [editWeeklyHourLimit, setEditWeeklyHourLimit] = useState('');
+  const [editOverflowProjectId, setEditOverflowProjectId] = useState('');
   const [checklistTemplates, setChecklistTemplates] = useState([]);
   const [confirmingClearGeoId, setConfirmingClearGeoId] = useState(null);
   const [confirmingClearBudgetId, setConfirmingClearBudgetId] = useState(null);
@@ -118,6 +122,10 @@ export default function ManageProjects({ projects, onProjectAdded, onProjectDele
       setEditDescription(p.description || '');
       setEditStatus(p.status || 'in_progress');
       setEditProgressPct(p.progress_pct != null ? String(p.progress_pct) : '');
+      setEditHourLimitMode(p.hour_limit_mode || 'off');
+      setEditDailyHourLimit(p.daily_hour_limit != null ? String(p.daily_hour_limit) : '');
+      setEditWeeklyHourLimit(p.weekly_hour_limit != null ? String(p.weekly_hour_limit) : '');
+      setEditOverflowProjectId(p.hour_limit_overflow_project_id ? String(p.hour_limit_overflow_project_id) : '');
     }
   };
 
@@ -143,13 +151,17 @@ export default function ManageProjects({ projects, onProjectAdded, onProjectDele
     payload.description = editDescription || null;
     payload.status = editStatus;
     payload.progress_pct = editProgressPct !== '' ? parseInt(editProgressPct, 10) : null;
+    payload.hour_limit_mode = editHourLimitMode;
+    payload.daily_hour_limit = editDailyHourLimit !== '' ? parseFloat(editDailyHourLimit) : null;
+    payload.weekly_hour_limit = editWeeklyHourLimit !== '' ? parseFloat(editWeeklyHourLimit) : null;
+    payload.hour_limit_overflow_project_id = (editHourLimitMode === 'hard' && editOverflowProjectId) ? parseInt(editOverflowProjectId) : null;
     try {
       const r = await api.patch(`/admin/projects/${id}`, payload);
       onProjectUpdated(r.data);
       setExpandedId(null);
       toast(t.projectUpdated, 'success');
-    } catch {
-      toast(t.failedUpdateProject, 'error');
+    } catch (err) {
+      toast(err?.response?.data?.error || t.failedUpdateProject, 'error');
     }
   };
 
@@ -518,6 +530,40 @@ export default function ManageProjects({ projects, onProjectAdded, onProjectDele
                         ))}
                       </select>
                       <p style={s.hint}>{t.clockInChecklistHint}</p>
+                    </div>
+
+                    {/* Hour limits */}
+                    <div style={s.section}>
+                      <div style={s.sectionTitle}>{t.hourLimitTitle}</div>
+                      <select style={s.editInput} value={editHourLimitMode} onChange={e => setEditHourLimitMode(e.target.value)}>
+                        <option value="off">{t.hourLimitOff}</option>
+                        <option value="warn">{t.hourLimitWarn}</option>
+                        <option value="hard">{t.hourLimitHard}</option>
+                      </select>
+                      {editHourLimitMode !== 'off' && (
+                        <div style={s.geoFields}>
+                          <div style={s.budgetField}>
+                            <label style={s.budgetLabel}>{t.hourLimitDaily}</label>
+                            <input style={s.geoInput} type="number" min="0" step="0.5" placeholder={t.hourLimitHoursPlaceholder} value={editDailyHourLimit} onChange={e => setEditDailyHourLimit(e.target.value)} />
+                          </div>
+                          <div style={s.budgetField}>
+                            <label style={s.budgetLabel}>{t.hourLimitWeekly}</label>
+                            <input style={s.geoInput} type="number" min="0" step="1" placeholder={t.hourLimitHoursPlaceholder} value={editWeeklyHourLimit} onChange={e => setEditWeeklyHourLimit(e.target.value)} />
+                          </div>
+                        </div>
+                      )}
+                      {editHourLimitMode === 'hard' && (
+                        <div style={{ marginTop: 8 }}>
+                          <label style={s.budgetLabel}>{t.hourLimitOverflow}</label>
+                          <select style={s.editInput} value={editOverflowProjectId} onChange={e => setEditOverflowProjectId(e.target.value)}>
+                            <option value="">{t.hourLimitOverflowNone}</option>
+                            {projects.filter(op => op.id !== p.id && op.active !== false).map(op => (
+                              <option key={op.id} value={op.id}>{op.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                      <p style={s.hint}>{t.hourLimitHint}</p>
                     </div>
 
                     {/* Actions */}

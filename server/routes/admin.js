@@ -8,6 +8,7 @@ const rateLimit = require('express-rate-limit');
 const { userOrIpKey } = require('../middleware/rateLimitKey');
 const { entryInstants, validLocalDate, wallClockInTZ } = require('../utils/timeFormat');
 const { PROJECT_STATUSES } = require('../constants/projectEnums');
+const { validateHourLimitInput, numOrNull: hlNumOrNull, reconcileCompanyActiveClocks } = require('../utils/projectHourLimits');
 const { clearSuppression } = require('../services/emailSuppression');
 const pool = require('../db');
 
@@ -872,6 +873,12 @@ router.post('/entries/:id/split', requireAdmin, requirePerm('approve_entries'), 
 router.get('/active-clocks', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   try {
+    // An admin viewing Workforce is one of the two "observers" that enforce a
+    // hard hour-limit lazily (the other is the worker's own /clock/status). Stop
+    // or switch anyone past their limit AS OF the limit instant before listing.
+    try { await reconcileCompanyActiveClocks(companyId); }
+    catch (recErr) { logger.warn({ err: recErr }, 'active-clocks reconcile failed'); }
+
     const result = await pool.query(
       `SELECT ac.user_id, ac.clock_in_time, ac.clock_in_lat, ac.clock_in_lng,
               ac.current_lat, ac.current_lng, ac.location_updated_at,
@@ -2008,12 +2015,13 @@ router.patch('/projects/:id/restore', requireAdmin, async (req, res) => {
 // Update project (name and/or wage_type and/or geofence)
 router.patch('/projects/:id', requireAdmin, requirePerm('manage_projects'),
   coerceBody({
-    int:   ['geo_radius_ft', 'required_checklist_template_id', 'progress_pct'],
-    float: ['geo_lat', 'geo_lng', 'budget_hours', 'budget_dollars', 'prevailing_wage_rate'],
+    int:   ['geo_radius_ft', 'required_checklist_template_id', 'progress_pct', 'hour_limit_overflow_project_id'],
+    float: ['geo_lat', 'geo_lng', 'budget_hours', 'budget_dollars', 'prevailing_wage_rate', 'daily_hour_limit', 'weekly_hour_limit'],
   }),
   async (req, res) => {
   const { wage_type, name, geo_lat, geo_lng, geo_radius_ft, clear_geofence, budget_hours, budget_dollars, prevailing_wage_rate, required_checklist_template_id,
-          client_name, job_number, address, start_date, end_date, description, status, progress_pct, active } = req.body;
+          client_name, job_number, address, start_date, end_date, description, status, progress_pct, active,
+          hour_limit_mode, daily_hour_limit, weekly_hour_limit, hour_limit_overflow_project_id } = req.body;
   const VALID_STATUSES = PROJECT_STATUSES;
   if (status !== undefined && !VALID_STATUSES.includes(status)) {
     logFailure(req, 'admin.projects.update', 'invalid_status', { status });
@@ -2029,6 +2037,36 @@ router.patch('/projects/:id', requireAdmin, requirePerm('manage_projects'),
   }
   const companyId = req.user.company_id;
   try {
+    // Validate hour-limit fields against the EFFECTIVE post-update state (body
+    // value if provided, else the current row) so a partial update isn't wrongly
+    // rejected. See server/utils/projectHourLimits.js.
+    const touchesHourLimit = ['hour_limit_mode', 'daily_hour_limit', 'weekly_hour_limit', 'hour_limit_overflow_project_id']
+      .some(k => req.body[k] !== undefined);
+    if (touchesHourLimit) {
+      const cur = await pool.query(
+        `SELECT hour_limit_mode, daily_hour_limit, weekly_hour_limit, hour_limit_overflow_project_id
+           FROM projects WHERE id = $1 AND company_id = $2`,
+        [req.params.id, companyId]
+      );
+      if (!cur.rows.length) {
+        logFailure(req, 'admin.projects.update', 'not_found', { project_id: req.params.id });
+        return res.status(404).json({ error: 'Project not found' });
+      }
+      const c = cur.rows[0];
+      const v = await validateHourLimitInput(pool, {
+        companyId,
+        projectId: Number(req.params.id),
+        mode: hour_limit_mode !== undefined ? hour_limit_mode : c.hour_limit_mode,
+        daily: daily_hour_limit !== undefined ? daily_hour_limit : hlNumOrNull(c.daily_hour_limit),
+        weekly: weekly_hour_limit !== undefined ? weekly_hour_limit : hlNumOrNull(c.weekly_hour_limit),
+        overflowProjectId: hour_limit_overflow_project_id !== undefined ? hour_limit_overflow_project_id : c.hour_limit_overflow_project_id,
+      });
+      if (v.error) {
+        logFailure(req, 'admin.projects.update', 'invalid_hour_limit', { error: v.error });
+        return res.status(400).json({ error: v.error });
+      }
+    }
+
     const fields = [];
     const values = [];
     let idx = 1;
@@ -2089,6 +2127,10 @@ router.patch('/projects/:id', requireAdmin, requirePerm('manage_projects'),
       fields.push(`progress_pct = $${idx++}`); values.push(progress_pct);
     }
     if (active !== undefined) { fields.push(`active = $${idx++}`); values.push(!!active); }
+    if (hour_limit_mode !== undefined) { fields.push(`hour_limit_mode = $${idx++}`); values.push(hour_limit_mode || 'off'); }
+    if (daily_hour_limit !== undefined) { fields.push(`daily_hour_limit = $${idx++}`); values.push(hlNumOrNull(daily_hour_limit)); }
+    if (weekly_hour_limit !== undefined) { fields.push(`weekly_hour_limit = $${idx++}`); values.push(hlNumOrNull(weekly_hour_limit)); }
+    if (hour_limit_overflow_project_id !== undefined) { fields.push(`hour_limit_overflow_project_id = $${idx++}`); values.push(hour_limit_overflow_project_id || null); }
     if (req.body.visible_to_user_ids !== undefined) {
       // null or empty array → unrestricted (visible to everyone in the company)
       const raw = req.body.visible_to_user_ids;
@@ -2188,10 +2230,14 @@ router.get('/geocode', requireAdmin, requirePerm('manage_projects'), geocodeLimi
 
 // Create a project
 router.post('/projects', requireAdmin, requirePerm('manage_projects'),
-  coerceBody({ float: ['prevailing_wage_rate', 'geo_lat', 'geo_lng'], int: ['geo_radius_ft'] }),
+  coerceBody({
+    float: ['prevailing_wage_rate', 'geo_lat', 'geo_lng', 'daily_hour_limit', 'weekly_hour_limit'],
+    int: ['geo_radius_ft', 'hour_limit_overflow_project_id'],
+  }),
   async (req, res) => {
   const { wage_type, prevailing_wage_rate, client_id, job_number, address, start_date, end_date, status, description,
-          geo_lat, geo_lng, geo_radius_ft } = req.body;
+          geo_lat, geo_lng, geo_radius_ft,
+          hour_limit_mode, daily_hour_limit, weekly_hour_limit, hour_limit_overflow_project_id } = req.body;
   const name = req.body.name?.trim();
   if (!name) {
     logFailure(req, 'admin.projects.create', 'name_required');
@@ -2216,20 +2262,33 @@ router.post('/projects', requireAdmin, requirePerm('manage_projects'),
   const validStatuses = PROJECT_STATUSES;
   const st = validStatuses.includes(status) ? status : 'in_progress';
   try {
+    if (['hour_limit_mode', 'daily_hour_limit', 'weekly_hour_limit', 'hour_limit_overflow_project_id'].some(k => req.body[k] !== undefined)) {
+      const v = await validateHourLimitInput(pool, {
+        companyId, projectId: null,
+        mode: hour_limit_mode, daily: daily_hour_limit, weekly: weekly_hour_limit,
+        overflowProjectId: hour_limit_overflow_project_id,
+      });
+      if (v.error) {
+        logFailure(req, 'admin.projects.create', 'invalid_hour_limit', { error: v.error });
+        return res.status(400).json({ error: v.error });
+      }
+    }
     let resolvedClientName = null;
     if (client_id) {
       const cr = await pool.query('SELECT name FROM clients WHERE id = $1 AND company_id = $2', [client_id, companyId]);
       if (cr.rows.length) resolvedClientName = cr.rows[0].name;
     }
     const result = await pool.query(
-      `INSERT INTO projects (company_id, name, wage_type, prevailing_wage_rate, client_id, client_name, job_number, address, start_date, end_date, status, description, geo_lat, geo_lng, geo_radius_ft)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+      `INSERT INTO projects (company_id, name, wage_type, prevailing_wage_rate, client_id, client_name, job_number, address, start_date, end_date, status, description, geo_lat, geo_lng, geo_radius_ft,
+                             hour_limit_mode, daily_hour_limit, weekly_hour_limit, hour_limit_overflow_project_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`,
       [companyId, name, wt, pwr,
        client_id || null, resolvedClientName, job_number?.trim() || null,
        address?.trim() || null, start_date || null, end_date || null, st, description?.trim() || null,
        geoFieldsPresent === 3 ? geo_lat : null,
        geoFieldsPresent === 3 ? geo_lng : null,
-       geoFieldsPresent === 3 ? geo_radius_ft : null]
+       geoFieldsPresent === 3 ? geo_radius_ft : null,
+       hour_limit_mode || 'off', hlNumOrNull(daily_hour_limit), hlNumOrNull(weekly_hour_limit), hour_limit_overflow_project_id || null]
     );
     await logAudit(companyId, req.user.id, req.user.full_name, 'project.created', 'project', result.rows[0].id, name, { wage_type: wt });
     const newProject = result.rows[0];

@@ -168,7 +168,9 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
   const [checklistSubmitting, setChecklistSubmitting] = useState(false);
   const [confirmingCancelClock, setConfirmingCancelClock] = useState(false);
   const [clockOutSummary, setClockOutSummary] = useState(null); // { seconds, projectName }
+  const [hourLimitNotice, setHourLimitNotice] = useState(null); // string banner, dismissible
   const timerRef = useRef(null);
+  const limitFiredRef = useRef(''); // "<projectId>:<limit_ts>" already acted on
 
   useEffect(() => {
     const refreshStatus = () => api.get('/clock/status').then(r => setStatus(r.data || false)).catch(() => setStatus(false));
@@ -225,6 +227,41 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
       setElapsed(0);
     }
     return () => clearInterval(timerRef.current);
+  }, [status]);
+
+  // Per-project hour limit — live enforcement while the app is open. The server
+  // enforces the same thing lazily on every /clock/status fetch (deterministic
+  // limit-time), so this is only for responsiveness: when the running shift
+  // reaches the limit, hard mode refetches (the server has already switched or
+  // stopped the worker AS OF the limit instant) and warn mode shows a heads-up.
+  // A ref keys each (project, limit_ts) so it fires exactly once.
+  useEffect(() => {
+    const hl = status && status.hour_limit;
+    if (!hl || !hl.limit_ts || (hl.mode !== 'hard' && hl.mode !== 'warn')) return;
+    const key = `${status.project_id}:${hl.limit_ts}`;
+    const fireAt = new Date(hl.limit_ts).getTime();
+    const run = async () => {
+      if (limitFiredRef.current === key) return;
+      limitFiredRef.current = key;
+      if (hl.mode === 'hard') {
+        try {
+          const r = await api.get('/clock/status');
+          const next = r.data || false;
+          setStatus(next);
+          if (!next || !next.clock_in_time) {
+            setHourLimitNotice((t.hourLimitReachedStopped || '').replace('{project}', status.project_name || ''));
+          } else if (String(next.project_id) !== String(status.project_id)) {
+            setHourLimitNotice((t.hourLimitReachedSwitched || '').replace('{project}', next.project_name || ''));
+          }
+        } catch { /* offline — the server still enforces on the next status fetch */ }
+      } else {
+        setHourLimitNotice((t.hourLimitReachedWarn || '').replace('{project}', status.project_name || ''));
+      }
+    };
+    const delay = fireAt - Date.now();
+    if (delay <= 0) { run(); return undefined; }
+    const id = setTimeout(run, Math.min(delay, 2147483647)); // setTimeout caps at ~24.8 days
+    return () => clearTimeout(id);
   }, [status]);
 
   // Push live location while clocked in
@@ -336,6 +373,15 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
         rememberProjectChoice(projectHistoryKey, selectedProject);
         // Auto-dismiss the first-clock-in hint — they've figured it out.
         try { safeLocal.setItem(HINT_DISMISSED_KEY, '1'); } catch {}
+        // Hour-limit clock-in outcomes: redirected to the overflow project, or a
+        // soft warning that they're already over a warn-mode project's cap.
+        if (r.data?.redirected_to_overflow) {
+          setHourLimitNotice((t.hourLimitRedirected || '').replace('{project}', r.data.project_name || ''));
+        } else if (r.data?.hour_warning) {
+          setHourLimitNotice((t.hourLimitWarnClockIn || '').replace('{project}', r.data.hour_warning.project_name || ''));
+        } else {
+          setHourLimitNotice(null);
+        }
         onClockedIn?.(r.data);
         setNotes('');
         clearClockInPersisted();
@@ -537,6 +583,13 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
           {!status.offline_queued && !clockOutQueued && <div style={styles.timer}>{formatElapsed(elapsed)}</div>}
         </div>
 
+        {hourLimitNotice && (
+          <div style={styles.hourLimitBanner}>
+            <span style={{ flex: 1 }}>{hourLimitNotice}</span>
+            <button onClick={() => setHourLimitNotice(null)} aria-label={t.dismiss || 'Dismiss'} style={styles.hourLimitDismiss}>✕</button>
+          </div>
+        )}
+
         {!clockOutQueued && (
           <>
             {/* Added rows */}
@@ -703,6 +756,12 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
               <li><strong>{t.cioLocationHelpFirefoxLabel}</strong> {t.cioLocationHelpFirefox}</li>
             </ul>
             <p style={styles.locationDeniedText}>{t.locationAfterUpdate}</p>
+          </div>
+        )}
+        {hourLimitNotice && (
+          <div style={styles.hourLimitBanner}>
+            <span style={{ flex: 1 }}>{hourLimitNotice}</span>
+            <button onClick={() => setHourLimitNotice(null)} aria-label={t.dismiss || 'Dismiss'} style={styles.hourLimitDismiss}>✕</button>
           </div>
         )}
         {error && <p role="alert" style={styles.error}>{error}</p>}
@@ -893,6 +952,8 @@ const styles = {
   geofenceHint: { fontSize: 12, color: '#0369a1', background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 6, padding: '7px 11px' },
   error: { color: '#ef4444', fontSize: 13, margin: 0, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, padding: '8px 12px' },
   errorDark: { fontSize: 13, margin: 0, background: 'rgba(255,255,255,0.15)', borderRadius: 6, padding: '8px 12px', color: '#fff' },
+  hourLimitBanner: { display: 'flex', alignItems: 'center', gap: 8, background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', borderRadius: 8, padding: '8px 12px', fontSize: 13, margin: '10px 0' },
+  hourLimitDismiss: { background: 'none', border: 'none', color: '#92400e', fontSize: 16, cursor: 'pointer', lineHeight: 1, padding: 0 },
   clockInBtn: { padding: '13px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 16, fontWeight: 700 },
   switchProjectBtn: { width: '100%', padding: '11px', background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.35)', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer' },
   switchBox: { background: 'rgba(255,255,255,0.12)', borderRadius: 8, padding: '12px', display: 'flex', flexDirection: 'column', gap: 10 },
