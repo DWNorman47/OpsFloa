@@ -619,6 +619,7 @@ const translations = {
     aqAddSegment: '+ Add segment',
     aqSplitSave: 'Split & Save',
     aqRecentlyApproved: 'Recently Approved',
+    aqApprovedInRange: 'Approved · not yet finalized',
     aqUnapprove: '↩ Unapprove',
 
     // ── Notification Bell ─────────────────────────────────────────────────────
@@ -5204,6 +5205,7 @@ const translations = {
     aqAddSegment: '+ Agregar segmento',
     aqSplitSave: 'Dividir y Guardar',
     aqRecentlyApproved: 'Aprobados Recientemente',
+    aqApprovedInRange: 'Aprobadas · aún sin finalizar',
     aqUnapprove: '↩ Desaprobar',
 
     // ── Notification Bell ─────────────────────────────────────────────────────

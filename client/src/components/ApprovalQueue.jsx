@@ -180,7 +180,13 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
   };
 
   const fetchRecentApproved = () => {
-    api.get('/admin/entries/recently-approved')
+    // With a date range, the server returns every approved entry in range that
+    // isn't already in a finalized payroll run (review-before-finalize); with no
+    // range it returns the last 24h of approvals.
+    const params = {};
+    if (dateFrom) params.from = dateFrom;
+    if (dateTo) params.to = dateTo;
+    api.get('/admin/entries/recently-approved', { params })
       .then(r => setRecentApproved(r.data))
       .catch(silentError('approvalqueue'));
   };
@@ -199,9 +205,11 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
       .then(([r, p]) => { if (!mounted) return; setEntries(r.data.entries); setHasMore(r.data.has_more); setProjects(p); })
       .catch(() => { if (mounted) setFetchError(true); })
       .finally(() => { if (mounted) setLoading(false); });
-    fetchRecentApproved();
     return () => { mounted = false; };
   }, []);
+  // Refresh the approved list on mount and whenever the date range changes (the
+  // range switches it from "last 24h" to "unfinalized approved entries in range").
+  useEffect(() => { fetchRecentApproved(); }, [dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (onCountChange) onCountChange(entries.length); }, [entries]);
 
   const startEdit = (e) => {
@@ -733,7 +741,7 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
       {recentApproved.length > 0 && (
         <div style={styles.recentSection}>
           <button style={styles.recentToggle} onClick={() => setShowRecent(v => !v)}>
-            <span>{t.aqRecentlyApproved} ({recentApproved.length})</span>
+            <span>{(dateFrom || dateTo) ? t.aqApprovedInRange : t.aqRecentlyApproved} ({recentApproved.length})</span>
             <span>{showRecent ? '▾' : '▸'}</span>
           </button>
           {showRecent && (

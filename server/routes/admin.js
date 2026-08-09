@@ -2939,12 +2939,40 @@ router.get('/entries/pending', requireAdmin, requirePerm('approve_entries'), asy
 });
 
 // GET /admin/entries/recently-approved — entries approved in the last 24 hours
+// Approved entries available to unapprove. Two modes:
+//   • With ?from&to — every approved entry in that date range that is NOT yet
+//     inside a FINALIZED payroll run (so an admin can review/revert before
+//     finalizing). A voided run is status='void', so its entries reappear here
+//     — "finalized then undone" shows up again, as intended.
+//   • Without a range — the last 24h of approvals (the original quick-revert list).
 router.get('/entries/recently-approved', requireAdmin, requirePerm('approve_entries'), async (req, res) => {
   const companyId = req.user.company_id;
   const accessIds = req.user.worker_access_ids;
+  const { from, to } = req.query;
+  const hasRange = !!(from || to);
   try {
-    const workerFilter = accessIds && accessIds.length ? `AND te.user_id = ANY($2)` : '';
-    const params = accessIds && accessIds.length ? [companyId, accessIds] : [companyId];
+    const params = [companyId];
+    let where = `te.company_id = $1 AND te.status = 'approved'`;
+    if (hasRange) {
+      if (from) { params.push(from); where += ` AND te.work_date >= $${params.length}::date`; }
+      if (to)   { params.push(to);   where += ` AND te.work_date <= $${params.length}::date`; }
+      where += `
+         AND NOT EXISTS (
+           SELECT 1 FROM payroll_run_checks prc
+           JOIN payroll_runs pr ON pr.id = prc.run_id
+           WHERE prc.company_id = te.company_id
+             AND pr.status = 'finalized'
+             AND prc.user_id = te.user_id
+             AND prc.period_start <= te.work_date
+             AND prc.period_end   >= te.work_date
+         )`;
+    } else {
+      where += ` AND te.approved_at >= NOW() - INTERVAL '24 hours'`;
+    }
+    if (accessIds && accessIds.length) { params.push(accessIds); where += ` AND te.user_id = ANY($${params.length})`; }
+    const orderLimit = hasRange
+      ? `ORDER BY te.work_date DESC, u.full_name LIMIT 500`
+      : `ORDER BY te.approved_at DESC LIMIT 100`;
     const { rows } = await pool.query(
       `SELECT te.id, te.work_date, te.start_time, te.end_time, te.project_id, te.user_id, te.approved_at,
               te.qbo_activity_id, te.qbo_synced_at,
@@ -2952,11 +2980,8 @@ router.get('/entries/recently-approved', requireAdmin, requirePerm('approve_entr
        FROM time_entries te
        JOIN users u ON te.user_id = u.id
        LEFT JOIN projects p ON te.project_id = p.id
-       WHERE te.company_id = $1 AND te.status = 'approved'
-         AND te.approved_at >= NOW() - INTERVAL '24 hours'
-         ${workerFilter}
-       ORDER BY te.approved_at DESC
-       LIMIT 100`,
+       WHERE ${where}
+       ${orderLimit}`,
       params
     );
     res.json(rows);
