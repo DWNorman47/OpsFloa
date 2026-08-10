@@ -98,6 +98,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
     feature_public: settings?.feature_public ?? true,
     feature_chat: settings?.feature_chat ?? false,
     feature_geolocation: settings?.feature_geolocation ?? true,
+    worker_messaging_scope: settings?.worker_messaging_scope ?? 'admins_only',
     location_ping_while_stationary: settings?.location_ping_while_stationary ?? false,
     daily_checklist_clockin_prompt: settings?.daily_checklist_clockin_prompt ?? true,
     module_timeclock: settings?.module_timeclock ?? true,
@@ -196,6 +197,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
       feature_public: settings.feature_public ?? true,
       feature_chat: settings.feature_chat ?? false,
       feature_geolocation: settings.feature_geolocation ?? true,
+      worker_messaging_scope: settings.worker_messaging_scope ?? 'admins_only',
       location_ping_while_stationary: settings.location_ping_while_stationary ?? false,
       daily_checklist_clockin_prompt: settings.daily_checklist_clockin_prompt ?? true,
       module_timeclock: settings.module_timeclock ?? true,
@@ -273,6 +275,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
         feature_public: form.feature_public,
         feature_chat: form.feature_chat,
         feature_geolocation: form.feature_geolocation,
+        worker_messaging_scope: form.worker_messaging_scope,
         location_ping_while_stationary: form.location_ping_while_stationary,
         daily_checklist_clockin_prompt: form.daily_checklist_clockin_prompt,
         module_timeclock: form.module_timeclock,
@@ -529,6 +532,23 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
               <span style={{ ...styles.toggleKnob, transform: form.feature_chat ? 'translateX(46px)' : 'translateX(0)' }} />
             </label>
           </div>
+          {form.feature_chat && (
+            <div style={styles.row}>
+              <div>
+                <div style={styles.label}>{t.mrMsgScope}</div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrMsgScopeDesc}</div>
+              </div>
+              <select
+                style={{ ...styles.input, width: 'auto', textAlign: 'left' }}
+                value={form.worker_messaging_scope}
+                onChange={e => set('worker_messaging_scope', e.target.value)}
+              >
+                <option value="off">{t.mrMsgScopeOff}</option>
+                <option value="admins_only">{t.mrMsgScopeAdmins}</option>
+                <option value="everyone">{t.mrMsgScopeEveryone}</option>
+              </select>
+            </div>
+          )}
           <div style={styles.row}>
             <div>
               <div style={styles.label}>{t.featGeolocation}</div>

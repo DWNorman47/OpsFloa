@@ -64,6 +64,7 @@ For each column we record:
 | `settings.value` (key=`overtime_rule`) | `daily`, `weekly` | **app-only** | `server/routes/admin.js` PATCH validation | Company-wide overtime calc. |
 | `settings.value` (key=`overtime_rate_method`) | `rate_when_worked`, `weighted_average` | **app-only** | `server/constants/payEnums.js` (`OVERTIME_RATE_METHODS`), `server/routes/admin.js` PATCH validation | How OT is priced when a worker earns >1 base rate in a period. `rate_when_worked` (default): each OT hour at the rate it earned. `weighted_average`: FLSA blended regular rate. Consumed by `server/utils/rateAwareOvertime.js`. |
 | `settings.value` (key=`invoice_signature`) | `none`, `optional`, `required` | **app-only** | `server/routes/admin.js` PATCH validation | Whether workers must sign invoices before exporting. |
+| `settings.value` (key=`worker_messaging_scope`) | `off`, `admins_only`, `everyone` | **app-only** | `server/constants/messagingEnums.js` (`WORKER_MESSAGING_SCOPES`), `server/routes/admin.js` PATCH validation, `server/utils/messaging.js` | Who a **worker** may direct-message (`/api/dm`). `admins_only` (default) = admins/managers only; `everyone` = admins + any active teammate; `off` = workers can't start messages. Admins always message any active same-company user; scope only gates workers. Enforced in `canMessage()`. |
 | `settings.value` (key=`currency`) | ISO 4217: `USD`, `CAD`, `EUR`, `GBP`, `MXN`, `HNL`, `GTQ`, `NIO`, `BZD`, `CRC`, `PAB` | **app-only** (shape only — see note) | `server/routes/admin.js:200` PATCH regex; dropdown `client/src/components/ManageRates.jsx`; locale maps `client/src/utils.js` + `server/currency.js` | Display currency for every money figure: app, PDFs, public client pages, report emails. |
 
 > **`currency` is validated by shape, not membership.** The PATCH check is only
@@ -390,7 +391,9 @@ orphaned and unread (kept only as historical data).
 These are fixed-value but Postgres enforces them via the `BOOLEAN` type.
 Listed for completeness so they're not flagged as gaps:
 
-`users.active`, `users.day_mark_mode`, `users.mfa_enabled`,
+`users.active`, `users.day_mark_mode`, `users.mfa_enabled`, `users.messaging_blocked`
+(global mute — the user can't send DMs; per-person blocks live in the
+`users.messaging_blocked_user_ids INTEGER[]` list, not a fixed-value column),
 `projects.active`, `time_entries.locked`, `shifts.cant_make_it`,
 `companies.is_exempt`, `companies.is_demo` (CHECK-free BOOLEAN, `0117`;
 marks demo/test tenants — suppresses real email, caps R2 at 200 MB,

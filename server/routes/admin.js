@@ -9,6 +9,7 @@ const { userOrIpKey } = require('../middleware/rateLimitKey');
 const { entryInstants, validLocalDate, wallClockInTZ } = require('../utils/timeFormat');
 const { PROJECT_STATUSES } = require('../constants/projectEnums');
 const { validateHourLimitInput, numOrNull: hlNumOrNull, reconcileCompanyActiveClocks } = require('../utils/projectHourLimits');
+const { WORKER_MESSAGING_SCOPES } = require('../constants/messagingEnums');
 const { clearSuppression } = require('../services/emailSuppression');
 const pool = require('../db');
 
@@ -201,7 +202,7 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
   // couldn't update them. Added during 2026-04-30 audit pass.
   const adminNumericKeys = ['shift_reminder_hour', 'pto_annual_days', 'cycle_count_audit_pct', 'cycle_count_reconcile_threshold'];
   const numericKeys = [...rateKeys, ...notifKeys, ...adminNumericKeys, 'overtime_threshold', 'media_retention_days', 'qbo_bill_terms_days', 'week_start', 'work_week_end', 'regular_shift_hours', 'sick_pay_pct', 'vacation_pay_pct'];
-  const stringKeys = ['overtime_rule', 'overtime_rate_method', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules', 'deductions', 'paycheck_rules'];
+  const stringKeys = ['overtime_rule', 'overtime_rate_method', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules', 'deductions', 'paycheck_rules', 'worker_messaging_scope'];
   const allowed = [...numericKeys, ...stringKeys, ...FEATURE_KEYS];
   const companyId = req.user.company_id;
   try {
@@ -244,6 +245,8 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
             return res.status(400).json({ error: 'Invalid timezone' });
           if (key === 'invoice_signature' && !['none', 'optional', 'required'].includes(val))
             return res.status(400).json({ error: 'invoice_signature must be none, optional, or required' });
+          if (key === 'worker_messaging_scope' && !WORKER_MESSAGING_SCOPES.includes(val))
+            return res.status(400).json({ error: `worker_messaging_scope must be one of: ${WORKER_MESSAGING_SCOPES.join(', ')}` });
           if (key.startsWith('label_') && (!String(val).trim() || String(val).length > 32))
             return res.status(400).json({ error: 'Labels must be 1-32 characters' });
           if (key === 'hours_rules' && val !== '') {
@@ -947,7 +950,7 @@ router.get('/workers', requireAdmin, async (req, res) => {
         FROM daily_regular
         GROUP BY user_id, ${weekBucketSql}
       )
-      SELECT u.id, u.full_name, u.invoice_name, u.username, u.role, u.role_id, u.language, u.hourly_rate, u.rate_type, u.day_mark_mode, u.overtime_rule, u.email, u.admin_permissions, u.worker_access_ids, u.worker_type, u.must_change_password, u.qbo_employee_id, u.qbo_vendor_id, u.classification, u.email_bounced_at, u.email_bounce_reason,
+      SELECT u.id, u.full_name, u.invoice_name, u.username, u.role, u.role_id, u.language, u.hourly_rate, u.rate_type, u.day_mark_mode, u.overtime_rule, u.email, u.admin_permissions, u.worker_access_ids, u.worker_type, u.must_change_password, u.qbo_employee_id, u.qbo_vendor_id, u.classification, u.email_bounced_at, u.email_bounce_reason, u.messaging_blocked, u.messaging_blocked_user_ids,
         COUNT(te.id) as total_entries,
         COALESCE(SUM(EXTRACT(EPOCH FROM (CASE WHEN te.end_time < te.start_time THEN te.end_time + INTERVAL '1 day' - te.start_time ELSE te.end_time - te.start_time END)) / 3600), 0) as total_hours,
         COALESCE(
@@ -970,7 +973,7 @@ router.get('/workers', requireAdmin, async (req, res) => {
       LEFT JOIN time_entries te ON te.user_id = u.id
         AND te.work_date >= CURRENT_DATE - INTERVAL '365 days'
       WHERE ${roleFilter} AND u.active = true AND u.company_id = $1 ${accessParamSql}
-      GROUP BY u.id, u.full_name, u.invoice_name, u.username, u.role, u.role_id, u.language, u.hourly_rate, u.rate_type, u.day_mark_mode, u.overtime_rule, u.email, u.admin_permissions, u.worker_access_ids, u.worker_type, u.must_change_password, u.qbo_employee_id, u.qbo_vendor_id, u.classification, u.email_bounced_at, u.email_bounce_reason
+      GROUP BY u.id, u.full_name, u.invoice_name, u.username, u.role, u.role_id, u.language, u.hourly_rate, u.rate_type, u.day_mark_mode, u.overtime_rule, u.email, u.admin_permissions, u.worker_access_ids, u.worker_type, u.must_change_password, u.qbo_employee_id, u.qbo_vendor_id, u.classification, u.email_bounced_at, u.email_bounce_reason, u.messaging_blocked, u.messaging_blocked_user_ids
       ORDER BY u.role DESC, u.full_name
       LIMIT 500`,
       queryParams
@@ -1756,6 +1759,44 @@ router.patch('/workers/:id/worker-access', requireAdmin, requirePerm('manage_rol
       [ids, req.params.id, req.user.company_id]
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Admin not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    logger.error({ err }, 'catch block error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// PATCH /admin/workers/:id/messaging — the block system: mute a member entirely
+// (messaging_blocked) and/or set the specific people they can't message
+// (messaging_blocked_user_ids). See server/utils/messaging.js.
+router.patch('/workers/:id/messaging', requireAdmin, requirePerm('manage_workers'), async (req, res) => {
+  if (String(req.params.id) === String(req.user.id)) {
+    return res.status(400).json({ error: 'You cannot change your own messaging settings' });
+  }
+  const { messaging_blocked, messaging_blocked_user_ids } = req.body;
+  const fields = [];
+  const values = [];
+  let idx = 1;
+  if (messaging_blocked !== undefined) { fields.push(`messaging_blocked = $${idx++}`); values.push(!!messaging_blocked); }
+  if (messaging_blocked_user_ids !== undefined) {
+    let ids = null;
+    if (Array.isArray(messaging_blocked_user_ids) && messaging_blocked_user_ids.length > 0) {
+      ids = messaging_blocked_user_ids.map(Number).filter(n => Number.isInteger(n) && n > 0);
+      if (ids.length === 0) ids = null;
+    }
+    fields.push(`messaging_blocked_user_ids = $${idx++}`); values.push(ids);
+  }
+  if (fields.length === 0) return res.status(400).json({ error: 'Nothing to update' });
+  values.push(req.params.id);
+  values.push(req.user.company_id);
+  try {
+    const result = await pool.query(
+      `UPDATE users SET ${fields.join(', ')} WHERE id = $${idx} AND company_id = $${idx + 1}
+       RETURNING id, full_name, messaging_blocked, messaging_blocked_user_ids`,
+      values
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'User not found' });
+    await logAudit(req.user.company_id, req.user.id, req.user.full_name, 'worker.messaging_updated', 'worker', parseInt(req.params.id), result.rows[0].full_name);
     res.json(result.rows[0]);
   } catch (err) {
     logger.error({ err }, 'catch block error');

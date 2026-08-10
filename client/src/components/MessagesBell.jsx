@@ -31,8 +31,10 @@ export default function MessagesBell() {
 
   const load = useCallback(() => {
     if (document.visibilityState !== 'visible' || !navigator.onLine) return;
-    api.get('/chat').then(r => {
-      const data = r.data || [];
+    Promise.all([
+      api.get('/chat').then(r => r.data || []).catch(() => []),
+      api.get('/dm/contacts').then(r => r.data?.contacts || []).catch(() => []),
+    ]).then(([data, contacts]) => {
       let unread;
       if (isAdmin) {
         // Admin sees a list of worker threads; a thread is unread when its last
@@ -64,16 +66,28 @@ export default function MessagesBell() {
           }));
       }
 
+      // Direct-message unread (from /dm/contacts; server-authoritative). These
+      // clear when the user opens that conversation (server stamps read_at), so
+      // they carry no localStorage readKey.
+      const dmItems = contacts.filter(c => c.unread > 0).map(c => ({
+        key: `dm${c.id}:${c.last_at}`,
+        title: c.full_name,
+        body: c.last_message,
+        time: c.last_at,
+        readKey: null,
+      }));
+      const all = [...unread, ...dmItems];
+
       // Chime when something new showed up since the previous poll (never on the
       // first load, so opening the app doesn't blast the chime for old messages).
-      const keys = unread.map(u => u.key);
+      const keys = all.map(u => u.key);
       if (!firstLoadRef.current && keys.some(k => !prevKeysRef.current.has(k))) {
         playMessageChime();
       }
       prevKeysRef.current = new Set(keys);
       firstLoadRef.current = false;
 
-      setItems(unread);
+      setItems(all);
     }).catch(silentError('messagesbell'));
   }, [isAdmin, user?.id]);
 
@@ -102,7 +116,7 @@ export default function MessagesBell() {
     const now = new Date().toISOString();
     // Set every relevant read key to now so the badge, the tab dots, and
     // CompanyChat all agree the thread(s) have been seen.
-    const keys = new Set(items.map(i => i.readKey));
+    const keys = new Set(items.map(i => i.readKey).filter(Boolean));
     keys.forEach(k => safeLocal.setItem(k, now));
     prevKeysRef.current = new Set();
     setItems([]);

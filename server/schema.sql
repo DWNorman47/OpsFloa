@@ -428,6 +428,8 @@ ALTER TABLE users     ADD COLUMN IF NOT EXISTS failed_login_attempts INT NOT NUL
 ALTER TABLE users     ADD COLUMN IF NOT EXISTS locked_until           TIMESTAMP;
 -- MFA (TOTP)
 ALTER TABLE users     ADD COLUMN IF NOT EXISTS mfa_enabled           BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users     ADD COLUMN IF NOT EXISTS messaging_blocked     BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users     ADD COLUMN IF NOT EXISTS messaging_blocked_user_ids INTEGER[]; -- specific people this user may not message (see 0169)
 ALTER TABLE users     ADD COLUMN IF NOT EXISTS mfa_secret            TEXT;
 ALTER TABLE users     ADD COLUMN IF NOT EXISTS mfa_secret_pending    TEXT;
 -- Timezone tracking on time entries and active clock

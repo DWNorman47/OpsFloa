@@ -232,6 +232,7 @@ app.use('/api/shifts', require('./routes/shifts'));
 app.use('/api/push', require('./routes/push'));
 app.use('/api/stripe', require('./routes/stripe'));
 app.use('/api/chat', require('./routes/chat'));
+app.use('/api/dm', require('./routes/directMessages'));
 app.use('/api/field-reports', requireAuth, requirePlan('business'), require('./routes/fieldReports'));
 app.use('/api/incidents', requireAuth, requirePlan('business'), require('./routes/incidents'));
 app.use('/api/sub-reports', requireAuth, requirePlan('business'), require('./routes/subReports'));
