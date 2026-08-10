@@ -4647,3 +4647,11 @@ Judgment calls / gotchas:
   worker_access_ids — no join table.
 
 `npm run verify` green (1401 server tests).
+
+### Follow-up: scope enum → two toggles
+Per David, "workers can message individual admins" should itself be a company
+option. That made the 3-way `worker_messaging_scope` enum redundant, so it was
+replaced with two boolean FEATURE_KEYS (both default OFF): `worker_dm_admins`
+and `worker_dm_workers`. Default = a worker has only the shared "Admins" thread.
+`canMessage()` takes `{ dmAdmins, dmWorkers }`; Company Settings shows two
+toggles. Retired `server/constants/messagingEnums.js` + its db-enums row.
