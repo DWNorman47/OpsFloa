@@ -4523,3 +4523,37 @@ Files: migration 0167, server/utils/projectHourLimits.js (+23 unit tests),
 clock.js (/in + /switch gates, /status reconcile, warn alert), admin.js
 (/active-clocks reconcile + project CRUD + validation), cron.js backstop,
 ManageProjects.jsx + ClockInOut.jsx + i18n. `npm run verify` green.
+
+## Approval Queue: collapsible sections + entry detail + location history
+
+Four asks on the Approval Queue:
+1. Pending approvals wrapped in a collapsible section, defaults OPEN each load
+   (`showPending` state, not persisted).
+2. Approved section always renders; open+empty shows a hint to change the dates.
+3. Clicking an approved row → details popup (ModalShell): approver+time, clock
+   source, notes, clock-in/out coords as text, QB sync; "View on map" seeds and
+   opens Location history for that worker/day.
+4. Page-level "Location history" popup with its own worker + date pickers → map
+   of clock-in/out points + list.
+
+Key findings / judgment calls:
+- **Data reality:** only two points persist per entry (`time_entries
+  .clock_in_lat/lng`, `clock_out_lat/lng`). `active_clock.current_lat/lng` is
+  live-only and wiped on clock-out; there is NO breadcrumb/path table. So
+  "location history" today = start+end per entry. Full-path tracking (David:
+  "not ready") is out of scope; left a code comment where a `<Polyline>` per
+  shift would drop in, and the /worker-locations endpoint is shaped to extend.
+- Had to **un-gate the date-range picker** (was `entries.length > 0`) — with zero
+  pending entries it vanished, but the approved empty-state tells users to change
+  "the dates above," so it must always show.
+- Entry-detail popup is **details-only, no map** (David's choice) — the map lives
+  in Location history, reachable via the popup's "View on map".
+- Location history is **self-contained** (own worker + date pickers, own
+  /admin/workers fetch) so it works without first setting the page filters.
+- Reused the file's existing Leaflet primitives (clockInIcon/clockOutIcon/
+  FitBounds) and the repo's ModalShell (this file had no modal before).
+
+server: new `GET /admin/worker-locations?user_id&from&to` (coord-bearing entries,
+any status, access-scoped, LIMIT 500); `/entries/recently-approved` enriched with
+location + approver/source fields. New test adminWorkerLocationsRoute.test.js.
+`npm run verify` green (1389 server tests).
