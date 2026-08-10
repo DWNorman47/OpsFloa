@@ -9,7 +9,6 @@ const { userOrIpKey } = require('../middleware/rateLimitKey');
 const { entryInstants, validLocalDate, wallClockInTZ } = require('../utils/timeFormat');
 const { PROJECT_STATUSES } = require('../constants/projectEnums');
 const { validateHourLimitInput, numOrNull: hlNumOrNull, reconcileCompanyActiveClocks } = require('../utils/projectHourLimits');
-const { WORKER_MESSAGING_SCOPES } = require('../constants/messagingEnums');
 const { clearSuppression } = require('../services/emailSuppression');
 const pool = require('../db');
 
@@ -202,7 +201,7 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
   // couldn't update them. Added during 2026-04-30 audit pass.
   const adminNumericKeys = ['shift_reminder_hour', 'pto_annual_days', 'cycle_count_audit_pct', 'cycle_count_reconcile_threshold'];
   const numericKeys = [...rateKeys, ...notifKeys, ...adminNumericKeys, 'overtime_threshold', 'media_retention_days', 'qbo_bill_terms_days', 'week_start', 'work_week_end', 'regular_shift_hours', 'sick_pay_pct', 'vacation_pay_pct'];
-  const stringKeys = ['overtime_rule', 'overtime_rate_method', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules', 'deductions', 'paycheck_rules', 'worker_messaging_scope'];
+  const stringKeys = ['overtime_rule', 'overtime_rate_method', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules', 'deductions', 'paycheck_rules'];
   const allowed = [...numericKeys, ...stringKeys, ...FEATURE_KEYS];
   const companyId = req.user.company_id;
   try {
@@ -245,8 +244,6 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
             return res.status(400).json({ error: 'Invalid timezone' });
           if (key === 'invoice_signature' && !['none', 'optional', 'required'].includes(val))
             return res.status(400).json({ error: 'invoice_signature must be none, optional, or required' });
-          if (key === 'worker_messaging_scope' && !WORKER_MESSAGING_SCOPES.includes(val))
-            return res.status(400).json({ error: `worker_messaging_scope must be one of: ${WORKER_MESSAGING_SCOPES.join(', ')}` });
           if (key.startsWith('label_') && (!String(val).trim() || String(val).length > 32))
             return res.status(400).json({ error: 'Labels must be 1-32 characters' });
           if (key === 'hours_rules' && val !== '') {

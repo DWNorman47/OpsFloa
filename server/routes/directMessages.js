@@ -6,12 +6,11 @@ const { userOrIpKey } = require('../middleware/rateLimitKey');
 const { requireAuth, requirePerm } = require('../middleware/auth');
 const { sendPushToUser } = require('../push');
 const { canMessage } = require('../utils/messaging');
-const { WORKER_MESSAGING_SCOPE_DEFAULT } = require('../constants/messagingEnums');
 
 // 1:1 direct messages. company_chat still owns the shared worker↔admins thread
 // (the "Admins" recipient); this is pairwise person-to-person. Who a WORKER may
-// message is governed by worker_messaging_scope + per-user blocks (see
-// server/utils/messaging.js). Mounted at /api/dm.
+// message is governed by the worker_dm_admins / worker_dm_workers settings +
+// per-user blocks (see server/utils/messaging.js). Mounted at /api/dm.
 
 const dmWriteLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -22,9 +21,13 @@ const dmWriteLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-async function getScope(companyId) {
-  const r = await pool.query(`SELECT value FROM settings WHERE company_id = $1 AND key = 'worker_messaging_scope'`, [companyId]);
-  return r.rows[0]?.value || WORKER_MESSAGING_SCOPE_DEFAULT;
+async function getMsgFlags(companyId) {
+  const r = await pool.query(
+    `SELECT key, value FROM settings WHERE company_id = $1 AND key IN ('worker_dm_admins', 'worker_dm_workers')`,
+    [companyId]
+  );
+  const m = Object.fromEntries(r.rows.map(x => [x.key, x.value]));
+  return { dmAdmins: m.worker_dm_admins === '1', dmWorkers: m.worker_dm_workers === '1' };
 }
 
 // GET /api/dm/contacts — people the caller may message, each with unread count +
@@ -38,7 +41,7 @@ router.get('/contacts', requireAuth, requirePerm('view_company_chat'), async (re
     );
     const me = meRes.rows[0];
     if (!me) return res.status(404).json({ error: 'User not found' });
-    const scope = await getScope(companyId);
+    const flags = await getMsgFlags(companyId);
 
     const [cand, unread, last] = await Promise.all([
       pool.query(`SELECT id, full_name, role FROM users WHERE company_id = $1 AND active = true AND id <> $2`, [companyId, req.user.id]),
@@ -55,7 +58,7 @@ router.get('/contacts', requireAuth, requirePerm('view_company_chat'), async (re
     const unreadBy = Object.fromEntries(unread.rows.map(r => [r.sender_id, r.n]));
     const lastBy = Object.fromEntries(last.rows.map(r => [r.partner, r]));
     const contacts = cand.rows
-      .filter(c => canMessage(me, { id: c.id, role: c.role, active: true, company_id: companyId }, { scope }).ok)
+      .filter(c => canMessage(me, { id: c.id, role: c.role, active: true, company_id: companyId }, flags).ok)
       .map(c => ({
         id: c.id,
         full_name: c.full_name,
@@ -66,7 +69,7 @@ router.get('/contacts', requireAuth, requirePerm('view_company_chat'), async (re
       }))
       .sort((a, b) => (new Date(b.last_at || 0) - new Date(a.last_at || 0)) || a.full_name.localeCompare(b.full_name));
 
-    res.json({ scope, contacts });
+    res.json({ contacts });
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });
@@ -117,8 +120,8 @@ router.post('/:userId', requireAuth, requirePerm('send_company_chat'), dmWriteLi
       pool.query(`SELECT id, company_id, role, active FROM users WHERE id = $1 AND company_id = $2`, [other, companyId]),
     ]);
     if (recRes.rowCount === 0) return res.status(404).json({ error: 'User not found' });
-    const scope = await getScope(companyId);
-    const verdict = canMessage(meRes.rows[0], recRes.rows[0], { scope });
+    const flags = await getMsgFlags(companyId);
+    const verdict = canMessage(meRes.rows[0], recRes.rows[0], flags);
     if (!verdict.ok) return res.status(403).json({ error: 'You are not allowed to message this person.', reason: verdict.reason });
 
     const ins = await pool.query(

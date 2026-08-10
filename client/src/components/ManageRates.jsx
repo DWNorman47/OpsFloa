@@ -98,7 +98,8 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
     feature_public: settings?.feature_public ?? true,
     feature_chat: settings?.feature_chat ?? false,
     feature_geolocation: settings?.feature_geolocation ?? true,
-    worker_messaging_scope: settings?.worker_messaging_scope ?? 'admins_only',
+    worker_dm_admins: settings?.worker_dm_admins ?? false,
+    worker_dm_workers: settings?.worker_dm_workers ?? false,
     location_ping_while_stationary: settings?.location_ping_while_stationary ?? false,
     daily_checklist_clockin_prompt: settings?.daily_checklist_clockin_prompt ?? true,
     module_timeclock: settings?.module_timeclock ?? true,
@@ -197,7 +198,8 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
       feature_public: settings.feature_public ?? true,
       feature_chat: settings.feature_chat ?? false,
       feature_geolocation: settings.feature_geolocation ?? true,
-      worker_messaging_scope: settings.worker_messaging_scope ?? 'admins_only',
+      worker_dm_admins: settings.worker_dm_admins ?? false,
+      worker_dm_workers: settings.worker_dm_workers ?? false,
       location_ping_while_stationary: settings.location_ping_while_stationary ?? false,
       daily_checklist_clockin_prompt: settings.daily_checklist_clockin_prompt ?? true,
       module_timeclock: settings.module_timeclock ?? true,
@@ -275,7 +277,8 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
         feature_public: form.feature_public,
         feature_chat: form.feature_chat,
         feature_geolocation: form.feature_geolocation,
-        worker_messaging_scope: form.worker_messaging_scope,
+        worker_dm_admins: form.worker_dm_admins,
+        worker_dm_workers: form.worker_dm_workers,
         location_ping_while_stationary: form.location_ping_while_stationary,
         daily_checklist_clockin_prompt: form.daily_checklist_clockin_prompt,
         module_timeclock: form.module_timeclock,
@@ -533,21 +536,28 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
             </label>
           </div>
           {form.feature_chat && (
-            <div style={styles.row}>
-              <div>
-                <div style={styles.label}>{t.mrMsgScope}</div>
-                <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrMsgScopeDesc}</div>
+            <>
+              <div style={styles.row}>
+                <div>
+                  <div style={styles.label}>{t.mrDmAdmins}</div>
+                  <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrDmAdminsDesc}</div>
+                </div>
+                <label style={{ ...styles.toggle, background: form.worker_dm_admins ? 'var(--ops-page-accent)' : '#d1d5db' }}>
+                  <input type="checkbox" checked={form.worker_dm_admins} onChange={e => set('worker_dm_admins', e.target.checked)} style={{ display: 'none' }} />
+                  <span style={{ ...styles.toggleKnob, transform: form.worker_dm_admins ? 'translateX(46px)' : 'translateX(0)' }} />
+                </label>
               </div>
-              <select
-                style={{ ...styles.input, width: 'auto', textAlign: 'left' }}
-                value={form.worker_messaging_scope}
-                onChange={e => set('worker_messaging_scope', e.target.value)}
-              >
-                <option value="off">{t.mrMsgScopeOff}</option>
-                <option value="admins_only">{t.mrMsgScopeAdmins}</option>
-                <option value="everyone">{t.mrMsgScopeEveryone}</option>
-              </select>
-            </div>
+              <div style={styles.row}>
+                <div>
+                  <div style={styles.label}>{t.mrDmWorkers}</div>
+                  <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrDmWorkersDesc}</div>
+                </div>
+                <label style={{ ...styles.toggle, background: form.worker_dm_workers ? 'var(--ops-page-accent)' : '#d1d5db' }}>
+                  <input type="checkbox" checked={form.worker_dm_workers} onChange={e => set('worker_dm_workers', e.target.checked)} style={{ display: 'none' }} />
+                  <span style={{ ...styles.toggleKnob, transform: form.worker_dm_workers ? 'translateX(46px)' : 'translateX(0)' }} />
+                </label>
+              </div>
+            </>
           )}
           <div style={styles.row}>
             <div>

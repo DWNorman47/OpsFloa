@@ -7,16 +7,18 @@
  *   - sender is not globally muted (users.messaging_blocked)
  *   - recipient is not on the sender's per-person block list
  *     (users.messaging_blocked_user_ids)
- *   - company scope (worker_messaging_scope): admins may message anyone; a WORKER
- *     may message admins only unless scope is 'everyone', and not at all if 'off'.
+ *   - company toggles: admins may message anyone; a WORKER may DM individual
+ *     admins only when `dmAdmins` (worker_dm_admins) is on, and other workers only
+ *     when `dmWorkers` (worker_dm_workers) is on. (Both default off — a worker then
+ *     has only the shared "Admins" company_chat thread, which these don't govern.)
  *
- * Pure function — callers load the two user rows + the scope string.
+ * Pure function — callers load the two user rows + the two flags.
  */
 
 const ADMIN_ROLES = new Set(['admin', 'super_admin']);
 const isAdmin = (u) => ADMIN_ROLES.has(u?.role);
 
-function canMessage(sender, recipient, { scope } = {}) {
+function canMessage(sender, recipient, { dmAdmins = false, dmWorkers = false } = {}) {
   if (!sender || !recipient) return { ok: false, reason: 'not_found' };
   if (!recipient.active) return { ok: false, reason: 'inactive' };
   if (String(sender.company_id) !== String(recipient.company_id)) return { ok: false, reason: 'cross_company' };
@@ -31,15 +33,11 @@ function canMessage(sender, recipient, { scope } = {}) {
     return { ok: false, reason: 'blocked' };
   }
 
-  // Admins may message any active same-company user; scope only restricts workers.
+  // Admins may message any active same-company user; the toggles only gate workers.
   if (isAdmin(sender)) return { ok: true };
 
-  const s = scope || 'admins_only';
-  if (s === 'off') return { ok: false, reason: 'scope_off' };
-  if (isAdmin(recipient)) return { ok: true }; // workers may always reach admins (admins_only + everyone)
-  // recipient is a worker → only when the company opens messaging to everyone
-  if (s === 'everyone') return { ok: true };
-  return { ok: false, reason: 'scope_admins_only' };
+  if (isAdmin(recipient)) return dmAdmins ? { ok: true } : { ok: false, reason: 'dm_admins_off' };
+  return dmWorkers ? { ok: true } : { ok: false, reason: 'dm_workers_off' };
 }
 
 module.exports = { canMessage, isAdmin };
