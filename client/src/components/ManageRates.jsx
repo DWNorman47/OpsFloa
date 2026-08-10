@@ -98,6 +98,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
     feature_public: settings?.feature_public ?? true,
     feature_chat: settings?.feature_chat ?? false,
     feature_geolocation: settings?.feature_geolocation ?? true,
+    location_ping_while_stationary: settings?.location_ping_while_stationary ?? false,
     daily_checklist_clockin_prompt: settings?.daily_checklist_clockin_prompt ?? true,
     module_timeclock: settings?.module_timeclock ?? true,
     module_work: settings?.module_work ?? true,
@@ -195,6 +196,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
       feature_public: settings.feature_public ?? true,
       feature_chat: settings.feature_chat ?? false,
       feature_geolocation: settings.feature_geolocation ?? true,
+      location_ping_while_stationary: settings.location_ping_while_stationary ?? false,
       daily_checklist_clockin_prompt: settings.daily_checklist_clockin_prompt ?? true,
       module_timeclock: settings.module_timeclock ?? true,
       module_work: settings.module_work ?? true,
@@ -271,6 +273,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
         feature_public: form.feature_public,
         feature_chat: form.feature_chat,
         feature_geolocation: form.feature_geolocation,
+        location_ping_while_stationary: form.location_ping_while_stationary,
         daily_checklist_clockin_prompt: form.daily_checklist_clockin_prompt,
         module_timeclock: form.module_timeclock,
         module_work: form.module_work,
@@ -536,6 +539,18 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
               <span style={{ ...styles.toggleKnob, transform: form.feature_geolocation ? 'translateX(46px)' : 'translateX(0)' }} />
             </label>
           </div>
+          {form.feature_geolocation && (
+            <div style={styles.row}>
+              <div>
+                <div style={styles.label}>{t.mrFeatPingStationary}</div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrFeatPingStationaryDesc}</div>
+              </div>
+              <label style={{ ...styles.toggle, background: form.location_ping_while_stationary ? 'var(--ops-page-accent)' : '#d1d5db' }}>
+                <input type="checkbox" checked={form.location_ping_while_stationary} onChange={e => set('location_ping_while_stationary', e.target.checked)} style={{ display: 'none' }} />
+                <span style={{ ...styles.toggleKnob, transform: form.location_ping_while_stationary ? 'translateX(46px)' : 'translateX(0)' }} />
+              </label>
+            </div>
+          )}
           {form.module_field && (
             <div style={styles.row}>
               <div>

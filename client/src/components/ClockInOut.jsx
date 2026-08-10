@@ -123,7 +123,7 @@ function ProjectWheelPicker({
   );
 }
 
-export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geolocationEnabled = true, projectsEnabled = true }) {
+export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geolocationEnabled = true, pingWhileStationary = false, projectsEnabled = true }) {
   // Detect day-mark workers up front — the actual switch to the DayMark
   // UI happens at the return statement (after all hook calls) so React's
   // hook-order rule isn't violated when the same component renders the
@@ -284,32 +284,36 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
       timeout: 10000,
     });
 
-    // Floor: guarantee a saved point at least every 10 min even when the worker
-    // is stationary. Checked each minute; only forces a ping after genuine
-    // silence — any real ping (movement, visibility, reconnect) resets the clock
-    // via lastPingRef. Server still throttles writes to 1/min. Skipped while
-    // offline (a ping can't reach the server); the reconnect handler covers that.
-    const FLOOR_MS = 10 * 60 * 1000;
-    const floorId = setInterval(() => {
-      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
-      if (Date.now() - lastPingRef.current < FLOOR_MS) return;
-      forcePing();
-    }, 60 * 1000);
+    // Floor (opt-in via the "Ping location while stationary" company setting):
+    // guarantee a saved point at least every 10 min even when the worker isn't
+    // moving. Checked each minute; only forces a ping after genuine silence —
+    // any real ping (movement, visibility, reconnect) resets the clock via
+    // lastPingRef. Server still throttles writes to 1/min. Skipped while offline;
+    // the reconnect handler grabs a fresh point + resets when back online.
+    let floorId = null;
+    let onOnline = null;
+    if (pingWhileStationary) {
+      const FLOOR_MS = 10 * 60 * 1000;
+      floorId = setInterval(() => {
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+        if (Date.now() - lastPingRef.current < FLOOR_MS) return;
+        forcePing();
+      }, 60 * 1000);
+      onOnline = () => forcePing();
+      window.addEventListener('online', onOnline);
+    }
 
     // Also push immediately when the worker opens their phone / switches back to the app
     const onVisible = () => { if (document.visibilityState === 'visible') forcePing({ timeout: 2500, maximumAge: 60000 }); };
     document.addEventListener('visibilitychange', onVisible);
-    // Coming back online after a gap: grab a fresh point and reset the floor.
-    const onOnline = () => forcePing();
-    window.addEventListener('online', onOnline);
 
     return () => {
       navigator.geolocation.clearWatch(watchId);
-      clearInterval(floorId);
+      if (floorId) clearInterval(floorId);
       document.removeEventListener('visibilitychange', onVisible);
-      window.removeEventListener('online', onOnline);
+      if (onOnline) window.removeEventListener('online', onOnline);
     };
-  }, [!!status?.clock_in_time, geolocationEnabled]);
+  }, [!!status?.clock_in_time, geolocationEnabled, pingWhileStationary]);
 
   // Auto-dismiss clock-out summary after 5s
   useEffect(() => {
