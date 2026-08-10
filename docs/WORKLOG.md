@@ -4601,3 +4601,16 @@ Completed the breadcrumb feature.
   per-shift point count; FitBounds frames the whole path.
 - Note: history accrues from when pings started recording — past shifts show only
   their clock-in/out points (no path). Retention sweep still deferred.
+
+## Location: stationary-ping setting + ping retention
+
+- **Company setting `location_ping_while_stationary`** (FEATURE_KEYS, default
+  FALSE). Toggle in Company Settings under Geolocation (only shows when
+  geolocation is on). OFF = only movement-driven pings; ON = the 10-min stationary
+  floor runs. Wired: settingsDefaults (key + default), ManageRates (init/reset/
+  save/toggle), Dashboard passes `pingWhileStationary` to ClockInOut, which gates
+  the floor + reconnect ping on it. PATCH allowlist already covers FEATURE_KEYS.
+  i18n mrFeatPingStationary(+Desc) EN/ES.
+- **Retention:** prod cron backstop (maintainActiveClocks) now
+  `DELETE FROM location_pings WHERE recorded_at < NOW() - INTERVAL '3 months'`.
+  Runs hourly in prod (crons are prod-only), keeping the breadcrumb table bounded.
