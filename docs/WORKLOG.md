@@ -4581,3 +4581,23 @@ Design/judgment:
 Storage only, per the ask. Drawing the per-shift polyline in the Location
 history map (from these pings) is the clear next step — the /worker-locations
 endpoint + map are already shaped for it.
+
+## Location tracking: 10-min floor + path drawing
+
+Completed the breadcrumb feature.
+
+- **10-minute floor (client, ClockInOut):** while clocked in, a per-minute check
+  forces a getCurrentPosition when it's been >10 min since the last ping, so a
+  stationary worker still gets a point every 10 min. Any real ping (movement,
+  visibility, reconnect) resets the floor via `lastPingRef`. Skipped when
+  `navigator.onLine === false`; a `window 'online'` handler forces a fresh ping +
+  reset on reconnect (the "reset if ping when offline and back on" ask). Server
+  still throttles writes to 1/min, so the floor is a floor, not extra volume.
+- **Draw path:** `/admin/worker-locations` now returns `{ entries, pings }`.
+  Entries carry `start_ts/end_ts` and now also include shifts that have pings but
+  no clock-in/out coords (EXISTS on location_pings in the shift window). The
+  Location history map draws a blue `<Polyline>` per shift from the pings between
+  its start/end, keeping the green/red clock-in/out markers; the list shows a
+  per-shift point count; FitBounds frames the whole path.
+- Note: history accrues from when pings started recording — past shifts show only
+  their clock-in/out points (no path). Retention sweep still deferred.
