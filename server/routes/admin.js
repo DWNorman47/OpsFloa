@@ -2996,35 +2996,52 @@ router.get('/entries/recently-approved', requireAdmin, requirePerm('approve_entr
 });
 
 // GET /admin/worker-locations?user_id&from&to — a worker's recorded clock-in/out
-// points across their time entries (any status) in a date range. Feeds the
-// Location history popup. Only rows with at least one coordinate are returned.
-// NOTE: today only two points exist per entry (clock-in + clock-out). When a
-// per-shift breadcrumb table lands, extend this to return the full path.
+// points AND the breadcrumb path across their time entries (any status) in a
+// date range. Feeds the Location history popup. Returns { entries, pings }:
+//   entries — shifts with any location data (a clock-in/out point OR pings in
+//             the shift window); carry start_ts/end_ts so the client can slice
+//             the path per shift.
+//   pings   — location_pings (migration 0168) in the range, ordered by time;
+//             the client draws a per-shift polyline from these.
 router.get('/worker-locations', requireAdmin, requirePerm('approve_entries'), async (req, res) => {
   const companyId = req.user.company_id;
   const accessIds = req.user.worker_access_ids;
   const userId = parseInt(req.query.user_id, 10);
   const { from, to } = req.query;
   if (!userId) return res.status(400).json({ error: 'user_id required' });
-  if (accessIds && accessIds.length && !accessIds.includes(userId)) return res.json([]);
+  if (accessIds && accessIds.length && !accessIds.includes(userId)) return res.json({ entries: [], pings: [] });
   try {
-    const params = [companyId, userId];
-    let where = `te.company_id = $1 AND te.user_id = $2
-                 AND (te.clock_in_lat IS NOT NULL OR te.clock_out_lat IS NOT NULL)`;
-    if (from) { params.push(from); where += ` AND te.work_date >= $${params.length}::date`; }
-    if (to)   { params.push(to);   where += ` AND te.work_date <= $${params.length}::date`; }
-    const { rows } = await pool.query(
-      `SELECT te.id, te.work_date, te.start_time, te.end_time, te.status,
+    const eParams = [companyId, userId];
+    let eWhere = `te.company_id = $1 AND te.user_id = $2
+                  AND (te.clock_in_lat IS NOT NULL OR te.clock_out_lat IS NOT NULL
+                       OR EXISTS (SELECT 1 FROM location_pings lp
+                                   WHERE lp.user_id = te.user_id
+                                     AND lp.recorded_at BETWEEN te.start_ts AND te.end_ts))`;
+    if (from) { eParams.push(from); eWhere += ` AND te.work_date >= $${eParams.length}::date`; }
+    if (to)   { eParams.push(to);   eWhere += ` AND te.work_date <= $${eParams.length}::date`; }
+    const entries = await pool.query(
+      `SELECT te.id, te.work_date, te.start_time, te.end_time, te.status, te.start_ts, te.end_ts,
               te.clock_in_lat, te.clock_in_lng, te.clock_out_lat, te.clock_out_lng,
               p.name AS project_name
        FROM time_entries te
        LEFT JOIN projects p ON te.project_id = p.id
-       WHERE ${where}
+       WHERE ${eWhere}
        ORDER BY te.work_date ASC, te.start_time ASC
        LIMIT 500`,
-      params
+      eParams
     );
-    res.json(rows);
+    const pParams = [companyId, userId];
+    let pWhere = `company_id = $1 AND user_id = $2`;
+    if (from) { pParams.push(from); pWhere += ` AND recorded_at >= $${pParams.length}::date`; }
+    if (to)   { pParams.push(to);   pWhere += ` AND recorded_at < ($${pParams.length}::date + 1)`; }
+    const pings = await pool.query(
+      `SELECT lat, lng, recorded_at FROM location_pings
+       WHERE ${pWhere}
+       ORDER BY recorded_at ASC
+       LIMIT 10000`,
+      pParams
+    );
+    res.json({ entries: entries.rows, pings: pings.rows });
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });

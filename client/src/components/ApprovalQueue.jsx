@@ -9,7 +9,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
 import { fmtHours, langToLocale, formatDateTime } from '../utils';
 import { labelSg, labelPl } from '../companyLabels';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -115,16 +115,26 @@ function LocationHistoryModal({ seed, onClose, t, locale }) {
   const [userId, setUserId] = useState(seed?.user_id ? String(seed.user_id) : '');
   const [from, setFrom] = useState(seed?.from || '');
   const [to, setTo] = useState(seed?.to || '');
-  const [rows, setRows] = useState(null); // null = not loaded yet
+  const [rows, setRows] = useState(null); // entries; null = not loaded yet
+  const [pings, setPings] = useState([]); // breadcrumb path points
   const [loading, setLoading] = useState(false);
 
   const load = (uid = userId, f = from, t2 = to) => {
     if (!uid) return;
     setLoading(true);
     api.get('/admin/worker-locations', { params: { user_id: uid, from: f || undefined, to: t2 || undefined } })
-      .then(r => setRows(r.data || []))
-      .catch(() => setRows([]))
+      .then(r => { setRows(r.data?.entries || []); setPings(r.data?.pings || []); })
+      .catch(() => { setRows([]); setPings([]); })
       .finally(() => setLoading(false));
+  };
+
+  // The breadcrumb path for one shift = pings recorded between its start/end.
+  const pathFor = (e) => {
+    if (!e.start_ts || !e.end_ts) return [];
+    const s = new Date(e.start_ts).getTime(), en = new Date(e.end_ts).getTime();
+    return pings
+      .filter(pg => { const ms = new Date(pg.recorded_at).getTime(); return ms >= s && ms <= en; })
+      .map(pg => [Number(pg.lat), Number(pg.lng)]);
   };
 
   useEffect(() => {
@@ -139,6 +149,7 @@ function LocationHistoryModal({ seed, onClose, t, locale }) {
     if (e.clock_in_lat != null) positions.push([Number(e.clock_in_lat), Number(e.clock_in_lng)]);
     if (e.clock_out_lat != null) positions.push([Number(e.clock_out_lat), Number(e.clock_out_lng)]);
   });
+  pings.forEach(pg => positions.push([Number(pg.lat), Number(pg.lng)]));
 
   return (
     <div style={styles.overlay} onClick={onClose}>
@@ -168,6 +179,10 @@ function LocationHistoryModal({ seed, onClose, t, locale }) {
                 <MapContainer center={positions[0]} zoom={13} style={styles.map} scrollWheelZoom={false}>
                   <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap" />
                   <FitBounds positions={positions} />
+                  {rows.map(e => {
+                    const path = pathFor(e);
+                    return path.length >= 2 ? <Polyline key={`path-${e.id}`} positions={path} color="#2563eb" weight={4} opacity={0.7} /> : null;
+                  })}
                   {rows.map(e => (
                     <React.Fragment key={e.id}>
                       {e.clock_in_lat != null && (
@@ -192,6 +207,7 @@ function LocationHistoryModal({ seed, onClose, t, locale }) {
                     {e.project_name && <span style={styles.recentProject}>{e.project_name}</span>}
                     <span style={styles.locCoord}>🟢 {coordText(e.clock_in_lat, e.clock_in_lng, t)}</span>
                     <span style={styles.locCoord}>🔴 {coordText(e.clock_out_lat, e.clock_out_lng, t)}</span>
+                    {pathFor(e).length >= 2 && <span style={styles.locCoord}>🧭 {pathFor(e).length} {t.aqPathPoints}</span>}
                   </div>
                 ))}
               </div>

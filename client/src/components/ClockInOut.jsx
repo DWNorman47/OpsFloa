@@ -171,6 +171,7 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
   const [hourLimitNotice, setHourLimitNotice] = useState(null); // string banner, dismissible
   const timerRef = useRef(null);
   const limitFiredRef = useRef(''); // "<projectId>:<limit_ts>" already acted on
+  const lastPingRef = useRef(0); // epoch ms of the last location push (drives the 10-min floor)
 
   useEffect(() => {
     const refreshStatus = () => api.get('/clock/status').then(r => setStatus(r.data || false)).catch(() => setStatus(false));
@@ -268,9 +269,13 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
   useEffect(() => {
     if (!status || !status.clock_in_time || !geolocationEnabled || !navigator.geolocation) return;
 
+    lastPingRef.current = Date.now(); // floor counts from when tracking (re)starts
+
     const pushLocation = (pos) => {
+      lastPingRef.current = Date.now();
       api.post('/clock/location', { lat: pos.coords.latitude, lng: pos.coords.longitude }).catch(silentError('clockinout'));
     };
+    const forcePing = (opts) => navigator.geolocation.getCurrentPosition(pushLocation, () => {}, { timeout: 8000, maximumAge: 0, enableHighAccuracy: false, ...opts });
 
     // watchPosition runs continuously while screen is on; fires on movement too
     const watchId = navigator.geolocation.watchPosition(pushLocation, () => {}, {
@@ -279,17 +284,30 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
       timeout: 10000,
     });
 
+    // Floor: guarantee a saved point at least every 10 min even when the worker
+    // is stationary. Checked each minute; only forces a ping after genuine
+    // silence — any real ping (movement, visibility, reconnect) resets the clock
+    // via lastPingRef. Server still throttles writes to 1/min. Skipped while
+    // offline (a ping can't reach the server); the reconnect handler covers that.
+    const FLOOR_MS = 10 * 60 * 1000;
+    const floorId = setInterval(() => {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+      if (Date.now() - lastPingRef.current < FLOOR_MS) return;
+      forcePing();
+    }, 60 * 1000);
+
     // Also push immediately when the worker opens their phone / switches back to the app
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') {
-        navigator.geolocation.getCurrentPosition(pushLocation, () => {}, { timeout: 2500, maximumAge: 60000, enableHighAccuracy: false });
-      }
-    };
+    const onVisible = () => { if (document.visibilityState === 'visible') forcePing({ timeout: 2500, maximumAge: 60000 }); };
     document.addEventListener('visibilitychange', onVisible);
+    // Coming back online after a gap: grab a fresh point and reset the floor.
+    const onOnline = () => forcePing();
+    window.addEventListener('online', onOnline);
 
     return () => {
       navigator.geolocation.clearWatch(watchId);
+      clearInterval(floorId);
       document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', onOnline);
     };
   }, [!!status?.clock_in_time, geolocationEnabled]);
 
