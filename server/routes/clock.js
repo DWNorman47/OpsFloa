@@ -940,15 +940,15 @@ router.post('/location', requireAuth, async (req, res) => {
 
     // Persist the ping to the breadcrumb history (location_pings), in addition to
     // the "last known" point on active_clock above. Fire-and-forget so it never
-    // delays the response. Throttled to ~1 row / 30s per user via NOT EXISTS so a
-    // movement-driven watchPosition can't flood the table. (migration 0168)
+    // delays the response. Throttled to ~1 row / minute per user via NOT EXISTS so
+    // a movement-driven watchPosition can't flood the table. (migration 0168)
     setImmediate(() => {
       pool.query(
         `INSERT INTO location_pings (company_id, user_id, lat, lng)
          SELECT $1, $2, $3, $4
          WHERE NOT EXISTS (
            SELECT 1 FROM location_pings
-           WHERE user_id = $2 AND recorded_at > NOW() - INTERVAL '30 seconds'
+           WHERE user_id = $2 AND recorded_at > NOW() - INTERVAL '1 minute'
          )`,
         [req.user.company_id, req.user.id, lat, lng]
       ).catch(err => logger.warn({ err }, 'location ping insert failed'));

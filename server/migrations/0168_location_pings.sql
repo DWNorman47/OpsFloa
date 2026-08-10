@@ -7,7 +7,7 @@
 -- Deliberately minimal and used ONLY for location tracking. No FK to
 -- time_entries (the entry doesn't exist yet mid-shift); pings are tied to a
 -- shift by user_id + recorded_at range at read time. Writes are throttled
--- server-side (~30s/user) so a movement-driven watchPosition can't flood it.
+-- server-side (~1/min/user) so a movement-driven watchPosition can't flood it.
 
 CREATE TABLE IF NOT EXISTS location_pings (
   id          BIGSERIAL PRIMARY KEY,
