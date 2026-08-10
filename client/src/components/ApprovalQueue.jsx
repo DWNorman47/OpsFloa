@@ -4,6 +4,7 @@ import { getOrFetch } from '../offlineDb';
 import { SkeletonList } from './Skeleton';
 import EmptyState from './EmptyState';
 import MessageThread from './MessageThread';
+import ModalShell from './ModalShell';
 import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
 import { fmtHours, langToLocale, formatDateTime } from '../utils';
@@ -92,6 +93,120 @@ function suggestedOverrideFor(entry, rule, threshold) {
   return { h, m };
 }
 
+// Human label for a time entry's clock source.
+function sourceLabel(src, t) {
+  if (src === 'admin') return t.aqSourceAdmin;
+  if (src === 'log_entry') return t.aqSourceLog;
+  return t.aqSourceWorker;
+}
+
+// "lat, lng" to 5 decimals, or a "not recorded" note.
+function coordText(lat, lng, t) {
+  if (lat == null || lng == null) return t.aqNotRecorded;
+  return `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`;
+}
+
+// Self-contained Location history popup: pick a worker + date range, see their
+// recorded clock-in (green) / clock-out (red) points on a map + a list. Today
+// only two points per entry are stored; when a per-shift breadcrumb table lands,
+// add a <Polyline> per shift here.
+function LocationHistoryModal({ seed, onClose, t, locale }) {
+  const [workers, setWorkers] = useState([]);
+  const [userId, setUserId] = useState(seed?.user_id ? String(seed.user_id) : '');
+  const [from, setFrom] = useState(seed?.from || '');
+  const [to, setTo] = useState(seed?.to || '');
+  const [rows, setRows] = useState(null); // null = not loaded yet
+  const [loading, setLoading] = useState(false);
+
+  const load = (uid = userId, f = from, t2 = to) => {
+    if (!uid) return;
+    setLoading(true);
+    api.get('/admin/worker-locations', { params: { user_id: uid, from: f || undefined, to: t2 || undefined } })
+      .then(r => setRows(r.data || []))
+      .catch(() => setRows([]))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    api.get('/admin/workers', { params: { all_roles: true } })
+      .then(r => setWorkers(r.data || []))
+      .catch(silentError('lochistory'));
+    if (seed?.user_id) load(String(seed.user_id), seed.from || '', seed.to || '');
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const positions = [];
+  (rows || []).forEach(e => {
+    if (e.clock_in_lat != null) positions.push([Number(e.clock_in_lat), Number(e.clock_in_lng)]);
+    if (e.clock_out_lat != null) positions.push([Number(e.clock_out_lat), Number(e.clock_out_lng)]);
+  });
+
+  return (
+    <div style={styles.overlay} onClick={onClose}>
+      <ModalShell onClose={onClose} titleId="aq-loc-title" style={styles.locModal}>
+        <div onClick={e => e.stopPropagation()}>
+          <h3 id="aq-loc-title" style={styles.modalTitle}>📍 {t.aqLocationHistory}</h3>
+          <div style={styles.locControls}>
+            <select style={styles.dateInput} value={userId} onChange={e => setUserId(e.target.value)}>
+              <option value="">{t.aqSelectWorker}</option>
+              {workers.map(w => (
+                <option key={w.id} value={w.id}>{w.full_name || w.name || w.username}</option>
+              ))}
+            </select>
+            <input type="date" style={styles.dateInput} value={from} onChange={e => setFrom(e.target.value)} title={t.fromDate} />
+            <span style={{ fontSize: 12, color: '#6b7280' }}>–</span>
+            <input type="date" style={styles.dateInput} value={to} onChange={e => setTo(e.target.value)} title={t.toDate} />
+            <button style={styles.applyDateBtn} onClick={() => load()} disabled={!userId || loading}>{loading ? '…' : t.aqShow}</button>
+          </div>
+
+          {rows === null ? (
+            <p style={styles.approvedEmpty}>{t.aqLocPrompt}</p>
+          ) : rows.length === 0 ? (
+            <p style={styles.approvedEmpty}>{t.aqNoLocationData}</p>
+          ) : (
+            <>
+              <div style={styles.mapWrap}>
+                <MapContainer center={positions[0]} zoom={13} style={styles.map} scrollWheelZoom={false}>
+                  <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap" />
+                  <FitBounds positions={positions} />
+                  {rows.map(e => (
+                    <React.Fragment key={e.id}>
+                      {e.clock_in_lat != null && (
+                        <Marker position={[Number(e.clock_in_lat), Number(e.clock_in_lng)]} icon={clockInIcon}>
+                          <Popup>🟢 {t.clockIn}<br />{formatDate(e.work_date, locale)} {formatTime(e.start_time)}</Popup>
+                        </Marker>
+                      )}
+                      {e.clock_out_lat != null && (
+                        <Marker position={[Number(e.clock_out_lat), Number(e.clock_out_lng)]} icon={clockOutIcon}>
+                          <Popup>🔴 {t.clockOut}<br />{formatDate(e.work_date, locale)} {formatTime(e.end_time)}</Popup>
+                        </Marker>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </MapContainer>
+              </div>
+              <div style={styles.locList}>
+                {rows.map(e => (
+                  <div key={e.id} style={styles.locListRow}>
+                    <span style={styles.recentDate}>{formatDate(e.work_date, locale)}</span>
+                    <span style={styles.recentTime}>{formatTime(e.start_time)} – {formatTime(e.end_time)}</span>
+                    {e.project_name && <span style={styles.recentProject}>{e.project_name}</span>}
+                    <span style={styles.locCoord}>🟢 {coordText(e.clock_in_lat, e.clock_in_lng, t)}</span>
+                    <span style={styles.locCoord}>🔴 {coordText(e.clock_out_lat, e.clock_out_lng, t)}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          <div style={styles.modalActions}>
+            <button style={styles.modalCloseBtn} onClick={onClose}>{t.close}</button>
+          </div>
+        </div>
+      </ModalShell>
+    </div>
+  );
+}
+
 export default function ApprovalQueue({ onCountChange, settings = null }) {
   const { user } = useAuth();
   const t = useT();
@@ -145,6 +260,10 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
   const [dateTo, setDateTo] = useState('');
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [approvingSelected, setApprovingSelected] = useState(false);
+  const [showPending, setShowPending] = useState(true); // approvals list open by default each load
+  const [detailEntry, setDetailEntry] = useState(null); // approved entry whose detail popup is open
+  const [locHistoryOpen, setLocHistoryOpen] = useState(false);
+  const [locSeed, setLocSeed] = useState(null); // { user_id, from, to } prefill for the Location history popup
 
   const fetch = () => {
     setLoading(true);
@@ -454,31 +573,33 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
             )}
           </>
         )}
+        <button style={styles.locHistoryBtn} onClick={() => { setLocSeed(null); setLocHistoryOpen(true); }}>
+          📍 {t.aqLocationHistory}
+        </button>
       </div>
 
-      {entries.length > 0 && (
-        <div className="filter-row" style={styles.dateFilterRow}>
-          <input
-            type="date"
-            style={styles.dateInput}
-            value={dateFrom}
-            onChange={e => setDateFrom(e.target.value)}
-            title={t.fromDate}
-          />
-          <span style={{ fontSize: 12, color: '#6b7280' }}>–</span>
-          <input
-            type="date"
-            style={styles.dateInput}
-            value={dateTo}
-            onChange={e => setDateTo(e.target.value)}
-            title={t.toDate}
-          />
-          <button style={styles.applyDateBtn} onClick={() => { setSelectedIds(new Set()); fetch(); }}>{t.apply}</button>
-          {(dateFrom || dateTo) && (
-            <button style={styles.clearDateBtn} aria-label={t.clearDateFilters} onClick={() => { setDateFrom(''); setDateTo(''); setSelectedIds(new Set()); fetch(); }}>✕</button>
-          )}
-        </div>
-      )}
+      {/* Always visible so the approved empty-state can point at "the dates above". */}
+      <div className="filter-row" style={styles.dateFilterRow}>
+        <input
+          type="date"
+          style={styles.dateInput}
+          value={dateFrom}
+          onChange={e => setDateFrom(e.target.value)}
+          title={t.fromDate}
+        />
+        <span style={{ fontSize: 12, color: '#6b7280' }}>–</span>
+        <input
+          type="date"
+          style={styles.dateInput}
+          value={dateTo}
+          onChange={e => setDateTo(e.target.value)}
+          title={t.toDate}
+        />
+        <button style={styles.applyDateBtn} onClick={() => { setSelectedIds(new Set()); fetch(); }}>{t.apply}</button>
+        {(dateFrom || dateTo) && (
+          <button style={styles.clearDateBtn} aria-label={t.clearDateFilters} onClick={() => { setDateFrom(''); setDateTo(''); setSelectedIds(new Set()); fetch(); }}>✕</button>
+        )}
+      </div>
 
       {fetchError ? (
         <p style={styles.fetchError}>{t.failedLoadPending} <button style={styles.retryBtn} onClick={fetch}>{t.retry}</button></p>
@@ -490,6 +611,12 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
           tone="good"
         />
       ) : (
+        <>
+        <button style={styles.recentToggle} onClick={() => setShowPending(v => !v)}>
+          <span>{t.aqPendingSection} ({visibleEntries.length})</span>
+          <span>{showPending ? '▾' : '▸'}</span>
+        </button>
+        {showPending && (
         <div style={styles.list}>
           {hasMore && (
             <div style={{ textAlign: 'center', padding: '12px 0 4px' }}>
@@ -736,19 +863,23 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
             </div>
           ))}
         </div>
+        )}
+        </>
       )}
 
-      {recentApproved.length > 0 && (
-        <div style={styles.recentSection}>
-          <button style={styles.recentToggle} onClick={() => setShowRecent(v => !v)}>
-            <span>{(dateFrom || dateTo) ? t.aqApprovedInRange : t.aqRecentlyApproved} ({recentApproved.length})</span>
-            <span>{showRecent ? '▾' : '▸'}</span>
-          </button>
-          {showRecent && (
+      <div style={styles.recentSection}>
+        <button style={styles.recentToggle} onClick={() => setShowRecent(v => !v)}>
+          <span>{(dateFrom || dateTo) ? t.aqApprovedInRange : t.aqRecentlyApproved} ({recentApproved.length})</span>
+          <span>{showRecent ? '▾' : '▸'}</span>
+        </button>
+        {showRecent && (
+          recentApproved.length === 0 ? (
+            <p style={styles.approvedEmpty}>{t.aqApprovedEmptyHint}</p>
+          ) : (
             <div style={styles.recentList}>
               {recentApproved.map(e => (
                 <div key={e.id} style={styles.recentRow}>
-                  <div style={styles.recentInfo}>
+                  <button style={styles.recentInfoBtn} onClick={() => setDetailEntry(e)} title={t.aqViewDetails}>
                     <span style={styles.recentWorker}>{e.worker_name}</span>
                     <span style={styles.recentDate}>{formatDate(e.work_date, locale)}</span>
                     <span style={styles.recentTime}>{formatTime(e.start_time)} – {formatTime(e.end_time)}</span>
@@ -758,7 +889,7 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                         QB ✓
                       </span>
                     )}
-                  </div>
+                  </button>
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
                     <button
                       style={{ ...styles.unapproveBtn, ...(unapproving === e.id ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
@@ -772,8 +903,52 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                 </div>
               ))}
             </div>
-          )}
+          )
+        )}
+      </div>
+
+      {detailEntry && (
+        <div style={styles.overlay} onClick={() => setDetailEntry(null)}>
+          <ModalShell onClose={() => setDetailEntry(null)} titleId="aq-detail-title" style={styles.modal}>
+            <div onClick={e => e.stopPropagation()}>
+              <h3 id="aq-detail-title" style={styles.modalTitle}>{detailEntry.worker_name}</h3>
+              <div style={styles.detailGrid}>
+                <span style={styles.detailLabel}>{t.aqWorkDate}</span><span>{formatDate(detailEntry.work_date, locale)}</span>
+                <span style={styles.detailLabel}>{t.aqTime}</span><span>{formatTime(detailEntry.start_time)} – {formatTime(detailEntry.end_time)}</span>
+                {detailEntry.project_name && (<><span style={styles.detailLabel}>{t.aqProject}</span><span>{detailEntry.project_name}</span></>)}
+                <span style={styles.detailLabel}>{t.aqApprovedBy}</span>
+                <span>{detailEntry.approved_by_name || '—'}{detailEntry.approved_at ? ` · ${formatDateTime(detailEntry.approved_at, user?.language)}` : ''}</span>
+                <span style={styles.detailLabel}>{t.aqSource}</span>
+                <span>{sourceLabel(detailEntry.clock_source, t)}{detailEntry.clocked_in_by_name ? ` (${detailEntry.clocked_in_by_name})` : ''}</span>
+                {detailEntry.notes && (<><span style={styles.detailLabel}>{t.aqNotes}</span><span>{detailEntry.notes}</span></>)}
+                <span style={styles.detailLabel}>{t.aqClockInLoc}</span>
+                <span>{coordText(detailEntry.clock_in_lat, detailEntry.clock_in_lng, t)}</span>
+                <span style={styles.detailLabel}>{t.aqClockOutLoc}</span>
+                <span>{coordText(detailEntry.clock_out_lat, detailEntry.clock_out_lng, t)}</span>
+                <span style={styles.detailLabel}>QuickBooks</span>
+                <span>{detailEntry.qbo_activity_id ? t.aqQbSynced : '—'}</span>
+              </div>
+              <div style={styles.modalActions}>
+                {(detailEntry.clock_in_lat || detailEntry.clock_out_lat) && (
+                  <button
+                    style={styles.viewMapBtn}
+                    onClick={() => {
+                      const d = (detailEntry.work_date || '').toString().substring(0, 10);
+                      setLocSeed({ user_id: detailEntry.user_id, from: d, to: d });
+                      setDetailEntry(null);
+                      setLocHistoryOpen(true);
+                    }}
+                  >📍 {t.aqViewOnMap}</button>
+                )}
+                <button style={styles.modalCloseBtn} onClick={() => setDetailEntry(null)}>{t.close}</button>
+              </div>
+            </div>
+          </ModalShell>
         </div>
+      )}
+
+      {locHistoryOpen && (
+        <LocationHistoryModal seed={locSeed} onClose={() => setLocHistoryOpen(false)} t={t} locale={locale} />
       )}
     </div>
   );
@@ -860,4 +1035,21 @@ const styles = {
   mapLegendItem: { fontSize: 11, color: '#374151', display: 'flex', alignItems: 'center', gap: 4 },
   mapLegendMissing: { fontSize: 11, color: '#6b7280', fontStyle: 'italic' },
   map: { height: 280, width: '100%' },
+  locHistoryBtn: { marginLeft: 'auto', background: 'none', border: '1px solid #bfdbfe', color: 'var(--ops-page-accent)', padding: '5px 12px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', flex: '0 0 auto' },
+  approvedEmpty: { fontSize: 13, color: '#6b7280', fontStyle: 'italic', margin: '10px 2px', textAlign: 'center' },
+  recentInfoBtn: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 13, background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer', padding: 0, flex: 1 },
+  // Modal (detail + location history)
+  overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000, padding: 16 },
+  modal: { background: '#fff', borderRadius: 12, padding: 20, maxWidth: 460, width: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.25)' },
+  locModal: { background: '#fff', borderRadius: 12, padding: 20, maxWidth: 720, width: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.25)' },
+  modalTitle: { margin: '0 0 14px', fontSize: 17, fontWeight: 700, color: '#111827' },
+  detailGrid: { display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 14px', fontSize: 13, color: '#374151', alignItems: 'baseline' },
+  detailLabel: { fontWeight: 600, color: '#6b7280' },
+  modalActions: { display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 18, flexWrap: 'wrap' },
+  viewMapBtn: { background: 'none', border: '1px solid #bfdbfe', color: 'var(--ops-page-accent)', padding: '7px 14px', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  modalCloseBtn: { background: '#111827', color: '#fff', border: 'none', padding: '7px 16px', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  locControls: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 },
+  locList: { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 },
+  locListRow: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12, padding: '6px 8px', background: '#f9fafb', borderRadius: 6 },
+  locCoord: { color: '#6b7280', fontFamily: 'monospace', fontSize: 11 },
 };

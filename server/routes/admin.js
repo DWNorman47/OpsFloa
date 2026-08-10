@@ -2975,13 +2975,53 @@ router.get('/entries/recently-approved', requireAdmin, requirePerm('approve_entr
       : `ORDER BY te.approved_at DESC LIMIT 100`;
     const { rows } = await pool.query(
       `SELECT te.id, te.work_date, te.start_time, te.end_time, te.project_id, te.user_id, te.approved_at,
-              te.qbo_activity_id, te.qbo_synced_at,
-              COALESCE(u.invoice_name, u.full_name) AS worker_name, p.name AS project_name
+              te.qbo_activity_id, te.qbo_synced_at, te.notes, te.clock_source, te.break_minutes, te.wage_type,
+              te.clock_in_lat, te.clock_in_lng, te.clock_out_lat, te.clock_out_lng,
+              COALESCE(u.invoice_name, u.full_name) AS worker_name, p.name AS project_name,
+              approver.full_name AS approved_by_name, cib.full_name AS clocked_in_by_name
        FROM time_entries te
        JOIN users u ON te.user_id = u.id
        LEFT JOIN projects p ON te.project_id = p.id
+       LEFT JOIN users approver ON te.approved_by = approver.id
+       LEFT JOIN users cib ON te.clocked_in_by = cib.id
        WHERE ${where}
        ${orderLimit}`,
+      params
+    );
+    res.json(rows);
+  } catch (err) {
+    logger.error({ err }, 'catch block error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /admin/worker-locations?user_id&from&to — a worker's recorded clock-in/out
+// points across their time entries (any status) in a date range. Feeds the
+// Location history popup. Only rows with at least one coordinate are returned.
+// NOTE: today only two points exist per entry (clock-in + clock-out). When a
+// per-shift breadcrumb table lands, extend this to return the full path.
+router.get('/worker-locations', requireAdmin, requirePerm('approve_entries'), async (req, res) => {
+  const companyId = req.user.company_id;
+  const accessIds = req.user.worker_access_ids;
+  const userId = parseInt(req.query.user_id, 10);
+  const { from, to } = req.query;
+  if (!userId) return res.status(400).json({ error: 'user_id required' });
+  if (accessIds && accessIds.length && !accessIds.includes(userId)) return res.json([]);
+  try {
+    const params = [companyId, userId];
+    let where = `te.company_id = $1 AND te.user_id = $2
+                 AND (te.clock_in_lat IS NOT NULL OR te.clock_out_lat IS NOT NULL)`;
+    if (from) { params.push(from); where += ` AND te.work_date >= $${params.length}::date`; }
+    if (to)   { params.push(to);   where += ` AND te.work_date <= $${params.length}::date`; }
+    const { rows } = await pool.query(
+      `SELECT te.id, te.work_date, te.start_time, te.end_time, te.status,
+              te.clock_in_lat, te.clock_in_lng, te.clock_out_lat, te.clock_out_lng,
+              p.name AS project_name
+       FROM time_entries te
+       LEFT JOIN projects p ON te.project_id = p.id
+       WHERE ${where}
+       ORDER BY te.work_date ASC, te.start_time ASC
+       LIMIT 500`,
       params
     );
     res.json(rows);
