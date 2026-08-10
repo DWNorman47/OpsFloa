@@ -4614,3 +4614,36 @@ Completed the breadcrumb feature.
 - **Retention:** prod cron backstop (maintainActiveClocks) now
   `DELETE FROM location_pings WHERE recorded_at < NOW() - INTERVAL '3 months'`.
   Runs hourly in prod (crons are prod-only), keeping the breadcrumb table bounded.
+
+## Direct messages + messaging scope setting + block system
+
+Added 1:1 direct messaging (`/api/dm`, `direct_messages` table) alongside the
+existing shared worker↔admins `company_chat` thread — the "Admins" recipient is
+kept; specific-person DMs are new. Governed by company setting
+`worker_messaging_scope` (off | admins_only [default] | everyone). Admins can
+always message any active same-company user; scope only gates workers. Block
+system in Directory ▸ Team Members: per-user mute (`users.messaging_blocked`) +
+per-person block list (`users.messaging_blocked_user_ids INTEGER[]`), edited via
+`PATCH /admin/workers/:id/messaging`.
+
+Enforcement is centralized in `server/utils/messaging.js canMessage()` (scope,
+mute, per-person block, same-company/active/self), reused by the send route and
+the contacts list. 9 unit/route tests.
+
+Judgment calls / gotchas:
+- **Caught + fixed a deploy-blocker in 0168**: `location_pings.company_id` was
+  INTEGER but `companies.id` is **UUID** — the FK would fail at migrate time (and
+  the runtime insert passes a UUID). A bad-FK CREATE TABLE fails atomically so it
+  never applied; fixed the file in place (separate commit) and used UUID for 0169.
+- Kept the collective "Admins" thread (company_chat) and layered DMs on top, per
+  David — no migration of existing chats. Worker Messages screen: a recipient
+  picker ("🏢 Admins" + people from /dm/contacts); admin picker gains a DM group
+  (other admins + anyone who's DM'd them) so worker→specific-admin DMs are visible
+  without reworking the Workforce chat.
+- DMs notify via push only (no inbox item) to match company_chat + avoid inbox
+  clutter; unread is server-authoritative (contacts.unread), folded into
+  MessagesBell. Pruned by chat_retention_days like company_chat.
+- Per-person block is directional (X's list) via INTEGER[] mirroring
+  worker_access_ids — no join table.
+
+`npm run verify` green (1401 server tests).
