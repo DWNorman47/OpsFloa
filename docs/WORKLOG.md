@@ -4557,3 +4557,27 @@ server: new `GET /admin/worker-locations?user_id&from&to` (coord-bearing entries
 any status, access-scoped, LIMIT 500); `/entries/recently-approved` enriched with
 location + approver/source fields. New test adminWorkerLocationsRoute.test.js.
 `npm run verify` green (1389 server tests).
+
+## Location tracking: breadcrumb pings table
+
+Started persisting GPS pings. `POST /api/clock/location` now INSERTs into a new
+`location_pings` table (migration 0168) on top of the existing active_clock
+"last known point" overwrite. This is the durable path — the earlier design only
+kept clock-in/out points; the live point was wiped on clock-out.
+
+Design/judgment:
+- Table used ONLY for location tracking: id, company_id, user_id, lat/lng,
+  recorded_at. No FK to time_entries (no entry exists mid-shift) — a shift's
+  trail = that user's pings between the entry's start_ts/end_ts.
+- **Throttled ~1 row/30s per user** via an INSERT ... WHERE NOT EXISTS(recent
+  ping) guard. The client uses watchPosition (fires on movement), so without a
+  throttle the table would flood — and this tenant is cost-sensitive (Neon).
+  30s still gives fine path resolution (~960 rows/worker/8h max).
+- Fire-and-forget after the response; never delays the clock ping.
+- No auto-retention sweep yet — deliberately left the data intact; retention
+  (e.g. delete pings older than N days in the prod cron) is an easy follow-up if
+  growth matters.
+
+Storage only, per the ask. Drawing the per-shift polyline in the Location
+history map (from these pings) is the clear next step — the /worker-locations
+endpoint + map are already shaped for it.
