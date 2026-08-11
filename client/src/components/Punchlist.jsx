@@ -334,7 +334,7 @@ function PunchItem({ item: initialItem, isAdmin, workers, onUpdated, onDeleted, 
   );
 }
 
-export default function Punchlist({ projects, settings = null, defaultProjectId = null }) {
+export default function Punchlist({ projects, settings = null, activeProject = '', onProjectChange }) {
   const t = useT();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
@@ -362,7 +362,8 @@ export default function Punchlist({ projects, settings = null, defaultProjectId 
       URL.revokeObjectURL(url);
     } finally { setPdfGenerating(false); }
   };
-  const [filterProject, setFilterProject] = useState('');
+  const [filterProject, setFilterProject] = useState(activeProject != null ? String(activeProject) : '');
+  useEffect(() => { setFilterProject(activeProject != null ? String(activeProject) : ''); }, [activeProject]);
   const [filterStatus, setFilterStatus] = useState('');
   const [filterPhase, setFilterPhase] = useState('');
 
@@ -443,7 +444,7 @@ export default function Punchlist({ projects, settings = null, defaultProjectId 
             isAdmin={isAdmin}
             existingPhases={allPhases}
             workerLabel={workerLabel}
-            defaultProjectId={defaultProjectId}
+            defaultProjectId={activeProject}
             onAdded={item => { setItems(prev => [item, ...prev]); setShowForm(false); }}
             onCancel={() => setShowForm(false)}
           />
@@ -451,7 +452,7 @@ export default function Punchlist({ projects, settings = null, defaultProjectId 
       )}
 
       <FieldFilters activeCount={activeFilterCount}>
-        <select style={styles.filterSelect} value={filterProject} onChange={e => setFilterProject(e.target.value)}>
+        <select style={styles.filterSelect} value={filterProject} onChange={e => { setFilterProject(e.target.value); onProjectChange?.(e.target.value); }}>
           <option value="">{`All Projects`}</option>
           {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>

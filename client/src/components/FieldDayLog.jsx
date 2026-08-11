@@ -120,13 +120,13 @@ export function Lightbox({ photos, startIndex, onClose, onDelete, deleting = fal
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function FieldDayLog({ projects, isAdmin, defaultProjectId }) {
+export default function FieldDayLog({ projects, isAdmin, activeProject, onProjectChange }) {
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
   const { onSync } = useOffline() || {};
 
-  const [project, setProject] = useState('');
+  const [project, setProject] = useState(activeProject != null ? String(activeProject) : '');
   const [date, setDate] = useState(todayISO());
   const [dayReports, setDayReports] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -146,36 +146,17 @@ export default function FieldDayLog({ projects, isAdmin, defaultProjectId }) {
   const [deletingPhoto, setDeletingPhoto] = useState(false);
   const { confirm, dialog } = useConfirm();
   const loadSeqRef = useRef(0);
-  const projectInitializedRef = useRef(false);
 
   const today = todayISO();
   const isToday = date === today;
   const isPastDay = date < today;
 
-  // Set default project once projects (and the clocked-in default) resolve.
-  // Prefer the worker's clocked-in real-job project; else last-used/recent.
+  // The project is the shared Field "active project" (FieldPage seeds it from the
+  // clocked-in job). Keep in sync if it changes elsewhere while this tab is open.
   useEffect(() => {
-    if (projectInitializedRef.current) return;
-    if (!projects.length) return;
-    if (isAdmin) {
-      projectInitializedRef.current = true;
-      setProject('');
-      return;
-    }
-    if (defaultProjectId === undefined) return; // wait for clock status to resolve
-    projectInitializedRef.current = true;
-    if (defaultProjectId && projects.some(p => p.id === defaultProjectId)) {
-      setProject(String(defaultProjectId));
-      return;
-    }
-    const last = safeLocal.getItem('field-last-project');
-    if (last !== null && projects.some(p => String(p.id) === last)) {
-      setProject(last);
-    } else {
-      const sorted = sortProjects(projects);
-      if (sorted[0]) setProject(String(sorted[0].id));
-    }
-  }, [projects, defaultProjectId, isAdmin]);
+    const next = activeProject != null ? String(activeProject) : '';
+    setProject(prev => (prev === next ? prev : next));
+  }, [activeProject]);
 
   const load = async (proj = project, d = date) => {
     const seq = ++loadSeqRef.current;
@@ -200,7 +181,8 @@ export default function FieldDayLog({ projects, isAdmin, defaultProjectId }) {
 
   const selectProject = id => {
     setProject(id);
-    if (!isAdmin) {
+    onProjectChange?.(id); // write back to the shared Field project so other tabs follow
+    if (!isAdmin && id) {
       safeLocal.setItem('field-last-project', id);
       markProjectUsed(id);
     }

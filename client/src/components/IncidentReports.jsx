@@ -289,7 +289,7 @@ function IncidentCard({ incident, isAdmin, onClosed, onDeleted }) {
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
-export default function IncidentReports({ projects, defaultProjectId = null }) {
+export default function IncidentReports({ projects, activeProject = '' }) {
   const { user } = useAuth();
   const t = useT();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
@@ -363,7 +363,7 @@ export default function IncidentReports({ projects, defaultProjectId = null }) {
         <div style={styles.formCard}>
           <IncidentForm
             projects={projects}
-            defaultProjectId={defaultProjectId}
+            defaultProjectId={activeProject}
             onSubmitted={r => { setIncidents(prev => [r, ...prev]); setShowForm(false); }}
             onCancel={() => setShowForm(false)}
           />

@@ -24,14 +24,16 @@ const fmtQty = n => {
 };
 
 // ── Haul / production log — per-job truck-load tickets ──────────────────────────
-export default function HaulTickets({ projects = [], defaultProjectId = null }) {
+export default function HaulTickets({ projects = [], activeProject = '', onProjectChange }) {
   const t = useT();
   const { user } = useAuth();
   const { hasTakeoff } = usePlan();
   const locale = langToLocale(user?.language);
   const today = new Date().toLocaleDateString('en-CA');
 
-  const [filterProject, setFilterProject] = useState('');
+  const [filterProject, setFilterProject] = useState(activeProject != null ? String(activeProject) : '');
+  // Follow the shared Field project (changed from any tab).
+  useEffect(() => { setFilterProject(activeProject != null ? String(activeProject) : ''); }, [activeProject]);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [tickets, setTickets] = useState([]);
@@ -140,18 +142,17 @@ export default function HaulTickets({ projects = [], defaultProjectId = null }) 
   const cancelEdit = () => {
     setEditingId(null);
     setSaveError('');
-    setForm({ project_id: defaultProjectId ? String(defaultProjectId) : '', ticket_date: today, ticket_no: '', hauler: '', material: '', qty: '', unit: 'CY', direction: 'export', notes: '' });
+    setForm({ project_id: activeProject ? String(activeProject) : '', ticket_date: today, ticket_no: '', hauler: '', material: '', qty: '', unit: 'CY', direction: 'export', notes: '' });
   };
 
-  // Default the add form's project to the worker's clocked-in real-job project
-  // once it resolves — only in add mode and only if the field is still empty.
+  // Default the add form's project to the shared Field project (add mode, empty field).
   const haulDefaultAppliedRef = useRef(false);
   useEffect(() => {
-    if (haulDefaultAppliedRef.current || !defaultProjectId) return;
-    if (!projects.some(p => p.id === defaultProjectId)) return;
+    if (haulDefaultAppliedRef.current || !activeProject) return;
+    if (!projects.some(p => String(p.id) === String(activeProject))) return;
     haulDefaultAppliedRef.current = true;
-    setForm(f => (editingId === null && !f.project_id ? { ...f, project_id: String(defaultProjectId) } : f));
-  }, [defaultProjectId, projects, editingId]);
+    setForm(f => (editingId === null && !f.project_id ? { ...f, project_id: String(activeProject) } : f));
+  }, [activeProject, projects, editingId]);
 
   const saveEdit = async () => {
     if (!form.ticket_date) { setSaveError(t.haulDateRequired); return; }
@@ -289,7 +290,7 @@ export default function HaulTickets({ projects = [], defaultProjectId = null }) 
 
       {/* Filters */}
       <div style={styles.filters}>
-        <select style={styles.filterInput} value={filterProject} onChange={e => setFilterProject(e.target.value)}>
+        <select style={styles.filterInput} value={filterProject} onChange={e => { setFilterProject(e.target.value); onProjectChange?.(e.target.value); }}>
           <option value="">{t.haulAllProjects}</option>
           {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>

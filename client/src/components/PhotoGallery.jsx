@@ -110,7 +110,7 @@ function Lightbox({ items, index, onClose, onDelete, deleting = false, locale = 
   );
 }
 
-export default function PhotoGallery({ projects }) {
+export default function PhotoGallery({ projects, activeProject = '', onProjectChange }) {
   const { user } = useAuth();
   const t = useT();
   const locale = langToLocale(user?.language);
@@ -118,7 +118,7 @@ export default function PhotoGallery({ projects }) {
 
   const [media, setMedia] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState({});
+  const [filters, setFilters] = useState({ project_id: activeProject != null ? String(activeProject) : '' });
   const [lightbox, setLightbox] = useState(null);
   const [deletingMedia, setDeletingMedia] = useState(false);
   const { confirm, dialog } = useConfirm();
@@ -127,7 +127,8 @@ export default function PhotoGallery({ projects }) {
   const hasFilters = Boolean(filters.project_id || filters.from || filters.to);
 
   const setFilter = (k, v) => { setPage(1); setFilters(f => ({ ...f, [k]: v })); };
-  const clearFilters = () => { setPage(1); setFilters({}); };
+  const clearFilters = () => { setPage(1); setFilters({}); onProjectChange?.(''); };
+  useEffect(() => { setFilters(f => ({ ...f, project_id: activeProject != null ? String(activeProject) : '' })); }, [activeProject]);
 
   const loadMedia = async (f = filters, p = page) => {
     try {
@@ -183,7 +184,7 @@ export default function PhotoGallery({ projects }) {
         {projects.length > 0 && (
           <label style={styles.filterField}>
             <span style={styles.dateLabel}>Project</span>
-            <select style={styles.filterSelect} value={filters.project_id || ''} onChange={e => setFilter('project_id', e.target.value)}>
+            <select style={styles.filterSelect} value={filters.project_id || ''} onChange={e => { setFilter('project_id', e.target.value); onProjectChange?.(e.target.value); }}>
               <option value="">{`All Projects`}</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>

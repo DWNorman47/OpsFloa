@@ -474,7 +474,7 @@ function ReportRow({ report: initialReport, onEdit, onDelete, isAdmin, companyNa
 
 // ── Main DailyReports component ────────────────────────────────────────────────
 
-export default function DailyReports({ projects, settings = null, defaultProjectId = null }) {
+export default function DailyReports({ projects, settings = null, activeProject = '', onProjectChange }) {
   const { user } = useAuth();
   const t = useT();
   const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
@@ -487,7 +487,8 @@ export default function DailyReports({ projects, settings = null, defaultProject
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null); // null=list, 'new'=new form, report=edit form
-  const [filterProject, setFilterProject] = useState('');
+  const [filterProject, setFilterProject] = useState(activeProject != null ? String(activeProject) : '');
+  useEffect(() => { setFilterProject(activeProject != null ? String(activeProject) : ''); }, [activeProject]);
   const [fieldPhotos, setFieldPhotos] = useState({});
 
   const loadReports = async (p = 1) => {
@@ -547,7 +548,7 @@ export default function DailyReports({ projects, settings = null, defaultProject
   if (editing !== null) {
     return (
       <ReportEditor
-        report={editing === 'new' ? (defaultProjectId ? { project_id: defaultProjectId } : null) : editing}
+        report={editing === 'new' ? (activeProject ? { project_id: activeProject } : null) : editing}
         projects={projects}
         onSaved={handleSaved}
         onCancel={() => setEditing(null)}
@@ -562,7 +563,7 @@ export default function DailyReports({ projects, settings = null, defaultProject
   return (
     <div>
       <div className="filter-row" style={styles.listHeader}>
-        <select style={styles.filterSelect} value={filterProject} onChange={e => setFilterProject(e.target.value)}>
+        <select style={styles.filterSelect} value={filterProject} onChange={e => { setFilterProject(e.target.value); onProjectChange?.(e.target.value); }}>
           <option value="">{`All Projects`}</option>
           {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
