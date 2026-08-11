@@ -4678,3 +4678,10 @@ URL `?project=` > clocked-in real job > each screen's prior default.
 
 Note: caught earlier that companies.id is UUID (fixed 0168 in a prior commit); all
 new `company_id` FKs use UUID. `npm run verify` green (1401 tests).
+
+### Extended to the rest of the sensible field tabs
+Seeded the new-record project on the remaining worker-facing project-scoped create
+forms: Punchlist, Incident Reports, Inspections (new only), Safety Checklists, Sub
+Reports. Skipped PhotoGallery (browse-only) and Safety Talks / RFIs (admin-only
+create — admins aren't clocked in, so the default never applies). Only create-form
+project fields seeded via the form initializer; browse filters untouched.
