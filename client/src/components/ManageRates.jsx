@@ -102,6 +102,8 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
     worker_dm_workers: settings?.worker_dm_workers ?? false,
     location_ping_while_stationary: settings?.location_ping_while_stationary ?? false,
     daily_checklist_clockin_prompt: settings?.daily_checklist_clockin_prompt ?? true,
+    field_shared_project: settings?.field_shared_project ?? true,
+    field_show_overhead_projects: settings?.field_show_overhead_projects ?? true,
     module_timeclock: settings?.module_timeclock ?? true,
     module_work: settings?.module_work ?? true,
     hide_work_orders_tab: settings?.hide_work_orders_tab ?? false,
@@ -202,6 +204,8 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
       worker_dm_workers: settings.worker_dm_workers ?? false,
       location_ping_while_stationary: settings.location_ping_while_stationary ?? false,
       daily_checklist_clockin_prompt: settings.daily_checklist_clockin_prompt ?? true,
+      field_shared_project: settings.field_shared_project ?? true,
+      field_show_overhead_projects: settings.field_show_overhead_projects ?? true,
       module_timeclock: settings.module_timeclock ?? true,
       module_work: settings.module_work ?? true,
       hide_work_orders_tab: settings.hide_work_orders_tab ?? false,
@@ -281,6 +285,8 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
         worker_dm_workers: form.worker_dm_workers,
         location_ping_while_stationary: form.location_ping_while_stationary,
         daily_checklist_clockin_prompt: form.daily_checklist_clockin_prompt,
+        field_shared_project: form.field_shared_project,
+        field_show_overhead_projects: form.field_show_overhead_projects,
         module_timeclock: form.module_timeclock,
         module_work: form.module_work,
         hide_work_orders_tab: form.hide_work_orders_tab,
@@ -590,6 +596,30 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
               <label style={{ ...styles.toggle, background: form.daily_checklist_clockin_prompt ? 'var(--ops-page-accent)' : '#d1d5db' }}>
                 <input type="checkbox" checked={form.daily_checklist_clockin_prompt} onChange={e => set('daily_checklist_clockin_prompt', e.target.checked)} style={{ display: 'none' }} />
                 <span style={{ ...styles.toggleKnob, transform: form.daily_checklist_clockin_prompt ? 'translateX(46px)' : 'translateX(0)' }} />
+              </label>
+            </div>
+          )}
+          {form.module_field && (
+            <div style={styles.row}>
+              <div>
+                <div style={styles.label}>{t.mrFieldShared}</div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrFieldSharedDesc}</div>
+              </div>
+              <label style={{ ...styles.toggle, background: form.field_shared_project ? 'var(--ops-page-accent)' : '#d1d5db' }}>
+                <input type="checkbox" checked={form.field_shared_project} onChange={e => set('field_shared_project', e.target.checked)} style={{ display: 'none' }} />
+                <span style={{ ...styles.toggleKnob, transform: form.field_shared_project ? 'translateX(46px)' : 'translateX(0)' }} />
+              </label>
+            </div>
+          )}
+          {form.module_field && (
+            <div style={styles.row}>
+              <div>
+                <div style={styles.label}>{t.mrFieldShowOverhead}</div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrFieldShowOverheadDesc}</div>
+              </div>
+              <label style={{ ...styles.toggle, background: form.field_show_overhead_projects ? 'var(--ops-page-accent)' : '#d1d5db' }}>
+                <input type="checkbox" checked={form.field_show_overhead_projects} onChange={e => set('field_show_overhead_projects', e.target.checked)} style={{ display: 'none' }} />
+                <span style={{ ...styles.toggleKnob, transform: form.field_show_overhead_projects ? 'translateX(46px)' : 'translateX(0)' }} />
               </label>
             </div>
           )}

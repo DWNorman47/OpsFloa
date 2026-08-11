@@ -157,6 +157,14 @@ export default function FieldPage() {
     setActiveProject(s);
     try { safeLocal.setItem('field_active_project', s); } catch { /* private mode */ }
   }, []);
+  // Company settings (default ON): share one project across tabs; show overhead
+  // codes in the Field pickers.
+  const sharedProject = features?.field_shared_project !== false;
+  const showOverhead = features?.field_show_overhead_projects !== false;
+  const fieldProjects = showOverhead ? projects : projects.filter(p => !p.is_overhead);
+  // When sharing is off, tabs still get the same seeded default but don't write
+  // back — so each tab is independent (no cross-tab sync).
+  const projectChange = sharedProject ? onProjectChange : undefined;
   useEffect(() => {
     if (seededRef.current) return;
     if (loading || clockedInDefault === undefined) return; // wait for data + clock (projects may legitimately be empty)
@@ -164,8 +172,9 @@ export default function FieldPage() {
     if (clockedInDefault) { setActiveProject(String(clockedInDefault)); return; }
     let last = '';
     try { last = safeLocal.getItem('field_active_project') || ''; } catch { /* ignore */ }
-    setActiveProject(last && projects.some(p => String(p.id) === last) ? last : '');
-  }, [loading, clockedInDefault, projects]);
+    const visible = p => String(p.id) === last && (showOverhead || !p.is_overhead);
+    setActiveProject(last && projects.some(visible) ? last : '');
+  }, [loading, clockedInDefault, projects, showOverhead]);
 
   const fieldGroups = [
     {
@@ -256,29 +265,29 @@ export default function FieldPage() {
             {activeProject === undefined ? (
               <TabLoader />
             ) : activeFieldTab === 'checklist-daily' ? (
-              <DailyChecklist projects={projects} settings={features} loading={loading} activeProject={activeProject} onProjectChange={onProjectChange} />
+              <DailyChecklist projects={fieldProjects} settings={features} loading={loading} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'daily' ? (
-              <DailyReports projects={projects} settings={features} activeProject={activeProject} onProjectChange={onProjectChange} />
+              <DailyReports projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'haul' ? (
-              <HaulTickets projects={projects} settings={features} activeProject={activeProject} onProjectChange={onProjectChange} />
+              <HaulTickets projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'punchlist' ? (
-              <Punchlist projects={projects} settings={features} activeProject={activeProject} onProjectChange={onProjectChange} />
+              <Punchlist projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'safety' ? (
-              <SafetyTalks projects={projects} settings={features} activeProject={activeProject} onProjectChange={onProjectChange} />
+              <SafetyTalks projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'checklists' ? (
-              <SafetyChecklists projects={projects} settings={features} activeProject={activeProject} onProjectChange={onProjectChange} />
+              <SafetyChecklists projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'incident' ? (
-              <IncidentReports projects={projects} settings={features} activeProject={activeProject} />
+              <IncidentReports projects={fieldProjects} settings={features} activeProject={activeProject} />
             ) : activeFieldTab === 'gallery' ? (
-              <PhotoGallery projects={projects} settings={features} activeProject={activeProject} onProjectChange={onProjectChange} />
+              <PhotoGallery projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'subs' ? (
-              <SubReports projects={projects} settings={features} activeProject={activeProject} onProjectChange={onProjectChange} />
+              <SubReports projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'rfi' ? (
-              <RFITracking projects={projects} settings={features} activeProject={activeProject} onProjectChange={onProjectChange} />
+              <RFITracking projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'inspect' ? (
-              <InspectionChecklists projects={projects} settings={features} activeProject={activeProject} onProjectChange={onProjectChange} />
+              <InspectionChecklists projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : (
-              <FieldDayLog projects={projects} isAdmin={isAdmin} settings={features} activeProject={activeProject} onProjectChange={onProjectChange} />
+              <FieldDayLog projects={fieldProjects} isAdmin={isAdmin} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             )}
           </Suspense>
         </ErrorBoundary>
