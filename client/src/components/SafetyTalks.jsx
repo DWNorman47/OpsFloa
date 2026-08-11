@@ -62,10 +62,10 @@ function fileIcon(contentType) {
   return '📎';
 }
 
-function NewTalkForm({ projects, onAdded, onCancel }) {
+function NewTalkForm({ projects, onAdded, onCancel, defaultProjectId = null }) {
   const t = useT();
   const today = new Date().toLocaleDateString('en-CA');
-  const [form, setForm] = useState({ title: '', content: '', given_by: '', talk_date: today, project_id: '' });
+  const [form, setForm] = useState({ title: '', content: '', given_by: '', talk_date: today, project_id: defaultProjectId ? String(defaultProjectId) : '' });
   const [questions, setQuestions] = useState([]);
   const [passThreshold, setPassThreshold] = useState('');
   const [saving, setSaving] = useState(false);
@@ -513,7 +513,7 @@ function TalkCard({ talk: initialTalk, isAdmin, onDeleted, workerLabelPlural = '
   );
 }
 
-export default function SafetyTalks({ projects, settings = null }) {
+export default function SafetyTalks({ projects, settings = null, activeProject = '', onProjectChange }) {
   const t = useT();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
@@ -525,7 +525,8 @@ export default function SafetyTalks({ projects, settings = null }) {
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [filterProject, setFilterProject] = useState('');
+  const [filterProject, setFilterProject] = useState(activeProject != null ? String(activeProject) : '');
+  useEffect(() => { setFilterProject(activeProject != null ? String(activeProject) : ''); }, [activeProject]);
   const [pdfGenerating, setPdfGenerating] = useState(false);
 
   const downloadPDF = async () => {
@@ -579,6 +580,7 @@ export default function SafetyTalks({ projects, settings = null }) {
         <div style={styles.formCard}>
           <NewTalkForm
             projects={projects}
+            defaultProjectId={activeProject}
             onAdded={talk => { setTalks(prev => [talk, ...prev]); setShowForm(false); }}
             onCancel={() => setShowForm(false)}
           />
@@ -587,7 +589,7 @@ export default function SafetyTalks({ projects, settings = null }) {
 
       {projects.length > 0 && (
         <FieldFilters activeCount={filterProject ? 1 : 0}>
-          <select style={styles.filterSelect} value={filterProject} onChange={e => setFilterProject(e.target.value)}>
+          <select style={styles.filterSelect} value={filterProject} onChange={e => { setFilterProject(e.target.value); onProjectChange?.(e.target.value); }}>
             <option value="">{`All Projects`}</option>
             {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>

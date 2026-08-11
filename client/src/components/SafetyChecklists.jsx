@@ -187,10 +187,10 @@ function TemplateForm({ initial, onSaved, onCancel }) {
 
 // ── Fill Out Form ─────────────────────────────────────────────────────────────
 
-function FillForm({ templates, projects, onSubmitted, onCancel }) {
+function FillForm({ templates, projects, onSubmitted, onCancel, defaultProjectId = null }) {
   const t = useT();
   const [templateId, setTemplateId] = useState('');
-  const [projectId, setProjectId] = useState('');
+  const [projectId, setProjectId] = useState(defaultProjectId ? String(defaultProjectId) : '');
   const [checkDate, setCheckDate] = useState(today());
   const [answers, setAnswers] = useState({});
   const [notes, setNotes] = useState('');
@@ -398,7 +398,7 @@ function SubmissionCard({ sub, isAdmin, onDeleted }) {
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
-export default function SafetyChecklists({ projects }) {
+export default function SafetyChecklists({ projects, activeProject = '', onProjectChange }) {
   const t = useT();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
@@ -408,7 +408,8 @@ export default function SafetyChecklists({ projects }) {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [filterProject, setFilterProject] = useState('');
+  const [filterProject, setFilterProject] = useState(activeProject != null ? String(activeProject) : '');
+  useEffect(() => { setFilterProject(activeProject != null ? String(activeProject) : ''); }, [activeProject]);
   const [editingTemplate, setEditingTemplate] = useState(null);
   const [showTemplateForm, setShowTemplateForm] = useState(false);
   const [pendingDeleteTemplateId, setPendingDeleteTemplateId] = useState(null);
@@ -446,6 +447,7 @@ export default function SafetyChecklists({ projects }) {
         <FillForm
           templates={templates}
           projects={projects}
+          defaultProjectId={activeProject}
           onSubmitted={sub => { setSubmissions(prev => [sub, ...prev]); setView('list'); }}
           onCancel={() => setView('list')}
         />
@@ -537,7 +539,7 @@ export default function SafetyChecklists({ projects }) {
 
       {projects.length > 0 && (
         <FieldFilters activeCount={filterProject ? 1 : 0}>
-          <select style={styles.filterSelect} value={filterProject} onChange={e => setFilterProject(e.target.value)}>
+          <select style={styles.filterSelect} value={filterProject} onChange={e => { setFilterProject(e.target.value); onProjectChange?.(e.target.value); }}>
             <option value="">{`All Projects`}</option>
             {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>

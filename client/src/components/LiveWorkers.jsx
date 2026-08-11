@@ -4,6 +4,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import api from '../api';
 import { SkeletonList } from './Skeleton';
+import MapLink from './MapLink';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
 import { formatInTz, langToLocale } from '../utils';
@@ -384,9 +385,9 @@ export default function LiveWorkers({ timezone = '', showInactiveAlerts = true, 
                 <div style={styles.workerMeta}>
                   <span>{t.clockedIn} {formatInTz(w.clock_in_time, timezone, undefined, locale)}</span>
                   {w.current_lat
-                    ? <span style={styles.locationTag}>📍 Live · {locationAge(w.location_updated_at)}</span>
+                    ? <MapLink lat={w.current_lat} lng={w.current_lng} label={`Live · ${locationAge(w.location_updated_at)}`} style={styles.locationTag} />
                     : w.clock_in_lat
-                      ? <span style={styles.locationTagStale}>📍 Clock-in location</span>
+                      ? <MapLink lat={w.clock_in_lat} lng={w.clock_in_lng} label="Clock-in location" style={styles.locationTagStale} />
                       : <span style={styles.noLocation}>{t.noLocation}</span>
                   }
                   {w.clock_source === 'admin' && w.clocked_in_by_name && (

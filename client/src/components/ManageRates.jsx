@@ -98,7 +98,12 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
     feature_public: settings?.feature_public ?? true,
     feature_chat: settings?.feature_chat ?? false,
     feature_geolocation: settings?.feature_geolocation ?? true,
+    worker_dm_admins: settings?.worker_dm_admins ?? false,
+    worker_dm_workers: settings?.worker_dm_workers ?? false,
+    location_ping_while_stationary: settings?.location_ping_while_stationary ?? false,
     daily_checklist_clockin_prompt: settings?.daily_checklist_clockin_prompt ?? true,
+    field_shared_project: settings?.field_shared_project ?? true,
+    field_show_overhead_projects: settings?.field_show_overhead_projects ?? true,
     module_timeclock: settings?.module_timeclock ?? true,
     module_work: settings?.module_work ?? true,
     hide_work_orders_tab: settings?.hide_work_orders_tab ?? false,
@@ -195,7 +200,12 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
       feature_public: settings.feature_public ?? true,
       feature_chat: settings.feature_chat ?? false,
       feature_geolocation: settings.feature_geolocation ?? true,
+      worker_dm_admins: settings.worker_dm_admins ?? false,
+      worker_dm_workers: settings.worker_dm_workers ?? false,
+      location_ping_while_stationary: settings.location_ping_while_stationary ?? false,
       daily_checklist_clockin_prompt: settings.daily_checklist_clockin_prompt ?? true,
+      field_shared_project: settings.field_shared_project ?? true,
+      field_show_overhead_projects: settings.field_show_overhead_projects ?? true,
       module_timeclock: settings.module_timeclock ?? true,
       module_work: settings.module_work ?? true,
       hide_work_orders_tab: settings.hide_work_orders_tab ?? false,
@@ -271,7 +281,12 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
         feature_public: form.feature_public,
         feature_chat: form.feature_chat,
         feature_geolocation: form.feature_geolocation,
+        worker_dm_admins: form.worker_dm_admins,
+        worker_dm_workers: form.worker_dm_workers,
+        location_ping_while_stationary: form.location_ping_while_stationary,
         daily_checklist_clockin_prompt: form.daily_checklist_clockin_prompt,
+        field_shared_project: form.field_shared_project,
+        field_show_overhead_projects: form.field_show_overhead_projects,
         module_timeclock: form.module_timeclock,
         module_work: form.module_work,
         hide_work_orders_tab: form.hide_work_orders_tab,
@@ -526,6 +541,30 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
               <span style={{ ...styles.toggleKnob, transform: form.feature_chat ? 'translateX(46px)' : 'translateX(0)' }} />
             </label>
           </div>
+          {form.feature_chat && (
+            <>
+              <div style={styles.row}>
+                <div>
+                  <div style={styles.label}>{t.mrDmAdmins}</div>
+                  <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrDmAdminsDesc}</div>
+                </div>
+                <label style={{ ...styles.toggle, background: form.worker_dm_admins ? 'var(--ops-page-accent)' : '#d1d5db' }}>
+                  <input type="checkbox" checked={form.worker_dm_admins} onChange={e => set('worker_dm_admins', e.target.checked)} style={{ display: 'none' }} />
+                  <span style={{ ...styles.toggleKnob, transform: form.worker_dm_admins ? 'translateX(46px)' : 'translateX(0)' }} />
+                </label>
+              </div>
+              <div style={styles.row}>
+                <div>
+                  <div style={styles.label}>{t.mrDmWorkers}</div>
+                  <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrDmWorkersDesc}</div>
+                </div>
+                <label style={{ ...styles.toggle, background: form.worker_dm_workers ? 'var(--ops-page-accent)' : '#d1d5db' }}>
+                  <input type="checkbox" checked={form.worker_dm_workers} onChange={e => set('worker_dm_workers', e.target.checked)} style={{ display: 'none' }} />
+                  <span style={{ ...styles.toggleKnob, transform: form.worker_dm_workers ? 'translateX(46px)' : 'translateX(0)' }} />
+                </label>
+              </div>
+            </>
+          )}
           <div style={styles.row}>
             <div>
               <div style={styles.label}>{t.featGeolocation}</div>
@@ -536,6 +575,18 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
               <span style={{ ...styles.toggleKnob, transform: form.feature_geolocation ? 'translateX(46px)' : 'translateX(0)' }} />
             </label>
           </div>
+          {form.feature_geolocation && (
+            <div style={styles.row}>
+              <div>
+                <div style={styles.label}>{t.mrFeatPingStationary}</div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrFeatPingStationaryDesc}</div>
+              </div>
+              <label style={{ ...styles.toggle, background: form.location_ping_while_stationary ? 'var(--ops-page-accent)' : '#d1d5db' }}>
+                <input type="checkbox" checked={form.location_ping_while_stationary} onChange={e => set('location_ping_while_stationary', e.target.checked)} style={{ display: 'none' }} />
+                <span style={{ ...styles.toggleKnob, transform: form.location_ping_while_stationary ? 'translateX(46px)' : 'translateX(0)' }} />
+              </label>
+            </div>
+          )}
           {form.module_field && (
             <div style={styles.row}>
               <div>
@@ -545,6 +596,30 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
               <label style={{ ...styles.toggle, background: form.daily_checklist_clockin_prompt ? 'var(--ops-page-accent)' : '#d1d5db' }}>
                 <input type="checkbox" checked={form.daily_checklist_clockin_prompt} onChange={e => set('daily_checklist_clockin_prompt', e.target.checked)} style={{ display: 'none' }} />
                 <span style={{ ...styles.toggleKnob, transform: form.daily_checklist_clockin_prompt ? 'translateX(46px)' : 'translateX(0)' }} />
+              </label>
+            </div>
+          )}
+          {form.module_field && (
+            <div style={styles.row}>
+              <div>
+                <div style={styles.label}>{t.mrFieldShared}</div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrFieldSharedDesc}</div>
+              </div>
+              <label style={{ ...styles.toggle, background: form.field_shared_project ? 'var(--ops-page-accent)' : '#d1d5db' }}>
+                <input type="checkbox" checked={form.field_shared_project} onChange={e => set('field_shared_project', e.target.checked)} style={{ display: 'none' }} />
+                <span style={{ ...styles.toggleKnob, transform: form.field_shared_project ? 'translateX(46px)' : 'translateX(0)' }} />
+              </label>
+            </div>
+          )}
+          {form.module_field && (
+            <div style={styles.row}>
+              <div>
+                <div style={styles.label}>{t.mrFieldShowOverhead}</div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrFieldShowOverheadDesc}</div>
+              </div>
+              <label style={{ ...styles.toggle, background: form.field_show_overhead_projects ? 'var(--ops-page-accent)' : '#d1d5db' }}>
+                <input type="checkbox" checked={form.field_show_overhead_projects} onChange={e => set('field_show_overhead_projects', e.target.checked)} style={{ display: 'none' }} />
+                <span style={{ ...styles.toggleKnob, transform: form.field_show_overhead_projects ? 'translateX(46px)' : 'translateX(0)' }} />
               </label>
             </div>
           )}

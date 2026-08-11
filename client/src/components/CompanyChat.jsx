@@ -11,39 +11,48 @@ function formatTime(str, locale = 'en-US') {
   return new Date(str).toLocaleString(locale, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
-// Worker view — shows their own private thread with admin
+// Worker view — the shared "Admins" thread (company_chat) plus 1:1 direct
+// messages with specific people (/api/dm), when the company setting allows it.
+// active === 'admins' → the collective thread; a number → a DM with that user.
 function WorkerChat({ settings, onRead }) {
   const { user } = useAuth();
   const t = useT();
   const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
   const locale = langToLocale(user?.language);
+  const [contacts, setContacts] = useState([]);
+  const [active, setActive] = useState('admins');
   const [messages, setMessages] = useState([]);
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
   const bottomRef = useRef(null);
   const pollRef = useRef(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+
+  const loadContacts = () => api.get('/dm/contacts').then(r => setContacts(r.data?.contacts || [])).catch(silentError('companychat'));
 
   const load = () => {
-    if (document.visibilityState !== 'visible' || !navigator.onLine) {
-      setLoading(false);
-      return Promise.resolve();
+    if (document.visibilityState !== 'visible' || !navigator.onLine) { setLoading(false); return Promise.resolve(); }
+    const cur = activeRef.current;
+    if (cur === 'admins') {
+      return api.get('/chat').then(r => { setMessages(r.data); onRead?.(); }).catch(silentError('companychat')).finally(() => setLoading(false));
     }
-    return api.get('/chat').then(r => {
-      setMessages(r.data);
-      onRead?.();
-    }).catch(silentError('companychat')).finally(() => setLoading(false));
+    return api.get(`/dm/${cur}`).then(r => { setMessages(r.data?.messages || []); }).catch(silentError('companychat')).finally(() => setLoading(false));
   };
 
+  useEffect(() => { loadContacts(); const iv = setInterval(loadContacts, 60000); return () => clearInterval(iv); }, []);
+
+  // (Re)load the active thread when the selection changes + poll it.
   useEffect(() => {
+    setLoading(true);
+    clearInterval(pollRef.current);
     load();
     pollRef.current = setInterval(load, 30000);
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') load();
-    };
+    const onVisible = () => { if (document.visibilityState === 'visible') load(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => { clearInterval(pollRef.current); document.removeEventListener('visibilitychange', onVisible); };
-  }, []);
+  }, [active]);
 
   useEffect(() => {
     if (bottomRef.current) {
@@ -57,9 +66,15 @@ function WorkerChat({ settings, onRead }) {
     if (!body.trim()) return;
     setSending(true);
     try {
-      const r = await api.post('/chat', { body });
+      const r = active === 'admins'
+        ? await api.post('/chat', { body })
+        : await api.post(`/dm/${active}`, { body });
       setMessages(prev => [...prev, r.data]);
       setBody('');
+      if (active !== 'admins') loadContacts();
+    } catch (err) {
+      // eslint-disable-next-line no-alert
+      if (err?.response?.status === 403) alert(err.response.data?.error || t.chatBlocked);
     } finally { setSending(false); }
   };
 
@@ -69,85 +84,89 @@ function WorkerChat({ settings, onRead }) {
         <span style={styles.title}>💬 {t.chatMessagesWithAdmin}</span>
         <span style={styles.sub}>{t.chatPrivateNote.replace('worker', workerLabel.toLowerCase())}</span>
       </div>
+      {contacts.length > 0 && (
+        <div style={styles.workerPicker}>
+          <select style={styles.pickerSelect} value={String(active)} onChange={e => { setActive(e.target.value === 'admins' ? 'admins' : Number(e.target.value)); setBody(''); }}>
+            <option value="admins">🏢 {t.chatAdminsOption}</option>
+            {contacts.map(c => (
+              <option key={c.id} value={c.id}>{c.full_name}{c.role === 'admin' ? ` · ${t.chatAdminBadge}` : ''}{c.unread ? ` 🔴 ${c.unread}` : ''}</option>
+            ))}
+          </select>
+        </div>
+      )}
       <Thread messages={messages} loading={loading} currentUserId={user?.id} bottomRef={bottomRef} t={t} locale={locale} />
       <ChatForm body={body} setBody={setBody} sending={sending} onSubmit={send} t={t} />
     </div>
   );
 }
 
-// Admin view — worker picker + thread
+// Admin view — a recipient picker with two groups: the worker company_chat
+// threads (value "w:<id>") and 1:1 direct messages (value "d:<id>", other admins
+// + anyone who has DM'd this admin).
 function AdminChat({ workers, settings }) {
   const { user } = useAuth();
   const t = useT();
   const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
   const locale = langToLocale(user?.language);
-  const [selectedId, setSelectedId] = useState('');
-  const [threads, setThreads] = useState([]); // workers with recent messages
+  const [selected, setSelected] = useState(''); // '' | 'w:<id>' | 'd:<id>'
+  const [threads, setThreads] = useState([]);
+  const [dmContacts, setDmContacts] = useState([]);
   const [messages, setMessages] = useState([]);
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [unreadByWorker, setUnreadByWorker] = useState({}); // workerId → last_at of unread message
+  const [unreadByWorker, setUnreadByWorker] = useState({});
   const bottomRef = useRef(null);
   const pollRef = useRef(null);
 
-  // Load worker thread list and check for unread
   const loadThreads = () => {
     if (document.visibilityState !== 'visible' || !navigator.onLine) return Promise.resolve();
     return api.get('/chat').then(r => {
       setThreads(r.data);
-      // Compare thread last_at against per-worker last-read stored in localStorage
       const unread = {};
       r.data.forEach(thread => {
         const key = `chatLastRead_admin_${thread.worker_id}`;
         const lastRead = safeLocal.getItem(key);
-        if (!lastRead || new Date(thread.last_at) > new Date(lastRead)) {
-          unread[thread.worker_id] = true;
-        }
+        if (!lastRead || new Date(thread.last_at) > new Date(lastRead)) unread[thread.worker_id] = true;
       });
       setUnreadByWorker(unread);
     }).catch(silentError('companychat'));
   };
+  const loadContacts = () => api.get('/dm/contacts').then(r => setDmContacts(r.data?.contacts || [])).catch(silentError('companychat'));
 
   useEffect(() => {
-    loadThreads();
-    const iv = setInterval(loadThreads, 60000);
-    document.addEventListener('visibilitychange', loadThreads);
-    window.addEventListener('online', loadThreads);
-    return () => {
-      clearInterval(iv);
-      document.removeEventListener('visibilitychange', loadThreads);
-      window.removeEventListener('online', loadThreads);
-    };
+    loadThreads(); loadContacts();
+    const iv = setInterval(() => { loadThreads(); loadContacts(); }, 60000);
+    const onVis = () => { loadThreads(); loadContacts(); };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('online', onVis);
+    return () => { clearInterval(iv); document.removeEventListener('visibilitychange', onVis); window.removeEventListener('online', onVis); };
   }, []);
 
-  // Load selected worker's thread
+  // Load the selected thread (worker company_chat or a DM) + poll it.
   useEffect(() => {
-    if (!selectedId) { setMessages([]); return; }
+    if (!selected) { setMessages([]); return; }
     setLoading(true);
     clearInterval(pollRef.current);
+    const kind = selected.startsWith('d:') ? 'dm' : 'worker';
+    const otherId = selected.slice(2);
     const fetch = () => {
-      if (document.visibilityState !== 'visible' || !navigator.onLine) {
-        setLoading(false);
-        return Promise.resolve();
+      if (document.visibilityState !== 'visible' || !navigator.onLine) { setLoading(false); return Promise.resolve(); }
+      if (kind === 'worker') {
+        return api.get(`/chat?worker_id=${otherId}`).then(r => {
+          setMessages(r.data);
+          safeLocal.setItem(`chatLastRead_admin_${otherId}`, new Date().toISOString());
+          setUnreadByWorker(prev => { const n = { ...prev }; delete n[otherId]; return n; });
+        }).catch(silentError('companychat')).finally(() => setLoading(false));
       }
-      return api.get(`/chat?worker_id=${selectedId}`).then(r => {
-        setMessages(r.data);
-        // Mark as read
-        safeLocal.setItem(`chatLastRead_admin_${selectedId}`, new Date().toISOString());
-        setUnreadByWorker(prev => { const n = { ...prev }; delete n[selectedId]; return n; });
-      }).catch(silentError('companychat')).finally(() => setLoading(false));
+      return api.get(`/dm/${otherId}`).then(r => { setMessages(r.data?.messages || []); loadContacts(); }).catch(silentError('companychat')).finally(() => setLoading(false));
     };
     fetch();
     pollRef.current = setInterval(fetch, 30000);
     document.addEventListener('visibilitychange', fetch);
     window.addEventListener('online', fetch);
-    return () => {
-      clearInterval(pollRef.current);
-      document.removeEventListener('visibilitychange', fetch);
-      window.removeEventListener('online', fetch);
-    };
-  }, [selectedId]);
+    return () => { clearInterval(pollRef.current); document.removeEventListener('visibilitychange', fetch); window.removeEventListener('online', fetch); };
+  }, [selected]);
 
   useEffect(() => {
     if (bottomRef.current) {
@@ -158,16 +177,26 @@ function AdminChat({ workers, settings }) {
 
   const send = async e => {
     e.preventDefault();
-    if (!body.trim() || !selectedId) return;
+    if (!body.trim() || !selected) return;
     setSending(true);
     try {
-      const r = await api.post('/chat', { body, worker_id: selectedId });
+      const kind = selected.startsWith('d:') ? 'dm' : 'worker';
+      const otherId = selected.slice(2);
+      const r = kind === 'worker'
+        ? await api.post('/chat', { body, worker_id: otherId })
+        : await api.post(`/dm/${otherId}`, { body });
       setMessages(prev => [...prev, r.data]);
       setBody('');
+    } catch (err) {
+      // eslint-disable-next-line no-alert
+      if (err?.response?.status === 403) alert(err.response.data?.error || t.chatBlocked);
     } finally { setSending(false); }
   };
 
-  const workerHasThread = id => threads.some(t => String(t.worker_id) === String(id));
+  const workerHasThread = id => threads.some(th => String(th.worker_id) === String(id));
+  // Admins reach workers via the company_chat thread; the DM group shows other
+  // admins (to start a DM) + anyone who already has a DM thread with this admin.
+  const dmList = dmContacts.filter(c => c.role === 'admin' || c.last_at);
 
   return (
     <div style={styles.wrap}>
@@ -176,16 +205,23 @@ function AdminChat({ workers, settings }) {
         <span style={styles.sub}>{t.chatAdminPrivateNote}</span>
       </div>
       <div style={styles.workerPicker}>
-        <select style={styles.pickerSelect} value={selectedId} onChange={e => setSelectedId(e.target.value)}>
-          <option value="">Select {workerLabel.toLowerCase()}</option>
-          {workers.filter(w => w.role !== 'admin').map(w => (
-            <option key={w.id} value={w.id}>
-              {w.full_name}{workerHasThread(w.id) ? ' 💬' : ''}{unreadByWorker[w.id] ? ' 🔴' : ''}
-            </option>
-          ))}
+        <select style={styles.pickerSelect} value={selected} onChange={e => { setSelected(e.target.value); setBody(''); }}>
+          <option value="">{t.chatSelectRecipient}</option>
+          <optgroup label={`${workerLabel} ${t.chatThreadsGroup}`}>
+            {workers.filter(w => w.role !== 'admin').map(w => (
+              <option key={`w${w.id}`} value={`w:${w.id}`}>{w.full_name}{workerHasThread(w.id) ? ' 💬' : ''}{unreadByWorker[w.id] ? ' 🔴' : ''}</option>
+            ))}
+          </optgroup>
+          {dmList.length > 0 && (
+            <optgroup label={t.chatDmGroup}>
+              {dmList.map(c => (
+                <option key={`d${c.id}`} value={`d:${c.id}`}>{c.full_name}{c.role === 'admin' ? ` · ${t.chatAdminBadge}` : ''}{c.unread ? ` 🔴 ${c.unread}` : ''}</option>
+              ))}
+            </optgroup>
+          )}
         </select>
       </div>
-      {selectedId ? (
+      {selected ? (
         <>
           <Thread messages={messages} loading={loading} currentUserId={user?.id} bottomRef={bottomRef} t={t} locale={locale} />
           <ChatForm body={body} setBody={setBody} sending={sending} onSubmit={send} t={t} />

@@ -947,7 +947,7 @@ router.get('/workers', requireAdmin, async (req, res) => {
         FROM daily_regular
         GROUP BY user_id, ${weekBucketSql}
       )
-      SELECT u.id, u.full_name, u.invoice_name, u.username, u.role, u.role_id, u.language, u.hourly_rate, u.rate_type, u.day_mark_mode, u.overtime_rule, u.email, u.admin_permissions, u.worker_access_ids, u.worker_type, u.must_change_password, u.qbo_employee_id, u.qbo_vendor_id, u.classification, u.email_bounced_at, u.email_bounce_reason,
+      SELECT u.id, u.full_name, u.invoice_name, u.username, u.role, u.role_id, u.language, u.hourly_rate, u.rate_type, u.day_mark_mode, u.overtime_rule, u.email, u.admin_permissions, u.worker_access_ids, u.worker_type, u.must_change_password, u.qbo_employee_id, u.qbo_vendor_id, u.classification, u.email_bounced_at, u.email_bounce_reason, u.messaging_blocked, u.messaging_blocked_user_ids,
         COUNT(te.id) as total_entries,
         COALESCE(SUM(EXTRACT(EPOCH FROM (CASE WHEN te.end_time < te.start_time THEN te.end_time + INTERVAL '1 day' - te.start_time ELSE te.end_time - te.start_time END)) / 3600), 0) as total_hours,
         COALESCE(
@@ -970,7 +970,7 @@ router.get('/workers', requireAdmin, async (req, res) => {
       LEFT JOIN time_entries te ON te.user_id = u.id
         AND te.work_date >= CURRENT_DATE - INTERVAL '365 days'
       WHERE ${roleFilter} AND u.active = true AND u.company_id = $1 ${accessParamSql}
-      GROUP BY u.id, u.full_name, u.invoice_name, u.username, u.role, u.role_id, u.language, u.hourly_rate, u.rate_type, u.day_mark_mode, u.overtime_rule, u.email, u.admin_permissions, u.worker_access_ids, u.worker_type, u.must_change_password, u.qbo_employee_id, u.qbo_vendor_id, u.classification, u.email_bounced_at, u.email_bounce_reason
+      GROUP BY u.id, u.full_name, u.invoice_name, u.username, u.role, u.role_id, u.language, u.hourly_rate, u.rate_type, u.day_mark_mode, u.overtime_rule, u.email, u.admin_permissions, u.worker_access_ids, u.worker_type, u.must_change_password, u.qbo_employee_id, u.qbo_vendor_id, u.classification, u.email_bounced_at, u.email_bounce_reason, u.messaging_blocked, u.messaging_blocked_user_ids
       ORDER BY u.role DESC, u.full_name
       LIMIT 500`,
       queryParams
@@ -1763,6 +1763,44 @@ router.patch('/workers/:id/worker-access', requireAdmin, requirePerm('manage_rol
   }
 });
 
+// PATCH /admin/workers/:id/messaging — the block system: mute a member entirely
+// (messaging_blocked) and/or set the specific people they can't message
+// (messaging_blocked_user_ids). See server/utils/messaging.js.
+router.patch('/workers/:id/messaging', requireAdmin, requirePerm('manage_workers'), async (req, res) => {
+  if (String(req.params.id) === String(req.user.id)) {
+    return res.status(400).json({ error: 'You cannot change your own messaging settings' });
+  }
+  const { messaging_blocked, messaging_blocked_user_ids } = req.body;
+  const fields = [];
+  const values = [];
+  let idx = 1;
+  if (messaging_blocked !== undefined) { fields.push(`messaging_blocked = $${idx++}`); values.push(!!messaging_blocked); }
+  if (messaging_blocked_user_ids !== undefined) {
+    let ids = null;
+    if (Array.isArray(messaging_blocked_user_ids) && messaging_blocked_user_ids.length > 0) {
+      ids = messaging_blocked_user_ids.map(Number).filter(n => Number.isInteger(n) && n > 0);
+      if (ids.length === 0) ids = null;
+    }
+    fields.push(`messaging_blocked_user_ids = $${idx++}`); values.push(ids);
+  }
+  if (fields.length === 0) return res.status(400).json({ error: 'Nothing to update' });
+  values.push(req.params.id);
+  values.push(req.user.company_id);
+  try {
+    const result = await pool.query(
+      `UPDATE users SET ${fields.join(', ')} WHERE id = $${idx} AND company_id = $${idx + 1}
+       RETURNING id, full_name, messaging_blocked, messaging_blocked_user_ids`,
+      values
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'User not found' });
+    await logAudit(req.user.company_id, req.user.id, req.user.full_name, 'worker.messaging_updated', 'worker', parseInt(req.params.id), result.rows[0].full_name);
+    res.json(result.rows[0]);
+  } catch (err) {
+    logger.error({ err }, 'catch block error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // Remove (soft-delete) a worker
 router.delete('/workers/:id', requireAdmin, requirePerm('manage_workers'), async (req, res) => {
   const companyId = req.user.company_id;
@@ -1970,7 +2008,7 @@ router.get('/projects', requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT id, company_id, name, wage_type, prevailing_wage_rate, geo_lat, geo_lng, geo_radius_ft,
-              budget_hours, budget_dollars, active, created_at,
+              budget_hours, budget_dollars, active, created_at, is_overhead,
               client_name, job_number, address, start_date, end_date, description, status,
               required_checklist_template_id, progress_pct, visible_to_user_ids
        FROM projects WHERE (active = true OR $2 = true) AND company_id = $1 ORDER BY active DESC, name LIMIT 500`,
@@ -2020,7 +2058,7 @@ router.patch('/projects/:id', requireAdmin, requirePerm('manage_projects'),
   }),
   async (req, res) => {
   const { wage_type, name, geo_lat, geo_lng, geo_radius_ft, clear_geofence, budget_hours, budget_dollars, prevailing_wage_rate, required_checklist_template_id,
-          client_name, job_number, address, start_date, end_date, description, status, progress_pct, active,
+          client_name, job_number, address, start_date, end_date, description, status, progress_pct, active, is_overhead,
           hour_limit_mode, daily_hour_limit, weekly_hour_limit, hour_limit_overflow_project_id } = req.body;
   const VALID_STATUSES = PROJECT_STATUSES;
   if (status !== undefined && !VALID_STATUSES.includes(status)) {
@@ -2127,6 +2165,7 @@ router.patch('/projects/:id', requireAdmin, requirePerm('manage_projects'),
       fields.push(`progress_pct = $${idx++}`); values.push(progress_pct);
     }
     if (active !== undefined) { fields.push(`active = $${idx++}`); values.push(!!active); }
+    if (is_overhead !== undefined) { fields.push(`is_overhead = $${idx++}`); values.push(!!is_overhead); }
     if (hour_limit_mode !== undefined) { fields.push(`hour_limit_mode = $${idx++}`); values.push(hour_limit_mode || 'off'); }
     if (daily_hour_limit !== undefined) { fields.push(`daily_hour_limit = $${idx++}`); values.push(hlNumOrNull(daily_hour_limit)); }
     if (weekly_hour_limit !== undefined) { fields.push(`weekly_hour_limit = $${idx++}`); values.push(hlNumOrNull(weekly_hour_limit)); }
@@ -2236,7 +2275,7 @@ router.post('/projects', requireAdmin, requirePerm('manage_projects'),
   }),
   async (req, res) => {
   const { wage_type, prevailing_wage_rate, client_id, job_number, address, start_date, end_date, status, description,
-          geo_lat, geo_lng, geo_radius_ft,
+          geo_lat, geo_lng, geo_radius_ft, is_overhead,
           hour_limit_mode, daily_hour_limit, weekly_hour_limit, hour_limit_overflow_project_id } = req.body;
   const name = req.body.name?.trim();
   if (!name) {
@@ -2280,15 +2319,15 @@ router.post('/projects', requireAdmin, requirePerm('manage_projects'),
     }
     const result = await pool.query(
       `INSERT INTO projects (company_id, name, wage_type, prevailing_wage_rate, client_id, client_name, job_number, address, start_date, end_date, status, description, geo_lat, geo_lng, geo_radius_ft,
-                             hour_limit_mode, daily_hour_limit, weekly_hour_limit, hour_limit_overflow_project_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`,
+                             hour_limit_mode, daily_hour_limit, weekly_hour_limit, hour_limit_overflow_project_id, is_overhead)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING *`,
       [companyId, name, wt, pwr,
        client_id || null, resolvedClientName, job_number?.trim() || null,
        address?.trim() || null, start_date || null, end_date || null, st, description?.trim() || null,
        geoFieldsPresent === 3 ? geo_lat : null,
        geoFieldsPresent === 3 ? geo_lng : null,
        geoFieldsPresent === 3 ? geo_radius_ft : null,
-       hour_limit_mode || 'off', hlNumOrNull(daily_hour_limit), hlNumOrNull(weekly_hour_limit), hour_limit_overflow_project_id || null]
+       hour_limit_mode || 'off', hlNumOrNull(daily_hour_limit), hlNumOrNull(weekly_hour_limit), hour_limit_overflow_project_id || null, !!is_overhead]
     );
     await logAudit(companyId, req.user.id, req.user.full_name, 'project.created', 'project', result.rows[0].id, name, { wage_type: wt });
     const newProject = result.rows[0];
@@ -2939,27 +2978,109 @@ router.get('/entries/pending', requireAdmin, requirePerm('approve_entries'), asy
 });
 
 // GET /admin/entries/recently-approved — entries approved in the last 24 hours
+// Approved entries available to unapprove. Two modes:
+//   • With ?from&to — every approved entry in that date range that is NOT yet
+//     inside a FINALIZED payroll run (so an admin can review/revert before
+//     finalizing). A voided run is status='void', so its entries reappear here
+//     — "finalized then undone" shows up again, as intended.
+//   • Without a range — the last 24h of approvals (the original quick-revert list).
 router.get('/entries/recently-approved', requireAdmin, requirePerm('approve_entries'), async (req, res) => {
   const companyId = req.user.company_id;
   const accessIds = req.user.worker_access_ids;
+  const { from, to } = req.query;
+  const hasRange = !!(from || to);
   try {
-    const workerFilter = accessIds && accessIds.length ? `AND te.user_id = ANY($2)` : '';
-    const params = accessIds && accessIds.length ? [companyId, accessIds] : [companyId];
+    const params = [companyId];
+    let where = `te.company_id = $1 AND te.status = 'approved'`;
+    if (hasRange) {
+      if (from) { params.push(from); where += ` AND te.work_date >= $${params.length}::date`; }
+      if (to)   { params.push(to);   where += ` AND te.work_date <= $${params.length}::date`; }
+      where += `
+         AND NOT EXISTS (
+           SELECT 1 FROM payroll_run_checks prc
+           JOIN payroll_runs pr ON pr.id = prc.run_id
+           WHERE prc.company_id = te.company_id
+             AND pr.status = 'finalized'
+             AND prc.user_id = te.user_id
+             AND prc.period_start <= te.work_date
+             AND prc.period_end   >= te.work_date
+         )`;
+    } else {
+      where += ` AND te.approved_at >= NOW() - INTERVAL '24 hours'`;
+    }
+    if (accessIds && accessIds.length) { params.push(accessIds); where += ` AND te.user_id = ANY($${params.length})`; }
+    const orderLimit = hasRange
+      ? `ORDER BY te.work_date DESC, u.full_name LIMIT 500`
+      : `ORDER BY te.approved_at DESC LIMIT 100`;
     const { rows } = await pool.query(
       `SELECT te.id, te.work_date, te.start_time, te.end_time, te.project_id, te.user_id, te.approved_at,
-              te.qbo_activity_id, te.qbo_synced_at,
-              COALESCE(u.invoice_name, u.full_name) AS worker_name, p.name AS project_name
+              te.qbo_activity_id, te.qbo_synced_at, te.notes, te.clock_source, te.break_minutes, te.wage_type,
+              te.clock_in_lat, te.clock_in_lng, te.clock_out_lat, te.clock_out_lng,
+              COALESCE(u.invoice_name, u.full_name) AS worker_name, p.name AS project_name,
+              approver.full_name AS approved_by_name, cib.full_name AS clocked_in_by_name
        FROM time_entries te
        JOIN users u ON te.user_id = u.id
        LEFT JOIN projects p ON te.project_id = p.id
-       WHERE te.company_id = $1 AND te.status = 'approved'
-         AND te.approved_at >= NOW() - INTERVAL '24 hours'
-         ${workerFilter}
-       ORDER BY te.approved_at DESC
-       LIMIT 100`,
+       LEFT JOIN users approver ON te.approved_by = approver.id
+       LEFT JOIN users cib ON te.clocked_in_by = cib.id
+       WHERE ${where}
+       ${orderLimit}`,
       params
     );
     res.json(rows);
+  } catch (err) {
+    logger.error({ err }, 'catch block error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /admin/worker-locations?user_id&from&to — a worker's recorded clock-in/out
+// points AND the breadcrumb path across their time entries (any status) in a
+// date range. Feeds the Location history popup. Returns { entries, pings }:
+//   entries — shifts with any location data (a clock-in/out point OR pings in
+//             the shift window); carry start_ts/end_ts so the client can slice
+//             the path per shift.
+//   pings   — location_pings (migration 0168) in the range, ordered by time;
+//             the client draws a per-shift polyline from these.
+router.get('/worker-locations', requireAdmin, requirePerm('approve_entries'), async (req, res) => {
+  const companyId = req.user.company_id;
+  const accessIds = req.user.worker_access_ids;
+  const userId = parseInt(req.query.user_id, 10);
+  const { from, to } = req.query;
+  if (!userId) return res.status(400).json({ error: 'user_id required' });
+  if (accessIds && accessIds.length && !accessIds.includes(userId)) return res.json({ entries: [], pings: [] });
+  try {
+    const eParams = [companyId, userId];
+    let eWhere = `te.company_id = $1 AND te.user_id = $2
+                  AND (te.clock_in_lat IS NOT NULL OR te.clock_out_lat IS NOT NULL
+                       OR EXISTS (SELECT 1 FROM location_pings lp
+                                   WHERE lp.user_id = te.user_id
+                                     AND lp.recorded_at BETWEEN te.start_ts AND te.end_ts))`;
+    if (from) { eParams.push(from); eWhere += ` AND te.work_date >= $${eParams.length}::date`; }
+    if (to)   { eParams.push(to);   eWhere += ` AND te.work_date <= $${eParams.length}::date`; }
+    const entries = await pool.query(
+      `SELECT te.id, te.work_date, te.start_time, te.end_time, te.status, te.start_ts, te.end_ts,
+              te.clock_in_lat, te.clock_in_lng, te.clock_out_lat, te.clock_out_lng,
+              p.name AS project_name
+       FROM time_entries te
+       LEFT JOIN projects p ON te.project_id = p.id
+       WHERE ${eWhere}
+       ORDER BY te.work_date ASC, te.start_time ASC
+       LIMIT 500`,
+      eParams
+    );
+    const pParams = [companyId, userId];
+    let pWhere = `company_id = $1 AND user_id = $2`;
+    if (from) { pParams.push(from); pWhere += ` AND recorded_at >= $${pParams.length}::date`; }
+    if (to)   { pParams.push(to);   pWhere += ` AND recorded_at < ($${pParams.length}::date + 1)`; }
+    const pings = await pool.query(
+      `SELECT lat, lng, recorded_at FROM location_pings
+       WHERE ${pWhere}
+       ORDER BY recorded_at ASC
+       LIMIT 10000`,
+      pParams
+    );
+    res.json({ entries: entries.rows, pings: pings.rows });
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });

@@ -262,6 +262,15 @@ async function maintainActiveClocks() {
   } catch (err) {
     console.error('[cron] hour-limit backstop error:', err);
   }
+
+  // Retention: location breadcrumb pings (migration 0168) older than 3 months
+  // are dropped so the table stays bounded.
+  try {
+    const del = await pool.query(`DELETE FROM location_pings WHERE recorded_at < NOW() - INTERVAL '3 months'`);
+    if (del.rowCount > 0) console.log(`[cron] location pings: pruned ${del.rowCount} row(s) older than 3 months`);
+  } catch (err) {
+    console.error('[cron] location ping retention error:', err);
+  }
 }
 
 // ─── Booking reminders ──────────────────────────────────────────────────────
