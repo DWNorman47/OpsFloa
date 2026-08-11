@@ -8,6 +8,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { publicLinkError } from '../utils/publicErrors';
+import MapLink from '../components/MapLink';
 import { getT } from '../i18n';
 import { detectLanguage } from '../languageDetect';
 import { formatDate, formatDateTime, langToLocale } from '../utils';
@@ -406,7 +407,11 @@ export function PublicBookingManagePage() {
         <Row label={t.pbkType} value={appt.appointment_type_name} />
         <Row label={t.pbkWith} value={appt.assigned_user_name} />
         <Row label={t.pbkLocation} value={LOCATION_KIND_LABELS[appt.location_kind]} />
-        {appt.location_detail && <Row label={t.pbkDetails} value={appt.location_detail} />}
+        {appt.location_detail && <Row label={t.pbkDetails} value={
+          ['onsite', 'office'].includes(appt.location_kind)
+            ? <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>{appt.location_detail} <MapLink address={appt.location_detail} /></span>
+            : appt.location_detail
+        } />}
       </div>
 
       {canCancel ? (

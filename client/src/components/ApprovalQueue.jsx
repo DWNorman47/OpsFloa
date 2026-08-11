@@ -5,6 +5,7 @@ import { SkeletonList } from './Skeleton';
 import EmptyState from './EmptyState';
 import MessageThread from './MessageThread';
 import ModalShell from './ModalShell';
+import MapLink from './MapLink';
 import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
 import { fmtHours, langToLocale, formatDateTime } from '../utils';
@@ -206,7 +207,9 @@ function LocationHistoryModal({ seed, onClose, t, locale }) {
                     <span style={styles.recentTime}>{formatTime(e.start_time)} – {formatTime(e.end_time)}</span>
                     {e.project_name && <span style={styles.recentProject}>{e.project_name}</span>}
                     <span style={styles.locCoord}>🟢 {coordText(e.clock_in_lat, e.clock_in_lng, t)}</span>
+                    <MapLink lat={e.clock_in_lat} lng={e.clock_in_lng} iconOnly />
                     <span style={styles.locCoord}>🔴 {coordText(e.clock_out_lat, e.clock_out_lng, t)}</span>
+                    <MapLink lat={e.clock_out_lat} lng={e.clock_out_lng} iconOnly />
                     {pathFor(e).length >= 2 && <span style={styles.locCoord}>🧭 {pathFor(e).length} {t.aqPathPoints}</span>}
                   </div>
                 ))}
@@ -938,9 +941,15 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                 <span>{sourceLabel(detailEntry.clock_source, t)}{detailEntry.clocked_in_by_name ? ` (${detailEntry.clocked_in_by_name})` : ''}</span>
                 {detailEntry.notes && (<><span style={styles.detailLabel}>{t.aqNotes}</span><span>{detailEntry.notes}</span></>)}
                 <span style={styles.detailLabel}>{t.aqClockInLoc}</span>
-                <span>{coordText(detailEntry.clock_in_lat, detailEntry.clock_in_lng, t)}</span>
+                <span style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  {coordText(detailEntry.clock_in_lat, detailEntry.clock_in_lng, t)}
+                  <MapLink lat={detailEntry.clock_in_lat} lng={detailEntry.clock_in_lng} />
+                </span>
                 <span style={styles.detailLabel}>{t.aqClockOutLoc}</span>
-                <span>{coordText(detailEntry.clock_out_lat, detailEntry.clock_out_lng, t)}</span>
+                <span style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  {coordText(detailEntry.clock_out_lat, detailEntry.clock_out_lng, t)}
+                  <MapLink lat={detailEntry.clock_out_lat} lng={detailEntry.clock_out_lng} />
+                </span>
                 <span style={styles.detailLabel}>QuickBooks</span>
                 <span>{detailEntry.qbo_activity_id ? t.aqQbSynced : '—'}</span>
               </div>

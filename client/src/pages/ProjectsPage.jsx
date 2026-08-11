@@ -6,6 +6,7 @@ import { useT } from '../hooks/useT';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
+import MapLink from '../components/MapLink';
 import TabBar from '../components/TabBar';
 import { langToLocale } from '../utils';
 import { silentError, reportClientError } from '../errorReporter';
@@ -603,7 +604,7 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, allProjec
                   })()}
                   {project.client_name && <div style={styles.budgetRow}><span style={styles.budgetLabel}>{clientLabel}</span><span style={styles.budgetValue}>{project.client_name}</span></div>}
                   {project.job_number && <div style={styles.budgetRow}><span style={styles.budgetLabel}>Job #</span><span style={styles.budgetValue}>{project.job_number}</span></div>}
-                  {project.address && <div style={styles.budgetRow}><span style={styles.budgetLabel}>Address</span><span style={{ ...styles.budgetValue, textAlign: 'right', maxWidth: 220 }}>{project.address}</span></div>}
+                  {project.address && <div style={styles.budgetRow}><span style={styles.budgetLabel}>Address</span><span style={{ ...styles.budgetValue, textAlign: 'right', maxWidth: 220 }}>{project.address} <MapLink address={project.address} lat={project.geo_lat} lng={project.geo_lng} /></span></div>}
                   {project.start_date && <div style={styles.budgetRow}><span style={styles.budgetLabel}>Start</span><span style={styles.budgetValue}>{new Date(project.start_date).toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' })}</span></div>}
                   {project.end_date && <div style={styles.budgetRow}><span style={styles.budgetLabel}>{t.ppTargetEnd}</span><span style={styles.budgetValue}>{new Date(project.end_date).toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' })}</span></div>}
                   {project.description && <p style={{ fontSize: 13, color: '#374151', margin: '8px 0 0', lineHeight: 1.5 }}>{project.description}</p>}

@@ -2178,6 +2178,8 @@ const translations = {
     deleteReport: 'Delete report',
     // ── Shared aria-labels / tooltips ─────────────────────────────────────────
     dismiss: 'Dismiss',
+    openInMaps: 'Open in Google Maps',
+    mapsShort: 'Maps',
     dismissAlert: 'Dismiss alert',
     dismissError: 'Dismiss error',
     cancelDelete: 'Cancel delete',
@@ -6802,6 +6804,8 @@ const translations = {
     deleteReport: 'Eliminar reporte',
     // ── Shared aria-labels / tooltips ─────────────────────────────────────────
     dismiss: 'Descartar',
+    openInMaps: 'Abrir en Google Maps',
+    mapsShort: 'Mapa',
     dismissAlert: 'Descartar alerta',
     dismissError: 'Descartar error',
     cancelDelete: 'Cancelar eliminación',
