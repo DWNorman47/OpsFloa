@@ -9,7 +9,7 @@
  * ONE threshold regardless of wage_type.
  */
 
-const { rateAwarePay, hasSimpleOtConfig } = require('../utils/rateAwareOvertime');
+const { rateAwarePay, splitRateAware, hasSimpleOtConfig } = require('../utils/rateAwareOvertime');
 
 // One entry. Rate is decided by baseRateOf per test (by wage_type / project).
 const mk = (work_date, start, end, wage_type = 'regular', project_id = null, break_minutes = 0) =>
@@ -74,6 +74,81 @@ describe('rate_when_worked (default)', () => {
     const r = rateAwarePay(entries, { rule: 'none', threshold: 8, otMult: 1.5, baseRateOf: flat(45) });
     expect(r.overtimeHours).toBeCloseTo(0, 5);
     expect(r.cost).toBeCloseTo(12 * 45, 2);
+  });
+});
+
+describe('overtime_wage_priority = regular_first (opt-in — OT off regular first, keep prevailing whole)', () => {
+  // The requested scenario: 3h regular THEN 6h prevailing, daily-8.
+  const scenario = [
+    mk(MON, '06:00', '09:00', 'regular'),        // 3h @30
+    mk(MON, '09:00', '15:00', 'prevailing', 1),  // 6h @45
+  ];
+
+  test('default (chronological) puts the OT hour on the later prevailing hour', () => {
+    const s = splitRateAware(scenario, { rule: 'daily', threshold: 8, otMult: 1.5, baseRateOf: excavatorRate });
+    expect(s.prevailingHours).toBeCloseTo(5, 5);   // 1 PW hour became OT
+    expect(s.regularHours).toBeCloseTo(3, 5);
+    expect(s.overtimeHours).toBeCloseTo(1, 5);
+    const r = rateAwarePay(scenario, { rule: 'daily', threshold: 8, otMult: 1.5, baseRateOf: excavatorRate });
+    expect(r.cost).toBeCloseTo(382.5, 2); // 3*30 + 5*45 + 1*45*1.5
+  });
+
+  test('regular_first → 6 PW straight, 2 regular straight, 1 REGULAR OT', () => {
+    const opts = { rule: 'daily', threshold: 8, otMult: 1.5, baseRateOf: excavatorRate, wagePriority: 'regular_first' };
+    const s = splitRateAware(scenario, opts);
+    expect(s.prevailingHours).toBeCloseTo(6, 5); // all prevailing stays straight
+    expect(s.regularHours).toBeCloseTo(2, 5);
+    expect(s.overtimeHours).toBeCloseTo(1, 5);
+    const r = rateAwarePay(scenario, opts);
+    expect(r.cost).toBeCloseTo(375, 2); // 6*45 + 2*30 + 1*30*1.5  (OT at the regular rate)
+  });
+
+  test('the inverse of Test B: civilian-first-then-PW no longer makes prevailing OT', () => {
+    const entries = [
+      mk(MON, '06:00', '10:00', 'regular'),        // 4h @30
+      mk(MON, '10:00', '16:00', 'prevailing', 1),  // 6h @45
+    ];
+    const s = splitRateAware(entries, { rule: 'daily', threshold: 8, otMult: 1.5, baseRateOf: excavatorRate, wagePriority: 'regular_first' });
+    expect(s.prevailingHours).toBeCloseTo(6, 5);
+    expect(s.regularHours).toBeCloseTo(2, 5);
+    expect(s.overtimeHours).toBeCloseTo(2, 5);
+    const r = rateAwarePay(entries, { rule: 'daily', threshold: 8, otMult: 1.5, baseRateOf: excavatorRate, wagePriority: 'regular_first' });
+    expect(r.cost).toBeCloseTo(420, 2); // 6*45 + 2*30 + 2*30*1.5  (was $435 prevailing-OT under chronological)
+  });
+
+  test('spillover: when regular hours < OT, the excess OT still falls on prevailing', () => {
+    const entries = [
+      mk(MON, '06:00', '06:30', 'regular'),        // 0.5h @30
+      mk(MON, '06:30', '15:30', 'prevailing', 1),  // 9h @45
+    ]; // 9.5h, daily-8 → 1.5h OT; only 0.5h regular to absorb
+    const s = splitRateAware(entries, { rule: 'daily', threshold: 8, otMult: 1.5, baseRateOf: excavatorRate, wagePriority: 'regular_first' });
+    expect(s.prevailingHours).toBeCloseTo(8, 5);   // 1 PW hour spilled into OT
+    expect(s.regularHours).toBeCloseTo(0, 5);       // all 0.5 regular went to OT
+    expect(s.overtimeHours).toBeCloseTo(1.5, 5);
+    const r = rateAwarePay(entries, { rule: 'daily', threshold: 8, otMult: 1.5, baseRateOf: excavatorRate, wagePriority: 'regular_first' });
+    expect(r.cost).toBeCloseTo(450, 2); // 8*45 + 1*45*1.5 + 0.5*30*1.5
+  });
+
+  test('pure prevailing over the threshold is unchanged (nothing to protect)', () => {
+    const entries = [mk(MON, '06:00', '16:00', 'prevailing', 1)]; // 10h
+    const chrono = rateAwarePay(entries, { rule: 'daily', threshold: 8, otMult: 1.5, baseRateOf: flat(45) });
+    const regfirst = rateAwarePay(entries, { rule: 'daily', threshold: 8, otMult: 1.5, baseRateOf: flat(45), wagePriority: 'regular_first' });
+    expect(regfirst.cost).toBeCloseTo(chrono.cost, 2);
+    expect(regfirst.cost).toBeCloseTo(495, 2); // 8*45 + 2*45*1.5
+  });
+
+  test('weekly rule: mixed week draws the weekly OT off regular first', () => {
+    const entries = [
+      mk(MON, '08:00', '16:00', 'prevailing', 1), // 8h PW
+      mk(TUE, '08:00', '16:00', 'prevailing', 1), // 8h PW
+      mk(WED, '08:00', '16:00', 'prevailing', 1), // 8h PW
+      mk(THU, '08:00', '16:00', 'prevailing', 1), // 8h PW  (32 PW)
+      mk(FRI, '08:00', '17:00', 'regular'),        // 9h reg (41 total → 1h OT)
+    ];
+    const s = splitRateAware(entries, { rule: 'weekly', threshold: 40, weekStart: 1, otMult: 1.5, baseRateOf: excavatorRate, wagePriority: 'regular_first' });
+    expect(s.prevailingHours).toBeCloseTo(32, 5); // all PW straight
+    expect(s.regularHours).toBeCloseTo(8, 5);
+    expect(s.overtimeHours).toBeCloseTo(1, 5);     // the 1 OT hour is regular
   });
 });
 

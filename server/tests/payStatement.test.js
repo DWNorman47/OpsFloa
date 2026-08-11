@@ -239,3 +239,27 @@ describe('buildPayStatement — overtime bands expose the multiplier', () => {
     expect(st.hours.overtimeBands).toEqual([]);
   });
 });
+
+describe('overtime_wage_priority setting flows through the statement', () => {
+  // 3h regular then 6h prevailing (9h, daily-8).
+  const scenario = [
+    entry({ start_time: '06:00:00', end_time: '09:00:00', wage_type: 'regular' }),
+    entry({ start_time: '09:00:00', end_time: '15:00:00', wage_type: 'prevailing' }),
+  ];
+  test('default (chronological): the 1 OT hour is prevailing', () => {
+    const st = build({ entries: scenario });
+    expect(st.hours.prevailing).toBeCloseTo(5);
+    expect(st.hours.regular).toBeCloseTo(3);
+    expect(st.hours.overtime).toBeCloseTo(1);
+  });
+  test('regular_first: prevailing stays whole (6h), OT (1h) comes off regular at the regular rate', () => {
+    const st = build({ entries: scenario, settings: { ...SETTINGS, overtime_wage_priority: 'regular_first' } });
+    expect(st.hours.prevailing).toBeCloseTo(6);
+    expect(st.hours.regular).toBeCloseTo(2);
+    expect(st.hours.overtime).toBeCloseTo(1);
+    expect(st.cost.prevailing).toBe(270); // 6 × 45
+    expect(st.cost.regular).toBe(60);     // 2 × 30
+    expect(st.cost.overtime).toBe(45);    // 1 × 30 × 1.5 (regular rate, not prevailing)
+    expect(st.totals.grossWages).toBeCloseTo(st.cost.regular + st.cost.overtime + st.cost.prevailing);
+  });
+});

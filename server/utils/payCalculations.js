@@ -544,7 +544,15 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
  * floor-generated hours are regular, but worked hours still retain any overtime
  * earned above the threshold.
  */
-function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig = null) {
+function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig = null, opts = {}) {
+  // Which wage type absorbs OT when a bucket mixes regular + prevailing hours over
+  // the threshold. 'regular_first' fills straight-time from prevailing hours first
+  // so the overflow lands on regular hours. Default 'chronological' = no reorder =
+  // today's behavior exactly. Only the rate-aware caller passes this (its clones
+  // carry the real wage type as `orig_wage_type`; all are wage_type:'regular' here
+  // so every hour is OT-eligible). See server/constants/payEnums.js.
+  const wagePriority = opts.wagePriority || 'chronological';
+  const wagePrio = e => ((e.orig_wage_type ?? e.wage_type) === 'prevailing' ? 0 : 1);
   // overtime_reason records WHY each entry's OT applies, so the pay statement can
   // explain it truthfully instead of blanket-labelling everything "over Nh daily".
   for (const e of entries) { e.overtime_hours = 0; e.overtime_reason = null; } // default (prevailing / non-regular)
@@ -606,6 +614,10 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
       for (const e of es) { e.overtime_hours = entryDuration(e); e.overtime_reason = e.overtime_hours > 0 ? reason : null; } // whole day is OT
       continue;
     }
+    // 'regular_first': consume prevailing-origin hours for straight-time before
+    // regular ones (stable → chronological within each wage group), so the
+    // over-threshold overflow falls on regular hours. No-op under 'chronological'.
+    if (wagePriority === 'regular_first') es.sort((a, b) => wagePrio(a) - wagePrio(b));
     // Window hours are already carved out; only the residual drives the reg/OT
     // fill. Without window rules `resid` is entryDuration verbatim (windowSumOf is
     // 0 and no clamp), so this matches the prior behaviour exactly.
