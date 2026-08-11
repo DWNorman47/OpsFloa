@@ -87,7 +87,10 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     // it earned (or the weighted-average blend). This is the only path that pays
     // overtime on prevailing / multi-rate hours — see docs/plans/rate-aware-overtime.md.
     const otMethod = settings.overtime_rate_method === 'weighted_average' ? 'weighted_average' : 'rate_when_worked';
-    const split = splitRateAware(paid, { rule, threshold, weekStart, otMult, baseRateOf, method: otMethod });
+    // 'regular_first' draws OT from regular hours before prevailing on a mixed day/
+    // week (default 'chronological' = today's behavior). See payEnums.js.
+    const wagePriority = settings.overtime_wage_priority === 'regular_first' ? 'regular_first' : 'chronological';
+    const split = splitRateAware(paid, { rule, threshold, weekStart, otMult, baseRateOf, method: otMethod, wagePriority });
     // Per-entry OT + reason for the line-item display column (BillPDF / WorkerMetrics).
     for (const e of paid) { e.overtime_hours = 0; e.overtime_reason = null; }
     split.worked.forEach((e, i) => { e.overtime_hours = split.perEntry[i].ot; e.overtime_reason = split.perEntry[i].reason; });

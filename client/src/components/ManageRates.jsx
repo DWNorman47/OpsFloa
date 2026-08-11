@@ -79,6 +79,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
     overtime_rule: settings?.overtime_rule ?? 'daily',
     overtime_threshold: String(settings?.overtime_threshold ?? 8),
     overtime_rate_method: settings?.overtime_rate_method ?? 'rate_when_worked',
+    overtime_wage_priority: settings?.overtime_wage_priority ?? 'chronological',
     regular_shift_hours: String(settings?.regular_shift_hours ?? 8),
     sick_pay_pct: String(settings?.sick_pay_pct ?? 100),
     vacation_pay_pct: String(settings?.vacation_pay_pct ?? 100),
@@ -181,6 +182,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
       overtime_rule: settings.overtime_rule ?? 'daily',
       overtime_threshold: String(settings.overtime_threshold ?? 8),
       overtime_rate_method: settings.overtime_rate_method ?? 'rate_when_worked',
+      overtime_wage_priority: settings.overtime_wage_priority ?? 'chronological',
       regular_shift_hours: String(settings.regular_shift_hours ?? 8),
       sick_pay_pct: String(settings.sick_pay_pct ?? 100),
       vacation_pay_pct: String(settings.vacation_pay_pct ?? 100),
@@ -262,6 +264,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
         overtime_rule: form.overtime_rule,
         overtime_threshold: parseFloat(form.overtime_threshold),
         overtime_rate_method: form.overtime_rate_method,
+        overtime_wage_priority: form.overtime_wage_priority,
         regular_shift_hours: parseFloat(form.regular_shift_hours),
         sick_pay_pct: parseFloat(form.sick_pay_pct),
         vacation_pay_pct: parseFloat(form.vacation_pay_pct),
@@ -995,6 +998,15 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
               <select style={{ ...styles.input, width: 'auto', textAlign: 'left' }} value={form.overtime_rate_method} onChange={e => set('overtime_rate_method', e.target.value)}>
                 <option value="rate_when_worked">{t.ratesRateWhenWorked}</option>
                 <option value="weighted_average">{t.ratesWeightedAverage}</option>
+              </select>
+            </div>
+          </div>
+          <div style={styles.row}>
+            <label style={styles.label}>{t.ratesWagePriority}<HelpTip text={t.ratesWagePriorityHelp} /></label>
+            <div style={styles.inputGroup}>
+              <select style={{ ...styles.input, width: 'auto', textAlign: 'left' }} value={form.overtime_wage_priority} onChange={e => set('overtime_wage_priority', e.target.value)}>
+                <option value="chronological">{t.ratesWagePriorityChrono}</option>
+                <option value="regular_first">{t.ratesWagePriorityRegularFirst}</option>
               </select>
             </div>
           </div>

@@ -33,7 +33,7 @@ const { DEFAULT_OVERTIME_RATE_METHOD } = require('../constants/payEnums');
  * @param {string} [opts.method]      'rate_when_worked' | 'weighted_average'
  * @returns {{ straightHours:number, overtimeHours:number, cost:number, perEntry:Array }}
  */
-function rateAwarePay(entries, { rule, threshold, weekStart = 1, otMult, baseRateOf, method = DEFAULT_OVERTIME_RATE_METHOD }) {
+function rateAwarePay(entries, { rule, threshold, weekStart = 1, otMult, baseRateOf, method = DEFAULT_OVERTIME_RATE_METHOD, wagePriority = 'chronological' }) {
   const worked = (entries || []).filter(e => e.start_time && e.end_time);
   const dur = e => Math.max(0, hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60);
 
@@ -45,9 +45,12 @@ function rateAwarePay(entries, { rule, threshold, weekStart = 1, otMult, baseRat
   const clones = worked.map(e => ({
     start_time: e.start_time, end_time: e.end_time, break_minutes: e.break_minutes,
     work_date: e.work_date, wage_type: 'regular',
+    // Real wage type preserved so wagePriority='regular_first' can fill straight
+    // time from prevailing hours first (all clones are 'regular' for threshold math).
+    orig_wage_type: e.wage_type,
     overtime_hours_override: e.overtime_hours_override ?? null,
   }));
-  annotateEntryOvertime(clones, rule, threshold, weekStart, null);
+  annotateEntryOvertime(clones, rule, threshold, weekStart, null, { wagePriority });
 
   let straightHours = 0, overtimeHours = 0;
   const perEntry = worked.map((e, i) => {

@@ -4729,3 +4729,29 @@ four surfaces David picked: recorded clock coords (ApprovalQueue location histor
 coords), live worker location (LiveWorkers tag → link), and client/booking
 addresses (ManageClients + PublicBookingPage on-site/office confirmation).
 i18n openInMaps/mapsShort EN/ES.
+
+## Pay: overtime_wage_priority (draw OT from regular hours first)
+
+Money-critical. On a mixed regular+prevailing day/week over the OT threshold, the
+engine assigns OT chronologically (later hours = OT) — so a worker doing 3h reg
+then 6h prevailing got the OT on a prevailing hour. New opt-in company setting
+`overtime_wage_priority`: `chronological` (default, unchanged) | `regular_first`
+(prevailing hours fill straight time first → OT drawn from regular first → 6 PW /
+2 reg / 1 reg OT).
+
+- Only affects the simple/rate-aware OT path (the only one that unifies wage types
+  under one threshold). Premium OT configs keep prevailing flat (unchanged).
+- Mechanism: `annotateEntryOvertime` gains an optional `wagePriority`; when
+  `regular_first` it stable-sorts each daily/weekly bucket prevailing-origin-first
+  before the straight/OT fill. rateAwareOvertime clones carry `orig_wage_type`
+  (they're all `wage_type:'regular'` for threshold math) and thread the flag;
+  payStatement + both admin.js splitRateAware sites (worker pay + WH-347) read the
+  setting so every surface agrees. Default `chronological` = no reorder = identical
+  to today (proven: all pre-existing pay tests green).
+- Spillover handled: if regular hours < the OT amount, the excess still lands on
+  prevailing. Reconciles by construction (splitRateAware buckets sum to total).
+- Tests: rateAwareOvertime.test.js (scenario, inverse of Test B, spillover,
+  pure-PW-unchanged, weekly) + payStatement.test.js (setting flows through).
+  `npm run verify` green (1409 server tests).
+
+Compliance note surfaced in the UI help: jurisdiction-sensitive; opt-in.
