@@ -4523,3 +4523,209 @@ Files: migration 0167, server/utils/projectHourLimits.js (+23 unit tests),
 clock.js (/in + /switch gates, /status reconcile, warn alert), admin.js
 (/active-clocks reconcile + project CRUD + validation), cron.js backstop,
 ManageProjects.jsx + ClockInOut.jsx + i18n. `npm run verify` green.
+
+## Approval Queue: collapsible sections + entry detail + location history
+
+Four asks on the Approval Queue:
+1. Pending approvals wrapped in a collapsible section, defaults OPEN each load
+   (`showPending` state, not persisted).
+2. Approved section always renders; open+empty shows a hint to change the dates.
+3. Clicking an approved row → details popup (ModalShell): approver+time, clock
+   source, notes, clock-in/out coords as text, QB sync; "View on map" seeds and
+   opens Location history for that worker/day.
+4. Page-level "Location history" popup with its own worker + date pickers → map
+   of clock-in/out points + list.
+
+Key findings / judgment calls:
+- **Data reality:** only two points persist per entry (`time_entries
+  .clock_in_lat/lng`, `clock_out_lat/lng`). `active_clock.current_lat/lng` is
+  live-only and wiped on clock-out; there is NO breadcrumb/path table. So
+  "location history" today = start+end per entry. Full-path tracking (David:
+  "not ready") is out of scope; left a code comment where a `<Polyline>` per
+  shift would drop in, and the /worker-locations endpoint is shaped to extend.
+- Had to **un-gate the date-range picker** (was `entries.length > 0`) — with zero
+  pending entries it vanished, but the approved empty-state tells users to change
+  "the dates above," so it must always show.
+- Entry-detail popup is **details-only, no map** (David's choice) — the map lives
+  in Location history, reachable via the popup's "View on map".
+- Location history is **self-contained** (own worker + date pickers, own
+  /admin/workers fetch) so it works without first setting the page filters.
+- Reused the file's existing Leaflet primitives (clockInIcon/clockOutIcon/
+  FitBounds) and the repo's ModalShell (this file had no modal before).
+
+server: new `GET /admin/worker-locations?user_id&from&to` (coord-bearing entries,
+any status, access-scoped, LIMIT 500); `/entries/recently-approved` enriched with
+location + approver/source fields. New test adminWorkerLocationsRoute.test.js.
+`npm run verify` green (1389 server tests).
+
+## Location tracking: breadcrumb pings table
+
+Started persisting GPS pings. `POST /api/clock/location` now INSERTs into a new
+`location_pings` table (migration 0168) on top of the existing active_clock
+"last known point" overwrite. This is the durable path — the earlier design only
+kept clock-in/out points; the live point was wiped on clock-out.
+
+Design/judgment:
+- Table used ONLY for location tracking: id, company_id, user_id, lat/lng,
+  recorded_at. No FK to time_entries (no entry exists mid-shift) — a shift's
+  trail = that user's pings between the entry's start_ts/end_ts.
+- **Throttled ~1 row/30s per user** via an INSERT ... WHERE NOT EXISTS(recent
+  ping) guard. The client uses watchPosition (fires on movement), so without a
+  throttle the table would flood — and this tenant is cost-sensitive (Neon).
+  30s still gives fine path resolution (~960 rows/worker/8h max).
+- Fire-and-forget after the response; never delays the clock ping.
+- No auto-retention sweep yet — deliberately left the data intact; retention
+  (e.g. delete pings older than N days in the prod cron) is an easy follow-up if
+  growth matters.
+
+Storage only, per the ask. Drawing the per-shift polyline in the Location
+history map (from these pings) is the clear next step — the /worker-locations
+endpoint + map are already shaped for it.
+
+## Location tracking: 10-min floor + path drawing
+
+Completed the breadcrumb feature.
+
+- **10-minute floor (client, ClockInOut):** while clocked in, a per-minute check
+  forces a getCurrentPosition when it's been >10 min since the last ping, so a
+  stationary worker still gets a point every 10 min. Any real ping (movement,
+  visibility, reconnect) resets the floor via `lastPingRef`. Skipped when
+  `navigator.onLine === false`; a `window 'online'` handler forces a fresh ping +
+  reset on reconnect (the "reset if ping when offline and back on" ask). Server
+  still throttles writes to 1/min, so the floor is a floor, not extra volume.
+- **Draw path:** `/admin/worker-locations` now returns `{ entries, pings }`.
+  Entries carry `start_ts/end_ts` and now also include shifts that have pings but
+  no clock-in/out coords (EXISTS on location_pings in the shift window). The
+  Location history map draws a blue `<Polyline>` per shift from the pings between
+  its start/end, keeping the green/red clock-in/out markers; the list shows a
+  per-shift point count; FitBounds frames the whole path.
+- Note: history accrues from when pings started recording — past shifts show only
+  their clock-in/out points (no path). Retention sweep still deferred.
+
+## Location: stationary-ping setting + ping retention
+
+- **Company setting `location_ping_while_stationary`** (FEATURE_KEYS, default
+  FALSE). Toggle in Company Settings under Geolocation (only shows when
+  geolocation is on). OFF = only movement-driven pings; ON = the 10-min stationary
+  floor runs. Wired: settingsDefaults (key + default), ManageRates (init/reset/
+  save/toggle), Dashboard passes `pingWhileStationary` to ClockInOut, which gates
+  the floor + reconnect ping on it. PATCH allowlist already covers FEATURE_KEYS.
+  i18n mrFeatPingStationary(+Desc) EN/ES.
+- **Retention:** prod cron backstop (maintainActiveClocks) now
+  `DELETE FROM location_pings WHERE recorded_at < NOW() - INTERVAL '3 months'`.
+  Runs hourly in prod (crons are prod-only), keeping the breadcrumb table bounded.
+
+## Direct messages + messaging scope setting + block system
+
+Added 1:1 direct messaging (`/api/dm`, `direct_messages` table) alongside the
+existing shared worker↔admins `company_chat` thread — the "Admins" recipient is
+kept; specific-person DMs are new. Governed by company setting
+`worker_messaging_scope` (off | admins_only [default] | everyone). Admins can
+always message any active same-company user; scope only gates workers. Block
+system in Directory ▸ Team Members: per-user mute (`users.messaging_blocked`) +
+per-person block list (`users.messaging_blocked_user_ids INTEGER[]`), edited via
+`PATCH /admin/workers/:id/messaging`.
+
+Enforcement is centralized in `server/utils/messaging.js canMessage()` (scope,
+mute, per-person block, same-company/active/self), reused by the send route and
+the contacts list. 9 unit/route tests.
+
+Judgment calls / gotchas:
+- **Caught + fixed a deploy-blocker in 0168**: `location_pings.company_id` was
+  INTEGER but `companies.id` is **UUID** — the FK would fail at migrate time (and
+  the runtime insert passes a UUID). A bad-FK CREATE TABLE fails atomically so it
+  never applied; fixed the file in place (separate commit) and used UUID for 0169.
+- Kept the collective "Admins" thread (company_chat) and layered DMs on top, per
+  David — no migration of existing chats. Worker Messages screen: a recipient
+  picker ("🏢 Admins" + people from /dm/contacts); admin picker gains a DM group
+  (other admins + anyone who's DM'd them) so worker→specific-admin DMs are visible
+  without reworking the Workforce chat.
+- DMs notify via push only (no inbox item) to match company_chat + avoid inbox
+  clutter; unread is server-authoritative (contacts.unread), folded into
+  MessagesBell. Pruned by chat_retention_days like company_chat.
+- Per-person block is directional (X's list) via INTEGER[] mirroring
+  worker_access_ids — no join table.
+
+`npm run verify` green (1401 server tests).
+
+### Follow-up: scope enum → two toggles
+Per David, "workers can message individual admins" should itself be a company
+option. That made the 3-way `worker_messaging_scope` enum redundant, so it was
+replaced with two boolean FEATURE_KEYS (both default OFF): `worker_dm_admins`
+and `worker_dm_workers`. Default = a worker has only the shared "Admins" thread.
+`canMessage()` takes `{ dmAdmins, dmWorkers }`; Company Settings shows two
+toggles. Retired `server/constants/messagingEnums.js` + its db-enums row.
+
+## Field screens default to the clocked-in project (+ overhead/non-job flag)
+
+Daily Checklist, Work Notes (FieldDayLog), new Daily Report, and Haul log now
+default their project picker to the worker's clocked-in project. Precedence:
+URL `?project=` > clocked-in real job > each screen's prior default.
+
+- **Overhead flag:** new `projects.is_overhead` boolean (migration 0170), admin-set
+  via a toggle on the ProjectsPage edit form. Marks non-job codes (Shop, Travel,
+  PTO) so auto-defaulting skips them — you don't want a daily report defaulting to
+  "Travel". David picked an explicit flag over name-guessing (fragile) or
+  no-job-number inference (implicit/wrong).
+- **Resolution in FieldPage** (all four are its tabs): fetch `/clock/status` once,
+  find the clocked-in project in the loaded list, and only treat it as the default
+  if it's active and `!is_overhead`. Passed down as `defaultProjectId`. Used an
+  **`undefined` sentinel** (vs null) so "clock status still loading" is
+  distinguishable from "not clocked into a real job" — screens wait rather than
+  finalizing their fallback early (the async-default race).
+- Each screen applies the default once, after the URL param, guarded so it never
+  overrides a manual pick.
+
+Note: caught earlier that companies.id is UUID (fixed 0168 in a prior commit); all
+new `company_id` FKs use UUID. `npm run verify` green (1401 tests).
+
+### Extended to the rest of the sensible field tabs
+Seeded the new-record project on the remaining worker-facing project-scoped create
+forms: Punchlist, Incident Reports, Inspections (new only), Safety Checklists, Sub
+Reports. Skipped PhotoGallery (browse-only) and Safety Talks / RFIs (admin-only
+create — admins aren't clocked in, so the default never applies). Only create-form
+project fields seeded via the form initializer; browse filters untouched.
+
+## Field: one shared "active project" across all tabs (one model, many interfaces)
+
+David's refinement of the shared-selector idea (he disliked a header/banner mock):
+keep each tab's own project selector UI, but back them all with ONE shared value
+in FieldPage. Pick a project on any tab → every other tab opens on it.
+
+- FieldPage owns `activeProject` ('' = All/none). Seed order: clocked-in real job
+  (skip overhead) → last-used (localStorage `field_active_project`) → none.
+  `undefined` until seeded; tab content shows a loader until then. Passed to every
+  project-scoped tab as `activeProject` + `onProjectChange`.
+- Each tab binds its browse filter (or primary project) to the shared value: init
+  from it, a sync effect follows changes, and its selector's onChange writes back.
+  Create-form defaults read the shared value too. Supersedes the per-tab clocked-in
+  defaults from earlier (same seed, now shared + persisted).
+- Daily Checklist keeps `?project=` deep-link precedence and pushes it into the
+  shared value so other tabs follow.
+- Gotcha fixed: don't gate seeding on `projects.length` — a company with zero
+  projects would otherwise hang on the tab loader forever.
+
+Reversible by design (FieldPage state + per-tab bindings). Bound 12 tabs;
+`npm run verify` green (1401 tests).
+
+### Company settings for the two Field behaviors
+Two boolean FEATURE_KEYS (Company Settings ▸ Field, both default ON):
+- `field_shared_project` — the shared active-project. Off = FieldPage passes no
+  `onProjectChange` (projectChange=undefined), so tabs keep the seeded default but
+  don't sync across tabs (back to independent).
+- `field_show_overhead_projects` — off filters `is_overhead` projects out of the
+  Field project lists (`fieldProjects`) and out of last-used seeding.
+Wired: settingsDefaults, ManageRates (two toggles under module_field),
+FieldPage (derive + apply), i18n EN/ES.
+
+## "Open in Google Maps" links
+
+Reusable `utils/maps.js` `googleMapsUrl({lat,lng,address})` (coords win, else
+address; Maps URL scheme, opens app on mobile) + `<MapLink>` component (new tab,
+rel=noopener, stopPropagation for clickable rows; `showIcon`/`iconOnly` variants).
+useT is safe on public pages (all routes are under AuthProvider). Placed on all
+four surfaces David picked: recorded clock coords (ApprovalQueue location history
++ entry detail), project/job-site address (ProjectsPage, falls back to geofence
+coords), live worker location (LiveWorkers tag → link), and client/booking
+addresses (ManageClients + PublicBookingPage on-site/office confirmation).
+i18n openInMaps/mapsShort EN/ES.

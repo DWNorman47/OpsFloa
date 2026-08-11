@@ -390,8 +390,12 @@ orphaned and unread (kept only as historical data).
 These are fixed-value but Postgres enforces them via the `BOOLEAN` type.
 Listed for completeness so they're not flagged as gaps:
 
-`users.active`, `users.day_mark_mode`, `users.mfa_enabled`,
-`projects.active`, `time_entries.locked`, `shifts.cant_make_it`,
+`users.active`, `users.day_mark_mode`, `users.mfa_enabled`, `users.messaging_blocked`
+(global mute — the user can't send DMs; per-person blocks live in the
+`users.messaging_blocked_user_ids INTEGER[]` list, not a fixed-value column),
+`projects.active`, `projects.is_overhead` (overhead/non-job code — Shop, Travel,
+PTO; screens skip auto-defaulting to the clocked-in project when it's overhead),
+`time_entries.locked`, `shifts.cant_make_it`,
 `companies.is_exempt`, `companies.is_demo` (CHECK-free BOOLEAN, `0117`;
 marks demo/test tenants — suppresses real email, caps R2 at 200 MB,
 wiped nightly), etc.

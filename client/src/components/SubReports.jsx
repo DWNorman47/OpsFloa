@@ -185,7 +185,7 @@ function SubCard({ report, onEdit, onDeleted }) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-export default function SubReports({ projects, settings = null }) {
+export default function SubReports({ projects, settings = null, activeProject = '', onProjectChange }) {
   const t = useT();
   const { user } = useAuth();
   const { onSync } = useOffline() || {};
@@ -198,7 +198,8 @@ export default function SubReports({ projects, settings = null }) {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [filters, setFilters] = useState({});
+  const [filters, setFilters] = useState({ project_id: activeProject != null ? String(activeProject) : '' });
+  useEffect(() => { setFilters(f => ({ ...f, project_id: activeProject != null ? String(activeProject) : '' })); }, [activeProject]);
 
   const setFilter = (k, v) => setFilters(f => ({ ...f, [k]: v }));
 
@@ -243,7 +244,7 @@ export default function SubReports({ projects, settings = null }) {
         <div style={styles.formCard}>
           <SubReportForm
             projects={projects}
-            initial={editing || BLANK}
+            initial={editing || (activeProject ? { ...BLANK, project_id: String(activeProject) } : BLANK)}
             workerLabelPluralLower={workerLabelPluralLower}
             onSaved={handleSaved}
             onCancel={() => { setShowForm(false); setEditing(null); }}
@@ -253,7 +254,7 @@ export default function SubReports({ projects, settings = null }) {
 
       <FieldFilters activeCount={activeFilterCount}>
         {projects.length > 0 && (
-          <select style={styles.filterSelect} value={filters.project_id || ''} onChange={e => setFilter('project_id', e.target.value)}>
+          <select style={styles.filterSelect} value={filters.project_id || ''} onChange={e => { setFilter('project_id', e.target.value); onProjectChange?.(e.target.value); }}>
             <option value="">{`All Projects`}</option>
             {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>

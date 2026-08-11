@@ -179,12 +179,12 @@ function TemplateBuilder({ initial, onSaved, onCancel }) {
 
 // ── Inspection Form (fill out an inspection) ──────────────────────────────────
 
-function InspectionForm({ templates, projects, initial, onSaved, onCancel }) {
+function InspectionForm({ templates, projects, initial, onSaved, onCancel, defaultProjectId = null }) {
   const t = useT();
   const isEdit = !!initial?.id;
   const [form, setForm] = useState({
     template_id: initial?.template_id ?? '',
-    project_id: initial?.project_id ?? '',
+    project_id: initial?.project_id ?? (defaultProjectId ? String(defaultProjectId) : ''),
     name: initial?.name ?? '',
     inspector: initial?.inspector ?? '',
     location: initial?.location ?? '',
@@ -482,7 +482,7 @@ function InspectionCard({ ins, isAdmin, templates, onEdit, onDeleted }) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-export default function InspectionChecklists({ projects }) {
+export default function InspectionChecklists({ projects, activeProject = '', onProjectChange }) {
   const t = useT();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
@@ -494,12 +494,14 @@ export default function InspectionChecklists({ projects }) {
   const [view, setView] = useState('inspections'); // 'inspections' | 'templates'
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [filters, setFilters] = useState({});
+  const [filters, setFilters] = useState({ project_id: activeProject != null ? String(activeProject) : '' });
   const [pendingDeleteTemplateId, setPendingDeleteTemplateId] = useState(null);
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
 
   const setFilter = (k, v) => { setPage(1); setFilters(f => ({ ...f, [k]: v })); };
+  // Follow the shared Field project (changed from any tab).
+  useEffect(() => { setFilters(f => ({ ...f, project_id: activeProject != null ? String(activeProject) : '' })); }, [activeProject]);
 
   const loadAll = async (p = page) => {
     const [insRes, tplRes] = await Promise.all([
@@ -573,6 +575,7 @@ export default function InspectionChecklists({ projects }) {
             <InspectionForm
               templates={templates}
               projects={projects}
+              defaultProjectId={activeProject}
               initial={editing || null}
               onSaved={handleSaved}
               onCancel={() => { setShowForm(false); setEditing(null); }}
@@ -590,7 +593,7 @@ export default function InspectionChecklists({ projects }) {
             <option value="pending">{t.inspStatusPending}</option>
           </select>
           {projects.length > 0 && (
-            <select style={styles.filterSelect} value={filters.project_id || ''} onChange={e => setFilter('project_id', e.target.value)}>
+            <select style={styles.filterSelect} value={filters.project_id || ''} onChange={e => { setFilter('project_id', e.target.value); onProjectChange?.(e.target.value); }}>
               <option value="">{`All Projects`}</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>

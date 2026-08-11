@@ -4,6 +4,7 @@ import { useT } from '../hooks/useT';
 import { useToast } from '../contexts/ToastContext';
 import { SkeletonList, SkeletonBlock } from './Skeleton';
 import EmptyState from './EmptyState';
+import MapLink from './MapLink';
 import { useAuth } from '../contexts/AuthContext';
 import { labelSg, labelPl } from '../companyLabels';
 
@@ -317,7 +318,7 @@ function ClientCard({ client, onEdit, onDeleted }) {
 
       {expanded && (
         <div style={s.cardBody}>
-          {client.address && <p style={s.addressText}>📍 {client.address}</p>}
+          {client.address && <p style={s.addressText}>📍 {client.address} <MapLink address={client.address} showIcon={false} /></p>}
           {client.notes && <p style={s.notesText}>{client.notes}</p>}
 
           <div style={s.sectionLabel}>{t.documentsSection}</div>

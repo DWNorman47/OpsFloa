@@ -317,7 +317,7 @@ function DayManager({ projectId, t, toast, onQueueChanged }) {
 }
 const swap = (arr, i, j) => { const a = arr.slice(); [a[i], a[j]] = [a[j], a[i]]; return a; };
 
-export default function DailyChecklist({ projects = [], settings = null, loading: projectsLoading = false }) {
+export default function DailyChecklist({ projects = [], settings = null, loading: projectsLoading = false, activeProject = '', onProjectChange }) {
   const t = useT();
   const toast = useToast();
   const canStart = usePerm('daily_checklist_start_day');
@@ -326,10 +326,12 @@ export default function DailyChecklist({ projects = [], settings = null, loading
   const canSchedule = usePerm('daily_checklist_schedule_days');
   const canManageSettings = usePerm('manage_settings');
 
-  // ?project=<id> (e.g. from the clock-in prompt) preselects that project; else the first.
+  // Project = the shared Field "active project". A ?project=<id> deep link (e.g.
+  // from the clock-in prompt) wins on mount; otherwise the shared value; else the first.
+  const initialUrlProj = useRef(Number(new URLSearchParams(window.location.search).get('project')) || 0);
   const [projectId, setProjectId] = useState(() => {
-    const p = Number(new URLSearchParams(window.location.search).get('project'));
-    return (Number.isInteger(p) && p > 0) ? p : (projects[0]?.id ?? '');
+    if (initialUrlProj.current) return initialUrlProj.current;
+    return activeProject ? Number(activeProject) : (projects[0]?.id ?? '');
   });
   const [day, setDay] = useState(null);
   const [items, setItems] = useState([]);
@@ -363,6 +365,19 @@ export default function DailyChecklist({ projects = [], settings = null, loading
   useEffect(() => {
     if (projects.length && !projects.some(p => p.id === projectId)) setProjectId(projects[0].id);
   }, [projects, projectId]);
+
+  // Push a ?project= deep link into the shared value once, so the other tabs follow it.
+  useEffect(() => {
+    if (initialUrlProj.current) onProjectChange?.(initialUrlProj.current);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Follow the shared Field project (changed from any tab). Skip the first pass when
+  // a deep link is present — the push above aligns the shared value instead.
+  useEffect(() => {
+    if (initialUrlProj.current) { initialUrlProj.current = 0; return; }
+    const next = activeProject ? Number(activeProject) : (projects[0]?.id ?? '');
+    setProjectId(prev => (prev === next ? prev : next));
+  }, [activeProject, projects]);
 
   // Drop the ?project= param once consumed so a refresh doesn't re-force it (mirrors the
   // Administration ?focus= pattern); the selection is already seeded above.
@@ -447,7 +462,7 @@ export default function DailyChecklist({ projects = [], settings = null, loading
     <div style={styles.wrap}>
       <div style={styles.head}>
         <label style={styles.label}>{t.dcSelectProject}</label>
-        <select style={styles.select} value={projectId} onChange={e => setProjectId(Number(e.target.value) || e.target.value)}>
+        <select style={styles.select} value={projectId} onChange={e => { const v = Number(e.target.value) || e.target.value; setProjectId(v); onProjectChange?.(v); }}>
           {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <span style={styles.headActions}>

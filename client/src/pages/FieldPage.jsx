@@ -1,5 +1,6 @@
-import React, { lazy, Suspense, useState, useEffect, useCallback } from 'react';
+import React, { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { safeLocal } from '../utils/safeStorage';
 import { useT } from '../hooks/useT';
 import api from '../api';
 import { getOrFetch } from '../offlineDb';
@@ -79,6 +80,7 @@ export default function FieldPage() {
   const [features, setFeatures] = useState({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
+  const [clockedInPid, setClockedInPid] = useState(undefined); // undefined = clock status not resolved yet
   const hashTab = window.location.hash.replace('#', '');
   const [fieldTab, setFieldTab] = useState(resolveFieldTab(hashTab));
   const switchTab = t => { setFieldTab(t); history.replaceState(null, '', '#' + t); };
@@ -126,6 +128,53 @@ export default function FieldPage() {
   }, []);
 
   useEffect(() => { init(); }, [init]);
+
+  // The worker's currently clocked-in project — screens below default their
+  // project picker to it (a real job only; see defaultProjectId). Not cached; it
+  // changes as they clock in/out.
+  useEffect(() => {
+    api.get('/clock/status').then(r => setClockedInPid(r.data?.project_id || null)).catch(() => setClockedInPid(null));
+  }, []);
+
+  // The clocked-in project, but only when it's a real job (active, not overhead).
+  // `undefined` = still resolving; `null` = no clocked-in real job.
+  const clockedInDefault = React.useMemo(() => {
+    if (clockedInPid === undefined) return undefined;
+    if (!clockedInPid || !projects?.length) return null;
+    const p = projects.find(pr => String(pr.id) === String(clockedInPid));
+    return (p && p.active !== false && !p.is_overhead) ? p.id : null;
+  }, [clockedInPid, projects]);
+
+  // ── Shared "active project" for the whole Field section ─────────────────────
+  // One value that every tab's project selector reads and writes, so choosing a
+  // project on any tab carries to all the others. `undefined` until seeded.
+  // Seed order: clocked-in real job → last-used (localStorage) → none/All.
+  // The URL ?project= (Daily Checklist deep link) still overrides on that tab.
+  const [activeProject, setActiveProject] = useState(undefined); // '' = All / none
+  const seededRef = useRef(false);
+  const onProjectChange = useCallback((val) => {
+    const s = val == null ? '' : String(val);
+    setActiveProject(s);
+    try { safeLocal.setItem('field_active_project', s); } catch { /* private mode */ }
+  }, []);
+  // Company settings (default ON): share one project across tabs; show overhead
+  // codes in the Field pickers.
+  const sharedProject = features?.field_shared_project !== false;
+  const showOverhead = features?.field_show_overhead_projects !== false;
+  const fieldProjects = showOverhead ? projects : projects.filter(p => !p.is_overhead);
+  // When sharing is off, tabs still get the same seeded default but don't write
+  // back — so each tab is independent (no cross-tab sync).
+  const projectChange = sharedProject ? onProjectChange : undefined;
+  useEffect(() => {
+    if (seededRef.current) return;
+    if (loading || clockedInDefault === undefined) return; // wait for data + clock (projects may legitimately be empty)
+    seededRef.current = true;
+    if (clockedInDefault) { setActiveProject(String(clockedInDefault)); return; }
+    let last = '';
+    try { last = safeLocal.getItem('field_active_project') || ''; } catch { /* ignore */ }
+    const visible = p => String(p.id) === last && (showOverhead || !p.is_overhead);
+    setActiveProject(last && projects.some(visible) ? last : '');
+  }, [loading, clockedInDefault, projects, showOverhead]);
 
   const fieldGroups = [
     {
@@ -213,30 +262,32 @@ export default function FieldPage() {
             recovered by navigating away from the broken tab. */}
         <ErrorBoundary key={activeFieldTab} mode="inline" label={activeFieldTab}>
           <Suspense fallback={<TabLoader />}>
-            {activeFieldTab === 'checklist-daily' ? (
-              <DailyChecklist projects={projects} settings={features} loading={loading} />
+            {activeProject === undefined ? (
+              <TabLoader />
+            ) : activeFieldTab === 'checklist-daily' ? (
+              <DailyChecklist projects={fieldProjects} settings={features} loading={loading} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'daily' ? (
-              <DailyReports projects={projects} settings={features} />
+              <DailyReports projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'haul' ? (
-              <HaulTickets projects={projects} settings={features} />
+              <HaulTickets projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'punchlist' ? (
-              <Punchlist projects={projects} settings={features} />
+              <Punchlist projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'safety' ? (
-              <SafetyTalks projects={projects} settings={features} />
+              <SafetyTalks projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'checklists' ? (
-              <SafetyChecklists projects={projects} settings={features} />
+              <SafetyChecklists projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'incident' ? (
-              <IncidentReports projects={projects} settings={features} />
+              <IncidentReports projects={fieldProjects} settings={features} activeProject={activeProject} />
             ) : activeFieldTab === 'gallery' ? (
-              <PhotoGallery projects={projects} settings={features} />
+              <PhotoGallery projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'subs' ? (
-              <SubReports projects={projects} settings={features} />
+              <SubReports projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'rfi' ? (
-              <RFITracking projects={projects} settings={features} />
+              <RFITracking projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'inspect' ? (
-              <InspectionChecklists projects={projects} settings={features} />
+              <InspectionChecklists projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : (
-              <FieldDayLog projects={projects} isAdmin={isAdmin} settings={features} />
+              <FieldDayLog projects={fieldProjects} isAdmin={isAdmin} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             )}
           </Suspense>
         </ErrorBoundary>

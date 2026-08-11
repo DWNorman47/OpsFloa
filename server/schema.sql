@@ -428,6 +428,8 @@ ALTER TABLE users     ADD COLUMN IF NOT EXISTS failed_login_attempts INT NOT NUL
 ALTER TABLE users     ADD COLUMN IF NOT EXISTS locked_until           TIMESTAMP;
 -- MFA (TOTP)
 ALTER TABLE users     ADD COLUMN IF NOT EXISTS mfa_enabled           BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users     ADD COLUMN IF NOT EXISTS messaging_blocked     BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users     ADD COLUMN IF NOT EXISTS messaging_blocked_user_ids INTEGER[]; -- specific people this user may not message (see 0169)
 ALTER TABLE users     ADD COLUMN IF NOT EXISTS mfa_secret            TEXT;
 ALTER TABLE users     ADD COLUMN IF NOT EXISTS mfa_secret_pending    TEXT;
 -- Timezone tracking on time entries and active clock
@@ -449,6 +451,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_time_entries_user_client_id ON time_entrie
 ALTER TABLE users ADD COLUMN IF NOT EXISTS overtime_rule VARCHAR(10) NOT NULL DEFAULT 'daily';
 -- Per-project prevailing wage rate (overrides company setting when set)
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS prevailing_wage_rate DECIMAL(10,2);
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS is_overhead BOOLEAN NOT NULL DEFAULT false; -- overhead/non-job code (see 0170)
 -- Company contact info for invoices
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS address TEXT;
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS phone VARCHAR(30);

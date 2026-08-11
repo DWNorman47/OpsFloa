@@ -23,7 +23,7 @@ function fmtIncidentDate(value, locale = 'en-US') {
 
 // ── Incident Form ─────────────────────────────────────────────────────────────
 
-function IncidentForm({ projects, onSubmitted, onCancel }) {
+function IncidentForm({ projects, onSubmitted, onCancel, defaultProjectId = null }) {
   const t = useT();
   const TYPE_LABELS = useMemo(() => ({
     'injury': `🤕 ${t.typeInjury}`,
@@ -42,7 +42,7 @@ function IncidentForm({ projects, onSubmitted, onCancel }) {
     incident_date: today(),
     incident_time: '',
     type: 'near-miss',
-    project_id: '',
+    project_id: defaultProjectId ? String(defaultProjectId) : '',
     injured_name: '',
     body_part: '',
     treatment: 'none',
@@ -289,7 +289,7 @@ function IncidentCard({ incident, isAdmin, onClosed, onDeleted }) {
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
-export default function IncidentReports({ projects }) {
+export default function IncidentReports({ projects, activeProject = '' }) {
   const { user } = useAuth();
   const t = useT();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
@@ -363,6 +363,7 @@ export default function IncidentReports({ projects }) {
         <div style={styles.formCard}>
           <IncidentForm
             projects={projects}
+            defaultProjectId={activeProject}
             onSubmitted={r => { setIncidents(prev => [r, ...prev]); setShowForm(false); }}
             onCancel={() => setShowForm(false)}
           />

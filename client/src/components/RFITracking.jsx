@@ -27,12 +27,12 @@ const STATUS_STYLES = {
 
 // ── RFI Form ──────────────────────────────────────────────────────────────────
 
-function RFIForm({ initial, projects, onSaved, onCancel }) {
+function RFIForm({ initial, projects, onSaved, onCancel, defaultProjectId = null }) {
   const t = useT();
   const STATUS_LABELS = useMemo(() => ({ open: t.statusOpen, answered: t.statusAnswered, closed: t.statusClosed }), [t]);
   const isEdit = !!initial?.id;
   const [form, setForm] = useState({
-    project_id: initial?.project_id ?? '',
+    project_id: initial?.project_id ?? (defaultProjectId ? String(defaultProjectId) : ''),
     subject: initial?.subject ?? '',
     description: initial?.description ?? '',
     directed_to: initial?.directed_to ?? '',
@@ -261,7 +261,7 @@ function RFICard({ rfi, isAdmin, companyName, onEdit, onDeleted, settings = null
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-export default function RFITracking({ projects, settings = null }) {
+export default function RFITracking({ projects, settings = null, activeProject = '', onProjectChange }) {
   const { user } = useAuth();
   const t = useT();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
@@ -273,8 +273,9 @@ export default function RFITracking({ projects, settings = null }) {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [filters, setFilters] = useState({});
+  const [filters, setFilters] = useState({ project_id: activeProject != null ? String(activeProject) : '' });
   const [companyName, setCompanyName] = useState('');
+  useEffect(() => { setFilters(f => ({ ...f, project_id: activeProject != null ? String(activeProject) : '' })); }, [activeProject]);
 
   const setFilter = (k, v) => setFilters(f => ({ ...f, [k]: v }));
 
@@ -329,6 +330,7 @@ export default function RFITracking({ projects, settings = null }) {
           <RFIForm
             initial={editing || null}
             projects={projects}
+            defaultProjectId={activeProject}
             onSaved={handleSaved}
             onCancel={() => { setShowForm(false); setEditing(null); }}
           />
@@ -343,7 +345,7 @@ export default function RFITracking({ projects, settings = null }) {
           <option value="closed">{t.statusClosed}</option>
         </select>
         {projects.length > 0 && (
-          <select style={styles.filterSelect} value={filters.project_id || ''} onChange={e => setFilter('project_id', e.target.value)}>
+          <select style={styles.filterSelect} value={filters.project_id || ''} onChange={e => { setFilter('project_id', e.target.value); onProjectChange?.(e.target.value); }}>
             <option value="">{`All Projects`}</option>
             {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>

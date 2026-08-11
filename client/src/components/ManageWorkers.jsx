@@ -265,6 +265,8 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
 
   const [editWorkerAccessForm, setEditWorkerAccessForm] = useState({ all_workers: true, ids: new Set() });
   const [editWorkerAccessSaving, setEditWorkerAccessSaving] = useState(false);
+  const [editMessagingForm, setEditMessagingForm] = useState({ blocked: false, blockedIds: new Set() });
+  const [editMessagingSaving, setEditMessagingSaving] = useState(false);
 
   // Invite
   const [inviteSending, setInviteSending] = useState(new Set());
@@ -555,6 +557,24 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
       cancelEdit();
     } catch (err) { toast(err.response?.data?.error || t.failedUpdateWorkerAccess, 'error'); }
     finally { setEditWorkerAccessSaving(false); }
+  };
+
+  const startEditMessaging = w => {
+    setEditingId(w.id); setEditSection('messaging');
+    setEditMessagingForm({ blocked: !!w.messaging_blocked, blockedIds: new Set(w.messaging_blocked_user_ids || []) });
+  };
+
+  const saveMessaging = async id => {
+    setEditMessagingSaving(true);
+    try {
+      const r = await api.patch(`/admin/workers/${id}/messaging`, {
+        messaging_blocked: editMessagingForm.blocked,
+        messaging_blocked_user_ids: Array.from(editMessagingForm.blockedIds),
+      });
+      onWorkerUpdated(r.data);
+      cancelEdit();
+    } catch (err) { toast(err.response?.data?.error || t.failedUpdateWorker, 'error'); }
+    finally { setEditMessagingSaving(false); }
   };
 
   // ── Invite helper ────────────────────────────────────────────────────────────
@@ -1270,6 +1290,76 @@ export default function ManageWorkers({ workers, onWorkerAdded, onWorkerDeleted,
                                   })}
                                 </div>
                               )
+                            }
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+      {/* ── Messaging block system ── */}
+                    {w.id !== currentUser?.id && (
+                      <div style={s.section}>
+                        <div style={s.sectionHeader}>
+                          <span style={s.sectionTitle}>{t.mwMessaging}</span>
+                          {(!isEditing || editSection !== 'messaging') && (
+                            <button style={s.sectionBtn} onClick={() => startEditMessaging(w)}>{t.edit}</button>
+                          )}
+                        </div>
+                        {isEditing && editSection === 'messaging' ? (
+                          <div style={s.editBlock}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, color: '#111827' }}>
+                              <input
+                                type="checkbox"
+                                checked={editMessagingForm.blocked}
+                                onChange={e => setEditMessagingForm(f => ({ ...f, blocked: e.target.checked }))}
+                              />
+                              {t.mwMsgBlockAll}
+                            </label>
+                            <div style={{ fontSize: 12, color: '#6b7280', margin: '4px 0' }}>{t.mwMsgBlockAllDesc}</div>
+                            {!editMessagingForm.blocked && (
+                              <>
+                                <div style={{ fontSize: 13, fontWeight: 600, color: '#111827', marginTop: 6 }}>{t.mwMsgCantMessage}</div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingLeft: 4, marginTop: 4, maxHeight: 220, overflowY: 'auto' }}>
+                                  {workers.filter(wk => wk.id !== w.id).map(wk => (
+                                    <label key={wk.id} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: '#374151' }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={editMessagingForm.blockedIds.has(wk.id)}
+                                        onChange={e => {
+                                          setEditMessagingForm(f => {
+                                            const ids = new Set(f.blockedIds);
+                                            e.target.checked ? ids.add(wk.id) : ids.delete(wk.id);
+                                            return { ...f, blockedIds: ids };
+                                          });
+                                        }}
+                                      />
+                                      {wk.full_name} <span style={{ color: '#6b7280', fontSize: 12 }}>@{wk.username}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                              </>
+                            )}
+                            <div style={s.editActions} className="manage-workers-actions">
+                              <button style={{ ...s.saveBtn, ...(editMessagingSaving ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={() => saveMessaging(w.id)} disabled={editMessagingSaving}>{editMessagingSaving ? t.loading : t.save}</button>
+                              <button style={s.cancelBtn} onClick={cancelEdit}>{t.cancel}</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div>
+                            {w.messaging_blocked
+                              ? <span style={{ fontSize: 13, color: '#dc2626', fontWeight: 600 }}>{t.mwMsgBlockedTag}</span>
+                              : (!w.messaging_blocked_user_ids || w.messaging_blocked_user_ids.length === 0)
+                                ? <span style={{ fontSize: 13, color: '#059669', fontWeight: 600 }}>{t.mwMsgNoBlocks}</span>
+                                : (
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 8px' }}>
+                                    {w.messaging_blocked_user_ids.map(id => {
+                                      const wk = workers.find(x => x.id === id);
+                                      return wk ? (
+                                        <span key={id} style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: '#fee2e2', color: '#991b1b' }}>{wk.full_name}</span>
+                                      ) : null;
+                                    })}
+                                  </div>
+                                )
                             }
                           </div>
                         )}
