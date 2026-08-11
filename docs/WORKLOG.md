@@ -4707,3 +4707,13 @@ in FieldPage. Pick a project on any tab → every other tab opens on it.
 
 Reversible by design (FieldPage state + per-tab bindings). Bound 12 tabs;
 `npm run verify` green (1401 tests).
+
+### Company settings for the two Field behaviors
+Two boolean FEATURE_KEYS (Company Settings ▸ Field, both default ON):
+- `field_shared_project` — the shared active-project. Off = FieldPage passes no
+  `onProjectChange` (projectChange=undefined), so tabs keep the seeded default but
+  don't sync across tabs (back to independent).
+- `field_show_overhead_projects` — off filters `is_overhead` projects out of the
+  Field project lists (`fieldProjects`) and out of last-used seeding.
+Wired: settingsDefaults, ManageRates (two toggles under module_field),
+FieldPage (derive + apply), i18n EN/ES.
