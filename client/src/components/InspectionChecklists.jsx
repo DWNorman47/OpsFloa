@@ -179,12 +179,12 @@ function TemplateBuilder({ initial, onSaved, onCancel }) {
 
 // ── Inspection Form (fill out an inspection) ──────────────────────────────────
 
-function InspectionForm({ templates, projects, initial, onSaved, onCancel }) {
+function InspectionForm({ templates, projects, initial, onSaved, onCancel, defaultProjectId = null }) {
   const t = useT();
   const isEdit = !!initial?.id;
   const [form, setForm] = useState({
     template_id: initial?.template_id ?? '',
-    project_id: initial?.project_id ?? '',
+    project_id: initial?.project_id ?? (defaultProjectId ? String(defaultProjectId) : ''),
     name: initial?.name ?? '',
     inspector: initial?.inspector ?? '',
     location: initial?.location ?? '',
@@ -482,7 +482,7 @@ function InspectionCard({ ins, isAdmin, templates, onEdit, onDeleted }) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-export default function InspectionChecklists({ projects }) {
+export default function InspectionChecklists({ projects, defaultProjectId = null }) {
   const t = useT();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
@@ -573,6 +573,7 @@ export default function InspectionChecklists({ projects }) {
             <InspectionForm
               templates={templates}
               projects={projects}
+              defaultProjectId={defaultProjectId}
               initial={editing || null}
               onSaved={handleSaved}
               onCancel={() => { setShowForm(false); setEditing(null); }}

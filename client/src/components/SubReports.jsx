@@ -185,7 +185,7 @@ function SubCard({ report, onEdit, onDeleted }) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-export default function SubReports({ projects, settings = null }) {
+export default function SubReports({ projects, settings = null, defaultProjectId = null }) {
   const t = useT();
   const { user } = useAuth();
   const { onSync } = useOffline() || {};
@@ -243,7 +243,7 @@ export default function SubReports({ projects, settings = null }) {
         <div style={styles.formCard}>
           <SubReportForm
             projects={projects}
-            initial={editing || BLANK}
+            initial={editing || (defaultProjectId ? { ...BLANK, project_id: String(defaultProjectId) } : BLANK)}
             workerLabelPluralLower={workerLabelPluralLower}
             onSaved={handleSaved}
             onCancel={() => { setShowForm(false); setEditing(null); }}

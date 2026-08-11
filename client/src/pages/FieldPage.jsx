@@ -239,21 +239,21 @@ export default function FieldPage() {
             ) : activeFieldTab === 'haul' ? (
               <HaulTickets projects={projects} settings={features} defaultProjectId={defaultProjectId} />
             ) : activeFieldTab === 'punchlist' ? (
-              <Punchlist projects={projects} settings={features} />
+              <Punchlist projects={projects} settings={features} defaultProjectId={defaultProjectId} />
             ) : activeFieldTab === 'safety' ? (
               <SafetyTalks projects={projects} settings={features} />
             ) : activeFieldTab === 'checklists' ? (
-              <SafetyChecklists projects={projects} settings={features} />
+              <SafetyChecklists projects={projects} settings={features} defaultProjectId={defaultProjectId} />
             ) : activeFieldTab === 'incident' ? (
-              <IncidentReports projects={projects} settings={features} />
+              <IncidentReports projects={projects} settings={features} defaultProjectId={defaultProjectId} />
             ) : activeFieldTab === 'gallery' ? (
               <PhotoGallery projects={projects} settings={features} />
             ) : activeFieldTab === 'subs' ? (
-              <SubReports projects={projects} settings={features} />
+              <SubReports projects={projects} settings={features} defaultProjectId={defaultProjectId} />
             ) : activeFieldTab === 'rfi' ? (
               <RFITracking projects={projects} settings={features} />
             ) : activeFieldTab === 'inspect' ? (
-              <InspectionChecklists projects={projects} settings={features} />
+              <InspectionChecklists projects={projects} settings={features} defaultProjectId={defaultProjectId} />
             ) : (
               <FieldDayLog projects={projects} isAdmin={isAdmin} settings={features} defaultProjectId={defaultProjectId} />
             )}

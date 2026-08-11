@@ -187,10 +187,10 @@ function TemplateForm({ initial, onSaved, onCancel }) {
 
 // ── Fill Out Form ─────────────────────────────────────────────────────────────
 
-function FillForm({ templates, projects, onSubmitted, onCancel }) {
+function FillForm({ templates, projects, onSubmitted, onCancel, defaultProjectId = null }) {
   const t = useT();
   const [templateId, setTemplateId] = useState('');
-  const [projectId, setProjectId] = useState('');
+  const [projectId, setProjectId] = useState(defaultProjectId ? String(defaultProjectId) : '');
   const [checkDate, setCheckDate] = useState(today());
   const [answers, setAnswers] = useState({});
   const [notes, setNotes] = useState('');
@@ -398,7 +398,7 @@ function SubmissionCard({ sub, isAdmin, onDeleted }) {
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
-export default function SafetyChecklists({ projects }) {
+export default function SafetyChecklists({ projects, defaultProjectId = null }) {
   const t = useT();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
@@ -446,6 +446,7 @@ export default function SafetyChecklists({ projects }) {
         <FillForm
           templates={templates}
           projects={projects}
+          defaultProjectId={defaultProjectId}
           onSubmitted={sub => { setSubmissions(prev => [sub, ...prev]); setView('list'); }}
           onCancel={() => setView('list')}
         />

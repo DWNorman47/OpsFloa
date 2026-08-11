@@ -32,14 +32,14 @@ function statusLabel(status, t) {
   return t.statusOpen;
 }
 
-function AddItemForm({ projects, workers, onAdded, onCancel, isAdmin, existingPhases, workerLabel = 'Worker' }) {
+function AddItemForm({ projects, workers, onAdded, onCancel, isAdmin, existingPhases, workerLabel = 'Worker', defaultProjectId = null }) {
   const t = useT();
   const PRIORITIES = [
     { value: 'high', label: `🔴 ${t.priorityHigh}` },
     { value: 'normal', label: `🟡 ${t.priorityNormal}` },
     { value: 'low', label: `⚪ ${t.priorityLow}` },
   ];
-  const [form, setForm] = useState({ title: '', description: '', location: '', project_id: '', priority: 'normal', assigned_to: '', phase: '' });
+  const [form, setForm] = useState({ title: '', description: '', location: '', project_id: defaultProjectId ? String(defaultProjectId) : '', priority: 'normal', assigned_to: '', phase: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -334,7 +334,7 @@ function PunchItem({ item: initialItem, isAdmin, workers, onUpdated, onDeleted, 
   );
 }
 
-export default function Punchlist({ projects, settings = null }) {
+export default function Punchlist({ projects, settings = null, defaultProjectId = null }) {
   const t = useT();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
@@ -443,6 +443,7 @@ export default function Punchlist({ projects, settings = null }) {
             isAdmin={isAdmin}
             existingPhases={allPhases}
             workerLabel={workerLabel}
+            defaultProjectId={defaultProjectId}
             onAdded={item => { setItems(prev => [item, ...prev]); setShowForm(false); }}
             onCancel={() => setShowForm(false)}
           />
