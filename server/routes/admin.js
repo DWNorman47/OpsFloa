@@ -32,7 +32,7 @@ const { workerStatement, companyStatements } = require('../utils/payStatement');
 const { splitRateAware, hasSimpleOtConfig } = require('../utils/rateAwareOvertime');
 const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = require('../utils/deductions');
 const { DEDUCTION_KINDS } = require('../constants/deductionEnums');
-const { OVERTIME_RATE_METHODS } = require('../constants/payEnums');
+const { OVERTIME_RATE_METHODS, OVERTIME_WAGE_PRIORITIES, DEFAULT_OVERTIME_WAGE_PRIORITY } = require('../constants/payEnums');
 const { weekRange, weekBucketKey } = require('../utils/weekBounds');
 const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const qbo = require('../services/qbo');
@@ -201,7 +201,7 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
   // couldn't update them. Added during 2026-04-30 audit pass.
   const adminNumericKeys = ['shift_reminder_hour', 'pto_annual_days', 'cycle_count_audit_pct', 'cycle_count_reconcile_threshold'];
   const numericKeys = [...rateKeys, ...notifKeys, ...adminNumericKeys, 'overtime_threshold', 'media_retention_days', 'qbo_bill_terms_days', 'week_start', 'work_week_end', 'regular_shift_hours', 'sick_pay_pct', 'vacation_pay_pct'];
-  const stringKeys = ['overtime_rule', 'overtime_rate_method', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules', 'deductions', 'paycheck_rules'];
+  const stringKeys = ['overtime_rule', 'overtime_rate_method', 'overtime_wage_priority', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules', 'deductions', 'paycheck_rules'];
   const allowed = [...numericKeys, ...stringKeys, ...FEATURE_KEYS];
   const companyId = req.user.company_id;
   try {
@@ -238,6 +238,8 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
             return res.status(400).json({ error: 'overtime_rule must be daily or weekly' });
           if (key === 'overtime_rate_method' && !OVERTIME_RATE_METHODS.includes(val))
             return res.status(400).json({ error: `overtime_rate_method must be one of: ${OVERTIME_RATE_METHODS.join(', ')}` });
+          if (key === 'overtime_wage_priority' && !OVERTIME_WAGE_PRIORITIES.includes(val))
+            return res.status(400).json({ error: `overtime_wage_priority must be one of: ${OVERTIME_WAGE_PRIORITIES.join(', ')}` });
           if (key === 'currency' && !/^[A-Z]{3}$/.test(val))
             return res.status(400).json({ error: 'currency must be a valid 3-letter ISO code' });
           if (key === 'company_timezone' && val !== '' && !/^[A-Za-z_]+\/[A-Za-z_\/]+$/.test(val))
@@ -1854,6 +1856,7 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
     // worker invoice. Premium OT configs + daily-rate workers keep the per-band path.
     const effectivePrevRate = parseFloat(projectResult.rows[0].prevailing_wage_rate) || settings.prevailing_wage_rate;
     const otMethod = settings.overtime_rate_method === 'weighted_average' ? 'weighted_average' : 'rate_when_worked';
+    const wagePriority = settings.overtime_wage_priority || DEFAULT_OVERTIME_WAGE_PRIORITY;
     const workerEntries = {};
     entries.forEach(e => {
       if (!workerEntries[e.user_id]) workerEntries[e.user_id] = { items: [], rate: parseFloat(e.hourly_rate) || settings.default_hourly_rate, rate_type: e.rate_type, overtime_rule: otRuleFromSettings(settings, e.overtime_rule), role_id: e.role_id };
@@ -1865,7 +1868,7 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
       const otConfig = otConfigByRole(role_id);
       if (rate_type !== 'daily' && hasSimpleOtConfig(otConfig)) {
         const baseRateOf = e => (e.wage_type === 'prevailing' ? effectivePrevRate : rate);
-        const s = splitRateAware(items, { rule: overtime_rule, threshold: parseFloat(settings.overtime_threshold) || 8, weekStart: settings.week_start, otMult: parseFloat(settings.overtime_multiplier) || 1.5, baseRateOf, method: otMethod });
+        const s = splitRateAware(items, { rule: overtime_rule, threshold: parseFloat(settings.overtime_threshold) || 8, weekStart: settings.week_start, otMult: parseFloat(settings.overtime_multiplier) || 1.5, baseRateOf, method: otMethod, wagePriority });
         for (const e of items) e.overtime_hours = 0;
         s.worked.forEach((e, i) => { e.overtime_hours = s.perEntry[i].ot; });
         regularHours += s.regularHours; overtimeHours += s.overtimeHours; prevailingHours += s.prevailingHours;
@@ -4339,6 +4342,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
     const emptyDays = () => ({ mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0, sun: 0 });
     const otMult = parseFloat(s.overtime_multiplier) || 1.5;
     const otMethod = s.overtime_rate_method === 'weighted_average' ? 'weighted_average' : 'rate_when_worked';
+    const wagePriority = s.overtime_wage_priority || DEFAULT_OVERTIME_WAGE_PRIORITY;
     const otConfigByRole = otConfigByRoleFactory(s);
 
     // Collect each worker's rounded entries, then run them through the shared
@@ -4401,7 +4405,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
 
       if (hasSimpleOtConfig(otConfig)) {
         const baseRateOf = e => (e.wage_type === 'prevailing' ? prevailingRateOf(e) : w.rate);
-        const split = splitRateAware(w.items, { rule: w.overtime_rule, threshold: parseFloat(s.overtime_threshold) || 8, weekStart: s.week_start, otMult, baseRateOf, method: otMethod });
+        const split = splitRateAware(w.items, { rule: w.overtime_rule, threshold: parseFloat(s.overtime_threshold) || 8, weekStart: s.week_start, otMult, baseRateOf, method: otMethod, wagePriority });
         split.worked.forEach((e, i) => {
           const p = split.perEntry[i];
           const dk = dayKeyOf(e);

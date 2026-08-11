@@ -709,9 +709,13 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                     )}
                     {(e.clock_in_lat || e.clock_out_lat) && (
                       <div style={styles.locationRow}>
-                        <button style={styles.locationBtn} onClick={() => setOpenMapId(openMapId === e.id ? null : e.id)}>
-                          📍 {openMapId === e.id ? t.aqHideMap : t.aqViewLocation}
-                        </button>
+                        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <button style={styles.locationBtn} onClick={() => setOpenMapId(openMapId === e.id ? null : e.id)}>
+                            📍 {openMapId === e.id ? t.aqHideMap : t.aqViewLocation}
+                          </button>
+                          <MapLink lat={e.clock_in_lat} lng={e.clock_in_lng} label={t.clockIn} />
+                          <MapLink lat={e.clock_out_lat} lng={e.clock_out_lng} label={t.clockOut} />
+                        </div>
                         {openMapId === e.id && (() => {
                           const positions = [
                             e.clock_in_lat  ? [parseFloat(e.clock_in_lat),  parseFloat(e.clock_in_lng)]  : null,

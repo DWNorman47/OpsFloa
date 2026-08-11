@@ -16,4 +16,24 @@ const OVERTIME_RATE_METHODS = Object.freeze(['rate_when_worked', 'weighted_avera
 
 const DEFAULT_OVERTIME_RATE_METHOD = 'rate_when_worked';
 
-module.exports = { OVERTIME_RATE_METHODS, DEFAULT_OVERTIME_RATE_METHOD };
+/**
+ * Which wage type ABSORBS overtime when a day/week mixes regular and prevailing
+ * hours over the threshold (only meaningful on the simple/rate-aware OT path):
+ *
+ *   - 'chronological' (default): the hours that cross the threshold are OT, in
+ *     the order worked — the later hours become OT regardless of wage type
+ *     (today's behavior; an artifact of entry order).
+ *   - 'regular_first': prevailing-wage hours fill straight-time first, so the
+ *     overtime is drawn from REGULAR hours first (prevailing hours stay whole).
+ *     Opt-in — jurisdiction-sensitive.
+ */
+const OVERTIME_WAGE_PRIORITIES = Object.freeze(['chronological', 'regular_first']);
+
+const DEFAULT_OVERTIME_WAGE_PRIORITY = 'chronological';
+
+module.exports = {
+  OVERTIME_RATE_METHODS,
+  DEFAULT_OVERTIME_RATE_METHOD,
+  OVERTIME_WAGE_PRIORITIES,
+  DEFAULT_OVERTIME_WAGE_PRIORITY,
+};
