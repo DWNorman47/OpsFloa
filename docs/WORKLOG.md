@@ -4717,3 +4717,15 @@ Two boolean FEATURE_KEYS (Company Settings ▸ Field, both default ON):
   Field project lists (`fieldProjects`) and out of last-used seeding.
 Wired: settingsDefaults, ManageRates (two toggles under module_field),
 FieldPage (derive + apply), i18n EN/ES.
+
+## "Open in Google Maps" links
+
+Reusable `utils/maps.js` `googleMapsUrl({lat,lng,address})` (coords win, else
+address; Maps URL scheme, opens app on mobile) + `<MapLink>` component (new tab,
+rel=noopener, stopPropagation for clickable rows; `showIcon`/`iconOnly` variants).
+useT is safe on public pages (all routes are under AuthProvider). Placed on all
+four surfaces David picked: recorded clock coords (ApprovalQueue location history
++ entry detail), project/job-site address (ProjectsPage, falls back to geofence
+coords), live worker location (LiveWorkers tag → link), and client/booking
+addresses (ManageClients + PublicBookingPage on-site/office confirmation).
+i18n openInMaps/mapsShort EN/ES.
