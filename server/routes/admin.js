@@ -2008,7 +2008,7 @@ router.get('/projects', requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT id, company_id, name, wage_type, prevailing_wage_rate, geo_lat, geo_lng, geo_radius_ft,
-              budget_hours, budget_dollars, active, created_at,
+              budget_hours, budget_dollars, active, created_at, is_overhead,
               client_name, job_number, address, start_date, end_date, description, status,
               required_checklist_template_id, progress_pct, visible_to_user_ids
        FROM projects WHERE (active = true OR $2 = true) AND company_id = $1 ORDER BY active DESC, name LIMIT 500`,
@@ -2058,7 +2058,7 @@ router.patch('/projects/:id', requireAdmin, requirePerm('manage_projects'),
   }),
   async (req, res) => {
   const { wage_type, name, geo_lat, geo_lng, geo_radius_ft, clear_geofence, budget_hours, budget_dollars, prevailing_wage_rate, required_checklist_template_id,
-          client_name, job_number, address, start_date, end_date, description, status, progress_pct, active,
+          client_name, job_number, address, start_date, end_date, description, status, progress_pct, active, is_overhead,
           hour_limit_mode, daily_hour_limit, weekly_hour_limit, hour_limit_overflow_project_id } = req.body;
   const VALID_STATUSES = PROJECT_STATUSES;
   if (status !== undefined && !VALID_STATUSES.includes(status)) {
@@ -2165,6 +2165,7 @@ router.patch('/projects/:id', requireAdmin, requirePerm('manage_projects'),
       fields.push(`progress_pct = $${idx++}`); values.push(progress_pct);
     }
     if (active !== undefined) { fields.push(`active = $${idx++}`); values.push(!!active); }
+    if (is_overhead !== undefined) { fields.push(`is_overhead = $${idx++}`); values.push(!!is_overhead); }
     if (hour_limit_mode !== undefined) { fields.push(`hour_limit_mode = $${idx++}`); values.push(hour_limit_mode || 'off'); }
     if (daily_hour_limit !== undefined) { fields.push(`daily_hour_limit = $${idx++}`); values.push(hlNumOrNull(daily_hour_limit)); }
     if (weekly_hour_limit !== undefined) { fields.push(`weekly_hour_limit = $${idx++}`); values.push(hlNumOrNull(weekly_hour_limit)); }
@@ -2274,7 +2275,7 @@ router.post('/projects', requireAdmin, requirePerm('manage_projects'),
   }),
   async (req, res) => {
   const { wage_type, prevailing_wage_rate, client_id, job_number, address, start_date, end_date, status, description,
-          geo_lat, geo_lng, geo_radius_ft,
+          geo_lat, geo_lng, geo_radius_ft, is_overhead,
           hour_limit_mode, daily_hour_limit, weekly_hour_limit, hour_limit_overflow_project_id } = req.body;
   const name = req.body.name?.trim();
   if (!name) {
@@ -2318,15 +2319,15 @@ router.post('/projects', requireAdmin, requirePerm('manage_projects'),
     }
     const result = await pool.query(
       `INSERT INTO projects (company_id, name, wage_type, prevailing_wage_rate, client_id, client_name, job_number, address, start_date, end_date, status, description, geo_lat, geo_lng, geo_radius_ft,
-                             hour_limit_mode, daily_hour_limit, weekly_hour_limit, hour_limit_overflow_project_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`,
+                             hour_limit_mode, daily_hour_limit, weekly_hour_limit, hour_limit_overflow_project_id, is_overhead)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING *`,
       [companyId, name, wt, pwr,
        client_id || null, resolvedClientName, job_number?.trim() || null,
        address?.trim() || null, start_date || null, end_date || null, st, description?.trim() || null,
        geoFieldsPresent === 3 ? geo_lat : null,
        geoFieldsPresent === 3 ? geo_lng : null,
        geoFieldsPresent === 3 ? geo_radius_ft : null,
-       hour_limit_mode || 'off', hlNumOrNull(daily_hour_limit), hlNumOrNull(weekly_hour_limit), hour_limit_overflow_project_id || null]
+       hour_limit_mode || 'off', hlNumOrNull(daily_hour_limit), hlNumOrNull(weekly_hour_limit), hour_limit_overflow_project_id || null, !!is_overhead]
     );
     await logAudit(companyId, req.user.id, req.user.full_name, 'project.created', 'project', result.rows[0].id, name, { wage_type: wt });
     const newProject = result.rows[0];

@@ -474,7 +474,7 @@ function ReportRow({ report: initialReport, onEdit, onDelete, isAdmin, companyNa
 
 // ── Main DailyReports component ────────────────────────────────────────────────
 
-export default function DailyReports({ projects, settings = null }) {
+export default function DailyReports({ projects, settings = null, defaultProjectId = null }) {
   const { user } = useAuth();
   const t = useT();
   const workerLabel = labelSg(settings?.label_worker, 'worker', user?.language);
@@ -547,7 +547,7 @@ export default function DailyReports({ projects, settings = null }) {
   if (editing !== null) {
     return (
       <ReportEditor
-        report={editing === 'new' ? null : editing}
+        report={editing === 'new' ? (defaultProjectId ? { project_id: defaultProjectId } : null) : editing}
         projects={projects}
         onSaved={handleSaved}
         onCancel={() => setEditing(null)}

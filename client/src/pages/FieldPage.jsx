@@ -79,6 +79,7 @@ export default function FieldPage() {
   const [features, setFeatures] = useState({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
+  const [clockedInPid, setClockedInPid] = useState(undefined); // undefined = clock status not resolved yet
   const hashTab = window.location.hash.replace('#', '');
   const [fieldTab, setFieldTab] = useState(resolveFieldTab(hashTab));
   const switchTab = t => { setFieldTab(t); history.replaceState(null, '', '#' + t); };
@@ -126,6 +127,24 @@ export default function FieldPage() {
   }, []);
 
   useEffect(() => { init(); }, [init]);
+
+  // The worker's currently clocked-in project — screens below default their
+  // project picker to it (a real job only; see defaultProjectId). Not cached; it
+  // changes as they clock in/out.
+  useEffect(() => {
+    api.get('/clock/status').then(r => setClockedInPid(r.data?.project_id || null)).catch(() => setClockedInPid(null));
+  }, []);
+
+  // Default project for the field screens: the clocked-in project, but only when
+  // it's a real job (active, not an overhead/non-job code like Shop or Travel).
+  // `undefined` = still resolving (screens should wait); `null` = no clocked-in
+  // real job (screens use their own default). The URL ?project= still wins.
+  const defaultProjectId = React.useMemo(() => {
+    if (clockedInPid === undefined) return undefined;
+    if (!clockedInPid || !projects?.length) return null;
+    const p = projects.find(pr => String(pr.id) === String(clockedInPid));
+    return (p && p.active !== false && !p.is_overhead) ? p.id : null;
+  }, [clockedInPid, projects]);
 
   const fieldGroups = [
     {
@@ -214,11 +233,11 @@ export default function FieldPage() {
         <ErrorBoundary key={activeFieldTab} mode="inline" label={activeFieldTab}>
           <Suspense fallback={<TabLoader />}>
             {activeFieldTab === 'checklist-daily' ? (
-              <DailyChecklist projects={projects} settings={features} loading={loading} />
+              <DailyChecklist projects={projects} settings={features} loading={loading} defaultProjectId={defaultProjectId} />
             ) : activeFieldTab === 'daily' ? (
-              <DailyReports projects={projects} settings={features} />
+              <DailyReports projects={projects} settings={features} defaultProjectId={defaultProjectId} />
             ) : activeFieldTab === 'haul' ? (
-              <HaulTickets projects={projects} settings={features} />
+              <HaulTickets projects={projects} settings={features} defaultProjectId={defaultProjectId} />
             ) : activeFieldTab === 'punchlist' ? (
               <Punchlist projects={projects} settings={features} />
             ) : activeFieldTab === 'safety' ? (
@@ -236,7 +255,7 @@ export default function FieldPage() {
             ) : activeFieldTab === 'inspect' ? (
               <InspectionChecklists projects={projects} settings={features} />
             ) : (
-              <FieldDayLog projects={projects} isAdmin={isAdmin} settings={features} />
+              <FieldDayLog projects={projects} isAdmin={isAdmin} settings={features} defaultProjectId={defaultProjectId} />
             )}
           </Suspense>
         </ErrorBoundary>

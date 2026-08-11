@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import api from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
@@ -24,7 +24,7 @@ const fmtQty = n => {
 };
 
 // ── Haul / production log — per-job truck-load tickets ──────────────────────────
-export default function HaulTickets({ projects = [] }) {
+export default function HaulTickets({ projects = [], defaultProjectId = null }) {
   const t = useT();
   const { user } = useAuth();
   const { hasTakeoff } = usePlan();
@@ -140,8 +140,18 @@ export default function HaulTickets({ projects = [] }) {
   const cancelEdit = () => {
     setEditingId(null);
     setSaveError('');
-    setForm({ project_id: '', ticket_date: today, ticket_no: '', hauler: '', material: '', qty: '', unit: 'CY', direction: 'export', notes: '' });
+    setForm({ project_id: defaultProjectId ? String(defaultProjectId) : '', ticket_date: today, ticket_no: '', hauler: '', material: '', qty: '', unit: 'CY', direction: 'export', notes: '' });
   };
+
+  // Default the add form's project to the worker's clocked-in real-job project
+  // once it resolves — only in add mode and only if the field is still empty.
+  const haulDefaultAppliedRef = useRef(false);
+  useEffect(() => {
+    if (haulDefaultAppliedRef.current || !defaultProjectId) return;
+    if (!projects.some(p => p.id === defaultProjectId)) return;
+    haulDefaultAppliedRef.current = true;
+    setForm(f => (editingId === null && !f.project_id ? { ...f, project_id: String(defaultProjectId) } : f));
+  }, [defaultProjectId, projects, editingId]);
 
   const saveEdit = async () => {
     if (!form.ticket_date) { setSaveError(t.haulDateRequired); return; }

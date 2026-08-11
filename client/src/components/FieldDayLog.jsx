@@ -120,7 +120,7 @@ export function Lightbox({ photos, startIndex, onClose, onDelete, deleting = fal
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function FieldDayLog({ projects, isAdmin }) {
+export default function FieldDayLog({ projects, isAdmin, defaultProjectId }) {
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
@@ -152,13 +152,20 @@ export default function FieldDayLog({ projects, isAdmin }) {
   const isToday = date === today;
   const isPastDay = date < today;
 
-  // Set default project once projects load
+  // Set default project once projects (and the clocked-in default) resolve.
+  // Prefer the worker's clocked-in real-job project; else last-used/recent.
   useEffect(() => {
     if (projectInitializedRef.current) return;
     if (!projects.length) return;
-    projectInitializedRef.current = true;
     if (isAdmin) {
+      projectInitializedRef.current = true;
       setProject('');
+      return;
+    }
+    if (defaultProjectId === undefined) return; // wait for clock status to resolve
+    projectInitializedRef.current = true;
+    if (defaultProjectId && projects.some(p => p.id === defaultProjectId)) {
+      setProject(String(defaultProjectId));
       return;
     }
     const last = safeLocal.getItem('field-last-project');
@@ -168,7 +175,7 @@ export default function FieldDayLog({ projects, isAdmin }) {
       const sorted = sortProjects(projects);
       if (sorted[0]) setProject(String(sorted[0].id));
     }
-  }, [projects]);
+  }, [projects, defaultProjectId, isAdmin]);
 
   const load = async (proj = project, d = date) => {
     const seq = ++loadSeqRef.current;

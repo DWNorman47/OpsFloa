@@ -152,6 +152,7 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, allProjec
     description: project.description || '',
     progress_pct: project.progress_pct != null ? String(project.progress_pct) : '',
     wage_type: project.wage_type || 'regular',
+    is_overhead: !!project.is_overhead,
     geo_lat: project.geo_lat != null ? String(project.geo_lat) : '',
     geo_lng: project.geo_lng != null ? String(project.geo_lng) : '',
     geo_radius_ft: project.geo_radius_ft != null ? String(project.geo_radius_ft) : '',
@@ -468,6 +469,7 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, allProjec
         description: editForm.description || null,
         progress_pct: editForm.progress_pct !== '' ? parseInt(editForm.progress_pct, 10) : null,
         wage_type: editForm.wage_type,
+        is_overhead: editForm.is_overhead,
         hour_limit_mode: editForm.hour_limit_mode,
         daily_hour_limit: editForm.daily_hour_limit !== '' ? parseFloat(editForm.daily_hour_limit) : null,
         weekly_hour_limit: editForm.weekly_hour_limit !== '' ? parseFloat(editForm.weekly_hour_limit) : null,
@@ -1285,6 +1287,14 @@ function ProjectDetail({ project, metrics, settings, companyInfo = {}, allProjec
               <div style={pf.field}>
                 <label style={pf.label}>{t.projectNameLabel}</label>
                 <input style={pf.input} value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} />
+              </div>
+
+              <div style={pf.field}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, color: '#374151' }}>
+                  <input type="checkbox" checked={editForm.is_overhead} onChange={e => setEditForm(f => ({ ...f, is_overhead: e.target.checked }))} />
+                  {t.projOverhead}
+                </label>
+                <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.projOverheadDesc}</div>
               </div>
 
               <div style={pf.row} className="project-edit-grid">

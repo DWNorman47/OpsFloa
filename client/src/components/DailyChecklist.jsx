@@ -317,7 +317,7 @@ function DayManager({ projectId, t, toast, onQueueChanged }) {
 }
 const swap = (arr, i, j) => { const a = arr.slice(); [a[i], a[j]] = [a[j], a[i]]; return a; };
 
-export default function DailyChecklist({ projects = [], settings = null, loading: projectsLoading = false }) {
+export default function DailyChecklist({ projects = [], settings = null, loading: projectsLoading = false, defaultProjectId = null }) {
   const t = useT();
   const toast = useToast();
   const canStart = usePerm('daily_checklist_start_day');
@@ -326,11 +326,15 @@ export default function DailyChecklist({ projects = [], settings = null, loading
   const canSchedule = usePerm('daily_checklist_schedule_days');
   const canManageSettings = usePerm('manage_settings');
 
-  // ?project=<id> (e.g. from the clock-in prompt) preselects that project; else the first.
+  // ?project=<id> (e.g. from the clock-in prompt) preselects that project; else the
+  // worker's clocked-in project (defaultProjectId, applied once it arrives below);
+  // else the first.
   const [projectId, setProjectId] = useState(() => {
     const p = Number(new URLSearchParams(window.location.search).get('project'));
-    return (Number.isInteger(p) && p > 0) ? p : (projects[0]?.id ?? '');
+    if (Number.isInteger(p) && p > 0) return p;
+    return defaultProjectId || (projects[0]?.id ?? '');
   });
+  const dcDefaultAppliedRef = useRef(false);
   const [day, setDay] = useState(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -363,6 +367,18 @@ export default function DailyChecklist({ projects = [], settings = null, loading
   useEffect(() => {
     if (projects.length && !projects.some(p => p.id === projectId)) setProjectId(projects[0].id);
   }, [projects, projectId]);
+
+  // Clocked-in-project default resolves async (clock status fetch in the parent).
+  // Apply it once when it arrives — but only if there's no ?project= and the user
+  // hasn't moved off the first-project fallback (so we never override a manual pick
+  // or the URL).
+  useEffect(() => {
+    if (dcDefaultAppliedRef.current || !defaultProjectId) return;
+    if (new URLSearchParams(window.location.search).has('project')) { dcDefaultAppliedRef.current = true; return; }
+    if (!projects.some(p => p.id === defaultProjectId)) return;
+    dcDefaultAppliedRef.current = true;
+    setProjectId(prev => (prev === (projects[0]?.id ?? '') ? defaultProjectId : prev));
+  }, [defaultProjectId, projects]);
 
   // Drop the ?project= param once consumed so a refresh doesn't re-force it (mirrors the
   // Administration ?focus= pattern); the selection is already seeded above.
