@@ -4685,3 +4685,25 @@ forms: Punchlist, Incident Reports, Inspections (new only), Safety Checklists, S
 Reports. Skipped PhotoGallery (browse-only) and Safety Talks / RFIs (admin-only
 create — admins aren't clocked in, so the default never applies). Only create-form
 project fields seeded via the form initializer; browse filters untouched.
+
+## Field: one shared "active project" across all tabs (one model, many interfaces)
+
+David's refinement of the shared-selector idea (he disliked a header/banner mock):
+keep each tab's own project selector UI, but back them all with ONE shared value
+in FieldPage. Pick a project on any tab → every other tab opens on it.
+
+- FieldPage owns `activeProject` ('' = All/none). Seed order: clocked-in real job
+  (skip overhead) → last-used (localStorage `field_active_project`) → none.
+  `undefined` until seeded; tab content shows a loader until then. Passed to every
+  project-scoped tab as `activeProject` + `onProjectChange`.
+- Each tab binds its browse filter (or primary project) to the shared value: init
+  from it, a sync effect follows changes, and its selector's onChange writes back.
+  Create-form defaults read the shared value too. Supersedes the per-tab clocked-in
+  defaults from earlier (same seed, now shared + persisted).
+- Daily Checklist keeps `?project=` deep-link precedence and pushes it into the
+  shared value so other tabs follow.
+- Gotcha fixed: don't gate seeding on `projects.length` — a company with zero
+  projects would otherwise hang on the tab loader forever.
+
+Reversible by design (FieldPage state + per-tab bindings). Bound 12 tabs;
+`npm run verify` green (1401 tests).
