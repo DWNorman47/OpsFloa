@@ -4655,3 +4655,26 @@ replaced with two boolean FEATURE_KEYS (both default OFF): `worker_dm_admins`
 and `worker_dm_workers`. Default = a worker has only the shared "Admins" thread.
 `canMessage()` takes `{ dmAdmins, dmWorkers }`; Company Settings shows two
 toggles. Retired `server/constants/messagingEnums.js` + its db-enums row.
+
+## Field screens default to the clocked-in project (+ overhead/non-job flag)
+
+Daily Checklist, Work Notes (FieldDayLog), new Daily Report, and Haul log now
+default their project picker to the worker's clocked-in project. Precedence:
+URL `?project=` > clocked-in real job > each screen's prior default.
+
+- **Overhead flag:** new `projects.is_overhead` boolean (migration 0170), admin-set
+  via a toggle on the ProjectsPage edit form. Marks non-job codes (Shop, Travel,
+  PTO) so auto-defaulting skips them — you don't want a daily report defaulting to
+  "Travel". David picked an explicit flag over name-guessing (fragile) or
+  no-job-number inference (implicit/wrong).
+- **Resolution in FieldPage** (all four are its tabs): fetch `/clock/status` once,
+  find the clocked-in project in the loaded list, and only treat it as the default
+  if it's active and `!is_overhead`. Passed down as `defaultProjectId`. Used an
+  **`undefined` sentinel** (vs null) so "clock status still loading" is
+  distinguishable from "not clocked into a real job" — screens wait rather than
+  finalizing their fallback early (the async-default race).
+- Each screen applies the default once, after the URL param, guarded so it never
+  overrides a manual pick.
+
+Note: caught earlier that companies.id is UUID (fixed 0168 in a prior commit); all
+new `company_id` FKs use UUID. `npm run verify` green (1401 tests).
