@@ -4832,3 +4832,11 @@ cluster; added a full-width thin "Show details ▾" button at the bottom of the 
 (`.approval-expand`, order 4, basis 100%) that only expands — no collapse control,
 and it's hidden once expanded (and while a reject form is open). Works on desktop
 too (wraps to its own bottom line). `npm run verify` green.
+
+## 2026-08-12 — Approvals: expand bar becomes the card footer
+Made the "Show details" button *be* the bottom of the card: full-bleed via
+`width: calc(100% + 32px)` + `margin: 10px -16px -12px -16px` to cancel the card's
+12x16 padding, `border-top` divider, bottom corners rounded 7px, thin 3px padding /
+11px text. Dropped the mobile `width:100%`/`flex-basis:100%` override (was fighting
+the calc); the calc width already exceeds 100% so it wraps to its own line.
+`npm run verify` green.
