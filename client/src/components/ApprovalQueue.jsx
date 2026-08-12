@@ -774,11 +774,13 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                     )}
                     {isExpanded && (
                       <div style={styles.expandTools}>
+                        <div style={styles.expandToolsTop}>
+                          <button style={styles.editTimesBtn} onClick={() => startEdit(e)}>✏️ Edit</button>
+                          <button style={styles.splitBtn} onClick={() => startSplit(e)}>⇌ Split</button>
+                        </div>
                         <button style={{ ...styles.msgBtn, marginTop: 0 }} onClick={() => setOpenMessageId(openMessageId === e.id ? null : e.id)}>
                           {openMessageId === e.id ? `💬 ${t.hideComments}` : t.commentsOpen}
                         </button>
-                        <button style={styles.editTimesBtn} onClick={() => startEdit(e)}>✏️ Edit</button>
-                        <button style={styles.splitBtn} onClick={() => startSplit(e)}>⇌ Split</button>
                       </div>
                     )}
                     {isExpanded && openMessageId === e.id && <MessageThread entryId={e.id} currentUserId={user?.id} />}
@@ -1086,7 +1088,7 @@ const styles = {
   list:      { display: 'flex', flexDirection: 'column', gap: 16 },
   dayHeader: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', padding: '2px 0 6px', borderBottom: '1px solid #e5e7eb', marginBottom: 8 },
   dayCount:  { background: '#f3f4f6', color: '#6b7280', borderRadius: 10, padding: '1px 7px', fontSize: 11, fontWeight: 700, textTransform: 'none', letterSpacing: 0 },
-  row: { border: '1px solid #e5e7eb', borderRadius: 8, padding: '12px 16px', marginBottom: 10, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' },
+  row: { border: '1px solid #e5e7eb', borderRadius: 8, padding: '12px 16px', marginBottom: 10, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', columnGap: 12, flexWrap: 'wrap' },
   rowSelected: { background: '#f0f7ff', borderColor: '#93c5fd' },
   rowCheckbox: { marginTop: 3, flexShrink: 0, cursor: 'pointer', width: 15, height: 15 },
   selectAllBtn: { padding: '4px 12px', background: '#f3f4f6', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', color: '#374151', flex: '0 0 auto' },
@@ -1124,7 +1126,7 @@ const styles = {
   // Full-bleed footer bar: negative margins cancel the card's 12x16 padding so it
   // sits flush against the card's bottom/side borders, with only the bottom corners
   // rounded to match. Thin tap strip that expands the row.
-  expandWideBtn: { boxSizing: 'border-box', width: 'calc(100% + 32px)', margin: '10px -16px -12px -16px', padding: '1px 3px', background: 'none', border: 'none', borderTop: '1px solid #e5e7eb', borderRadius: '0 0 7px 7px', color: '#9ca3af', fontSize: 11, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  expandWideBtn: { boxSizing: 'border-box', width: 'calc(100% + 32px)', margin: '4px -16px -12px -16px', padding: '1px 3px', background: 'none', border: 'none', borderTop: '1px solid #e5e7eb', borderRadius: '0 0 7px 7px', color: '#9ca3af', fontSize: 11, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 },
   rejectForm: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   rejectInput: { padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, minWidth: 160 },
   confirmRejectBtn: { background: '#ef4444', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
@@ -1146,7 +1148,8 @@ const styles = {
   cancelApproveAllBtn: { background: 'none', border: '1px solid #e5e7eb', color: '#6b7280', padding: '5px 14px', borderRadius: 6, fontSize: 13, cursor: 'pointer', flex: '0 0 auto' },
   inlineError: { fontSize: 12, color: '#ef4444' },
   msgBtn: { background: 'none', border: '1px solid #e5e7eb', color: '#6b7280', padding: '3px 10px', borderRadius: 5, fontSize: 11, cursor: 'pointer', marginTop: 6 },
-  expandTools: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 },
+  expandTools: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8, marginTop: 6 },
+  expandToolsTop: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' },
   signedTag: { display: 'inline-block', marginTop: 4, background: '#ede9fe', color: '#5b21b6', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10 },
   waitingTag: { display: 'inline-block', marginTop: 4, background: '#fef3c7', color: '#92400e', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10 },
   locationRow: { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 },
