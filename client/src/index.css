@@ -3120,20 +3120,26 @@ input, select, textarea {
     border-radius: 10px !important;
   }
 
-  /* Approval queue rows (mobile): checkbox + action buttons share the top line
-     (buttons pushed to the right), with the entry details wrapping below. */
+  /* Approval queue rows (mobile): three columns — checkbox | details | actions.
+     The action buttons stack vertically on the right (expand on top, then reject,
+     then approve). An open edit/split/reject form wraps full-width below. */
   .approval-row {
     flex-direction: row !important;
     flex-wrap: wrap !important;
-    align-items: center !important;
+    align-items: flex-start !important;
   }
   .approval-row .approval-check { order: 0 !important; }
-  .approval-row .approval-actions { order: 1 !important; margin-left: auto !important; }
   .approval-row .approval-main {
+    order: 1 !important;
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    width: auto !important;
+    margin-top: 0 !important;
+  }
+  .approval-row .approval-actions {
     order: 2 !important;
-    flex-basis: 100% !important;
-    width: 100% !important;
-    margin-top: 8px !important;
+    flex-direction: column-reverse !important;
+    align-items: flex-end !important;
   }
   .approval-row .approval-form {
     order: 3 !important;
