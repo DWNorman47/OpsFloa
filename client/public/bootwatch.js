@@ -20,7 +20,11 @@
  * Not precached (see vite.config.js globIgnores) so the newest logic is always fetched.
  */
 (function () {
-  var GRACE_MS = 12000;
+  // How long to let boot run before assuming it's a stuck blank screen. The boot
+  // splash (see index.html) shows a spinner during this window, so a shorter wait
+  // still looks intentional. Kept comfortably above a slow-network bundle download
+  // so we don't hard-reset a boot that would have succeeded on its own.
+  var GRACE_MS = 8000;
   var COOLDOWN_MS = 60000;
   var KEY = 'opsfloa_boot_reset_at';
 
