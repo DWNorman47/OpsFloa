@@ -4784,3 +4784,14 @@ marker popups. `openInMaps` i18n made provider-agnostic ("Open in maps"). Provid
 `<select>` added to Company Settings under the geolocation section (gated on
 feature_geolocation). Only two client files use Leaflet markers, so "every leaflet
 map" was a bounded surface. `npm run verify` green.
+
+## 2026-08-12 — Approvals: compact rows + icon actions
+Pending approval rows were tall and busy. Made them compact by default with a
+per-row expand chevron (▸/▾, `expandedIds` Set state). Collapsed shows only the
+summary line + icon-only Accept (✓) / Reject (✕) + the chevron; expanding reveals
+the location "View location" map, the comments thread button, and the Edit/Split
+buttons. Accept/Reject keep title + aria-label for a11y (icons only visually).
+Also removed the two clock-in/clock-out MapLink pin links that sat next to "View
+location" — redundant now that the inline map's marker popups link out via the
+company map provider, and they looked awkward. i18n aqExpandRow/aqCollapseRow
+EN/ES. `npm run verify` green.
