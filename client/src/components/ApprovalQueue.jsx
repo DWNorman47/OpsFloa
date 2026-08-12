@@ -242,6 +242,8 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
   const [approvingAll, setApprovingAll] = useState(false);
   const [openMessageId, setOpenMessageId] = useState(null);
   const [openMapId, setOpenMapId] = useState(null);
+  const [expandedIds, setExpandedIds] = useState(() => new Set()); // pending rows are compact by default; expand to reveal location, comments, edit & split
+  const toggleExpand = (id) => setExpandedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const [fetchError, setFetchError] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -688,6 +690,7 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
               </div>
               {entriesByDay[day].map(e => {
                 const canApprove = entryHasEnded(e);
+                const isExpanded = expandedIds.has(e.id);
                 return (
                 <div key={e.id} className="approval-row" style={{ ...styles.row, ...(selectedIds.has(e.id) ? styles.rowSelected : {}) }}>
                   <input
@@ -733,14 +736,12 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                           : t.aqLogEntry}
                       </div>
                     )}
-                    {(e.clock_in_lat || e.clock_out_lat) && (
+                    {isExpanded && (e.clock_in_lat || e.clock_out_lat) && (
                       <div style={styles.locationRow}>
                         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
                           <button style={styles.locationBtn} onClick={() => setOpenMapId(openMapId === e.id ? null : e.id)}>
                             📍 {openMapId === e.id ? t.aqHideMap : t.aqViewLocation}
                           </button>
-                          <MapLink lat={e.clock_in_lat} lng={e.clock_in_lng} label={t.clockIn} />
-                          <MapLink lat={e.clock_out_lat} lng={e.clock_out_lng} label={t.clockOut} />
                         </div>
                         {openMapId === e.id && (() => {
                           const positions = [
@@ -770,10 +771,12 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                         })()}
                       </div>
                     )}
-                    <button style={styles.msgBtn} onClick={() => setOpenMessageId(openMessageId === e.id ? null : e.id)}>
-                      {openMessageId === e.id ? `💬 ${t.hideComments}` : t.commentsOpen}
-                    </button>
-                    {openMessageId === e.id && <MessageThread entryId={e.id} currentUserId={user?.id} />}
+                    {isExpanded && (
+                      <button style={styles.msgBtn} onClick={() => setOpenMessageId(openMessageId === e.id ? null : e.id)}>
+                        {openMessageId === e.id ? `💬 ${t.hideComments}` : t.commentsOpen}
+                      </button>
+                    )}
+                    {isExpanded && openMessageId === e.id && <MessageThread entryId={e.id} currentUserId={user?.id} />}
                   </div>
 
                   {editingId === e.id ? (
@@ -894,17 +897,27 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                     </div>
                   ) : (
                     <div style={styles.actions}>
-                      <button style={styles.editTimesBtn} onClick={() => startEdit(e)}>✏️ Edit</button>
-                      <button style={styles.splitBtn} onClick={() => startSplit(e)}>⇌ Split</button>
+                      {isExpanded && <button style={styles.editTimesBtn} onClick={() => startEdit(e)}>✏️ Edit</button>}
+                      {isExpanded && <button style={styles.splitBtn} onClick={() => startSplit(e)}>⇌ Split</button>}
                       <button
-                        style={{ ...styles.approveBtn, ...((working === e.id || !canApprove) ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
+                        style={{ ...styles.approveIconBtn, ...((working === e.id || !canApprove) ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
                         onClick={() => canApprove && approve(e.id)}
                         disabled={working === e.id || !canApprove}
-                        title={!canApprove ? 'This entry cannot be approved until its end time has passed.' : undefined}
+                        title={!canApprove ? 'This entry cannot be approved until its end time has passed.' : t.approve}
+                        aria-label={t.approve}
                       >
-                        {working === e.id ? t.saving : t.approve}
+                        {working === e.id ? '…' : '✓'}
                       </button>
-                      <button style={styles.rejectBtn} onClick={() => { setRejectingId(e.id); setRejectNote(''); }}>{t.reject}</button>
+                      <button style={styles.rejectIconBtn} onClick={() => { setRejectingId(e.id); setRejectNote(''); }} title={t.reject} aria-label={t.reject}>✕</button>
+                      <button
+                        style={styles.expandBtn}
+                        onClick={() => toggleExpand(e.id)}
+                        title={isExpanded ? t.aqCollapseRow : t.aqExpandRow}
+                        aria-label={isExpanded ? t.aqCollapseRow : t.aqExpandRow}
+                        aria-expanded={isExpanded}
+                      >
+                        {isExpanded ? '▾' : '▸'}
+                      </button>
                     </div>
                   )}
                 </div>
@@ -1101,6 +1114,9 @@ const styles = {
   saveTimesBtn: { padding: '6px 14px', background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: 13, cursor: 'pointer' },
   approveBtn: { background: '#059669', color: '#fff', border: 'none', padding: '6px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   rejectBtn: { background: 'none', border: '1px solid #fca5a5', color: '#ef4444', padding: '6px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  approveIconBtn: { background: '#059669', color: '#fff', border: 'none', width: 34, height: 34, borderRadius: 6, fontSize: 17, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 },
+  rejectIconBtn: { background: 'none', border: '1px solid #fca5a5', color: '#ef4444', width: 34, height: 34, borderRadius: 6, fontSize: 15, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 },
+  expandBtn: { background: 'none', border: '1px solid #e5e7eb', color: '#6b7280', width: 30, height: 34, borderRadius: 6, fontSize: 13, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 },
   rejectForm: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   rejectInput: { padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, minWidth: 160 },
   confirmRejectBtn: { background: '#ef4444', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
