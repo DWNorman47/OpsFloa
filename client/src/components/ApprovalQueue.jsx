@@ -774,10 +774,8 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                     )}
                     {isExpanded && (
                       <div style={styles.expandTools}>
-                        <div style={styles.expandToolsTop}>
-                          <button style={styles.editTimesBtn} onClick={() => startEdit(e)}>✏️ Edit</button>
-                          <button style={styles.splitBtn} onClick={() => startSplit(e)}>⇌ Split</button>
-                        </div>
+                        <button style={styles.editTimesBtn} onClick={() => startEdit(e)}>✏️ Edit</button>
+                        <button style={styles.splitBtn} onClick={() => startSplit(e)}>⇌ Split</button>
                         <button style={{ ...styles.msgBtn, marginTop: 0 }} onClick={() => setOpenMessageId(openMessageId === e.id ? null : e.id)}>
                           {openMessageId === e.id ? `💬 ${t.hideComments}` : t.commentsOpen}
                         </button>
@@ -1148,8 +1146,7 @@ const styles = {
   cancelApproveAllBtn: { background: 'none', border: '1px solid #e5e7eb', color: '#6b7280', padding: '5px 14px', borderRadius: 6, fontSize: 13, cursor: 'pointer', flex: '0 0 auto' },
   inlineError: { fontSize: 12, color: '#ef4444' },
   msgBtn: { background: 'none', border: '1px solid #e5e7eb', color: '#6b7280', padding: '3px 10px', borderRadius: 5, fontSize: 11, cursor: 'pointer', marginTop: 6 },
-  expandTools: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8, marginTop: 6 },
-  expandToolsTop: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' },
+  expandTools: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 },
   signedTag: { display: 'inline-block', marginTop: 4, background: '#ede9fe', color: '#5b21b6', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10 },
   waitingTag: { display: 'inline-block', marginTop: 4, background: '#fef3c7', color: '#92400e', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10 },
   locationRow: { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 },
