@@ -3121,8 +3121,9 @@ input, select, textarea {
   }
 
   /* Approval queue rows (mobile): three columns — checkbox | details | actions.
-     The action buttons stack vertically on the right (expand on top, then reject,
-     then approve). An open edit/split/reject form wraps full-width below. */
+     The action buttons stack vertically on the right (accept on top, reject below).
+     A full-width "show details" button and any open edit/split/reject form wrap
+     full-width below. */
   .approval-row {
     flex-direction: row !important;
     flex-wrap: wrap !important;
@@ -3138,7 +3139,7 @@ input, select, textarea {
   }
   .approval-row .approval-actions {
     order: 2 !important;
-    flex-direction: column-reverse !important;
+    flex-direction: column !important;
     align-items: flex-end !important;
   }
   .approval-row .approval-form {
@@ -3146,6 +3147,11 @@ input, select, textarea {
     flex-basis: 100% !important;
     width: 100% !important;
     margin-top: 8px !important;
+  }
+  .approval-row .approval-expand {
+    order: 4 !important;
+    flex-basis: 100% !important;
+    width: 100% !important;
   }
 
   /* Analytics stat grid: 2 columns on mobile */

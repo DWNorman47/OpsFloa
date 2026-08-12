@@ -912,16 +912,18 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                         {working === e.id ? '…' : '✓'}
                       </button>
                       <button style={styles.rejectIconBtn} onClick={() => { setRejectingId(e.id); setRejectNote(''); }} title={t.reject} aria-label={t.reject}>✕</button>
-                      <button
-                        style={styles.expandBtn}
-                        onClick={() => toggleExpand(e.id)}
-                        title={isExpanded ? t.aqCollapseRow : t.aqExpandRow}
-                        aria-label={isExpanded ? t.aqCollapseRow : t.aqExpandRow}
-                        aria-expanded={isExpanded}
-                      >
-                        {isExpanded ? '▾' : '▸'}
-                      </button>
                     </div>
+                  )}
+                  {!isExpanded && rejectingId !== e.id && (
+                    <button
+                      className="approval-expand"
+                      style={styles.expandWideBtn}
+                      onClick={() => toggleExpand(e.id)}
+                      aria-label={t.aqExpandRow}
+                      aria-expanded={false}
+                    >
+                      {t.aqExpandRow} ▾
+                    </button>
                   )}
                 </div>
               );})}
@@ -1119,7 +1121,7 @@ const styles = {
   rejectBtn: { background: 'none', border: '1px solid #fca5a5', color: '#ef4444', padding: '6px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   approveIconBtn: { background: '#059669', color: '#fff', border: 'none', width: 34, height: 34, borderRadius: 6, fontSize: 17, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 },
   rejectIconBtn: { background: 'none', border: '1px solid #fca5a5', color: '#ef4444', width: 34, height: 34, borderRadius: 6, fontSize: 15, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 },
-  expandBtn: { background: 'none', border: '1px solid #e5e7eb', color: '#6b7280', width: 30, height: 34, borderRadius: 6, fontSize: 13, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 },
+  expandWideBtn: { width: '100%', marginTop: 10, padding: '7px', background: 'none', border: '1px solid #e5e7eb', color: '#6b7280', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 },
   rejectForm: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   rejectInput: { padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, minWidth: 160 },
   confirmRejectBtn: { background: '#ef4444', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
