@@ -188,12 +188,12 @@ function LocationHistoryModal({ seed, onClose, t, locale }) {
                     <React.Fragment key={e.id}>
                       {e.clock_in_lat != null && (
                         <Marker position={[Number(e.clock_in_lat), Number(e.clock_in_lng)]} icon={clockInIcon}>
-                          <Popup>🟢 {t.clockIn}<br />{formatDate(e.work_date, locale)} {formatTime(e.start_time)}</Popup>
+                          <Popup>🟢 {t.clockIn}<br />{formatDate(e.work_date, locale)} {formatTime(e.start_time)}<br /><MapLink lat={e.clock_in_lat} lng={e.clock_in_lng} label={t.openInMaps} /></Popup>
                         </Marker>
                       )}
                       {e.clock_out_lat != null && (
                         <Marker position={[Number(e.clock_out_lat), Number(e.clock_out_lng)]} icon={clockOutIcon}>
-                          <Popup>🔴 {t.clockOut}<br />{formatDate(e.work_date, locale)} {formatTime(e.end_time)}</Popup>
+                          <Popup>🔴 {t.clockOut}<br />{formatDate(e.work_date, locale)} {formatTime(e.end_time)}<br /><MapLink lat={e.clock_out_lat} lng={e.clock_out_lng} label={t.openInMaps} /></Popup>
                         </Marker>
                       )}
                     </React.Fragment>
@@ -269,6 +269,10 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
   const [recentApproved, setRecentApproved] = useState([]);
   const [showRecent, setShowRecent] = useState(false);
   const [unapproving, setUnapproving] = useState(null);
+  const [recentRejected, setRecentRejected] = useState([]);
+  const [showRejected, setShowRejected] = useState(false);
+  const [unrejecting, setUnrejecting] = useState(null);
+  const [unrejectError, setUnrejectError] = useState('');
   const [splitSegments, setSplitSegments] = useState([]);
   const [splitSaving, setSplitSaving] = useState(false);
   const [splitError, setSplitError] = useState('');
@@ -329,6 +333,17 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
       .catch(silentError('approvalqueue'));
   };
 
+  const fetchRecentRejected = () => {
+    // Mirror of the approved list: date range → rejected entries in range; no
+    // range → the last 24h of rejections.
+    const params = {};
+    if (dateFrom) params.from = dateFrom;
+    if (dateTo) params.to = dateTo;
+    api.get('/admin/entries/recently-rejected', { params })
+      .then(r => setRecentRejected(r.data))
+      .catch(silentError('approvalqueue'));
+  };
+
   useEffect(() => {
     let mounted = true;
     setLoading(true);
@@ -347,7 +362,7 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
   }, []);
   // Refresh the approved list on mount and whenever the date range changes (the
   // range switches it from "last 24h" to "unfinalized approved entries in range").
-  useEffect(() => { fetchRecentApproved(); }, [dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchRecentApproved(); fetchRecentRejected(); }, [dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (onCountChange) onCountChange(entries.length); }, [entries]);
 
   const startEdit = (e) => {
@@ -464,6 +479,17 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
     } catch (err) {
       setUnapproveError(err.response?.data?.error || t.failedUnapprove);
     } finally { setUnapproving(null); }
+  };
+
+  const unreject = async id => {
+    setUnrejecting(id);
+    try {
+      await api.patch(`/admin/entries/${id}/unreject`);
+      setRecentRejected(prev => prev.filter(e => e.id !== id));
+      fetch(); // back into the pending queue
+    } catch (err) {
+      setUnrejectError(err.response?.data?.error || t.failedRestore);
+    } finally { setUnrejecting(null); }
   };
 
   const submitReject = async id => {
@@ -726,8 +752,8 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                               <MapContainer center={positions[0]} zoom={14} style={styles.map} scrollWheelZoom={false}>
                                 <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' />
                                 <FitBounds positions={positions} />
-                                {e.clock_in_lat && <Marker position={[parseFloat(e.clock_in_lat), parseFloat(e.clock_in_lng)]} icon={clockInIcon}><Popup>🟢 {t.clockIn}<br />{e.worker_name}</Popup></Marker>}
-                                {e.clock_out_lat && <Marker position={[parseFloat(e.clock_out_lat), parseFloat(e.clock_out_lng)]} icon={clockOutIcon}><Popup>🔴 {t.clockOut}<br />{e.worker_name}</Popup></Marker>}
+                                {e.clock_in_lat && <Marker position={[parseFloat(e.clock_in_lat), parseFloat(e.clock_in_lng)]} icon={clockInIcon}><Popup>🟢 {t.clockIn}<br />{e.worker_name}<br /><MapLink lat={e.clock_in_lat} lng={e.clock_in_lng} label={t.openInMaps} /></Popup></Marker>}
+                                {e.clock_out_lat && <Marker position={[parseFloat(e.clock_out_lat), parseFloat(e.clock_out_lng)]} icon={clockOutIcon}><Popup>🔴 {t.clockOut}<br />{e.worker_name}<br /><MapLink lat={e.clock_out_lat} lng={e.clock_out_lng} label={t.openInMaps} /></Popup></Marker>}
                               </MapContainer>
                               <div style={styles.mapLegend}>
                                 {e.clock_in_lat
@@ -930,6 +956,42 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
         )}
       </div>
 
+      <div style={styles.recentSection}>
+        <button style={styles.recentToggle} onClick={() => setShowRejected(v => !v)}>
+          <span>{(dateFrom || dateTo) ? t.aqRejectedInRange : t.aqRecentlyRejected} ({recentRejected.length})</span>
+          <span>{showRejected ? '▾' : '▸'}</span>
+        </button>
+        {showRejected && (
+          recentRejected.length === 0 ? (
+            <p style={styles.approvedEmpty}>{t.aqRejectedEmptyHint}</p>
+          ) : (
+            <div style={styles.recentList}>
+              {recentRejected.map(e => (
+                <div key={e.id} style={styles.recentRow}>
+                  <button style={styles.recentInfoBtn} onClick={() => setDetailEntry({ ...e, _rejected: true })} title={t.aqViewDetails}>
+                    <span style={styles.recentWorker}>{e.worker_name}</span>
+                    <span style={styles.recentDate}>{formatDate(e.work_date, locale)}</span>
+                    <span style={styles.recentTime}>{formatTime(e.start_time)} – {formatTime(e.end_time)}</span>
+                    {e.project_name && <span style={styles.recentProject}>{e.project_name}</span>}
+                    {e.approval_note && <span style={styles.recentReason} title={e.approval_note}>“{e.approval_note}”</span>}
+                  </button>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                    <button
+                      style={{ ...styles.restoreBtn, ...(unrejecting === e.id ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
+                      onClick={() => { setUnrejectError(''); unreject(e.id); }}
+                      disabled={unrejecting === e.id}
+                    >
+                      {unrejecting === e.id ? t.saving : t.aqRestore}
+                    </button>
+                    {unrejectError && unrejecting === null && <span style={styles.inlineError}>{unrejectError}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        )}
+      </div>
+
       {detailEntry && (
         <div style={styles.overlay} onClick={() => setDetailEntry(null)}>
           <ModalShell onClose={() => setDetailEntry(null)} titleId="aq-detail-title" style={styles.modal}>
@@ -939,8 +1001,9 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                 <span style={styles.detailLabel}>{t.aqWorkDate}</span><span>{formatDate(detailEntry.work_date, locale)}</span>
                 <span style={styles.detailLabel}>{t.aqTime}</span><span>{formatTime(detailEntry.start_time)} – {formatTime(detailEntry.end_time)}</span>
                 {detailEntry.project_name && (<><span style={styles.detailLabel}>{t.aqProject}</span><span>{detailEntry.project_name}</span></>)}
-                <span style={styles.detailLabel}>{t.aqApprovedBy}</span>
+                <span style={styles.detailLabel}>{detailEntry._rejected ? t.aqRejectedBy : t.aqApprovedBy}</span>
                 <span>{detailEntry.approved_by_name || '—'}{detailEntry.approved_at ? ` · ${formatDateTime(detailEntry.approved_at, user?.language)}` : ''}</span>
+                {detailEntry._rejected && detailEntry.approval_note && (<><span style={styles.detailLabel}>{t.aqRejectReason}</span><span>{detailEntry.approval_note}</span></>)}
                 <span style={styles.detailLabel}>{t.aqSource}</span>
                 <span>{sourceLabel(detailEntry.clock_source, t)}{detailEntry.clocked_in_by_name ? ` (${detailEntry.clocked_in_by_name})` : ''}</span>
                 {detailEntry.notes && (<><span style={styles.detailLabel}>{t.aqNotes}</span><span>{detailEntry.notes}</span></>)}
@@ -954,8 +1017,10 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                   {coordText(detailEntry.clock_out_lat, detailEntry.clock_out_lng, t)}
                   <MapLink lat={detailEntry.clock_out_lat} lng={detailEntry.clock_out_lng} />
                 </span>
-                <span style={styles.detailLabel}>QuickBooks</span>
-                <span>{detailEntry.qbo_activity_id ? t.aqQbSynced : '—'}</span>
+                {!detailEntry._rejected && (<>
+                  <span style={styles.detailLabel}>QuickBooks</span>
+                  <span>{detailEntry.qbo_activity_id ? t.aqQbSynced : '—'}</span>
+                </>)}
               </div>
               <div style={styles.modalActions}>
                 {(detailEntry.clock_in_lat || detailEntry.clock_out_lat) && (
@@ -1051,6 +1116,8 @@ const styles = {
   recentTime: { color: '#6b7280' },
   recentProject: { background: '#e0e7ff', color: '#3730a3', borderRadius: 6, padding: '1px 7px', fontSize: 11, fontWeight: 600 },
   unapproveBtn: { padding: '5px 12px', background: '#fff', border: '1px solid #fca5a5', color: '#dc2626', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' },
+  restoreBtn: { padding: '5px 12px', background: '#fff', border: '1px solid #a7f3d0', color: '#059669', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' },
+  recentReason: { color: '#b45309', fontStyle: 'italic', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   qboSyncBadge: { background: '#d1fae5', color: '#065f46', border: '1px solid #6ee7b7', borderRadius: 6, padding: '1px 6px', fontSize: 11, fontWeight: 700 },
   cancelApproveAllBtn: { background: 'none', border: '1px solid #e5e7eb', color: '#6b7280', padding: '5px 14px', borderRadius: 6, fontSize: 13, cursor: 'pointer', flex: '0 0 auto' },
   inlineError: { fontSize: 12, color: '#ef4444' },
