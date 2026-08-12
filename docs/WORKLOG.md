@@ -4818,3 +4818,9 @@ checkbox | details (`.approval-main`, flex:1) | actions. Actions stack verticall
 with `flex-direction: column-reverse` so the DOM order (approve, reject, expand)
 renders top→bottom as expand / reject / approve, right-aligned. Forms still wrap
 full-width below (order 3, basis 100%). CSS-only; verify green.
+
+## 2026-08-12 — Approvals mobile: fix column wrap
+The 3-column mobile layout wrapped the actions below the details because flex line-
+breaking sizes `.approval-main` by its content width first. Changed it to
+`flex: 1 1 0%` so all three columns (checkbox | details | actions) stay on one line
+and details grows to fill. Forms still wrap full-width below.
