@@ -4907,3 +4907,9 @@ Under max-width 600px, `.member-report-row` now lays out as a card: ident (name 
 username) with the pin and the ›/✓ chevron on the top line, and `.member-report-
 metrics` becomes a 2-col grid (order:10, basis:100%) so the 4–5 stat tiles sit as
 two rows of two, left-aligned. Added hook classes to MemberReportRow. Build green.
+
+## 2026-08-12 — Team Member Reports mobile: center + reorder tiles
+Centered each stat tile (align-items/text-align center) in the 2x2 card grid, and
+swapped Overtime↔Entries via CSS `order` (metric-entries order:1, metric-overtime
+order:2) so the bottom row reads Entries | Overtime — mobile only, desktop row
+order untouched. Metric gained an optional className. Build green.
