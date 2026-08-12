@@ -30,7 +30,7 @@ function defaultDates() { return presetRange('lastweek'); }
 // The report AREA: the detail panel for ONE selected member, rendered once below
 // the member table (not per row). Mounted with key={worker.id} so switching
 // members resets its state cleanly.
-export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = {}, overtimeEnabled = true, projectsEnabled = true, projects = [], settings = null }) {
+export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = {}, overtimeEnabled = true, projectsEnabled = true, projects = [], settings = null, embedded = false }) {
   const t = useT();
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -303,11 +303,13 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
   };
 
   return (
-    <div style={styles.panelCard}>
-      <div style={styles.panelHead}>
-        <span style={styles.name}>{worker.full_name}</span>
-        <span style={styles.username}>@{worker.username}</span>
-      </div>
+    <div style={{ ...styles.panelCard, ...(embedded ? styles.panelCardEmbedded : {}) }}>
+      {!embedded && (
+        <div style={styles.panelHead}>
+          <span style={styles.name}>{worker.full_name}</span>
+          <span style={styles.username}>@{worker.username}</span>
+        </div>
+      )}
       <div style={styles.panel}>
           <div style={styles.dateRow}>
             <div style={styles.dateField}><label style={styles.label}>{t.from}</label><input style={styles.input} type="date" value={from} onChange={e => setFrom(e.target.value)} /></div>
@@ -548,6 +550,7 @@ function InputsUsed({ su, t, currency, goto }) {
 
 const styles = {
   panelCard: { background: '#fff', borderRadius: 12, boxShadow: '0 2px 14px rgba(0,0,0,0.10)', overflow: 'hidden', marginTop: 16 },
+  panelCardEmbedded: { borderRadius: 0, boxShadow: 'none', marginTop: 0, borderBottom: '1px solid #f0f0f0' },
   panelHead: { padding: '14px 18px', display: 'flex', alignItems: 'baseline', gap: 10, borderBottom: '1px solid #f0f0f0' },
   name: { fontWeight: 700, fontSize: 16 },
   username: { color: '#6b7280', fontSize: 12.5 },

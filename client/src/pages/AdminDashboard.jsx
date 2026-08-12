@@ -309,14 +309,22 @@ export function WorkforcePanel() {
                   const pages = Math.max(1, Math.ceil(workers.length / PAGE));
                   const page = Math.min(reportPage, pages - 1);
                   const slice = workers.slice(page * PAGE, page * PAGE + PAGE);
-                  const sel = workers.find(w => w.id === selectedReportWorker) || null;
                   return (
                     <>
                       <div style={styles.memberTable}>
                         {slice.map(w => (
-                          <MemberReportRow key={w.id} worker={w} overtimeEnabled={settings?.feature_overtime !== false}
-                            selected={selectedReportWorker === w.id}
-                            onSelect={() => setSelectedReportWorker(id => id === w.id ? null : w.id)} />
+                          <React.Fragment key={w.id}>
+                            <MemberReportRow worker={w} overtimeEnabled={settings?.feature_overtime !== false}
+                              selected={selectedReportWorker === w.id}
+                              onSelect={() => setSelectedReportWorker(id => id === w.id ? null : w.id)} />
+                            {selectedReportWorker === w.id && (
+                              <div ref={reportPanelRef}>
+                                <Suspense fallback={<TabLoader />}>
+                                  <WorkerMetrics key={w.id} worker={w} embedded currency={settings?.currency ?? 'USD'} companyInfo={companyInfo} overtimeEnabled={settings?.feature_overtime !== false} projectsEnabled={settings?.feature_project_integration !== false} projects={projects} settings={settings} />
+                                </Suspense>
+                              </div>
+                            )}
+                          </React.Fragment>
                         ))}
                       </div>
                       {pages > 1 && (
@@ -324,13 +332,6 @@ export function WorkforcePanel() {
                           <button style={{ ...styles.pagerBtn, ...(page === 0 ? styles.pagerBtnOff : {}) }} disabled={page === 0} onClick={() => setReportPage(p => Math.max(0, p - 1))}>‹ {t.paginationPrev}</button>
                           <span style={styles.pagerInfo}>{t.paginationPageOf.replace('{n}', page + 1).replace('{total}', pages)}</span>
                           <button style={{ ...styles.pagerBtn, ...(page >= pages - 1 ? styles.pagerBtnOff : {}) }} disabled={page >= pages - 1} onClick={() => setReportPage(p => Math.min(pages - 1, p + 1))}>{t.paginationNext} ›</button>
-                        </div>
-                      )}
-                      {sel && (
-                        <div ref={reportPanelRef}>
-                          <Suspense fallback={<TabLoader />}>
-                            <WorkerMetrics key={sel.id} worker={sel} currency={settings?.currency ?? 'USD'} companyInfo={companyInfo} overtimeEnabled={settings?.feature_overtime !== false} projectsEnabled={settings?.feature_project_integration !== false} projects={projects} settings={settings} />
-                          </Suspense>
                         </div>
                       )}
                     </>
