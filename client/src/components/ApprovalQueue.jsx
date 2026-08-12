@@ -1121,7 +1121,10 @@ const styles = {
   rejectBtn: { background: 'none', border: '1px solid #fca5a5', color: '#ef4444', padding: '6px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   approveIconBtn: { background: '#059669', color: '#fff', border: 'none', width: 34, height: 34, borderRadius: 6, fontSize: 17, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 },
   rejectIconBtn: { background: 'none', border: '1px solid #fca5a5', color: '#ef4444', width: 34, height: 34, borderRadius: 6, fontSize: 15, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 },
-  expandWideBtn: { width: '100%', marginTop: 10, padding: '7px', background: 'none', border: '1px solid #e5e7eb', color: '#6b7280', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  // Full-bleed footer bar: negative margins cancel the card's 12x16 padding so it
+  // sits flush against the card's bottom/side borders, with only the bottom corners
+  // rounded to match. Thin tap strip that expands the row.
+  expandWideBtn: { boxSizing: 'border-box', width: 'calc(100% + 32px)', margin: '10px -16px -12px -16px', padding: '3px', background: 'none', border: 'none', borderTop: '1px solid #e5e7eb', borderRadius: '0 0 7px 7px', color: '#9ca3af', fontSize: 11, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 },
   rejectForm: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   rejectInput: { padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, minWidth: 160 },
   confirmRejectBtn: { background: '#ef4444', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },

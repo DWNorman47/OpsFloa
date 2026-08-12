@@ -3150,8 +3150,9 @@ input, select, textarea {
   }
   .approval-row .approval-expand {
     order: 4 !important;
-    flex-basis: 100% !important;
-    width: 100% !important;
+    flex-basis: auto !important;
+    /* width (calc full-bleed) + negative margins come from the inline style;
+       calc width already exceeds 100% so it wraps to its own bottom line. */
   }
 
   /* Analytics stat grid: 2 columns on mobile */
