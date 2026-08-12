@@ -4824,3 +4824,11 @@ The 3-column mobile layout wrapped the actions below the details because flex li
 breaking sizes `.approval-main` by its content width first. Changed it to
 `flex: 1 1 0%` so all three columns (checkbox | details | actions) stay on one line
 and details grows to fill. Forms still wrap full-width below.
+
+## 2026-08-12 — Approvals: accept-over-reject + bottom expand bar
+Per request: mobile action column now accept on top / reject below (plain
+`column`, was `column-reverse`). Dropped the small expand chevron from the action
+cluster; added a full-width thin "Show details ▾" button at the bottom of the card
+(`.approval-expand`, order 4, basis 100%) that only expands — no collapse control,
+and it's hidden once expanded (and while a reject form is open). Works on desktop
+too (wraps to its own bottom line). `npm run verify` green.
