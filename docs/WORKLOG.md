@@ -4913,3 +4913,9 @@ Centered each stat tile (align-items/text-align center) in the 2x2 card grid, an
 swapped Overtime↔Entries via CSS `order` (metric-entries order:1, metric-overtime
 order:2) so the bottom row reads Entries | Overtime — mobile only, desktop row
 order untouched. Metric gained an optional className. Build green.
+
+## 2026-08-12 — Team Member Reports mobile: swap stat columns
+Per request, reordered the card's 2x2 grid via CSS `order` so left column =
+Regular/Overtime, right column = Total/Entries (reads Regular | Total / Overtime |
+Entries). Tagged all tiles (metric-total/regular/overtime/prevailing/entries).
+Mobile only; desktop row order untouched. Build green.
