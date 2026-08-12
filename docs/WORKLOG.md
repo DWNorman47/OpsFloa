@@ -4896,3 +4896,8 @@ filtered list before pagination. New state in AdminDashboard (`reportSearch`,
 `pinnedReportWorkers` + toggle); MemberReportRow gains `pinned`/`onTogglePin`
 (stopPropagation so it doesn't trigger row expand). i18n trSearchWorkers/
 trNoWorkerMatch/trPin/trUnpin EN+ES. Verify green.
+
+## 2026-08-12 — Team Member Reports: pushpin instead of lock
+Pin-to-top icon changed from 🔓/🔒 lock to a single pushpin 📌: tilted 40° + 0.4
+opacity when unpinned, upright + full opacity + 1.1 scale when pinned (with a short
+transition). Reads as pinning, not locking. Build green.
