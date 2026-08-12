@@ -286,7 +286,8 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [approvingSelected, setApprovingSelected] = useState(false);
   const [showPending, setShowPending] = useState(true); // approvals list open by default each load
-  const [detailEntry, setDetailEntry] = useState(null); // approved entry whose detail popup is open
+  const [expandedRecent, setExpandedRecent] = useState(() => new Set()); // recently-approved/rejected rows expanded inline for details (keyed 'a-'/'r-' + id)
+  const toggleRecentExpand = (key) => setExpandedRecent(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
   const [locHistoryOpen, setLocHistoryOpen] = useState(false);
   const [locSeed, setLocSeed] = useState(null); // { user_id, from, to } prefill for the Location history popup
 
@@ -564,6 +565,47 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
   };
 
   if (loading) return <div className="admin-card" style={styles.card}><SkeletonList count={4} rows={2} /></div>;
+
+  // Inline detail panel for an expanded recently-approved/rejected row. Work
+  // date/time/project already show in the row header, so this adds the rest:
+  // who approved/rejected it (+ when), reason, source, notes, clock locations
+  // (with map links), QuickBooks sync, and a jump to the full location history.
+  const renderRecentDetails = (entry, rejected) => (
+    <div style={styles.recentDetails}>
+      <div style={styles.detailGrid}>
+        <span style={styles.detailLabel}>{rejected ? t.aqRejectedBy : t.aqApprovedBy}</span>
+        <span>{entry.approved_by_name || '—'}{entry.approved_at ? ` · ${formatDateTime(entry.approved_at, user?.language)}` : ''}</span>
+        {rejected && entry.approval_note && (<><span style={styles.detailLabel}>{t.aqRejectReason}</span><span>{entry.approval_note}</span></>)}
+        <span style={styles.detailLabel}>{t.aqSource}</span>
+        <span>{sourceLabel(entry.clock_source, t)}{entry.clocked_in_by_name ? ` (${entry.clocked_in_by_name})` : ''}</span>
+        {entry.notes && (<><span style={styles.detailLabel}>{t.aqNotes}</span><span>{entry.notes}</span></>)}
+        <span style={styles.detailLabel}>{t.aqClockInLoc}</span>
+        <span style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {coordText(entry.clock_in_lat, entry.clock_in_lng, t)}
+          <MapLink lat={entry.clock_in_lat} lng={entry.clock_in_lng} />
+        </span>
+        <span style={styles.detailLabel}>{t.aqClockOutLoc}</span>
+        <span style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {coordText(entry.clock_out_lat, entry.clock_out_lng, t)}
+          <MapLink lat={entry.clock_out_lat} lng={entry.clock_out_lng} />
+        </span>
+        {!rejected && (<>
+          <span style={styles.detailLabel}>QuickBooks</span>
+          <span>{entry.qbo_activity_id ? t.aqQbSynced : '—'}</span>
+        </>)}
+      </div>
+      {(entry.clock_in_lat || entry.clock_out_lat) && (
+        <button
+          style={{ ...styles.viewMapBtn, marginTop: 10 }}
+          onClick={() => {
+            const d = (entry.work_date || '').toString().substring(0, 10);
+            setLocSeed({ user_id: entry.user_id, from: d, to: d });
+            setLocHistoryOpen(true);
+          }}
+        >📍 {t.aqViewOnMap}</button>
+      )}
+    </div>
+  );
 
   return (
     <div className="admin-card" style={styles.card}>
@@ -944,31 +986,39 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
             <p style={styles.approvedEmpty}>{t.aqApprovedEmptyHint}</p>
           ) : (
             <div style={styles.recentList}>
-              {recentApproved.map(e => (
-                <div key={e.id} style={styles.recentRow}>
-                  <button style={styles.recentInfoBtn} onClick={() => setDetailEntry(e)} title={t.aqViewDetails}>
-                    <span style={styles.recentWorker}>{e.worker_name}</span>
-                    <span style={styles.recentDate}>{formatDate(e.work_date, locale)}</span>
-                    <span style={styles.recentTime}>{formatTime(e.start_time)} – {formatTime(e.end_time)}</span>
-                    {e.project_name && <span style={styles.recentProject}>{e.project_name}</span>}
-                    {e.qbo_activity_id && (
-                      <span style={styles.qboSyncBadge} title={`Synced to QuickBooks${e.qbo_synced_at ? ' · ' + formatDateTime(e.qbo_synced_at, user?.language) : ''}`}>
-                        QB ✓
-                      </span>
-                    )}
-                  </button>
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-                    <button
-                      style={{ ...styles.unapproveBtn, ...(unapproving === e.id ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
-                      onClick={() => { setUnapproveError(''); unapprove(e.id); }}
-                      disabled={unapproving === e.id}
-                    >
-                      {unapproving === e.id ? t.saving : t.aqUnapprove}
+              {recentApproved.map(e => {
+                const key = 'a-' + e.id;
+                const open = expandedRecent.has(key);
+                return (
+                <div key={e.id} style={styles.recentItem}>
+                  <div style={styles.recentRow}>
+                    <button style={styles.recentInfoBtn} onClick={() => toggleRecentExpand(key)} title={t.aqViewDetails} aria-expanded={open}>
+                      <span style={styles.recentChevron}>{open ? '▾' : '▸'}</span>
+                      <span style={styles.recentWorker}>{e.worker_name}</span>
+                      <span style={styles.recentDate}>{formatDate(e.work_date, locale)}</span>
+                      <span style={styles.recentTime}>{formatTime(e.start_time)} – {formatTime(e.end_time)}</span>
+                      {e.project_name && <span style={styles.recentProject}>{e.project_name}</span>}
+                      {e.qbo_activity_id && (
+                        <span style={styles.qboSyncBadge} title={`Synced to QuickBooks${e.qbo_synced_at ? ' · ' + formatDateTime(e.qbo_synced_at, user?.language) : ''}`}>
+                          QB ✓
+                        </span>
+                      )}
                     </button>
-                    {unapproveError && unapproving === null && <span style={styles.inlineError}>{unapproveError}</span>}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                      <button
+                        style={{ ...styles.unapproveBtn, ...(unapproving === e.id ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
+                        onClick={() => { setUnapproveError(''); unapprove(e.id); }}
+                        disabled={unapproving === e.id}
+                      >
+                        {unapproving === e.id ? t.saving : t.aqUnapprove}
+                      </button>
+                      {unapproveError && unapproving === null && <span style={styles.inlineError}>{unapproveError}</span>}
+                    </div>
                   </div>
+                  {open && renderRecentDetails(e, false)}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )
         )}
@@ -984,80 +1034,39 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
             <p style={styles.approvedEmpty}>{t.aqRejectedEmptyHint}</p>
           ) : (
             <div style={styles.recentList}>
-              {recentRejected.map(e => (
-                <div key={e.id} style={styles.recentRow}>
-                  <button style={styles.recentInfoBtn} onClick={() => setDetailEntry({ ...e, _rejected: true })} title={t.aqViewDetails}>
-                    <span style={styles.recentWorker}>{e.worker_name}</span>
-                    <span style={styles.recentDate}>{formatDate(e.work_date, locale)}</span>
-                    <span style={styles.recentTime}>{formatTime(e.start_time)} – {formatTime(e.end_time)}</span>
-                    {e.project_name && <span style={styles.recentProject}>{e.project_name}</span>}
-                    {e.approval_note && <span style={styles.recentReason} title={e.approval_note}>“{e.approval_note}”</span>}
-                  </button>
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-                    <button
-                      style={{ ...styles.restoreBtn, ...(unrejecting === e.id ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
-                      onClick={() => { setUnrejectError(''); unreject(e.id); }}
-                      disabled={unrejecting === e.id}
-                    >
-                      {unrejecting === e.id ? t.saving : t.aqRestore}
+              {recentRejected.map(e => {
+                const key = 'r-' + e.id;
+                const open = expandedRecent.has(key);
+                return (
+                <div key={e.id} style={styles.recentItem}>
+                  <div style={styles.recentRow}>
+                    <button style={styles.recentInfoBtn} onClick={() => toggleRecentExpand(key)} title={t.aqViewDetails} aria-expanded={open}>
+                      <span style={styles.recentChevron}>{open ? '▾' : '▸'}</span>
+                      <span style={styles.recentWorker}>{e.worker_name}</span>
+                      <span style={styles.recentDate}>{formatDate(e.work_date, locale)}</span>
+                      <span style={styles.recentTime}>{formatTime(e.start_time)} – {formatTime(e.end_time)}</span>
+                      {e.project_name && <span style={styles.recentProject}>{e.project_name}</span>}
+                      {e.approval_note && <span style={styles.recentReason} title={e.approval_note}>“{e.approval_note}”</span>}
                     </button>
-                    {unrejectError && unrejecting === null && <span style={styles.inlineError}>{unrejectError}</span>}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                      <button
+                        style={{ ...styles.restoreBtn, ...(unrejecting === e.id ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
+                        onClick={() => { setUnrejectError(''); unreject(e.id); }}
+                        disabled={unrejecting === e.id}
+                      >
+                        {unrejecting === e.id ? t.saving : t.aqRestore}
+                      </button>
+                      {unrejectError && unrejecting === null && <span style={styles.inlineError}>{unrejectError}</span>}
+                    </div>
                   </div>
+                  {open && renderRecentDetails(e, true)}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )
         )}
       </div>
-
-      {detailEntry && (
-        <div style={styles.overlay} onClick={() => setDetailEntry(null)}>
-          <ModalShell onClose={() => setDetailEntry(null)} titleId="aq-detail-title" style={styles.modal}>
-            <div onClick={e => e.stopPropagation()}>
-              <h3 id="aq-detail-title" style={styles.modalTitle}>{detailEntry.worker_name}</h3>
-              <div style={styles.detailGrid}>
-                <span style={styles.detailLabel}>{t.aqWorkDate}</span><span>{formatDate(detailEntry.work_date, locale)}</span>
-                <span style={styles.detailLabel}>{t.aqTime}</span><span>{formatTime(detailEntry.start_time)} – {formatTime(detailEntry.end_time)}</span>
-                {detailEntry.project_name && (<><span style={styles.detailLabel}>{t.aqProject}</span><span>{detailEntry.project_name}</span></>)}
-                <span style={styles.detailLabel}>{detailEntry._rejected ? t.aqRejectedBy : t.aqApprovedBy}</span>
-                <span>{detailEntry.approved_by_name || '—'}{detailEntry.approved_at ? ` · ${formatDateTime(detailEntry.approved_at, user?.language)}` : ''}</span>
-                {detailEntry._rejected && detailEntry.approval_note && (<><span style={styles.detailLabel}>{t.aqRejectReason}</span><span>{detailEntry.approval_note}</span></>)}
-                <span style={styles.detailLabel}>{t.aqSource}</span>
-                <span>{sourceLabel(detailEntry.clock_source, t)}{detailEntry.clocked_in_by_name ? ` (${detailEntry.clocked_in_by_name})` : ''}</span>
-                {detailEntry.notes && (<><span style={styles.detailLabel}>{t.aqNotes}</span><span>{detailEntry.notes}</span></>)}
-                <span style={styles.detailLabel}>{t.aqClockInLoc}</span>
-                <span style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  {coordText(detailEntry.clock_in_lat, detailEntry.clock_in_lng, t)}
-                  <MapLink lat={detailEntry.clock_in_lat} lng={detailEntry.clock_in_lng} />
-                </span>
-                <span style={styles.detailLabel}>{t.aqClockOutLoc}</span>
-                <span style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  {coordText(detailEntry.clock_out_lat, detailEntry.clock_out_lng, t)}
-                  <MapLink lat={detailEntry.clock_out_lat} lng={detailEntry.clock_out_lng} />
-                </span>
-                {!detailEntry._rejected && (<>
-                  <span style={styles.detailLabel}>QuickBooks</span>
-                  <span>{detailEntry.qbo_activity_id ? t.aqQbSynced : '—'}</span>
-                </>)}
-              </div>
-              <div style={styles.modalActions}>
-                {(detailEntry.clock_in_lat || detailEntry.clock_out_lat) && (
-                  <button
-                    style={styles.viewMapBtn}
-                    onClick={() => {
-                      const d = (detailEntry.work_date || '').toString().substring(0, 10);
-                      setLocSeed({ user_id: detailEntry.user_id, from: d, to: d });
-                      setDetailEntry(null);
-                      setLocHistoryOpen(true);
-                    }}
-                  >📍 {t.aqViewOnMap}</button>
-                )}
-                <button style={styles.modalCloseBtn} onClick={() => setDetailEntry(null)}>{t.close}</button>
-              </div>
-            </div>
-          </ModalShell>
-        </div>
-      )}
 
       {locHistoryOpen && (
         <LocationHistoryModal seed={locSeed} onClose={() => setLocHistoryOpen(false)} t={t} locale={locale} />
@@ -1133,7 +1142,10 @@ const styles = {
   recentSection: { marginTop: 20, borderTop: '1px solid #f0f0f0', paddingTop: 12 },
   recentToggle: { background: 'none', border: 'none', display: 'flex', justifyContent: 'space-between', width: '100%', fontSize: 13, fontWeight: 600, color: '#6b7280', cursor: 'pointer', padding: '4px 0' },
   recentList: { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 },
+  recentItem: { display: 'flex', flexDirection: 'column', background: '#f9fafb', borderRadius: 7, overflow: 'hidden' },
   recentRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '8px 10px', background: '#f9fafb', borderRadius: 7, flexWrap: 'wrap' },
+  recentChevron: { color: '#9ca3af', fontSize: 11 },
+  recentDetails: { padding: '4px 12px 12px', borderTop: '1px solid #eef2f7' },
   recentInfo: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 13 },
   recentWorker: { fontWeight: 700, color: '#374151' },
   recentDate: { color: '#6b7280' },
