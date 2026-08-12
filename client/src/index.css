@@ -3171,7 +3171,10 @@ input, select, textarea {
     gap: 12px 16px !important;
     margin-top: 4px !important;
   }
-  .member-report-row .member-report-metrics > * { align-items: flex-start !important; }
+  .member-report-row .member-report-metrics > * { align-items: center !important; text-align: center !important; }
+  /* Swap Overtime and Entries so the bottom row reads Entries | Overtime. */
+  .member-report-row .member-report-metrics .metric-entries { order: 1 !important; }
+  .member-report-row .member-report-metrics .metric-overtime { order: 2 !important; }
 
   /* Analytics stat grid: 2 columns on mobile */
   .analytics-stats {

@@ -37,18 +37,18 @@ export default function MemberReportRow({ worker, overtimeEnabled = true, select
       <div className="member-report-metrics" style={styles.metrics}>
         <Metric label={t.totalMetric} value={fmtHours(total)} />
         {regular > 0 && <Metric label={t.regularMetric} value={fmtHours(regular)} color="#2563eb" />}
-        {overtimeEnabled && overtime > 0 && <Metric label={t.overtimeMetric} value={fmtHours(overtime)} color="#dc2626" />}
+        {overtimeEnabled && overtime > 0 && <Metric className="metric-overtime" label={t.overtimeMetric} value={fmtHours(overtime)} color="#dc2626" />}
         {prevailing > 0 && <Metric label={t.prevailingMetric} value={fmtHours(prevailing)} color="#d97706" />}
-        <Metric label={t.entriesMetric} value={worker.total_entries || 0} />
+        <Metric className="metric-entries" label={t.entriesMetric} value={worker.total_entries || 0} />
       </div>
       <span className="member-report-pick" style={{ ...styles.pick, ...(selected ? styles.pickOn : {}) }}>{selected ? '✓' : '›'}</span>
     </div>
   );
 }
 
-function Metric({ label, value, color }) {
+function Metric({ label, value, color, className }) {
   return (
-    <div style={styles.metric}>
+    <div style={styles.metric} className={className}>
       <span style={{ ...styles.metricVal, color: color || '#222' }}>{value}</span>
       <span style={styles.metricLabel}>{label}</span>
     </div>
