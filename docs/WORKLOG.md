@@ -4881,3 +4881,9 @@ worker now renders WorkerMetrics right under that worker's MemberReportRow (move
 the render into the slice.map via React.Fragment). New `embedded` prop on
 WorkerMetrics strips the floating-card chrome (margin/shadow/radius) and the
 duplicate name header so it looks like an in-table expansion. Build green.
+
+## 2026-08-12 — Team Member Reports: multiple open at once
+`selectedReportWorker` (single id) → `expandedReportWorkers` Set, so expanding one
+worker no longer collapses another (each WorkerMetrics stays mounted with its
+generated bill + date range intact). `lastOpenedWorker` drives the scroll-into-view
+target and only the just-opened panel gets the ref. Build green.
