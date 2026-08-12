@@ -3172,9 +3172,13 @@ input, select, textarea {
     margin-top: 4px !important;
   }
   .member-report-row .member-report-metrics > * { align-items: center !important; text-align: center !important; }
-  /* Swap Overtime and Entries so the bottom row reads Entries | Overtime. */
-  .member-report-row .member-report-metrics .metric-entries { order: 1 !important; }
-  .member-report-row .member-report-metrics .metric-overtime { order: 2 !important; }
+  /* Column order: left column = Regular / Overtime, right column = Total / Entries.
+     So the grid reads  Regular | Total  /  Overtime | Entries. */
+  .member-report-row .member-report-metrics .metric-regular { order: 1 !important; }
+  .member-report-row .member-report-metrics .metric-total { order: 2 !important; }
+  .member-report-row .member-report-metrics .metric-overtime { order: 3 !important; }
+  .member-report-row .member-report-metrics .metric-prevailing { order: 4 !important; }
+  .member-report-row .member-report-metrics .metric-entries { order: 5 !important; }
 
   /* Analytics stat grid: 2 columns on mobile */
   .analytics-stats {

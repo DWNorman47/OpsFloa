@@ -35,10 +35,10 @@ export default function MemberReportRow({ worker, overtimeEnabled = true, select
         <span style={styles.username}>@{worker.username}</span>
       </div>
       <div className="member-report-metrics" style={styles.metrics}>
-        <Metric label={t.totalMetric} value={fmtHours(total)} />
-        {regular > 0 && <Metric label={t.regularMetric} value={fmtHours(regular)} color="#2563eb" />}
+        <Metric className="metric-total" label={t.totalMetric} value={fmtHours(total)} />
+        {regular > 0 && <Metric className="metric-regular" label={t.regularMetric} value={fmtHours(regular)} color="#2563eb" />}
         {overtimeEnabled && overtime > 0 && <Metric className="metric-overtime" label={t.overtimeMetric} value={fmtHours(overtime)} color="#dc2626" />}
-        {prevailing > 0 && <Metric label={t.prevailingMetric} value={fmtHours(prevailing)} color="#d97706" />}
+        {prevailing > 0 && <Metric className="metric-prevailing" label={t.prevailingMetric} value={fmtHours(prevailing)} color="#d97706" />}
         <Metric className="metric-entries" label={t.entriesMetric} value={worker.total_entries || 0} />
       </div>
       <span className="member-report-pick" style={{ ...styles.pick, ...(selected ? styles.pickOn : {}) }}>{selected ? '✓' : '›'}</span>
