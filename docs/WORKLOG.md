@@ -4850,3 +4850,8 @@ Expand tools now stack: an Edit/Split row on top, Comments below
 (`expandTools` → column, new `expandToolsTop` row). Shortened the "Show details"
 footer band by switching `.row` from `gap:12` to `columnGap:12` (kills the extra
 wrap-line row-gap above the footer) and trimming the bar's top margin 10→4. Build green.
+
+## 2026-08-12 — Approvals: footer padding vs bar height
+Correction to the prior tweak: put the space *above* the expand bar back (row
+`gap:12`, bar margin-top 10) but shrink the bar's own height with `line-height:1`,
+`padding:0 3px`, `minHeight:16`. Build green.
