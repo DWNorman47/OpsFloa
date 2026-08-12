@@ -3120,11 +3120,65 @@ input, select, textarea {
     border-radius: 10px !important;
   }
 
-  /* Approval queue rows stack vertically */
+  /* Approval queue rows (mobile): three columns — checkbox | details | actions.
+     The action buttons stack vertically on the right (accept on top, reject below).
+     A full-width "show details" button and any open edit/split/reject form wrap
+     full-width below. */
   .approval-row {
-    flex-direction: column !important;
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
     align-items: flex-start !important;
   }
+  .approval-row .approval-check { order: 0 !important; }
+  .approval-row .approval-main {
+    order: 1 !important;
+    flex: 1 1 0% !important;
+    min-width: 0 !important;
+    width: auto !important;
+    margin-top: 0 !important;
+  }
+  .approval-row .approval-actions {
+    order: 2 !important;
+    flex-direction: column !important;
+    align-items: flex-end !important;
+  }
+  .approval-row .approval-form {
+    order: 3 !important;
+    flex-basis: 100% !important;
+    width: 100% !important;
+    margin-top: 8px !important;
+  }
+  .approval-row .approval-expand {
+    order: 4 !important;
+    flex-basis: auto !important;
+    /* width (calc full-bleed) + negative margins come from the inline style;
+       calc width already exceeds 100% so it wraps to its own bottom line. */
+  }
+
+  /* Team Member report rows become cards: name (with pin + chevron) on top,
+     then the stat tiles in a 2-column grid (two rows of two) below. */
+  .member-report-row {
+    flex-wrap: wrap !important;
+    align-items: center !important;
+  }
+  .member-report-row .member-report-ident { flex: 1 1 auto !important; }
+  .member-report-row .member-report-metrics {
+    order: 10 !important;
+    flex-basis: 100% !important;
+    width: 100% !important;
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 12px 16px !important;
+    margin-top: 4px !important;
+  }
+  .member-report-row .member-report-metrics > * { align-items: center !important; text-align: center !important; }
+  /* Column order: left column = Regular / Overtime, right column = Total / Entries.
+     So the grid reads  Regular | Total  /  Overtime | Entries. */
+  .member-report-row .member-report-metrics .metric-regular { order: 1 !important; }
+  .member-report-row .member-report-metrics .metric-total { order: 2 !important; }
+  .member-report-row .member-report-metrics .metric-overtime { order: 3 !important; }
+  .member-report-row .member-report-metrics .metric-prevailing { order: 4 !important; }
+  .member-report-row .member-report-metrics .metric-entries { order: 5 !important; }
 
   /* Analytics stat grid: 2 columns on mobile */
   .analytics-stats {

@@ -4,7 +4,7 @@ import { useT } from '../hooks/useT';
 
 // One member as a single-column table row: name + their period summary metrics.
 // Selecting it fills the report area below the table (state lives in the parent).
-export default function MemberReportRow({ worker, overtimeEnabled = true, selected = false, onSelect }) {
+export default function MemberReportRow({ worker, overtimeEnabled = true, selected = false, onSelect, pinned = false, onTogglePin }) {
   const t = useT();
   const total = parseFloat(worker.total_hours) || 0;
   const regular = parseFloat(worker.regular_hours) || 0;
@@ -12,6 +12,7 @@ export default function MemberReportRow({ worker, overtimeEnabled = true, select
   const prevailing = parseFloat(worker.prevailing_hours) || 0;
   return (
     <div
+      className="member-report-row"
       style={{ ...styles.row, ...(selected ? styles.rowSelected : {}) }}
       onClick={onSelect}
       role="button"
@@ -19,25 +20,35 @@ export default function MemberReportRow({ worker, overtimeEnabled = true, select
       aria-pressed={selected}
       onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onSelect())}
     >
-      <div style={styles.ident}>
+      {onTogglePin && (
+        <button
+          className="member-report-pin"
+          style={{ ...styles.pinBtn, ...(pinned ? styles.pinBtnOn : {}) }}
+          onClick={e => { e.stopPropagation(); onTogglePin(); }}
+          title={pinned ? t.trUnpin : t.trPin}
+          aria-label={pinned ? t.trUnpin : t.trPin}
+          aria-pressed={pinned}
+        >📌</button>
+      )}
+      <div className="member-report-ident" style={styles.ident}>
         <span style={styles.name}>{worker.full_name}</span>
         <span style={styles.username}>@{worker.username}</span>
       </div>
-      <div style={styles.metrics}>
-        <Metric label={t.totalMetric} value={fmtHours(total)} />
-        {regular > 0 && <Metric label={t.regularMetric} value={fmtHours(regular)} color="#2563eb" />}
-        {overtimeEnabled && overtime > 0 && <Metric label={t.overtimeMetric} value={fmtHours(overtime)} color="#dc2626" />}
-        {prevailing > 0 && <Metric label={t.prevailingMetric} value={fmtHours(prevailing)} color="#d97706" />}
-        <Metric label={t.entriesMetric} value={worker.total_entries || 0} />
+      <div className="member-report-metrics" style={styles.metrics}>
+        <Metric className="metric-total" label={t.totalMetric} value={fmtHours(total)} />
+        {regular > 0 && <Metric className="metric-regular" label={t.regularMetric} value={fmtHours(regular)} color="#2563eb" />}
+        {overtimeEnabled && overtime > 0 && <Metric className="metric-overtime" label={t.overtimeMetric} value={fmtHours(overtime)} color="#dc2626" />}
+        {prevailing > 0 && <Metric className="metric-prevailing" label={t.prevailingMetric} value={fmtHours(prevailing)} color="#d97706" />}
+        <Metric className="metric-entries" label={t.entriesMetric} value={worker.total_entries || 0} />
       </div>
-      <span style={{ ...styles.pick, ...(selected ? styles.pickOn : {}) }}>{selected ? '✓' : '›'}</span>
+      <span className="member-report-pick" style={{ ...styles.pick, ...(selected ? styles.pickOn : {}) }}>{selected ? '✓' : '›'}</span>
     </div>
   );
 }
 
-function Metric({ label, value, color }) {
+function Metric({ label, value, color, className }) {
   return (
-    <div style={styles.metric}>
+    <div style={styles.metric} className={className}>
       <span style={{ ...styles.metricVal, color: color || '#222' }}>{value}</span>
       <span style={styles.metricLabel}>{label}</span>
     </div>
@@ -46,6 +57,8 @@ function Metric({ label, value, color }) {
 
 const styles = {
   row: { background: '#fff', display: 'flex', alignItems: 'center', gap: 16, padding: '12px 16px', borderBottom: '1px solid #f0f0f0', cursor: 'pointer', flexWrap: 'wrap' },
+  pinBtn: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: '2px 2px', lineHeight: 1, opacity: 0.4, transform: 'rotate(40deg)', transition: 'opacity .12s, transform .12s', flex: '0 0 auto' },
+  pinBtnOn: { opacity: 1, transform: 'rotate(0deg) scale(1.1)' },
   rowSelected: { background: '#eef2ff', boxShadow: 'inset 3px 0 0 var(--ops-page-accent, #4338ca)' },
   ident: { display: 'flex', flexDirection: 'column', minWidth: 140 },
   name: { fontWeight: 700, fontSize: 15 },

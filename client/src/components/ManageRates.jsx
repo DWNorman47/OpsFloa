@@ -102,6 +102,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
     worker_dm_admins: settings?.worker_dm_admins ?? false,
     worker_dm_workers: settings?.worker_dm_workers ?? false,
     location_ping_while_stationary: settings?.location_ping_while_stationary ?? false,
+    map_provider: settings?.map_provider ?? 'google',
     daily_checklist_clockin_prompt: settings?.daily_checklist_clockin_prompt ?? true,
     field_shared_project: settings?.field_shared_project ?? true,
     field_show_overhead_projects: settings?.field_show_overhead_projects ?? true,
@@ -205,6 +206,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
       worker_dm_admins: settings.worker_dm_admins ?? false,
       worker_dm_workers: settings.worker_dm_workers ?? false,
       location_ping_while_stationary: settings.location_ping_while_stationary ?? false,
+      map_provider: settings.map_provider ?? 'google',
       daily_checklist_clockin_prompt: settings.daily_checklist_clockin_prompt ?? true,
       field_shared_project: settings.field_shared_project ?? true,
       field_show_overhead_projects: settings.field_show_overhead_projects ?? true,
@@ -287,6 +289,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
         worker_dm_admins: form.worker_dm_admins,
         worker_dm_workers: form.worker_dm_workers,
         location_ping_while_stationary: form.location_ping_while_stationary,
+        map_provider: form.map_provider,
         daily_checklist_clockin_prompt: form.daily_checklist_clockin_prompt,
         field_shared_project: form.field_shared_project,
         field_show_overhead_projects: form.field_show_overhead_projects,
@@ -588,6 +591,21 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
                 <input type="checkbox" checked={form.location_ping_while_stationary} onChange={e => set('location_ping_while_stationary', e.target.checked)} style={{ display: 'none' }} />
                 <span style={{ ...styles.toggleKnob, transform: form.location_ping_while_stationary ? 'translateX(46px)' : 'translateX(0)' }} />
               </label>
+            </div>
+          )}
+          {form.feature_geolocation && (
+            <div style={styles.row}>
+              <div>
+                <div style={styles.label}>{t.mrMapProvider}</div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.mrMapProviderDesc}</div>
+              </div>
+              <select style={{ ...styles.input, width: 'auto', textAlign: 'left' }} value={form.map_provider} onChange={e => set('map_provider', e.target.value)}>
+                <option value="google">Google Maps</option>
+                <option value="apple">Apple Maps</option>
+                <option value="osm">OpenStreetMap</option>
+                <option value="waze">Waze</option>
+                <option value="bing">Bing Maps</option>
+              </select>
             </div>
           )}
           {form.module_field && (
