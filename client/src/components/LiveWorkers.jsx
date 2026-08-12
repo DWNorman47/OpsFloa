@@ -441,6 +441,8 @@ export default function LiveWorkers({ timezone = '', showInactiveAlerts = true, 
                         : <>📍 Clock-in location<br /></>
                       }
                       In: {formatInTz(w.clock_in_time, timezone, undefined, locale)}
+                      <br />
+                      <MapLink lat={w._pos.lat} lng={w._pos.lng} />
                     </Popup>
                   </Marker>
                 ))}

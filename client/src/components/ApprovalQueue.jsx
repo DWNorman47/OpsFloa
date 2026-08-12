@@ -188,12 +188,12 @@ function LocationHistoryModal({ seed, onClose, t, locale }) {
                     <React.Fragment key={e.id}>
                       {e.clock_in_lat != null && (
                         <Marker position={[Number(e.clock_in_lat), Number(e.clock_in_lng)]} icon={clockInIcon}>
-                          <Popup>🟢 {t.clockIn}<br />{formatDate(e.work_date, locale)} {formatTime(e.start_time)}<br /><MapLink lat={e.clock_in_lat} lng={e.clock_in_lng} label={t.openInMaps} /></Popup>
+                          <Popup>🟢 {t.clockIn}<br />{formatDate(e.work_date, locale)} {formatTime(e.start_time)}<br /><MapLink lat={e.clock_in_lat} lng={e.clock_in_lng} /></Popup>
                         </Marker>
                       )}
                       {e.clock_out_lat != null && (
                         <Marker position={[Number(e.clock_out_lat), Number(e.clock_out_lng)]} icon={clockOutIcon}>
-                          <Popup>🔴 {t.clockOut}<br />{formatDate(e.work_date, locale)} {formatTime(e.end_time)}<br /><MapLink lat={e.clock_out_lat} lng={e.clock_out_lng} label={t.openInMaps} /></Popup>
+                          <Popup>🔴 {t.clockOut}<br />{formatDate(e.work_date, locale)} {formatTime(e.end_time)}<br /><MapLink lat={e.clock_out_lat} lng={e.clock_out_lng} /></Popup>
                         </Marker>
                       )}
                     </React.Fragment>
@@ -752,8 +752,8 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                               <MapContainer center={positions[0]} zoom={14} style={styles.map} scrollWheelZoom={false}>
                                 <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' />
                                 <FitBounds positions={positions} />
-                                {e.clock_in_lat && <Marker position={[parseFloat(e.clock_in_lat), parseFloat(e.clock_in_lng)]} icon={clockInIcon}><Popup>🟢 {t.clockIn}<br />{e.worker_name}<br /><MapLink lat={e.clock_in_lat} lng={e.clock_in_lng} label={t.openInMaps} /></Popup></Marker>}
-                                {e.clock_out_lat && <Marker position={[parseFloat(e.clock_out_lat), parseFloat(e.clock_out_lng)]} icon={clockOutIcon}><Popup>🔴 {t.clockOut}<br />{e.worker_name}<br /><MapLink lat={e.clock_out_lat} lng={e.clock_out_lng} label={t.openInMaps} /></Popup></Marker>}
+                                {e.clock_in_lat && <Marker position={[parseFloat(e.clock_in_lat), parseFloat(e.clock_in_lng)]} icon={clockInIcon}><Popup>🟢 {t.clockIn}<br />{e.worker_name}<br /><MapLink lat={e.clock_in_lat} lng={e.clock_in_lng} /></Popup></Marker>}
+                                {e.clock_out_lat && <Marker position={[parseFloat(e.clock_out_lat), parseFloat(e.clock_out_lng)]} icon={clockOutIcon}><Popup>🔴 {t.clockOut}<br />{e.worker_name}<br /><MapLink lat={e.clock_out_lat} lng={e.clock_out_lng} /></Popup></Marker>}
                               </MapContainer>
                               <div style={styles.mapLegend}>
                                 {e.clock_in_lat
