@@ -4860,3 +4860,11 @@ Correction to the prior tweak: put the space *above* the expand bar back (row
 Collapsed the expand tools back to a single `flex-wrap` row (Edit, Split,
 Comments). Wide = all one line; narrow = Comments wraps beneath Edit/Split, so
 "edit & split above comments" still holds when cramped. Build green.
+
+## 2026-08-12 — Approvals: inline-expandable recent rows
+Recently-approved and recently-rejected rows are now expandable inline (chevron +
+`expandedRecent` Set keyed 'a-'/'r-'+id) instead of opening a modal. Extracted a
+shared `renderRecentDetails(entry, rejected)` panel (approver/rejecter + time,
+reason, source, notes, clock in/out coords + MapLinks, QB sync, and the location-
+history jump) and deleted the old detail modal (its styles left in place, unused).
+`npm run verify` green (1413 server / 288 client).
