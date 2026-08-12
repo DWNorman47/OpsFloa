@@ -4919,3 +4919,15 @@ Per request, reordered the card's 2x2 grid via CSS `order` so left column =
 Regular/Overtime, right column = Total/Entries (reads Regular | Total / Overtime |
 Entries). Tagged all tiles (metric-total/regular/overtime/prevailing/entries).
 Mobile only; desktop row order untouched. Build green.
+
+## 2026-08-12 — PWA boot: loading splash + shorter watchdog
+Blank-screen-on-open has two causes: (1) the gap between JS running (which hides
+the static #prehydrate page) and React painting, stretched by bundle download on
+slow networks/devices; (2) post-deploy stale shell/SW referencing purged /assets
+chunk hashes → React never mounts → blank until the boot watchdog hard-resets.
+Added a `#boot-splash` (logo + CSS spinner) in index.html shown only under
+`html.js` and cleared when React clears #root — so both cases show a spinner, not
+white. It also auto-hides / reveals #prehydrate when the watchdog strips `js`.
+Lowered `GRACE_MS` 12000→8000 in bootwatch.js for faster recovery (still above a
+slow-bundle download; 60s cooldown + fallback still guard against loops). CSP OK
+(style-src unsafe-inline, img-src self). Build green.
