@@ -12,6 +12,7 @@ export default function MemberReportRow({ worker, overtimeEnabled = true, select
   const prevailing = parseFloat(worker.prevailing_hours) || 0;
   return (
     <div
+      className="member-report-row"
       style={{ ...styles.row, ...(selected ? styles.rowSelected : {}) }}
       onClick={onSelect}
       role="button"
@@ -21,6 +22,7 @@ export default function MemberReportRow({ worker, overtimeEnabled = true, select
     >
       {onTogglePin && (
         <button
+          className="member-report-pin"
           style={{ ...styles.pinBtn, ...(pinned ? styles.pinBtnOn : {}) }}
           onClick={e => { e.stopPropagation(); onTogglePin(); }}
           title={pinned ? t.trUnpin : t.trPin}
@@ -28,18 +30,18 @@ export default function MemberReportRow({ worker, overtimeEnabled = true, select
           aria-pressed={pinned}
         >📌</button>
       )}
-      <div style={styles.ident}>
+      <div className="member-report-ident" style={styles.ident}>
         <span style={styles.name}>{worker.full_name}</span>
         <span style={styles.username}>@{worker.username}</span>
       </div>
-      <div style={styles.metrics}>
+      <div className="member-report-metrics" style={styles.metrics}>
         <Metric label={t.totalMetric} value={fmtHours(total)} />
         {regular > 0 && <Metric label={t.regularMetric} value={fmtHours(regular)} color="#2563eb" />}
         {overtimeEnabled && overtime > 0 && <Metric label={t.overtimeMetric} value={fmtHours(overtime)} color="#dc2626" />}
         {prevailing > 0 && <Metric label={t.prevailingMetric} value={fmtHours(prevailing)} color="#d97706" />}
         <Metric label={t.entriesMetric} value={worker.total_entries || 0} />
       </div>
-      <span style={{ ...styles.pick, ...(selected ? styles.pickOn : {}) }}>{selected ? '✓' : '›'}</span>
+      <span className="member-report-pick" style={{ ...styles.pick, ...(selected ? styles.pickOn : {}) }}>{selected ? '✓' : '›'}</span>
     </div>
   );
 }

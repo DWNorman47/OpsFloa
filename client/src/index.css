@@ -3155,6 +3155,24 @@ input, select, textarea {
        calc width already exceeds 100% so it wraps to its own bottom line. */
   }
 
+  /* Team Member report rows become cards: name (with pin + chevron) on top,
+     then the stat tiles in a 2-column grid (two rows of two) below. */
+  .member-report-row {
+    flex-wrap: wrap !important;
+    align-items: center !important;
+  }
+  .member-report-row .member-report-ident { flex: 1 1 auto !important; }
+  .member-report-row .member-report-metrics {
+    order: 10 !important;
+    flex-basis: 100% !important;
+    width: 100% !important;
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 12px 16px !important;
+    margin-top: 4px !important;
+  }
+  .member-report-row .member-report-metrics > * { align-items: flex-start !important; }
+
   /* Analytics stat grid: 2 columns on mobile */
   .analytics-stats {
     grid-template-columns: 1fr 1fr !important;
