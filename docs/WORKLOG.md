@@ -4795,3 +4795,13 @@ Also removed the two clock-in/clock-out MapLink pin links that sat next to "View
 location" — redundant now that the inline map's marker popups link out via the
 company map provider, and they looked awkward. i18n aqExpandRow/aqCollapseRow
 EN/ES. `npm run verify` green.
+
+## 2026-08-12 — Approvals mobile: action buttons on the top line
+Follow-up to the compact rows. On mobile the row was stacking vertically
+(checkbox → details → buttons). Reworked the `.approval-row` mobile rule to a
+wrapping flex row and used flex `order` to put the checkbox + action buttons on
+the top line (buttons pushed right with `margin-left:auto`), with the details
+(`.approval-main`) and any open edit/split/reject form (`.approval-form`) wrapping
+full-width below. Added hook classes approval-check/-main/-actions/-form; actions
+now `flex-wrap` + right-justify so the expanded set (Edit/Split/✓/✕/▾) reflows on
+narrow screens. Desktop layout untouched. `npm run verify` green.
