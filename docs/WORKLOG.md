@@ -4811,3 +4811,10 @@ Moved the Edit and Split buttons out of the right-side action cluster into a
 small `expandTools` toolbar next to the Comments button (all revealed together on
 expand). The action cluster (both desktop and the mobile top-right) is now just
 Accept/Reject/expand icons. `npm run verify` green.
+
+## 2026-08-12 — Approvals mobile: 3-column row with stacked actions
+Reworked the mobile `.approval-row` again per the mockup: three columns —
+checkbox | details (`.approval-main`, flex:1) | actions. Actions stack vertically
+with `flex-direction: column-reverse` so the DOM order (approve, reject, expand)
+renders top→bottom as expand / reject / approve, right-aligned. Forms still wrap
+full-width below (order 3, basis 100%). CSS-only; verify green.
