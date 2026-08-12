@@ -4840,3 +4840,7 @@ Made the "Show details" button *be* the bottom of the card: full-bleed via
 11px text. Dropped the mobile `width:100%`/`flex-basis:100%` override (was fighting
 the calc); the calc width already exceeds 100% so it wraps to its own line.
 `npm run verify` green.
+
+## 2026-08-12 — Approvals: slimmer footer + row spacing
+Trimmed the expand footer bar to `padding: 1px 3px` (thinner) and added
+`marginBottom: 10` to `.approval-row` for a little gap between entries. Build green.
