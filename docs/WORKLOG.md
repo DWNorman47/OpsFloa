@@ -4855,3 +4855,8 @@ wrap-line row-gap above the footer) and trimming the bar's top margin 10→4. Bu
 Correction to the prior tweak: put the space *above* the expand bar back (row
 `gap:12`, bar margin-top 10) but shrink the bar's own height with `line-height:1`,
 `padding:0 3px`, `minHeight:16`. Build green.
+
+## 2026-08-12 — Approvals: tools on one wrapping row
+Collapsed the expand tools back to a single `flex-wrap` row (Edit, Split,
+Comments). Wide = all one line; narrow = Comments wraps beneath Edit/Split, so
+"edit & split above comments" still holds when cramped. Build green.
