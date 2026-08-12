@@ -4868,3 +4868,9 @@ shared `renderRecentDetails(entry, rejected)` panel (approver/rejecter + time,
 reason, source, notes, clock in/out coords + MapLinks, QB sync, and the location-
 history jump) and deleted the old detail modal (its styles left in place, unused).
 `npm run verify` green (1413 server / 288 client).
+
+## 2026-08-12 — Team Member Reports: relocate Deductions/Add Entry
+Moved the per-worker Deductions and Add Entry buttons + their forms from the top
+of the WorkerMetrics panel to below the Details section, inside the
+`billData && hasResults` block, so they surface only after "Generate entries".
+Top of the panel is now just the date range + Generate. Build green.
