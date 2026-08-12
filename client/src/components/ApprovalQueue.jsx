@@ -1086,7 +1086,7 @@ const styles = {
   list:      { display: 'flex', flexDirection: 'column', gap: 16 },
   dayHeader: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', padding: '2px 0 6px', borderBottom: '1px solid #e5e7eb', marginBottom: 8 },
   dayCount:  { background: '#f3f4f6', color: '#6b7280', borderRadius: 10, padding: '1px 7px', fontSize: 11, fontWeight: 700, textTransform: 'none', letterSpacing: 0 },
-  row: { border: '1px solid #e5e7eb', borderRadius: 8, padding: '12px 16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' },
+  row: { border: '1px solid #e5e7eb', borderRadius: 8, padding: '12px 16px', marginBottom: 10, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' },
   rowSelected: { background: '#f0f7ff', borderColor: '#93c5fd' },
   rowCheckbox: { marginTop: 3, flexShrink: 0, cursor: 'pointer', width: 15, height: 15 },
   selectAllBtn: { padding: '4px 12px', background: '#f3f4f6', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', color: '#374151', flex: '0 0 auto' },
@@ -1124,7 +1124,7 @@ const styles = {
   // Full-bleed footer bar: negative margins cancel the card's 12x16 padding so it
   // sits flush against the card's bottom/side borders, with only the bottom corners
   // rounded to match. Thin tap strip that expands the row.
-  expandWideBtn: { boxSizing: 'border-box', width: 'calc(100% + 32px)', margin: '10px -16px -12px -16px', padding: '3px', background: 'none', border: 'none', borderTop: '1px solid #e5e7eb', borderRadius: '0 0 7px 7px', color: '#9ca3af', fontSize: 11, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  expandWideBtn: { boxSizing: 'border-box', width: 'calc(100% + 32px)', margin: '10px -16px -12px -16px', padding: '1px 3px', background: 'none', border: 'none', borderTop: '1px solid #e5e7eb', borderRadius: '0 0 7px 7px', color: '#9ca3af', fontSize: 11, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 },
   rejectForm: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   rejectInput: { padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, minWidth: 160 },
   confirmRejectBtn: { background: '#ef4444', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
