@@ -99,6 +99,13 @@ export function WorkforcePanel() {
     else { next.add(id); setLastOpenedWorker(id); }
     return next;
   });
+  const [reportSearch, setReportSearch] = useState(''); // filter the member list by name/username
+  const [pinnedReportWorkers, setPinnedReportWorkers] = useState(() => new Set()); // pinned workers float to the top of the list
+  const togglePinWorker = (id) => setPinnedReportWorkers(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
   const [reportPage, setReportPage] = useState(0);
 
   // Report section headers, so opening one can scroll to it instead of the page top.
@@ -315,17 +322,38 @@ export function WorkforcePanel() {
               ? <p style={{ color: '#666' }}>{`No ${workerLabelPlural.toLowerCase()} yet.`}</p>
               : (() => {
                   const PAGE = 8;
-                  const pages = Math.max(1, Math.ceil(workers.length / PAGE));
+                  const q = reportSearch.trim().toLowerCase();
+                  const filtered = q
+                    ? workers.filter(w => (w.full_name || '').toLowerCase().includes(q) || (w.username || '').toLowerCase().includes(q))
+                    : workers;
+                  // Pinned workers float to the top; stable sort keeps the rest in order.
+                  const ordered = [...filtered].sort((a, b) => (pinnedReportWorkers.has(b.id) ? 1 : 0) - (pinnedReportWorkers.has(a.id) ? 1 : 0));
+                  const pages = Math.max(1, Math.ceil(ordered.length / PAGE));
                   const page = Math.min(reportPage, pages - 1);
-                  const slice = workers.slice(page * PAGE, page * PAGE + PAGE);
+                  const slice = ordered.slice(page * PAGE, page * PAGE + PAGE);
                   return (
                     <>
+                      <div style={styles.reportSearchRow}>
+                        <input
+                          style={styles.reportSearchInput}
+                          type="search"
+                          value={reportSearch}
+                          onChange={e => { setReportSearch(e.target.value); setReportPage(0); }}
+                          placeholder={t.trSearchWorkers}
+                          aria-label={t.trSearchWorkers}
+                        />
+                      </div>
+                      {ordered.length === 0 ? (
+                        <p style={{ color: '#666', padding: '8px 4px' }}>{t.trNoWorkerMatch}</p>
+                      ) : (
                       <div style={styles.memberTable}>
                         {slice.map(w => (
                           <React.Fragment key={w.id}>
                             <MemberReportRow worker={w} overtimeEnabled={settings?.feature_overtime !== false}
                               selected={expandedReportWorkers.has(w.id)}
-                              onSelect={() => toggleReportWorker(w.id)} />
+                              onSelect={() => toggleReportWorker(w.id)}
+                              pinned={pinnedReportWorkers.has(w.id)}
+                              onTogglePin={() => togglePinWorker(w.id)} />
                             {expandedReportWorkers.has(w.id) && (
                               <div ref={w.id === lastOpenedWorker ? reportPanelRef : undefined}>
                                 <Suspense fallback={<TabLoader />}>
@@ -336,6 +364,7 @@ export function WorkforcePanel() {
                           </React.Fragment>
                         ))}
                       </div>
+                      )}
                       {pages > 1 && (
                         <div style={styles.pager}>
                           <button style={{ ...styles.pagerBtn, ...(page === 0 ? styles.pagerBtnOff : {}) }} disabled={page === 0} onClick={() => setReportPage(p => Math.max(0, p - 1))}>‹ {t.paginationPrev}</button>
@@ -424,6 +453,8 @@ const styles = {
   subheading: { fontSize: 18, fontWeight: 600, margin: '32px 0 16px' },
   sectionToggle: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: '12px 16px', fontSize: 16, fontWeight: 600, color: '#111827', cursor: 'pointer', marginTop: 24, marginBottom: 4, textAlign: 'left', scrollMarginTop: 16 },
   chevron: { fontSize: 11, color: '#6b7280' },
+  reportSearchRow: { margin: '4px 0 8px' },
+  reportSearchInput: { width: '100%', maxWidth: 340, boxSizing: 'border-box', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: 8, fontSize: 14 },
   memberTable: { background: '#fff', borderRadius: 10, boxShadow: '0 1px 6px rgba(0,0,0,0.07)', overflow: 'hidden', marginTop: 4 },
   pager: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, marginTop: 12 },
   pagerBtn: { background: '#fff', border: '1px solid #d1d5db', borderRadius: 7, padding: '6px 14px', fontSize: 13, fontWeight: 600, color: '#374151', cursor: 'pointer' },
