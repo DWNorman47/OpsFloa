@@ -453,7 +453,7 @@ const styles = {
   subheading: { fontSize: 18, fontWeight: 600, margin: '32px 0 16px' },
   sectionToggle: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: '12px 16px', fontSize: 16, fontWeight: 600, color: '#111827', cursor: 'pointer', marginTop: 24, marginBottom: 4, textAlign: 'left', scrollMarginTop: 16 },
   chevron: { fontSize: 11, color: '#6b7280' },
-  reportSearchRow: { margin: '0 0 8px' },
+  reportSearchRow: { margin: '-4px 0 8px' },
   reportSearchInput: { width: '100%', maxWidth: 340, boxSizing: 'border-box', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: 8, fontSize: 14 },
   memberTable: { background: '#fff', borderRadius: 10, boxShadow: '0 1px 6px rgba(0,0,0,0.07)', overflow: 'hidden', marginTop: 4 },
   pager: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, marginTop: 12 },
