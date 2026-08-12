@@ -4767,3 +4767,20 @@ aren't in payroll; returns `approval_note` as the rejection reason + rejecter).
 the shared detail popup (rejection-aware: "Rejected by" + Reason, QuickBooks row
 hidden), and have a Restore button. i18n EN/ES; adminRecentRejectedRoute.test.js
 (4 tests). `npm run verify` green (1413).
+
+## 2026-08-12 — Configurable external map provider for all pin/location links
+Generalized the "open in Google Maps" links into a company setting. New
+`map_provider` string enum (google/apple/osm/waze/bing, default google):
+`server/constants/mapEnums.js` (source of truth), settingsDefaults STRING_KEYS +
+default, admin.js PATCH enum guard, docs/db-enums.md row. `client/utils/maps.js`
+now has `mapUrl(loc, provider)` (coords win, else address search; per-provider URL
+schemes) + `MAP_PROVIDER_NAMES`; `googleMapsUrl` kept as a thin wrapper.
+`useMapProvider()` in SettingsContext (falls back to 'google' outside the provider
+tree / on public pages, so links never break). MapLink reads the provider from
+context and defaults its visible label to the provider name — so every existing
+pin popup and location tag (ApprovalQueue, LiveWorkers) respects the setting with
+no per-callsite change. Added the previously-missing MapLink inside LiveWorkers'
+marker popups. `openInMaps` i18n made provider-agnostic ("Open in maps"). Provider
+`<select>` added to Company Settings under the geolocation section (gated on
+feature_geolocation). Only two client files use Leaflet markers, so "every leaflet
+map" was a bounded surface. `npm run verify` green.
