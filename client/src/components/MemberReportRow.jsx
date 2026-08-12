@@ -26,7 +26,7 @@ export default function MemberReportRow({ worker, overtimeEnabled = true, select
           title={pinned ? t.trUnpin : t.trPin}
           aria-label={pinned ? t.trUnpin : t.trPin}
           aria-pressed={pinned}
-        >{pinned ? '🔒' : '🔓'}</button>
+        >📌</button>
       )}
       <div style={styles.ident}>
         <span style={styles.name}>{worker.full_name}</span>
@@ -55,8 +55,8 @@ function Metric({ label, value, color }) {
 
 const styles = {
   row: { background: '#fff', display: 'flex', alignItems: 'center', gap: 16, padding: '12px 16px', borderBottom: '1px solid #f0f0f0', cursor: 'pointer', flexWrap: 'wrap' },
-  pinBtn: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: '2px 2px', lineHeight: 1, opacity: 0.45, flex: '0 0 auto' },
-  pinBtnOn: { opacity: 1 },
+  pinBtn: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: '2px 2px', lineHeight: 1, opacity: 0.4, transform: 'rotate(40deg)', transition: 'opacity .12s, transform .12s', flex: '0 0 auto' },
+  pinBtnOn: { opacity: 1, transform: 'rotate(0deg) scale(1.1)' },
   rowSelected: { background: '#eef2ff', boxShadow: 'inset 3px 0 0 var(--ops-page-accent, #4338ca)' },
   ident: { display: 'flex', flexDirection: 'column', minWidth: 140 },
   name: { fontWeight: 700, fontSize: 15 },
