@@ -4874,3 +4874,10 @@ Moved the per-worker Deductions and Add Entry buttons + their forms from the top
 of the WorkerMetrics panel to below the Details section, inside the
 `billData && hasResults` block, so they surface only after "Generate entries".
 Top of the panel is now just the date range + Generate. Build green.
+
+## 2026-08-12 — Team Member Reports: inline expand under the row
+Reverted the "panel below the table" layout back to inline expansion: clicking a
+worker now renders WorkerMetrics right under that worker's MemberReportRow (moved
+the render into the slice.map via React.Fragment). New `embedded` prop on
+WorkerMetrics strips the floating-card chrome (margin/shadow/radius) and the
+duplicate name header so it looks like an in-table expansion. Build green.
