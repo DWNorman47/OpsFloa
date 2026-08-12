@@ -4887,3 +4887,12 @@ duplicate name header so it looks like an in-table expansion. Build green.
 worker no longer collapses another (each WorkerMetrics stays mounted with its
 generated bill + date range intact). `lastOpenedWorker` drives the scroll-into-view
 target and only the just-opened panel gets the ref. Build green.
+
+## 2026-08-12 — Team Member Reports: search + pin
+Added a search input (name/username, resets to page 1 on change) at the top of the
+workers-reports section, and a pin toggle at the start of each MemberReportRow
+(🔓 unlocked → 🔒 locked). Pinned workers are stable-sorted to the top of the
+filtered list before pagination. New state in AdminDashboard (`reportSearch`,
+`pinnedReportWorkers` + toggle); MemberReportRow gains `pinned`/`onTogglePin`
+(stopPropagation so it doesn't trigger row expand). i18n trSearchWorkers/
+trNoWorkerMatch/trPin/trUnpin EN+ES. Verify green.
