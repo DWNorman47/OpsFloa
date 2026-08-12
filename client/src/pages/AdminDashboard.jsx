@@ -88,8 +88,17 @@ export function WorkforcePanel() {
   const [tab, setTab] = useState(() => getHashTab() || 'live');
   // Bumped when a payroll run is finalized so the history list below reloads.
   const [payrollHistoryKey, setPayrollHistoryKey] = useState(0);
-  // Team Member Reports: one member's detail panel below the table at a time.
-  const [selectedReportWorker, setSelectedReportWorker] = useState(null);
+  // Team Member Reports: each worker's report expands inline under their row.
+  // A set (not a single id) so opening another worker doesn't collapse/reset the
+  // ones already open — their generated entries and date range stay put.
+  const [expandedReportWorkers, setExpandedReportWorkers] = useState(() => new Set());
+  const [lastOpenedWorker, setLastOpenedWorker] = useState(null); // drives the scroll-into-view, so only the just-opened panel is targeted
+  const toggleReportWorker = (id) => setExpandedReportWorkers(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) { next.delete(id); }
+    else { next.add(id); setLastOpenedWorker(id); }
+    return next;
+  });
   const [reportPage, setReportPage] = useState(0);
 
   // Report section headers, so opening one can scroll to it instead of the page top.
@@ -98,10 +107,10 @@ export function WorkforcePanel() {
   // to it so the detail isn't off-screen. Fires on a *new* selection, not on deselect.
   const reportPanelRef = useRef(null);
   useEffect(() => {
-    if (!selectedReportWorker) return;
+    if (!lastOpenedWorker) return;
     const id = setTimeout(() => reportPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
     return () => clearTimeout(id);
-  }, [selectedReportWorker]);
+  }, [lastOpenedWorker]);
   const toggleSection = key => {
     const opening = !!collapsedSections[key]; // was collapsed → this click opens it
     setCollapsedSections(s => {
@@ -315,10 +324,10 @@ export function WorkforcePanel() {
                         {slice.map(w => (
                           <React.Fragment key={w.id}>
                             <MemberReportRow worker={w} overtimeEnabled={settings?.feature_overtime !== false}
-                              selected={selectedReportWorker === w.id}
-                              onSelect={() => setSelectedReportWorker(id => id === w.id ? null : w.id)} />
-                            {selectedReportWorker === w.id && (
-                              <div ref={reportPanelRef}>
+                              selected={expandedReportWorkers.has(w.id)}
+                              onSelect={() => toggleReportWorker(w.id)} />
+                            {expandedReportWorkers.has(w.id) && (
+                              <div ref={w.id === lastOpenedWorker ? reportPanelRef : undefined}>
                                 <Suspense fallback={<TabLoader />}>
                                   <WorkerMetrics key={w.id} worker={w} embedded currency={settings?.currency ?? 'USD'} companyInfo={companyInfo} overtimeEnabled={settings?.feature_overtime !== false} projectsEnabled={settings?.feature_project_integration !== false} projects={projects} settings={settings} />
                                 </Suspense>
