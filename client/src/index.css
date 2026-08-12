@@ -3131,7 +3131,7 @@ input, select, textarea {
   .approval-row .approval-check { order: 0 !important; }
   .approval-row .approval-main {
     order: 1 !important;
-    flex: 1 1 auto !important;
+    flex: 1 1 0% !important;
     min-width: 0 !important;
     width: auto !important;
     margin-top: 0 !important;
