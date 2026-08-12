@@ -4901,3 +4901,9 @@ trNoWorkerMatch/trPin/trUnpin EN+ES. Verify green.
 Pin-to-top icon changed from 🔓/🔒 lock to a single pushpin 📌: tilted 40° + 0.4
 opacity when unpinned, upright + full opacity + 1.1 scale when pinned (with a short
 transition). Reads as pinning, not locking. Build green.
+
+## 2026-08-12 — Team Member Reports: 2x2 stat card on mobile
+Under max-width 600px, `.member-report-row` now lays out as a card: ident (name +
+username) with the pin and the ›/✓ chevron on the top line, and `.member-report-
+metrics` becomes a 2-col grid (order:10, basis:100%) so the 4–5 stat tiles sit as
+two rows of two, left-aligned. Added hook classes to MemberReportRow. Build green.
