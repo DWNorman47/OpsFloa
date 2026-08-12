@@ -4805,3 +4805,9 @@ the top line (buttons pushed right with `margin-left:auto`), with the details
 full-width below. Added hook classes approval-check/-main/-actions/-form; actions
 now `flex-wrap` + right-justify so the expanded set (Edit/Split/✓/✕/▾) reflows on
 narrow screens. Desktop layout untouched. `npm run verify` green.
+
+## 2026-08-12 — Approvals: Edit/Split beside the comment button
+Moved the Edit and Split buttons out of the right-side action cluster into a
+small `expandTools` toolbar next to the Comments button (all revealed together on
+expand). The action cluster (both desktop and the mobile top-right) is now just
+Accept/Reject/expand icons. `npm run verify` green.
