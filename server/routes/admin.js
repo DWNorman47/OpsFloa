@@ -3037,6 +3037,51 @@ router.get('/entries/recently-approved', requireAdmin, requirePerm('approve_entr
   }
 });
 
+// GET /admin/entries/recently-rejected — mirror of recently-approved for rejected
+// entries. With ?from&to → every rejected entry in the date range; without →
+// the last 24h of rejections. (No payroll-finalization filter — rejected entries
+// aren't in payroll.) approval_note carries the rejection reason; approved_by the
+// admin who rejected it.
+router.get('/entries/recently-rejected', requireAdmin, requirePerm('approve_entries'), async (req, res) => {
+  const companyId = req.user.company_id;
+  const accessIds = req.user.worker_access_ids;
+  const { from, to } = req.query;
+  const hasRange = !!(from || to);
+  try {
+    const params = [companyId];
+    let where = `te.company_id = $1 AND te.status = 'rejected'`;
+    if (hasRange) {
+      if (from) { params.push(from); where += ` AND te.work_date >= $${params.length}::date`; }
+      if (to)   { params.push(to);   where += ` AND te.work_date <= $${params.length}::date`; }
+    } else {
+      where += ` AND te.approved_at >= NOW() - INTERVAL '24 hours'`;
+    }
+    if (accessIds && accessIds.length) { params.push(accessIds); where += ` AND te.user_id = ANY($${params.length})`; }
+    const orderLimit = hasRange
+      ? `ORDER BY te.work_date DESC, u.full_name LIMIT 500`
+      : `ORDER BY te.approved_at DESC LIMIT 100`;
+    const { rows } = await pool.query(
+      `SELECT te.id, te.work_date, te.start_time, te.end_time, te.project_id, te.user_id, te.approved_at,
+              te.notes, te.approval_note, te.clock_source, te.break_minutes, te.wage_type,
+              te.clock_in_lat, te.clock_in_lng, te.clock_out_lat, te.clock_out_lng,
+              COALESCE(u.invoice_name, u.full_name) AS worker_name, p.name AS project_name,
+              approver.full_name AS approved_by_name, cib.full_name AS clocked_in_by_name
+       FROM time_entries te
+       JOIN users u ON te.user_id = u.id
+       LEFT JOIN projects p ON te.project_id = p.id
+       LEFT JOIN users approver ON te.approved_by = approver.id
+       LEFT JOIN users cib ON te.clocked_in_by = cib.id
+       WHERE ${where}
+       ${orderLimit}`,
+      params
+    );
+    res.json(rows);
+  } catch (err) {
+    logger.error({ err }, 'catch block error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // GET /admin/worker-locations?user_id&from&to — a worker's recorded clock-in/out
 // points AND the breadcrumb path across their time entries (any status) in a
 // date range. Feeds the Location history popup. Returns { entries, pings }:
@@ -3387,6 +3432,31 @@ router.patch('/entries/:id/unapprove', requireAdmin, requirePerm('approve_entrie
         catch (err) { logger.error({ err }, '[QBO delete on unapprove]'); }
       });
     }
+  } catch (err) {
+    logger.error({ err }, 'catch block error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// PATCH /admin/entries/:id/unreject — restore a rejected entry back to pending
+// (clears the rejection note/rejecter). Rejected entries were never approved or
+// pushed to QBO, so there's no lock/qbo cleanup to do.
+router.patch('/entries/:id/unreject', requireAdmin, requirePerm('approve_entries'), async (req, res) => {
+  const companyId = req.user.company_id;
+  const accessIds = req.user.worker_access_ids;
+  try {
+    const workerFilter = accessIds && accessIds.length ? `AND user_id = ANY($3)` : '';
+    const params = accessIds && accessIds.length ? [req.params.id, companyId, accessIds] : [req.params.id, companyId];
+    const result = await pool.query(
+      `UPDATE time_entries
+       SET status = 'pending', approval_note = NULL, approved_by = NULL, approved_at = NULL
+       WHERE id = $1 AND company_id = $2 AND status = 'rejected' ${workerFilter}
+       RETURNING *`,
+      params
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Entry not found or not in rejected state' });
+    await logAudit(companyId, req.user.id, req.user.full_name, 'entry.unrejected', 'time_entry', parseInt(req.params.id), null);
+    res.json(result.rows[0]);
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });
