@@ -1126,7 +1126,7 @@ const styles = {
   // Full-bleed footer bar: negative margins cancel the card's 12x16 padding so it
   // sits flush against the card's bottom/side borders, with only the bottom corners
   // rounded to match. Thin tap strip that expands the row.
-  expandWideBtn: { boxSizing: 'border-box', width: 'calc(100% + 32px)', margin: '10px -16px -12px -16px', padding: '0 3px', lineHeight: 1, background: 'none', border: 'none', borderTop: '1px solid #e5e7eb', borderRadius: '0 0 7px 7px', color: '#9ca3af', fontSize: 11, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, minHeight: 16 },
+  expandWideBtn: { boxSizing: 'border-box', width: 'calc(100% + 32px)', margin: '10px -16px -12px -16px', padding: '0 3px', lineHeight: 1, background: 'none', border: 'none', borderTop: '1px solid #e5e7eb', borderRadius: '0 0 7px 7px', color: '#9ca3af', fontSize: 11, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, minHeight: 24 },
   rejectForm: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   rejectInput: { padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, minWidth: 160 },
   confirmRejectBtn: { background: '#ef4444', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
