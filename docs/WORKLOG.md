@@ -4755,3 +4755,15 @@ then 6h prevailing got the OT on a prevailing hour. New opt-in company setting
   `npm run verify` green (1409 server tests).
 
 Compliance note surfaced in the UI help: jurisdiction-sensitive; opt-in.
+
+## Approval Queue: Recently Rejected section
+
+Mirror of the Approved section. `GET /admin/entries/recently-rejected` (24h default
+or ?from&to date range — no payroll-finalization filter since rejected entries
+aren't in payroll; returns `approval_note` as the rejection reason + rejecter).
+`PATCH /admin/entries/:id/unreject` restores rejected→pending. Client: a collapsible
+"Recently rejected / Rejected in range" section driven by the same top date picker
+(the [dateFrom,dateTo] effect now refetches both lists); rows show the reason, open
+the shared detail popup (rejection-aware: "Rejected by" + Reason, QuickBooks row
+hidden), and have a Restore button. i18n EN/ES; adminRecentRejectedRoute.test.js
+(4 tests). `npm run verify` green (1413).
