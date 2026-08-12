@@ -695,13 +695,14 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                 <div key={e.id} className="approval-row" style={{ ...styles.row, ...(selectedIds.has(e.id) ? styles.rowSelected : {}) }}>
                   <input
                     type="checkbox"
+                    className="approval-check"
                     checked={selectedIds.has(e.id)}
                     onChange={() => canApprove && toggleSelect(e.id)}
                     disabled={!canApprove}
                     title={!canApprove ? 'This entry cannot be approved until its end time has passed.' : undefined}
                     style={{ ...styles.rowCheckbox, ...(!canApprove ? { opacity: 0.35, cursor: 'not-allowed' } : {}) }}
                   />
-                  <div style={styles.rowMain}>
+                  <div className="approval-main" style={styles.rowMain}>
                     <div style={styles.worker}>{e.worker_name}</div>
                     <div style={styles.detail}>
                       <span style={styles.project}>{e.project_name}</span>
@@ -780,7 +781,7 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                   </div>
 
                   {editingId === e.id ? (
-                    <div style={styles.editTimesForm}>
+                    <div className="approval-form" style={styles.editTimesForm}>
                       <div style={styles.editTimesRow}>
                         <div>
                           <div style={styles.editTimesLabel}>{t.aqEditDateLabel || 'Date'}</div>
@@ -844,7 +845,7 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                       </div>
                     </div>
                   ) : splittingId === e.id ? (
-                    <div style={styles.splitForm}>
+                    <div className="approval-form" style={styles.splitForm}>
                       <div style={styles.splitTitle}>{t.aqSplitEntry}</div>
                       {splitError && <div style={styles.splitError}>{splitError}</div>}
                       {splitSegments.map((seg, i) => (
@@ -887,7 +888,7 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                       </div>
                     </div>
                   ) : rejectingId === e.id ? (
-                    <div style={styles.rejectForm}>
+                    <div className="approval-form" style={styles.rejectForm}>
                       <div style={{ display: 'flex', flexDirection: 'column' }}>
                         <input style={styles.rejectInput} placeholder={t.reasonOptional} maxLength={500} value={rejectNote} onChange={ev => setRejectNote(ev.target.value)} autoFocus />
                         <div style={{ fontSize: 11, color: '#6b7280', textAlign: 'right', marginTop: 2 }}>{rejectNote.length}/500</div>
@@ -896,7 +897,7 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                       <button style={styles.cancelBtn} onClick={() => { setRejectingId(null); setRejectNote(''); }}>{t.cancel}</button>
                     </div>
                   ) : (
-                    <div style={styles.actions}>
+                    <div className="approval-actions" style={styles.actions}>
                       {isExpanded && <button style={styles.editTimesBtn} onClick={() => startEdit(e)}>✏️ Edit</button>}
                       {isExpanded && <button style={styles.splitBtn} onClick={() => startSplit(e)}>⇌ Split</button>}
                       <button
@@ -1094,7 +1095,7 @@ const styles = {
   wageTag: { color: '#fff', padding: '1px 7px', borderRadius: 10, fontSize: 11, fontWeight: 700 },
   notes: { marginTop: 4, fontSize: 12, color: '#6b7280', fontStyle: 'italic' },
   sourceBadge: { fontSize: 11, color: '#1e40af', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 4, padding: '2px 8px', fontWeight: 600, display: 'inline-block', marginTop: 4 },
-  actions: { display: 'flex', gap: 8, alignItems: 'center' },
+  actions: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' },
   editTimesBtn: { padding: '6px 12px', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: 7, fontWeight: 600, fontSize: 13, cursor: 'pointer' },
   splitBtn:     { padding: '6px 12px', background: '#faf5ff', color: '#7c3aed', border: '1px solid #ddd6fe', borderRadius: 7, fontWeight: 600, fontSize: 13, cursor: 'pointer' },
   editProjectSelect: { padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: 7, fontSize: 13, width: '100%' },

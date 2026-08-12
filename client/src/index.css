@@ -3120,10 +3120,26 @@ input, select, textarea {
     border-radius: 10px !important;
   }
 
-  /* Approval queue rows stack vertically */
+  /* Approval queue rows (mobile): checkbox + action buttons share the top line
+     (buttons pushed to the right), with the entry details wrapping below. */
   .approval-row {
-    flex-direction: column !important;
-    align-items: flex-start !important;
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+  }
+  .approval-row .approval-check { order: 0 !important; }
+  .approval-row .approval-actions { order: 1 !important; margin-left: auto !important; }
+  .approval-row .approval-main {
+    order: 2 !important;
+    flex-basis: 100% !important;
+    width: 100% !important;
+    margin-top: 8px !important;
+  }
+  .approval-row .approval-form {
+    order: 3 !important;
+    flex-basis: 100% !important;
+    width: 100% !important;
+    margin-top: 8px !important;
   }
 
   /* Analytics stat grid: 2 columns on mobile */
