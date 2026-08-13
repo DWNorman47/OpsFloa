@@ -10,6 +10,7 @@ const {
   computeRuleNet,
   applyGroupDeductions,
   applyDeductions,
+  splitDeductionsByTiming,
   groupOpts,
 } = require('../utils/paycheckRun');
 
@@ -145,6 +146,30 @@ describe('applyDeductions — per-paycheck AND grouped deductions together', () 
     ], seguro, rap, rs); // combined 8000 < 11000 exempt
     expect(c1.deductionTotal).toBe(200); // 5% × 4000
     expect(c2.deductionTotal).toBe(200); // Seguro only; RAP base 0 → 0
+  });
+});
+
+describe('splitDeductionsByTiming — per-check vs grouped (shared by run + previews)', () => {
+  const seguro = { id: 's', name: 'Seguro', kind: 'percent', value: 5 };
+  const rap = { id: 'r', name: 'RAP', kind: 'percent', value: 1.5 };
+  const loan = { id: 'l', name: 'Loan', kind: 'fixed', value: 50 }; // a worker deduction
+
+  test('grouped + selected: selected→grouped, the rest→per-check, worker deds per-check', () => {
+    const rs = { deductions: { timing: 'grouped', scope: 'selected', selectedDeductionIds: ['r'] } };
+    const { perCheck, grouped } = splitDeductionsByTiming([seguro, rap], [loan], rs);
+    expect(grouped.map(d => d.id)).toEqual(['r']);
+    expect(perCheck.map(d => d.id).sort()).toEqual(['l', 's']);
+  });
+  test('no ruleset → everything per-check', () => {
+    const { perCheck, grouped } = splitDeductionsByTiming([seguro, rap], [loan], null);
+    expect(grouped).toEqual([]);
+    expect(perCheck.map(d => d.id).sort()).toEqual(['l', 'r', 's']);
+  });
+  test('grouped + scope all → all company deds grouped; worker deds still per-check', () => {
+    const rs = { deductions: { timing: 'grouped', scope: 'all' } };
+    const { perCheck, grouped } = splitDeductionsByTiming([seguro, rap], [loan], rs);
+    expect(grouped.map(d => d.id).sort()).toEqual(['r', 's']);
+    expect(perCheck.map(d => d.id)).toEqual(['l']);
   });
 });
 

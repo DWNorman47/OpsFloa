@@ -486,8 +486,17 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
     const minDailyRules = (otConfig && Array.isArray(otConfig.minDailyRules)) ? otConfig.minDailyRules : [];
     const noClockRules = minDailyRules.filter(r => r.requiresClockin === false && (parseFloat(r.hours) || 0) > 0);
     if (rule === 'daily' && noClockRules.length && range && range.from && range.to) {
-      const activeWeeks = new Set(Object.keys(buckets).map(dk => weekBucketKey(dk, weekStart)));
-      const workedAnyInPeriod = Object.keys(buckets).length > 0;
+      // Pay-rule-window principle: the week/day gates consult the worker's REAL
+      // attendance for the whole week — including clock-ins OUTSIDE the pulled range
+      // (`range.workedDays`, a Set of YMD the loader fills from a widened query) — so a
+      // period that clips a week doesn't drop an earned guarantee. The OUTPUT below
+      // still only pays guarantees for days inside [from,to]; out-of-range days are
+      // consulted, never shown or paid.
+      const extraWorked = (range && range.workedDays instanceof Set) ? range.workedDays : null;
+      const workedDay = d => buckets[d] != null || (extraWorked ? extraWorked.has(d) : false);
+      const allWorked = extraWorked ? [...Object.keys(buckets), ...extraWorked] : Object.keys(buckets);
+      const activeWeeks = new Set(allWorked.map(dk => weekBucketKey(dk, weekStart)));
+      const workedAnyInPeriod = Object.keys(buckets).length > 0; // 'period' gate stays scoped to the pulled period
       for (const dk of eachDateKey(range.from, range.to)) {
         if (buckets[dk] != null) continue;                          // worked day — floored above
         // A rest day CAN carry a no-clock-in guarantee: the guarantee pays its
@@ -508,7 +517,7 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
             gate = weekDaysOf(dk, weekStart).every(d =>
               d === dk                                   // D itself is the day being filled — irrelevant
               || (weekdaysOnly && !isWeekdayKey(d))      // weekends don't count for the weekday gate
-              || buckets[d] != null);                    // otherwise that day must have been worked
+              || workedDay(d));                          // otherwise that day must have been worked (whole week, in or out of range)
           } else {
             gate = activeWeeks.has(weekBucketKey(dk, weekStart)); // 'week'
           }

@@ -419,6 +419,9 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
                 )}
                 {s.reimbursement_total > 0 && <SummaryLine label={t.expensesLabel || 'Expenses'} value={`+ ${formatCurrency(s.reimbursement_total, currency)}`} />}
                 <SummaryLine label={t.totalCostLabel} value={formatCurrency(s.net_pay ?? s.total_cost, currency)} strong />
+                {(s.deferred_deductions || []).length > 0 && (
+                  <div style={styles.deferredNote}>{t.payGroupedDeferred.replace('{names}', s.deferred_deductions.join(', '))}</div>
+                )}
               </div>
 
               {/* ── Inputs used ── */}
@@ -576,6 +579,7 @@ const styles = {
   line: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderBottom: '1px solid #f0f0f0', fontSize: 13.5 },
   lineClickable: { cursor: 'pointer' },
   detailsBody: { marginTop: 4 },
+  deferredNote: { fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '6px 9px', marginTop: 8, lineHeight: 1.4 },
   lineStrong: { fontWeight: 700 },
   lineDate: { fontVariantNumeric: 'tabular-nums', color: '#374151', minWidth: 84 },
   lineMid: { color: '#374151' },
