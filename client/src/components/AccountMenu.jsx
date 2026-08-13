@@ -16,6 +16,7 @@ export default function AccountMenu({ onOpenGuide }) {
   const { user, logout, updateUser } = useAuth();
   const t = useT();
   const [open, setOpen] = useState(false);
+  const [langOpen, setLangOpen] = useState(false);
   const ref = useRef(null);
 
   useEffect(() => {
@@ -27,8 +28,12 @@ export default function AccountMenu({ onOpenGuide }) {
     return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
   }, [open]);
 
+  // Collapse the language sub-popup whenever the whole menu closes.
+  useEffect(() => { if (!open) setLangOpen(false); }, [open]);
+
   const changeLang = async lang => {
     setOpen(false);
+    setLangOpen(false);
     if ((user?.language || 'English') === lang) return;
     try {
       await api.post('/auth/update-language', { language: lang }, { suppressToast: true });
@@ -60,13 +65,22 @@ export default function AccountMenu({ onOpenGuide }) {
             <span className="ami-icon" aria-hidden="true">↻</span>{t.refresh || 'Refresh'}
           </button>
 
-          <div className="account-menu-label">{t.languageAria || 'Language'}</div>
-          <button type="button" role="menuitemradio" aria-checked={lang === 'English'} className={`account-menu-item${lang === 'English' ? ' is-active' : ''}`} onClick={() => changeLang('English')}>
-            <span className="ami-icon" aria-hidden="true">🌐</span>English{lang === 'English' && <span className="ami-check" aria-hidden="true">✓</span>}
-          </button>
-          <button type="button" role="menuitemradio" aria-checked={lang === 'Spanish'} className={`account-menu-item${lang === 'Spanish' ? ' is-active' : ''}`} onClick={() => changeLang('Spanish')}>
-            <span className="ami-icon" aria-hidden="true">🌐</span>Español{lang === 'Spanish' && <span className="ami-check" aria-hidden="true">✓</span>}
-          </button>
+          <div className="account-menu-sub">
+            <button type="button" className="account-menu-item" onClick={() => setLangOpen(o => !o)} aria-haspopup="menu" aria-expanded={langOpen}>
+              <span className="ami-icon" aria-hidden="true">🌐</span>{lang === 'Spanish' ? 'Español' : 'English'}
+              <span className="ami-caret" aria-hidden="true">{langOpen ? '▾' : '▸'}</span>
+            </button>
+            {langOpen && (
+              <div className="account-submenu" role="menu">
+                <button type="button" role="menuitemradio" aria-checked={lang === 'English'} className={`account-menu-item${lang === 'English' ? ' is-active' : ''}`} onClick={() => changeLang('English')}>
+                  English{lang === 'English' && <span className="ami-check" aria-hidden="true">✓</span>}
+                </button>
+                <button type="button" role="menuitemradio" aria-checked={lang === 'Spanish'} className={`account-menu-item${lang === 'Spanish' ? ' is-active' : ''}`} onClick={() => changeLang('Spanish')}>
+                  Español{lang === 'Spanish' && <span className="ami-check" aria-hidden="true">✓</span>}
+                </button>
+              </div>
+            )}
+          </div>
 
           <div className="account-menu-divider" />
           <button type="button" role="menuitem" className="account-menu-item" onClick={() => { setOpen(false); onOpenGuide?.(); }}>
