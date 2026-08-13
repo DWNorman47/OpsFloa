@@ -18,7 +18,7 @@ const { requireAdmin, requirePlan, requireCertifiedPayrollAddon, requirePerm } =
 const { normalizePaycheckRules } = require('../constants/paycheckRuleEnums');
 const { USER_WORKER_TYPES } = require('../constants/userEnums');
 const { projectBelongsToCompany } = require('../utils/tenantRefs');
-const { resolveRuleset, rulesetsForActiveRoles, deductionsForRole, applyDeductions, groupOpts } = require('../utils/paycheckRun');
+const { resolveRuleset, rulesetsForActiveRoles, deductionsForRole, applyDeductions, splitDeductionsByTiming, groupOpts } = require('../utils/paycheckRun');
 const { generatePeriods, groupPeriods, isValidIsoDate, dateRangeDays } = require('../utils/payPeriods');
 const { PERMISSIONS, PERMISSION_KEYS, BUILTIN_ROLES, getUserPermissions, hasPerm } = require('../permissions');
 const { coerceBody } = require('../middleware/coerce');
@@ -1104,6 +1104,9 @@ router.get('/workers/:id/entries', requireAdmin, requirePerm('view_worker_wages'
       gross_wages: st.totals.grossWages, deductions: st.deductions,
       deductions_total: st.totals.deductionsTotal, net_pay: st.totals.netPay,
       overtime_multiplier: st.rates.overtimeMultiplier, prevailing_wage_rate: st.rates.prevailingWageRate,
+      // Grouped/monthly deductions (e.g. RAP) aren't shown on this per-range preview —
+      // they're figured on the payroll run over the whole month. Names for a UI note.
+      deferred_deductions: st.deferredDeductions || [],
     };
 
     res.json({
@@ -3740,22 +3743,8 @@ async function computePayrollRun(companyId, from, to, rulesetId = null) {
       //     which apply when 'selected').
       // Worker-specific rows (loans, garnishments) are always per-paycheck.
       const roleDeds = deductionsForRole(companyDeds, r.w.role_id);
-      const dcfg = r.ruleset && r.ruleset.deductions;
-      let groupedDeds = [], perCheckDeds = [];
-      if (dcfg && dcfg.timing === 'grouped') {
-        if (dcfg.scope === 'selected') {
-          const sel = new Set(dcfg.selectedDeductionIds || []);
-          groupedDeds = roleDeds.filter(d => sel.has(d.id));
-          perCheckDeds = roleDeds.filter(d => !sel.has(d.id));
-        } else {
-          groupedDeds = roleDeds;
-        }
-      } else {
-        perCheckDeds = (dcfg && dcfg.scope === 'selected')
-          ? roleDeds.filter(d => new Set(dcfg.selectedDeductionIds || []).has(d.id))
-          : roleDeds;
-      }
-      perCheckDeds = [...perCheckDeds, ...normalizeWorkerDeductions(wdByUser[r.w.id])];
+      const { perCheck: perCheckDeds, grouped: groupedDeds } =
+        splitDeductionsByTiming(roleDeds, normalizeWorkerDeductions(wdByUser[r.w.id]), r.ruleset);
       const withGross = r.periods.map(p => { const st = stmtFor(p.periodStart + '|' + p.periodEnd, r.w.id); return { ...p, gross: st ? st.totals.grossWages : 0 }; });
       for (const p of applyDeductions(withGross, perCheckDeds, groupedDeds, r.ruleset)) {
         if (!inRange(p)) continue; // wider window was only for correct grouping; output just the checks whose pay date lands in [from,to]

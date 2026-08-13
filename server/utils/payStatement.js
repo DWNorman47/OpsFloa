@@ -8,6 +8,25 @@ const { leaveRateMultipliers, computeWorkerLeave, computeCompanyLeave, otRuleFro
 const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, sickRulesFromSettings } = require('./hoursRules');
 const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = require('./deductions');
 const { splitRateAware, hasSimpleOtConfig } = require('./rateAwareOvertime');
+const { resolveRuleset, deductionsForRole, splitDeductionsByTiming } = require('./paycheckRun');
+const { normalizePaycheckRules } = require('../constants/paycheckRuleEnums');
+
+// Resolve the worker's paycheck ruleset, then split their role's company deductions +
+// personal deductions into the ones that come out every paycheck vs. the ones GROUPED
+// once per pair/month. A per-range preview (an arbitrary date range or one pay period)
+// can only honestly show the PER-CHECK deductions — the grouped ones (exempt + combined
+// gross across the whole group) are figured on the payroll run — so it returns
+// { previewDeductions, deferredNames } and the caller notes the deferred ones.
+function previewDeductionSplit(settings, worker, workerDedRows) {
+  const companyDeds = parseCompanyDeductions(settings.deductions);
+  const workerDeds = normalizeWorkerDeductions(workerDedRows);
+  const rulesets = normalizePaycheckRules(settings.paycheck_rules).rulesets;
+  const resolved = resolveRuleset(rulesets, worker.role_id);
+  const ruleset = resolved && resolved.ruleset ? resolved.ruleset : null;
+  const roleDeds = deductionsForRole(companyDeds, worker.role_id);
+  const { perCheck, grouped } = splitDeductionsByTiming(roleDeds, workerDeds, ruleset);
+  return { previewDeductions: perCheck, deferredNames: grouped.map(d => d.name) };
+}
 
 /**
  * ONE pay statement, produced once, rendered by every pay surface.
@@ -334,13 +353,15 @@ async function workerStatement({ companyId, worker, settings, from, to, explain 
 
   const entries = roundEntriesFromSettings(entriesR.rows, settings, { workerRoleById: { [worker.id]: worker.role_id }, explain });
   const otConfig = otConfigFromSettings(settings, worker.role_id);
-  const deductions = parseCompanyDeductions(settings.deductions).concat(normalizeWorkerDeductions(dedR.rows));
+  const { previewDeductions, deferredNames } = previewDeductionSplit(settings, worker, dedR.rows);
   const weekWorkedDays = new Set((weekWorkedR.rows || []).map(r => r.d));
 
-  return buildPayStatement({
-    worker, entries, reimbursements: reimbR.rows, leave, deductions,
+  const stmt = buildPayStatement({
+    worker, entries, reimbursements: reimbR.rows, leave, deductions: previewDeductions,
     otConfig, projectRateMap, settings, from, to, explain, weekWorkedDays,
   });
+  stmt.deferredDeductions = deferredNames; // grouped/monthly deductions shown at payroll run, not here
+  return stmt;
 }
 
 /**
@@ -396,23 +417,25 @@ async function companyStatements({ companyId, workers, settings, from, to }) {
   const weekWorkedByUser = new Map();
   (weekWorkedR.rows || []).forEach(r => { (weekWorkedByUser.get(r.user_id) || weekWorkedByUser.set(r.user_id, new Set()).get(r.user_id)).add(r.d); });
 
-  const companyDeductions = parseCompanyDeductions(settings.deductions);
   const dedByUser = {};
   dedR.rows.forEach(r => { (dedByUser[r.user_id] = dedByUser[r.user_id] || []).push(r); });
 
   const otConfigByRole = otConfigByRoleFactory(settings);
   for (const w of list) {
-    out.set(w.id, buildPayStatement({
+    const { previewDeductions, deferredNames } = previewDeductionSplit(settings, w, dedByUser[w.id] || []);
+    const stmt = buildPayStatement({
       worker: w,
       entries: byWorker[w.id] || [],
       reimbursements: [],
       leave: leaveByUser.get(w.id) || { sick: 0, vacation: 0 },
-      deductions: companyDeductions.concat(normalizeWorkerDeductions(dedByUser[w.id] || [])),
+      deductions: previewDeductions,
       otConfig: otConfigByRole(w.role_id),
       projectRateMap,
       settings, from, to, explain: false,
       weekWorkedDays: weekWorkedByUser.get(w.id) || null,
-    }));
+    });
+    stmt.deferredDeductions = deferredNames;
+    out.set(w.id, stmt);
   }
   return out;
 }
@@ -470,7 +493,7 @@ async function workerPeriodStatements({ companyId, worker, settings, periods }) 
   const paidAll = roundEntriesFromSettings(entriesR.rows, settings, { workerRoleById: { [worker.id]: worker.role_id } });
   const weekWorkedDays = new Set((weekWorkedR.rows || []).map(r => r.d));
   const otConfig = otConfigFromSettings(settings, worker.role_id);
-  const deductions = parseCompanyDeductions(settings.deductions).concat(normalizeWorkerDeductions(dedR.rows));
+  const { previewDeductions, deferredNames } = previewDeductionSplit(settings, worker, dedR.rows);
   const leaveRules = sickRulesFromSettings(settings, worker.role_id);
   const shiftsByDate = shiftHoursByDate(leaveShifts.rows);
 
@@ -480,9 +503,10 @@ async function workerPeriodStatements({ companyId, worker, settings, periods }) 
     const leave = computeLeaveHours(leaveReqs.rows, shiftsByDate, leaveRules, settings.regular_shift_hours, ps, pe);
     if (entries.length === 0 && leave.sick === 0 && leave.vacation === 0) continue; // leave-only periods still show; fully-empty drop
     const statement = buildPayStatement({
-      worker, entries, reimbursements: [], leave, deductions,
+      worker, entries, reimbursements: [], leave, deductions: previewDeductions,
       otConfig, projectRateMap, settings, from: ps, to: pe, explain: false, weekWorkedDays,
     });
+    statement.deferredDeductions = deferredNames; // grouped/monthly deductions shown at payroll run, not here
     out.push({ period, statement });
   }
   return out;

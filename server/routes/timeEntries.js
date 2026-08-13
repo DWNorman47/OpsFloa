@@ -498,6 +498,7 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
         overtime_multiplier: st.rates.overtimeMultiplier, prevailing_wage_rate: st.rates.prevailingWageRate,
         gross_wages: st.totals.grossWages, deductions: st.deductions,
         deductions_total: st.totals.deductionsTotal, net_pay: st.totals.netWages,
+        deferred_deductions: st.deferredDeductions || [], // grouped/monthly deductions shown at payroll run
       },
     }));
     res.json(result);
