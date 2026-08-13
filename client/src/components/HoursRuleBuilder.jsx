@@ -235,7 +235,16 @@ export default function HoursRuleBuilder({ rules, onChange, title, help, highlig
   // `sickHours`). Map those back so editing a saved rule shows its real values.
   const draftFieldsFromRule = (rule) => {
     switch (rule.type) {
-      case 'min_daily': return rule.hours != null ? { minHours: String(rule.hours) } : {};
+      // min_daily stores `requiresClockin` / `activeWindow`, but the form edits
+      // `minRequiresClockin` / `minActiveWindow`. Without mapping them back, editing
+      // a saved rule resets the clock-in toggle to its default (true) and the
+      // window to 'week' — so "guarantee without a clock-in" and the every-weekday/
+      // every-other-day gate silently revert on the next save.
+      case 'min_daily': return {
+        ...(rule.hours != null ? { minHours: String(rule.hours) } : {}),
+        minRequiresClockin: rule.requiresClockin !== false,
+        minActiveWindow: rule.activeWindow || 'week',
+      };
       case 'sick_value': return {
         ...(rule.hours != null ? { sickHours: String(rule.hours) } : {}),
         leaveApplies: rule.applies || 'both',
