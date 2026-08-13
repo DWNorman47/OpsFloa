@@ -4963,3 +4963,16 @@ shown option rows. Now one row shows the current language (🌐 + name + caret);
 clicking it opens a `.account-submenu` flyout with English/Español (active checked,
 selecting applies + closes). Flyout opens left on desktop, below the row under
 600px so it can't clip. `langOpen` state resets when the menu closes. Build green.
+
+## 2026-08-13 — Fix: min_daily rule reverts "requires clock-in" on edit
+David reported a Sunday "guaranteed hours if worked every other day" rule losing
+its unchecked "requires a clock-in" on refresh. Root cause: HoursRuleBuilder's
+`draftFieldsFromRule` (the edit deserialize) mapped only `hours` for min_daily. The
+engine stores `requiresClockin`/`activeWindow`, but the form edits
+`minRequiresClockin`/`minActiveWindow`; spreading `...rule` doesn't populate those,
+so they fell back to blankRule defaults (true / 'week'). Since save is
+`requiresClockin = minRequiresClockin !== false`, the default-true then persisted
+on the next save — turning the guarantee off. Fixed by mapping both fields back on
+edit (mirrors the documented round/edge fix right above it). Also explains why the
+every-other-day window wasn't sticking. Verify green (1413/288). Follow-up worth
+considering: a client round-trip test for the builder (none exists today).
