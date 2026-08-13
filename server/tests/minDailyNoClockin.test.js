@@ -111,6 +111,23 @@ describe('activeWindow = every_weekday (guarantee a weekday if all OTHER weekday
   });
 });
 
+describe('week gate consults attendance OUTSIDE the pulled range (pay-rule window principle)', () => {
+  // Sunday guarantee on "every weekday that week". Range starts Tuesday, so Monday
+  // (07-06) is out of the pulled range. The gate must still see the real Monday
+  // clock-in via range.workedDays, or the earned Sunday guarantee flickers away.
+  const sunWk = () => otConfig([{ id: 'm', type: 'min_daily', when: { kind: 'weekdays', days: [0] }, hours: 8, requiresClockin: false, activeWindow: 'every_weekday' }]);
+  const RANGE_TUE = { from: '2026-07-07', to: '2026-07-12' }; // Tue → Sun; Monday 07-06 excluded
+  const tueToFri = daysWorked(['2026-07-07', '2026-07-08', '2026-07-09', '2026-07-10']);
+  test('without the widened attendance, clipping Monday drops the Sunday guarantee', () => {
+    const r = computeOT(tueToFri, 'daily', 8, 1, sunWk(), RANGE_TUE);
+    expect(r.regularHours).toBeCloseTo(32); // Sunday not earned — Monday unseen
+  });
+  test('Monday supplied via range.workedDays → Sunday still earns its 8h', () => {
+    const r = computeOT(tueToFri, 'daily', 8, 1, sunWk(), { ...RANGE_TUE, workedDays: new Set(['2026-07-06']) });
+    expect(r.regularHours).toBeCloseTo(40); // 32 worked + 8 guaranteed Sunday
+  });
+});
+
 describe('rest day and a no-clock-in guarantee coexist', () => {
   // A rest-day rule and a min_daily no-clock-in guarantee on the same day are NOT
   // contradictory: an EMPTY rest day still earns the guarantee at the regular rate,

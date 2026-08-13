@@ -40,7 +40,7 @@ const cents = n => Math.round((Number(n) || 0) * 100) / 100;
  * @param opts.from,opts.to      period (may be null for an all-time invoice)
  * @param opts.explain           attach settings_used / leaveDetail + per-entry OT/wage notes
  */
-function buildPayStatement({ worker, entries, reimbursements = [], leave = { sick: 0, vacation: 0 }, deductions = [], otConfig = null, projectRateMap = {}, settings = {}, from = null, to = null, explain = false }) {
+function buildPayStatement({ worker, entries, reimbursements = [], leave = { sick: 0, vacation: 0 }, deductions = [], otConfig = null, projectRateMap = {}, settings = {}, from = null, to = null, explain = false, weekWorkedDays = null }) {
   // 'unpaid' team members are tracked (hours are still computed from their entries) but
   // earn NOTHING. Force every wage RATE to 0 and drop the pay artifacts (guarantee top-up,
   // leave, deductions, per-project prevailing rates) so ALL pay math below yields $0 —
@@ -104,7 +104,7 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     // Daily-rate workers, or premium OT configs (tiers, rest-day, 7th-day,
     // windows, night differential) that need per-band attribution. Prevailing
     // stays flat here until the per-band rate-aware work lands.
-    const ot = computeOT(paid, rule, threshold, weekStart, otConfig, { from, to });
+    const ot = computeOT(paid, rule, threshold, weekStart, otConfig, { from, to, workedDays: weekWorkedDays });
     annotateEntryOvertime(paid, rule, threshold, weekStart, otConfig);
     regularHours = ot.regularHours; overtimeHours = ot.overtimeHours;
     floorDetail = ot.floorDetail || [];
@@ -288,7 +288,7 @@ async function loadProjectRateMap(companyId) {
  * the invoice and (per period) the pay stubs.
  */
 async function workerStatement({ companyId, worker, settings, from, to, explain = false }) {
-  const [entriesR, reimbR, dedR, projectRateMap, leave] = await Promise.all([
+  const [entriesR, reimbR, dedR, projectRateMap, leave, weekWorkedR] = await Promise.all([
     pool.query(
       // work_date AS text — this column wins over te.*'s Date. pg returns DATE as
       // a JS Date, but the rules engine keys on a 'YYYY-MM-DD' string, so a Date
@@ -319,15 +319,27 @@ async function workerStatement({ companyId, worker, settings, from, to, explain 
     ),
     loadProjectRateMap(companyId),
     computeWorkerLeave({ companyId, userId: worker.id, roleId: worker.role_id, settings, from, to, withDetail: explain }),
+    // Worked-day DATES for the whole weeks touching [from,to] (±7d), so a week-based
+    // guarantee gate can see clock-ins just outside the pulled range. Dates only —
+    // these never become entries or pay; they only inform the gate. See computeOT.
+    pool.query(
+      `SELECT DISTINCT to_char(work_date, 'YYYY-MM-DD') AS d
+         FROM time_entries
+        WHERE user_id = $1 AND status = 'approved' AND wage_type = 'regular'
+          AND $2::date IS NOT NULL AND $3::date IS NOT NULL
+          AND work_date >= ($2::date - 7) AND work_date <= ($3::date + 7)`,
+      [worker.id, from || null, to || null]
+    ),
   ]);
 
   const entries = roundEntriesFromSettings(entriesR.rows, settings, { workerRoleById: { [worker.id]: worker.role_id }, explain });
   const otConfig = otConfigFromSettings(settings, worker.role_id);
   const deductions = parseCompanyDeductions(settings.deductions).concat(normalizeWorkerDeductions(dedR.rows));
+  const weekWorkedDays = new Set((weekWorkedR.rows || []).map(r => r.d));
 
   return buildPayStatement({
     worker, entries, reimbursements: reimbR.rows, leave, deductions,
-    otConfig, projectRateMap, settings, from, to, explain,
+    otConfig, projectRateMap, settings, from, to, explain, weekWorkedDays,
   });
 }
 
@@ -346,7 +358,7 @@ async function companyStatements({ companyId, workers, settings, from, to }) {
   const workerRoleById = {};
   list.forEach(w => { workerRoleById[w.id] = w.role_id; });
 
-  const [entriesR, dedR, projectRateMap, leaveByUser] = await Promise.all([
+  const [entriesR, dedR, projectRateMap, leaveByUser, weekWorkedR] = await Promise.all([
     pool.query(
       // ORDER BY is REQUIRED, not cosmetic: rate-aware OT attributes overtime to
       // the chronologically-later hours and prices each at its own rate, so the
@@ -365,11 +377,24 @@ async function companyStatements({ companyId, workers, settings, from, to }) {
     ),
     loadProjectRateMap(companyId),
     computeCompanyLeave({ companyId, workers: list, settings, from, to }),
+    // Worked-day DATES for the whole weeks touching [from,to] (±7d), per worker, so a
+    // week-based guarantee gate sees clock-ins just outside the pulled range. Dates
+    // only — never entries or pay. See the pay-rule-window principle in computeOT.
+    pool.query(
+      `SELECT te.user_id, to_char(te.work_date, 'YYYY-MM-DD') AS d
+         FROM time_entries te
+        WHERE te.company_id = $1 AND te.status = 'approved' AND te.wage_type = 'regular'
+          AND te.work_date >= ($2::date - 7) AND te.work_date <= ($3::date + 7)
+        GROUP BY te.user_id, te.work_date`,
+      [companyId, from, to]
+    ),
   ]);
 
   const paidRows = roundEntriesFromSettings(entriesR.rows, settings, { workerRoleById });
   const byWorker = {};
   paidRows.forEach(e => { (byWorker[e.user_id] = byWorker[e.user_id] || []).push(e); });
+  const weekWorkedByUser = new Map();
+  (weekWorkedR.rows || []).forEach(r => { (weekWorkedByUser.get(r.user_id) || weekWorkedByUser.set(r.user_id, new Set()).get(r.user_id)).add(r.d); });
 
   const companyDeductions = parseCompanyDeductions(settings.deductions);
   const dedByUser = {};
@@ -386,6 +411,7 @@ async function companyStatements({ companyId, workers, settings, from, to }) {
       otConfig: otConfigByRole(w.role_id),
       projectRateMap,
       settings, from, to, explain: false,
+      weekWorkedDays: weekWorkedByUser.get(w.id) || null,
     }));
   }
   return out;
@@ -406,7 +432,7 @@ async function workerPeriodStatements({ companyId, worker, settings, periods }) 
   const minDate = list.reduce((m, p) => (day(p.period_start) < m ? day(p.period_start) : m), day(list[0].period_start));
   const maxDate = list.reduce((m, p) => (day(p.period_end) > m ? day(p.period_end) : m), day(list[0].period_end));
 
-  const [entriesR, dedR, projectRateMap, leaveReqs, leaveShifts] = await Promise.all([
+  const [entriesR, dedR, projectRateMap, leaveReqs, leaveShifts, weekWorkedR] = await Promise.all([
     pool.query(
       `SELECT te.*, p.name as project_name, to_char(te.work_date, 'YYYY-MM-DD') AS work_date
        FROM time_entries te LEFT JOIN projects p ON te.project_id = p.id
@@ -430,9 +456,19 @@ async function workerPeriodStatements({ companyId, worker, settings, periods }) 
        WHERE user_id = $1 AND company_id = $2 AND shift_date >= $3::date AND shift_date <= $4::date`,
       [worker.id, companyId, minDate, maxDate]
     ),
+    // Worked-day DATES for the whole weeks touching the span (±7d), so each period's
+    // week-based guarantee gate sees clock-ins in adjacent periods / just outside the
+    // span. Dates only — never entries or pay. See the pay-rule-window principle.
+    pool.query(
+      `SELECT DISTINCT to_char(work_date, 'YYYY-MM-DD') AS d FROM time_entries
+        WHERE user_id = $1 AND status = 'approved' AND wage_type = 'regular'
+          AND work_date >= ($2::date - 7) AND work_date <= ($3::date + 7)`,
+      [worker.id, minDate, maxDate]
+    ),
   ]);
 
   const paidAll = roundEntriesFromSettings(entriesR.rows, settings, { workerRoleById: { [worker.id]: worker.role_id } });
+  const weekWorkedDays = new Set((weekWorkedR.rows || []).map(r => r.d));
   const otConfig = otConfigFromSettings(settings, worker.role_id);
   const deductions = parseCompanyDeductions(settings.deductions).concat(normalizeWorkerDeductions(dedR.rows));
   const leaveRules = sickRulesFromSettings(settings, worker.role_id);
@@ -445,7 +481,7 @@ async function workerPeriodStatements({ companyId, worker, settings, periods }) 
     if (entries.length === 0 && leave.sick === 0 && leave.vacation === 0) continue; // leave-only periods still show; fully-empty drop
     const statement = buildPayStatement({
       worker, entries, reimbursements: [], leave, deductions,
-      otConfig, projectRateMap, settings, from: ps, to: pe, explain: false,
+      otConfig, projectRateMap, settings, from: ps, to: pe, explain: false, weekWorkedDays,
     });
     out.push({ period, statement });
   }
