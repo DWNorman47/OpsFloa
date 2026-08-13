@@ -4946,3 +4946,13 @@ The solid accent initials circle looked heavy next to the thin outline chat/bell
 icons. Replaced with a feather "user" outline icon styled to match them (color
 #475569, 6px pad, rounded hover, accent tint + soft bg on open). Dropped the
 initials helper. Build green.
+
+## 2026-08-12 — SuperAdmin: on-demand staging refresh + weekly schedule
+The prod→staging copy is the `sync-staging-db.yml` GitHub Actions workflow. Added
+`POST /superadmin/sync-staging` (super-admin; 403 on production) that dispatches it
+via the GitHub REST API using env vars GH_ACTIONS_TOKEN + GH_ACTIONS_REPO (optional
+GH_ACTIONS_REF, default 'main'). SuperAdmin → Demo Workspace tab now shows a "Copy
+production → staging" card on non-prod hosts (prodHost check on hostname; server
+enforces too). Dropped the workflow schedule from nightly (`0 4 * * *`) to weekly
+Mondays (`0 4 * * 1`). NOTE: needs the two env vars set on the staging server + a
+GitHub token with actions:write for the button to work. Verify green.
