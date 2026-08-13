@@ -60,9 +60,13 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
   // "N days × rate/day" (which reconciles to the total) instead of an "/hr" line
   // that can't be checked against the hours shown.
   const isDaily = rate_type === 'daily';
-  const regularPayLabel = isDaily && regular_days != null
-    ? (t.regularPayDaily || 'Regular Pay ({days} days × {rate}/day)')
-        .replace('{days}', regular_days).replace('{rate}', fmtMoney(workerRate))
+  const regularPayLabel = isDaily
+    // Days-form when regular pay is purely worked days × rate; plain label when it also
+    // includes guaranteed extra hours (priced at daily ÷ 8), so "/hr" is never shown for a daily worker.
+    ? (regular_days != null
+        ? (t.regularPayDaily || 'Regular Pay ({days} days × {rate}/day)')
+            .replace('{days}', regular_days).replace('{rate}', fmtMoney(workerRate))
+        : t.regularPay)
     : `${t.regularPay} (${fmtMoney(workerRate)}/hr)`;
   const totalHours = regular_hours + overtime_hours + prevailing_hours;
   const overtimeEnabled = settings?.feature_overtime !== false;

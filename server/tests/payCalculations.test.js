@@ -310,6 +310,15 @@ describe('computeDailyPayCosts', () => {
     expect(days).toBe(5);
   });
 
+  test('OT hourly is the daily rate ÷ 8, not ÷ the threshold', () => {
+    // $800/day, OT after 10h (threshold 10), worked 12h → 2h OT.
+    const entries = [entry('2024-01-01', '06:00', '18:00')]; // 12h
+    const { regularCost, overtimeCost } = computeDailyPayCosts(entries, 'daily', 10, 800, 1.5);
+    expect(regularCost).toBe(800);
+    // 2h × (800 ÷ 8) × 1.5 = 2 × 100 × 1.5 = 300  (NOT 800 ÷ 10 → 240)
+    expect(overtimeCost).toBeCloseTo(300, 2);
+  });
+
   test('10-hour day with $200 rate, 8h threshold, 1.5× = $75 OT cost', () => {
     // 2h OT at (200/8) * 1.5 = 25 * 1.5 = 37.5/hr → 2h = $75
     const entries = [entry('2024-01-01', '07:00', '17:00')]; // 10h
@@ -350,14 +359,15 @@ describe('computeDailyPayCosts', () => {
     expect(overtimeCost).toBe(0);
   });
 
-  test('weekly OT with daily rate: 45h week, 5h OT at (200/40)*1.5 = $37.50', () => {
-    // On weekly rules the threshold is 40, so hourly OT rate = 200/40 = 5 × 1.5 = 7.50
-    // 5h OT × 7.50 = $37.50 OT cost. 5 days × 200 = $1000 regular.
+  test('weekly OT with daily rate: OT hourly is daily ÷ 8, not ÷ the 40h threshold', () => {
+    // The daily rate covers a standard 8h day, so the OT hourly = 200 ÷ 8 = 25 (NOT
+    // 200 ÷ 40 = 5, which would treat the daily rate as covering a whole 40h week).
+    // 5h OT × 25 × 1.5 = $187.50. 5 days × 200 = $1000 regular.
     const entries = ['2024-01-01', '2024-01-02', '2024-01-03', '2024-01-04', '2024-01-05']
       .map(d => entry(d, '08:00', '17:00')); // 9h each = 45h week
     const { regularCost, overtimeCost } = computeDailyPayCosts(entries, 'weekly', 40, 200, 1.5);
     expect(regularCost).toBe(1000);
-    expect(overtimeCost).toBeCloseTo(37.5, 2);
+    expect(overtimeCost).toBeCloseTo(187.5, 2);
   });
 });
 

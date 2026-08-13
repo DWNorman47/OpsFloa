@@ -138,13 +138,14 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     }
     totalHours = regularHours + overtimeHours + prevailingHours;
     if (rateType === 'daily') {
-      const dc = computeDailyPayCosts(paid, rule, threshold, rate, otMult, otConfig);
-      // A guaranteed day (min_daily no-clock-in) has no worked entry, so
-      // computeDailyPayCosts doesn't count it — but a daily-rate worker still earns
-      // a full daily rate for that day. Each 'guarantee' floor row is one empty day.
-      const guaranteeDays = floorDetail.filter(f => f.kind === 'guarantee').length;
-      regularDays = dc.days + guaranteeDays;
-      regularCostRaw = dc.regularCost + guaranteeDays * rate;
+      const dailyHours = parseFloat(settings.regular_shift_hours) || 8; // daily rate ÷ standard day (8) → hourly
+      const dc = computeDailyPayCosts(paid, rule, threshold, rate, otMult, otConfig, dailyHours);
+      // Worked days pay a flat daily rate (they showed up). Guaranteed EXTRA hours
+      // (min_daily no-clock-in, no worked entry) are paid at the hourly rate — daily ÷ 8
+      // — per guaranteed hour, so a 4h guarantee is half a day's pay, not a whole one.
+      const guaranteeHours = floorDetail.filter(f => f.kind === 'guarantee').reduce((s, f) => s + (parseFloat(f.hours) || 0), 0);
+      regularDays = guaranteeHours > 0 ? null : dc.days; // days-form label only when it reconciles to days × rate
+      regularCostRaw = dc.regularCost + guaranteeHours * dc.hourly;
       overtimeCostRaw = dc.overtimeCost;
     } else {
       regularCostRaw = regularHours * rate;
