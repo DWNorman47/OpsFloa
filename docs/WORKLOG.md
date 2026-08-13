@@ -5009,3 +5009,13 @@ worked Sunday hours at 2×, so the rest-day rule is redundant AND blocks the
 guarantee. Added regression tests locking the intended interaction. 1417 green.
 Possible follow-up: warn in the builder when a day is both a rest day and has a
 no-clock-in guarantee.
+
+## 2026-08-13 — Warn on rest-day + no-clock-in-guarantee conflict
+Added a rule-list warning in HoursRuleBuilder when any weekday is both a rest_day
+and a min_daily requiresClockin=false guarantee — the engine skips guarantees on
+rest days (payCalculations.js:482), so it was silently a no-op (exactly David's Sun
+case). Computes the day intersection from each rule's `when`, renders an amber/red
+banner naming the day(s) + the fix. New i18n hrRestGuaranteeWarn EN/ES. Also
+confirmed via repro that with the rest-day rule removed, an empty Sunday pays 8h at
+REGULAR and a worked Sunday pays 2x via the window rule — matching David's intent.
+Verify green (1417).
