@@ -9,6 +9,7 @@ const {
   deductionsForRole,
   computeRuleNet,
   applyGroupDeductions,
+  applyDeductions,
   groupOpts,
 } = require('../utils/paycheckRun');
 
@@ -115,6 +116,35 @@ describe('applyGroupDeductions — combine the group, exempt once, deduct on the
     ], ded, rs);
     expect(c2.base).toBe(2000);          // own 3000 − 1000 exempt (NOT the combined 6000)
     expect(c2.deductionTotal).toBe(200); // 10% of 2000
+  });
+});
+
+describe('applyDeductions — per-paycheck AND grouped deductions together', () => {
+  const seguro = [{ id: 's', name: 'Seguro Social', kind: 'percent', value: 5, cap: null }];   // every check
+  const rap = [{ id: 'r', name: 'RAP', kind: 'percent', value: 1.5, cap: null }];               // grouped, monthly
+  const rs = { deductions: { exemptAmountCents: 1100000 } }; // $11,000 exempt on the grouped set
+
+  test('Seguro Social comes out every check; RAP only on the flagged check (on combined − exempt)', () => {
+    const [c1, c2] = applyDeductions([
+      { groupKey: '0', deductionsApply: false, gross: 6000 },
+      { groupKey: '0', deductionsApply: true, gross: 6000 },
+    ], seguro, rap, rs);
+    // Check 1: only Seguro Social 5% × 6000 = 300.
+    expect(c1.deductionTotal).toBe(300);
+    expect(c1.net).toBe(5700);
+    // Check 2: Seguro 300 + RAP 1.5% × (12000 − 11000) = 300 + 15 = 315.
+    expect(c2.deductionTotal).toBe(315);
+    expect(c2.net).toBe(5685);
+    expect(c2.lines.map(l => l.name).sort()).toEqual(['RAP', 'Seguro Social']);
+  });
+
+  test('below the exempt: RAP is 0 but Seguro Social still comes out of every check', () => {
+    const [c1, c2] = applyDeductions([
+      { groupKey: '0', deductionsApply: false, gross: 4000 },
+      { groupKey: '0', deductionsApply: true, gross: 4000 },
+    ], seguro, rap, rs); // combined 8000 < 11000 exempt
+    expect(c1.deductionTotal).toBe(200); // 5% × 4000
+    expect(c2.deductionTotal).toBe(200); // Seguro only; RAP base 0 → 0
   });
 });
 

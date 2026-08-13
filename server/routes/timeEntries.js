@@ -489,6 +489,8 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
         vacation_hours: n2(st.hours.vacation),
         // Priced by the shared engine (the stub used to recompute these on the client).
         rate: st.rates.rate,
+        rate_type: st.rates.rateType,
+        regular_days: st.hours.regularDays,
         regular_cost: st.cost.regular, overtime_cost: st.cost.overtime, prevailing_cost: st.cost.prevailing,
         night_cost: st.cost.night,
         guarantee_cost: st.cost.guarantee, sick_cost: st.cost.sick, vacation_cost: st.cost.vacation,

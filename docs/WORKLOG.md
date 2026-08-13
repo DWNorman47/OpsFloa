@@ -5019,3 +5019,67 @@ banner naming the day(s) + the fix. New i18n hrRestGuaranteeWarn EN/ES. Also
 confirmed via repro that with the rest-day rule removed, an empty Sunday pays 8h at
 REGULAR and a worked Sunday pays 2x via the window rule — matching David's intent.
 Verify green (1417).
+
+## 2026-08-13 — Rest day + no-clock-in guarantee now COEXIST (behavior change)
+Per David: he wants both to apply — guaranteed hours (regular rate) on the rest day
+AND double for clocked-in hours. Removed the guarantee loop's `restDays` skip in
+payCalculations.js so an EMPTY rest day earns its min_daily no-clock-in guarantee at
+the regular rate; a WORKED rest day still goes through the rest-day premium branch
+(no guarantee). Reverted the rest-day/guarantee conflict WARNING + its i18n added an
+hour earlier (no longer a conflict). Flipped the tests: empty rest-day Sunday → 48
+reg / 0 OT; worked rest-day Sunday → 40 reg / 8 OT @2x. NOTE: this is a company-wide
+behavior change — any tenant with both a rest-day rule and a same-day no-clock-in
+guarantee will now start paying that guarantee. 1418 green.
+
+## 2026-08-13 — Pay stub: daily-rate regular pay was labeled "/hr"
+David's Honduran stub showed "Regular Pay (L 575.90/hr)" with 111h59m but L 5,759 —
+which is 10 days × 575.90/day (a daily-rate worker). The PAY was correct; the LABEL
+lied ("/hr") and showed hours, so it couldn't be traced. Fix: computeDailyPayCosts
+now returns `days`; buildPayStatement exposes `hours.regularDays`; the /pay-stubs
+flattener passes `rate_type` + `regular_days`; PayStubView renders "N days ×
+rate/day" for daily workers (hourly unchanged). i18n regularPayDaily EN/ES. Tests:
+computeDailyPayCosts.days=5 assertion. NOTE not yet addressed: for daily-rate
+workers, sick/vacation leave is still priced hours × daily_rate in payStatement.js
+(likely wrong) — flagged for a separate look. Other surfaces: WorkerMetrics already
+shows /day correctly (InputsUsed); paycheck PDF uses a different data path. 1418 green.
+
+## 2026-08-13 — Daily-rate guarantee pay, multi-expand, deduction-grouping finding
+Three asks from David:
+1. **Daily-rate guaranteed days** (FIXED): `computeDailyPayCosts` counts days only from
+   worked entries, so a guaranteed-only day (min_daily no-clock-in) paid a daily worker
+   nothing. `buildPayStatement` now adds `guaranteeDays × dailyRate` (and to
+   `hours.regularDays`). Test: 5 worked + 1 guaranteed = 6 × $200 = $1200.
+2. **Multiple expansions** (FIXED): WorkerMetrics `openLine` (single value) → a Set, so
+   several pay-detail rows can be open at once.
+3. **RAP "once per month" shows each period** (EXPLAINED, not fixed): the WorkerMetrics
+   "Pay Summary" bill and the legacy per-period pay stubs go through
+   `workerStatement`→`buildPayStatement`→`payStubTotals`, which applies worker deductions
+   RAW — each deduction on that range's gross, with NO exempt amount and NO grouping.
+   The paycheck-rule settings (once per calendar month, exempt 11903.13, combined base,
+   last check) are only applied by the actual PAYROLL RUN (admin.js register at ~3625 via
+   resolveRuleset + applyGroupDeductions + exempt). So the preview's RAP (1.5% × 5759 =
+   86.39 every period) does NOT match a real run (which, with gross < the 11903.13 exempt,
+   would be 0). This is the parked "grouped-payroll edges." A real fix = make the preview
+   surfaces resolve the ruleset + group across the worker's pay periods (substantial,
+   money-critical) — pending David's go-ahead on approach. 1419 tests green.
+
+## 2026-08-13 — Payroll: cut checks on schedule + per-deduction timing
+David: checks must be issued on the pay schedule throughout the month; some
+deductions are per-paycheck, some per-month. Two coupled fixes:
+1. computePayrollRun: was `groupPeriods(generatePeriods(schedule, from, to))` — a
+   partial run misflagged the group's "last check." Now generates [from−45, to+45],
+   groups against the full schedule, outputs only checks with payDate ∈ [from,to]
+   (`inRange`). Safe to run any single check. `/admin/payroll-periods` now lists one
+   entry PER CHECK (period_end ≤ today; genTo = today+45 so flagging is correct),
+   run_from=run_to=payDate — so you cut checks as their periods close, not per closed
+   group.
+2. New `applyDeductions(periods, perCheckDeds, groupedDeds, ruleset)` in paycheckRun:
+   per-check deductions on every check's own gross + grouped on the flagged check
+   (combined − exempt, ruleset cap), one combined min-net floor, lines footed by
+   largest-remainder. Run split: timing 'grouped'+scope 'selected' → selected =
+   grouped, the rest of the role's company deductions = per-paycheck (previously
+   dropped). Worker deductions always per-paycheck. Tests: applyDeductions (Seguro
+   every check + RAP on flagged/combined; below-exempt → RAP 0, Seguro still applies)
+   and the daily-guarantee. NOTE behavior change for other tenants: grouped+selected
+   no longer excludes non-selected role deductions — they now come out per check.
+   1421 tests green.

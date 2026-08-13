@@ -8,6 +8,7 @@
 
 jest.mock('../db', () => ({ query: jest.fn() }));
 const { buildPayStatement } = require('../utils/payStatement');
+const { otConfigFromSettings } = require('../utils/hoursRules');
 
 const SETTINGS = {
   overtime_threshold: 8, week_start: 1, overtime_multiplier: 1.5,
@@ -51,6 +52,26 @@ describe('buildPayStatement — hours + reconciliation', () => {
     expect(a.cost).toEqual(b.cost);
     expect(a.totals).toEqual(b.totals);
     expect(a.hours).toEqual(b.hours);
+  });
+});
+
+describe('buildPayStatement — daily rate + no-clock-in guarantee', () => {
+  test('a guaranteed-only day earns a full daily rate', () => {
+    const otConfig = otConfigFromSettings({ hours_rules: JSON.stringify({ enabled: true, rules: [
+      { id: 'sun', type: 'min_daily', when: { kind: 'weekdays', days: [0] }, hours: 8, requiresClockin: false, activeWindow: 'every_weekday' },
+    ] }) });
+    const monFri = ['2026-07-06', '2026-07-07', '2026-07-08', '2026-07-09', '2026-07-10']
+      .map(d => entry({ work_date: d, start_time: '08:00:00', end_time: '16:00:00' }));
+    const st = buildPayStatement({
+      worker: worker({ hourly_rate: 200, rate_type: 'daily' }),
+      entries: monFri, reimbursements: [], leave: { sick: 0, vacation: 0 },
+      deductions: [], otConfig, projectRateMap: {}, settings: SETTINGS,
+      from: '2026-07-06', to: '2026-07-12', // range includes the empty Sunday 07-12
+    });
+    // 5 worked days + 1 guaranteed Sunday = 6 days × $200 = $1200.
+    expect(st.hours.regularDays).toBe(6);
+    expect(st.cost.regular).toBe(1200);
+    expect(st.totals.grossWages).toBe(1200);
   });
 });
 

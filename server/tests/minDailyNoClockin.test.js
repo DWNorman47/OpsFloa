@@ -111,21 +111,30 @@ describe('activeWindow = every_weekday (guarantee a weekday if all OTHER weekday
   });
 });
 
-describe('rest day suppresses the no-clock-in guarantee', () => {
-  // A day designated a rest day is never given a guarantee floor, even if its
-  // window gate is satisfied — the two are contradictory (a rest day is premium-
-  // if-worked, not a base-hours-guaranteed day). Regression for a real config
-  // where a "Sun rest day 2x" rule silently cancelled a "Sun guarantee 8h" rule.
+describe('rest day and a no-clock-in guarantee coexist', () => {
+  // A rest-day rule and a min_daily no-clock-in guarantee on the same day are NOT
+  // contradictory: an EMPTY rest day still earns the guarantee at the regular rate,
+  // while an actually-worked rest day is paid at the rest-day premium. The guarantee
+  // is opt-in per day, so if an admin created it for a rest day it should pay.
   const sunGuarantee = { id: 'm', type: 'min_daily', when: { kind: 'weekdays', days: [0] }, hours: 8, requiresClockin: false, activeWindow: 'every_weekday' };
+  const restSun = { id: 'rest', type: 'rest_day', when: { kind: 'weekdays', days: [0] }, mult: 2 };
   const monFri = ['2026-07-06', '2026-07-07', '2026-07-08', '2026-07-09', '2026-07-10'];
   test('Sunday guarantee fires without a rest-day rule', () => {
     const r = computeOT(daysWorked(monFri), 'daily', 8, 1, otConfig([sunGuarantee]), WK);
     expect(r.regularHours).toBeCloseTo(48); // 40 worked + 8 guaranteed Sunday
   });
-  test('Sunday guarantee is suppressed when Sunday is also a rest day', () => {
-    const r = computeOT(daysWorked(monFri), 'daily', 8, 1,
-      otConfig([{ id: 'rest', type: 'rest_day', when: { kind: 'weekdays', days: [0] }, mult: 2 }, sunGuarantee]), WK);
-    expect(r.regularHours).toBeCloseTo(40); // Sunday NOT guaranteed — it's a rest day
+  test('empty rest-day Sunday still earns the guarantee at regular rate', () => {
+    const r = computeOT(daysWorked(monFri), 'daily', 8, 1, otConfig([restSun, sunGuarantee]), WK);
+    expect(r.regularHours).toBeCloseTo(48);   // 40 worked + 8 guaranteed (regular)
+    expect(r.overtimeHours).toBeCloseTo(0);   // guaranteed hours are NOT the rest-day premium
+  });
+  test('a WORKED rest-day Sunday is paid the rest-day premium, not the guarantee', () => {
+    // Mon–Fri + a worked Sunday 07-12 (8h). The worked day takes the rest-day
+    // premium; the guarantee only fills empty days, so it does not also apply here.
+    const r = computeOT(daysWorked([...monFri, '2026-07-12']), 'daily', 8, 1, otConfig([restSun, sunGuarantee]), WK);
+    expect(r.regularHours).toBeCloseTo(40);          // just the Mon–Fri worked hours
+    expect(r.overtimeHours).toBeCloseTo(8);          // Sunday 8h at the rest-day premium
+    expect(r.otBands).toEqual([{ hours: 8, mult: 2 }]);
   });
 });
 

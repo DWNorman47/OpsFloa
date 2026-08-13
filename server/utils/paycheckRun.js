@@ -139,6 +139,60 @@ function applyGroupDeductions(periods, deductions, ruleset) {
 }
 
 /**
+ * The real-world case: SOME deductions come out every paycheck (e.g. Seguro Social),
+ * others once per group (e.g. RAP, monthly, above an exempt threshold). So each check
+ * gets its `perCheckDeds` on its OWN gross, and the group's flagged check ALSO gets
+ * `groupedDeds` on the group's combined gross minus the exempt. The min-net floor and
+ * the ruleset cap apply to the combined result. Returns periods with { deductionTotal,
+ * net, base, exempt, combinedGross, lines }.
+ */
+function applyDeductions(periods, perCheckDeds, groupedDeds, ruleset) {
+  const ded = (ruleset && ruleset.deductions) || {};
+  const combine = !(ded.combineGroup === false);
+  const combined = {};
+  for (const p of periods) combined[p.groupKey] = round2((combined[p.groupKey] || 0) + (p.gross || 0));
+  return periods.map(p => {
+    const g = Math.max(0, round2(p.gross || 0));
+    // Per-paycheck deductions: this check's own gross, every check, no exempt.
+    const pc = computeDeductions(g, perCheckDeds || []);
+    let groupedLines = [], groupedTotal = 0, exempt = 0, base = 0;
+    const combinedGross = combine ? (combined[p.groupKey] || 0) : g;
+    if (p.deductionsApply && (groupedDeds || []).length) {
+      exempt = Math.max(0, (ded.exemptAmountCents || 0) / 100);
+      base = Math.max(0, round2(combinedGross - exempt));
+      const gr = computeDeductions(base, groupedDeds);
+      groupedLines = gr.lines || [];
+      groupedTotal = gr.total || 0;
+      const cap = ded.cap || {};
+      if (cap.type === 'amount' && cap.valueCents > 0) groupedTotal = Math.min(groupedTotal, cap.valueCents / 100);
+      else if (cap.type === 'percent' && cap.valuePct > 0) groupedTotal = Math.min(groupedTotal, round2(base * (cap.valuePct / 100)));
+    }
+    let dedTotal = round2((pc.total || 0) + groupedTotal);
+    // Min-net floor: never push THIS check's take-home below minNet (applies to the
+    // combined per-check + grouped deductions).
+    const minNet = Math.max(0, (ded.minNetCents || 0) / 100);
+    if (g - dedTotal < minNet) dedTotal = Math.max(0, round2(g - minNet));
+    dedTotal = round2(dedTotal);
+
+    // Foot the itemized lines to the (possibly cap/floor-trimmed) total — same
+    // largest-remainder allocation as computeRuleNet so the stub reconciles.
+    let outLines = [...(pc.lines || []), ...groupedLines];
+    const totalCents = Math.round(dedTotal * 100);
+    const rawCents = outLines.map(l => Math.round((Number(l.amount) || 0) * 100));
+    const rawTotalCents = rawCents.reduce((a, c) => a + c, 0);
+    if (rawTotalCents > 0 && rawTotalCents !== totalCents) {
+      const exact = rawCents.map(c => (c * totalCents) / rawTotalCents);
+      const alloc = exact.map(Math.floor);
+      const rem = totalCents - alloc.reduce((a, c) => a + c, 0);
+      const order = exact.map((v, i) => [v - Math.floor(v), i]).sort((a, b) => b[0] - a[0]).map(x => x[1]);
+      for (let k = 0; k < rem && k < order.length; k++) alloc[order[k]] += 1;
+      outLines = outLines.map((l, i) => ({ ...l, amount: alloc[i] / 100 }));
+    }
+    return { ...p, deductionTotal: dedTotal, net: round2(g - dedTotal), base, exempt, combinedGross, lines: outLines };
+  });
+}
+
+/**
  * Flatten a normalized ruleset's nested `deductions.{timing, group:{by, applyOn}}` into
  * the flat `{timing, groupBy, applyOn}` shape groupPeriods expects. Without this, callers
  * passing `ruleset.deductions` straight in leave groupBy/applyOn undefined, so EVERY
@@ -150,4 +204,4 @@ function groupOpts(deductions) {
   return { timing: d.timing, groupBy: g.by, applyOn: g.applyOn };
 }
 
-module.exports = { resolveRuleset, rulesetsForActiveRoles, deductionsForRole, computeRuleNet, applyGroupDeductions, groupOpts };
+module.exports = { resolveRuleset, rulesetsForActiveRoles, deductionsForRole, computeRuleNet, applyGroupDeductions, applyDeductions, groupOpts };

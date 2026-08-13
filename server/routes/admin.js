@@ -18,7 +18,7 @@ const { requireAdmin, requirePlan, requireCertifiedPayrollAddon, requirePerm } =
 const { normalizePaycheckRules } = require('../constants/paycheckRuleEnums');
 const { USER_WORKER_TYPES } = require('../constants/userEnums');
 const { projectBelongsToCompany } = require('../utils/tenantRefs');
-const { resolveRuleset, rulesetsForActiveRoles, deductionsForRole, applyGroupDeductions, groupOpts } = require('../utils/paycheckRun');
+const { resolveRuleset, rulesetsForActiveRoles, deductionsForRole, applyDeductions, groupOpts } = require('../utils/paycheckRun');
 const { generatePeriods, groupPeriods, isValidIsoDate, dateRangeDays } = require('../utils/payPeriods');
 const { PERMISSIONS, PERMISSION_KEYS, BUILTIN_ROLES, getUserPermissions, hasPerm } = require('../permissions');
 const { coerceBody } = require('../middleware/coerce');
@@ -3629,6 +3629,17 @@ async function computePayrollRun(companyId, from, to, rulesetId = null) {
     const s = await getSettings(companyId);
     const weekStart = parseInt(s.week_start ?? 1, 10); // drives the work_week period basis
     const rulesets = normalizePaycheckRules(s.paycheck_rules).rulesets;
+    // Grouping (once-per-month deductions on the group's last check) must be resolved
+    // against the WHOLE group, or a partial run — say cutting one bi-weekly check
+    // mid-month — would wrongly treat that check as the month's last and dump the
+    // month's deductions on it. So generate a window wide enough to contain any group
+    // touching [from,to], group that, then OUTPUT only checks whose pay date is in
+    // [from,to]. A non-final check nets to its own gross; the month's real last check
+    // still carries the combined deduction when its own pay date comes up.
+    const shiftIso = (isoStr, days) => { const dt = new Date(isoStr + 'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate() + days); return dt.toISOString().slice(0, 10); };
+    const genFrom = shiftIso(from, -45);
+    const genTo = shiftIso(to, 45);
+    const inRange = p => p.payDate >= from && p.payDate <= to;
     if (rulesets.length > 1 && rulesetId == null) {
       return {
         from,
@@ -3684,7 +3695,7 @@ async function computePayrollRun(companyId, from, to, rulesetId = null) {
       if (periodsByRuleset[key]) return periodsByRuleset[key];
       let grouped;
       if (!ruleset) grouped = [{ periodStart: from, periodEnd: to, payDate: to, groupKey: '0', deductionsApply: true }];
-      else grouped = groupPeriods(generatePeriods(ruleset.schedule, from, to, weekStart), groupOpts(ruleset.deductions));
+      else grouped = groupPeriods(generatePeriods(ruleset.schedule, genFrom, genTo, weekStart), groupOpts(ruleset.deductions));
       periodsByRuleset[key] = grouped;
       return grouped;
     };
@@ -3696,11 +3707,10 @@ async function computePayrollRun(companyId, from, to, rulesetId = null) {
     // issues — e.g. biweekly with no anchor date, semimonthly with no pay days)
     // from one whose pay date simply falls outside the selected range (e.g. a
     // month-end pay date past `to`).
-    const shiftIso = (isoStr, days) => { const dt = new Date(isoStr + 'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate() + days); return dt.toISOString().slice(0, 10); };
     const notices = [];
     const noticedRulesets = new Set();
     for (const r of ready) {
-      if (!r.ruleset || r.periods.length > 0 || noticedRulesets.has(r.ruleset.id)) continue;
+      if (!r.ruleset || r.periods.some(inRange) || noticedRulesets.has(r.ruleset.id)) continue;
       noticedRulesets.add(r.ruleset.id);
       const wide = generatePeriods(r.ruleset.schedule, shiftIso(from, -400), shiftIso(to, 400), weekStart);
       notices.push({ ruleset_id: r.ruleset.id, ruleset_name: r.ruleset.name || null, reason: wide.length ? 'out_of_range' : 'schedule_incomplete' });
@@ -3720,19 +3730,35 @@ async function computePayrollRun(companyId, from, to, rulesetId = null) {
     // One row (stub) per (worker, check): combine each group, exempt once, deduct on the flagged check.
     const rows = [];
     for (const r of ready) {
-      // A ruleset can restrict which COMPANY deductions apply (scope 'selected' +
-      // the picked ids from the settings checklist). Worker-specific rows (loans,
-      // garnishments) are a per-worker obligation, not part of that pick, so they
-      // always apply. Default scope 'all' → no filtering.
-      let coDeds = deductionsForRole(companyDeds, r.w.role_id);
+      // Split deductions into two timings so some come out every paycheck (Seguro
+      // Social) and others once per group (RAP, monthly):
+      //   timing 'grouped' + scope 'selected' → the SELECTED company deductions are
+      //     grouped (combined gross − exempt, on the group's flagged check); the REST
+      //     of the role's company deductions come out every paycheck.
+      //   timing 'grouped' + scope 'all'      → all grouped.
+      //   timing 'every' (or no ruleset)      → all per-paycheck (scope still filters
+      //     which apply when 'selected').
+      // Worker-specific rows (loans, garnishments) are always per-paycheck.
+      const roleDeds = deductionsForRole(companyDeds, r.w.role_id);
       const dcfg = r.ruleset && r.ruleset.deductions;
-      if (dcfg && dcfg.scope === 'selected') {
-        const sel = new Set(dcfg.selectedDeductionIds || []);
-        coDeds = coDeds.filter(d => sel.has(d.id));
+      let groupedDeds = [], perCheckDeds = [];
+      if (dcfg && dcfg.timing === 'grouped') {
+        if (dcfg.scope === 'selected') {
+          const sel = new Set(dcfg.selectedDeductionIds || []);
+          groupedDeds = roleDeds.filter(d => sel.has(d.id));
+          perCheckDeds = roleDeds.filter(d => !sel.has(d.id));
+        } else {
+          groupedDeds = roleDeds;
+        }
+      } else {
+        perCheckDeds = (dcfg && dcfg.scope === 'selected')
+          ? roleDeds.filter(d => new Set(dcfg.selectedDeductionIds || []).has(d.id))
+          : roleDeds;
       }
-      const deds = [...coDeds, ...normalizeWorkerDeductions(wdByUser[r.w.id])];
+      perCheckDeds = [...perCheckDeds, ...normalizeWorkerDeductions(wdByUser[r.w.id])];
       const withGross = r.periods.map(p => { const st = stmtFor(p.periodStart + '|' + p.periodEnd, r.w.id); return { ...p, gross: st ? st.totals.grossWages : 0 }; });
-      for (const p of applyGroupDeductions(withGross, deds, r.ruleset)) {
+      for (const p of applyDeductions(withGross, perCheckDeds, groupedDeds, r.ruleset)) {
+        if (!inRange(p)) continue; // wider window was only for correct grouping; output just the checks whose pay date lands in [from,to]
         // A schedule issues dates even when a worker has no payable activity.
         // Do not create zero-dollar "checks" that can be finalized/marked paid.
         if (centsOf(p.gross) === 0 && centsOf(p.deductionTotal) === 0 && centsOf(p.net) === 0) continue;
@@ -3814,50 +3840,42 @@ router.get('/payroll-periods', requireAdmin, requirePerm('view_reports'), requir
     const scheduledRulesets = rulesetsForActiveRoles(rulesets, activeWorkerRoles.rows.map(row => row.role_id));
     const todayIso = new Date().toISOString().slice(0, 10);
     const shiftIso = (isoStr, days) => { const dt = new Date(isoStr + 'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate() + days); return dt.toISOString().slice(0, 10); };
-    // Generate up to today (a period's pay date can fall a few days after its work
-    // period ends); the overlap filter below trims periods with no hours either side.
+    // Offer one entry PER CHECK so paychecks can be cut on the pay schedule THROUGHOUT
+    // the month — not held back until a whole monthly group closes. Generate a bit past
+    // today so the current month's structure is complete (needed to know which check
+    // carries the grouped deductions), but only OFFER checks whose work period has
+    // closed (period_end ≤ today) — those are the ones there's something to pay. The run
+    // itself re-groups against the full schedule, so a non-final check nets to its own
+    // gross and the month's real last check still carries the grouped deduction.
     const recentFloor = shiftIso(todayIso, -800);
     const genFrom = shiftIso(firstWork < recentFloor ? recentFloor : firstWork, -45);
-    const genTo = todayIso;
-    // Offer one entry per GROUP, not per check. A grouped ruleset combines a pair/month
-    // of checks behind one exempt threshold; the run must span the WHOLE group or the
-    // exempt is wrongly applied per-check. Each entry carries run_from/run_to = the
-    // group's pay-date window (running exactly that window re-groups identically, since
-    // it contains exactly the group's checks). timing 'every' → each check is its own
-    // group → run_from = run_to = pay_date (unchanged behavior).
+    const genTo = shiftIso(todayIso, 45);
     const seen = new Map();
     for (const rs of scheduledRulesets) {
       const gen = generatePeriods(rs.schedule, genFrom, genTo, weekStart)
         .filter(p => !(p.periodEnd < firstWork || p.periodStart > lastWork));
       const grouped = groupPeriods(gen, groupOpts(rs.deductions));
-      const byGroup = new Map();
-      for (const p of grouped) { (byGroup.get(p.groupKey) || byGroup.set(p.groupKey, []).get(p.groupKey)).push(p); }
-      for (const g of byGroup.values()) {
-        if (!g.length) continue;
-        const payDates = g.map(p => p.payDate).sort();
-        const runFrom = payDates[0], runTo = payDates[payDates.length - 1];
-        const periodStart = g.reduce((mn, p) => (p.periodStart < mn ? p.periodStart : mn), g[0].periodStart);
-        const periodEnd = g.reduce((mx, p) => (p.periodEnd > mx ? p.periodEnd : mx), g[0].periodEnd);
-        // Represent the group by the check the deductions actually land on (else the latest).
-        const flagged = g.find(p => p.deductionsApply) || g[g.length - 1];
-        const key = `${rs.id}|${runFrom}|${runTo}`;
+      for (const p of grouped) {
+        if (p.periodEnd > todayIso) continue; // work period not closed yet — nothing to cut
+        const key = `${rs.id}|${p.payDate}|${p.periodStart}|${p.periodEnd}`;
         if (!seen.has(key)) {
           seen.set(key, {
             ruleset_id: rs.id,
             ruleset_name: rs.name || null,
-            pay_date: flagged.payDate,
-            period_start: periodStart,
-            period_end: periodEnd,
-            run_from: runFrom,
-            run_to: runTo,
-            check_count: g.length,
+            pay_date: p.payDate,
+            period_start: p.periodStart,
+            period_end: p.periodEnd,
+            run_from: p.payDate,
+            run_to: p.payDate,
+            check_count: 1,
+            deducts: !!p.deductionsApply, // this check carries the group's (e.g. monthly) deductions
           });
         }
       }
     }
     const periods = [...seen.values()]
-      .sort((a, b) => (a.run_to < b.run_to ? 1 : a.run_to > b.run_to ? -1 : 0))
-      .slice(0, 60);
+      .sort((a, b) => (a.pay_date < b.pay_date ? 1 : a.pay_date > b.pay_date ? -1 : 0))
+      .slice(0, 120);
     res.json({ periods, rulesets: rulesetOptions });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
