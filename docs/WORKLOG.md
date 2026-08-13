@@ -5109,3 +5109,22 @@ companyStatements/workerPeriodStatements each query distinct regular work_dates 
 server suite 1425 green (2 transient OOM flakes on the all-in-one run cleared with
 --maxWorkers=2). STILL OWED (#2): preview surfaces applying the ruleset grouping so
 RAP reflects the full month there too.
+
+## 2026-08-13 — Pay-rule window #2: previews defer grouped deductions to the run
+The preview surfaces (WorkerMetrics bill via workerStatement, per-period pay stubs
+via workerPeriodStatements, overtime/CSV via companyStatements) applied deductions
+RAW — RAP on every period's gross at 1.5%, ignoring the exempt and once-per-month
+(David's original complaint). Fix: extracted `splitDeductionsByTiming(roleDeds,
+workerDeds, ruleset)` in paycheckRun.js (also now used by computePayrollRun so they
+can't diverge). New `previewDeductionSplit` in payStatement.js resolves the worker's
+ruleset and passes ONLY the per-check deductions to buildPayStatement; the grouped
+ones (RAP) are returned as `deferredDeductions` names. Routes expose
+`deferred_deductions`; WorkerMetrics + PayStubView show an amber note ("Monthly
+deductions (RAP) are figured on the payroll run… not shown on this preview").
+Backward compatible (no ruleset → all per-check, unchanged). companyStatements is
+also used by computePayrollRun but ONLY for gross/hours, so deferring its deductions
+can't affect the run's math. i18n payGroupedDeferred EN/ES. 1428 green. NOTE: full
+month-grouped RAP still only appears in the actual payroll RUN — the previews now
+honestly defer it rather than showing a wrong figure; showing RAP on the exact
+right pay-stub period would need the worker stubs unified onto the ruleset schedule
+(bigger, separate).
