@@ -479,7 +479,11 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
       const workedAnyInPeriod = Object.keys(buckets).length > 0;
       for (const dk of eachDateKey(range.from, range.to)) {
         if (buckets[dk] != null) continue;                          // worked day — floored above
-        if (restDays && restDays.has(weekdayOfDate(dk))) continue;  // don't guarantee a rest day
+        // A rest day CAN carry a no-clock-in guarantee: the guarantee pays its
+        // hours at the REGULAR rate on an empty rest day, while an actually-worked
+        // rest day (a real bucket, handled above) is paid at the rest-day premium.
+        // The two coexist — the guarantee is opt-in per day, so if an admin created
+        // it for a rest day they want it to pay.
         let floor = 0;
         for (const r of noClockRules) {
           if (!ruleMatchesDate(r, dk)) continue;
@@ -667,12 +671,13 @@ function computeDailyPayCosts(entries, overtimeRule, threshold, dailyRate, overt
   const regular = entries.filter(e => e.wage_type === 'regular');
   const days = new Set(regular.map(e => ymd(e.work_date))).size;
   if (overtimeRule === 'none') {
-    return { regularCost: days * dailyRate, overtimeCost: 0 };
+    return { regularCost: days * dailyRate, overtimeCost: 0, days };
   }
   const { otBands } = computeOT(entries, overtimeRule, threshold, 1, otConfig);
   return {
     regularCost: days * dailyRate,
     overtimeCost: otBandsCost(otBands, dailyRate / threshold, overtimeMultiplier),
+    days,
   };
 }
 

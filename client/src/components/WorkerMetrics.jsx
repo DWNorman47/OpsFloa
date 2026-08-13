@@ -39,7 +39,7 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
   const [to, setTo] = useState(defaultDates().to);
   const [billData, setBillData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [openLine, setOpenLine] = useState(null); // 'e{idx}' | 'ot' | 'sick' | 'vacation' | 'guarantee' | 'deductions' | 'inputs'
+  const [openLine, setOpenLine] = useState(() => new Set()); // set of open detail keys — multiple can be open at once ('e{idx}' | 'ot' | 'night' | 'deductions' | 'inputs' …)
   const [detailsOpen, setDetailsOpen] = useState(false); // the per-entry breakdown is collapsed by default
   const [showPreview, setShowPreview] = useState(false);
   const [previewUrl, setPreviewUrl] = useState(null);
@@ -67,7 +67,7 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
   }, [worker.id]);
 
   const policyRaw = settings?.hours_rules || null;
-  const toggleLine = key => setOpenLine(cur => (cur === key ? null : key));
+  const toggleLine = key => setOpenLine(cur => { const n = new Set(cur); n.has(key) ? n.delete(key) : n.add(key); return n; });
   const goto = link => { if (link) navigate(link); };
 
   const rowToForm = d => ({ id: `d${d.id}`, name: d.name || '', kind: d.kind === 'fixed' ? 'fixed' : 'percent', value: d.value != null ? String(d.value) : '', cap: d.cap_amount != null ? String(d.cap_amount) : '' });
@@ -144,7 +144,7 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
   };
 
   const fetchBill = async () => {
-    setLoading(true); setOpenLine(null);
+    setLoading(true); setOpenLine(new Set());
     try {
       const params = { explain: 1 };
       if (from) params.from = from;
@@ -354,9 +354,9 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
                           <span style={styles.lineTimes}>{e.synthetic ? '' : `${(e.start_time || '').slice(0, 5)}–${(e.end_time || '').slice(0, 5)}`}</span>
                           {overtimeEnabled && !e.synthetic && (e.overtime_hours || 0) > 0 && <span style={styles.otBadge}>{t.otHrs} {fmtHours(e.overtime_hours)}</span>}
                           <span style={styles.lineHours}>{fmtHours(dur(e))}</span>
-                          <span style={styles.lineChev}>{expandable ? (openLine === key ? '▾' : '▸') : ''}</span>
+                          <span style={styles.lineChev}>{expandable ? (openLine.has(key) ? '▾' : '▸') : ''}</span>
                         </div>
-                        {openLine === key && expandable && (e.synthetic ? syntheticTrace(e) : <EntryTrace e={e} />)}
+                        {openLine.has(key) && expandable && (e.synthetic ? syntheticTrace(e) : <EntryTrace e={e} />)}
                       </div>
                     );
                   })}
@@ -383,7 +383,7 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
                 {s.regular_hours > 0 && <SummaryLine label={t.regularLabel} value={`${fmtHours(s.regular_hours)} · ${formatCurrency(s.regular_cost, currency)}`} />}
                 {overtimeEnabled && s.overtime_hours > 0 && (
                   <SummaryLine label={t.overtimeLabel} value={`${fmtHours(s.overtime_hours)} · ${formatCurrency(s.overtime_cost, currency)}`}
-                    open={openLine === 'ot'} onToggle={() => toggleLine('ot')}
+                    open={openLine.has('ot')} onToggle={() => toggleLine('ot')}
                     detail={<div style={styles.trace}>
                       {(s.overtime_bands && s.overtime_bands.length > 0
                         ? s.overtime_bands.map((b, i) => (
@@ -402,7 +402,7 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
                     : `${fmtHours(s.night_hours)}`;
                   return (
                     <SummaryLine label={t.nightDiffLabel || 'Night differential'} value={`${fmtHours(s.night_hours)} · ${formatCurrency(s.night_cost, currency)}`}
-                      open={openLine === 'night'} onToggle={() => toggleLine('night')}
+                      open={openLine.has('night')} onToggle={() => toggleLine('night')}
                       detail={<div style={styles.trace}><div style={styles.traceItem}><span>{detailText}</span><button style={styles.traceLink} onClick={() => goto('/administration#workspace')}>{t.trViewSetting} →</button></div></div>} />
                   );
                 })()}
@@ -413,7 +413,7 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
                   <>
                     <SummaryLine label={t.pdfGrossWages || 'Gross wages'} value={formatCurrency(s.gross_wages, currency)} />
                     <SummaryLine label={t.deductionsLabel || 'Deductions'} value={`− ${formatCurrency(s.deductions_total, currency)}`}
-                      open={openLine === 'deductions'} onToggle={() => toggleLine('deductions')}
+                      open={openLine.has('deductions')} onToggle={() => toggleLine('deductions')}
                       detail={<div style={styles.trace}>{s.deductions.map((d, i) => <div key={i} style={styles.traceItem}><span>{d.name}{d.kind === 'percent' ? ` (${d.value}%)` : ''} — {formatCurrency(d.amount, currency)}</span></div>)}</div>} />
                   </>
                 )}
@@ -427,9 +427,9 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
                   <div style={{ ...styles.line, ...styles.lineClickable }} onClick={() => toggleLine('inputs')}>
                     <span style={styles.sectionTitle}>{t.trInputsUsed}</span>
                     <span style={styles.rowSpacer} />
-                    <span style={styles.lineChev}>{openLine === 'inputs' ? '▾' : '▸'}</span>
+                    <span style={styles.lineChev}>{openLine.has('inputs') ? '▾' : '▸'}</span>
                   </div>
-                  {openLine === 'inputs' && <InputsUsed su={billData.settings_used} t={t} currency={currency} goto={goto} />}
+                  {openLine.has('inputs') && <InputsUsed su={billData.settings_used} t={t} currency={currency} goto={goto} />}
                 </div>
               )}
 

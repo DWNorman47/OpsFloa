@@ -303,9 +303,11 @@ describe('computeDailyPayCosts', () => {
   test('5 days × $200/day, no OT = $1000', () => {
     const entries = ['2024-01-01', '2024-01-02', '2024-01-03', '2024-01-04', '2024-01-05']
       .map(d => entry(d, '08:00', '16:00')); // 8h each
-    const { regularCost, overtimeCost } = computeDailyPayCosts(entries, 'daily', 8, 200, 1.5);
+    const { regularCost, overtimeCost, days } = computeDailyPayCosts(entries, 'daily', 8, 200, 1.5);
     expect(regularCost).toBe(1000);
     expect(overtimeCost).toBe(0);
+    // The day count backs regular pay (days × rate) so a stub can show "N days × rate/day".
+    expect(days).toBe(5);
   });
 
   test('10-hour day with $200 rate, 8h threshold, 1.5× = $75 OT cost', () => {
