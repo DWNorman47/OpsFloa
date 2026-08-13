@@ -4988,3 +4988,13 @@ Sunday fell in the range. The two window labels were near-identical ("every othe
 weekday" vs "every other day"), so reworded dropdown + summary strings (EN/ES) to
 "every weekday (Mon–Fri)" vs "every other day — weekends included". Guidance: use
 the Mon–Fri window if the intent is "worked the normal week." Verify green.
+
+## 2026-08-13 — Verified: every_weekday guarantee works for weekend targets
+David clarified the Sunday rule was set to "every weekday" with the range through
+08-09, so Saturday should be irrelevant. Reproduced his exact 3-rule config (Sun 2×
+window + Sat 'period' 4h + Sun 'every_weekday' 8h, incl. a 0h Wednesday) directly
+against computeOT: it produced ALL FOUR guarantees — Sat 08-01/08-08 (4h) AND Sun
+08-02/08-09 (8h). So the engine is correct; the report he saw was computed with the
+Sunday rule NOT actually on 'every_weekday' (saved as every_other_day, or changed
+after generating without regenerating). Added regression tests for the weekend-
+target every_weekday case (was uncovered). 1415 tests green.
