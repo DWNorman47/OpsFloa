@@ -56,7 +56,7 @@ describe('buildPayStatement — hours + reconciliation', () => {
 });
 
 describe('buildPayStatement — daily rate + no-clock-in guarantee', () => {
-  test('a guaranteed-only day earns a full daily rate', () => {
+  test('a full (8h) guaranteed day earns a full daily rate (8 × daily ÷ 8)', () => {
     const otConfig = otConfigFromSettings({ hours_rules: JSON.stringify({ enabled: true, rules: [
       { id: 'sun', type: 'min_daily', when: { kind: 'weekdays', days: [0] }, hours: 8, requiresClockin: false, activeWindow: 'every_weekday' },
     ] }) });
@@ -68,10 +68,28 @@ describe('buildPayStatement — daily rate + no-clock-in guarantee', () => {
       deductions: [], otConfig, projectRateMap: {}, settings: SETTINGS,
       from: '2026-07-06', to: '2026-07-12', // range includes the empty Sunday 07-12
     });
-    // 5 worked days + 1 guaranteed Sunday = 6 days × $200 = $1200.
-    expect(st.hours.regularDays).toBe(6);
+    // 5 worked days × $200 = 1000, + an 8h guaranteed Sunday × (200 ÷ 8 = 25) = 200 → 1200.
+    expect(st.hours.regularDays).toBeNull(); // includes guaranteed extra hours → no days-form
     expect(st.cost.regular).toBe(1200);
     expect(st.totals.grossWages).toBe(1200);
+  });
+
+  test('a PARTIAL guaranteed day pays its hours × (daily ÷ 8), not a full day', () => {
+    const otConfig = otConfigFromSettings({ hours_rules: JSON.stringify({ enabled: true, rules: [
+      { id: 'sun', type: 'min_daily', when: { kind: 'weekdays', days: [0] }, hours: 4, requiresClockin: false, activeWindow: 'every_weekday' },
+    ] }) });
+    const monFri = ['2026-07-06', '2026-07-07', '2026-07-08', '2026-07-09', '2026-07-10']
+      .map(d => entry({ work_date: d, start_time: '08:00:00', end_time: '16:00:00' }));
+    const st = buildPayStatement({
+      worker: worker({ hourly_rate: 800, rate_type: 'daily' }),
+      entries: monFri, reimbursements: [], leave: { sick: 0, vacation: 0 },
+      deductions: [], otConfig, projectRateMap: {}, settings: SETTINGS, // regular_shift_hours: 8
+      from: '2026-07-06', to: '2026-07-12',
+    });
+    // 5 worked days × 800 = 4000, + 4h guaranteed Sunday × (800 ÷ 8 = 100) = 400 → 4400.
+    expect(st.cost.regular).toBe(4400);
+    expect(st.hours.regularDays).toBeNull(); // includes extra hours → no days-form label
+    expect(st.totals.grossWages).toBe(4400);
   });
 });
 
