@@ -4940,3 +4940,9 @@ Outside-click + Escape close it. Moved the username span to the left of the chat
 (MessagesBell) icon. AppHeader dropped useT/logout usage and the dead headerBtn/
 guideBtn styles; HeaderActions.jsx kept (still used by other admin pages). CSS added
 top-level (`.account-menu*`). Verify green (1413 server / 288 client).
+
+## 2026-08-12 — Header account menu: icon, not filled avatar
+The solid accent initials circle looked heavy next to the thin outline chat/bell
+icons. Replaced with a feather "user" outline icon styled to match them (color
+#475569, 6px pad, rounded hover, accent tint + soft bg on open). Dropped the
+initials helper. Build green.
