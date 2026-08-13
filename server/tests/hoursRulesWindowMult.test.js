@@ -141,3 +141,23 @@ describe('window_mult — parse & backward-compat', () => {
     expect(bandMap(r)).toEqual({ 1.5: 2 });
   });
 });
+
+describe('window_mult + min_daily on a worked day — windowed hours count toward the floor', () => {
+  // Sunday: a 2x window covering the whole day + a min-daily floor of 8 (requires
+  // clock-in). Regression: windowed hours must count as paid hours toward the floor,
+  // or the day gets the floor ON TOP of the premium hours (double pay).
+  const cfgWinFloor = () => cfg([
+    { id: 'w', type: 'window_mult', when: { kind: 'weekdays', days: [0] }, from: '05:00', to: '05:00', mult: 2 },
+    { id: 'm', type: 'min_daily', when: { kind: 'weekdays', days: [0] }, hours: 8 }, // requiresClockin defaults true → floor
+  ]);
+  test('9h worked all inside the 2x window: floor already met, no extra regular', () => {
+    const r = computeOT([e(SUN, '07:00', '16:00')], 'daily', 8, 1, cfgWinFloor());
+    expect(r.regularHours).toBeCloseTo(0);   // was 8 before the fix (double pay)
+    expect(bandMap(r)).toEqual({ 2: 9 });
+  });
+  test('3h worked inside the window: floor tops up only the 5h shortfall as regular', () => {
+    const r = computeOT([e(SUN, '07:00', '10:00')], 'daily', 8, 1, cfgWinFloor());
+    expect(r.regularHours).toBeCloseTo(5);   // 8 floor − 3 worked
+    expect(bandMap(r)).toEqual({ 2: 3 });
+  });
+});

@@ -5083,3 +5083,14 @@ deductions are per-paycheck, some per-month. Two coupled fixes:
    and the daily-guarantee. NOTE behavior change for other tenants: grouped+selected
    no longer excludes non-selected role deductions — they now come out per check.
    1421 tests green.
+
+## 2026-08-13 — Fix: min-daily floor double-counted with a window multiplier
+The min-daily floor compared its minimum against the bucket's RESIDUAL (post-window
+carve-out) regular hours. A day fully inside a window_mult had residual 0, so the
+floor added its whole minimum as regular on top of the premium windowed hours —
+double pay (worked 9h in a Sun 2x window → 9h@2x + 8h regular). Fixed in
+payCalculations.js: track window hours per bucket (`windowByBucket`) and measure the
+floor shortfall against `residual + window` (total paid worked hours). Non-window
+days unchanged (windowByBucket empty). Tests in hoursRulesWindowMult.test.js.
+Answered David's question along the way: min-daily hours are always REGULAR rate
+(autoReg), never OT; the window 2x only applies to actually-worked hours. 1423 green.
