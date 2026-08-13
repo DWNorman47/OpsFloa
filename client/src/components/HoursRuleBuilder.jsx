@@ -277,6 +277,15 @@ export default function HoursRuleBuilder({ rules, onChange, title, help, highlig
     (r.type === 'add_time' || r.type === 'remove_time') && r.base === 'schedule'
     && ((r.edge === 'after' && !hasEnd) || (r.edge === 'before' && !hasStart)));
 
+  // A day designated a rest day never receives a min_daily "no clock-in" guarantee
+  // (the engine skips rest days), so a rule set with both silently drops the
+  // guarantee on that day. Surface the conflict, naming the day(s).
+  const daysOfRule = (r) => r.when?.kind === 'weekdays' ? (r.when.days || []).map(Number)
+    : r.when?.kind === 'every_day' ? [0, 1, 2, 3, 4, 5, 6] : [];
+  const restWeekdays = new Set(rules.filter(r => r.type === 'rest_day').flatMap(daysOfRule));
+  const guaranteeWeekdays = new Set(rules.filter(r => r.type === 'min_daily' && r.requiresClockin === false).flatMap(daysOfRule));
+  const restGuaranteeConflict = [...guaranteeWeekdays].filter(d => restWeekdays.has(d)).sort((a, b) => dayRank(a) - dayRank(b));
+
   return (
     <div style={s.wrap}>
       <div style={s.head}>
@@ -304,6 +313,12 @@ export default function HoursRuleBuilder({ rules, onChange, title, help, highlig
 
       {scheduleFallbackInUse && (
         <p style={s.note}>{t.hrNeedsBaselineNote}</p>
+      )}
+
+      {restGuaranteeConflict.length > 0 && (
+        <p style={s.warn}>
+          ⚠ {t.hrRestGuaranteeWarn.replace('{days}', restGuaranteeConflict.map(d => t[`hrDay_${WEEKDAY_KEYS[d]}`]).join(', '))}
+        </p>
       )}
 
       {draft && (
@@ -835,6 +850,7 @@ const s = {
   editBtn: { background: 'none', border: '1px solid #d1d5db', color: '#374151', fontSize: 12, fontWeight: 600, lineHeight: 1, cursor: 'pointer', padding: '4px 10px', borderRadius: 6, flexShrink: 0 },
   delBtn: { background: 'none', border: 'none', color: '#9ca3af', fontSize: 18, lineHeight: 1, cursor: 'pointer', padding: '0 4px', flexShrink: 0 },
   note: { fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '6px 9px', margin: '0 0 12px' },
+  warn: { fontSize: 12.5, fontWeight: 600, color: '#991b1b', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, padding: '7px 10px', margin: '0 0 12px' },
   draft: { display: 'flex', flexDirection: 'column', gap: 10, padding: 14, background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 9 },
   field: { display: 'flex', flexDirection: 'column', gap: 4 },
   label: { fontSize: 12, fontWeight: 600, color: '#6b7280' },
