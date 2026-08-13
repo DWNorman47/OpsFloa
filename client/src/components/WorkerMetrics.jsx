@@ -30,7 +30,7 @@ function defaultDates() { return presetRange('lastweek'); }
 // The report AREA: the detail panel for ONE selected member, rendered once below
 // the member table (not per row). Mounted with key={worker.id} so switching
 // members resets its state cleanly.
-export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = {}, overtimeEnabled = true, projectsEnabled = true, projects = [], settings = null }) {
+export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = {}, overtimeEnabled = true, projectsEnabled = true, projects = [], settings = null, embedded = false }) {
   const t = useT();
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -303,55 +303,14 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
   };
 
   return (
-    <div style={styles.panelCard}>
-      <div style={styles.panelHead}>
-        <span style={styles.name}>{worker.full_name}</span>
-        <span style={styles.username}>@{worker.username}</span>
-      </div>
+    <div style={{ ...styles.panelCard, ...(embedded ? styles.panelCardEmbedded : {}) }}>
+      {!embedded && (
+        <div style={styles.panelHead}>
+          <span style={styles.name}>{worker.full_name}</span>
+          <span style={styles.username}>@{worker.username}</span>
+        </div>
+      )}
       <div style={styles.panel}>
-          <div style={styles.panelActions}>
-            <button style={styles.addEntryBtn} onClick={toggleDeductions}>{showDeductions ? `✕ ${t.cancel}` : `− ${t.dedWorkerBtn}`}</button>
-            <button style={styles.addEntryBtn} onClick={() => { setShowAddEntry(v => !v); setAddError(''); setAddSuccess(false); }}>{showAddEntry ? `✕ ${t.cancel}` : `+ ${t.addEntry}`}</button>
-          </div>
-
-          {showDeductions && (
-            <div style={styles.addForm}>
-              <p style={{ fontSize: 12.5, color: '#6b7280', margin: '0 0 12px', lineHeight: 1.5 }}>{t.dedWorkerNote}</p>
-              {deductions == null ? <div style={{ color: '#6b7280', fontSize: 13 }}>{t.loading}</div> : (
-                <>
-                  <DeductionListEditor items={deductions} onChange={setDeductions} />
-                  {dedError && <div style={styles.addError}>{dedError}</div>}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12 }}>
-                    <button style={{ ...styles.fetchBtn, ...(dedSaving ? styles.disabled : {}) }} onClick={saveDeductions} disabled={dedSaving}>{dedSaving ? t.saving : t.dedSave}</button>
-                    {dedSaved && <span style={{ color: '#059669', fontSize: 13, fontWeight: 600 }}>{t.dedSaved}</span>}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-          {addSuccess && <div style={styles.addSuccess}>{t.entryAddedSuccess}</div>}
-          {showAddEntry && (
-            <form onSubmit={handleAddEntry} style={styles.addForm}>
-              <div style={styles.addRow}>
-                <div style={styles.addField}><label style={styles.label}>{t.date}</label><input style={styles.input} type="date" value={addForm.work_date} onChange={e => setAddForm(f => ({ ...f, work_date: e.target.value }))} required disabled={addSaving} /></div>
-                <div style={styles.addField}><label style={styles.label}>{t.startTime}</label><input style={styles.input} type="time" value={addForm.start_time} onChange={e => setAddForm(f => ({ ...f, start_time: e.target.value }))} required disabled={addSaving} /></div>
-                <div style={styles.addField}><label style={styles.label}>{t.endTime}</label><input style={styles.input} type="time" value={addForm.end_time} onChange={e => setAddForm(f => ({ ...f, end_time: e.target.value }))} required disabled={addSaving} /></div>
-                <div style={styles.addField}><label style={styles.label}>{t.breakMin}</label><input style={{ ...styles.input, width: 70 }} type="number" min="0" value={addForm.break_minutes} onChange={e => setAddForm(f => ({ ...f, break_minutes: e.target.value }))} disabled={addSaving} /></div>
-              </div>
-              {projectsEnabled && projects.length > 0 && (
-                <div style={styles.addField}><label style={styles.label}>Project</label>
-                  <select style={styles.input} value={addForm.project_id} onChange={e => setAddForm(f => ({ ...f, project_id: e.target.value }))} disabled={addSaving}>
-                    <option value="">No project</option>
-                    {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
-                </div>
-              )}
-              <div style={styles.addField}><label style={styles.label}>{t.notes}</label><input style={{ ...styles.input, width: '100%' }} type="text" maxLength={500} value={addForm.notes} onChange={e => setAddForm(f => ({ ...f, notes: e.target.value }))} placeholder={t.optional} disabled={addSaving} /></div>
-              {addError && <div style={styles.addError}>{addError}</div>}
-              <button style={{ ...styles.fetchBtn, ...(addSaving ? styles.disabled : {}) }} type="submit" disabled={addSaving}>{addSaving ? t.saving : t.addEntry}</button>
-            </form>
-          )}
-
           <div style={styles.dateRow}>
             <div style={styles.dateField}><label style={styles.label}>{t.from}</label><input style={styles.input} type="date" value={from} onChange={e => setFrom(e.target.value)} /></div>
             <div style={styles.dateField}><label style={styles.label}>{t.to}</label><input style={styles.input} type="date" value={to} onChange={e => setTo(e.target.value)} /></div>
@@ -478,6 +437,50 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
                 )}
               </div>
 
+              {/* ── Manage: per-worker deductions / add a manual entry (below Details) ── */}
+              <div style={styles.panelActions}>
+                <button style={styles.addEntryBtn} onClick={toggleDeductions}>{showDeductions ? `✕ ${t.cancel}` : `− ${t.dedWorkerBtn}`}</button>
+                <button style={styles.addEntryBtn} onClick={() => { setShowAddEntry(v => !v); setAddError(''); setAddSuccess(false); }}>{showAddEntry ? `✕ ${t.cancel}` : `+ ${t.addEntry}`}</button>
+              </div>
+
+              {showDeductions && (
+                <div style={styles.addForm}>
+                  <p style={{ fontSize: 12.5, color: '#6b7280', margin: '0 0 12px', lineHeight: 1.5 }}>{t.dedWorkerNote}</p>
+                  {deductions == null ? <div style={{ color: '#6b7280', fontSize: 13 }}>{t.loading}</div> : (
+                    <>
+                      <DeductionListEditor items={deductions} onChange={setDeductions} />
+                      {dedError && <div style={styles.addError}>{dedError}</div>}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12 }}>
+                        <button style={{ ...styles.fetchBtn, ...(dedSaving ? styles.disabled : {}) }} onClick={saveDeductions} disabled={dedSaving}>{dedSaving ? t.saving : t.dedSave}</button>
+                        {dedSaved && <span style={{ color: '#059669', fontSize: 13, fontWeight: 600 }}>{t.dedSaved}</span>}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+              {addSuccess && <div style={styles.addSuccess}>{t.entryAddedSuccess}</div>}
+              {showAddEntry && (
+                <form onSubmit={handleAddEntry} style={styles.addForm}>
+                  <div style={styles.addRow}>
+                    <div style={styles.addField}><label style={styles.label}>{t.date}</label><input style={styles.input} type="date" value={addForm.work_date} onChange={e => setAddForm(f => ({ ...f, work_date: e.target.value }))} required disabled={addSaving} /></div>
+                    <div style={styles.addField}><label style={styles.label}>{t.startTime}</label><input style={styles.input} type="time" value={addForm.start_time} onChange={e => setAddForm(f => ({ ...f, start_time: e.target.value }))} required disabled={addSaving} /></div>
+                    <div style={styles.addField}><label style={styles.label}>{t.endTime}</label><input style={styles.input} type="time" value={addForm.end_time} onChange={e => setAddForm(f => ({ ...f, end_time: e.target.value }))} required disabled={addSaving} /></div>
+                    <div style={styles.addField}><label style={styles.label}>{t.breakMin}</label><input style={{ ...styles.input, width: 70 }} type="number" min="0" value={addForm.break_minutes} onChange={e => setAddForm(f => ({ ...f, break_minutes: e.target.value }))} disabled={addSaving} /></div>
+                  </div>
+                  {projectsEnabled && projects.length > 0 && (
+                    <div style={styles.addField}><label style={styles.label}>Project</label>
+                      <select style={styles.input} value={addForm.project_id} onChange={e => setAddForm(f => ({ ...f, project_id: e.target.value }))} disabled={addSaving}>
+                        <option value="">No project</option>
+                        {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  <div style={styles.addField}><label style={styles.label}>{t.notes}</label><input style={{ ...styles.input, width: '100%' }} type="text" maxLength={500} value={addForm.notes} onChange={e => setAddForm(f => ({ ...f, notes: e.target.value }))} placeholder={t.optional} disabled={addSaving} /></div>
+                  {addError && <div style={styles.addError}>{addError}</div>}
+                  <button style={{ ...styles.fetchBtn, ...(addSaving ? styles.disabled : {}) }} type="submit" disabled={addSaving}>{addSaving ? t.saving : t.addEntry}</button>
+                </form>
+              )}
+
               {/* ── Export / preview at the bottom ── */}
               <div style={styles.btnRow}>
                 <button style={{ ...styles.previewBtn, ...(pdfGenerating ? styles.disabled : {}) }} onClick={togglePreview} disabled={pdfGenerating}>{pdfGenerating ? t.preparing : showPreview ? t.hideBill : t.previewBill}</button>
@@ -547,6 +550,7 @@ function InputsUsed({ su, t, currency, goto }) {
 
 const styles = {
   panelCard: { background: '#fff', borderRadius: 12, boxShadow: '0 2px 14px rgba(0,0,0,0.10)', overflow: 'hidden', marginTop: 16 },
+  panelCardEmbedded: { borderRadius: 0, boxShadow: 'none', marginTop: 0, borderBottom: '1px solid #f0f0f0' },
   panelHead: { padding: '14px 18px', display: 'flex', alignItems: 'baseline', gap: 10, borderBottom: '1px solid #f0f0f0' },
   name: { fontWeight: 700, fontSize: 16 },
   username: { color: '#6b7280', fontSize: 12.5 },

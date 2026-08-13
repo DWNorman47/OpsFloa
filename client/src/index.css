@@ -2282,6 +2282,45 @@ input, select, textarea {
   .worker-mode-btn { display: inline-block !important; }
 }
 
+/* ── Header account menu (avatar → Refresh / Language / Guide / Logout) ── */
+.account-menu { position: relative; display: inline-flex; flex-shrink: 0; }
+/* Matches the chat/bell icon buttons: thin gray outline icon, no fill. */
+.account-menu-btn {
+  background: none; border: none; cursor: pointer;
+  color: #475569; padding: 6px; border-radius: 8px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: color 0.15s, background 0.15s;
+}
+.account-menu-btn:hover { color: #1e293b; background: #f1f5f9; }
+.account-menu-btn.is-open { color: var(--app-accent, #2563eb); background: #eff3fb; }
+.account-menu-btn:focus-visible { outline: 2px solid var(--app-accent, #2563eb); outline-offset: 2px; }
+.account-menu-dropdown {
+  position: absolute; top: calc(100% + 8px); right: 0;
+  min-width: 200px; background: #fff; color: #111827;
+  border: 1px solid #e2e8f0; border-radius: 12px;
+  box-shadow: 0 10px 32px rgba(15,23,42,0.18);
+  padding: 6px; z-index: 200;
+}
+.account-menu-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  background: none; border: none; text-align: left; cursor: pointer;
+  padding: 9px 10px; border-radius: 8px; font-size: 13.5px; font-weight: 600; color: #334155;
+}
+.account-menu-item:hover { background: #f1f5f9; }
+.account-menu-item .ami-icon {
+  width: 18px; flex-shrink: 0; text-align: center; font-size: 14px; color: #64748b;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.account-menu-item.is-active { color: var(--app-accent, #2563eb); }
+.account-menu-item .ami-check { margin-left: auto; color: var(--app-accent, #2563eb); font-weight: 800; }
+.account-menu-item.is-logout { color: #dc2626; }
+.account-menu-item.is-logout .ami-icon { color: #dc2626; }
+.account-menu-label {
+  padding: 8px 10px 4px; font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8;
+}
+.account-menu-divider { height: 1px; background: #e2e8f0; margin: 6px 4px; }
+
 /* ── Mobile responsive ── */
 @media (max-width: 600px) {
 
@@ -3120,11 +3159,65 @@ input, select, textarea {
     border-radius: 10px !important;
   }
 
-  /* Approval queue rows stack vertically */
+  /* Approval queue rows (mobile): three columns — checkbox | details | actions.
+     The action buttons stack vertically on the right (accept on top, reject below).
+     A full-width "show details" button and any open edit/split/reject form wrap
+     full-width below. */
   .approval-row {
-    flex-direction: column !important;
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
     align-items: flex-start !important;
   }
+  .approval-row .approval-check { order: 0 !important; }
+  .approval-row .approval-main {
+    order: 1 !important;
+    flex: 1 1 0% !important;
+    min-width: 0 !important;
+    width: auto !important;
+    margin-top: 0 !important;
+  }
+  .approval-row .approval-actions {
+    order: 2 !important;
+    flex-direction: column !important;
+    align-items: flex-end !important;
+  }
+  .approval-row .approval-form {
+    order: 3 !important;
+    flex-basis: 100% !important;
+    width: 100% !important;
+    margin-top: 8px !important;
+  }
+  .approval-row .approval-expand {
+    order: 4 !important;
+    flex-basis: auto !important;
+    /* width (calc full-bleed) + negative margins come from the inline style;
+       calc width already exceeds 100% so it wraps to its own bottom line. */
+  }
+
+  /* Team Member report rows become cards: name (with pin + chevron) on top,
+     then the stat tiles in a 2-column grid (two rows of two) below. */
+  .member-report-row {
+    flex-wrap: wrap !important;
+    align-items: center !important;
+  }
+  .member-report-row .member-report-ident { flex: 1 1 auto !important; }
+  .member-report-row .member-report-metrics {
+    order: 10 !important;
+    flex-basis: 100% !important;
+    width: 100% !important;
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 12px 16px !important;
+    margin-top: 4px !important;
+  }
+  .member-report-row .member-report-metrics > * { align-items: center !important; text-align: center !important; }
+  /* Column order: left column = Regular / Overtime, right column = Total / Entries.
+     So the grid reads  Regular | Total  /  Overtime | Entries. */
+  .member-report-row .member-report-metrics .metric-regular { order: 1 !important; }
+  .member-report-row .member-report-metrics .metric-total { order: 2 !important; }
+  .member-report-row .member-report-metrics .metric-overtime { order: 3 !important; }
+  .member-report-row .member-report-metrics .metric-prevailing { order: 4 !important; }
+  .member-report-row .member-report-metrics .metric-entries { order: 5 !important; }
 
   /* Analytics stat grid: 2 columns on mobile */
   .analytics-stats {

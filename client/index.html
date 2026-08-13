@@ -133,7 +133,30 @@
          hash and update script-src, or the class never gets set and the
          summary flashes on every load:
            node -e "const c=require('crypto');console.log('sha256-'+c.createHash('sha256').update(\"document.documentElement.classList.add('js');\").digest('base64'))" -->
-    <style>html.js #prehydrate { display: none; }</style>
+    <style>
+      html.js #prehydrate { display: none; }
+      /* Boot splash: shown only while JS is running but React hasn't painted yet
+         (the gap the blank screen used to live in). React clears #root on mount,
+         removing it. Hidden for no-JS/crawlers so they still get #prehydrate. If
+         the boot watchdog gives up it strips the `js` class, which hides this and
+         reveals #prehydrate as the fallback. */
+      #boot-splash { display: none; }
+      html.js #boot-splash {
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 18px; min-height: 100vh; background: #f4f6f9;
+      }
+      #boot-splash .boot-spinner {
+        width: 34px; height: 34px; border-radius: 50%;
+        border: 3px solid #d6deeb; border-top-color: #2563eb;
+        animation: boot-spin 0.8s linear infinite;
+      }
+      @keyframes boot-spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { #boot-splash .boot-spinner { animation-duration: 2.4s; } }
+      @media (prefers-color-scheme: dark) {
+        html.js #boot-splash { background: #0f172a; }
+        #boot-splash .boot-spinner { border-color: #334155; border-top-color: #60a5fa; }
+      }
+    </style>
     <script>document.documentElement.classList.add('js');</script>
   </head>
   <body>
@@ -180,6 +203,10 @@
             <a href="/llms.txt" style="color:#2563eb;text-decoration:none;font-weight:700;padding:14px 4px">Information for AI assistants</a>
           </section>
         </main>
+      </div>
+      <div id="boot-splash" aria-hidden="true">
+        <img src="/icon-96x96.png" alt="" width="56" height="56" />
+        <div class="boot-spinner"></div>
       </div>
     </div>
     <noscript>

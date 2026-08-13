@@ -4767,3 +4767,192 @@ aren't in payroll; returns `approval_note` as the rejection reason + rejecter).
 the shared detail popup (rejection-aware: "Rejected by" + Reason, QuickBooks row
 hidden), and have a Restore button. i18n EN/ES; adminRecentRejectedRoute.test.js
 (4 tests). `npm run verify` green (1413).
+
+## 2026-08-12 — Configurable external map provider for all pin/location links
+Generalized the "open in Google Maps" links into a company setting. New
+`map_provider` string enum (google/apple/osm/waze/bing, default google):
+`server/constants/mapEnums.js` (source of truth), settingsDefaults STRING_KEYS +
+default, admin.js PATCH enum guard, docs/db-enums.md row. `client/utils/maps.js`
+now has `mapUrl(loc, provider)` (coords win, else address search; per-provider URL
+schemes) + `MAP_PROVIDER_NAMES`; `googleMapsUrl` kept as a thin wrapper.
+`useMapProvider()` in SettingsContext (falls back to 'google' outside the provider
+tree / on public pages, so links never break). MapLink reads the provider from
+context and defaults its visible label to the provider name — so every existing
+pin popup and location tag (ApprovalQueue, LiveWorkers) respects the setting with
+no per-callsite change. Added the previously-missing MapLink inside LiveWorkers'
+marker popups. `openInMaps` i18n made provider-agnostic ("Open in maps"). Provider
+`<select>` added to Company Settings under the geolocation section (gated on
+feature_geolocation). Only two client files use Leaflet markers, so "every leaflet
+map" was a bounded surface. `npm run verify` green.
+
+## 2026-08-12 — Approvals: compact rows + icon actions
+Pending approval rows were tall and busy. Made them compact by default with a
+per-row expand chevron (▸/▾, `expandedIds` Set state). Collapsed shows only the
+summary line + icon-only Accept (✓) / Reject (✕) + the chevron; expanding reveals
+the location "View location" map, the comments thread button, and the Edit/Split
+buttons. Accept/Reject keep title + aria-label for a11y (icons only visually).
+Also removed the two clock-in/clock-out MapLink pin links that sat next to "View
+location" — redundant now that the inline map's marker popups link out via the
+company map provider, and they looked awkward. i18n aqExpandRow/aqCollapseRow
+EN/ES. `npm run verify` green.
+
+## 2026-08-12 — Approvals mobile: action buttons on the top line
+Follow-up to the compact rows. On mobile the row was stacking vertically
+(checkbox → details → buttons). Reworked the `.approval-row` mobile rule to a
+wrapping flex row and used flex `order` to put the checkbox + action buttons on
+the top line (buttons pushed right with `margin-left:auto`), with the details
+(`.approval-main`) and any open edit/split/reject form (`.approval-form`) wrapping
+full-width below. Added hook classes approval-check/-main/-actions/-form; actions
+now `flex-wrap` + right-justify so the expanded set (Edit/Split/✓/✕/▾) reflows on
+narrow screens. Desktop layout untouched. `npm run verify` green.
+
+## 2026-08-12 — Approvals: Edit/Split beside the comment button
+Moved the Edit and Split buttons out of the right-side action cluster into a
+small `expandTools` toolbar next to the Comments button (all revealed together on
+expand). The action cluster (both desktop and the mobile top-right) is now just
+Accept/Reject/expand icons. `npm run verify` green.
+
+## 2026-08-12 — Approvals mobile: 3-column row with stacked actions
+Reworked the mobile `.approval-row` again per the mockup: three columns —
+checkbox | details (`.approval-main`, flex:1) | actions. Actions stack vertically
+with `flex-direction: column-reverse` so the DOM order (approve, reject, expand)
+renders top→bottom as expand / reject / approve, right-aligned. Forms still wrap
+full-width below (order 3, basis 100%). CSS-only; verify green.
+
+## 2026-08-12 — Approvals mobile: fix column wrap
+The 3-column mobile layout wrapped the actions below the details because flex line-
+breaking sizes `.approval-main` by its content width first. Changed it to
+`flex: 1 1 0%` so all three columns (checkbox | details | actions) stay on one line
+and details grows to fill. Forms still wrap full-width below.
+
+## 2026-08-12 — Approvals: accept-over-reject + bottom expand bar
+Per request: mobile action column now accept on top / reject below (plain
+`column`, was `column-reverse`). Dropped the small expand chevron from the action
+cluster; added a full-width thin "Show details ▾" button at the bottom of the card
+(`.approval-expand`, order 4, basis 100%) that only expands — no collapse control,
+and it's hidden once expanded (and while a reject form is open). Works on desktop
+too (wraps to its own bottom line). `npm run verify` green.
+
+## 2026-08-12 — Approvals: expand bar becomes the card footer
+Made the "Show details" button *be* the bottom of the card: full-bleed via
+`width: calc(100% + 32px)` + `margin: 10px -16px -12px -16px` to cancel the card's
+12x16 padding, `border-top` divider, bottom corners rounded 7px, thin 3px padding /
+11px text. Dropped the mobile `width:100%`/`flex-basis:100%` override (was fighting
+the calc); the calc width already exceeds 100% so it wraps to its own line.
+`npm run verify` green.
+
+## 2026-08-12 — Approvals: slimmer footer + row spacing
+Trimmed the expand footer bar to `padding: 1px 3px` (thinner) and added
+`marginBottom: 10` to `.approval-row` for a little gap between entries. Build green.
+
+## 2026-08-12 — Approvals: footer height + tools order
+Expand tools now stack: an Edit/Split row on top, Comments below
+(`expandTools` → column, new `expandToolsTop` row). Shortened the "Show details"
+footer band by switching `.row` from `gap:12` to `columnGap:12` (kills the extra
+wrap-line row-gap above the footer) and trimming the bar's top margin 10→4. Build green.
+
+## 2026-08-12 — Approvals: footer padding vs bar height
+Correction to the prior tweak: put the space *above* the expand bar back (row
+`gap:12`, bar margin-top 10) but shrink the bar's own height with `line-height:1`,
+`padding:0 3px`, `minHeight:16`. Build green.
+
+## 2026-08-12 — Approvals: tools on one wrapping row
+Collapsed the expand tools back to a single `flex-wrap` row (Edit, Split,
+Comments). Wide = all one line; narrow = Comments wraps beneath Edit/Split, so
+"edit & split above comments" still holds when cramped. Build green.
+
+## 2026-08-12 — Approvals: inline-expandable recent rows
+Recently-approved and recently-rejected rows are now expandable inline (chevron +
+`expandedRecent` Set keyed 'a-'/'r-'+id) instead of opening a modal. Extracted a
+shared `renderRecentDetails(entry, rejected)` panel (approver/rejecter + time,
+reason, source, notes, clock in/out coords + MapLinks, QB sync, and the location-
+history jump) and deleted the old detail modal (its styles left in place, unused).
+`npm run verify` green (1413 server / 288 client).
+
+## 2026-08-12 — Team Member Reports: relocate Deductions/Add Entry
+Moved the per-worker Deductions and Add Entry buttons + their forms from the top
+of the WorkerMetrics panel to below the Details section, inside the
+`billData && hasResults` block, so they surface only after "Generate entries".
+Top of the panel is now just the date range + Generate. Build green.
+
+## 2026-08-12 — Team Member Reports: inline expand under the row
+Reverted the "panel below the table" layout back to inline expansion: clicking a
+worker now renders WorkerMetrics right under that worker's MemberReportRow (moved
+the render into the slice.map via React.Fragment). New `embedded` prop on
+WorkerMetrics strips the floating-card chrome (margin/shadow/radius) and the
+duplicate name header so it looks like an in-table expansion. Build green.
+
+## 2026-08-12 — Team Member Reports: multiple open at once
+`selectedReportWorker` (single id) → `expandedReportWorkers` Set, so expanding one
+worker no longer collapses another (each WorkerMetrics stays mounted with its
+generated bill + date range intact). `lastOpenedWorker` drives the scroll-into-view
+target and only the just-opened panel gets the ref. Build green.
+
+## 2026-08-12 — Team Member Reports: search + pin
+Added a search input (name/username, resets to page 1 on change) at the top of the
+workers-reports section, and a pin toggle at the start of each MemberReportRow
+(🔓 unlocked → 🔒 locked). Pinned workers are stable-sorted to the top of the
+filtered list before pagination. New state in AdminDashboard (`reportSearch`,
+`pinnedReportWorkers` + toggle); MemberReportRow gains `pinned`/`onTogglePin`
+(stopPropagation so it doesn't trigger row expand). i18n trSearchWorkers/
+trNoWorkerMatch/trPin/trUnpin EN+ES. Verify green.
+
+## 2026-08-12 — Team Member Reports: pushpin instead of lock
+Pin-to-top icon changed from 🔓/🔒 lock to a single pushpin 📌: tilted 40° + 0.4
+opacity when unpinned, upright + full opacity + 1.1 scale when pinned (with a short
+transition). Reads as pinning, not locking. Build green.
+
+## 2026-08-12 — Team Member Reports: 2x2 stat card on mobile
+Under max-width 600px, `.member-report-row` now lays out as a card: ident (name +
+username) with the pin and the ›/✓ chevron on the top line, and `.member-report-
+metrics` becomes a 2-col grid (order:10, basis:100%) so the 4–5 stat tiles sit as
+two rows of two, left-aligned. Added hook classes to MemberReportRow. Build green.
+
+## 2026-08-12 — Team Member Reports mobile: center + reorder tiles
+Centered each stat tile (align-items/text-align center) in the 2x2 card grid, and
+swapped Overtime↔Entries via CSS `order` (metric-entries order:1, metric-overtime
+order:2) so the bottom row reads Entries | Overtime — mobile only, desktop row
+order untouched. Metric gained an optional className. Build green.
+
+## 2026-08-12 — Team Member Reports mobile: swap stat columns
+Per request, reordered the card's 2x2 grid via CSS `order` so left column =
+Regular/Overtime, right column = Total/Entries (reads Regular | Total / Overtime |
+Entries). Tagged all tiles (metric-total/regular/overtime/prevailing/entries).
+Mobile only; desktop row order untouched. Build green.
+
+## 2026-08-12 — PWA boot: loading splash + shorter watchdog
+Blank-screen-on-open has two causes: (1) the gap between JS running (which hides
+the static #prehydrate page) and React painting, stretched by bundle download on
+slow networks/devices; (2) post-deploy stale shell/SW referencing purged /assets
+chunk hashes → React never mounts → blank until the boot watchdog hard-resets.
+Added a `#boot-splash` (logo + CSS spinner) in index.html shown only under
+`html.js` and cleared when React clears #root — so both cases show a spinner, not
+white. It also auto-hides / reveals #prehydrate when the watchdog strips `js`.
+Lowered `GRACE_MS` 12000→8000 in bootwatch.js for faster recovery (still above a
+slow-bundle download; 60s cooldown + fallback still guard against loops). CSP OK
+(style-src unsafe-inline, img-src self). Build green.
+
+## 2026-08-12 — Header: account menu + username placement
+Consolidated the header-right buttons (Refresh, Language, Logout, Guide) into a new
+`AccountMenu` — a circular initials avatar tinted with `--app-accent` that opens a
+dropdown (Refresh / Language EN·ES with active check / Guide → GuideDrawer / Logout).
+Outside-click + Escape close it. Moved the username span to the left of the chat
+(MessagesBell) icon. AppHeader dropped useT/logout usage and the dead headerBtn/
+guideBtn styles; HeaderActions.jsx kept (still used by other admin pages). CSS added
+top-level (`.account-menu*`). Verify green (1413 server / 288 client).
+
+## 2026-08-12 — Header account menu: icon, not filled avatar
+The solid accent initials circle looked heavy next to the thin outline chat/bell
+icons. Replaced with a feather "user" outline icon styled to match them (color
+#475569, 6px pad, rounded hover, accent tint + soft bg on open). Dropped the
+initials helper. Build green.
+
+## 2026-08-12 — SuperAdmin: on-demand staging refresh + weekly schedule
+The prod→staging copy is the `sync-staging-db.yml` GitHub Actions workflow. Added
+`POST /superadmin/sync-staging` (super-admin; 403 on production) that dispatches it
+via the GitHub REST API using env vars GH_ACTIONS_TOKEN + GH_ACTIONS_REPO (optional
+GH_ACTIONS_REF, default 'main'). SuperAdmin → Demo Workspace tab now shows a "Copy
+production → staging" card on non-prod hosts (prodHost check on hostname; server
+enforces too). Dropped the workflow schedule from nightly (`0 4 * * *`) to weekly
+Mondays (`0 4 * * 1`). NOTE: needs the two env vars set on the staging server + a
+GitHub token with actions:write for the button to work. Verify green.

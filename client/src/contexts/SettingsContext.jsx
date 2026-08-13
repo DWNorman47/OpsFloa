@@ -67,3 +67,10 @@ export const useSettings = () => useContext(SettingsContext);
  * `currency` as a prop from the page that renders them.
  */
 export const useCurrency = () => useContext(SettingsContext).settings?.currency ?? 'USD';
+
+/**
+ * The company's external map provider for "open in maps" links (see MapLink).
+ * Falls back to 'google' while settings load, on failure, or outside the
+ * provider tree (e.g. public pages) — so links always work.
+ */
+export const useMapProvider = () => useContext(SettingsContext).settings?.map_provider || 'google';
