@@ -4998,3 +4998,24 @@ against computeOT: it produced ALL FOUR guarantees — Sat 08-01/08-08 (4h) AND 
 Sunday rule NOT actually on 'every_weekday' (saved as every_other_day, or changed
 after generating without regenerating). Added regression tests for the weekend-
 target every_weekday case (was uncovered). 1415 tests green.
+
+## 2026-08-13 — Root cause: rest-day rule cancels the Sunday guarantee
+David's full rule list revealed a "Sun — rest day — whole day at 2×" rule. The
+no-clock-in guarantee skips rest days (payCalculations.js:482), so Sunday being a
+rest day suppresses the "Sun guarantee 8h" rule entirely. Proved via repro (Sunday
+guarantee fires without the rest-day rule, empty with it). Fix is config: remove the
+Sun rest-day rule — the separate "Sun 05:00–05:00 2×" window_mult already pays
+worked Sunday hours at 2×, so the rest-day rule is redundant AND blocks the
+guarantee. Added regression tests locking the intended interaction. 1417 green.
+Possible follow-up: warn in the builder when a day is both a rest day and has a
+no-clock-in guarantee.
+
+## 2026-08-13 — Warn on rest-day + no-clock-in-guarantee conflict
+Added a rule-list warning in HoursRuleBuilder when any weekday is both a rest_day
+and a min_daily requiresClockin=false guarantee — the engine skips guarantees on
+rest days (payCalculations.js:482), so it was silently a no-op (exactly David's Sun
+case). Computes the day intersection from each rule's `when`, renders an amber/red
+banner naming the day(s) + the fix. New i18n hrRestGuaranteeWarn EN/ES. Also
+confirmed via repro that with the rest-day rule removed, an empty Sunday pays 8h at
+REGULAR and a worked Sunday pays 2x via the window rule — matching David's intent.
+Verify green (1417).
