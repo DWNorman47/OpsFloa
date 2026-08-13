@@ -2320,6 +2320,20 @@ input, select, textarea {
   text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8;
 }
 .account-menu-divider { height: 1px; background: #e2e8f0; margin: 6px 4px; }
+/* Language: single row showing the current choice + a flyout to pick another. */
+.account-menu-sub { position: relative; }
+.account-menu-item .ami-caret { margin-left: auto; color: #94a3b8; font-size: 12px; }
+.account-submenu {
+  position: absolute; top: -6px; right: calc(100% + 8px);
+  min-width: 150px; background: #fff; border: 1px solid #e2e8f0;
+  border-radius: 10px; box-shadow: 0 10px 32px rgba(15,23,42,0.18);
+  padding: 6px; z-index: 210;
+}
+@media (max-width: 600px) {
+  /* On narrow screens open it below the row (aligned to the dropdown) instead of
+     flying left, so it can't run off the edge. */
+  .account-submenu { top: calc(100% + 4px); right: 0; left: 0; }
+}
 
 /* ── Mobile responsive ── */
 @media (max-width: 600px) {
