@@ -223,6 +223,20 @@ that holds the exhaustive detail.
 ## ❓ Open questions / decisions for you
 *Blocked on your call before anyone builds.*
 
+- **Grouped+selected ruleset now applies NON-selected deductions per paycheck.**
+  (2026-08-13) When building per-deduction timing (some deductions per paycheck, some
+  monthly), the payroll run's `timing:'grouped' + scope:'selected'` was reinterpreted:
+  the SELECTED company deductions are the grouped/monthly ones (e.g. RAP), and the REST
+  of the role's company deductions now come out EVERY paycheck (e.g. Seguro Social).
+  Previously the non-selected ones were **dropped from the run entirely.** This is what
+  David wanted for the Honduras setup, but it's a behavior change: if any ruleset ever
+  used "Only selected" to *exclude* a role deduction, that deduction now applies per
+  paycheck instead of not at all. David unsure whether that's a problem. Decision owed:
+  keep the implicit "selected = grouped, rest = per-check" rule, OR add an explicit
+  per-deduction timing toggle (per-check / monthly / off) so exclusion stays possible.
+  Code: `applyDeductions` in `server/utils/paycheckRun.js` + the split in
+  `computePayrollRun` (`server/routes/admin.js`). → memory: [[project_payroll_review_decisions]]
+
 - **Equipment-maintenance alert re-fires daily.** (2026-07-31) While an item stays
   past its maintenance interval, the 8am job re-sends the same push + inbox alert every
   day. The audit fixed the *retry-resend* (per-company try/catch so a mid-batch error

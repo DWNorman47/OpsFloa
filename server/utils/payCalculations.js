@@ -396,30 +396,36 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
   const windowByMult = new Map();
   let windowTotal = 0;
   const residualOf = new Map();
+  const windowOf = new Map(); // per-entry window (premium) hours — they're paid hours, so the min-daily floor must count them
   for (const e of auto) {
     let residual = entryDuration(e);
+    let entryWindow = 0;
     if (windowRules.length) {
       for (const [m, h] of windowHoursForEntry(e, windowRules)) {
         windowByMult.set(m, (windowByMult.get(m) || 0) + h);
         windowTotal += h;
         residual -= h;
+        entryWindow += h;
       }
       residual = Math.max(0, residual); // carve-out must not push a residual negative
     }
     // No window rules → residual is entryDuration verbatim, preserving the
     // long-break negative-hours quirk that pins upstream data-integrity bugs.
     residualOf.set(e, residual);
+    windowOf.set(e, entryWindow);
   }
 
   if (rule === 'none') {
     autoReg = auto.reduce((s, e) => s + residualOf.get(e), 0);
   } else {
     const buckets = {};
+    const windowByBucket = {}; // window (premium) hours per bucket — counted toward the min-daily floor
     auto.forEach(e => {
       const key = rule === 'weekly'
         ? weekBucketKey(e.work_date, weekStart)
         : ymd(e.work_date);
       buckets[key] = (buckets[key] || 0) + residualOf.get(e);
+      windowByBucket[key] = (windowByBucket[key] || 0) + (windowOf.get(e) || 0);
     });
 
     // Identify each week's 7th-day key: group worked days by workweek; a week
@@ -457,9 +463,14 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
           addOt(Math.max(0, Math.min(h, upper) - b.afterHours), b.mult);
         });
         const minD = minDailyForBucket(otConfig, rule, dk);
-        if (minD > 0 && h < minD) {
-          const add = minD - h;
-          autoReg += add;                         // reporting-time floor: pay the shortfall as regular
+        // The floor guarantees a minimum of PAID hours. Window-multiplier hours are
+        // paid (at their premium), so they count toward the minimum — otherwise a day
+        // whose hours are all inside a window would be topped up on top of the premium
+        // hours (double pay). Measure the shortfall against total worked hours.
+        const workedTotal = h + (windowByBucket[dk] || 0);
+        if (minD > 0 && workedTotal < minD) {
+          const add = minD - workedTotal;
+          autoReg += add;                         // reporting-time floor: pay only the true shortfall as regular
           floorDetail.push({ date: dk, hours: +add.toFixed(2), kind: 'min_daily' });
         }
       }
