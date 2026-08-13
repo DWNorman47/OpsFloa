@@ -357,6 +357,17 @@ that holds the exhaustive detail.
 ## 📌 Planned / ready-to-build
 *Scoped with a plan; just not started.*
 
+- **Surface Safety-Checklist completion on the Daily Checklist** — the Field
+  reorg (2026-08-13) made the *Safety Checklists* tab **admin-only** (now under the
+  Manage group): admins manage templates + review submissions there. David's intent
+  is that the crew *completes* checklists via the **Daily Checklist** tab and the
+  finished results show up there. That worker-completion path is **not built yet** —
+  until it is, non-admins have no in-app way to complete a safety checklist (the old
+  worker-facing `checklists` tab is gone). Needs: a way to attach/instantiate a
+  safety-checklist template onto a project's daily checklist and record completions
+  that both surfaces still read. `SafetyChecklists.jsx` + `DailyChecklist.jsx` +
+  `/safety-checklists` and `/daily-checklists` routes.
+
 - **Drop the dormant `project_invoices` table** — migration `0150` unified the
   QBO mirror into native `invoices` (data copied, `lien_waivers` FK repointed,
   `qbo.js`/`projectReports`/`closeout`/`lienWaivers` all read native). The old

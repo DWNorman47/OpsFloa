@@ -23,6 +23,30 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-13 — Field Work: 4th group reorg + new admin-only "Manage" tab
+
+Dropped the *Resources* group (it only held Sub Reports) and added a **Manage**
+group, so Field Work stays at four top tabs. The other tabs regrouped so the top
+three are all everyday onsite crew work:
+
+- **Daily/Today** — Notes · Daily Checklist · Daily Reports ᴬ · Haul Tickets
+- **Issues** — Punch List · Incident Reports
+- **Safety** — Safety Talks · Inspections ᴬ *(Checklists moved out)*
+- **Manage** ᴬ *(new, last)* — Safety Checklists · Media · Sub Reports
+
+Manage is entirely admin-only, so workers never see it (the empty-group filter
+drops it) — their view is just Daily / Safety / Issues. New i18n key `fldGroupManage`
+(EN "Manage" / ES "Gestión"); no render-logic change (tabs still map by id).
+
+**⚠️ Behavior change / gap:** the *Safety Checklists* tab was worker-facing before —
+crews completed checklists there. It's now admin-only. Per David's call, worker
+completion should instead flow through the **Daily Checklist** tab and results share
+back — **but that integration isn't built yet**, so right now non-admins have no
+in-app way to complete a safety checklist. Filed under *Planned / ready-to-build*
+in `docs/BACKLOG.md`.
+
+`npm run verify` client side (eslint + i18n parity + build) green.
+
 ## 2026-08-13 — Move RFIs & Submittals into the Work/Projects module (office vs onsite)
 
 Applied the **office-vs-onsite** lens: RFIs (architect/engineer questions) and

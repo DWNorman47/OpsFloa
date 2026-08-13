@@ -184,7 +184,6 @@ export default function FieldPage() {
         { id: 'checklist-daily', label: t.fieldTabDailyChecklist },
         ...(isAdmin ? [{ id: 'daily', label: t.fieldTabDaily }] : []),
         { id: 'haul', label: t.fieldTabHaul },
-        ...(isAdmin && features.feature_media_gallery ? [{ id: 'gallery', label: t.fieldTabMedia }] : []),
       ],
     },
     {
@@ -200,14 +199,18 @@ export default function FieldPage() {
       label: t.fieldTabSafety,
       items: [
         { id: 'safety', label: t.fldTabTalks },
-        { id: 'checklists', label: t.fieldTabChecklists },
         ...(isAdmin ? [{ id: 'inspect', label: t.fieldTabInspect }] : []),
       ],
     },
+    // Manage — admin-only back-office bucket: checklist templates + submissions,
+    // the media library, and sub daily reports. Worker-completed safety checklist
+    // results surface via the Daily Checklist tab, not here.
     {
-      id: 'resources',
-      label: isAdmin ? t.fldGroupResources : t.fldGroupMore,
+      id: 'manage',
+      label: t.fldGroupManage,
       items: [
+        ...(isAdmin ? [{ id: 'checklists', label: t.fieldTabChecklists }] : []),
+        ...(isAdmin && features.feature_media_gallery ? [{ id: 'gallery', label: t.fieldTabMedia }] : []),
         ...(isAdmin ? [{ id: 'subs', label: t.fieldTabSubs }] : []),
       ],
     },
