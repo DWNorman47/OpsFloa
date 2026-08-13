@@ -183,6 +183,28 @@ router.get('/projects/:projectId/history', async (req, res) => {
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
+// GET /days/:dayId — one day's full item breakdown, with who checked each and when.
+// Read-only (field access); used by the history view to expand a completed day.
+router.get('/days/:dayId', async (req, res) => {
+  try {
+    const day = await loadDay(pool, req.params.dayId, req.user.company_id);
+    if (!day) return res.status(404).json({ error: 'Not found' });
+    const items = await pool.query(
+      `SELECT i.id, i.text, i.kind, i.checked, i.value, i.order_index, i.source, i.checked_at,
+              u.full_name AS checked_by_name
+         FROM daily_checklist_items i
+         LEFT JOIN users u ON u.id = i.checked_by
+        WHERE i.daily_checklist_id = $1
+        ORDER BY i.order_index, i.id`,
+      [req.params.dayId]
+    );
+    res.json({
+      day: { id: day.id, day_number: day.day_number, work_date: day.work_date, status: day.status, completed_at: day.completed_at },
+      items: items.rows,
+    });
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
 // POST /projects/:projectId/start — start today's day. Idempotent (a day already active
 // is returned unchanged). Otherwise resumes a prepared plan and slides it onto today:
 // a calendar plan dated today, an ordinal plan targeting this day number, else the top of

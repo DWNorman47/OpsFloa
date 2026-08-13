@@ -317,6 +317,99 @@ function DayManager({ projectId, t, toast, onQueueChanged }) {
 }
 const swap = (arr, i, j) => { const a = arr.slice(); [a[i], a[j]] = [a[j], a[i]]; return a; };
 
+// ── History ────────────────────────────────────────────────────────────────
+// Read-only review of a project's COMPLETED days. Each row expands (lazy) to the
+// full item breakdown, with who checked each item and when.
+function ChecklistHistory({ projectId, t, toast }) {
+  const [days, setDays] = useState(null);      // null = loading
+  const [openId, setOpenId] = useState(null);
+  const [detail, setDetail] = useState({});    // dayId → { items } | { loading:true }
+
+  useEffect(() => {
+    let alive = true;
+    setDays(null); setOpenId(null); setDetail({});
+    api.get(`/daily-checklist/projects/${projectId}/history`)
+      .then(r => { if (alive) setDays(r.data.days || []); })
+      .catch(() => { if (alive) { setDays([]); toast(t.dcLoadFailed, 'error'); } });
+    return () => { alive = false; };
+  }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggle = async (dayId) => {
+    if (openId === dayId) { setOpenId(null); return; }
+    setOpenId(dayId);
+    if (detail[dayId]) return;
+    setDetail(d => ({ ...d, [dayId]: { loading: true } }));
+    try {
+      const r = await api.get(`/daily-checklist/days/${dayId}`);
+      setDetail(d => ({ ...d, [dayId]: { items: r.data.items || [] } }));
+    } catch {
+      setDetail(d => ({ ...d, [dayId]: { items: [] } }));
+      toast(t.dcLoadFailed, 'error');
+    }
+  };
+
+  if (days === null) return <div style={hStyles.panel}><div style={hStyles.muted}>{t.loading}</div></div>;
+  if (!days.length) return <div style={hStyles.panel}><div style={hStyles.muted}>{t.dcHistoryEmpty}</div></div>;
+
+  return (
+    <div style={hStyles.panel}>
+      {days.map(d => {
+        const open = openId === d.id;
+        const det = detail[d.id];
+        return (
+          <div key={d.id} style={hStyles.day}>
+            <button type="button" style={hStyles.dayHead} onClick={() => toggle(d.id)} aria-expanded={open}>
+              <span style={hStyles.chev}>{open ? '▾' : '▸'}</span>
+              <span style={hStyles.dayDate}>{d.work_date ? String(d.work_date).slice(0, 10) : t.dcDayLabel.replace('{n}', d.day_number)}</span>
+              <span style={hStyles.dayMeta}>{t.dcDayLabel.replace('{n}', d.day_number)} · {t.dcItemsChecked.replace('{n}', d.checked_count).replace('{total}', d.item_count)}</span>
+            </button>
+            {open && (
+              <div style={hStyles.items}>
+                {!det || det.loading ? (
+                  <div style={hStyles.muted}>{t.loading}</div>
+                ) : det.items.length === 0 ? (
+                  <div style={hStyles.muted}>{t.dcHistoryNoItems}</div>
+                ) : det.items.map(it => {
+                  const done = it.kind === 'text' ? !!(it.value && it.value.trim()) : it.checked;
+                  return (
+                    <div key={it.id} style={hStyles.item}>
+                      <span style={{ ...hStyles.mark, color: done ? '#059669' : '#9ca3af' }}>{it.kind === 'text' ? '✎' : (it.checked ? '✓' : '○')}</span>
+                      <div style={hStyles.itemBody}>
+                        <div style={hStyles.itemText}>{it.text}{it.kind === 'text' && it.value ? `: ${it.value}` : ''}</div>
+                        <div style={hStyles.itemWho}>
+                          {done
+                            ? `${it.checked_by_name || t.dcSomeone}${it.checked_at ? ' · ' + new Date(it.checked_at).toLocaleString() : ''}`
+                            : t.dcUnchecked}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const hStyles = {
+  panel: { background: '#f9fafb', border: '1px solid #eef0f2', borderRadius: 10, padding: 8, marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 6 },
+  muted: { color: '#6b7280', fontSize: 13, padding: '8px 6px' },
+  day: { background: '#fff', border: '1px solid #eef0f2', borderRadius: 8, overflow: 'hidden' },
+  dayHead: { display: 'flex', alignItems: 'center', gap: 10, width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '10px 12px', textAlign: 'left' },
+  chev: { color: '#9ca3af', fontSize: 12 },
+  dayDate: { fontWeight: 700, fontSize: 14, color: '#111827', fontVariantNumeric: 'tabular-nums' },
+  dayMeta: { marginLeft: 'auto', fontSize: 12, color: '#6b7280' },
+  items: { borderTop: '1px solid #f3f4f6', padding: '4px 12px 10px', display: 'flex', flexDirection: 'column', gap: 8 },
+  item: { display: 'flex', gap: 10, alignItems: 'flex-start', paddingTop: 8 },
+  mark: { fontSize: 15, fontWeight: 700, lineHeight: 1.3, flexShrink: 0 },
+  itemBody: { minWidth: 0 },
+  itemText: { fontSize: 13.5, color: '#111827', lineHeight: 1.35 },
+  itemWho: { fontSize: 11.5, color: '#6b7280', marginTop: 1 },
+};
+
 export default function DailyChecklist({ projects = [], settings = null, loading: projectsLoading = false, activeProject = '', onProjectChange }) {
   const t = useT();
   const toast = useToast();
@@ -466,6 +559,7 @@ export default function DailyChecklist({ projects = [], settings = null, loading
           {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <span style={styles.headActions}>
+          <button style={styles.linkBtn} onClick={() => setPanel(p => p === 'history' ? null : 'history')}>{panel === 'history' ? '▾' : '▸'} {t.dcHistory}</button>
           {canSchedule && <button style={styles.linkBtn} onClick={() => setPanel(p => p === 'manager' ? null : 'manager')}>{panel === 'manager' ? '▾' : '▸'} {t.dcDayManager}</button>}
         </span>
       </div>
@@ -478,6 +572,7 @@ export default function DailyChecklist({ projects = [], settings = null, loading
         </label>
       )}
 
+      {panel === 'history' && projectId && <ChecklistHistory key={`h${projectId}`} projectId={projectId} t={t} toast={toast} />}
       {canSchedule && panel === 'manager' && projectId && <DayManager key={`m${projectId}`} projectId={projectId} t={t} toast={toast} onQueueChanged={refreshActive} />}
 
       {conflict ? (

@@ -5143,3 +5143,15 @@ Pay" then (never "/hr" for a daily worker). Updated two tests that asserted the 
 ÷threshold basis (weekly-OT daily → now 187.50 not 37.50; full 8h guarantee → cost
 unchanged 1200 but regularDays null). New tests: OT ÷8 with threshold 10; partial 4h
 guarantee → 4×(daily/8). 1430 green (one unrelated OOM flake, passes alone).
+
+## 2026-08-13 — Daily Checklist: History view (completed days were write-only)
+Filled-in checklists saved fine (daily_checklists + daily_checklist_items, with
+checked_by/checked_at) but NOTHING in the client read them back — the
+/projects/:id/history endpoint existed but had no consumer, so once a day completed
+there was no way to review it. Added: GET /daily-checklist/days/:dayId (read-only,
+field access) returning the day + items joined to users for checked_by_name; a
+`ChecklistHistory` component in DailyChecklist.jsx behind a new "History" toggle
+(available to anyone who can see the tab) — completed days newest-first, each
+expands lazily to the full per-item breakdown (value/checked, who, when). i18n
+dcHistory/dcHistoryEmpty/dcItemsChecked/dcHistoryNoItems/dcSomeone/dcUnchecked EN+ES.
+28 daily-checklist tests + i18n parity + build green.
