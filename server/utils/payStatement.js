@@ -120,9 +120,13 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     totalHours = regularHours + overtimeHours + prevailingHours;
     if (rateType === 'daily') {
       const dc = computeDailyPayCosts(paid, rule, threshold, rate, otMult, otConfig);
-      regularCostRaw = dc.regularCost;
+      // A guaranteed day (min_daily no-clock-in) has no worked entry, so
+      // computeDailyPayCosts doesn't count it — but a daily-rate worker still earns
+      // a full daily rate for that day. Each 'guarantee' floor row is one empty day.
+      const guaranteeDays = floorDetail.filter(f => f.kind === 'guarantee').length;
+      regularDays = dc.days + guaranteeDays;
+      regularCostRaw = dc.regularCost + guaranteeDays * rate;
       overtimeCostRaw = dc.overtimeCost;
-      regularDays = dc.days;
     } else {
       regularCostRaw = regularHours * rate;
       overtimeCostRaw = otBandsCost(ot.otBands, rate, otMult);
