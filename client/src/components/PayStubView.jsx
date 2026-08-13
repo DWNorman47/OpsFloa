@@ -51,7 +51,7 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
     regular_cost = 0, overtime_cost = 0, prevailing_cost = 0, guarantee_cost = 0,
     night_hours = 0, night_cost = 0,
     sick_cost = 0, vacation_cost = 0, gross_wages = 0,
-    deductions = [], net_pay = 0,
+    deductions = [], net_pay = 0, deferred_deductions = [],
     rate: workerRate = 0, overtime_multiplier: otMult = 1.5,
     prevailing_wage_rate: prevRate = 0, sick_rate = 0, vacation_rate = 0,
     rate_type = 'hourly', regular_days = null,
@@ -291,6 +291,9 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
                       <span>{fmtMoney(gross_wages)}</span>
                     </div>
                   )}
+                  {deferred_deductions.length > 0 && (
+                    <div style={s.deferredNote}>{t.payGroupedDeferred.replace('{names}', deferred_deductions.join(', '))}</div>
+                  )}
                 </>
               )}
             </div>
@@ -413,4 +416,5 @@ const s = {
   sumTable: { border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', minWidth: 280 },
   sumRow: { display: 'flex', justifyContent: 'space-between', padding: '8px 14px', fontSize: 13, color: '#374151', borderBottom: '1px solid #f3f4f6' },
   sumTotal: { display: 'flex', justifyContent: 'space-between', padding: '10px 14px', fontSize: 14, fontWeight: 700, background: 'var(--ops-page-accent)', color: '#fff' },
+  deferredNote: { fontSize: 12, color: '#92400e', background: '#fffbeb', borderTop: '1px solid #fde68a', padding: '7px 14px', lineHeight: 1.4 },
 };

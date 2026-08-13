@@ -193,6 +193,37 @@ function applyDeductions(periods, perCheckDeds, groupedDeds, ruleset) {
 }
 
 /**
+ * Split a role's company deductions + a worker's personal deductions into the ones
+ * that come out EVERY paycheck vs. the ones GROUPED (once per pair/month). Shared by
+ * the payroll run and the preview surfaces so they never disagree.
+ *   timing 'grouped' + scope 'selected' → selected company deds are grouped, the rest
+ *     of the role's company deds are per-check.
+ *   timing 'grouped' + scope 'all'      → all company deds grouped.
+ *   timing 'every' (or no ruleset)      → all per-check (scope 'selected' still filters).
+ * Worker deductions (loans/garnishments) are always per-check.
+ */
+function splitDeductionsByTiming(roleDeds, workerDeds, ruleset) {
+  const dcfg = ruleset && ruleset.deductions;
+  const role = roleDeds || [];
+  let grouped = [], perCheck = [];
+  if (dcfg && dcfg.timing === 'grouped') {
+    if (dcfg.scope === 'selected') {
+      const sel = new Set(dcfg.selectedDeductionIds || []);
+      grouped = role.filter(d => sel.has(d.id));
+      perCheck = role.filter(d => !sel.has(d.id));
+    } else {
+      grouped = role;
+    }
+  } else {
+    perCheck = (dcfg && dcfg.scope === 'selected')
+      ? role.filter(d => new Set(dcfg.selectedDeductionIds || []).has(d.id))
+      : role;
+  }
+  perCheck = [...perCheck, ...(workerDeds || [])];
+  return { perCheck, grouped };
+}
+
+/**
  * Flatten a normalized ruleset's nested `deductions.{timing, group:{by, applyOn}}` into
  * the flat `{timing, groupBy, applyOn}` shape groupPeriods expects. Without this, callers
  * passing `ruleset.deductions` straight in leave groupBy/applyOn undefined, so EVERY
@@ -204,4 +235,4 @@ function groupOpts(deductions) {
   return { timing: d.timing, groupBy: g.by, applyOn: g.applyOn };
 }
 
-module.exports = { resolveRuleset, rulesetsForActiveRoles, deductionsForRole, computeRuleNet, applyGroupDeductions, applyDeductions, groupOpts };
+module.exports = { resolveRuleset, rulesetsForActiveRoles, deductionsForRole, computeRuleNet, applyGroupDeductions, applyDeductions, splitDeductionsByTiming, groupOpts };
