@@ -4931,3 +4931,12 @@ white. It also auto-hides / reveals #prehydrate when the watchdog strips `js`.
 Lowered `GRACE_MS` 12000→8000 in bootwatch.js for faster recovery (still above a
 slow-bundle download; 60s cooldown + fallback still guard against loops). CSP OK
 (style-src unsafe-inline, img-src self). Build green.
+
+## 2026-08-12 — Header: account menu + username placement
+Consolidated the header-right buttons (Refresh, Language, Logout, Guide) into a new
+`AccountMenu` — a circular initials avatar tinted with `--app-accent` that opens a
+dropdown (Refresh / Language EN·ES with active check / Guide → GuideDrawer / Logout).
+Outside-click + Escape close it. Moved the username span to the left of the chat
+(MessagesBell) icon. AppHeader dropped useT/logout usage and the dead headerBtn/
+guideBtn styles; HeaderActions.jsx kept (still used by other admin pages). CSS added
+top-level (`.account-menu*`). Verify green (1413 server / 288 client).
