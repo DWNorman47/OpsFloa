@@ -5030,3 +5030,15 @@ hour earlier (no longer a conflict). Flipped the tests: empty rest-day Sunday �
 reg / 0 OT; worked rest-day Sunday → 40 reg / 8 OT @2x. NOTE: this is a company-wide
 behavior change — any tenant with both a rest-day rule and a same-day no-clock-in
 guarantee will now start paying that guarantee. 1418 green.
+
+## 2026-08-13 — Pay stub: daily-rate regular pay was labeled "/hr"
+David's Honduran stub showed "Regular Pay (L 575.90/hr)" with 111h59m but L 5,759 —
+which is 10 days × 575.90/day (a daily-rate worker). The PAY was correct; the LABEL
+lied ("/hr") and showed hours, so it couldn't be traced. Fix: computeDailyPayCosts
+now returns `days`; buildPayStatement exposes `hours.regularDays`; the /pay-stubs
+flattener passes `rate_type` + `regular_days`; PayStubView renders "N days ×
+rate/day" for daily workers (hourly unchanged). i18n regularPayDaily EN/ES. Tests:
+computeDailyPayCosts.days=5 assertion. NOTE not yet addressed: for daily-rate
+workers, sick/vacation leave is still priced hours × daily_rate in payStatement.js
+(likely wrong) — flagged for a separate look. Other surfaces: WorkerMetrics already
+shows /day correctly (InputsUsed); paycheck PDF uses a different data path. 1418 green.
