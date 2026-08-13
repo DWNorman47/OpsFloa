@@ -1,4 +1,5 @@
 const router = require('express').Router();
+const axios = require('axios');
 const pool = require('../db');
 const logger = require('../logger');
 const jwt = require('jsonwebtoken');
@@ -925,6 +926,50 @@ router.delete('/affiliates/:id', requireSuperAdmin, async (req, res) => {
   } catch (err) {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Trigger the "Sync Staging DB from Production" GitHub Actions workflow
+// (.github/workflows/sync-staging-db.yml) on demand, so the nightly schedule
+// isn't required. Super-admin only, and NEVER on production (the job overwrites
+// staging with a prod dump — there's no reason to fire it from prod, and gating
+// it keeps the prod SuperAdmin button harmless).
+//
+// Needs two env vars on the staging server:
+//   GH_ACTIONS_TOKEN  — a GitHub token with actions:write on the repo
+//   GH_ACTIONS_REPO   — "owner/repo"
+// Optional: GH_ACTIONS_REF — branch the workflow file lives on (default 'main').
+router.post('/sync-staging', requireSuperAdmin, async (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({ error: 'This action is only available on staging.' });
+  }
+  const token = process.env.GH_ACTIONS_TOKEN;
+  const repo = process.env.GH_ACTIONS_REPO;
+  const ref = process.env.GH_ACTIONS_REF || 'main';
+  if (!token || !repo) {
+    return res.status(500).json({ error: 'Staging sync is not configured (set GH_ACTIONS_TOKEN and GH_ACTIONS_REPO).' });
+  }
+  try {
+    await axios.post(
+      `https://api.github.com/repos/${repo}/actions/workflows/sync-staging-db.yml/dispatches`,
+      { ref },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'opsfloa-superadmin',
+        },
+        timeout: 15000,
+      }
+    );
+    logger.info({ by: req.user.id, repo, ref }, 'sync-staging workflow dispatched');
+    res.json({ dispatched: true });
+  } catch (err) {
+    const status = err.response?.status;
+    const detail = err.response?.data?.message || err.message;
+    logger.error({ err: detail, status }, 'sync-staging dispatch failed');
+    res.status(502).json({ error: `GitHub dispatch failed${status ? ` (${status})` : ''}: ${detail}` });
   }
 });
 

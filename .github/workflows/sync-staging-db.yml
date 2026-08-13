@@ -1,10 +1,11 @@
 name: Sync Staging DB from Production
 
-# Runs nightly at 4 AM UTC.
-# Can also be triggered manually from the Actions tab (useful for on-demand refreshes).
+# Runs weekly (Mondays at 4 AM UTC). Nightly isn't needed — on-demand refreshes
+# come from the SuperAdmin "Copy production → staging" button (which dispatches
+# this same workflow) or the "Run workflow" button on the Actions tab.
 on:
   schedule:
-    - cron: '0 4 * * *'
+    - cron: '0 4 * * 1'
   workflow_dispatch:
 
 jobs:

@@ -138,6 +138,16 @@ export default function SuperAdmin() {
   const [demoWorking, setDemoWorking] = useState(false);
   const [demoResult, setDemoResult] = useState(null);
   const [demoError, setDemoError] = useState('');
+  const [syncWorking, setSyncWorking] = useState(false);
+  const [syncMsg, setSyncMsg] = useState('');
+  const [syncError, setSyncError] = useState('');
+  // The "copy production → staging" action only makes sense off production, so
+  // hide it on the prod host (opsfloa.com / www.opsfloa.com). Everything else —
+  // dev.opsfloa.com, localhost, previews — is a safe place to show it. The server
+  // also enforces this (403 on prod); this is just the UI gate.
+  const prodHost = typeof window !== 'undefined'
+    && (window.location.hostname === 'opsfloa.com' || window.location.hostname === 'www.opsfloa.com');
+  const isStagingHost = !prodHost;
 
   useEffect(() => {
     Promise.all([
@@ -188,6 +198,20 @@ export default function SuperAdmin() {
       setDemoError(err.response?.data?.error || 'Could not reset demo workspace');
     } finally {
       setDemoWorking(false);
+    }
+  };
+
+  const runStagingSync = async () => {
+    setSyncWorking(true);
+    setSyncMsg('');
+    setSyncError('');
+    try {
+      await api.post('/superadmin/sync-staging');
+      setSyncMsg('Started. The copy runs on GitHub Actions (a few minutes) — watch the Actions tab; staging will drop connections while it restores.');
+    } catch (err) {
+      setSyncError(err.response?.data?.error || 'Could not start the staging sync.');
+    } finally {
+      setSyncWorking(false);
     }
   };
 
@@ -461,6 +485,24 @@ export default function SuperAdmin() {
             </section>
 
             {demoError && <div role="alert" style={styles.deleteErrorBox}>{demoError}</div>}
+
+            {isStagingHost && (
+              <section style={styles.card}>
+                <div style={{ padding: 20 }}>
+                  <h3 style={styles.afFormTitle}>Refresh staging from production</h3>
+                  <p style={{ ...styles.demoText, margin: '6px 0 14px' }}>
+                    Runs the “Sync Staging DB from Production” job (dump prod → wipe staging → restore).
+                    Use it on demand so the nightly schedule isn’t required. Staging will briefly go
+                    offline while it restores.
+                  </p>
+                  <button style={styles.demoBtn} onClick={runStagingSync} disabled={syncWorking}>
+                    {syncWorking ? 'Starting…' : 'Copy production → staging'}
+                  </button>
+                  {syncMsg && <div style={{ marginTop: 12, color: '#059669', fontSize: 13, fontWeight: 600 }}>{syncMsg}</div>}
+                  {syncError && <div role="alert" style={{ ...styles.deleteErrorBox, marginTop: 12 }}>{syncError}</div>}
+                </div>
+              </section>
+            )}
 
             <section style={styles.card}>
               <div style={{ padding: 20 }}>
