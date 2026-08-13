@@ -5128,3 +5128,18 @@ month-grouped RAP still only appears in the actual payroll RUN — the previews 
 honestly defer it rather than showing a wrong figure; showing RAP on the exact
 right pay-stub period would need the worker stubs unified onto the ruleset schedule
 (bigger, separate).
+
+## 2026-08-13 — Daily-rate hourly = daily rate ÷ 8 for OT + extra hours
+David: a daily-pay worker's OT / extra hours must use an hourly rate derived from
+the daily rate ÷ 8. Was `dailyRate / threshold` (fine when threshold=8, but wrong for
+a 10h daily threshold or weekly-40). computeDailyPayCosts now takes `dailyHours`
+(buildPayStatement passes `regular_shift_hours || 8`) and prices OT at
+`otBandsCost(otBands, dailyRate/dailyHours, mult)`; returns `hourly`. Guaranteed
+no-clock-in EXTRA hours: was `guaranteeDays × dailyRate` (a full day per guaranteed
+day — overpaid a partial 4h guarantee); now `guaranteeHours × (dailyRate/dailyHours)`
+so 4h = half a day, 8h = a full day. `regularDays` set null when guarantee hours are
+present so the "N days × rate/day" label suppresses; PayStubView shows plain "Regular
+Pay" then (never "/hr" for a daily worker). Updated two tests that asserted the old
+÷threshold basis (weekly-OT daily → now 187.50 not 37.50; full 8h guarantee → cost
+unchanged 1200 but regularDays null). New tests: OT ÷8 with threshold 10; partial 4h
+guarantee → 4×(daily/8). 1430 green (one unrelated OOM flake, passes alone).
