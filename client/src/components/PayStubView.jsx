@@ -54,7 +54,16 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
     deductions = [], net_pay = 0,
     rate: workerRate = 0, overtime_multiplier: otMult = 1.5,
     prevailing_wage_rate: prevRate = 0, sick_rate = 0, vacation_rate = 0,
+    rate_type = 'hourly', regular_days = null,
   } = stub.summary;
+  // Daily-rate workers are paid days × daily-rate, so the "regular pay" line reads
+  // "N days × rate/day" (which reconciles to the total) instead of an "/hr" line
+  // that can't be checked against the hours shown.
+  const isDaily = rate_type === 'daily';
+  const regularPayLabel = isDaily && regular_days != null
+    ? (t.regularPayDaily || 'Regular Pay ({days} days × {rate}/day)')
+        .replace('{days}', regular_days).replace('{rate}', fmtMoney(workerRate))
+    : `${t.regularPay} (${fmtMoney(workerRate)}/hr)`;
   const totalHours = regular_hours + overtime_hours + prevailing_hours;
   const overtimeEnabled = settings?.feature_overtime !== false;
   const hasDeductions = Array.isArray(deductions) && deductions.length > 0;
@@ -219,7 +228,7 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
                 <>
                   {regular_hours > 0 && regular_cost > 0 && (
                     <div style={{ ...s.sumRow, borderTop: '1px solid #e5e7eb' }}>
-                      <span>{t.regularPay} ({fmtMoney(workerRate)}/hr)</span>
+                      <span>{regularPayLabel}</span>
                       <span>{fmtMoney(regular_cost)}</span>
                     </div>
                   )}

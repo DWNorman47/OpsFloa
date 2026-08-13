@@ -75,6 +75,7 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
 
   let regularHours, overtimeHours, prevailingHours, totalHours;
   let regularCostRaw, overtimeCostRaw, prevailingCostRaw;
+  let regularDays = null; // daily-rate workers only: # of paid days behind regular pay (days × rate)
   let overtimeBands = []; // [{hours, mult}] — how many OT hours at which multiplier
   // Rule-generated regular hours (min-daily floor / no-clock-in guarantee), per day —
   // materialized below as real entry rows so no paid hour is invisible.
@@ -121,6 +122,7 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
       const dc = computeDailyPayCosts(paid, rule, threshold, rate, otMult, otConfig);
       regularCostRaw = dc.regularCost;
       overtimeCostRaw = dc.overtimeCost;
+      regularDays = dc.days;
     } else {
       regularCostRaw = regularHours * rate;
       overtimeCostRaw = otBandsCost(ot.otBands, rate, otMult);
@@ -247,6 +249,9 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
       sick: sickHours, vacation: vacationHours,
       guaranteeShortfall, guaranteeMin: guaranteeMinHours, guaranteeWeeks,
       total: totalHours, mileage,
+      // Daily-rate workers: the paid-day count behind regular pay (regular = days × rate),
+      // so a stub can show "N days × rate/day" instead of an unverifiable "/hr" line.
+      regularDays,
     },
     cost: {
       regular: regularCost, overtime: overtimeCost, prevailing: prevailingCost,

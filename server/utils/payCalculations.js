@@ -671,12 +671,13 @@ function computeDailyPayCosts(entries, overtimeRule, threshold, dailyRate, overt
   const regular = entries.filter(e => e.wage_type === 'regular');
   const days = new Set(regular.map(e => ymd(e.work_date))).size;
   if (overtimeRule === 'none') {
-    return { regularCost: days * dailyRate, overtimeCost: 0 };
+    return { regularCost: days * dailyRate, overtimeCost: 0, days };
   }
   const { otBands } = computeOT(entries, overtimeRule, threshold, 1, otConfig);
   return {
     regularCost: days * dailyRate,
     overtimeCost: otBandsCost(otBands, dailyRate / threshold, overtimeMultiplier),
+    days,
   };
 }
 
