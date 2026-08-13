@@ -5094,3 +5094,18 @@ floor shortfall against `residual + window` (total paid worked hours). Non-windo
 days unchanged (windowByBucket empty). Tests in hoursRulesWindowMult.test.js.
 Answered David's question along the way: min-daily hours are always REGULAR rate
 (autoReg), never OT; the window 2x only applies to actually-worked hours. 1423 green.
+
+## 2026-08-13 — Pay-rule window #1: week-gate guarantee sees the whole week
+David's principle: a rule evaluates against ITS OWN window regardless of the pulled
+range; display + paid stay range-scoped (see memory project_pay_rule_windows). He
+showed a Sunday 8h guarantee vanishing when the report start moved Mon→Tue (Monday
+clipped → "worked every weekday" gate failed even though he worked Monday).
+Fix (#1 of 2): computeOT's every_weekday/every_other_day (and 'week') gate now
+consults `range.workedDays` — a dates-only Set of the worker's real clock-ins for the
+weeks touching [from,to] — via `workedDay(d)`. The guarantee still only PAYS for days
+inside [from,to] (out-of-range days consulted, never emitted). Loaders workerStatement/
+companyStatements/workerPeriodStatements each query distinct regular work_dates over
+[from−7, to+7] and pass `weekWorkedDays`. Tests in minDailyNoClockin.test.js. Full
+server suite 1425 green (2 transient OOM flakes on the all-in-one run cleared with
+--maxWorkers=2). STILL OWED (#2): preview surfaces applying the ruleset grouping so
+RAP reflects the full month there too.
