@@ -4976,3 +4976,15 @@ on the next save — turning the guarantee off. Fixed by mapping both fields bac
 edit (mirrors the documented round/edge fix right above it). Also explains why the
 every-other-day window wasn't sticking. Verify green (1413/288). Follow-up worth
 considering: a client round-trip test for the builder (none exists today).
+
+## 2026-08-13 — Clarify min-daily no-clock-in window labels
+David: a Sun 8h guarantee ("every other day that week") wasn't paying while a Sat
+4h guarantee ("anywhere in the period") was. Root cause is behavior, not a bug: the
+`every_other_day` gate requires the worker to have CLOCKED IN every other day of
+the week, including Saturday — but Saturday only received its own guarantee, and a
+guarantee is not a worked bucket (confirmed by minDailyNoClockin.test.js:107). The
+'period' gate always passes once they've worked at all, so Sat showed. Also only one
+Sunday fell in the range. The two window labels were near-identical ("every other
+weekday" vs "every other day"), so reworded dropdown + summary strings (EN/ES) to
+"every weekday (Mon–Fri)" vs "every other day — weekends included". Guidance: use
+the Mon–Fri window if the intent is "worked the normal week." Verify green.
