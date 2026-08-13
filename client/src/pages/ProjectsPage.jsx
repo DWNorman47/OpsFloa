@@ -17,6 +17,8 @@ import { EstimatesPanel } from './EstimatesPage';
 import { InvoicesPanel } from './InvoicesPage';
 import { ChangeOrdersPanel } from './ChangeOrdersPage';
 import { SubPOsPanel } from './SubsPage';
+import { SubmittalsPanel } from './SubmittalsPage';
+import RFITracking from '../components/RFITracking';
 import WorkOrdersPanel from '../components/WorkOrdersPanel';
 import { useHasAnyPerm } from '../hooks/usePerm';
 import { labelSg, labelPl } from '../companyLabels';
@@ -2018,7 +2020,7 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
 // users who could see Sales before the consolidation.
 const SALES_TAB_PERMS = ['manage_projects', 'manage_settings'];
 const PROJECT_TAB_PERMS = ['view_projects', 'manage_projects', 'manage_project_visibility'];
-const PROJECT_TAB_IDS = ['projects', 'work_orders', 'estimates', 'invoices', 'change_orders', 'pos'];
+const PROJECT_TAB_IDS = ['projects', 'work_orders', 'rfis', 'submittals', 'estimates', 'invoices', 'change_orders', 'pos'];
 
 export default function ProjectsPage() {
   const t = useT();
@@ -2054,6 +2056,8 @@ export default function ProjectsPage() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [clients, setClients] = useState([]);
   const [viewMode, setViewMode] = useState(() => safeLocal.getItem('opsfloa_projects_view') || 'grid');
+  // Project selector for the cross-project RFI tracker tab (RFITracking is controlled).
+  const [rfiProject, setRfiProject] = useState('');
 
   const loadProjects = (archived) => {
     setLoading(true);
@@ -2101,6 +2105,10 @@ export default function ProjectsPage() {
   const tabs = [
     ...(!canSeeProjectWork || hideProjects ? [] : [{ id: 'projects', label: 'Projects' }]),
     ...(!canSeeProjectWork || hideWorkOrders ? [] : [{ id: 'work_orders', label: 'Work Orders' }]),
+    ...(canSeeProjectWork ? [
+      { id: 'rfis', label: t.fieldTabRFI },
+      { id: 'submittals', label: t.submTitle },
+    ] : []),
     ...(canSeeSales ? [
       { id: 'estimates', label: t.estList },
       { id: 'invoices', label: t.invList },
@@ -2112,6 +2120,7 @@ export default function ProjectsPage() {
   // Fall back to the first visible tab if the requested one is hidden or gated.
   const tabAllowed = (id) => {
     if (id === 'estimates' || id === 'invoices' || id === 'change_orders') return canSeeSales;
+    if (id === 'rfis' || id === 'submittals') return canSeeProjectWork;
     if (id === 'pos') return canSeePOs;
     if (id === 'projects') return canSeeProjectWork && !hideProjects;
     if (id === 'work_orders') return canSeeProjectWork && !hideWorkOrders;
@@ -2152,6 +2161,18 @@ export default function ProjectsPage() {
         {activeTab === 'pos' && (
           <div style={{ marginTop: 24 }}>
             <SubPOsPanel />
+          </div>
+        )}
+
+        {activeTab === 'rfis' && (
+          <div style={{ marginTop: 24 }}>
+            <RFITracking projects={projects} settings={settings} activeProject={rfiProject} onProjectChange={setRfiProject} />
+          </div>
+        )}
+
+        {activeTab === 'submittals' && (
+          <div style={{ marginTop: 24 }}>
+            <SubmittalsPanel />
           </div>
         )}
 

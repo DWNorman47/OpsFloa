@@ -41,7 +41,6 @@ const PublicEstimatePage = lazy(() => import('./pages/PublicEstimatePage'));
 const PublicInvoicePage = lazy(() => import('./pages/PublicInvoicePage'));
 const FinancialReportsPage = lazy(() => import('./pages/FinancialReportsPage'));
 const PublicChangeOrderPage = lazy(() => import('./pages/PublicChangeOrderPage'));
-const SubmittalsPage    = lazy(() => import('./pages/SubmittalsPage'));
 const CloseoutPage      = lazy(() => import('./pages/CloseoutPage'));
 const LienWaiversPage   = lazy(() => import('./pages/LienWaiversPage'));
 const PublicLienWaiverSignPage = lazy(() => import('./pages/PublicLienWaiverSignPage'));
@@ -197,7 +196,7 @@ function AppRoutes() {
           working by deep-linking to the matching Projects tab. */}
       <Route path="/sales" element={<Navigate to="/work#estimates" replace />} />
       <Route path="/change-orders" element={<Navigate to="/work#change_orders" replace />} />
-      <Route path="/submittals" element={<PrivateRoute adminOnly moduleId="field"><SubmittalsPage /></PrivateRoute>} />
+      <Route path="/submittals" element={<Navigate to="/work#submittals" replace />} />
       <Route path="/closeout" element={<PrivateRoute adminOnly moduleId="workforce"><CloseoutPage /></PrivateRoute>} />
       <Route path="/lien-waivers" element={<PrivateRoute adminOnly moduleId="workforce"><LienWaiversPage /></PrivateRoute>} />
       <Route path="/catalog" element={<PrivateRoute moduleId="inventory"><CatalogPage /></PrivateRoute>} />

@@ -50,7 +50,6 @@ const SafetyChecklists    = lazy(() => import('../components/SafetyChecklists'))
 const IncidentReports     = lazy(() => import('../components/IncidentReports'));
 const PhotoGallery        = lazy(() => import('../components/PhotoGallery'));
 const SubReports          = lazy(() => import('../components/SubReports'));
-const RFITracking         = lazy(() => import('../components/RFITracking'));
 const InspectionChecklists = lazy(() => import('../components/InspectionChecklists'));
 const DailyChecklist      = lazy(() => import('../components/DailyChecklist'));
 
@@ -194,7 +193,6 @@ export default function FieldPage() {
       items: [
         { id: 'punchlist', label: t.fieldTabPunch },
         { id: 'incident', label: t.fieldTabIncidents },
-        ...(isAdmin ? [{ id: 'rfi', label: t.fieldTabRFI }] : []),
       ],
     },
     {
@@ -282,8 +280,6 @@ export default function FieldPage() {
               <PhotoGallery projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'subs' ? (
               <SubReports projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
-            ) : activeFieldTab === 'rfi' ? (
-              <RFITracking projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'inspect' ? (
               <InspectionChecklists projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : (

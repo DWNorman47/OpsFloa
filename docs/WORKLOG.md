@@ -23,6 +23,38 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-13 — Move RFIs & Submittals into the Work/Projects module (office vs onsite)
+
+Applied the **office-vs-onsite** lens: RFIs (architect/engineer questions) and
+Submittals (shop-drawing/product approvals) are office document workflows → they
+belong in **Work**, alongside Change Orders. Inspections and Sub Reports are onsite
+logs → they **stay in Field** (peeked SubReports to confirm: date / sub company /
+foreman / headcount = a daily onsite log).
+
+- **RFIs:** removed the Field `rfi` tab (+ its lazy import). The cross-project RFI
+  tracker (`RFITracking`) is now a top-level **Work** tab. Per-project RFIs already
+  lived in the project-detail *Closeout* tab — untouched; this just relocates the
+  company-wide tracker out of Field.
+- **Submittals:** extracted `SubmittalsPanel` from `SubmittalsPage` (drops its own
+  `PageShell`, mirrors `ChangeOrdersPanel`) and render it as a top-level Work tab.
+  `/submittals` now `Navigate`-redirects to `/work#submittals` (same pattern the
+  retired `/change-orders` → `/work#change_orders` uses); dropped the dead route +
+  lazy import.
+- Both new tabs gate under `canSeeProjectWork` (project-admin perm), hash-deep-linkable
+  via `PROJECT_TAB_IDS`. No new i18n keys — reused `fieldTabRFI` ("RFIs") and
+  `submTitle` ("Submittals").
+
+**Finding / judgment call:** RFIs already had *two* homes before this — the Field
+`RFITracking` tab **and** a per-project section in the Work project-detail Closeout
+tab. I left the Closeout per-project section as-is and only moved the cross-project
+tracker; deleting one would lose a real view (per-project vs company-wide). If that
+duplication ever bothers you, the Closeout section is the candidate to fold into the
+new tab.
+
+`npm run verify`: client eslint + i18n parity + build all green. Server suite: 1403
+pass; 6 failures were all `stripeCheckoutRoute` / timeout **contention flakes**
+(pass in isolation), unrelated to these client-only changes.
+
 ## 2026-08-01 — AI Jump Start earthwork: contour geometry extraction (iteration 1)
 
 The spot grades on David's grading sheets are vector/SHX line-work, not text —
