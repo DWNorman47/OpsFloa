@@ -4956,3 +4956,10 @@ production → staging" card on non-prod hosts (prodHost check on hostname; serv
 enforces too). Dropped the workflow schedule from nightly (`0 4 * * *`) to weekly
 Mondays (`0 4 * * 1`). NOTE: needs the two env vars set on the staging server + a
 GitHub token with actions:write for the button to work. Verify green.
+
+## 2026-08-12 — Account menu: language as single row + flyout
+Simplified the language section: dropped the "LANGUAGE" label and the two always-
+shown option rows. Now one row shows the current language (🌐 + name + caret);
+clicking it opens a `.account-submenu` flyout with English/Español (active checked,
+selecting applies + closes). Flyout opens left on desktop, below the row under
+600px so it can't clip. `langOpen` state resets when the menu closes. Build green.
