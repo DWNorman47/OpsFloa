@@ -5062,3 +5062,24 @@ Three asks from David:
    would be 0). This is the parked "grouped-payroll edges." A real fix = make the preview
    surfaces resolve the ruleset + group across the worker's pay periods (substantial,
    money-critical) — pending David's go-ahead on approach. 1419 tests green.
+
+## 2026-08-13 — Payroll: cut checks on schedule + per-deduction timing
+David: checks must be issued on the pay schedule throughout the month; some
+deductions are per-paycheck, some per-month. Two coupled fixes:
+1. computePayrollRun: was `groupPeriods(generatePeriods(schedule, from, to))` — a
+   partial run misflagged the group's "last check." Now generates [from−45, to+45],
+   groups against the full schedule, outputs only checks with payDate ∈ [from,to]
+   (`inRange`). Safe to run any single check. `/admin/payroll-periods` now lists one
+   entry PER CHECK (period_end ≤ today; genTo = today+45 so flagging is correct),
+   run_from=run_to=payDate — so you cut checks as their periods close, not per closed
+   group.
+2. New `applyDeductions(periods, perCheckDeds, groupedDeds, ruleset)` in paycheckRun:
+   per-check deductions on every check's own gross + grouped on the flagged check
+   (combined − exempt, ruleset cap), one combined min-net floor, lines footed by
+   largest-remainder. Run split: timing 'grouped'+scope 'selected' → selected =
+   grouped, the rest of the role's company deductions = per-paycheck (previously
+   dropped). Worker deductions always per-paycheck. Tests: applyDeductions (Seguro
+   every check + RAP on flagged/combined; below-exempt → RAP 0, Seguro still applies)
+   and the daily-guarantee. NOTE behavior change for other tenants: grouped+selected
+   no longer excludes non-selected role deductions — they now come out per check.
+   1421 tests green.
