@@ -12,13 +12,6 @@ import { useAuth } from '../contexts/AuthContext';
 import { useT } from '../hooks/useT';
 import { silentError } from '../errorReporter';
 
-function initialsOf(name, fallback) {
-  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
-  const letters = parts.slice(0, 2).map(w => w[0]);
-  const out = letters.join('').toUpperCase();
-  return out || String(fallback || '?').slice(0, 1).toUpperCase() || '?';
-}
-
 export default function AccountMenu({ onOpenGuide }) {
   const { user, logout, updateUser } = useAuth();
   const t = useT();
@@ -44,20 +37,22 @@ export default function AccountMenu({ onOpenGuide }) {
   };
 
   const lang = user?.language || 'English';
-  const initials = initialsOf(user?.full_name, user?.username);
 
   return (
     <div className="account-menu" ref={ref}>
       <button
         type="button"
-        className="account-menu-btn"
+        className={`account-menu-btn${open ? ' is-open' : ''}`}
         onClick={() => setOpen(o => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
         title={user?.full_name || t.account || 'Account'}
         aria-label={user?.full_name || t.account || 'Account'}
       >
-        {initials}
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+          <circle cx="12" cy="7" r="4" />
+        </svg>
       </button>
       {open && (
         <div className="account-menu-dropdown" role="menu">

@@ -2284,13 +2284,15 @@ input, select, textarea {
 
 /* ── Header account menu (avatar → Refresh / Language / Guide / Logout) ── */
 .account-menu { position: relative; display: inline-flex; flex-shrink: 0; }
+/* Matches the chat/bell icon buttons: thin gray outline icon, no fill. */
 .account-menu-btn {
-  width: 34px; height: 34px; border-radius: 50%;
-  border: none; cursor: pointer; font-size: 12.5px; font-weight: 700; letter-spacing: 0.02em;
-  color: #fff; background: var(--app-accent, #2563eb);
-  display: inline-flex; align-items: center; justify-content: center; line-height: 1;
+  background: none; border: none; cursor: pointer;
+  color: #475569; padding: 6px; border-radius: 8px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: color 0.15s, background 0.15s;
 }
-.account-menu-btn:hover { filter: brightness(0.94); }
+.account-menu-btn:hover { color: #1e293b; background: #f1f5f9; }
+.account-menu-btn.is-open { color: var(--app-accent, #2563eb); background: #eff3fb; }
 .account-menu-btn:focus-visible { outline: 2px solid var(--app-accent, #2563eb); outline-offset: 2px; }
 .account-menu-dropdown {
   position: absolute; top: calc(100% + 8px); right: 0;
