@@ -95,6 +95,20 @@ describe('activeWindow = every_weekday (guarantee a weekday if all OTHER weekday
     const r = computeOT(daysWorked(['2026-07-06', '2026-07-07', '2026-07-08']), 'daily', 8, 1, fri(), WK);
     expect(r.regularHours).toBeCloseTo(24); // Friday not earned
   });
+
+  // Weekend TARGET: a Sunday rule on 'every_weekday' should pay once Mon–Fri were
+  // worked — Saturday is irrelevant (it's not a weekday). Regression for the case
+  // that confused a real setup: Sat had no clock-in but the Sunday still earns.
+  const sunWk = () => otConfig([{ id: 'm', type: 'min_daily', when: { kind: 'weekdays', days: [0] }, hours: 8, requiresClockin: false, activeWindow: 'every_weekday' }]);
+  test('empty Sunday is guaranteed when Mon–Fri were worked (Saturday irrelevant)', () => {
+    // Mon–Fri only; no Saturday clock-in.
+    const r = computeOT(daysWorked(['2026-07-06', '2026-07-07', '2026-07-08', '2026-07-09', '2026-07-10']), 'daily', 8, 1, sunWk(), WK);
+    expect(r.regularHours).toBeCloseTo(48); // 40 worked + 8 guaranteed Sunday
+  });
+  test('Sunday not guaranteed when a weekday (Wed) is missing', () => {
+    const r = computeOT(daysWorked(['2026-07-06', '2026-07-07', '2026-07-09', '2026-07-10']), 'daily', 8, 1, sunWk(), WK);
+    expect(r.regularHours).toBeCloseTo(32); // Sunday not earned
+  });
 });
 
 describe('activeWindow = every_other_day (guarantee a day if EVERY other day of the week was worked)', () => {

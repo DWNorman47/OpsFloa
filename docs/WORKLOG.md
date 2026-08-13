@@ -4956,3 +4956,45 @@ production → staging" card on non-prod hosts (prodHost check on hostname; serv
 enforces too). Dropped the workflow schedule from nightly (`0 4 * * *`) to weekly
 Mondays (`0 4 * * 1`). NOTE: needs the two env vars set on the staging server + a
 GitHub token with actions:write for the button to work. Verify green.
+
+## 2026-08-12 — Account menu: language as single row + flyout
+Simplified the language section: dropped the "LANGUAGE" label and the two always-
+shown option rows. Now one row shows the current language (🌐 + name + caret);
+clicking it opens a `.account-submenu` flyout with English/Español (active checked,
+selecting applies + closes). Flyout opens left on desktop, below the row under
+600px so it can't clip. `langOpen` state resets when the menu closes. Build green.
+
+## 2026-08-13 — Fix: min_daily rule reverts "requires clock-in" on edit
+David reported a Sunday "guaranteed hours if worked every other day" rule losing
+its unchecked "requires a clock-in" on refresh. Root cause: HoursRuleBuilder's
+`draftFieldsFromRule` (the edit deserialize) mapped only `hours` for min_daily. The
+engine stores `requiresClockin`/`activeWindow`, but the form edits
+`minRequiresClockin`/`minActiveWindow`; spreading `...rule` doesn't populate those,
+so they fell back to blankRule defaults (true / 'week'). Since save is
+`requiresClockin = minRequiresClockin !== false`, the default-true then persisted
+on the next save — turning the guarantee off. Fixed by mapping both fields back on
+edit (mirrors the documented round/edge fix right above it). Also explains why the
+every-other-day window wasn't sticking. Verify green (1413/288). Follow-up worth
+considering: a client round-trip test for the builder (none exists today).
+
+## 2026-08-13 — Clarify min-daily no-clock-in window labels
+David: a Sun 8h guarantee ("every other day that week") wasn't paying while a Sat
+4h guarantee ("anywhere in the period") was. Root cause is behavior, not a bug: the
+`every_other_day` gate requires the worker to have CLOCKED IN every other day of
+the week, including Saturday — but Saturday only received its own guarantee, and a
+guarantee is not a worked bucket (confirmed by minDailyNoClockin.test.js:107). The
+'period' gate always passes once they've worked at all, so Sat showed. Also only one
+Sunday fell in the range. The two window labels were near-identical ("every other
+weekday" vs "every other day"), so reworded dropdown + summary strings (EN/ES) to
+"every weekday (Mon–Fri)" vs "every other day — weekends included". Guidance: use
+the Mon–Fri window if the intent is "worked the normal week." Verify green.
+
+## 2026-08-13 — Verified: every_weekday guarantee works for weekend targets
+David clarified the Sunday rule was set to "every weekday" with the range through
+08-09, so Saturday should be irrelevant. Reproduced his exact 3-rule config (Sun 2×
+window + Sat 'period' 4h + Sun 'every_weekday' 8h, incl. a 0h Wednesday) directly
+against computeOT: it produced ALL FOUR guarantees — Sat 08-01/08-08 (4h) AND Sun
+08-02/08-09 (8h). So the engine is correct; the report he saw was computed with the
+Sunday rule NOT actually on 'every_weekday' (saved as every_other_day, or changed
+after generating without regenerating). Added regression tests for the weekend-
+target every_weekday case (was uncovered). 1415 tests green.
