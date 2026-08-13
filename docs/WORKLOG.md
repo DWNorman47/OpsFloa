@@ -5019,3 +5019,14 @@ banner naming the day(s) + the fix. New i18n hrRestGuaranteeWarn EN/ES. Also
 confirmed via repro that with the rest-day rule removed, an empty Sunday pays 8h at
 REGULAR and a worked Sunday pays 2x via the window rule — matching David's intent.
 Verify green (1417).
+
+## 2026-08-13 — Rest day + no-clock-in guarantee now COEXIST (behavior change)
+Per David: he wants both to apply — guaranteed hours (regular rate) on the rest day
+AND double for clocked-in hours. Removed the guarantee loop's `restDays` skip in
+payCalculations.js so an EMPTY rest day earns its min_daily no-clock-in guarantee at
+the regular rate; a WORKED rest day still goes through the rest-day premium branch
+(no guarantee). Reverted the rest-day/guarantee conflict WARNING + its i18n added an
+hour earlier (no longer a conflict). Flipped the tests: empty rest-day Sunday → 48
+reg / 0 OT; worked rest-day Sunday → 40 reg / 8 OT @2x. NOTE: this is a company-wide
+behavior change — any tenant with both a rest-day rule and a same-day no-clock-in
+guarantee will now start paying that guarantee. 1418 green.
