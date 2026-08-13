@@ -5042,3 +5042,23 @@ computeDailyPayCosts.days=5 assertion. NOTE not yet addressed: for daily-rate
 workers, sick/vacation leave is still priced hours × daily_rate in payStatement.js
 (likely wrong) — flagged for a separate look. Other surfaces: WorkerMetrics already
 shows /day correctly (InputsUsed); paycheck PDF uses a different data path. 1418 green.
+
+## 2026-08-13 — Daily-rate guarantee pay, multi-expand, deduction-grouping finding
+Three asks from David:
+1. **Daily-rate guaranteed days** (FIXED): `computeDailyPayCosts` counts days only from
+   worked entries, so a guaranteed-only day (min_daily no-clock-in) paid a daily worker
+   nothing. `buildPayStatement` now adds `guaranteeDays × dailyRate` (and to
+   `hours.regularDays`). Test: 5 worked + 1 guaranteed = 6 × $200 = $1200.
+2. **Multiple expansions** (FIXED): WorkerMetrics `openLine` (single value) → a Set, so
+   several pay-detail rows can be open at once.
+3. **RAP "once per month" shows each period** (EXPLAINED, not fixed): the WorkerMetrics
+   "Pay Summary" bill and the legacy per-period pay stubs go through
+   `workerStatement`→`buildPayStatement`→`payStubTotals`, which applies worker deductions
+   RAW — each deduction on that range's gross, with NO exempt amount and NO grouping.
+   The paycheck-rule settings (once per calendar month, exempt 11903.13, combined base,
+   last check) are only applied by the actual PAYROLL RUN (admin.js register at ~3625 via
+   resolveRuleset + applyGroupDeductions + exempt). So the preview's RAP (1.5% × 5759 =
+   86.39 every period) does NOT match a real run (which, with gross < the 11903.13 exempt,
+   would be 0). This is the parked "grouped-payroll edges." A real fix = make the preview
+   surfaces resolve the ruleset + group across the worker's pay periods (substantial,
+   money-critical) — pending David's go-ahead on approach. 1419 tests green.
