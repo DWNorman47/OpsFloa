@@ -46,10 +46,29 @@ export default function ProjectDailySetup() {
   const [projects, setProjects] = useState([]);
   const [roles, setRoles] = useState([]);
   const [scopeProject, setScopeProject] = useState(''); // '' = all projects
+  const [viewMode, setViewMode] = useState('all'); // 'all' | 'day' | 'date'
+  const [viewDay, setViewDay] = useState(1);
+  const [viewDate, setViewDate] = useState('');
   const [assignments, setAssignments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [addTemplateId, setAddTemplateId] = useState('');
   const [error, setError] = useState('');
+
+  // The schedule a newly-added checklist gets, based on the day being viewed: pinned to
+  // the day/date in a day view, otherwise left on no particular day.
+  const addSchedule = () => {
+    if (viewMode === 'day') return { schedule_type: 'ordinal', ordinal_target: Math.max(1, Number(viewDay) || 1) };
+    if (viewMode === 'date' && viewDate) return { schedule_type: 'date', scheduled_date: viewDate };
+    return { schedule_type: 'none' };
+  };
+
+  // Which assignments to show for the current day view: every-day defaults + the ones
+  // specific to this day/date (a day view). "All checklists" shows everything.
+  const visible = assignments.filter(a => {
+    if (viewMode === 'day') return a.schedule_type === 'every' || (a.schedule_type === 'ordinal' && Number(a.ordinal_target) === Number(viewDay));
+    if (viewMode === 'date') return a.schedule_type === 'every' || (a.schedule_type === 'date' && (a.scheduled_date || '').slice(0, 10) === viewDate);
+    return true;
+  });
 
   useEffect(() => {
     Promise.all([
@@ -74,7 +93,7 @@ export default function ProjectDailySetup() {
     if (!addTemplateId) return;
     setError('');
     try {
-      await api.post('/daily-checklist/assignments', { template_id: Number(addTemplateId), project_id: scopeProject || null });
+      await api.post('/daily-checklist/assignments', { template_id: Number(addTemplateId), project_id: scopeProject || null, ...addSchedule() });
       setAddTemplateId('');
       await loadScope(scopeProject);
     } catch (err) { setError(err.response?.data?.error || t.failedToSave); }
@@ -90,7 +109,8 @@ export default function ProjectDailySetup() {
   const setLocal = (id, body) => setAssignments(prev => prev.map(a => a.id === id ? { ...a, ...body } : a));
 
   const onScheduleType = (a, v) => {
-    if (v === 'every') patch(a.id, { schedule_type: 'every', ordinal_target: null, scheduled_date: null });
+    if (v === 'none') patch(a.id, { schedule_type: 'none', ordinal_target: null, scheduled_date: null });
+    else if (v === 'every') patch(a.id, { schedule_type: 'every', ordinal_target: null, scheduled_date: null });
     else if (v === 'ordinal') patch(a.id, { schedule_type: 'ordinal', ordinal_target: a.ordinal_target || 1, scheduled_date: null });
     else {
       const d = (a.scheduled_date || '').slice(0, 10);
@@ -130,6 +150,19 @@ export default function ProjectDailySetup() {
           <option value="">{t.pdAllProjects}</option>
           {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
+
+        <label style={styles.scopeBarLabel}>{t.pdView}</label>
+        <select style={styles.projectSelect} value={viewMode} onChange={e => setViewMode(e.target.value)}>
+          <option value="all">{t.pdViewAll}</option>
+          <option value="day">{t.pdViewDay}</option>
+          <option value="date">{t.pdViewDate}</option>
+        </select>
+        {viewMode === 'day' && (
+          <input style={styles.dayNumInput} type="number" min="1" value={viewDay} onChange={e => setViewDay(Math.max(1, parseInt(e.target.value, 10) || 1))} />
+        )}
+        {viewMode === 'date' && (
+          <input style={styles.smallSelect} type="date" value={viewDate} onChange={e => setViewDate(e.target.value)} />
+        )}
       </div>
 
       <p style={styles.hint}>{t.pdScopeHint}</p>
@@ -152,18 +185,20 @@ export default function ProjectDailySetup() {
 
       {loading ? (
         <SkeletonList count={3} rows={2} />
-      ) : assignments.length === 0 ? (
+      ) : visible.length === 0 ? (
         <div style={styles.empty}><p style={styles.emptyText}>{t.pdEmpty}</p></div>
       ) : (
         <div style={styles.list}>
-          {assignments.map((a, idx) => (
+          {visible.map((a, idx) => (
             <div key={a.id} style={styles.card}>
               <div style={styles.cardHead}>
                 <div style={styles.cardHeadLeft}>
-                  <div style={styles.arrows}>
-                    <button type="button" style={{ ...styles.arrow, ...(idx === 0 ? styles.arrowOff : {}) }} aria-label={t.pdMoveUp} disabled={idx === 0} onClick={() => move(idx, -1)}>▲</button>
-                    <button type="button" style={{ ...styles.arrow, ...(idx === assignments.length - 1 ? styles.arrowOff : {}) }} aria-label={t.pdMoveDown} disabled={idx === assignments.length - 1} onClick={() => move(idx, 1)}>▼</button>
-                  </div>
+                  {viewMode === 'all' && (
+                    <div style={styles.arrows}>
+                      <button type="button" style={{ ...styles.arrow, ...(idx === 0 ? styles.arrowOff : {}) }} aria-label={t.pdMoveUp} disabled={idx === 0} onClick={() => move(idx, -1)}>▲</button>
+                      <button type="button" style={{ ...styles.arrow, ...(idx === visible.length - 1 ? styles.arrowOff : {}) }} aria-label={t.pdMoveDown} disabled={idx === visible.length - 1} onClick={() => move(idx, 1)}>▼</button>
+                    </div>
+                  )}
                   <div>
                     <div style={styles.cardTitle}>{a.template_name}</div>
                     <div style={styles.cardMeta}>{a.item_count} {t.itemsCount}</div>
@@ -176,7 +211,8 @@ export default function ProjectDailySetup() {
                 <div style={styles.scopeCell}>
                   <div style={styles.scopeLabel}>{t.pdSchedule}</div>
                   <div style={styles.scheduleRow}>
-                    <select style={styles.smallSelect} value={a.schedule_type || 'every'} onChange={e => onScheduleType(a, e.target.value)}>
+                    <select style={styles.smallSelect} value={a.schedule_type || 'none'} onChange={e => onScheduleType(a, e.target.value)}>
+                      <option value="none">{t.pdSchedNone}</option>
                       <option value="every">{t.pdSchedEvery}</option>
                       <option value="ordinal">{t.pdSchedOrdinal}</option>
                       <option value="date">{t.pdSchedDate}</option>

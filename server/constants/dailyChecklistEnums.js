@@ -44,11 +44,12 @@ const DAILY_CHECKLIST_ITEM_MODES = Object.freeze(['shared', 'individual']);
 const DAILY_CHECKLIST_ITEM_MODE_DEFAULT = 'shared';
 
 // daily_checklist_assignments.schedule_type — when a checklist seeds a day.
+//   none    — no particular day; assigned but not seeded (a parked/neutral state)
 //   every   — carries through every worked day
 //   ordinal — only the Nth worked day (ordinal_target)
 //   date    — only a specific calendar date (scheduled_date)
-const DAILY_CHECKLIST_ASSIGNMENT_SCHEDULES = Object.freeze(['every', 'ordinal', 'date']);
-const DAILY_CHECKLIST_ASSIGNMENT_SCHEDULE_DEFAULT = 'every';
+const DAILY_CHECKLIST_ASSIGNMENT_SCHEDULES = Object.freeze(['none', 'every', 'ordinal', 'date']);
+const DAILY_CHECKLIST_ASSIGNMENT_SCHEDULE_DEFAULT = 'none';
 
 module.exports = {
   DAILY_CHECKLIST_STATUSES,

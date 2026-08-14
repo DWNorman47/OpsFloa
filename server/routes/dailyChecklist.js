@@ -141,7 +141,7 @@ async function companyRoleIds(db, companyId) {
 }
 
 // Normalize an assignment's day schedule from the body → { schedule_type, ordinal_target,
-// scheduled_date } or { error }. 'every' clears both targets.
+// scheduled_date } or { error }. 'none'/'every' clear both targets. Unknown → 'none'.
 function normAssignmentSchedule(body) {
   if (body?.schedule_type === 'ordinal') {
     const n = Number(body?.ordinal_target);
@@ -152,7 +152,8 @@ function normAssignmentSchedule(body) {
     if (!isYmd(body?.scheduled_date)) return { error: 'scheduled_date must be YYYY-MM-DD' };
     return { schedule_type: 'date', ordinal_target: null, scheduled_date: body.scheduled_date };
   }
-  return { schedule_type: 'every', ordinal_target: null, scheduled_date: null };
+  if (body?.schedule_type === 'every') return { schedule_type: 'every', ordinal_target: null, scheduled_date: null };
+  return { schedule_type: 'none', ordinal_target: null, scheduled_date: null };
 }
 
 // GET /assignments?project_id= — assignments for one project scope (absent/blank = the
