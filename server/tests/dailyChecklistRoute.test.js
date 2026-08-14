@@ -168,7 +168,7 @@ describe('PATCH /days/:id/items/:itemId', () => {
   test('checking a shared item stamps checked_by + checked_at on the item row', async () => {
     pool.query
       .mockResolvedValueOnce({ rows: [{ id: 42, company_id: 'co-1', status: 'active' }] })     // loadDay
-      .mockResolvedValueOnce({ rows: [{ id: 3, mode: 'shared', role_id: null }] })            // item lookup
+      .mockResolvedValueOnce({ rows: [{ id: 3, mode: 'shared', role_ids: null }] })            // item lookup
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 3 }] })                              // UPDATE
       .mockResolvedValueOnce({ rows: [{ id: 3, checked: true, mode: 'shared' }] });           // loadItems reload
     const res = await request(makeApp()).patch('/api/daily-checklist/days/42/items/3').send({ checked: true });
@@ -182,7 +182,7 @@ describe('PATCH /days/:id/items/:itemId', () => {
   test('checking an individual item upserts private per-user state, not the item row', async () => {
     pool.query
       .mockResolvedValueOnce({ rows: [{ id: 42, company_id: 'co-1', status: 'active' }] })     // loadDay
-      .mockResolvedValueOnce({ rows: [{ id: 3, mode: 'individual', role_id: null }] })        // item lookup
+      .mockResolvedValueOnce({ rows: [{ id: 3, mode: 'individual', role_ids: null }] })        // item lookup
       .mockResolvedValueOnce({ rowCount: 1, rows: [] })                                        // upsert user_state
       .mockResolvedValueOnce({ rows: [{ id: 3, checked: true, mode: 'individual' }] });        // loadItems reload
     const res = await request(makeApp()).patch('/api/daily-checklist/days/42/items/3').send({ checked: true });

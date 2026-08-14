@@ -1,78 +1,93 @@
-// Project Daily — the admin setup surface for the recurring items that seed each day's
-// Daily Checklist. Items are authored per scope cell along two dimensions plus a mode:
-//   • Project: "Default — all projects" or a specific project (both apply, additively)
-//   • Team member type: "All types" or a specific type (both apply, additively)
-//   • Mode per item: shared (one state everyone with the type shares) vs individual
-//     (each matching person gets their own private check state)
-// Picking a (project, type) cell loads that cell's items; Save replaces the cell.
-import React, { useState, useEffect, useCallback } from 'react';
+// Project Daily — assign whole Checklist Builder checklists to seed each day's Daily
+// Checklist. Each assignment = a checklist + a project scope + a team-role scope + a mode.
+// Projects and roles default to "All"; an Add control narrows either to a specific set.
+//   Shared     = one list everyone with a matching role shares (one change seen by all)
+//   Individual = each matching person gets their own private copy
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../api';
 import { useT } from '../hooks/useT';
 import { SkeletonList } from './Skeleton';
 
-const KINDS = ['check', 'text'];
-const MODES = ['shared', 'individual'];
+// A scope picker: "All" until you add specific ones; chips + an Add dropdown after.
+function ScopePicker({ allLabel, addLabel, options, selected, onChange }) {
+  const ids = Array.isArray(selected) && selected.length ? selected.map(String) : null;
+  const nameById = useMemo(() => Object.fromEntries(options.map(o => [String(o.id), o.name])), [options]);
+  const remaining = options.filter(o => !ids || !ids.includes(String(o.id)));
+  const add = id => { if (!id) return; onChange([...(ids || []), id].map(Number)); };
+  const remove = id => {
+    const next = (ids || []).filter(x => x !== String(id)).map(Number);
+    onChange(next.length ? next : null); // empty → back to All
+  };
+  return (
+    <div style={styles.scopeRow}>
+      {!ids ? (
+        <span style={styles.allTag}>{allLabel}</span>
+      ) : (
+        ids.map(id => (
+          <span key={id} style={styles.chip}>
+            {nameById[id] || id}
+            <button type="button" style={styles.chipX} aria-label="Remove" onClick={() => remove(id)}>✕</button>
+          </span>
+        ))
+      )}
+      {remaining.length > 0 && (
+        <select style={styles.addSelect} value="" onChange={e => { add(e.target.value); e.target.value = ''; }}>
+          <option value="">+ {addLabel}</option>
+          {remaining.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+        </select>
+      )}
+    </div>
+  );
+}
 
 export default function ProjectDailySetup() {
   const t = useT();
+  const [assignments, setAssignments] = useState([]);
+  const [templates, setTemplates] = useState([]);
   const [projects, setProjects] = useState([]);
   const [roles, setRoles] = useState([]);
-  const [scopeProject, setScopeProject] = useState(''); // '' = default (all projects)
-  const [scopeRole, setScopeRole] = useState('');        // '' = all types
-  const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [dirty, setDirty] = useState(false);
+  const [addTemplateId, setAddTemplateId] = useState('');
   const [error, setError] = useState('');
+
+  const loadAssignments = useCallback(async () => {
+    const r = await api.get('/daily-checklist/assignments');
+    setAssignments(r.data.assignments || []);
+  }, []);
 
   useEffect(() => {
     Promise.all([
-      api.get('/admin/projects').then(r => r.data).catch(() => []),
-      api.get('/admin/roles').then(r => r.data).catch(() => []),
-    ]).then(([p, r]) => { setProjects(p || []); setRoles(r || []); });
+      api.get('/daily-checklist/assignments').then(r => r.data.assignments || []).catch(() => []),
+      api.get('/safety-checklists/templates').then(r => r.data || []).catch(() => []),
+      api.get('/admin/projects').then(r => r.data || []).catch(() => []),
+      api.get('/admin/roles').then(r => r.data || []).catch(() => []),
+    ]).then(([a, tmpls, p, r]) => {
+      setAssignments(a); setTemplates(tmpls); setProjects(p); setRoles(r);
+    }).finally(() => setLoading(false));
   }, []);
 
-  const loadScope = useCallback(async (project, role) => {
-    setLoading(true); setError(''); setSaved(false); setDirty(false);
+  const addAssignment = async () => {
+    if (!addTemplateId) return;
+    setError('');
     try {
-      const params = {};
-      if (project) params.project_id = project;
-      if (role) params.role_id = role;
-      const r = await api.get('/daily-checklist/recurring', { params });
-      setItems((r.data.items || []).map(it => ({
-        _id: Math.random(),
-        text: it.text || '',
-        kind: KINDS.includes(it.kind) ? it.kind : 'check',
-        mode: MODES.includes(it.mode) ? it.mode : 'shared',
-      })));
-    } catch {
-      setError(t.failedToLoad); setItems([]);
-    } finally { setLoading(false); }
-  }, [t]);
-
-  useEffect(() => { loadScope(scopeProject, scopeRole); }, [scopeProject, scopeRole, loadScope]);
-
-  const addItem = () => { setItems(p => [...p, { _id: Math.random(), text: '', kind: 'check', mode: 'shared' }]); setDirty(true); setSaved(false); };
-  const removeItem = id => { setItems(p => p.filter(i => i._id !== id)); setDirty(true); setSaved(false); };
-  const updateItem = (id, k, v) => { setItems(p => p.map(i => i._id === id ? { ...i, [k]: v } : i)); setDirty(true); setSaved(false); };
-
-  const save = async () => {
-    setSaving(true); setError('');
-    try {
-      await api.put('/daily-checklist/recurring', {
-        project_id: scopeProject || null,
-        role_id: scopeRole || null,
-        items: items.filter(i => i.text.trim()).map(i => ({ text: i.text.trim(), kind: i.kind, mode: i.mode })),
-      });
-      setSaved(true); setDirty(false);
-    } catch (err) {
-      setError(err.response?.data?.error || t.failedToSave);
-    } finally { setSaving(false); }
+      await api.post('/daily-checklist/assignments', { template_id: Number(addTemplateId) });
+      setAddTemplateId('');
+      await loadAssignments();
+    } catch (err) { setError(err.response?.data?.error || t.failedToSave); }
   };
 
-  const scopeLabel = (scopeProject ? (projects.find(p => String(p.id) === String(scopeProject))?.name || '') : t.pdDefaultAllProjects)
-    + ' · ' + (scopeRole ? (roles.find(r => String(r.id) === String(scopeRole))?.name || '') : t.pdAllTypes);
+  // Patch one field, updating local state optimistically.
+  const patch = async (id, body) => {
+    setAssignments(prev => prev.map(a => a.id === id ? { ...a, ...body } : a));
+    try { await api.patch(`/daily-checklist/assignments/${id}`, body); }
+    catch (err) { setError(err.response?.data?.error || t.failedToSave); loadAssignments(); }
+  };
+
+  const remove = async (id) => {
+    setAssignments(prev => prev.filter(a => a.id !== id));
+    try { await api.delete(`/daily-checklist/assignments/${id}`); }
+    catch { loadAssignments(); }
+  };
 
   return (
     <div>
@@ -83,95 +98,111 @@ export default function ProjectDailySetup() {
         </div>
       </div>
 
-      <div style={styles.scopeBar}>
-        <div style={styles.fieldGroup}>
-          <label style={styles.label}>{t.pdProjectScope}</label>
-          <select style={styles.select} value={scopeProject} onChange={e => setScopeProject(e.target.value)}>
-            <option value="">{t.pdDefaultAllProjects}</option>
-            {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </div>
-        <div style={styles.fieldGroup}>
-          <label style={styles.label}>{t.pdTypeScope}</label>
-          <select style={styles.select} value={scopeRole} onChange={e => setScopeRole(e.target.value)}>
-            <option value="">{t.pdAllTypes}</option>
-            {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-          </select>
-        </div>
-      </div>
-
       <p style={styles.hint}>{t.pdScopeHint}</p>
 
-      {loading ? (
-        <SkeletonList count={3} rows={1} />
+      {templates.length === 0 ? (
+        <div style={styles.empty}><p style={styles.emptyText}>{t.pdNoChecklists}</p></div>
       ) : (
-        <>
-          <div style={styles.editingScope}>{t.pdEditing}: <strong>{scopeLabel}</strong></div>
-          <div style={styles.list}>
-            {items.map((item, idx) => (
-              <div key={item._id} style={styles.itemRow}>
-                <span style={styles.itemIdx}>{idx + 1}</span>
-                <input
-                  style={styles.textInput}
-                  type="text"
-                  placeholder={t.itemLabelPlaceholder}
-                  value={item.text}
-                  onChange={e => updateItem(item._id, 'text', e.target.value)}
-                />
-                <select style={styles.smallSelect} value={item.kind} onChange={e => updateItem(item._id, 'kind', e.target.value)}>
-                  <option value="check">{t.checklistTypeCheckbox}</option>
-                  <option value="text">{t.checklistTypeText}</option>
-                </select>
-                <select style={styles.smallSelect} value={item.mode} onChange={e => updateItem(item._id, 'mode', e.target.value)} title={t.pdModeLabel}>
-                  <option value="shared">{t.pdModeShared}</option>
-                  <option value="individual">{t.pdModeIndividual}</option>
-                </select>
-                <button type="button" style={styles.removeBtn} aria-label={t.removeItem} onClick={() => removeItem(item._id)}>✕</button>
-              </div>
-            ))}
-            {items.length === 0 && <p style={styles.empty}>{t.pdEmpty}</p>}
-          </div>
+        <div style={styles.addBar}>
+          <select style={styles.addTemplateSelect} value={addTemplateId} onChange={e => setAddTemplateId(e.target.value)}>
+            <option value="">{t.pdPickChecklist}</option>
+            {templates.map(tp => <option key={tp.id} value={tp.id}>{tp.name}</option>)}
+          </select>
+          <button type="button" style={{ ...styles.addBtn, ...(addTemplateId ? {} : { opacity: 0.55, cursor: 'not-allowed' }) }} onClick={addAssignment} disabled={!addTemplateId}>
+            + {t.pdAssignChecklist}
+          </button>
+        </div>
+      )}
 
-          <div style={styles.actions}>
-            <button type="button" style={styles.addBtn} onClick={addItem}>{t.addItem}</button>
-            <div style={{ flex: 1 }} />
-            {saved && !dirty && <span style={styles.savedTag}>✓ {t.pdSaved}</span>}
-            <button
-              type="button"
-              style={{ ...styles.saveBtn, ...((saving || !dirty) ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
-              onClick={save}
-              disabled={saving || !dirty}
-            >
-              {saving ? t.saving : t.saveChanges}
-            </button>
-          </div>
-          {error && <p role="alert" style={styles.error}>{error}</p>}
-        </>
+      {error && <p role="alert" style={styles.error}>{error}</p>}
+
+      {loading ? (
+        <SkeletonList count={3} rows={2} />
+      ) : assignments.length === 0 ? (
+        <div style={styles.empty}><p style={styles.emptyText}>{t.pdEmpty}</p></div>
+      ) : (
+        <div style={styles.list}>
+          {assignments.map(a => (
+            <div key={a.id} style={styles.card}>
+              <div style={styles.cardHead}>
+                <div>
+                  <div style={styles.cardTitle}>{a.template_name}</div>
+                  <div style={styles.cardMeta}>{a.item_count} {t.itemsCount}</div>
+                </div>
+                <button type="button" style={styles.removeBtn} onClick={() => remove(a.id)}>{t.delete}</button>
+              </div>
+
+              <div style={styles.scopeGrid}>
+                <div style={styles.scopeCell}>
+                  <div style={styles.scopeLabel}>{t.pdProjectScope}</div>
+                  <ScopePicker
+                    allLabel={t.pdAllProjects}
+                    addLabel={t.pdAddProject}
+                    options={projects}
+                    selected={a.project_ids}
+                    onChange={ids => patch(a.id, { project_ids: ids })}
+                  />
+                </div>
+                <div style={styles.scopeCell}>
+                  <div style={styles.scopeLabel}>{t.pdTypeScope}</div>
+                  <ScopePicker
+                    allLabel={t.pdAllTypes}
+                    addLabel={t.pdAddRole}
+                    options={roles}
+                    selected={a.role_ids}
+                    onChange={ids => patch(a.id, { role_ids: ids })}
+                  />
+                </div>
+                <div style={styles.scopeCell}>
+                  <div style={styles.scopeLabel}>{t.pdModeLabel}</div>
+                  <div style={styles.modeToggle}>
+                    {['shared', 'individual'].map(m => (
+                      <button
+                        key={m}
+                        type="button"
+                        style={{ ...styles.modeBtn, ...(a.mode === m ? styles.modeBtnOn : {}) }}
+                        onClick={() => a.mode !== m && patch(a.id, { mode: m })}
+                      >
+                        {m === 'shared' ? t.pdModeShared : t.pdModeIndividual}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
 }
 
 const styles = {
-  topRow: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' },
+  topRow: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12, gap: 12, flexWrap: 'wrap' },
   heading: { fontSize: 22, fontWeight: 800, color: '#111827', margin: 0 },
   summary: { fontSize: 13, color: '#6b7280', margin: '4px 0 0' },
-  scopeBar: { display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 10 },
-  fieldGroup: { display: 'flex', flexDirection: 'column', gap: 4, minWidth: 200, flex: 1 },
-  label: { fontSize: 12, fontWeight: 600, color: '#6b7280' },
-  select: { padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 7, fontSize: 13, background: '#fff', width: '100%', boxSizing: 'border-box' },
   hint: { fontSize: 12, color: '#6b7280', background: '#f9fafb', border: '1px solid #eef2f7', borderRadius: 8, padding: '8px 12px', lineHeight: 1.5, margin: '0 0 16px' },
-  editingScope: { fontSize: 12, color: '#6b7280', margin: '0 0 8px' },
-  list: { display: 'flex', flexDirection: 'column', gap: 8 },
-  itemRow: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  itemIdx: { fontSize: 12, fontWeight: 700, color: '#6b7280', flexShrink: 0, width: 18 },
-  textInput: { padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 7, fontSize: 13, flex: 1, minWidth: 160, boxSizing: 'border-box' },
-  smallSelect: { padding: '8px 6px', border: '1px solid #e5e7eb', borderRadius: 7, fontSize: 12, background: '#fff', flexShrink: 0 },
-  removeBtn: { fontSize: 11, color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 6px', borderRadius: 4, flexShrink: 0 },
-  empty: { color: '#6b7280', fontSize: 14, padding: '10px 0' },
-  actions: { display: 'flex', alignItems: 'center', gap: 10, marginTop: 16 },
-  addBtn: { fontSize: 12, fontWeight: 600, color: '#059669', background: '#ecfdf5', border: '1px solid #a7f3d0', padding: '8px 14px', borderRadius: 7, cursor: 'pointer' },
-  savedTag: { fontSize: 13, fontWeight: 600, color: '#065f46' },
-  saveBtn: { background: '#059669', color: '#fff', border: 'none', padding: '9px 18px', borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: 'pointer' },
-  error: { color: '#ef4444', fontSize: 13, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, padding: '8px 12px', margin: '10px 0 0' },
+  addBar: { display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 },
+  addTemplateSelect: { padding: '9px 12px', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 14, background: '#fff', minWidth: 220, flex: 1, maxWidth: 360 },
+  addBtn: { background: '#059669', color: '#fff', border: 'none', padding: '9px 18px', borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: 'pointer', flexShrink: 0 },
+  list: { display: 'flex', flexDirection: 'column', gap: 12 },
+  card: { background: '#fff', borderRadius: 12, boxShadow: '0 1px 6px rgba(0,0,0,0.07)', padding: 16 },
+  cardHead: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 12 },
+  cardTitle: { fontWeight: 700, fontSize: 15, color: '#111827' },
+  cardMeta: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  removeBtn: { background: 'none', border: '1px solid #fca5a5', color: '#ef4444', padding: '5px 12px', borderRadius: 6, fontSize: 12, cursor: 'pointer', flexShrink: 0 },
+  scopeGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 },
+  scopeCell: { display: 'flex', flexDirection: 'column', gap: 6 },
+  scopeLabel: { fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.04em' },
+  scopeRow: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  allTag: { fontSize: 12, fontWeight: 600, color: '#374151', background: '#f3f4f6', padding: '4px 10px', borderRadius: 12 },
+  chip: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 600, color: '#1d4ed8', background: '#eff6ff', border: '1px solid #bfdbfe', padding: '3px 6px 3px 10px', borderRadius: 12 },
+  chipX: { border: 'none', background: 'none', color: '#1d4ed8', cursor: 'pointer', fontSize: 11, padding: 0, lineHeight: 1 },
+  addSelect: { padding: '5px 8px', border: '1px dashed #cbd5e1', borderRadius: 8, fontSize: 12, background: '#fff', color: '#6b7280', cursor: 'pointer' },
+  modeToggle: { display: 'inline-flex', border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', width: 'fit-content' },
+  modeBtn: { border: 'none', background: '#fff', color: '#6b7280', padding: '7px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  modeBtnOn: { background: '#059669', color: '#fff' },
+  empty: { textAlign: 'center', padding: '40px 20px' },
+  emptyText: { color: '#6b7280', fontSize: 15 },
+  error: { color: '#ef4444', fontSize: 13, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, padding: '8px 12px', margin: '0 0 12px' },
 };

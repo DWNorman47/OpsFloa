@@ -23,42 +23,46 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
-## 2026-08-13 — Project Daily: scoped + shared/individual recurring checklist setup
+## 2026-08-13 — Project Daily: assign whole checklists (scoped, shared/individual)
 
-New **Project Daily** tab (first in Field ▸ Manage, admin-only) — the setup home for
-the recurring items that seed each day's Daily Checklist. Three authoring dimensions:
+New **Project Daily** tab (first in Field ▸ Manage, admin-only) — seeds each day's
+Daily Checklist from **whole Checklist Builder checklists**, not hand-typed items. Each
+**assignment** = a template + a project scope + a team-role scope + a mode:
 
-- **Project** — `recurring.project_id` now nullable: `NULL` = company default (all
-  projects); a value = that project. Both apply additively (text-dedup handles overlap).
-- **Team member type** — new `recurring.role_id` (FK roles): `NULL` = all types; a
-  value = that type. Each assembled day item carries `role_id`, and crew reads filter
-  to `role_id IS NULL OR role_id = viewer's` — **each worker sees only their type's
-  items + the all-types defaults; admins see all**. `req.user.role_id` (already in the
-  JWT) drives it, no extra lookup.
-- **Shared vs individual** (per item) — new `mode` column. `shared` = one row, everyone
-  matching shares the check state (a change by one is seen by all — today's model).
-  `individual` = each matching person gets a **private** check state, stored in the new
-  `daily_checklist_item_user_state` table; `loadItems` resolves the viewer's own state
-  and PATCH upserts it instead of the shared row.
+- **Projects** — `assignments.project_ids INT[]` (NULL/empty = all projects; or a set).
+  UI defaults to *All*; an **Add project** control narrows it to specific projects (chips).
+- **Team roles** — `assignments.role_ids INT[]` (NULL/empty = all types; or a set). Same
+  Add pattern. Because it's a set, one **shared** row is visible to several types at once.
+  Each assembled day item carries `items.role_ids INT[]`; crew reads filter to
+  `role_ids IS NULL OR viewer_role = ANY(role_ids)` — a worker sees only items for their
+  type + the all-types ones; admins see all. `req.user.role_id` (in the JWT) drives it.
+- **Shared vs individual** (per assignment) — `mode`. `shared` = one row everyone matching
+  shares; `individual` = each matching person gets a private check state in
+  `daily_checklist_item_user_state`. `loadItems` resolves the viewer's own state; PATCH
+  upserts it instead of the shared row.
 
-Migration `0172` (project_id nullable + role_id + mode + user-state table + CHECK/enum
-via `dailyChecklistEnums.js`, logged in `db-enums.md`). New matrix endpoints
-`GET/PUT /daily-checklist/recurring?project_id=&role_id=` (each `(project,type)` pair is
-one editable cell). The legacy `/projects/:id/recurring` + `replaceRecurring` (the
-day-form carryover flow) are scoped to the `role_id IS NULL AND mode='shared'` cell so
-they never clobber the new default/type/individual cells.
+At day-assembly, each active matching assignment expands its template's items onto the day
+(deduped by text, after the project's own hand-typed recurring template).
 
-**Judgment calls / simplifications (both filed in BACKLOG):**
-- Rollover carries only **shared** unchecked items forward; individual items re-seed
-  from the template each day (no single "not done" to carry).
-- Admin's view of an *individual* item on the shared day shows the admin's own (empty)
-  state — a per-person completion report is the follow-up.
-- The clock-in "start your day" prompt still keys off project-specific recurring items,
-  so a project relying only on **default** items won't be flagged there yet.
+Endpoints: `GET/POST/PATCH/DELETE /daily-checklist/assignments`. Migration `0173`
+(`assignments` table; `items.role_id`→`role_ids[]`; **reverts** the interim `0172`
+per-scope columns on `recurring_items` and restores the day-form carryover to its original
+project-scoped shape). `db-enums.md` updated for `assignments.mode` + `items.mode`.
 
-Verify: full server suite **1431 green** (added an individual-mode PATCH test + fixed
-the shared-mode one for the new item-lookup query); client eslint + i18n parity + 84
-smoke + build all green.
+> **Supersedes** the earlier same-day *field-by-field* Project Daily (0172) — David
+> redirected to checklist-by-checklist assignments with multi-project / multi-role scope.
+> `0172` still runs (its `daily_checklist_item_user_state` table + `items.mode` stay);
+> `0173` evolves the rest.
+
+**Simplifications (BACKLOG):** rollover carries **shared** unchecked items only
+(individual re-seed each day); admin sees an individual item with their own (empty) state
+— per-person completion report is the follow-up; the clock-in "start your day" prompt
+still keys off the per-project recurring template, so an assignment-only project isn't
+flagged there yet.
+
+Verify: full server suite **1431 green** (individual-mode PATCH test added; shared-mode
+one updated for the new item-lookup + `role_ids`); client eslint + i18n parity + 84 smoke
++ build all green.
 
 ## 2026-08-13 — Typed Checklist Builder + Checklist Reports (Manage)
 

@@ -287,13 +287,13 @@ that holds the exhaustive detail.
 ## ✨ Ideas — improvements
 
 - **Project Daily — two follow-ups from the 2026-08-13 build.** (1) *Clock-in
-  prompt gap:* the post-clock-in "start your day" prompt still flags a project as
-  startable only from *project-specific* recurring items — a project relying solely
-  on **default (all-projects)** items won't appear (the day still assembles defaults
-  when started manually). (2) *Admin/reporting view of individual items:* on the
-  shared day view an admin sees an individual item with their *own* (usually empty)
-  state; there's no per-person completion breakdown yet. A Checklist-Reports-style
-  per-person view of individual-item completion is the natural home. Both in
+  prompt gap:* the post-clock-in "start your day" prompt flags a project as startable
+  only from its *per-project recurring* template — a project seeded purely by a
+  **Project Daily assignment** (all-projects or a project set) won't appear yet (the
+  day still assembles the assignment when started manually). (2) *Admin/reporting view
+  of individual items:* on the shared day view an admin sees an individual item with
+  their *own* (usually empty) state; there's no per-person completion breakdown yet — a
+  Checklist-Reports-style per-person view is the natural home. Both in
   `server/routes/dailyChecklist.js` / `ProjectDailySetup.jsx`.
 
 - **Haul log: print layout + a specific-takeoff picker.** A print-friendly haul
