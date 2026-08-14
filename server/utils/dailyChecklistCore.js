@@ -48,7 +48,7 @@ async function appendAssembledItems(client, { dayId, companyId, projectId, seen,
        FROM daily_checklist_assignments a
        JOIN safety_checklist_templates t ON t.id = a.template_id
       WHERE a.company_id = $1 AND a.active = true
-        AND (a.project_ids IS NULL OR $2::int = ANY(a.project_ids))
+        AND (a.project_id IS NULL OR a.project_id = $2)
       ORDER BY a.order_index, a.id`,
     [companyId, projectId]
   );

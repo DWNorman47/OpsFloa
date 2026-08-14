@@ -120,88 +120,118 @@ router.put('/projects/:projectId/recurring', requirePerm('daily_checklist_manage
 
 // ── Project Daily assignments ────────────────────────────────────────────────────
 // The Project Daily tab seeds each day from whole Checklist Builder checklists. An
-// assignment = one template + a project scope + a team-type scope + a mode:
-//   project_ids: null/[] = all projects        | a set = those projects
-//   role_ids:    null/[] = all team-member-types| a set = those types (one shared row,
+// assignment = one template + a project scope + a team-role scope + a mode:
+//   project_id: null = all projects | id = one project (single scope)
+//   role_ids:   null/[] = all team-member-types | a set = those roles (one shared row,
 //                                                 visible to any of them)
-//   mode:        'shared' | 'individual' (the whole checklist)
+//   mode:       'shared' | 'individual' (the whole checklist)
 // At day-assembly each matching assignment expands its template's items onto the day.
 
-// Sanitize a scope array from the body: [] or non-array → null (= all); else the subset of
-// ids that belong to the company (via `valid`, a Set of allowed ids as strings).
+// Sanitize a role scope array: [] or non-array → null (= all); else the subset of ids that
+// belong to the company (via `valid`, a Set of allowed ids as strings).
 const scopeIds = (raw, valid) => {
   if (!Array.isArray(raw) || raw.length === 0) return null;
   const ids = [...new Set(raw.map(Number).filter(n => Number.isInteger(n) && valid.has(String(n))))];
   return ids.length ? ids : null;
 };
 
-async function companyProjectIds(db, companyId) {
-  const r = await db.query('SELECT id FROM projects WHERE company_id = $1', [companyId]);
-  return new Set(r.rows.map(x => String(x.id)));
-}
 async function companyRoleIds(db, companyId) {
   const r = await db.query('SELECT id FROM roles WHERE company_id = $1', [companyId]);
   return new Set(r.rows.map(x => String(x.id)));
 }
 
-// GET /assignments — all Project Daily assignments (with template name + item count).
+// GET /assignments?project_id= — assignments for one project scope (absent/blank = the
+// all-projects scope, i.e. project_id IS NULL), with template name + item count.
 router.get('/assignments', async (req, res) => {
+  const raw = req.query.project_id;
+  const params = [req.user.company_id];
+  let scope = 'a.project_id IS NULL';
+  if (raw != null && raw !== '') {
+    if (!(await projectBelongsToCompany(pool, raw, req.user.company_id))) return res.status(404).json({ error: 'Project not found' });
+    params.push(raw); scope = `a.project_id = $${params.length}`;
+  }
   try {
     const r = await pool.query(
-      `SELECT a.id, a.template_id, a.project_ids, a.role_ids, a.mode, a.order_index, a.active,
+      `SELECT a.id, a.template_id, a.project_id, a.role_ids, a.mode, a.order_index, a.active,
               t.name AS template_name, t.type AS template_type,
               COALESCE(jsonb_array_length(t.items), 0) AS item_count
          FROM daily_checklist_assignments a
          JOIN safety_checklist_templates t ON t.id = a.template_id
-        WHERE a.company_id = $1
+        WHERE a.company_id = $1 AND ${scope}
         ORDER BY a.order_index, a.id`,
-      [req.user.company_id]
+      params
     );
     res.json({ assignments: r.rows });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
-// POST /assignments — assign a checklist. Body: { template_id, project_ids?, role_ids?, mode? }.
+// POST /assignments — assign a checklist. Body: { template_id, project_id?, role_ids?, mode? }.
 router.post('/assignments', requirePerm('daily_checklist_manage_recurring'), async (req, res) => {
   const companyId = req.user.company_id;
   const templateId = Number(req.body?.template_id);
   if (!Number.isInteger(templateId)) return res.status(400).json({ error: 'template_id required' });
+  const rawProject = req.body?.project_id;
   try {
     const tmpl = await pool.query('SELECT id FROM safety_checklist_templates WHERE id = $1 AND company_id = $2', [templateId, companyId]);
     if (tmpl.rowCount === 0) return res.status(404).json({ error: 'Checklist not found' });
-    const [validProjects, validRoles] = await Promise.all([companyProjectIds(pool, companyId), companyRoleIds(pool, companyId)]);
-    const projectIds = scopeIds(req.body?.project_ids, validProjects);
-    const roleIds = scopeIds(req.body?.role_ids, validRoles);
-    const ord = await pool.query('SELECT COALESCE(MAX(order_index), -1) + 1 AS n FROM daily_checklist_assignments WHERE company_id = $1', [companyId]);
+    let projectId = null;
+    if (rawProject != null && rawProject !== '') {
+      if (!(await projectBelongsToCompany(pool, rawProject, companyId))) return res.status(400).json({ error: 'Invalid project' });
+      projectId = rawProject;
+    }
+    const roleIds = scopeIds(req.body?.role_ids, await companyRoleIds(pool, companyId));
+    const ord = await pool.query(
+      'SELECT COALESCE(MAX(order_index), -1) + 1 AS n FROM daily_checklist_assignments WHERE company_id = $1 AND project_id IS NOT DISTINCT FROM $2',
+      [companyId, projectId]
+    );
     const r = await pool.query(
-      `INSERT INTO daily_checklist_assignments (company_id, template_id, project_ids, role_ids, mode, order_index, created_by)
+      `INSERT INTO daily_checklist_assignments (company_id, template_id, project_id, role_ids, mode, order_index, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-      [companyId, templateId, projectIds, roleIds, cleanMode(req.body?.mode), ord.rows[0].n, req.user.id]
+      [companyId, templateId, projectId, roleIds, cleanMode(req.body?.mode), ord.rows[0].n, req.user.id]
     );
     res.status(201).json({ id: r.rows[0].id });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
-// PATCH /assignments/:id — update scope / mode / active. Any field may be omitted.
+// PATCH /assignments/:id — update role scope / mode / active. Any field may be omitted.
 router.patch('/assignments/:id', requirePerm('daily_checklist_manage_recurring'), async (req, res) => {
   const companyId = req.user.company_id;
   try {
     const existing = await pool.query('SELECT * FROM daily_checklist_assignments WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
     if (existing.rowCount === 0) return res.status(404).json({ error: 'Not found' });
     const cur = existing.rows[0];
-    const [validProjects, validRoles] = await Promise.all([companyProjectIds(pool, companyId), companyRoleIds(pool, companyId)]);
-    const projectIds = req.body?.project_ids !== undefined ? scopeIds(req.body.project_ids, validProjects) : cur.project_ids;
-    const roleIds = req.body?.role_ids !== undefined ? scopeIds(req.body.role_ids, validRoles) : cur.role_ids;
+    const roleIds = req.body?.role_ids !== undefined ? scopeIds(req.body.role_ids, await companyRoleIds(pool, companyId)) : cur.role_ids;
     const mode = req.body?.mode !== undefined ? cleanMode(req.body.mode) : cur.mode;
     const active = typeof req.body?.active === 'boolean' ? req.body.active : cur.active;
     const r = await pool.query(
-      `UPDATE daily_checklist_assignments SET project_ids = $1, role_ids = $2, mode = $3, active = $4, updated_at = now()
-        WHERE id = $5 AND company_id = $6
-        RETURNING id, template_id, project_ids, role_ids, mode, order_index, active`,
-      [projectIds, roleIds, mode, active, req.params.id, companyId]
+      `UPDATE daily_checklist_assignments SET role_ids = $1, mode = $2, active = $3, updated_at = now()
+        WHERE id = $4 AND company_id = $5
+        RETURNING id, template_id, project_id, role_ids, mode, order_index, active`,
+      [roleIds, mode, active, req.params.id, companyId]
     );
     res.json({ assignment: r.rows[0] });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
+// POST /assignments/reorder — set order_index by array position. Body: { order: [id, ...] }
+// (the assignment ids of one project scope, in the desired order).
+router.post('/assignments/reorder', requirePerm('daily_checklist_manage_recurring'), async (req, res) => {
+  const order = Array.isArray(req.body?.order) ? req.body.order : [];
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (let i = 0; i < order.length; i++) {
+      await client.query(
+        'UPDATE daily_checklist_assignments SET order_index = $1, updated_at = now() WHERE id = $2 AND company_id = $3',
+        [i, order[i], req.user.company_id]
+      );
+    }
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' });
+  } finally { client.release(); }
 });
 
 // DELETE /assignments/:id

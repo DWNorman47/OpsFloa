@@ -29,8 +29,10 @@ New **Project Daily** tab (first in Field ▸ Manage, admin-only) — seeds each
 Daily Checklist from **whole Checklist Builder checklists**, not hand-typed items. Each
 **assignment** = a template + a project scope + a team-role scope + a mode:
 
-- **Projects** — `assignments.project_ids INT[]` (NULL/empty = all projects; or a set).
-  UI defaults to *All*; an **Add project** control narrows it to specific projects (chips).
+- **Project** — `assignments.project_id` (NULL = all projects, or **one** project — a
+  single scope, `0174`). The tab has a top-level project selector; you add + **arrange**
+  (reorder) the checklists within the chosen scope. *(Started as `project_ids[]` in `0173`;
+  simplified to single-project per feedback.)*
 - **Team roles** — `assignments.role_ids INT[]` (NULL/empty = all types; or a set). Same
   Add pattern. Because it's a set, one **shared** row is visible to several types at once.
   Each assembled day item carries `items.role_ids INT[]`; crew reads filter to

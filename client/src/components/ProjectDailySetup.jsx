@@ -1,6 +1,6 @@
-// Project Daily — assign whole Checklist Builder checklists to seed each day's Daily
-// Checklist. Each assignment = a checklist + a project scope + a team-role scope + a mode.
-// Projects and roles default to "All"; an Add control narrows either to a specific set.
+// Project Daily — pick a project scope (All projects or one project), then add, arrange,
+// and role-scope the Checklist Builder checklists that seed each day's Daily Checklist.
+// Each assignment carries a team-role scope (all / one / several) and a mode:
 //   Shared     = one list everyone with a matching role shares (one change seen by all)
 //   Individual = each matching person gets their own private copy
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
@@ -8,12 +8,12 @@ import api from '../api';
 import { useT } from '../hooks/useT';
 import { SkeletonList } from './Skeleton';
 
-// A scope picker: "All" until you add specific ones; chips + an Add dropdown after.
-function ScopePicker({ allLabel, addLabel, options, selected, onChange }) {
+// A role scope picker: "All types" until you add specific roles; chips + Add after.
+function RolePicker({ allLabel, addLabel, options, selected, onChange }) {
   const ids = Array.isArray(selected) && selected.length ? selected.map(String) : null;
   const nameById = useMemo(() => Object.fromEntries(options.map(o => [String(o.id), o.name])), [options]);
   const remaining = options.filter(o => !ids || !ids.includes(String(o.id)));
-  const add = id => { if (!id) return; onChange([...(ids || []), id].map(Number)); };
+  const add = id => { if (id) onChange([...(ids || []), id].map(Number)); };
   const remove = id => {
     const next = (ids || []).filter(x => x !== String(id)).map(Number);
     onChange(next.length ? next : null); // empty → back to All
@@ -42,51 +42,64 @@ function ScopePicker({ allLabel, addLabel, options, selected, onChange }) {
 
 export default function ProjectDailySetup() {
   const t = useT();
-  const [assignments, setAssignments] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [projects, setProjects] = useState([]);
   const [roles, setRoles] = useState([]);
+  const [scopeProject, setScopeProject] = useState(''); // '' = all projects
+  const [assignments, setAssignments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [addTemplateId, setAddTemplateId] = useState('');
   const [error, setError] = useState('');
 
-  const loadAssignments = useCallback(async () => {
-    const r = await api.get('/daily-checklist/assignments');
-    setAssignments(r.data.assignments || []);
-  }, []);
-
   useEffect(() => {
     Promise.all([
-      api.get('/daily-checklist/assignments').then(r => r.data.assignments || []).catch(() => []),
       api.get('/safety-checklists/templates').then(r => r.data || []).catch(() => []),
       api.get('/admin/projects').then(r => r.data || []).catch(() => []),
       api.get('/admin/roles').then(r => r.data || []).catch(() => []),
-    ]).then(([a, tmpls, p, r]) => {
-      setAssignments(a); setTemplates(tmpls); setProjects(p); setRoles(r);
-    }).finally(() => setLoading(false));
+    ]).then(([tmpls, p, r]) => { setTemplates(tmpls); setProjects(p); setRoles(r); });
   }, []);
+
+  const loadScope = useCallback(async (project) => {
+    setLoading(true); setError('');
+    try {
+      const r = await api.get('/daily-checklist/assignments', { params: project ? { project_id: project } : {} });
+      setAssignments(r.data.assignments || []);
+    } catch { setAssignments([]); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { loadScope(scopeProject); }, [scopeProject, loadScope]);
 
   const addAssignment = async () => {
     if (!addTemplateId) return;
     setError('');
     try {
-      await api.post('/daily-checklist/assignments', { template_id: Number(addTemplateId) });
+      await api.post('/daily-checklist/assignments', { template_id: Number(addTemplateId), project_id: scopeProject || null });
       setAddTemplateId('');
-      await loadAssignments();
+      await loadScope(scopeProject);
     } catch (err) { setError(err.response?.data?.error || t.failedToSave); }
   };
 
-  // Patch one field, updating local state optimistically.
   const patch = async (id, body) => {
     setAssignments(prev => prev.map(a => a.id === id ? { ...a, ...body } : a));
     try { await api.patch(`/daily-checklist/assignments/${id}`, body); }
-    catch (err) { setError(err.response?.data?.error || t.failedToSave); loadAssignments(); }
+    catch (err) { setError(err.response?.data?.error || t.failedToSave); loadScope(scopeProject); }
   };
 
   const remove = async (id) => {
     setAssignments(prev => prev.filter(a => a.id !== id));
     try { await api.delete(`/daily-checklist/assignments/${id}`); }
-    catch { loadAssignments(); }
+    catch { loadScope(scopeProject); }
+  };
+
+  const move = async (idx, dir) => {
+    const next = [...assignments];
+    const j = idx + dir;
+    if (j < 0 || j >= next.length) return;
+    [next[idx], next[j]] = [next[j], next[idx]];
+    setAssignments(next);
+    try { await api.post('/daily-checklist/assignments/reorder', { order: next.map(a => a.id) }); }
+    catch { loadScope(scopeProject); }
   };
 
   return (
@@ -96,6 +109,14 @@ export default function ProjectDailySetup() {
           <h2 style={styles.heading}>{t.pdTitle}</h2>
           <p style={styles.summary}>{t.pdSub}</p>
         </div>
+      </div>
+
+      <div style={styles.scopeBar}>
+        <label style={styles.scopeBarLabel}>{t.pdProjectScope}</label>
+        <select style={styles.projectSelect} value={scopeProject} onChange={e => setScopeProject(e.target.value)}>
+          <option value="">{t.pdAllProjects}</option>
+          {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
       </div>
 
       <p style={styles.hint}>{t.pdScopeHint}</p>
@@ -122,30 +143,26 @@ export default function ProjectDailySetup() {
         <div style={styles.empty}><p style={styles.emptyText}>{t.pdEmpty}</p></div>
       ) : (
         <div style={styles.list}>
-          {assignments.map(a => (
+          {assignments.map((a, idx) => (
             <div key={a.id} style={styles.card}>
               <div style={styles.cardHead}>
-                <div>
-                  <div style={styles.cardTitle}>{a.template_name}</div>
-                  <div style={styles.cardMeta}>{a.item_count} {t.itemsCount}</div>
+                <div style={styles.cardHeadLeft}>
+                  <div style={styles.arrows}>
+                    <button type="button" style={{ ...styles.arrow, ...(idx === 0 ? styles.arrowOff : {}) }} aria-label={t.pdMoveUp} disabled={idx === 0} onClick={() => move(idx, -1)}>▲</button>
+                    <button type="button" style={{ ...styles.arrow, ...(idx === assignments.length - 1 ? styles.arrowOff : {}) }} aria-label={t.pdMoveDown} disabled={idx === assignments.length - 1} onClick={() => move(idx, 1)}>▼</button>
+                  </div>
+                  <div>
+                    <div style={styles.cardTitle}>{a.template_name}</div>
+                    <div style={styles.cardMeta}>{a.item_count} {t.itemsCount}</div>
+                  </div>
                 </div>
                 <button type="button" style={styles.removeBtn} onClick={() => remove(a.id)}>{t.delete}</button>
               </div>
 
               <div style={styles.scopeGrid}>
                 <div style={styles.scopeCell}>
-                  <div style={styles.scopeLabel}>{t.pdProjectScope}</div>
-                  <ScopePicker
-                    allLabel={t.pdAllProjects}
-                    addLabel={t.pdAddProject}
-                    options={projects}
-                    selected={a.project_ids}
-                    onChange={ids => patch(a.id, { project_ids: ids })}
-                  />
-                </div>
-                <div style={styles.scopeCell}>
                   <div style={styles.scopeLabel}>{t.pdTypeScope}</div>
-                  <ScopePicker
+                  <RolePicker
                     allLabel={t.pdAllTypes}
                     addLabel={t.pdAddRole}
                     options={roles}
@@ -181,6 +198,9 @@ const styles = {
   topRow: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12, gap: 12, flexWrap: 'wrap' },
   heading: { fontSize: 22, fontWeight: 800, color: '#111827', margin: 0 },
   summary: { fontSize: 13, color: '#6b7280', margin: '4px 0 0' },
+  scopeBar: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' },
+  scopeBarLabel: { fontSize: 12, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.04em' },
+  projectSelect: { padding: '9px 12px', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 14, background: '#fff', minWidth: 220 },
   hint: { fontSize: 12, color: '#6b7280', background: '#f9fafb', border: '1px solid #eef2f7', borderRadius: 8, padding: '8px 12px', lineHeight: 1.5, margin: '0 0 16px' },
   addBar: { display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 },
   addTemplateSelect: { padding: '9px 12px', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 14, background: '#fff', minWidth: 220, flex: 1, maxWidth: 360 },
@@ -188,10 +208,14 @@ const styles = {
   list: { display: 'flex', flexDirection: 'column', gap: 12 },
   card: { background: '#fff', borderRadius: 12, boxShadow: '0 1px 6px rgba(0,0,0,0.07)', padding: 16 },
   cardHead: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 12 },
+  cardHeadLeft: { display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 },
+  arrows: { display: 'flex', flexDirection: 'column', gap: 2, flexShrink: 0 },
+  arrow: { border: '1px solid #e5e7eb', background: '#f9fafb', color: '#6b7280', borderRadius: 5, width: 24, height: 18, fontSize: 9, lineHeight: 1, cursor: 'pointer', padding: 0 },
+  arrowOff: { opacity: 0.35, cursor: 'not-allowed' },
   cardTitle: { fontWeight: 700, fontSize: 15, color: '#111827' },
   cardMeta: { fontSize: 12, color: '#6b7280', marginTop: 2 },
   removeBtn: { background: 'none', border: '1px solid #fca5a5', color: '#ef4444', padding: '5px 12px', borderRadius: 6, fontSize: 12, cursor: 'pointer', flexShrink: 0 },
-  scopeGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 },
+  scopeGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 },
   scopeCell: { display: 'flex', flexDirection: 'column', gap: 6 },
   scopeLabel: { fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.04em' },
   scopeRow: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
