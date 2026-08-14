@@ -11,7 +11,7 @@ import { reportClientError } from '../errorReporter';
 import RetryBanner from '../components/RetryBanner';
 import ErrorBoundary from '../components/ErrorBoundary';
 
-const FIELD_TABS = ['notes', 'checklist-daily', 'daily', 'haul', 'punchlist', 'safety', 'checklists', 'incident', 'gallery', 'subs', 'rfi', 'inspect'];
+const FIELD_TABS = ['notes', 'checklist-daily', 'daily', 'haul', 'punchlist', 'safety', 'checklist-builder', 'checklist-reports', 'incident', 'gallery', 'subs', 'rfi', 'inspect'];
 const FIELD_HASH_ALIASES = {
   today: 'notes',
   'work-notes': 'notes',
@@ -30,9 +30,12 @@ const FIELD_HASH_ALIASES = {
   inspections: 'inspect',
   inspection: 'inspect',
   talks: 'safety',
-  checklist: 'checklists',
+  checklists: 'checklist-builder',
+  checklist: 'checklist-builder',
+  builder: 'checklist-builder',
+  'checklist-report': 'checklist-reports',
 };
-const FIELD_GROUP_DEFAULTS = { daily: 'notes', issues: 'punchlist', safety: 'safety', resources: 'subs' };
+const FIELD_GROUP_DEFAULTS = { log: 'checklist-daily', issues: 'punchlist', manage: 'checklist-builder' };
 
 function resolveFieldTab(rawHash) {
   const hash = String(rawHash || '').replace('#', '').trim().toLowerCase();
@@ -46,7 +49,8 @@ const DailyReports        = lazy(() => import('../components/DailyReports'));
 const HaulTickets         = lazy(() => import('../components/HaulTickets'));
 const Punchlist           = lazy(() => import('../components/Punchlist'));
 const SafetyTalks         = lazy(() => import('../components/SafetyTalks'));
-const SafetyChecklists    = lazy(() => import('../components/SafetyChecklists'));
+const ChecklistBuilder    = lazy(() => import('../components/ChecklistManager').then(m => ({ default: m.ChecklistBuilder })));
+const ChecklistReports    = lazy(() => import('../components/ChecklistManager').then(m => ({ default: m.ChecklistReports })));
 const IncidentReports     = lazy(() => import('../components/IncidentReports'));
 const PhotoGallery        = lazy(() => import('../components/PhotoGallery'));
 const SubReports          = lazy(() => import('../components/SubReports'));
@@ -204,7 +208,8 @@ export default function FieldPage() {
       id: 'manage',
       label: t.fldGroupManage,
       items: [
-        ...(isAdmin ? [{ id: 'checklists', label: t.fieldTabChecklists }] : []),
+        ...(isAdmin ? [{ id: 'checklist-builder', label: t.fieldTabChecklistBuilder }] : []),
+        ...(isAdmin ? [{ id: 'checklist-reports', label: t.fieldTabChecklistReports }] : []),
         ...(isAdmin && features.feature_media_gallery ? [{ id: 'gallery', label: t.fieldTabMedia }] : []),
       ],
     },
@@ -269,8 +274,10 @@ export default function FieldPage() {
               <Punchlist projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'safety' ? (
               <SafetyTalks projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
-            ) : activeFieldTab === 'checklists' ? (
-              <SafetyChecklists projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
+            ) : activeFieldTab === 'checklist-builder' ? (
+              <ChecklistBuilder projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
+            ) : activeFieldTab === 'checklist-reports' ? (
+              <ChecklistReports projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'incident' ? (
               <IncidentReports projects={fieldProjects} settings={features} activeProject={activeProject} />
             ) : activeFieldTab === 'gallery' ? (

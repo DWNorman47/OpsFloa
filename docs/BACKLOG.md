@@ -357,16 +357,24 @@ that holds the exhaustive detail.
 ## 📌 Planned / ready-to-build
 *Scoped with a plan; just not started.*
 
-- **Surface Safety-Checklist completion on the Daily Checklist** — the Field
-  reorg (2026-08-13) made the *Safety Checklists* tab **admin-only** (now under the
-  Manage group): admins manage templates + review submissions there. David's intent
-  is that the crew *completes* checklists via the **Daily Checklist** tab and the
-  finished results show up there. That worker-completion path is **not built yet** —
-  until it is, non-admins have no in-app way to complete a safety checklist (the old
-  worker-facing `checklists` tab is gone). Needs: a way to attach/instantiate a
-  safety-checklist template onto a project's daily checklist and record completions
-  that both surfaces still read. `SafetyChecklists.jsx` + `DailyChecklist.jsx` +
-  `/safety-checklists` and `/daily-checklists` routes.
+- **Fold Inspections into the Checklist Builder (phase 2)** — the 2026-08-13 build
+  turned the old *Safety Checklists* tool into a typed **Checklist Builder** +
+  **Checklist Reports** (Manage group, admin-only); templates now carry a `type`
+  (safety/quality/pretask/equipment/general) and answers key by stable item id.
+  `inspection_templates` + `inspections` are a near-identical second builder that
+  should collapse into this one: add an `inspection` type, migrate the two tables
+  into `safety_checklist_*` (item types superset: add `pass_fail`, `number`;
+  inspections also carry a pass/fail/pending roll-up + inspector/location to
+  preserve), remap `results` (keyed by item id already) into `answers`, then retire
+  the Inspections tab + `inspections.js` route + `InspectionChecklists.jsx`. This is
+  the real de-duplication win; deferred because it's a live data migration.
+- **Surface Safety-Checklist completion on the Daily Checklist** — crews already
+  complete safety checklists **at clock-in** (`ClockInOut.jsx` posts a submission),
+  and admins can record one from Checklist Reports. What's still missing is David's
+  intent that completion also flow through the **Daily Checklist** tab with results
+  showing there. Needs a way to attach a checklist template onto a project's daily
+  checklist and record completions both surfaces read. `DailyChecklist.jsx` +
+  `ChecklistManager.jsx` + `/safety-checklists` and `/daily-checklists` routes.
 
 - **Drop the dormant `project_invoices` table** — migration `0150` unified the
   QBO mirror into native `invoices` (data copied, `lien_waivers` FK repointed,

@@ -23,6 +23,43 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-13 — Typed Checklist Builder + Checklist Reports (Manage)
+
+Generalized the single *Safety Checklists* tool into two admin Manage tabs:
+**Checklist Builder** (define/edit templates) and **Checklist Reports** (history of
+submissions). Templates now carry a **type** — safety / quality / pre-task /
+equipment / general — so one builder covers all of them; the old tool was
+safety-only. Reports filter by project / type / date range and badge each row with
+its type.
+
+- **Data:** new fixed-value column `safety_checklist_templates.type` (migration
+  `0171`, CHECK + `server/constants/checklistEnums.js`, logged in `docs/db-enums.md`).
+  Default `safety`, so existing templates keep their meaning. Kept the
+  `safety_checklist_*` **table names** (no rename) — low-risk; the Inspections
+  fold-in (phase 2) is where a real data migration happens.
+- **id-keyed answers (correctness fix):** template items now get a stable `id` on
+  save (server, `crypto.randomUUID`), and new submissions key answers by id instead
+  of array index — so editing/reordering a template no longer silently re-maps past
+  answers. Legacy index-keyed submissions (incl. the ones `ClockInOut` writes at
+  clock-in) still render via `checklistAnswer`'s id→index→label fallback. **No data
+  migration needed.**
+- **Split** `SafetyChecklists.jsx` → `ChecklistManager.jsx` exporting `ChecklistBuilder`
+  + `ChecklistReports`; FieldPage Manage group swaps the one `checklists` tab for the
+  two. Reports keeps a "+ Fill Out" record action so submissions can still be created
+  in-app.
+
+**Findings / judgment calls:**
+- Discovered there are really **three** checklist systems: Safety Checklists,
+  **Inspections** (a ~90% identical second template+submission builder), and the
+  per-day **Daily Checklist** (different model). This build unified the *naming/typing*
+  of the first; folding Inspections in is filed as phase 2 in `docs/BACKLOG.md`.
+- Kept the item field types at check/text for now (what safety used); pass_fail/number
+  come with the Inspections fold-in.
+
+`npm run verify` client side green (eslint + i18n parity + 84 smoke tests + build);
+server route loads + `superadminDelete` suite green. Item field types stay check/text
+for now.
+
 ## 2026-08-13 — Field Work: regrouped to Log / Issues / Manage (3 top tabs)
 
 Collapsed Field Work from four groups to **three**, per David's layout:
