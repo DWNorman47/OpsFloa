@@ -27,15 +27,15 @@ or act on. Commit hashes are on `dev` unless noted.
 
 Collapsed Field Work from four groups to **three**, per David's layout:
 
-- **Log** — Daily Checklist · Notes · Daily Reports ᴬ · Haul Tickets
+- **Log** — Daily Checklist · Notes · Daily Reports ᴬ · Sub Reports ᴬ · Haul Tickets
 - **Issues** — Punch List · Incident Reports · Safety Talks · Inspections ᴬ
-- **Manage** ᴬ *(last)* — Safety Checklists · Media · Sub Reports
+- **Manage** ᴬ *(last)* — Safety Checklists · Media
 
 The old *Safety* group dissolved (Talks + Inspections joined Issues) and *Resources*
-is gone (Sub Reports → Manage). Manage's items are all admin-only, so workers never
-see it (empty-group filter drops it) — their view is just Log / Issues. Sub Reports
-is the GC's daily subcontractor log (sub company, lead, headcount, work performed);
-it's admin reference, hence Manage rather than Log. New i18n keys `fldGroupManage`
+is gone (Sub Reports → Log, as the GC's daily subcontractor log — sub company, lead,
+headcount, work performed — sitting next to Daily Reports). Manage's items are all
+admin-only, so workers never see it (empty-group filter drops it) — their view is
+just Log / Issues. New i18n keys `fldGroupManage`
 (Manage/Gestión) and `fldGroupLog` (Log/Registro); no render-logic change (tabs map
 by id). *(Superseded a mid-day 4-group draft — Daily/Issues/Safety/Manage.)*
 
