@@ -177,11 +177,11 @@ export default function FieldPage() {
 
   const fieldGroups = [
     {
-      id: 'daily',
-      label: isAdmin ? t.fldGroupDaily : t.fldGroupToday,
+      id: 'log',
+      label: t.fldGroupLog,
       items: [
-        { id: 'notes', label: t.fieldTabNotes },
         { id: 'checklist-daily', label: t.fieldTabDailyChecklist },
+        { id: 'notes', label: t.fieldTabNotes },
         ...(isAdmin ? [{ id: 'daily', label: t.fieldTabDaily }] : []),
         { id: 'haul', label: t.fieldTabHaul },
       ],
@@ -192,12 +192,6 @@ export default function FieldPage() {
       items: [
         { id: 'punchlist', label: t.fieldTabPunch },
         { id: 'incident', label: t.fieldTabIncidents },
-      ],
-    },
-    {
-      id: 'safety',
-      label: t.fieldTabSafety,
-      items: [
         { id: 'safety', label: t.fldTabTalks },
         ...(isAdmin ? [{ id: 'inspect', label: t.fieldTabInspect }] : []),
       ],

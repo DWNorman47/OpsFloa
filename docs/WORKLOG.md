@@ -23,20 +23,21 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
-## 2026-08-13 — Field Work: 4th group reorg + new admin-only "Manage" tab
+## 2026-08-13 — Field Work: regrouped to Log / Issues / Manage (3 top tabs)
 
-Dropped the *Resources* group (it only held Sub Reports) and added a **Manage**
-group, so Field Work stays at four top tabs. The other tabs regrouped so the top
-three are all everyday onsite crew work:
+Collapsed Field Work from four groups to **three**, per David's layout:
 
-- **Daily/Today** — Notes · Daily Checklist · Daily Reports ᴬ · Haul Tickets
-- **Issues** — Punch List · Incident Reports
-- **Safety** — Safety Talks · Inspections ᴬ *(Checklists moved out)*
-- **Manage** ᴬ *(new, last)* — Safety Checklists · Media · Sub Reports
+- **Log** — Daily Checklist · Notes · Daily Reports ᴬ · Haul Tickets
+- **Issues** — Punch List · Incident Reports · Safety Talks · Inspections ᴬ
+- **Manage** ᴬ *(last)* — Safety Checklists · Media · Sub Reports
 
-Manage is entirely admin-only, so workers never see it (the empty-group filter
-drops it) — their view is just Daily / Safety / Issues. New i18n key `fldGroupManage`
-(EN "Manage" / ES "Gestión"); no render-logic change (tabs still map by id).
+The old *Safety* group dissolved (Talks + Inspections joined Issues) and *Resources*
+is gone (Sub Reports → Manage). Manage's items are all admin-only, so workers never
+see it (empty-group filter drops it) — their view is just Log / Issues. Sub Reports
+is the GC's daily subcontractor log (sub company, lead, headcount, work performed);
+it's admin reference, hence Manage rather than Log. New i18n keys `fldGroupManage`
+(Manage/Gestión) and `fldGroupLog` (Log/Registro); no render-logic change (tabs map
+by id). *(Superseded a mid-day 4-group draft — Daily/Issues/Safety/Manage.)*
 
 **⚠️ Behavior change / gap:** the *Safety Checklists* tab was worker-facing before —
 crews completed checklists there. It's now admin-only. Per David's call, worker
