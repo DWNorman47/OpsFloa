@@ -85,6 +85,19 @@ export default function ProjectDailySetup() {
     try { await api.patch(`/daily-checklist/assignments/${id}`, body); }
     catch (err) { setError(err.response?.data?.error || t.failedToSave); loadScope(scopeProject); }
   };
+  // Local-only update (no server call) — used for the transient "Date" selection before a
+  // date is actually picked (the server requires a date for schedule_type 'date').
+  const setLocal = (id, body) => setAssignments(prev => prev.map(a => a.id === id ? { ...a, ...body } : a));
+
+  const onScheduleType = (a, v) => {
+    if (v === 'every') patch(a.id, { schedule_type: 'every', ordinal_target: null, scheduled_date: null });
+    else if (v === 'ordinal') patch(a.id, { schedule_type: 'ordinal', ordinal_target: a.ordinal_target || 1, scheduled_date: null });
+    else {
+      const d = (a.scheduled_date || '').slice(0, 10);
+      if (d) patch(a.id, { schedule_type: 'date', scheduled_date: d });
+      else setLocal(a.id, { schedule_type: 'date' }); // reveal the date input; patch on pick
+    }
+  };
 
   const remove = async (id) => {
     setAssignments(prev => prev.filter(a => a.id !== id));
@@ -161,6 +174,33 @@ export default function ProjectDailySetup() {
 
               <div style={styles.scopeGrid}>
                 <div style={styles.scopeCell}>
+                  <div style={styles.scopeLabel}>{t.pdSchedule}</div>
+                  <div style={styles.scheduleRow}>
+                    <select style={styles.smallSelect} value={a.schedule_type || 'every'} onChange={e => onScheduleType(a, e.target.value)}>
+                      <option value="every">{t.pdSchedEvery}</option>
+                      <option value="ordinal">{t.pdSchedOrdinal}</option>
+                      <option value="date">{t.pdSchedDate}</option>
+                    </select>
+                    {a.schedule_type === 'ordinal' && (
+                      <input
+                        style={styles.dayNumInput}
+                        type="number"
+                        min="1"
+                        value={a.ordinal_target || 1}
+                        onChange={e => patch(a.id, { schedule_type: 'ordinal', ordinal_target: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+                      />
+                    )}
+                    {a.schedule_type === 'date' && (
+                      <input
+                        style={styles.smallSelect}
+                        type="date"
+                        value={(a.scheduled_date || '').slice(0, 10)}
+                        onChange={e => e.target.value && patch(a.id, { schedule_type: 'date', scheduled_date: e.target.value })}
+                      />
+                    )}
+                  </div>
+                </div>
+                <div style={styles.scopeCell}>
                   <div style={styles.scopeLabel}>{t.pdTypeScope}</div>
                   <RolePicker
                     allLabel={t.pdAllTypes}
@@ -184,6 +224,13 @@ export default function ProjectDailySetup() {
                       </button>
                     ))}
                   </div>
+                </div>
+                <div style={styles.scopeCell}>
+                  <div style={styles.scopeLabel}>{t.pdCarryover}</div>
+                  <label style={styles.carryLabel}>
+                    <input type="checkbox" checked={!!a.carryover} onChange={e => patch(a.id, { carryover: e.target.checked })} />
+                    <span>{t.pdCarryoverHint}</span>
+                  </label>
                 </div>
               </div>
             </div>
@@ -219,6 +266,10 @@ const styles = {
   scopeCell: { display: 'flex', flexDirection: 'column', gap: 6 },
   scopeLabel: { fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.04em' },
   scopeRow: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  scheduleRow: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  smallSelect: { padding: '7px 8px', border: '1px solid #e5e7eb', borderRadius: 7, fontSize: 13, background: '#fff' },
+  dayNumInput: { padding: '7px 8px', border: '1px solid #e5e7eb', borderRadius: 7, fontSize: 13, width: 64 },
+  carryLabel: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#374151', cursor: 'pointer', lineHeight: 1.4 },
   allTag: { fontSize: 12, fontWeight: 600, color: '#374151', background: '#f3f4f6', padding: '4px 10px', borderRadius: 12 },
   chip: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 600, color: '#1d4ed8', background: '#eff6ff', border: '1px solid #bfdbfe', padding: '3px 6px 3px 10px', borderRadius: 12 },
   chipX: { border: 'none', background: 'none', color: '#1d4ed8', cursor: 'pointer', fontSize: 11, padding: 0, lineHeight: 1 },

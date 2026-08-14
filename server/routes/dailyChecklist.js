@@ -140,6 +140,21 @@ async function companyRoleIds(db, companyId) {
   return new Set(r.rows.map(x => String(x.id)));
 }
 
+// Normalize an assignment's day schedule from the body → { schedule_type, ordinal_target,
+// scheduled_date } or { error }. 'every' clears both targets.
+function normAssignmentSchedule(body) {
+  if (body?.schedule_type === 'ordinal') {
+    const n = Number(body?.ordinal_target);
+    if (!Number.isInteger(n) || n < 1) return { error: 'ordinal_target must be a positive integer' };
+    return { schedule_type: 'ordinal', ordinal_target: n, scheduled_date: null };
+  }
+  if (body?.schedule_type === 'date') {
+    if (!isYmd(body?.scheduled_date)) return { error: 'scheduled_date must be YYYY-MM-DD' };
+    return { schedule_type: 'date', ordinal_target: null, scheduled_date: body.scheduled_date };
+  }
+  return { schedule_type: 'every', ordinal_target: null, scheduled_date: null };
+}
+
 // GET /assignments?project_id= — assignments for one project scope (absent/blank = the
 // all-projects scope, i.e. project_id IS NULL), with template name + item count.
 router.get('/assignments', async (req, res) => {
@@ -153,6 +168,7 @@ router.get('/assignments', async (req, res) => {
   try {
     const r = await pool.query(
       `SELECT a.id, a.template_id, a.project_id, a.role_ids, a.mode, a.order_index, a.active,
+              a.schedule_type, a.ordinal_target, a.scheduled_date, a.carryover,
               t.name AS template_name, t.type AS template_type,
               COALESCE(jsonb_array_length(t.items), 0) AS item_count
          FROM daily_checklist_assignments a
@@ -180,14 +196,18 @@ router.post('/assignments', requirePerm('daily_checklist_manage_recurring'), asy
       projectId = rawProject;
     }
     const roleIds = scopeIds(req.body?.role_ids, await companyRoleIds(pool, companyId));
+    const sched = normAssignmentSchedule(req.body);
+    if (sched.error) return res.status(400).json({ error: sched.error });
     const ord = await pool.query(
       'SELECT COALESCE(MAX(order_index), -1) + 1 AS n FROM daily_checklist_assignments WHERE company_id = $1 AND project_id IS NOT DISTINCT FROM $2',
       [companyId, projectId]
     );
     const r = await pool.query(
-      `INSERT INTO daily_checklist_assignments (company_id, template_id, project_id, role_ids, mode, order_index, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-      [companyId, templateId, projectId, roleIds, cleanMode(req.body?.mode), ord.rows[0].n, req.user.id]
+      `INSERT INTO daily_checklist_assignments
+         (company_id, template_id, project_id, role_ids, mode, schedule_type, ordinal_target, scheduled_date, carryover, order_index, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+      [companyId, templateId, projectId, roleIds, cleanMode(req.body?.mode),
+       sched.schedule_type, sched.ordinal_target, sched.scheduled_date, req.body?.carryover === true, ord.rows[0].n, req.user.id]
     );
     res.status(201).json({ id: r.rows[0].id });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
@@ -203,11 +223,20 @@ router.patch('/assignments/:id', requirePerm('daily_checklist_manage_recurring')
     const roleIds = req.body?.role_ids !== undefined ? scopeIds(req.body.role_ids, await companyRoleIds(pool, companyId)) : cur.role_ids;
     const mode = req.body?.mode !== undefined ? cleanMode(req.body.mode) : cur.mode;
     const active = typeof req.body?.active === 'boolean' ? req.body.active : cur.active;
+    const carryover = typeof req.body?.carryover === 'boolean' ? req.body.carryover : cur.carryover;
+    let schedType = cur.schedule_type, ordTarget = cur.ordinal_target, schedDate = cur.scheduled_date;
+    if (req.body?.schedule_type !== undefined) {
+      const sched = normAssignmentSchedule(req.body);
+      if (sched.error) return res.status(400).json({ error: sched.error });
+      ({ schedule_type: schedType, ordinal_target: ordTarget, scheduled_date: schedDate } = sched);
+    }
     const r = await pool.query(
-      `UPDATE daily_checklist_assignments SET role_ids = $1, mode = $2, active = $3, updated_at = now()
-        WHERE id = $4 AND company_id = $5
-        RETURNING id, template_id, project_id, role_ids, mode, order_index, active`,
-      [roleIds, mode, active, req.params.id, companyId]
+      `UPDATE daily_checklist_assignments
+          SET role_ids = $1, mode = $2, active = $3, schedule_type = $4, ordinal_target = $5,
+              scheduled_date = $6, carryover = $7, updated_at = now()
+        WHERE id = $8 AND company_id = $9
+        RETURNING id, template_id, project_id, role_ids, mode, schedule_type, ordinal_target, scheduled_date, carryover, order_index, active`,
+      [roleIds, mode, active, schedType, ordTarget, schedDate, carryover, req.params.id, companyId]
     );
     res.json({ assignment: r.rows[0] });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
@@ -472,7 +501,7 @@ router.post('/projects/:projectId/start', requirePerm('daily_checklist_start_day
       await client.query("UPDATE daily_checklists SET status = 'canceled', updated_at = now() WHERE id = $1", [mergeFrom.id]);
     }
 
-    await appendAssembledItems(client, { dayId: day.id, companyId, projectId, seen, startOrder: order });
+    await appendAssembledItems(client, { dayId: day.id, companyId, projectId, seen, startOrder: order, dayNumber: day.day_number, workDate: day.work_date });
 
     await client.query('COMMIT');
     res.status(201).json({ day, items: await loadItems(client, day.id, viewerOf(req)), started: true });

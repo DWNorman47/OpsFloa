@@ -46,6 +46,17 @@ Daily Checklist from **whole Checklist Builder checklists**, not hand-typed item
 At day-assembly, each active matching assignment expands its template's items onto the day
 (deduped by text, after the project's own hand-typed recurring template).
 
+**Day scheduling + per-checklist carryover (`0175`):** each assignment also has a
+`schedule_type` — **every** worked day, a specific **ordinal** day (`ordinal_target`), or a
+specific **date** (`scheduled_date`) — and a **carryover** flag. Assembly gathers assignments
+matching the day (`every OR ordinal=day_number OR date=work_date`), so a "Day 3" assignment
+and an "8/21/26" assignment that land on the same worked day **combine (deduped) into one
+day** automatically — no special merge code, it falls out of the existing assembly loop.
+Carryover is now **per checklist**: `daily_checklist_items.carryover` is set from the
+assignment (hand-typed recurring + manual items keep carrying as before); rollover only
+carries unchecked shared items with `carryover = true`. UI: a Schedule select (Every day /
+Day # / On a date) + a Carryover toggle on each checklist card.
+
 Endpoints: `GET/POST/PATCH/DELETE /daily-checklist/assignments`. Migration `0173`
 (`assignments` table; `items.role_id`→`role_ids[]`; **reverts** the interim `0172`
 per-scope columns on `recurring_items` and restores the day-form carryover to its original

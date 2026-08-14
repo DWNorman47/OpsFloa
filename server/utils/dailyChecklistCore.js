@@ -19,45 +19,52 @@ async function pauseOverdueCalendar(db, companyId, projectId) {
 // Insert the recurring template then the previous day's unchecked items onto `dayId`,
 // skipping any whose normalized text is already present (`seen`). `startOrder` continues
 // the item ordering after whatever items the day already has. Returns the next order index.
-async function appendAssembledItems(client, { dayId, companyId, projectId, seen, startOrder }) {
+async function appendAssembledItems(client, { dayId, companyId, projectId, seen, startOrder, dayNumber = null, workDate = null }) {
   let order = startOrder;
   // roleIds: null/[] = all team-member-types; a set = visible to those types only.
-  const add = async (text, kind, source, roleIds = null, mode = 'shared') => {
+  // carryover: whether this item's "not done" state rolls forward to the next day.
+  const add = async (text, kind, source, roleIds = null, mode = 'shared', carryover = true) => {
     const key = normText(text);
     if (!key || seen.has(key)) return;
     seen.add(key);
     const roles = Array.isArray(roleIds) && roleIds.length ? roleIds : null;
     await client.query(
-      'INSERT INTO daily_checklist_items (daily_checklist_id, text, kind, order_index, source, role_ids, mode) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-      [dayId, text.slice(0, MAX_TEXT), kind === 'text' ? 'text' : 'check', order++, source, roles, mode === 'individual' ? 'individual' : 'shared']
+      'INSERT INTO daily_checklist_items (daily_checklist_id, text, kind, order_index, source, role_ids, mode, carryover) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+      [dayId, text.slice(0, MAX_TEXT), kind === 'text' ? 'text' : 'check', order++, source, roles, mode === 'individual' ? 'individual' : 'shared', carryover !== false]
     );
   };
 
   // The project's own hand-typed recurring template (the day-form carryover). All-types,
-  // shared — added first so it wins the text-dedup over any assigned duplicate.
+  // shared, carries forward — added first so it wins the text-dedup over any assigned dup.
   const recurring = await client.query(
     'SELECT text, kind FROM daily_checklist_recurring_items WHERE company_id = $1 AND project_id = $2 AND active = true ORDER BY order_index, id',
     [companyId, projectId]
   );
-  for (const row of recurring.rows) await add(row.text, row.kind, 'recurring', null, 'shared');
+  for (const row of recurring.rows) await add(row.text, row.kind, 'recurring', null, 'shared', true);
 
   // Assigned Checklist Builder checklists (Project Daily): each active assignment matching
-  // this project expands its template's items, tagged with the assignment's role set + mode.
+  // this project AND scheduled for this day (every / this ordinal / this date) expands its
+  // template's items, tagged with the assignment's role set, mode, and carryover flag.
+  // An ordinal and a date assignment that resolve to the same day both match here → their
+  // checklists combine (deduped) into the one day.
   const assigned = await client.query(
-    `SELECT a.role_ids, a.mode, t.items
+    `SELECT a.role_ids, a.mode, a.carryover, t.items
        FROM daily_checklist_assignments a
        JOIN safety_checklist_templates t ON t.id = a.template_id
       WHERE a.company_id = $1 AND a.active = true
         AND (a.project_id IS NULL OR a.project_id = $2)
+        AND (a.schedule_type = 'every'
+             OR (a.schedule_type = 'ordinal' AND $3::int IS NOT NULL AND a.ordinal_target = $3::int)
+             OR (a.schedule_type = 'date' AND $4::date IS NOT NULL AND a.scheduled_date = $4::date))
       ORDER BY a.order_index, a.id`,
-    [companyId, projectId]
+    [companyId, projectId, dayNumber, workDate]
   );
   for (const asg of assigned.rows) {
     const items = Array.isArray(asg.items) ? asg.items : [];
     for (const it of items) {
       const label = it && (it.label ?? it.text ?? it.name);
       if (!label) continue;
-      await add(label, it.type === 'text' ? 'text' : 'check', 'recurring', asg.role_ids, asg.mode);
+      await add(label, it.type === 'text' ? 'text' : 'check', 'recurring', asg.role_ids, asg.mode, asg.carryover);
     }
   }
 
@@ -66,14 +73,14 @@ async function appendAssembledItems(client, { dayId, companyId, projectId, seen,
     [companyId, projectId]
   );
   if (prev.rows[0]) {
-    // Roll forward unchecked SHARED items only — individual items are per-person, re-seed
-    // fresh each day, and have no single "not done" to carry. "Not done" is generalized:
-    // an unchecked box or an empty text field.
+    // Roll forward unchecked SHARED items that opted into carryover. Individual items are
+    // per-person, re-seed fresh each day, and have no single "not done" to carry. "Not
+    // done" is generalized: an unchecked box or an empty text field.
     const carry = await client.query(
-      "SELECT text, kind, role_ids FROM daily_checklist_items WHERE daily_checklist_id = $1 AND mode = 'shared' AND ((kind = 'check' AND checked = false) OR (kind = 'text' AND (value IS NULL OR value = ''))) ORDER BY order_index, id",
+      "SELECT text, kind, role_ids FROM daily_checklist_items WHERE daily_checklist_id = $1 AND mode = 'shared' AND carryover = true AND ((kind = 'check' AND checked = false) OR (kind = 'text' AND (value IS NULL OR value = ''))) ORDER BY order_index, id",
       [prev.rows[0].id]
     );
-    for (const row of carry.rows) await add(row.text, row.kind, 'rollover', row.role_ids, 'shared');
+    for (const row of carry.rows) await add(row.text, row.kind, 'rollover', row.role_ids, 'shared', true);
   }
   return order;
 }
@@ -129,7 +136,7 @@ async function autoStartDay(client, { companyId, projectId, userId, workDate = n
   const cur = await client.query('SELECT text, order_index FROM daily_checklist_items WHERE daily_checklist_id = $1', [day.id]);
   const seen = new Set(cur.rows.map(r => normText(r.text)));
   const startOrder = cur.rows.reduce((m, r) => Math.max(m, r.order_index + 1), 0);
-  await appendAssembledItems(client, { dayId: day.id, companyId, projectId, seen, startOrder });
+  await appendAssembledItems(client, { dayId: day.id, companyId, projectId, seen, startOrder, dayNumber: day.day_number, workDate: day.work_date });
   return { started: true, dayId: day.id };
 }
 
