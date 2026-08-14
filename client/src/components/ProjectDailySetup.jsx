@@ -62,6 +62,12 @@ export default function ProjectDailySetup() {
     return { schedule_type: 'none' };
   };
 
+  // The items of each assigned checklist template, for the read-only preview column.
+  const itemsByTemplate = useMemo(
+    () => Object.fromEntries(templates.map(tp => [tp.id, Array.isArray(tp.items) ? tp.items : []])),
+    [templates]
+  );
+
   // Which assignments to show for the current day view: every-day defaults + the ones
   // specific to this day/date (a day view). "All checklists" shows everything.
   const visible = assignments.filter(a => {
@@ -207,7 +213,8 @@ export default function ProjectDailySetup() {
                 <button type="button" style={styles.removeBtn} onClick={() => remove(a.id)}>{t.delete}</button>
               </div>
 
-              <div style={styles.scopeGrid}>
+              <div style={styles.twoCol}>
+                <div style={styles.controlsCol}>
                 <div style={styles.scopeCell}>
                   <div style={styles.scopeLabel}>{t.pdSchedule}</div>
                   <div style={styles.scheduleRow}>
@@ -268,6 +275,26 @@ export default function ProjectDailySetup() {
                     <span>{t.pdCarryoverHint}</span>
                   </label>
                 </div>
+                </div>
+
+                <div style={styles.itemsCol}>
+                  <div style={styles.scopeLabel}>{t.pdChecklistItems}</div>
+                  {(() => {
+                    const items = itemsByTemplate[a.template_id] || [];
+                    return items.length === 0 ? (
+                      <p style={styles.itemsEmpty}>{t.pdNoItems}</p>
+                    ) : (
+                      <div style={styles.itemsList}>
+                        {items.map((it, i) => (
+                          <div key={it.id || i} style={styles.itemRow}>
+                            <span style={styles.itemKind}>{it.type === 'text' ? '✎' : '☐'}</span>
+                            <span style={styles.itemLabel}>{it.label ?? it.text ?? it.name}</span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
               </div>
             </div>
           ))}
@@ -298,7 +325,14 @@ const styles = {
   cardTitle: { fontWeight: 700, fontSize: 15, color: '#111827' },
   cardMeta: { fontSize: 12, color: '#6b7280', marginTop: 2 },
   removeBtn: { background: 'none', border: '1px solid #fca5a5', color: '#ef4444', padding: '5px 12px', borderRadius: 6, fontSize: 12, cursor: 'pointer', flexShrink: 0 },
-  scopeGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 },
+  twoCol: { display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'flex-start' },
+  controlsCol: { display: 'flex', flexDirection: 'column', gap: 14, flex: '1 1 240px', minWidth: 220 },
+  itemsCol: { flex: '2 1 300px', minWidth: 240, background: '#f9fafb', border: '1px solid #eef2f7', borderRadius: 8, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6 },
+  itemsList: { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 2 },
+  itemRow: { display: 'flex', alignItems: 'flex-start', gap: 8 },
+  itemKind: { fontSize: 13, color: '#9ca3af', flexShrink: 0, marginTop: 1, width: 14, textAlign: 'center' },
+  itemLabel: { fontSize: 13, color: '#374151', lineHeight: 1.4 },
+  itemsEmpty: { fontSize: 13, color: '#9ca3af', fontStyle: 'italic', margin: '4px 0 0' },
   scopeCell: { display: 'flex', flexDirection: 'column', gap: 6 },
   scopeLabel: { fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.04em' },
   scopeRow: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
