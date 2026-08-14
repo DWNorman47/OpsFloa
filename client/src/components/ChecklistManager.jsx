@@ -453,7 +453,7 @@ export function ChecklistBuilder() {
           <h2 style={styles.heading}>{t.checklistBuilderTitle}</h2>
           <p style={styles.summary}>{t.checklistBuilderSub}</p>
         </div>
-        <button style={styles.newBtn} onClick={() => { setEditingTemplate(null); setShowTemplateForm(true); }}>+ {t.newTemplate}</button>
+        <button style={styles.newBtn} onClick={() => { setEditingTemplate(null); setShowTemplateForm(true); }}>{t.newTemplate}</button>
       </div>
 
       {showTemplateForm && (
