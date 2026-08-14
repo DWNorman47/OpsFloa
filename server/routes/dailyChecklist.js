@@ -17,6 +17,15 @@ const pool = require('../db');
 const { requirePerm, hasPerm } = require('../permissions');
 const { projectBelongsToCompany } = require('../utils/tenantRefs');
 const { MAX_TEXT, normText, pauseOverdueCalendar, appendAssembledItems } = require('../utils/dailyChecklistCore');
+const { DAILY_CHECKLIST_ITEM_MODES } = require('../constants/dailyChecklistEnums');
+
+// Who is viewing a day — admins see every item; a worker sees all-types items plus their
+// own team-member-type's, and sees their own private state for individual items.
+function viewerOf(req) {
+  const isAdmin = req.user.role === 'admin' || req.user.role === 'super_admin';
+  return { isAdmin, userId: req.user.id, roleId: req.user.role_id ?? null };
+}
+const cleanMode = m => (m === 'individual' ? 'individual' : 'shared');
 
 const cleanText = v => (typeof v === 'string' ? v.trim() : '');
 const isYmd = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v));
@@ -26,10 +35,29 @@ async function loadDay(db, dayId, companyId) {
   const r = await db.query('SELECT * FROM daily_checklists WHERE id = $1 AND company_id = $2', [dayId, companyId]);
   return r.rows[0] || null;
 }
-async function loadItems(db, dayId) {
+// Load a day's items from a viewer's perspective. Individual items resolve to that
+// viewer's own private state (via daily_checklist_item_user_state); shared items use the
+// item row. A non-admin viewer sees only all-types items + their own type's. With no
+// viewer (admin/day-manager contexts), every item is returned with its shared state.
+async function loadItems(db, dayId, viewer = null) {
+  const uid = viewer ? viewer.userId : null;
+  const params = [dayId, uid];
+  let where = 'i.daily_checklist_id = $1';
+  if (viewer && !viewer.isAdmin) {
+    params.push(viewer.roleId);
+    where += ` AND (i.role_id IS NULL OR i.role_id = $${params.length})`;
+  }
   const r = await db.query(
-    'SELECT id, text, kind, checked, value, order_index, source, checked_by, checked_at FROM daily_checklist_items WHERE daily_checklist_id = $1 ORDER BY order_index, id',
-    [dayId]
+    `SELECT i.id, i.text, i.kind, i.order_index, i.source, i.role_id, i.mode,
+            CASE WHEN i.mode = 'individual' THEN COALESCE(us.checked, false) ELSE i.checked END AS checked,
+            CASE WHEN i.mode = 'individual' THEN us.value ELSE i.value END AS value,
+            CASE WHEN i.mode = 'individual' THEN us.checked_at ELSE i.checked_at END AS checked_at,
+            CASE WHEN i.mode = 'individual' THEN us.user_id ELSE i.checked_by END AS checked_by
+       FROM daily_checklist_items i
+       LEFT JOIN daily_checklist_item_user_state us ON us.item_id = i.id AND us.user_id = $2
+      WHERE ${where}
+      ORDER BY i.order_index, i.id`,
+    params
   );
   return r.rows;
 }
@@ -47,7 +75,7 @@ router.get('/projects/:projectId/recurring', async (req, res) => {
     if (!(await projectBelongsToCompany(pool, req.params.projectId, req.user.company_id)))
       return res.status(404).json({ error: 'Project not found' });
     const r = await pool.query(
-      'SELECT id, text, kind, order_index, active FROM daily_checklist_recurring_items WHERE company_id = $1 AND project_id = $2 ORDER BY order_index, id',
+      "SELECT id, text, kind, order_index, active FROM daily_checklist_recurring_items WHERE company_id = $1 AND project_id = $2 AND role_id IS NULL AND mode = 'shared' ORDER BY order_index, id",
       [req.user.company_id, req.params.projectId]
     );
     res.json({ items: r.rows });
@@ -71,7 +99,7 @@ router.put('/projects/:projectId/recurring', requirePerm('daily_checklist_manage
       return res.status(404).json({ error: 'Project not found' });
     }
     await client.query('BEGIN');
-    await client.query('DELETE FROM daily_checklist_recurring_items WHERE company_id = $1 AND project_id = $2', [companyId, projectId]);
+    await client.query("DELETE FROM daily_checklist_recurring_items WHERE company_id = $1 AND project_id = $2 AND role_id IS NULL AND mode = 'shared'", [companyId, projectId]);
     for (let i = 0; i < rows.length; i++) {
       await client.query(
         'INSERT INTO daily_checklist_recurring_items (company_id, project_id, text, kind, order_index, active, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7)',
@@ -80,8 +108,86 @@ router.put('/projects/:projectId/recurring', requirePerm('daily_checklist_manage
     }
     await client.query('COMMIT');
     const r = await client.query(
-      'SELECT id, text, kind, order_index, active FROM daily_checklist_recurring_items WHERE company_id = $1 AND project_id = $2 ORDER BY order_index, id',
+      "SELECT id, text, kind, order_index, active FROM daily_checklist_recurring_items WHERE company_id = $1 AND project_id = $2 AND role_id IS NULL AND mode = 'shared' ORDER BY order_index, id",
       [companyId, projectId]
+    );
+    res.json({ items: r.rows });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' });
+  } finally { client.release(); }
+});
+
+// ── Recurring template matrix (Project Daily setup) ─────────────────────────────
+// The Project Daily tab authors recurring items across two scope dimensions + a mode:
+//   project_id: null = company default (all projects) | id = that project
+//   role_id:    null = all team-member-types          | id = that type
+//   mode:       'shared' | 'individual' (per item)
+// Each (project_id, role_id) pair is one editable cell; PUT replaces that cell wholesale.
+// The legacy /projects/:id/recurring endpoints manage only the (project, all-types, shared)
+// cell, so the two never clobber each other.
+
+// Resolve + validate a scope from query/body. Returns { projectId, roleId } (each null or a
+// validated id) or { error }.
+async function resolveScope(db, companyId, rawProject, rawRole) {
+  let projectId = null, roleId = null;
+  if (rawProject != null && rawProject !== '') {
+    if (!(await projectBelongsToCompany(db, rawProject, companyId))) return { error: 'Project not found' };
+    projectId = rawProject;
+  }
+  if (rawRole != null && rawRole !== '') {
+    const r = await db.query('SELECT 1 FROM roles WHERE id = $1 AND company_id = $2', [rawRole, companyId]);
+    if (r.rowCount === 0) return { error: 'Team member type not found' };
+    roleId = rawRole;
+  }
+  return { projectId, roleId };
+}
+
+// GET /recurring?project_id=&role_id= — items for exactly that scope cell.
+router.get('/recurring', async (req, res) => {
+  try {
+    const scope = await resolveScope(pool, req.user.company_id, req.query.project_id, req.query.role_id);
+    if (scope.error) return res.status(404).json({ error: scope.error });
+    const r = await pool.query(
+      `SELECT id, text, kind, mode, order_index, active FROM daily_checklist_recurring_items
+        WHERE company_id = $1 AND project_id IS NOT DISTINCT FROM $2 AND role_id IS NOT DISTINCT FROM $3
+        ORDER BY order_index, id`,
+      [req.user.company_id, scope.projectId, scope.roleId]
+    );
+    res.json({ items: r.rows });
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
+// PUT /recurring — replace one scope cell.
+// Body: { project_id, role_id, items: [{ text, kind?, mode?, active? }] }.
+router.put('/recurring', requirePerm('daily_checklist_manage_recurring'), async (req, res) => {
+  const companyId = req.user.company_id;
+  const rows = (Array.isArray(req.body?.items) ? req.body.items : [])
+    .map(it => ({ text: cleanText(it?.text), kind: cleanKind(it?.kind), mode: cleanMode(it?.mode), active: it?.active !== false }))
+    .filter(it => it.text)
+    .map(it => ({ text: it.text.slice(0, MAX_TEXT), kind: it.kind, mode: it.mode, active: it.active }))
+    .slice(0, 200);
+  const client = await pool.connect();
+  try {
+    const scope = await resolveScope(client, companyId, req.body?.project_id, req.body?.role_id);
+    if (scope.error) { client.release(); return res.status(404).json({ error: scope.error }); }
+    await client.query('BEGIN');
+    await client.query(
+      'DELETE FROM daily_checklist_recurring_items WHERE company_id = $1 AND project_id IS NOT DISTINCT FROM $2 AND role_id IS NOT DISTINCT FROM $3',
+      [companyId, scope.projectId, scope.roleId]
+    );
+    for (let i = 0; i < rows.length; i++) {
+      await client.query(
+        'INSERT INTO daily_checklist_recurring_items (company_id, project_id, role_id, text, kind, mode, order_index, active, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+        [companyId, scope.projectId, scope.roleId, rows[i].text, rows[i].kind, rows[i].mode, i, rows[i].active, req.user.id]
+      );
+    }
+    await client.query('COMMIT');
+    const r = await client.query(
+      `SELECT id, text, kind, mode, order_index, active FROM daily_checklist_recurring_items
+        WHERE company_id = $1 AND project_id IS NOT DISTINCT FROM $2 AND role_id IS NOT DISTINCT FROM $3
+        ORDER BY order_index, id`,
+      [companyId, scope.projectId, scope.roleId]
     );
     res.json({ items: r.rows });
   } catch (err) {
@@ -158,7 +264,7 @@ router.get('/projects/:projectId/active', async (req, res) => {
       [req.user.company_id, req.params.projectId]
     );
     const day = r.rows[0] || null;
-    res.json({ day, items: day ? await loadItems(pool, day.id) : [] });
+    res.json({ day, items: day ? await loadItems(pool, day.id, viewerOf(req)) : [] });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
@@ -189,14 +295,23 @@ router.get('/days/:dayId', async (req, res) => {
   try {
     const day = await loadDay(pool, req.params.dayId, req.user.company_id);
     if (!day) return res.status(404).json({ error: 'Not found' });
+    const viewer = viewerOf(req);
+    const params = [req.params.dayId, viewer.userId];
+    let where = 'i.daily_checklist_id = $1';
+    if (!viewer.isAdmin) { params.push(viewer.roleId); where += ` AND (i.role_id IS NULL OR i.role_id = $${params.length})`; }
     const items = await pool.query(
-      `SELECT i.id, i.text, i.kind, i.checked, i.value, i.order_index, i.source, i.checked_at,
-              u.full_name AS checked_by_name
+      `SELECT i.id, i.text, i.kind, i.order_index, i.source, i.role_id, i.mode,
+              CASE WHEN i.mode = 'individual' THEN COALESCE(us.checked, false) ELSE i.checked END AS checked,
+              CASE WHEN i.mode = 'individual' THEN us.value ELSE i.value END AS value,
+              CASE WHEN i.mode = 'individual' THEN us.checked_at ELSE i.checked_at END AS checked_at,
+              CASE WHEN i.mode = 'individual' THEN vu.full_name ELSE u.full_name END AS checked_by_name
          FROM daily_checklist_items i
+         LEFT JOIN daily_checklist_item_user_state us ON us.item_id = i.id AND us.user_id = $2
          LEFT JOIN users u ON u.id = i.checked_by
-        WHERE i.daily_checklist_id = $1
+         LEFT JOIN users vu ON vu.id = $2 AND us.checked = true
+        WHERE ${where}
         ORDER BY i.order_index, i.id`,
-      [req.params.dayId]
+      params
     );
     res.json({
       day: { id: day.id, day_number: day.day_number, work_date: day.work_date, status: day.status, completed_at: day.completed_at },
@@ -233,7 +348,7 @@ router.post('/projects/:projectId/start', requirePerm('daily_checklist_start_day
     if (existing.rows[0]) {
       await client.query('COMMIT');
       const d0 = existing.rows[0];
-      return res.json({ day: d0, items: await loadItems(client, d0.id), started: false });
+      return res.json({ day: d0, items: await loadItems(client, d0.id, viewerOf(req)), started: false });
     }
 
     // Calendar plans whose date has passed → paused, so they can't match "today".
@@ -313,7 +428,7 @@ router.post('/projects/:projectId/start', requirePerm('daily_checklist_start_day
     await appendAssembledItems(client, { dayId: day.id, companyId, projectId, seen, startOrder: order });
 
     await client.query('COMMIT');
-    res.status(201).json({ day, items: await loadItems(client, day.id), started: true });
+    res.status(201).json({ day, items: await loadItems(client, day.id, viewerOf(req)), started: true });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     // Lost a race to another start → the other one won; return the active day.
@@ -323,7 +438,7 @@ router.post('/projects/:projectId/start', requirePerm('daily_checklist_start_day
           "SELECT * FROM daily_checklists WHERE company_id = $1 AND project_id = $2 AND status = 'active'",
           [companyId, projectId]
         );
-        if (r.rows[0]) return res.json({ day: r.rows[0], items: await loadItems(pool, r.rows[0].id), started: false });
+        if (r.rows[0]) return res.json({ day: r.rows[0], items: await loadItems(pool, r.rows[0].id, viewerOf(req)), started: false });
       } catch { /* fall through to 500 */ }
     }
     req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' });
@@ -343,7 +458,7 @@ router.post('/days/:dayId/items', requirePerm('daily_checklist_check_items'), as
     if (day.status !== 'active') return res.status(409).json({ error: 'Day is not active' });
     const ord = await pool.query('SELECT COALESCE(MAX(order_index), -1) + 1 AS n FROM daily_checklist_items WHERE daily_checklist_id = $1', [day.id]);
     const r = await pool.query(
-      "INSERT INTO daily_checklist_items (daily_checklist_id, text, kind, order_index, source) VALUES ($1, $2, $3, $4, 'manual') RETURNING id, text, kind, checked, value, order_index, source",
+      "INSERT INTO daily_checklist_items (daily_checklist_id, text, kind, order_index, source) VALUES ($1, $2, $3, $4, 'manual') RETURNING id, text, kind, checked, value, order_index, source, role_id, mode",
       [day.id, text, kind, ord.rows[0].n]
     );
     res.status(201).json({ item: r.rows[0] });
@@ -361,26 +476,59 @@ router.patch('/days/:dayId/items/:itemId', requirePerm('daily_checklist_check_it
     const day = await loadDay(pool, req.params.dayId, req.user.company_id);
     if (!day) return res.status(404).json({ error: 'Day not found' });
     if (day.status !== 'active') return res.status(409).json({ error: 'Day is not active' });
-    const sets = [], vals = [];
-    if (hasChecked) {
-      sets.push(`checked = $${vals.push(req.body.checked)}`);
-      if (req.body.checked) { sets.push(`checked_by = $${vals.push(req.user.id)}`); sets.push('checked_at = now()'); }
-      else { sets.push('checked_by = NULL'); sets.push('checked_at = NULL'); }
+    const viewer = viewerOf(req);
+    const itemRow = (await pool.query(
+      'SELECT id, mode, role_id FROM daily_checklist_items WHERE id = $1 AND daily_checklist_id = $2',
+      [req.params.itemId, day.id]
+    )).rows[0];
+    if (!itemRow) return res.status(404).json({ error: 'Item not found' });
+    // A worker may only touch items their team-member-type can see.
+    if (!viewer.isAdmin && itemRow.role_id != null && String(itemRow.role_id) !== String(viewer.roleId)) {
+      return res.status(404).json({ error: 'Item not found' });
     }
-    if (hasValue) sets.push(`value = $${vals.push(req.body.value.slice(0, 2000))}`);
-    if (hasText) {
-      const text = cleanText(req.body.text).slice(0, MAX_TEXT);
-      if (!text) return res.status(400).json({ error: 'Text cannot be empty' });
-      sets.push(`text = $${vals.push(text)}`);
+
+    if (itemRow.mode === 'individual') {
+      // Private per-person check/value; a label edit still updates the shared definition.
+      if (hasChecked || hasValue) {
+        await pool.query(
+          `INSERT INTO daily_checklist_item_user_state (item_id, user_id, checked, value, checked_at)
+             VALUES ($1, $2, $3, $4, CASE WHEN $3 THEN now() ELSE NULL END)
+           ON CONFLICT (item_id, user_id) DO UPDATE SET
+             checked    = CASE WHEN $5 THEN EXCLUDED.checked ELSE daily_checklist_item_user_state.checked END,
+             value      = CASE WHEN $6 THEN EXCLUDED.value   ELSE daily_checklist_item_user_state.value END,
+             checked_at = CASE WHEN $5 THEN (CASE WHEN EXCLUDED.checked THEN now() ELSE NULL END) ELSE daily_checklist_item_user_state.checked_at END`,
+          [itemRow.id, viewer.userId, hasChecked ? req.body.checked : false, hasValue ? req.body.value.slice(0, 2000) : null, hasChecked, hasValue]
+        );
+      }
+      if (hasText) {
+        const text = cleanText(req.body.text).slice(0, MAX_TEXT);
+        if (!text) return res.status(400).json({ error: 'Text cannot be empty' });
+        await pool.query('UPDATE daily_checklist_items SET text = $1 WHERE id = $2 AND daily_checklist_id = $3', [text, itemRow.id, day.id]);
+      }
+    } else {
+      // Shared: update the item row (everyone matching sees the change).
+      const sets = [], vals = [];
+      if (hasChecked) {
+        sets.push(`checked = $${vals.push(req.body.checked)}`);
+        if (req.body.checked) { sets.push(`checked_by = $${vals.push(req.user.id)}`); sets.push('checked_at = now()'); }
+        else { sets.push('checked_by = NULL'); sets.push('checked_at = NULL'); }
+      }
+      if (hasValue) sets.push(`value = $${vals.push(req.body.value.slice(0, 2000))}`);
+      if (hasText) {
+        const text = cleanText(req.body.text).slice(0, MAX_TEXT);
+        if (!text) return res.status(400).json({ error: 'Text cannot be empty' });
+        sets.push(`text = $${vals.push(text)}`);
+      }
+      vals.push(req.params.itemId, day.id);
+      const upd = await pool.query(
+        `UPDATE daily_checklist_items SET ${sets.join(', ')} WHERE id = $${vals.length - 1} AND daily_checklist_id = $${vals.length}`,
+        vals
+      );
+      if (upd.rowCount === 0) return res.status(404).json({ error: 'Item not found' });
     }
-    vals.push(req.params.itemId, day.id);
-    const r = await pool.query(
-      `UPDATE daily_checklist_items SET ${sets.join(', ')} WHERE id = $${vals.length - 1} AND daily_checklist_id = $${vals.length}
-       RETURNING id, text, kind, checked, value, order_index, source, checked_by, checked_at`,
-      vals
-    );
-    if (r.rowCount === 0) return res.status(404).json({ error: 'Item not found' });
-    res.json({ item: r.rows[0] });
+
+    const item = (await loadItems(pool, day.id, viewer)).find(r => String(r.id) === String(req.params.itemId));
+    res.json({ item });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
@@ -390,7 +538,11 @@ router.delete('/days/:dayId/items/:itemId', requirePerm('daily_checklist_check_i
     const day = await loadDay(pool, req.params.dayId, req.user.company_id);
     if (!day) return res.status(404).json({ error: 'Day not found' });
     if (day.status !== 'active') return res.status(409).json({ error: 'Day is not active' });
-    const r = await pool.query('DELETE FROM daily_checklist_items WHERE id = $1 AND daily_checklist_id = $2 RETURNING id', [req.params.itemId, day.id]);
+    const viewer = viewerOf(req);
+    const params = [req.params.itemId, day.id];
+    let extra = '';
+    if (!viewer.isAdmin) { params.push(viewer.roleId); extra = ` AND (role_id IS NULL OR role_id = $${params.length})`; }
+    const r = await pool.query(`DELETE FROM daily_checklist_items WHERE id = $1 AND daily_checklist_id = $2${extra} RETURNING id`, params);
     if (r.rowCount === 0) return res.status(404).json({ error: 'Item not found' });
     res.json({ deleted: true });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
@@ -462,7 +614,7 @@ const planItems = body => (Array.isArray(body?.items) ? body.items : [])
 // form). Full replace — the form always pre-loads the current recurring set, so what it
 // sends back IS the intended template.
 async function replaceRecurring(client, companyId, projectId, items, userId) {
-  await client.query('DELETE FROM daily_checklist_recurring_items WHERE company_id = $1 AND project_id = $2', [companyId, projectId]);
+  await client.query("DELETE FROM daily_checklist_recurring_items WHERE company_id = $1 AND project_id = $2 AND role_id IS NULL AND mode = 'shared'", [companyId, projectId]);
   for (let i = 0; i < items.length; i++) {
     await client.query(
       'INSERT INTO daily_checklist_recurring_items (company_id, project_id, text, kind, order_index, active, created_by) VALUES ($1, $2, $3, $4, $5, true, $6)',

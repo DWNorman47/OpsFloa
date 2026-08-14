@@ -165,16 +165,33 @@ describe('POST /days/:id/complete', () => {
 });
 
 describe('PATCH /days/:id/items/:itemId', () => {
-  test('checking an item stamps checked_by + checked_at', async () => {
+  test('checking a shared item stamps checked_by + checked_at on the item row', async () => {
     pool.query
-      .mockResolvedValueOnce({ rows: [{ id: 42, company_id: 'co-1', status: 'active' }] }) // loadDay
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 3, checked: true }] });           // UPDATE
+      .mockResolvedValueOnce({ rows: [{ id: 42, company_id: 'co-1', status: 'active' }] })     // loadDay
+      .mockResolvedValueOnce({ rows: [{ id: 3, mode: 'shared', role_id: null }] })            // item lookup
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 3 }] })                              // UPDATE
+      .mockResolvedValueOnce({ rows: [{ id: 3, checked: true, mode: 'shared' }] });           // loadItems reload
     const res = await request(makeApp()).patch('/api/daily-checklist/days/42/items/3').send({ checked: true });
     expect(res.status).toBe(200);
-    const [sql, vals] = pool.query.mock.calls[1];
+    const [sql, vals] = pool.query.mock.calls[2]; // the UPDATE (loadDay, lookup, then UPDATE)
     expect(sql).toMatch(/checked_by = \$/);
     expect(sql).toMatch(/checked_at = now\(\)/);
     expect(vals).toContain(5); // req.user.id stamped as checked_by
+  });
+
+  test('checking an individual item upserts private per-user state, not the item row', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ id: 42, company_id: 'co-1', status: 'active' }] })     // loadDay
+      .mockResolvedValueOnce({ rows: [{ id: 3, mode: 'individual', role_id: null }] })        // item lookup
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })                                        // upsert user_state
+      .mockResolvedValueOnce({ rows: [{ id: 3, checked: true, mode: 'individual' }] });        // loadItems reload
+    const res = await request(makeApp()).patch('/api/daily-checklist/days/42/items/3').send({ checked: true });
+    expect(res.status).toBe(200);
+    const stateSql = pool.query.mock.calls[2][0];
+    expect(stateSql).toMatch(/INSERT INTO daily_checklist_item_user_state/);
+    expect(stateSql).toMatch(/ON CONFLICT/);
+    // The shared item row is never touched for an individual item.
+    expect(pool.query.mock.calls.map(c => c[0]).join('\n')).not.toMatch(/UPDATE daily_checklist_items SET checked/);
   });
 
   test('rejects edits to a non-active day', async () => {

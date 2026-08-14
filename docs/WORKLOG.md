@@ -23,6 +23,43 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-13 — Project Daily: scoped + shared/individual recurring checklist setup
+
+New **Project Daily** tab (first in Field ▸ Manage, admin-only) — the setup home for
+the recurring items that seed each day's Daily Checklist. Three authoring dimensions:
+
+- **Project** — `recurring.project_id` now nullable: `NULL` = company default (all
+  projects); a value = that project. Both apply additively (text-dedup handles overlap).
+- **Team member type** — new `recurring.role_id` (FK roles): `NULL` = all types; a
+  value = that type. Each assembled day item carries `role_id`, and crew reads filter
+  to `role_id IS NULL OR role_id = viewer's` — **each worker sees only their type's
+  items + the all-types defaults; admins see all**. `req.user.role_id` (already in the
+  JWT) drives it, no extra lookup.
+- **Shared vs individual** (per item) — new `mode` column. `shared` = one row, everyone
+  matching shares the check state (a change by one is seen by all — today's model).
+  `individual` = each matching person gets a **private** check state, stored in the new
+  `daily_checklist_item_user_state` table; `loadItems` resolves the viewer's own state
+  and PATCH upserts it instead of the shared row.
+
+Migration `0172` (project_id nullable + role_id + mode + user-state table + CHECK/enum
+via `dailyChecklistEnums.js`, logged in `db-enums.md`). New matrix endpoints
+`GET/PUT /daily-checklist/recurring?project_id=&role_id=` (each `(project,type)` pair is
+one editable cell). The legacy `/projects/:id/recurring` + `replaceRecurring` (the
+day-form carryover flow) are scoped to the `role_id IS NULL AND mode='shared'` cell so
+they never clobber the new default/type/individual cells.
+
+**Judgment calls / simplifications (both filed in BACKLOG):**
+- Rollover carries only **shared** unchecked items forward; individual items re-seed
+  from the template each day (no single "not done" to carry).
+- Admin's view of an *individual* item on the shared day shows the admin's own (empty)
+  state — a per-person completion report is the follow-up.
+- The clock-in "start your day" prompt still keys off project-specific recurring items,
+  so a project relying only on **default** items won't be flagged there yet.
+
+Verify: full server suite **1431 green** (added an individual-mode PATCH test + fixed
+the shared-mode one for the new item-lookup query); client eslint + i18n parity + 84
+smoke + build all green.
+
 ## 2026-08-13 — Typed Checklist Builder + Checklist Reports (Manage)
 
 Generalized the single *Safety Checklists* tool into two admin Manage tabs:

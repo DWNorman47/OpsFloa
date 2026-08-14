@@ -21,32 +21,39 @@ async function pauseOverdueCalendar(db, companyId, projectId) {
 // the item ordering after whatever items the day already has. Returns the next order index.
 async function appendAssembledItems(client, { dayId, companyId, projectId, seen, startOrder }) {
   let order = startOrder;
-  const add = async (text, kind, source) => {
+  const add = async (text, kind, source, roleId = null, mode = 'shared') => {
     const key = normText(text);
     if (!key || seen.has(key)) return;
     seen.add(key);
     await client.query(
-      'INSERT INTO daily_checklist_items (daily_checklist_id, text, kind, order_index, source) VALUES ($1, $2, $3, $4, $5)',
-      [dayId, text.slice(0, MAX_TEXT), kind === 'text' ? 'text' : 'check', order++, source]
+      'INSERT INTO daily_checklist_items (daily_checklist_id, text, kind, order_index, source, role_id, mode) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+      [dayId, text.slice(0, MAX_TEXT), kind === 'text' ? 'text' : 'check', order++, source, roleId, mode === 'individual' ? 'individual' : 'shared']
     );
   };
+  // Both the company default (project_id IS NULL) and this project's own recurring items
+  // apply, across every team-member-type scope. All-types (role_id NULL) come first so a
+  // shared all-types item wins the text-dedup over a narrower duplicate.
   const recurring = await client.query(
-    'SELECT text, kind FROM daily_checklist_recurring_items WHERE company_id = $1 AND project_id = $2 AND active = true ORDER BY order_index, id',
+    `SELECT text, kind, role_id, mode FROM daily_checklist_recurring_items
+       WHERE company_id = $1 AND (project_id IS NULL OR project_id = $2) AND active = true
+       ORDER BY (project_id IS NOT NULL), (role_id IS NOT NULL), order_index, id`,
     [companyId, projectId]
   );
-  for (const row of recurring.rows) await add(row.text, row.kind, 'recurring');
+  for (const row of recurring.rows) await add(row.text, row.kind, 'recurring', row.role_id, row.mode);
 
   const prev = await client.query(
     "SELECT id FROM daily_checklists WHERE company_id = $1 AND project_id = $2 AND status = 'completed' ORDER BY work_date DESC NULLS LAST, day_number DESC LIMIT 1",
     [companyId, projectId]
   );
   if (prev.rows[0]) {
+    // Roll forward unchecked SHARED items only — individual items are per-person, re-seed
+    // fresh from the template each day, and have no single "not done" to carry.
     // "Not done" is generalized across kinds: an unchecked box or an empty text field.
     const carry = await client.query(
-      "SELECT text, kind FROM daily_checklist_items WHERE daily_checklist_id = $1 AND ((kind = 'check' AND checked = false) OR (kind = 'text' AND (value IS NULL OR value = ''))) ORDER BY order_index, id",
+      "SELECT text, kind, role_id FROM daily_checklist_items WHERE daily_checklist_id = $1 AND mode = 'shared' AND ((kind = 'check' AND checked = false) OR (kind = 'text' AND (value IS NULL OR value = ''))) ORDER BY order_index, id",
       [prev.rows[0].id]
     );
-    for (const row of carry.rows) await add(row.text, row.kind, 'rollover');
+    for (const row of carry.rows) await add(row.text, row.kind, 'rollover', row.role_id, 'shared');
   }
   return order;
 }
