@@ -22,6 +22,7 @@ import { userCanSeeModule } from '../modulePermissions';
 
 import { silentError } from '../errorReporter';
 import { safeLocal } from '../utils/safeStorage';
+import { getChatUnread, subscribeChatUnread, setChatUnread } from '../chatUnreadStore';
 import { escapeHtml } from '../utils/html';
 import { startOfWeek as computeStartOfWeek, toYMD } from '../utils/weekBounds';
 // Secondary tabs — lazy-loaded on first visit
@@ -109,7 +110,7 @@ export default function Dashboard() {
   const [group, setGroup] = useState(() => landingGroup(user));
   const [entryView, setEntryView] = useState('list');
   const [shiftPrefill, setShiftPrefill] = useState(null);
-  const [chatUnread, setChatUnread] = useState(false);
+  const [chatUnread, setChatUnreadLocal] = useState(getChatUnread);
   const [timesheetWeekStart, setTimesheetWeekStart] = useState(() => computeStartOfWeek(new Date(), 1));
 
   useEffect(() => {
@@ -197,29 +198,9 @@ export default function Dashboard() {
     return onSync(count => { if (count > 0) refreshEntries(); });
   }, [onSync]);
 
-  // Background chat unread check (only when not on messages tab)
-  useEffect(() => {
-    if (tab === 'messages') return;
-    const check = () => {
-      if (document.visibilityState !== 'visible' || !navigator.onLine) return;
-      api.get('/chat').then(r => {
-        const lastRead = safeLocal.getItem('chatLastRead');
-        const hasUnread = r.data.some(
-          m => m.sender_id !== user?.id && (!lastRead || new Date(m.created_at) > new Date(lastRead))
-        );
-        setChatUnread(hasUnread);
-      }).catch(silentError('dashboard'));
-    };
-    check();
-    const iv = setInterval(check, 60000);
-    document.addEventListener('visibilitychange', check);
-    window.addEventListener('online', check);
-    return () => {
-      clearInterval(iv);
-      document.removeEventListener('visibilitychange', check);
-      window.removeEventListener('online', check);
-    };
-  }, [tab, user?.id]);
+  // The header MessagesBell is the single /chat poller; mirror its company-chat
+  // unread signal into local state to drive the Messages-tab dot (no second poll).
+  useEffect(() => subscribeChatUnread(setChatUnreadLocal), []);
 
   const handleEntryAdded = entry => {
     setEntries(prev => [entry, ...prev]);

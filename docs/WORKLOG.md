@@ -23,6 +23,34 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-13 — Perf: one auth round trip per request + single /chat poller
+
+Two app-specific latency fixes (from a "what's slow *for this app*" pass — the leading
+cause is Render/Neon cold starts + cross-host hops; these are the code-side wins).
+
+**Auth: 2–3 DB round trips → 1.** Every gated request did `requireAuth` (query `users`
+for the revocation check) **then** `requirePlan`/`requireXAddon` (query `companies` for
+plan/subscription, sometimes twice). `requireAuth` now fetches the company row in the
+**same** query as the token check (LEFT JOIN by the token's company_id) and stashes it on
+`req.company`; the five plan/add-on gates read that via a new `resolveCompany(req)` helper,
+falling back to a lookup only on the paths that skip requireAuth's fetch (impersonation,
+super-admin). **No security change:** the `active` + `token_version` revocation checks stay
+live per request — nothing is cached — so a fired/offboarded user or a password change
+still loses access instantly. Full server suite **1431 green** (incl. auth + subscription
+suites) with no test changes.
+
+**Chat: two `/chat` pollers → one.** The Dashboard ran its own `/chat` poll (60s) for the
+Messages-tab dot while the header `MessagesBell` already polled `/chat` (40s). Added a tiny
+`chatUnreadStore` (module pub/sub); MessagesBell publishes the company-chat unread signal,
+the Dashboard subscribes instead of polling. Removes one recurring request (and its
+auth+DB tax) for every user with the dashboard open. Edge: only matters when chat is on
+(the bell's gate) — when chat is off there are no messages to flag anyway.
+
+Left the tab-refocus cache-clear **as-is** — it's registry-driven (TTL + write-invalidation
+in `cacheRegistry.js`), only fires after >30s hidden, doesn't force an immediate refetch
+(just drops warm cache so the next read refreshes), and it closes a real cross-session
+staleness bug (commit `fbe2b9d7`). Not worth the regression risk to change.
+
 ## 2026-08-13 — Project Daily: assign whole checklists (scoped, shared/individual)
 
 New **Project Daily** tab (first in Field ▸ Manage, admin-only) — seeds each day's
