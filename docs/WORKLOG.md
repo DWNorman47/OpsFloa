@@ -23,6 +23,25 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-13 — Clock-in feel: pre-warm the GPS fix
+
+Tapping Clock In blocks on `getCurrentPosition` before the request goes out — up to
+2.5s (non-geofenced) or 8s (geofenced, high-accuracy). That device-side GPS wait is the
+single biggest perceived delay on a normal clock-in, and no server/DB tuning touches it.
+
+Added a background pre-warm in `ClockInOut`: while the worker is on the clock-in screen
+(geolocation on, not yet clocked in), fire a low-accuracy `getLocation` on mount + on
+tab-refocus. It only populates the browser's position cache — result ignored, no UI/state
+touched. Because the non-geofenced clock-in reads with `maximumAge: 60000`, the tap then
+reuses that warm fix instantly instead of acquiring fresh: "tap → wait for GPS → send"
+becomes "tap → send." **Geofenced projects are deliberately left alone** — they clock in
+with `maximumAge: 0` (fresh high-accuracy fix required for geofence integrity), so the
+pre-warm can't and doesn't let a stale position satisfy a geofence.
+
+Silent for returning workers (permission already granted — the daily case); a first-time
+user just sees the location prompt on screen-open instead of at tap. Client-only; lint +
+77 smoke + build green.
+
 ## 2026-08-13 — Perf: one auth round trip per request + single /chat poller
 
 Two app-specific latency fixes (from a "what's slow *for this app*" pass — the leading
