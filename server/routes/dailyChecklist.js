@@ -273,6 +273,53 @@ router.delete('/assignments/:id', requirePerm('daily_checklist_manage_recurring'
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
+// ── Project work-calendar (the scheduler) ───────────────────────────────────────
+// Which calendar dates a project is worked. The Nth worked date is Day N — the day
+// number is computed by rank over ALL the project's worked dates, then windowed to the
+// requested range, so a mid-range date still shows its true global Day number.
+
+// GET /projects/:projectId/work-days?from=&to= — worked dates in [from,to] + their Day #.
+router.get('/projects/:projectId/work-days', async (req, res) => {
+  try {
+    if (!(await projectBelongsToCompany(pool, req.params.projectId, req.user.company_id)))
+      return res.status(404).json({ error: 'Project not found' });
+    const params = [req.user.company_id, req.params.projectId];
+    let range = '';
+    if (isYmd(req.query.from)) { params.push(req.query.from); range += ` AND work_date >= $${params.length}`; }
+    if (isYmd(req.query.to))   { params.push(req.query.to);   range += ` AND work_date <= $${params.length}`; }
+    const r = await pool.query(
+      `SELECT to_char(work_date, 'YYYY-MM-DD') AS work_date, day_number
+         FROM (
+           SELECT work_date, ROW_NUMBER() OVER (ORDER BY work_date) AS day_number
+             FROM project_work_days WHERE company_id = $1 AND project_id = $2
+         ) t
+        WHERE true${range}
+        ORDER BY work_date`,
+      params
+    );
+    res.json({ days: r.rows.map(x => ({ work_date: x.work_date, day_number: Number(x.day_number) })) });
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
+// PUT /projects/:projectId/work-days — mark a date worked/unworked. Body { work_date, worked }.
+router.put('/projects/:projectId/work-days', requirePerm('daily_checklist_manage_recurring'), async (req, res) => {
+  const { work_date, worked } = req.body || {};
+  if (!isYmd(work_date)) return res.status(400).json({ error: 'work_date must be YYYY-MM-DD' });
+  try {
+    if (!(await projectBelongsToCompany(pool, req.params.projectId, req.user.company_id)))
+      return res.status(404).json({ error: 'Project not found' });
+    if (worked === false) {
+      await pool.query('DELETE FROM project_work_days WHERE company_id = $1 AND project_id = $2 AND work_date = $3', [req.user.company_id, req.params.projectId, work_date]);
+    } else {
+      await pool.query(
+        'INSERT INTO project_work_days (company_id, project_id, work_date, created_by) VALUES ($1, $2, $3, $4) ON CONFLICT (project_id, work_date) DO NOTHING',
+        [req.user.company_id, req.params.projectId, work_date, req.user.id]
+      );
+    }
+    res.json({ ok: true });
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
 // GET /clock-in-prompt — after a clock-in, which of the user's accessible projects have a
 // daily checklist worth opening: a project with an ACTIVE day (anyone who can see the
 // project), plus — for users who can start days — projects that are set up but not started

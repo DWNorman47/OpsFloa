@@ -7,6 +7,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../api';
 import { useT } from '../hooks/useT';
 import { SkeletonList } from './Skeleton';
+import ProjectScheduler from './ProjectScheduler';
 
 // A role scope picker: "All types" until you add specific roles; chips + Add after.
 function RolePicker({ allLabel, addLabel, options, selected, onChange }) {
@@ -46,9 +47,7 @@ export default function ProjectDailySetup() {
   const [projects, setProjects] = useState([]);
   const [roles, setRoles] = useState([]);
   const [scopeProject, setScopeProject] = useState(''); // '' = all projects
-  const [viewMode, setViewMode] = useState('all'); // 'all' | 'day' | 'date'
-  const [viewDay, setViewDay] = useState(1);
-  const [viewDate, setViewDate] = useState('');
+  const [viewMode, setViewMode] = useState('all'); // 'all' | 'daily' | 'schedule'
   const [assignments, setAssignments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [addTemplateId, setAddTemplateId] = useState('');
@@ -58,8 +57,6 @@ export default function ProjectDailySetup() {
   // the day/date in a day view, otherwise left on no particular day.
   const addSchedule = () => {
     if (viewMode === 'daily') return { schedule_type: 'every' };
-    if (viewMode === 'day') return { schedule_type: 'ordinal', ordinal_target: Math.max(1, Number(viewDay) || 1) };
-    if (viewMode === 'date' && viewDate) return { schedule_type: 'date', scheduled_date: viewDate };
     return { schedule_type: 'none' };
   };
 
@@ -73,8 +70,6 @@ export default function ProjectDailySetup() {
   // specific to this day/date (a day view). "All checklists" shows everything.
   const visible = assignments.filter(a => {
     if (viewMode === 'daily') return a.schedule_type === 'every';
-    if (viewMode === 'day') return a.schedule_type === 'every' || (a.schedule_type === 'ordinal' && Number(a.ordinal_target) === Number(viewDay));
-    if (viewMode === 'date') return a.schedule_type === 'every' || (a.schedule_type === 'date' && (a.scheduled_date || '').slice(0, 10) === viewDate);
     return true;
   });
 
@@ -163,19 +158,27 @@ export default function ProjectDailySetup() {
         <select style={styles.projectSelect} value={viewMode} onChange={e => setViewMode(e.target.value)}>
           <option value="all">{t.pdViewAll}</option>
           <option value="daily">{t.pdViewDaily}</option>
-          <option value="day">{t.pdViewDay}</option>
-          <option value="date">{t.pdViewDate}</option>
+          <option value="schedule">{t.pdViewSchedule}</option>
         </select>
-        {viewMode === 'day' && (
-          <input style={styles.dayNumInput} type="number" min="1" value={viewDay} onChange={e => setViewDay(Math.max(1, parseInt(e.target.value, 10) || 1))} />
-        )}
-        {viewMode === 'date' && (
-          <input style={styles.smallSelect} type="date" value={viewDate} onChange={e => setViewDate(e.target.value)} />
-        )}
       </div>
 
       <p style={styles.hint}>{t.pdScopeHint}</p>
 
+      {error && <p role="alert" style={styles.error}>{error}</p>}
+
+      {viewMode === 'schedule' ? (
+        scopeProject ? (
+          <ProjectScheduler
+            projectId={scopeProject}
+            assignments={assignments}
+            templates={templates}
+            onAssignmentAdded={() => loadScope(scopeProject)}
+          />
+        ) : (
+          <div style={styles.empty}><p style={styles.emptyText}>{t.pdSchedulePickProject}</p></div>
+        )
+      ) : (
+      <>
       {templates.length === 0 ? (
         <div style={styles.empty}><p style={styles.emptyText}>{t.pdNoChecklists}</p></div>
       ) : (
@@ -189,8 +192,6 @@ export default function ProjectDailySetup() {
           </button>
         </div>
       )}
-
-      {error && <p role="alert" style={styles.error}>{error}</p>}
 
       {loading ? (
         <SkeletonList count={3} rows={2} />
@@ -302,6 +303,8 @@ export default function ProjectDailySetup() {
             </div>
           ))}
         </div>
+      )}
+      </>
       )}
     </div>
   );

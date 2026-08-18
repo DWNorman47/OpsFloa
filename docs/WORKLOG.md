@@ -23,6 +23,33 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-18 — Project scheduler v1: a work-calendar behind Project Daily
+
+Turned the Project Daily "A day / A date" inputs into a visual **scheduler** — the first
+slice of a broader project planner. New VIEW options: **All checklists · Daily · Schedule**
+(the old A-day/A-date filters retired into the calendar).
+
+- **New primitive — the work-calendar.** `project_work_days` (migration `0177`): which
+  calendar dates a project is worked. The Nth worked date, chronologically, *is* **Day N**
+  (computed by `ROW_NUMBER()` over all of a project's worked dates, then windowed to the
+  visible range — so a mid-range date still shows its true global Day number). This is what
+  lets the calendar label dates ahead of time; today's runtime `day_number` is only assigned
+  when a day is *started*.
+- **Endpoints:** `GET/PUT /daily-checklist/projects/:id/work-days` (list-with-Day-# / toggle
+  a date worked). Adding a checklist to a date reuses the existing assignment engine
+  (`schedule_type='date'`) — no new runtime scheduling logic.
+- **UI** (`ProjectScheduler.jsx`): Month/Week toggle, Prev/Next/Today; each date cell shows a
+  worked checkbox, its **Day N** badge, and the checklists that run then (every-day + Day-N +
+  date-pinned). A detail panel under the grid lists a selected date's checklists and assigns a
+  new one pinned to that date. Requires a specific project (work-days are per-project).
+
+Judgment call: the calendar pins added checklists to the **date**; ordinal (Day-#) pinning
+still lives on the per-checklist schedule control in the "All checklists" list. Planned next:
+equipment/phase planner rows on the same grid, plus copy-week / CSV / summary.
+
+Server daily-checklist tests green (endpoints additive); client eslint + i18n parity + 84
+smoke + build green.
+
 ## 2026-08-13 — Sliding session: stay logged in while active, idle-out after a day
 
 Fixes the "kept the app open → bounced to /login roughly daily" problem. Was: a hard
