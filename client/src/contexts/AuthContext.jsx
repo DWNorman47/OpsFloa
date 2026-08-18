@@ -110,6 +110,37 @@ export function AuthProvider({ children }) {
     } catch { /* storage blocked */ }
   }, [user, loading]);
 
+  // Sliding session: while a real login is open and in the foreground, periodically
+  // re-issue the token so an actively-used app never gets bounced to login mid-day. The
+  // token itself is the idle window — stop refreshing (go idle/backgrounded) and it
+  // lapses on its own, logging them out. Impersonation tabs (session-scoped token) are
+  // deliberately excluded — those must stay short-lived and not slide.
+  useEffect(() => {
+    if (!user) return;
+    if (safeSession.getItem('tc_token')) return; // impersonation — never slide
+    let last = 0;
+    const MIN_GAP = 15 * 60 * 1000; // slide at most every 15 min
+    const slide = async () => {
+      if (document.visibilityState !== 'visible' || navigator.onLine === false) return;
+      if (Date.now() - last < MIN_GAP) return;
+      last = Date.now();
+      try {
+        const r = await api.post('/auth/refresh', {}, { suppressToast: true });
+        if (r.data?.token) safeLocal.setItem('tc_token', r.data.token);
+      } catch { /* expired (idle) or past the 7-day cap → the 401 interceptor sends to login */ }
+    };
+    slide(); // slide on open, so a same-day return keeps rolling the window forward
+    const iv = setInterval(slide, 5 * 60 * 1000);
+    const onVisible = () => slide();
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', onVisible);
+    return () => {
+      clearInterval(iv);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', onVisible);
+    };
+  }, [user]);
+
   const login = async (username, password, company_name) => {
     await Promise.all([clearCache(), clearPendingSyncs()]);
     clearOfflineQueue();

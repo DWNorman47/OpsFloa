@@ -23,6 +23,30 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-13 — Sliding session: stay logged in while active, idle-out after a day
+
+Fixes the "kept the app open → bounced to /login roughly daily" problem. Was: a hard
+1-day JWT with no refresh; on expiry the client hard-redirects to /login (any 401).
+
+Now a **sliding session with an idle window + absolute cap** (David's call: ~1-day idle,
+7-day hard cap):
+- New `POST /auth/refresh` (requireAuth) re-issues a token with a fresh idle window. Because
+  requireAuth re-validates live (unexpired + `token_version` + not deactivated), a
+  fired/offboarded user or a password change still can't refresh — **immediate revocation is
+  unchanged**. Impersonation / setup / MFA tokens (no `tv`) are refused, so they can't slide.
+- New `lgn` claim (original login epoch) is preserved across refreshes; the endpoint denies
+  refresh past `SESSION_MAX_DAYS` (env, default **7**) → 401 `session_max` → client goes to
+  login. So even a constantly-active worker re-authenticates weekly.
+- Client (`AuthContext`): while a **real** login is open + foregrounded, it slides the token
+  (on open, on refocus, and every ~5 min, throttled to once/15 min). Backgrounded/idle → no
+  slide → the token lapses on its own (the idle logout). Impersonation tabs (session-scoped
+  token) never slide.
+
+Net: active use rolls the 1-day window forward indefinitely (no more daily bounce); a phone
+left untouched for ~a day logs out; everyone re-logs-in at least weekly. Token lifetime is
+still `JWT_EXPIRES_IN || '1d'` (= the idle window). Full server suite **1431 green**; client
+lint + 77 smoke + build green.
+
 ## 2026-08-13 — Clock-in feel: pre-warm the GPS fix
 
 Tapping Clock In blocks on `getCurrentPosition` before the request goes out — up to
