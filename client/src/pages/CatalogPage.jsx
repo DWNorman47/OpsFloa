@@ -25,8 +25,18 @@ const CATEGORY_LABEL_KEYS = {
   subs: 'estCatSubs', overhead: 'estCatOverhead', contingency: 'estCatContingency', other: 'estCatOther',
 };
 
+// Route wrapper: the standalone /catalog page. The Inventory module renders
+// <CatalogPanel/> inline instead, so the panel itself carries no PageShell.
 export default function CatalogPage() {
   const { user } = useAuth();
+  return (
+    <PageShell currentApp="inventory" maxWidth={1200} headerProps={{ userRole: user?.role }}>
+      <CatalogPanel />
+    </PageShell>
+  );
+}
+
+export function CatalogPanel() {
   const t = useT();
   const toast = useToast();
   const { confirm, dialog } = useConfirm();
@@ -72,7 +82,7 @@ export default function CatalogPage() {
   }
 
   return (
-    <PageShell currentApp="inventory" maxWidth={1200} headerProps={{ userRole: user?.role }}>
+    <>
       <div className="admin-page-shell">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
           <div>
@@ -152,7 +162,7 @@ export default function CatalogPage() {
         />
       )}
       {dialog}
-    </PageShell>
+    </>
   );
 }
 
