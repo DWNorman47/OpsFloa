@@ -23,7 +23,7 @@ function checklistsForDate(assignments, dateStr, dn) {
 
 export default function ProjectScheduler({ projectId, assignments = [], templates = [], onAssignmentAdded }) {
   const t = useT();
-  const [viewMode, setViewMode] = useState('month'); // 'month' | 'week'
+  const [viewMode, setViewMode] = useState('week'); // 'week' | 'month'
   const [anchor, setAnchor] = useState(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; });
   const [workDays, setWorkDays] = useState({}); // { 'YYYY-MM-DD': dayNumber }
   const [selected, setSelected] = useState(null); // 'YYYY-MM-DD'
