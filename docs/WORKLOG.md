@@ -5485,3 +5485,31 @@ non-hourly/unset operating rate contribute nothing to usage — record those as
 manual equipment expenses instead (kept distinct to avoid double-counting the
 same machine time). +1 spend test (usage folds into equipment category); full
 suite 1456 + client lint/i18n/build green.
+
+## 2026-08-18 — Planned costs: forecast rentals before you act
+
+David wanted a place to plan the cost of renting equipment before committing.
+There wasn't one — expenses were actuals-only (every row counted as spent), and
+only sub POs populated the "committed" bucket. Added a planned/actual lifecycle
+to project expenses (the altitude-correct fix — works for any planned cost, not
+just rentals).
+
+- **Migration 0180**: `project_expenses.status` (planned|actual, default actual,
+  CHECK) + nullable `equipment_id` FK. `PROJECT_EXPENSE_STATUSES` constant + db-enums row.
+- **server/utils/projectCost.js** (new): one home for the cost math both money
+  rollups read — `equipmentUsageCents`, `manualExpensesByStatus` (planned→committed,
+  actual→spent). projectSpend.js AND projectReports.js `spendTotals` now call it.
+  **This also fixed a gap**: last commit's equipment-usage number reached the
+  spend tab but not the P&L/WIP (parallel copy) — now both agree.
+- **projectSpend.js**: planned expenses of ANY category feed the committed bucket;
+  POST accepts status + equipment_id (validated); new PATCH edits fields / flips
+  planned→actual (auto-stamps paid_date on convert).
+- **ProjectFinancialsTab**: a "Plan a rental" form (pick machine + duration →
+  forecast cost from its rent-in rate → filed as a planned equipment expense
+  linked to the asset), a "Planned" toggle on the manual-expense form, planned
+  rows badged + a "Mark actual" convert button. Planned costs show in the
+  Committed column and reduce projected profit, without touching spent.
+
+Only hourly-note carries over: the rental forecast uses the machine's rent-IN
+rate × duration. +7 tests (planned→committed rollup, status/equipment_id POST
+validation, PATCH convert + tax recompute); suite 1463 + client lint/i18n/build green.

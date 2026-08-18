@@ -11,6 +11,7 @@ const {
 } = require('../middleware/financialAccess');
 const { csvCell } = require('../utils/csv');
 const { loadSettings, laborCostCents, LABOR_ENTRY_COLUMNS } = require('../utils/paidHours');
+const { equipmentUsageCents, manualExpensesByStatus, sumMap } = require('../utils/projectCost');
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -87,7 +88,9 @@ async function spendTotals(projectId, settings) {
   let materials = 0;
   let subsSpent = 0;
   let subsCommitted = 0;
-  let manualExpenses = 0;
+  let manualExpenses = 0;       // actual expenses (spent)
+  let manualCommitted = 0;      // planned expenses (committed forecast)
+  let equipUsage = 0;           // logged hours × hourly operating rate
   // Labor — same pipeline as project spend, so the WIP report and the spend
   // snapshot can't disagree about one project's labor. This was a duplicate of
   // that query, carrying the same two bugs (no overtime, and overnight shifts
@@ -105,15 +108,15 @@ async function spendTotals(projectId, settings) {
     );
     labor = laborCostCents(r.rows, settings);
   } catch { /* time_entries shape may differ */ }
-  // Manual expenses
+  // Manual expenses, split actual (spent) vs planned (committed forecast).
   try {
-    const r = await pool.query(
-      `SELECT COALESCE(SUM(amount_cents + tax_cents), 0)::bigint AS cents
-         FROM project_expenses WHERE project_id = $1`,
-      [projectId]
-    );
-    manualExpenses = parseInt(r.rows[0].cents, 10);
+    const { spent, committed } = await manualExpensesByStatus(projectId);
+    manualExpenses = sumMap(spent);
+    manualCommitted = sumMap(committed);
   } catch { /* table may not exist */ }
+  // Equipment usage (logged hours × hourly operating rate) — same source as the
+  // per-category spend snapshot, so P&L/WIP and the spend tab agree.
+  equipUsage = await equipmentUsageCents(projectId);
   // Sub spent + committed
   try {
     const paidR = await pool.query(
@@ -139,9 +142,12 @@ async function spendTotals(projectId, settings) {
     subsCommitted = parseInt(cR.rows[0].cents, 10);
   } catch { /* tables may not exist */ }
   return {
-    spent_cents:     labor + manualExpenses + materials + subsSpent,
-    committed_cents: subsCommitted,
-    by_source: { labor, materials, subs_spent: subsSpent, subs_committed: subsCommitted, manual_expenses: manualExpenses },
+    spent_cents:     labor + manualExpenses + materials + subsSpent + equipUsage,
+    committed_cents: subsCommitted + manualCommitted,
+    by_source: {
+      labor, materials, subs_spent: subsSpent, subs_committed: subsCommitted,
+      manual_expenses: manualExpenses, manual_committed: manualCommitted, equipment_usage: equipUsage,
+    },
   };
 }
 

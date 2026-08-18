@@ -44,22 +44,27 @@ export default function ProjectFinancialsTab({ projectId }) {
 
   const [showExpenseForm, setShowExpenseForm] = useState(false);
   const [expenseForm, setExpenseForm] = useState({
-    category: 'other', description: '', amount_cents: 0, tax_pct: 0, vendor: '', paid_date: new Date().toISOString().slice(0, 10),
+    category: 'other', description: '', amount_cents: 0, tax_pct: 0, vendor: '', paid_date: new Date().toISOString().slice(0, 10), planned: false,
   });
+  const [equipment, setEquipment] = useState([]);
+  const [showRentalForm, setShowRentalForm] = useState(false);
+  const [rentalForm, setRentalForm] = useState({ equipment_id: '', duration: '1' });
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [b, s, p, e] = await Promise.all([
+      const [b, s, p, e, eq] = await Promise.all([
         api.get(`/projects/${projectId}/budget`).then(r => r.data).catch(() => null),
         api.get(`/projects/${projectId}/spend`).then(r => r.data).catch(() => null),
         api.get(`/projects/${projectId}/pnl`).then(r => r.data).catch(() => null),
         api.get(`/projects/${projectId}/expenses`).then(r => r.data.items || []).catch(() => []),
+        api.get('/equipment').then(r => (Array.isArray(r.data) ? r.data : [])).catch(() => []),
       ]);
       setBudget(b);
       setSpend(s);
       setPnl(p);
       setExpenses(e);
+      setEquipment(eq);
     } catch (err) { silentError(err); }
     finally { setLoading(false); }
   }, [projectId]);
@@ -82,13 +87,51 @@ export default function ProjectFinancialsTab({ projectId }) {
         amount_cents: amt,
         tax_pct: parseFloat(expenseForm.tax_pct) || 0,
         vendor: expenseForm.vendor || null,
-        paid_date: expenseForm.paid_date || null,
+        paid_date: expenseForm.planned ? null : (expenseForm.paid_date || null),
+        status: expenseForm.planned ? 'planned' : 'actual',
       });
       toast('Expense added', 'success');
       setShowExpenseForm(false);
-      setExpenseForm({ category: 'other', description: '', amount_cents: 0, tax_pct: 0, vendor: '', paid_date: new Date().toISOString().slice(0, 10) });
+      setExpenseForm({ category: 'other', description: '', amount_cents: 0, tax_pct: 0, vendor: '', paid_date: new Date().toISOString().slice(0, 10), planned: false });
       await load();
     } catch (err) { setError(err.response?.data?.error || 'Failed to add expense'); }
+  }
+
+  // Plan a rental: pick a machine + duration → forecast cost from its rent-in
+  // rate, filed as a PLANNED equipment expense (rolls into committed, not spent).
+  const rentalAsset = equipment.find(a => String(a.id) === String(rentalForm.equipment_id));
+  const rentalRate = rentalAsset && rentalAsset.rental_rate != null ? parseFloat(rentalAsset.rental_rate) : null;
+  const rentalDuration = parseFloat(rentalForm.duration) || 0;
+  const rentalAmountCents = rentalRate != null ? Math.round(rentalRate * rentalDuration * 100) : 0;
+
+  async function planRental() {
+    setError(null);
+    if (!rentalAsset) { setError('Pick a machine'); return; }
+    if (rentalRate == null) { setError('That machine has no rent-in rate set (Equipment ▸ Rentals)'); return; }
+    if (rentalDuration <= 0) { setError('Enter how long you plan to rent it'); return; }
+    const unit = rentalAsset.rental_rate_unit || 'day';
+    try {
+      await api.post(`/projects/${projectId}/expenses`, {
+        category: 'equipment',
+        description: `Rent ${rentalAsset.name} — ${rentalDuration} ${unit}${rentalDuration === 1 ? '' : 's'}`,
+        amount_cents: rentalAmountCents,
+        vendor: rentalAsset.rental_vendor || null,
+        status: 'planned',
+        equipment_id: rentalAsset.id,
+      });
+      toast('Planned rental added', 'success');
+      setShowRentalForm(false);
+      setRentalForm({ equipment_id: '', duration: '1' });
+      await load();
+    } catch (err) { setError(err.response?.data?.error || 'Failed to plan rental'); }
+  }
+
+  async function convertExpense(id) {
+    try {
+      await api.patch(`/projects/${projectId}/expenses/${id}`, { status: 'actual' });
+      toast('Marked as actual', 'success');
+      await load();
+    } catch (err) { setError(err.response?.data?.error || 'Failed to update expense'); }
   }
 
   async function deleteExpense(id) {
@@ -214,10 +257,45 @@ export default function ProjectFinancialsTab({ projectId }) {
       <div style={styles.card}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
           <h3 style={styles.h3}>Project expenses ({expenses.length})</h3>
-          <button onClick={() => setShowExpenseForm(s => !s)} style={styles.btn}>
-            {showExpenseForm ? 'Cancel' : '+ Add expense'}
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => { setShowRentalForm(s => !s); setShowExpenseForm(false); }} style={styles.btn}>
+              {showRentalForm ? 'Cancel' : '+ Plan a rental'}
+            </button>
+            <button onClick={() => { setShowExpenseForm(s => !s); setShowRentalForm(false); }} style={styles.btn}>
+              {showExpenseForm ? 'Cancel' : '+ Add expense'}
+            </button>
+          </div>
         </div>
+
+        {showRentalForm && (
+          <div style={{ background: '#eef2ff', padding: 12, borderRadius: 6, marginBottom: 12 }}>
+            <div style={styles.grid3}>
+              <Field label="Machine">
+                <select value={rentalForm.equipment_id} onChange={e => setRentalForm(f => ({ ...f, equipment_id: e.target.value }))} style={styles.input}>
+                  <option value="">Select…</option>
+                  {equipment.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              </Field>
+              <Field label={`Duration${rentalAsset ? ` (${rentalAsset.rental_rate_unit || 'day'}s)` : ''}`} required>
+                <input type="number" min="0" step="0.5" value={rentalForm.duration} onChange={e => setRentalForm(f => ({ ...f, duration: e.target.value }))} style={styles.input} />
+              </Field>
+              <Field label="Planned cost">
+                <div style={{ padding: '6px 0', fontWeight: 700, fontSize: 15 }}>
+                  {rentalRate == null ? <span style={{ color: '#9ca3af', fontWeight: 400, fontSize: 13 }}>{rentalAsset ? 'no rent-in rate' : '—'}</span> : formatCents(rentalAmountCents)}
+                </div>
+              </Field>
+            </div>
+            {rentalAsset && rentalRate != null && (
+              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
+                {formatCents(Math.round(rentalRate * 100))}/{rentalAsset.rental_rate_unit || 'day'}
+                {rentalAsset.rental_vendor && ` · ${rentalAsset.rental_vendor}`} · filed as a planned (committed) cost
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+              <button onClick={planRental} style={styles.btnPrimary}>Add planned rental</button>
+            </div>
+          </div>
+        )}
 
         {showExpenseForm && (
           <div style={{ background: '#fef3c7', padding: 12, borderRadius: 6, marginBottom: 12 }}>
@@ -252,10 +330,14 @@ export default function ProjectFinancialsTab({ projectId }) {
                 <input value={expenseForm.vendor} onChange={e => setExpenseForm(f => ({ ...f, vendor: e.target.value }))} style={styles.input} />
               </Field>
               <Field label="Paid date">
-                <input type="date" value={expenseForm.paid_date} onChange={e => setExpenseForm(f => ({ ...f, paid_date: e.target.value }))} style={styles.input} />
+                <input type="date" value={expenseForm.paid_date} onChange={e => setExpenseForm(f => ({ ...f, paid_date: e.target.value }))} style={styles.input} disabled={expenseForm.planned} />
               </Field>
             </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#374151', cursor: 'pointer' }}>
+                <input type="checkbox" checked={expenseForm.planned} onChange={e => setExpenseForm(f => ({ ...f, planned: e.target.checked }))} />
+                Planned (forecast — counts as committed, not spent)
+              </label>
               <button onClick={addExpense} style={styles.btnPrimary}>{t.add}</button>
             </div>
           </div>
@@ -278,21 +360,24 @@ export default function ProjectFinancialsTab({ projectId }) {
               </tr>
             </thead>
             <tbody>
-              {expenses.map(e => (
-                <tr key={e.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                  <td style={styles.td}>{e.paid_date ? new Date(e.paid_date).toLocaleDateString() : '—'}</td>
+              {expenses.map(e => {
+                const planned = e.status === 'planned';
+                return (
+                <tr key={e.id} style={{ borderBottom: '1px solid #f3f4f6', background: planned ? '#fafaff' : 'transparent' }}>
+                  <td style={styles.td}>{planned ? <span style={styles.plannedPill}>Planned</span> : (e.paid_date ? new Date(e.paid_date).toLocaleDateString() : '—')}</td>
                   <td style={styles.td}>
                     <span style={{ ...styles.catPill, background: CATEGORY_COLORS[e.category] + '22', color: CATEGORY_COLORS[e.category] }}>{e.category}</span>
                   </td>
                   <td style={styles.td}>{e.description}</td>
                   <td style={styles.td}>{e.vendor || '—'}</td>
-                  <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(e.amount_cents)}</td>
+                  <td style={{ ...styles.td, textAlign: 'right', color: planned ? '#6b7280' : '#111827' }}>{formatCents(e.amount_cents)}</td>
                   <td style={{ ...styles.td, textAlign: 'right', color: '#6b7280' }}>{formatCents(e.tax_cents)}</td>
-                  <td style={styles.td}>
+                  <td style={{ ...styles.td, whiteSpace: 'nowrap' }}>
+                    {planned && <button onClick={() => convertExpense(e.id)} style={styles.markActualBtn} title="Rental happened — move to actual spent">Mark actual</button>}
                     <button onClick={() => deleteExpense(e.id)} style={styles.iconBtn} title="Delete">×</button>
                   </td>
                 </tr>
-              ))}
+              );})}
             </tbody>
           </table>
           </div>
@@ -331,6 +416,8 @@ const styles = {
   th: { textAlign: 'left', padding: '8px 12px', fontSize: 11, color: '#6b7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' },
   td: { padding: '10px 12px', color: '#111827' },
   catPill: { display: 'inline-block', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 8, textTransform: 'uppercase', letterSpacing: '0.04em' },
+  plannedPill: { display: 'inline-block', fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 8, background: '#e0e7ff', color: '#4338ca', textTransform: 'uppercase', letterSpacing: '0.04em' },
+  markActualBtn: { background: 'transparent', border: '1px solid #d1d5db', color: '#374151', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', padding: '3px 8px', marginRight: 6 },
   btn: { background: '#fff', color: '#374151', border: '1px solid #d1d5db', padding: '6px 12px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   btnPrimary: { background: 'var(--ops-page-accent)', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer' },
   iconBtn: { background: 'transparent', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 4px' },

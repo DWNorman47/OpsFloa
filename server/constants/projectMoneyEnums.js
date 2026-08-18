@@ -82,6 +82,12 @@ const INVOICE_AUDIT_ACTIONS = Object.freeze([
   'created', 'sent', 'payment', 'voided',
 ]);
 
+// project_expenses.status lifecycle. 'planned' = a forecast cost (rolls into the
+// COMMITTED bucket of the spend/P&L rollup); 'actual' = incurred (SPENT). See
+// migration 0180. Default 'actual' keeps existing rows counting as spent.
+const PROJECT_EXPENSE_STATUSES = Object.freeze(['planned', 'actual']);
+const PROJECT_EXPENSE_STATUS_DEFAULT = 'actual';
+
 // Header money math. Order matters — overhead is on subtotal, margin
 // is on subtotal+overhead, contingency is on the post-margin amount,
 // tax is the last layer. All rounded at each step to keep the math
@@ -148,6 +154,8 @@ module.exports = {
   INVOICE_FROZEN_STATUSES,
   INVOICE_PAYMENT_METHODS,
   INVOICE_AUDIT_ACTIONS,
+  PROJECT_EXPENSE_STATUSES,
+  PROJECT_EXPENSE_STATUS_DEFAULT,
   computeEstimateTotals,
   computeLineTotal,
   computeInvoiceTotals,
