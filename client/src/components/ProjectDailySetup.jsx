@@ -22,6 +22,7 @@ export default function ProjectDailySetup() {
   const [loading, setLoading] = useState(true);
   const [addTemplateId, setAddTemplateId] = useState('');
   const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
 
   // The schedule a newly-added checklist gets, based on the day being viewed: pinned to
   // the day/date in a day view, otherwise left on no particular day.
@@ -84,20 +85,28 @@ export default function ProjectDailySetup() {
     catch { loadScope(scopeProject); }
   };
 
+  // Apply a new global order: optimistic reorder now, with a "Saving…" flag while it
+  // persists (the reorder POST can take a beat). Shared by the Daily-view drag and the
+  // scheduler, so a drop feels instant in both. Reverts on error.
+  const reorderAssignments = async (orderIds) => {
+    const byId = Object.fromEntries(assignments.map(a => [a.id, a]));
+    setAssignments(orderIds.map(id => byId[id]).filter(Boolean)); // optimistic
+    setSaving(true);
+    try { await api.post('/daily-checklist/assignments/reorder', { order: orderIds }); }
+    catch { loadScope(scopeProject); }
+    finally { setSaving(false); }
+  };
   // Reorder within the currently-visible subset (the every-day list in "Daily"), keeping
-  // every other assignment's global position — same approach as the scheduler's day reorder.
-  const reorderVisible = async (from, to) => {
+  // every other assignment's global position.
+  const reorderVisible = (from, to) => {
     if (from == null || to == null || from === to) return;
     const visIds = visible.map(a => a.id);
     const [moved] = visIds.splice(from, 1);
     visIds.splice(to, 0, moved);
     const visSet = new Set(visIds);
     let k = 0;
-    const order = assignments.map(a => a.id).map(id => (visSet.has(id) ? visIds[k++] : id));
-    const byId = Object.fromEntries(assignments.map(a => [a.id, a]));
-    setAssignments(order.map(id => byId[id]));
-    try { await api.post('/daily-checklist/assignments/reorder', { order }); }
-    catch { loadScope(scopeProject); }
+    const orderIds = assignments.map(a => a.id).map(id => (visSet.has(id) ? visIds[k++] : id));
+    reorderAssignments(orderIds);
   };
   const dnd = useDragReorder(reorderVisible);
 
@@ -108,6 +117,7 @@ export default function ProjectDailySetup() {
           <h2 style={styles.heading}>{t.pdTitle}</h2>
           <p style={styles.summary}>{t.pdSub}</p>
         </div>
+        {saving && <span style={styles.savingChip}>{t.pdSaving}</span>}
       </div>
 
       <div style={styles.scopeBar}>
@@ -136,6 +146,7 @@ export default function ProjectDailySetup() {
             assignments={assignments}
             templates={templates}
             roles={roles}
+            onReorder={reorderAssignments}
             onAssignmentAdded={() => loadScope(scopeProject)}
           />
         ) : (
@@ -185,6 +196,7 @@ export default function ProjectDailySetup() {
 
 const styles = {
   topRow: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12, gap: 12, flexWrap: 'wrap' },
+  savingChip: { fontSize: 12, fontWeight: 700, color: '#1d4ed8', background: '#eff6ff', border: '1px solid #bfdbfe', padding: '4px 12px', borderRadius: 12, alignSelf: 'center' },
   heading: { fontSize: 22, fontWeight: 800, color: '#111827', margin: 0 },
   summary: { fontSize: 13, color: '#6b7280', margin: '4px 0 0' },
   scopeBar: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' },

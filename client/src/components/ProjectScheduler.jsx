@@ -23,7 +23,7 @@ function checklistsForDate(assignments, dateStr, dn) {
   );
 }
 
-export default function ProjectScheduler({ projectId, assignments = [], templates = [], roles = [], onAssignmentAdded }) {
+export default function ProjectScheduler({ projectId, assignments = [], templates = [], roles = [], onReorder, onAssignmentAdded }) {
   const t = useT();
   const [viewMode, setViewMode] = useState('week'); // 'week' | 'month'
   const [anchor, setAnchor] = useState(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; });
@@ -108,17 +108,17 @@ export default function ProjectScheduler({ projectId, assignments = [], template
   const selItems = selChecklist ? (itemsByTemplate[selChecklist.template_id] || []) : null;
 
   // Drag-reorder within the day: rebuild the global order so the day's checklists follow
-  // the new drag order while every other assignment keeps its position.
-  const reorderDay = async (from, to) => {
+  // the new drag order while every other assignment keeps its position, then hand it to the
+  // parent (which reorders optimistically + shows Saving…), so the drop feels instant.
+  const reorderDay = (from, to) => {
     if (from == null || to == null || from === to) return;
     const dayIds = selChecklists.map(a => a.id);
     const [moved] = dayIds.splice(from, 1);
     dayIds.splice(to, 0, moved);
     const daySet = new Set(dayIds);
     let k = 0;
-    const order = assignments.map(a => a.id).map(id => (daySet.has(id) ? dayIds[k++] : id));
-    try { await api.post('/daily-checklist/assignments/reorder', { order }); onAssignmentAdded?.(); }
-    catch (err) { setError(err.response?.data?.error || t.failedToSave); }
+    const orderIds = assignments.map(a => a.id).map(id => (daySet.has(id) ? dayIds[k++] : id));
+    onReorder?.(orderIds);
   };
   const dnd = useDragReorder(reorderDay);
 
