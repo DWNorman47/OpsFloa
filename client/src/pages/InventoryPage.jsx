@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useT } from '../hooks/useT';
 import { usePerm } from '../hooks/usePerm';
 import { usePlan } from '../hooks/usePlan';
@@ -23,6 +24,7 @@ import EquipmentMaintenanceLog from '../components/inventory/EquipmentMaintenanc
 import { silentError } from '../errorReporter';
 export default function InventoryPage() {
   const t = useT();
+  const navigate = useNavigate();
   // Visibility is permission-driven, not role-driven: anyone with view_inventory
   // (or the broader manage_inventory) sees the read/operational views; the
   // management + setup tabs require manage_inventory. The server enforces the
@@ -63,6 +65,9 @@ export default function InventoryPage() {
     { id: 'locations',   label: t.invSetupLocations },
     { id: 'suppliers',   label: t.invSetupSuppliers },
     { id: 'conversions', label: t.invTabConversions, dot: pendingConversions > 0 ? '#d97706' : null },
+    // Material Catalog is its own route (/catalog); this tab navigates there
+    // rather than rendering inline. See switchTab's intercept.
+    { id: 'catalog',     label: t.invTabCatalog },
   ] : [];
   // Equipment group (Business plan + manage_equipment). Consolidated here from
   // the old Field "Equipment Log" tab. M1 ships the Assets tab (the moved
@@ -101,6 +106,8 @@ export default function InventoryPage() {
 
   const switchTab = next => {
     const nextTab = normalizeInventoryTab(next);
+    // The Catalog tab is a route, not an inline panel — hand off to it.
+    if (nextTab === 'catalog') { navigate('/catalog'); return; }
     setTab(nextTab);
     history.replaceState(null, '', '#' + nextTab);
   };
