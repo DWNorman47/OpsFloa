@@ -9,6 +9,7 @@ import { useT } from '../hooks/useT';
 import { SkeletonList } from './Skeleton';
 import ProjectScheduler from './ProjectScheduler';
 import AssignmentCard from './AssignmentCard';
+import { useDragReorder } from '../hooks/useDragReorder';
 
 export default function ProjectDailySetup() {
   const t = useT();
@@ -83,15 +84,16 @@ export default function ProjectDailySetup() {
     catch { loadScope(scopeProject); }
   };
 
-  const move = async (idx, dir) => {
+  const reorderList = async (from, to) => {
+    if (from == null || to == null || from === to) return;
     const next = [...assignments];
-    const j = idx + dir;
-    if (j < 0 || j >= next.length) return;
-    [next[idx], next[j]] = [next[j], next[idx]];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
     setAssignments(next);
     try { await api.post('/daily-checklist/assignments/reorder', { order: next.map(a => a.id) }); }
     catch { loadScope(scopeProject); }
   };
+  const dnd = useDragReorder(reorderList);
 
   return (
     <div>
@@ -163,12 +165,8 @@ export default function ProjectDailySetup() {
               items={itemsByTemplate[a.template_id] || []}
               onPatch={patch}
               onRemove={remove}
-              {...(viewMode === 'all' ? {
-                onMoveUp: () => move(idx, -1),
-                onMoveDown: () => move(idx, 1),
-                upDisabled: idx === 0,
-                downDisabled: idx === visible.length - 1,
-              } : {})}
+              collapsible
+              {...(viewMode === 'all' ? { dragProps: dnd.dragProps(idx), isOver: dnd.isOver(idx) } : {})}
             />
           ))}
         </div>

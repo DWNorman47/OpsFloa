@@ -1,9 +1,9 @@
 // A Project Daily assignment card — the full editor for one assigned checklist: schedule,
 // team-role scope, shared/individual mode, carryover, a read-only item list, and delete.
-// Shared by the Project Daily list view and the scheduler's day editor. Stateless except
-// for the transient "Date" selection (before a date is actually picked); all real changes
-// go through onPatch / onRemove, and optional move arrows through onMoveUp / onMoveDown.
-import React, { useState, useEffect, useMemo } from 'react';
+// Shared by the Project Daily list view and the scheduler's day editor.
+//   collapsible → starts collapsed (header only), click the title to expand.
+//   dragProps   → enables drag-to-reorder by a grip handle (the whole card is the ghost).
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useT } from '../hooks/useT';
 
 // A role scope picker: "All types" until you add specific roles; chips + Add after.
@@ -38,12 +38,19 @@ function RolePicker({ allLabel, addLabel, options, selected, onChange }) {
   );
 }
 
-export default function AssignmentCard({ a, roles = [], items = [], onPatch, onRemove, onMoveUp, onMoveDown, upDisabled, downDisabled }) {
+export default function AssignmentCard({ a, roles = [], items = [], onPatch, onRemove, collapsible = false, dragProps = null, isOver = false }) {
   const t = useT();
+  const cardRef = useRef(null);
+  const [expanded, setExpanded] = useState(!collapsible);
   // Transient: user picked "Date" but hasn't chosen one yet (server needs a real date).
   const [schedOverride, setSchedOverride] = useState(null);
   useEffect(() => { setSchedOverride(null); }, [a.schedule_type]);
   const schedType = schedOverride || a.schedule_type || 'none';
+
+  const schedTag = a.schedule_type === 'every' ? t.pdSchedEvery
+    : a.schedule_type === 'ordinal' ? t.pdSchedOrdinal.replace('#', a.ordinal_target)
+    : a.schedule_type === 'date' ? t.pdSchedDate
+    : t.pdSchedNone;
 
   const onSchedType = (v) => {
     setSchedOverride(null);
@@ -55,110 +62,128 @@ export default function AssignmentCard({ a, roles = [], items = [], onPatch, onR
     } else onPatch(a.id, { schedule_type: v, ordinal_target: null, scheduled_date: null }); // none / every
   };
 
-  const showArrows = typeof onMoveUp === 'function';
+  // Grip is the drag source (drags the whole card as the ghost); the card is the drop target.
+  const onGripDragStart = (e) => {
+    if (cardRef.current) { try { e.dataTransfer.setDragImage(cardRef.current, 16, 16); } catch { /* ignore */ } }
+    dragProps.onDragStart(e);
+  };
 
   return (
-    <div style={styles.card}>
+    <div
+      ref={cardRef}
+      style={{ ...styles.card, ...(isOver ? styles.cardDrop : {}) }}
+      {...(dragProps ? { onDragOver: dragProps.onDragOver, onDrop: dragProps.onDrop, onDragEnd: dragProps.onDragEnd } : {})}
+    >
       <div style={styles.cardHead}>
         <div style={styles.cardHeadLeft}>
-          {showArrows && (
-            <div style={styles.arrows}>
-              <button type="button" style={{ ...styles.arrow, ...(upDisabled ? styles.arrowOff : {}) }} aria-label={t.pdMoveUp} disabled={upDisabled} onClick={onMoveUp}>▲</button>
-              <button type="button" style={{ ...styles.arrow, ...(downDisabled ? styles.arrowOff : {}) }} aria-label={t.pdMoveDown} disabled={downDisabled} onClick={onMoveDown}>▼</button>
-            </div>
+          {dragProps && (
+            <span style={styles.grip} draggable onDragStart={onGripDragStart} title={t.pdDrag} aria-label={t.pdDrag}>⠿</span>
           )}
-          <div>
-            <div style={styles.cardTitle}>{a.template_name}</div>
+          <div
+            style={{ minWidth: 0, cursor: collapsible ? 'pointer' : 'default' }}
+            onClick={() => collapsible && setExpanded(x => !x)}
+          >
+            <div style={styles.cardTitle}>
+              {a.template_name}
+              {collapsible && <span style={styles.chevron}>{expanded ? ' ▾' : ' ▸'}</span>}
+            </div>
             <div style={styles.cardMeta}>{a.item_count ?? items.length} {t.itemsCount}</div>
           </div>
         </div>
-        <button type="button" style={styles.removeBtn} onClick={() => onRemove(a.id)}>{t.delete}</button>
-      </div>
-
-      <div style={styles.twoCol}>
-        <div style={styles.controlsCol}>
-          <div style={styles.scopeCell}>
-            <div style={styles.scopeLabel}>{t.pdSchedule}</div>
-            <div style={styles.scheduleRow}>
-              <select style={styles.smallSelect} value={schedType} onChange={e => onSchedType(e.target.value)}>
-                <option value="none">{t.pdSchedNone}</option>
-                <option value="every">{t.pdSchedEvery}</option>
-                <option value="ordinal">{t.pdSchedOrdinal}</option>
-                <option value="date">{t.pdSchedDate}</option>
-              </select>
-              {schedType === 'ordinal' && (
-                <input
-                  style={styles.dayNumInput}
-                  type="number"
-                  min="1"
-                  value={a.ordinal_target || 1}
-                  onChange={e => onPatch(a.id, { schedule_type: 'ordinal', ordinal_target: Math.max(1, parseInt(e.target.value, 10) || 1) })}
-                />
-              )}
-              {schedType === 'date' && (
-                <input
-                  style={styles.smallSelect}
-                  type="date"
-                  value={(a.scheduled_date || '').slice(0, 10)}
-                  onChange={e => e.target.value && onPatch(a.id, { schedule_type: 'date', scheduled_date: e.target.value })}
-                />
-              )}
-            </div>
-          </div>
-          <div style={styles.scopeCell}>
-            <div style={styles.scopeLabel}>{t.pdTypeScope}</div>
-            <RolePicker allLabel={t.pdAllTypes} addLabel={t.pdAddRole} options={roles} selected={a.role_ids} onChange={ids => onPatch(a.id, { role_ids: ids })} />
-          </div>
-          <div style={styles.scopeCell}>
-            <div style={styles.scopeLabel}>{t.pdModeLabel}</div>
-            <div style={styles.modeToggle}>
-              {['shared', 'individual'].map(m => (
-                <button key={m} type="button" style={{ ...styles.modeBtn, ...(a.mode === m ? styles.modeBtnOn : {}) }} onClick={() => a.mode !== m && onPatch(a.id, { mode: m })}>
-                  {m === 'shared' ? t.pdModeShared : t.pdModeIndividual}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div style={styles.scopeCell}>
-            <div style={styles.scopeLabel}>{t.pdCarryover}</div>
-            <label style={styles.carryLabel}>
-              <input type="checkbox" checked={!!a.carryover} onChange={e => onPatch(a.id, { carryover: e.target.checked })} />
-              <span>{t.pdCarryoverHint}</span>
-            </label>
-          </div>
-        </div>
-
-        <div style={styles.itemsCol}>
-          <div style={styles.scopeLabel}>{t.pdChecklistItems}</div>
-          {items.length === 0 ? (
-            <p style={styles.itemsEmpty}>{t.pdNoItems}</p>
-          ) : (
-            <div style={styles.itemsList}>
-              {items.map((it, i) => (
-                <div key={it.id || i} style={styles.itemRow}>
-                  <span style={styles.itemKind}>{it.type === 'text' ? '✎' : '☐'}</span>
-                  <span style={styles.itemLabel}>{it.label ?? it.text ?? it.name}</span>
-                </div>
-              ))}
-            </div>
-          )}
+        <div style={styles.cardHeadRight}>
+          {collapsible && !expanded && <span style={styles.schedChip}>{schedTag}</span>}
+          <button type="button" style={styles.removeBtn} onClick={() => onRemove(a.id)}>{t.delete}</button>
         </div>
       </div>
+
+      {expanded && (
+        <div style={styles.twoCol}>
+          <div style={styles.controlsCol}>
+            <div style={styles.scopeCell}>
+              <div style={styles.scopeLabel}>{t.pdSchedule}</div>
+              <div style={styles.scheduleRow}>
+                <select style={styles.smallSelect} value={schedType} onChange={e => onSchedType(e.target.value)}>
+                  <option value="none">{t.pdSchedNone}</option>
+                  <option value="every">{t.pdSchedEvery}</option>
+                  <option value="ordinal">{t.pdSchedOrdinal}</option>
+                  <option value="date">{t.pdSchedDate}</option>
+                </select>
+                {schedType === 'ordinal' && (
+                  <input
+                    style={styles.dayNumInput}
+                    type="number"
+                    min="1"
+                    value={a.ordinal_target || 1}
+                    onChange={e => onPatch(a.id, { schedule_type: 'ordinal', ordinal_target: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+                  />
+                )}
+                {schedType === 'date' && (
+                  <input
+                    style={styles.smallSelect}
+                    type="date"
+                    value={(a.scheduled_date || '').slice(0, 10)}
+                    onChange={e => e.target.value && onPatch(a.id, { schedule_type: 'date', scheduled_date: e.target.value })}
+                  />
+                )}
+              </div>
+            </div>
+            <div style={styles.scopeCell}>
+              <div style={styles.scopeLabel}>{t.pdTypeScope}</div>
+              <RolePicker allLabel={t.pdAllTypes} addLabel={t.pdAddRole} options={roles} selected={a.role_ids} onChange={ids => onPatch(a.id, { role_ids: ids })} />
+            </div>
+            <div style={styles.scopeCell}>
+              <div style={styles.scopeLabel}>{t.pdModeLabel}</div>
+              <div style={styles.modeToggle}>
+                {['shared', 'individual'].map(m => (
+                  <button key={m} type="button" style={{ ...styles.modeBtn, ...(a.mode === m ? styles.modeBtnOn : {}) }} onClick={() => a.mode !== m && onPatch(a.id, { mode: m })}>
+                    {m === 'shared' ? t.pdModeShared : t.pdModeIndividual}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={styles.scopeCell}>
+              <div style={styles.scopeLabel}>{t.pdCarryover}</div>
+              <label style={styles.carryLabel}>
+                <input type="checkbox" checked={!!a.carryover} onChange={e => onPatch(a.id, { carryover: e.target.checked })} />
+                <span>{t.pdCarryoverHint}</span>
+              </label>
+            </div>
+          </div>
+
+          <div style={styles.itemsCol}>
+            <div style={styles.scopeLabel}>{t.pdChecklistItems}</div>
+            {items.length === 0 ? (
+              <p style={styles.itemsEmpty}>{t.pdNoItems}</p>
+            ) : (
+              <div style={styles.itemsList}>
+                {items.map((it, i) => (
+                  <div key={it.id || i} style={styles.itemRow}>
+                    <span style={styles.itemKind}>{it.type === 'text' ? '✎' : '☐'}</span>
+                    <span style={styles.itemLabel}>{it.label ?? it.text ?? it.name}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 const styles = {
   card: { background: '#fff', borderRadius: 12, boxShadow: '0 1px 6px rgba(0,0,0,0.07)', padding: 16 },
-  cardHead: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 12 },
+  cardDrop: { boxShadow: '0 0 0 2px #2563eb' },
+  cardHead: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
   cardHeadLeft: { display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 },
-  arrows: { display: 'flex', flexDirection: 'column', gap: 2, flexShrink: 0 },
-  arrow: { border: '1px solid #e5e7eb', background: '#f9fafb', color: '#6b7280', borderRadius: 5, width: 24, height: 18, fontSize: 9, lineHeight: 1, cursor: 'pointer', padding: 0 },
-  arrowOff: { opacity: 0.35, cursor: 'not-allowed' },
+  cardHeadRight: { display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 },
+  grip: { color: '#9ca3af', fontSize: 16, cursor: 'grab', userSelect: 'none', flexShrink: 0, lineHeight: 1 },
   cardTitle: { fontWeight: 700, fontSize: 15, color: '#111827' },
+  chevron: { color: '#9ca3af', fontSize: 12, fontWeight: 700 },
   cardMeta: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  schedChip: { fontSize: 11, fontWeight: 700, color: '#6b7280', background: '#f3f4f6', padding: '3px 9px', borderRadius: 10 },
   removeBtn: { background: 'none', border: '1px solid #fca5a5', color: '#ef4444', padding: '5px 12px', borderRadius: 6, fontSize: 12, cursor: 'pointer', flexShrink: 0 },
-  twoCol: { display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'flex-start' },
+  twoCol: { display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'flex-start', marginTop: 12 },
   controlsCol: { display: 'flex', flexDirection: 'column', gap: 14, flex: '1 1 240px', minWidth: 220 },
   itemsCol: { flex: '2 1 300px', minWidth: 240, background: '#f9fafb', border: '1px solid #eef2f7', borderRadius: 8, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6 },
   itemsList: { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 2 },

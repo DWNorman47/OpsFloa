@@ -6,6 +6,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../api';
 import { useT } from '../hooks/useT';
 import AssignmentCard from './AssignmentCard';
+import { useDragReorder } from '../hooks/useDragReorder';
 
 const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const parseYmd = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
@@ -106,19 +107,20 @@ export default function ProjectScheduler({ projectId, assignments = [], template
   const selChecklist = selChecklistId ? selChecklists.find(a => a.id === selChecklistId) : null;
   const selItems = selChecklist ? (itemsByTemplate[selChecklist.template_id] || []) : null;
 
-  // Reorder a checklist within the day. order_index is global, so swap the two day-items'
-  // positions in the full assignment order and resend the whole list (others stay put).
-  const moveInDay = async (dayList, idx, dir) => {
-    const j = idx + dir;
-    if (j < 0 || j >= dayList.length) return;
-    const order = assignments.map(a => a.id);
-    const pa = order.indexOf(dayList[idx].id);
-    const pb = order.indexOf(dayList[j].id);
-    if (pa < 0 || pb < 0) return;
-    [order[pa], order[pb]] = [order[pb], order[pa]];
+  // Drag-reorder within the day: rebuild the global order so the day's checklists follow
+  // the new drag order while every other assignment keeps its position.
+  const reorderDay = async (from, to) => {
+    if (from == null || to == null || from === to) return;
+    const dayIds = selChecklists.map(a => a.id);
+    const [moved] = dayIds.splice(from, 1);
+    dayIds.splice(to, 0, moved);
+    const daySet = new Set(dayIds);
+    let k = 0;
+    const order = assignments.map(a => a.id).map(id => (daySet.has(id) ? dayIds[k++] : id));
     try { await api.post('/daily-checklist/assignments/reorder', { order }); onAssignmentAdded?.(); }
     catch (err) { setError(err.response?.data?.error || t.failedToSave); }
   };
+  const dnd = useDragReorder(reorderDay);
 
   const patchAssignment = async (id, body) => {
     try { await api.patch(`/daily-checklist/assignments/${id}`, body); onAssignmentAdded?.(); }
@@ -209,13 +211,12 @@ export default function ProjectScheduler({ projectId, assignments = [], template
                   {selChecklists.map((a, i) => (
                     <div
                       key={a.id}
-                      style={{ ...styles.detailItem, ...(a.id === selChecklistId ? styles.detailItemSel : {}) }}
+                      draggable
+                      {...dnd.dragProps(i)}
+                      style={{ ...styles.detailItem, ...(a.id === selChecklistId ? styles.detailItemSel : {}), ...(dnd.isOver(i) ? styles.detailItemDrop : {}) }}
                       onClick={() => setSelChecklistId(id => (id === a.id ? null : a.id))}
                     >
-                      <div style={styles.detailArrows}>
-                        <button type="button" style={{ ...styles.detailArrow, ...(i === 0 ? styles.detailArrowOff : {}) }} aria-label={t.pdMoveUp} disabled={i === 0} onClick={e => { e.stopPropagation(); moveInDay(selChecklists, i, -1); }}>▲</button>
-                        <button type="button" style={{ ...styles.detailArrow, ...(i === selChecklists.length - 1 ? styles.detailArrowOff : {}) }} aria-label={t.pdMoveDown} disabled={i === selChecklists.length - 1} onClick={e => { e.stopPropagation(); moveInDay(selChecklists, i, 1); }}>▼</button>
-                      </div>
+                      <span style={styles.dragHandle} title={t.pdDrag} aria-hidden="true">⠿</span>
                       <span style={styles.detailItemName}>{a.template_name}</span>
                       <span style={styles.detailItemTag}>
                         {a.schedule_type === 'every' ? t.pdSchedEvery
@@ -290,6 +291,8 @@ const styles = {
   detailList: { display: 'flex', flexDirection: 'column', gap: 6 },
   detailItem: { display: 'flex', alignItems: 'center', gap: 10, background: '#f9fafb', border: '1px solid #eef2f7', borderRadius: 7, padding: '7px 10px', cursor: 'pointer' },
   detailItemSel: { borderColor: '#2563eb', boxShadow: '0 0 0 2px #2563eb' },
+  detailItemDrop: { boxShadow: '0 0 0 2px #93c5fd' },
+  dragHandle: { color: '#9ca3af', fontSize: 15, cursor: 'grab', userSelect: 'none', flexShrink: 0, lineHeight: 1 },
   detailArrows: { display: 'flex', flexDirection: 'column', gap: 2, flexShrink: 0 },
   detailArrow: { border: '1px solid #e5e7eb', background: '#fff', color: '#6b7280', borderRadius: 5, width: 22, height: 16, fontSize: 8, lineHeight: 1, cursor: 'pointer', padding: 0 },
   detailArrowOff: { opacity: 0.35, cursor: 'not-allowed' },
