@@ -27,8 +27,14 @@ export default function ProjectScheduler({ projectId, assignments = [], template
   const [anchor, setAnchor] = useState(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; });
   const [workDays, setWorkDays] = useState({}); // { 'YYYY-MM-DD': dayNumber }
   const [selected, setSelected] = useState(null); // 'YYYY-MM-DD'
+  const [selChecklistId, setSelChecklistId] = useState(null); // assignment selected for item preview
   const [addTemplateId, setAddTemplateId] = useState('');
   const [error, setError] = useState('');
+
+  const itemsByTemplate = useMemo(
+    () => Object.fromEntries(templates.map(tp => [tp.id, Array.isArray(tp.items) ? tp.items : []])),
+    [templates]
+  );
 
   // The visible grid of dates.
   const gridDays = useMemo(() => {
@@ -54,6 +60,7 @@ export default function ProjectScheduler({ projectId, assignments = [], template
   }, [projectId, gridDays]);
 
   useEffect(() => { loadWorkDays(); }, [loadWorkDays]);
+  useEffect(() => { setSelChecklistId(null); }, [selected]); // drop the item preview when the date changes
 
   const toggleWorked = async (dateStr, worked) => {
     setError('');
@@ -95,6 +102,22 @@ export default function ProjectScheduler({ projectId, assignments = [], template
 
   const selDn = selected ? (workDays[selected] ?? null) : null;
   const selChecklists = selected && selDn != null ? checklistsForDate(assignments, selected, selDn) : [];
+  const selChecklist = selChecklistId ? selChecklists.find(a => a.id === selChecklistId) : null;
+  const selItems = selChecklist ? (itemsByTemplate[selChecklist.template_id] || []) : null;
+
+  // Reorder a checklist within the day. order_index is global, so swap the two day-items'
+  // positions in the full assignment order and resend the whole list (others stay put).
+  const moveInDay = async (dayList, idx, dir) => {
+    const j = idx + dir;
+    if (j < 0 || j >= dayList.length) return;
+    const order = assignments.map(a => a.id);
+    const pa = order.indexOf(dayList[idx].id);
+    const pb = order.indexOf(dayList[j].id);
+    if (pa < 0 || pb < 0) return;
+    [order[pa], order[pb]] = [order[pb], order[pa]];
+    try { await api.post('/daily-checklist/assignments/reorder', { order }); onAssignmentAdded?.(); }
+    catch (err) { setError(err.response?.data?.error || t.failedToSave); }
+  };
 
   return (
     <div>
@@ -173,8 +196,16 @@ export default function ProjectScheduler({ projectId, assignments = [], template
                 <p style={styles.detailEmpty}>{t.pdNoneThisDay}</p>
               ) : (
                 <div style={styles.detailList}>
-                  {selChecklists.map(a => (
-                    <div key={a.id} style={styles.detailItem}>
+                  {selChecklists.map((a, i) => (
+                    <div
+                      key={a.id}
+                      style={{ ...styles.detailItem, ...(a.id === selChecklistId ? styles.detailItemSel : {}) }}
+                      onClick={() => setSelChecklistId(id => (id === a.id ? null : a.id))}
+                    >
+                      <div style={styles.detailArrows}>
+                        <button type="button" style={{ ...styles.detailArrow, ...(i === 0 ? styles.detailArrowOff : {}) }} aria-label={t.pdMoveUp} disabled={i === 0} onClick={e => { e.stopPropagation(); moveInDay(selChecklists, i, -1); }}>▲</button>
+                        <button type="button" style={{ ...styles.detailArrow, ...(i === selChecklists.length - 1 ? styles.detailArrowOff : {}) }} aria-label={t.pdMoveDown} disabled={i === selChecklists.length - 1} onClick={e => { e.stopPropagation(); moveInDay(selChecklists, i, 1); }}>▼</button>
+                      </div>
                       <span style={styles.detailItemName}>{a.template_name}</span>
                       <span style={styles.detailItemTag}>
                         {a.schedule_type === 'every' ? t.pdSchedEvery
@@ -183,6 +214,24 @@ export default function ProjectScheduler({ projectId, assignments = [], template
                       </span>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {selItems && (
+                <div style={styles.checklistPreview}>
+                  <div style={styles.detailLabel}>{selChecklist.template_name}</div>
+                  {selItems.length === 0 ? (
+                    <p style={styles.detailEmpty}>{t.pdNoItems}</p>
+                  ) : (
+                    <div style={styles.previewList}>
+                      {selItems.map((it, i) => (
+                        <div key={it.id || i} style={styles.previewItem}>
+                          <span style={styles.previewKind}>{it.type === 'text' ? '✎' : '☐'}</span>
+                          <span style={styles.previewLabel}>{it.label ?? it.text ?? it.name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
               {templates.length > 0 && (
@@ -235,9 +284,18 @@ const styles = {
   detailLabel: { fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.04em', margin: '14px 0 6px' },
   detailEmpty: { fontSize: 13, color: '#9ca3af', fontStyle: 'italic', margin: 0 },
   detailList: { display: 'flex', flexDirection: 'column', gap: 6 },
-  detailItem: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, background: '#f9fafb', border: '1px solid #eef2f7', borderRadius: 7, padding: '7px 10px' },
-  detailItemName: { fontSize: 13, fontWeight: 600, color: '#111827' },
-  detailItemTag: { fontSize: 11, fontWeight: 700, color: '#6b7280' },
+  detailItem: { display: 'flex', alignItems: 'center', gap: 10, background: '#f9fafb', border: '1px solid #eef2f7', borderRadius: 7, padding: '7px 10px', cursor: 'pointer' },
+  detailItemSel: { borderColor: '#2563eb', boxShadow: '0 0 0 2px #2563eb' },
+  detailArrows: { display: 'flex', flexDirection: 'column', gap: 2, flexShrink: 0 },
+  detailArrow: { border: '1px solid #e5e7eb', background: '#fff', color: '#6b7280', borderRadius: 5, width: 22, height: 16, fontSize: 8, lineHeight: 1, cursor: 'pointer', padding: 0 },
+  detailArrowOff: { opacity: 0.35, cursor: 'not-allowed' },
+  detailItemName: { fontSize: 13, fontWeight: 600, color: '#111827', flex: 1, minWidth: 0 },
+  detailItemTag: { fontSize: 11, fontWeight: 700, color: '#6b7280', flexShrink: 0 },
+  checklistPreview: { marginTop: 14, background: '#f9fafb', border: '1px solid #eef2f7', borderRadius: 8, padding: '10px 14px' },
+  previewList: { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 },
+  previewItem: { display: 'flex', alignItems: 'flex-start', gap: 8 },
+  previewKind: { fontSize: 13, color: '#9ca3af', flexShrink: 0, marginTop: 1, width: 14, textAlign: 'center' },
+  previewLabel: { fontSize: 13, color: '#374151', lineHeight: 1.4 },
   addBar: { display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' },
   addSelect: { padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 13, background: '#fff', minWidth: 200, flex: 1 },
   addBtn: { background: '#059669', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: 'pointer' },
