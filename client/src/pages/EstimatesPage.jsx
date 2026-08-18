@@ -290,6 +290,24 @@ function EstimateForm({ existing, onSave, onCancel }) {
     setDirty(true);
     setLines(arr => arr.filter((_, idx) => idx !== i));
   }
+  // Save a line back to the material catalog so it pre-fills future estimates.
+  // The line's unit cost is already the client-facing price, so it lands as the
+  // catalog item's sell price. Creates a catalog-only row (is_stocked=false).
+  async function saveLineToCatalog(line) {
+    const desc = line.description?.toString().trim();
+    if (!desc) { toast(t.estSaveToCatalogEmpty, 'error'); return; }
+    try {
+      await api.post('/catalog/items', {
+        name: desc,
+        unit: line.unit || null,
+        sell_price_cents: parseInt(line.unit_cost_cents, 10) || 0,
+        default_estimate_category: line.category || null,
+      });
+      toast(t.estSavedToCatalog, 'success');
+    } catch (err) {
+      toast(err.response?.data?.error || t.estSaveToCatalogError, 'error');
+    }
+  }
 
   // Live totals — pure-function math mirroring server/constants/projectMoneyEnums.js
   // computeEstimateTotals. Lines that don't parse count as zero (same defensive rule).
@@ -407,7 +425,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
                 <th style={{ ...styles.lineTh, width: 80 }}>{t.estUnit}</th>
                 <th style={{ ...styles.lineTh, width: 120, textAlign: 'right' }}>{t.estUnitCost}</th>
                 <th style={{ ...styles.lineTh, width: 100, textAlign: 'right' }}>{t.estTotal}</th>
-                <th style={{ ...styles.lineTh, width: 32 }}></th>
+                <th style={{ ...styles.lineTh, width: 64 }}></th>
               </tr>
             </thead>
             <tbody>
@@ -439,7 +457,8 @@ function EstimateForm({ existing, onSave, onCancel }) {
                     <td style={{ ...styles.lineTd, textAlign: 'right', fontWeight: 600 }}>
                       {formatCents(total)}
                     </td>
-                    <td style={styles.lineTd}>
+                    <td style={{ ...styles.lineTd, whiteSpace: 'nowrap' }}>
+                      <button onClick={() => saveLineToCatalog(l)} style={styles.iconBtn} title={t.estSaveToCatalog}>🔖</button>
                       <button onClick={() => removeLine(i)} style={styles.iconBtn} title={t.estRemove}>×</button>
                     </td>
                   </tr>

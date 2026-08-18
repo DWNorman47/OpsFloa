@@ -5401,3 +5401,34 @@ field access) returning the day + items joined to users for checked_by_name; a
 expands lazily to the full per-item breakdown (value/checked, who, when). i18n
 dcHistory/dcHistoryEmpty/dcItemsChecked/dcHistoryNoItems/dcSomeone/dcUnchecked EN+ES.
 28 daily-checklist tests + i18n parity + build green.
+
+## 2026-08-18 — Estimate prefill: fillable material catalog + default markups
+
+David asked how to set up "missing costs" so estimates prefill easily. Found the
+consume side was already fully built (estimate-line CatalogPicker + `/catalog`
+resolver with markup math, migration 0108's price-book columns) but there was **no
+write path**: CatalogPage was read-only, `catalog.js` had zero writes, and
+`inventory.js` wrote `unit_cost` but none of the catalog fields. So the picker
+worked but the shelf could only be stocked by accident. Built the three moves I
+recommended:
+
+1. **Save line to catalog** (`EstimatesPage`): a 🔖 button per estimate line POSTs
+   it back as a catalog-only item (description→name, unit, line unit-cost→sell
+   price, category). Grows the price book from real bids — lowest-friction path.
+2. **Editable catalog + bulk import** (`CatalogPage` rewrite + `catalog.js`
+   POST/PATCH/DELETE + `POST /catalog/items/bulk`): create/edit/delete rows
+   (DELETE refuses `is_stocked` items — those belong to Inventory), and a
+   paste-a-spreadsheet importer (tab- or comma-delimited, header auto-skip,
+   SKU-based upsert that COALESCEs so a partial sheet augments not wipes).
+3. **Company default markups by category** (`estimate_default_markups` JSON
+   setting): collapsible panel on CatalogPage; the resolver now falls back
+   item sell price → item markup → **company markup by category** → raw cost →
+   0. So a supplier cost alone still resolves to a sell price.
+
+No migration — all columns existed from 0108; the markups ride the settings table.
+Judgment calls: catalog write routes reuse `requireCommercialAccess` (same gate as
+the picker); DELETE is catalog-only to protect stocked items with stock/txns; the
+resolver's settings read is lazy + error-swallowing so a settings hiccup never
+breaks a pick. db-enums row added for `estimate_default_markups`. +13 catalog tests
+(create/patch/delete-guard/bulk/company-markup fallback); full server suite 1444 +
+client eslint/i18n/build green.

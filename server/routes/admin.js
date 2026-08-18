@@ -34,6 +34,7 @@ const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = req
 const { DEDUCTION_KINDS } = require('../constants/deductionEnums');
 const { OVERTIME_RATE_METHODS, OVERTIME_WAGE_PRIORITIES, DEFAULT_OVERTIME_WAGE_PRIORITY } = require('../constants/payEnums');
 const { MAP_PROVIDERS } = require('../constants/mapEnums');
+const { MONEY_CATEGORIES } = require('../constants/projectMoneyEnums');
 const { weekRange, weekBucketKey } = require('../utils/weekBounds');
 const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const qbo = require('../services/qbo');
@@ -202,7 +203,7 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
   // couldn't update them. Added during 2026-04-30 audit pass.
   const adminNumericKeys = ['shift_reminder_hour', 'pto_annual_days', 'cycle_count_audit_pct', 'cycle_count_reconcile_threshold'];
   const numericKeys = [...rateKeys, ...notifKeys, ...adminNumericKeys, 'overtime_threshold', 'media_retention_days', 'qbo_bill_terms_days', 'week_start', 'work_week_end', 'regular_shift_hours', 'sick_pay_pct', 'vacation_pay_pct'];
-  const stringKeys = ['overtime_rule', 'overtime_rate_method', 'overtime_wage_priority', 'map_provider', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules', 'deductions', 'paycheck_rules'];
+  const stringKeys = ['overtime_rule', 'overtime_rate_method', 'overtime_wage_priority', 'map_provider', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules', 'deductions', 'paycheck_rules', 'estimate_default_markups'];
   const allowed = [...numericKeys, ...stringKeys, ...FEATURE_KEYS];
   const companyId = req.user.company_id;
   try {
@@ -298,6 +299,22 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
             try { parsed = JSON.parse(val); } catch { return res.status(400).json({ error: 'paycheck_rules must be valid JSON' }); }
             if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
               return res.status(400).json({ error: 'paycheck_rules must be a JSON object' });
+          }
+          if (key === 'estimate_default_markups' && val !== '') {
+            // JSON map of estimate category → default markup %. Keys must be
+            // known money categories; values non-negative numbers ≤ 1000.
+            if (String(val).length > 2000) return res.status(400).json({ error: 'estimate_default_markups is too large' });
+            let parsed;
+            try { parsed = JSON.parse(val); } catch { return res.status(400).json({ error: 'estimate_default_markups must be valid JSON' }); }
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+              return res.status(400).json({ error: 'estimate_default_markups must be a JSON object' });
+            for (const [cat, pct] of Object.entries(parsed)) {
+              if (!MONEY_CATEGORIES.includes(cat))
+                return res.status(400).json({ error: `estimate_default_markups has an unknown category: ${cat}` });
+              const n = Number(pct);
+              if (!Number.isFinite(n) || n < 0 || n > 1000)
+                return res.status(400).json({ error: `estimate_default_markups[${cat}] must be between 0 and 1000` });
+            }
           }
           const hasExpected = expectedSettings && typeof expectedSettings === 'object'
             && Object.prototype.hasOwnProperty.call(expectedSettings, key);
