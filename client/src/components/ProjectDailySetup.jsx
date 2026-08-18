@@ -57,6 +57,7 @@ export default function ProjectDailySetup() {
   // The schedule a newly-added checklist gets, based on the day being viewed: pinned to
   // the day/date in a day view, otherwise left on no particular day.
   const addSchedule = () => {
+    if (viewMode === 'daily') return { schedule_type: 'every' };
     if (viewMode === 'day') return { schedule_type: 'ordinal', ordinal_target: Math.max(1, Number(viewDay) || 1) };
     if (viewMode === 'date' && viewDate) return { schedule_type: 'date', scheduled_date: viewDate };
     return { schedule_type: 'none' };
@@ -71,6 +72,7 @@ export default function ProjectDailySetup() {
   // Which assignments to show for the current day view: every-day defaults + the ones
   // specific to this day/date (a day view). "All checklists" shows everything.
   const visible = assignments.filter(a => {
+    if (viewMode === 'daily') return a.schedule_type === 'every';
     if (viewMode === 'day') return a.schedule_type === 'every' || (a.schedule_type === 'ordinal' && Number(a.ordinal_target) === Number(viewDay));
     if (viewMode === 'date') return a.schedule_type === 'every' || (a.schedule_type === 'date' && (a.scheduled_date || '').slice(0, 10) === viewDate);
     return true;
@@ -160,6 +162,7 @@ export default function ProjectDailySetup() {
         <label style={styles.scopeBarLabel}>{t.pdView}</label>
         <select style={styles.projectSelect} value={viewMode} onChange={e => setViewMode(e.target.value)}>
           <option value="all">{t.pdViewAll}</option>
+          <option value="daily">{t.pdViewDaily}</option>
           <option value="day">{t.pdViewDay}</option>
           <option value="date">{t.pdViewDate}</option>
         </select>
