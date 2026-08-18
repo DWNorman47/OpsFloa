@@ -74,15 +74,19 @@ export default function ProjectDailySetup() {
   };
 
   const patch = async (id, body) => {
-    setAssignments(prev => prev.map(a => a.id === id ? { ...a, ...body } : a));
+    setAssignments(prev => prev.map(a => a.id === id ? { ...a, ...body } : a)); // optimistic
+    setSaving(true);
     try { await api.patch(`/daily-checklist/assignments/${id}`, body); }
     catch (err) { setError(err.response?.data?.error || t.failedToSave); loadScope(scopeProject); }
+    finally { setSaving(false); }
   };
 
   const remove = async (id) => {
-    setAssignments(prev => prev.filter(a => a.id !== id));
+    setAssignments(prev => prev.filter(a => a.id !== id)); // optimistic
+    setSaving(true);
     try { await api.delete(`/daily-checklist/assignments/${id}`); }
     catch { loadScope(scopeProject); }
+    finally { setSaving(false); }
   };
 
   // Apply a new global order: optimistic reorder now, with a "Saving…" flag while it
@@ -147,6 +151,8 @@ export default function ProjectDailySetup() {
             templates={templates}
             roles={roles}
             onReorder={reorderAssignments}
+            onPatch={patch}
+            onRemove={remove}
             onAssignmentAdded={() => loadScope(scopeProject)}
           />
         ) : (

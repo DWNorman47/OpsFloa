@@ -47,6 +47,21 @@ export default function AssignmentCard({ a, roles = [], items = [], onPatch, onR
   useEffect(() => { setSchedOverride(null); }, [a.schedule_type]);
   const schedType = schedOverride || a.schedule_type || 'none';
 
+  // Day-number / date edit as a draft — commit only when finished (blur / Enter), so the
+  // assignment doesn't reflow on every keystroke or half-typed value.
+  const [ordDraft, setOrdDraft] = useState(a.ordinal_target || 1);
+  const [dateDraft, setDateDraft] = useState((a.scheduled_date || '').slice(0, 10));
+  useEffect(() => { setOrdDraft(a.ordinal_target || 1); }, [a.ordinal_target]);
+  useEffect(() => { setDateDraft((a.scheduled_date || '').slice(0, 10)); }, [a.scheduled_date]);
+  const commitOrdinal = () => {
+    const n = Math.max(1, parseInt(ordDraft, 10) || 1);
+    setOrdDraft(n);
+    if (a.schedule_type !== 'ordinal' || n !== a.ordinal_target) onPatch(a.id, { schedule_type: 'ordinal', ordinal_target: n, scheduled_date: null });
+  };
+  const commitDate = () => {
+    if (dateDraft && dateDraft !== (a.scheduled_date || '').slice(0, 10)) onPatch(a.id, { schedule_type: 'date', scheduled_date: dateDraft });
+  };
+
   const schedTag = a.schedule_type === 'every' ? t.pdSchedEvery
     : a.schedule_type === 'ordinal' ? t.pdSchedOrdinal.replace('#', a.ordinal_target)
     : a.schedule_type === 'date' ? t.pdSchedDate
@@ -113,16 +128,19 @@ export default function AssignmentCard({ a, roles = [], items = [], onPatch, onR
                     style={styles.dayNumInput}
                     type="number"
                     min="1"
-                    value={a.ordinal_target || 1}
-                    onChange={e => onPatch(a.id, { schedule_type: 'ordinal', ordinal_target: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+                    value={ordDraft}
+                    onChange={e => setOrdDraft(e.target.value)}
+                    onBlur={commitOrdinal}
+                    onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                   />
                 )}
                 {schedType === 'date' && (
                   <input
                     style={styles.smallSelect}
                     type="date"
-                    value={(a.scheduled_date || '').slice(0, 10)}
-                    onChange={e => e.target.value && onPatch(a.id, { schedule_type: 'date', scheduled_date: e.target.value })}
+                    value={dateDraft}
+                    onChange={e => setDateDraft(e.target.value)}
+                    onBlur={commitDate}
                   />
                 )}
               </div>

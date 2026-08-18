@@ -23,7 +23,7 @@ function checklistsForDate(assignments, dateStr, dn) {
   );
 }
 
-export default function ProjectScheduler({ projectId, assignments = [], templates = [], roles = [], onReorder, onAssignmentAdded }) {
+export default function ProjectScheduler({ projectId, assignments = [], templates = [], roles = [], onReorder, onPatch, onRemove, onAssignmentAdded }) {
   const t = useT();
   const [viewMode, setViewMode] = useState('week'); // 'week' | 'month'
   const [anchor, setAnchor] = useState(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; });
@@ -122,14 +122,9 @@ export default function ProjectScheduler({ projectId, assignments = [], template
   };
   const dnd = useDragReorder(reorderDay);
 
-  const patchAssignment = async (id, body) => {
-    try { await api.patch(`/daily-checklist/assignments/${id}`, body); onAssignmentAdded?.(); }
-    catch (err) { setError(err.response?.data?.error || t.failedToSave); }
-  };
-  const removeAssignment = async (id) => {
-    try { await api.delete(`/daily-checklist/assignments/${id}`); setSelChecklistId(null); onAssignmentAdded?.(); }
-    catch (err) { setError(err.response?.data?.error || t.failedToSave); }
-  };
+  // Edit/delete go through the parent's optimistic patch/remove so the change shows instantly
+  // (the parent also flips the Saving… flag while it persists).
+  const removeSelected = (id) => { setSelChecklistId(null); onRemove?.(id); };
 
   return (
     <div>
@@ -234,8 +229,8 @@ export default function ProjectScheduler({ projectId, assignments = [], template
                     a={selChecklist}
                     roles={roles}
                     items={selItems || []}
-                    onPatch={patchAssignment}
-                    onRemove={removeAssignment}
+                    onPatch={onPatch}
+                    onRemove={removeSelected}
                   />
                 </div>
               )}
