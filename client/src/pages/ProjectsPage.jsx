@@ -1531,6 +1531,15 @@ function ProjectVisibility({ project, onProjectUpdated, toggleStyle, countStyle,
     setSelected(new Set(project.visible_to_user_ids || []));
   }, [project.id, project.visible_to_user_ids]);
 
+  const [priority, setPriority] = useState(project.priority || 'normal');
+  useEffect(() => { setPriority(project.priority || 'normal'); }, [project.id, project.priority]);
+  const savePriority = async (v) => {
+    const prev = priority;
+    setPriority(v);
+    try { const r = await api.patch(`/admin/projects/${project.id}`, { priority: v }); onProjectUpdated?.(r.data); }
+    catch (err) { setPriority(prev); setError(err.response?.data?.error || 'Save failed'); }
+  };
+
   useEffect(() => {
     if (!open || workers !== null) return;
     setLoading(true);
@@ -1588,11 +1597,30 @@ function ProjectVisibility({ project, onProjectUpdated, toggleStyle, countStyle,
             </span>
           )}
           {!restricted && <span style={countStyle}>Everyone</span>}
+          {priority !== 'normal' && (
+            <span style={{ ...countStyle, background: priority === 'hidden' ? '#9ca3af' : priority === 'high' ? '#ef4444' : '#6b7280' }}>
+              {priority === 'hidden' ? t.pvPriorityHidden : priority === 'high' ? t.pvPriorityHigh : t.pvPriorityLow}
+            </span>
+          )}
           <span style={{ fontSize: 12, color: '#6b7280' }}>{open ? '▴' : '▾'}</span>
         </span>
       </button>
       {open && (
         <div style={{ marginTop: 8 }}>
+          <div style={{ marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid #eef2f7' }}>
+            <label style={{ fontSize: 12, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 4 }}>{t.pvPriorityLabel}</label>
+            <select
+              value={priority}
+              onChange={e => savePriority(e.target.value)}
+              style={{ padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 7, fontSize: 13, background: '#fff', minWidth: 180 }}
+            >
+              <option value="high">{t.pvPriorityHigh}</option>
+              <option value="normal">{t.pvPriorityNormal}</option>
+              <option value="low">{t.pvPriorityLow}</option>
+              <option value="hidden">{t.pvPriorityHidden}</option>
+            </select>
+            <p style={{ fontSize: 12, color: '#9ca3af', margin: '6px 0 0' }}>{t.pvPriorityHelp}</p>
+          </div>
           <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 12px' }}>
             Choose which {workerLabelPluralLower} see this project in their Time Clock dropdown. Leave empty to make it visible to
             everyone. Admins always see every project regardless of this setting.

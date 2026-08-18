@@ -22,6 +22,15 @@ const PROJECT_WAGE_TYPE_DEFAULT = 'regular';
 const HOUR_LIMIT_MODES = Object.freeze(['off', 'warn', 'hard']);
 const HOUR_LIMIT_MODE_DEFAULT = 'off';
 
+// Project visibility priority (projects.priority) — whether it shows in workers' pickers
+// and in what order.
+//   high   — listed first
+//   normal — default
+//   low    — listed last (still shown)
+//   hidden — not shown in workers' Time Clock dropdown (admins still see + manage it)
+const PROJECT_PRIORITIES = Object.freeze(['high', 'normal', 'low', 'hidden']);
+const PROJECT_PRIORITY_DEFAULT = 'normal';
+
 module.exports = {
   PROJECT_STATUSES,
   PROJECT_STATUS_DEFAULT,
@@ -29,4 +38,6 @@ module.exports = {
   PROJECT_WAGE_TYPE_DEFAULT,
   HOUR_LIMIT_MODES,
   HOUR_LIMIT_MODE_DEFAULT,
+  PROJECT_PRIORITIES,
+  PROJECT_PRIORITY_DEFAULT,
 };

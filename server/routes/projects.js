@@ -19,8 +19,9 @@ router.get('/', requireAuth, async (req, res) => {
     const result = await pool.query(
       `SELECT * FROM projects
         WHERE active = true AND company_id = $1
+          AND priority <> 'hidden'
           ${visibilityClause}
-        ORDER BY name LIMIT 500`,
+        ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'low' THEN 2 ELSE 1 END, name LIMIT 500`,
       params
     );
     res.json(result.rows);

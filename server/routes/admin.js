@@ -7,7 +7,7 @@ const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const { userOrIpKey } = require('../middleware/rateLimitKey');
 const { entryInstants, validLocalDate, wallClockInTZ } = require('../utils/timeFormat');
-const { PROJECT_STATUSES } = require('../constants/projectEnums');
+const { PROJECT_STATUSES, PROJECT_PRIORITIES } = require('../constants/projectEnums');
 const { validateHourLimitInput, numOrNull: hlNumOrNull, reconcileCompanyActiveClocks } = require('../utils/projectHourLimits');
 const { clearSuppression } = require('../services/emailSuppression');
 const pool = require('../db');
@@ -2019,8 +2019,9 @@ router.get('/projects', requireAdmin, async (req, res) => {
       `SELECT id, company_id, name, wage_type, prevailing_wage_rate, geo_lat, geo_lng, geo_radius_ft,
               budget_hours, budget_dollars, active, created_at, is_overhead,
               client_name, job_number, address, start_date, end_date, description, status,
-              required_checklist_template_id, progress_pct, visible_to_user_ids
-       FROM projects WHERE (active = true OR $2 = true) AND company_id = $1 ORDER BY active DESC, name LIMIT 500`,
+              required_checklist_template_id, progress_pct, visible_to_user_ids, priority
+       FROM projects WHERE (active = true OR $2 = true) AND company_id = $1
+        ORDER BY active DESC, CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 WHEN 'low' THEN 2 ELSE 3 END, name LIMIT 500`,
       [companyId, req.query.include_archived === 'true']
     );
     res.json(result.rows);
@@ -2067,12 +2068,16 @@ router.patch('/projects/:id', requireAdmin, requirePerm('manage_projects'),
   }),
   async (req, res) => {
   const { wage_type, name, geo_lat, geo_lng, geo_radius_ft, clear_geofence, budget_hours, budget_dollars, prevailing_wage_rate, required_checklist_template_id,
-          client_name, job_number, address, start_date, end_date, description, status, progress_pct, active, is_overhead,
+          client_name, job_number, address, start_date, end_date, description, status, progress_pct, active, is_overhead, priority,
           hour_limit_mode, daily_hour_limit, weekly_hour_limit, hour_limit_overflow_project_id } = req.body;
   const VALID_STATUSES = PROJECT_STATUSES;
   if (status !== undefined && !VALID_STATUSES.includes(status)) {
     logFailure(req, 'admin.projects.update', 'invalid_status', { status });
     return res.status(400).json({ error: `status must be one of: ${VALID_STATUSES.join(', ')}` });
+  }
+  if (priority !== undefined && !PROJECT_PRIORITIES.includes(priority)) {
+    logFailure(req, 'admin.projects.update', 'invalid_priority', { priority });
+    return res.status(400).json({ error: `priority must be one of: ${PROJECT_PRIORITIES.join(', ')}` });
   }
   if (wage_type !== undefined && !['regular', 'prevailing'].includes(wage_type)) {
     logFailure(req, 'admin.projects.update', 'invalid_wage_type', { wage_type });
@@ -2175,6 +2180,7 @@ router.patch('/projects/:id', requireAdmin, requirePerm('manage_projects'),
     }
     if (active !== undefined) { fields.push(`active = $${idx++}`); values.push(!!active); }
     if (is_overhead !== undefined) { fields.push(`is_overhead = $${idx++}`); values.push(!!is_overhead); }
+    if (priority !== undefined) { fields.push(`priority = $${idx++}`); values.push(priority); }
     if (hour_limit_mode !== undefined) { fields.push(`hour_limit_mode = $${idx++}`); values.push(hour_limit_mode || 'off'); }
     if (daily_hour_limit !== undefined) { fields.push(`daily_hour_limit = $${idx++}`); values.push(hlNumOrNull(daily_hour_limit)); }
     if (weekly_hour_limit !== undefined) { fields.push(`weekly_hour_limit = $${idx++}`); values.push(hlNumOrNull(weekly_hour_limit)); }
