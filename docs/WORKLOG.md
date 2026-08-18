@@ -5432,3 +5432,35 @@ resolver's settings read is lazy + error-swallowing so a settings hiccup never
 breaks a pick. db-enums row added for `estimate_default_markups`. +13 catalog tests
 (create/patch/delete-guard/bulk/company-markup fallback); full server suite 1444 +
 client eslint/i18n/build green.
+
+## 2026-08-18 — Equipment economics: full machine rate model → estimates
+
+David's model: a machine should have a rent-IN cost (pay a vendor), a rent-OUT
+price (charge others), and on-project USE costs that split into mobilization
+(to/from site) + per-hour operating. Audited the app: only rent-in existed
+(`equipment_items.rental_rate`, day/week/month, internal-only), estimates never
+looked at equipment, and a machine's cost could be typed in up to three
+unlinked places (asset, catalog, project expense). Built the full model:
+
+- **Migration 0179**: widen `rental_rate_unit` to allow `hour`; add
+  `rent_out_rate`/`rent_out_unit`, `mobilization_cost`, `operating_rate`/
+  `operating_unit` (DECIMAL dollars, matching the table). `EQUIPMENT_RATE_UNITS`
+  constant + CHECKs + db-enums rows.
+- **equipment.js**: parse/validate the new rates; **PATCH is now a partial
+  update** (only touches columns the body sends) — this also fixes a latent bug
+  where editing an asset's name from the registry form wiped its rental/cost
+  fields. New `GET /:id/estimate-lines` resolves an asset's rates into estimate
+  line shapes (mobilization + operating, or rent-out fallback), dollars→cents.
+- **UI**: a "Rates & costs" section on the equipment asset form (purchase cost,
+  rent-out, mobilization, operating + period pickers); `hour` added to the
+  rent-in unit dropdown on the Rentals tab. The estimate line picker became a
+  **Catalog | Equipment** picker — picking a machine drops in its mobilization +
+  operating lines at once (part→localized description).
+
+Placement decision: rent-IN stays on the Rentals tab (with vendor/return-due,
+its natural workflow); charge-out economics live on the asset form — so every
+cost has exactly ONE home, no field entered twice. Rent-out is stored/editable
+but not auto-inserted into a project estimate (different transaction); the picker
+inserts the use-on-job lines. +11 equipment tests (validation, partial-update
+no-wipe, estimate-lines resolver); full server suite 1455 + client eslint/i18n/
+build green.

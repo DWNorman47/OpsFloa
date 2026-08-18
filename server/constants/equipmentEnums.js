@@ -17,8 +17,11 @@ const EQUIPMENT_KINDS = Object.freeze(['heavy', 'vehicle', 'trailer', 'power_too
 const EQUIPMENT_MAINTENANCE_KINDS = Object.freeze(['service', 'repair', 'inspection', 'other']);
 const EQUIPMENT_MAINTENANCE_KIND_DEFAULT = 'service';
 
-// equipment_items.rental_rate_unit
-const RENTAL_RATE_UNITS = Object.freeze(['day', 'week', 'month']);
+// Rate period for every equipment money rate: rent-in (rental_rate_unit),
+// rent-out (rent_out_unit), and operating (operating_unit). See migration 0179.
+const EQUIPMENT_RATE_UNITS = Object.freeze(['hour', 'day', 'week', 'month']);
+// Back-compat alias — rental_rate_unit used to be its own (day/week/month) list.
+const RENTAL_RATE_UNITS = EQUIPMENT_RATE_UNITS;
 
 module.exports = {
   EQUIPMENT_STATUSES,
@@ -26,5 +29,6 @@ module.exports = {
   EQUIPMENT_KINDS,
   EQUIPMENT_MAINTENANCE_KINDS,
   EQUIPMENT_MAINTENANCE_KIND_DEFAULT,
+  EQUIPMENT_RATE_UNITS,
   RENTAL_RATE_UNITS,
 };
