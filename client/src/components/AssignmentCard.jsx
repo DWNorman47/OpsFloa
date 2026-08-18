@@ -41,6 +41,7 @@ function RolePicker({ allLabel, addLabel, options, selected, onChange }) {
 export default function AssignmentCard({ a, roles = [], items = [], onPatch, onRemove, collapsible = false, dragProps = null, isOver = false }) {
   const t = useT();
   const cardRef = useRef(null);
+  const dateTyped = useRef(false); // true once a key is pressed in the date field this focus
   const [expanded, setExpanded] = useState(!collapsible);
   // Transient: user picked "Date" but hasn't chosen one yet (server needs a real date).
   const [schedOverride, setSchedOverride] = useState(null);
@@ -58,8 +59,10 @@ export default function AssignmentCard({ a, roles = [], items = [], onPatch, onR
     setOrdDraft(n);
     if (a.schedule_type !== 'ordinal' || n !== a.ordinal_target) onPatch(a.id, { schedule_type: 'ordinal', ordinal_target: n, scheduled_date: null });
   };
-  const commitDate = () => {
-    if (dateDraft && dateDraft !== (a.scheduled_date || '').slice(0, 10)) onPatch(a.id, { schedule_type: 'date', scheduled_date: dateDraft });
+  // A picker selection fires onChange with no keystroke → commit immediately; typing fires
+  // keydown first and commits only on Enter / blur (partial years fire garbage dates).
+  const commitDate = (v = dateDraft) => {
+    if (v && v !== (a.scheduled_date || '').slice(0, 10)) onPatch(a.id, { schedule_type: 'date', scheduled_date: v });
   };
 
   const schedTag = a.schedule_type === 'every' ? t.pdSchedEvery
@@ -139,8 +142,10 @@ export default function AssignmentCard({ a, roles = [], items = [], onPatch, onR
                     style={styles.smallSelect}
                     type="date"
                     value={dateDraft}
-                    onChange={e => setDateDraft(e.target.value)}
-                    onBlur={commitDate}
+                    onFocus={() => { dateTyped.current = false; }}
+                    onKeyDown={e => { dateTyped.current = true; if (e.key === 'Enter') e.currentTarget.blur(); }}
+                    onChange={e => { setDateDraft(e.target.value); if (!dateTyped.current) commitDate(e.target.value); }}
+                    onBlur={() => commitDate()}
                   />
                 )}
               </div>
