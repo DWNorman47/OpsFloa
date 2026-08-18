@@ -5,6 +5,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../api';
 import { useT } from '../hooks/useT';
+import AssignmentCard from './AssignmentCard';
 
 const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const parseYmd = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
@@ -21,7 +22,7 @@ function checklistsForDate(assignments, dateStr, dn) {
   );
 }
 
-export default function ProjectScheduler({ projectId, assignments = [], templates = [], onAssignmentAdded }) {
+export default function ProjectScheduler({ projectId, assignments = [], templates = [], roles = [], onAssignmentAdded }) {
   const t = useT();
   const [viewMode, setViewMode] = useState('week'); // 'week' | 'month'
   const [anchor, setAnchor] = useState(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; });
@@ -116,6 +117,15 @@ export default function ProjectScheduler({ projectId, assignments = [], template
     if (pa < 0 || pb < 0) return;
     [order[pa], order[pb]] = [order[pb], order[pa]];
     try { await api.post('/daily-checklist/assignments/reorder', { order }); onAssignmentAdded?.(); }
+    catch (err) { setError(err.response?.data?.error || t.failedToSave); }
+  };
+
+  const patchAssignment = async (id, body) => {
+    try { await api.patch(`/daily-checklist/assignments/${id}`, body); onAssignmentAdded?.(); }
+    catch (err) { setError(err.response?.data?.error || t.failedToSave); }
+  };
+  const removeAssignment = async (id) => {
+    try { await api.delete(`/daily-checklist/assignments/${id}`); setSelChecklistId(null); onAssignmentAdded?.(); }
     catch (err) { setError(err.response?.data?.error || t.failedToSave); }
   };
 
@@ -217,21 +227,15 @@ export default function ProjectScheduler({ projectId, assignments = [], template
                 </div>
               )}
 
-              {selItems && (
-                <div style={styles.checklistPreview}>
-                  <div style={styles.detailLabel}>{selChecklist.template_name}</div>
-                  {selItems.length === 0 ? (
-                    <p style={styles.detailEmpty}>{t.pdNoItems}</p>
-                  ) : (
-                    <div style={styles.previewList}>
-                      {selItems.map((it, i) => (
-                        <div key={it.id || i} style={styles.previewItem}>
-                          <span style={styles.previewKind}>{it.type === 'text' ? '✎' : '☐'}</span>
-                          <span style={styles.previewLabel}>{it.label ?? it.text ?? it.name}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+              {selChecklist && (
+                <div style={{ marginTop: 14 }}>
+                  <AssignmentCard
+                    a={selChecklist}
+                    roles={roles}
+                    items={selItems || []}
+                    onPatch={patchAssignment}
+                    onRemove={removeAssignment}
+                  />
                 </div>
               )}
               {templates.length > 0 && (

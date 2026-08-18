@@ -8,38 +8,7 @@ import api from '../api';
 import { useT } from '../hooks/useT';
 import { SkeletonList } from './Skeleton';
 import ProjectScheduler from './ProjectScheduler';
-
-// A role scope picker: "All types" until you add specific roles; chips + Add after.
-function RolePicker({ allLabel, addLabel, options, selected, onChange }) {
-  const ids = Array.isArray(selected) && selected.length ? selected.map(String) : null;
-  const nameById = useMemo(() => Object.fromEntries(options.map(o => [String(o.id), o.name])), [options]);
-  const remaining = options.filter(o => !ids || !ids.includes(String(o.id)));
-  const add = id => { if (id) onChange([...(ids || []), id].map(Number)); };
-  const remove = id => {
-    const next = (ids || []).filter(x => x !== String(id)).map(Number);
-    onChange(next.length ? next : null); // empty → back to All
-  };
-  return (
-    <div style={styles.scopeRow}>
-      {!ids ? (
-        <span style={styles.allTag}>{allLabel}</span>
-      ) : (
-        ids.map(id => (
-          <span key={id} style={styles.chip}>
-            {nameById[id] || id}
-            <button type="button" style={styles.chipX} aria-label="Remove" onClick={() => remove(id)}>✕</button>
-          </span>
-        ))
-      )}
-      {remaining.length > 0 && (
-        <select style={styles.addSelect} value="" onChange={e => { add(e.target.value); e.target.value = ''; }}>
-          <option value="">+ {addLabel}</option>
-          {remaining.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-        </select>
-      )}
-    </div>
-  );
-}
+import AssignmentCard from './AssignmentCard';
 
 export default function ProjectDailySetup() {
   const t = useT();
@@ -107,20 +76,6 @@ export default function ProjectDailySetup() {
     try { await api.patch(`/daily-checklist/assignments/${id}`, body); }
     catch (err) { setError(err.response?.data?.error || t.failedToSave); loadScope(scopeProject); }
   };
-  // Local-only update (no server call) — used for the transient "Date" selection before a
-  // date is actually picked (the server requires a date for schedule_type 'date').
-  const setLocal = (id, body) => setAssignments(prev => prev.map(a => a.id === id ? { ...a, ...body } : a));
-
-  const onScheduleType = (a, v) => {
-    if (v === 'none') patch(a.id, { schedule_type: 'none', ordinal_target: null, scheduled_date: null });
-    else if (v === 'every') patch(a.id, { schedule_type: 'every', ordinal_target: null, scheduled_date: null });
-    else if (v === 'ordinal') patch(a.id, { schedule_type: 'ordinal', ordinal_target: a.ordinal_target || 1, scheduled_date: null });
-    else {
-      const d = (a.scheduled_date || '').slice(0, 10);
-      if (d) patch(a.id, { schedule_type: 'date', scheduled_date: d });
-      else setLocal(a.id, { schedule_type: 'date' }); // reveal the date input; patch on pick
-    }
-  };
 
   const remove = async (id) => {
     setAssignments(prev => prev.filter(a => a.id !== id));
@@ -172,6 +127,7 @@ export default function ProjectDailySetup() {
             projectId={scopeProject}
             assignments={assignments}
             templates={templates}
+            roles={roles}
             onAssignmentAdded={() => loadScope(scopeProject)}
           />
         ) : (
@@ -200,107 +156,20 @@ export default function ProjectDailySetup() {
       ) : (
         <div style={styles.list}>
           {visible.map((a, idx) => (
-            <div key={a.id} style={styles.card}>
-              <div style={styles.cardHead}>
-                <div style={styles.cardHeadLeft}>
-                  {viewMode === 'all' && (
-                    <div style={styles.arrows}>
-                      <button type="button" style={{ ...styles.arrow, ...(idx === 0 ? styles.arrowOff : {}) }} aria-label={t.pdMoveUp} disabled={idx === 0} onClick={() => move(idx, -1)}>▲</button>
-                      <button type="button" style={{ ...styles.arrow, ...(idx === visible.length - 1 ? styles.arrowOff : {}) }} aria-label={t.pdMoveDown} disabled={idx === visible.length - 1} onClick={() => move(idx, 1)}>▼</button>
-                    </div>
-                  )}
-                  <div>
-                    <div style={styles.cardTitle}>{a.template_name}</div>
-                    <div style={styles.cardMeta}>{a.item_count} {t.itemsCount}</div>
-                  </div>
-                </div>
-                <button type="button" style={styles.removeBtn} onClick={() => remove(a.id)}>{t.delete}</button>
-              </div>
-
-              <div style={styles.twoCol}>
-                <div style={styles.controlsCol}>
-                <div style={styles.scopeCell}>
-                  <div style={styles.scopeLabel}>{t.pdSchedule}</div>
-                  <div style={styles.scheduleRow}>
-                    <select style={styles.smallSelect} value={a.schedule_type || 'none'} onChange={e => onScheduleType(a, e.target.value)}>
-                      <option value="none">{t.pdSchedNone}</option>
-                      <option value="every">{t.pdSchedEvery}</option>
-                      <option value="ordinal">{t.pdSchedOrdinal}</option>
-                      <option value="date">{t.pdSchedDate}</option>
-                    </select>
-                    {a.schedule_type === 'ordinal' && (
-                      <input
-                        style={styles.dayNumInput}
-                        type="number"
-                        min="1"
-                        value={a.ordinal_target || 1}
-                        onChange={e => patch(a.id, { schedule_type: 'ordinal', ordinal_target: Math.max(1, parseInt(e.target.value, 10) || 1) })}
-                      />
-                    )}
-                    {a.schedule_type === 'date' && (
-                      <input
-                        style={styles.smallSelect}
-                        type="date"
-                        value={(a.scheduled_date || '').slice(0, 10)}
-                        onChange={e => e.target.value && patch(a.id, { schedule_type: 'date', scheduled_date: e.target.value })}
-                      />
-                    )}
-                  </div>
-                </div>
-                <div style={styles.scopeCell}>
-                  <div style={styles.scopeLabel}>{t.pdTypeScope}</div>
-                  <RolePicker
-                    allLabel={t.pdAllTypes}
-                    addLabel={t.pdAddRole}
-                    options={roles}
-                    selected={a.role_ids}
-                    onChange={ids => patch(a.id, { role_ids: ids })}
-                  />
-                </div>
-                <div style={styles.scopeCell}>
-                  <div style={styles.scopeLabel}>{t.pdModeLabel}</div>
-                  <div style={styles.modeToggle}>
-                    {['shared', 'individual'].map(m => (
-                      <button
-                        key={m}
-                        type="button"
-                        style={{ ...styles.modeBtn, ...(a.mode === m ? styles.modeBtnOn : {}) }}
-                        onClick={() => a.mode !== m && patch(a.id, { mode: m })}
-                      >
-                        {m === 'shared' ? t.pdModeShared : t.pdModeIndividual}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div style={styles.scopeCell}>
-                  <div style={styles.scopeLabel}>{t.pdCarryover}</div>
-                  <label style={styles.carryLabel}>
-                    <input type="checkbox" checked={!!a.carryover} onChange={e => patch(a.id, { carryover: e.target.checked })} />
-                    <span>{t.pdCarryoverHint}</span>
-                  </label>
-                </div>
-                </div>
-
-                <div style={styles.itemsCol}>
-                  <div style={styles.scopeLabel}>{t.pdChecklistItems}</div>
-                  {(() => {
-                    const items = itemsByTemplate[a.template_id] || [];
-                    return items.length === 0 ? (
-                      <p style={styles.itemsEmpty}>{t.pdNoItems}</p>
-                    ) : (
-                      <div style={styles.itemsList}>
-                        {items.map((it, i) => (
-                          <div key={it.id || i} style={styles.itemRow}>
-                            <span style={styles.itemKind}>{it.type === 'text' ? '✎' : '☐'}</span>
-                            <span style={styles.itemLabel}>{it.label ?? it.text ?? it.name}</span>
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  })()}
-                </div>
-              </div>
-            </div>
+            <AssignmentCard
+              key={a.id}
+              a={a}
+              roles={roles}
+              items={itemsByTemplate[a.template_id] || []}
+              onPatch={patch}
+              onRemove={remove}
+              {...(viewMode === 'all' ? {
+                onMoveUp: () => move(idx, -1),
+                onMoveDown: () => move(idx, 1),
+                upDisabled: idx === 0,
+                downDisabled: idx === visible.length - 1,
+              } : {})}
+            />
           ))}
         </div>
       )}
