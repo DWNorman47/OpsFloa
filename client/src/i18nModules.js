@@ -10,6 +10,9 @@
 export const moduleEn = {
   // ── Estimates (est) ──────────────────────────────────────────────────────
   estList: 'Estimates',
+  workGroupProjects: 'Projects',
+  workGroupDocuments: 'Documents',
+  workGroupFinancials: 'Financials',
   estChangeOrders: 'Change Orders',
   estNew: '+ New Estimate',
   estSearchPlaceholder: 'Search by project / client / number...',
@@ -714,6 +717,9 @@ export const moduleEn = {
 export const moduleEs = {
   // ── Estimates (est) ──────────────────────────────────────────────────────
   estList: 'Presupuestos',
+  workGroupProjects: 'Proyectos',
+  workGroupDocuments: 'Documentos',
+  workGroupFinancials: 'Finanzas',
   estChangeOrders: 'Órdenes de Cambio',
   estNew: '+ Nuevo Presupuesto',
   estSearchPlaceholder: 'Buscar por proyecto / cliente / número...',

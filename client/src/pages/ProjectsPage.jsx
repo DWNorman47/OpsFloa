@@ -2102,43 +2102,72 @@ export default function ProjectsPage() {
   let hideWorkOrders = settings?.hide_work_orders_tab === true || settings?.hide_work_orders_tab === '1';
   if (hideProjects && hideWorkOrders) { hideProjects = false; hideWorkOrders = false; }
 
-  const tabs = [
-    ...(!canSeeProjectWork || hideProjects ? [] : [{ id: 'projects', label: 'Projects' }]),
-    ...(!canSeeProjectWork || hideWorkOrders ? [] : [{ id: 'work_orders', label: 'Work Orders' }]),
-    ...(canSeeProjectWork ? [
-      { id: 'rfis', label: t.fieldTabRFI },
-      { id: 'submittals', label: t.submTitle },
-    ] : []),
-    ...(canSeeSales ? [
-      { id: 'estimates', label: t.estList },
-      { id: 'invoices', label: t.invList },
-      { id: 'change_orders', label: t.coList },
-    ] : []),
-    ...(canSeePOs ? [{ id: 'pos', label: t.subPurchaseOrders }] : []),
-  ];
+  // Group the tabs (Field-style: group tabs on top, sub-tabs below). The grouping follows
+  // both function and the permission boundary — Projects/Documents = project-work perm,
+  // Financials = sales perm.
+  const groups = [
+    {
+      id: 'projects', label: t.workGroupProjects,
+      items: [
+        ...(!canSeeProjectWork || hideProjects ? [] : [{ id: 'projects', label: 'Projects' }]),
+        ...(!canSeeProjectWork || hideWorkOrders ? [] : [{ id: 'work_orders', label: 'Work Orders' }]),
+      ],
+    },
+    {
+      id: 'documents', label: t.workGroupDocuments,
+      items: canSeeProjectWork ? [
+        { id: 'rfis', label: t.fieldTabRFI },
+        { id: 'submittals', label: t.submTitle },
+      ] : [],
+    },
+    {
+      id: 'financials', label: t.workGroupFinancials,
+      items: [
+        ...(canSeeSales ? [
+          { id: 'estimates', label: t.estList },
+          { id: 'invoices', label: t.invList },
+          { id: 'change_orders', label: t.coList },
+        ] : []),
+        ...(canSeePOs ? [{ id: 'pos', label: t.subPurchaseOrders }] : []),
+      ],
+    },
+  ].filter(g => g.items.length > 0);
 
-  // Fall back to the first visible tab if the requested one is hidden or gated.
-  const tabAllowed = (id) => {
-    if (id === 'estimates' || id === 'invoices' || id === 'change_orders') return canSeeSales;
-    if (id === 'rfis' || id === 'submittals') return canSeeProjectWork;
-    if (id === 'pos') return canSeePOs;
-    if (id === 'projects') return canSeeProjectWork && !hideProjects;
-    if (id === 'work_orders') return canSeeProjectWork && !hideWorkOrders;
-    return true;
-  };
-  const activeTab = tabAllowed(mainTab) ? mainTab : ((tabs[0] && tabs[0].id) || 'projects');
+  // Resolve the active tab (fall back to the first visible one) and its group.
+  const allItems = groups.flatMap(g => g.items);
+  const activeTab = allItems.some(i => i.id === mainTab) ? mainTab : (allItems[0]?.id || 'projects');
+  const activeGroup = groups.find(g => g.items.some(i => i.id === activeTab)) || groups[0];
 
   return (
     <div style={styles.page}>
       <AppHeader currentApp="projects" features={features} />
 
       <main id="main-content" style={styles.main}>
-        <TabBar
-          active={activeTab}
-          onChange={changeTab}
-          tabs={tabs}
-          breakpoint={520}
-        />
+        <div className="ops-workflow-tabs" role="tablist" aria-label="Work groups">
+          {groups.map(g => (
+            <button
+              key={g.id}
+              type="button"
+              role="tab"
+              aria-selected={activeGroup?.id === g.id}
+              aria-current={activeGroup?.id === g.id ? 'page' : undefined}
+              className={`ops-workflow-tab ${activeGroup?.id === g.id ? 'is-active' : ''}`.trim()}
+              onClick={() => changeTab(g.items[0].id)}
+            >
+              {g.label}
+            </button>
+          ))}
+        </div>
+        {activeGroup && activeGroup.items.length > 1 && (
+          <div className="ops-subtabs">
+            <TabBar
+              active={activeTab}
+              onChange={changeTab}
+              tabs={activeGroup.items}
+              breakpoint={520}
+            />
+          </div>
+        )}
 
         {activeTab === 'estimates' && (
           <div style={{ marginTop: 24 }}>
