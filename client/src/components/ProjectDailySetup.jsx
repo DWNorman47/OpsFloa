@@ -84,16 +84,22 @@ export default function ProjectDailySetup() {
     catch { loadScope(scopeProject); }
   };
 
-  const reorderList = async (from, to) => {
+  // Reorder within the currently-visible subset (the every-day list in "Daily"), keeping
+  // every other assignment's global position — same approach as the scheduler's day reorder.
+  const reorderVisible = async (from, to) => {
     if (from == null || to == null || from === to) return;
-    const next = [...assignments];
-    const [moved] = next.splice(from, 1);
-    next.splice(to, 0, moved);
-    setAssignments(next);
-    try { await api.post('/daily-checklist/assignments/reorder', { order: next.map(a => a.id) }); }
+    const visIds = visible.map(a => a.id);
+    const [moved] = visIds.splice(from, 1);
+    visIds.splice(to, 0, moved);
+    const visSet = new Set(visIds);
+    let k = 0;
+    const order = assignments.map(a => a.id).map(id => (visSet.has(id) ? visIds[k++] : id));
+    const byId = Object.fromEntries(assignments.map(a => [a.id, a]));
+    setAssignments(order.map(id => byId[id]));
+    try { await api.post('/daily-checklist/assignments/reorder', { order }); }
     catch { loadScope(scopeProject); }
   };
-  const dnd = useDragReorder(reorderList);
+  const dnd = useDragReorder(reorderVisible);
 
   return (
     <div>
@@ -166,7 +172,7 @@ export default function ProjectDailySetup() {
               onPatch={patch}
               onRemove={remove}
               collapsible
-              {...(viewMode === 'all' ? { dragProps: dnd.dragProps(idx), isOver: dnd.isOver(idx) } : {})}
+              {...(viewMode === 'daily' ? { dragProps: dnd.dragProps(idx), isOver: dnd.isOver(idx) } : {})}
             />
           ))}
         </div>
