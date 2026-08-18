@@ -134,6 +134,31 @@ describe('GET /api/projects/:id/spend', () => {
     expect(res.body.totals.pct_used).toBe(58);
   });
 
+  test('adds equipment usage (hours × hourly operating rate) to the equipment category', async () => {
+    pool.query.mockImplementation((sql) => {
+      if (/FROM projects WHERE id/i.test(sql) && /AND company_id/i.test(sql)) {
+        return Promise.resolve({ rowCount: 1, rows: [{ id: 42, name: 'P' }] });
+      }
+      if (/FROM settings/i.test(sql)) return Promise.resolve({ rows: [] });
+      if (/FROM time_entries/i.test(sql)) return Promise.resolve({ rows: [] });
+      if (/information_schema\.tables/i.test(sql)) return Promise.resolve({ rowCount: 1, rows: [{ '?column?': 1 }] });
+      if (/information_schema\.columns/i.test(sql)) return Promise.resolve({ rowCount: 0, rows: [] });
+      if (/FROM equipment_hours/i.test(sql)) return Promise.resolve({ rows: [{ dollars: '480.00' }] });  // 4h × $120
+      if (/FROM project_expenses/i.test(sql) && /GROUP BY category/i.test(sql)) {
+        return Promise.resolve({ rows: [{ category: 'equipment', cents: '25000' }] });
+      }
+      if (/FROM subcontract/i.test(sql)) return Promise.resolve({ rows: [{ cents: '0' }] });
+      if (/FROM project_budget_categories/i.test(sql)) return Promise.resolve({ rows: [] });
+      return Promise.resolve({ rows: [], rowCount: 0 });
+    });
+
+    const res = await request(makeApp()).get('/api/projects/42/spend');
+    expect(res.status).toBe(200);
+    const byCat = Object.fromEntries(res.body.categories.map(c => [c.category, c]));
+    // 25000 manual equipment expense + 48000 usage (4h × $120/hr)
+    expect(byCat.equipment.spent_cents).toBe(73000);
+  });
+
   test('returns null pct_used when no budget is set', async () => {
     pool.query.mockImplementation((sql) => {
       if (/FROM projects WHERE id/i.test(sql) && /AND company_id/i.test(sql)) {

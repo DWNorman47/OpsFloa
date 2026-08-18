@@ -5464,3 +5464,24 @@ but not auto-inserted into a project estimate (different transaction); the picke
 inserts the use-on-job lines. +11 equipment tests (validation, partial-update
 no-wipe, estimate-lines resolver); full server suite 1455 + client eslint/i18n/
 build green.
+
+## 2026-08-18 — Equipment actuals: logged hours × rate → project P&L
+
+Closed the loop from the equipment rate model: actual machine cost now derives
+from logged hours × the machine's HOURLY operating rate.
+
+- **projectSpend.js**: new `equipmentUsageSpent(projectId)` — SUM(hours ×
+  operating_rate) for machines with an hourly operating rate — added to the
+  `equipment` category spend alongside manual equipment expenses. So the
+  existing budget/spend rollup (P&L + WIP) now shows estimated (from the
+  estimate → budget) vs actual (usage + expenses) equipment cost with no new UI.
+  Guarded (tableExists + try/catch) so it's a no-op on pre-0179 environments.
+- **EquipmentLog card**: the hours log gained a **Cost** column (hours × hourly
+  rate per entry) + a machine total footer — so every dollar traces to a row.
+
+Only HOURLY operating rates are costed: the hours log records hours, so an
+hourly rate multiplies cleanly (no assumed hours-per-day). Machines with a
+non-hourly/unset operating rate contribute nothing to usage — record those as
+manual equipment expenses instead (kept distinct to avoid double-counting the
+same machine time). +1 spend test (usage folds into equipment category); full
+suite 1456 + client lint/i18n/build green.

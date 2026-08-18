@@ -76,6 +76,30 @@ async function expensesByCategory(projectId) {
   return new Map(r.rows.map(row => [row.category, parseInt(row.cents, 10)]));
 }
 
+// Actual equipment usage cost for a project: logged hours × the machine's
+// HOURLY operating rate. Only hourly operating rates are costed — the hours
+// log records hours, so an hourly rate multiplies cleanly (no assumed
+// hours-per-day). Machines with a non-hourly or unset operating rate
+// contribute nothing here (record them as manual equipment expenses instead).
+// Guarded so it returns 0 on environments where 0179 hasn't added the columns.
+async function equipmentUsageSpent(projectId) {
+  if (!(await tableExists('equipment_hours'))) return 0;
+  try {
+    const r = await pool.query(
+      `SELECT COALESCE(SUM(h.hours * e.operating_rate), 0)::numeric AS dollars
+         FROM equipment_hours h
+         JOIN equipment_items e ON e.id = h.equipment_id
+        WHERE h.project_id = $1
+          AND e.operating_rate IS NOT NULL
+          AND e.operating_unit = 'hour'`,
+      [projectId]
+    );
+    return Math.round(parseFloat(r.rows[0].dollars) * 100);
+  } catch {
+    return 0;  // operating_rate column absent (pre-0179) — no contribution
+  }
+}
+
 // Stub for the forthcoming sub PO + payment integration.
 async function subsSpentAndCommitted(projectId) {
   if (!(await tableExists('subcontract_pos'))) return { spent: 0, committed: 0 };
@@ -136,11 +160,12 @@ router.get('/projects/:id/spend', requireAuth, requireProjectFinancialAccess, as
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
     const settings = await loadSettings(companyId);
-    const [labor, expenses, subs, mats, budgetRes] = await Promise.all([
+    const [labor, expenses, subs, mats, equipUsage, budgetRes] = await Promise.all([
       laborSpent(req.params.id, settings),
       expensesByCategory(req.params.id),
       subsSpentAndCommitted(req.params.id),
       materialsSpentAndCommitted(req.params.id),
+      equipmentUsageSpent(req.params.id),
       pool.query(
         'SELECT category, budget_cents, budget_alert_pct FROM project_budget_categories WHERE project_id = $1',
         [req.params.id]
@@ -167,6 +192,9 @@ router.get('/projects/:id/spend', requireAuth, requireProjectFinancialAccess, as
       } else if (category === 'subs') {
         spent = (expenses.get('subs') || 0) + subs.spent;
         committed = subs.committed;
+      } else if (category === 'equipment') {
+        // Manual equipment expenses + computed usage (logged hours × hourly rate).
+        spent = (expenses.get('equipment') || 0) + equipUsage;
       } else {
         spent = expenses.get(category) || 0;
       }

@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { langToLocale } from '../utils';
 import { useOffline } from '../contexts/OfflineContext';
 import { useT } from '../hooks/useT';
+import { useCents } from '../hooks/useMoney';
 import { SkeletonList, SkeletonBlock } from './Skeleton';
 import AssetLabelModal from './inventory/AssetLabelModal';
 
@@ -217,7 +218,14 @@ function LogHoursForm({ item, projects, onLogged, onCancel }) {
 function EquipmentCard({ item, projects, isAdmin, onEdit, onDeleted, onHoursLogged }) {
   const t = useT();
   const { user } = useAuth();
+  const formatCents = useCents();
   const locale = langToLocale(user?.language);
+  // Actual usage cost is derived only when the operating rate is hourly — the
+  // hours log records hours, so an hourly rate multiplies cleanly. Non-hourly
+  // operating rates show hours only (no assumed hours-per-day conversion).
+  const hourlyRate = (item.operating_unit === 'hour' && item.operating_rate != null)
+    ? parseFloat(item.operating_rate) : null;
+  const costCents = h => (hourlyRate != null ? Math.round(parseFloat(h.hours) * hourlyRate * 100) : null);
   const [expanded, setExpanded] = useState(false);
   const [loggingHours, setLoggingHours] = useState(false);
   const [showLabel, setShowLabel] = useState(false);
@@ -347,6 +355,7 @@ function EquipmentCard({ item, projects, isAdmin, onEdit, onDeleted, onHoursLogg
                     <tr>
                       <th style={styles.hth}>{t.date}</th>
                       <th style={styles.hth}>{t.hours}</th>
+                      {hourlyRate != null && <th style={{ ...styles.hth, textAlign: 'right' }}>{t.eqUsageCost}</th>}
                       <th style={styles.hth}>{t.operatorField}</th>
                       <th style={styles.hth}>Project</th>
                       <th style={styles.hth}>{t.notes}</th>
@@ -361,6 +370,7 @@ function EquipmentCard({ item, projects, isAdmin, onEdit, onDeleted, onHoursLogg
                           {parseFloat(h.hours).toFixed(1)}
                           {h.pending && <span style={styles.pendingBadge}>⏳</span>}
                         </td>
+                        {hourlyRate != null && <td style={{ ...styles.htd, textAlign: 'right' }}>{formatCents(costCents(h))}</td>}
                         <td style={styles.htd}>{h.operator_name || '—'}</td>
                         <td style={styles.htd}>{h.project_name || '—'}</td>
                         <td style={{ ...styles.htd, color: '#6b7280' }}>{h.notes || ''}</td>
@@ -377,6 +387,20 @@ function EquipmentCard({ item, projects, isAdmin, onEdit, onDeleted, onHoursLogg
                       </tr>
                     ))}
                   </tbody>
+                  {hourlyRate != null && hours.length > 0 && (
+                    <tfoot>
+                      <tr>
+                        <td style={{ ...styles.htd, fontWeight: 700 }}>{t.eqTotal}</td>
+                        <td style={{ ...styles.htd, fontWeight: 700 }}>
+                          {hours.reduce((s, h) => s + (parseFloat(h.hours) || 0), 0).toFixed(1)}
+                        </td>
+                        <td style={{ ...styles.htd, fontWeight: 800, textAlign: 'right' }}>
+                          {formatCents(hours.reduce((s, h) => s + (costCents(h) || 0), 0))}
+                        </td>
+                        <td style={styles.htd} colSpan={3}></td>
+                      </tr>
+                    </tfoot>
+                  )}
                 </table>
               )}
               {entryDeleteError && <p style={styles.inlineError}>{entryDeleteError}</p>}
