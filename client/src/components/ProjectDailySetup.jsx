@@ -9,10 +9,14 @@ import { useT } from '../hooks/useT';
 import { SkeletonList } from './Skeleton';
 import ProjectScheduler from './ProjectScheduler';
 import AssignmentCard from './AssignmentCard';
+import { ChecklistHistory } from './DailyChecklist';
 import { useDragReorder } from '../hooks/useDragReorder';
+import { useToast } from '../contexts/ToastContext';
 
 export default function ProjectDailySetup() {
   const t = useT();
+  const toast = useToast();
+  const [autostart, setAutostart] = useState(false);
   const [templates, setTemplates] = useState([]);
   const [projects, setProjects] = useState([]);
   const [roles, setRoles] = useState([]);
@@ -49,8 +53,20 @@ export default function ProjectDailySetup() {
       api.get('/safety-checklists/templates').then(r => r.data || []).catch(() => []),
       api.get('/admin/projects').then(r => r.data || []).catch(() => []),
       api.get('/admin/roles').then(r => r.data || []).catch(() => []),
-    ]).then(([tmpls, p, r]) => { setTemplates(tmpls); setProjects(p); setRoles(r); });
+      api.get('/settings').then(r => r.data || {}).catch(() => ({})),
+    ]).then(([tmpls, p, r, s]) => {
+      setTemplates(tmpls); setProjects(p); setRoles(r);
+      setAutostart(s?.daily_checklist_clockin_autostart === true);
+    });
   }, []);
+
+  // Auto-start on first clock-in — a company setting (moved here from the crew view).
+  const toggleAutostart = async () => {
+    const next = !autostart;
+    setAutostart(next);
+    try { await api.patch('/admin/settings', { daily_checklist_clockin_autostart: next }); }
+    catch { setAutostart(!next); toast?.(t.dcAutostartFailed, 'error'); }
+  };
 
   const loadScope = useCallback(async (project) => {
     setLoading(true); setError('');
@@ -136,10 +152,17 @@ export default function ProjectDailySetup() {
           <option value="all">{t.pdViewAll}</option>
           <option value="daily">{t.pdViewDaily}</option>
           <option value="schedule">{t.pdViewSchedule}</option>
+          <option value="history">{t.pdViewHistory}</option>
         </select>
       </div>
 
       <p style={styles.hint}>{t.pdScopeHint}</p>
+
+      <label style={styles.autostartRow}>
+        <input type="checkbox" checked={autostart} onChange={toggleAutostart} />
+        <span style={styles.autostartLabel}>{t.dcAutostartLabel}</span>
+        <span style={styles.autostartHelp}>{t.dcAutostartHelp}</span>
+      </label>
 
       {error && <p role="alert" style={styles.error}>{error}</p>}
 
@@ -155,6 +178,12 @@ export default function ProjectDailySetup() {
             onRemove={remove}
             onAssignmentAdded={() => loadScope(scopeProject)}
           />
+        ) : (
+          <div style={styles.empty}><p style={styles.emptyText}>{t.pdSchedulePickProject}</p></div>
+        )
+      ) : viewMode === 'history' ? (
+        scopeProject ? (
+          <ChecklistHistory projectId={scopeProject} t={t} toast={toast} />
         ) : (
           <div style={styles.empty}><p style={styles.emptyText}>{t.pdSchedulePickProject}</p></div>
         )
@@ -208,7 +237,10 @@ const styles = {
   scopeBar: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' },
   scopeBarLabel: { fontSize: 12, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.04em' },
   projectSelect: { padding: '9px 12px', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 14, background: '#fff', minWidth: 220 },
-  hint: { fontSize: 12, color: '#6b7280', background: '#f9fafb', border: '1px solid #eef2f7', borderRadius: 8, padding: '8px 12px', lineHeight: 1.5, margin: '0 0 16px' },
+  hint: { fontSize: 12, color: '#6b7280', background: '#f9fafb', border: '1px solid #eef2f7', borderRadius: 8, padding: '8px 12px', lineHeight: 1.5, margin: '0 0 12px' },
+  autostartRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#374151', cursor: 'pointer', margin: '0 0 16px', flexWrap: 'wrap' },
+  autostartLabel: { fontWeight: 600 },
+  autostartHelp: { fontSize: 12, color: '#9ca3af' },
   addBar: { display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 },
   addTemplateSelect: { padding: '9px 12px', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 14, background: '#fff', minWidth: 220, flex: 1, maxWidth: 360 },
   addBtn: { background: '#059669', color: '#fff', border: 'none', padding: '9px 18px', borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: 'pointer', flexShrink: 0 },

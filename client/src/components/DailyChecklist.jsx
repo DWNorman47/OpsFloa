@@ -228,7 +228,7 @@ function QueueRow({ day, t, toast, first, last, onChanged, recurring }) {
   );
 }
 
-function DayManager({ projectId, t, toast, onQueueChanged }) {
+export function DayManager({ projectId, t, toast, onQueueChanged }) {
   const [queue, setQueue] = useState(null);
   const [recurring, setRecurring] = useState([]); // recurring template as carryover rows
   const [form, setForm] = useState({ schedule_type: 'ordinal', scheduled_date: localToday(), ordinal_target: 1, name: '', items: null });
@@ -320,7 +320,7 @@ const swap = (arr, i, j) => { const a = arr.slice(); [a[i], a[j]] = [a[j], a[i]]
 // ── History ────────────────────────────────────────────────────────────────
 // Read-only review of a project's COMPLETED days. Each row expands (lazy) to the
 // full item breakdown, with who checked each item and when.
-function ChecklistHistory({ projectId, t, toast }) {
+export function ChecklistHistory({ projectId, t, toast }) {
   const [days, setDays] = useState(null);      // null = loading
   const [openId, setOpenId] = useState(null);
   const [detail, setDetail] = useState({});    // dayId → { items } | { loading:true }
@@ -416,8 +416,6 @@ export default function DailyChecklist({ projects = [], settings = null, loading
   const canStart = usePerm('daily_checklist_start_day');
   const canCheck = usePerm('daily_checklist_check_items');
   const canComplete = usePerm('daily_checklist_complete_day');
-  const canSchedule = usePerm('daily_checklist_schedule_days');
-  const canManageSettings = usePerm('manage_settings');
 
   // Project = the shared Field "active project". A ?project=<id> deep link (e.g.
   // from the clock-in prompt) wins on mount; otherwise the shared value; else the first.
@@ -432,10 +430,8 @@ export default function DailyChecklist({ projects = [], settings = null, loading
   const [busy, setBusy] = useState(false);
   const [newItem, setNewItem] = useState('');
   const [newItemKind, setNewItemKind] = useState('check');
-  const [panel, setPanel] = useState(null); // 'recurring' | 'manager' | null
   const [queued, setQueued] = useState([]); // prepared days waiting (shown on the Start card)
   const [conflict, setConflict] = useState(null);
-  const [autostart, setAutostart] = useState(settings?.daily_checklist_clockin_autostart === true);
 
   const loadActive = useCallback(async (pid) => {
     if (!pid) { setDay(null); setItems([]); setQueued([]); return; }
@@ -484,9 +480,6 @@ export default function DailyChecklist({ projects = [], settings = null, loading
   useEffect(() => { loadActive(projectId); }, [projectId, loadActive]);
 
   // Stable so the Day Manager's effects don't re-fire every render (which thrashed the
-  // active card). Called only after a Day Manager mutation, to pick up items merged onto
-  // the running day.
-  const refreshActive = useCallback(() => { loadActive(projectId); }, [loadActive, projectId]);
 
   const startDay = async (resolution) => {
     setBusy(true);
@@ -537,12 +530,6 @@ export default function DailyChecklist({ projects = [], settings = null, loading
     catch { toast(t.dcCancelFailed, 'error'); }
     finally { setBusy(false); }
   };
-  const toggleAutostart = async () => {
-    const next = !autostart;
-    setAutostart(next);
-    try { await api.patch('/admin/settings', { daily_checklist_clockin_autostart: next }); }
-    catch { setAutostart(!next); toast(t.dcAutostartFailed, 'error'); }
-  };
 
   // Projects load async in the parent — show a skeleton until they settle, so we don't flash
   // "No projects yet" mid-load. Only claim empty once loading is done.
@@ -558,22 +545,7 @@ export default function DailyChecklist({ projects = [], settings = null, loading
         <select style={styles.select} value={projectId} onChange={e => { const v = Number(e.target.value) || e.target.value; setProjectId(v); onProjectChange?.(v); }}>
           {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
-        <span style={styles.headActions}>
-          <button style={styles.linkBtn} onClick={() => setPanel(p => p === 'history' ? null : 'history')}>{panel === 'history' ? '▾' : '▸'} {t.dcHistory}</button>
-          {canSchedule && <button style={styles.linkBtn} onClick={() => setPanel(p => p === 'manager' ? null : 'manager')}>{panel === 'manager' ? '▾' : '▸'} {t.dcDayManager}</button>}
-        </span>
       </div>
-
-      {canManageSettings && (
-        <label style={styles.toggleRow}>
-          <input type="checkbox" checked={autostart} onChange={toggleAutostart} />
-          <span>{t.dcAutostartLabel}</span>
-          <span style={styles.toggleHelp}>{t.dcAutostartHelp}</span>
-        </label>
-      )}
-
-      {panel === 'history' && projectId && <ChecklistHistory key={`h${projectId}`} projectId={projectId} t={t} toast={toast} />}
-      {canSchedule && panel === 'manager' && projectId && <DayManager key={`m${projectId}`} projectId={projectId} t={t} toast={toast} onQueueChanged={refreshActive} />}
 
       {conflict ? (
         <div style={styles.conflictCard}>
