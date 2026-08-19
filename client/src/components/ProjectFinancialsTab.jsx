@@ -51,6 +51,8 @@ export default function ProjectFinancialsTab({ projectId }) {
   const [editBudget, setEditBudget] = useState(false);
   const [budgetDraft, setBudgetDraft] = useState({});
   const [savingBudget, setSavingBudget] = useState(false);
+  const [editContract, setEditContract] = useState(false);
+  const [contractDraft, setContractDraft] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -123,6 +125,17 @@ export default function ProjectFinancialsTab({ projectId }) {
     finally { setSavingBudget(false); }
   }
 
+  async function saveContract() {
+    const cents = contractDraft === '' ? null : Math.round(Number(contractDraft) * 100);
+    if (cents !== null && (!Number.isFinite(cents) || cents < 0)) { setError('Enter a valid contract value'); return; }
+    try {
+      await api.patch(`/admin/projects/${projectId}`, { contract_value_cents: cents });
+      toast('Contract value saved', 'success');
+      setEditContract(false);
+      await load();
+    } catch (err) { setError(err.response?.data?.error || 'Failed to save contract value'); }
+  }
+
   async function releaseRetainage() {
     const held = parseInt(pnl?.revenue?.retainage_outstanding_cents, 10) || 0;
     if (!await confirm({
@@ -160,7 +173,21 @@ export default function ProjectFinancialsTab({ projectId }) {
       {/* P&L summary */}
       {pnl && (
         <div style={styles.card}>
-          <h3 style={styles.h3}>P&L Summary</h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <h3 style={{ ...styles.h3, margin: 0 }}>P&L Summary</h3>
+            {canWrite && !pnl.locked && (
+              editContract ? (
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <span style={{ fontSize: 13, color: '#6b7280' }}>Contract $</span>
+                  <input type="number" min="0" step="0.01" value={contractDraft} onChange={e => setContractDraft(e.target.value)} style={{ ...styles.input, width: 120 }} autoFocus />
+                  <button onClick={saveContract} style={styles.btnPrimary}>Save</button>
+                  <button onClick={() => setEditContract(false)} style={styles.btn}>Cancel</button>
+                </div>
+              ) : (
+                <button onClick={() => { setContractDraft(pnl.contract_value_cents ? (parseInt(pnl.contract_value_cents, 10) / 100).toString() : ''); setEditContract(true); }} style={styles.btn}>Set contract value</button>
+              )
+            )}
+          </div>
           {pnl.locked && (
             <div style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 8, padding: '10px 14px', marginBottom: 12, display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'baseline', fontSize: 14 }}>
               <span style={{ fontWeight: 700, color: '#065f46' }}>🔒 Final (locked)</span>

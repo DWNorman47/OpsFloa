@@ -59,28 +59,38 @@ async function invoiceTotals(projectId, companyId) {
 // (revenue) the same way applyAcceptedCoToBudget raises the cost budget —
 // otherwise projected/bid margin would drop by the CO amount with no offset.
 async function contractValueCents(projectId) {
+  // Base contract: an explicit per-project contract value wins (hand-set on a
+  // manual job); otherwise the latest accepted estimate's total.
+  let base = null;
   try {
-    const r = await pool.query(
-      `SELECT total_cents
-         FROM estimates
-        WHERE converted_project_id = $1 AND status IN ('accepted')
-        ORDER BY responded_at DESC NULLS LAST
-        LIMIT 1`,
-      [projectId]
-    );
-    if (r.rowCount > 0) {
-      let contract = parseInt(r.rows[0].total_cents, 10);
-      try {
-        const co = await pool.query(
-          `SELECT COALESCE(SUM(total_cents), 0)::bigint AS sum
-             FROM change_orders WHERE project_id = $1 AND status = 'accepted'`,
-          [projectId]
-        );
-        contract += parseInt(co.rows[0].sum, 10) || 0;
-      } catch { /* change_orders table may not exist */ }
-      return contract;
-    }
-  } catch { /* table may not exist */ }
+    const p = await pool.query('SELECT contract_value_cents FROM projects WHERE id = $1', [projectId]);
+    if (p.rows[0] && p.rows[0].contract_value_cents != null) base = parseInt(p.rows[0].contract_value_cents, 10);
+  } catch { /* column may not exist pre-0188 */ }
+  if (base == null) {
+    try {
+      const r = await pool.query(
+        `SELECT total_cents
+           FROM estimates
+          WHERE converted_project_id = $1 AND status IN ('accepted')
+          ORDER BY responded_at DESC NULLS LAST
+          LIMIT 1`,
+        [projectId]
+      );
+      if (r.rowCount > 0) base = parseInt(r.rows[0].total_cents, 10);
+    } catch { /* table may not exist */ }
+  }
+  if (base != null) {
+    let contract = base;
+    try {
+      const co = await pool.query(
+        `SELECT COALESCE(SUM(total_cents), 0)::bigint AS sum
+           FROM change_orders WHERE project_id = $1 AND status = 'accepted'`,
+        [projectId]
+      );
+      contract += parseInt(co.rows[0].sum, 10) || 0;
+    } catch { /* change_orders table may not exist */ }
+    return contract;
+  }
   // Fallback: budget total (sum of category budgets). Still meaningful
   // if no estimate flow was used to create the project.
   try {

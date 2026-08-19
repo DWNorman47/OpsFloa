@@ -5595,3 +5595,26 @@ double-markup):
   drops all members in at once, priced live × member qty.
 
 Full server suite 1476 + client eslint/i18n/build green throughout.
+
+## 2026-08-19 — Money-flow third pass (audit-driven fixes)
+
+Re-audited all three phases; fixed the correctness bugs (several self-inflicted):
+- Retainage release was wrong (release invoice double-counted revenue + voiding it
+  stranded money + completed close-out at draft + concurrent double-fire).
+  Redesigned: "Release retainage" just marks held→released across the invoices
+  (no new invoice); retainage is already billed in the originals, so releasing
+  lifts the hold and the existing balances collect it. Reverted the 0188 flag
+  migration; kept 0185's retainage_released_cents.
+- Alternates rendered inline but excluded from totals in detail/PDF/public →
+  visible lines summed to more than the total. Split into an "Alternates &
+  Options" block below the Total in all three; public SELECT returns line_type.
+- Change orders now raise CONTRACT value too (contractValueCents + accepted CO
+  totals), not just cost — margins no longer drop with no revenue offset.
+- projectFrozen now guards time-entry create/edit/delete (was expenses only).
+- Manual projects get an editable contract_value_cents (0188) so their margins
+  aren't always 0/negative; contractValueCents prefers it, then estimate, then
+  budget. Editable on the Financials tab.
+- Cleanups: received-basis materials excludes cancelled POs; assembly expander
+  loads the markup map once (N+1); assembly notes now save.
+
+Full server suite 1477 + client eslint/i18n/build green throughout.

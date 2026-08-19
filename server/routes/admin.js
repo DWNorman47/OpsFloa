@@ -2087,7 +2087,7 @@ router.patch('/projects/:id', requireAdmin, requirePerm('manage_projects'),
   }),
   async (req, res) => {
   const { wage_type, name, geo_lat, geo_lng, geo_radius_ft, clear_geofence, budget_hours, budget_dollars, prevailing_wage_rate, required_checklist_template_id,
-          client_name, job_number, address, start_date, end_date, description, status, progress_pct, active, is_overhead, priority,
+          client_name, job_number, address, start_date, end_date, description, status, progress_pct, active, is_overhead, priority, contract_value_cents,
           hour_limit_mode, daily_hour_limit, weekly_hour_limit, hour_limit_overflow_project_id } = req.body;
   const VALID_STATUSES = PROJECT_STATUSES;
   if (status !== undefined && !VALID_STATUSES.includes(status)) {
@@ -2200,6 +2200,11 @@ router.patch('/projects/:id', requireAdmin, requirePerm('manage_projects'),
     if (active !== undefined) { fields.push(`active = $${idx++}`); values.push(!!active); }
     if (is_overhead !== undefined) { fields.push(`is_overhead = $${idx++}`); values.push(!!is_overhead); }
     if (priority !== undefined) { fields.push(`priority = $${idx++}`); values.push(priority); }
+    if (contract_value_cents !== undefined) {
+      const cv = contract_value_cents === null || contract_value_cents === '' ? null : parseInt(contract_value_cents, 10);
+      if (cv !== null && (!Number.isFinite(cv) || cv < 0)) return res.status(400).json({ error: 'contract_value_cents must be non-negative' });
+      fields.push(`contract_value_cents = $${idx++}`); values.push(cv);
+    }
     if (hour_limit_mode !== undefined) { fields.push(`hour_limit_mode = $${idx++}`); values.push(hour_limit_mode || 'off'); }
     if (daily_hour_limit !== undefined) { fields.push(`daily_hour_limit = $${idx++}`); values.push(hlNumOrNull(daily_hour_limit)); }
     if (weekly_hour_limit !== undefined) { fields.push(`weekly_hour_limit = $${idx++}`); values.push(hlNumOrNull(weekly_hour_limit)); }
