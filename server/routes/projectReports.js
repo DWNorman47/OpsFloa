@@ -168,20 +168,38 @@ function pctOrNull(num, den, decimals = 1) {
 // Assemble the full per-project P&L object. Shared by the live /pnl endpoint and
 // the close-out snapshot, so the "final" locked number is computed identically
 // to the live one.
+async function budgetTotalCents(projectId) {
+  try {
+    const r = await pool.query(
+      'SELECT COALESCE(SUM(budget_cents), 0)::bigint AS sum FROM project_budget_categories WHERE project_id = $1',
+      [projectId]
+    );
+    return parseInt(r.rows[0].sum, 10);
+  } catch { return 0; }
+}
+
 async function computeProjectPnl(projectId, companyId, settings) {
-  const [contractValue, spend, invoices] = await Promise.all([
+  const [contractValue, spend, invoices, budgetTotal] = await Promise.all([
     contractValueCents(projectId),
     spendTotals(projectId, settings),
     invoiceTotals(projectId, companyId),
+    budgetTotalCents(projectId),
   ]);
-  // gross_profit = revenue billed − cost spent  (lagging actual)
-  // projected_profit = contract value − (spent + committed)  (leading indicator)
+  // gross_profit = revenue billed − cost spent  (lagging actual).
+  // projected_profit = contract − estimate-at-completion cost. EAC is the cost
+  // you still expect to incur, not just what's landed: max(spent+committed,
+  // budget). So early on (spent≈0) projected ≈ contract − budget ≈ bid margin
+  // and converges to actual as costs post — instead of starting near 100%.
+  const committedCost = spend.spent_cents + spend.committed_cents;
+  const forecastCost = Math.max(committedCost, budgetTotal || 0);
   const gross_profit_cents     = invoices.billed_cents - spend.spent_cents;
-  const projected_profit_cents = contractValue - (spend.spent_cents + spend.committed_cents);
+  const projected_profit_cents = contractValue - forecastCost;
   return {
     contract_value_cents: contractValue,
     revenue: invoices,
     cost: spend,
+    budget_cost_cents: budgetTotal,
+    forecast_cost_cents: forecastCost,
     gross_profit_cents,
     gross_margin_pct:       pctOrNull(gross_profit_cents, invoices.billed_cents),
     projected_profit_cents,
@@ -237,13 +255,15 @@ router.get('/projects/pnl-summary', requireAuth, requireFinancialReportsAccess, 
     const settings = await loadSettings(companyId);
     const rows = [];
     for (const p of projRes.rows) {
-      const [contractValue, spend, invoices] = await Promise.all([
+      const [contractValue, spend, invoices, budgetTotal] = await Promise.all([
         contractValueCents(p.id),
         spendTotals(p.id, settings),
         invoiceTotals(p.id, companyId),
+        budgetTotalCents(p.id),
       ]);
       const gross_profit_cents     = invoices.billed_cents - spend.spent_cents;
-      const projected_profit_cents = contractValue - (spend.spent_cents + spend.committed_cents);
+      // EAC forecast: max(spent+committed, budget) — same as the per-project P&L.
+      const projected_profit_cents = contractValue - Math.max(spend.spent_cents + spend.committed_cents, budgetTotal || 0);
       rows.push({
         project_id:             p.id,
         name:                   p.name,
