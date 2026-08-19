@@ -5551,3 +5551,27 @@ Acted on the three-phase weak-spot audit. Seven fixes, each its own commit:
 Shared server/utils/projectCost.js keeps the spend snapshot and P&L/WIP in
 lockstep (labor burden, equipment usage, materials, planned/actual expenses).
 Full server suite 1467 + client eslint/i18n/build green throughout.
+
+## 2026-08-18 — Money-flow second pass: coherence fixes + next-tier
+
+Re-audited the three phases (3 agents), fixed the incoherences the first batch
+introduced, then worked the next tier. Shipped, each its own commit:
+
+Coherence fixes (some self-inflicted): labor budget burdened at convert (matches
+burdened actuals); close-out snapshot first-freeze-wins + clear-on-reopen +
+`closed` gated like final_complete; estimate line Cost shows "—" not $0.00; PO
+project link editable (PATCH).
+
+Next tier: cost round-trips catalog + takeoff (planroom v89); projected margin =
+estimate-at-completion (max(spent+committed, budget)) not a burn-down; freeze
+protection blocks cost edits on a closed job (projectFrozen); duplicate estimate
+(POST /:id/duplicate); equipment day/week/month costed via distinct log-dates;
+perm-gate the Financials write controls; committed shown on the locked banner;
+email the acceptance link on send (Resend); change orders carry cost_cents and
+bump budget by cost+burden (0184).
+
+Deferred (larger feature-builds, flagged to David): retainage release flow (J3),
+materials received-to-jobsite-not-issued (P3 — double-count risk needs a model),
+per-line/per-category markup, alternates/allowances, assemblies/kits.
+
+Full server suite 1469 + client eslint/i18n/build green throughout.
