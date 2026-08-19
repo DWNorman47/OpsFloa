@@ -51,7 +51,10 @@ function payNumbers(settings, rule = null) {
  */
 function otRuleFromSettings(settings, workerRule) {
   const off = settings && (settings.feature_overtime === false || settings.feature_overtime === '0' || settings.feature_overtime === 0);
-  return off ? 'none' : (workerRule || 'daily');
+  // A worker with no rule of their own inherits the COMPANY overtime_rule, then
+  // 'daily' as the final default — a null worker rule used to hardcode 'daily',
+  // silently ignoring a company set to weekly.
+  return off ? 'none' : (workerRule || (settings && settings.overtime_rule) || 'daily');
 }
 
 /**

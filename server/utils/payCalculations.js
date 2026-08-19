@@ -85,11 +85,12 @@ function shiftHoursByDate(shifts) {
  * @param regularShiftHours  company Regular Shift default (last-resort hours)
  */
 function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours, from, to, detail = null) {
-  // `dates` collects every YMD paid as leave (always, cheaply) so the pay engine can
-  // avoid ALSO granting a no-clock-in daily guarantee on a day already paid as leave
-  // (that would double-pay the day). See the guarantee-fill gate in computeOT.
-  const totals = { sick: 0, vacation: 0, dates: new Set() };
+  // `leaveByDate` maps every YMD → paid-leave hours that day (sick + vacation),
+  // always and cheaply, so a no-clock-in daily guarantee only tops the day UP TO its
+  // floor counting the leave already paid — never double-paying it. See computeOT.
+  const totals = { sick: 0, vacation: 0, leaveByDate: new Map() };
   if (!from || !to) return totals;
+  const addLeaveDay = (dk, h) => { if (dk != null) totals.leaveByDate.set(dk, (totals.leaveByDate.get(dk) || 0) + h); };
   const f = String(from).substring(0, 10), t = String(to).substring(0, 10);
   const rules = Array.isArray(leaveRules) ? leaveRules : [];
   const def = parseFloat(regularShiftHours) || 0;
@@ -116,7 +117,7 @@ function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours
       if (anchor != null && (anchor < f || anchor > t)) continue;
       const h = parseFloat(req.hours) || 0;
       totals[type] += h;
-      if (anchor != null) totals.dates.add(anchor);
+      addLeaveDay(anchor, h);
       if (detail) detail.push({ type, date: anchor, hours: h, source: 'partial' });
       continue;
     }
@@ -127,7 +128,7 @@ function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours
       seen[type].add(dk);
       const v = dayValue(dk, type);
       totals[type] += v.hours;
-      totals.dates.add(dk);
+      addLeaveDay(dk, v.hours);
       if (detail) detail.push({ type, date: dk, hours: v.hours, source: v.source, ...(v.ruleId ? { ruleId: v.ruleId } : {}) });
     }
   }
@@ -502,10 +503,9 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
       const allWorked = extraWorked ? [...Object.keys(buckets), ...extraWorked] : Object.keys(buckets);
       const activeWeeks = new Set(allWorked.map(dk => weekBucketKey(dk, weekStart)));
       const workedAnyInPeriod = Object.keys(buckets).length > 0; // 'period' gate stays scoped to the pulled period
-      const leaveDays = (range && range.leaveDays instanceof Set) ? range.leaveDays : null;
+      const leaveByDate = (range && range.leaveByDate instanceof Map) ? range.leaveByDate : null;
       for (const dk of eachDateKey(range.from, range.to)) {
         if (buckets[dk] != null) continue;                          // worked day — floored above
-        if (leaveDays && leaveDays.has(dk)) continue;               // paid as leave already — a guarantee here double-pays the day
         // A rest day CAN carry a no-clock-in guarantee: the guarantee pays its
         // hours at the REGULAR rate on an empty rest day, while an actually-worked
         // rest day (a real bucket, handled above) is paid at the rest-day premium.
@@ -530,9 +530,14 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
           }
           if (gate) floor = Math.max(floor, parseFloat(r.hours) || 0);
         }
-        if (floor > 0) {
-          autoReg += floor;                // guaranteed regular hours (no OT)
-          floorDetail.push({ date: dk, hours: +floor.toFixed(2), kind: 'guarantee' });
+        // Paid leave on this day counts toward the guarantee floor: a 4h partial-leave
+        // day with an 8h guarantee tops up only 4h (leave 4 + guarantee 4), and a
+        // full 8h leave day tops up 0 — never double-paying the leave hours.
+        const leaveH = leaveByDate ? (leaveByDate.get(dk) || 0) : 0;
+        const topUp = Math.max(0, floor - leaveH);
+        if (topUp > 0) {
+          autoReg += topUp;                // guaranteed regular hours (no OT)
+          floorDetail.push({ date: dk, hours: +topUp.toFixed(2), kind: 'guarantee' });
         }
       }
     }

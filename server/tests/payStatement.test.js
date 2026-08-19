@@ -105,7 +105,7 @@ describe('buildPayStatement — daily rate + no-clock-in guarantee', () => {
     expect(st.totals.grossWages).toBe(300);
   });
 
-  test('a no-clock-in daily guarantee does NOT stack on a day already paid as leave', () => {
+  test('a FULL leave day does NOT stack a no-clock-in daily guarantee on top', () => {
     const otConfig = otConfigFromSettings({ hours_rules: JSON.stringify({ enabled: true, rules: [
       { id: 'g', type: 'min_daily', when: { kind: 'every_day' }, hours: 8, requiresClockin: false, activeWindow: 'week' },
     ] }) });
@@ -115,13 +115,29 @@ describe('buildPayStatement — daily rate + no-clock-in guarantee', () => {
       reimbursements: [], deductions: [], otConfig, projectRateMap: {}, settings: SETTINGS,
       from: '2026-07-06', to: '2026-07-07', // Mon + empty Tue
     };
-    // Tue is empty but the worker took approved sick Tue → pay sick, NOT sick + guarantee.
-    const withLeave = buildPayStatement({ ...common, leave: { sick: 8, vacation: 0, dates: new Set(['2026-07-07']) } });
+    // Tue is empty but the worker took a FULL 8h approved sick day → pay sick, NOT sick + guarantee.
+    const withLeave = buildPayStatement({ ...common, leave: { sick: 8, vacation: 0, leaveByDate: new Map([['2026-07-07', 8]]) } });
     expect(withLeave.cost.sick).toBe(240);          // 8h × 30 sick
-    expect(withLeave.hours.regular).toBeCloseTo(8); // Mon only — no Tue guarantee stacked
-    // Control: same leave hours but no date info (old behavior) → Tue guarantee DOES stack.
+    expect(withLeave.hours.regular).toBeCloseTo(8); // Mon only — no Tue guarantee stacked (8h leave fills the 8h floor)
+    // Control: same leave hours but no per-day info (old behavior) → Tue guarantee DOES stack.
     const noDates = buildPayStatement({ ...common, leave: { sick: 8, vacation: 0 } });
     expect(noDates.hours.regular).toBeCloseTo(16);  // Mon 8 + Tue guarantee 8 (the double-pay this fix prevents)
+  });
+
+  test('a PARTIAL leave day tops up only the remainder of the guarantee floor', () => {
+    const otConfig = otConfigFromSettings({ hours_rules: JSON.stringify({ enabled: true, rules: [
+      { id: 'g', type: 'min_daily', when: { kind: 'every_day' }, hours: 8, requiresClockin: false, activeWindow: 'week' },
+    ] }) });
+    // Tue: 4h partial sick, no clock-in, under an 8h guarantee → 4h leave + 4h guarantee top-up.
+    const st = buildPayStatement({
+      worker: worker({ hourly_rate: 30, rate_type: 'hourly' }),
+      entries: [entry({ work_date: '2026-07-06', start_time: '08:00:00', end_time: '16:00:00' })], // Mon 8h worked
+      reimbursements: [], deductions: [], otConfig, projectRateMap: {}, settings: SETTINGS,
+      from: '2026-07-06', to: '2026-07-07',
+      leave: { sick: 4, vacation: 0, leaveByDate: new Map([['2026-07-07', 4]]) },
+    });
+    expect(st.cost.sick).toBe(120);                 // 4h × 30 sick
+    expect(st.hours.regular).toBeCloseTo(12);       // Mon 8 + Tue guarantee top-up 4 (8 floor − 4 leave)
   });
 
   test("a daily-rate worker's weekly guarantee shortfall pays per HOUR, not per daily rate", () => {

@@ -125,8 +125,10 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     // stays flat here until the per-band rate-aware work lands.
     const ot = computeOT(paid, rule, threshold, weekStart, otConfig, {
       from, to, workedDays: weekWorkedDays,
-      // Days already paid as leave must not ALSO earn a no-clock-in daily guarantee.
-      leaveDays: (leave && leave.dates instanceof Set) ? leave.dates : null,
+      // Paid-leave hours per day: a no-clock-in daily guarantee only tops the day up
+      // to its floor counting leave already paid (no double-pay; partial leave still
+      // gets the remainder).
+      leaveByDate: (leave && leave.leaveByDate instanceof Map) ? leave.leaveByDate : null,
     });
     annotateEntryOvertime(paid, rule, threshold, weekStart, otConfig);
     regularHours = ot.regularHours; overtimeHours = ot.overtimeHours;
