@@ -13,6 +13,7 @@ import { useConfirm } from './ConfirmDialog';
 import { useToast } from '../contexts/ToastContext';
 import { useT } from '../hooks/useT';
 import { useCents } from '../hooks/useMoney';
+import { useHasAnyPerm } from '../hooks/usePerm';
 import { silentError } from '../errorReporter';
 
 const CATEGORIES = ['labor', 'materials', 'equipment', 'subs', 'overhead', 'contingency', 'other'];
@@ -32,6 +33,7 @@ export default function ProjectFinancialsTab({ projectId }) {
   // The big P&L numbers want whole-dollar rounding (no $0.00 noise on a $250k
   // contract), so showCents=false. Bound to the company currency by the hook.
   const formatCents = useCents({ showCents: false });
+  const canWrite = useHasAnyPerm(['manage_projects']);   // financial writes need manage_projects
   const toast = useToast();
   const t = useT();
   const { confirm, dialog: confirmDialog } = useConfirm();
@@ -150,6 +152,9 @@ export default function ProjectFinancialsTab({ projectId }) {
               <span style={{ fontWeight: 700, color: '#065f46' }}>🔒 Final (locked)</span>
               <span>Profit <strong>{formatCents(pnl.locked.gross_profit_cents)}</strong></span>
               <span style={{ color: '#6b7280' }}>Cost {formatCents(pnl.locked.cost?.spent_cents)}</span>
+              {parseInt(pnl.locked.cost?.committed_cents, 10) > 0 && (
+                <span style={{ color: '#b45309' }}>+ {formatCents(pnl.locked.cost.committed_cents)} committed (not yet spent)</span>
+              )}
               {pnl.locked.snapshot_at && (
                 <span style={{ marginLeft: 'auto', fontSize: 12, color: '#6b7280' }}>
                   as of {new Date(pnl.locked.snapshot_at).toLocaleDateString()} · live figures below
@@ -212,7 +217,7 @@ export default function ProjectFinancialsTab({ projectId }) {
       <div style={styles.card}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <h3 style={{ ...styles.h3, margin: 0 }}>Budget (cost) vs. Spend by category</h3>
-          {editBudget ? (
+          {!canWrite ? null : editBudget ? (
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => setEditBudget(false)} style={styles.btn}>Cancel</button>
               <button onClick={saveBudget} disabled={savingBudget} style={styles.btnPrimary}>{savingBudget ? 'Saving…' : 'Save budget'}</button>
@@ -312,11 +317,11 @@ export default function ProjectFinancialsTab({ projectId }) {
           <h3 style={styles.h3}>Project expenses ({expenses.length})</h3>
           {pnl?.locked ? (
             <span style={{ fontSize: 12, color: '#6b7280' }}>🔒 Closed — reopen to edit costs</span>
-          ) : (
+          ) : canWrite ? (
             <button onClick={() => setShowExpenseForm(s => !s)} style={styles.btn}>
               {showExpenseForm ? 'Cancel' : '+ Add expense'}
             </button>
-          )}
+          ) : null}
         </div>
 
         {showExpenseForm && (
@@ -389,7 +394,7 @@ export default function ProjectFinancialsTab({ projectId }) {
                   <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(e.amount_cents)}</td>
                   <td style={{ ...styles.td, textAlign: 'right', color: '#6b7280' }}>{formatCents(e.tax_cents)}</td>
                   <td style={styles.td}>
-                    {!pnl?.locked && <button onClick={() => deleteExpense(e.id)} style={styles.iconBtn} title="Delete">×</button>}
+                    {!pnl?.locked && canWrite && <button onClick={() => deleteExpense(e.id)} style={styles.iconBtn} title="Delete">×</button>}
                   </td>
                 </tr>
               ))}
