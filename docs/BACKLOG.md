@@ -157,6 +157,38 @@ that holds the exhaustive detail.
   `substantially_complete` when the stored row is stale. Also `const byCat` on
   the line above is assigned and never read — dead. (2026-07-16)
 
+- **Money-flow bug-hunt leftovers — pre-existing, low-frequency or risky to change.**
+  (2026-08-19) Surfaced during the 3-agent bug hunt after the estimate→closeout
+  build-out; consciously left un-fixed (the 10 clear defects that pass found were
+  fixed same day). Each is a real-but-minor issue:
+  - **ManageRates "Save section" saves EVERY section's edits.** `saveSection(section)`
+    (`client/src/components/ManageRates.jsx:263`) PATCHes the whole ~90-field settings
+    payload regardless of which button was clicked; `section` only drives the checkmark.
+    Editing Labor Burden then clicking a different section's Save still commits the
+    burden change. No corruption (server validates), but surprising. Fix: send only the
+    fields owned by `section`. (Blast radius grew when `labor_burden_pct` /
+    `materials_cost_basis` were added to that payload.)
+  - **Estimate & CO numbers minted without an advisory lock.** `estimates.js` (~:270,340)
+    and `changeOrders.js` (~:204) do `MAX(number)+1` inside the INSERT with no
+    `pg_advisory_xact_lock` (invoices.js DOES lock). `estimate_number`/`co_number` are
+    UNIQUE, so two concurrent creates / a double-click collide → loser hits an
+    unhandled 23505 → 500. No corruption; rare 500. Fix: same per-company advisory lock.
+  - **P&L / WIP swallow labor/materials/equipment errors to $0.** `projectReports.js`
+    `spendTotals` wraps the labor query in `try/catch {}` (and projectCost helpers return
+    0 on any exception), so a *genuine* DB error makes P&L silently show $0 cost / inflated
+    profit — while the Spend tab (`projectSpend.js:64`, unwrapped) 500s on the same error.
+    The catches intentionally guard partial-migration envs; narrowing them (check
+    `tableExists`/error-code, let real errors propagate) is the fix but risks that guard.
+  - **Estimate header PATCH re-checks frozen status OUTSIDE its lock (TOCTOU).**
+    `estimates.js` (~:403) reads status on the pool before BEGIN with no `FOR UPDATE`,
+    unlike PUT /lines / send / convert. A PATCH changing `margin_pct` can interleave with
+    a concurrent send and silently change the totals of an already-sent estimate. Fix:
+    move the `SELECT status … FOR UPDATE` + frozen check inside the TX.
+  - **Minor:** `MoneyInput` reverts unparseable text (`"15.5.5"`) on blur with no cue;
+    catalog item PATCH doesn't guard `is_stocked` (DELETE does); `labor_burden_pct` may
+    reject an explicit 0 (leave-unset = same effect); `purchase_orders.status` enum is
+    validated inline in `inventory.js` but missing from `docs/db-enums.md`.
+
 ## 🧭 Design flaws — raised, set aside for later
 
 - **Should the minimum-daily floor appear on the WH-347 at all?** Certified Payroll now
