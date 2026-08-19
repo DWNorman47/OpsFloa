@@ -113,6 +113,33 @@ describe('GET /api/catalog/items/:id/estimate-line', () => {
   });
 });
 
+describe('assemblies', () => {
+  test('POST rejects a missing name', async () => {
+    const res = await request(makeApp()).post('/api/catalog/assemblies').send({ items: [] });
+    expect(res.status).toBe(400);
+  });
+
+  test('GET /assemblies/:id/estimate-lines expands members with member qty', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 3, name: 'Bath rough-in' }] })  // assembly
+      .mockResolvedValueOnce({ rows: [
+        { id: 1, name: 'PVC pipe', unit: 'ft', unit_cost: '2.00', sell_price_cents: 400, default_markup_pct: null, default_estimate_category: 'materials', member_qty: '10' },
+        { id: 2, name: 'Elbow', unit: 'ea', unit_cost: '0.50', sell_price_cents: null, default_markup_pct: 100, default_estimate_category: 'materials', member_qty: '4' },
+      ] });
+    const res = await request(makeApp()).get('/api/catalog/assemblies/3/estimate-lines');
+    expect(res.status).toBe(200);
+    expect(res.body.lines).toHaveLength(2);
+    expect(res.body.lines[0]).toMatchObject({ description: 'PVC pipe', unit_cost_cents: 400, cost_cents: 200, qty: 10 });
+    expect(res.body.lines[1]).toMatchObject({ description: 'Elbow', unit_cost_cents: 100, qty: 4 });  // 50c × 2.0
+  });
+
+  test('GET /assemblies/:id/estimate-lines 404 when not in company', async () => {
+    pool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const res = await request(makeApp()).get('/api/catalog/assemblies/9/estimate-lines');
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('POST /api/catalog/items', () => {
   test('creates a catalog-only row and returns it', async () => {
     pool.query.mockResolvedValueOnce({ rows: [{ id: 42, name: 'Rebar #4', is_stocked: false, sell_price_cents: 780 }] });

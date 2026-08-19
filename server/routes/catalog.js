@@ -153,10 +153,38 @@ router.get('/catalog/tags', requireAuth, requireCommercialAccess, async (req, re
   }
 });
 
-// GET /catalog/items/:id/estimate-line — resolve to an estimate-ready line
-// shape (description, unit, unit_cost_cents derived from sell_price_cents
-// or markup, category from default_estimate_category). Saves the client
-// from doing the markup math itself.
+// Resolve one catalog item row to an estimate-ready line shape. Unit price in
+// priority: explicit sell price → item markup over cost → company category
+// markup over cost → raw cost → 0. Shared by the single-item route and the
+// assembly expander.
+async function resolveEstimateLine(item, companyId) {
+  let unitCost;
+  if (item.sell_price_cents != null) {
+    unitCost = parseInt(item.sell_price_cents, 10);
+  } else {
+    const baseCents = item.unit_cost != null ? Math.round(parseFloat(item.unit_cost) * 100) : null;
+    let markup = item.default_markup_pct != null ? parseFloat(item.default_markup_pct) : null;
+    if (markup == null && baseCents != null) {
+      const cat = MONEY_CATEGORIES.includes(item.default_estimate_category)
+        ? item.default_estimate_category : 'materials';
+      markup = await companyDefaultMarkup(companyId, cat);
+    }
+    if (baseCents != null && markup != null) unitCost = Math.round(baseCents * (1 + markup / 100));
+    else unitCost = baseCents != null ? baseCents : 0;
+  }
+  return {
+    description:     item.name,
+    unit:           item.unit || null,
+    unit_cost_cents: unitCost,  // the PRICE the client sees
+    // cost basis (what it costs you) = supplier cost. Null when none on file.
+    cost_cents:     item.unit_cost != null ? Math.round(parseFloat(item.unit_cost) * 100) : null,
+    category:       MONEY_CATEGORIES.includes(item.default_estimate_category)
+                      ? item.default_estimate_category : 'materials',
+    source_item_id: item.id,
+  };
+}
+
+// GET /catalog/items/:id/estimate-line — resolve one catalog item to a line.
 router.get('/catalog/items/:id/estimate-line', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
@@ -165,41 +193,171 @@ router.get('/catalog/items/:id/estimate-line', requireAuth, requireCommercialAcc
       [req.params.id, companyId]
     );
     if (r.rowCount === 0) return res.status(404).json({ error: 'Item not found' });
-    const item = r.rows[0];
-    // Resolve the line's unit cost in priority order:
-    //   1. explicit sell price on the item
-    //   2. item's own default markup % over supplier cost
-    //   3. company default markup % (by category) over supplier cost
-    //   4. raw supplier cost
-    //   5. zero
-    let unitCost;
-    if (item.sell_price_cents != null) {
-      unitCost = parseInt(item.sell_price_cents, 10);
-    } else {
-      const baseCents = item.unit_cost != null ? Math.round(parseFloat(item.unit_cost) * 100) : null;
-      let markup = item.default_markup_pct != null ? parseFloat(item.default_markup_pct) : null;
-      if (markup == null && baseCents != null) {
-        const cat = MONEY_CATEGORIES.includes(item.default_estimate_category)
-          ? item.default_estimate_category : 'materials';
-        markup = await companyDefaultMarkup(companyId, cat);
-      }
-      if (baseCents != null && markup != null) unitCost = Math.round(baseCents * (1 + markup / 100));
-      else unitCost = baseCents != null ? baseCents : 0;
-    }
-    res.json({
-      description:         item.name,
-      unit:                item.unit || null,
-      unit_cost_cents:     unitCost,  // the PRICE the client sees
-      // cost basis (what it costs you) = supplier cost, for the estimate's
-      // cost/price/margin. Null when the item has no supplier cost on file.
-      cost_cents:          item.unit_cost != null ? Math.round(parseFloat(item.unit_cost) * 100) : null,
-      category:            MONEY_CATEGORIES.includes(item.default_estimate_category)
-                            ? item.default_estimate_category
-                            : 'materials',
-      source_item_id:      item.id,
-    });
+    res.json(await resolveEstimateLine(r.rows[0], companyId));
   } catch (err) {
     req.log.error({ err }, 'catalog estimate-line error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Assemblies (kits) — saved bundles of catalog items ────────────────────────
+
+function sanitizeAssemblyBody(body = {}) {
+  const errors = [];
+  const name = (body.name ?? '').toString().trim();
+  if (!name) errors.push('name is required');
+  else if (name.length > 255) errors.push('name must be 255 characters or fewer');
+  const notes = body.notes == null ? null : body.notes.toString();
+  const rawItems = Array.isArray(body.items) ? body.items : [];
+  const items = [];
+  rawItems.forEach((it, i) => {
+    const itemId = parseInt(it.item_id, 10);
+    if (!Number.isFinite(itemId)) return;  // skip blank rows
+    const qty = it.qty == null || it.qty === '' ? 1 : Number(it.qty);
+    if (!Number.isFinite(qty) || qty < 0) { errors.push(`row ${i + 1}: invalid qty`); return; }
+    items.push({ item_id: itemId, qty, sort_order: i });
+  });
+  return { name, notes, items, errors };
+}
+
+// GET /catalog/assemblies — list with member counts.
+router.get('/catalog/assemblies', requireAuth, requireCommercialAccess, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT a.id, a.name, a.notes,
+              COUNT(ai.id)::int AS item_count
+         FROM estimate_assemblies a
+         LEFT JOIN estimate_assembly_items ai ON ai.assembly_id = a.id
+        WHERE a.company_id = $1
+        GROUP BY a.id
+        ORDER BY a.name ASC`,
+      [req.user.company_id]
+    );
+    res.json({ assemblies: r.rows });
+  } catch (err) {
+    req.log.error({ err }, 'assemblies list error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /catalog/assemblies/:id — one assembly with its member items (+ names).
+router.get('/catalog/assemblies/:id', requireAuth, requireCommercialAccess, async (req, res) => {
+  const companyId = req.user.company_id;
+  try {
+    const a = await pool.query('SELECT id, name, notes FROM estimate_assemblies WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
+    if (a.rowCount === 0) return res.status(404).json({ error: 'Assembly not found' });
+    const items = await pool.query(
+      `SELECT ai.item_id, ai.qty, ai.sort_order, i.name, i.unit
+         FROM estimate_assembly_items ai
+         JOIN inventory_items i ON i.id = ai.item_id
+        WHERE ai.assembly_id = $1
+        ORDER BY ai.sort_order, ai.id`,
+      [req.params.id]
+    );
+    res.json({ ...a.rows[0], items: items.rows });
+  } catch (err) {
+    req.log.error({ err }, 'assembly read error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /catalog/assemblies — create.
+router.post('/catalog/assemblies', requireAuth, requireCommercialAccess, async (req, res) => {
+  const companyId = req.user.company_id;
+  const { name, notes, items, errors } = sanitizeAssemblyBody(req.body);
+  if (errors.length) return res.status(400).json({ error: errors[0], errors });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const a = await client.query(
+      'INSERT INTO estimate_assemblies (company_id, name, notes, created_by) VALUES ($1,$2,$3,$4) RETURNING id',
+      [companyId, name, notes, req.user.id]
+    );
+    const assemblyId = a.rows[0].id;
+    for (const it of items) {
+      // Member must be a catalog item in this company.
+      const chk = await client.query('SELECT id FROM inventory_items WHERE id = $1 AND company_id = $2', [it.item_id, companyId]);
+      if (chk.rowCount === 0) continue;
+      await client.query(
+        'INSERT INTO estimate_assembly_items (assembly_id, item_id, qty, sort_order) VALUES ($1,$2,$3,$4)',
+        [assemblyId, it.item_id, it.qty, it.sort_order]
+      );
+    }
+    await client.query('COMMIT');
+    res.status(201).json({ id: assemblyId, name });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    req.log.error({ err }, 'assembly create error');
+    res.status(500).json({ error: 'Server error' });
+  } finally { client.release(); }
+});
+
+// PATCH /catalog/assemblies/:id — replace name/notes + member list.
+router.patch('/catalog/assemblies/:id', requireAuth, requireCommercialAccess, async (req, res) => {
+  const companyId = req.user.company_id;
+  const { name, notes, items, errors } = sanitizeAssemblyBody(req.body);
+  if (errors.length) return res.status(400).json({ error: errors[0], errors });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const upd = await client.query(
+      'UPDATE estimate_assemblies SET name = $3, notes = $4, updated_at = NOW() WHERE id = $1 AND company_id = $2 RETURNING id',
+      [req.params.id, companyId, name, notes]
+    );
+    if (upd.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Assembly not found' }); }
+    await client.query('DELETE FROM estimate_assembly_items WHERE assembly_id = $1', [req.params.id]);
+    for (const it of items) {
+      const chk = await client.query('SELECT id FROM inventory_items WHERE id = $1 AND company_id = $2', [it.item_id, companyId]);
+      if (chk.rowCount === 0) continue;
+      await client.query(
+        'INSERT INTO estimate_assembly_items (assembly_id, item_id, qty, sort_order) VALUES ($1,$2,$3,$4)',
+        [req.params.id, it.item_id, it.qty, it.sort_order]
+      );
+    }
+    await client.query('COMMIT');
+    res.json({ id: parseInt(req.params.id, 10), name });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    req.log.error({ err }, 'assembly update error');
+    res.status(500).json({ error: 'Server error' });
+  } finally { client.release(); }
+});
+
+// DELETE /catalog/assemblies/:id
+router.delete('/catalog/assemblies/:id', requireAuth, requireCommercialAccess, async (req, res) => {
+  try {
+    const r = await pool.query('DELETE FROM estimate_assemblies WHERE id = $1 AND company_id = $2 RETURNING id', [req.params.id, req.user.company_id]);
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Assembly not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    req.log.error({ err }, 'assembly delete error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /catalog/assemblies/:id/estimate-lines — expand to estimate lines. Each
+// member resolves live (current catalog prices) and its qty scales the line.
+router.get('/catalog/assemblies/:id/estimate-lines', requireAuth, requireCommercialAccess, async (req, res) => {
+  const companyId = req.user.company_id;
+  try {
+    const a = await pool.query('SELECT id, name FROM estimate_assemblies WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
+    if (a.rowCount === 0) return res.status(404).json({ error: 'Assembly not found' });
+    const members = await pool.query(
+      `SELECT i.*, ai.qty AS member_qty
+         FROM estimate_assembly_items ai
+         JOIN inventory_items i ON i.id = ai.item_id
+        WHERE ai.assembly_id = $1
+        ORDER BY ai.sort_order, ai.id`,
+      [req.params.id]
+    );
+    const lines = [];
+    for (const m of members.rows) {
+      const line = await resolveEstimateLine(m, companyId);
+      lines.push({ ...line, qty: parseFloat(m.member_qty) || 1 });
+    }
+    res.json({ assembly_id: a.rows[0].id, name: a.rows[0].name, lines });
+  } catch (err) {
+    req.log.error({ err }, 'assembly expand error');
     res.status(500).json({ error: 'Server error' });
   }
 });

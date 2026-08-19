@@ -627,6 +627,7 @@ function LinePicker({ onAdd }) {
   const [q, setQ] = useState('');
   const [catalogItems, setCatalogItems] = useState([]);
   const [equipment, setEquipment] = useState([]);
+  const [assemblies, setAssemblies] = useState([]);
   const [loading, setLoading] = useState(false);
 
   // Localized "Machine — <part>" description for an equipment line.
@@ -634,12 +635,15 @@ function LinePicker({ onAdd }) {
     mobilization: t.estEqMobilization, operating: t.estEqOperating, rental: t.estEqRental,
   };
 
-  // Owned machines: fetched once when the picker opens, filtered locally.
+  // Owned machines + assemblies: fetched once when the picker opens, filtered locally.
   useEffect(() => {
     if (!open) return;
     api.get('/equipment')
       .then(({ data }) => setEquipment(Array.isArray(data) ? data : []))
       .catch(() => setEquipment([]));
+    api.get('/catalog/assemblies')
+      .then(({ data }) => setAssemblies(data.assemblies || []))
+      .catch(() => setAssemblies([]));
   }, [open]);
 
   // Catalog: searched server-side as the query changes.
@@ -659,7 +663,11 @@ function LinePicker({ onAdd }) {
   const machineResults = needle
     ? equipment.filter(a => `${a.name} ${a.unit_number || ''}`.toLowerCase().includes(needle))
     : equipment;
+  const assemblyResults = needle
+    ? assemblies.filter(a => a.name.toLowerCase().includes(needle))
+    : assemblies;
   const results = [
+    ...assemblyResults.map(a => ({ ...a, _type: 'assembly' })),
     ...catalogItems.map(it => ({ ...it, _type: 'catalog' })),
     ...machineResults.map(a => ({ ...a, _type: 'equipment' })),
   ];
@@ -676,6 +684,18 @@ function LinePicker({ onAdd }) {
           unit_cost_cents: data.unit_cost_cents,
           cost_cents: data.cost_cents ?? null,
         }]);
+      } else if (row._type === 'assembly') {
+        const { data } = await api.get(`/catalog/assemblies/${row.id}/estimate-lines`);
+        const lines = (data.lines || []).map(l => ({
+          category: l.category || 'materials',
+          description: l.description,
+          qty: l.qty ?? 1,
+          unit: l.unit || '',
+          unit_cost_cents: l.unit_cost_cents,
+          cost_cents: l.cost_cents ?? null,
+        }));
+        if (!lines.length) return;
+        onAdd(lines);
       } else {
         const { data } = await api.get(`/equipment/${row.id}/estimate-lines`);
         const lines = (data.lines || []).map(l => ({
@@ -738,6 +758,9 @@ function LinePicker({ onAdd }) {
                 {row._type === 'equipment' && (
                   <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#6d28d9', background: '#ede9fe', padding: '1px 6px', borderRadius: 6 }}>{t.estLibMachine}</span>
                 )}
+                {row._type === 'assembly' && (
+                  <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#0369a1', background: '#e0f2fe', padding: '1px 6px', borderRadius: 6 }}>{t.estLibAssembly}</span>
+                )}
               </div>
               <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
                 {row._type === 'catalog' ? (
@@ -747,6 +770,8 @@ function LinePicker({ onAdd }) {
                     {row.sell_price_cents != null && ` · ${formatCents(row.sell_price_cents)}`}
                     {!row.is_stocked && ` · ${t.estCatalogOnly}`}
                   </>
+                ) : row._type === 'assembly' ? (
+                  <>{row.item_count} {t.estAssemblyItems}</>
                 ) : (
                   <>
                     {row.unit_number && `${row.unit_number} · `}

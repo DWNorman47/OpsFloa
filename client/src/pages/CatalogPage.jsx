@@ -106,6 +106,7 @@ export function CatalogPanel() {
         </div>
 
         <MarkupsPanel toast={toast} />
+        <AssembliesPanel toast={toast} confirm={confirm} />
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
           <input
@@ -536,6 +537,135 @@ function MarkupsPanel({ toast }) {
 }
 
 // ── Small building blocks ──────────────────────────────────────────────────────
+
+// ── Assemblies (kits) ──────────────────────────────────────────────────────────
+
+function AssembliesPanel({ toast, confirm }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [assemblies, setAssemblies] = useState([]);
+  const [editing, setEditing] = useState(null);   // null | {} (new) | {id} (edit)
+
+  const load = useCallback(() => {
+    api.get('/catalog/assemblies')
+      .then(({ data }) => { setAssemblies(data.assemblies || []); setLoaded(true); })
+      .catch(() => setLoaded(true));
+  }, []);
+
+  function openPanel() {
+    setOpen(o => !o);
+    if (!loaded) load();
+  }
+
+  async function del(a) {
+    if (!await confirm({ title: t.catAsmDeleteTitle, body: t.catAsmDeleteBody })) return;
+    try { await api.delete(`/catalog/assemblies/${a.id}`); toast(t.catAsmDeleted, 'success'); load(); }
+    catch (err) { toast(err.response?.data?.error || t.catSaveError, 'error'); }
+  }
+
+  return (
+    <div style={styles.markupsWrap}>
+      <button onClick={openPanel} style={styles.markupsToggle}>
+        <span style={{ transform: open ? 'rotate(90deg)' : 'none', display: 'inline-block', transition: 'transform 0.15s' }}>▸</span>
+        {t.catAsmTitle}
+      </button>
+      {open && (
+        <div style={styles.markupsBody}>
+          <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 10px' }}>{t.catAsmHint}</p>
+          <button onClick={() => setEditing({})} style={styles.primaryBtn}>{t.catAsmNew}</button>
+          {!loaded ? <SkeletonList rows={1} /> : assemblies.length === 0 ? null : (
+            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {assemblies.map(a => (
+                <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 6 }}>
+                  <strong style={{ flex: 1 }}>{a.name}</strong>
+                  <span style={{ fontSize: 12, color: '#6b7280' }}>{a.item_count} {t.estAssemblyItems}</span>
+                  <button onClick={() => setEditing(a)} style={styles.linkBtn}>{t.catEdit}</button>
+                  <button onClick={() => del(a)} style={{ ...styles.linkBtn, color: '#b91c1c' }}>{t.catDelete}</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {editing && (
+        <AssemblyEditor
+          assemblyId={editing.id || null}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); load(); }}
+          toast={toast}
+        />
+      )}
+    </div>
+  );
+}
+
+function AssemblyEditor({ assemblyId, onClose, onSaved, toast }) {
+  const t = useT();
+  const [name, setName] = useState('');
+  const [items, setItems] = useState([]);        // [{ item_id, qty }]
+  const [catalog, setCatalog] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    api.get('/catalog/items', { params: { limit: 200 } }).then(({ data }) => setCatalog(data.items || [])).catch(() => {});
+    if (assemblyId) {
+      api.get(`/catalog/assemblies/${assemblyId}`).then(({ data }) => {
+        setName(data.name || '');
+        setItems((data.items || []).map(it => ({ item_id: String(it.item_id), qty: String(it.qty) })));
+      }).catch(() => {});
+    }
+  }, [assemblyId]);
+
+  const addRow = () => setItems(arr => [...arr, { item_id: '', qty: '1' }]);
+  const setRow = (i, k, v) => setItems(arr => arr.map((r, idx) => idx === i ? { ...r, [k]: v } : r));
+  const removeRow = i => setItems(arr => arr.filter((_, idx) => idx !== i));
+
+  async function save() {
+    if (!name.trim()) { setError(`${t.catFieldName} — ${t.estRequired}`); return; }
+    setSaving(true); setError(null);
+    try {
+      const payload = {
+        name: name.trim(),
+        items: items.filter(r => r.item_id).map(r => ({ item_id: parseInt(r.item_id, 10), qty: r.qty === '' ? 1 : Number(r.qty) })),
+      };
+      if (assemblyId) await api.patch(`/catalog/assemblies/${assemblyId}`, payload);
+      else await api.post('/catalog/assemblies', payload);
+      toast(assemblyId ? t.catToastUpdated : t.catToastCreated, 'success');
+      onSaved();
+    } catch (err) { setError(err.response?.data?.error || t.catSaveError); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <Overlay onClose={onClose} wide>
+      <h3 style={styles.modalTitle}>{assemblyId ? t.catAsmEditTitle : t.catAsmNew}</h3>
+      {error && <div style={styles.errorBox}>{error}</div>}
+      <Labeled label={t.catFieldName} full>
+        <input value={name} onChange={e => setName(e.target.value)} style={styles.input} autoFocus />
+      </Labeled>
+      <div style={{ marginTop: 12 }}>
+        <span style={styles.fieldLabel}>{t.catAsmItems}</span>
+        {items.map((r, i) => (
+          <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+            <select value={r.item_id} onChange={e => setRow(i, 'item_id', e.target.value)} style={{ ...styles.input, flex: 1 }}>
+              <option value="">{t.catAsmPickItem}</option>
+              {catalog.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <input type="number" min="0" step="0.01" value={r.qty} onChange={e => setRow(i, 'qty', e.target.value)} style={{ ...styles.input, width: 80 }} placeholder="qty" />
+            <button onClick={() => removeRow(i)} style={styles.linkBtn}>×</button>
+          </div>
+        ))}
+        <button onClick={addRow} style={styles.ghostBtn}>{t.catAsmAddItem}</button>
+      </div>
+      <div style={styles.modalActions}>
+        <button onClick={onClose} style={styles.ghostBtn}>{t.catCancel}</button>
+        <button onClick={save} disabled={saving} style={styles.primaryBtn}>{saving ? t.catSaving : t.catSave}</button>
+      </div>
+    </Overlay>
+  );
+}
 
 function Overlay({ children, onClose, wide }) {
   return (

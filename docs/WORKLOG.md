@@ -5575,3 +5575,23 @@ materials received-to-jobsite-not-issued (P3 — double-count risk needs a model
 per-line/per-category markup, alternates/allowances, assemblies/kits.
 
 Full server suite 1469 + client eslint/i18n/build green throughout.
+
+## 2026-08-18 — Money-flow: the three deferred feature-builds
+
+Finished the last tier (per-line/per-category markup consciously dropped —
+subsumed by the cost+price split; a third markup layer would just re-introduce
+double-markup):
+
+- **Retainage release** (0185): invoices.retainage_released_cents;
+  POST /invoices/retainage-release/:projectId bills outstanding held back as a
+  draft invoice + marks sources released; close-out item completes on
+  outstanding=0; Financials tab shows held + a Release button.
+- **Alternates & allowances** (0186): estimate_lines.line_type
+  (base/allowance/alternate/optional). base+allowance count toward the bid total
+  and budget; alternate+optional priced but separate. Form Type column + totals.
+- **Assemblies (kits)** (0187): estimate_assemblies + _items — a named bundle of
+  catalog items; CRUD + expand resolver (resolveEstimateLine extracted + shared);
+  builder on the Catalog page; an Assemblies source in the estimate picker that
+  drops all members in at once, priced live × member qty.
+
+Full server suite 1476 + client eslint/i18n/build green throughout.
