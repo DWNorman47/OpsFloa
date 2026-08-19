@@ -268,6 +268,23 @@ describe('POST /api/invoices/from-estimate/:id', () => {
   });
 });
 
+describe('POST /api/invoices/retainage-release/:projectId', () => {
+  test('404 when project not in caller company', async () => {
+    pool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });   // project lookup
+    const res = await request(makeApp()).post('/api/invoices/retainage-release/42');
+    expect(res.status).toBe(404);
+  });
+
+  test('400 when the project holds no retainage', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, name: 'P', client_id: null }] })  // project
+      .mockResolvedValueOnce({ rows: [{ outstanding: '0' }] });                                 // outstanding
+    const res = await request(makeApp()).post('/api/invoices/retainage-release/42');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/retainage/i);
+  });
+});
+
 // ── Public view — token-keyed, no auth ────────────────────────────────────────
 describe('GET /api/public/invoices/view/:token', () => {
   test('404 when no invoice matches the token hash', async () => {

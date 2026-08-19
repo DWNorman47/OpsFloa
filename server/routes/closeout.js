@@ -199,14 +199,17 @@ async function computeAutoStatus(companyId, projectId, item) {
       // column). Done only when invoices EXIST and none still hold retainage —
       // the old SUM(balance) over project_invoices returned 0 (→ 'done') for
       // every non-QBO project, which had zero rows: a false positive.
+      // Outstanding = held − released. A "Release retainage" invoice draws the
+      // released amount up to held, so outstanding → 0 marks the item done.
       const r = await pool.query(
-        `SELECT COUNT(*) AS n, COALESCE(SUM(retainage_held_cents), 0) AS held
+        `SELECT COUNT(*) AS n,
+                COALESCE(SUM(retainage_held_cents - retainage_released_cents), 0) AS outstanding
            FROM invoices WHERE project_id = $1 AND status <> 'void'`,
         [projectId]
       );
       const n = parseInt(r.rows[0].n, 10);
       if (n === 0) return 'in_progress';               // nothing invoiced → not released
-      return parseInt(r.rows[0].held, 10) === 0 ? 'done' : 'in_progress';
+      return parseInt(r.rows[0].outstanding, 10) === 0 ? 'done' : 'in_progress';
     } catch { return null; }
   }
   return null;

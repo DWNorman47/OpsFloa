@@ -123,6 +123,20 @@ export default function ProjectFinancialsTab({ projectId }) {
     finally { setSavingBudget(false); }
   }
 
+  async function releaseRetainage() {
+    const held = parseInt(pnl?.revenue?.retainage_outstanding_cents, 10) || 0;
+    if (!await confirm({
+      title: 'Release retainage?',
+      body: `Create a draft invoice for ${formatCents(held)} of held retainage? Send it to bill the client for the withheld amount.`,
+      confirmLabel: 'Create invoice',
+    })) return;
+    try {
+      await api.post(`/invoices/retainage-release/${projectId}`);
+      toast('Retainage release invoice created (draft)', 'success');
+      await load();
+    } catch (err) { setError(err.response?.data?.error || 'Failed to release retainage'); }
+  }
+
   async function deleteExpense(id) {
     if (!await confirm({
       title: 'Delete this expense?',
@@ -188,6 +202,14 @@ export default function ProjectFinancialsTab({ projectId }) {
               value={pnl.projected_margin_pct == null ? '—' : `${pnl.projected_margin_pct.toFixed(1)}%`}
             />
           </div>
+          {parseInt(pnl.revenue?.retainage_outstanding_cents, 10) > 0 && (
+            <div style={{ marginTop: 12, padding: '10px 12px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', fontSize: 14 }}>
+              <span>Retainage held by client: <strong>{formatCents(pnl.revenue.retainage_outstanding_cents)}</strong></span>
+              {canWrite && !pnl.locked && (
+                <button onClick={releaseRetainage} style={{ ...styles.btn, marginLeft: 'auto' }}>Release retainage →</button>
+              )}
+            </div>
+          )}
           {(() => {
             // Bid margin = (contract − budgeted cost) / contract. Compared with
             // projected margin, it answers "are we tracking to the margin we bid?"

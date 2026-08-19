@@ -33,6 +33,7 @@ async function invoiceTotals(projectId, companyId) {
     const r = await pool.query(
       `SELECT
          COALESCE(SUM(i.total_cents), 0) AS billed_cents,
+         COALESCE(SUM(i.retainage_held_cents - i.retainage_released_cents), 0) AS retainage_outstanding_cents,
          COALESCE((
            SELECT SUM(p.amount_cents)
              FROM invoice_payments p
@@ -46,6 +47,7 @@ async function invoiceTotals(projectId, companyId) {
     return {
       billed_cents:    parseInt(r.rows[0].billed_cents, 10) || 0,
       collected_cents: parseInt(r.rows[0].collected_cents, 10) || 0,
+      retainage_outstanding_cents: parseInt(r.rows[0].retainage_outstanding_cents, 10) || 0,
     };
   } catch {
     return { billed_cents: 0, collected_cents: 0 };
