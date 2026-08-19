@@ -252,7 +252,7 @@ router.get('/catalog/assemblies/:id', requireAuth, requireCommercialAccess, asyn
     const a = await pool.query('SELECT id, name, notes FROM estimate_assemblies WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
     if (a.rowCount === 0) return res.status(404).json({ error: 'Assembly not found' });
     const items = await pool.query(
-      `SELECT ai.item_id, ai.qty, ai.sort_order, i.name, i.unit
+      `SELECT ai.item_id, ai.qty, ai.sort_order, i.name, i.sku, i.unit
          FROM estimate_assembly_items ai
          JOIN inventory_items i ON i.id = ai.item_id
         WHERE ai.assembly_id = $1

@@ -604,10 +604,18 @@ function AssemblyEditor({ assemblyId, onClose, onSaved, toast }) {
   const t = useT();
   const [name, setName] = useState('');
   const [notes, setNotes] = useState('');
-  const [items, setItems] = useState([]);        // [{ item_id, qty }]
+  const [items, setItems] = useState([]);        // [{ item_id, label, qty }]
   const [catalog, setCatalog] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+
+  // Native typeahead: label the datalist options so duplicate names are
+  // distinguishable, and resolve the typed label back to an item id.
+  const labelFor = c => (c.sku ? `${c.name} (${c.sku})` : c.name);
+  const idForLabel = label => {
+    const m = catalog.find(c => labelFor(c) === label);
+    return m ? String(m.id) : '';
+  };
 
   useEffect(() => {
     api.get('/catalog/items', { params: { limit: 200 } }).then(({ data }) => setCatalog(data.items || [])).catch(() => {});
@@ -615,12 +623,12 @@ function AssemblyEditor({ assemblyId, onClose, onSaved, toast }) {
       api.get(`/catalog/assemblies/${assemblyId}`).then(({ data }) => {
         setName(data.name || '');
         setNotes(data.notes || '');
-        setItems((data.items || []).map(it => ({ item_id: String(it.item_id), qty: String(it.qty) })));
+        setItems((data.items || []).map(it => ({ item_id: String(it.item_id), label: it.sku ? `${it.name} (${it.sku})` : it.name, qty: String(it.qty) })));
       }).catch(() => {});
     }
   }, [assemblyId]);
 
-  const addRow = () => setItems(arr => [...arr, { item_id: '', qty: '1' }]);
+  const addRow = () => setItems(arr => [...arr, { item_id: '', label: '', qty: '1' }]);
   const setRow = (i, k, v) => setItems(arr => arr.map((r, idx) => idx === i ? { ...r, [k]: v } : r));
   const removeRow = i => setItems(arr => arr.filter((_, idx) => idx !== i));
 
@@ -651,14 +659,20 @@ function AssemblyEditor({ assemblyId, onClose, onSaved, toast }) {
       <Labeled label={t.catAsmNotes} full>
         <input value={notes} onChange={e => setNotes(e.target.value)} style={styles.input} />
       </Labeled>
+      <datalist id="asm-catalog-items">
+        {catalog.map(c => <option key={c.id} value={labelFor(c)} />)}
+      </datalist>
       <div style={{ marginTop: 12 }}>
         <span style={styles.fieldLabel}>{t.catAsmItems}</span>
         {items.map((r, i) => (
           <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
-            <select value={r.item_id} onChange={e => setRow(i, 'item_id', e.target.value)} style={{ ...styles.input, flex: 1 }}>
-              <option value="">{t.catAsmPickItem}</option>
-              {catalog.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <input
+              list="asm-catalog-items"
+              value={r.label}
+              onChange={e => { const label = e.target.value; setItems(arr => arr.map((row, idx) => idx === i ? { ...row, label, item_id: idForLabel(label) } : row)); }}
+              placeholder={t.catAsmPickItem}
+              style={{ ...styles.input, flex: 1, borderColor: r.label && !r.item_id ? '#fca5a5' : undefined }}
+            />
             <input type="number" min="0" step="0.01" value={r.qty} onChange={e => setRow(i, 'qty', e.target.value)} style={{ ...styles.input, width: 80 }} placeholder="qty" />
             <button onClick={() => removeRow(i)} style={styles.linkBtn}>×</button>
           </div>
