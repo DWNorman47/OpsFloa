@@ -277,11 +277,20 @@ describe('POST /api/invoices/retainage-release/:projectId', () => {
 
   test('400 when the project holds no retainage', async () => {
     pool.query
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, name: 'P', client_id: null }] })  // project
-      .mockResolvedValueOnce({ rows: [{ outstanding: '0' }] });                                 // outstanding
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42 }] })   // project
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] });            // UPDATE — nothing held
     const res = await request(makeApp()).post('/api/invoices/retainage-release/42');
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/retainage/i);
+  });
+
+  test('marks held retainage released', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42 }] })                             // project
+      .mockResolvedValueOnce({ rowCount: 2, rows: [{ id: 5, newly_released: '1000' }, { id: 6, newly_released: '500' }] });  // UPDATE
+    const res = await request(makeApp()).post('/api/invoices/retainage-release/42');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ released_cents: 1500, invoices: 2 });
   });
 });
 

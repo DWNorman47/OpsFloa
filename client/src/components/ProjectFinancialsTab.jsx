@@ -127,12 +127,12 @@ export default function ProjectFinancialsTab({ projectId }) {
     const held = parseInt(pnl?.revenue?.retainage_outstanding_cents, 10) || 0;
     if (!await confirm({
       title: 'Release retainage?',
-      body: `Create a draft invoice for ${formatCents(held)} of held retainage? Send it to bill the client for the withheld amount.`,
-      confirmLabel: 'Create invoice',
+      body: `Mark ${formatCents(held)} of withheld retainage as released? It's already billed on prior invoices — releasing lifts the hold so the remaining balances are collectible.`,
+      confirmLabel: 'Release',
     })) return;
     try {
       await api.post(`/invoices/retainage-release/${projectId}`);
-      toast('Retainage release invoice created (draft)', 'success');
+      toast('Retainage released', 'success');
       await load();
     } catch (err) { setError(err.response?.data?.error || 'Failed to release retainage'); }
   }

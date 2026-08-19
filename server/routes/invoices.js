@@ -367,56 +367,28 @@ router.post('/from-project/:projectId', requireAuth, requireCommercialAccess, as
   }
 });
 
-// POST /invoices/retainage-release/:projectId — bill back the retainage the
-// client held across the project's invoices. Creates a draft "Retainage release"
-// invoice for the outstanding held (held − already-released), and marks the
-// source invoices released so the close-out item can auto-complete. The new
-// invoice, once sent + paid, brings the withheld money in.
+// POST /invoices/retainage-release/:projectId — record that the client has
+// RELEASED the retainage withheld across the project's invoices (the withholding
+// is lifted). Retainage is already inside those invoices' totals — it just sat
+// unpaid — so releasing bills nothing new; it marks the held amount released so
+// the remaining invoice balances become collectible and the close-out item
+// completes. Idempotent: re-firing just re-sets released = held (no double-up).
 router.post('/retainage-release/:projectId', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
-    const projRes = await pool.query(
-      `SELECT p.id, p.name, p.client_id, c.name AS client_name, c.contact_email
-         FROM projects p LEFT JOIN clients c ON c.id = p.client_id
-        WHERE p.id = $1 AND p.company_id = $2`,
-      [req.params.projectId, companyId]
-    );
+    const projRes = await pool.query('SELECT id FROM projects WHERE id = $1 AND company_id = $2', [req.params.projectId, companyId]);
     if (projRes.rowCount === 0) return res.status(404).json({ error: 'Project not found' });
-    const proj = projRes.rows[0];
-    const outRes = await pool.query(
-      `SELECT COALESCE(SUM(retainage_held_cents - retainage_released_cents), 0)::bigint AS outstanding
-         FROM invoices WHERE project_id = $1 AND company_id = $2 AND status <> 'void'`,
+    const upd = await pool.query(
+      `UPDATE invoices SET retainage_released_cents = retainage_held_cents, updated_at = NOW()
+        WHERE project_id = $1 AND company_id = $2 AND status <> 'void'
+          AND retainage_held_cents > retainage_released_cents
+        RETURNING id, retainage_held_cents - retainage_released_cents AS newly_released`,
       [req.params.projectId, companyId]
     );
-    const outstanding = parseInt(outRes.rows[0].outstanding, 10) || 0;
-    if (outstanding <= 0) return res.status(400).json({ error: 'No retainage held to release on this project' });
-
-    const fields = {
-      project_id: proj.id, client_id: proj.client_id,
-      client_name_snapshot: proj.client_name || proj.name || '(no client)', client_email: proj.contact_email || null,
-      project_name: proj.name, project_address: null, tax_pct: 0, retainage_pct: 0,
-      issue_date: null, due_date: null, notes: 'Release of retainage held on prior invoices.', terms: null,
-    };
-    const lines = [{ category: 'other', sort_order: 0, description: 'Retainage release', qty: 1, unit: null, unit_cost_cents: outstanding, total_cents: outstanding, notes: null }];
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const { invoiceId, number } = await createInvoice(client, companyId, req.user.id, fields, lines, { source: 'project' });
-      // Mark the source invoices released so outstanding hits 0 (record kept).
-      await client.query(
-        `UPDATE invoices SET retainage_released_cents = retainage_held_cents, updated_at = NOW()
-          WHERE project_id = $1 AND company_id = $2 AND status <> 'void'
-            AND retainage_held_cents > retainage_released_cents AND id <> $3`,
-        [req.params.projectId, companyId, invoiceId]
-      );
-      await client.query('COMMIT');
-      await recordAudit({ invoiceId, action: 'created', actorKind: 'admin', actorUserId: req.user.id, actorIp: req.ip, details: { retainage_release: proj.id, amount_cents: outstanding } });
-      await logAudit(companyId, req.user.id, req.user.full_name, 'invoice.created', 'invoice', invoiceId, number, { retainage_release: true });
-      res.status(201).json(await loadInvoiceFull(companyId, invoiceId));
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw err;
-    } finally { client.release(); }
+    const released = upd.rows.reduce((s, r) => s + (parseInt(r.newly_released, 10) || 0), 0);
+    if (upd.rowCount === 0) return res.status(400).json({ error: 'No retainage held to release on this project' });
+    await logAudit(companyId, req.user.id, req.user.full_name, 'invoice.retainage_released', 'project', req.params.projectId, null, { released_cents: released, invoices: upd.rowCount });
+    res.json({ released_cents: released, invoices: upd.rowCount });
   } catch (err) {
     req.log.error({ err }, 'retainage release error');
     res.status(500).json({ error: 'Server error' });
