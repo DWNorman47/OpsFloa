@@ -25,6 +25,11 @@ const CATEGORIES = ['labor', 'materials', 'equipment', 'subs', 'overhead', 'cont
 
 // Maps a category VALUE (used in logic/API) to its i18n key for display only.
 // The values themselves are never translated.
+const LINE_TYPES = ['base', 'allowance', 'alternate', 'optional'];
+const LINE_TYPE_LABEL_KEYS = {
+  base: 'estLineTypeBase', allowance: 'estLineTypeAllowance',
+  alternate: 'estLineTypeAlternate', optional: 'estLineTypeOptional',
+};
 const CATEGORY_LABEL_KEYS = {
   labor: 'estCatLabor',
   materials: 'estCatMaterials',
@@ -266,7 +271,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
   });
   const [lines, setLines] = useState(existing?.lines?.length > 0
     ? existing.lines.map(l => ({ ...l }))
-    : [{ category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0, cost_cents: null }]
+    : [{ category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0, cost_cents: null, line_type: 'base' }]
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -284,7 +289,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
   }
   function addLine() {
     setDirty(true);
-    setLines(arr => [...arr, { category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0, cost_cents: null }]);
+    setLines(arr => [...arr, { category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0, cost_cents: null, line_type: 'base' }]);
   }
   function removeLine(i) {
     setDirty(true);
@@ -315,13 +320,22 @@ function EstimateForm({ existing, onSave, onCancel }) {
   // Live totals — pure-function math mirroring server/constants/projectMoneyEnums.js
   // computeEstimateTotals. Lines that don't parse count as zero (same defensive rule).
   const totals = (() => {
+    const inTotal = l => !l.line_type || l.line_type === 'base' || l.line_type === 'allowance';
     const subtotal = lines.reduce((sum, l) => {
+      if (!inTotal(l)) return sum;   // alternate/optional shown separately
+      const cents = Math.round((parseFloat(l.qty) || 0) * (parseInt(l.unit_cost_cents, 10) || 0));
+      return sum + Math.max(0, cents);
+    }, 0);
+    // Alternates/optional priced total (not in the base bid).
+    const alternatesTotal = lines.reduce((sum, l) => {
+      if (inTotal(l)) return sum;
       const cents = Math.round((parseFloat(l.qty) || 0) * (parseInt(l.unit_cost_cents, 10) || 0));
       return sum + Math.max(0, cents);
     }, 0);
     // Cost baseline = qty × cost (falling back to price where cost is blank) —
-    // matches what the converted project's budget will carry.
+    // matches what the converted project's budget will carry (base+allowance only).
     const costBaseline = lines.reduce((sum, l) => {
+      if (!inTotal(l)) return sum;
       const price = parseInt(l.unit_cost_cents, 10) || 0;
       const cost = l.cost_cents == null || l.cost_cents === '' ? price : (parseInt(l.cost_cents, 10) || 0);
       return sum + Math.max(0, Math.round((parseFloat(l.qty) || 0) * cost));
@@ -341,7 +355,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
     // Est. margin = contract (pre-tax) − cost baseline. Tax is a pass-through,
     // so margin is measured against the pre-tax contract.
     const estMargin   = preTax - costBaseline;
-    return { subtotal, costBaseline, overhead, margin, contingency, tax, total, estMargin, preTax };
+    return { subtotal, costBaseline, overhead, margin, contingency, tax, total, estMargin, preTax, alternatesTotal };
   })();
 
   async function handleSave() {
@@ -365,6 +379,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
             unit: l.unit || null,
             unit_cost_cents: parseInt(l.unit_cost_cents, 10) || 0,
             cost_cents: l.cost_cents == null || l.cost_cents === '' ? null : parseInt(l.cost_cents, 10),
+            line_type: l.line_type || 'base',
           })),
       };
       let response;
@@ -435,6 +450,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
             <thead>
               <tr>
                 <th style={styles.lineTh}>{t.estCategory}</th>
+                <th style={{ ...styles.lineTh, width: 96 }}>{t.estLineType}</th>
                 <th style={styles.lineTh}>{t.estDescription}</th>
                 <th style={{ ...styles.lineTh, width: 80 }}>{t.estQty}</th>
                 <th style={{ ...styles.lineTh, width: 80 }}>{t.estUnit}</th>
@@ -452,6 +468,11 @@ function EstimateForm({ existing, onSave, onCancel }) {
                     <td style={styles.lineTd}>
                       <select value={l.category} onChange={e => updateLine(i, 'category', e.target.value)} style={{ ...styles.input, padding: '6px 8px' }}>
                         {CATEGORIES.map(c => <option key={c} value={c}>{t[CATEGORY_LABEL_KEYS[c]]}</option>)}
+                      </select>
+                    </td>
+                    <td style={styles.lineTd}>
+                      <select value={l.line_type || 'base'} onChange={e => updateLine(i, 'line_type', e.target.value)} style={{ ...styles.input, padding: '6px 8px' }}>
+                        {LINE_TYPES.map(lt => <option key={lt} value={lt}>{t[LINE_TYPE_LABEL_KEYS[lt]]}</option>)}
                       </select>
                     </td>
                     <td style={styles.lineTd}>
@@ -532,6 +553,12 @@ function EstimateForm({ existing, onSave, onCancel }) {
           <TotalsRow label={`${t.estContingency} (${head.contingency_pct || 0}%)`} value={totals.contingency} />
           <TotalsRow label={`${t.estTax} (${head.tax_pct || 0}%)`} value={totals.tax} />
           <TotalsRow label={t.estTotal} value={totals.total} bold />
+          {totals.alternatesTotal > 0 && (
+            <div style={{ fontSize: 12, color: '#6b7280', padding: '6px 0 0', display: 'flex', justifyContent: 'space-between' }}>
+              <span>{t.estAlternatesNote}</span>
+              <span>{formatCents(totals.alternatesTotal)}</span>
+            </div>
+          )}
           <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #d1d5db' }}>
             <TotalsRow label={t.estCostBaseline} value={totals.costBaseline} />
             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontWeight: 700, fontSize: 14, color: totals.estMargin < 0 ? '#dc2626' : '#047857' }}>

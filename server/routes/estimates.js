@@ -37,6 +37,8 @@ const {
   ESTIMATE_STATUSES,
   ESTIMATE_FROZEN_STATUSES,
   MONEY_CATEGORIES,
+  ESTIMATE_LINE_TYPES,
+  ESTIMATE_LINE_TYPES_IN_TOTAL,
   computeEstimateTotals,
   computeLineTotal,
 } = require('../constants/projectMoneyEnums');
@@ -115,6 +117,7 @@ function normaliseLine(line, sortOrder) {
     unit: line.unit ? line.unit.toString().slice(0, 20) : null,
     unit_cost_cents,
     cost_cents,
+    line_type: ESTIMATE_LINE_TYPES.includes(line.line_type) ? line.line_type : 'base',
     total_cents,
     notes: line.notes ? line.notes.toString() : null,
   };
@@ -151,10 +154,10 @@ async function recomputeAndStoreTotals(client, estimateId) {
   );
   if (headRes.rowCount === 0) throw new Error('estimate not found');
   const linesRes = await client.query(
-    'SELECT total_cents FROM estimate_lines WHERE estimate_id = $1',
+    'SELECT total_cents, line_type FROM estimate_lines WHERE estimate_id = $1',
     [estimateId]
   );
-  const lines = linesRes.rows.map(r => ({ total_cents: parseInt(r.total_cents, 10) }));
+  const lines = linesRes.rows.map(r => ({ total_cents: parseInt(r.total_cents, 10), line_type: r.line_type }));
   const head = headRes.rows[0];
   const totals = computeEstimateTotals({
     lines,
@@ -284,9 +287,9 @@ router.post('/', requireAuth, requireCommercialAccess, async (req, res) => {
     for (const ln of lines) {
       await client.query(
         `INSERT INTO estimate_lines
-          (estimate_id, category, sort_order, description, qty, unit, unit_cost_cents, cost_cents, total_cents, notes)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [estimateId, ln.category, ln.sort_order, ln.description, ln.qty, ln.unit, ln.unit_cost_cents, ln.cost_cents, ln.total_cents, ln.notes]
+          (estimate_id, category, sort_order, description, qty, unit, unit_cost_cents, cost_cents, line_type, total_cents, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [estimateId, ln.category, ln.sort_order, ln.description, ln.qty, ln.unit, ln.unit_cost_cents, ln.cost_cents, ln.line_type, ln.total_cents, ln.notes]
       );
     }
     await recomputeAndStoreTotals(client, estimateId);
@@ -322,7 +325,7 @@ router.post('/:id/duplicate', requireAuth, requireCommercialAccess, async (req, 
     if (srcRes.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Estimate not found' }); }
     const s = srcRes.rows[0];
     const linesRes = await client.query(
-      `SELECT category, sort_order, description, qty, unit, unit_cost_cents, cost_cents, total_cents, notes
+      `SELECT category, sort_order, description, qty, unit, unit_cost_cents, cost_cents, line_type, total_cents, notes
          FROM estimate_lines WHERE estimate_id = $1 ORDER BY sort_order, id`,
       [req.params.id]
     );
@@ -351,9 +354,9 @@ router.post('/:id/duplicate', requireAuth, requireCommercialAccess, async (req, 
     for (const ln of linesRes.rows) {
       await client.query(
         `INSERT INTO estimate_lines
-          (estimate_id, category, sort_order, description, qty, unit, unit_cost_cents, cost_cents, total_cents, notes)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [newId, ln.category, ln.sort_order, ln.description, ln.qty, ln.unit, ln.unit_cost_cents, ln.cost_cents, ln.total_cents, ln.notes]
+          (estimate_id, category, sort_order, description, qty, unit, unit_cost_cents, cost_cents, line_type, total_cents, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [newId, ln.category, ln.sort_order, ln.description, ln.qty, ln.unit, ln.unit_cost_cents, ln.cost_cents, ln.line_type, ln.total_cents, ln.notes]
       );
     }
     await recomputeAndStoreTotals(client, newId);
@@ -523,9 +526,9 @@ router.put('/:id/lines', requireAuth, requireCommercialAccess, async (req, res) 
     for (const ln of lines) {
       await client.query(
         `INSERT INTO estimate_lines
-          (estimate_id, category, sort_order, description, qty, unit, unit_cost_cents, cost_cents, total_cents, notes)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [req.params.id, ln.category, ln.sort_order, ln.description, ln.qty, ln.unit, ln.unit_cost_cents, ln.cost_cents, ln.total_cents, ln.notes]
+          (estimate_id, category, sort_order, description, qty, unit, unit_cost_cents, cost_cents, line_type, total_cents, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [req.params.id, ln.category, ln.sort_order, ln.description, ln.qty, ln.unit, ln.unit_cost_cents, ln.cost_cents, ln.line_type, ln.total_cents, ln.notes]
       );
     }
     const totals = await recomputeAndStoreTotals(client, req.params.id);
@@ -775,6 +778,7 @@ router.post('/:id/convert', requireAuth, requireCommercialAccess, async (req, re
       `SELECT category, SUM(ROUND(qty * COALESCE(cost_cents, unit_cost_cents)))::bigint AS sum_cents
          FROM estimate_lines
         WHERE estimate_id = $1
+          AND line_type IN ('base', 'allowance')
         GROUP BY category`,
       [req.params.id]
     );

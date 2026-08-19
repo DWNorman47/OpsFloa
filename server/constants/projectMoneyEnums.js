@@ -96,6 +96,12 @@ const PROJECT_EXPENSE_STATUS_DEFAULT = 'actual';
 const MATERIALS_COST_BASES = Object.freeze(['issued', 'received']);
 const MATERIALS_COST_BASIS_DEFAULT = 'issued';
 
+// estimate_lines.line_type. base + allowance count toward the bid total (and the
+// converted budget); alternate + optional are priced but shown separately.
+const ESTIMATE_LINE_TYPES = Object.freeze(['base', 'allowance', 'alternate', 'optional']);
+// The types included in the bid total / budget seed.
+const ESTIMATE_LINE_TYPES_IN_TOTAL = Object.freeze(['base', 'allowance']);
+
 // Header money math. Order matters — overhead is on subtotal, margin
 // is on subtotal+overhead, contingency is on the post-margin amount,
 // tax is the last layer. All rounded at each step to keep the math
@@ -108,6 +114,9 @@ function computeEstimateTotals({
   tax_pct = 0,
 }) {
   const subtotal = lines.reduce((sum, l) => {
+    // alternate / optional lines are priced but shown separately — they don't
+    // count toward the base bid total. Missing type → 'base' (legacy lines).
+    if (l.line_type && !ESTIMATE_LINE_TYPES_IN_TOTAL.includes(l.line_type)) return sum;
     // Defensive: any line that isn't fully numeric counts as zero so a
     // malformed POST can't poison the total.
     const lineTotal = Number.isFinite(l.total_cents) ? Math.round(l.total_cents) : 0;
@@ -166,6 +175,8 @@ module.exports = {
   PROJECT_EXPENSE_STATUS_DEFAULT,
   MATERIALS_COST_BASES,
   MATERIALS_COST_BASIS_DEFAULT,
+  ESTIMATE_LINE_TYPES,
+  ESTIMATE_LINE_TYPES_IN_TOTAL,
   computeEstimateTotals,
   computeLineTotal,
   computeInvoiceTotals,

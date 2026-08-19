@@ -110,6 +110,21 @@ describe('computeEstimateTotals', () => {
     });
   });
 
+  test('alternate/optional lines are excluded from the subtotal; base+allowance count', () => {
+    const t = computeEstimateTotals({
+      lines: [
+        { total_cents: 100000, line_type: 'base' },
+        { total_cents: 20000, line_type: 'allowance' },
+        { total_cents: 50000, line_type: 'alternate' },   // excluded
+        { total_cents: 30000, line_type: 'optional' },     // excluded
+        { total_cents: 5000 },                             // no type → base
+      ],
+      overhead_pct: 0, margin_pct: 0, contingency_pct: 0, tax_pct: 0,
+    });
+    expect(t.subtotal).toBe(125000);  // 100000 + 20000 + 5000
+    expect(t.total).toBe(125000);
+  });
+
   test('zero percentages collapse cleanly to subtotal', () => {
     const t = computeEstimateTotals({
       lines: [{ total_cents: 5000 }, { total_cents: 3000 }],
