@@ -831,7 +831,7 @@ function EstimateDetail({ id, onBack, onEdit }) {
       // step. Auto-copy lets them paste straight into an email.
       const url = `${window.location.origin}/e/${data.response_token}`;
       try { await navigator.clipboard?.writeText(url); } catch {}
-      toast(t.estToastSent, 'success');
+      toast(data.email?.sent ? `${t.estToastEmailed} ${data.email.to}` : t.estToastSent, 'success');
     } catch (err) {
       setActionError(err.response?.data?.error || t.estErrSend);
     } finally {

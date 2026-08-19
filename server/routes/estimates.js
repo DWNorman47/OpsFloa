@@ -8,6 +8,31 @@ const { logAudit } = require('../auditLog');
 const { uploadBase64, deleteByUrl, getBytesByUrl } = require('../r2');
 const { clientBelongsToCompany } = require('../utils/tenantRefs');
 const { loadSettings } = require('../utils/paidHours');
+const { sendEmail } = require('../email');
+const { escapeHtml } = require('../utils/htmlEscape');
+
+// App base for the client-facing acceptance link (/e/<token>). Trailing slash trimmed.
+const APP_URL = (process.env.APP_URL || 'https://opsfloa.com').replace(/\/+$/, '');
+
+// Best-effort client email of the acceptance link. Called AFTER the estimate is
+// committed 'sent', so a delivery failure never blocks the send (the admin still
+// has the copyable link). Returns sendEmail()'s result.
+async function emailEstimateToClient({ estimate, token, companyName, replyTo }) {
+  const co  = escapeHtml(companyName || 'OpsFloa');
+  const num = escapeHtml(estimate.estimate_number || '');
+  const who = escapeHtml(estimate.client_name_snapshot || 'there');
+  const proj = escapeHtml(estimate.project_name || '');
+  const url = `${APP_URL}/e/${token}`;
+  const subject = `Estimate ${estimate.estimate_number} from ${companyName || 'OpsFloa'}`;
+  const html = `
+    <div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px">
+      <h2 style="color:#1a56db;margin:0 0 8px">Estimate ${num}</h2>
+      <p style="color:#444;margin:0 0 16px">Hi ${who}, ${co} sent you an estimate${proj ? ` for ${proj}` : ''}. Review it and accept online below.</p>
+      <a href="${url}" style="display:inline-block;background:#1a56db;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;margin-top:8px">View &amp; accept estimate</a>
+      <p style="color:#9ca3af;font-size:12px;margin-top:24px;word-break:break-all">${url}</p>
+    </div>`;
+  return sendEmail(estimate.client_email, subject, html, undefined, { fromName: companyName, replyTo });
+}
 const {
   ESTIMATE_STATUSES,
   ESTIMATE_FROZEN_STATUSES,
@@ -560,8 +585,32 @@ router.post('/:id/send', requireAuth, requireCommercialAccess, async (req, res) 
     await logAudit(companyId, req.user.id, req.user.full_name,
       'estimate.sent', 'estimate', req.params.id, headRes.rows[0].estimate_number, null);
     const full = await loadEstimateFull(companyId, req.params.id);
+    // Best-effort: email the client the /e/<token> acceptance link. Already
+    // committed 'sent', so a delivery failure/skip just falls back to the
+    // copyable link — never a 500.
+    let email = { sent: false, reason: 'no_recipient' };
+    if (full.client_email) {
+      try {
+        const meta = await pool.query(
+          `SELECT co.name AS company_name, (SELECT email FROM users WHERE id = $2) AS sender_email
+             FROM companies co WHERE co.id = $1`,
+          [companyId, req.user.id]
+        );
+        const r = await emailEstimateToClient({
+          estimate: full, token: rawToken,
+          companyName: meta.rows[0]?.company_name,
+          replyTo: meta.rows[0]?.sender_email || null,
+        });
+        email = r?.ok
+          ? { sent: true, to: full.client_email }
+          : { sent: false, to: full.client_email, reason: r?.error ? 'error' : (r?.skipped || r?.suppressed || 'unknown') };
+      } catch (err) {
+        req.log.error({ err }, 'estimate send email error');
+        email = { sent: false, to: full.client_email, reason: 'error' };
+      }
+    }
     // Return the raw token only on this response — it disappears after.
-    res.json({ ...full, response_token: rawToken });
+    res.json({ ...full, response_token: rawToken, email });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     req.log.error({ err }, 'estimate send error');
