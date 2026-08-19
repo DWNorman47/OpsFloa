@@ -2513,7 +2513,7 @@ router.get('/purchase-orders/:id', requireAuth, requirePerm('manage_inventory'),
 // PATCH /api/inventory/purchase-orders/:id
 router.patch('/purchase-orders/:id', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
-  const { supplier_id, order_date, expected_date, to_location_id, notes, reference_no, status } = req.body;
+  const { supplier_id, order_date, expected_date, to_location_id, notes, reference_no, status, project_id } = req.body;
   if (notes !== undefined && notes && notes.trim().length > 1000) return res.status(400).json({ error: 'notes too long (max 1000 characters)' });
   if (reference_no !== undefined && reference_no && reference_no.trim().length > 100) return res.status(400).json({ error: 'reference_no too long (max 100 characters)' });
   try {
@@ -2545,6 +2545,14 @@ router.patch('/purchase-orders/:id', requireAuth, requirePerm('manage_inventory'
     if (order_date   !== undefined) { sets.push(`order_date=$${idx++}`);     vals.push(order_date); }
     if (expected_date!== undefined) { sets.push(`expected_date=$${idx++}`);  vals.push(expected_date || null); }
     if (to_location_id!==undefined) { sets.push(`to_location_id=$${idx++}`); vals.push(to_location_id || null); }
+    if (project_id   !== undefined) {
+      const pid = project_id ? parseInt(project_id, 10) : null;
+      if (pid != null) {
+        const proj = await pool.query('SELECT id FROM projects WHERE id=$1 AND company_id=$2', [pid, companyId]);
+        if (!proj.rowCount) return res.status(400).json({ error: 'Project not found' });
+      }
+      sets.push(`project_id=$${idx++}`); vals.push(pid);
+    }
     if (notes        !== undefined) { sets.push(`notes=$${idx++}`);          vals.push(notes?.trim() || null); }
     if (reference_no !== undefined) { sets.push(`reference_no=$${idx++}`);   vals.push(reference_no?.trim() || null); }
     if (status       !== undefined) {

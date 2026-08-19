@@ -396,7 +396,10 @@ router.post('/projects/:id/closeout/transition', requireAdmin, async (req, res) 
         }
       }
     }
-    if (to === 'final_complete') {
+    if (to === 'final_complete' || to === 'closed') {
+      // `closed` freezes the P&L too, so it needs the same completeness gate as
+      // final_complete — else a straight open→closed freezes a number taken
+      // before the final invoice / retainage items are satisfied.
       // Same compute-on-read fix: a pure SQL count over stored `status` treats
       // every auto item as 'pending' (they're never written past that), so
       // final_complete was unreachable for EVERY company. Compute each required
@@ -410,7 +413,7 @@ router.post('/projects/:id/closeout/transition', requireAdmin, async (req, res) 
         const status = await effectiveItemStatus(companyId, req.params.id, item);
         if (!CLOSEOUT_ITEM_DONE_STATUSES.includes(status)) {
           return res.status(409).json({
-            error: 'Cannot transition to final_complete: required items still pending',
+            error: `Cannot transition to ${to}: required items still pending`,
           });
         }
       }
@@ -421,10 +424,13 @@ router.post('/projects/:id/closeout/transition', requireAdmin, async (req, res) 
       ? new Date().toISOString().slice(0, 10) : co.final_completion_date;
     const closedAt = to === 'closed' ? 'NOW()' : 'closed_at';
 
-    // Freeze the final cost/profit when the job reaches final_complete or closed,
-    // so later edits to a past time entry / expense can't silently rewrite it.
+    // Freeze the final cost/profit on the FIRST time the job reaches
+    // final_complete or closed — first-freeze-wins, so a reopen→edit→reclose
+    // can't silently rewrite the locked number. Reopening clears the freeze so
+    // it can be re-taken fresh.
+    const clearSnapshot = to === 'reopened';
     let snapshot = null;
-    if (to === 'final_complete' || to === 'closed') {
+    if ((to === 'final_complete' || to === 'closed') && !co.final_financials) {
       try {
         const settings = await loadSettings(companyId);
         snapshot = await computeProjectPnl(req.params.id, companyId, settings);
@@ -439,10 +445,10 @@ router.post('/projects/:id/closeout/transition', requireAdmin, async (req, res) 
          final_completion_date = $3,
          warranty_start_date = COALESCE(warranty_start_date, $2),
          closed_at = ${closedAt},
-         final_financials       = COALESCE($5::jsonb, final_financials),
-         financials_snapshot_at = CASE WHEN $5 IS NOT NULL THEN NOW() ELSE financials_snapshot_at END
+         final_financials       = CASE WHEN $6 THEN NULL WHEN $5 IS NOT NULL THEN $5::jsonb ELSE final_financials END,
+         financials_snapshot_at = CASE WHEN $6 THEN NULL WHEN $5 IS NOT NULL THEN NOW() ELSE financials_snapshot_at END
        WHERE id = $4 RETURNING *`,
-      [to, subDate, finalDate, co.id, snapshot ? JSON.stringify(snapshot) : null]
+      [to, subDate, finalDate, co.id, snapshot ? JSON.stringify(snapshot) : null, clearSnapshot]
     );
     await logAudit(companyId, req.user.id, req.user.full_name,
       `closeout.${to}`, 'project_closeout', co.id, project.name,

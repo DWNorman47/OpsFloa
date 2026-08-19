@@ -461,10 +461,17 @@ function EstimateForm({ existing, onSave, onCancel }) {
                       <input value={l.unit || ''} onChange={e => updateLine(i, 'unit', e.target.value)} style={{ ...styles.input, padding: '6px 8px' }} />
                     </td>
                     <td style={styles.lineTd}>
-                      <MoneyInput
-                        valueCents={l.cost_cents == null || l.cost_cents === '' ? 0 : l.cost_cents}
-                        onChange={cents => updateLine(i, 'cost_cents', cents)}
-                        style={{ padding: '6px 8px 6px 22px', fontSize: 14 }}
+                      {/* Cost is optional — blank means "use price as the cost
+                          baseline" (no line margin claimed). Shown empty, not $0. */}
+                      <input
+                        type="number" step="0.01" min="0"
+                        value={l.cost_cents == null || l.cost_cents === '' ? '' : (parseInt(l.cost_cents, 10) / 100)}
+                        onChange={e => {
+                          const v = e.target.value;
+                          updateLine(i, 'cost_cents', v === '' || !Number.isFinite(parseFloat(v)) ? null : Math.round(parseFloat(v) * 100));
+                        }}
+                        placeholder="—"
+                        style={{ ...styles.input, padding: '6px 8px', fontSize: 14, textAlign: 'right' }}
                       />
                     </td>
                     <td style={styles.lineTd}>

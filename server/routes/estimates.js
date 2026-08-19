@@ -7,6 +7,7 @@ const { requireCommercialAccess } = require('../middleware/commercialAccess');
 const { logAudit } = require('../auditLog');
 const { uploadBase64, deleteByUrl, getBytesByUrl } = require('../r2');
 const { clientBelongsToCompany } = require('../utils/tenantRefs');
+const { loadSettings } = require('../utils/paidHours');
 const {
   ESTIMATE_STATUSES,
   ESTIMATE_FROZEN_STATUSES,
@@ -660,7 +661,18 @@ router.post('/:id/convert', requireAuth, requireCommercialAccess, async (req, re
         GROUP BY category`,
       [req.params.id]
     );
-    const budgetCostCents = catSumsRes.rows.reduce((s, r) => s + (parseInt(r.sum_cents, 10) || 0), 0);
+    // Load the labor budget with the same employer burden that actual labor
+    // cost carries (settings.labor_burden_pct) — otherwise a perfectly-bid job
+    // reads over-budget on labor by exactly the burden %. Budget stays editable,
+    // so this is only the seed.
+    const convertSettings = await loadSettings(companyId);
+    const burdenPct = parseFloat(convertSettings.labor_burden_pct) || 0;
+    const budgetRows = catSumsRes.rows.map(r => {
+      let cents = parseInt(r.sum_cents, 10) || 0;
+      if (r.category === 'labor' && burdenPct > 0) cents = Math.round(cents * (1 + burdenPct / 100));
+      return { category: r.category, cents };
+    });
+    const budgetCostCents = budgetRows.reduce((s, r) => s + r.cents, 0);
     const projRes = await client.query(
       `INSERT INTO projects (company_id, name, address, budget_dollars, active, client_id, created_at)
        VALUES ($1, $2, $3, $4, true, $5, NOW()) RETURNING id`,
@@ -673,14 +685,13 @@ router.post('/:id/convert', requireAuth, requireCommercialAccess, async (req, re
     const projectId = projRes.rows[0].id;
     // Seed per-category budgets. Skip zero-cent rows so unused categories
     // don't litter the budget bar.
-    for (const row of catSumsRes.rows) {
-      const cents = parseInt(row.sum_cents, 10);
-      if (!cents) continue;
+    for (const row of budgetRows) {
+      if (!row.cents) continue;
       await client.query(
         `INSERT INTO project_budget_categories (project_id, category, budget_cents)
          VALUES ($1, $2, $3)
          ON CONFLICT (project_id, category) DO UPDATE SET budget_cents = EXCLUDED.budget_cents`,
-        [projectId, row.category, cents]
+        [projectId, row.category, row.cents]
       );
     }
     await client.query(
