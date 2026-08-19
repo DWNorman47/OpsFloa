@@ -248,6 +248,20 @@ describe('POST /api/estimates/:id/convert', () => {
   });
 });
 
+describe('POST /api/estimates/:id/accept (admin)', () => {
+  test('409 when status is not draft or sent', async () => {
+    pool.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'accepted', estimate_number: 'EST-1' }] });
+    const res = await request(makeApp()).post('/api/estimates/42/accept').send({});
+    expect(res.status).toBe(409);
+  });
+
+  test('404 when the estimate is not in the company', async () => {
+    pool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const res = await request(makeApp()).post('/api/estimates/42/accept').send({});
+    expect(res.status).toBe(404);
+  });
+});
+
 // ───────────────────────────────────────────────────────────────────────────
 // Public accept/decline — token-keyed, no auth
 // ───────────────────────────────────────────────────────────────────────────

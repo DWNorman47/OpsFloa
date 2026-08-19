@@ -873,6 +873,36 @@ function EstimateDetail({ id, onBack, onEdit }) {
     }
   }
 
+  // Admin records a deal closed off-app (phone / handshake), then is offered to
+  // convert straight to a project — so a won job never gets stuck in "sent".
+  async function markAccepted() {
+    if (!await confirm({
+      title: t.estMarkAcceptedTitle,
+      body: t.estMarkAcceptedBody,
+      confirmLabel: t.estMarkAccepted,
+    })) return;
+    setBusy(true);
+    setActionError(null);
+    let ok = false;
+    try {
+      await api.post(`/estimates/${id}/accept`, {});
+      toast(t.estToastAccepted, 'success');
+      await load();
+      ok = true;
+    } catch (err) {
+      setActionError(err.response?.data?.error || t.estErrAccept);
+    } finally {
+      setBusy(false);
+    }
+    if (ok && await confirm({
+      title: t.estConvertConfirmTitle,
+      body: t.estConvertNowBody,
+      confirmLabel: t.estConvert,
+    })) {
+      await convert();
+    }
+  }
+
   async function convert() {
     if (!await confirm({
       title: t.estConvertConfirmTitle,
@@ -948,6 +978,9 @@ function EstimateDetail({ id, onBack, onEdit }) {
           )}
           {isSent && (
             <button onClick={withdraw} disabled={busy} style={styles.ghostBtn}>{t.estWithdraw}</button>
+          )}
+          {(isDraft || isSent) && (
+            <button onClick={markAccepted} disabled={busy} style={styles.primaryBtn}>{t.estMarkAccepted}</button>
           )}
           {isAccepted && !estimate.converted_project_id && (
             <button onClick={convert} disabled={busy} style={styles.primaryBtn}>

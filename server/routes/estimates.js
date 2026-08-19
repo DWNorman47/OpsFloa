@@ -566,6 +566,44 @@ router.post('/:id/withdraw', requireAuth, requireCommercialAccess, async (req, r
   }
 });
 
+// POST /estimates/:id/accept — admin records acceptance for a deal closed off
+// the app (phone / handshake / email), so it can be converted. Mirrors the
+// public accept but attributes it to the admin. Optional body: accepted_by
+// (who agreed) + note. From draft or sent.
+router.post('/:id/accept', requireAuth, requireCommercialAccess, async (req, res) => {
+  const companyId = req.user.company_id;
+  const acceptedBy = (req.body.accepted_by || '').toString().trim().slice(0, 255) || null;
+  const note = (req.body.note || '').toString().trim().slice(0, 1000) || null;
+  try {
+    const headRes = await pool.query(
+      'SELECT status, estimate_number FROM estimates WHERE id = $1 AND company_id = $2',
+      [req.params.id, companyId]
+    );
+    if (headRes.rowCount === 0) return res.status(404).json({ error: 'Estimate not found' });
+    if (!['draft', 'sent'].includes(headRes.rows[0].status)) {
+      return res.status(409).json({ error: `Cannot accept from status '${headRes.rows[0].status}'` });
+    }
+    await pool.query(
+      `UPDATE estimates SET status='accepted', responded_at=NOW(),
+         accepted_signer_name=COALESCE($2, accepted_signer_name)
+        WHERE id=$1`,
+      [req.params.id, acceptedBy]
+    );
+    await recordAudit({
+      estimateId: req.params.id, action: 'accepted', actorKind: 'admin',
+      actorUserId: req.user.id, actorIp: req.ip,
+      details: { source: 'admin', accepted_by: acceptedBy, note },
+    });
+    await logAudit(companyId, req.user.id, req.user.full_name,
+      'estimate.accepted', 'estimate', req.params.id, headRes.rows[0].estimate_number, null);
+    const full = await loadEstimateFull(companyId, req.params.id);
+    res.json(full);
+  } catch (err) {
+    req.log.error({ err }, 'estimate admin accept error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // POST /estimates/:id/convert — accepted → project. Creates a projects
 // row AND seeds project_budget_categories with one row per category
 // summed from the estimate lines. The shared MONEY_CATEGORIES vocabulary
