@@ -46,6 +46,9 @@ export default function ProjectFinancialsTab({ projectId }) {
   const [expenseForm, setExpenseForm] = useState({
     category: 'other', description: '', amount_cents: 0, tax_pct: 0, vendor: '', paid_date: new Date().toISOString().slice(0, 10),
   });
+  const [editBudget, setEditBudget] = useState(false);
+  const [budgetDraft, setBudgetDraft] = useState({});
+  const [savingBudget, setSavingBudget] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -89,6 +92,33 @@ export default function ProjectFinancialsTab({ projectId }) {
       setExpenseForm({ category: 'other', description: '', amount_cents: 0, tax_pct: 0, vendor: '', paid_date: new Date().toISOString().slice(0, 10) });
       await load();
     } catch (err) { setError(err.response?.data?.error || 'Failed to add expense'); }
+  }
+
+  function startEditBudget() {
+    const d = {};
+    CATEGORIES.forEach(cat => {
+      const b = budget?.categories?.find(c => c.category === cat);
+      const cents = b ? parseInt(b.budget_cents, 10) || 0 : 0;
+      d[cat] = cents ? (cents / 100).toFixed(2) : '';
+    });
+    setBudgetDraft(d);
+    setEditBudget(true);
+  }
+
+  async function saveBudget() {
+    setSavingBudget(true);
+    setError(null);
+    try {
+      const categories = CATEGORIES.map(cat => ({
+        category: cat,
+        budget_cents: budgetDraft[cat] === '' || budgetDraft[cat] == null ? 0 : Math.round(Number(budgetDraft[cat]) * 100),
+      }));
+      await api.put(`/projects/${projectId}/budget`, { categories });
+      toast('Budget saved', 'success');
+      setEditBudget(false);
+      await load();
+    } catch (err) { setError(err.response?.data?.error || 'Failed to save budget'); }
+    finally { setSavingBudget(false); }
   }
 
   async function deleteExpense(id) {
@@ -141,12 +171,44 @@ export default function ProjectFinancialsTab({ projectId }) {
               value={pnl.projected_margin_pct == null ? '—' : `${pnl.projected_margin_pct.toFixed(1)}%`}
             />
           </div>
+          {(() => {
+            // Bid margin = (contract − budgeted cost) / contract. Compared with
+            // projected margin, it answers "are we tracking to the margin we bid?"
+            const contractC = parseInt(pnl.contract_value_cents, 10) || 0;
+            const budgetCostC = parseInt(budget?.total_cents, 10) || 0;
+            if (!contractC || !budgetCostC) return null;
+            const bidMarginPct = ((contractC - budgetCostC) / contractC) * 100;
+            const proj = pnl.projected_margin_pct;
+            const delta = proj == null ? null : proj - bidMarginPct;
+            return (
+              <div style={{ marginTop: 12, padding: '10px 12px', background: '#f9fafb', borderRadius: 8, fontSize: 14, display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'baseline' }}>
+                <span><strong>Bid margin</strong> {bidMarginPct.toFixed(1)}%</span>
+                <span style={{ color: '#6b7280' }}>vs</span>
+                <span><strong>Projected</strong> {proj == null ? '—' : `${proj.toFixed(1)}%`}</span>
+                {delta != null && (
+                  <span style={{ marginLeft: 'auto', fontWeight: 700, color: delta < -0.05 ? '#dc2626' : delta > 0.05 ? '#059669' : '#6b7280' }}>
+                    {delta >= 0 ? '+' : ''}{delta.toFixed(1)} pts
+                  </span>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
 
       {/* Categorized budget + spend */}
       <div style={styles.card}>
-        <h3 style={styles.h3}>Budget vs. Spend by category</h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <h3 style={{ ...styles.h3, margin: 0 }}>Budget (cost) vs. Spend by category</h3>
+          {editBudget ? (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => setEditBudget(false)} style={styles.btn}>Cancel</button>
+              <button onClick={saveBudget} disabled={savingBudget} style={styles.btnPrimary}>{savingBudget ? 'Saving…' : 'Save budget'}</button>
+            </div>
+          ) : (
+            <button onClick={startEditBudget} style={styles.btn}>Edit budget</button>
+          )}
+        </div>
         <div style={styles.tableScroll}>
         <table style={styles.table}>
           <thead>
@@ -155,6 +217,7 @@ export default function ProjectFinancialsTab({ projectId }) {
               <th style={{ ...styles.th, textAlign: 'right' }}>Budget</th>
               <th style={{ ...styles.th, textAlign: 'right' }}>Spent</th>
               <th style={{ ...styles.th, textAlign: 'right' }}>Committed</th>
+              <th style={{ ...styles.th, textAlign: 'right' }}>Variance</th>
               <th style={styles.th}>% Used</th>
             </tr>
           </thead>
@@ -166,9 +229,10 @@ export default function ProjectFinancialsTab({ projectId }) {
               const spentCents = parseInt(sRow.spent_cents, 10) || 0;
               const committedCents = parseInt(sRow.committed_cents, 10) || 0;
               const used = spentCents + committedCents;
+              const variance = budgetCents - used;   // + = under budget, − = over
               const pct = budgetCents > 0 ? Math.min(150, Math.round((used / budgetCents) * 100)) : null;
               const pctColor = pct == null ? '#6b7280' : pct >= 100 ? '#dc2626' : pct >= 85 ? '#d97706' : '#059669';
-              if (budgetCents === 0 && spentCents === 0 && committedCents === 0) return null;
+              if (!editBudget && budgetCents === 0 && spentCents === 0 && committedCents === 0) return null;
               return (
                 <tr key={cat} style={{ borderBottom: '1px solid #f3f4f6' }}>
                   <td style={styles.td}>
@@ -176,9 +240,22 @@ export default function ProjectFinancialsTab({ projectId }) {
                       {cat}
                     </span>
                   </td>
-                  <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(budgetCents)}</td>
+                  <td style={{ ...styles.td, textAlign: 'right' }}>
+                    {editBudget ? (
+                      <input
+                        type="number" min="0" step="0.01"
+                        value={budgetDraft[cat] ?? ''}
+                        onChange={e => setBudgetDraft(d => ({ ...d, [cat]: e.target.value }))}
+                        style={{ ...styles.input, maxWidth: 110, textAlign: 'right' }}
+                        placeholder="0.00"
+                      />
+                    ) : formatCents(budgetCents)}
+                  </td>
                   <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(spentCents)}</td>
                   <td style={{ ...styles.td, textAlign: 'right', color: '#6b7280' }}>{formatCents(committedCents)}</td>
+                  <td style={{ ...styles.td, textAlign: 'right', fontWeight: 600, color: budgetCents === 0 ? '#9ca3af' : variance < 0 ? '#dc2626' : '#059669' }}>
+                    {budgetCents === 0 ? '—' : formatCents(variance)}
+                  </td>
                   <td style={styles.td}>
                     {pct != null && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -200,6 +277,10 @@ export default function ProjectFinancialsTab({ projectId }) {
                 <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(budget.total_cents)}</td>
                 <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(spend.totals.spent_cents)}</td>
                 <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: '#6b7280' }}>{formatCents(spend.totals.committed_cents)}</td>
+                {(() => {
+                  const tv = parseInt(budget.total_cents, 10) - (parseInt(spend.totals.spent_cents, 10) + parseInt(spend.totals.committed_cents, 10));
+                  return <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: tv < 0 ? '#dc2626' : '#059669' }}>{formatCents(tv)}</td>;
+                })()}
                 <td style={{ ...styles.td, fontWeight: 700 }}>
                   {spend.totals.pct_used != null && `${spend.totals.pct_used}%`}
                 </td>
@@ -208,6 +289,9 @@ export default function ProjectFinancialsTab({ projectId }) {
           )}
         </table>
         </div>
+        <p style={{ fontSize: 12, color: '#6b7280', margin: '10px 0 0' }}>
+          Budget is your estimated <strong>cost</strong>. Variance = budget − (spent + committed): <span style={{ color: '#059669' }}>green</span> is under, <span style={{ color: '#dc2626' }}>red</span> is over.
+        </p>
       </div>
 
       {/* Manual expenses */}
