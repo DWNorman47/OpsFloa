@@ -11,6 +11,7 @@ import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { useCents } from '../hooks/useMoney';
+import { useDragReorder } from '../hooks/useDragReorder';
 import { useCurrency } from '../contexts/SettingsContext';
 import { formatDate, formatDateTime } from '../utils';
 import { computeBreakdown } from '../utils/estimateMath';
@@ -295,6 +296,16 @@ function EstimateForm({ existing, onSave, onCancel }) {
     setDirty(true);
     setLines(arr => arr.filter((_, idx) => idx !== i));
   }
+  function moveLine(from, to) {
+    setDirty(true);
+    setLines(arr => {
+      const next = arr.slice();
+      const [row] = next.splice(from, 1);
+      next.splice(to, 0, row);
+      return next;
+    });
+  }
+  const { dragProps, isOver } = useDragReorder(moveLine);
   // Save a line back to the material catalog so it pre-fills future estimates.
   // The line's unit cost is already the client-facing price, so it lands as the
   // catalog item's sell price. Creates a catalog-only row (is_stocked=false).
@@ -380,6 +391,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
             unit_cost_cents: parseInt(l.unit_cost_cents, 10) || 0,
             cost_cents: l.cost_cents == null || l.cost_cents === '' ? null : parseInt(l.cost_cents, 10),
             line_type: l.line_type || 'base',
+            notes: l.notes?.trim() || null,
           })),
       };
       let response;
@@ -449,6 +461,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
+                <th style={{ ...styles.lineTh, width: 22 }}></th>
                 <th style={styles.lineTh}>{t.estCategory}</th>
                 <th style={{ ...styles.lineTh, width: 96 }}>{t.estLineType}</th>
                 <th style={styles.lineTh}>{t.estDescription}</th>
@@ -463,8 +476,16 @@ function EstimateForm({ existing, onSave, onCancel }) {
             <tbody>
               {lines.map((l, i) => {
                 const total = Math.round((parseFloat(l.qty) || 0) * (parseInt(l.unit_cost_cents, 10) || 0));
+                const dp = dragProps(i);
                 return (
-                  <tr key={i}>
+                  <tr key={i} onDragOver={dp.onDragOver} onDrop={dp.onDrop} style={isOver(i) ? { outline: '2px solid #93c5fd' } : undefined}>
+                    <td
+                      style={{ ...styles.lineTd, cursor: 'grab', color: '#9ca3af', textAlign: 'center', userSelect: 'none' }}
+                      draggable
+                      onDragStart={dp.onDragStart}
+                      onDragEnd={dp.onDragEnd}
+                      title={t.estReorderHint}
+                    >⠿</td>
                     <td style={styles.lineTd}>
                       <select value={l.category} onChange={e => updateLine(i, 'category', e.target.value)} style={{ ...styles.input, padding: '6px 8px' }}>
                         {CATEGORIES.map(c => <option key={c} value={c}>{t[CATEGORY_LABEL_KEYS[c]]}</option>)}
@@ -477,6 +498,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
                     </td>
                     <td style={styles.lineTd}>
                       <input value={l.description} onChange={e => updateLine(i, 'description', e.target.value)} style={{ ...styles.input, padding: '6px 8px' }} />
+                      <input value={l.notes || ''} onChange={e => updateLine(i, 'notes', e.target.value)} placeholder={t.estLineNotePlaceholder} style={{ ...styles.input, padding: '4px 8px', fontSize: 12, color: '#6b7280', marginTop: 3 }} />
                     </td>
                     <td style={styles.lineTd}>
                       <input type="number" step="0.01" min="0" value={l.qty} onChange={e => updateLine(i, 'qty', e.target.value)} style={{ ...styles.input, padding: '6px 8px' }} />
@@ -1170,7 +1192,10 @@ function EstimateDetail({ id, onBack, onEdit }) {
               <tbody>
                 {linesByCat[category].map(l => (
                   <tr key={l.id}>
-                    <td style={{ padding: '4px 0' }}>{l.description}{l.line_type === 'allowance' ? ` (${t.estLineTypeAllowance.toLowerCase()})` : ''}</td>
+                    <td style={{ padding: '4px 0' }}>
+                      {l.description}{l.line_type === 'allowance' ? ` (${t.estLineTypeAllowance.toLowerCase()})` : ''}
+                      {l.notes ? <div style={{ fontSize: 12, color: '#9ca3af' }}>{l.notes}</div> : null}
+                    </td>
                     <td style={{ padding: '4px 8px', textAlign: 'right', color: '#6b7280', width: 100 }}>
                       {l.qty} {l.unit || ''}
                     </td>
