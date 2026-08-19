@@ -5513,3 +5513,18 @@ just rentals).
 Only hourly-note carries over: the rental forecast uses the machine's rent-IN
 rate × duration. +7 tests (planned→committed rollup, status/equipment_id POST
 validation, PATCH convert + tax recompute); suite 1463 + client lint/i18n/build green.
+
+## 2026-08-18 — Estimate library polish: unified picker + clearer catalog entry
+
+Consolidating the "planning an estimate" phase after a design pass with David.
+- Estimate line picker: merged the Catalog/Equipment tabs into ONE search over
+  both sources (catalog reference costs + owned machines, machines tagged). No
+  copying between them — unified read, single source of truth per rate.
+- Removed the "Plan a rental" UI from ProjectFinancialsTab (execution-phase, off
+  focus). Server planned/actual expense lifecycle kept dormant for a later revive.
+- Catalog item editor: added one-click type presets (Material / Rental / Labor /
+  Subcontract / Other → set category + default unit) and reorganized pricing into
+  a cost × markup = live client-price flow, with "set price" as an override.
+  So storing an expected rental rate is: New item → Rental → cost/day.
+
+Client-only; eslint + i18n parity + build green.

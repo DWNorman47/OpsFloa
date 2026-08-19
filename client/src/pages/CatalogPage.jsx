@@ -25,6 +25,16 @@ const CATEGORY_LABEL_KEYS = {
   subs: 'estCatSubs', overhead: 'estCatOverhead', contingency: 'estCatContingency', other: 'estCatOther',
 };
 
+// Quick item-type presets — set the estimate category + a sensible default unit
+// so entering a rental, a labor rate, etc. is one click before pricing.
+const TYPE_PRESETS = [
+  { id: 'material', labelKey: 'catTypeMaterial', category: 'materials', unit: 'each' },
+  { id: 'rental',   labelKey: 'catTypeRental',   category: 'equipment', unit: 'day' },
+  { id: 'labor',    labelKey: 'catTypeLabor',    category: 'labor',     unit: 'hr' },
+  { id: 'sub',      labelKey: 'catTypeSub',      category: 'subs',      unit: 'ls' },
+  { id: 'other',    labelKey: 'catTypeOther',    category: 'other',     unit: 'each' },
+];
+
 // Route wrapper: the standalone /catalog page. The Inventory module renders
 // <CatalogPanel/> inline instead, so the panel itself carries no PageShell.
 export default function CatalogPage() {
@@ -213,6 +223,7 @@ function CatalogRow({ item, onEdit, onDelete }) {
 
 function ItemEditor({ item, onClose, onSaved, toast }) {
   const t = useT();
+  const formatCents = useCents();
   const isEdit = !!item;
   const [form, setForm] = useState(() => ({
     name: item?.name || '',
@@ -227,6 +238,24 @@ function ItemEditor({ item, onClose, onSaved, toast }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  // One-click type: set the category and a default unit to start from.
+  function applyType(preset) {
+    setForm(f => ({ ...f, category: preset.category, unit: preset.unit }));
+  }
+
+  // Live "what the client sees" price: an explicit set price wins; otherwise
+  // cost × (1 + markup); otherwise the raw cost. Mirrors the server resolver.
+  const costNum = form.unit_cost === '' ? null : Number(form.unit_cost);
+  const markupNum = form.markup === '' ? null : Number(form.markup);
+  const sellNum = form.sell === '' ? null : Number(form.sell);
+  let clientCents = null;
+  if (sellNum != null && Number.isFinite(sellNum)) clientCents = Math.round(sellNum * 100);
+  else if (costNum != null && Number.isFinite(costNum)) {
+    clientCents = markupNum != null && Number.isFinite(markupNum)
+      ? Math.round(costNum * 100 * (1 + markupNum / 100))
+      : Math.round(costNum * 100);
+  }
 
   function buildPayload() {
     const p = {
@@ -263,6 +292,19 @@ function ItemEditor({ item, onClose, onSaved, toast }) {
     <Overlay onClose={onClose}>
       <h3 style={styles.modalTitle}>{isEdit ? t.catFormEditTitle : t.catFormNewTitle}</h3>
       {error && <div style={styles.errorBox}>{error}</div>}
+
+      <label style={styles.fieldLabel}>{t.catType}</label>
+      <div style={styles.typeRow}>
+        {TYPE_PRESETS.map(p => (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => applyType(p)}
+            style={{ ...styles.typeBtn, ...(form.category === p.category ? styles.typeBtnActive : {}) }}
+          >{t[p.labelKey]}</button>
+        ))}
+      </div>
+
       <div style={styles.formGrid}>
         <Labeled label={t.catFieldName} full>
           <input value={form.name} onChange={e => set('name', e.target.value)} style={styles.input} autoFocus />
@@ -273,26 +315,42 @@ function ItemEditor({ item, onClose, onSaved, toast }) {
         <Labeled label={t.catFieldUnit}>
           <input value={form.unit} onChange={e => set('unit', e.target.value)} placeholder="each" style={styles.input} />
         </Labeled>
-        <Labeled label={t.catFieldCost}>
-          <input type="number" step="0.01" min="0" value={form.unit_cost} onChange={e => set('unit_cost', e.target.value)} style={styles.input} />
+      </div>
+
+      {/* Pricing: your cost + markup → what the client sees (or set a price to override). */}
+      <div style={styles.pricingBox}>
+        <div style={styles.pricingRow}>
+          <Labeled label={t.catYourCost}>
+            <input type="number" step="0.01" min="0" value={form.unit_cost} onChange={e => set('unit_cost', e.target.value)} style={styles.input} />
+          </Labeled>
+          <span style={styles.pricingOp}>×</span>
+          <Labeled label={t.catFieldMarkup}>
+            <input type="number" step="0.1" min="0" max="1000" value={form.markup} onChange={e => set('markup', e.target.value)} placeholder="0" style={styles.input} disabled={sellNum != null} />
+          </Labeled>
+          <span style={styles.pricingOp}>=</span>
+          <div style={{ minWidth: 96 }}>
+            <span style={styles.fieldLabel}>{t.catClientPrice}</span>
+            <div style={styles.clientPrice}>
+              {clientCents != null ? `${formatCents(clientCents)}${form.unit ? ` / ${form.unit}` : ''}` : '—'}
+            </div>
+          </div>
+        </div>
+        <Labeled label={t.catSetPrice} hint={t.catSetPriceHint}>
+          <input type="number" step="0.01" min="0" value={form.sell} onChange={e => set('sell', e.target.value)} style={{ ...styles.input, maxWidth: 160 }} />
         </Labeled>
-        <Labeled label={t.catFieldSell}>
-          <input type="number" step="0.01" min="0" value={form.sell} onChange={e => set('sell', e.target.value)} style={styles.input} />
-        </Labeled>
-        <Labeled label={t.catFieldMarkup}>
-          <input type="number" step="0.1" min="0" max="1000" value={form.markup} onChange={e => set('markup', e.target.value)} style={styles.input} />
-        </Labeled>
+      </div>
+
+      <div style={styles.formGrid}>
         <Labeled label={t.catFieldCategory}>
           <select value={form.category} onChange={e => set('category', e.target.value)} style={styles.input}>
             <option value="">{t.catNone}</option>
             {CATEGORIES.map(c => <option key={c} value={c}>{t[CATEGORY_LABEL_KEYS[c]]}</option>)}
           </select>
         </Labeled>
-        <Labeled label={t.catFieldTags} full hint={t.catTagsHint}>
+        <Labeled label={t.catFieldTags} hint={t.catTagsHint}>
           <input value={form.tags} onChange={e => set('tags', e.target.value)} style={styles.input} />
         </Labeled>
       </div>
-      <p style={styles.priceHint}>{t.catPriceHint}</p>
       <div style={styles.modalActions}>
         <button onClick={onClose} style={styles.ghostBtn}>{t.catCancel}</button>
         <button onClick={save} disabled={saving} style={styles.primaryBtn}>{saving ? t.catSaving : t.catSave}</button>
@@ -516,8 +574,15 @@ const styles = {
   overlay: { position: 'fixed', inset: 0, background: 'rgba(17,24,39,0.45)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '48px 16px', zIndex: 100, overflowY: 'auto' },
   modal: { background: '#fff', borderRadius: 12, padding: 24, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' },
   modalTitle: { fontSize: 18, fontWeight: 700, margin: '0 0 16px', color: '#111827' },
-  formGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 },
+  formGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 },
   fieldLabel: { display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 },
+  typeRow: { display: 'flex', flexWrap: 'wrap', gap: 6, margin: '0 0 14px' },
+  typeBtn: { padding: '5px 12px', fontSize: 13, fontWeight: 600, color: '#374151', background: '#fff', border: '1px solid #d1d5db', borderRadius: 999, cursor: 'pointer' },
+  typeBtnActive: { background: '#1d4ed8', borderColor: '#1d4ed8', color: '#fff' },
+  pricingBox: { background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: 12, marginBottom: 12 },
+  pricingRow: { display: 'flex', alignItems: 'flex-end', gap: 8, flexWrap: 'wrap', marginBottom: 8 },
+  pricingOp: { fontSize: 16, color: '#9ca3af', fontWeight: 700, padding: '0 2px 8px' },
+  clientPrice: { fontSize: 16, fontWeight: 800, color: '#047857', padding: '6px 0' },
   fieldHint: { fontWeight: 400, color: '#9ca3af' },
   input: { width: '100%', boxSizing: 'border-box', padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, fontFamily: 'inherit', background: '#fff' },
   priceHint: { fontSize: 12, color: '#6b7280', margin: '12px 0 0' },
