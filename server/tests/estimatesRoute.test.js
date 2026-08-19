@@ -248,6 +248,17 @@ describe('POST /api/estimates/:id/convert', () => {
   });
 });
 
+describe('POST /api/estimates/:id/duplicate', () => {
+  test('404 when the source estimate is not in the company', async () => {
+    pool.query
+      .mockResolvedValueOnce(undefined)                  // BEGIN
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })  // source SELECT
+      .mockResolvedValueOnce(undefined);                 // ROLLBACK
+    const res = await request(makeApp()).post('/api/estimates/9/duplicate');
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('POST /api/estimates/:id/accept (admin)', () => {
   test('409 when status is not draft or sent', async () => {
     pool.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'accepted', estimate_number: 'EST-1' }] });

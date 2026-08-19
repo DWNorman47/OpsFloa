@@ -912,6 +912,22 @@ function EstimateDetail({ id, onBack, onEdit }) {
     }
   }
 
+  // Clone this estimate into a fresh draft (the "duplicate to revise" path +
+  // repeat-job reuse). Returns to the list, where the new "… (copy)" draft shows.
+  async function duplicate() {
+    setBusy(true);
+    setActionError(null);
+    try {
+      const { data } = await api.post(`/estimates/${id}/duplicate`);
+      toast(`${t.estToastDuplicated} ${data.estimate_number}`, 'success');
+      onBack();
+    } catch (err) {
+      setActionError(err.response?.data?.error || t.estErrDuplicate);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // Admin records a deal closed off-app (phone / handshake), then is offered to
   // convert straight to a project — so a won job never gets stuck in "sent".
   async function markAccepted() {
@@ -1004,6 +1020,7 @@ function EstimateDetail({ id, onBack, onEdit }) {
           <button onClick={downloadPDF} disabled={pdfGenerating} style={styles.ghostBtn}>
             {pdfGenerating ? t.estGenerating : t.estDownloadPdf}
           </button>
+          <button onClick={duplicate} disabled={busy} style={styles.ghostBtn}>{t.estDuplicate}</button>
           {isDraft && (
             <>
               <button onClick={onEdit} style={styles.ghostBtn}>{t.estEdit}</button>

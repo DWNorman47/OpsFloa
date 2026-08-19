@@ -284,6 +284,73 @@ router.post('/', requireAuth, requireCommercialAccess, async (req, res) => {
   }
 });
 
+// POST /estimates/:id/duplicate — clone header + lines into a new DRAFT. This
+// is the "duplicate to revise" path a frozen estimate points at, and the
+// primitive for reusing a repeat-job estimate. Time-sensitive dates (valid_until,
+// bid_due_at) are cleared; the copy starts fresh.
+router.post('/:id/duplicate', requireAuth, requireCommercialAccess, async (req, res) => {
+  const companyId = req.user.company_id;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const srcRes = await client.query('SELECT * FROM estimates WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
+    if (srcRes.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Estimate not found' }); }
+    const s = srcRes.rows[0];
+    const linesRes = await client.query(
+      `SELECT category, sort_order, description, qty, unit, unit_cost_cents, cost_cents, total_cents, notes
+         FROM estimate_lines WHERE estimate_id = $1 ORDER BY sort_order, id`,
+      [req.params.id]
+    );
+    const headRes = await client.query(
+      `INSERT INTO estimates
+        (company_id, estimate_number, client_id, client_name_snapshot, client_email,
+         project_address, project_name, scope_summary,
+         overhead_pct, margin_pct, contingency_pct, tax_pct,
+         valid_until, notes, exclusions, terms, bid_due_at, created_by)
+       VALUES
+        ($1,
+         (SELECT 'EST-' || EXTRACT(YEAR FROM CURRENT_DATE)::int || '-' ||
+                 LPAD((COALESCE(MAX(
+                   CASE WHEN estimate_number ~ ('^EST-' || EXTRACT(YEAR FROM CURRENT_DATE)::int || '-[0-9]+$')
+                        THEN SUBSTRING(estimate_number FROM '[0-9]+$')::int ELSE 0 END
+                 ), 0) + 1)::text, 4, '0')
+          FROM estimates WHERE company_id = $1),
+         $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL, $12, $13, $14, NULL, $15)
+       RETURNING *`,
+      [companyId, s.client_id, s.client_name_snapshot, s.client_email,
+       s.project_address, `${s.project_name} (copy)`, s.scope_summary,
+       s.overhead_pct, s.margin_pct, s.contingency_pct, s.tax_pct,
+       s.notes, s.exclusions, s.terms, req.user.id]
+    );
+    const newId = headRes.rows[0].id;
+    for (const ln of linesRes.rows) {
+      await client.query(
+        `INSERT INTO estimate_lines
+          (estimate_id, category, sort_order, description, qty, unit, unit_cost_cents, cost_cents, total_cents, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [newId, ln.category, ln.sort_order, ln.description, ln.qty, ln.unit, ln.unit_cost_cents, ln.cost_cents, ln.total_cents, ln.notes]
+      );
+    }
+    await recomputeAndStoreTotals(client, newId);
+    await client.query('COMMIT');
+    await recordAudit({
+      estimateId: newId, action: 'created', actorKind: 'admin',
+      actorUserId: req.user.id, actorIp: req.ip,
+      details: { duplicated_from: parseInt(req.params.id, 10), line_count: linesRes.rowCount },
+    });
+    await logAudit(companyId, req.user.id, req.user.full_name,
+      'estimate.duplicated', 'estimate', newId, headRes.rows[0].estimate_number, { from: req.params.id });
+    const full = await loadEstimateFull(companyId, newId);
+    res.status(201).json(full);
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    req.log.error({ err }, 'estimate duplicate error');
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
 // GET /estimates/:id
 router.get('/:id', requireAuth, requireCommercialAccess, async (req, res) => {
   try {
