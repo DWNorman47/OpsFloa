@@ -41,6 +41,13 @@ function normaliseLine(line, sortOrder) {
   if (!Number.isFinite(qty) || qty < 0) return null;
   if (!Number.isFinite(unit_cost_cents) || unit_cost_cents < 0) return null;
   const total_cents = computeLineTotal({ qty, unit_cost_cents });
+  // Optional per-unit COST basis (price is unit_cost_cents). Null → budget
+  // falls back to price for this line.
+  let cost_cents = null;
+  if (line.cost_cents != null && line.cost_cents !== '') {
+    const c = typeof line.cost_cents === 'number' ? line.cost_cents : parseInt(line.cost_cents, 10);
+    if (Number.isFinite(c) && c >= 0) cost_cents = c;
+  }
   return {
     category: line.category,
     sort_order: Number.isFinite(sortOrder) ? sortOrder : 0,
@@ -48,6 +55,7 @@ function normaliseLine(line, sortOrder) {
     qty,
     unit: line.unit ? line.unit.toString().slice(0, 20) : null,
     unit_cost_cents,
+    cost_cents,
     total_cents,
     notes: line.notes ? line.notes.toString() : null,
   };
@@ -207,9 +215,9 @@ router.post('/projects/:projectId/change-orders', requireAuth, requireCommercial
     for (const ln of lines) {
       await client.query(
         `INSERT INTO change_order_lines
-           (change_order_id, category, sort_order, description, qty, unit, unit_cost_cents, total_cents, notes)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [coId, ln.category, ln.sort_order, ln.description, ln.qty, ln.unit, ln.unit_cost_cents, ln.total_cents, ln.notes]
+           (change_order_id, category, sort_order, description, qty, unit, unit_cost_cents, cost_cents, total_cents, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [coId, ln.category, ln.sort_order, ln.description, ln.qty, ln.unit, ln.unit_cost_cents, ln.cost_cents, ln.total_cents, ln.notes]
       );
     }
     await recomputeTotals(client, coId);
@@ -309,9 +317,9 @@ router.put('/change-orders/:id/lines', requireAuth, requireCommercialAccess, asy
     for (const ln of lines) {
       await client.query(
         `INSERT INTO change_order_lines
-           (change_order_id, category, sort_order, description, qty, unit, unit_cost_cents, total_cents, notes)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [req.params.id, ln.category, ln.sort_order, ln.description, ln.qty, ln.unit, ln.unit_cost_cents, ln.total_cents, ln.notes]
+           (change_order_id, category, sort_order, description, qty, unit, unit_cost_cents, cost_cents, total_cents, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [req.params.id, ln.category, ln.sort_order, ln.description, ln.qty, ln.unit, ln.unit_cost_cents, ln.cost_cents, ln.total_cents, ln.notes]
       );
     }
     await recomputeTotals(client, req.params.id);
@@ -414,22 +422,30 @@ async function applyAcceptedCoToBudget(client, coId, projectId) {
     // Already applied — no-op so duplicate accept can't double-bump.
     return 0;
   }
-  const totalCents = parseInt(guardRes.rows[0].total_cents, 10) || 0;
-
-  // Aggregate line totals by category.
+  // Aggregate line COST by category (cost_cents where set, else price) — the CO
+  // bumps the budget by cost, matching the estimate-seeded cost budget.
   const sumsRes = await client.query(
-    `SELECT category, SUM(total_cents)::bigint AS sum_cents
+    `SELECT category, SUM(ROUND(qty * COALESCE(cost_cents, unit_cost_cents)))::bigint AS sum_cents
        FROM change_order_lines
       WHERE change_order_id = $1
       GROUP BY category`,
     [coId]
   );
-  // For each category with a positive delta, upsert into
-  // project_budget_categories — INCREMENT existing budget rather than
-  // overwrite.
+  // Load the labor budget with the same employer burden actual labor carries,
+  // so a labor CO doesn't read under-budget by the burden %.
+  const bRes = await client.query(
+    `SELECT COALESCE((SELECT s.value FROM settings s
+                        JOIN projects p ON p.company_id = s.company_id
+                       WHERE p.id = $1 AND s.key = 'labor_burden_pct' LIMIT 1), '0') AS burden`,
+    [projectId]
+  );
+  const burdenPct = parseFloat(bRes.rows[0].burden) || 0;
+  let costTotalCents = 0;
   for (const row of sumsRes.rows) {
-    const cents = parseInt(row.sum_cents, 10);
+    let cents = parseInt(row.sum_cents, 10);
     if (!cents) continue;
+    if (row.category === 'labor' && burdenPct > 0) cents = Math.round(cents * (1 + burdenPct / 100));
+    costTotalCents += cents;
     await client.query(
       `INSERT INTO project_budget_categories (project_id, category, budget_cents)
        VALUES ($1, $2, $3)
@@ -438,11 +454,10 @@ async function applyAcceptedCoToBudget(client, coId, projectId) {
       [projectId, row.category, cents]
     );
   }
-  // Reset the alert watermark + bump legacy budget_dollars by total in
-  // dollars. Use a parameterised round on the JS side to avoid the
-  // integer-truncation that `(total_cents / 100)` does in SQL — odd
-  // cent totals would otherwise drop a dollar.
-  const totalDollars = Math.round(totalCents / 100);
+  // Reset the alert watermark + bump legacy budget_dollars by the COST total
+  // (matches the category rollup). Round on the JS side to avoid SQL integer
+  // truncation dropping a dollar on odd cent totals.
+  const totalDollars = Math.round(costTotalCents / 100);
   await client.query(
     `UPDATE projects SET budget_alert_pct = NULL,
             budget_dollars = COALESCE(budget_dollars, 0) + $1
