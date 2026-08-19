@@ -266,7 +266,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
   });
   const [lines, setLines] = useState(existing?.lines?.length > 0
     ? existing.lines.map(l => ({ ...l }))
-    : [{ category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0 }]
+    : [{ category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0, cost_cents: null }]
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -284,7 +284,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
   }
   function addLine() {
     setDirty(true);
-    setLines(arr => [...arr, { category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0 }]);
+    setLines(arr => [...arr, { category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0, cost_cents: null }]);
   }
   function removeLine(i) {
     setDirty(true);
@@ -316,6 +316,13 @@ function EstimateForm({ existing, onSave, onCancel }) {
       const cents = Math.round((parseFloat(l.qty) || 0) * (parseInt(l.unit_cost_cents, 10) || 0));
       return sum + Math.max(0, cents);
     }, 0);
+    // Cost baseline = qty × cost (falling back to price where cost is blank) —
+    // matches what the converted project's budget will carry.
+    const costBaseline = lines.reduce((sum, l) => {
+      const price = parseInt(l.unit_cost_cents, 10) || 0;
+      const cost = l.cost_cents == null || l.cost_cents === '' ? price : (parseInt(l.cost_cents, 10) || 0);
+      return sum + Math.max(0, Math.round((parseFloat(l.qty) || 0) * cost));
+    }, 0);
     const ohPct = parseFloat(head.overhead_pct) || 0;
     const mgPct = parseFloat(head.margin_pct) || 0;
     const ctPct = parseFloat(head.contingency_pct) || 0;
@@ -327,7 +334,11 @@ function EstimateForm({ existing, onSave, onCancel }) {
     const contingency = Math.round(preCont * (ctPct / 100));
     const preTax      = preCont + contingency;
     const tax         = Math.round(preTax * (txPct / 100));
-    return { subtotal, overhead, margin, contingency, tax, total: preTax + tax };
+    const total       = preTax + tax;
+    // Est. margin = contract (pre-tax) − cost baseline. Tax is a pass-through,
+    // so margin is measured against the pre-tax contract.
+    const estMargin   = preTax - costBaseline;
+    return { subtotal, costBaseline, overhead, margin, contingency, tax, total, estMargin, preTax };
   })();
 
   async function handleSave() {
@@ -350,6 +361,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
             qty: parseFloat(l.qty) || 0,
             unit: l.unit || null,
             unit_cost_cents: parseInt(l.unit_cost_cents, 10) || 0,
+            cost_cents: l.cost_cents == null || l.cost_cents === '' ? null : parseInt(l.cost_cents, 10),
           })),
       };
       let response;
@@ -423,7 +435,8 @@ function EstimateForm({ existing, onSave, onCancel }) {
                 <th style={styles.lineTh}>{t.estDescription}</th>
                 <th style={{ ...styles.lineTh, width: 80 }}>{t.estQty}</th>
                 <th style={{ ...styles.lineTh, width: 80 }}>{t.estUnit}</th>
-                <th style={{ ...styles.lineTh, width: 120, textAlign: 'right' }}>{t.estUnitCost}</th>
+                <th style={{ ...styles.lineTh, width: 110, textAlign: 'right' }}>{t.estLineCost}</th>
+                <th style={{ ...styles.lineTh, width: 120, textAlign: 'right' }}>{t.estLinePrice}</th>
                 <th style={{ ...styles.lineTh, width: 100, textAlign: 'right' }}>{t.estTotal}</th>
                 <th style={{ ...styles.lineTh, width: 64 }}></th>
               </tr>
@@ -446,6 +459,13 @@ function EstimateForm({ existing, onSave, onCancel }) {
                     </td>
                     <td style={styles.lineTd}>
                       <input value={l.unit || ''} onChange={e => updateLine(i, 'unit', e.target.value)} style={{ ...styles.input, padding: '6px 8px' }} />
+                    </td>
+                    <td style={styles.lineTd}>
+                      <MoneyInput
+                        valueCents={l.cost_cents == null || l.cost_cents === '' ? 0 : l.cost_cents}
+                        onChange={cents => updateLine(i, 'cost_cents', cents)}
+                        style={{ padding: '6px 8px 6px 22px', fontSize: 14 }}
+                      />
                     </td>
                     <td style={styles.lineTd}>
                       <MoneyInput
@@ -502,6 +522,13 @@ function EstimateForm({ existing, onSave, onCancel }) {
           <TotalsRow label={`${t.estContingency} (${head.contingency_pct || 0}%)`} value={totals.contingency} />
           <TotalsRow label={`${t.estTax} (${head.tax_pct || 0}%)`} value={totals.tax} />
           <TotalsRow label={t.estTotal} value={totals.total} bold />
+          <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #d1d5db' }}>
+            <TotalsRow label={t.estCostBaseline} value={totals.costBaseline} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontWeight: 700, fontSize: 14, color: totals.estMargin < 0 ? '#dc2626' : '#047857' }}>
+              <span>{t.estMarginProfit}{totals.preTax > 0 ? ` (${((totals.estMargin / totals.preTax) * 100).toFixed(1)}%)` : ''}</span>
+              <span>{formatCents(totals.estMargin)}</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -610,6 +637,7 @@ function LinePicker({ onAdd }) {
           qty: 1,
           unit: data.unit || '',
           unit_cost_cents: data.unit_cost_cents,
+          cost_cents: data.cost_cents ?? null,
         }]);
       } else {
         const { data } = await api.get(`/equipment/${row.id}/estimate-lines`);
@@ -619,6 +647,7 @@ function LinePicker({ onAdd }) {
           qty: l.qty ?? 1,
           unit: l.unit || '',
           unit_cost_cents: l.unit_cost_cents,
+          cost_cents: null,
         }));
         if (!lines.length) return;
         onAdd(lines);

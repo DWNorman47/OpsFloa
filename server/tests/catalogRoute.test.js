@@ -66,7 +66,8 @@ describe('GET /api/catalog/items/:id/estimate-line', () => {
     }] });
     const res = await request(makeApp()).get('/api/catalog/items/9/estimate-line');
     expect(res.status).toBe(200);
-    expect(res.body.unit_cost_cents).toBe(500);
+    expect(res.body.unit_cost_cents).toBe(500);       // price (sell)
+    expect(res.body.cost_cents).toBe(350);            // cost basis (supplier cost $3.50)
     expect(res.body.category).toBe('materials');
     expect(res.body.source_item_id).toBe(9);
   });

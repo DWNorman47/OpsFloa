@@ -189,7 +189,10 @@ router.get('/catalog/items/:id/estimate-line', requireAuth, requireCommercialAcc
     res.json({
       description:         item.name,
       unit:                item.unit || null,
-      unit_cost_cents:     unitCost,
+      unit_cost_cents:     unitCost,  // the PRICE the client sees
+      // cost basis (what it costs you) = supplier cost, for the estimate's
+      // cost/price/margin. Null when the item has no supplier cost on file.
+      cost_cents:          item.unit_cost != null ? Math.round(parseFloat(item.unit_cost) * 100) : null,
       category:            MONEY_CATEGORIES.includes(item.default_estimate_category)
                             ? item.default_estimate_category
                             : 'materials',

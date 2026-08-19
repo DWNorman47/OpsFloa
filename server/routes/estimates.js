@@ -72,6 +72,14 @@ function normaliseLine(line, sortOrder) {
   if (!isNonNegFiniteNumber(qty)) return null;
   if (!isNonNegFiniteNumber(unit_cost_cents)) return null;
   const total_cents = computeLineTotal({ qty, unit_cost_cents });
+  // cost_cents is the per-unit COST basis (what it costs you); unit_cost_cents is
+  // the PRICE (what the client pays). Optional — null means cost unknown, and the
+  // budget falls back to price for that line. Never above the price.
+  let cost_cents = null;
+  if (line.cost_cents != null && line.cost_cents !== '') {
+    const c = typeof line.cost_cents === 'number' ? line.cost_cents : parseInt(line.cost_cents, 10);
+    if (isNonNegFiniteNumber(c)) cost_cents = c;
+  }
   return {
     category: line.category,
     sort_order: Number.isFinite(sortOrder) ? sortOrder : 0,
@@ -79,6 +87,7 @@ function normaliseLine(line, sortOrder) {
     qty,
     unit: line.unit ? line.unit.toString().slice(0, 20) : null,
     unit_cost_cents,
+    cost_cents,
     total_cents,
     notes: line.notes ? line.notes.toString() : null,
   };
@@ -248,9 +257,9 @@ router.post('/', requireAuth, requireCommercialAccess, async (req, res) => {
     for (const ln of lines) {
       await client.query(
         `INSERT INTO estimate_lines
-          (estimate_id, category, sort_order, description, qty, unit, unit_cost_cents, total_cents, notes)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [estimateId, ln.category, ln.sort_order, ln.description, ln.qty, ln.unit, ln.unit_cost_cents, ln.total_cents, ln.notes]
+          (estimate_id, category, sort_order, description, qty, unit, unit_cost_cents, cost_cents, total_cents, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [estimateId, ln.category, ln.sort_order, ln.description, ln.qty, ln.unit, ln.unit_cost_cents, ln.cost_cents, ln.total_cents, ln.notes]
       );
     }
     await recomputeAndStoreTotals(client, estimateId);
@@ -420,9 +429,9 @@ router.put('/:id/lines', requireAuth, requireCommercialAccess, async (req, res) 
     for (const ln of lines) {
       await client.query(
         `INSERT INTO estimate_lines
-          (estimate_id, category, sort_order, description, qty, unit, unit_cost_cents, total_cents, notes)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [req.params.id, ln.category, ln.sort_order, ln.description, ln.qty, ln.unit, ln.unit_cost_cents, ln.total_cents, ln.notes]
+          (estimate_id, category, sort_order, description, qty, unit, unit_cost_cents, cost_cents, total_cents, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [req.params.id, ln.category, ln.sort_order, ln.description, ln.qty, ln.unit, ln.unit_cost_cents, ln.cost_cents, ln.total_cents, ln.notes]
       );
     }
     const totals = await recomputeAndStoreTotals(client, req.params.id);
@@ -640,21 +649,25 @@ router.post('/:id/convert', requireAuth, requireCommercialAccess, async (req, re
         return res.status(409).json({ error: 'Estimate has expired since acceptance — duplicate to revise' });
       }
     }
-    // Sum line totals by category — this is the seed for budget categories.
+    // Seed budget categories from COST (what the job costs you), not price.
+    // cost_cents where set, else the line price — so the budget is a real cost
+    // baseline and estimate-vs-actual variance is cost-vs-cost. The contract
+    // (sell) value stays on the estimate's total_cents, read by the P&L.
     const catSumsRes = await client.query(
-      `SELECT category, SUM(total_cents)::bigint AS sum_cents
+      `SELECT category, SUM(ROUND(qty * COALESCE(cost_cents, unit_cost_cents)))::bigint AS sum_cents
          FROM estimate_lines
         WHERE estimate_id = $1
         GROUP BY category`,
       [req.params.id]
     );
+    const budgetCostCents = catSumsRes.rows.reduce((s, r) => s + (parseInt(r.sum_cents, 10) || 0), 0);
     const projRes = await client.query(
       `INSERT INTO projects (company_id, name, address, budget_dollars, active, client_id, created_at)
        VALUES ($1, $2, $3, $4, true, $5, NOW()) RETURNING id`,
       [companyId, est.project_name, est.project_address,
-       // Keep budget_dollars populated for legacy reads during the
-       // transition. Total in dollars (round at the cent edge).
-       Math.round(parseInt(est.total_cents, 10) / 100),
+       // budget_dollars is the COST budget (matches the category rollup); the
+       // marked-up contract value lives on the estimate. Round at the cent edge.
+       Math.round(budgetCostCents / 100),
        est.client_id]
     );
     const projectId = projRes.rows[0].id;

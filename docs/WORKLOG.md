@@ -5528,3 +5528,26 @@ Consolidating the "planning an estimate" phase after a design pass with David.
   So storing an expected rental rate is: New item → Rental → cost/day.
 
 Client-only; eslint + i18n parity + build green.
+
+## 2026-08-18 — Money-flow overhaul (audit fixes #1–#7)
+
+Acted on the three-phase weak-spot audit. Seven fixes, each its own commit:
+1. Labor burden % on job cost only (opt-in includeBurden; pay/billing untouched).
+2. Admin "mark accepted" + convert prompt (won jobs no longer stuck in sent).
+3. Budget editor wired to the existing PUT /budget (was read-only).
+4. Materials cost: issued inventory (spent) + open POs (committed); 0181 adds
+   purchase_orders.project_id; PO form gets a Project selector.
+5. Close-out snapshot: final_complete/closed freezes the P&L (0182 JSON on
+   project_closeouts, shared computeProjectPnl); /pnl returns it as `locked`,
+   Financials tab shows a 🔒 Final banner.
+6. Variance column + Bid-margin-vs-Projected readout on the Financials tab.
+7. Cost + price per line (David's pick): 0183 adds estimate_lines.cost_cents
+   (nullable — existing estimates unchanged). Catalog fills both cost & price;
+   estimate shows Cost / Price / Est. margin; convert seeds the budget (and
+   budget_dollars) from COST (COALESCE(cost, price)), so budget is a real cost
+   baseline and variance is cost-vs-cost. Contract value stays the marked-up
+   estimate total (read by the P&L), so cost/price/margin all reconcile.
+
+Shared server/utils/projectCost.js keeps the spend snapshot and P&L/WIP in
+lockstep (labor burden, equipment usage, materials, planned/actual expenses).
+Full server suite 1467 + client eslint/i18n/build green throughout.
