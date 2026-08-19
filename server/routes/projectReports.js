@@ -54,8 +54,10 @@ async function invoiceTotals(projectId, companyId) {
   }
 }
 
-// Latest accepted estimate's total for a project (the contract value
-// baseline). Change orders bump this once that module lands.
+// Contract value for a project: the accepted estimate total PLUS every accepted
+// change order's total. A CO is added scope AND price, so it raises the contract
+// (revenue) the same way applyAcceptedCoToBudget raises the cost budget —
+// otherwise projected/bid margin would drop by the CO amount with no offset.
 async function contractValueCents(projectId) {
   try {
     const r = await pool.query(
@@ -66,7 +68,18 @@ async function contractValueCents(projectId) {
         LIMIT 1`,
       [projectId]
     );
-    if (r.rowCount > 0) return parseInt(r.rows[0].total_cents, 10);
+    if (r.rowCount > 0) {
+      let contract = parseInt(r.rows[0].total_cents, 10);
+      try {
+        const co = await pool.query(
+          `SELECT COALESCE(SUM(total_cents), 0)::bigint AS sum
+             FROM change_orders WHERE project_id = $1 AND status = 'accepted'`,
+          [projectId]
+        );
+        contract += parseInt(co.rows[0].sum, 10) || 0;
+      } catch { /* change_orders table may not exist */ }
+      return contract;
+    }
   } catch { /* table may not exist */ }
   // Fallback: budget total (sum of category budgets). Still meaningful
   // if no estimate flow was used to create the project.

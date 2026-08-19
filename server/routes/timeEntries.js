@@ -10,6 +10,7 @@ const { coerceBody } = require('../middleware/coerce');
 const { logFailure } = require('../failureLog');
 const { SETTINGS_DEFAULTS, applySettingsRows } = require('../settingsDefaults');
 const { entryInstants } = require('../utils/timeFormat');
+const { projectFrozen } = require('../utils/projectCost');
 const { generatePeriods, groupPeriods, isValidIsoDate, dateRangeDays } = require('../utils/payPeriods');
 const rateLimit = require('express-rate-limit');
 const { userOrIpKey } = require('../middleware/rateLimitKey');
@@ -115,6 +116,7 @@ router.post('/', requireAuth, entryWriteLimiter,
       logFailure(req, 'time_entries.create', 'project_not_found', { project_id });
       return res.status(400).json({ error: 'Project not found' });
     }
+    if (await projectFrozen(project_id)) return res.status(409).json({ error: 'This job is closed — reopen its close-out to log time to it.', code: 'project_frozen' });
     const wage_type = projectResult.rows[0].wage_type;
 
     const bm = break_minutes ?? 0;
@@ -181,6 +183,7 @@ router.patch('/:id', requireAuth, async (req, res) => {
     );
     if (existing.rowCount === 0) return res.status(404).json({ error: 'Entry not found' });
     const entry = existing.rows[0];
+    if (await projectFrozen(entry.project_id)) return res.status(409).json({ error: 'This job is closed — reopen its close-out to change its labor.', code: 'project_frozen' });
     const entryDate = new Date(entry.work_date);
     const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 7);
     if (entryDate < cutoff) return res.status(403).json({ error: 'Entries older than 7 days cannot be edited' });
@@ -309,9 +312,10 @@ router.get('/messages/unread-count', requireAuth, async (req, res) => {
 // Delete an entry (own entries only)
 router.delete('/:id', requireAuth, async (req, res) => {
   try {
-    const existing = await pool.query('SELECT work_date, locked FROM time_entries WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+    const existing = await pool.query('SELECT work_date, locked, project_id FROM time_entries WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
     if (existing.rowCount === 0) return res.status(404).json({ error: 'Entry not found' });
     if (existing.rows[0].locked) return res.status(403).json({ error: 'Approved entries cannot be deleted' });
+    if (await projectFrozen(existing.rows[0].project_id)) return res.status(409).json({ error: 'This job is closed — reopen its close-out to change its labor.', code: 'project_frozen' });
     const locked = await pool.query(
       'SELECT id FROM pay_periods WHERE company_id = $1 AND period_start <= $2 AND period_end >= $2',
       [req.user.company_id, existing.rows[0].work_date]
