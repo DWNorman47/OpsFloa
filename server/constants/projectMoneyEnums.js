@@ -88,6 +88,14 @@ const INVOICE_AUDIT_ACTIONS = Object.freeze([
 const PROJECT_EXPENSE_STATUSES = Object.freeze(['planned', 'actual']);
 const PROJECT_EXPENSE_STATUS_DEFAULT = 'actual';
 
+// How a company recognizes MATERIALS cost on a project (settings.materials_cost_basis):
+//   'issued'   — cost = inventory issued to the job (warehouse → job flow). Default.
+//   'received' — cost = value received on the job's POs (buy-to-jobsite flow).
+// Open POs count as committed in both; only the SPENT source switches, so a
+// company never double-counts. See server/utils/projectCost.js.
+const MATERIALS_COST_BASES = Object.freeze(['issued', 'received']);
+const MATERIALS_COST_BASIS_DEFAULT = 'issued';
+
 // Header money math. Order matters — overhead is on subtotal, margin
 // is on subtotal+overhead, contingency is on the post-margin amount,
 // tax is the last layer. All rounded at each step to keep the math
@@ -156,6 +164,8 @@ module.exports = {
   INVOICE_AUDIT_ACTIONS,
   PROJECT_EXPENSE_STATUSES,
   PROJECT_EXPENSE_STATUS_DEFAULT,
+  MATERIALS_COST_BASES,
+  MATERIALS_COST_BASIS_DEFAULT,
   computeEstimateTotals,
   computeLineTotal,
   computeInvoiceTotals,

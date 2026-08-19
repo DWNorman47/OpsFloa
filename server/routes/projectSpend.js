@@ -109,7 +109,7 @@ router.get('/projects/:id/spend', requireAuth, requireProjectFinancialAccess, as
       laborSpent(req.params.id, settings),
       manualExpensesByStatus(req.params.id),
       subsSpentAndCommitted(req.params.id),
-      materialsCents(req.params.id),
+      materialsCents(req.params.id, settings.materials_cost_basis),
       equipmentUsageCents(req.params.id),
       pool.query(
         'SELECT category, budget_cents, budget_alert_pct FROM project_budget_categories WHERE project_id = $1',

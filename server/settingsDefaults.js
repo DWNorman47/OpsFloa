@@ -1,5 +1,5 @@
 const FEATURE_KEYS = ['feature_scheduling', 'feature_analytics', 'feature_public', 'feature_chat', 'feature_prevailing_wage', 'feature_reimbursements', 'feature_pto', 'module_field', 'module_timeclock', 'module_work', 'module_inventory', 'module_tools', 'module_analytics', 'module_team', 'module_financial_reports', 'feature_project_integration', 'feature_overtime', 'feature_geolocation', 'feature_inactive_alerts', 'feature_overtime_alerts', 'feature_broadcast', 'feature_media_gallery', 'feature_admin_edit_time', 'feature_worker_edit_time', 'show_worker_wages', 'notification_use_work_hours', 'media_delete_on_project_archive', 'notify_timeoff_requests', 'notify_budget_alerts', 'notify_entry_submitted', 'report_weekly_payroll', 'report_weekly_low_stock', 'report_monthly_valuation', 'report_daily_ot_column', 'qbo_auto_push', 'qbo_auto_push_expenses', 'qbo_auto_create_customers', 'notify_qbo_disconnect', 'cp_track_classifications', 'cp_track_fringes', 'cp_collect_ssn', 'cp_require_signature', 'cp_compute_deductions', 'cp_wh347_format', 'hide_work_orders_tab', 'hide_projects_tab', 'daily_checklist_clockin_autostart', 'daily_checklist_clockin_prompt', 'location_ping_while_stationary', 'worker_dm_admins', 'worker_dm_workers', 'field_shared_project', 'field_show_overhead_projects'];
-const STRING_KEYS = ['overtime_rule', 'overtime_rate_method', 'overtime_wage_priority', 'map_provider', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'cycle_count_reconcile_threshold_type', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules', 'deductions', 'paycheck_rules', 'estimate_default_markups'];
+const STRING_KEYS = ['overtime_rule', 'overtime_rate_method', 'overtime_wage_priority', 'map_provider', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'cycle_count_reconcile_threshold_type', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules', 'deductions', 'paycheck_rules', 'estimate_default_markups', 'materials_cost_basis'];
 
 // Defaults available to all authenticated users
 const SETTINGS_DEFAULTS = {
@@ -119,6 +119,9 @@ const SETTINGS_DEFAULTS = {
   // Empty = no company defaults (raw supplier cost flows through, as before).
   // See server/routes/catalog.js companyDefaultMarkup.
   estimate_default_markups: '',
+  // How materials cost is recognized on a project: 'issued' (inventory issued to
+  // the job) or 'received' (value received on the job's POs). See projectCost.js.
+  materials_cost_basis: 'issued',
 };
 
 // Admin-only defaults (superset of SETTINGS_DEFAULTS)

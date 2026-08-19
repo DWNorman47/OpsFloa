@@ -93,25 +93,19 @@ async function manualExpensesByStatus(projectId) {
 }
 
 // Materials cost for a project, split spent vs committed. Returns integer cents.
-//   spent     — inventory ISSUED to the project (type='issue', project_id, unit_cost)
-//   committed — unreceived value of OPEN purchase orders linked to the project
-// Each source is guarded so a partial/absent schema contributes 0.
-async function materialsCents(projectId) {
+//   committed — unreceived value of OPEN project POs (both bases)
+//   spent     — depends on the company's materials_cost_basis:
+//               'issued'   (default): inventory ISSUED to the project
+//               'received'         : value RECEIVED on the project's POs
+// One basis at a time, so a company never double-counts. Each source is guarded
+// so a partial/absent schema contributes 0.
+async function materialsCents(projectId, basis = 'issued') {
   let spent = 0;
   let committed = 0;
-  if (await tableExists('inventory_transactions')) {
-    try {
-      const r = await pool.query(
-        `SELECT COALESCE(SUM(quantity * unit_cost), 0)::numeric AS dollars
-           FROM inventory_transactions
-          WHERE project_id = $1 AND type = 'issue' AND unit_cost IS NOT NULL`,
-        [projectId]
-      );
-      const c = Math.round(parseFloat(r.rows[0].dollars) * 100);
-      spent = Number.isFinite(c) ? c : 0;
-    } catch { /* shape differs */ }
-  }
-  if (await tableExists('purchase_orders')) {
+  const dollarsToCents = d => { const c = Math.round(parseFloat(d) * 100); return Number.isFinite(c) ? c : 0; };
+
+  const hasPOs = await tableExists('purchase_orders');
+  if (hasPOs) {
     try {
       const r = await pool.query(
         `SELECT COALESCE(SUM((pol.qty_ordered - pol.qty_received) * pol.unit_cost), 0)::numeric AS dollars
@@ -122,9 +116,37 @@ async function materialsCents(projectId) {
             AND pol.unit_cost IS NOT NULL`,
         [projectId]
       );
-      const c = Math.round(parseFloat(r.rows[0].dollars) * 100);
-      committed = Number.isFinite(c) && c > 0 ? c : 0;
+      committed = Math.max(0, dollarsToCents(r.rows[0].dollars));
     } catch { /* project_id column absent (pre-0181) */ }
+  }
+
+  if (basis === 'received') {
+    // Cost = material received against the job's POs (buy-to-jobsite flow).
+    if (hasPOs) {
+      try {
+        const r = await pool.query(
+          `SELECT COALESCE(SUM(pol.qty_received * pol.unit_cost), 0)::numeric AS dollars
+             FROM purchase_order_lines pol
+             JOIN purchase_orders po ON po.id = pol.po_id
+            WHERE po.project_id = $1 AND pol.unit_cost IS NOT NULL`,
+          [projectId]
+        );
+        spent = dollarsToCents(r.rows[0].dollars);
+      } catch { /* project_id column absent (pre-0181) */ }
+    }
+  } else {
+    // Default 'issued': cost = inventory issued to the project (warehouse flow).
+    if (await tableExists('inventory_transactions')) {
+      try {
+        const r = await pool.query(
+          `SELECT COALESCE(SUM(quantity * unit_cost), 0)::numeric AS dollars
+             FROM inventory_transactions
+            WHERE project_id = $1 AND type = 'issue' AND unit_cost IS NOT NULL`,
+          [projectId]
+        );
+        spent = dollarsToCents(r.rows[0].dollars);
+      } catch { /* shape differs */ }
+    }
   }
   return { spent, committed };
 }

@@ -208,6 +208,32 @@ describe('GET /api/projects/:id/spend', () => {
     expect(mat.committed_cents).toBe(80000);     // 800 open PO
   });
 
+  test("materials_cost_basis='received' counts received PO value as spent, not issues", async () => {
+    pool.query.mockImplementation((sql) => {
+      if (/FROM projects WHERE id/i.test(sql) && /AND company_id/i.test(sql)) {
+        return Promise.resolve({ rowCount: 1, rows: [{ id: 42, name: 'P' }] });
+      }
+      // settings: received basis
+      if (/FROM settings/i.test(sql)) return Promise.resolve({ rows: [{ key: 'materials_cost_basis', value: 'received' }] });
+      if (/FROM time_entries/i.test(sql)) return Promise.resolve({ rows: [] });
+      if (/information_schema/i.test(sql)) return Promise.resolve({ rowCount: 1, rows: [{ '?column?': 1 }] });
+      // received query uses qty_received; committed uses (qty_ordered - qty_received)
+      if (/FROM purchase_order_lines/i.test(sql) && /qty_received \* pol\.unit_cost/i.test(sql)) return Promise.resolve({ rows: [{ dollars: '900.00' }] });
+      if (/FROM purchase_order_lines/i.test(sql)) return Promise.resolve({ rows: [{ dollars: '300.00' }] });  // committed (unreceived)
+      if (/FROM inventory_transactions/i.test(sql)) return Promise.resolve({ rows: [{ dollars: '9999.00' }] });  // must be ignored in received mode
+      if (/FROM project_expenses/i.test(sql) && /GROUP BY category/i.test(sql)) return Promise.resolve({ rows: [] });
+      if (/FROM subcontract/i.test(sql)) return Promise.resolve({ rows: [{ cents: '0' }] });
+      if (/FROM equipment_hours/i.test(sql)) return Promise.resolve({ rows: [] });
+      if (/FROM project_budget_categories/i.test(sql)) return Promise.resolve({ rows: [] });
+      return Promise.resolve({ rows: [], rowCount: 0 });
+    });
+    const res = await request(makeApp()).get('/api/projects/42/spend');
+    expect(res.status).toBe(200);
+    const mat = res.body.categories.find(c => c.category === 'materials');
+    expect(mat.spent_cents).toBe(90000);       // received, NOT the 9999 issued
+    expect(mat.committed_cents).toBe(30000);    // unreceived open PO
+  });
+
   test('returns null pct_used when no budget is set', async () => {
     pool.query.mockImplementation((sql) => {
       if (/FROM projects WHERE id/i.test(sql) && /AND company_id/i.test(sql)) {

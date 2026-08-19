@@ -34,7 +34,7 @@ const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = req
 const { DEDUCTION_KINDS } = require('../constants/deductionEnums');
 const { OVERTIME_RATE_METHODS, OVERTIME_WAGE_PRIORITIES, DEFAULT_OVERTIME_WAGE_PRIORITY } = require('../constants/payEnums');
 const { MAP_PROVIDERS } = require('../constants/mapEnums');
-const { MONEY_CATEGORIES } = require('../constants/projectMoneyEnums');
+const { MONEY_CATEGORIES, MATERIALS_COST_BASES } = require('../constants/projectMoneyEnums');
 const { weekRange, weekBucketKey } = require('../utils/weekBounds');
 const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const qbo = require('../services/qbo');
@@ -203,7 +203,7 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
   // couldn't update them. Added during 2026-04-30 audit pass.
   const adminNumericKeys = ['shift_reminder_hour', 'pto_annual_days', 'cycle_count_audit_pct', 'cycle_count_reconcile_threshold'];
   const numericKeys = [...rateKeys, ...notifKeys, ...adminNumericKeys, 'overtime_threshold', 'media_retention_days', 'qbo_bill_terms_days', 'week_start', 'work_week_end', 'regular_shift_hours', 'sick_pay_pct', 'vacation_pay_pct'];
-  const stringKeys = ['overtime_rule', 'overtime_rate_method', 'overtime_wage_priority', 'map_provider', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules', 'deductions', 'paycheck_rules', 'estimate_default_markups'];
+  const stringKeys = ['overtime_rule', 'overtime_rate_method', 'overtime_wage_priority', 'map_provider', 'currency', 'company_timezone', 'invoice_signature', 'default_temp_password', 'global_required_checklist_template_id', 'qbo_expense_account_id', 'qbo_bank_account_id', 'qbo_labor_item_id', 'setup_questionnaire_completed_at', 'label_client', 'label_worker', 'label_field', 'hours_rules', 'deductions', 'paycheck_rules', 'estimate_default_markups', 'materials_cost_basis'];
   const allowed = [...numericKeys, ...stringKeys, ...FEATURE_KEYS];
   const companyId = req.user.company_id;
   try {
@@ -244,6 +244,8 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
             return res.status(400).json({ error: `overtime_wage_priority must be one of: ${OVERTIME_WAGE_PRIORITIES.join(', ')}` });
           if (key === 'map_provider' && !MAP_PROVIDERS.includes(val))
             return res.status(400).json({ error: `map_provider must be one of: ${MAP_PROVIDERS.join(', ')}` });
+          if (key === 'materials_cost_basis' && !MATERIALS_COST_BASES.includes(val))
+            return res.status(400).json({ error: `materials_cost_basis must be one of: ${MATERIALS_COST_BASES.join(', ')}` });
           if (key === 'currency' && !/^[A-Z]{3}$/.test(val))
             return res.status(400).json({ error: 'currency must be a valid 3-letter ISO code' });
           if (key === 'company_timezone' && val !== '' && !/^[A-Za-z_]+\/[A-Za-z_\/]+$/.test(val))

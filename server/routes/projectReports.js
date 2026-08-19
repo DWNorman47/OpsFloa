@@ -118,8 +118,8 @@ async function spendTotals(projectId, settings) {
   // Equipment usage (logged hours × hourly operating rate) — same source as the
   // per-category spend snapshot, so P&L/WIP and the spend tab agree.
   equipUsage = await equipmentUsageCents(projectId);
-  // Materials: issued-to-project cost (spent) + open-PO value (committed).
-  const mat = await materialsCents(projectId);
+  // Materials: spent (issued or received per company basis) + open-PO committed.
+  const mat = await materialsCents(projectId, settings.materials_cost_basis);
   materials = mat.spent;
   materialsCommitted = mat.committed;
   // Sub spent + committed

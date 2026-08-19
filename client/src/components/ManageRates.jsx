@@ -76,6 +76,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
     prevailing_wage_rate: String(settings?.prevailing_wage_rate ?? 0),
     default_hourly_rate: String(settings?.default_hourly_rate ?? 30),
     labor_burden_pct: String(settings?.labor_burden_pct ?? 0),
+    materials_cost_basis: settings?.materials_cost_basis ?? 'issued',
     overtime_multiplier: String(settings?.overtime_multiplier ?? 1.5),
     overtime_rule: settings?.overtime_rule ?? 'daily',
     overtime_threshold: String(settings?.overtime_threshold ?? 8),
@@ -181,6 +182,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
       prevailing_wage_rate: String(settings.prevailing_wage_rate ?? 0),
       default_hourly_rate: String(settings.default_hourly_rate ?? 30),
       labor_burden_pct: String(settings.labor_burden_pct ?? 0),
+      materials_cost_basis: settings.materials_cost_basis ?? 'issued',
       overtime_multiplier: String(settings.overtime_multiplier ?? 1.5),
       overtime_rule: settings.overtime_rule ?? 'daily',
       overtime_threshold: String(settings.overtime_threshold ?? 8),
@@ -265,6 +267,7 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
         prevailing_wage_rate: parseFloat(form.prevailing_wage_rate),
         default_hourly_rate: parseFloat(form.default_hourly_rate),
         labor_burden_pct: parseFloat(form.labor_burden_pct) || 0,
+        materials_cost_basis: form.materials_cost_basis,
         overtime_multiplier: parseFloat(form.overtime_multiplier),
         overtime_rule: form.overtime_rule,
         overtime_threshold: parseFloat(form.overtime_threshold),
@@ -974,6 +977,16 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
               <input style={styles.input} type="number" min="0" max="200" step="0.1" value={form.labor_burden_pct} onChange={e => set('labor_burden_pct', e.target.value)} />
               <span style={styles.suffix}>%</span>
             </div>
+          </div>
+          <div style={styles.row}>
+            <div>
+              <label style={styles.label}>{t.ratesMaterialsBasis}</label>
+              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{t.ratesMaterialsBasisDesc}</div>
+            </div>
+            <select style={{ ...styles.input, minWidth: 180 }} value={form.materials_cost_basis} onChange={e => set('materials_cost_basis', e.target.value)}>
+              <option value="issued">{t.ratesMaterialsIssued}</option>
+              <option value="received">{t.ratesMaterialsReceived}</option>
+            </select>
           </div>
           <div style={styles.row}>
             <div>
