@@ -128,7 +128,7 @@ async function materialsCents(projectId, basis = 'issued') {
           `SELECT COALESCE(SUM(pol.qty_received * pol.unit_cost), 0)::numeric AS dollars
              FROM purchase_order_lines pol
              JOIN purchase_orders po ON po.id = pol.po_id
-            WHERE po.project_id = $1 AND pol.unit_cost IS NOT NULL`,
+            WHERE po.project_id = $1 AND po.status <> 'cancelled' AND pol.unit_cost IS NOT NULL`,
           [projectId]
         );
         spent = dollarsToCents(r.rows[0].dollars);

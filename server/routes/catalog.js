@@ -81,22 +81,26 @@ function sanitizeItemBody(body = {}, { partial = false } = {}) {
   return { out, errors };
 }
 
-// Company-wide default markup % for an estimate category (from the
-// `estimate_default_markups` JSON setting). Returns null when unset or
-// malformed — the resolver then falls through to the raw supplier cost.
-// Swallows errors so a settings hiccup never breaks a catalog pick.
-async function companyDefaultMarkup(companyId, category) {
+// The company's default markup map ({category: pct}) from the
+// `estimate_default_markups` JSON setting. {} on unset/malformed/error, so a
+// settings hiccup never breaks a catalog pick. Load once and reuse across an
+// assembly expansion to avoid a per-member query.
+async function loadCompanyMarkups(companyId) {
   try {
     const r = await pool.query(
       `SELECT value FROM settings WHERE company_id = $1 AND key = 'estimate_default_markups'`,
       [companyId]
     );
-    if (!r.rows.length || !r.rows[0].value) return null;
+    if (!r.rows.length || !r.rows[0].value) return {};
     const map = JSON.parse(r.rows[0].value);
-    if (!map || typeof map !== 'object') return null;
-    const v = Number(map[category]);
-    return Number.isFinite(v) && v >= 0 ? v : null;
-  } catch { return null; }
+    return map && typeof map === 'object' ? map : {};
+  } catch { return {}; }
+}
+
+// Default markup % for a category from a preloaded map (or null).
+function markupFor(markups, category) {
+  const v = Number(markups[category]);
+  return Number.isFinite(v) && v >= 0 ? v : null;
 }
 
 // The catalog is the estimate-line picker and exposes supplier cost / sell price /
@@ -157,7 +161,7 @@ router.get('/catalog/tags', requireAuth, requireCommercialAccess, async (req, re
 // priority: explicit sell price → item markup over cost → company category
 // markup over cost → raw cost → 0. Shared by the single-item route and the
 // assembly expander.
-async function resolveEstimateLine(item, companyId) {
+function resolveEstimateLine(item, markups) {
   let unitCost;
   if (item.sell_price_cents != null) {
     unitCost = parseInt(item.sell_price_cents, 10);
@@ -167,7 +171,7 @@ async function resolveEstimateLine(item, companyId) {
     if (markup == null && baseCents != null) {
       const cat = MONEY_CATEGORIES.includes(item.default_estimate_category)
         ? item.default_estimate_category : 'materials';
-      markup = await companyDefaultMarkup(companyId, cat);
+      markup = markupFor(markups, cat);
     }
     if (baseCents != null && markup != null) unitCost = Math.round(baseCents * (1 + markup / 100));
     else unitCost = baseCents != null ? baseCents : 0;
@@ -193,7 +197,8 @@ router.get('/catalog/items/:id/estimate-line', requireAuth, requireCommercialAcc
       [req.params.id, companyId]
     );
     if (r.rowCount === 0) return res.status(404).json({ error: 'Item not found' });
-    res.json(await resolveEstimateLine(r.rows[0], companyId));
+    const markups = await loadCompanyMarkups(companyId);
+    res.json(resolveEstimateLine(r.rows[0], markups));
   } catch (err) {
     req.log.error({ err }, 'catalog estimate-line error');
     res.status(500).json({ error: 'Server error' });
@@ -350,11 +355,11 @@ router.get('/catalog/assemblies/:id/estimate-lines', requireAuth, requireCommerc
         ORDER BY ai.sort_order, ai.id`,
       [req.params.id]
     );
-    const lines = [];
-    for (const m of members.rows) {
-      const line = await resolveEstimateLine(m, companyId);
-      lines.push({ ...line, qty: parseFloat(m.member_qty) || 1 });
-    }
+    const markups = await loadCompanyMarkups(companyId);  // once, not per member
+    const lines = members.rows.map(m => ({
+      ...resolveEstimateLine(m, markups),
+      qty: parseFloat(m.member_qty) || 1,
+    }));
     res.json({ assembly_id: a.rows[0].id, name: a.rows[0].name, lines });
   } catch (err) {
     req.log.error({ err }, 'assembly expand error');

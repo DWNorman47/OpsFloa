@@ -603,6 +603,7 @@ function AssembliesPanel({ toast, confirm }) {
 function AssemblyEditor({ assemblyId, onClose, onSaved, toast }) {
   const t = useT();
   const [name, setName] = useState('');
+  const [notes, setNotes] = useState('');
   const [items, setItems] = useState([]);        // [{ item_id, qty }]
   const [catalog, setCatalog] = useState([]);
   const [saving, setSaving] = useState(false);
@@ -613,6 +614,7 @@ function AssemblyEditor({ assemblyId, onClose, onSaved, toast }) {
     if (assemblyId) {
       api.get(`/catalog/assemblies/${assemblyId}`).then(({ data }) => {
         setName(data.name || '');
+        setNotes(data.notes || '');
         setItems((data.items || []).map(it => ({ item_id: String(it.item_id), qty: String(it.qty) })));
       }).catch(() => {});
     }
@@ -628,6 +630,7 @@ function AssemblyEditor({ assemblyId, onClose, onSaved, toast }) {
     try {
       const payload = {
         name: name.trim(),
+        notes: notes.trim() || null,
         items: items.filter(r => r.item_id).map(r => ({ item_id: parseInt(r.item_id, 10), qty: r.qty === '' ? 1 : Number(r.qty) })),
       };
       if (assemblyId) await api.patch(`/catalog/assemblies/${assemblyId}`, payload);
@@ -644,6 +647,9 @@ function AssemblyEditor({ assemblyId, onClose, onSaved, toast }) {
       {error && <div style={styles.errorBox}>{error}</div>}
       <Labeled label={t.catFieldName} full>
         <input value={name} onChange={e => setName(e.target.value)} style={styles.input} autoFocus />
+      </Labeled>
+      <Labeled label={t.catAsmNotes} full>
+        <input value={notes} onChange={e => setNotes(e.target.value)} style={styles.input} />
       </Labeled>
       <div style={{ marginTop: 12 }}>
         <span style={styles.fieldLabel}>{t.catAsmItems}</span>
