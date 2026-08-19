@@ -114,10 +114,24 @@ async function materialsCents(projectId) {
   return { spent, committed };
 }
 
+// Is the project's close-out frozen (final_complete / closed)? Cost mutations
+// on a frozen job would silently drift its locked final number, so callers
+// block them. Returns false if closeout tables/columns aren't present.
+async function projectFrozen(projectId) {
+  try {
+    const r = await pool.query(
+      `SELECT 1 FROM project_closeouts
+        WHERE project_id = $1 AND status IN ('final_complete', 'closed') LIMIT 1`,
+      [projectId]
+    );
+    return r.rowCount > 0;
+  } catch { return false; }
+}
+
 function sumMap(map) {
   let total = 0;
   for (const v of map.values()) total += v;
   return total;
 }
 
-module.exports = { tableExists, equipmentUsageCents, manualExpensesByStatus, materialsCents, sumMap };
+module.exports = { tableExists, equipmentUsageCents, manualExpensesByStatus, materialsCents, projectFrozen, sumMap };

@@ -275,6 +275,17 @@ describe('POST /api/projects/:projectId/expenses', () => {
     expect(res.status).toBe(404);
   });
 
+  test('409 when the project close-out is frozen (final/closed)', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, name: 'Test' }] })   // project
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ '?column?': 1 }] });         // frozen → match
+    const res = await request(makeApp())
+      .post('/api/projects/42/expenses')
+      .send({ category: 'equipment', amount_cents: 1000, description: 'late cost' });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('project_frozen');
+  });
+
   test('rejects an invalid status', async () => {
     const res = await request(makeApp())
       .post('/api/projects/42/expenses')
@@ -285,6 +296,7 @@ describe('POST /api/projects/:projectId/expenses', () => {
   test('stores a planned rental linked to an equipment asset', async () => {
     pool.query
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, name: 'Test' }] })   // project
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                           // not frozen
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 7 }] })                   // equipment check
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 9, status: 'planned', equipment_id: 7 }] });  // insert
     const res = await request(makeApp())
@@ -298,6 +310,7 @@ describe('POST /api/projects/:projectId/expenses', () => {
   test('rejects a planned rental whose equipment is not in the company', async () => {
     pool.query
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, name: 'Test' }] })   // project
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                           // not frozen
       .mockResolvedValueOnce({ rowCount: 0, rows: [] });                          // equipment check → miss
     const res = await request(makeApp())
       .post('/api/projects/42/expenses')
@@ -308,7 +321,8 @@ describe('POST /api/projects/:projectId/expenses', () => {
 
   test('computes tax_cents and stores the row', async () => {
     pool.query
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, name: 'Test' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, name: 'Test' }] })   // project
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                           // not frozen
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 7, description: 'Crane rental', category: 'equipment', amount_cents: 10000, tax_cents: 800 }] });
 
     const res = await request(makeApp())
@@ -326,25 +340,28 @@ describe('POST /api/projects/:projectId/expenses', () => {
 
 describe('PATCH /api/projects/:projectId/expenses/:id', () => {
   test('flips a planned forecast to actual and stamps a paid date', async () => {
-    pool.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 9, status: 'actual' }] });
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                          // not frozen
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 9, status: 'actual' }] });  // update
     const res = await request(makeApp())
       .patch('/api/projects/42/expenses/9')
       .send({ status: 'actual' });
     expect(res.status).toBe(200);
-    const [sql] = pool.query.mock.calls[0];
+    const [sql] = pool.query.mock.calls.find(c => /UPDATE project_expenses/.test(c[0]));
     expect(sql).toMatch(/status = \$1/);
     expect(sql).toMatch(/paid_date = \$2/);  // auto-stamped on convert
   });
 
   test('recomputes tax_cents when the amount changes', async () => {
     pool.query
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                                          // not frozen
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ amount_cents: '10000', tax_pct: '8' }] })  // current
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 9 }] });                                // update
     const res = await request(makeApp())
       .patch('/api/projects/42/expenses/9')
       .send({ amount_cents: 20000 });
     expect(res.status).toBe(200);
-    const updateCall = pool.query.mock.calls[1];
+    const updateCall = pool.query.mock.calls.find(c => /UPDATE project_expenses/.test(c[0]));
     // tax_cents = round(20000 * 0.08) = 1600
     expect(updateCall[1]).toContain(1600);
   });

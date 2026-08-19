@@ -16,7 +16,9 @@ const { requireProjectFinancialAccess, requireProjectFinancialWrite } = require(
 const { logAudit } = require('../auditLog');
 const { MONEY_CATEGORIES, PROJECT_EXPENSE_STATUSES, PROJECT_EXPENSE_STATUS_DEFAULT } = require('../constants/projectMoneyEnums');
 const { loadSettings, laborCostCents, LABOR_ENTRY_COLUMNS } = require('../utils/paidHours');
-const { equipmentUsageCents, manualExpensesByStatus, materialsCents } = require('../utils/projectCost');
+const { equipmentUsageCents, manualExpensesByStatus, materialsCents, projectFrozen } = require('../utils/projectCost');
+
+const FROZEN_MSG = 'This job is closed — reopen its close-out to change costs.';
 
 async function assertProjectInCompany(companyId, projectId) {
   const r = await pool.query(
@@ -235,6 +237,7 @@ router.post('/projects/:id/expenses', requireAuth, requireProjectFinancialWrite,
   try {
     const project = await assertProjectInCompany(companyId, req.params.id);
     if (!project) return res.status(404).json({ error: 'Project not found' });
+    if (await projectFrozen(req.params.id)) return res.status(409).json({ error: FROZEN_MSG, code: 'project_frozen' });
     if (equipment_id != null) {
       const eq = await pool.query('SELECT id FROM equipment_items WHERE id = $1 AND company_id = $2', [equipment_id, companyId]);
       if (eq.rowCount === 0) return res.status(400).json({ error: 'equipment not found' });
@@ -263,6 +266,7 @@ router.post('/projects/:id/expenses', requireAuth, requireProjectFinancialWrite,
 // paid_date supplied stamps today, so the cost moves committed → spent.
 router.patch('/projects/:projectId/expenses/:id', requireAuth, requireProjectFinancialWrite, async (req, res) => {
   const companyId = req.user.company_id;
+  if (await projectFrozen(req.params.projectId)) return res.status(409).json({ error: FROZEN_MSG, code: 'project_frozen' });
   const b = req.body;
   const sets = [];
   const params = [];
@@ -333,6 +337,7 @@ router.patch('/projects/:projectId/expenses/:id', requireAuth, requireProjectFin
 
 router.delete('/projects/:projectId/expenses/:id', requireAuth, requireProjectFinancialWrite, async (req, res) => {
   const companyId = req.user.company_id;
+  if (await projectFrozen(req.params.projectId)) return res.status(409).json({ error: FROZEN_MSG, code: 'project_frozen' });
   try {
     const r = await pool.query(
       `DELETE FROM project_expenses

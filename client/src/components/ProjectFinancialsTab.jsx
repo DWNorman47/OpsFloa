@@ -310,9 +310,13 @@ export default function ProjectFinancialsTab({ projectId }) {
       <div style={styles.card}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
           <h3 style={styles.h3}>Project expenses ({expenses.length})</h3>
-          <button onClick={() => setShowExpenseForm(s => !s)} style={styles.btn}>
-            {showExpenseForm ? 'Cancel' : '+ Add expense'}
-          </button>
+          {pnl?.locked ? (
+            <span style={{ fontSize: 12, color: '#6b7280' }}>🔒 Closed — reopen to edit costs</span>
+          ) : (
+            <button onClick={() => setShowExpenseForm(s => !s)} style={styles.btn}>
+              {showExpenseForm ? 'Cancel' : '+ Add expense'}
+            </button>
+          )}
         </div>
 
         {showExpenseForm && (
@@ -385,7 +389,7 @@ export default function ProjectFinancialsTab({ projectId }) {
                   <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(e.amount_cents)}</td>
                   <td style={{ ...styles.td, textAlign: 'right', color: '#6b7280' }}>{formatCents(e.tax_cents)}</td>
                   <td style={styles.td}>
-                    <button onClick={() => deleteExpense(e.id)} style={styles.iconBtn} title="Delete">×</button>
+                    {!pnl?.locked && <button onClick={() => deleteExpense(e.id)} style={styles.iconBtn} title="Delete">×</button>}
                   </td>
                 </tr>
               ))}
