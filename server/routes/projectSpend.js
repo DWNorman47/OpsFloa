@@ -61,7 +61,7 @@ async function laborSpent(projectId, settings) {
         AND te.end_time IS NOT NULL`,
     [projectId]
   );
-  return laborCostCents(r.rows, settings);
+  return laborCostCents(r.rows, settings, { includeBurden: true });
 }
 
 // Stub for the forthcoming sub PO + payment integration.

@@ -124,6 +124,16 @@ describe('laborCostCents', () => {
     expect(laborCostCents([entry({ rate: null })], settings())).toBe(0);
   });
 
+  test('labor burden loads job cost only when includeBurden is passed', () => {
+    const s = { ...settings(), labor_burden_pct: 30 };
+    // $1,250 base. Without the flag (pay/billing paths) → unchanged.
+    expect(laborCostCents([entry()], s)).toBe(125000);
+    // With the flag (job-cost paths) → 1250 × 1.30 = $1,625.
+    expect(laborCostCents([entry()], s, { includeBurden: true })).toBe(162500);
+    // Flag on but no burden set → unchanged.
+    expect(laborCostCents([entry()], settings(), { includeBurden: true })).toBe(125000);
+  });
+
   test('empty input is zero, not a crash', () => {
     expect(laborCostCents([], settings())).toBe(0);
     expect(laborCostCents(null, settings())).toBe(0);

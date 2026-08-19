@@ -106,7 +106,7 @@ async function spendTotals(projectId, settings) {
           AND te.end_time IS NOT NULL`,
       [projectId]
     );
-    labor = laborCostCents(r.rows, settings);
+    labor = laborCostCents(r.rows, settings, { includeBurden: true });
   } catch { /* time_entries shape may differ */ }
   // Manual expenses, split actual (spent) vs planned (committed forecast).
   try {

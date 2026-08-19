@@ -96,7 +96,12 @@ function computePaid(entries, settings, { rule = 'daily', ctx = {}, roleId = nul
  * mixing two people's hours would invent overtime neither of them worked.
  * Each row must carry `user_id`, `rate`, and `ot_rule` (join them in the query).
  */
-function laborCostCents(entries, settings) {
+// `opts.includeBurden` loads the result with the company's employer labor
+// burden (payroll taxes, workers' comp, insurance) via settings.labor_burden_pct.
+// This is a COST-reporting concept (job costing / P&L), NEVER what a worker is
+// paid or what a client is billed — so it's opt-in and OFF by default. Only the
+// project spend + P&L paths pass it true; invoices and every pay surface don't.
+function laborCostCents(entries, settings, opts = {}) {
   const { multiplier } = payNumbers(settings);
   const byWorker = new Map();
   for (const e of entries || []) {
@@ -116,6 +121,10 @@ function laborCostCents(entries, settings) {
     if (otConfig && otConfig.nightDifferential) {
       dollars += nightPremiumCost(paid, otConfig.nightDifferential, rate);
     }
+  }
+  if (opts.includeBurden) {
+    const burden = parseFloat(settings?.labor_burden_pct);
+    if (Number.isFinite(burden) && burden > 0) dollars *= (1 + burden / 100);
   }
   return Math.round(dollars * 100);
 }

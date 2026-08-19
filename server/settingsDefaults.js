@@ -4,6 +4,10 @@ const STRING_KEYS = ['overtime_rule', 'overtime_rate_method', 'overtime_wage_pri
 // Defaults available to all authenticated users
 const SETTINGS_DEFAULTS = {
   prevailing_wage_rate: 45, default_hourly_rate: 30, overtime_multiplier: 1.5,
+  // Employer labor burden as a % on top of wages (payroll taxes, workers' comp,
+  // insurance). Applied to JOB COST only (project spend + P&L), never to pay or
+  // client billing. 0 = off (unchanged). See server/utils/paidHours.js.
+  labor_burden_pct: 0,
   overtime_rule: 'daily', overtime_threshold: 8,
   // How OT is priced when a worker earns more than one base rate in a period.
   // See server/constants/payEnums.js. Default = each OT hour at the rate it earned.

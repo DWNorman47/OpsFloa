@@ -196,7 +196,7 @@ router.get('/settings', requireAdmin, async (req, res) => {
 
 // Update settings
 router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (req, res) => {
-  const rateKeys = ['prevailing_wage_rate', 'default_hourly_rate', 'overtime_multiplier'];
+  const rateKeys = ['prevailing_wage_rate', 'default_hourly_rate', 'overtime_multiplier', 'labor_burden_pct'];
   const notifKeys = ['notification_inactive_days', 'notification_start_hour', 'notification_end_hour', 'chat_retention_days'];
   // shift_reminder_hour / pto_annual_days / cycle_count_* sat in
   // ADMIN_SETTINGS_DEFAULTS without being in this allowlist, so the UI
