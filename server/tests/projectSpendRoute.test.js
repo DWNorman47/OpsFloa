@@ -143,7 +143,7 @@ describe('GET /api/projects/:id/spend', () => {
       if (/FROM time_entries/i.test(sql)) return Promise.resolve({ rows: [] });
       if (/information_schema\.tables/i.test(sql)) return Promise.resolve({ rowCount: 1, rows: [{ '?column?': 1 }] });
       if (/information_schema\.columns/i.test(sql)) return Promise.resolve({ rowCount: 0, rows: [] });
-      if (/FROM equipment_hours/i.test(sql)) return Promise.resolve({ rows: [{ dollars: '480.00' }] });  // 4h × $120
+      if (/FROM equipment_hours/i.test(sql)) return Promise.resolve({ rows: [{ unit: 'hour', rate: '120', hours: '4', days: 1 }] });  // 4h × $120
       if (/FROM project_expenses/i.test(sql) && /GROUP BY category/i.test(sql)) {
         return Promise.resolve({ rows: [{ category: 'equipment', cents: '25000' }] });
       }
@@ -197,7 +197,7 @@ describe('GET /api/projects/:id/spend', () => {
       if (/FROM purchase_order_lines/i.test(sql)) return Promise.resolve({ rows: [{ dollars: '800.00' }] });     // open PO
       if (/FROM project_expenses/i.test(sql) && /GROUP BY category/i.test(sql)) return Promise.resolve({ rows: [] });
       if (/FROM subcontract/i.test(sql)) return Promise.resolve({ rows: [{ cents: '0' }] });
-      if (/FROM equipment_hours/i.test(sql)) return Promise.resolve({ rows: [{ dollars: '0' }] });
+      if (/FROM equipment_hours/i.test(sql)) return Promise.resolve({ rows: [] });
       if (/FROM project_budget_categories/i.test(sql)) return Promise.resolve({ rows: [] });
       return Promise.resolve({ rows: [], rowCount: 0 });
     });

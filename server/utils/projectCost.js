@@ -19,24 +19,39 @@ async function tableExists(name) {
   }
 }
 
-// Actual equipment usage cost for a project: logged hours × the machine's
-// HOURLY operating rate. Only hourly operating rates are costed — the hours
-// log records hours, so an hourly rate multiplies cleanly (no assumed
-// hours-per-day). Returns integer cents. 0 on environments where 0179 hasn't
-// added operating_rate.
+// Actual equipment usage cost for a project, from the hours log × each machine's
+// operating rate. Hourly rates multiply logged hours; day/week/month rates use
+// DISTINCT log-dates as days-used (each logged day = a day of use), converting
+// weeks≈days/7 and months≈days/30. Returns integer cents. 0 on environments
+// where 0179 hasn't added operating_rate.
 async function equipmentUsageCents(projectId) {
   if (!(await tableExists('equipment_hours'))) return 0;
   try {
     const r = await pool.query(
-      `SELECT COALESCE(SUM(h.hours * e.operating_rate), 0)::numeric AS dollars
+      `SELECT e.operating_unit AS unit,
+              e.operating_rate::numeric AS rate,
+              COALESCE(SUM(h.hours), 0)::numeric AS hours,
+              COUNT(DISTINCT h.log_date)::int AS days
          FROM equipment_hours h
          JOIN equipment_items e ON e.id = h.equipment_id
-        WHERE h.project_id = $1
-          AND e.operating_rate IS NOT NULL
-          AND e.operating_unit = 'hour'`,
+        WHERE h.project_id = $1 AND e.operating_rate IS NOT NULL
+        GROUP BY e.id, e.operating_unit, e.operating_rate`,
       [projectId]
     );
-    const cents = Math.round(parseFloat(r.rows[0].dollars) * 100);
+    let dollars = 0;
+    for (const row of r.rows) {
+      const rate = parseFloat(row.rate) || 0;
+      const hours = parseFloat(row.hours) || 0;
+      const days = parseInt(row.days, 10) || 0;
+      switch (row.unit) {
+        case 'day':   dollars += days * rate; break;
+        case 'week':  dollars += (days / 7) * rate; break;
+        case 'month': dollars += (days / 30) * rate; break;
+        case 'hour':
+        default:      dollars += hours * rate; break;  // null unit → hourly
+      }
+    }
+    const cents = Math.round(dollars * 100);
     return Number.isFinite(cents) ? cents : 0;
   } catch {
     return 0;  // operating_rate column absent (pre-0179)
