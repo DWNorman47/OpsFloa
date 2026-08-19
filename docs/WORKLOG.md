@@ -23,6 +23,46 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-19 — Pay engine review: six money bugs fixed
+
+Rigorous pass over the pay/OT/deduction engine (a 3-angle audit + verification).
+Six real money bugs found and fixed, each with a regression test; `npm run verify`
+green (server 1486, client 288).
+
+**Fixed:**
+1. **Overnight shift → $0** when an hours-rules policy (rounding or any rule) was
+   enabled. `applyRounding`/`applyRules` (`hoursRules.js`) worked in minutes-since-
+   midnight and clamped `end < start` to `start`, collapsing a 22:00→06:00 shift to
+   0 paid hours. Now the overnight end is carried as extended minutes (+1440);
+   `toHHMMSS` already wraps it back. **Highest severity — a whole night paid nothing.**
+2. **Daily-rate leave paid ~8× over.** Sick/vacation and the weekly-guarantee
+   shortfall multiplied *hours × the daily rate* for daily-rate workers
+   (`payStatement.js`). Now they use the derived hourly rate (daily ÷ standard day);
+   `sickRate`/`vacationRate` display fixed too.
+3. **No-clock-in daily guarantee double-paid approved leave days.** A `min_daily`
+   `requiresClockin:false` rule filled every empty day — including days already paid
+   as leave — stacking guarantee + leave. `computeLeaveHours` now emits the set of
+   paid-leave dates and the guarantee-fill skips them.
+4. **Weekly OT threshold defaulted to 8, not 40.** Every surface but qbo.js hardcoded
+   `|| 8`, so a weekly-rule company that never edited the threshold got OT after 8h/
+   week. New shared `otThreshold(settings, rule)` (weekly→40, daily→8) used across
+   payStatement/paidHours/admin/clock; client bumps the shared field 8↔40 when the
+   rule is switched.
+5. **Negative sick/vacation pct paid 100%.** `leaveRateMultipliers` fell a negative
+   pct through to the unset→100% default; now clamps negatives to 0 (unset still 100%).
+6. **Ruleset deduction cap only limited the grouped portion.** `applyDeductions`
+   capped `groupedTotal` alone, so per-check deductions escaped the cap (and a per-
+   check-only check was never capped) — contradicting its own docstring and
+   `computeRuleNet`. Cap now applies to the combined per-check + grouped total.
+
+**Non-issue:** the worker pay-stub deduction engine (an earlier audit note) already
+uses `splitDeductionsByTiming`/`applyGroupDeductions` in the current tree — no change.
+
+**Judgment calls / flagged, not changed** → `docs/BACKLOG.md` (pay-engine section):
+company-wide `overtime_rule` isn't consulted when a worker's own rule is null;
+partial-leave + guarantee interaction; plus the pre-existing policy questions
+(worked+leave same-day stacking, WH-347 net columns, night-diff in OT regular rate).
+
 ## 2026-08-18 — Project scheduler v1: a work-calendar behind Project Daily
 
 Turned the Project Daily "A day / A date" inputs into a visual **scheduler** — the first

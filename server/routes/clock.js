@@ -6,6 +6,7 @@ const { haversineDistanceFt } = require('../utils/geoUtils');
 const { sendPushToCompanyAdmins } = require('../push');
 const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const { applySettingsRows, SETTINGS_DEFAULTS } = require('../settingsDefaults');
+const { otThreshold } = require('../utils/paidHours');
 const { sendEmail } = require('../email');
 const { wallClockInTZ, validLocalTime, entryInstants } = require('../utils/timeFormat');
 const { autoStartDayTx } = require('../utils/dailyChecklistCore');
@@ -541,8 +542,8 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
         if (!s.feature_overtime || !s.feature_overtime_alerts) return;
 
         const workDate = oldClock.work_date;
-        const threshold = parseFloat(s.overtime_threshold) || 8;
         const rule = s.overtime_rule || 'daily';
+        const threshold = otThreshold(s, rule);
         const calcH = (start, end, brk = 0) => {
           const startDate = new Date(`1970-01-01T${start}`);
           const endDate = new Date(`1970-01-01T${end}`);
@@ -776,8 +777,8 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
 
         if (s.feature_overtime && s.feature_overtime_alerts) {
           const workDate = clock.work_date;
-          const threshold = parseFloat(s.overtime_threshold) || 8;
           const rule = s.overtime_rule || 'daily';
+          const threshold = otThreshold(s, rule);
 
           // Get all entries for this worker on the relevant period (before this new entry)
           let prevHours = 0;

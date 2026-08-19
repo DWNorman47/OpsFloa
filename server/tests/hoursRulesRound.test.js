@@ -10,6 +10,31 @@ const { parseRules, parsePolicy, roundEntriesForPay } = require('../utils/hoursR
 const entry = (over = {}) => ({ user_id: 1, work_date: '2026-07-06', wage_type: 'regular', start_time: '07:07:00', end_time: '17:22:00', break_minutes: 0, ...over });
 const paid = (policy, e = entry()) => roundEntriesForPay([e], policy)[0];
 
+describe('overnight punch is not collapsed to 0h by rounding/rules', () => {
+  const overnight = (over = {}) => entry({ start_time: '22:07:00', end_time: '06:07:00', ...over });
+
+  test('an overnight shift keeps its ~8h under a rounding policy (was paid $0)', () => {
+    const policy = parsePolicy(JSON.stringify({
+      enabled: true,
+      rules: [{ id: 'r1', type: 'round', when: { kind: 'every_day' }, edge: 'both', reference: 'clock', direction: 'nearest', intervalMin: 15 }],
+    }));
+    const o = paid(policy, overnight());
+    expect(o.start_time).toBe('22:00:00');  // 22:07 → nearest 15
+    expect(o.end_time).toBe('06:00:00');     // 06:07 → nearest 15 (NOT collapsed to 22:00)
+  });
+
+  test('overnight survives the applyRules path (a non-round rule present, rounding off)', () => {
+    const policy = parsePolicy(JSON.stringify({
+      enabled: true,
+      rounding: { clockIn: { direction: 'off' }, clockOut: { direction: 'off' } },
+      rules: [{ id: 'b1', type: 'auto_break', when: { kind: 'every_day' }, trigger: { kind: 'after_hours', hours: 6 }, minutes: 30 }],
+    }));
+    const o = paid(policy, overnight({ start_time: '22:00:00', end_time: '06:00:00' }));
+    expect(o.start_time).toBe('22:00:00');
+    expect(o.end_time).toBe('06:00:00');     // not collapsed
+  });
+});
+
 describe('round rule — engine', () => {
   test('rounds both edges to the nearest interval on the wall clock', () => {
     const policy = parsePolicy(JSON.stringify({

@@ -1000,11 +1000,20 @@ function roundEdge(rawMin, expectedMin, cfg, edge) {
  */
 function applyRounding(rawStart, rawEnd, expected, rounding) {
   const rs = toMin(rawStart);
-  const re = toMin(rawEnd);
+  let re = toMin(rawEnd);
   if (rs == null || re == null) return { start: rawStart, end: rawEnd };
 
   const es = expected ? expected.startMin : null;
-  const ee = expected ? expected.endMin : null;
+  let ee = expected ? expected.endMin : null;
+
+  // Overnight punch (end wall-clock before start = next day): carry the end as
+  // extended minutes so rounding + the non-inversion clamp below don't collapse
+  // the shift to 0h. 1440 is a multiple of every rounding interval, so the grid
+  // is preserved; toHHMMSS wraps the result back to a wall-clock time.
+  if (re < rs) {
+    re += 1440;
+    if (ee != null && es != null && ee < es) ee += 1440;  // overnight expected shift
+  }
 
   let ps = roundEdge(rs, es, rounding.clockIn, 'in');
   let pe = roundEdge(re, ee, rounding.clockOut, 'out');
@@ -1125,11 +1134,17 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null, tr
   // The punch as it arrived. Rung thresholds are ALWAYS judged against this,
   // never against the clipped value — an End Time rule at 5:00 would otherwise
   // pull every punch back to 5:00 and no rung could ever fire.
+  // Overnight punch: carry the end as next-day extended minutes so the interval
+  // math and the `e < s ⇒ e = s` clamps below don't collapse the shift to 0h.
+  // toHHMMSS wraps the paid end back to a wall-clock time at the call site.
+  const overnight = startMin != null && endMin != null && endMin < startMin;
+  const endExt = overnight ? endMin + 1440 : endMin;
+
   const punchStart = startMin;
-  const punchEnd = endMin;
+  const punchEnd = endExt;
 
   let s = startMin;
-  let e = endMin;
+  let e = endExt;
 
   // ── 1. Clip ── bound the paid punch, and establish the baseline the ladder
   // measures from. clip_start ("Start Time") is "ignore anything before this";
@@ -1164,7 +1179,11 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null, tr
   // No End Time rule for this day → fall back to the scheduled day. Validation
   // requires the rule (see validatePolicy), so this only catches a policy
   // written straight into the DB.
-  if (baseEnd == null && expected) baseEnd = expected.endMin;
+  if (baseEnd == null && expected) {
+    // Match the punch's extended frame for an overnight expected shift.
+    baseEnd = (overnight && expected.endMin != null && expected.startMin != null && expected.endMin < expected.startMin)
+      ? expected.endMin + 1440 : expected.endMin;
+  }
   if (baseStart == null && expected) baseStart = expected.startMin;
   if (e < s) e = s;
 

@@ -27,7 +27,7 @@ const { sendPushToUser, sendPushToAllWorkers } = require('../push');
 const { sendEmail } = require('../email');
 const { hoursWorked, computeOT, annotateEntryOvertime, computeDailyPayCosts, otBandsCost, nightPremiumCost, nightHoursForEntry, computeGuaranteeShortfall } = require('../utils/payCalculations');
 const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, validatePolicyRaw, migrateFixedSlots, hasFixedSlots, ymd } = require('../utils/hoursRules');
-const { computePaid, computeWorkerLeave, computeCompanyLeave, leaveRateMultipliers, otRuleFromSettings } = require('../utils/paidHours');
+const { computePaid, computeWorkerLeave, computeCompanyLeave, leaveRateMultipliers, otRuleFromSettings, otThreshold } = require('../utils/paidHours');
 const { workerStatement, companyStatements } = require('../utils/payStatement');
 const { splitRateAware, hasSimpleOtConfig } = require('../utils/rateAwareOvertime');
 const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = require('../utils/deductions');
@@ -931,7 +931,9 @@ router.get('/workers', requireAdmin, async (req, res) => {
   const accessIds = req.user.worker_access_ids;
   try {
     const settings = await getSettings(companyId);
-    const threshold = parseFloat(settings.overtime_threshold) || 8;
+    // Company-wide threshold; rule-aware default (weekly → 40) so a weekly company
+    // isn't given an 8-hour weekly OT line. The SQL applies it per-worker by rule.
+    const threshold = otThreshold(settings, settings.overtime_rule);
     const weekStart = parseInt(settings.week_start ?? 1, 10);
 
     // LESSON LEARNED — node-pg parameter binding (Postgres 42P18):
@@ -1893,7 +1895,7 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
       const otConfig = otConfigByRole(role_id);
       if (rate_type !== 'daily' && hasSimpleOtConfig(otConfig)) {
         const baseRateOf = e => (e.wage_type === 'prevailing' ? effectivePrevRate : rate);
-        const s = splitRateAware(items, { rule: overtime_rule, threshold: parseFloat(settings.overtime_threshold) || 8, weekStart: settings.week_start, otMult: parseFloat(settings.overtime_multiplier) || 1.5, baseRateOf, method: otMethod, wagePriority });
+        const s = splitRateAware(items, { rule: overtime_rule, threshold: otThreshold(settings, overtime_rule), weekStart: settings.week_start, otMult: parseFloat(settings.overtime_multiplier) || 1.5, baseRateOf, method: otMethod, wagePriority });
         for (const e of items) e.overtime_hours = 0;
         s.worked.forEach((e, i) => { e.overtime_hours = s.perEntry[i].ot; });
         regularHours += s.regularHours; overtimeHours += s.overtimeHours; prevailingHours += s.prevailingHours;
@@ -1951,8 +1953,6 @@ router.get('/projects/metrics', requireAdmin, async (req, res) => {
   try {
     const metricsSettings = await getSettings(companyId);
     const defaultRate = metricsSettings.default_hourly_rate || 30;
-    const otThreshold = metricsSettings.overtime_threshold || 8;
-    const weekStart   = parseInt(metricsSettings.week_start) || 1;
 
     const [projectsRes, entriesRes] = await Promise.all([
       pool.query(
@@ -4178,7 +4178,6 @@ router.get('/export/worker-hours', requireAdmin, requirePerm('view_reports'), re
   const accessIds = req.user.worker_access_ids;
   try {
     const s = await getSettings(companyId);
-    const threshold = parseFloat(s.overtime_threshold) || 8;
     const weekStart = s.week_start;
 
     const wConds = ['company_id = $1', "role = 'worker'", 'active = true'];
@@ -4214,7 +4213,8 @@ router.get('/export/worker-hours', requireAdmin, requirePerm('view_reports'), re
       // export's split matches the invoice/report/stub instead of its own math.
       // No `range` passed: this is an hours-WORKED report, so it excludes the
       // min-daily "no clock-in" guarantee fill the pay surfaces include.
-      const { regularHours, overtimeHours } = computeOT(we, otRuleFromSettings(s, w.overtime_rule), threshold, weekStart, otConfigByRole(w.role_id));
+      const wRule = otRuleFromSettings(s, w.overtime_rule);
+      const { regularHours, overtimeHours } = computeOT(we, wRule, otThreshold(s, wRule), weekStart, otConfigByRole(w.role_id));
       const total = regularHours + overtimeHours;
       const days = new Set(we.map(e => dayKey(e.work_date))).size;
       tReg += regularHours; tOt += overtimeHours; tTot += total; tDays += days;
@@ -4515,7 +4515,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
 
       if (hasSimpleOtConfig(otConfig)) {
         const baseRateOf = e => (e.wage_type === 'prevailing' ? prevailingRateOf(e) : w.rate);
-        const split = splitRateAware(w.items, { rule: w.overtime_rule, threshold: parseFloat(s.overtime_threshold) || 8, weekStart: s.week_start, otMult, baseRateOf, method: otMethod, wagePriority });
+        const split = splitRateAware(w.items, { rule: w.overtime_rule, threshold: otThreshold(s, w.overtime_rule), weekStart: s.week_start, otMult, baseRateOf, method: otMethod, wagePriority });
         split.worked.forEach((e, i) => {
           const p = split.perEntry[i];
           const dk = dayKeyOf(e);
@@ -4555,7 +4555,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
         // dropped on the WH-347. OT on regular entries only; prevailing stays flat
         // (matches buildPayStatement's premium path). Previously this fell back to
         // flat hours and reported zero overtime — understating OT hours and gross.
-        const threshold = parseFloat(s.overtime_threshold) || 8;
+        const threshold = otThreshold(s, w.overtime_rule);
         const reg = w.items.filter(e => e.wage_type === 'regular');
         const { regularHours: rh, overtimeHours: oh, otBands, floorDetail: floorDet } = computeOT(reg, w.overtime_rule, threshold, s.week_start, otConfig);
         annotateEntryOvertime(reg, w.overtime_rule, threshold, s.week_start, otConfig);

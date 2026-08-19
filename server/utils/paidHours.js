@@ -21,11 +21,21 @@ const { computeOT, otBandsCost, nightPremiumCost, shiftHoursByDate, computeLeave
  * here, once.
  */
 
+/**
+ * The overtime threshold in hours. When the setting is unset/0 the fallback is
+ * RULE-AWARE: a weekly rule defaults to 40, a daily rule to 8. A bare `|| 8`
+ * silently gave a weekly company an 8-hour weekly threshold (OT after the first
+ * day). Every surface must use this so they can't disagree (qbo already did 40).
+ */
+function otThreshold(settings, rule) {
+  return parseFloat((settings || {}).overtime_threshold) || (rule === 'weekly' ? 40 : 8);
+}
+
 /** The three numbers the pipeline reads off company settings, coerced safely. */
-function payNumbers(settings) {
+function payNumbers(settings, rule = null) {
   const s = settings || {};
   return {
-    threshold: parseFloat(s.overtime_threshold) || 8,
+    threshold: otThreshold(s, rule),
     weekStart: parseInt(s.week_start ?? 1, 10),
     multiplier: parseFloat(s.overtime_multiplier) || 1.5,
   };
@@ -81,7 +91,7 @@ function computePaid(entries, settings, { rule = 'daily', ctx = {}, roleId = nul
   }
   const paid = roundEntriesFromSettings(entries || [], settings, effCtx);
   const otConfig = otConfigFromSettings(settings, roleId);
-  const { threshold, weekStart } = payNumbers(settings);
+  const { threshold, weekStart } = payNumbers(settings, rule);
   // `range` (the pay period being computed) enables the min_daily "no clock-in"
   // guarantee to fill empty days; absent → today's entry-only behaviour.
   const { regularHours, overtimeHours, otBands } = computeOT(paid, rule, threshold, weekStart, otConfig, range);
@@ -152,7 +162,10 @@ const LABOR_ENTRY_COLUMNS = `
  */
 function leaveRateMultipliers(settings) {
   const s = settings || {};
-  const frac = (v) => { const n = parseFloat(v); return Number.isFinite(n) && n >= 0 ? n / 100 : 1; };
+  // Unset/non-numeric → 1 (full base rate, the documented default). A finite value
+  // is used as-is, with negatives clamped to 0 — a negative pct must pay nothing,
+  // not silently fall through to 100% (which the old `n >= 0 ? … : 1` did).
+  const frac = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? Math.max(0, n) / 100 : 1; };
   return { sick: frac(s.sick_pay_pct), vacation: frac(s.vacation_pay_pct) };
 }
 
@@ -222,6 +235,7 @@ async function computeCompanyLeave({ companyId, workers, settings, from, to }) {
 module.exports = {
   loadSettings,
   payNumbers,
+  otThreshold,
   otRuleFromSettings,
   computePaid,
   laborCostCents,

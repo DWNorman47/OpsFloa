@@ -147,6 +147,26 @@ describe('applyDeductions — per-paycheck AND grouped deductions together', () 
     expect(c1.deductionTotal).toBe(200); // 5% × 4000
     expect(c2.deductionTotal).toBe(200); // Seguro only; RAP base 0 → 0
   });
+
+  test('an amount cap limits the COMBINED per-check + grouped total, not just the grouped part', () => {
+    const capRs = { deductions: { exemptAmountCents: 0, cap: { type: 'amount', valueCents: 25000 } } }; // $250 cap
+    const [, c2] = applyDeductions([
+      { groupKey: '0', deductionsApply: false, gross: 6000 },
+      { groupKey: '0', deductionsApply: true, gross: 6000 },
+    ], seguro, rap, capRs);
+    // Raw would be Seguro 300 + RAP 1.5% × 12000 = 300 + 180 = 480 → capped to 250 (was 300 + min(180,250)=480).
+    expect(c2.deductionTotal).toBe(250);
+    expect(c2.net).toBe(5750);
+  });
+
+  test('an amount cap also limits a check that has ONLY per-check deductions (used to escape the cap)', () => {
+    const capRs = { deductions: { cap: { type: 'amount', valueCents: 20000 } } }; // $200 cap
+    const big = [{ id: 's', name: 'Seguro Social', kind: 'percent', value: 5, cap: null }];
+    const [c1] = applyDeductions([
+      { groupKey: '0', deductionsApply: false, gross: 6000 }, // 5% × 6000 = 300, no grouped deds
+    ], big, [], capRs);
+    expect(c1.deductionTotal).toBe(200); // capped — previously 300 (cap only touched the grouped part)
+  });
 });
 
 describe('splitDeductionsByTiming — per-check vs grouped (shared by run + previews)', () => {

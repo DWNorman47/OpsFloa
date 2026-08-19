@@ -91,6 +91,76 @@ describe('buildPayStatement — daily rate + no-clock-in guarantee', () => {
     expect(st.hours.regularDays).toBeNull(); // includes extra hours → no days-form label
     expect(st.totals.grossWages).toBe(4400);
   });
+
+  test('leave for a daily-rate worker prices per HOUR (daily ÷ 8), not a full daily rate', () => {
+    const st = buildPayStatement({
+      worker: worker({ hourly_rate: 200, rate_type: 'daily' }), // $200/day → $25/h
+      entries: [], reimbursements: [], leave: { sick: 8, vacation: 4 },
+      deductions: [], otConfig: null, projectRateMap: {}, settings: SETTINGS, // regular_shift_hours: 8, 100% pcts
+      from: '2026-07-06', to: '2026-07-06',
+    });
+    expect(st.cost.sick).toBe(200);      // 8h × (200 ÷ 8 = 25) — was 8 × 200 = 1600 (~8× over)
+    expect(st.cost.vacation).toBe(100);  // 4h × 25
+    expect(st.cost.sickRate).toBe(25);   // hourly-equivalent, not the daily 200
+    expect(st.totals.grossWages).toBe(300);
+  });
+
+  test('a no-clock-in daily guarantee does NOT stack on a day already paid as leave', () => {
+    const otConfig = otConfigFromSettings({ hours_rules: JSON.stringify({ enabled: true, rules: [
+      { id: 'g', type: 'min_daily', when: { kind: 'every_day' }, hours: 8, requiresClockin: false, activeWindow: 'week' },
+    ] }) });
+    const common = {
+      worker: worker({ hourly_rate: 30, rate_type: 'hourly' }),
+      entries: [entry({ work_date: '2026-07-06', start_time: '08:00:00', end_time: '16:00:00' })], // Mon 8h worked
+      reimbursements: [], deductions: [], otConfig, projectRateMap: {}, settings: SETTINGS,
+      from: '2026-07-06', to: '2026-07-07', // Mon + empty Tue
+    };
+    // Tue is empty but the worker took approved sick Tue → pay sick, NOT sick + guarantee.
+    const withLeave = buildPayStatement({ ...common, leave: { sick: 8, vacation: 0, dates: new Set(['2026-07-07']) } });
+    expect(withLeave.cost.sick).toBe(240);          // 8h × 30 sick
+    expect(withLeave.hours.regular).toBeCloseTo(8); // Mon only — no Tue guarantee stacked
+    // Control: same leave hours but no date info (old behavior) → Tue guarantee DOES stack.
+    const noDates = buildPayStatement({ ...common, leave: { sick: 8, vacation: 0 } });
+    expect(noDates.hours.regular).toBeCloseTo(16);  // Mon 8 + Tue guarantee 8 (the double-pay this fix prevents)
+  });
+
+  test("a daily-rate worker's weekly guarantee shortfall pays per HOUR, not per daily rate", () => {
+    // Guaranteed 40h/week, works one 8h day → 32h shortfall, priced at $25/h = $800.
+    const st = buildPayStatement({
+      worker: worker({ hourly_rate: 200, rate_type: 'daily', guaranteed_weekly_hours: 40 }),
+      entries: [entry({ work_date: '2026-07-06', start_time: '08:00:00', end_time: '16:00:00' })],
+      reimbursements: [], leave: { sick: 0, vacation: 0 },
+      deductions: [], otConfig: null, projectRateMap: {}, settings: SETTINGS,
+      from: '2026-07-06', to: '2026-07-12',
+    });
+    expect(st.cost.guarantee).toBe(800); // 32h × 25 — was 32 × 200 = 6400 (~8× over)
+  });
+});
+
+describe('buildPayStatement — weekly OT threshold defaults to 40, not 8', () => {
+  // A weekly-rule company that never edited the threshold (unset) must get a 40h
+  // weekly threshold — a bare `|| 8` gave OT after the first 8h of the week.
+  const weekly = (over = {}) => buildPayStatement({
+    worker: worker({ overtime_rule: 'weekly' }), entries: [], reimbursements: [], leave: { sick: 0, vacation: 0 },
+    deductions: [], otConfig: null, projectRateMap: {},
+    settings: { ...SETTINGS, overtime_rule: 'weekly', overtime_threshold: null },
+    from: '2026-07-06', to: '2026-07-12', ...over,
+  });
+
+  test('30h across the week under weekly rule is all straight time (< 40)', () => {
+    const days = ['2026-07-06', '2026-07-07', '2026-07-08'].map(d => entry({ work_date: d, start_time: '08:00:00', end_time: '18:00:00' })); // 3 × 10h = 30h
+    const st = weekly({ entries: days });
+    expect(st.hours.regular).toBeCloseTo(30);
+    expect(st.hours.overtime).toBeCloseTo(0); // would have been 6h OT with an 8h weekly threshold
+  });
+
+  test('45h across the week yields 5h OT past the 40h default', () => {
+    const days = ['2026-07-06', '2026-07-07', '2026-07-08', '2026-07-09', '2026-07-10']
+      .map(d => entry({ work_date: d, start_time: '08:00:00', end_time: '17:00:00' })); // 5 × 9h = 45h
+    const st = weekly({ entries: days });
+    expect(st.hours.overtime).toBeCloseTo(5);
+    expect(st.hours.regular).toBeCloseTo(40);
+  });
 });
 
 describe('buildPayStatement — unpaid worker earns nothing (hours still tracked)', () => {

@@ -22,7 +22,8 @@ describe('leaveRateMultipliers', () => {
     expect(leaveRateMultipliers({ sick_pay_pct: 80, vacation_pay_pct: 50 })).toEqual({ sick: 0.8, vacation: 0.5 });
     expect(leaveRateMultipliers({})).toEqual({ sick: 1, vacation: 1 });
     expect(leaveRateMultipliers(undefined)).toEqual({ sick: 1, vacation: 1 });
-    expect(leaveRateMultipliers({ sick_pay_pct: 'x', vacation_pay_pct: -5 })).toEqual({ sick: 1, vacation: 1 });
+    expect(leaveRateMultipliers({ sick_pay_pct: 'x' }).sick).toBe(1);          // non-numeric → unset default 100%
+    expect(leaveRateMultipliers({ vacation_pay_pct: -5 }).vacation).toBe(0);    // negative clamps to 0 (was wrongly 100%)
     expect(leaveRateMultipliers({ sick_pay_pct: 0 })).toEqual({ sick: 0, vacation: 1 });
   });
 });

@@ -255,6 +255,22 @@ that holds the exhaustive detail.
 ## ❓ Open questions / decisions for you
 *Blocked on your call before anyone builds.*
 
+- **Company-wide `overtime_rule` is ignored when a worker's own rule is null.**
+  (2026-08-19) The pay engine resolves OT rule via `otRuleFromSettings(settings,
+  worker.overtime_rule)` = `workerRule || 'daily'` — it never falls back to the
+  COMPANY `overtime_rule` setting. So a company set to *weekly* whose worker rows have
+  a null `overtime_rule` would silently get *daily* OT. Likely a non-issue if every
+  worker row is always seeded with a rule, but worth confirming: should a null worker
+  rule inherit the company setting instead of hardcoding 'daily'? (`server/utils/
+  paidHours.js:52`.) Found during the 2026-08-19 pay-engine review.
+
+- **Partial leave + no-clock-in guarantee on the same day.** (2026-08-19) The new
+  fix (guarantee-fill skips any day already paid as leave) treats a *partial* leave
+  day (e.g. 4h sick, no clock-in) as fully covered — it grants no guarantee top-up.
+  Defensible (avoids double-pay) but a policy call: should a 4h partial-leave day with
+  an 8h no-clock-in guarantee pay 4h leave + 4h guarantee, or just the 4h leave?
+  Currently: just the leave. (`computeOT` guarantee gate, `payCalculations.js`.)
+
 - **Grouped+selected ruleset now applies NON-selected deductions per paycheck.**
   (2026-08-13) When building per-deduction timing (some deductions per paycheck, some
   monthly), the payroll run's `timing:'grouped' + scope:'selected'` was reinterpreted:

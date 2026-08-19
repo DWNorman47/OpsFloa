@@ -4,7 +4,7 @@ const {
   nightPremiumCost, nightHoursForEntry, hoursWorked, computeGuaranteeShortfall,
   computeLeaveHours, shiftHoursByDate,
 } = require('./payCalculations');
-const { leaveRateMultipliers, computeWorkerLeave, computeCompanyLeave, otRuleFromSettings } = require('./paidHours');
+const { leaveRateMultipliers, computeWorkerLeave, computeCompanyLeave, otRuleFromSettings, otThreshold } = require('./paidHours');
 const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, sickRulesFromSettings } = require('./hoursRules');
 const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = require('./deductions');
 const { splitRateAware, hasSimpleOtConfig } = require('./rateAwareOvertime');
@@ -76,7 +76,7 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     projectRateMap = {}; // prevailing entries fall back to prevRate, which is 0 below
   }
   const rule = otRuleFromSettings(settings, worker.overtime_rule);
-  const threshold = parseFloat(settings.overtime_threshold) || 8;
+  const threshold = otThreshold(settings, rule);
   const weekStart = settings.week_start;
   const otMult = parseFloat(settings.overtime_multiplier) || 1.5;
   // Gate rate/prevRate on `unpaid` directly — a `... || 45`/`... || 0` fallback would turn a
@@ -123,7 +123,11 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     // Daily-rate workers, or premium OT configs (tiers, rest-day, 7th-day,
     // windows, night differential) that need per-band attribution. Prevailing
     // stays flat here until the per-band rate-aware work lands.
-    const ot = computeOT(paid, rule, threshold, weekStart, otConfig, { from, to, workedDays: weekWorkedDays });
+    const ot = computeOT(paid, rule, threshold, weekStart, otConfig, {
+      from, to, workedDays: weekWorkedDays,
+      // Days already paid as leave must not ALSO earn a no-clock-in daily guarantee.
+      leaveDays: (leave && leave.dates instanceof Set) ? leave.dates : null,
+    });
     annotateEntryOvertime(paid, rule, threshold, weekStart, otConfig);
     regularHours = ot.regularHours; overtimeHours = ot.overtimeHours;
     floorDetail = ot.floorDetail || [];
@@ -182,13 +186,19 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
   const { shortfall: guaranteeShortfall, minHours: guaranteeMinHours, weeks: guaranteeWeeks } =
     computeGuaranteeShortfall(totalHours + sickHours + vacationHours, worker.guaranteed_weekly_hours, from, to);
 
+  // Per-hour pay lines (leave, weekly guarantee shortfall) price at an HOURLY rate.
+  // For a daily-rate worker `rate` is the DAILY amount, so use the derived hourly
+  // (daily ÷ standard day) — otherwise 8h of sick would pay 8 daily rates (~8× over).
+  const leaveDailyHours = parseFloat(settings.regular_shift_hours) || 8;
+  const hourlyRate = rateType === 'daily' ? (leaveDailyHours > 0 ? rate / leaveDailyHours : 0) : rate;
+
   // Round every line to cents so line items provably sum to the totals.
   const regularCost = cents(regularCostRaw);
   const overtimeCost = cents(overtimeCostRaw);
   const prevailingCost = cents(prevailingCostRaw);
-  const guaranteeCost = cents(guaranteeShortfall * rate);
-  const sickCost = cents(sickHours * rate * mult.sick);
-  const vacationCost = cents(vacationHours * rate * mult.vacation);
+  const guaranteeCost = cents(guaranteeShortfall * hourlyRate);
+  const sickCost = cents(sickHours * hourlyRate * mult.sick);
+  const vacationCost = cents(vacationHours * hourlyRate * mult.vacation);
   const nightPremium = cents(nightPremiumRaw);
   const grossWages = regularCost + overtimeCost + prevailingCost + nightPremium + guaranteeCost + sickCost + vacationCost;
 
@@ -281,7 +291,7 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
       regular: regularCost, overtime: overtimeCost, prevailing: prevailingCost,
       night: nightPremium,
       sick: sickCost, vacation: vacationCost, guarantee: guaranteeCost,
-      sickRate: cents(rate * mult.sick), vacationRate: cents(rate * mult.vacation),
+      sickRate: cents(hourlyRate * mult.sick), vacationRate: cents(hourlyRate * mult.vacation),
     },
     rates: { rate, rateType, prevailingWageRate: prevRate, overtimeMultiplier: otMult, sickPct: settings.sick_pay_pct, vacationPct: settings.vacation_pay_pct },
     deductions: stub.deductions,

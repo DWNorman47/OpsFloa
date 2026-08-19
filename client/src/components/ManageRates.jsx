@@ -1023,7 +1023,20 @@ export default function ManageRates({ settings, onSettingsUpdated }) {
           <div style={styles.row}>
             <label style={styles.label}>{t.ratesCalcMethod}<HelpTip text={t.ratesCalcMethodHelp} /></label>
             <div style={styles.inputGroup}>
-              <select style={{ ...styles.input, width: 'auto', textAlign: 'left' }} value={form.overtime_rule} onChange={e => set('overtime_rule', e.target.value)}>
+              <select style={{ ...styles.input, width: 'auto', textAlign: 'left' }} value={form.overtime_rule} onChange={e => {
+                const rule = e.target.value;
+                setForm(f => {
+                  // The threshold field is shared between the two rules. If it still holds
+                  // the OTHER rule's default (8 daily / 40 weekly), track the switch so a
+                  // weekly company doesn't silently keep an 8-hour weekly OT line.
+                  const cur = String(f.overtime_threshold);
+                  const next = rule === 'weekly' && cur === '8' ? '40'
+                    : rule === 'daily' && cur === '40' ? '8'
+                    : f.overtime_threshold;
+                  return { ...f, overtime_rule: rule, overtime_threshold: next };
+                });
+                setSaved(null); setError('');
+              }}>
                 <option value="daily">{t.ratesDailyMethod}</option>
                 <option value="weekly">{t.ratesWeeklyMethod}</option>
               </select>

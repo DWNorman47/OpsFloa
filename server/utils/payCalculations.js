@@ -85,7 +85,10 @@ function shiftHoursByDate(shifts) {
  * @param regularShiftHours  company Regular Shift default (last-resort hours)
  */
 function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours, from, to, detail = null) {
-  const totals = { sick: 0, vacation: 0 };
+  // `dates` collects every YMD paid as leave (always, cheaply) so the pay engine can
+  // avoid ALSO granting a no-clock-in daily guarantee on a day already paid as leave
+  // (that would double-pay the day). See the guarantee-fill gate in computeOT.
+  const totals = { sick: 0, vacation: 0, dates: new Set() };
   if (!from || !to) return totals;
   const f = String(from).substring(0, 10), t = String(to).substring(0, 10);
   const rules = Array.isArray(leaveRules) ? leaveRules : [];
@@ -113,6 +116,7 @@ function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours
       if (anchor != null && (anchor < f || anchor > t)) continue;
       const h = parseFloat(req.hours) || 0;
       totals[type] += h;
+      if (anchor != null) totals.dates.add(anchor);
       if (detail) detail.push({ type, date: anchor, hours: h, source: 'partial' });
       continue;
     }
@@ -123,6 +127,7 @@ function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours
       seen[type].add(dk);
       const v = dayValue(dk, type);
       totals[type] += v.hours;
+      totals.dates.add(dk);
       if (detail) detail.push({ type, date: dk, hours: v.hours, source: v.source, ...(v.ruleId ? { ruleId: v.ruleId } : {}) });
     }
   }
@@ -497,8 +502,10 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
       const allWorked = extraWorked ? [...Object.keys(buckets), ...extraWorked] : Object.keys(buckets);
       const activeWeeks = new Set(allWorked.map(dk => weekBucketKey(dk, weekStart)));
       const workedAnyInPeriod = Object.keys(buckets).length > 0; // 'period' gate stays scoped to the pulled period
+      const leaveDays = (range && range.leaveDays instanceof Set) ? range.leaveDays : null;
       for (const dk of eachDateKey(range.from, range.to)) {
         if (buckets[dk] != null) continue;                          // worked day — floored above
+        if (leaveDays && leaveDays.has(dk)) continue;               // paid as leave already — a guarantee here double-pays the day
         // A rest day CAN carry a no-clock-in guarantee: the guarantee pays its
         // hours at the REGULAR rate on an empty rest day, while an actually-worked
         // rest day (a real bucket, handled above) is paid at the rest-day premium.
