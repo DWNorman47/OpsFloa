@@ -103,11 +103,13 @@ export default function PublicEstimatePage() {
 
   const canAct = estimate.status === 'sent';
 
+  const isAlt = l => l.line_type === 'alternate' || l.line_type === 'optional';
   const linesByCat = {};
   for (const c of CATEGORIES) linesByCat[c] = [];
   for (const l of estimate.lines || []) {
-    if (linesByCat[l.category]) linesByCat[l.category].push(l);
+    if (!isAlt(l) && linesByCat[l.category]) linesByCat[l.category].push(l);
   }
+  const altLines = (estimate.lines || []).filter(isAlt);
 
   return (
     <div style={{ minHeight: '100vh', background: '#f9fafb', padding: '40px 16px' }}>
@@ -157,7 +159,7 @@ export default function PublicEstimatePage() {
                 <tbody>
                   {linesByCat[category].map((l, i) => (
                     <tr key={i}>
-                      <td style={{ padding: '5px 0' }}>{l.description}</td>
+                      <td style={{ padding: '5px 0' }}>{l.description}{l.line_type === 'allowance' ? ` (${(t.estLineTypeAllowance || 'allowance').toLowerCase()})` : ''}</td>
                       <td style={{ padding: '5px 8px', textAlign: 'right', color: '#6b7280', width: 90 }}>
                         {l.qty} {l.unit || ''}
                       </td>
@@ -179,6 +181,23 @@ export default function PublicEstimatePage() {
           )}
           <Row label={t.pubTotal} value={estimate.total_cents} bold currency={estimate.currency} />
         </div>
+
+        {altLines.length > 0 && (
+          <div style={{ marginTop: 18 }}>
+            <div style={styles.catLabel}>{t.estAlternatesHeading || 'Alternates & Options (not included in total)'}</div>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+              <tbody>
+                {altLines.map((l, i) => (
+                  <tr key={i}>
+                    <td style={{ padding: '5px 0' }}>{l.description} <span style={{ color: '#9ca3af', fontSize: 12 }}>({t[`estLineType${l.line_type.charAt(0).toUpperCase()}${l.line_type.slice(1)}`] || l.line_type})</span></td>
+                    <td style={{ padding: '5px 8px', textAlign: 'right', color: '#6b7280', width: 90 }}>{l.qty} {l.unit || ''}</td>
+                    <td style={{ padding: '5px 0', textAlign: 'right', width: 100 }}>{formatCents(l.total_cents, estimate?.currency)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {estimate.exclusions && (
           <div style={{ marginTop: 24 }}>

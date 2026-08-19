@@ -1037,11 +1037,15 @@ function EstimateDetail({ id, onBack, onEdit }) {
   const isAccepted = estimate.status === 'accepted';
 
   // Group lines by category for display.
+  // Base scope (base + allowance) is grouped by category and totaled; alternates
+  // and options are listed separately below the total (priced, not summed in).
+  const isAlt = l => l.line_type === 'alternate' || l.line_type === 'optional';
   const linesByCat = {};
   for (const c of CATEGORIES) linesByCat[c] = [];
   for (const l of estimate.lines || []) {
-    if (linesByCat[l.category]) linesByCat[l.category].push(l);
+    if (!isAlt(l) && linesByCat[l.category]) linesByCat[l.category].push(l);
   }
+  const altLines = (estimate.lines || []).filter(isAlt);
 
   // Full markup→tax cascade, same helper the PDF uses, so the on-screen
   // totals match the downloaded document to the cent.
@@ -1166,7 +1170,7 @@ function EstimateDetail({ id, onBack, onEdit }) {
               <tbody>
                 {linesByCat[category].map(l => (
                   <tr key={l.id}>
-                    <td style={{ padding: '4px 0' }}>{l.description}</td>
+                    <td style={{ padding: '4px 0' }}>{l.description}{l.line_type === 'allowance' ? ` (${t.estLineTypeAllowance.toLowerCase()})` : ''}</td>
                     <td style={{ padding: '4px 8px', textAlign: 'right', color: '#6b7280', width: 100 }}>
                       {l.qty} {l.unit || ''}
                     </td>
@@ -1188,6 +1192,23 @@ function EstimateDetail({ id, onBack, onEdit }) {
           {estimate.tax_pct > 0 && <TotalsRow label={`${t.estTax} (${estimate.tax_pct}%)`} value={breakdown.tax} />}
           <TotalsRow label={t.estTotal} value={breakdown.total} bold />
         </div>
+
+        {altLines.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>{t.estAlternatesHeading}</div>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+              <tbody>
+                {altLines.map(l => (
+                  <tr key={l.id}>
+                    <td style={{ padding: '4px 0' }}>{l.description} <span style={{ color: '#9ca3af', fontSize: 12 }}>({t[LINE_TYPE_LABEL_KEYS[l.line_type]]})</span></td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right', color: '#6b7280', width: 100 }}>{l.qty} {l.unit || ''}</td>
+                    <td style={{ padding: '4px 0', textAlign: 'right', width: 120 }}>{formatCents(l.total_cents)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {(estimate.exclusions || estimate.terms) && (

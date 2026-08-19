@@ -876,7 +876,7 @@ publicRouter.get('/view/:token', async (req, res) => {
     );
     if (r.rowCount === 0) return res.status(404).json({ error: 'Not found' });
     const linesRes = await pool.query(
-      'SELECT category, sort_order, description, qty, unit, total_cents FROM estimate_lines WHERE estimate_id = $1 ORDER BY sort_order, id',
+      'SELECT category, sort_order, description, qty, unit, total_cents, line_type FROM estimate_lines WHERE estimate_id = $1 ORDER BY sort_order, id',
       [r.rows[0].id]
     );
     res.json({ ...r.rows[0], lines: linesRes.rows });
