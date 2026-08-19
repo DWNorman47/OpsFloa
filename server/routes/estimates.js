@@ -75,7 +75,8 @@ function normaliseLine(line, sortOrder) {
   const total_cents = computeLineTotal({ qty, unit_cost_cents });
   // cost_cents is the per-unit COST basis (what it costs you); unit_cost_cents is
   // the PRICE (what the client pays). Optional — null means cost unknown, and the
-  // budget falls back to price for that line. Never above the price.
+  // budget falls back to price for that line. Cost may exceed price (a
+  // deliberate loss-leader line shows negative margin) — not clamped.
   let cost_cents = null;
   if (line.cost_cents != null && line.cost_cents !== '') {
     const c = typeof line.cost_cents === 'number' ? line.cost_cents : parseInt(line.cost_cents, 10);

@@ -301,6 +301,9 @@ function EstimateForm({ existing, onSave, onCancel }) {
         name: desc,
         unit: line.unit || null,
         sell_price_cents: parseInt(line.unit_cost_cents, 10) || 0,
+        // Preserve the cost basis so a re-picked catalog line restores cost too
+        // (unit_cost is dollars on the catalog item).
+        unit_cost: line.cost_cents == null || line.cost_cents === '' ? null : (parseInt(line.cost_cents, 10) / 100),
         default_estimate_category: line.category || null,
       });
       toast(t.estSavedToCatalog, 'success');
