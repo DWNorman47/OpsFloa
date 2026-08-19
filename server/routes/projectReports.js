@@ -165,6 +165,30 @@ function pctOrNull(num, den, decimals = 1) {
 
 // ── P&L: per-project ──────────────────────────────────────────────────────────
 
+// Assemble the full per-project P&L object. Shared by the live /pnl endpoint and
+// the close-out snapshot, so the "final" locked number is computed identically
+// to the live one.
+async function computeProjectPnl(projectId, companyId, settings) {
+  const [contractValue, spend, invoices] = await Promise.all([
+    contractValueCents(projectId),
+    spendTotals(projectId, settings),
+    invoiceTotals(projectId, companyId),
+  ]);
+  // gross_profit = revenue billed − cost spent  (lagging actual)
+  // projected_profit = contract value − (spent + committed)  (leading indicator)
+  const gross_profit_cents     = invoices.billed_cents - spend.spent_cents;
+  const projected_profit_cents = contractValue - (spend.spent_cents + spend.committed_cents);
+  return {
+    contract_value_cents: contractValue,
+    revenue: invoices,
+    cost: spend,
+    gross_profit_cents,
+    gross_margin_pct:       pctOrNull(gross_profit_cents, invoices.billed_cents),
+    projected_profit_cents,
+    projected_margin_pct:   pctOrNull(projected_profit_cents, contractValue),
+  };
+}
+
 router.get('/projects/:id/pnl', requireAuth, requireProjectFinancialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
@@ -172,29 +196,26 @@ router.get('/projects/:id/pnl', requireAuth, requireProjectFinancialAccess, asyn
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
     const settings = await loadSettings(companyId);
-    const [contractValue, spend, invoices] = await Promise.all([
-      contractValueCents(req.params.id),
-      spendTotals(req.params.id, settings),
-      invoiceTotals(req.params.id, companyId),
-    ]);
+    const pnl = await computeProjectPnl(req.params.id, companyId, settings);
 
-    // gross_profit = revenue billed − cost spent  (lagging actual)
-    // projected_profit = contract value − (spent + committed)  (leading indicator)
-    const gross_profit_cents     = invoices.billed_cents - spend.spent_cents;
-    const projected_profit_cents = contractValue - (spend.spent_cents + spend.committed_cents);
-    const gross_margin_pct       = pctOrNull(gross_profit_cents, invoices.billed_cents);
-    const projected_margin_pct   = pctOrNull(projected_profit_cents, contractValue);
+    // If the job's close-out has frozen a final snapshot, hand it back too so
+    // the UI can show the locked number alongside the (still-live) figures.
+    let locked = null;
+    try {
+      const lr = await pool.query(
+        'SELECT final_financials, financials_snapshot_at FROM project_closeouts WHERE project_id = $1',
+        [req.params.id]
+      );
+      if (lr.rows[0]?.final_financials) {
+        locked = { ...lr.rows[0].final_financials, snapshot_at: lr.rows[0].financials_snapshot_at };
+      }
+    } catch { /* closeout table/columns may not exist yet */ }
 
     res.json({
       project_id: parseInt(req.params.id, 10),
       project_name: project.name,
-      contract_value_cents: contractValue,
-      revenue: invoices,
-      cost: spend,
-      gross_profit_cents,
-      gross_margin_pct,
-      projected_profit_cents,
-      projected_margin_pct,
+      ...pnl,
+      locked,
     });
   } catch (err) {
     req.log.error({ err }, 'project pnl error');
@@ -383,3 +404,4 @@ router.get('/wip-report/export', requireAuth, requireFinancialReportsAccess, asy
 });
 
 module.exports = router;
+module.exports.computeProjectPnl = computeProjectPnl;

@@ -145,6 +145,18 @@ export default function ProjectFinancialsTab({ projectId }) {
       {pnl && (
         <div style={styles.card}>
           <h3 style={styles.h3}>P&L Summary</h3>
+          {pnl.locked && (
+            <div style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 8, padding: '10px 14px', marginBottom: 12, display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'baseline', fontSize: 14 }}>
+              <span style={{ fontWeight: 700, color: '#065f46' }}>🔒 Final (locked)</span>
+              <span>Profit <strong>{formatCents(pnl.locked.gross_profit_cents)}</strong></span>
+              <span style={{ color: '#6b7280' }}>Cost {formatCents(pnl.locked.cost?.spent_cents)}</span>
+              {pnl.locked.snapshot_at && (
+                <span style={{ marginLeft: 'auto', fontSize: 12, color: '#6b7280' }}>
+                  as of {new Date(pnl.locked.snapshot_at).toLocaleDateString()} · live figures below
+                </span>
+              )}
+            </div>
+          )}
           <div style={styles.statGrid}>
             <Stat label="Contract value" value={formatCents(pnl.contract_value_cents)} />
             <Stat label="Revenue billed" value={formatCents(pnl.revenue?.billed_cents)} />

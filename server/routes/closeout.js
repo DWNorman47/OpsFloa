@@ -8,6 +8,8 @@ const router = require('express').Router();
 const pool   = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const { logAudit } = require('../auditLog');
+const { loadSettings } = require('../utils/paidHours');
+const { computeProjectPnl } = require('./projectReports');
 const {
   CLOSEOUT_STATUSES,
   CLOSEOUT_ITEM_STATUSES,
@@ -418,15 +420,29 @@ router.post('/projects/:id/closeout/transition', requireAdmin, async (req, res) 
     const finalDate = (to === 'final_complete' && !co.final_completion_date)
       ? new Date().toISOString().slice(0, 10) : co.final_completion_date;
     const closedAt = to === 'closed' ? 'NOW()' : 'closed_at';
+
+    // Freeze the final cost/profit when the job reaches final_complete or closed,
+    // so later edits to a past time entry / expense can't silently rewrite it.
+    let snapshot = null;
+    if (to === 'final_complete' || to === 'closed') {
+      try {
+        const settings = await loadSettings(companyId);
+        snapshot = await computeProjectPnl(req.params.id, companyId, settings);
+      } catch (err) {
+        req.log.error({ err }, 'closeout snapshot compute failed');  // don't block the transition
+      }
+    }
     const updRes = await pool.query(
       `UPDATE project_closeouts SET
          status = $1,
          substantial_completion_date = $2,
          final_completion_date = $3,
          warranty_start_date = COALESCE(warranty_start_date, $2),
-         closed_at = ${closedAt}
+         closed_at = ${closedAt},
+         final_financials       = COALESCE($5::jsonb, final_financials),
+         financials_snapshot_at = CASE WHEN $5 IS NOT NULL THEN NOW() ELSE financials_snapshot_at END
        WHERE id = $4 RETURNING *`,
-      [to, subDate, finalDate, co.id]
+      [to, subDate, finalDate, co.id, snapshot ? JSON.stringify(snapshot) : null]
     );
     await logAudit(companyId, req.user.id, req.user.full_name,
       `closeout.${to}`, 'project_closeout', co.id, project.name,
