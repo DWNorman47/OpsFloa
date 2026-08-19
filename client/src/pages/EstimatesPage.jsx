@@ -547,19 +547,22 @@ function Field({ label, required, error, children }) {
   );
 }
 
-// Inline picker for pre-filled estimate lines from two sources:
-//   • Catalog   — a material/price-book item → one line
-//   • Equipment — a machine asset → its mobilization + operating (or rent-out)
-//                 lines, resolved from the rates set on the asset.
-// Opens inline rather than as a true modal so it doesn't fight the form.
-// onAdd receives an ARRAY of line shapes to append.
+// One unified library picker for estimate lines. A single search spans both
+// reference sources, merged into one list:
+//   • Catalog items  — priced reference costs (materials, rental references,
+//                      subs, labor…) → one line each
+//   • Owned machines — equipment assets → their mobilization + operating (or
+//                      rent-out) lines, resolved from the rates on the asset
+// No copying between the two (see the estimate-phase model): the picker just
+// reads both, so it feels like one library with a single source of truth per
+// rate. Opens inline. onAdd receives an ARRAY of line shapes to append.
 function LinePicker({ onAdd }) {
   const formatCents = useCents();
   const t = useT();
   const [open, setOpen] = useState(false);
-  const [source, setSource] = useState('catalog');   // 'catalog' | 'equipment'
   const [q, setQ] = useState('');
-  const [items, setItems] = useState([]);
+  const [catalogItems, setCatalogItems] = useState([]);
+  const [equipment, setEquipment] = useState([]);
   const [loading, setLoading] = useState(false);
 
   // Localized "Machine — <part>" description for an equipment line.
@@ -567,62 +570,59 @@ function LinePicker({ onAdd }) {
     mobilization: t.estEqMobilization, operating: t.estEqOperating, rental: t.estEqRental,
   };
 
+  // Owned machines: fetched once when the picker opens, filtered locally.
+  useEffect(() => {
+    if (!open) return;
+    api.get('/equipment')
+      .then(({ data }) => setEquipment(Array.isArray(data) ? data : []))
+      .catch(() => setEquipment([]));
+  }, [open]);
+
+  // Catalog: searched server-side as the query changes.
   useEffect(() => {
     if (!open) return;
     setLoading(true);
     const timer = setTimeout(() => {
-      if (source === 'catalog') {
-        api.get('/catalog/items', { params: q ? { q } : {}, limit: 30 })
-          .then(({ data }) => setItems(data.items || []))
-          .catch(() => setItems([]))
-          .finally(() => setLoading(false));
-      } else {
-        // The equipment list is small; fetch active assets and filter locally.
-        api.get('/equipment')
-          .then(({ data }) => {
-            const all = Array.isArray(data) ? data : [];
-            const needle = q.trim().toLowerCase();
-            setItems(needle
-              ? all.filter(a => `${a.name} ${a.unit_number || ''}`.toLowerCase().includes(needle))
-              : all);
-          })
-          .catch(() => setItems([]))
-          .finally(() => setLoading(false));
-      }
+      api.get('/catalog/items', { params: q ? { q } : {}, limit: 30 })
+        .then(({ data }) => setCatalogItems(data.items || []))
+        .catch(() => setCatalogItems([]))
+        .finally(() => setLoading(false));
     }, 200);
     return () => clearTimeout(timer);
-  }, [q, open, source]);
+  }, [q, open]);
 
-  function switchSource(next) {
-    if (next === source) return;
-    setSource(next); setItems([]); setQ('');
-  }
+  const needle = q.trim().toLowerCase();
+  const machineResults = needle
+    ? equipment.filter(a => `${a.name} ${a.unit_number || ''}`.toLowerCase().includes(needle))
+    : equipment;
+  const results = [
+    ...catalogItems.map(it => ({ ...it, _type: 'catalog' })),
+    ...machineResults.map(a => ({ ...a, _type: 'equipment' })),
+  ];
 
-  async function pickCatalog(item) {
+  async function pick(row) {
     try {
-      const { data } = await api.get(`/catalog/items/${item.id}/estimate-line`);
-      onAdd([{
-        category: data.category || 'materials',
-        description: data.description,
-        qty: 1,
-        unit: data.unit || '',
-        unit_cost_cents: data.unit_cost_cents,
-      }]);
-      close();
-    } catch { /* ignore */ }
-  }
-
-  async function pickEquipment(asset) {
-    try {
-      const { data } = await api.get(`/equipment/${asset.id}/estimate-lines`);
-      const lines = (data.lines || []).map(l => ({
-        category: l.category || 'equipment',
-        description: EQ_PART_LABELS[l.part] ? `${data.name} — ${EQ_PART_LABELS[l.part]}` : data.name,
-        qty: l.qty ?? 1,
-        unit: l.unit || '',
-        unit_cost_cents: l.unit_cost_cents,
-      }));
-      if (lines.length) onAdd(lines);
+      if (row._type === 'catalog') {
+        const { data } = await api.get(`/catalog/items/${row.id}/estimate-line`);
+        onAdd([{
+          category: data.category || 'materials',
+          description: data.description,
+          qty: 1,
+          unit: data.unit || '',
+          unit_cost_cents: data.unit_cost_cents,
+        }]);
+      } else {
+        const { data } = await api.get(`/equipment/${row.id}/estimate-lines`);
+        const lines = (data.lines || []).map(l => ({
+          category: l.category || 'equipment',
+          description: EQ_PART_LABELS[l.part] ? `${data.name} — ${EQ_PART_LABELS[l.part]}` : data.name,
+          qty: l.qty ?? 1,
+          unit: l.unit || '',
+          unit_cost_cents: l.unit_cost_cents,
+        }));
+        if (!lines.length) return;
+        onAdd(lines);
+      }
       close();
     } catch { /* ignore */ }
   }
@@ -636,17 +636,6 @@ function LinePicker({ onAdd }) {
       </button>
     );
   }
-  const tab = (id, label) => (
-    <button
-      onClick={() => switchSource(id)}
-      style={{
-        flex: 1, padding: '6px 10px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
-        border: '1px solid #d1d5db', background: source === id ? '#1d4ed8' : '#fff',
-        color: source === id ? '#fff' : '#374151',
-        borderRadius: 6,
-      }}
-    >{label}</button>
-  );
   return (
     <div style={{
       position: 'absolute', zIndex: 50, background: '#fff',
@@ -654,58 +643,52 @@ function LinePicker({ onAdd }) {
       boxShadow: '0 8px 24px rgba(0,0,0,0.12)', width: 480, maxHeight: 380, overflow: 'auto',
       marginTop: 40,
     }}>
-      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-        {tab('catalog', t.estSourceCatalog)}
-        {tab('equipment', t.estSourceEquipment)}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+        <input
+          autoFocus
+          placeholder={t.estSearchLibrary}
+          value={q}
+          onChange={e => setQ(e.target.value)}
+          style={{ flex: 1, boxSizing: 'border-box', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14 }}
+        />
         <button onClick={close} style={{ background: 'transparent', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 18 }}>×</button>
       </div>
-      <input
-        autoFocus
-        placeholder={source === 'catalog' ? t.estSearchCatalog : t.estSearchEquipment}
-        value={q}
-        onChange={e => setQ(e.target.value)}
-        style={{ width: '100%', boxSizing: 'border-box', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, marginBottom: 8 }}
-      />
-      {loading ? (
+      {loading && results.length === 0 ? (
         <div style={{ fontSize: 13, color: '#6b7280', padding: 12 }}>{t.estSearching}</div>
-      ) : items.length === 0 ? (
+      ) : results.length === 0 ? (
         <div style={{ fontSize: 13, color: '#6b7280', padding: 12 }}>{t.estNoMatches}</div>
-      ) : source === 'catalog' ? (
-        <div>
-          {items.map(item => (
-            <div
-              key={item.id}
-              onClick={() => pickCatalog(item)}
-              style={{ padding: '8px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}
-              onMouseEnter={e => e.currentTarget.style.background = '#f3f4f6'}
-              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-            >
-              <div style={{ fontWeight: 600, color: '#111827' }}>{item.name}</div>
-              <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
-                {item.sku && `${item.sku} · `}
-                {item.unit && `${t.estPer} ${item.unit}`}
-                {item.sell_price_cents != null && ` · ${formatCents(item.sell_price_cents)}`}
-                {!item.is_stocked && ` · ${t.estCatalogOnly}`}
-              </div>
-            </div>
-          ))}
-        </div>
       ) : (
         <div>
-          {items.map(asset => (
+          {results.map(row => (
             <div
-              key={asset.id}
-              onClick={() => pickEquipment(asset)}
+              key={`${row._type}-${row.id}`}
+              onClick={() => pick(row)}
               style={{ padding: '8px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}
               onMouseEnter={e => e.currentTarget.style.background = '#f3f4f6'}
               onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
             >
-              <div style={{ fontWeight: 600, color: '#111827' }}>{asset.name}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontWeight: 600, color: '#111827' }}>{row.name}</span>
+                {row._type === 'equipment' && (
+                  <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#6d28d9', background: '#ede9fe', padding: '1px 6px', borderRadius: 6 }}>{t.estLibMachine}</span>
+                )}
+              </div>
               <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
-                {asset.unit_number && `${asset.unit_number} · `}
-                {asset.operating_rate != null ? `${formatCents(Math.round(parseFloat(asset.operating_rate) * 100))}/${asset.operating_unit || 'hr'}`
-                  : asset.rent_out_rate != null ? `${formatCents(Math.round(parseFloat(asset.rent_out_rate) * 100))}/${asset.rent_out_unit || 'day'}`
-                  : t.estEqNoRates}
+                {row._type === 'catalog' ? (
+                  <>
+                    {row.sku && `${row.sku} · `}
+                    {row.unit && `${t.estPer} ${row.unit}`}
+                    {row.sell_price_cents != null && ` · ${formatCents(row.sell_price_cents)}`}
+                    {!row.is_stocked && ` · ${t.estCatalogOnly}`}
+                  </>
+                ) : (
+                  <>
+                    {row.unit_number && `${row.unit_number} · `}
+                    {row.operating_rate != null ? `${formatCents(Math.round(parseFloat(row.operating_rate) * 100))}/${row.operating_unit || 'hr'}`
+                      : row.rent_out_rate != null ? `${formatCents(Math.round(parseFloat(row.rent_out_rate) * 100))}/${row.rent_out_unit || 'day'}`
+                      : t.estEqNoRates}
+                  </>
+                )}
               </div>
             </div>
           ))}
