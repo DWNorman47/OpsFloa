@@ -21,6 +21,17 @@ that holds the exhaustive detail.
 
 ## 🔧 Bugs — set aside for later
 
+- **WH-347 certified payroll prices a DAILY-rate worker as hours × daily-rate (~8× over).**
+  (2026-08-19) The certified-payroll `computeWorker` path (`server/routes/admin.js`
+  ~4516 simple path, ~4592 premium path) has no `rate_type !== 'daily'` guard like
+  `buildPayStatement` does, so `regular_cost = straightHours × w.rate` treats the daily
+  amount as an hourly rate. A $200/day worker, 8h × 5 days → WH-347 reports $8,000
+  instead of $1,000. Pre-existing; niche (daily-rate + prevailing-wage certified
+  payroll is an unusual combo — WH-347 jobs pay hourly prevailing rates), but it is a
+  wrong dollar on a compliance document. Fix = route daily-rate workers through
+  `computeDailyPayCosts` (daily ÷ regular_shift_hours) on that surface too. Found in the
+  2026-08-19 pay-engine pass. → memory: [[project_payroll_review_decisions]]
+
 - **Leave + worked on the SAME day — verify no double-pay.** (2026-08-05) Reported as
   "sick/vacation aren't working"; David suspects it was a test where a sick day was
   entered for a day the employee *also* clocked in. The pay engine appends synthetic
@@ -190,6 +201,28 @@ that holds the exhaustive detail.
     validated inline in `inventory.js` but missing from `docs/db-enums.md`.
 
 ## 🧭 Design flaws — raised, set aside for later
+
+- **Preview surfaces report a "Net Pay" that ignores ruleset cap / min-net.** (2026-08-19)
+  The worker invoice, overtime report, and payroll CSV price deductions through
+  `payStubTotals` (gross − per-check deductions, clamped ≥0) — no exempt, no cap, no
+  min-net floor, and grouped deductions deferred. So their "Net" is a fourth distinct
+  number from the payroll run's net. Partly by design (a date-range preview can't
+  resolve pay-period groups), but the cap/min-net omission on the *per-check* portion
+  is a real inconsistency with `applyDeductions` (which now caps the combined total),
+  and the CSV doesn't surface `deferred_deductions` so a reader can't tell groups were
+  omitted. Decide: label these as "preview / pre-deduction" nets, or make them run the
+  full per-check cap/min-net. (`server/utils/payStatement.js` previewDeductionSplit +
+  payStubTotals.) Found 2026-08-19 pay-engine pass. → memory: [[project_payroll_review_decisions]]
+
+- **A grouped deduction can't exceed one check's take-home room (min-net truncation).**
+  (2026-08-19) In `applyDeductions`/`computeRuleNet` the min-net floor uses the flagged
+  check's OWN gross, while a grouped deduction is figured on the group's combined gross
+  minus exempt. If the group's deduction is large relative to the single check it lands
+  on, `g − dedTotal < minNet` fires and silently trims the grouped deduction to
+  `g − minNet` — under-withholding the group's intended total, with no spill to the
+  other check(s) in the group. Consistent between the two functions (not a divergence),
+  so low urgency, but a real ceiling worth a design decision: should a group's deduction
+  be allowed to spill across its checks? (`server/utils/paycheckRun.js`.)
 
 - **Should the minimum-daily floor appear on the WH-347 at all?** Certified Payroll now
   includes worked-day min-daily floor hours in the regular total AND the day columns (they

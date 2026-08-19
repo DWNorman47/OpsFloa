@@ -1903,11 +1903,15 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
       } else {
         // Per-band path: OT on regular only, prevailing flat (premium configs / daily rate).
         const reg = items.filter(e => e.wage_type === 'regular');
-        const { regularHours: rh, overtimeHours: oh, otBands } = computeOT(reg, overtime_rule, settings.overtime_threshold, settings.week_start, otConfig);
-        annotateEntryOvertime(reg, overtime_rule, settings.overtime_threshold, settings.week_start, otConfig);
+        const bandThreshold = otThreshold(settings, overtime_rule);
+        const { regularHours: rh, overtimeHours: oh, otBands } = computeOT(reg, overtime_rule, bandThreshold, settings.week_start, otConfig);
+        annotateEntryOvertime(reg, overtime_rule, bandThreshold, settings.week_start, otConfig);
         regularHours += rh; overtimeHours += oh;
         if (rate_type === 'daily') {
-          const dc = computeDailyPayCosts(reg, overtime_rule, settings.overtime_threshold, rate, settings.overtime_multiplier, otConfig);
+          // Pass regular_shift_hours so daily OT prices at daily ÷ standard day, matching
+          // the worker invoice (buildPayStatement); the 7th arg defaulted to 8 before.
+          const dailyHours = parseFloat(settings.regular_shift_hours) || 8;
+          const dc = computeDailyPayCosts(reg, overtime_rule, bandThreshold, rate, settings.overtime_multiplier, otConfig, dailyHours);
           regularCost += dc.regularCost; overtimeCost += dc.overtimeCost;
         } else {
           regularCost += rh * rate;

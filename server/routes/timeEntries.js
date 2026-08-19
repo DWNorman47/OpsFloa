@@ -338,7 +338,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
 const { loadSettings } = require('../utils/paidHours');
 const { workerPeriodStatements, workerStatement } = require('../utils/payStatement');
 const { normalizePaycheckRules } = require('../constants/paycheckRuleEnums');
-const { resolveRuleset, deductionsForRole, applyGroupDeductions, groupOpts } = require('../utils/paycheckRun');
+const { resolveRuleset, deductionsForRole, splitDeductionsByTiming, applyDeductions, groupOpts } = require('../utils/paycheckRun');
 const { parseCompanyDeductions, normalizeWorkerDeductions } = require('../utils/deductions');
 const { weekRange } = require('../utils/weekBounds');
 
@@ -435,23 +435,22 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
       const grouped = groupPeriods(generatePeriods(ruleset.schedule, genFromIso, toIso, weekStart), groupOpts(ruleset.deductions));
       const companyDeds = parseCompanyDeductions(settings.deductions);
       const wdRows = await pool.query('SELECT id, name, kind, value, cap_amount, active FROM worker_deductions WHERE user_id = $1 AND company_id = $2 AND active = true', [userId, companyId]);
-      // Honor the ruleset's deduction scope (see computePayrollRun): 'selected' restricts
-      // the company deductions to the picked ids; worker rows always apply. Keeps the
-      // worker's stub identical to the admin run.
-      let coDeds = deductionsForRole(companyDeds, worker.role_id);
-      const dcfg = ruleset.deductions;
-      if (dcfg && dcfg.scope === 'selected') {
-        const sel = new Set(dcfg.selectedDeductionIds || []);
-        coDeds = coDeds.filter(d => sel.has(d.id));
-      }
-      const deds = [...coDeds, ...normalizeWorkerDeductions(wdRows.rows)];
+      // Split deductions into per-check vs grouped EXACTLY as computePayrollRun does
+      // (splitDeductionsByTiming → applyDeductions), so the worker's stub matches the
+      // admin run to the cent. The old path filtered company deds down to the selected
+      // ids and ran applyGroupDeductions, which dropped the non-selected per-check
+      // company deductions (e.g. Seguro Social) from the stub and priced the rest as
+      // if everything were grouped — the stub then showed a higher net than the run.
+      const roleDeds = deductionsForRole(companyDeds, worker.role_id);
+      const { perCheck: perCheckDeds, grouped: groupedDeds } =
+        splitDeductionsByTiming(roleDeds, normalizeWorkerDeductions(wdRows.rows), ruleset);
       const withStmt = [];
       for (const p of grouped) {
         const st = await workerStatement({ companyId, worker, settings, from: p.periodStart, to: p.periodEnd });
         withStmt.push({ ...p, gross: st.totals.grossWages, _st: st });
       }
       const n2 = x => parseFloat((x || 0).toFixed(2));
-      const stubs = applyGroupDeductions(withStmt, deds, ruleset).map((p, i) => {
+      const stubs = applyDeductions(withStmt, perCheckDeds, groupedDeds, ruleset).map((p, i) => {
         const st = withStmt[i]._st;
         return {
           id: `${ruleset.id}-${p.payDate}`,

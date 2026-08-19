@@ -23,6 +23,36 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-19 — Pay engine, second pass: overnight completion, stub↔run parity, surface gaps
+
+Follow-up audit (three parallel reviewers) after the first round. Fixed the real
+findings; flagged the niche/design ones to `BACKLOG.md`. `npm run verify` green.
+
+**Fixed:**
+- **Overnight fix was incomplete** — the first round extended the *punch* into the
+  next-day frame but left rule *threshold* times same-day. Two consequences, both
+  fixed by framing morning-after thresholds (+1440): (a) an "End Time" (`clip_end`)
+  rule at e.g. 06:00 still collapsed an overnight shift to $0; (b) an after-edge
+  clock-anchored `add_time`/`remove_time` measured a ~1470-min distance to the raw
+  threshold — a regression the punch-extension introduced (e.g. an "every 15 min"
+  ladder adding ~495 min). (`hoursRules.js` ruleCredit/edgeCredit/applyRules.)
+- **Worker pay-stub ≠ admin payroll run** (the big one). The advanced-ruleset stub
+  used `applyGroupDeductions` + an inline scope filter that *dropped* the non-selected
+  per-check company deductions (e.g. Seguro Social) and priced everything as grouped —
+  so the worker saw a higher take-home than they'd actually be paid. Now uses
+  `splitDeductionsByTiming` + `applyDeductions`, identical to `computePayrollRun`.
+- **Project-bill endpoint** priced daily-rate OT at daily÷8 (omitted the
+  `regular_shift_hours` arg) and used the raw OT threshold — now matches the invoice
+  (`otThreshold` + real dailyHours). (`admin.js` ~1906.)
+- **Guarantee line label** on the pay stub + bill PDF printed the daily rate as "/hr"
+  next to an hourly-priced amount (traceability break) — now derives the rate from the
+  line itself (`cost ÷ hours`). Dollars were already correct.
+
+**Flagged, not changed** → `BACKLOG.md`: WH-347 prices a daily-rate worker at hours ×
+daily-rate (~8× over; niche daily-rate + certified-payroll combo); preview surfaces'
+"Net" ignores ruleset cap/min-net; a grouped deduction can't exceed one check's
+take-home room (min-net truncation).
+
 ## 2026-08-19 — Pay engine review: six money bugs fixed
 
 Rigorous pass over the pay/OT/deduction engine (a 3-angle audit + verification).
