@@ -254,10 +254,10 @@ router.get('/catalog/assemblies/:id', requireAuth, requireCommercialAccess, asyn
     const items = await pool.query(
       `SELECT ai.item_id, ai.qty, ai.sort_order, i.name, i.sku, i.unit
          FROM estimate_assembly_items ai
-         JOIN inventory_items i ON i.id = ai.item_id
+         JOIN inventory_items i ON i.id = ai.item_id AND i.company_id = $2
         WHERE ai.assembly_id = $1
         ORDER BY ai.sort_order, ai.id`,
-      [req.params.id]
+      [req.params.id, companyId]
     );
     res.json({ ...a.rows[0], items: items.rows });
   } catch (err) {
@@ -350,16 +350,16 @@ router.get('/catalog/assemblies/:id/estimate-lines', requireAuth, requireCommerc
     const members = await pool.query(
       `SELECT i.*, ai.qty AS member_qty
          FROM estimate_assembly_items ai
-         JOIN inventory_items i ON i.id = ai.item_id
+         JOIN inventory_items i ON i.id = ai.item_id AND i.company_id = $2
         WHERE ai.assembly_id = $1
         ORDER BY ai.sort_order, ai.id`,
-      [req.params.id]
+      [req.params.id, companyId]
     );
     const markups = await loadCompanyMarkups(companyId);  // once, not per member
-    const lines = members.rows.map(m => ({
-      ...resolveEstimateLine(m, markups),
-      qty: parseFloat(m.member_qty) || 1,
-    }));
+    const lines = members.rows.map(m => {
+      const q = parseFloat(m.member_qty);
+      return { ...resolveEstimateLine(m, markups), qty: Number.isFinite(q) ? q : 1 };
+    });
     res.json({ assembly_id: a.rows[0].id, name: a.rows[0].name, lines });
   } catch (err) {
     req.log.error({ err }, 'assembly expand error');

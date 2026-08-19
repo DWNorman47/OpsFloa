@@ -26,6 +26,12 @@ const CATEGORIES = ['labor', 'materials', 'equipment', 'subs', 'overhead', 'cont
 
 // Maps a category VALUE (used in logic/API) to its i18n key for display only.
 // The values themselves are never translated.
+// Stable per-row key so React reconciles editable line rows by identity, not
+// position — otherwise a reorder/remove can leave a MoneyInput's mid-typed text
+// on the wrong row.
+let _lineKeySeq = 0;
+const newLineKey = () => `l${++_lineKeySeq}`;
+
 const LINE_TYPES = ['base', 'allowance', 'alternate', 'optional'];
 const LINE_TYPE_LABEL_KEYS = {
   base: 'estLineTypeBase', allowance: 'estLineTypeAllowance',
@@ -271,8 +277,8 @@ function EstimateForm({ existing, onSave, onCancel }) {
     terms: existing?.terms || '',
   });
   const [lines, setLines] = useState(existing?.lines?.length > 0
-    ? existing.lines.map(l => ({ ...l }))
-    : [{ category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0, cost_cents: null, line_type: 'base' }]
+    ? existing.lines.map(l => ({ _key: newLineKey(), ...l }))
+    : [{ _key: newLineKey(), category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0, cost_cents: null, line_type: 'base' }]
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -290,7 +296,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
   }
   function addLine() {
     setDirty(true);
-    setLines(arr => [...arr, { category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0, cost_cents: null, line_type: 'base' }]);
+    setLines(arr => [...arr, { _key: newLineKey(), category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0, cost_cents: null, line_type: 'base' }]);
   }
   function removeLine(i) {
     setDirty(true);
@@ -301,7 +307,9 @@ function EstimateForm({ existing, onSave, onCancel }) {
     setLines(arr => {
       const next = arr.slice();
       const [row] = next.splice(from, 1);
-      next.splice(to, 0, row);
+      // Removing the source shifts later indices down by one, so a downward
+      // drop must target to-1 to land the row AT the drop position (not past it).
+      next.splice(from < to ? to - 1 : to, 0, row);
       return next;
     });
   }
@@ -478,7 +486,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
                 const total = Math.round((parseFloat(l.qty) || 0) * (parseInt(l.unit_cost_cents, 10) || 0));
                 const dp = dragProps(i);
                 return (
-                  <tr key={i} onDragOver={dp.onDragOver} onDrop={dp.onDrop} style={isOver(i) ? { outline: '2px solid #93c5fd' } : undefined}>
+                  <tr key={l._key || i} onDragOver={dp.onDragOver} onDrop={dp.onDrop} style={isOver(i) ? { outline: '2px solid #93c5fd' } : undefined}>
                     <td
                       style={{ ...styles.lineTd, cursor: 'grab', color: '#9ca3af', textAlign: 'center', userSelect: 'none' }}
                       draggable
@@ -514,7 +522,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
                         value={l.cost_cents == null || l.cost_cents === '' ? '' : (parseInt(l.cost_cents, 10) / 100)}
                         onChange={e => {
                           const v = e.target.value;
-                          updateLine(i, 'cost_cents', v === '' || !Number.isFinite(parseFloat(v)) ? null : Math.round(parseFloat(v) * 100));
+                          updateLine(i, 'cost_cents', v === '' || !Number.isFinite(parseFloat(v)) ? null : Math.max(0, Math.round(parseFloat(v) * 100)));
                         }}
                         placeholder="—"
                         style={{ ...styles.input, padding: '6px 8px', fontSize: 14, textAlign: 'right' }}
@@ -547,7 +555,7 @@ function EstimateForm({ existing, onSave, onCancel }) {
             // equipment asset. Flip dirty so the tab-close prompt fires,
             // just like after any other line edit.
             setDirty(true);
-            setLines(arr => [...arr, ...newLines]);
+            setLines(arr => [...arr, ...newLines.map(l => ({ _key: newLineKey(), ...l }))]);
           }} />
         </div>
       </div>

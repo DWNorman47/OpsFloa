@@ -634,6 +634,9 @@ function AssemblyEditor({ assemblyId, onClose, onSaved, toast }) {
 
   async function save() {
     if (!name.trim()) { setError(`${t.catFieldName} — ${t.estRequired}`); return; }
+    // A row with text that didn't resolve to a catalog item would be silently
+    // dropped — flag it so the user fixes it instead of losing the line.
+    if (items.some(r => r.label && r.label.trim() && !r.item_id)) { setError(t.catAsmUnresolved); return; }
     setSaving(true); setError(null);
     try {
       const payload = {

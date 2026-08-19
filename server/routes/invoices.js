@@ -378,11 +378,18 @@ router.post('/retainage-release/:projectId', requireAuth, requireCommercialAcces
   try {
     const projRes = await pool.query('SELECT id FROM projects WHERE id = $1 AND company_id = $2', [req.params.projectId, companyId]);
     if (projRes.rowCount === 0) return res.status(404).json({ error: 'Project not found' });
+    // Capture the pre-update delta in a CTE — a bare RETURNING would evaluate
+    // (held − released) AFTER the SET and always report 0.
     const upd = await pool.query(
-      `UPDATE invoices SET retainage_released_cents = retainage_held_cents, updated_at = NOW()
-        WHERE project_id = $1 AND company_id = $2 AND status <> 'void'
-          AND retainage_held_cents > retainage_released_cents
-        RETURNING id, retainage_held_cents - retainage_released_cents AS newly_released`,
+      `WITH pre AS (
+         SELECT id, (retainage_held_cents - retainage_released_cents) AS newly_released
+           FROM invoices
+          WHERE project_id = $1 AND company_id = $2 AND status <> 'void'
+            AND retainage_held_cents > retainage_released_cents
+       )
+       UPDATE invoices i SET retainage_released_cents = i.retainage_held_cents, updated_at = NOW()
+         FROM pre WHERE i.id = pre.id
+         RETURNING i.id, pre.newly_released`,
       [req.params.projectId, companyId]
     );
     const released = upd.rows.reduce((s, r) => s + (parseInt(r.newly_released, 10) || 0), 0);

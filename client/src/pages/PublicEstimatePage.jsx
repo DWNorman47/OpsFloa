@@ -174,12 +174,11 @@ export default function PublicEstimatePage() {
           ))}
         </div>
 
+        {/* Client-facing: show only the bottom-line total (line items are
+            itemized above; the contractor's overhead/margin/contingency
+            breakdown is intentionally not exposed). Tax, if any, is included. */}
         <div style={styles.totalsBox}>
-          <Row label={t.pubSubtotal} value={estimate.subtotal_cents} currency={estimate.currency} />
-          {parseFloat(estimate.overhead_pct) > 0 && (
-            <Row label={`${t.pubOverhead} (${estimate.overhead_pct}%)`} value={Math.round(estimate.subtotal_cents * estimate.overhead_pct / 100)} currency={estimate.currency} />
-          )}
-          <Row label={t.pubTotal} value={estimate.total_cents} bold currency={estimate.currency} />
+          <Row label={parseFloat(estimate.tax_pct) > 0 ? `${t.pubTotal} (${t.pubInclTax})` : t.pubTotal} value={estimate.total_cents} bold currency={estimate.currency} />
         </div>
 
         {altLines.length > 0 && (

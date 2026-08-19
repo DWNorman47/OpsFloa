@@ -41,7 +41,7 @@ async function invoiceTotals(projectId, companyId) {
             WHERE i2.project_id = $1 AND i2.company_id = $2 AND i2.status <> 'void'
          ), 0) AS collected_cents
        FROM invoices i
-      WHERE i.project_id = $1 AND i.company_id = $2 AND i.status <> 'void'`,
+      WHERE i.project_id = $1 AND i.company_id = $2 AND i.status NOT IN ('void', 'draft')`,
       [projectId, companyId]
     );
     return {
@@ -50,7 +50,7 @@ async function invoiceTotals(projectId, companyId) {
       retainage_outstanding_cents: parseInt(r.rows[0].retainage_outstanding_cents, 10) || 0,
     };
   } catch {
-    return { billed_cents: 0, collected_cents: 0 };
+    return { billed_cents: 0, collected_cents: 0, retainage_outstanding_cents: 0 };
   }
 }
 

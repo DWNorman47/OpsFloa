@@ -449,8 +449,8 @@ router.post('/projects/:id/closeout/transition', requireAdmin, async (req, res) 
          final_completion_date = $3,
          warranty_start_date = COALESCE(warranty_start_date, $2),
          closed_at = ${closedAt},
-         final_financials       = CASE WHEN $6 THEN NULL WHEN $5 IS NOT NULL THEN $5::jsonb ELSE final_financials END,
-         financials_snapshot_at = CASE WHEN $6 THEN NULL WHEN $5 IS NOT NULL THEN NOW() ELSE financials_snapshot_at END
+         final_financials       = CASE WHEN $6 THEN NULL WHEN $5 IS NOT NULL AND final_financials IS NULL THEN $5::jsonb ELSE final_financials END,
+         financials_snapshot_at = CASE WHEN $6 THEN NULL WHEN $5 IS NOT NULL AND final_financials IS NULL THEN NOW() ELSE financials_snapshot_at END
        WHERE id = $4 RETURNING *`,
       [to, subDate, finalDate, co.id, snapshot ? JSON.stringify(snapshot) : null, clearSnapshot]
     );
