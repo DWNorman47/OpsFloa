@@ -11,7 +11,7 @@ const {
 } = require('../middleware/financialAccess');
 const { csvCell } = require('../utils/csv');
 const { loadSettings, laborCostCents, LABOR_ENTRY_COLUMNS } = require('../utils/paidHours');
-const { equipmentUsageCents, manualExpensesByStatus, sumMap } = require('../utils/projectCost');
+const { equipmentUsageCents, manualExpensesByStatus, materialsCents, sumMap } = require('../utils/projectCost');
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -85,7 +85,8 @@ async function contractValueCents(projectId) {
 // P&L and WIP.
 async function spendTotals(projectId, settings) {
   let labor = 0;
-  let materials = 0;
+  let materials = 0;            // issued-to-project inventory cost (spent)
+  let materialsCommitted = 0;   // unreceived open-PO value for the project
   let subsSpent = 0;
   let subsCommitted = 0;
   let manualExpenses = 0;       // actual expenses (spent)
@@ -117,6 +118,10 @@ async function spendTotals(projectId, settings) {
   // Equipment usage (logged hours × hourly operating rate) — same source as the
   // per-category spend snapshot, so P&L/WIP and the spend tab agree.
   equipUsage = await equipmentUsageCents(projectId);
+  // Materials: issued-to-project cost (spent) + open-PO value (committed).
+  const mat = await materialsCents(projectId);
+  materials = mat.spent;
+  materialsCommitted = mat.committed;
   // Sub spent + committed
   try {
     const paidR = await pool.query(
@@ -143,9 +148,10 @@ async function spendTotals(projectId, settings) {
   } catch { /* tables may not exist */ }
   return {
     spent_cents:     labor + manualExpenses + materials + subsSpent + equipUsage,
-    committed_cents: subsCommitted + manualCommitted,
+    committed_cents: subsCommitted + manualCommitted + materialsCommitted,
     by_source: {
-      labor, materials, subs_spent: subsSpent, subs_committed: subsCommitted,
+      labor, materials, materials_committed: materialsCommitted,
+      subs_spent: subsSpent, subs_committed: subsCommitted,
       manual_expenses: manualExpenses, manual_committed: manualCommitted, equipment_usage: equipUsage,
     },
   };

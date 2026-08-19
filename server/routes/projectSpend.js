@@ -16,7 +16,7 @@ const { requireProjectFinancialAccess, requireProjectFinancialWrite } = require(
 const { logAudit } = require('../auditLog');
 const { MONEY_CATEGORIES, PROJECT_EXPENSE_STATUSES, PROJECT_EXPENSE_STATUS_DEFAULT } = require('../constants/projectMoneyEnums');
 const { loadSettings, laborCostCents, LABOR_ENTRY_COLUMNS } = require('../utils/paidHours');
-const { equipmentUsageCents, manualExpensesByStatus } = require('../utils/projectCost');
+const { equipmentUsageCents, manualExpensesByStatus, materialsCents } = require('../utils/projectCost');
 
 async function assertProjectInCompany(companyId, projectId) {
   const r = await pool.query(
@@ -95,27 +95,6 @@ async function subsSpentAndCommitted(projectId) {
   };
 }
 
-// Stub for the forthcoming inventory-PO-to-project linkage.
-async function materialsSpentAndCommitted(projectId) {
-  if (!(await tableExists('purchase_orders'))) return { spent: 0, committed: 0 };
-  // Skip until inventory POs gain a project_id column (sketched but not
-  // yet shipped). For now, no contribution.
-  try {
-    const colCheck = await pool.query(
-      `SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'purchase_orders' AND column_name = 'project_id' LIMIT 1`
-    );
-    if (colCheck.rowCount === 0) return { spent: 0, committed: 0 };
-    // Materials spent = the lines that have been received against this
-    // project's POs, valued at the unit_cost on the line.
-    // Materials committed = lines on POs in status='submitted' or 'partial'
-    // that haven't been fully received.
-    return { spent: 0, committed: 0 };  // Placeholder — full impl ships with inventory PO project linkage.
-  } catch {
-    return { spent: 0, committed: 0 };
-  }
-}
-
 // GET /projects/:id/spend — current spend snapshot.
 router.get('/projects/:id/spend', requireAuth, requireProjectFinancialAccess, async (req, res) => {
   const companyId = req.user.company_id;
@@ -128,7 +107,7 @@ router.get('/projects/:id/spend', requireAuth, requireProjectFinancialAccess, as
       laborSpent(req.params.id, settings),
       manualExpensesByStatus(req.params.id),
       subsSpentAndCommitted(req.params.id),
-      materialsSpentAndCommitted(req.params.id),
+      materialsCents(req.params.id),
       equipmentUsageCents(req.params.id),
       pool.query(
         'SELECT category, budget_cents, budget_alert_pct FROM project_budget_categories WHERE project_id = $1',

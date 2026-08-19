@@ -77,10 +77,47 @@ async function manualExpensesByStatus(projectId) {
   return { spent, committed };
 }
 
+// Materials cost for a project, split spent vs committed. Returns integer cents.
+//   spent     — inventory ISSUED to the project (type='issue', project_id, unit_cost)
+//   committed — unreceived value of OPEN purchase orders linked to the project
+// Each source is guarded so a partial/absent schema contributes 0.
+async function materialsCents(projectId) {
+  let spent = 0;
+  let committed = 0;
+  if (await tableExists('inventory_transactions')) {
+    try {
+      const r = await pool.query(
+        `SELECT COALESCE(SUM(quantity * unit_cost), 0)::numeric AS dollars
+           FROM inventory_transactions
+          WHERE project_id = $1 AND type = 'issue' AND unit_cost IS NOT NULL`,
+        [projectId]
+      );
+      const c = Math.round(parseFloat(r.rows[0].dollars) * 100);
+      spent = Number.isFinite(c) ? c : 0;
+    } catch { /* shape differs */ }
+  }
+  if (await tableExists('purchase_orders')) {
+    try {
+      const r = await pool.query(
+        `SELECT COALESCE(SUM((pol.qty_ordered - pol.qty_received) * pol.unit_cost), 0)::numeric AS dollars
+           FROM purchase_order_lines pol
+           JOIN purchase_orders po ON po.id = pol.po_id
+          WHERE po.project_id = $1
+            AND po.status IN ('submitted', 'partial')
+            AND pol.unit_cost IS NOT NULL`,
+        [projectId]
+      );
+      const c = Math.round(parseFloat(r.rows[0].dollars) * 100);
+      committed = Number.isFinite(c) && c > 0 ? c : 0;
+    } catch { /* project_id column absent (pre-0181) */ }
+  }
+  return { spent, committed };
+}
+
 function sumMap(map) {
   let total = 0;
   for (const v of map.values()) total += v;
   return total;
 }
 
-module.exports = { tableExists, equipmentUsageCents, manualExpensesByStatus, sumMap };
+module.exports = { tableExists, equipmentUsageCents, manualExpensesByStatus, materialsCents, sumMap };

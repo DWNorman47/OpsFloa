@@ -2409,12 +2409,18 @@ router.get('/purchase-orders', requireAuth, requirePerm('manage_inventory'), asy
 // POST /api/inventory/purchase-orders
 router.post('/purchase-orders', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const { supplier_id, order_date, expected_date, to_location_id, notes, reference_no, lines = [] } = req.body;
+  const projectId = req.body.project_id != null && req.body.project_id !== '' ? parseInt(req.body.project_id, 10) : null;
   if (notes && notes.trim().length > 1000) return res.status(400).json({ error: 'notes too long (max 1000 characters)' });
   if (reference_no && reference_no.trim().length > 100) return res.status(400).json({ error: 'reference_no too long (max 100 characters)' });
+  if (projectId != null && !Number.isFinite(projectId)) return res.status(400).json({ error: 'invalid project_id' });
   const companyId = req.user.company_id;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    if (projectId != null) {
+      const proj = await client.query('SELECT id FROM projects WHERE id=$1 AND company_id=$2', [projectId, companyId]);
+      if (!proj.rowCount) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Project not found' }); }
+    }
     if (supplier_id) {
       const supplier = await client.query(
         'SELECT id FROM inventory_suppliers WHERE id=$1 AND company_id=$2',
@@ -2432,12 +2438,12 @@ router.post('/purchase-orders', requireAuth, requirePerm('manage_inventory'), as
     const poNumber = await nextPONumber(client, companyId);
     const poResult = await client.query(
       `INSERT INTO purchase_orders
-         (company_id, po_number, supplier_id, order_date, expected_date, to_location_id, notes, reference_no, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+         (company_id, po_number, supplier_id, order_date, expected_date, to_location_id, notes, reference_no, created_by, project_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
       [companyId, poNumber, supplier_id || null,
        order_date || new Date().toISOString().slice(0,10),
        expected_date || null, to_location_id || null,
-       notes?.trim() || null, reference_no?.trim() || null, req.user.id]
+       notes?.trim() || null, reference_no?.trim() || null, req.user.id, projectId]
     );
     const po = poResult.rows[0];
     for (const line of lines) {
