@@ -138,7 +138,7 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
       if (e.wage_type !== 'prevailing') continue;
       // Clamp at 0 (matches entryDuration): a break longer than the shift must not
       // produce negative prevailing hours/cost.
-      const h = Math.max(0, hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60);
+      const h = Math.max(0, hoursWorked(e.start_time, e.end_time) - Math.max(0, e.break_minutes || 0) / 60);
       prevailingHours += h;
       prevailingCostRaw += h * (projectRateMap && projectRateMap[e.project_id] != null ? projectRateMap[e.project_id] : prevRate);
     }

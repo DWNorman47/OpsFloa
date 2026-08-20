@@ -494,7 +494,7 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
           companyId, req.user.id, oldClock.project_id, oldClock.work_date,
           start_time, end_time, clockInTime, clockOutTime, oldWageType, oldClock.notes || null,
           oldClock.clock_in_lat, oldClock.clock_in_lng, lat || null, lng || null,
-          parseInt(break_minutes) || 0, mileage != null ? parseFloat(mileage) : null,
+          Math.max(0, parseInt(break_minutes) || 0), mileage != null ? parseFloat(mileage) : null,
           oldClock.timezone || null,
           oldClock.clock_source, oldClock.clocked_in_by,
         ]
@@ -650,7 +650,7 @@ async function recoverLostClockOut(req, res) {
           clock_out_lat, clock_out_lng, break_minutes, mileage, timezone, clock_source, clocked_in_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'worker',NULL) RETURNING *`,
       [companyId, req.user.id, entryProjectId, wd, start_time, end_time, recoverTs, clockOutTime, wage_type, cleanNotes,
-       lat || null, lng || null, parseInt(break_minutes) || 0, mileage != null ? parseFloat(mileage) : null, timezone || null]
+       lat || null, lng || null, Math.max(0, parseInt(break_minutes) || 0), mileage != null ? parseFloat(mileage) : null, timezone || null]
     );
     await txClient.query('COMMIT');
     logger.warn({ user_id: req.user.id }, 'clock.out recovered a shift whose offline clock-in never synced');
@@ -752,7 +752,7 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
           companyId, req.user.id, entryProjectId, clock.work_date,
           start_time, end_time, clockInTime, clockOutTime, wage_type, clock.notes || null,
           clock.clock_in_lat, clock.clock_in_lng, lat || null, lng || null,
-          parseInt(break_minutes) || 0, mileage != null ? parseFloat(mileage) : null,
+          Math.max(0, parseInt(break_minutes) || 0), mileage != null ? parseFloat(mileage) : null,
           clock.timezone || null,
           clock.clock_source, clock.clocked_in_by,
         ]

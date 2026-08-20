@@ -6055,3 +6055,49 @@ Re-audited all three phases; fixed the correctness bugs (several self-inflicted)
   loads the markup map once (N+1); assembly notes now save.
 
 Full server suite 1477 + client eslint/i18n/build green throughout.
+
+## 2026-08-20 — Field Work deep audit, pass 2 (media lifecycle, clock, field access)
+
+Second parallel-reviewer pass over the worker/field surfaces (clock flow, media
+lifecycle, field project access + scheduling). Verified each finding against the
+code before acting.
+
+FIXED (self-contained, safe):
+- **Safety-talk media leaks (3 HIGH).** Deleting a talk (attachments cascade) or a
+  single attachment never purged R2 and mis-refunded storage — one path orphaned +
+  over-counted, the other under-counted. Both now read the url(s) first, `deleteByUrl`
+  (talk-delete guarded by an own-folder allowlist; attachment-delete guarded by a
+  still-referenced check), and refund the real bytes. The attachment POST now
+  HEAD-verifies the REAL R2 object size (`getObjectMetadataByUrl`) instead of trusting
+  client `size_bytes` — that was a clean storage-cap bypass (upload 500MB, POST
+  `size_bytes:0`) — and rejects any URL outside `safety-talk-attachments/`. Mirrors the
+  already-fixed field-report video path. New `safetyTalkMedia.test.js` (4 tests).
+- **Batch media-retention still-referenced guard.** `mediaRetention` (project-archive +
+  daily retention) purged R2 unconditionally; a shared/resubmitted URL could be deleted
+  out from under a surviving row. Added `purgeUnreferenced` (delete DB rows first, then
+  purge each distinct URL only if no row still points at it) across all three loops.
+- **Negative `break_minutes` overpay vector.** A negative break subtracts-a-negative and
+  ADDS paid hours; the outer `Math.max(0, …)` on duration can't catch it. Clamped the
+  break at 0 in both pay-read spots (`entryDuration`, `payStatement` prevailing calc) —
+  the money guarantee — plus the worker/admin write sites, plus a `NOT VALID` CHECK
+  (migration 0195) so raw SQL / future endpoints can't store it. Test added.
+
+FLAGGED (not fixed — decisions for David, in BACKLOG "Open questions"):
+- **Forgotten/multi-day clock-out paid as <24h (MONEY-CRITICAL).** Pay reads wall-clock
+  `start_time/end_time`; `hoursWorked` truncates mod-24h, so a 49h forgotten shift pays
+  1h. The correct `start_ts/end_ts` are stored but no pay surface reads them — the
+  Phase-3 reader cutover never landed. Also hits admin end<start edits and offline
+  recover. This is the reader cutover (money-critical, jurisdiction-sensitive) — staged
+  change + David's call, NOT an audit-pass edit. Did not touch the pay reader.
+- **`visible_to_user_ids` / `field_show_overhead_projects` are display-only.** Not
+  enforced on write — a worker can clock in / switch / file a field report against a
+  restricted or overhead project by POSTing its numeric id. Same-company only. Needs a
+  product call (access boundary vs. declutter) before enforcing server-side.
+
+Backlogged LOW/MED: project-archive delete covers only field-report photos; stuck
+transcription polls forever + never frees its video; mark-day dedup lacks a unique
+index; dual Day-N counters can diverge; `pauseOverdueCalendar` uses UTC not company-
+local; edited ordinal/calendar plans can be left un-activatable; documents are unmetered
+against the storage cap (likely by-design).
+
+Full server suite 1520 + client eslint/i18n/build green.

@@ -28,11 +28,39 @@ that holds the exhaustive detail.
   on conflict); `field_report_photos.media_type` CHECK (0193) + constant; haul-ticket qty upper
   bound; daily-report "No project" (NULL project_id) duplicate — migration 0194 dedupes existing
   rows and adds a NULLS-NOT-DISTINCT unique index, and the POST reverted to an atomic ON CONFLICT
-  upsert. STILL OPEN: (b) LOW —
+  upsert.
+  FIXED 2026-08-20 (pass 2): safety-talk media leaks — deleting a talk or an attachment now purges
+  the R2 object(s) and refunds storage (was orphaning + drifting both directions); the attachment
+  POST HEAD-verifies the REAL object size and allowlists the URL to its own folder (was trusting
+  client `size_bytes` → storage-cap bypass); batch media-retention deletes gained the
+  still-referenced guard; negative `break_minutes` can no longer inflate pay (reader clamps at 0 +
+  write-site clamps + CHECK 0195). STILL OPEN: (b) LOW —
   duplicate `GET /days/:dayId` route (419 shadows 803) leaves the plan-edit handler dead; a worker
   with `role_id = NULL` sees no role-scoped items; assignment items mislabeled `source='recurring'`;
   a same-text-different-MODE checklist item is still dropped (only same-mode different-role merges);
   report photo display order is nondeterministic (identical created_at).
+
+- **Field Work — media & scheduling residuals (2026-08-20 audit pass 2, LOW/MED).**
+  (1) Project-archive media delete (`mediaRetention.deleteMediaForProject`) covers only
+  `field_report_photos` — recordings, safety-talk attachments, and inventory photos tied to the
+  archived project are neither deleted nor storage-decremented (their R2 objects survive + keep
+  counting). (2) A recording stuck in `status='processing'` (AssemblyAI never returns) is re-polled
+  every 20s forever with no max-attempt/age cutoff; `cleanupStagedVideo` only runs on completion, so
+  a stuck *video* keeps its R2 object + counted storage indefinitely (`transcriptionPoller.js`). Not
+  a cost loop. (3) `mark-day` dedup is SELECT-then-INSERT with no `(user_id, work_date)` unique index
+  — two rapid taps/devices can both insert a pending day (pay is NOT doubled — `computeDailyPayCosts`
+  counts distinct days — but it pollutes approvals/`today-marked`). (4) Two "Day N" counters: the work-
+  calendar ranks marked `project_work_days` (`ROW_NUMBER`), but ordinal *firing* counts started days
+  (`MAX(day_number)+1 WHERE status IN active/completed`) — they diverge on a skipped/unmarked day, so
+  a checklist pinned to "Day 3" can fire on the wrong date. (5) `pauseOverdueCalendar` compares
+  `scheduled_date < CURRENT_DATE` (server UTC, not company-local) — off-by-a-day on the queue's
+  on-time/off-time display west/east of UTC (mostly cosmetic; the exact-date match still activates the
+  right plan). (6) `PUT /days/:dayId/plan-items` mirrors items onto the active day but leaves the
+  edited ordinal/calendar plan `pending` pointing at an already-consumed day-number/date, so it can
+  never activate (queue clutter). (7) Documents (`project_/client_/worker_documents`,
+  `submittal_documents`, subcontractor docs) store a client `size_bytes` but never
+  increment/decrement storage — entirely unmetered against the plan cap; appears by-design (docs vs
+  media), flag only if documents are meant to count.
 
 - **Field Work — geolocation / field-log minors (2026-08-20 audit).** Geofence fails OPEN when a
   project's `geo_radius_ft` is 0 (falsy — `clock.js:129/401` skip the whole distance check); an
@@ -504,6 +532,33 @@ that holds the exhaustive detail.
 
 ## ❓ Open questions / decisions for you
 *Blocked on your call before anyone builds.*
+
+- **Forgotten / multi-day clock-out is paid as <24h (mod-24 truncation) — MONEY-CRITICAL.**
+  (2026-08-20 Field Work deep-audit pass 2) The pay engine derives a shift's duration from
+  wall-clock time-of-day only: `hoursWorked(start_time,end_time)` does `if (ms<0) ms+=86400000`,
+  capping any shift under 24h. Clock in Mon 08:00, forget, clock out Wed 09:00 → stored
+  `work_date=Mon, start_time=08:00, end_time=09:00` → **paid 1 hour** for ~49h. The correct
+  instants (`start_ts`/`end_ts`) ARE stored, but NO pay surface reads them — the Phase-3 reader
+  cutover never landed (`payStatement.js` + `LABOR_ENTRY_COLUMNS` still select `start_time/end_time`;
+  `elapsedMinutes(start_ts,end_ts)` in `timeFormat.js` is written+DST-correct but unused). Same
+  truncation hits admin edits that swap end<start (silently paid as a 16h overnight) and
+  `recoverLostClockOut` (offline never-synced clock-in). The 16h stale-clock cron only *alerts* —
+  never caps/auto-closes. **Decision:** this is the reader cutover (money-critical, jurisdiction-
+  sensitive, touches every worker's pay) — do it as its own staged+tested change, not folded into
+  an audit pass. Interim safety option: a max-duration sanity cap (e.g. reject/flag >16–20h) at
+  the clock-out + recover write sites. I did NOT change the pay reader unilaterally.
+
+- **Per-project visibility (`visible_to_user_ids`) is display-only, not enforced on write.**
+  (2026-08-20 audit) The gate exists only on list reads (`projects.js` GET, the clock-in prompt).
+  Every *action* endpoint checks company membership only — clock in (`clock.js`), clock switch,
+  field-report create (`projectBelongsToCompany`), all daily-checklist project routes. A worker
+  walled off from Project X (hidden from their picker) can still POST `/api/clock/in` (or /switch,
+  or a field report) with X's numeric `project_id` — trivially guessable — and log time/reports
+  against it. Same-company only (no cross-tenant). **Decision:** is `visible_to_user_ids` an access
+  boundary or just picker declutter? If a boundary, enforce it server-side on the write paths (I did
+  NOT, since enforcing could break legit flows where a worker must log to a not-listed project).
+  Sibling: `field_show_overhead_projects` is likewise client-only — `/api/projects` still ships
+  overhead/internal codes (Yard, Bench, PTO) and a worker can clock into them via the API.
 
 - **Business seat cap — ENFORCED 2026-08-20 (hard cap, your call).** Business is now capped at
   15 included + purchased per-worker seats (`companies.paid_worker_seats`, migration 0190) +

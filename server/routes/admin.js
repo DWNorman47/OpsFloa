@@ -684,7 +684,7 @@ router.post('/clock-out/:user_id', requireAdmin, requirePerm('manage_workers'), 
           companyId, clock.user_id, clock.project_id, clock.work_date,
           start_time, end_time, clockInTime, clockOutTime, clock.wage_type || 'regular', clock.notes || null,
           clock.clock_in_lat, clock.clock_in_lng,
-          parseInt(break_minutes) || 0, mileageVal,
+          Math.max(0, parseInt(break_minutes) || 0), mileageVal,
           clock.timezone || null,
           clock.clock_source, clock.clocked_in_by,
         ]
@@ -917,7 +917,7 @@ router.post('/entries/:id/split', requireAdmin, requirePerm('approve_entries'), 
           [
             companyId, o.user_id, seg.project_id || null, o.work_date,
             seg.start_time, seg.end_time, start_ts, end_ts, wage_type,
-            o.notes, o.break_minutes || 0, o.mileage, o.timezone || null,
+            o.notes, Math.max(0, o.break_minutes || 0), o.mileage, o.timezone || null,
             'admin', req.user.id,
           ]
         );
@@ -1148,7 +1148,7 @@ router.post('/workers/:id/entries', requireAdmin, requirePerm('manage_workers'),
       [
         companyId, req.params.id, project_id || null, work_date,
         start_time, end_time, start_ts, end_ts, wage_type, notes || null,
-        parseInt(break_minutes) || 0, entryMileageVal,
+        Math.max(0, parseInt(break_minutes) || 0), entryMileageVal,
         workerRow.rows[0].timezone || null,
         req.user.id,
       ]

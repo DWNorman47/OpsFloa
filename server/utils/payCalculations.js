@@ -18,7 +18,9 @@ function hoursWorked(start, end) {
 function entryDuration(e) {
   // Clamp at 0: a break longer than the shift (bad/hostile input) would otherwise
   // yield a negative duration that subtracts from paid hours — and thus from pay.
-  return Math.max(0, hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60);
+  // Also clamp the break itself at 0: a NEGATIVE break would otherwise ADD hours
+  // (subtracting a negative), an overpay vector the outer Math.max can't catch.
+  return Math.max(0, hoursWorked(e.start_time, e.end_time) - Math.max(0, e.break_minutes || 0) / 60);
 }
 
 /** Day of week (0=Sun … 6=Sat) for a YYYY-MM-DD key, timezone-independent. */

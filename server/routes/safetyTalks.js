@@ -3,9 +3,19 @@ const pool = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { projectBelongsToCompany } = require('../utils/tenantRefs');
 const { sendPushToAllWorkers } = require('../push');
-const { getPresignedUploadUrl } = require('../r2');
+const { getPresignedUploadUrl, deleteByUrl, getObjectMetadataByUrl } = require('../r2');
 const { checkStorageLimit, incrementStorage, decrementStorage } = require('../storage');
 const { logAudit } = require('../auditLog');
+
+// Only URLs under this app's own safety-talk-attachments folder may be stored as
+// attachments (and later purged via deleteByUrl, which derives the key from the URL
+// with no ownership check). Without this an admin could POST an arbitrary R2 URL —
+// another tenant's document/COI/takeoff — as an "attachment", then delete it here.
+function isOwnSafetyAttachmentUrl(u) {
+  const base = process.env.R2_PUBLIC_URL;
+  if (!base || typeof u !== 'string') return false;
+  return u.startsWith(`${base}/safety-talk-attachments/`);
+}
 
 // GET /safety-talks
 router.get('/', requireAuth, async (req, res) => {
@@ -288,11 +298,26 @@ router.delete('/:id', requireAuth, async (req, res) => {
   if (!isAdmin) return res.status(403).json({ error: 'Admins only' });
 
   try {
+    // Read attachment url+size BEFORE deleting the talk: safety_talk_attachments has
+    // ON DELETE CASCADE, so the rows vanish with the talk. Without this the R2 objects
+    // are orphaned forever and companies.storage_bytes_used stays inflated.
+    const atts = await pool.query(
+      `SELECT a.url, a.size_bytes FROM safety_talk_attachments a
+       JOIN safety_talks t ON a.talk_id = t.id
+       WHERE t.id=$1 AND t.company_id=$2`,
+      [req.params.id, companyId]
+    );
     const result = await pool.query(
       'DELETE FROM safety_talks WHERE id=$1 AND company_id=$2 RETURNING id',
       [req.params.id, companyId]
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Not found' });
+    let freed = 0;
+    for (const a of atts.rows) {
+      if (isOwnSafetyAttachmentUrl(a.url)) deleteByUrl(a.url).catch(() => {});
+      freed += parseInt(a.size_bytes || 0) || 0;
+    }
+    if (freed > 0) decrementStorage(companyId, freed).catch(() => {});
     logAudit(companyId, req.user.id, req.user.full_name, 'safety_talk.deleted', 'safety_talk', req.params.id, null, null);
     res.json({ deleted: true });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
@@ -325,17 +350,26 @@ router.post('/:id/attachments', requireAuth, async (req, res) => {
   const companyId = req.user.company_id;
   const isAdmin = req.user.role === 'admin' || req.user.role === 'super_admin';
   if (!isAdmin) return res.status(403).json({ error: 'Admins only' });
-  const { name, url, content_type, size_bytes } = req.body;
+  const { name, url, content_type } = req.body;
   if (!name || !url) return res.status(400).json({ error: 'name and url required' });
+  if (!isOwnSafetyAttachmentUrl(url)) return res.status(400).json({ error: 'invalid attachment url' });
   try {
     const talk = await pool.query('SELECT id FROM safety_talks WHERE id=$1 AND company_id=$2', [req.params.id, companyId]);
     if (talk.rowCount === 0) return res.status(404).json({ error: 'Not found' });
+    // Count the REAL uploaded object size (HEAD), never the client-sent size_bytes — a
+    // client could otherwise upload a large object then POST size_bytes: 0 and bypass
+    // the storage cap. Mirrors the field-report video path.
+    let realBytes = 0;
+    try {
+      const meta = await getObjectMetadataByUrl(url);
+      realBytes = meta ? meta.contentLength : 0;
+    } catch { realBytes = 0; }
     const result = await pool.query(
       `INSERT INTO safety_talk_attachments (talk_id, name, url, content_type, size_bytes, uploaded_by)
        VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [req.params.id, name, url, content_type || null, size_bytes || null, req.user.id]
+      [req.params.id, name, url, content_type || null, realBytes || null, req.user.id]
     );
-    if (size_bytes) incrementStorage(companyId, parseInt(size_bytes)).catch(() => {});
+    if (realBytes > 0) incrementStorage(companyId, realBytes).catch(() => {});
     res.status(201).json(result.rows[0]);
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
@@ -349,11 +383,17 @@ router.delete('/:id/attachments/:attId', requireAuth, async (req, res) => {
     const talk = await pool.query('SELECT id FROM safety_talks WHERE id=$1 AND company_id=$2', [req.params.id, companyId]);
     if (talk.rowCount === 0) return res.status(404).json({ error: 'Not found' });
     const result = await pool.query(
-      'DELETE FROM safety_talk_attachments WHERE id=$1 AND talk_id=$2 RETURNING id, size_bytes',
+      'DELETE FROM safety_talk_attachments WHERE id=$1 AND talk_id=$2 RETURNING id, url, size_bytes',
       [req.params.attId, req.params.id]
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Not found' });
-    const bytes = result.rows[0].size_bytes;
+    const { url, size_bytes: bytes } = result.rows[0];
+    // Purge the R2 object (was never happening — the file leaked on every delete), but
+    // only when no other attachment row still points at the same URL.
+    if (isOwnSafetyAttachmentUrl(url)) {
+      const stillRef = await pool.query('SELECT 1 FROM safety_talk_attachments WHERE url=$1 LIMIT 1', [url]);
+      if (stillRef.rowCount === 0) deleteByUrl(url).catch(() => {});
+    }
     if (bytes) decrementStorage(companyId, parseInt(bytes)).catch(() => {});
     res.json({ deleted: true });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
