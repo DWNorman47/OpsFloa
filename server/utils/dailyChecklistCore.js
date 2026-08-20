@@ -21,17 +21,44 @@ async function pauseOverdueCalendar(db, companyId, projectId) {
 // the item ordering after whatever items the day already has. Returns the next order index.
 async function appendAssembledItems(client, { dayId, companyId, projectId, seen, startOrder, dayNumber = null, workDate = null }) {
   let order = startOrder;
+  // Items added in THIS assembly pass, keyed on text+mode → the inserted row's id + role set.
+  // Lets two assignments that share an item label but target DIFFERENT team-types MERGE their
+  // role scopes into one row instead of the second being silently dropped — which used to hide
+  // the item from the second crew entirely. (The caller's `seen` set still gates against items
+  // already on the day; a text collision across DIFFERENT modes stays distinct-or-dropped.)
+  const addedByKey = new Map();
   // roleIds: null/[] = all team-member-types; a set = visible to those types only.
   // carryover: whether this item's "not done" state rolls forward to the next day.
   const add = async (text, kind, source, roleIds = null, mode = 'shared', carryover = true) => {
     const key = normText(text);
-    if (!key || seen.has(key)) return;
-    seen.add(key);
+    if (!key) return;
+    const m = mode === 'individual' ? 'individual' : 'shared';
     const roles = Array.isArray(roleIds) && roleIds.length ? roleIds : null;
-    await client.query(
-      'INSERT INTO daily_checklist_items (daily_checklist_id, text, kind, order_index, source, role_ids, mode, carryover) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-      [dayId, text.slice(0, MAX_TEXT), kind === 'text' ? 'text' : 'check', order++, source, roles, mode === 'individual' ? 'individual' : 'shared', carryover !== false]
+    const localKey = key + '|' + m;
+    const prior = addedByKey.get(localKey);
+    if (prior) {
+      // Same text+mode already seeded this pass — widen its role scope. NULL (all-types) is a
+      // superset and dominates; otherwise union the two sets so every targeted crew sees it.
+      if (prior.roleIds === null) return; // already all-types
+      if (roles === null) {
+        await client.query('UPDATE daily_checklist_items SET role_ids = NULL WHERE id = $1', [prior.id]);
+        prior.roleIds = null;
+      } else {
+        const merged = Array.from(new Set([...prior.roleIds, ...roles]));
+        if (merged.length !== prior.roleIds.length) {
+          await client.query('UPDATE daily_checklist_items SET role_ids = $1 WHERE id = $2', [merged, prior.id]);
+          prior.roleIds = merged;
+        }
+      }
+      return;
+    }
+    if (seen.has(key)) return; // already present on the day (pre-existing / manual / other mode)
+    seen.add(key);
+    const ins = await client.query(
+      'INSERT INTO daily_checklist_items (daily_checklist_id, text, kind, order_index, source, role_ids, mode, carryover) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
+      [dayId, text.slice(0, MAX_TEXT), kind === 'text' ? 'text' : 'check', order++, source, roles, m, carryover !== false]
     );
+    addedByKey.set(localKey, { id: ins.rows[0].id, roleIds: roles });
   };
 
   // The project's own hand-typed recurring template (the day-form carryover). All-types,

@@ -133,8 +133,8 @@ router.post('/', requireAuth, async (req, res) => {
     // the same project+date. PATCH enforces ownership; POST must too, or a worker could clobber
     // a coworker's/admin's report through this path. (IS NOT DISTINCT FROM handles null project_id.)
     const dupe = await client.query(
-      `SELECT created_by FROM daily_reports
-       WHERE company_id = $1 AND project_id IS NOT DISTINCT FROM $2 AND report_date = $3`,
+      `SELECT id, created_by FROM daily_reports
+       WHERE company_id = $1 AND project_id IS NOT DISTINCT FROM $2 AND report_date = $3 FOR UPDATE`,
       [companyId, project_id || null, report_date]
     );
     if (dupe.rowCount > 0 && !isAdmin && dupe.rows[0].created_by !== req.user.id) {
@@ -142,20 +142,35 @@ router.post('/', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'A report for this project and date already exists' });
     }
 
-    const result = await client.query(
-      `INSERT INTO daily_reports
-         (company_id, project_id, report_date, superintendent, weather_condition, weather_temp,
-          work_performed, delays_issues, visitor_log, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       ON CONFLICT (company_id, project_id, report_date)
-       DO UPDATE SET superintendent=$4, weather_condition=$5, weather_temp=$6,
-         work_performed=$7, delays_issues=$8, visitor_log=$9, updated_at=NOW()
-       RETURNING id`,
-      [companyId, project_id || null, report_date, superintendent?.trim() || null,
-       weather_condition?.trim() || null, tempVal, work_performed?.trim() || null,
-       delays_issues?.trim() || null, visitor_log?.trim() || null, req.user.id]
-    );
-    const reportId = result.rows[0].id;
+    let reportId;
+    if (dupe.rowCount > 0) {
+      // Update the existing report by id. The ON CONFLICT below only matches when project_id
+      // is non-NULL (the unique index treats NULLs as distinct), so a "No project" report would
+      // otherwise insert a duplicate on every re-submit. Updating the located row covers both.
+      const upd = await client.query(
+        `UPDATE daily_reports SET superintendent=$1, weather_condition=$2, weather_temp=$3,
+           work_performed=$4, delays_issues=$5, visitor_log=$6, updated_at=NOW()
+         WHERE id=$7 RETURNING id`,
+        [superintendent?.trim() || null, weather_condition?.trim() || null, tempVal,
+         work_performed?.trim() || null, delays_issues?.trim() || null, visitor_log?.trim() || null, dupe.rows[0].id]
+      );
+      reportId = upd.rows[0].id;
+    } else {
+      const result = await client.query(
+        `INSERT INTO daily_reports
+           (company_id, project_id, report_date, superintendent, weather_condition, weather_temp,
+            work_performed, delays_issues, visitor_log, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         ON CONFLICT (company_id, project_id, report_date)
+         DO UPDATE SET superintendent=$4, weather_condition=$5, weather_temp=$6,
+           work_performed=$7, delays_issues=$8, visitor_log=$9, updated_at=NOW()
+         RETURNING id`,
+        [companyId, project_id || null, report_date, superintendent?.trim() || null,
+         weather_condition?.trim() || null, tempVal, work_performed?.trim() || null,
+         delays_issues?.trim() || null, visitor_log?.trim() || null, req.user.id]
+      );
+      reportId = result.rows[0].id;
+    }
 
     // Validate sub-table row fields (trim + numeric checks)
     for (const m of manpower) {
@@ -246,6 +261,14 @@ router.patch('/:id', requireAuth, async (req, res) => {
     if (!isAdmin && existing.rows[0].created_by !== req.user.id) {
       await client.query('ROLLBACK');
       return res.status(403).json({ error: 'You can only edit your own reports' });
+    }
+
+    // Edit-lock once reviewed — matches fieldReports. A non-admin must not rewrite the
+    // work-performed / crew / weather of a report already signed off (it still shows the
+    // reviewer's name over content they never saw).
+    if (!isAdmin && existing.rows[0].status === 'reviewed') {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Reviewed reports cannot be edited' });
     }
 
     if (clientUpdatedAt && new Date(existing.rows[0].updated_at).getTime() !== new Date(clientUpdatedAt).getTime()) {

@@ -92,6 +92,9 @@ router.get('/:id', requireAuth, async (req, res) => {
 
 // POST /safety-talks
 router.post('/', requireAuth, async (req, res) => {
+  // Admins only — a safety talk is a company safety record and its creation push-blasts every
+  // worker; PATCH/DELETE/attachments already gate on isAdmin, POST was the gap.
+  if (!(req.user.role === 'admin' || req.user.role === 'super_admin')) return res.status(403).json({ error: 'Admins only' });
   const { project_id, talk_date, questions, pass_threshold } = req.body;
   const title = req.body.title?.trim();
   const content = req.body.content?.trim() || null;

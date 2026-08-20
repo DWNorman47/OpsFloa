@@ -26,7 +26,7 @@ function makeClient(plan = {}) {
       if (/FROM daily_checklist_recurring_items/.test(sql)) return { rows: plan.recurring || [] };
       if (/status = 'completed' ORDER BY/.test(sql)) return { rows: plan.completedDay || [] };
       if (/checked = false/.test(sql)) return { rows: plan.carry || [] };
-      if (/INSERT INTO daily_checklist_items/.test(sql)) { inserted.push({ text: params[1], source: params[4] }); return { rows: [] }; }
+      if (/INSERT INTO daily_checklist_items/.test(sql)) { inserted.push({ text: params[1], source: params[4] }); return { rows: [{ id: inserted.length }] }; }
       return { rows: [] };
     }),
   };

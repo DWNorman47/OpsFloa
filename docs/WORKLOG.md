@@ -23,6 +23,38 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-20 — Field Work module: deep audit + fixes
+
+Three-reviewer DEEP dive on the Field Work module (daily-checklist lifecycle, field/daily reports
++ offline, field logs + geolocation) per request. The module came back well-built overall
+(auto-start idempotency, timezone, template edit/delete safety, author attribution, cross-worker
+edit blocks, safety-talk acks, geofence math, tenant scoping all correct). Fixed the real ones;
+flagged the complex/lower ones. `npm run verify` green (server 1514, client 28).
+
+**Fixed:**
+- **Daily-checklist assembly silently dropped items for a crew (HIGH, data-loss).** Two
+  assignments sharing an item label but targeting DIFFERENT team-types deduped on text alone, so
+  only the first survived and the other crew never saw the item. Assembly now MERGES role scopes
+  for same-text+mode items (union; all-types dominates) instead of dropping the duplicate. Tests
+  added. (Residual: same-text-different-MODE still drops — flagged.)
+- **Daily reports had no edit-lock on reviewed reports (HIGH, sign-off bypass).** field-reports
+  blocked post-review edits; daily-reports didn't — a non-admin could rewrite the crew/weather/
+  work-performed of a signed-off report while it still showed the reviewer's name. Added the same
+  `status='reviewed'` guard.
+- **Punchlist: any worker could edit/verify/reassign any item.** The `manage_punchlist` perm
+  existed but wasn't enforced — PATCH and DELETE now require it (mirrors haul tickets).
+- **Safety-talk POST had no admin gate** — a worker could create a company safety record and
+  push-blast every worker. Now admin-only (PATCH/DELETE/attachments already were).
+- **Duplicate "No project" daily reports:** the `ON CONFLICT (…project_id…)` never matched a NULL
+  project_id, so a re-submit inserted a duplicate. A found duplicate now routes through an explicit
+  UPDATE (covers NULL). (True concurrent NULL race still needs a unique index — flagged.)
+
+**Flagged to `BACKLOG.md`:** individual-mode checklist completions invisible/misattributed in
+history (MED-HIGH, needs the report queries to aggregate per-user state); field-report offline
+replay has no idempotency key → duplicate report + double storage on a lost-response reconnect
+(HIGH, needs client request-id + server dedup); geofence fail-open on radius 0; the dead
+`GET /days/:dayId` route; media_type CHECK; haul upper bound; a few LOW field-log items.
+
 ## 2026-08-20 — Eighth pass: QBO idempotency, submittal/convert races, DB-enum CHECKs
 
 Three-reviewer sweep: QBO sync, DB-constraint drift, field/PM subsystems. `npm run verify` green.

@@ -21,6 +21,32 @@ that holds the exhaustive detail.
 
 ## 🔧 Bugs — set aside for later
 
+- **Field Work — deeper findings not yet fixed (2026-08-20 Field Work deep audit).**
+  (a) MED-HIGH — daily-checklist INDIVIDUAL-mode completions are invisible/misattributed in
+  history: `dailyChecklist.js:404` counts done items via `COUNT(i.checked)` (never set for
+  individual mode → a fully-completed crew day shows "0/N"), and the detail (`:429-436`) resolves
+  individual `checked` against the VIEWER (`us.user_id = $2`), crediting the check to whoever looks
+  and showing unchecked for a reviewing admin. Needs the history queries to aggregate
+  `daily_checklist_item_user_state`. (b) HIGH — field-report OFFLINE replay has no idempotency key
+  (`client/src/sw.js` enqueues on any thrown error; `field_reports` has no unique constraint), so a
+  POST whose response is lost replays on reconnect → a second report + re-uploaded photos +
+  double-counted storage. Needs a client request id + server dedup. (c) daily-report concurrent
+  "No project" (NULL project_id) submit can still race two rows (the double-tap/re-submit dup was
+  fixed in code 2026-08-20; a true concurrent race needs a unique index with NULLS NOT DISTINCT —
+  risky if existing dup NULL rows exist, so dedupe first). (d) LOW — duplicate `GET /days/:dayId`
+  route (419 shadows 803) leaves the plan-edit handler dead; a worker with `role_id = NULL` sees no
+  role-scoped items; assignment items mislabeled `source='recurring'`; a same-text-different-MODE
+  item is still dropped (only same-mode different-role is now merged 2026-08-20);
+  `field_report_photos.media_type` has no CHECK (CLAUDE.md rule); report photo order is
+  nondeterministic (identical created_at).
+
+- **Field Work — geolocation / field-log minors (2026-08-20 audit).** Geofence fails OPEN when a
+  project's `geo_radius_ft` is 0 (falsy — `clock.js:129/401` skip the whole distance check); an
+  exact `0` lat/lng is treated as "missing location". Haul-ticket qty has a lower bound but no upper
+  bound (`99999999` skews reconcile sums). Location-ping throttle is a non-atomic check-then-insert
+  (bounded). Safety-talk attachment DELETE doesn't call R2 delete (orphaned objects). Field
+  geolocation trusts client lat/lng with no plausibility check (inherent browser-GPS limitation).
+
 - **QBO sync — smaller gaps (2026-08-20 audit; the idempotency-key duplication was fixed).**
   (a) Manual batch pushes (`/push`, `/push-expenses`, `/push-bills`) collect per-object failures into
   the HTTP response only — NOT into `qbo_sync_errors` — so a failure vanishes if the admin navigates
