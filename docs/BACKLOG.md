@@ -21,17 +21,16 @@ that holds the exhaustive detail.
 
 ## 🔧 Bugs — set aside for later
 
-- **Storage-usage accounting drifts upward (companies never reclaim space).** (2026-08-20)
-  Two paths increment `storage_bytes_used` but never decrement: (a) `fieldReports.js` presigned
-  VIDEO upload increments at reservation time from the client-supplied `size` (before any file
-  exists), and the video is later stored as a pass-through URL with `size_bytes: 0`, so deleting
-  it frees nothing — every presigned video permanently inflates usage; a `size=0` request also
-  skips the check AND the increment, letting a multi-GB upload go uncounted (cap bypass). (b)
-  `inventory.js` imports only `incrementStorage` — inventory photo deletes/replaces never
-  decrement. The correct model is `recordings.js` (HEAD-verify the real R2 size, increment inside
-  the insert tx, refund on delete). Also (low): `storage.js` cap check is check-then-act (two
-  concurrent uploads can both pass), and `getStorageInfo` allows `used <= limit` (one over at the
-  cap). Storage accounting only — not money. Found 2026-08-20 storage audit.
+- **Storage-usage accounting drift — FIXED 2026-08-20 (two main paths).** field-report presigned
+  videos: no longer incremented optimistically at reservation from the unverified client `size`
+  (an abandoned upload / `size=0` request no longer drifts or bypasses); storage is now counted at
+  submit from the video's REAL R2 object size (HEAD-verified) and stored, so delete refunds it.
+  Inventory photo replace (location + setup PATCH) now reclaims removed photos — HEAD each dropped
+  URL, decrement, and delete the R2 object. Residual (LOW, left): `storage.js` cap check is
+  check-then-act (two concurrent uploads can both pass — bounded overage), `getStorageInfo` allows
+  `used <= limit` (one over at the cap), and `safetyTalks.js` still trusts a client `size_bytes`
+  (symmetric inc/dec so no drift, but an orphaned presigned upload is uncounted). Orphaned R2
+  objects from abandoned uploads remain a separate janitor concern.
 
 - **Cycle-count set-to-counted subsumes movements during the apply window (design note).**
   (2026-08-19, after FIXING the TOCTOU) Completion now SETS on-hand to the counted physical

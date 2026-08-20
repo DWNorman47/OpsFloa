@@ -4,8 +4,8 @@ const logger = require('../logger');
 const { requireAuth, requirePerm, hasPerm } = require('../middleware/auth');
 const { escapeHtml } = require('../utils/htmlEscape');
 const { formatCurrency, companyCurrency } = require('../currency');
-const { uploadBase64 } = require('../r2');
-const { checkStorageLimit, incrementStorage } = require('../storage');
+const { uploadBase64, deleteByUrl, getObjectMetadataByUrl } = require('../r2');
+const { checkStorageLimit, incrementStorage, decrementStorage } = require('../storage');
 const { sendPushToCompanyAdmins } = require('../push');
 const { createInboxItemBatch } = require('./inbox');
 const { getAdvancedSettings, ADVANCED_DEFAULTS } = require('./admin');
@@ -263,6 +263,20 @@ async function maybeSendLowStockAlert(companyId, itemId) {
 
 // Process an array of photo values (existing https:// URLs or new base64 data: URIs).
 // Uploads any base64 images to R2, tracks storage, returns array of https:// URLs.
+// When a photo set is replaced, free storage + delete the R2 objects for the photos that
+// were dropped — inventory only ever incremented, so edits/replacements leaked storage
+// forever. Inventory stores bare URLs (no per-photo size), so HEAD each removed object for
+// its real byte size before decrementing. oldUrls/keptUrls are arrays of URL strings.
+async function reclaimRemovedPhotos(companyId, oldUrls, keptUrls) {
+  const kept = new Set((Array.isArray(keptUrls) ? keptUrls : []).filter(u => typeof u === 'string'));
+  const removed = (Array.isArray(oldUrls) ? oldUrls : []).filter(u => typeof u === 'string' && !kept.has(u));
+  for (const url of removed) {
+    const meta = await getObjectMetadataByUrl(url).catch(() => null);
+    if (meta && meta.contentLength > 0) decrementStorage(companyId, meta.contentLength).catch(() => {});
+    deleteByUrl(url).catch(() => {});
+  }
+}
+
 async function processPhotos(photos, companyId) {
   if (!photos || photos.length === 0) return [];
   const base64Photos = photos.filter(p => typeof p === 'string' && p.startsWith('data:'));
@@ -713,7 +727,9 @@ router.patch('/locations/:id', requireAuth, requirePerm('manage_inventory'), asy
     if (address !== undefined) { sets.push(`address=$${idx++}`); vals.push(address?.trim() || null); }
     if (active !== undefined) { sets.push(`active=$${idx++}`); vals.push(!!active); }
     if (photo_urls !== undefined) {
+      const prev = await pool.query('SELECT photo_urls FROM inventory_locations WHERE id=$1 AND company_id=$2', [req.params.id, companyId]);
       const processed = await processPhotos(photo_urls, companyId);
+      await reclaimRemovedPhotos(companyId, prev.rows[0]?.photo_urls, processed);
       sets.push(`photo_urls=$${idx++}`); vals.push(JSON.stringify(processed));
     }
     if (sets.length === 0) return res.status(400).json({ error: 'No fields to update' });
@@ -2218,7 +2234,7 @@ function buildSetupRoutes(prefix, table, parentKey, parentTable) {
     const { name, notes, active, photo_urls } = req.body;
     try {
       const existing = await pool.query(
-        `SELECT id FROM ${table} WHERE id=$1 AND company_id=$2`,
+        `SELECT id, photo_urls FROM ${table} WHERE id=$1 AND company_id=$2`,
         [req.params.id, companyId]
       );
       if (existing.rowCount === 0) return res.status(404).json({ error: 'Not found' });
@@ -2228,6 +2244,7 @@ function buildSetupRoutes(prefix, table, parentKey, parentTable) {
       if (active !== undefined) { sets.push(`active=$${idx++}`); vals.push(!!active); }
       if (photo_urls !== undefined) {
         const processed = await processPhotos(photo_urls, companyId);
+        await reclaimRemovedPhotos(companyId, existing.rows[0]?.photo_urls, processed);
         sets.push(`photo_urls=$${idx++}`); vals.push(JSON.stringify(processed));
       }
       if (sets.length === 0) return res.status(400).json({ error: 'No fields to update' });

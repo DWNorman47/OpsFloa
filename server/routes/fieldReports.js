@@ -3,7 +3,7 @@ const pool = require('../db');
 const logger = require('../logger');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { sendPushToCompanyAdmins } = require('../push');
-const { uploadBase64, getPresignedUploadUrl, deleteByUrl } = require('../r2');
+const { uploadBase64, getPresignedUploadUrl, deleteByUrl, getObjectMetadataByUrl } = require('../r2');
 const { checkStorageLimit, incrementStorage, decrementStorage } = require('../storage');
 const { logAudit } = require('../auditLog');
 const { projectBelongsToCompany } = require('../utils/tenantRefs');
@@ -123,7 +123,12 @@ router.post('/', requireAuth, async (req, res) => {
               }));
             }
             if (!isOwnFieldReportMediaUrl(p.url)) throw new Error('invalid media url');
-            return Promise.resolve({ url: p.url, sizeBytes: 0, caption, media_type: p.media_type || 'photo' });
+            // Already uploaded to R2 (a presigned video). Count its REAL object size so
+            // storage is accurate and refundable on delete — the old code stored 0, so
+            // the video's bytes were never freed and the reservation-time count drifted.
+            return getObjectMetadataByUrl(p.url)
+              .then(meta => ({ url: p.url, sizeBytes: meta ? meta.contentLength : 0, caption, media_type: p.media_type || 'photo' }))
+              .catch(() => ({ url: p.url, sizeBytes: 0, caption, media_type: p.media_type || 'photo' }));
           })
         );
       } catch (uploadErr) {
@@ -341,9 +346,11 @@ router.get('/upload-url', requireAuth, async (req, res) => {
           storage_limit: true,
         });
       }
-      // Increment optimistically — video is uploaded directly to R2 with no confirmation step
-      incrementStorage(companyId, sizeBytes).catch(() => {});
     }
+    // NB: do NOT increment here. This is a pre-flight check only — the client-supplied
+    // `size` is unverified and the upload may never complete. Storage is counted when the
+    // report is submitted, from the video's REAL R2 object size (HEAD-verified below), so
+    // an abandoned upload isn't billed and a `size=0` request can't dodge the count.
     const ext = contentType.split('/')[1]?.split(';')[0] || 'mp4';
     const { uploadUrl, publicUrl } = await getPresignedUploadUrl('videos', ext, contentType);
     res.json({ uploadUrl, publicUrl });

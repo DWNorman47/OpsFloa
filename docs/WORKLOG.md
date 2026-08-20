@@ -23,6 +23,24 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-20 — Fix storage-usage accounting drift
+
+Closed the upward storage-usage drift flagged in the seventh pass. `npm run verify` green.
+
+- **Field-report presigned videos** no longer increment `storage_bytes_used` optimistically at
+  reservation from the unverified client `size` (so an abandoned upload — or a `size=0` request
+  that used to skip the increment entirely — no longer drifts or dodges the count). Storage is now
+  counted at SUBMIT from the video's REAL R2 object size (HEAD-verified via `getObjectMetadataByUrl`)
+  and stored in `size_bytes`, so deleting the report refunds it. The old code stored `size_bytes: 0`
+  on the pass-through, so every video's bytes were counted-forever-never-freed.
+- **Inventory photo replace** (location PATCH + setup PATCH) now reclaims removed photos: HEAD each
+  dropped URL for its real size, decrement storage, and delete the R2 object. Inventory previously
+  only ever incremented, so every photo edit leaked storage (and orphaned R2 objects).
+
+Residual (LOW, flagged): the cap check is check-then-act (bounded concurrent overage); `safetyTalks`
+still trusts a client `size_bytes` (symmetric, no drift); orphaned R2 objects from abandoned uploads
+are a separate janitor concern.
+
 ## 2026-08-20 — Seventh pass: client money rendering, equipment, scheduling/storage
 
 Four-reviewer sweep of the areas still uncovered: client money rendering, equipment/rental,
