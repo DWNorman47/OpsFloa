@@ -63,7 +63,9 @@ function shiftHoursByDate(shifts) {
   const m = new Map();
   for (const sh of shifts || []) {
     if (!sh || sh.shift_date == null) continue;
-    const dk = String(sh.shift_date).substring(0, 10);
+    // pg returns DATE as a local-midnight Date; ymd() normalizes both forms. A bare
+    // String(date).slice gives "Wed Aug 19", which never matches a real YMD key.
+    const dk = ymd(sh.shift_date);
     m.set(dk, (m.get(dk) || 0) + hoursWorked(sh.start_time, sh.end_time));
   }
   return m;
@@ -113,7 +115,7 @@ function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours
       // fetch query returns any request overlapping [from,to], so a partial
       // straddling a pay-period boundary would otherwise be paid IN FULL in both
       // periods (this loader runs once per period for per-worker pay stubs).
-      const anchor = req.start_date != null ? String(req.start_date).substring(0, 10) : null;
+      const anchor = req.start_date != null ? ymd(req.start_date) : null;
       if (anchor != null && (anchor < f || anchor > t)) continue;
       const h = parseFloat(req.hours) || 0;
       totals[type] += h;
@@ -122,7 +124,7 @@ function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours
       continue;
     }
     if (req.start_date == null || req.end_date == null) continue;
-    const s = String(req.start_date).substring(0, 10), e = String(req.end_date).substring(0, 10);
+    const s = ymd(req.start_date), e = ymd(req.end_date);
     for (const dk of eachDateKey(s < f ? f : s, e > t ? t : e)) {
       if (seen[type].has(dk)) continue;                    // dedup overlapping requests
       seen[type].add(dk);
@@ -448,6 +450,10 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
       });
     }
     const firstT = sd ? (parseFloat(sd.firstHoursThreshold) || 0) : 0;
+    // Paid leave counts toward a worked day's min_daily floor too (not just the empty-
+    // day guarantee) — a 4h worked + 4h approved-leave day under an 8h floor is already
+    // covered for 8h, so the floor must not top it up again on top of the leave pay.
+    const floorLeaveByDate = (range && range.leaveByDate instanceof Map) ? range.leaveByDate : null;
 
     Object.entries(buckets).forEach(([dk, h]) => {
       if (restDays && restDays.has(weekdayOfDate(dk))) {
@@ -473,7 +479,8 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
         // paid (at their premium), so they count toward the minimum — otherwise a day
         // whose hours are all inside a window would be topped up on top of the premium
         // hours (double pay). Measure the shortfall against total worked hours.
-        const workedTotal = h + (windowByBucket[dk] || 0);
+        const leaveH = floorLeaveByDate ? (floorLeaveByDate.get(dk) || 0) : 0;
+        const workedTotal = h + (windowByBucket[dk] || 0) + leaveH;
         if (minD > 0 && workedTotal < minD) {
           const add = minD - workedTotal;
           autoReg += add;                         // reporting-time floor: pay only the true shortfall as regular

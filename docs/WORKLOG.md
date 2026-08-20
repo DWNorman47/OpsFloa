@@ -23,6 +23,44 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-19 — Pay engine, third pass: the $0-leave bug + two regressions from my own changes
+
+Three-reviewer audit (regression review of my diff + two fresh-area sweeps). Found and
+fixed a critical live bug and two regressions I'd introduced. `npm run verify` green.
+
+**Critical — approved sick/vacation paid $0 on EVERY surface.** The leave loaders SELECT
+`start_date`/`end_date` without `to_char`, so node-pg hands `computeLeaveHours` local-
+midnight **Date objects**; a bare `String(date).slice(0,10)` → `"Wed Aug 19"`, which
+`eachDateKey` rejects → leave silently computed to 0 (invoice, OT report, payroll CSV,
+stubs, admin payroll). Reproduced with Date objects (0) vs strings (8). This is almost
+certainly the standing "sick/vacation aren't working" report (BACKLOG 2026-08-05). Fixed
+by using the existing Date-robust `ymd()` in `computeLeaveHours` (both request paths) and
+`shiftHoursByDate` (the schedule-first valuation had the same `shift_date` miss, so a
+scheduled day silently fell back to the default hours). Added regression tests that feed
+**Date objects** — the whole test suite fed strings, which is why this stayed invisible.
+
+**Regression I introduced (HIGH).** The `/workers` list SQL (`admin.js`) branches per
+worker on `u.overtime_rule` but I'd fed both branches ONE company-derived threshold — so
+a daily-rule worker at a weekly-default company got a 40h *daily* threshold (a 12h day →
+12 reg / 0 OT). Fixed: pass both a daily ($2=8) and weekly ($3=40) threshold; each branch
+uses its own.
+
+**Regression I introduced (MEDIUM).** My leave-aware guarantee top-up only covered the
+empty-day (no-clock-in) branch; the *worked-day* `min_daily` floor still ignored leave, so
+4h worked + 4h partial sick under an 8h floor paid 12h. Fixed: the worked-day floor now
+counts same-day leave toward the floor too. Both branches tested.
+
+**Also:** completed the overnight rounding frame (an overnight punch against a *same-day*
+schedule with directional rounding could truncate toward the schedule — now the expected
+end is framed forward whenever it's before the punch start); made the dashboard OT-worker
+count rule-aware (was `> NULL` = always 0 when threshold unset, and 8h/week for weekly cos).
+
+**Flagged to `BACKLOG.md`** (design decisions / by-design, not fixed): QBO push-payroll
+journal has no overlap guard and books gross to both sides (double-post risk + won't tie
+to the register); grouped-ruleset amount cap is applied per-check (a pair can deduct 2×);
+DST overnight shifts pay the wall-clock span (pending the timestamp-reader cutover);
+weekly-guarantee week count coarsely rounds non-7-day periods.
+
 ## 2026-08-19 — WH-347: price daily-rate workers correctly (was ~8× over)
 
 The certified-payroll `computeWorker` (`admin.js`) had no daily-rate guard, so a

@@ -1012,7 +1012,11 @@ function applyRounding(rawStart, rawEnd, expected, rounding) {
   // is preserved; toHHMMSS wraps the result back to a wall-clock time.
   if (re < rs) {
     re += 1440;
-    if (ee != null && es != null && ee < es) ee += 1440;  // overnight expected shift
+    // Frame the expected end into the punch's next-day frame whenever it falls before
+    // the punch start — an overnight expected shift (ee < es) OR a same-day schedule the
+    // overnight punch runs past. Leaving ee same-day while re is extended made directional
+    // rounding measure a ~1440-min gap and could truncate the shift toward the schedule.
+    if (ee != null && ee < rs) ee += 1440;
   }
 
   let ps = roundEdge(rs, es, rounding.clockIn, 'in');

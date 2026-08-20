@@ -111,8 +111,10 @@ router.get('/kpis', requireAdmin, async (req, res) => {
       pool.query(`SELECT COUNT(*) FROM work_orders WHERE company_id = $1 AND active = true AND status NOT IN ('completed','canceled')`, [companyId]),
     ]);
 
-    // Workers who've exceeded the OT threshold this week
-    const { overtime_rule, overtime_threshold } = settings;
+    // Workers who've exceeded the OT threshold this week. Rule-aware threshold
+    // (weekly → 40, daily → 8) so a weekly company isn't counted against an 8h line
+    // and an unset threshold isn't a SQL NULL (`> NULL` is never true → always 0).
+    const { overtime_rule } = settings;
     let otWorkers = 0;
     if (overtime_rule === 'weekly') {
       const r = await pool.query(
@@ -132,7 +134,7 @@ router.get('/kpis', requireAdmin, async (req, res) => {
              )) / 3600 - (break_minutes::float / 60)
            ) > $2
          ) sub`,
-        [companyId, overtime_threshold, weekStartDateStr]
+        [companyId, otThreshold(settings, 'weekly'), weekStartDateStr]
       );
       otWorkers = parseInt(r.rows[0].count);
     } else {
@@ -154,7 +156,7 @@ router.get('/kpis', requireAdmin, async (req, res) => {
              )) / 3600 - (break_minutes::float / 60)
            ) > $2
          ) sub`,
-        [companyId, overtime_threshold, weekStartDateStr]
+        [companyId, otThreshold(settings, 'daily'), weekStartDateStr]
       );
       otWorkers = parseInt(r.rows[0].count);
     }
@@ -931,9 +933,12 @@ router.get('/workers', requireAdmin, async (req, res) => {
   const accessIds = req.user.worker_access_ids;
   try {
     const settings = await getSettings(companyId);
-    // Company-wide threshold; rule-aware default (weekly → 40) so a weekly company
-    // isn't given an 8-hour weekly OT line. The SQL applies it per-worker by rule.
-    const threshold = otThreshold(settings, settings.overtime_rule);
+    // The SQL branches per worker on u.overtime_rule, so it needs BOTH thresholds:
+    // the weekly branch caps at the weekly default (40) and the daily branch at the
+    // daily default (8). Feeding one company-derived value to both branches gave a
+    // daily-rule worker a 40h *daily* threshold on a weekly-default company.
+    const dailyThreshold = otThreshold(settings, 'daily');
+    const weeklyThreshold = otThreshold(settings, 'weekly');
     const weekStart = parseInt(settings.week_start ?? 1, 10);
 
     // LESSON LEARNED — node-pg parameter binding (Postgres 42P18):
@@ -944,7 +949,7 @@ router.get('/workers', requireAdmin, async (req, res) => {
     // fixed position, but when accessFilter was empty the SQL never touched
     // $3 → 42P18. Fix: only push a param when we know the SQL will reference
     // it, and let the index track the true position.
-    const queryParams = [companyId, threshold];
+    const queryParams = [companyId, dailyThreshold, weeklyThreshold]; // $2 daily, $3 weekly
     let accessParamSql = '';
     if (accessIds && accessIds.length) {
       queryParams.push(accessIds);
@@ -978,7 +983,7 @@ router.get('/workers', requireAdmin, async (req, res) => {
         COALESCE(SUM(EXTRACT(EPOCH FROM (CASE WHEN te.end_time < te.start_time THEN te.end_time + INTERVAL '1 day' - te.start_time ELSE te.end_time - te.start_time END)) / 3600), 0) as total_hours,
         COALESCE(
           CASE WHEN u.overtime_rule = 'weekly' THEN
-            (SELECT SUM(LEAST(week_hours, $2)) FROM weekly_regular wr WHERE wr.user_id = u.id)
+            (SELECT SUM(LEAST(week_hours, $3)) FROM weekly_regular wr WHERE wr.user_id = u.id)
           ELSE
             (SELECT SUM(LEAST(day_hours, $2)) FROM daily_regular dr WHERE dr.user_id = u.id)
           END
@@ -986,7 +991,7 @@ router.get('/workers', requireAdmin, async (req, res) => {
         COALESCE(
           CASE WHEN u.overtime_rule = 'none' THEN 0
                WHEN u.overtime_rule = 'weekly' THEN
-                 (SELECT SUM(GREATEST(week_hours - $2, 0)) FROM weekly_regular wr WHERE wr.user_id = u.id)
+                 (SELECT SUM(GREATEST(week_hours - $3, 0)) FROM weekly_regular wr WHERE wr.user_id = u.id)
                ELSE
                  (SELECT SUM(GREATEST(day_hours - $2, 0)) FROM daily_regular dr WHERE dr.user_id = u.id)
                END

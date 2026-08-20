@@ -22,6 +22,31 @@ describe('shiftHoursByDate', () => {
     const m = shiftHoursByDate([{ shift_date: '2026-07-06', start_time: '08:00:00', end_time: '12:00:00' }]);
     expect(m.get('2026-07-06')).toBeCloseTo(4);
   });
+
+  test('keys off a local-midnight Date (as node-pg returns DATE), not "Wed Jul 06"', () => {
+    const m = shiftHoursByDate([{ shift_date: new Date(2026, 6, 6), start_time: '08:00:00', end_time: '12:00:00' }]);
+    expect(m.get('2026-07-06')).toBeCloseTo(4); // was a "Mon Jul 06" key → never matched a real YMD
+  });
+});
+
+describe('computeLeaveHours — DATE columns arrive as JS Date objects (node-pg), not strings', () => {
+  // The loaders SELECT start_date/end_date without to_char, so pg hands computeLeaveHours
+  // local-midnight Date objects. A bare String(date).slice(0,10) → "Wed Aug 19", which
+  // eachDateKey rejects → leave silently paid $0 on every surface. Regression guard.
+  const D = (y, m, d) => new Date(y, m - 1, d);
+  test('a full-day request given as Date objects still pays (was $0)', () => {
+    const r = computeLeaveHours([full('vacation', D(2026, 7, 6), D(2026, 7, 6))], NO_SHIFTS, rules, DEF, ...WK);
+    expect(r.vacation).toBe(9); // Monday rule; was 0 when the Date stringified to "Mon Jul 06"
+  });
+  test('a partial request anchored on a Date lands in the period', () => {
+    const r = computeLeaveHours([{ type: 'sick', hours: 4, start_date: D(2026, 7, 7), end_date: D(2026, 7, 7) }], NO_SHIFTS, rules, DEF, ...WK);
+    expect(r.sick).toBe(4);
+  });
+  test('a full-day Date request is valued schedule-first (shift map also Date-keyed)', () => {
+    const shifts = shiftHoursByDate([{ shift_date: D(2026, 7, 6), start_time: '07:00:00', end_time: '17:00:00' }]); // 10h Mon
+    const r = computeLeaveHours([full('sick', D(2026, 7, 6), D(2026, 7, 6))], shifts, rules, DEF, ...WK);
+    expect(r.sick).toBe(10); // scheduled 10h wins, not the 9h rule or 8h default
+  });
 });
 
 describe('computeLeaveHours — full-day precedence', () => {

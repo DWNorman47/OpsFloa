@@ -140,6 +140,25 @@ describe('buildPayStatement — daily rate + no-clock-in guarantee', () => {
     expect(st.hours.regular).toBeCloseTo(12);       // Mon 8 + Tue guarantee top-up 4 (8 floor − 4 leave)
   });
 
+  test('a worked-day min_daily floor counts same-day leave (no double-pay top-up)', () => {
+    const otConfig = otConfigFromSettings({ hours_rules: JSON.stringify({ enabled: true, rules: [
+      { id: 'md', type: 'min_daily', when: { kind: 'every_day' }, hours: 8 },
+    ] }) });
+    const common = {
+      worker: worker({ hourly_rate: 30, rate_type: 'hourly' }),
+      entries: [entry({ work_date: '2026-07-06', start_time: '08:00:00', end_time: '12:00:00' })], // 4h worked Mon
+      reimbursements: [], deductions: [], otConfig, projectRateMap: {}, settings: SETTINGS,
+      from: '2026-07-06', to: '2026-07-06',
+    };
+    // 4h worked + 4h approved sick under an 8h floor → covered for 8h; the floor tops up 0.
+    const withLeave = buildPayStatement({ ...common, leave: { sick: 4, vacation: 0, leaveByDate: new Map([['2026-07-06', 4]]) } });
+    expect(withLeave.hours.regular).toBeCloseTo(4);  // worked only — floor not stacked on the leave
+    expect(withLeave.cost.sick).toBe(120);           // 4h × 30
+    // Control (no per-day leave info): floor tops the worked 4h up to 8h → the double-pay.
+    const noDates = buildPayStatement({ ...common, leave: { sick: 4, vacation: 0 } });
+    expect(noDates.hours.regular).toBeCloseTo(8);    // 4 worked + 4 floor (would be 12h paid with the 4h sick)
+  });
+
   test("a daily-rate worker's weekly guarantee shortfall pays per HOUR, not per daily rate", () => {
     // Guaranteed 40h/week, works one 8h day → 32h shortfall, priced at $25/h = $800.
     const st = buildPayStatement({

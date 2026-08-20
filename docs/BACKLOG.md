@@ -201,6 +201,40 @@ that holds the exhaustive detail.
   whether the WH-347 should instead mirror the stub's days × daily total. (`admin.js`
   computeWorker.) → memory: [[project_payroll_review_decisions]]
 
+- **QBO "push-payroll" journal: no overlap guard + books gross to both sides.** (2026-08-19)
+  `POST /api/qbo/push-payroll` (`server/routes/qbo.js`) journals total gross labor for a
+  work-date range. Two gaps: (1) idempotency is only `sha256(companyId|from|to)`, so two
+  *overlapping* ranges (Aug 1–15 then Aug 1–31) post two journal entries and double-book
+  the overlap in the GL — unlike payroll-run/finalize, which has an overlap probe. (2) It
+  debits AND credits the same GROSS on a work-date window, so it ignores deductions
+  (credit overstated vs the register's net) and uses a different window basis than the
+  pay-date-keyed register, so the journal won't tie to the finalized run. Decide what the
+  journal should represent (gross labor accrual vs net + withholding liabilities) and add
+  the same overlap/duplicate guard finalize has. Lower-severity siblings: the grouped-
+  deduction generate window (±45d) can miss the partner of a *monthly* `by:'pair'` group;
+  month-group keying uses the shifted pay-date month for weekly/biweekly (no `groupMonth`).
+  Found 2026-08-19 pay-engine pass. → memory: [[project_payroll_review_decisions]]
+
+- **Grouped-ruleset amount cap is applied PER CHECK, so a pair can deduct up to 2× the cap.**
+  (2026-08-19) `applyDeductions` caps each check's combined per-check+grouped total against
+  the ruleset cap independently; for a `by:'pair'` grouping the two checks are each capped,
+  so the group can withhold up to twice the cap. Stub and admin run agree (both use
+  `applyDeductions`), so it's self-consistent — but confirm per-check-cap is the intended
+  semantics for a *grouped* cap, vs one cap across the group. (`server/utils/paycheckRun.js`.)
+
+- **DST overnight shift is paid the wall-clock span, not real hours.** (2026-08-19) Every
+  pay path reads `start_time`/`end_time` (bare TIME) and computes wall-clock hours, so a
+  23:00→07:00 shift is always 8.00h even on a fall-back night (9 real hours → 1h underpay)
+  or spring-forward (7 real → 1h overpay). The instant-based `elapsedMinutes` would give the
+  true figure but `start_ts`/`end_ts` are write-only (no pay reader consumes them). Consistent
+  across surfaces and pending the Phase-3 timestamp-reader cutover, but a real DST-zone
+  over/under-pay. Also affects the night-differential window.
+
+- **Weekly-guarantee week count coarsely rounds non-7-day periods.** (2026-08-19)
+  `computeGuaranteeShortfall` uses `weeks = max(1, round(days/7))`, so a 30-day month → 4
+  weeks (a 40h/wk guarantee tops up to only 160h for a ~4.33-week month) and a 10-day range
+  → 1 week. Ties into the still-owed pay-rule-window work. → memory: [[project_pay_rule_windows]]
+
 - **Preview surfaces report a "Net Pay" that ignores ruleset cap / min-net.** (2026-08-19)
   The worker invoice, overtime report, and payroll CSV price deductions through
   `payStubTotals` (gross − per-check deductions, clamped ≥0) — no exempt, no cap, no
