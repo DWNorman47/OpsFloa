@@ -26,9 +26,9 @@ that holds the exhaustive detail.
   `daily_checklist_item_user_state`); field-report offline-replay idempotency (client_request_id +
   server dedup, migration 0192); shared-text last-write-wins (compare-and-swap on prev_value, 409
   on conflict); `field_report_photos.media_type` CHECK (0193) + constant; haul-ticket qty upper
-  bound. STILL OPEN: (a) daily-report concurrent "No project" (NULL project_id) submit can race two
-  rows — the double-tap/re-submit dup is fixed in code, but a true concurrent race needs a unique
-  index with NULLS NOT DISTINCT (risky if existing dup NULL rows exist → dedupe first). (b) LOW —
+  bound; daily-report "No project" (NULL project_id) duplicate — migration 0194 dedupes existing
+  rows and adds a NULLS-NOT-DISTINCT unique index, and the POST reverted to an atomic ON CONFLICT
+  upsert. STILL OPEN: (b) LOW —
   duplicate `GET /days/:dayId` route (419 shadows 803) leaves the plan-edit handler dead; a worker
   with `role_id = NULL` sees no role-scoped items; assignment items mislabeled `source='recurring'`;
   a same-text-different-MODE checklist item is still dropped (only same-mode different-role merges);
