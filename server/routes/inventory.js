@@ -160,6 +160,33 @@ async function applyStockDelta(client, companyId, itemId, locationId, delta, bin
   );
 }
 
+// Reconcile a stock row to an ABSOLUTE quantity — a physical cycle count is authoritative,
+// so on-hand becomes exactly what was counted. Locks the row, reads the CURRENT quantity,
+// then sets it, returning the real delta applied (for the ledger). This is what a cycle
+// count must use instead of applyStockDelta: applying a delta computed against the
+// count-creation snapshot double-counts any issue/receipt that landed while the count was
+// open (e.g. snapshot 100, 20 issued → 80, count 80 → the stale −20 delta wrongly drove
+// stock to 60). Setting to the counted value can't drift. Must run in a BEGIN/COMMIT block.
+async function setStockAbsolute(client, companyId, itemId, locationId, targetQty, uomId = null) {
+  const uom = uomId ? parseInt(uomId) : null;
+  const cur = await client.query(
+    `SELECT quantity FROM inventory_stock
+      WHERE item_id=$1 AND location_id=$2 AND company_id=$3 AND COALESCE(uom_id,0)=COALESCE($4::int,0)
+      FOR UPDATE`,
+    [itemId, locationId, companyId, uom]
+  );
+  const current = cur.rowCount ? parseFloat(cur.rows[0].quantity) : 0;
+  await client.query(
+    `INSERT INTO inventory_stock
+       (company_id, item_id, location_id, uom_id, quantity, updated_at)
+     VALUES ($1, $2, $3, $4, $5, NOW())
+     ON CONFLICT (item_id, location_id, (COALESCE(uom_id, 0)))
+     DO UPDATE SET quantity = EXCLUDED.quantity, updated_at = NOW()`,
+    [companyId, itemId, locationId, uom, targetQty]
+  );
+  return targetQty - current;
+}
+
 // When issuing/transferring out using a UOM that has no stock row at this location,
 // find the UOM that does have stock and convert the quantity automatically.
 // e.g. stock is in 'box' (factor=30), user issues 9 'each' (factor=1) →
@@ -1471,13 +1498,19 @@ router.post('/cycle-counts/:id/complete', requireAuth, requirePerm('manage_inven
     try {
       await client.query('BEGIN');
 
-      // Post adjust transactions for lines with non-zero variance
+      // Reconcile stock to the counted physical for each line that found a discrepancy.
+      // Set-to-counted (not a snapshot-based delta) so a movement while the count was open
+      // can't double-count. Lines with no variance are left alone (a concurrent movement on
+      // them stays intact). The ledger records the REAL delta applied at completion time.
       const linesWithVariance = lines.rows.filter(l => l.variance != null && parseFloat(l.variance) !== 0);
       const isFullCount = cc.rows[0].count_type === 'full';
+      let adjustmentsPosted = 0;
       for (const line of linesWithVariance) {
-        const delta = parseFloat(line.variance); // in stock UOM units
+        const countedAbsolute = parseFloat(line.expected_qty) + parseFloat(line.variance); // physical count, stock UOM
         const locationId = isFullCount ? line.location_id : cc.rows[0].location_id;
         const stockUomId = line.stock_uom_id || null;
+        const applied = await setStockAbsolute(client, companyId, line.item_id, locationId, countedAbsolute, stockUomId);
+        if (applied === 0) continue; // stock already matches the count — nothing to post
         const typeLabel = cc.rows[0].count_type === 'reconcile' ? 'Reconcile count adjustment'
           : cc.rows[0].count_type === 'audit' ? 'Audit count adjustment'
           : cc.rows[0].count_type === 'full' ? 'Full count adjustment'
@@ -1486,9 +1519,9 @@ router.post('/cycle-counts/:id/complete', requireAuth, requirePerm('manage_inven
           `INSERT INTO inventory_transactions
            (company_id, type, item_id, quantity, to_location_id, performed_by, notes, uom_id)
            VALUES ($1,'adjust',$2,$3,$4,$5,$6,$7)`,
-          [companyId, line.item_id, Math.abs(delta), locationId, req.user.id, typeLabel, stockUomId]
+          [companyId, line.item_id, Math.abs(applied), locationId, req.user.id, typeLabel, stockUomId]
         );
-        await applyStockDelta(client, companyId, line.item_id, locationId, delta, {}, stockUomId);
+        adjustmentsPosted++;
       }
 
       // Atomically claim completion — prevent double-posting if auto-complete fired concurrently
@@ -1505,8 +1538,8 @@ router.post('/cycle-counts/:id/complete', requireAuth, requirePerm('manage_inven
 
       await client.query('COMMIT');
       logAudit(companyId, req.user.id, req.user.full_name, 'cycle_count.completed', 'cycle_count', req.params.id, null,
-        { adjustments_posted: linesWithVariance.length, count_type: cc.rows[0].count_type });
-      res.json({ success: true, adjustments_posted: linesWithVariance.length });
+        { adjustments_posted: adjustmentsPosted, count_type: cc.rows[0].count_type });
+      res.json({ success: true, adjustments_posted: adjustmentsPosted });
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
@@ -1558,17 +1591,21 @@ async function checkAutoComplete(companyId, countId, completedById) {
     const typeLabel = { reconcile: 'Reconcile count adjustment', audit: 'Audit count adjustment',
       full: 'Full count adjustment' }[cc.count_type] || 'Cycle count adjustment';
 
+    // Set-to-counted reconciliation (see the /complete route for why a snapshot-based
+    // delta double-counts a concurrent movement).
     const linesWithVariance = linesResult.rows.filter(l => l.variance != null && parseFloat(l.variance) !== 0);
     for (const line of linesWithVariance) {
-      const delta = parseFloat(line.variance);
+      const countedAbsolute = parseFloat(line.expected_qty) + parseFloat(line.variance);
       const locationId = isFullCount ? line.location_id : cc.location_id;
+      const stockUomId = line.stock_uom_id || null;
+      const applied = await setStockAbsolute(client, companyId, line.item_id, locationId, countedAbsolute, stockUomId);
+      if (applied === 0) continue;
       await client.query(
         `INSERT INTO inventory_transactions
          (company_id, type, item_id, quantity, to_location_id, performed_by, notes, uom_id)
          VALUES ($1,'adjust',$2,$3,$4,$5,$6,$7)`,
-        [companyId, line.item_id, Math.abs(delta), locationId, completedById, typeLabel, line.stock_uom_id || null]
+        [companyId, line.item_id, Math.abs(applied), locationId, completedById, typeLabel, stockUomId]
       );
-      await applyStockDelta(client, companyId, line.item_id, locationId, delta, {}, line.stock_uom_id || null);
     }
     await client.query('COMMIT');
     return true;
@@ -3008,3 +3045,4 @@ router.get('/valuation', requireAuth, requirePerm('manage_inventory'), async (re
 });
 
 module.exports = router;
+module.exports.setStockAbsolute = setStockAbsolute; // exported for unit tests

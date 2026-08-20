@@ -21,17 +21,14 @@ that holds the exhaustive detail.
 
 ## 🔧 Bugs — set aside for later
 
-- **Cycle count applies a STALE snapshot delta to live stock (TOCTOU).** (2026-08-19)
-  `expected_qty` is snapshotted at count creation; at completion the code posts
-  `variance = counted − expected_qty(snapshot)` and ADDS it to the CURRENT quantity
-  without re-locking or reconciling to the counted absolute (`inventory.js` ~1475/1561).
-  If any issue/receipt lands between count creation and completion, on-hand ends up
-  wrong (and so does all downstream valuation): e.g. snapshot 100, 20 issued, counter
-  counts 100 → variance 0 → stock stays 80 forever; or counts 80 → −20 → stock 60
-  (double-counts the issue). Fix: lock the stock row at APPLY time and derive the delta
-  from current qty (or set the counted absolute), not the creation snapshot. Real
-  silent stock/valuation corruption; deferred because the correct fix needs careful
-  re-lock + count semantics. Found 2026-08-19 inventory audit.
+- **Cycle-count set-to-counted subsumes movements during the apply window (design note).**
+  (2026-08-19, after FIXING the TOCTOU) Completion now SETS on-hand to the counted physical
+  under a row lock (`setStockAbsolute`) instead of adding a snapshot-based delta, so a
+  movement while the count was open can no longer double-count. Residual: a movement between
+  when the counter entered the count and when an admin completes it is subsumed into the count
+  (the physical count is treated as authoritative as of completion) — standard WMS behavior,
+  but if precise, freeze counted items or complete promptly. A stricter model would capture
+  system-on-hand at count-entry and apply only the discovered shrinkage.
 
 - **Inventory adjustment transactions discard their sign in the ledger.** (2026-08-19)
   The main txn POST and cycle-count adjust insert `quantity = Math.abs(...)` while

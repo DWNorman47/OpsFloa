@@ -23,6 +23,24 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-19 — Cycle-count TOCTOU: reconcile to the counted physical, not a stale delta
+
+Fixed the inventory cycle-count corruption flagged in the fifth pass. Completion posted
+`variance = counted − expected_qty(snapshot)` and ADDED it to current stock — so any
+issue/receipt that landed while the count was open double-counted (snapshot 100, 20 issued
+→ 80; count 80 → the stale −20 drove stock to 60, not 80).
+
+New `setStockAbsolute(client, …, targetQty, uom)` locks the stock row, reads the current
+quantity, SETS it to the counted physical, and returns the real delta applied (for the
+ledger). Both apply paths (`/complete` and `checkAutoComplete`) now reconcile discrepancy
+lines to the counted value rather than adding a snapshot delta; zero-variance lines are left
+untouched so a concurrent movement on them survives, and the ledger records the actual delta
+posted at completion (skipping no-op reconciliations). Unit tests on `setStockAbsolute` pin
+the SET-not-add semantics, the delta return, the no-row=0 case, and the FOR UPDATE lock.
+
+Residual (design note in BACKLOG): a movement between count-entry and completion is subsumed
+into the count (physical is authoritative as of completion) — standard WMS behavior.
+
 ## 2026-08-19 — Fifth pass: security (MFA bypass, cross-tenant R2 delete), timezone, inventory
 
 Three-reviewer sweep of untouched surfaces: multi-tenant security, timezone day-attribution,
