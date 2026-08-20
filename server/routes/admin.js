@@ -358,7 +358,9 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
           if (current[key] !== val) changed[key] = val;
         } else {
           const val = parseFloat(req.body[key]);
-          if (isNaN(val)) return res.status(400).json({ error: `Invalid value for ${key}` });
+          // Number.isFinite rejects NaN AND Infinity — parseFloat('1e999') is Infinity,
+          // which isNaN() lets through and would poison OT/pay math downstream.
+          if (!Number.isFinite(val)) return res.status(400).json({ error: `Invalid value for ${key}` });
           const allowZero = ['prevailing_wage_rate', 'overtime_multiplier'];
           if (rateKeys.includes(key) && (allowZero.includes(key) ? val < 0 : val <= 0)) return res.status(400).json({ error: `Invalid value for ${key}` });
           if ([...notifKeys, 'overtime_threshold'].includes(key) && val < 0) return res.status(400).json({ error: `Invalid value for ${key}` });
@@ -629,29 +631,34 @@ router.post('/clock-out/:user_id', requireAdmin, requirePerm('manage_workers'), 
   const mileageVal = mileage != null && mileage !== '' ? parseFloat(mileage) : null;
   if (mileageVal !== null && isNaN(mileageVal)) return res.status(400).json({ error: 'mileage must be a number' });
   try {
-    const clockResult = await pool.query(
-      `SELECT ac.*, p.wage_type, p.name AS project_name
-       FROM active_clock ac
-       LEFT JOIN projects p ON ac.project_id = p.id
-       WHERE ac.user_id = $1 AND ac.company_id = $2`,
-      [req.params.user_id, companyId]
-    );
-    if (clockResult.rowCount === 0) return res.status(400).json({ error: 'Worker is not clocked in' });
-    const clock = clockResult.rows[0];
-
-    const clockInTime = new Date(clock.clock_in_time);
-    const clockOutTime = new Date();
-    // Use the worker's stored timezone for the wall-clock fallback — the
-    // server runs in UTC so a raw getUTCHours() would stamp the wrong
-    // wall-clock for any worker outside that zone. start_ts / end_ts
-    // below are real UTC instants and remain correct.
-    const start_time = wallClockInTZ(clockInTime,  clock.timezone);
-    const end_time   = wallClockInTZ(clockOutTime, clock.timezone);
-
     const client = await pool.connect();
     let entryResult;
     try {
       await client.query('BEGIN');
+      // Lock the active_clock row inside the tx and re-check it exists, so two concurrent
+      // clock-outs (admin double-click, or an admin racing the worker's own /clock/out)
+      // can't both insert a time_entry for one shift = double-paid labor. Mirrors the
+      // worker path in clock.js. FOR UPDATE OF ac locks only the active_clock row.
+      const clockResult = await client.query(
+        `SELECT ac.*, p.wage_type, p.name AS project_name
+         FROM active_clock ac
+         LEFT JOIN projects p ON ac.project_id = p.id
+         WHERE ac.user_id = $1 AND ac.company_id = $2
+         FOR UPDATE OF ac`,
+        [req.params.user_id, companyId]
+      );
+      if (clockResult.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Worker is not clocked in' });
+      }
+      const clock = clockResult.rows[0];
+      const clockInTime = new Date(clock.clock_in_time);
+      const clockOutTime = new Date();
+      // Use the worker's stored timezone for the wall-clock fallback — the server runs in
+      // UTC so a raw getUTCHours() would stamp the wrong wall-clock for a worker outside
+      // that zone. start_ts / end_ts below are real UTC instants and remain correct.
+      const start_time = wallClockInTZ(clockInTime,  clock.timezone);
+      const end_time   = wallClockInTZ(clockOutTime, clock.timezone);
       // Phase 2 dual-write: clockInTime / clockOutTime are real UTC instants
       // — write them straight to start_ts / end_ts.
       entryResult = await client.query(
@@ -869,8 +876,14 @@ router.post('/entries/:id/split', requireAdmin, requirePerm('approve_entries'), 
     try {
       await client.query('BEGIN');
 
-      // Delete original
-      await client.query('DELETE FROM time_entries WHERE id=$1', [req.params.id]);
+      // Delete original — guard on rowCount so two concurrent splits of the same entry
+      // can't both insert their segments (the original's hours duplicated = double-pay).
+      // The loser's DELETE affects 0 rows → abort before inserting.
+      const del = await client.query('DELETE FROM time_entries WHERE id=$1 AND company_id=$2 RETURNING id', [req.params.id, companyId]);
+      if (del.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Entry was already modified — reload and try again.' });
+      }
 
       // Insert new segments. Phase 2 dual-write: each segment derives its
       // own start_ts / end_ts from the original entry's work_date + tz.
@@ -1055,6 +1068,24 @@ router.get('/workers/archived', requireAdmin, async (req, res) => {
 router.patch('/workers/:id/restore', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
   try {
+    // Enforce the seat cap on restore too — create and invite already do. Otherwise a
+    // Free/Starter company can archive→create→restore its way past the paid seat count
+    // for free (reactivating a worker adds an active seat just like creating one).
+    const target = await pool.query(
+      'SELECT role FROM users WHERE id = $1 AND active = false AND company_id = $2',
+      [req.params.id, companyId]
+    );
+    if (target.rowCount === 0) return res.status(404).json({ error: 'Archived worker not found' });
+    if (target.rows[0].role === 'worker') {
+      const overLimit = await checkWorkerLimit(companyId);
+      if (overLimit) {
+        const planName = overLimit.plan.charAt(0).toUpperCase() + overLimit.plan.slice(1);
+        return res.status(403).json({
+          error: `Worker limit reached. Your ${planName} plan allows up to ${overLimit.limit} workers (you have ${overLimit.current}). Upgrade or archive a worker first.`,
+          code: 'worker_limit_reached', limit: overLimit.limit, current: overLimit.current,
+        });
+      }
+    }
     const result = await pool.query(
       'UPDATE users SET active = true WHERE id = $1 AND active = false AND company_id = $2 RETURNING id, full_name, username, role, language, hourly_rate',
       [req.params.id, companyId]

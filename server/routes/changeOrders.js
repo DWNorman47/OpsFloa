@@ -275,6 +275,12 @@ router.patch('/change-orders/:id', requireAuth, requireCommercialAccess, async (
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      // Re-check status under a row lock: a concurrent /send could have frozen this CO
+      // (draft→sent, tokenized out to the client) between the unlocked check above and
+      // here, so a total-changing edit must not land on an already-sent document of record.
+      const locked = await client.query('SELECT status FROM change_orders WHERE id = $1 AND company_id = $2 FOR UPDATE', [req.params.id, companyId]);
+      if (locked.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Change order not found' }); }
+      if (isFrozen(locked.rows[0].status)) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'CO is frozen at this status' }); }
       await client.query(
         `UPDATE change_orders SET ${fields.join(', ')} WHERE id = $${idx}`,
         params

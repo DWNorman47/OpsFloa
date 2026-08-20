@@ -10,6 +10,7 @@ const { coerceBody } = require('../middleware/coerce');
 const { logFailure } = require('../failureLog');
 const { SETTINGS_DEFAULTS, applySettingsRows } = require('../settingsDefaults');
 const { entryInstants } = require('../utils/timeFormat');
+const { escapeHtml } = require('../utils/htmlEscape');
 const { projectFrozen } = require('../utils/projectCost');
 const { generatePeriods, groupPeriods, isValidIsoDate, dateRangeDays } = require('../utils/payPeriods');
 const rateLimit = require('express-rate-limit');
@@ -157,7 +158,8 @@ router.post('/', requireAuth, entryWriteLimiter,
           [companyId]
         );
         const subject = `Time entry submitted: ${req.user.full_name}`;
-        const body = `<p><b>${req.user.full_name}</b> submitted a time entry for <b>${work_date}</b> (${start_time}–${end_time}).</p><p>— OpsFloa</p>`;
+        const safeName = escapeHtml(String(req.user.full_name ?? '')); // user-controlled → escape in the HTML email
+        const body = `<p><b>${safeName}</b> submitted a time entry for <b>${escapeHtml(String(work_date))}</b> (${escapeHtml(String(start_time))}–${escapeHtml(String(end_time))}).</p><p>— OpsFloa</p>`;
         for (const admin of admins.rows) sendEmail(admin.email, subject, body);
       } catch (err) { logger.error({ err }, 'Entry notification error'); }
     });

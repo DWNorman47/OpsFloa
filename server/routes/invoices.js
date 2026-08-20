@@ -248,6 +248,7 @@ router.post('/', requireAuth, requireCommercialAccess, async (req, res) => {
     if (fields[k] === null) return res.status(400).json({ error: `${k} out of range` });
   }
   const rawLines = Array.isArray(req.body.lines) ? req.body.lines : [];
+  if (rawLines.length > 500) return res.status(400).json({ error: 'Too many line items (max 500)' });
   const lines = [];
   for (let i = 0; i < rawLines.length; i++) {
     const n = normaliseLine(rawLines[i], i);
@@ -463,6 +464,7 @@ router.patch('/:id', requireAuth, requireCommercialAccess, async (req, res) => {
 router.put('/:id/lines', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   if (!Array.isArray(req.body.lines)) return res.status(400).json({ error: 'lines must be an array' });
+  if (req.body.lines.length > 500) return res.status(400).json({ error: 'Too many line items (max 500)' });
   const lines = [];
   for (let i = 0; i < req.body.lines.length; i++) {
     const n = normaliseLine(req.body.lines[i], i);

@@ -218,6 +218,24 @@ that holds the exhaustive detail.
 
 ## 🧭 Design flaws — raised, set aside for later
 
+- **Billing LOW (from the 2026-08-19 billing audit).** (a) Seat-cap check is a TOCTOU race:
+  `checkWorkerLimit` does a COUNT then the caller INSERTs with no lock/transaction, so two
+  simultaneous create/invite requests at seat−1 both pass → bounded +1 overage (matters only
+  where seats are billed). (b) `/stripe/addon` sets the `addon_*` flag immediately after
+  `subscriptionItems.create`, which only schedules a prorated charge — the entitlement isn't
+  payment-confirmed; combined with (c) feature gates granting full access during `past_due`/
+  `unpaid` (only `canceled`/`trial_expired` deny), a company keeps add-ons through a failed
+  payment until Stripe fires `subscription.deleted`. (c) is a reasonable dunning grace window
+  but worth a conscious decision. Webhook replay itself is safe (absolute-value writes + an
+  `event.created` watermark).
+
+- **Money input overflow / uncapped free-text (LOW, from the 2026-08-19 injection audit).**
+  Invoice/estimate line `qty × unit_cost_cents` (`computeLineTotal`) has no ceiling, so values
+  near 1e15 can exceed `Number.MAX_SAFE_INTEGER` (precision loss) or BIGINT (INSERT 500) —
+  trusted-author only. Several free-text fields (invoice notes/terms/project_address, invoice-
+  line notes, payment notes) are written with no length cap while sibling fields are capped —
+  storage bloat, inconsistent. Consider a shared max-length + a sane per-line total ceiling.
+
 - **Security LOW / hardening (from the 2026-08-19 audit; no exploit path or admin-only).**
   (a) `shifts.js` admin shift create/edit stores `project_id` from the body with no
   in-company check (unlike clock.js/reimbursements.js) — a single-field cross-company
@@ -414,6 +432,17 @@ that holds the exhaustive detail.
 
 ## ❓ Open questions / decisions for you
 *Blocked on your call before anyone builds.*
+
+- **Business plan: per-seat billing is set at checkout and never reconciled to actual workers
+  (revenue).** (2026-08-19) `/stripe/checkout` bills the `worker_count` the client sends as the
+  Stripe seat quantity, `WORKER_LIMITS.business = null` (unlimited), and no worker-create/restore
+  path pushes an updated quantity to Stripe. So a Business company billed for N seats can add
+  workers past N with no further charge — e.g. check out with `worker_count: 0` ($35 base), then
+  create 500 workers for free. This is a BILLING-MODEL decision, not a clear bug: do you want
+  OpsFloa to auto-reconcile the Stripe seat quantity to `COUNT(active workers) − 15 included`
+  (on create/restore/deactivate), enforce a hard cap, or keep manual seat selection? Whatever you
+  choose, the enforcement/reconcile code follows. Largest revenue exposure found. (`stripe.js`,
+  `admin.js` worker create/restore.) Found 2026-08-19 billing audit.
 
 - **Company-wide `overtime_rule` is ignored when a worker's own rule is null.**
   (2026-08-19) The pay engine resolves OT rule via `otRuleFromSettings(settings,

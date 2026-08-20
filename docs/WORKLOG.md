@@ -23,6 +23,45 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-19 — Sixth pass: billing, transaction integrity, output injection
+
+Three-reviewer sweep of the remaining money surfaces: Stripe billing/seats, transaction &
+concurrency integrity, and output-injection/input-boundary. `npm run verify` green (server 1500+).
+
+**Transaction integrity — fixed (each an un-hardened twin of an already-fixed path):**
+- **Admin clock-out could double-pay (HIGH).** It read `active_clock` outside the tx with no
+  lock, then inserted a time_entry + deleted the clock — two concurrent clock-outs (admin
+  double-click, or admin racing the worker's own /clock/out) both inserted = two paid entries
+  for one shift. Now the read is inside the tx with `FOR UPDATE OF ac` and re-checked (mirrors
+  the worker path in clock.js).
+- **Entry-split could duplicate segments.** The delete-then-insert ignored the DELETE rowCount;
+  two concurrent splits both inserted their segments. Now guards on `DELETE … RETURNING` and
+  aborts (409) if the original is already gone.
+- **Change-order PATCH TOCTOU.** Checked `isFrozen` on an unlocked read, then updated in a
+  separate tx with no re-check — a concurrent /send could freeze it in between. Now re-locks
+  `FOR UPDATE` and re-checks status inside the tx (mirrors the invoices.js PATCH fix).
+
+**Billing — fixed:**
+- **Worker "restore" bypassed the seat cap.** Reactivation flipped `active=true` with no
+  `checkWorkerLimit`, so a Free/Starter company could archive→create→restore past its paid
+  seats for free. Now checks the cap before restoring a worker (admins skip it). Tests added.
+
+**Output injection — fixed:**
+- **Scheduled-report emails had no HTML escaping (HIGH of the set).** Worker/item names, SKUs,
+  categories, and company name went raw into the weekly-payroll / low-stock / valuation emails
+  (a low-privilege staffer's crafted item name → tracking pixel or phishing link in the admin's
+  inbox). `td()` and `emailHeader()` now escape by default (a `raw` opt for the one built-markup
+  cell). Also escaped `req.user.full_name` in the time-entry-submitted admin email, and the
+  company name in the service-request email.
+- **Unbounded `lines[]` arrays** on invoice/estimate create+update (a million-row transaction) —
+  capped at 500. **Settings PATCH accepted `Infinity`** (`parseFloat('1e999')`, which `isNaN`
+  lets through, poisoning pay math) — now `Number.isFinite`. CSV formula injection was already
+  clean (a `csvCell` sanitizer is used on every export).
+
+**Flagged to `BACKLOG.md`:** Business per-seat billing isn't reconciled to actual workers (a
+revenue/billing-MODEL decision for you — the biggest exposure); seat-cap TOCTOU; addon flag set
+before charge settles + past_due grace; money-total overflow ceiling; uncapped free-text fields.
+
 ## 2026-08-19 — Cycle-count TOCTOU: reconcile to the counted physical, not a stale delta
 
 Fixed the inventory cycle-count corruption flagged in the fifth pass. Completion posted

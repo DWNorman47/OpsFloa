@@ -180,7 +180,7 @@ async function notifyAdminsOfNewRequest(companyId, companyName, requestId, reque
       await sendEmail(
         a.email,
         `New client request — ${requesterName}`,
-        `<p>A client submitted a new request to ${companyName} via OpsFloa.</p>
+        `<p>A client submitted a new request to ${escapeHtml(String(companyName ?? ''))} via OpsFloa.</p>
          <p><strong>From:</strong> ${escapeHtml(requesterName)}</p>
          <p><strong>Type:</strong> ${catLabel}</p>
          <p>Review it in your <a href="${process.env.APP_URL || 'https://app.opsfloa.com'}/administration#requests">Administration → Requests</a> tab.</p>`
