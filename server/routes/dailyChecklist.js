@@ -401,7 +401,14 @@ router.get('/projects/:projectId/history', async (req, res) => {
     const r = await pool.query(
       `SELECT d.id, d.day_number, d.work_date, d.completed_at,
               COUNT(i.id)::int AS item_count,
-              COUNT(i.id) FILTER (WHERE i.checked)::int AS checked_count
+              -- An INDIVIDUAL item's "done" state lives in daily_checklist_item_user_state, not
+              -- i.checked, so count it done when anyone completed it — otherwise a crew that
+              -- finished a per-person day still read "0 / N".
+              COUNT(i.id) FILTER (
+                WHERE (i.mode <> 'individual' AND i.checked)
+                   OR (i.mode = 'individual' AND EXISTS (
+                         SELECT 1 FROM daily_checklist_item_user_state s WHERE s.item_id = i.id AND s.checked = true))
+              )::int AS checked_count
          FROM daily_checklists d
          LEFT JOIN daily_checklist_items i ON i.daily_checklist_id = d.id
         WHERE d.company_id = $1 AND d.project_id = $2 AND d.status = 'completed'
@@ -421,19 +428,31 @@ router.get('/days/:dayId', async (req, res) => {
     const day = await loadDay(pool, req.params.dayId, req.user.company_id);
     if (!day) return res.status(404).json({ error: 'Not found' });
     const viewer = viewerOf(req);
-    const params = [req.params.dayId, viewer.userId];
+    // History is a REVIEW of a completed day — an individual item aggregates the whole crew's
+    // per-person state (who checked, all their text answers, latest time), NOT the viewer's own
+    // (the old query resolved us.user_id = the viewer, so a reviewing admin saw everything as
+    // unchecked and every completion credited to whoever was looking).
+    const params = [req.params.dayId];
     let where = 'i.daily_checklist_id = $1';
     if (!viewer.isAdmin) { params.push(viewer.roleId); where += ` AND (i.role_ids IS NULL OR $${params.length} = ANY(i.role_ids))`; }
     const items = await pool.query(
       `SELECT i.id, i.text, i.kind, i.order_index, i.source, i.role_ids, i.mode,
-              CASE WHEN i.mode = 'individual' THEN COALESCE(us.checked, false) ELSE i.checked END AS checked,
-              CASE WHEN i.mode = 'individual' THEN us.value ELSE i.value END AS value,
-              CASE WHEN i.mode = 'individual' THEN us.checked_at ELSE i.checked_at END AS checked_at,
-              CASE WHEN i.mode = 'individual' THEN vu.full_name ELSE u.full_name END AS checked_by_name
+              CASE WHEN i.mode = 'individual'
+                   THEN EXISTS (SELECT 1 FROM daily_checklist_item_user_state s WHERE s.item_id = i.id AND s.checked = true)
+                   ELSE i.checked END AS checked,
+              CASE WHEN i.mode = 'individual'
+                   THEN (SELECT string_agg(s.value, E'\n') FROM daily_checklist_item_user_state s WHERE s.item_id = i.id AND s.value IS NOT NULL AND s.value <> '')
+                   ELSE i.value END AS value,
+              CASE WHEN i.mode = 'individual'
+                   THEN (SELECT max(s.checked_at) FROM daily_checklist_item_user_state s WHERE s.item_id = i.id AND s.checked = true)
+                   ELSE i.checked_at END AS checked_at,
+              CASE WHEN i.mode = 'individual'
+                   THEN (SELECT string_agg(su.full_name, ', ' ORDER BY su.full_name)
+                           FROM daily_checklist_item_user_state s JOIN users su ON su.id = s.user_id
+                          WHERE s.item_id = i.id AND s.checked = true)
+                   ELSE u.full_name END AS checked_by_name
          FROM daily_checklist_items i
-         LEFT JOIN daily_checklist_item_user_state us ON us.item_id = i.id AND us.user_id = $2
          LEFT JOIN users u ON u.id = i.checked_by
-         LEFT JOIN users vu ON vu.id = $2 AND us.checked = true
         WHERE ${where}
         ORDER BY i.order_index, i.id`,
       params
@@ -633,24 +652,41 @@ router.patch('/days/:dayId/items/:itemId', requirePerm('daily_checklist_check_it
       }
     } else {
       // Shared: update the item row (everyone matching sees the change).
+      // A shared TEXT value is a single field — two people filling it silently overwrite each
+      // other (last-write-wins). When the client sends `prev_value` (what it loaded), do a
+      // compare-and-swap and 409 on a concurrent change so the second writer reloads/merges
+      // instead of clobbering. Omitting prev_value keeps the legacy overwrite (older clients).
+      if (hasValue && typeof req.body?.prev_value === 'string') {
+        const r = await pool.query(
+          'UPDATE daily_checklist_items SET value = $1 WHERE id = $2 AND daily_checklist_id = $3 AND value IS NOT DISTINCT FROM $4',
+          [req.body.value.slice(0, 2000), req.params.itemId, day.id, req.body.prev_value]
+        );
+        if (r.rowCount === 0) {
+          const still = await pool.query('SELECT value FROM daily_checklist_items WHERE id = $1 AND daily_checklist_id = $2', [req.params.itemId, day.id]);
+          if (still.rowCount === 0) return res.status(404).json({ error: 'Item not found' });
+          return res.status(409).json({ error: 'Someone else updated this note — reload to see their entry before saving.', code: 'value_conflict', value: still.rows[0].value });
+        }
+      }
       const sets = [], vals = [];
       if (hasChecked) {
         sets.push(`checked = $${vals.push(req.body.checked)}`);
         if (req.body.checked) { sets.push(`checked_by = $${vals.push(req.user.id)}`); sets.push('checked_at = now()'); }
         else { sets.push('checked_by = NULL'); sets.push('checked_at = NULL'); }
       }
-      if (hasValue) sets.push(`value = $${vals.push(req.body.value.slice(0, 2000))}`);
+      if (hasValue && typeof req.body?.prev_value !== 'string') sets.push(`value = $${vals.push(req.body.value.slice(0, 2000))}`);
       if (hasText) {
         const text = cleanText(req.body.text).slice(0, MAX_TEXT);
         if (!text) return res.status(400).json({ error: 'Text cannot be empty' });
         sets.push(`text = $${vals.push(text)}`);
       }
-      vals.push(req.params.itemId, day.id);
-      const upd = await pool.query(
-        `UPDATE daily_checklist_items SET ${sets.join(', ')} WHERE id = $${vals.length - 1} AND daily_checklist_id = $${vals.length}`,
-        vals
-      );
-      if (upd.rowCount === 0) return res.status(404).json({ error: 'Item not found' });
+      if (sets.length) {
+        vals.push(req.params.itemId, day.id);
+        const upd = await pool.query(
+          `UPDATE daily_checklist_items SET ${sets.join(', ')} WHERE id = $${vals.length - 1} AND daily_checklist_id = $${vals.length}`,
+          vals
+        );
+        if (upd.rowCount === 0) return res.status(404).json({ error: 'Item not found' });
+      }
     }
 
     const item = (await loadItems(pool, day.id, viewer)).find(r => String(r.id) === String(req.params.itemId));

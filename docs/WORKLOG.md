@@ -23,6 +23,34 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-20 — Field Work: individual-mode history, offline idempotency, shared-text conflicts
+
+Follow-up on the Field Work deep-audit findings — fixed the two big ones plus the shared-text
+concern David raised. `npm run verify` green (server 1515, client 28).
+
+- **Individual-mode checklist completions were invisible/misattributed in history (MED-HIGH).**
+  The history count only read the shared `checked` column (never set for individual items → a
+  fully-completed crew day showed "0/N"), and the detail resolved the per-person state against
+  the VIEWER, so a reviewing admin saw everything unchecked and each check credited to whoever
+  looked. Both history queries now aggregate `daily_checklist_item_user_state` — done = anyone
+  completed it; the detail shows who checked (name list), all their text answers, and the latest time.
+- **Field-report offline replay could duplicate a report + double-count storage (HIGH).** Added a
+  client-generated `client_request_id` (migration 0192 column + partial unique index); the POST
+  dedups on it (and self-heals a concurrent replay race via the unique index), so an offline-queued
+  submission replayed on reconnect returns the existing report instead of inserting a second one.
+  Client sends the id on all three field-report POSTs. Test added.
+- **Shared-text last-write-wins (David's question).** A shared checklist TEXT field is a single
+  `value` — two people filling it silently overwrote each other (checks are idempotent, so those
+  were fine). The item PATCH now does a compare-and-swap when the client sends `prev_value`
+  (409 on a concurrent change, returning the other person's text to merge); the client captures the
+  field's value on focus and handles the 409. Backward-compatible (no prev_value → legacy overwrite).
+- **Also:** `field_report_photos.media_type` now has a CHECK (migration 0193) + shared constant +
+  coerced-on-write + doc row (CLAUDE.md fixed-value rule); haul-ticket qty gained an upper bound.
+
+Still open (flagged): daily-report concurrent NULL-project race (needs a NULLS-NOT-DISTINCT index);
+the dead `GET /days/:dayId` route; a same-text-different-MODE checklist item still drops; a few LOW
+geolocation edges.
+
 ## 2026-08-20 — Field Work module: deep audit + fixes
 
 Three-reviewer DEEP dive on the Field Work module (daily-checklist lifecycle, field/daily reports

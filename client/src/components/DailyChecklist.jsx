@@ -504,11 +504,25 @@ export default function DailyChecklist({ projects = [], settings = null, loading
     try { const r = await api.post(`/daily-checklist/days/${day.id}/items`, { text: text2, kind: newItemKind }); setItems(prev => [...prev, r.data.item]); setNewItem(''); }
     catch { toast(t.dcAddFailed, 'error'); }
   };
-  // Text-field items: type freely (local), save on blur.
+  // Text-field items: type freely (local), save on blur. `textBaseline` captures the value the
+  // field held when the user started editing (its server value), sent as `prev_value` so the
+  // server rejects a save if someone else changed a SHARED text field meanwhile (409) instead of
+  // silently overwriting their entry.
+  const textBaseline = useRef({});
   const setItemValueLocal = (item, value) => setItems(prev => prev.map(i => (i.id === item.id ? { ...i, value } : i)));
   const saveItemValue = async (item, value) => {
-    try { await api.patch(`/daily-checklist/days/${day.id}/items/${item.id}`, { value }); }
-    catch { toast(t.dcUpdateFailed, 'error'); }
+    const prev_value = textBaseline.current[item.id] ?? (item.value || '');
+    try {
+      await api.patch(`/daily-checklist/days/${day.id}/items/${item.id}`, { value, prev_value });
+      textBaseline.current[item.id] = value; // new baseline for the next edit
+    } catch (err) {
+      if (err?.response?.status === 409) {
+        const theirs = err.response.data?.value ?? '';
+        setItems(prev => prev.map(i => (i.id === item.id ? { ...i, value: theirs } : i)));
+        textBaseline.current[item.id] = theirs;
+        toast(err.response.data?.error || t.dcUpdateFailed, 'error');
+      } else { toast(t.dcUpdateFailed, 'error'); }
+    }
   };
   const removeItem = async (item) => {
     try { await api.delete(`/daily-checklist/days/${day.id}/items/${item.id}`); setItems(prev => prev.filter(i => i.id !== item.id)); }
@@ -594,6 +608,7 @@ export default function DailyChecklist({ projects = [], settings = null, loading
                       <span style={styles.textItemLabel}>{item.text}</span>
                       <input style={styles.textItemInput} value={item.value || ''} disabled={!canCheck}
                         placeholder={t.dcTextValuePlaceholder}
+                        onFocus={() => { textBaseline.current[item.id] = item.value || ''; }}
                         onChange={e => setItemValueLocal(item, e.target.value)}
                         onBlur={e => canCheck && saveItemValue(item, e.target.value)} />
                     </div>

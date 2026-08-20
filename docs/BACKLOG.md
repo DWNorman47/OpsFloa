@@ -21,24 +21,18 @@ that holds the exhaustive detail.
 
 ## 🔧 Bugs — set aside for later
 
-- **Field Work — deeper findings not yet fixed (2026-08-20 Field Work deep audit).**
-  (a) MED-HIGH — daily-checklist INDIVIDUAL-mode completions are invisible/misattributed in
-  history: `dailyChecklist.js:404` counts done items via `COUNT(i.checked)` (never set for
-  individual mode → a fully-completed crew day shows "0/N"), and the detail (`:429-436`) resolves
-  individual `checked` against the VIEWER (`us.user_id = $2`), crediting the check to whoever looks
-  and showing unchecked for a reviewing admin. Needs the history queries to aggregate
-  `daily_checklist_item_user_state`. (b) HIGH — field-report OFFLINE replay has no idempotency key
-  (`client/src/sw.js` enqueues on any thrown error; `field_reports` has no unique constraint), so a
-  POST whose response is lost replays on reconnect → a second report + re-uploaded photos +
-  double-counted storage. Needs a client request id + server dedup. (c) daily-report concurrent
-  "No project" (NULL project_id) submit can still race two rows (the double-tap/re-submit dup was
-  fixed in code 2026-08-20; a true concurrent race needs a unique index with NULLS NOT DISTINCT —
-  risky if existing dup NULL rows exist, so dedupe first). (d) LOW — duplicate `GET /days/:dayId`
-  route (419 shadows 803) leaves the plan-edit handler dead; a worker with `role_id = NULL` sees no
-  role-scoped items; assignment items mislabeled `source='recurring'`; a same-text-different-MODE
-  item is still dropped (only same-mode different-role is now merged 2026-08-20);
-  `field_report_photos.media_type` has no CHECK (CLAUDE.md rule); report photo order is
-  nondeterministic (identical created_at).
+- **Field Work — residual findings (2026-08-20 deep audit; the big ones were FIXED same day).**
+  FIXED 2026-08-20: individual-mode completion misattribution (history now aggregates
+  `daily_checklist_item_user_state`); field-report offline-replay idempotency (client_request_id +
+  server dedup, migration 0192); shared-text last-write-wins (compare-and-swap on prev_value, 409
+  on conflict); `field_report_photos.media_type` CHECK (0193) + constant; haul-ticket qty upper
+  bound. STILL OPEN: (a) daily-report concurrent "No project" (NULL project_id) submit can race two
+  rows — the double-tap/re-submit dup is fixed in code, but a true concurrent race needs a unique
+  index with NULLS NOT DISTINCT (risky if existing dup NULL rows exist → dedupe first). (b) LOW —
+  duplicate `GET /days/:dayId` route (419 shadows 803) leaves the plan-edit handler dead; a worker
+  with `role_id = NULL` sees no role-scoped items; assignment items mislabeled `source='recurring'`;
+  a same-text-different-MODE checklist item is still dropped (only same-mode different-role merges);
+  report photo display order is nondeterministic (identical created_at).
 
 - **Field Work — geolocation / field-log minors (2026-08-20 audit).** Geofence fails OPEN when a
   project's `geo_radius_ft` is 0 (falsy — `clock.js:129/401` skip the whole distance check); an
