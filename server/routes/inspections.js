@@ -121,6 +121,12 @@ router.post('/', requireAdmin, async (req, res) => {
   if (notes && notes.length > 1000) return res.status(400).json({ error: 'notes too long (max 1000 characters)' });
   if (status && !VALID_STATUSES.includes(status)) return res.status(400).json({ error: 'status must be pass, fail, or pending' });
   try {
+    // template_id is a live FK to the company's inspection_templates — verify ownership so
+    // a foreign template id can't be attached (and its structure rendered) on this inspection.
+    if (template_id != null) {
+      const tpl = await pool.query('SELECT id FROM inspection_templates WHERE id = $1 AND company_id = $2', [template_id, req.user.company_id]);
+      if (tpl.rowCount === 0) return res.status(400).json({ error: 'Template not found' });
+    }
     const result = await pool.query(
       `INSERT INTO inspections (company_id, template_id, project_id, name, inspector, location,
          notes, results, status, inspected_at, created_by)

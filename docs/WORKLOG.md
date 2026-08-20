@@ -55,8 +55,11 @@ CHECK'd columns in `docs/db-enums.md`.
 **Flagged to `BACKLOG.md`:** QBO manual-batch failures not recorded to qbo_sync_errors + retry
 only supports reimbursement/time (not bills); vendor/customer create lacks idempotency; push-bills
 `force` re-bills; booking accepts a `scheduled_at` past `max_advance_days` / off slot-grid;
-dailyChecklist duplicate dead route; inspections template/project not company-scoped (largely inert);
-a pre-existing migration-linter failure at 0174.
+dailyChecklist duplicate dead route; inspections template/project not company-scoped (largely inert).
+
+(Chased a migration-linter failure at 0174 — turned out to be a false alarm: the linter runs
+against the already-migrated dev DB, not a fresh empty one, so 0173's `CREATE TABLE IF NOT EXISTS`
+no-ops and 0174 can't find the `project_ids` it drops. A clean sequential apply is fine.)
 
 ## 2026-08-20 — Fix storage-usage accounting drift
 

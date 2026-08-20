@@ -21,13 +21,6 @@ that holds the exhaustive detail.
 
 ## 🔧 Bugs — set aside for later
 
-- **Pre-existing migration-linter failure at 0174.** (2026-08-20) `node server/scripts/lintMigrations.js`
-  halts at `0174_daily_checklist_assignment_single_project.sql` with `column "project_ids" does not
-  exist` — the linter replays migrations on a scratch DB and 0174 references a column a sibling/later
-  migration handles differently. `npm run verify` doesn't run this linter, so it's been silent. Could
-  mean a genuine fresh-migrate-from-scratch break (like the cycle-count `variance` one) — worth
-  confirming 0173/0174 apply cleanly on an empty DB. Not introduced by any recent change.
-
 - **QBO sync — smaller gaps (2026-08-20 audit; the idempotency-key duplication was fixed).**
   (a) Manual batch pushes (`/push`, `/push-expenses`, `/push-bills`) collect per-object failures into
   the HTTP response only — NOT into `qbo_sync_errors` — so a failure vanishes if the admin navigates
