@@ -6,6 +6,7 @@ const { EQUIPMENT_KINDS, RENTAL_RATE_UNITS, EQUIPMENT_RATE_UNITS, EQUIPMENT_MAIN
 const { requireCommercialAccess } = require('../middleware/commercialAccess');
 const { uploadBase64 } = require('../r2');
 const { projectBelongsToCompany, userBelongsToCompany } = require('../utils/tenantRefs');
+const { projectFrozen } = require('../utils/projectCost');
 
 // Upload an optional base64 condition photo (data URL) to R2, returning its URL
 // (or null). Done before opening a transaction so the DB connection isn't held
@@ -255,6 +256,11 @@ router.post('/:id/hours', requireAuth, async (req, res) => {
   const operator_name = req.body.operator_name?.trim() || null;
   const notes = req.body.notes?.trim() || null;
   if (!log_date || !hours) return res.status(400).json({ error: 'log_date and hours are required' });
+  // Bound hours: raw parseFloat let a negative slip through (`!(-100)` is false), and
+  // operating_rate × hours feeds project cost — so −100h at $50/h booked a −$5,000 credit
+  // that erased other real equipment cost. A day has 24 hours, so cap there.
+  const hrs = parseFloat(hours);
+  if (!Number.isFinite(hrs) || hrs <= 0 || hrs > 24) return res.status(400).json({ error: 'hours must be a number between 0 and 24' });
   if (operator_name && operator_name.length > 255) return res.status(400).json({ error: 'operator_name too long (max 255 characters)' });
   if (notes && notes.length > 1000) return res.status(400).json({ error: 'notes too long (max 1000 characters)' });
   const companyId = req.user.company_id;
@@ -268,6 +274,11 @@ router.post('/:id/hours', requireAuth, async (req, res) => {
     if (!(await projectBelongsToCompany(pool, project_id, companyId))) {
       return res.status(404).json({ error: 'Project not found' });
     }
+    // Equipment hours are a project COST (via equipmentUsageCents) — don't let them land
+    // on a closed/final project, matching the guard on every other cost mutation.
+    if (project_id != null && await projectFrozen(project_id)) {
+      return res.status(409).json({ error: 'This project is closed and can no longer accept cost changes.', code: 'project_frozen' });
+    }
 
     const full = await pool.query(
       `WITH inserted AS (
@@ -278,11 +289,11 @@ router.post('/:id/hours', requireAuth, async (req, res) => {
        FROM inserted h
        LEFT JOIN projects p ON h.project_id = p.id
        LEFT JOIN users u ON h.created_by = u.id`,
-      [req.params.id, companyId, project_id || null, log_date, parseFloat(hours),
+      [req.params.id, companyId, project_id || null, log_date, hrs,
        operator_name, notes, req.user.id]
     );
     logAudit(companyId, req.user.id, req.user.full_name, 'equipment.hours_logged', 'equipment', req.params.id, null,
-      { log_date, hours: parseFloat(hours), project_id: project_id || null });
+      { log_date, hours: hrs, project_id: project_id || null });
     res.status(201).json(full.rows[0]);
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
@@ -293,6 +304,12 @@ router.delete('/hours/:entryId', requireAuth, async (req, res) => {
   try {
     const cond = isAdmin ? 'company_id = $2' : 'company_id = $2 AND created_by = $3';
     const params = isAdmin ? [req.params.entryId, req.user.company_id] : [req.params.entryId, req.user.company_id, req.user.id];
+    // Deleting hours lowers a project's equipment cost — block it on a closed project.
+    const found = await pool.query(`SELECT project_id FROM equipment_hours WHERE id = $1 AND ${cond}`, params);
+    if (found.rowCount === 0) return res.status(404).json({ error: 'Entry not found' });
+    if (found.rows[0].project_id != null && await projectFrozen(found.rows[0].project_id)) {
+      return res.status(409).json({ error: 'This project is closed and can no longer accept cost changes.', code: 'project_frozen' });
+    }
     const result = await pool.query(`DELETE FROM equipment_hours WHERE id = $1 AND ${cond} RETURNING id`, params);
     if (result.rowCount === 0) return res.status(404).json({ error: 'Entry not found' });
     res.json({ deleted: true });

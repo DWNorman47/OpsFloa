@@ -60,13 +60,38 @@ const isWeekdayKey = (dk) => { const w = weekdayOfDate(dk); return w >= 1 && w <
 /** Total scheduled hours per YYYY-MM-DD from a worker's shifts (sum of shift
  *  durations that day; shifts carry no break). */
 function shiftHoursByDate(shifts) {
-  const m = new Map();
+  // Value each day at the UNION of its shift intervals (overlaps merged), NOT the naive
+  // sum — a full sick/vacation day is priced at this, and there's no shift-uniqueness
+  // constraint, so two identical/overlapping 8h shifts (a double-clicked create, an
+  // overlapping recurrence) would otherwise value the leave day at 16h instead of 8h.
+  // Legit split shifts (07:00-11:00 + 12:00-16:00) don't overlap → still sum to 8h.
+  const hhmm = (t) => { // "HH:MM[:SS]" → minutes since midnight, or null
+    const mch = /^(\d{1,2}):(\d{2})/.exec(String(t ?? ''));
+    return mch ? (+mch[1]) * 60 + (+mch[2]) : null;
+  };
+  const byDate = new Map();
   for (const sh of shifts || []) {
     if (!sh || sh.shift_date == null) continue;
     // pg returns DATE as a local-midnight Date; ymd() normalizes both forms. A bare
     // String(date).slice gives "Wed Aug 19", which never matches a real YMD key.
     const dk = ymd(sh.shift_date);
-    m.set(dk, (m.get(dk) || 0) + hoursWorked(sh.start_time, sh.end_time));
+    let s = hhmm(sh.start_time), e = hhmm(sh.end_time);
+    if (s == null || e == null) continue;
+    if (e < s) e += 1440;      // overnight shift
+    if (e <= s) continue;      // zero/negative span
+    if (!byDate.has(dk)) byDate.set(dk, []);
+    byDate.get(dk).push([s, e]);
+  }
+  const m = new Map();
+  for (const [dk, ivals] of byDate) {
+    ivals.sort((a, b) => a[0] - b[0]);
+    let total = 0, curS = null, curE = null;
+    for (const [s, e] of ivals) {
+      if (curE == null || s > curE) { if (curE != null) total += curE - curS; curS = s; curE = e; }
+      else if (e > curE) curE = e; // overlap → extend the current merged interval
+    }
+    if (curE != null) total += curE - curS;
+    m.set(dk, total / 60);
   }
   return m;
 }

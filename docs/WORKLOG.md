@@ -23,6 +23,42 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-20 — Seventh pass: client money rendering, equipment, scheduling/storage
+
+Four-reviewer sweep of the areas still uncovered: client money rendering, equipment/rental,
+scheduling/shifts, storage. `npm run verify` green (server 1511, client 28).
+
+**Fixed:**
+- **Duplicate/overlapping shifts over-valued a full leave day (money).** `shiftHoursByDate`
+  SUMMED every shift on a date, and a full sick/vacation day is priced at that — so two identical
+  8h shifts (a double-clicked create, an overlapping recurrence) valued the leave day at 16h. Now
+  values the day at the UNION of shift intervals (overlaps merged); a genuine split shift
+  (07–11 + 12–16) still sums to 8h. Tests added.
+- **Equipment hours had no validation → negative cost.** A raw `parseFloat` let `hours: -100`
+  through (`!(-100)` is false), and operating_rate × hours feeds project cost, so −100h @ $50/h
+  booked a −$5,000 credit that erased other real equipment cost. Now bounds hours to (0, 24];
+  also added the frozen-project guard to the hours log + delete (every other cost mutation has it).
+  Tests added.
+- **Client-facing bill PDF: per-entry Hours column was wrong.** `ProjectBillPDF.calcHours` printed
+  a negative for overnight shifts and ignored the logged break, so the itemized hours didn't
+  reconcile to the server total. Now wraps past midnight and subtracts the break, matching the
+  server.
+- **Public change-order totals didn't foot.** The page showed Subtotal + Overhead but the Total
+  also folds in margin + tax → a visible gap that also leaked the overhead %. Now shows only the
+  bottom-line total (tax-included label), mirroring the public estimate page.
+- **`parseDollars` silently 100×'d a comma-decimal money input.** The shared MoneyInput parser
+  stripped all commas, so a user typing "15,50" (meaning $15.50) sent $1,550 to the server. Now
+  accepts a plain or thousands-grouped number and REJECTS a comma-as-decimal (returns null so the
+  user re-enters with a period). Tests added.
+
+Cents-vs-dollars across the whole client came back CLEAN otherwise (every value formatted with its
+unit; no dangerouslySetInnerHTML; print/PDF HTML escapes user strings).
+
+**Flagged to `BACKLOG.md`:** storage-usage accounting drifts upward (presigned videos never
+refunded + a `size=0` cap bypass; inventory photos never decremented); equipment week/month rate
+semantics + mobilization-not-in-actuals + null-rate-silent-$0; client currency-symbol/penny nits;
+`cant_make_it` still values a leave day.
+
 ## 2026-08-20 — Enforce the Business seat cap (hard cap)
 
 Closed the Business-plan underbilling leak flagged in the sixth pass. You chose a hard cap

@@ -30,13 +30,18 @@ export function formatMoney(cents, opts = {}) {
   }).format(n);
 }
 
-// Dollar amount → cents integer. Accepts "15", "15.5", "$15.50", " 15 ".
+// Dollar amount → cents integer. Accepts "15", "15.5", "$15.50", " 15 ", "$1,500.00".
 // Returns null when the input can't be parsed.
 export function parseDollars(value) {
   if (value == null || value === '') return null;
-  const cleaned = String(value).replace(/[$,\s]/g, '');
-  if (!/^-?\d+(\.\d{0,2})?$/.test(cleaned)) return null;
-  const num = parseFloat(cleaned);
+  const s = String(value).replace(/[$\s]/g, ''); // strip $ and whitespace; KEEP commas to validate them
+  // Accept a plain number OR a well-formed thousands-grouped number. A comma used as a
+  // DECIMAL separator ("15,50") is rejected rather than parsed: the old code stripped all
+  // commas, so "15,50" silently became 1550 → 155000 cents ($1,550) instead of $15.50.
+  const plain = /^-?\d+(\.\d{0,2})?$/;
+  const grouped = /^-?\d{1,3}(,\d{3})+(\.\d{0,2})?$/;
+  if (!plain.test(s) && !grouped.test(s)) return null;
+  const num = parseFloat(s.replace(/,/g, ''));
   if (!Number.isFinite(num)) return null;
   return Math.round(num * 100);
 }

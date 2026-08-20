@@ -141,3 +141,23 @@ describe('GET /api/equipment/:id/estimate-lines', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('POST /api/equipment/:id/hours — hours validation', () => {
+  test('rejects negative hours before any DB write (was booking a negative cost credit)', async () => {
+    const res = await request(makeApp()).post('/api/equipment/7/hours').send({ log_date: '2026-08-20', hours: -100, project_id: 3 });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/between 0 and 24/);
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  test('rejects hours over 24', async () => {
+    const res = await request(makeApp()).post('/api/equipment/7/hours').send({ log_date: '2026-08-20', hours: 9999, project_id: 3 });
+    expect(res.status).toBe(400);
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  test('rejects a non-numeric hours value', async () => {
+    const res = await request(makeApp()).post('/api/equipment/7/hours').send({ log_date: '2026-08-20', hours: 'lots', project_id: 3 });
+    expect(res.status).toBe(400);
+  });
+});

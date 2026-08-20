@@ -21,6 +21,18 @@ that holds the exhaustive detail.
 
 ## 🔧 Bugs — set aside for later
 
+- **Storage-usage accounting drifts upward (companies never reclaim space).** (2026-08-20)
+  Two paths increment `storage_bytes_used` but never decrement: (a) `fieldReports.js` presigned
+  VIDEO upload increments at reservation time from the client-supplied `size` (before any file
+  exists), and the video is later stored as a pass-through URL with `size_bytes: 0`, so deleting
+  it frees nothing — every presigned video permanently inflates usage; a `size=0` request also
+  skips the check AND the increment, letting a multi-GB upload go uncounted (cap bypass). (b)
+  `inventory.js` imports only `incrementStorage` — inventory photo deletes/replaces never
+  decrement. The correct model is `recordings.js` (HEAD-verify the real R2 size, increment inside
+  the insert tx, refund on delete). Also (low): `storage.js` cap check is check-then-act (two
+  concurrent uploads can both pass), and `getStorageInfo` allows `used <= limit` (one over at the
+  cap). Storage accounting only — not money. Found 2026-08-20 storage audit.
+
 - **Cycle-count set-to-counted subsumes movements during the apply window (design note).**
   (2026-08-19, after FIXING the TOCTOU) Completion now SETS on-hand to the counted physical
   under a row lock (`setStockAbsolute`) instead of adding a snapshot-based delta, so a
@@ -217,6 +229,28 @@ that holds the exhaustive detail.
     validated inline in `inventory.js` but missing from `docs/db-enums.md`.
 
 ## 🧭 Design flaws — raised, set aside for later
+
+- **Equipment economics — semantics + gaps (2026-08-20 audit).** (a) DECISION: a week/month
+  `operating_unit` prorates by days-used (`COUNT(DISTINCT log_date)/7 or /30 × rate`,
+  `projectCost.js`), so a $9,000/month machine used 10 distinct days books $3,000 — correct if
+  "operating rate" means usage-prorated, wrong if it means the full calendar-period rental. Confirm
+  the intended meaning. (b) `mobilization_cost` is emitted as an estimate line but no code books it
+  into ACTUAL project spend — WIP/P&L understates vs the bid unless someone hand-enters it. (c) a
+  machine with a NULL `operating_rate` silently books $0 for its hours (no per-company default,
+  no warning). (FIXED same day: negative/absurd hours validation + the frozen-project guard on
+  hours log/delete.)
+
+- **Client currency/rounding nits (2026-08-20 client audit; cents-vs-dollars was clean).**
+  Hardcoded `$` in the mileage preview (`ReimbursementsAdmin.jsx`) and the "Contract $" input label
+  (`ProjectFinancialsTab.jsx`) ignore a non-USD company currency (cosmetic; amounts are correct).
+  `OvertimeReport.jsx`/`PayrollRun.jsx` sum dollar floats then format, so a re-summed column total
+  can differ from the rounded rows by a penny (`PayrollHistory` sums integer cents server-side —
+  the better pattern). `WorkerSummary.jsx` prices a 0/unset rate at a hardcoded $30/hr in its
+  (client-side estimate) earnings tile.
+
+- **`cant_make_it` shifts still value a full leave day.** (2026-08-20) A shift a worker flagged
+  "can't make it" still counts its hours toward a full sick/vacation day's schedule-first value.
+  Appears intended (schedule-first), but worth a product decision. (`shiftHoursByDate`.)
 
 - **Billing LOW (from the 2026-08-19 billing audit).** (a) Seat-cap check is a TOCTOU race:
   `checkWorkerLimit` does a COUNT then the caller INSERTs with no lock/transaction, so two
