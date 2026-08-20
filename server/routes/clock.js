@@ -8,7 +8,7 @@ const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const { applySettingsRows, SETTINGS_DEFAULTS } = require('../settingsDefaults');
 const { otThreshold } = require('../utils/paidHours');
 const { sendEmail } = require('../email');
-const { wallClockInTZ, validLocalTime, entryInstants } = require('../utils/timeFormat');
+const { wallClockInTZ, validLocalTime, entryInstants, isTruncatedLongShift } = require('../utils/timeFormat');
 const { autoStartDayTx } = require('../utils/dailyChecklistCore');
 const {
   loadWeekStart, loadPriorHours, evaluateGate, pickOverflowTarget,
@@ -647,10 +647,11 @@ async function recoverLostClockOut(req, res) {
     const ins = await txClient.query(
       `INSERT INTO time_entries
          (company_id, user_id, project_id, work_date, start_time, end_time, start_ts, end_ts, wage_type, notes,
-          clock_out_lat, clock_out_lng, break_minutes, mileage, timezone, clock_source, clocked_in_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'worker',NULL) RETURNING *`,
+          clock_out_lat, clock_out_lng, break_minutes, mileage, timezone, clock_source, clocked_in_by, long_shift_flagged)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'worker',NULL,$16) RETURNING *`,
       [companyId, req.user.id, entryProjectId, wd, start_time, end_time, recoverTs, clockOutTime, wage_type, cleanNotes,
-       lat || null, lng || null, Math.max(0, parseInt(break_minutes) || 0), mileage != null ? parseFloat(mileage) : null, timezone || null]
+       lat || null, lng || null, Math.max(0, parseInt(break_minutes) || 0), mileage != null ? parseFloat(mileage) : null, timezone || null,
+       isTruncatedLongShift(recoverTs, clockOutTime, start_time, end_time)]
     );
     await txClient.query('COMMIT');
     logger.warn({ user_id: req.user.id }, 'clock.out recovered a shift whose offline clock-in never synced');
@@ -745,8 +746,8 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
         `INSERT INTO time_entries
            (company_id, user_id, project_id, work_date, start_time, end_time, start_ts, end_ts, wage_type, notes,
             clock_in_lat, clock_in_lng, clock_out_lat, clock_out_lng, break_minutes, mileage, timezone,
-            clock_source, clocked_in_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+            clock_source, clocked_in_by, long_shift_flagged)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
          RETURNING *`,
         [
           companyId, req.user.id, entryProjectId, clock.work_date,
@@ -755,6 +756,7 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
           Math.max(0, parseInt(break_minutes) || 0), mileage != null ? parseFloat(mileage) : null,
           clock.timezone || null,
           clock.clock_source, clock.clocked_in_by,
+          isTruncatedLongShift(clockInTime, clockOutTime, start_time, end_time),
         ]
       );
       await txClient.query('DELETE FROM active_clock WHERE user_id = $1', [req.user.id]);

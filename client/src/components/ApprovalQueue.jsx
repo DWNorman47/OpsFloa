@@ -68,6 +68,15 @@ function formatHours(start, end) {
   return fmtHours((e - s) / 3600000);
 }
 
+// Real elapsed hours from the instant columns (start_ts→end_ts), used to show the
+// TRUE duration of a flagged multi-day shift whose wall-clock hours are truncated.
+function spanHours(e) {
+  if (!e.start_ts || !e.end_ts) return null;
+  const ms = new Date(e.end_ts) - new Date(e.start_ts);
+  if (!(ms > 0)) return null;
+  return fmtHours(ms / 3600000);
+}
+
 function entryHasEnded(entry) {
   if (!entry?.end_ts) return false;
   return new Date(entry.end_ts).getTime() <= Date.now();
@@ -753,6 +762,11 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                       <span style={{ ...styles.wageTag, background: e.wage_type === 'prevailing' ? '#d97706' : '#2563eb' }}>
                         {e.wage_type === 'prevailing' ? t.prevailing : t.regular}
                       </span>
+                      {e.long_shift_flagged && (
+                        <span style={{ ...styles.wageTag, background: '#b91c1c' }} title={t.aqLongShiftTitle}>
+                          ⚠ {t.aqLongShift}{spanHours(e) ? `: ${spanHours(e)}` : ''}
+                        </span>
+                      )}
                       {e.overtime_hours_override != null && (() => {
                         const total = parseFloat(e.overtime_hours_override);
                         const h = Math.trunc(total);

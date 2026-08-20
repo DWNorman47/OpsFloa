@@ -6101,3 +6101,24 @@ local; edited ordinal/calendar plans can be left un-activatable; documents are u
 against the storage cap (likely by-design).
 
 Full server suite 1520 + client eslint/i18n/build green.
+
+## 2026-08-20 — Interim guard: flag truncated multi-day clock-outs
+
+Stopgap for the money-critical clock-out truncation (pay reads wall-clock TIME
+columns capped at <24h; a forgotten Mon→Wed shift reads as ~1h). The correct
+`start_ts`/`end_ts` instants ARE stored, so rather than the risky reader cutover
+(deferred — it shifts pay for any entry where reported wall-time ≠ server span,
+e.g. DST/client-drift), I flag the anomaly for the human gatekeeper:
+- `time_entries.long_shift_flagged` (migration 0196; also in schema.sql).
+- Set at `/clock/out` and `recoverLostClockOut` via new
+  `isTruncatedLongShift(start_ts, end_ts, start_time, end_time)` in `timeFormat.js`
+  — true iff the real span exceeds the wall-clock hours by ≥1h (exactly a
+  day-boundary crossing; a representable ≤24h overnight is NOT flagged).
+- Approvals queue (`ApprovalQueue.jsx`) shows a red "⚠ Long shift: {real span}"
+  badge (span computed from `start_ts`/`end_ts`), bilingual (`aqLongShift` /
+  `aqLongShiftTitle`). Entries are `pending` by default and only `approved` ones
+  pay, so this catches the mis-valuation before it reaches payroll.
+Zero pay-math change. `isTruncatedLongShift` unit-tested (5 cases). The reader
+cutover remains an open decision for David (BACKLOG → Open questions).
+
+Full server suite + client eslint/i18n/build green.

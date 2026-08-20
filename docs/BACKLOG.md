@@ -545,8 +545,14 @@ that holds the exhaustive detail.
   `recoverLostClockOut` (offline never-synced clock-in). The 16h stale-clock cron only *alerts* —
   never caps/auto-closes. **Decision:** this is the reader cutover (money-critical, jurisdiction-
   sensitive, touches every worker's pay) — do it as its own staged+tested change, not folded into
-  an audit pass. Interim safety option: a max-duration sanity cap (e.g. reject/flag >16–20h) at
-  the clock-out + recover write sites. I did NOT change the pay reader unilaterally.
+  an audit pass. I did NOT change the pay reader unilaterally.
+  INTERIM SHIPPED 2026-08-20: `time_entries.long_shift_flagged` (migration 0196) is set at
+  clock-out + offline-recover when the real instant span exceeds the wall-clock hours by ≥1h (i.e.
+  a day boundary was truncated); the Approvals queue shows a red "⚠ Long shift: {real span}" badge
+  (from `start_ts`/`end_ts`) so an admin doesn't blind-approve a mis-valued entry (entries are
+  `pending` by default; only `approved` ones are paid). This SURFACES the anomaly but does NOT fix
+  the valuation — the reader cutover is still owed. Note the flag can't catch a swapped-time admin
+  edit (17:00→09:00 is a representable 16h overnight, ambiguous by design).
 
 - **Per-project visibility (`visible_to_user_ids`) is display-only, not enforced on write.**
   (2026-08-20 audit) The gate exists only on list reads (`projects.js` GET, the clock-in prompt).
