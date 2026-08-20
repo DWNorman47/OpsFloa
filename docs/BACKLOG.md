@@ -191,6 +191,42 @@ that holds the exhaustive detail.
 
 ## 🧭 Design flaws — raised, set aside for later
 
+- **Deductive (credit) change orders can't be modeled.** (2026-08-19) `changeOrders.js`
+  rejects negative qty/unit_cost lines and clamps line totals to ≥0, and `contractValueCents`
+  only ever ADDS accepted CO totals while `applyAcceptedCoToBudget` only increments budget.
+  So a scope-reduction / credit CO (a normal construction event) has no representation —
+  worse, forcing it in as a positive line RAISES the contract and budget the wrong way.
+  Needs a signed-CO path (allow negative totals; contract/budget follow the sign).
+
+- **Closeout freeze guards only 2 of ~6 cost sources.** (2026-08-19) `projectFrozen` is
+  enforced on project_expenses and time entries, but NOT on change-order accept, subcontract
+  payments, inventory issues / PO receipts, or equipment-hours logging. The locked snapshot
+  (`final_financials`) is immutable and safe, but the *live* P&L a user compares against the
+  lock keeps moving after closeout if any of those unguarded costs are added on a closed job.
+  Consider extending `projectFrozen` to CO-accept + the other cost mutations.
+
+- **Hand-set `contract_value_cents` still has accepted COs added on top.** (2026-08-19)
+  `contractValueCents` takes the override as base then ALSO adds accepted CO totals, so an
+  admin who set the override to the current all-in contract (mentally including an accepted
+  CO) gets it double-counted. Decide whether the override is pre- or post-CO and document it.
+
+- **Labor burden double-applies if an estimator enters an already-burdened cost.** (2026-08-19)
+  Budget seeding multiplies labor by (1 + burden%) on convert and CO-accept, correct for a raw
+  wage but inflating by ~burden² if the entered `cost_cents` already includes burden. Undetectable
+  from data — a UI note ("enter raw wage cost") or a per-line "already burdened" flag would help.
+
+- **Equipment cost can be double-entered (manual expense + logged hours).** (2026-08-19)
+  Equipment spend = manual project_expenses tagged equipment PLUS equipmentUsageCents (hours ×
+  rate); nothing dedupes a manual equipment expense against logged hours for the same machine
+  (`project_expenses.equipment_id` exists but is unused). By-design today; worth a guard/warning.
+
+- **Invoicing minors (AR modeling choices).** (2026-08-19) From the invoicing audit, all
+  low-harm: overpayment is uncapped so `collected_cents` can exceed `billed_cents` with no
+  flag; voiding an invoice leaves its `invoice_payments` rows in place (money silently drops
+  out of every rollup with only an audit line); the public invoice view shows a total that
+  includes unreleased retainage with no "retainage withheld / due now" breakdown; a $0-total
+  invoice can never reach `paid`. Confirm each is the intended model. (`server/routes/invoices.js`.)
+
 - **WH-347 prices a daily-rate worker on an hourly-equivalent basis.** (2026-08-19,
   FIXED the ~8× overpay same day) The certified-payroll `computeWorker` now costs a
   daily-rate worker at daily ÷ regular_shift_hours (an hours-based document needs an

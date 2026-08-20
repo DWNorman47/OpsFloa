@@ -23,6 +23,44 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-19 — Fourth pass: systemic date-object sweep + invoicing/retainage/reimbursement bugs
+
+After the $0-leave bug (a DATE column parsed as a JS Date), swept ALL of `server/` for the
+same anti-pattern and audited two untouched money areas. `npm run verify` green.
+
+**Date-object class — two more live bugs + one latent, all fixed:**
+- **Pay stubs 500'd on the legacy (no-ruleset) pay-period path.** `workerPeriodStatements`
+  did `String(period_start).substring(0,10)` on `pay_periods.period_start/end` (DATE →
+  Date) → "Wed Aug 19", bound as a `::date` SQL param → invalid-date throw (and the row
+  filter would've dropped every entry anyway). Fixed via the Date-robust `ymd()`.
+- **Time-off approve/deny: garbled dates + dead shift-conflict flagging.** `timeOff.js` did
+  `.toString().substring(0,10)` on DATE → "Wed Aug 19" in the email/push/inbox/audit, and
+  bound it to `$3::date` in the shift-conflict UPDATE → cast error swallowed in setImmediate
+  → shifts during approved time off were NEVER auto-flagged. Fixed with `ymd()`.
+- **dailyChecklist** scheduled-date match compared two raw Dates (equal only by coincidence)
+  — hardened with `ymd()` before it silently breaks.
+- The sweep confirmed the pay engine's other `String(x).slice` sites are regex-guarded and
+  fed normalized input (safe no-op on a stray Date), and the `.toISOString()` date sites are
+  correct on the UTC server (flagged as TZ-fragile but out of scope).
+
+**Money-flow (invoicing/retainage/reimbursements) — two fixed:**
+- **Retainage could go negative → false closeout "done".** The release CTE and the closeout
+  outstanding-sum both included `draft` invoices (P&L already excludes draft), and
+  `recomputeTotals` rewrote held without touching released — so releasing on a draft then
+  editing it down made held − released negative. Fixed: release + closeout now exclude draft
+  (matching P&L), and `recomputeTotals` clamps `released = LEAST(released, held)`.
+- **Reimbursement re-approval created a DUPLICATE QuickBooks expense.** The approval handler
+  never checked the existing `qbo_purchase_id` and passed no `requestId`, so a double-click or
+  approved→pending→approved posted a second Purchase. Fixed: skip the push when already synced,
+  and pass a stable `requestId` (`ops-reimb-<id>`) for Intuit-side dedup.
+
+No unit tests for the two money-flow fixes (route + SQL, need a DB harness); verified by reading.
+
+**Flagged to `BACKLOG.md`** (design calls): deductive/credit COs unmodelable; closeout freeze
+guards only 2 of ~6 cost sources; hand-set contract value double-counts COs; labor-burden
+double-apply; equipment manual+hours double-entry; AR minors (uncapped overpay, void strands
+payments). Plus prior QBO push-payroll double-post cluster.
+
 ## 2026-08-19 — Pay engine, third pass: the $0-leave bug + two regressions from my own changes
 
 Three-reviewer audit (regression review of my diff + two fresh-area sweeps). Found and

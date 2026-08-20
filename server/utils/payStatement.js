@@ -5,7 +5,7 @@ const {
   computeLeaveHours, shiftHoursByDate,
 } = require('./payCalculations');
 const { leaveRateMultipliers, computeWorkerLeave, computeCompanyLeave, otRuleFromSettings, otThreshold } = require('./paidHours');
-const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, sickRulesFromSettings } = require('./hoursRules');
+const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, sickRulesFromSettings, ymd } = require('./hoursRules');
 const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = require('./deductions');
 const { splitRateAware, hasSimpleOtConfig } = require('./rateAwareOvertime');
 const { resolveRuleset, deductionsForRole, splitDeductionsByTiming } = require('./paycheckRun');
@@ -464,7 +464,11 @@ async function workerPeriodStatements({ companyId, worker, settings, periods }) 
   const out = [];
   const list = periods || [];
   if (list.length === 0) return out;
-  const day = d => String(d).substring(0, 10);
+  // pg returns pay_periods.period_start/end as local-midnight Date objects; ymd()
+  // normalizes both Date and string to 'YYYY-MM-DD'. A bare String(date).slice gave
+  // "Wed Aug 19", which then threw as a ::date bound AND never matched a to_char'd
+  // work_date in the filter below — 500-ing the legacy (no-ruleset) pay-stub path.
+  const day = d => ymd(d);
   const minDate = list.reduce((m, p) => (day(p.period_start) < m ? day(p.period_start) : m), day(list[0].period_start));
   const maxDate = list.reduce((m, p) => (day(p.period_end) > m ? day(p.period_end) : m), day(list[0].period_end));
 

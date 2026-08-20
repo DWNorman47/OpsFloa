@@ -18,6 +18,7 @@ const { requirePerm, hasPerm } = require('../permissions');
 const { projectBelongsToCompany } = require('../utils/tenantRefs');
 const { MAX_TEXT, normText, pauseOverdueCalendar, appendAssembledItems } = require('../utils/dailyChecklistCore');
 const { DAILY_CHECKLIST_ITEM_MODES } = require('../constants/dailyChecklistEnums');
+const { ymd } = require('../utils/hoursRules');
 
 // Who is viewing a day — admins see every item; a worker sees all-types items plus their
 // own team-member-type's, and sees their own private state for individual items.
@@ -760,7 +761,7 @@ async function activeDayMatching(db, companyId, projectId, schedule) {
   if (!active) return null;
   const matches = schedule.schedule_type === 'ordinal'
     ? Number(schedule.ordinal_target) === Number(active.day_number)
-    : String(schedule.scheduled_date).slice(0, 10) === String(active.work_date).slice(0, 10);
+    : ymd(schedule.scheduled_date) === ymd(active.work_date); // both DATE cols → normalize (String().slice gave "Www Mmm DD", equal only by coincidence)
   return matches ? active : null;
 }
 

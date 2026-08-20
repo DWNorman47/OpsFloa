@@ -205,7 +205,7 @@ async function computeAutoStatus(companyId, projectId, item) {
       const r = await pool.query(
         `SELECT COUNT(*) AS n,
                 COALESCE(SUM(retainage_held_cents - retainage_released_cents), 0) AS outstanding
-           FROM invoices WHERE project_id = $1 AND status <> 'void'`,
+           FROM invoices WHERE project_id = $1 AND status NOT IN ('void', 'draft')`,
         [projectId]
       );
       const n = parseInt(r.rows[0].n, 10);
