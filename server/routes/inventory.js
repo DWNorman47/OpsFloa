@@ -12,7 +12,7 @@ const { getAdvancedSettings, ADVANCED_DEFAULTS } = require('./admin');
 const { applySettingsRows, ADMIN_SETTINGS_DEFAULTS } = require('../settingsDefaults');
 const { logAudit } = require('../auditLog');
 const { coerceBody } = require('../middleware/coerce');
-const { INVENTORY_COUNT_TYPES } = require('../constants/inventoryEnums');
+const { INVENTORY_COUNT_TYPES, INVENTORY_LOCATION_TYPES } = require('../constants/inventoryEnums');
 
 const TXN_COERCE = coerceBody({
   int: ['item_id', 'from_location_id', 'to_location_id', 'uom_id', 'to_uom_id',
@@ -682,7 +682,7 @@ router.get('/locations', requireAuth, requireInventoryView, async (req, res) => 
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
-const VALID_LOCATION_TYPES = ['warehouse', 'job_site', 'truck', 'other'];
+const VALID_LOCATION_TYPES = INVENTORY_LOCATION_TYPES; // shared constant (DB CHECK in migration 0191)
 
 // POST /api/inventory/locations
 router.post('/locations', requireAuth, requirePerm('manage_inventory'), async (req, res) => {

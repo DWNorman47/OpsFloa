@@ -3372,6 +3372,7 @@ router.patch('/entries/:id/approve', requireAdmin, requirePerm('approve_entries'
         const w = worker.rows[0];
         if (!w) return;
         if (w.worker_type === 'unpaid') return; // unpaid workers' labor is not synced to QBO
+        if (entry.qbo_activity_id) return; // already pushed — don't create a second TimeActivity
         const usesVendor = w.worker_type === 'contractor' || w.worker_type === 'subcontractor';
         const mappedId = usesVendor ? w.qbo_vendor_id : w.qbo_employee_id;
         if (!mappedId) return;
@@ -3390,6 +3391,9 @@ router.patch('/entries/:id/approve', requireAdmin, requirePerm('approve_entries'
           workDate,
           hours,
           description: entry.notes || '',
+          // Same key as the manual push + retry so a lost response can't double-post the
+          // labor: if auto-sync's response is lost and an admin later re-pushes, Intuit dedups.
+          requestId: `ops-ta-${entry.id}`,
         });
         await pool.query(
           'UPDATE time_entries SET qbo_activity_id = $1, qbo_synced_at = NOW() WHERE id = $2',
@@ -4916,15 +4920,14 @@ router.delete('/clients/:id', requireAdmin, async (req, res) => {
   } finally { client.release(); }
 });
 
-// Client documents
-const CLIENT_DOC_TYPES = ['w9', 'w2', 'coi', 'contract', 'license', 'other'];
+// Client documents — doc_type is a fixed-value column (DB CHECK in migration 0191).
+const { CLIENT_DOCUMENT_TYPES, CLIENT_DOCUMENT_TYPE_DEFAULT } = require('../constants/clientDocumentEnums');
 
 router.post('/clients/:id/documents/upload', requireAdmin, async (req, res) => {
   const { dataUrl, name, doc_type, expires_at, direction } = req.body;
   if (!dataUrl || !name) return res.status(400).json({ error: 'dataUrl and name required' });
   const companyId = req.user.company_id;
-  const CLIENT_DOC_TYPES_LOCAL = ['coi', 'w9', 'w2', 'contract', 'license', 'other'];
-  const safeType = CLIENT_DOC_TYPES_LOCAL.includes(doc_type) ? doc_type : 'other';
+  const safeType = CLIENT_DOCUMENT_TYPES.includes(doc_type) ? doc_type : CLIENT_DOCUMENT_TYPE_DEFAULT;
   const safeDir = direction === 'from_company' ? 'from_company' : 'from_client';
   try {
     const { uploadBase64 } = require('../r2');
@@ -4943,7 +4946,7 @@ router.post('/clients/:id/documents', requireAdmin, async (req, res) => {
   const { name, url, size_bytes, doc_type, expires_at } = req.body;
   if (!name || !url) return res.status(400).json({ error: 'name and url required' });
   const companyId = req.user.company_id;
-  const safeType = CLIENT_DOC_TYPES.includes(doc_type) ? doc_type : 'other';
+  const safeType = CLIENT_DOCUMENT_TYPES.includes(doc_type) ? doc_type : CLIENT_DOCUMENT_TYPE_DEFAULT;
   try {
     const clientCheck = await pool.query('SELECT id FROM clients WHERE id=$1 AND company_id=$2', [req.params.id, companyId]);
     if (clientCheck.rowCount === 0) return res.status(404).json({ error: 'Client not found' });

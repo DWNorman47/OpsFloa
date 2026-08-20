@@ -21,6 +21,32 @@ that holds the exhaustive detail.
 
 ## 🔧 Bugs — set aside for later
 
+- **Pre-existing migration-linter failure at 0174.** (2026-08-20) `node server/scripts/lintMigrations.js`
+  halts at `0174_daily_checklist_assignment_single_project.sql` with `column "project_ids" does not
+  exist` — the linter replays migrations on a scratch DB and 0174 references a column a sibling/later
+  migration handles differently. `npm run verify` doesn't run this linter, so it's been silent. Could
+  mean a genuine fresh-migrate-from-scratch break (like the cycle-count `variance` one) — worth
+  confirming 0173/0174 apply cleanly on an empty DB. Not introduced by any recent change.
+
+- **QBO sync — smaller gaps (2026-08-20 audit; the idempotency-key duplication was fixed).**
+  (a) Manual batch pushes (`/push`, `/push-expenses`, `/push-bills`) collect per-object failures into
+  the HTTP response only — NOT into `qbo_sync_errors` — so a failure vanishes if the admin navigates
+  away, and `retry-error` only handles reimbursement/time_entry (a failed bill can never be retried).
+  (b) `createVendor`/`createCustomer` take no requestId and the create routes don't check an existing
+  mapping first → a double-fire makes two QBO vendors/customers (only the 2nd id persists). (c)
+  push-bills `force` deliberately drops the requestId and re-bills already-billed rows with no
+  confirmation — a double-pay foot-gun. (`server/routes/qbo.js`, `services/qbo.js`.)
+
+- **Field/PM — smaller gaps (2026-08-20 audit; subsystem is otherwise well-hardened).** (a)
+  `booking.js` book endpoints validate only the lower time bound (`advance_notice_hrs`), not the
+  `max_advance_days` upper bound or `slot_interval_min` alignment — a scripted/public POST can book
+  an arbitrary far-future or off-grid slot. (b) `dailyChecklist.js` registers `GET /days/:dayId`
+  twice (419 + 803); the second (plan-edit payload with scheduled_date/name/notes) is dead code, so
+  the plan-edit view gets the reduced payload. (c) `inspections.js` POST/PATCH don't company-scope
+  `template_id`/`project_id` (defense-in-depth; largely inert — `inspections.project_id` is UUID vs
+  `projects.id` INTEGER so the join never matches). (d) a `completed` work order can be PATCHed back
+  to `open` (no terminal-state lock) — product decision.
+
 - **Storage-usage accounting drift — FIXED 2026-08-20 (two main paths).** field-report presigned
   videos: no longer incremented optimistically at reservation from the unverified client `size`
   (an abandoned upload / `size=0` request no longer drifts or bypasses); storage is now counted at

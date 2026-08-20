@@ -23,6 +23,41 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-20 — Eighth pass: QBO idempotency, submittal/convert races, DB-enum CHECKs
+
+Three-reviewer sweep: QBO sync, DB-constraint drift, field/PM subsystems. `npm run verify` green.
+
+**QBO — fixed (idempotency-key fragmentation → duplicate money objects):** the same entity was
+pushed through auto/manual/retry paths with DIFFERENT (or no) requestIds, so Intuit couldn't
+dedup across paths and a lost-response retry created a second Purchase/TimeActivity.
+- Reimbursement Purchase: standardized ALL paths to `ops-reimb-<id>` (was auto=`ops-reimb`,
+  batch=`ops-pur`, retry=none).
+- TimeActivity: auto-sync and retry now pass `ops-ta-<id>` (was none on both); auto-sync also
+  guards on `qbo_activity_id`.
+- createBill item line: `Amount` now derived from the ROUNDED qty/unitPrice actually sent, so
+  QBO's recomputed `Qty × UnitPrice` matches our Amount (was computed off full-precision qty →
+  line/total drift vs the preview).
+
+**Field/PM — fixed:**
+- Submittal transitions (send/close/stamp/void) re-check the from-status IN the UPDATE WHERE
+  (were JS-checked then blind UPDATE) so two concurrent transitions can't both apply.
+- Service-request convert / convert-work-order now lock the request `FOR UPDATE` in a tx, so two
+  concurrent converts can't each create a project/work-order.
+
+**DB-constraint integrity (CLAUDE.md invariant) — fixed:** the audit found the documented
+money/pay columns all genuinely CHECK-enforced, but two fixed-value columns were app-only:
+`client_documents.doc_type` (validated by two duplicated inline literals) and
+`inventory_locations.type` (a third inline copy). Migration 0191 adds CHECKs (`NOT VALID` so a
+stray legacy value can't fail boot); added a shared `clientDocumentEnums.js`, deduped the inline
+literals to the shared constants, and documented these two + six previously-undocumented
+CHECK'd columns in `docs/db-enums.md`.
+
+**Flagged to `BACKLOG.md`:** QBO manual-batch failures not recorded to qbo_sync_errors + retry
+only supports reimbursement/time (not bills); vendor/customer create lacks idempotency; push-bills
+`force` re-bills; booking accepts a `scheduled_at` past `max_advance_days` / off slot-grid;
+dailyChecklist duplicate dead route; inspections template/project not company-scoped (largely inert);
+a pre-existing migration-linter failure at 0174.
+
 ## 2026-08-20 — Fix storage-usage accounting drift
 
 Closed the upward storage-usage drift flagged in the seventh pass. `npm run verify` green.
