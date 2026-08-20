@@ -77,3 +77,38 @@ describe('PATCH /admin/workers/:id/restore — seat cap', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('PATCH /admin/workers/:id/restore — Business seat cap', () => {
+  const business = (over = {}) => ({ rows: [{ plan: 'business', subscription_status: 'active', trial_ends_at: null, bonus_seats: 0, paid_worker_seats: 5, ...over }] });
+
+  test('403 at the Business cap (15 included + 5 paid = 20, and 20 active)', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ role: 'worker' }] })
+      .mockResolvedValueOnce(business())                 // 15 + 5 = 20
+      .mockResolvedValueOnce({ rows: [{ count: '20' }] }); // at cap
+    const res = await request(makeApp()).patch('/api/admin/workers/9/restore');
+    expect(res.status).toBe(403);
+    expect(res.body.limit).toBe(20);
+    expect(pool.query).toHaveBeenCalledTimes(3);
+  });
+
+  test('restores under the Business cap (19 < 20)', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ role: 'worker' }] })
+      .mockResolvedValueOnce(business())
+      .mockResolvedValueOnce({ rows: [{ count: '19' }] })
+      .mockResolvedValueOnce(restored);
+    const res = await request(makeApp()).patch('/api/admin/workers/9/restore');
+    expect(res.status).toBe(200);
+  });
+
+  test('grace: paid_worker_seats NULL (subscription not yet synced) → unlimited', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ role: 'worker' }] })
+      .mockResolvedValueOnce(business({ paid_worker_seats: null })) // not synced → grace
+      .mockResolvedValueOnce(restored); // no COUNT query — returns null before it
+    const res = await request(makeApp()).patch('/api/admin/workers/9/restore');
+    expect(res.status).toBe(200);
+    expect(pool.query).toHaveBeenCalledTimes(3); // lookup + company (grace, no count) + UPDATE
+  });
+});

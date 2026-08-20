@@ -433,16 +433,14 @@ that holds the exhaustive detail.
 ## ❓ Open questions / decisions for you
 *Blocked on your call before anyone builds.*
 
-- **Business plan: per-seat billing is set at checkout and never reconciled to actual workers
-  (revenue).** (2026-08-19) `/stripe/checkout` bills the `worker_count` the client sends as the
-  Stripe seat quantity, `WORKER_LIMITS.business = null` (unlimited), and no worker-create/restore
-  path pushes an updated quantity to Stripe. So a Business company billed for N seats can add
-  workers past N with no further charge — e.g. check out with `worker_count: 0` ($35 base), then
-  create 500 workers for free. This is a BILLING-MODEL decision, not a clear bug: do you want
-  OpsFloa to auto-reconcile the Stripe seat quantity to `COUNT(active workers) − 15 included`
-  (on create/restore/deactivate), enforce a hard cap, or keep manual seat selection? Whatever you
-  choose, the enforcement/reconcile code follows. Largest revenue exposure found. (`stripe.js`,
-  `admin.js` worker create/restore.) Found 2026-08-19 billing audit.
+- **Business seat cap — ENFORCED 2026-08-20 (hard cap, your call).** Business is now capped at
+  15 included + purchased per-worker seats (`companies.paid_worker_seats`, migration 0190) +
+  bonus_seats; create/invite/restore all block past it, like Free/Starter. `paid_worker_seats` is
+  synced from Stripe by the billing webhook + change-plan. Two follow-ups worth knowing: (a) an
+  EXISTING Business subscription reads `paid_worker_seats = NULL` until its next webhook/change-
+  plan, and NULL = grace (unlimited) — so enforcement kicks in lazily; if you want it immediate,
+  backfill `paid_worker_seats` from Stripe for current Business subs. (b) The seat-cap TOCTOU
+  (below) now matters slightly more since the cap is real. Was: [billing-model decision].
 
 - **Company-wide `overtime_rule` is ignored when a worker's own rule is null.**
   (2026-08-19) The pay engine resolves OT rule via `otRuleFromSettings(settings,

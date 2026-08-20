@@ -23,6 +23,24 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-20 — Enforce the Business seat cap (hard cap)
+
+Closed the Business-plan underbilling leak flagged in the sixth pass. You chose a hard cap
+(block, like Free/Starter — not auto-billing). `npm run verify` green.
+
+- New `companies.paid_worker_seats` (migration 0190, nullable) = purchased per-worker seats
+  above the 15 the base includes (the Stripe per-worker item quantity). Synced from Stripe by
+  the billing webhook (both `checkout.session.completed` and `customer.subscription.updated`)
+  and set immediately by `change-plan`.
+- `checkWorkerLimit` now caps Business at `15 + paid_worker_seats + bonus_seats`; create,
+  invite, and restore all block past it. `BUSINESS_INCLUDED_WORKERS = 15` duplicated in admin.js
+  with a "must match stripe.js" comment.
+- **Deploy safety:** `paid_worker_seats = NULL` (unsynced) is treated as grace (unlimited), so
+  an existing Business subscription isn't retroactively blocked before its next webhook/change-
+  plan populates the real count. To enforce immediately, backfill from Stripe (noted in BACKLOG).
+- Tests: change-plan sets the seat count; restore blocks at the Business cap, allows under it,
+  and grants grace when unsynced.
+
 ## 2026-08-19 — Sixth pass: billing, transaction integrity, output injection
 
 Three-reviewer sweep of the remaining money surfaces: Stripe billing/seats, transaction &

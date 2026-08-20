@@ -60,22 +60,35 @@ const sgMail = {
   },
 };
 
-// Worker limits per plan (null = unlimited). Trial always gets unlimited.
+// Worker limits per plan (null = handled specially). Trial always gets unlimited.
 const WORKER_LIMITS = { free: 3, starter: 10, business: null };
+// Business base includes this many seats; per-worker seats are billed above it.
+// MUST match BUSINESS_INCLUDED_WORKERS in routes/stripe.js.
+const BUSINESS_INCLUDED_WORKERS = 15;
 const ENTRY_HAS_ENDED_SQL = `end_ts IS NOT NULL AND end_ts <= NOW()`;
 
 async function checkWorkerLimit(companyId) {
   const company = await pool.query(
-    'SELECT plan, subscription_status, trial_ends_at, bonus_seats FROM companies WHERE id = $1', [companyId]
+    'SELECT plan, subscription_status, trial_ends_at, bonus_seats, paid_worker_seats FROM companies WHERE id = $1', [companyId]
   );
-  const { plan, subscription_status, trial_ends_at, bonus_seats } = company.rows[0] || {};
+  const { plan, subscription_status, trial_ends_at, bonus_seats, paid_worker_seats } = company.rows[0] || {};
   const trialActive = subscription_status === 'trial' && (!trial_ends_at || new Date(trial_ends_at) >= new Date());
   if (trialActive) return null; // active trial = unlimited
-  const base = WORKER_LIMITS[plan || 'free'];
-  if (base === null) return null; // business = unlimited
-  // Complimentary seats a super_admin granted this company sit on top of the
-  // plan cap and are not billed (see superadmin PATCH bonus_seats).
-  const limit = base + (parseInt(bonus_seats, 10) || 0);
+  // Complimentary seats a super_admin granted sit on top of the cap and aren't billed.
+  const bonus = parseInt(bonus_seats, 10) || 0;
+  let limit;
+  if ((plan || 'free') === 'business') {
+    // Business = 15 included + purchased per-worker seats (synced from Stripe) + bonus.
+    // paid_worker_seats NULL = the subscription hasn't synced yet → grace (unlimited),
+    // so an existing Business company isn't blocked before its sub next syncs. See
+    // migration 0190 + the stripe.js webhook.
+    if (paid_worker_seats == null) return null;
+    limit = BUSINESS_INCLUDED_WORKERS + (parseInt(paid_worker_seats, 10) || 0) + bonus;
+  } else {
+    const base = WORKER_LIMITS[plan || 'free'];
+    if (base === null) return null;
+    limit = base + bonus;
+  }
   const count = await pool.query(
     `SELECT COUNT(*) FROM users WHERE company_id = $1 AND role = 'worker' AND active = true`,
     [companyId]
