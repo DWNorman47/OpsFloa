@@ -23,6 +23,21 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-19 — WH-347: price daily-rate workers correctly (was ~8× over)
+
+The certified-payroll `computeWorker` (`admin.js`) had no daily-rate guard, so a
+daily-rate worker's `regular_cost` = hours × daily-rate — treating the daily amount
+as an hourly rate ($200/day, 40h → $8,000 instead of ~$1,000). Now costs a daily-rate
+worker at the hourly-equivalent (daily ÷ regular_shift_hours) via one `wageRate` var
+used across both the simple (rate-aware) and premium OT paths. Hourly workers are
+untouched (`wageRate === rate`).
+
+Basis note: WH-347 is an hours document, so the hourly-equivalent keeps the cells
+footing to the totals; it matches the daily-rate pay stub (days × daily rate) only when
+a worker's daily hours = the standard shift — logged in `BACKLOG.md` as a design note.
+No unit test added: `computeWorker` is an inline route closure (would need a full
+ordered-query integration mock); the full suite confirms no hourly-worker regression.
+
 ## 2026-08-19 — Pay engine, second pass: overnight completion, stub↔run parity, surface gaps
 
 Follow-up audit (three parallel reviewers) after the first round. Fixed the real

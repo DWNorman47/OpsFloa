@@ -21,17 +21,6 @@ that holds the exhaustive detail.
 
 ## 🔧 Bugs — set aside for later
 
-- **WH-347 certified payroll prices a DAILY-rate worker as hours × daily-rate (~8× over).**
-  (2026-08-19) The certified-payroll `computeWorker` path (`server/routes/admin.js`
-  ~4516 simple path, ~4592 premium path) has no `rate_type !== 'daily'` guard like
-  `buildPayStatement` does, so `regular_cost = straightHours × w.rate` treats the daily
-  amount as an hourly rate. A $200/day worker, 8h × 5 days → WH-347 reports $8,000
-  instead of $1,000. Pre-existing; niche (daily-rate + prevailing-wage certified
-  payroll is an unusual combo — WH-347 jobs pay hourly prevailing rates), but it is a
-  wrong dollar on a compliance document. Fix = route daily-rate workers through
-  `computeDailyPayCosts` (daily ÷ regular_shift_hours) on that surface too. Found in the
-  2026-08-19 pay-engine pass. → memory: [[project_payroll_review_decisions]]
-
 - **Leave + worked on the SAME day — verify no double-pay.** (2026-08-05) Reported as
   "sick/vacation aren't working"; David suspects it was a test where a sick day was
   entered for a day the employee *also* clocked in. The pay engine appends synthetic
@@ -201,6 +190,16 @@ that holds the exhaustive detail.
     validated inline in `inventory.js` but missing from `docs/db-enums.md`.
 
 ## 🧭 Design flaws — raised, set aside for later
+
+- **WH-347 prices a daily-rate worker on an hourly-equivalent basis.** (2026-08-19,
+  FIXED the ~8× overpay same day) The certified-payroll `computeWorker` now costs a
+  daily-rate worker at daily ÷ regular_shift_hours (an hours-based document needs an
+  hourly rate). This equals the daily-rate pay stub (days × daily rate) only when the
+  worker's daily hours = the standard shift; a 10h day on an 8h standard would show
+  10 × (daily/8) on the WH-347 vs 1 day on the stub. Acceptable for the form, but if a
+  daily-rate worker ever appears on certified payroll with off-standard days, decide
+  whether the WH-347 should instead mirror the stub's days × daily total. (`admin.js`
+  computeWorker.) → memory: [[project_payroll_review_decisions]]
 
 - **Preview surfaces report a "Net Pay" that ignores ruleset cap / min-net.** (2026-08-19)
   The worker invoice, overtime report, and payroll CSV price deductions through

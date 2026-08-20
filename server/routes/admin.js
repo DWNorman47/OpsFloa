@@ -4486,6 +4486,14 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
     // fallback (no prevailing OT) — matching the rest of the app.
     const computeWorker = (w) => {
       const otConfig = otConfigByRole(w.role_id);
+      // WH-347 is an hours-based document; a daily-rate worker's `rate` is the DAILY
+      // amount, so cost it at the hourly-equivalent (daily ÷ standard shift) — otherwise
+      // every regular hour is priced at a whole day (an ~8× overstatement of gross). This
+      // is an hourly-equivalent basis; it can differ slightly from the daily-rate pay stub
+      // (days × daily rate) when a worker's daily hours ≠ the standard shift.
+      const wageRate = w.rate_type === 'daily'
+        ? w.rate / (parseFloat(s.regular_shift_hours) || 8)
+        : w.rate;
       const regular_days = emptyDays(), prevailing_days = emptyDays(), ot_days = emptyDays();
       const dayKeyOf = e => DAY_KEYS[new Date(e.work_date + 'T00:00:00Z').getUTCDay()];
       const dur = e => Math.max(0, hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60);
@@ -4518,7 +4526,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
       let regular_cost = 0, prevailing_cost = 0, overtime_cost = 0, night_premium = 0;
 
       if (hasSimpleOtConfig(otConfig)) {
-        const baseRateOf = e => (e.wage_type === 'prevailing' ? prevailingRateOf(e) : w.rate);
+        const baseRateOf = e => (e.wage_type === 'prevailing' ? prevailingRateOf(e) : wageRate);
         const split = splitRateAware(w.items, { rule: w.overtime_rule, threshold: otThreshold(s, w.overtime_rule), weekStart: s.week_start, otMult, baseRateOf, method: otMethod, wagePriority });
         split.worked.forEach((e, i) => {
           const p = split.perEntry[i];
@@ -4575,7 +4583,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
           }
           cr.regular_days[dk] = +(cr.regular_days[dk] + (h - otH)).toFixed(2);
           cr.regular_total += h - otH;
-          cr.regular_cost += (h - otH) * w.rate;
+          cr.regular_cost += (h - otH) * wageRate;
         }
         // A minimum-daily floor tops a short worked day up to its minimum; those hours are
         // in rh but not on any entry above, so add them to their day column — otherwise the
@@ -4589,12 +4597,12 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
             const cr = classRow(source);
             cr.regular_days[dk] = +(cr.regular_days[dk] + f.hours).toFixed(2);
             cr.regular_total += f.hours;
-            cr.regular_cost += f.hours * w.rate;
+            cr.regular_cost += f.hours * wageRate;
           }
         }
         regular_total = rh; overtime_total = oh;
-        regular_cost = rh * w.rate;
-        overtime_cost = otBandsCost(otBands, w.rate, otMult);
+        regular_cost = rh * wageRate;
+        overtime_cost = otBandsCost(otBands, wageRate, otMult);
         const premiumOtRate = overtime_total > 0 ? overtime_cost / overtime_total : 0;
         for (const cr of classMap.values()) cr.overtime_cost = cr.overtime_total * premiumOtRate;
         // Night differential is an additive premium on regular hours worked in the
