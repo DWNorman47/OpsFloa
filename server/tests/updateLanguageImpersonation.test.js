@@ -28,7 +28,9 @@ function makeApp() {
 // present) that the super-admin who started the session is still active +
 // super_admin. `didUpdateLanguage()` isolates the route's own write from that
 // auth-check query.
-const normalToken = jwt.sign({ id: 42, role: 'worker', company_id: 'c1', username: 'ana' }, process.env.JWT_SECRET);
+const normalToken = jwt.sign({ id: 42, role: 'worker', company_id: 'c1', username: 'ana', tv: 0 }, process.env.JWT_SECRET);
+// requireAuth's normal-session check (tv token) reads token_version + active.
+const authOkNormal = { rows: [{ token_version: 0, active: true }] };
 const impToken = jwt.sign({ id: 42, role: 'worker', company_id: 'c1', username: 'ana', imp: true }, process.env.JWT_SECRET);
 const impByToken = jwt.sign({ id: 42, role: 'worker', company_id: 'c1', username: 'ana', imp: true, imp_by: 7 }, process.env.JWT_SECRET);
 
@@ -40,16 +42,17 @@ beforeEach(() => { pool.query.mockReset(); });
 
 describe('POST /auth/update-language', () => {
   test('a normal session persists the language to the profile', async () => {
-    pool.query.mockResolvedValueOnce({ rowCount: 1 });
+    pool.query.mockResolvedValueOnce(authOkNormal);   // requireAuth tv check
+    pool.query.mockResolvedValueOnce({ rowCount: 1 }); // the language UPDATE
     const res = await request(makeApp())
       .post('/api/auth/update-language')
       .set('Authorization', `Bearer ${normalToken}`)
       .send({ language: 'English' });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ success: true, language: 'English', persisted: true });
-    expect(pool.query).toHaveBeenCalledTimes(1);
-    expect(pool.query.mock.calls[0][0]).toMatch(/UPDATE users SET language/);
-    expect(pool.query.mock.calls[0][1]).toEqual(['English', 42]);
+    expect(pool.query).toHaveBeenCalledTimes(2);
+    expect(pool.query.mock.calls[1][0]).toMatch(/UPDATE users SET language/);
+    expect(pool.query.mock.calls[1][1]).toEqual(['English', 42]);
   });
 
   test('an impersonation session does NOT write to the profile', async () => {

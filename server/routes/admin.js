@@ -6,7 +6,7 @@ const { escapeHtml } = require('../utils/htmlEscape');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const { userOrIpKey } = require('../middleware/rateLimitKey');
-const { entryInstants, validLocalDate, wallClockInTZ } = require('../utils/timeFormat');
+const { entryInstants, validLocalDate, wallClockInTZ, wallDateInTZ } = require('../utils/timeFormat');
 const { PROJECT_STATUSES, PROJECT_PRIORITIES } = require('../constants/projectEnums');
 const { validateHourLimitInput, numOrNull: hlNumOrNull, reconcileCompanyActiveClocks } = require('../utils/projectHourLimits');
 const { clearSuppression } = require('../services/emailSuppression');
@@ -38,6 +38,17 @@ const { MONEY_CATEGORIES, MATERIALS_COST_BASES } = require('../constants/project
 const { weekRange, weekBucketKey } = require('../utils/weekBounds');
 const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const qbo = require('../services/qbo');
+
+// A partial admin restricted to specific workers (worker_access_ids) must not reach
+// another worker's wage/PII/pay/deductions/documents by id — those per-worker detail
+// routes scope only by company_id, so without this a scoped admin could read/write any
+// same-company worker via an enumerated :id. Returns true when the target is in scope
+// (no restriction set → full access, matching the list routes).
+function workerInScope(req, targetId) {
+  const ids = req.user.worker_access_ids;
+  return !ids || !ids.length || ids.map(Number).includes(Number(targetId));
+}
+const DENY_WORKER = { error: 'Not authorized for this worker' };
 
 // Legacy { to, subject, html } send shape → central sendEmail(); re-throw on
 // provider failure so the invite try/catch still sets email_sent correctly.
@@ -580,9 +591,16 @@ router.post('/clock-in', requireAdmin, requirePerm('manage_workers'), async (req
       return res.status(404).json({ error: 'Project not found' });
     }
 
+    // work_date is the COMPANY-LOCAL date, not UTC CURRENT_DATE: an admin clocking a
+    // worker in at 6pm local (already tomorrow in UTC) must land on today's local date,
+    // else the shift buckets into the wrong pay period / OT week. The worker /clock/in
+    // path uses the client's local_work_date; this admin path has none, so derive it
+    // from company_timezone.
+    const tzRow = await pool.query("SELECT value FROM settings WHERE company_id = $1 AND key = 'company_timezone'", [companyId]);
+    const adminWorkDate = wallDateInTZ(new Date(), tzRow.rows[0]?.value || 'UTC');
     const result = await pool.query(
       `INSERT INTO active_clock (user_id, company_id, project_id, clock_in_time, work_date, notes, clock_source, clocked_in_by)
-       VALUES ($1, $2, $3, NOW(), CURRENT_DATE, $4, 'admin', $5)
+       VALUES ($1, $2, $3, NOW(), $6::date, $4, 'admin', $5)
        ON CONFLICT (user_id) DO UPDATE
          SET project_id = EXCLUDED.project_id,
              clock_in_time = EXCLUDED.clock_in_time,
@@ -591,7 +609,7 @@ router.post('/clock-in', requireAdmin, requirePerm('manage_workers'), async (req
              clock_source = EXCLUDED.clock_source,
              clocked_in_by = EXCLUDED.clocked_in_by
        RETURNING *`,
-      [user_id, companyId, project_id || null, notes || null, req.user.id]
+      [user_id, companyId, project_id || null, notes || null, req.user.id, adminWorkDate]
     );
     const projName = project_id
       ? await pool.query('SELECT name FROM projects WHERE id = $1', [project_id])
@@ -1053,6 +1071,7 @@ router.patch('/workers/:id/restore', requireAdmin, async (req, res) => {
 // Get a worker's entries for a date range (for bill generation)
 router.post('/workers/:id/entries', requireAdmin, requirePerm('manage_workers'), async (req, res) => {
   const companyId = req.user.company_id;
+  if (!workerInScope(req, req.params.id)) return res.status(403).json(DENY_WORKER);
   const { work_date, start_time, end_time, project_id, break_minutes, mileage } = req.body;
   const notes = req.body.notes?.trim() || null;
   if (!work_date || !start_time || !end_time) {
@@ -1101,6 +1120,7 @@ router.post('/workers/:id/entries', requireAdmin, requirePerm('manage_workers'),
 router.get('/workers/:id/entries', requireAdmin, requirePerm('view_worker_wages'), async (req, res) => {
   const { from, to } = req.query;
   const companyId = req.user.company_id;
+  if (!workerInScope(req, req.params.id)) return res.status(403).json(DENY_WORKER);
   try {
     const userResult = await pool.query(
       'SELECT id, full_name, invoice_name, username, email, hourly_rate, rate_type, overtime_rule, guaranteed_weekly_hours, role_id, worker_type FROM users WHERE id = $1 AND role = $2 AND company_id = $3',
@@ -1156,6 +1176,7 @@ router.get('/workers/:id/entries', requireAdmin, requirePerm('view_worker_wages'
 // when the worker has no applicable ruleset/schedule — the client just omits the presets.
 router.get('/workers/:id/pay-periods', requireAdmin, requirePerm('view_worker_wages'), async (req, res) => {
   const companyId = req.user.company_id;
+  if (!workerInScope(req, req.params.id)) return res.status(403).json(DENY_WORKER);
   try {
     const u = await pool.query(
       "SELECT role_id FROM users WHERE id = $1 AND role = 'worker' AND company_id = $2",
@@ -1198,6 +1219,7 @@ router.get('/workers/:id/pay-periods', requireAdmin, requirePerm('view_worker_wa
 // of the company-wide list). Returns the full rows so the editor can round-trip.
 router.get('/workers/:id/deductions', requireAdmin, requirePerm('manage_workers'), async (req, res) => {
   const companyId = req.user.company_id;
+  if (!workerInScope(req, req.params.id)) return res.status(403).json(DENY_WORKER);
   try {
     const ok = await pool.query('SELECT 1 FROM users WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
     if (ok.rowCount === 0) return res.status(404).json({ error: 'Worker not found' });
@@ -1218,6 +1240,7 @@ router.get('/workers/:id/deductions', requireAdmin, requirePerm('manage_workers'
 router.put('/workers/:id/deductions', requireAdmin, requirePerm('manage_workers'), async (req, res) => {
   const companyId = req.user.company_id;
   const userId = req.params.id;
+  if (!workerInScope(req, userId)) return res.status(403).json(DENY_WORKER);
   const incoming = Array.isArray(req.body.deductions) ? req.body.deductions : [];
   try {
     const ok = await pool.query('SELECT 1 FROM users WHERE id = $1 AND company_id = $2', [userId, companyId]);
@@ -4926,6 +4949,7 @@ const { uploadBase64, deleteByUrl } = require('../r2');
 
 router.get('/workers/:id/documents', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
+  if (!workerInScope(req, req.params.id)) return res.status(403).json(DENY_WORKER);
   try {
     const result = await pool.query(
       `SELECT d.id, d.name, d.url, d.size_bytes, d.mime_type, d.created_at, u.full_name as uploaded_by_name
@@ -4938,6 +4962,7 @@ router.get('/workers/:id/documents', requireAdmin, async (req, res) => {
 });
 
 router.post('/workers/:id/documents', requireAdmin, async (req, res) => {
+  if (!workerInScope(req, req.params.id)) return res.status(403).json(DENY_WORKER);
   const { name, data } = req.body; // data = base64 data URL
   const trimmedName = name?.trim();
   if (!trimmedName || !data) return res.status(400).json({ error: 'name and data required' });
@@ -4966,6 +4991,7 @@ router.post('/workers/:id/documents', requireAdmin, async (req, res) => {
 
 router.delete('/workers/:id/documents/:docId', requireAdmin, async (req, res) => {
   const companyId = req.user.company_id;
+  if (!workerInScope(req, req.params.id)) return res.status(403).json(DENY_WORKER);
   try {
     const doc = await pool.query(
       'SELECT url FROM worker_documents WHERE id = $1 AND user_id = $2 AND company_id = $3',

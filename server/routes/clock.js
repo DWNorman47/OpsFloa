@@ -148,8 +148,8 @@ router.post('/in', requireAuth, requirePerm('clock_self'), clockLimiter, coerceB
       if (requiredChecklistId) {
         const sub = await pool.query(
           `SELECT id FROM safety_checklist_submissions
-           WHERE company_id=$1 AND template_id=$2 AND submitted_by=$3 AND check_date=CURRENT_DATE`,
-          [companyId, requiredChecklistId, req.user.id]
+           WHERE company_id=$1 AND template_id=$2 AND submitted_by=$3 AND check_date=COALESCE($4::date, CURRENT_DATE)`,
+          [companyId, requiredChecklistId, req.user.id, local_work_date || null]
         );
         if (sub.rowCount === 0) {
           logFailure(req, 'clock.in', 'checklist_required', { template_id: requiredChecklistId, project_id });
@@ -197,8 +197,8 @@ router.post('/in', requireAuth, requirePerm('clock_self'), clockLimiter, coerceB
     } else if (globalChecklistId) {
       const sub = await pool.query(
         `SELECT id FROM safety_checklist_submissions
-         WHERE company_id=$1 AND template_id=$2 AND submitted_by=$3 AND check_date=CURRENT_DATE`,
-        [companyId, globalChecklistId, req.user.id]
+         WHERE company_id=$1 AND template_id=$2 AND submitted_by=$3 AND check_date=COALESCE($4::date, CURRENT_DATE)`,
+        [companyId, globalChecklistId, req.user.id, local_work_date || null]
       );
       if (sub.rowCount === 0) {
         logFailure(req, 'clock.in', 'checklist_required', { template_id: globalChecklistId });
@@ -419,8 +419,8 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
     if (requiredChecklistId) {
       const sub = await pool.query(
         `SELECT id FROM safety_checklist_submissions
-         WHERE company_id=$1 AND template_id=$2 AND submitted_by=$3 AND check_date=CURRENT_DATE`,
-        [companyId, requiredChecklistId, req.user.id]
+         WHERE company_id=$1 AND template_id=$2 AND submitted_by=$3 AND check_date=COALESCE($4::date, CURRENT_DATE)`,
+        [companyId, requiredChecklistId, req.user.id, local_work_date || null]
       );
       if (sub.rowCount === 0) {
         logFailure(req, 'clock.switch', 'checklist_required', { template_id: requiredChecklistId, project_id });

@@ -21,6 +21,36 @@ that holds the exhaustive detail.
 
 ## 🔧 Bugs — set aside for later
 
+- **Cycle count applies a STALE snapshot delta to live stock (TOCTOU).** (2026-08-19)
+  `expected_qty` is snapshotted at count creation; at completion the code posts
+  `variance = counted − expected_qty(snapshot)` and ADDS it to the CURRENT quantity
+  without re-locking or reconciling to the counted absolute (`inventory.js` ~1475/1561).
+  If any issue/receipt lands between count creation and completion, on-hand ends up
+  wrong (and so does all downstream valuation): e.g. snapshot 100, 20 issued, counter
+  counts 100 → variance 0 → stock stays 80 forever; or counts 80 → −20 → stock 60
+  (double-counts the issue). Fix: lock the stock row at APPLY time and derive the delta
+  from current qty (or set the counted absolute), not the creation snapshot. Real
+  silent stock/valuation corruption; deferred because the correct fix needs careful
+  re-lock + count semantics. Found 2026-08-19 inventory audit.
+
+- **Inventory adjustment transactions discard their sign in the ledger.** (2026-08-19)
+  The main txn POST and cycle-count adjust insert `quantity = Math.abs(...)` while
+  applying the SIGNED delta to stock (`inventory.js` ~926/951/1489/1569). So a −5 and a
+  +5 adjustment are stored identically (`type=adjust, quantity=5`); the
+  `inventory_transactions` ledger can't be replayed to rebuild stock and the history/audit
+  view is misleading (breaks "everything traceable"). Cycle-count adjust rows also omit
+  `unit_cost`, so valuation adjustments carry no cost basis. Grand totals aren't wrong
+  today (issues are always positive; valuation reads the stock table), but ledger
+  integrity is broken. Fix: store the signed quantity (and a unit_cost) on adjust rows.
+
+- **Issues/transfers can drive stock arbitrarily negative and bill fictional material
+  to a job.** (2026-08-19) `inventory.js` applies negative deltas unconditionally; a
+  post-commit read only returns `warning:'stock_negative'` — the txn still commits. A
+  worker can issue 1,000 units a location never held → stock deeply negative, a valued
+  `issue` txn is written, and `projectCost.materialsCents` charges the project for
+  material that doesn't exist. Decide: block negative issues (vs warn), at least on the
+  received/issued-basis money path. (Policy call — some shops allow backorder/negative.)
+
 - **Leave + worked on the SAME day — verify no double-pay.** (2026-08-05) Reported as
   "sick/vacation aren't working"; David suspects it was a test where a sick day was
   entered for a day the employee *also* clocked in. The pay engine appends synthetic
@@ -190,6 +220,37 @@ that holds the exhaustive detail.
     validated inline in `inventory.js` but missing from `docs/db-enums.md`.
 
 ## 🧭 Design flaws — raised, set aside for later
+
+- **Security LOW / hardening (from the 2026-08-19 audit; no exploit path or admin-only).**
+  (a) `shifts.js` admin shift create/edit stores `project_id` from the body with no
+  in-company check (unlike clock.js/reimbursements.js) — a single-field cross-company
+  `project_name` leak to an admin who guesses an id. (b) `liveSessions.js` SSE stream
+  skips the `requirePlanToolsAddon` gate the REST routes carry (entitlement bypass;
+  company isolation intact). (c) `push.js` `/push/generate-vapid-keys` is unauthenticated
+  (self-disables once keys are set — remove post-setup). (d) `estimates.js`/`invoices.js`
+  store the raw share token in plaintext alongside its hash (change orders / lien waivers
+  store hash only). (e) `estimates.js` PATCH does its frozen/company check with a plain
+  SELECT, not `FOR UPDATE`, so a total-changing edit can race a concurrent `/send`.
+
+- **Labor-bill paths show wages to a manage_integrations admin without view_worker_wages.**
+  (2026-08-19) `push-bills-preview` (now gated with manage_integrations) and `push-bills`
+  both surface per-worker labor dollars but require only `manage_integrations`, not
+  `view_worker_wages` (unlike `push-payroll`). Decide whether the bill paths should also
+  require wage visibility. (`server/routes/qbo.js`.)
+
+- **Dashboard/KPI "this week / this month" boundaries computed in UTC.** (2026-08-19)
+  `weekRange(new Date())` and `CURRENT_DATE`/`date_trunc('month', CURRENT_DATE)` on the
+  UTC server make "hours this week", "active workers this week/month", the OT-this-week
+  counter, and the pay-period picker flip ~5h early for west-of-UTC companies (the window
+  between local-afternoon and local-midnight). Stored pay data is TZ-correct; only these
+  live read-time boundaries drift. (`admin.js` /kpis + summary, `timeEntries.js`,
+  `shifts.js`, `weekBounds.js`.) The persisted clock-in fixes landed 2026-08-19.
+
+- **Inventory standard-cost notes.** (2026-08-19) Receipts never update
+  `inventory_items.unit_cost` (standard-cost model — on-hand value can diverge from actual
+  purchase cost; no moving-average maintenance). Over-receipt is silently truncated to the
+  remaining qty (a real over-shipment is dropped with no error). Returns/reversals aren't
+  modeled, so material issued-then-returned leaves project cost permanently inflated.
 
 - **Deductive (credit) change orders can't be modeled.** (2026-08-19) `changeOrders.js`
   rejects negative qty/unit_cost lines and clamps line totals to ≥0, and `contractValueCents`

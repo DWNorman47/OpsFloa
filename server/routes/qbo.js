@@ -860,7 +860,7 @@ function computeGroupOvertime(group, ot) {
 
 // POST /api/qbo/push-bills-preview — dry-run summary of what would be billed
 // Body: { from, to, worker_ids, force }
-router.post('/push-bills-preview', requireAdmin, async (req, res) => {
+router.post('/push-bills-preview', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
   const { from, to, worker_ids, force } = req.body;
   try {
     // Settings first: gatherBillData needs the policy to compute the PAID punch.

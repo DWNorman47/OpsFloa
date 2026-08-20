@@ -8,6 +8,18 @@ const { checkStorageLimit, incrementStorage, decrementStorage } = require('../st
 const { logAudit } = require('../auditLog');
 const { projectBelongsToCompany } = require('../utils/tenantRefs');
 
+// A pass-through (already-hosted) media URL is only accepted if it points at THIS
+// app's field-report media folders on R2. Without this, a client could store an
+// arbitrary R2 URL — e.g. another tenant's submittal/COI/takeoff PDF — as a "photo",
+// then delete it via the photo-delete route (deleteByUrl derives the key from the URL
+// with no ownership check). Restricting to photos/ + videos/ keeps a field-report
+// delete from ever reaching another subsystem's (or tenant's document) objects.
+function isOwnFieldReportMediaUrl(u) {
+  const base = process.env.R2_PUBLIC_URL;
+  if (!base || typeof u !== 'string') return false;
+  return u.startsWith(`${base}/photos/`) || u.startsWith(`${base}/videos/`);
+}
+
 // GET /field-reports — worker gets own; admin gets full company feed
 router.get('/', requireAuth, async (req, res) => {
   const companyId = req.user.company_id;
@@ -110,6 +122,7 @@ router.post('/', requireAuth, async (req, res) => {
                 media_type: p.media_type || 'photo',
               }));
             }
+            if (!isOwnFieldReportMediaUrl(p.url)) throw new Error('invalid media url');
             return Promise.resolve({ url: p.url, sizeBytes: 0, caption, media_type: p.media_type || 'photo' });
           })
         );
@@ -254,7 +267,11 @@ router.delete('/photos/:photoId', requireAuth, async (req, res) => {
 
     await pool.query('DELETE FROM field_report_photos WHERE id = $1', [photo.id]);
 
-    deleteByUrl(photo.url).catch(() => {});
+    // Only purge the R2 object when nothing else references the same URL. Belt-and-
+    // suspenders with the store-time allowlist: if two rows ever point at one object
+    // (e.g. a resubmitted URL), deleting one row must not orphan the other's media.
+    const stillReferenced = await pool.query('SELECT 1 FROM field_report_photos WHERE url = $1 LIMIT 1', [photo.url]);
+    if (stillReferenced.rowCount === 0) deleteByUrl(photo.url).catch(() => {});
     const sizeBytes = parseInt(photo.size_bytes || 0);
     if (sizeBytes > 0) decrementStorage(companyId, sizeBytes).catch(() => {});
 

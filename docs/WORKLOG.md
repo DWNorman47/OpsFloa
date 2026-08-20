@@ -23,6 +23,55 @@ or act on. Commit hashes are on `dev` unless noted.
 
 ---
 
+## 2026-08-19 — Fifth pass: security (MFA bypass, cross-tenant R2 delete), timezone, inventory
+
+Three-reviewer sweep of untouched surfaces: multi-tenant security, timezone day-attribution,
+inventory valuation. The security findings are the most serious of the whole review.
+`npm run verify` green (server 1496, client 28).
+
+**Security — fixed:**
+- **MFA / forced-password-change BYPASS (HIGH).** `requireAuth` accepted any signed token
+  lacking both `tv` and `imp` — including the `mfa_pending` challenge token issued from just
+  a password. An attacker with the password but not the TOTP could call `/auth/mfa/disable`
+  (or read `/auth/me`) with that token and turn MFA off. `requireAuth` now rejects anything
+  that isn't a full session (`tv`) or impersonation (`imp`) token; the legit consumers
+  (`/mfa/confirm`, `/complete-setup`) verify their tokens explicitly, so nothing breaks.
+  Added regression tests (mfa/setup tokens → 401; impersonation still passes).
+- **Arbitrary cross-tenant R2 object deletion (HIGH).** A worker could POST a field report
+  with a photo `url` pointing at ANOTHER tenant's object (submittal/COI/takeoff PDF); the
+  photo-delete route's `deleteByUrl` derives the key from the URL with no ownership check,
+  destroying it. Now: a pass-through media URL is only accepted if it's under this app's
+  field-report folders (`photos/`/`videos/`), and the R2 delete only fires when no other row
+  references the URL. (Root cause — R2 keys aren't company-namespaced — flagged for a proper
+  fix.)
+- **worker_access_ids not enforced on per-worker detail routes.** A partial admin scoped to
+  specific workers could still read/write ANY same-company worker's wages/pay/deductions/PII
+  via an enumerated `:id` (entries, pay-periods, deductions, documents — 8 routes). Added a
+  `workerInScope` guard to each.
+- **QBO `push-bills-preview` had no permission gate** (only requireAdmin) — added
+  `manage_integrations` to match its sibling.
+
+**Timezone — fixed:**
+- **Safety-checklist clock-in gate compared a stored LOCAL date to UTC `CURRENT_DATE`**, so
+  for any west-of-UTC company, workers were blocked from clocking in from ~afternoon onward
+  ("Complete the required safety checklist"). The gate (3 sites: /in project, /in global,
+  /switch) now matches the worker's `local_work_date`.
+- **Admin "clock in worker"** stamped `work_date = CURRENT_DATE` (UTC), mis-dating evening
+  admin clock-ins into the wrong pay period / OT week. Now derives the date from
+  `company_timezone` via `wallDateInTZ`.
+
+**Inventory — fixed:**
+- **Cycle counts were broken on any fresh migrate build:** `variance` was defined
+  `GENERATED ALWAYS` (0039) but the UOM-aware code writes it directly (0051's intent), so
+  `SET variance=$N` errors. Migration 0189 drops the generated expression (idempotent
+  `DROP EXPRESSION IF EXISTS`, safe on a hand-patched prod DB).
+
+**Flagged to `BACKLOG.md`** (real but risky/policy — not fixed): cycle-count TOCTOU (stale
+snapshot delta corrupts stock); inventory adjustment sign discarded in the ledger; negative
+stock on issue bills fictional material; security LOW hardening (shifts project scope,
+liveSessions addon gate, vapid route, token plaintext, estimate PATCH lock); labor-bill wage
+visibility; dashboard/KPI UTC week/month boundaries; inventory standard-cost gaps.
+
 ## 2026-08-19 — Fourth pass: systemic date-object sweep + invoicing/retainage/reimbursement bugs
 
 After the $0-leave bug (a DATE column parsed as a JS Date), swept ALL of `server/` for the

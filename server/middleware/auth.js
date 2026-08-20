@@ -85,6 +85,14 @@ async function requireAuth(req, res, next) {
     } catch (err) {
       return res.status(503).json({ error: 'Auth service temporarily unavailable' });
     }
+  } else {
+    // Neither a full session (tv) nor an impersonation (imp) token — i.e. a single-
+    // purpose challenge token (mfa_pending / setup_pending). Those are verified
+    // explicitly by their own endpoints (/auth/mfa/confirm, /auth/complete-setup) and
+    // must NEVER authenticate a normal request. Falling through here let an mfa-pending
+    // token (issued from just a password, before the second factor) reach /auth/me and
+    // /auth/mfa/disable — bypassing MFA entirely.
+    return res.status(401).json({ error: 'Invalid token' });
   }
 
   req.user = payload;
