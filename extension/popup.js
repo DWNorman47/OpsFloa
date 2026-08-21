@@ -67,7 +67,7 @@
   }
 
   let encBlob = null; // current encrypted bundle, or null
-  let onGenerated = null, onEncrypted = null; // optional hooks the extension sets (fill the page)
+  let onGenerated = null; // optional hook the extension sets (fills the page password field)
 
   // Remember the hint in the browser + prefill it next time.
   const HINT_KEY = 'opsfloa_enc_hint';
@@ -172,7 +172,6 @@
       badge.style.display = 'none';
       setOpen('enc-collapse', 'enc-head', false); // collapse encryption
       setCopyAllLabel();
-      if (onEncrypted) onEncrypted(encBlob);
       toast($('t-save').checked ? 'Encrypted & saved (hint included)' : 'Encrypted');
     } catch { badge.style.color = 'var(--bad)'; badge.textContent = 'Encryption failed.'; }
   }
@@ -449,12 +448,12 @@ To read it: open the OpsFloa decryptor (decryptor.html), paste the payload above
       return !!(res && res.result);
     } catch { return false; }
   }
-  // Clicking Generate fills the page's password field; Encrypt overwrites it with the sealed value.
+  // Clicking Generate fills the page's password field with the plaintext password.
+  // (The sealed value is never put in a login field — it's for the vault/share only.)
   onGenerated = (pw) => { fillPageWith(pw); };
-  onEncrypted = (blob) => { fillPageWith(blob); };
   const fillBtn = $('fill');
   if (fillBtn) fillBtn.addEventListener('click', async () => {
-    const val = encBlob || $('pw').dataset.value;
+    const val = $('pw').dataset.value;
     if (!val) { toast('Generate a password first'); return; }
     if (!hasChrome) { toast('Fill works inside the extension'); return; }
     const ok = await fillPageWith(val);

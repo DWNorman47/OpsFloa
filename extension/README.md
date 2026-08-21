@@ -14,8 +14,8 @@ No server/database yet (that's Phase 2).
 - `popup.js` — all popup logic (generator, encryption, vault, share, modals) + the
   extension glue: on open it prefills **Site** from the active tab's hostname and pulls the
   **entered username/email** off the page. **Clicking Generate fills the page's password
-  field; clicking Encrypt overwrites it with the sealed value.** The **Fill** button fills
-  the current value (sealed if encrypted, else the password) via `chrome.scripting`.
+  field** with the plaintext password; the **Fill** button re-fills it via `chrome.scripting`.
+  (The sealed `OPSFLOA1:` value is never put in a login field — it's for the vault/share only.)
 - `content.js` — injects a small 🔑 icon beside a focused password field. Clicking it tries
   to open the popup (via the service worker); **if the browser blocks that, it falls back to
   generating a strong password and filling the field in-page** (and copying it).

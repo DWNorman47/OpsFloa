@@ -460,7 +460,7 @@
   }
 
   let encBlob = null; // current encrypted bundle, or null
-  let onGenerated = null, onEncrypted = null; // optional hooks the extension sets (fill the page)
+  let onGenerated = null; // optional hook the extension sets (fills the page password field)
 
   // Remember the hint in the browser + prefill it next time.
   const HINT_KEY = 'opsfloa_enc_hint';
@@ -565,7 +565,6 @@
       badge.style.display = 'none';
       setOpen('enc-collapse', 'enc-head', false); // collapse encryption
       setCopyAllLabel();
-      if (onEncrypted) onEncrypted(encBlob);
       toast($('t-save').checked ? 'Encrypted & saved (hint included)' : 'Encrypted');
     } catch { badge.style.color = 'var(--bad)'; badge.textContent = 'Encryption failed.'; }
   }

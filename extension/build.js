@@ -61,12 +61,12 @@ const extCode = `
       return !!(res && res.result);
     } catch { return false; }
   }
-  // Clicking Generate fills the page's password field; Encrypt overwrites it with the sealed value.
+  // Clicking Generate fills the page's password field with the plaintext password.
+  // (The sealed value is never put in a login field — it's for the vault/share only.)
   onGenerated = (pw) => { fillPageWith(pw); };
-  onEncrypted = (blob) => { fillPageWith(blob); };
   const fillBtn = $('fill');
   if (fillBtn) fillBtn.addEventListener('click', async () => {
-    const val = encBlob || $('pw').dataset.value;
+    const val = $('pw').dataset.value;
     if (!val) { toast('Generate a password first'); return; }
     if (!hasChrome) { toast('Fill works inside the extension'); return; }
     const ok = await fillPageWith(val);

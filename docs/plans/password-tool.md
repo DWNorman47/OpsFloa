@@ -132,7 +132,8 @@ off the page. A `content.js` injects a 🔑 icon beside a focused password field
 browsers don't reliably allow opening the toolbar popup from a page event (toolbar icon is
 the guaranteed path). Pure `crypto.getRandomValues`. Remaining: icons (none bundled — Chrome
 default), Firefox manifest variant, refining fill/username target selection. **Generate fills
-the page's password field; Encrypt overwrites it with the sealed value.** The 🔑 in-field icon
+the page's password field** with the plaintext (the sealed value never goes in a login field).
+The 🔑 in-field icon
 **falls back to an in-page generate+fill** when `openPopup()` is blocked. Padlock icons are
 bundled (`generate-icons.js`, no deps). Cross-browser (Chrome/Edge share MV3; Firefox needs a
 manifest variant).

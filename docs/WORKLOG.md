@@ -6135,8 +6135,8 @@ design; no server/DB yet (Save to Database is a disabled Phase-2 button).
   warnings, and persistence (hint/on-state/email/saved-password).
 - Phase 1: `build.js` generates `popup.html`+`popup.js` from the prototype (single source of
   truth; MV3 bans inline scripts). Glue: Site prefill + username pull from the page;
-  **Generate fills the page password field, Encrypt overwrites it with the sealed value**;
-  `content.js` injects a 🔑 by focused password fields; `background.js` best-effort
+  **Generate fills the page password field** with the plaintext (the sealed value never goes
+  in a login field); `content.js` injects a 🔑 by focused password fields; `background.js` best-effort
   `chrome.action.openPopup()`. Padlock icons via `generate-icons.js` (no deps).
 - Judgment calls: browsers don't reliably let an extension open its toolbar popup from a
   page event → 🔑 falls back to in-page generate+fill. Saving the encryption password to the
