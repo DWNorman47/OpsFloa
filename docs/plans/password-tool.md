@@ -63,8 +63,12 @@ A single compact popup (~380px), laid out top→bottom in the order you configur
    (localStorage in the prototype; per-user rows in the DB later). Not a fixed CHECK enum
    since users extend it — validate as free text scoped to the user's own category list.
 5. **Generate** — its own **collapsible section** (open by default): length slider (12–32,
-   default 20) + toggles (uppercase, numbers, symbols, exclude-ambiguous) + **Generate
-   strong password** button.
+   default 20) + toggles (uppercase, numbers, symbols, **safe symbols** (default on), exclude-
+   ambiguous) + **Generate strong password** button. **Safe symbols** restricts to `!@*-_.`,
+   dropping the URL/form/shell edge-case troublemakers (`+ % & # $ ^ ; = ( ) [ ] { } : , ?`);
+   turn off for the full symbol set. Generation **guarantees ≥1 char from each enabled class**
+   (then shuffles), so complexity rules always pass. The in-field 🔑 fallback uses the same
+   safe defaults + coverage.
 6. **Password** — monospace display + strength meter (revealed; the user asked for it).
 7. **Encryption** — a **collapsible section** (collapsed by default, "Off/On" chip) sitting
    **after** the result. Inside: the enable toggle → password + hint + an explicit

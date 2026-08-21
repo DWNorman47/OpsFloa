@@ -3,6 +3,7 @@
   const form = $('form'), popup = $('popup');
   const lenEl = $('length'), lenVal = $('lenval');
   const SYMBOLS = '!@#$%^&*()-_=+[]{};:,.?';
+  const SAFE_SYMBOLS = '!@*-_.'; // widely accepted; avoids + % & # $ ^ ; = and URL/shell hazards
   const ambiguous = 'IOl0O1|';
 
   lenEl.addEventListener('input', () => lenVal.textContent = lenEl.value);
@@ -102,25 +103,34 @@
     cb.addEventListener('change', sync); sync();
   });
 
-  function charset() {
-    let s = '';
-    if ($('c-upper').checked) s += 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    if ($('c-num').checked)   s += '0123456789';
-    if ($('c-sym').checked)   s += SYMBOLS;
-    s += 'abcdefghijklmnopqrstuvwxyz'; // always include lowercase as a base
-    if ($('c-amb').checked) s = [...s].filter(c => !ambiguous.includes(c)).join('');
-    return [...new Set(s)].join('');
+  const randInt = (n) => { const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] % n; };
+  const pick = (s) => s[randInt(s.length)];
+
+  // One string per enabled character class (lowercase always). Honors exclude-ambiguous
+  // and the safe-symbols toggle. Used to guarantee coverage of every enabled class.
+  function pools() {
+    const strip = (s) => $('c-amb').checked ? [...s].filter(c => !ambiguous.includes(c)).join('') : s;
+    const list = [strip('abcdefghijklmnopqrstuvwxyz')];
+    if ($('c-upper').checked) list.push(strip('ABCDEFGHIJKLMNOPQRSTUVWXYZ'));
+    if ($('c-num').checked)   list.push(strip('0123456789'));
+    if ($('c-sym').checked)   { const sym = strip($('c-safe').checked ? SAFE_SYMBOLS : SYMBOLS); if (sym) list.push(sym); }
+    return list.filter(p => p.length);
   }
 
   function generate() {
-    const cs = charset(), len = +lenEl.value;
-    const out = new Uint32Array(len);
-    crypto.getRandomValues(out);
-    let pw = '';
-    for (let i = 0; i < len; i++) pw += cs[out[i] % cs.length];
+    const len = +lenEl.value;
+    const ps = pools();
+    const all = [...new Set(ps.join(''))].join('');
+    const chars = [];
+    // At least one char from each enabled class (as far as the length allows)…
+    for (const p of ps) if (chars.length < len) chars.push(pick(p));
+    // …then fill the rest from the full pool, and shuffle so the guaranteed ones aren't first.
+    while (chars.length < len) chars.push(pick(all));
+    for (let i = chars.length - 1; i > 0; i--) { const j = randInt(i + 1); [chars[i], chars[j]] = [chars[j], chars[i]]; }
+    const pw = chars.join('');
     $('pw').textContent = pw;
     $('pw').dataset.value = pw;
-    strength(pw, cs.length);
+    strength(pw, all.length);
     popup.classList.add('locked');
     // Collapse the Generate section; a fresh password invalidates any prior encryption.
     setOpen('gen-collapse', 'gen-head', false);

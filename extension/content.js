@@ -47,11 +47,17 @@
   function hide() { if (btn) btn.style.display = 'none'; }
 
   // In-page fallback: strong random password, fill the field (+ any confirm field), copy it.
+  // Matches the popup's defaults: safe symbols + at least one of each class.
   function genPassword(len) {
-    const cs = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()-_=+';
-    const out = new Uint32Array(len); crypto.getRandomValues(out);
-    let s = ''; for (let i = 0; i < len; i++) s += cs[out[i] % cs.length];
-    return s;
+    const U = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', L = 'abcdefghijklmnopqrstuvwxyz', N = '0123456789', S = '!@*-_.';
+    const pools = [L, U, N, S], all = U + L + N + S;
+    const ri = (n) => { const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] % n; };
+    const pk = (s) => s[ri(s.length)];
+    const ch = [];
+    for (const p of pools) if (ch.length < len) ch.push(pk(p));
+    while (ch.length < len) ch.push(pk(all));
+    for (let i = ch.length - 1; i > 0; i--) { const j = ri(i + 1); [ch[i], ch[j]] = [ch[j], ch[i]]; }
+    return ch.join('');
   }
   function setVal(input, v) {
     input.focus(); input.value = v;
