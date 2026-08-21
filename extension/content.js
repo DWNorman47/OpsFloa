@@ -58,8 +58,18 @@
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
   }
+  function deepFindPassword() {
+    const all = [];
+    const walk = (root) => {
+      root.querySelectorAll('input').forEach((el) => all.push(el));
+      root.querySelectorAll('*').forEach((el) => { if (el.shadowRoot) walk(el.shadowRoot); });
+    };
+    walk(document);
+    const vis = (el) => !!el && (el.offsetParent !== null || el.getClientRects().length > 0);
+    return all.find((el) => el.type === 'password' && vis(el)) || all.find((el) => el.type === 'password') || null;
+  }
   function quickFill(f) {
-    if (!isPw(f)) f = document.querySelector('input[type="password"]');
+    if (!isPw(f)) f = deepFindPassword();
     if (!f) { flash('No password field found'); return; }
     const pw = genPassword(20);
     setVal(f, pw);

@@ -8,7 +8,10 @@ The extension generates strong passwords, encrypts/decrypts them, saves to a loc
 No server/database yet (that's Phase 2).
 
 ### Files
-- `manifest.json` — MV3 manifest (`activeTab` + `scripting` permissions only).
+- `manifest.json` — MV3 manifest. Permissions: `activeTab`, `scripting`, and
+  `host_permissions` for all http/https sites (needed so Fill can reach password fields in
+  any frame). The content script also runs on all sites, so "read/change data on all sites"
+  is expected for a password tool. Fill searches **all frames and pierces shadow DOM**.
 - `popup.html` — the popup UI (inline `<style>`; loads `popup.js` externally — MV3 forbids
   inline scripts).
 - `popup.js` — all popup logic (generator, encryption, vault, share, modals) + the

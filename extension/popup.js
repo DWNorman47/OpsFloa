@@ -410,8 +410,8 @@ To read it: open the OpsFloa decryptor (decryptor.html), paste the payload above
       try { if (t && t.url) { const u = new URL(t.url); if (u.hostname) $('site').value = u.hostname; } } catch {}
       // Pull the entered username/email from the page (if any) into the Username field.
       try {
-        const [r] = await chrome.scripting.executeScript({
-          target: { tabId: t.id },
+        const results = await chrome.scripting.executeScript({
+          target: { tabId: t.id, allFrames: true },
           func: () => {
             const sels = ['input[autocomplete="username"]', 'input[type="email"]',
               'input[name*="user" i]', 'input[name*="email" i]', 'input[id*="user" i]', 'input[id*="email" i]'];
@@ -424,7 +424,8 @@ To read it: open the OpsFloa decryptor (decryptor.html), paste the payload above
             return '';
           },
         });
-        if (r && r.result && !$('username').value) $('username').value = r.result;
+        const found = results.map((r) => r && r.result).find(Boolean);
+        if (found && !$('username').value) $('username').value = found;
       } catch {}
     }).catch(() => {});
   }
@@ -432,20 +433,35 @@ To read it: open the OpsFloa decryptor (decryptor.html), paste the payload above
     if (!hasChrome || !value) return false;
     try {
       const t = await activeTab();
-      const [res] = await chrome.scripting.executeScript({
-        target: { tabId: t.id }, args: [value],
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: t.id, allFrames: true }, args: [value],
         func: (v) => {
+          const vis = (el) => !!el && (el.offsetParent !== null || el.getClientRects().length > 0);
+          const setVal = (input) => {
+            input.focus(); input.value = v;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+          };
+          // Collect every input, piercing shadow roots (many sign-up forms wrap fields in
+          // web components that querySelector can't see through).
+          const all = [];
+          const walk = (root) => {
+            root.querySelectorAll('input').forEach((el) => all.push(el));
+            root.querySelectorAll('*').forEach((el) => { if (el.shadowRoot) walk(el.shadowRoot); });
+          };
+          walk(document);
           const a = document.activeElement;
-          const input = (a && a.tagName === 'INPUT' && a.type === 'password') ? a
-            : document.querySelector('input[type="password"]');
+          if (a && a.tagName === 'INPUT' && a.type === 'password') { setVal(a); return true; }
+          const passish = (el) => /pass(word|wd|phrase)?/i.test(el.name || '') || /pass(word|wd|phrase)?/i.test(el.id || '') || /password/i.test(el.autocomplete || '');
+          const input = all.find((el) => el.type === 'password' && vis(el))
+            || all.find((el) => el.type === 'password')
+            || all.find((el) => vis(el) && passish(el));
           if (!input) return false;
-          input.focus(); input.value = v;
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-          input.dispatchEvent(new Event('change', { bubbles: true }));
+          setVal(input);
           return true;
         },
       });
-      return !!(res && res.result);
+      return results.some((r) => r && r.result); // true if any frame filled
     } catch { return false; }
   }
   // Clicking Generate fills the page's password field with the plaintext password.
