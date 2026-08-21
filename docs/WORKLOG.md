@@ -6122,3 +6122,23 @@ Zero pay-math change. `isTruncatedLongShift` unit-tested (5 cases). The reader
 cutover remains an open decision for David (BACKLOG → Open questions).
 
 Full server suite + client eslint/i18n/build green.
+
+## 2026-08-21 — Password tool: prototype → MV3 extension (Phase 0–1)
+
+New `extension/` add-on (design: `docs/plans/password-tool.md`). Zero-knowledge by
+design; no server/DB yet (Save to Database is a disabled Phase-2 button).
+- Phase 0: self-contained `popup-prototype.html` — generator + strength meter, growable
+  categories, real WebCrypto PBKDF2-SHA256→AES-256-GCM encryption (sealed `OPSFLOA1:`
+  value with the hint embedded so it travels with the value), in-popup decryption +
+  standalone offline `decryptor.html`, browser (localStorage) vault with encrypt-first and
+  same-site+username overwrite guards, encrypted-email share (mailto), custom modal for all
+  warnings, and persistence (hint/on-state/email/saved-password).
+- Phase 1: `build.js` generates `popup.html`+`popup.js` from the prototype (single source of
+  truth; MV3 bans inline scripts). Glue: Site prefill + username pull from the page;
+  **Generate fills the page password field, Encrypt overwrites it with the sealed value**;
+  `content.js` injects a 🔑 by focused password fields; `background.js` best-effort
+  `chrome.action.openPopup()`. Padlock icons via `generate-icons.js` (no deps).
+- Judgment calls: browsers don't reliably let an extension open its toolbar popup from a
+  page event → 🔑 falls back to in-page generate+fill. Saving the encryption password to the
+  browser is offered but warned as "less safe" (browser-only, never synced). One-time share
+  links deferred to Phase 3 (need the server). Server/client untouched; verify green.
