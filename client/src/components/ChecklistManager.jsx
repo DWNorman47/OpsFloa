@@ -1,3 +1,11 @@
+// Checklist Builder + Checklist Reports — the admin "Manage" surfaces for the
+// typed checklist system (safety / quality / pre-task / equipment / general).
+//   • ChecklistBuilder — define & edit templates (the "define" surface).
+//   • ChecklistReports — history of what's been answered (the "review" surface),
+//     with a Record action so admins can log a completion directly.
+// Crews also complete safety checklists at clock-in (see ClockInOut) and, going
+// forward, via the Daily Checklist tab. Answers key by stable item id; legacy
+// index-keyed submissions still read via checklistAnswer's fallback.
 import React, { useState, useEffect, useMemo } from 'react';
 import api from '../api';
 import { useAuth } from '../contexts/AuthContext';
@@ -8,6 +16,20 @@ import { SkeletonList } from './Skeleton';
 import FieldFilters from './FieldFilters';
 
 const today = () => new Date().toLocaleDateString('en-CA');
+
+// Template categories — must mirror server/constants/checklistEnums.js.
+const CHECKLIST_TYPES = ['safety', 'quality', 'pretask', 'equipment', 'general'];
+const DEFAULT_TYPE = 'safety';
+const TYPE_LABEL = { safety: 'clTypeSafety', quality: 'clTypeQuality', pretask: 'clTypePretask', equipment: 'clTypeEquipment', general: 'clTypeGeneral' };
+const TYPE_COLOR = {
+  safety: '#b91c1c|#fef2f2', quality: '#1d4ed8|#eff6ff', pretask: '#b45309|#fffbeb',
+  equipment: '#6d28d9|#f5f3ff', general: '#374151|#f3f4f6',
+};
+function TypeBadge({ type, t }) {
+  const key = CHECKLIST_TYPES.includes(type) ? type : DEFAULT_TYPE;
+  const [fg, bg] = (TYPE_COLOR[key] || TYPE_COLOR.general).split('|');
+  return <span style={{ fontSize: 11, fontWeight: 700, color: fg, background: bg, padding: '2px 8px', borderRadius: 10 }}>{t[TYPE_LABEL[key]]}</span>;
+}
 
 function formatChecklistDate(value, locale = 'en-US') {
   if (!value) return '';
@@ -28,17 +50,21 @@ function normalizeChecklistItem(item = {}) {
 function normalizeTemplate(template = {}) {
   return {
     ...template,
+    type: CHECKLIST_TYPES.includes(template.type) ? template.type : DEFAULT_TYPE,
     items: Array.isArray(template.items) ? template.items.map(normalizeChecklistItem) : [],
   };
 }
 
+// Stable key for an answer: the item's id when present (new templates), else its
+// position (legacy index-keyed submissions).
+const answerKey = (item, index) => item?.id ?? index;
 function checklistAnswer(answers, item, index) {
-  return answers?.[index] ?? answers?.[item?.id] ?? answers?.[item?.label] ?? answers?.[item?.text];
+  return answers?.[item?.id] ?? answers?.[index] ?? answers?.[item?.label] ?? answers?.[item?.text];
 }
 
 const PRESETS = [
   {
-    name: 'Daily Workplace Safety',
+    name: 'Daily Workplace Safety', type: 'safety',
     description: 'General daily workplace safety walkthrough',
     items: [
       { label: 'PPE available and in use', type: 'check' },
@@ -51,7 +77,7 @@ const PRESETS = [
     ],
   },
   {
-    name: 'Pre-Task Hazard Assessment',
+    name: 'Pre-Task Hazard Assessment', type: 'pretask',
     description: 'Fill out before starting any new task',
     items: [
       { label: 'Task and work area explained to the team', type: 'check' },
@@ -63,7 +89,7 @@ const PRESETS = [
     ],
   },
   {
-    name: 'End-of-Day Closeout',
+    name: 'End-of-Day Closeout', type: 'safety',
     description: 'Before wrapping up each day',
     items: [
       { label: 'All tools secured or stored', type: 'check' },
@@ -76,12 +102,13 @@ const PRESETS = [
   },
 ];
 
-// ── Template Manager ──────────────────────────────────────────────────────────
+// ── Template Form ──────────────────────────────────────────────────────────────
 
 function TemplateForm({ initial, onSaved, onCancel }) {
   const t = useT();
   const isEdit = !!initial?.id;
   const [name, setName] = useState(initial?.name ?? '');
+  const [type, setType] = useState(CHECKLIST_TYPES.includes(initial?.type) ? initial.type : DEFAULT_TYPE);
   const [description, setDescription] = useState(initial?.description ?? '');
   const [items, setItems] = useState(
     (initial?.items ?? []).map(i => ({ ...i, _id: Math.random() }))
@@ -101,6 +128,7 @@ function TemplateForm({ initial, onSaved, onCancel }) {
     setSaving(true); setError('');
     const payload = {
       name,
+      type,
       description,
       items: items.filter(i => i.label.trim()).map(({ _id, ...i }) => i),
     };
@@ -129,7 +157,7 @@ function TemplateForm({ initial, onSaved, onCancel }) {
         <div style={styles.presetGrid}>
           {PRESETS.map(p => (
             <button key={p.name} type="button" style={styles.presetCard} onClick={() => {
-              setName(p.name); setDescription(p.description);
+              setName(p.name); setDescription(p.description); setType(p.type || DEFAULT_TYPE);
               setItems(p.items.map(i => ({ ...i, _id: Math.random() })));
               setShowPresets(false);
             }}>
@@ -145,7 +173,13 @@ function TemplateForm({ initial, onSaved, onCancel }) {
           <label style={styles.label}>{t.templateNameLabel}<span style={{ color: '#ef4444', marginLeft: 2 }}>*</span></label>
           <input style={styles.input} type="text" maxLength={255} value={name} onChange={e => setName(e.target.value)} placeholder={t.checklistNamePlaceholder} />
         </div>
-        <div style={{ ...styles.fieldGroup, gridColumn: '1 / -1' }}>
+        <div style={styles.fieldGroup}>
+          <label style={styles.label}>{t.checklistTypeLabel}</label>
+          <select style={styles.input} value={type} onChange={e => setType(e.target.value)}>
+            {CHECKLIST_TYPES.map(ct => <option key={ct} value={ct}>{t[TYPE_LABEL[ct]]}</option>)}
+          </select>
+        </div>
+        <div style={styles.fieldGroup}>
           <label style={styles.label}>{t.descriptionField}</label>
           <input style={styles.input} type="text" maxLength={500} value={description} onChange={e => setDescription(e.target.value)} placeholder={t.descriptionField} />
         </div>
@@ -197,14 +231,10 @@ function FillForm({ templates, projects, onSubmitted, onCancel, defaultProjectId
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const template = templates.find(t => String(t.id) === String(templateId));
+  const template = templates.find(tmpl => String(tmpl.id) === String(templateId));
   const items = template?.items ?? [];
 
-  const setAnswer = (idx, val) => setAnswers(a => ({ ...a, [idx]: val }));
-
-  const allRequiredAnswered = items.every((item, i) =>
-    item.type === 'text' ? true : answers[i] !== undefined
-  );
+  const setAnswer = (key, val) => setAnswers(a => ({ ...a, [key]: val }));
 
   const submit = async e => {
     e.preventDefault();
@@ -233,7 +263,7 @@ function FillForm({ templates, projects, onSubmitted, onCancel, defaultProjectId
           <label style={styles.label}>{t.templateField} *</label>
           <select style={styles.input} value={templateId} onChange={e => { setTemplateId(e.target.value); setAnswers({}); }}>
             <option value="">{t.selectChecklistOpt}</option>
-            {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            {templates.map(tmpl => <option key={tmpl.id} value={tmpl.id}>{tmpl.name}</option>)}
           </select>
         </div>
         <div style={styles.fieldGroup}>
@@ -257,33 +287,36 @@ function FillForm({ templates, projects, onSubmitted, onCancel, defaultProjectId
 
       {items.length > 0 && (
         <div style={styles.fillItems}>
-          {items.map((item, i) => (
-            <div key={i} style={styles.fillRow}>
-              {item.type === 'check' ? (
-                <>
-                  <input
-                    type="checkbox"
-                    id={`item-${i}`}
-                    checked={answers[i] === true}
-                    onChange={e => setAnswer(i, e.target.checked)}
-                    style={styles.fillCheckbox}
-                  />
-                  <label htmlFor={`item-${i}`} style={styles.fillLabel}>{item.label}</label>
-                </>
-              ) : (
-                <div style={{ flex: 1 }}>
-                  <label style={styles.fillLabel}>{item.label}</label>
-                  <input
-                    style={{ ...styles.input, marginTop: 4 }}
-                    type="text"
-                    placeholder={t.enterResponse}
-                    value={answers[i] || ''}
-                    onChange={e => setAnswer(i, e.target.value)}
-                  />
-                </div>
-              )}
-            </div>
-          ))}
+          {items.map((item, i) => {
+            const key = answerKey(item, i);
+            return (
+              <div key={key} style={styles.fillRow}>
+                {item.type === 'check' ? (
+                  <>
+                    <input
+                      type="checkbox"
+                      id={`item-${key}`}
+                      checked={answers[key] === true}
+                      onChange={e => setAnswer(key, e.target.checked)}
+                      style={styles.fillCheckbox}
+                    />
+                    <label htmlFor={`item-${key}`} style={styles.fillLabel}>{item.label}</label>
+                  </>
+                ) : (
+                  <div style={{ flex: 1 }}>
+                    <label style={styles.fillLabel}>{item.label}</label>
+                    <input
+                      style={{ ...styles.input, marginTop: 4 }}
+                      type="text"
+                      placeholder={t.enterResponse}
+                      value={answers[key] || ''}
+                      onChange={e => setAnswer(key, e.target.value)}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -319,10 +352,7 @@ function SubmissionCard({ sub, isAdmin, onDeleted }) {
   const items = sub.template_items ?? [];
 
   const checkItems = items.filter(i => i.type === 'check');
-  const checkedCount = checkItems.filter((_, i) => {
-    const globalIdx = items.indexOf(checkItems[i]);
-    return checklistAnswer(sub.answers, checkItems[i], globalIdx) === true;
-  }).length;
+  const checkedCount = checkItems.filter(ci => checklistAnswer(sub.answers, ci, items.indexOf(ci)) === true).length;
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -338,6 +368,7 @@ function SubmissionCard({ sub, isAdmin, onDeleted }) {
         <div style={styles.cardLeft}>
           <div style={styles.cardTitle}>{sub.template_name}</div>
           <div style={styles.cardMeta}>
+            {sub.template_type && <TypeBadge type={sub.template_type} t={t} />}
             {formatChecklistDate(sub.check_date, locale)}
             {sub.project_name && <span style={styles.projectTag}>{sub.project_name}</span>}
             {sub.submitted_by_name && <span style={styles.submittedBy}>{t.submittedBy} {sub.submitted_by_name}</span>}
@@ -358,7 +389,7 @@ function SubmissionCard({ sub, isAdmin, onDeleted }) {
           {items.length > 0 && (
             <div style={styles.answerList}>
               {items.map((item, i) => (
-                <div key={i} style={styles.answerRow}>
+                <div key={answerKey(item, i)} style={styles.answerRow}>
                   {item.type === 'check' ? (
                     <>
                       <span style={checklistAnswer(sub.answers, item, i) ? styles.checkYes : styles.checkNo}>
@@ -396,126 +427,160 @@ function SubmissionCard({ sub, isAdmin, onDeleted }) {
   );
 }
 
-// ── Main Component ────────────────────────────────────────────────────────────
+// ── Checklist Builder (templates) ───────────────────────────────────────────────
 
-export default function SafetyChecklists({ projects, activeProject = '', onProjectChange }) {
+export function ChecklistBuilder() {
+  const t = useT();
+  const [templates, setTemplates] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [typeFilter, setTypeFilter] = useState('');
+  const [editingTemplate, setEditingTemplate] = useState(null);
+  const [showTemplateForm, setShowTemplateForm] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState(null);
+
+  useEffect(() => {
+    api.get('/safety-checklists/templates')
+      .then(r => setTemplates((r.data || []).map(normalizeTemplate)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const shown = typeFilter ? templates.filter(tp => tp.type === typeFilter) : templates;
+
+  return (
+    <div>
+      <div style={styles.topRow}>
+        <div>
+          <h2 style={styles.heading}>{t.checklistBuilderTitle}</h2>
+          <p style={styles.summary}>{t.checklistBuilderSub}</p>
+        </div>
+        <button style={styles.newBtn} onClick={() => { setEditingTemplate(null); setShowTemplateForm(true); }}>{t.newTemplate}</button>
+      </div>
+
+      {showTemplateForm && (
+        <div style={styles.formCard}>
+          <TemplateForm
+            initial={editingTemplate}
+            onSaved={(saved, isEdit) => {
+              const normalized = normalizeTemplate(saved);
+              setTemplates(prev => isEdit ? prev.map(x => x.id === normalized.id ? normalized : x) : [normalized, ...prev]);
+              setShowTemplateForm(false);
+              setEditingTemplate(null);
+            }}
+            onCancel={() => { setShowTemplateForm(false); setEditingTemplate(null); }}
+          />
+        </div>
+      )}
+
+      {templates.length > 0 && (
+        <FieldFilters activeCount={typeFilter ? 1 : 0}>
+          <select style={styles.filterSelect} value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
+            <option value="">{t.allTypes}</option>
+            {CHECKLIST_TYPES.map(ct => <option key={ct} value={ct}>{t[TYPE_LABEL[ct]]}</option>)}
+          </select>
+        </FieldFilters>
+      )}
+
+      {loading ? (
+        <SkeletonList count={3} rows={2} />
+      ) : shown.length === 0 && !showTemplateForm ? (
+        <div style={styles.empty}>
+          <p style={styles.emptyText}>{templates.length === 0 ? t.noTemplatesAdmin : t.noTemplatesForType}</p>
+          {templates.length === 0 && (
+            <button style={styles.emptyCtaBtn} onClick={() => setShowTemplateForm(true)}>+ {t.createTemplate}</button>
+          )}
+        </div>
+      ) : (
+        <div style={styles.list}>
+          {shown.map(tmpl => (
+            <div key={tmpl.id} style={styles.templateCard}>
+              <div style={styles.templateCardLeft}>
+                <div style={styles.templateCardTitleRow}>
+                  <span style={styles.templateCardName}>{tmpl.name}</span>
+                  <TypeBadge type={tmpl.type} t={t} />
+                </div>
+                {tmpl.description && <div style={styles.templateCardDesc}>{tmpl.description}</div>}
+                <div style={styles.templateCardCount}>{tmpl.items?.length ?? 0} {t.itemsCount}</div>
+              </div>
+              <div style={styles.templateCardActions}>
+                <button style={styles.editBtn} onClick={() => { setEditingTemplate({ ...tmpl, items: tmpl.items?.map(i => ({ ...i, _id: Math.random() })) }); setShowTemplateForm(true); }}>{t.edit}</button>
+                {pendingDeleteId === tmpl.id ? (
+                  <>
+                    <button style={styles.confirmDeleteBtn} onClick={async () => {
+                      await api.delete(`/safety-checklists/templates/${tmpl.id}`);
+                      setTemplates(prev => prev.filter(x => x.id !== tmpl.id));
+                      setPendingDeleteId(null);
+                    }}>{t.confirm}</button>
+                    <button style={styles.cancelDeleteBtn} onClick={() => setPendingDeleteId(null)}>{t.cancel}</button>
+                  </>
+                ) : (
+                  <button style={styles.deleteBtn} onClick={() => setPendingDeleteId(tmpl.id)}>{t.delete}</button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Checklist Reports (submissions) ─────────────────────────────────────────────
+
+export function ChecklistReports({ projects = [], activeProject = '', onProjectChange }) {
   const t = useT();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
-  const [view, setView] = useState('list'); // 'list' | 'fill' | 'templates'
   const [templates, setTemplates] = useState([]);
   const [submissions, setSubmissions] = useState([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [filterProject, setFilterProject] = useState(activeProject != null ? String(activeProject) : '');
+  const [filterType, setFilterType] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [showFill, setShowFill] = useState(false);
   useEffect(() => { setFilterProject(activeProject != null ? String(activeProject) : ''); }, [activeProject]);
-  const [editingTemplate, setEditingTemplate] = useState(null);
-  const [showTemplateForm, setShowTemplateForm] = useState(false);
-  const [pendingDeleteTemplateId, setPendingDeleteTemplateId] = useState(null);
 
-  // Attach template items to submissions for rendering
-  const { templatesById, enriched } = useMemo(() => {
-    const byId = Object.fromEntries(templates.map(t => [t.id, t]));
-    return {
-      templatesById: byId,
-      enriched: submissions.map(s => ({ ...s, template_items: byId[s.template_id]?.items ?? [] })),
-    };
+  // Attach template items to submissions for rendering the answers.
+  const enriched = useMemo(() => {
+    const byId = Object.fromEntries(templates.map(tp => [tp.id, tp]));
+    return submissions.map(s => ({ ...s, template_items: byId[s.template_id]?.items ?? [] }));
   }, [templates, submissions]);
 
-  const load = async (proj = filterProject, p = 1) => {
+  const load = async (p = 1) => {
     setPage(p);
     try {
       const params = { page: p, limit: 50 };
-      if (proj) params.project_id = proj;
-      const [t, s] = await Promise.all([
+      if (filterProject) params.project_id = filterProject;
+      if (filterType) params.type = filterType;
+      if (from) params.from = from;
+      if (to) params.to = to;
+      const [tRes, sRes] = await Promise.all([
         api.get('/safety-checklists/templates'),
         api.get('/safety-checklists', { params }),
       ]);
-      setTemplates((t.data || []).map(normalizeTemplate));
-      setSubmissions(s.data.items);
-      setTotalPages(s.data.pages);
+      setTemplates((tRes.data || []).map(normalizeTemplate));
+      setSubmissions(sRes.data?.items || []);
+      setTotalPages(sRes.data?.pages || 1);
     } finally { setLoading(false); }
   };
 
-  useEffect(() => { load(); }, []);
-  useEffect(() => { if (!loading) load(filterProject, 1); }, [filterProject]);
+  useEffect(() => { load(1); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!loading) load(1); }, [filterProject, filterType, from, to]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (view === 'fill') {
+  const activeFilterCount = (filterProject ? 1 : 0) + (filterType ? 1 : 0) + (from ? 1 : 0) + (to ? 1 : 0);
+
+  if (showFill) {
     return (
       <div style={styles.formCard}>
         <FillForm
           templates={templates}
           projects={projects}
           defaultProjectId={activeProject}
-          onSubmitted={sub => { setSubmissions(prev => [sub, ...prev]); setView('list'); }}
-          onCancel={() => setView('list')}
+          onSubmitted={sub => { setSubmissions(prev => [sub, ...prev]); setShowFill(false); }}
+          onCancel={() => setShowFill(false)}
         />
-      </div>
-    );
-  }
-
-  if (view === 'templates') {
-    return (
-      <div>
-        <div style={styles.topRow}>
-          <h2 style={styles.heading}>{t.checklistTemplates}</h2>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button style={styles.newBtn} onClick={() => { setEditingTemplate(null); setShowTemplateForm(true); }}>{t.newTemplate}</button>
-            <button style={styles.backBtn} onClick={() => { setShowTemplateForm(false); setView('list'); }}>← {t.back}</button>
-          </div>
-        </div>
-
-        {showTemplateForm && (
-          <div style={styles.formCard}>
-            <TemplateForm
-              initial={editingTemplate}
-              onSaved={(t, isEdit) => {
-                const normalized = normalizeTemplate(t);
-                setTemplates(prev => isEdit ? prev.map(x => x.id === normalized.id ? normalized : x) : [normalized, ...prev]);
-                setShowTemplateForm(false);
-                setEditingTemplate(null);
-              }}
-              onCancel={() => { setShowTemplateForm(false); setEditingTemplate(null); }}
-            />
-          </div>
-        )}
-
-        {templates.length === 0 && !showTemplateForm ? (
-          <div style={styles.empty}>
-            <p style={styles.emptyText}>{t.noTemplatesAdmin}</p>
-            <button style={styles.emptyCtaBtn} onClick={() => setShowTemplateForm(true)}>
-              + Create Template
-            </button>
-          </div>
-        ) : (
-          <div style={styles.list}>
-            {templates.map(tmpl => (
-              <div key={tmpl.id} style={styles.templateCard}>
-                <div style={styles.templateCardLeft}>
-                  <div style={styles.templateCardName}>{tmpl.name}</div>
-                  {tmpl.description && <div style={styles.templateCardDesc}>{tmpl.description}</div>}
-                  <div style={styles.templateCardCount}>{tmpl.items?.length ?? 0} {t.itemsCount}</div>
-                </div>
-                <div style={styles.templateCardActions}>
-                  <button style={styles.editBtn} onClick={() => { setEditingTemplate({ ...tmpl, items: tmpl.items?.map(i => ({ ...i, _id: Math.random() })) }); setShowTemplateForm(true); }}>{t.edit}</button>
-                  {pendingDeleteTemplateId === tmpl.id ? (
-                    <>
-                      <button style={styles.confirmDeleteBtn} onClick={async () => {
-                        await api.delete(`/safety-checklists/templates/${tmpl.id}`);
-                        setTemplates(prev => prev.filter(x => x.id !== tmpl.id));
-                        setPendingDeleteTemplateId(null);
-                      }}>{t.confirm}</button>
-                      <button style={styles.cancelDeleteBtn} onClick={() => setPendingDeleteTemplateId(null)}>{t.cancel}</button>
-                    </>
-                  ) : (
-                    <button style={styles.deleteBtn} onClick={() => setPendingDeleteTemplateId(tmpl.id)}>{t.delete}</button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
     );
   }
@@ -524,37 +589,36 @@ export default function SafetyChecklists({ projects, activeProject = '', onProje
     <div>
       <div style={styles.topRow}>
         <div>
-          <h2 style={styles.heading}>{t.safetyChecklists}</h2>
+          <h2 style={styles.heading}>{t.checklistReportsTitle}</h2>
           {submissions.length > 0 && (
             <p style={styles.summary}>{submissions.length} {submissions.length !== 1 ? t.submissionsPluralCount : t.submissionsCount}</p>
           )}
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          {isAdmin && <button style={styles.templatesBtn} onClick={() => setView('templates')}>{t.manageTemplates}</button>}
-          <button style={{ ...styles.newBtn, ...(templates.length === 0 ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={() => setView('fill')} disabled={templates.length === 0}>
-            {templates.length === 0 ? t.noTemplates : `+ ${t.fillOut}`}
-          </button>
-        </div>
+        <button style={{ ...styles.newBtn, ...(templates.length === 0 ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={() => setShowFill(true)} disabled={templates.length === 0}>
+          {templates.length === 0 ? t.noTemplates : `+ ${t.fillOut}`}
+        </button>
       </div>
 
-      {projects.length > 0 && (
-        <FieldFilters activeCount={filterProject ? 1 : 0}>
+      <FieldFilters activeCount={activeFilterCount}>
+        {projects.length > 0 && (
           <select style={styles.filterSelect} value={filterProject} onChange={e => { setFilterProject(e.target.value); onProjectChange?.(e.target.value); }}>
             <option value="">{`All Projects`}</option>
             {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
-        </FieldFilters>
-      )}
+        )}
+        <select style={styles.filterSelect} value={filterType} onChange={e => setFilterType(e.target.value)}>
+          <option value="">{t.allTypes}</option>
+          {CHECKLIST_TYPES.map(ct => <option key={ct} value={ct}>{t[TYPE_LABEL[ct]]}</option>)}
+        </select>
+        <input style={styles.filterInput} type="date" value={from} onChange={e => setFrom(e.target.value)} title={t.fromDate} />
+        <input style={styles.filterInput} type="date" value={to} onChange={e => setTo(e.target.value)} title={t.toDate} />
+      </FieldFilters>
 
       {loading ? (
         <SkeletonList count={4} rows={2} />
       ) : submissions.length === 0 ? (
         <div style={styles.empty}>
-          <p style={styles.emptyText}>
-            {templates.length === 0
-              ? isAdmin ? t.noTemplatesAdmin : t.noTemplatesWorker
-              : t.noSubmissionsYet}
-          </p>
+          <p style={styles.emptyText}>{templates.length === 0 ? t.noTemplatesAdmin : t.noSubmissionsYet}</p>
         </div>
       ) : (
         <>
@@ -568,7 +632,7 @@ export default function SafetyChecklists({ projects, activeProject = '', onProje
               />
             ))}
           </div>
-          <Pagination page={page} pages={totalPages} onChange={p => load(filterProject, p)} />
+          <Pagination page={page} pages={totalPages} onChange={p => load(p)} />
         </>
       )}
     </div>
@@ -580,10 +644,8 @@ const styles = {
   heading: { fontSize: 22, fontWeight: 800, color: '#111827', margin: 0 },
   summary: { fontSize: 13, color: '#6b7280', margin: '4px 0 0' },
   newBtn: { background: '#059669', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: 'pointer', flexShrink: 0 },
-  templatesBtn: { background: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb', padding: '9px 16px', borderRadius: 8, fontWeight: 600, fontSize: 13, cursor: 'pointer', flexShrink: 0 },
-  backBtn: { background: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb', padding: '9px 16px', borderRadius: 8, fontWeight: 600, fontSize: 13, cursor: 'pointer' },
-  filters: { marginBottom: 14 },
-  filterSelect: { padding: '7px 10px', border: '1px solid #e5e7eb', borderRadius: 7, fontSize: 13, background: '#fff', minWidth: 160 },
+  filterSelect: { padding: '7px 10px', border: '1px solid #e5e7eb', borderRadius: 7, fontSize: 13, background: '#fff', minWidth: 150 },
+  filterInput: { padding: '7px 10px', border: '1px solid #e5e7eb', borderRadius: 7, fontSize: 13, background: '#fff' },
   list: { display: 'flex', flexDirection: 'column', gap: 10 },
   // Submission card
   card: { background: '#fff', borderRadius: 12, boxShadow: '0 1px 6px rgba(0,0,0,0.07)', overflow: 'hidden' },
@@ -609,7 +671,8 @@ const styles = {
   // Template card
   templateCard: { background: '#fff', borderRadius: 10, boxShadow: '0 1px 4px rgba(0,0,0,0.06)', padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   templateCardLeft: { flex: 1, minWidth: 0 },
-  templateCardName: { fontWeight: 700, fontSize: 14, color: '#111827', marginBottom: 2 },
+  templateCardTitleRow: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 2 },
+  templateCardName: { fontWeight: 700, fontSize: 14, color: '#111827' },
   templateCardDesc: { fontSize: 12, color: '#6b7280', marginBottom: 4 },
   templateCardCount: { fontSize: 11, color: '#6b7280' },
   templateCardActions: { display: 'flex', gap: 8, flexShrink: 0 },
@@ -650,7 +713,6 @@ const styles = {
   submitBtn: { background: '#059669', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: 'pointer' },
   cancelBtn: { background: 'none', border: '1px solid #e5e7eb', color: '#6b7280', padding: '10px 20px', borderRadius: 8, fontSize: 14, cursor: 'pointer' },
   empty: { textAlign: 'center', padding: '60px 20px' },
-  emptyIcon: { fontSize: 40, marginBottom: 12 },
   emptyText: { color: '#6b7280', fontSize: 15 },
   emptyCtaBtn: { marginTop: 14, background: 'var(--ops-page-accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '9px 20px', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
   hint: { color: '#6b7280', fontSize: 14 },

@@ -9,6 +9,10 @@ import { SkeletonList } from './Skeleton';
 import { safeLocal } from '../utils/safeStorage';
 import { useConfirm } from './ConfirmDialog';
 
+// A stable per-submission id so an offline-queued POST replayed on reconnect (same body)
+// dedups server-side instead of creating a duplicate report. See migration 0192.
+const newRequestId = () => (globalThis.crypto?.randomUUID?.() || `r-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function todayISO() {
@@ -206,6 +210,7 @@ export default function FieldDayLog({ projects, isAdmin, activeProject, onProjec
         photos: capturePhotos,
         lat, lng,
         report_date: date,
+        client_request_id: newRequestId(),
       });
       const item = r.data?.offline
         ? { id: 'pending-' + Date.now(), pending: true, photos: capturePhotos.map(p => ({ url: p.url, caption: p.caption || '' })), notes: null, reported_at: new Date().toISOString(), project_id: project }
@@ -228,6 +233,7 @@ export default function FieldDayLog({ projects, isAdmin, activeProject, onProjec
         notes: captureNote,
         lat, lng,
         report_date: date,
+        client_request_id: newRequestId(),
       });
       const item = r.data?.offline
         ? { id: 'pending-' + Date.now(), pending: true, notes: captureNote, photos: [], reported_at: new Date().toISOString(), project_id: project }
@@ -264,6 +270,7 @@ export default function FieldDayLog({ projects, isAdmin, activeProject, onProjec
         photos: [{ url: publicUrl, caption: videoCaption, media_type: 'video' }],
         lat, lng,
         report_date: date,
+        client_request_id: newRequestId(),
       });
       setDayReports(prev => [r.data, ...prev]);
       setCaptureVideo(null);

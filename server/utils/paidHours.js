@@ -21,11 +21,21 @@ const { computeOT, otBandsCost, nightPremiumCost, shiftHoursByDate, computeLeave
  * here, once.
  */
 
+/**
+ * The overtime threshold in hours. When the setting is unset/0 the fallback is
+ * RULE-AWARE: a weekly rule defaults to 40, a daily rule to 8. A bare `|| 8`
+ * silently gave a weekly company an 8-hour weekly threshold (OT after the first
+ * day). Every surface must use this so they can't disagree (qbo already did 40).
+ */
+function otThreshold(settings, rule) {
+  return parseFloat((settings || {}).overtime_threshold) || (rule === 'weekly' ? 40 : 8);
+}
+
 /** The three numbers the pipeline reads off company settings, coerced safely. */
-function payNumbers(settings) {
+function payNumbers(settings, rule = null) {
   const s = settings || {};
   return {
-    threshold: parseFloat(s.overtime_threshold) || 8,
+    threshold: otThreshold(s, rule),
     weekStart: parseInt(s.week_start ?? 1, 10),
     multiplier: parseFloat(s.overtime_multiplier) || 1.5,
   };
@@ -41,7 +51,10 @@ function payNumbers(settings) {
  */
 function otRuleFromSettings(settings, workerRule) {
   const off = settings && (settings.feature_overtime === false || settings.feature_overtime === '0' || settings.feature_overtime === 0);
-  return off ? 'none' : (workerRule || 'daily');
+  // A worker with no rule of their own inherits the COMPANY overtime_rule, then
+  // 'daily' as the final default — a null worker rule used to hardcode 'daily',
+  // silently ignoring a company set to weekly.
+  return off ? 'none' : (workerRule || (settings && settings.overtime_rule) || 'daily');
 }
 
 /**
@@ -81,7 +94,7 @@ function computePaid(entries, settings, { rule = 'daily', ctx = {}, roleId = nul
   }
   const paid = roundEntriesFromSettings(entries || [], settings, effCtx);
   const otConfig = otConfigFromSettings(settings, roleId);
-  const { threshold, weekStart } = payNumbers(settings);
+  const { threshold, weekStart } = payNumbers(settings, rule);
   // `range` (the pay period being computed) enables the min_daily "no clock-in"
   // guarantee to fill empty days; absent → today's entry-only behaviour.
   const { regularHours, overtimeHours, otBands } = computeOT(paid, rule, threshold, weekStart, otConfig, range);
@@ -96,7 +109,12 @@ function computePaid(entries, settings, { rule = 'daily', ctx = {}, roleId = nul
  * mixing two people's hours would invent overtime neither of them worked.
  * Each row must carry `user_id`, `rate`, and `ot_rule` (join them in the query).
  */
-function laborCostCents(entries, settings) {
+// `opts.includeBurden` loads the result with the company's employer labor
+// burden (payroll taxes, workers' comp, insurance) via settings.labor_burden_pct.
+// This is a COST-reporting concept (job costing / P&L), NEVER what a worker is
+// paid or what a client is billed — so it's opt-in and OFF by default. Only the
+// project spend + P&L paths pass it true; invoices and every pay surface don't.
+function laborCostCents(entries, settings, opts = {}) {
   const { multiplier } = payNumbers(settings);
   const byWorker = new Map();
   for (const e of entries || []) {
@@ -116,6 +134,10 @@ function laborCostCents(entries, settings) {
     if (otConfig && otConfig.nightDifferential) {
       dollars += nightPremiumCost(paid, otConfig.nightDifferential, rate);
     }
+  }
+  if (opts.includeBurden) {
+    const burden = parseFloat(settings?.labor_burden_pct);
+    if (Number.isFinite(burden) && burden > 0) dollars *= (1 + burden / 100);
   }
   return Math.round(dollars * 100);
 }
@@ -143,7 +165,10 @@ const LABOR_ENTRY_COLUMNS = `
  */
 function leaveRateMultipliers(settings) {
   const s = settings || {};
-  const frac = (v) => { const n = parseFloat(v); return Number.isFinite(n) && n >= 0 ? n / 100 : 1; };
+  // Unset/non-numeric → 1 (full base rate, the documented default). A finite value
+  // is used as-is, with negatives clamped to 0 — a negative pct must pay nothing,
+  // not silently fall through to 100% (which the old `n >= 0 ? … : 1` did).
+  const frac = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? Math.max(0, n) / 100 : 1; };
   return { sick: frac(s.sick_pay_pct), vacation: frac(s.vacation_pay_pct) };
 }
 
@@ -213,6 +238,7 @@ async function computeCompanyLeave({ companyId, workers, settings, from, to }) {
 module.exports = {
   loadSettings,
   payNumbers,
+  otThreshold,
   otRuleFromSettings,
   computePaid,
   laborCostCents,

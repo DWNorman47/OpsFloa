@@ -661,8 +661,10 @@ router.post('/push-expenses', requireAdmin, requirePerm('manage_integrations'), 
           amount: parseFloat(r.amount),
           description: r.description || r.category || 'Expense reimbursement',
           txnDate,
-          // One purchase per reimbursement — a double-click dedupes at Intuit.
-          requestId: `ops-pur-${r.id}`,
+          // One purchase per reimbursement, keyed IDENTICALLY across the auto-sync, batch,
+          // and retry paths (`ops-reimb-<id>`) so pushing the same reimbursement through a
+          // different path can't create a second QBO Purchase.
+          requestId: `ops-reimb-${r.id}`,
         });
         await pool.query(
           'UPDATE reimbursements SET qbo_purchase_id = $1, qbo_synced_at = NOW() WHERE id = $2',
@@ -860,7 +862,7 @@ function computeGroupOvertime(group, ot) {
 
 // POST /api/qbo/push-bills-preview — dry-run summary of what would be billed
 // Body: { from, to, worker_ids, force }
-router.post('/push-bills-preview', requireAdmin, async (req, res) => {
+router.post('/push-bills-preview', requireAdmin, requirePerm('manage_integrations'), async (req, res) => {
   const { from, to, worker_ids, force } = req.body;
   try {
     // Settings first: gatherBillData needs the policy to compute the PAID punch.
@@ -1146,6 +1148,10 @@ router.post('/retry-error/:id', requireAdmin, async (req, res) => {
         amount: parseFloat(r.amount),
         description: r.description || r.category || 'Expense reimbursement',
         txnDate,
+        // SAME key as the auto-sync and batch-push paths — a recorded error usually means
+        // the response was lost AFTER QBO created the Purchase, so retry must dedup, not
+        // create a second Purchase for the same reimbursement.
+        requestId: `ops-reimb-${entity_id}`,
       });
       await pool.query(
         'UPDATE reimbursements SET qbo_purchase_id = $1, qbo_synced_at = NOW() WHERE id = $2',
@@ -1175,6 +1181,7 @@ router.post('/retry-error/:id', requireAdmin, async (req, res) => {
         customerId: e.qbo_customer_id,
         classId: e.qbo_class_id || null,
         workDate, hours, description: e.notes || '',
+        requestId: `ops-ta-${entity_id}`, // same key as manual + auto-sync so retry dedups
       });
       await pool.query(
         'UPDATE time_entries SET qbo_activity_id = $1, qbo_synced_at = NOW() WHERE id = $2',

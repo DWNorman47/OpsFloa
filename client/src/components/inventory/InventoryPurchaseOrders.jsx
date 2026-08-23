@@ -169,10 +169,12 @@ function PODetail({ po: initialPo, locations, suppliers, onBack, onUpdate }) {
   const [editForm, setEditForm] = useState({
     supplier_id: po.supplier_id ? String(po.supplier_id) : '',
     to_location_id: po.to_location_id ? String(po.to_location_id) : '',
+    project_id: po.project_id ? String(po.project_id) : '',
     expected_date: po.expected_date ? po.expected_date.slice(0,10) : '',
     reference_no: po.reference_no || '',
     notes: po.notes || '',
   });
+  const [projects, setProjects] = useState([]);
   const [editSaving, setEditSaving] = useState(false);
   const [actionErr, setActionErr]   = useState('');
   const [confirmingCancel, setConfirmingCancel] = useState(false);
@@ -186,6 +188,12 @@ function PODetail({ po: initialPo, locations, suppliers, onBack, onUpdate }) {
       api.get('/inventory/items?active=true').then(r => setItems(r.data)).catch(silentError('inventorypurchaseorders'));
     }
   }, [addingLine]);
+
+  useEffect(() => {
+    if (editing && projects.length === 0) {
+      api.get('/work').then(r => setProjects(Array.isArray(r.data) ? r.data : [])).catch(() => {});
+    }
+  }, [editing, projects.length]);
 
   const isDraft     = po.status === 'draft';
   const canReceive  = ['submitted', 'partial'].includes(po.status);
@@ -229,6 +237,7 @@ function PODetail({ po: initialPo, locations, suppliers, onBack, onUpdate }) {
       const r = await api.patch(`/inventory/purchase-orders/${po.id}`, {
         supplier_id: editForm.supplier_id ? parseInt(editForm.supplier_id) : null,
         to_location_id: editForm.to_location_id ? parseInt(editForm.to_location_id) : null,
+        project_id: editForm.project_id ? parseInt(editForm.project_id) : null,
         expected_date: editForm.expected_date || null,
         reference_no: editForm.reference_no,
         notes: editForm.notes,
@@ -365,6 +374,13 @@ function PODetail({ po: initialPo, locations, suppliers, onBack, onUpdate }) {
               <select style={d.editInput} value={editForm.to_location_id} onChange={e => setEditForm(f => ({ ...f, to_location_id: e.target.value }))}>
                 <option value="">{t.none}</option>
                 {locations.filter(l => l.active).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
+            </div>
+            <div style={d.editField}>
+              <label style={d.editLabel}>{t.invPOProject}</label>
+              <select style={d.editInput} value={editForm.project_id} onChange={e => setEditForm(f => ({ ...f, project_id: e.target.value }))}>
+                <option value="">{t.none}</option>
+                {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </div>
             <div style={d.editField}>
@@ -598,11 +614,13 @@ function POCreateForm({ locations, suppliers, prefillItems, onSaved, onCancel })
   const [form, setForm] = useState({
     supplier_id: '',
     to_location_id: '',
+    project_id: '',
     order_date: new Date().toISOString().slice(0,10),
     expected_date: '',
     reference_no: '',
     notes: '',
   });
+  const [projects, setProjects] = useState([]);
   const [lines, setLines]   = useState(() =>
     (prefillItems || []).map(item => {
       const itemId = item.item_id || item.id;
@@ -624,6 +642,7 @@ function POCreateForm({ locations, suppliers, prefillItems, onSaved, onCancel })
 
   useEffect(() => {
     api.get('/inventory/items?active=true').then(r => setItems(r.data)).catch(silentError('inventorypurchaseorders'));
+    api.get('/work').then(r => setProjects(Array.isArray(r.data) ? r.data : [])).catch(() => {});
   }, []);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -659,6 +678,7 @@ function POCreateForm({ locations, suppliers, prefillItems, onSaved, onCancel })
       const payload = {
         supplier_id: form.supplier_id ? parseInt(form.supplier_id) : null,
         to_location_id: form.to_location_id ? parseInt(form.to_location_id) : null,
+        project_id: form.project_id ? parseInt(form.project_id) : null,
         order_date: form.order_date,
         expected_date: form.expected_date || null,
         reference_no: form.reference_no,
@@ -695,6 +715,13 @@ function POCreateForm({ locations, suppliers, prefillItems, onSaved, onCancel })
           <select style={c.input} value={form.to_location_id} onChange={e => set('to_location_id', e.target.value)}>
             <option value="">{t.none}</option>
             {locations.filter(l => l.active).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+          </select>
+        </div>
+        <div style={c.field}>
+          <label style={c.label}>{t.invPOProject}</label>
+          <select style={c.input} value={form.project_id} onChange={e => set('project_id', e.target.value)}>
+            <option value="">{t.none}</option>
+            {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </div>
         <div style={c.field}>

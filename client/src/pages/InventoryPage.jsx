@@ -13,6 +13,7 @@ import InventoryCycleCounts from '../components/inventory/InventoryCycleCounts';
 import InventorySetup, { SupplierPanel } from '../components/inventory/InventorySetup';
 import InventoryValuation from '../components/inventory/InventoryValuation';
 import InventoryPurchaseOrders from '../components/inventory/InventoryPurchaseOrders';
+import { CatalogPanel } from './CatalogPage';
 import InventoryConversions from '../components/inventory/InventoryConversions';
 import MyCount from '../components/MyCount';
 import EquipmentLog from '../components/EquipmentLog';
@@ -63,6 +64,7 @@ export default function InventoryPage() {
     { id: 'locations',   label: t.invSetupLocations },
     { id: 'suppliers',   label: t.invSetupSuppliers },
     { id: 'conversions', label: t.invTabConversions, dot: pendingConversions > 0 ? '#d97706' : null },
+    { id: 'catalog',     label: t.invTabCatalog },
   ] : [];
   // Equipment group (Business plan + manage_equipment). Consolidated here from
   // the old Field "Equipment Log" tab. M1 ships the Assets tab (the moved
@@ -246,6 +248,9 @@ export default function InventoryPage() {
         )}
         {tab === 'items' && canManage && (
           <InventoryItems onItemChange={refreshLowStock} />
+        )}
+        {tab === 'catalog' && canManage && (
+          <CatalogPanel />
         )}
         {tab === 'transactions' && (
           <InventoryTransactions

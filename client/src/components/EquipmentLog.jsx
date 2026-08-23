@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { langToLocale } from '../utils';
 import { useOffline } from '../contexts/OfflineContext';
 import { useT } from '../hooks/useT';
+import { useCents } from '../hooks/useMoney';
 import { SkeletonList, SkeletonBlock } from './Skeleton';
 import AssetLabelModal from './inventory/AssetLabelModal';
 
@@ -17,6 +18,18 @@ function fmtEquipmentDate(value, locale = 'en-US') {
   return parsed.toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+// Rate-period picker shared by the rent-out and operating rate fields.
+function UnitSelect({ t, value, onChange }) {
+  return (
+    <select style={styles.unitSelect} value={value} onChange={e => onChange(e.target.value)} aria-label={t.eqPerUnit}>
+      <option value="hour">{t.eqPerUnit} {t.eqUnitHour}</option>
+      <option value="day">{t.eqPerUnit} {t.eqUnitDay}</option>
+      <option value="week">{t.eqPerUnit} {t.eqUnitWeek}</option>
+      <option value="month">{t.eqPerUnit} {t.eqUnitMonth}</option>
+    </select>
+  );
+}
+
 // ── Equipment Item Form (admin) ────────────────────────────────────────────────
 
 function ItemForm({ initial, onSaved, onCancel }) {
@@ -27,6 +40,12 @@ function ItemForm({ initial, onSaved, onCancel }) {
     unit_number: initial?.unit_number ?? '',
     maintenance_interval_hours: initial?.maintenance_interval_hours ?? '',
     notes: initial?.notes ?? '',
+    purchase_cost: initial?.purchase_cost ?? '',
+    rent_out_rate: initial?.rent_out_rate ?? '',
+    rent_out_unit: initial?.rent_out_unit ?? 'day',
+    mobilization_cost: initial?.mobilization_cost ?? '',
+    operating_rate: initial?.operating_rate ?? '',
+    operating_unit: initial?.operating_unit ?? 'hour',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -77,6 +96,41 @@ function ItemForm({ initial, onSaved, onCancel }) {
         <label htmlFor="eq-notes" style={styles.label}>{t.notes}</label>
         <input id="eq-notes" style={styles.input} type="text" placeholder={t.optionalNotes} value={form.notes} onChange={e => set('notes', e.target.value)} maxLength={1000} />
       </div>
+
+      <div style={styles.ratesSection}>
+        <div style={styles.ratesHeader}>{t.eqRatesSection}</div>
+        <p style={styles.ratesHint}>{t.eqRatesHint}</p>
+        <div style={styles.row}>
+          <div style={styles.fieldGroup}>
+            <label style={styles.label}>{t.eqPurchaseCost}</label>
+            <input style={styles.input} type="number" min="0" step="0.01" value={form.purchase_cost} onChange={e => set('purchase_cost', e.target.value)} />
+          </div>
+          <div style={styles.fieldGroup}>
+            <label style={styles.label}>{t.eqRentOutRate}</label>
+            <div style={styles.rateRow}>
+              <input style={styles.input} type="number" min="0" step="0.01" value={form.rent_out_rate} onChange={e => set('rent_out_rate', e.target.value)} />
+              <UnitSelect t={t} value={form.rent_out_unit} onChange={v => set('rent_out_unit', v)} />
+            </div>
+            <span style={styles.subHint}>{t.eqRentOutHint}</span>
+          </div>
+        </div>
+        <div style={styles.row}>
+          <div style={styles.fieldGroup}>
+            <label style={styles.label}>{t.eqMobilization}</label>
+            <input style={styles.input} type="number" min="0" step="0.01" value={form.mobilization_cost} onChange={e => set('mobilization_cost', e.target.value)} />
+            <span style={styles.subHint}>{t.eqMobilizationHint}</span>
+          </div>
+          <div style={styles.fieldGroup}>
+            <label style={styles.label}>{t.eqOperatingRate}</label>
+            <div style={styles.rateRow}>
+              <input style={styles.input} type="number" min="0" step="0.01" value={form.operating_rate} onChange={e => set('operating_rate', e.target.value)} />
+              <UnitSelect t={t} value={form.operating_unit} onChange={v => set('operating_unit', v)} />
+            </div>
+            <span style={styles.subHint}>{t.eqOperatingHint}</span>
+          </div>
+        </div>
+      </div>
+
       {error && <p role="alert" style={styles.error}>{error}</p>}
       <div style={styles.formActions}>
         <button style={{ ...styles.submitBtn, ...(saving ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} type="submit" disabled={saving}>{saving ? t.saving : isEdit ? t.saveChanges : t.addEquipmentTitle}</button>
@@ -164,7 +218,14 @@ function LogHoursForm({ item, projects, onLogged, onCancel }) {
 function EquipmentCard({ item, projects, isAdmin, onEdit, onDeleted, onHoursLogged }) {
   const t = useT();
   const { user } = useAuth();
+  const formatCents = useCents();
   const locale = langToLocale(user?.language);
+  // Actual usage cost is derived only when the operating rate is hourly — the
+  // hours log records hours, so an hourly rate multiplies cleanly. Non-hourly
+  // operating rates show hours only (no assumed hours-per-day conversion).
+  const hourlyRate = (item.operating_unit === 'hour' && item.operating_rate != null)
+    ? parseFloat(item.operating_rate) : null;
+  const costCents = h => (hourlyRate != null ? Math.round(parseFloat(h.hours) * hourlyRate * 100) : null);
   const [expanded, setExpanded] = useState(false);
   const [loggingHours, setLoggingHours] = useState(false);
   const [showLabel, setShowLabel] = useState(false);
@@ -294,6 +355,7 @@ function EquipmentCard({ item, projects, isAdmin, onEdit, onDeleted, onHoursLogg
                     <tr>
                       <th style={styles.hth}>{t.date}</th>
                       <th style={styles.hth}>{t.hours}</th>
+                      {hourlyRate != null && <th style={{ ...styles.hth, textAlign: 'right' }}>{t.eqUsageCost}</th>}
                       <th style={styles.hth}>{t.operatorField}</th>
                       <th style={styles.hth}>Project</th>
                       <th style={styles.hth}>{t.notes}</th>
@@ -308,6 +370,7 @@ function EquipmentCard({ item, projects, isAdmin, onEdit, onDeleted, onHoursLogg
                           {parseFloat(h.hours).toFixed(1)}
                           {h.pending && <span style={styles.pendingBadge}>⏳</span>}
                         </td>
+                        {hourlyRate != null && <td style={{ ...styles.htd, textAlign: 'right' }}>{formatCents(costCents(h))}</td>}
                         <td style={styles.htd}>{h.operator_name || '—'}</td>
                         <td style={styles.htd}>{h.project_name || '—'}</td>
                         <td style={{ ...styles.htd, color: '#6b7280' }}>{h.notes || ''}</td>
@@ -324,6 +387,20 @@ function EquipmentCard({ item, projects, isAdmin, onEdit, onDeleted, onHoursLogg
                       </tr>
                     ))}
                   </tbody>
+                  {hourlyRate != null && hours.length > 0 && (
+                    <tfoot>
+                      <tr>
+                        <td style={{ ...styles.htd, fontWeight: 700 }}>{t.eqTotal}</td>
+                        <td style={{ ...styles.htd, fontWeight: 700 }}>
+                          {hours.reduce((s, h) => s + (parseFloat(h.hours) || 0), 0).toFixed(1)}
+                        </td>
+                        <td style={{ ...styles.htd, fontWeight: 800, textAlign: 'right' }}>
+                          {formatCents(hours.reduce((s, h) => s + (costCents(h) || 0), 0))}
+                        </td>
+                        <td style={styles.htd} colSpan={3}></td>
+                      </tr>
+                    </tfoot>
+                  )}
                 </table>
               )}
               {entryDeleteError && <p style={styles.inlineError}>{entryDeleteError}</p>}
@@ -429,6 +506,12 @@ export default function EquipmentLog({ projects }) {
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const styles = {
+  ratesSection: { marginTop: 18, paddingTop: 16, borderTop: '1px solid #e5e7eb' },
+  ratesHeader: { fontSize: 13, fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.04em' },
+  ratesHint: { fontSize: 12, color: '#6b7280', margin: '4px 0 12px' },
+  rateRow: { display: 'flex', gap: 8, alignItems: 'stretch' },
+  unitSelect: { border: '1px solid #d1d5db', borderRadius: 8, padding: '0 8px', fontSize: 13, background: '#fff', color: '#374151', flexShrink: 0 },
+  subHint: { display: 'block', fontSize: 11, color: '#9ca3af', marginTop: 3 },
   topRow: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' },
   heading: { fontSize: 22, fontWeight: 800, color: '#111827', margin: 0 },
   summary: { fontSize: 13, color: '#6b7280', margin: '4px 0 0' },

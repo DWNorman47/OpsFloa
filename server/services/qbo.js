@@ -270,15 +270,20 @@ async function createPurchase(companyId, { bankAccountId, expenseAccountId, vend
 async function createBill(companyId, { vendorId, txnDate, dueDate, memo, lines, requestId }) {
   const qboLines = lines.map(l => {
     if (l.type === 'item') {
-      const amount = parseFloat((l.qty * l.unitPrice).toFixed(2));
+      // Derive Amount from the ROUNDED qty/unitPrice we actually send — QBO recomputes the
+      // line as Qty × UnitPrice, so computing Amount off the full-precision qty made the
+      // posted line differ from our Amount (and drift from the push-bills-preview total).
+      const qty = parseFloat(l.qty.toFixed(2));
+      const unitPrice = parseFloat(l.unitPrice.toFixed(2));
+      const amount = parseFloat((qty * unitPrice).toFixed(2));
       return {
         DetailType: 'ItemBasedExpenseLineDetail',
         Amount: amount,
         Description: l.description || '',
         ItemBasedExpenseLineDetail: {
           ItemRef: { value: String(l.itemId) },
-          UnitPrice: parseFloat(l.unitPrice.toFixed(2)),
-          Qty: parseFloat(l.qty.toFixed(2)),
+          UnitPrice: unitPrice,
+          Qty: qty,
           ...(l.classId ? { ClassRef: { value: String(l.classId) } } : {}),
           ...(l.customerId ? { CustomerRef: { value: String(l.customerId) }, BillableStatus: 'NotBillable' } : {}),
         },

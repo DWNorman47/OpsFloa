@@ -73,6 +73,10 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
   const hasDeductions = Array.isArray(deductions) && deductions.length > 0;
   const showPay = gross_wages > 0;
   const billedHours = totalHours + guarantee_shortfall_hours + sick_hours + vacation_hours;
+  // The guarantee is priced per hour (daily ÷ standard day for a daily worker), so
+  // derive the shown rate from the line itself — never workerRate, which is the DAILY
+  // amount for a daily worker and would print "$200/hr" beside a $400 total.
+  const guaranteeRate = guarantee_shortfall_hours > 0 ? guarantee_cost / guarantee_shortfall_hours : workerRate;
 
   const ci = companyInfo || {};
   const billToLines = [
@@ -256,7 +260,7 @@ function InvoiceCard({ stub, user, settings, companyInfo, defaultOpen, t }) {
                   )}
                   {guarantee_shortfall_hours > 0 && guarantee_cost > 0 && (
                     <div style={{ ...s.sumRow, color: '#2563eb' }}>
-                      <span>{t.minimumGuaranteePay.replace('{hours}', fmtH(guarantee_shortfall_hours)).replace('{rate}', `${fmtMoney(workerRate)}/hr`)}</span>
+                      <span>{t.minimumGuaranteePay.replace('{hours}', fmtH(guarantee_shortfall_hours)).replace('{rate}', `${fmtMoney(guaranteeRate)}/hr`)}</span>
                       <span>{fmtMoney(guarantee_cost)}</span>
                     </div>
                   )}

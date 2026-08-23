@@ -7,17 +7,19 @@ const { weekRange } = require('../utils/weekBounds');
 const { hoursWorked } = require('../utils/payCalculations');
 const { loadSettings, computePaid } = require('../utils/paidHours');
 const { formatCurrency, companyCurrency } = require('../currency');
+const { escapeHtml } = require('../utils/htmlEscape');
 
 const APP_URL = process.env.APP_URL || 'https://app.opsfloa.com';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function emailHeader(title, subtitle) {
+  // title/subtitle carry company name — escape (they're plain text, never markup).
   return `
     <div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:24px">
     <div style="border-bottom:3px solid #92400e;padding-bottom:12px;margin-bottom:20px">
-      <h2 style="color:#92400e;margin:0;font-size:20px">${title}</h2>
-      ${subtitle ? `<p style="color:#6b7280;margin:4px 0 0;font-size:13px">${subtitle}</p>` : ''}
+      <h2 style="color:#92400e;margin:0;font-size:20px">${escapeHtml(String(title ?? ''))}</h2>
+      ${subtitle ? `<p style="color:#6b7280;margin:4px 0 0;font-size:13px">${escapeHtml(String(subtitle))}</p>` : ''}
     </div>
   `;
 }
@@ -49,7 +51,10 @@ function td(text, opts = {}) {
     opts.mono ? 'font-family:monospace' : '',
     opts.color ? `color:${opts.color}` : '',
   ].filter(Boolean).join(';');
-  return `<td style="${style}">${text}</td>`;
+  // Escape cell text by default (worker/item names, SKUs, categories are user-controlled
+  // and land in an admin's inbox). opts.raw is for the few cells that pass built markup.
+  const content = opts.raw ? text : escapeHtml(String(text ?? ''));
+  return `<td style="${style}">${content}</td>`;
 }
 
 // Get the primary admin email for a company (first active admin with email)
@@ -145,7 +150,7 @@ async function sendWeeklyPayrollReport(companyId, companyName) {
       ${td(row.full_name, { bold: true })}
       ${td(row.entry_count)}
       ${td(row.total_hours.toFixed(2), { align: 'right' })}
-      ${td(row.overtime_hours > 0 ? `<span style="color:#d97706;font-weight:700">${row.overtime_hours.toFixed(2)}</span>` : '—', { align: 'right' })}
+      ${td(row.overtime_hours > 0 ? `<span style="color:#d97706;font-weight:700">${row.overtime_hours.toFixed(2)}</span>` : '—', { align: 'right', raw: true })}
     </tr>`;
   }).join('');
 

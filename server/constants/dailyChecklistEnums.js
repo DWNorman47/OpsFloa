@@ -36,6 +36,21 @@ const DAILY_CHECKLIST_ITEM_SOURCE_DEFAULT = 'manual';
 const DAILY_CHECKLIST_ITEM_KINDS = Object.freeze(['check', 'text']);
 const DAILY_CHECKLIST_ITEM_KIND_DEFAULT = 'check';
 
+// daily_checklist_recurring_items.mode + daily_checklist_items.mode — who owns the check.
+//   shared     — one row; everyone with the matching team-member-type sees + checks the
+//                same state (a change by one is seen by all)
+//   individual — each matching person gets their own private check state (per-user)
+const DAILY_CHECKLIST_ITEM_MODES = Object.freeze(['shared', 'individual']);
+const DAILY_CHECKLIST_ITEM_MODE_DEFAULT = 'shared';
+
+// daily_checklist_assignments.schedule_type — when a checklist seeds a day.
+//   none    — no particular day; assigned but not seeded (a parked/neutral state)
+//   every   — carries through every worked day
+//   ordinal — only the Nth worked day (ordinal_target)
+//   date    — only a specific calendar date (scheduled_date)
+const DAILY_CHECKLIST_ASSIGNMENT_SCHEDULES = Object.freeze(['none', 'every', 'ordinal', 'date']);
+const DAILY_CHECKLIST_ASSIGNMENT_SCHEDULE_DEFAULT = 'none';
+
 module.exports = {
   DAILY_CHECKLIST_STATUSES,
   DAILY_CHECKLIST_STATUS_DEFAULT,
@@ -45,4 +60,8 @@ module.exports = {
   DAILY_CHECKLIST_ITEM_SOURCE_DEFAULT,
   DAILY_CHECKLIST_ITEM_KINDS,
   DAILY_CHECKLIST_ITEM_KIND_DEFAULT,
+  DAILY_CHECKLIST_ITEM_MODES,
+  DAILY_CHECKLIST_ITEM_MODE_DEFAULT,
+  DAILY_CHECKLIST_ASSIGNMENT_SCHEDULES,
+  DAILY_CHECKLIST_ASSIGNMENT_SCHEDULE_DEFAULT,
 };

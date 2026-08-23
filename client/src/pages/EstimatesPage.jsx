@@ -11,6 +11,7 @@ import SortHeader, { sortRows } from '../components/SortHeader';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { useCents } from '../hooks/useMoney';
+import { useDragReorder } from '../hooks/useDragReorder';
 import { useCurrency } from '../contexts/SettingsContext';
 import { formatDate, formatDateTime } from '../utils';
 import { computeBreakdown } from '../utils/estimateMath';
@@ -25,6 +26,17 @@ const CATEGORIES = ['labor', 'materials', 'equipment', 'subs', 'overhead', 'cont
 
 // Maps a category VALUE (used in logic/API) to its i18n key for display only.
 // The values themselves are never translated.
+// Stable per-row key so React reconciles editable line rows by identity, not
+// position — otherwise a reorder/remove can leave a MoneyInput's mid-typed text
+// on the wrong row.
+let _lineKeySeq = 0;
+const newLineKey = () => `l${++_lineKeySeq}`;
+
+const LINE_TYPES = ['base', 'allowance', 'alternate', 'optional'];
+const LINE_TYPE_LABEL_KEYS = {
+  base: 'estLineTypeBase', allowance: 'estLineTypeAllowance',
+  alternate: 'estLineTypeAlternate', optional: 'estLineTypeOptional',
+};
 const CATEGORY_LABEL_KEYS = {
   labor: 'estCatLabor',
   materials: 'estCatMaterials',
@@ -265,8 +277,8 @@ function EstimateForm({ existing, onSave, onCancel }) {
     terms: existing?.terms || '',
   });
   const [lines, setLines] = useState(existing?.lines?.length > 0
-    ? existing.lines.map(l => ({ ...l }))
-    : [{ category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0 }]
+    ? existing.lines.map(l => ({ _key: newLineKey(), ...l }))
+    : [{ _key: newLineKey(), category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0, cost_cents: null, line_type: 'base' }]
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -284,19 +296,68 @@ function EstimateForm({ existing, onSave, onCancel }) {
   }
   function addLine() {
     setDirty(true);
-    setLines(arr => [...arr, { category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0 }]);
+    setLines(arr => [...arr, { _key: newLineKey(), category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0, cost_cents: null, line_type: 'base' }]);
   }
   function removeLine(i) {
     setDirty(true);
     setLines(arr => arr.filter((_, idx) => idx !== i));
   }
+  function moveLine(from, to) {
+    setDirty(true);
+    setLines(arr => {
+      const next = arr.slice();
+      const [row] = next.splice(from, 1);
+      // Removing the source shifts later indices down by one, so a downward
+      // drop must target to-1 to land the row AT the drop position (not past it).
+      next.splice(from < to ? to - 1 : to, 0, row);
+      return next;
+    });
+  }
+  const { dragProps, isOver } = useDragReorder(moveLine);
+  // Save a line back to the material catalog so it pre-fills future estimates.
+  // The line's unit cost is already the client-facing price, so it lands as the
+  // catalog item's sell price. Creates a catalog-only row (is_stocked=false).
+  async function saveLineToCatalog(line) {
+    const desc = line.description?.toString().trim();
+    if (!desc) { toast(t.estSaveToCatalogEmpty, 'error'); return; }
+    try {
+      await api.post('/catalog/items', {
+        name: desc,
+        unit: line.unit || null,
+        sell_price_cents: parseInt(line.unit_cost_cents, 10) || 0,
+        // Preserve the cost basis so a re-picked catalog line restores cost too
+        // (unit_cost is dollars on the catalog item).
+        unit_cost: line.cost_cents == null || line.cost_cents === '' ? null : (parseInt(line.cost_cents, 10) / 100),
+        default_estimate_category: line.category || null,
+      });
+      toast(t.estSavedToCatalog, 'success');
+    } catch (err) {
+      toast(err.response?.data?.error || t.estSaveToCatalogError, 'error');
+    }
+  }
 
   // Live totals — pure-function math mirroring server/constants/projectMoneyEnums.js
   // computeEstimateTotals. Lines that don't parse count as zero (same defensive rule).
   const totals = (() => {
+    const inTotal = l => !l.line_type || l.line_type === 'base' || l.line_type === 'allowance';
     const subtotal = lines.reduce((sum, l) => {
+      if (!inTotal(l)) return sum;   // alternate/optional shown separately
       const cents = Math.round((parseFloat(l.qty) || 0) * (parseInt(l.unit_cost_cents, 10) || 0));
       return sum + Math.max(0, cents);
+    }, 0);
+    // Alternates/optional priced total (not in the base bid).
+    const alternatesTotal = lines.reduce((sum, l) => {
+      if (inTotal(l)) return sum;
+      const cents = Math.round((parseFloat(l.qty) || 0) * (parseInt(l.unit_cost_cents, 10) || 0));
+      return sum + Math.max(0, cents);
+    }, 0);
+    // Cost baseline = qty × cost (falling back to price where cost is blank) —
+    // matches what the converted project's budget will carry (base+allowance only).
+    const costBaseline = lines.reduce((sum, l) => {
+      if (!inTotal(l)) return sum;
+      const price = parseInt(l.unit_cost_cents, 10) || 0;
+      const cost = l.cost_cents == null || l.cost_cents === '' ? price : (parseInt(l.cost_cents, 10) || 0);
+      return sum + Math.max(0, Math.round((parseFloat(l.qty) || 0) * cost));
     }, 0);
     const ohPct = parseFloat(head.overhead_pct) || 0;
     const mgPct = parseFloat(head.margin_pct) || 0;
@@ -309,7 +370,11 @@ function EstimateForm({ existing, onSave, onCancel }) {
     const contingency = Math.round(preCont * (ctPct / 100));
     const preTax      = preCont + contingency;
     const tax         = Math.round(preTax * (txPct / 100));
-    return { subtotal, overhead, margin, contingency, tax, total: preTax + tax };
+    const total       = preTax + tax;
+    // Est. margin = contract (pre-tax) − cost baseline. Tax is a pass-through,
+    // so margin is measured against the pre-tax contract.
+    const estMargin   = preTax - costBaseline;
+    return { subtotal, costBaseline, overhead, margin, contingency, tax, total, estMargin, preTax, alternatesTotal };
   })();
 
   async function handleSave() {
@@ -332,6 +397,9 @@ function EstimateForm({ existing, onSave, onCancel }) {
             qty: parseFloat(l.qty) || 0,
             unit: l.unit || null,
             unit_cost_cents: parseInt(l.unit_cost_cents, 10) || 0,
+            cost_cents: l.cost_cents == null || l.cost_cents === '' ? null : parseInt(l.cost_cents, 10),
+            line_type: l.line_type || 'base',
+            notes: l.notes?.trim() || null,
           })),
       };
       let response;
@@ -401,33 +469,64 @@ function EstimateForm({ existing, onSave, onCancel }) {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
+                <th style={{ ...styles.lineTh, width: 22 }}></th>
                 <th style={styles.lineTh}>{t.estCategory}</th>
+                <th style={{ ...styles.lineTh, width: 96 }}>{t.estLineType}</th>
                 <th style={styles.lineTh}>{t.estDescription}</th>
                 <th style={{ ...styles.lineTh, width: 80 }}>{t.estQty}</th>
                 <th style={{ ...styles.lineTh, width: 80 }}>{t.estUnit}</th>
-                <th style={{ ...styles.lineTh, width: 120, textAlign: 'right' }}>{t.estUnitCost}</th>
+                <th style={{ ...styles.lineTh, width: 110, textAlign: 'right' }}>{t.estLineCost}</th>
+                <th style={{ ...styles.lineTh, width: 120, textAlign: 'right' }}>{t.estLinePrice}</th>
                 <th style={{ ...styles.lineTh, width: 100, textAlign: 'right' }}>{t.estTotal}</th>
-                <th style={{ ...styles.lineTh, width: 32 }}></th>
+                <th style={{ ...styles.lineTh, width: 64 }}></th>
               </tr>
             </thead>
             <tbody>
               {lines.map((l, i) => {
                 const total = Math.round((parseFloat(l.qty) || 0) * (parseInt(l.unit_cost_cents, 10) || 0));
+                const dp = dragProps(i);
                 return (
-                  <tr key={i}>
+                  <tr key={l._key || i} onDragOver={dp.onDragOver} onDrop={dp.onDrop} style={isOver(i) ? { outline: '2px solid #93c5fd' } : undefined}>
+                    <td
+                      style={{ ...styles.lineTd, cursor: 'grab', color: '#9ca3af', textAlign: 'center', userSelect: 'none' }}
+                      draggable
+                      onDragStart={dp.onDragStart}
+                      onDragEnd={dp.onDragEnd}
+                      title={t.estReorderHint}
+                    >⠿</td>
                     <td style={styles.lineTd}>
                       <select value={l.category} onChange={e => updateLine(i, 'category', e.target.value)} style={{ ...styles.input, padding: '6px 8px' }}>
                         {CATEGORIES.map(c => <option key={c} value={c}>{t[CATEGORY_LABEL_KEYS[c]]}</option>)}
                       </select>
                     </td>
                     <td style={styles.lineTd}>
+                      <select value={l.line_type || 'base'} onChange={e => updateLine(i, 'line_type', e.target.value)} style={{ ...styles.input, padding: '6px 8px' }}>
+                        {LINE_TYPES.map(lt => <option key={lt} value={lt}>{t[LINE_TYPE_LABEL_KEYS[lt]]}</option>)}
+                      </select>
+                    </td>
+                    <td style={styles.lineTd}>
                       <input value={l.description} onChange={e => updateLine(i, 'description', e.target.value)} style={{ ...styles.input, padding: '6px 8px' }} />
+                      <input value={l.notes || ''} onChange={e => updateLine(i, 'notes', e.target.value)} placeholder={t.estLineNotePlaceholder} style={{ ...styles.input, padding: '4px 8px', fontSize: 12, color: '#6b7280', marginTop: 3 }} />
                     </td>
                     <td style={styles.lineTd}>
                       <input type="number" step="0.01" min="0" value={l.qty} onChange={e => updateLine(i, 'qty', e.target.value)} style={{ ...styles.input, padding: '6px 8px' }} />
                     </td>
                     <td style={styles.lineTd}>
                       <input value={l.unit || ''} onChange={e => updateLine(i, 'unit', e.target.value)} style={{ ...styles.input, padding: '6px 8px' }} />
+                    </td>
+                    <td style={styles.lineTd}>
+                      {/* Cost is optional — blank means "use price as the cost
+                          baseline" (no line margin claimed). Shown empty, not $0. */}
+                      <input
+                        type="number" step="0.01" min="0"
+                        value={l.cost_cents == null || l.cost_cents === '' ? '' : (parseInt(l.cost_cents, 10) / 100)}
+                        onChange={e => {
+                          const v = e.target.value;
+                          updateLine(i, 'cost_cents', v === '' || !Number.isFinite(parseFloat(v)) ? null : Math.max(0, Math.round(parseFloat(v) * 100)));
+                        }}
+                        placeholder="—"
+                        style={{ ...styles.input, padding: '6px 8px', fontSize: 14, textAlign: 'right' }}
+                      />
                     </td>
                     <td style={styles.lineTd}>
                       <MoneyInput
@@ -439,7 +538,8 @@ function EstimateForm({ existing, onSave, onCancel }) {
                     <td style={{ ...styles.lineTd, textAlign: 'right', fontWeight: 600 }}>
                       {formatCents(total)}
                     </td>
-                    <td style={styles.lineTd}>
+                    <td style={{ ...styles.lineTd, whiteSpace: 'nowrap' }}>
+                      <button onClick={() => saveLineToCatalog(l)} style={styles.iconBtn} title={t.estSaveToCatalog}>🔖</button>
                       <button onClick={() => removeLine(i)} style={styles.iconBtn} title={t.estRemove}>×</button>
                     </td>
                   </tr>
@@ -450,18 +550,12 @@ function EstimateForm({ existing, onSave, onCancel }) {
         </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
           <button onClick={addLine} style={styles.ghostBtn}>{t.estAddLine}</button>
-          <CatalogPicker onPick={(picked) => {
-            // Append a new line pre-filled from the catalog item. Flip
-            // dirty so the tab-close prompt fires after a catalog pick
-            // just like it does after any other line edit.
+          <LinePicker onAdd={(newLines) => {
+            // Append one or more lines pre-filled from the catalog or an
+            // equipment asset. Flip dirty so the tab-close prompt fires,
+            // just like after any other line edit.
             setDirty(true);
-            setLines(arr => [...arr, {
-              category: picked.category || 'materials',
-              description: picked.description,
-              qty: 1,
-              unit: picked.unit || '',
-              unit_cost_cents: picked.unit_cost_cents,
-            }]);
+            setLines(arr => [...arr, ...newLines.map(l => ({ _key: newLineKey(), ...l }))]);
           }} />
         </div>
       </div>
@@ -489,6 +583,19 @@ function EstimateForm({ existing, onSave, onCancel }) {
           <TotalsRow label={`${t.estContingency} (${head.contingency_pct || 0}%)`} value={totals.contingency} />
           <TotalsRow label={`${t.estTax} (${head.tax_pct || 0}%)`} value={totals.tax} />
           <TotalsRow label={t.estTotal} value={totals.total} bold />
+          {totals.alternatesTotal > 0 && (
+            <div style={{ fontSize: 12, color: '#6b7280', padding: '6px 0 0', display: 'flex', justifyContent: 'space-between' }}>
+              <span>{t.estAlternatesNote}</span>
+              <span>{formatCents(totals.alternatesTotal)}</span>
+            </div>
+          )}
+          <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #d1d5db' }}>
+            <TotalsRow label={t.estCostBaseline} value={totals.costBaseline} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontWeight: 700, fontSize: 14, color: totals.estMargin < 0 ? '#dc2626' : '#047857' }}>
+              <span>{t.estMarginProfit}{totals.preTax > 0 ? ` (${((totals.estMargin / totals.preTax) * 100).toFixed(1)}%)` : ''}</span>
+              <span>{formatCents(totals.estMargin)}</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -534,44 +641,114 @@ function Field({ label, required, error, children }) {
   );
 }
 
-// Modal picker that searches /catalog/items, lets the user select one,
-// resolves it via /catalog/items/:id/estimate-line, and passes the line
-// shape up. Lightweight; opens inline rather than a true modal so it
-// doesn't fight with the rest of the form.
-function CatalogPicker({ onPick }) {
+// One unified library picker for estimate lines. A single search spans both
+// reference sources, merged into one list:
+//   • Catalog items  — priced reference costs (materials, rental references,
+//                      subs, labor…) → one line each
+//   • Owned machines — equipment assets → their mobilization + operating (or
+//                      rent-out) lines, resolved from the rates on the asset
+// No copying between the two (see the estimate-phase model): the picker just
+// reads both, so it feels like one library with a single source of truth per
+// rate. Opens inline. onAdd receives an ARRAY of line shapes to append.
+function LinePicker({ onAdd }) {
   const formatCents = useCents();
   const t = useT();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
-  const [items, setItems] = useState([]);
+  const [catalogItems, setCatalogItems] = useState([]);
+  const [equipment, setEquipment] = useState([]);
+  const [assemblies, setAssemblies] = useState([]);
   const [loading, setLoading] = useState(false);
 
+  // Localized "Machine — <part>" description for an equipment line.
+  const EQ_PART_LABELS = {
+    mobilization: t.estEqMobilization, operating: t.estEqOperating, rental: t.estEqRental,
+  };
+
+  // Owned machines + assemblies: fetched once when the picker opens, filtered locally.
+  useEffect(() => {
+    if (!open) return;
+    api.get('/equipment')
+      .then(({ data }) => setEquipment(Array.isArray(data) ? data : []))
+      .catch(() => setEquipment([]));
+    api.get('/catalog/assemblies')
+      .then(({ data }) => setAssemblies(data.assemblies || []))
+      .catch(() => setAssemblies([]));
+  }, [open]);
+
+  // Catalog: searched server-side as the query changes.
   useEffect(() => {
     if (!open) return;
     setLoading(true);
-    const params = q ? { q } : {};
     const timer = setTimeout(() => {
-      api.get('/catalog/items', { params, limit: 30 })
-        .then(({ data }) => setItems(data.items || []))
-        .catch(() => setItems([]))
+      api.get('/catalog/items', { params: q ? { q } : {}, limit: 30 })
+        .then(({ data }) => setCatalogItems(data.items || []))
+        .catch(() => setCatalogItems([]))
         .finally(() => setLoading(false));
     }, 200);
     return () => clearTimeout(timer);
   }, [q, open]);
 
-  async function pick(item) {
+  const needle = q.trim().toLowerCase();
+  const machineResults = needle
+    ? equipment.filter(a => `${a.name} ${a.unit_number || ''}`.toLowerCase().includes(needle))
+    : equipment;
+  const assemblyResults = needle
+    ? assemblies.filter(a => a.name.toLowerCase().includes(needle))
+    : assemblies;
+  const results = [
+    ...assemblyResults.map(a => ({ ...a, _type: 'assembly' })),
+    ...catalogItems.map(it => ({ ...it, _type: 'catalog' })),
+    ...machineResults.map(a => ({ ...a, _type: 'equipment' })),
+  ];
+
+  async function pick(row) {
     try {
-      const { data } = await api.get(`/catalog/items/${item.id}/estimate-line`);
-      onPick(data);
-      setOpen(false);
-      setQ('');
+      if (row._type === 'catalog') {
+        const { data } = await api.get(`/catalog/items/${row.id}/estimate-line`);
+        onAdd([{
+          category: data.category || 'materials',
+          description: data.description,
+          qty: 1,
+          unit: data.unit || '',
+          unit_cost_cents: data.unit_cost_cents,
+          cost_cents: data.cost_cents ?? null,
+        }]);
+      } else if (row._type === 'assembly') {
+        const { data } = await api.get(`/catalog/assemblies/${row.id}/estimate-lines`);
+        const lines = (data.lines || []).map(l => ({
+          category: l.category || 'materials',
+          description: l.description,
+          qty: l.qty ?? 1,
+          unit: l.unit || '',
+          unit_cost_cents: l.unit_cost_cents,
+          cost_cents: l.cost_cents ?? null,
+        }));
+        if (!lines.length) return;
+        onAdd(lines);
+      } else {
+        const { data } = await api.get(`/equipment/${row.id}/estimate-lines`);
+        const lines = (data.lines || []).map(l => ({
+          category: l.category || 'equipment',
+          description: EQ_PART_LABELS[l.part] ? `${data.name} — ${EQ_PART_LABELS[l.part]}` : data.name,
+          qty: l.qty ?? 1,
+          unit: l.unit || '',
+          unit_cost_cents: l.unit_cost_cents,
+          cost_cents: null,
+        }));
+        if (!lines.length) return;
+        onAdd(lines);
+      }
+      close();
     } catch { /* ignore */ }
   }
+
+  function close() { setOpen(false); setQ(''); }
 
   if (!open) {
     return (
       <button onClick={() => setOpen(true)} style={{ background: '#f0f4ff', color: '#1d4ed8', border: '1px solid #c7d2fe', padding: '8px 14px', borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>
-        {t.estFromCatalog}
+        {t.estFromLibrary}
       </button>
     );
   }
@@ -579,39 +756,60 @@ function CatalogPicker({ onPick }) {
     <div style={{
       position: 'absolute', zIndex: 50, background: '#fff',
       border: '1px solid #d1d5db', borderRadius: 8, padding: 12,
-      boxShadow: '0 8px 24px rgba(0,0,0,0.12)', width: 480, maxHeight: 360, overflow: 'auto',
+      boxShadow: '0 8px 24px rgba(0,0,0,0.12)', width: 480, maxHeight: 380, overflow: 'auto',
       marginTop: 40,
     }}>
       <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
         <input
           autoFocus
-          placeholder={t.estSearchCatalog}
+          placeholder={t.estSearchLibrary}
           value={q}
           onChange={e => setQ(e.target.value)}
-          style={{ padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14, flex: 1 }}
+          style={{ flex: 1, boxSizing: 'border-box', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 14 }}
         />
-        <button onClick={() => { setOpen(false); setQ(''); }} style={{ background: 'transparent', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 18 }}>×</button>
+        <button onClick={close} style={{ background: 'transparent', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: 18 }}>×</button>
       </div>
-      {loading ? (
+      {loading && results.length === 0 ? (
         <div style={{ fontSize: 13, color: '#6b7280', padding: 12 }}>{t.estSearching}</div>
-      ) : items.length === 0 ? (
+      ) : results.length === 0 ? (
         <div style={{ fontSize: 13, color: '#6b7280', padding: 12 }}>{t.estNoMatches}</div>
       ) : (
         <div>
-          {items.map(item => (
+          {results.map(row => (
             <div
-              key={item.id}
-              onClick={() => pick(item)}
+              key={`${row._type}-${row.id}`}
+              onClick={() => pick(row)}
               style={{ padding: '8px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}
               onMouseEnter={e => e.currentTarget.style.background = '#f3f4f6'}
               onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
             >
-              <div style={{ fontWeight: 600, color: '#111827' }}>{item.name}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontWeight: 600, color: '#111827' }}>{row.name}</span>
+                {row._type === 'equipment' && (
+                  <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#6d28d9', background: '#ede9fe', padding: '1px 6px', borderRadius: 6 }}>{t.estLibMachine}</span>
+                )}
+                {row._type === 'assembly' && (
+                  <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#0369a1', background: '#e0f2fe', padding: '1px 6px', borderRadius: 6 }}>{t.estLibAssembly}</span>
+                )}
+              </div>
               <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
-                {item.sku && `${item.sku} · `}
-                {item.unit && `${t.estPer} ${item.unit}`}
-                {item.sell_price_cents != null && ` · ${formatCents(item.sell_price_cents)}`}
-                {!item.is_stocked && ` · ${t.estCatalogOnly}`}
+                {row._type === 'catalog' ? (
+                  <>
+                    {row.sku && `${row.sku} · `}
+                    {row.unit && `${t.estPer} ${row.unit}`}
+                    {row.sell_price_cents != null && ` · ${formatCents(row.sell_price_cents)}`}
+                    {!row.is_stocked && ` · ${t.estCatalogOnly}`}
+                  </>
+                ) : row._type === 'assembly' ? (
+                  <>{row.item_count} {t.estAssemblyItems}</>
+                ) : (
+                  <>
+                    {row.unit_number && `${row.unit_number} · `}
+                    {row.operating_rate != null ? `${formatCents(Math.round(parseFloat(row.operating_rate) * 100))}/${row.operating_unit || 'hr'}`
+                      : row.rent_out_rate != null ? `${formatCents(Math.round(parseFloat(row.rent_out_rate) * 100))}/${row.rent_out_unit || 'day'}`
+                      : t.estEqNoRates}
+                  </>
+                )}
               </div>
             </div>
           ))}
@@ -715,7 +913,7 @@ function EstimateDetail({ id, onBack, onEdit }) {
       // step. Auto-copy lets them paste straight into an email.
       const url = `${window.location.origin}/e/${data.response_token}`;
       try { await navigator.clipboard?.writeText(url); } catch {}
-      toast(t.estToastSent, 'success');
+      toast(data.email?.sent ? `${t.estToastEmailed} ${data.email.to}` : t.estToastSent, 'success');
     } catch (err) {
       setActionError(err.response?.data?.error || t.estErrSend);
     } finally {
@@ -796,6 +994,52 @@ function EstimateDetail({ id, onBack, onEdit }) {
     }
   }
 
+  // Clone this estimate into a fresh draft (the "duplicate to revise" path +
+  // repeat-job reuse). Returns to the list, where the new "… (copy)" draft shows.
+  async function duplicate() {
+    setBusy(true);
+    setActionError(null);
+    try {
+      const { data } = await api.post(`/estimates/${id}/duplicate`);
+      toast(`${t.estToastDuplicated} ${data.estimate_number}`, 'success');
+      onBack();
+    } catch (err) {
+      setActionError(err.response?.data?.error || t.estErrDuplicate);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Admin records a deal closed off-app (phone / handshake), then is offered to
+  // convert straight to a project — so a won job never gets stuck in "sent".
+  async function markAccepted() {
+    if (!await confirm({
+      title: t.estMarkAcceptedTitle,
+      body: t.estMarkAcceptedBody,
+      confirmLabel: t.estMarkAccepted,
+    })) return;
+    setBusy(true);
+    setActionError(null);
+    let ok = false;
+    try {
+      await api.post(`/estimates/${id}/accept`, {});
+      toast(t.estToastAccepted, 'success');
+      await load();
+      ok = true;
+    } catch (err) {
+      setActionError(err.response?.data?.error || t.estErrAccept);
+    } finally {
+      setBusy(false);
+    }
+    if (ok && await confirm({
+      title: t.estConvertConfirmTitle,
+      body: t.estConvertNowBody,
+      confirmLabel: t.estConvert,
+    })) {
+      await convert();
+    }
+  }
+
   async function convert() {
     if (!await confirm({
       title: t.estConvertConfirmTitle,
@@ -823,11 +1067,15 @@ function EstimateDetail({ id, onBack, onEdit }) {
   const isAccepted = estimate.status === 'accepted';
 
   // Group lines by category for display.
+  // Base scope (base + allowance) is grouped by category and totaled; alternates
+  // and options are listed separately below the total (priced, not summed in).
+  const isAlt = l => l.line_type === 'alternate' || l.line_type === 'optional';
   const linesByCat = {};
   for (const c of CATEGORIES) linesByCat[c] = [];
   for (const l of estimate.lines || []) {
-    if (linesByCat[l.category]) linesByCat[l.category].push(l);
+    if (!isAlt(l) && linesByCat[l.category]) linesByCat[l.category].push(l);
   }
+  const altLines = (estimate.lines || []).filter(isAlt);
 
   // Full markup→tax cascade, same helper the PDF uses, so the on-screen
   // totals match the downloaded document to the cent.
@@ -858,6 +1106,7 @@ function EstimateDetail({ id, onBack, onEdit }) {
           <button onClick={downloadPDF} disabled={pdfGenerating} style={styles.ghostBtn}>
             {pdfGenerating ? t.estGenerating : t.estDownloadPdf}
           </button>
+          <button onClick={duplicate} disabled={busy} style={styles.ghostBtn}>{t.estDuplicate}</button>
           {isDraft && (
             <>
               <button onClick={onEdit} style={styles.ghostBtn}>{t.estEdit}</button>
@@ -871,6 +1120,9 @@ function EstimateDetail({ id, onBack, onEdit }) {
           )}
           {isSent && (
             <button onClick={withdraw} disabled={busy} style={styles.ghostBtn}>{t.estWithdraw}</button>
+          )}
+          {(isDraft || isSent) && (
+            <button onClick={markAccepted} disabled={busy} style={styles.primaryBtn}>{t.estMarkAccepted}</button>
           )}
           {isAccepted && !estimate.converted_project_id && (
             <button onClick={convert} disabled={busy} style={styles.primaryBtn}>
@@ -948,7 +1200,10 @@ function EstimateDetail({ id, onBack, onEdit }) {
               <tbody>
                 {linesByCat[category].map(l => (
                   <tr key={l.id}>
-                    <td style={{ padding: '4px 0' }}>{l.description}</td>
+                    <td style={{ padding: '4px 0' }}>
+                      {l.description}{l.line_type === 'allowance' ? ` (${t.estLineTypeAllowance.toLowerCase()})` : ''}
+                      {l.notes ? <div style={{ fontSize: 12, color: '#9ca3af' }}>{l.notes}</div> : null}
+                    </td>
                     <td style={{ padding: '4px 8px', textAlign: 'right', color: '#6b7280', width: 100 }}>
                       {l.qty} {l.unit || ''}
                     </td>
@@ -970,6 +1225,23 @@ function EstimateDetail({ id, onBack, onEdit }) {
           {estimate.tax_pct > 0 && <TotalsRow label={`${t.estTax} (${estimate.tax_pct}%)`} value={breakdown.tax} />}
           <TotalsRow label={t.estTotal} value={breakdown.total} bold />
         </div>
+
+        {altLines.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>{t.estAlternatesHeading}</div>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+              <tbody>
+                {altLines.map(l => (
+                  <tr key={l.id}>
+                    <td style={{ padding: '4px 0' }}>{l.description} <span style={{ color: '#9ca3af', fontSize: 12 }}>({t[LINE_TYPE_LABEL_KEYS[l.line_type]]})</span></td>
+                    <td style={{ padding: '4px 8px', textAlign: 'right', color: '#6b7280', width: 100 }}>{l.qty} {l.unit || ''}</td>
+                    <td style={{ padding: '4px 0', textAlign: 'right', width: 120 }}>{formatCents(l.total_cents)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {(estimate.exclusions || estimate.terms) && (

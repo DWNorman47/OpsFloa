@@ -21,6 +21,111 @@ that holds the exhaustive detail.
 
 ## 🔧 Bugs — set aside for later
 
+- **Field Work — residual findings (2026-08-20 deep audit; the big ones were FIXED same day).**
+  FIXED 2026-08-20: individual-mode completion misattribution (history now aggregates
+  `daily_checklist_item_user_state`); field-report offline-replay idempotency (client_request_id +
+  server dedup, migration 0192); shared-text last-write-wins (compare-and-swap on prev_value, 409
+  on conflict); `field_report_photos.media_type` CHECK (0193) + constant; haul-ticket qty upper
+  bound; daily-report "No project" (NULL project_id) duplicate — migration 0194 dedupes existing
+  rows and adds a NULLS-NOT-DISTINCT unique index, and the POST reverted to an atomic ON CONFLICT
+  upsert.
+  FIXED 2026-08-20 (pass 2): safety-talk media leaks — deleting a talk or an attachment now purges
+  the R2 object(s) and refunds storage (was orphaning + drifting both directions); the attachment
+  POST HEAD-verifies the REAL object size and allowlists the URL to its own folder (was trusting
+  client `size_bytes` → storage-cap bypass); batch media-retention deletes gained the
+  still-referenced guard; negative `break_minutes` can no longer inflate pay (reader clamps at 0 +
+  write-site clamps + CHECK 0195). STILL OPEN: (b) LOW —
+  duplicate `GET /days/:dayId` route (419 shadows 803) leaves the plan-edit handler dead; a worker
+  with `role_id = NULL` sees no role-scoped items; assignment items mislabeled `source='recurring'`;
+  a same-text-different-MODE checklist item is still dropped (only same-mode different-role merges);
+  report photo display order is nondeterministic (identical created_at).
+
+- **Field Work — media & scheduling residuals (2026-08-20 audit pass 2, LOW/MED).**
+  (1) Project-archive media delete (`mediaRetention.deleteMediaForProject`) covers only
+  `field_report_photos` — recordings, safety-talk attachments, and inventory photos tied to the
+  archived project are neither deleted nor storage-decremented (their R2 objects survive + keep
+  counting). (2) A recording stuck in `status='processing'` (AssemblyAI never returns) is re-polled
+  every 20s forever with no max-attempt/age cutoff; `cleanupStagedVideo` only runs on completion, so
+  a stuck *video* keeps its R2 object + counted storage indefinitely (`transcriptionPoller.js`). Not
+  a cost loop. (3) `mark-day` dedup is SELECT-then-INSERT with no `(user_id, work_date)` unique index
+  — two rapid taps/devices can both insert a pending day (pay is NOT doubled — `computeDailyPayCosts`
+  counts distinct days — but it pollutes approvals/`today-marked`). (4) Two "Day N" counters: the work-
+  calendar ranks marked `project_work_days` (`ROW_NUMBER`), but ordinal *firing* counts started days
+  (`MAX(day_number)+1 WHERE status IN active/completed`) — they diverge on a skipped/unmarked day, so
+  a checklist pinned to "Day 3" can fire on the wrong date. (5) `pauseOverdueCalendar` compares
+  `scheduled_date < CURRENT_DATE` (server UTC, not company-local) — off-by-a-day on the queue's
+  on-time/off-time display west/east of UTC (mostly cosmetic; the exact-date match still activates the
+  right plan). (6) `PUT /days/:dayId/plan-items` mirrors items onto the active day but leaves the
+  edited ordinal/calendar plan `pending` pointing at an already-consumed day-number/date, so it can
+  never activate (queue clutter). (7) Documents (`project_/client_/worker_documents`,
+  `submittal_documents`, subcontractor docs) store a client `size_bytes` but never
+  increment/decrement storage — entirely unmetered against the plan cap; appears by-design (docs vs
+  media), flag only if documents are meant to count.
+
+- **Field Work — geolocation / field-log minors (2026-08-20 audit).** Geofence fails OPEN when a
+  project's `geo_radius_ft` is 0 (falsy — `clock.js:129/401` skip the whole distance check); an
+  exact `0` lat/lng is treated as "missing location". Haul-ticket qty has a lower bound but no upper
+  bound (`99999999` skews reconcile sums). Location-ping throttle is a non-atomic check-then-insert
+  (bounded). Safety-talk attachment DELETE doesn't call R2 delete (orphaned objects). Field
+  geolocation trusts client lat/lng with no plausibility check (inherent browser-GPS limitation).
+
+- **QBO sync — smaller gaps (2026-08-20 audit; the idempotency-key duplication was fixed).**
+  (a) Manual batch pushes (`/push`, `/push-expenses`, `/push-bills`) collect per-object failures into
+  the HTTP response only — NOT into `qbo_sync_errors` — so a failure vanishes if the admin navigates
+  away, and `retry-error` only handles reimbursement/time_entry (a failed bill can never be retried).
+  (b) `createVendor`/`createCustomer` take no requestId and the create routes don't check an existing
+  mapping first → a double-fire makes two QBO vendors/customers (only the 2nd id persists). (c)
+  push-bills `force` deliberately drops the requestId and re-bills already-billed rows with no
+  confirmation — a double-pay foot-gun. (`server/routes/qbo.js`, `services/qbo.js`.)
+
+- **Field/PM — smaller gaps (2026-08-20 audit; subsystem is otherwise well-hardened).** (a)
+  `booking.js` book endpoints validate only the lower time bound (`advance_notice_hrs`), not the
+  `max_advance_days` upper bound or `slot_interval_min` alignment — a scripted/public POST can book
+  an arbitrary far-future or off-grid slot. (b) `dailyChecklist.js` registers `GET /days/:dayId`
+  twice (419 + 803); the second (plan-edit payload with scheduled_date/name/notes) is dead code, so
+  the plan-edit view gets the reduced payload. (c) `inspections.js` POST/PATCH don't company-scope
+  `template_id`/`project_id` (defense-in-depth; largely inert — `inspections.project_id` is UUID vs
+  `projects.id` INTEGER so the join never matches). (d) a `completed` work order can be PATCHed back
+  to `open` (no terminal-state lock) — product decision.
+
+- **Storage-usage accounting drift — FIXED 2026-08-20 (two main paths).** field-report presigned
+  videos: no longer incremented optimistically at reservation from the unverified client `size`
+  (an abandoned upload / `size=0` request no longer drifts or bypasses); storage is now counted at
+  submit from the video's REAL R2 object size (HEAD-verified) and stored, so delete refunds it.
+  Inventory photo replace (location + setup PATCH) now reclaims removed photos — HEAD each dropped
+  URL, decrement, and delete the R2 object. Residual (LOW, left): `storage.js` cap check is
+  check-then-act (two concurrent uploads can both pass — bounded overage), `getStorageInfo` allows
+  `used <= limit` (one over at the cap), and `safetyTalks.js` still trusts a client `size_bytes`
+  (symmetric inc/dec so no drift, but an orphaned presigned upload is uncounted). Orphaned R2
+  objects from abandoned uploads remain a separate janitor concern.
+
+- **Cycle-count set-to-counted subsumes movements during the apply window (design note).**
+  (2026-08-19, after FIXING the TOCTOU) Completion now SETS on-hand to the counted physical
+  under a row lock (`setStockAbsolute`) instead of adding a snapshot-based delta, so a
+  movement while the count was open can no longer double-count. Residual: a movement between
+  when the counter entered the count and when an admin completes it is subsumed into the count
+  (the physical count is treated as authoritative as of completion) — standard WMS behavior,
+  but if precise, freeze counted items or complete promptly. A stricter model would capture
+  system-on-hand at count-entry and apply only the discovered shrinkage.
+
+- **Inventory adjustment transactions discard their sign in the ledger.** (2026-08-19)
+  The main txn POST and cycle-count adjust insert `quantity = Math.abs(...)` while
+  applying the SIGNED delta to stock (`inventory.js` ~926/951/1489/1569). So a −5 and a
+  +5 adjustment are stored identically (`type=adjust, quantity=5`); the
+  `inventory_transactions` ledger can't be replayed to rebuild stock and the history/audit
+  view is misleading (breaks "everything traceable"). Cycle-count adjust rows also omit
+  `unit_cost`, so valuation adjustments carry no cost basis. Grand totals aren't wrong
+  today (issues are always positive; valuation reads the stock table), but ledger
+  integrity is broken. Fix: store the signed quantity (and a unit_cost) on adjust rows.
+
+- **Issues/transfers can drive stock arbitrarily negative and bill fictional material
+  to a job.** (2026-08-19) `inventory.js` applies negative deltas unconditionally; a
+  post-commit read only returns `warning:'stock_negative'` — the txn still commits. A
+  worker can issue 1,000 units a location never held → stock deeply negative, a valued
+  `issue` txn is written, and `projectCost.materialsCents` charges the project for
+  material that doesn't exist. Decide: block negative issues (vs warn), at least on the
+  received/issued-basis money path. (Policy call — some shops allow backorder/negative.)
+
 - **Leave + worked on the SAME day — verify no double-pay.** (2026-08-05) Reported as
   "sick/vacation aren't working"; David suspects it was a test where a sick day was
   entered for a day the employee *also* clocked in. The pay engine appends synthetic
@@ -157,7 +262,212 @@ that holds the exhaustive detail.
   `substantially_complete` when the stored row is stale. Also `const byCat` on
   the line above is assigned and never read — dead. (2026-07-16)
 
+- **Money-flow bug-hunt leftovers — pre-existing, low-frequency or risky to change.**
+  (2026-08-19) Surfaced during the 3-agent bug hunt after the estimate→closeout
+  build-out; consciously left un-fixed (the 10 clear defects that pass found were
+  fixed same day). Each is a real-but-minor issue:
+  - **ManageRates "Save section" saves EVERY section's edits.** `saveSection(section)`
+    (`client/src/components/ManageRates.jsx:263`) PATCHes the whole ~90-field settings
+    payload regardless of which button was clicked; `section` only drives the checkmark.
+    Editing Labor Burden then clicking a different section's Save still commits the
+    burden change. No corruption (server validates), but surprising. Fix: send only the
+    fields owned by `section`. (Blast radius grew when `labor_burden_pct` /
+    `materials_cost_basis` were added to that payload.)
+  - **Estimate & CO numbers minted without an advisory lock.** `estimates.js` (~:270,340)
+    and `changeOrders.js` (~:204) do `MAX(number)+1` inside the INSERT with no
+    `pg_advisory_xact_lock` (invoices.js DOES lock). `estimate_number`/`co_number` are
+    UNIQUE, so two concurrent creates / a double-click collide → loser hits an
+    unhandled 23505 → 500. No corruption; rare 500. Fix: same per-company advisory lock.
+  - **P&L / WIP swallow labor/materials/equipment errors to $0.** `projectReports.js`
+    `spendTotals` wraps the labor query in `try/catch {}` (and projectCost helpers return
+    0 on any exception), so a *genuine* DB error makes P&L silently show $0 cost / inflated
+    profit — while the Spend tab (`projectSpend.js:64`, unwrapped) 500s on the same error.
+    The catches intentionally guard partial-migration envs; narrowing them (check
+    `tableExists`/error-code, let real errors propagate) is the fix but risks that guard.
+  - **Estimate header PATCH re-checks frozen status OUTSIDE its lock (TOCTOU).**
+    `estimates.js` (~:403) reads status on the pool before BEGIN with no `FOR UPDATE`,
+    unlike PUT /lines / send / convert. A PATCH changing `margin_pct` can interleave with
+    a concurrent send and silently change the totals of an already-sent estimate. Fix:
+    move the `SELECT status … FOR UPDATE` + frozen check inside the TX.
+  - **Minor:** `MoneyInput` reverts unparseable text (`"15.5.5"`) on blur with no cue;
+    catalog item PATCH doesn't guard `is_stocked` (DELETE does); `labor_burden_pct` may
+    reject an explicit 0 (leave-unset = same effect); `purchase_orders.status` enum is
+    validated inline in `inventory.js` but missing from `docs/db-enums.md`.
+
 ## 🧭 Design flaws — raised, set aside for later
+
+- **Equipment economics — semantics + gaps (2026-08-20 audit).** (a) DECISION: a week/month
+  `operating_unit` prorates by days-used (`COUNT(DISTINCT log_date)/7 or /30 × rate`,
+  `projectCost.js`), so a $9,000/month machine used 10 distinct days books $3,000 — correct if
+  "operating rate" means usage-prorated, wrong if it means the full calendar-period rental. Confirm
+  the intended meaning. (b) `mobilization_cost` is emitted as an estimate line but no code books it
+  into ACTUAL project spend — WIP/P&L understates vs the bid unless someone hand-enters it. (c) a
+  machine with a NULL `operating_rate` silently books $0 for its hours (no per-company default,
+  no warning). (FIXED same day: negative/absurd hours validation + the frozen-project guard on
+  hours log/delete.)
+
+- **Client currency/rounding nits (2026-08-20 client audit; cents-vs-dollars was clean).**
+  Hardcoded `$` in the mileage preview (`ReimbursementsAdmin.jsx`) and the "Contract $" input label
+  (`ProjectFinancialsTab.jsx`) ignore a non-USD company currency (cosmetic; amounts are correct).
+  `OvertimeReport.jsx`/`PayrollRun.jsx` sum dollar floats then format, so a re-summed column total
+  can differ from the rounded rows by a penny (`PayrollHistory` sums integer cents server-side —
+  the better pattern). `WorkerSummary.jsx` prices a 0/unset rate at a hardcoded $30/hr in its
+  (client-side estimate) earnings tile.
+
+- **`cant_make_it` shifts still value a full leave day.** (2026-08-20) A shift a worker flagged
+  "can't make it" still counts its hours toward a full sick/vacation day's schedule-first value.
+  Appears intended (schedule-first), but worth a product decision. (`shiftHoursByDate`.)
+
+- **Billing LOW (from the 2026-08-19 billing audit).** (a) Seat-cap check is a TOCTOU race:
+  `checkWorkerLimit` does a COUNT then the caller INSERTs with no lock/transaction, so two
+  simultaneous create/invite requests at seat−1 both pass → bounded +1 overage (matters only
+  where seats are billed). (b) `/stripe/addon` sets the `addon_*` flag immediately after
+  `subscriptionItems.create`, which only schedules a prorated charge — the entitlement isn't
+  payment-confirmed; combined with (c) feature gates granting full access during `past_due`/
+  `unpaid` (only `canceled`/`trial_expired` deny), a company keeps add-ons through a failed
+  payment until Stripe fires `subscription.deleted`. (c) is a reasonable dunning grace window
+  but worth a conscious decision. Webhook replay itself is safe (absolute-value writes + an
+  `event.created` watermark).
+
+- **Money input overflow / uncapped free-text (LOW, from the 2026-08-19 injection audit).**
+  Invoice/estimate line `qty × unit_cost_cents` (`computeLineTotal`) has no ceiling, so values
+  near 1e15 can exceed `Number.MAX_SAFE_INTEGER` (precision loss) or BIGINT (INSERT 500) —
+  trusted-author only. Several free-text fields (invoice notes/terms/project_address, invoice-
+  line notes, payment notes) are written with no length cap while sibling fields are capped —
+  storage bloat, inconsistent. Consider a shared max-length + a sane per-line total ceiling.
+
+- **Security LOW / hardening (from the 2026-08-19 audit; no exploit path or admin-only).**
+  (a) `shifts.js` admin shift create/edit stores `project_id` from the body with no
+  in-company check (unlike clock.js/reimbursements.js) — a single-field cross-company
+  `project_name` leak to an admin who guesses an id. (b) `liveSessions.js` SSE stream
+  skips the `requirePlanToolsAddon` gate the REST routes carry (entitlement bypass;
+  company isolation intact). (c) `push.js` `/push/generate-vapid-keys` is unauthenticated
+  (self-disables once keys are set — remove post-setup). (d) `estimates.js`/`invoices.js`
+  store the raw share token in plaintext alongside its hash (change orders / lien waivers
+  store hash only). (e) `estimates.js` PATCH does its frozen/company check with a plain
+  SELECT, not `FOR UPDATE`, so a total-changing edit can race a concurrent `/send`.
+
+- **Labor-bill paths show wages to a manage_integrations admin without view_worker_wages.**
+  (2026-08-19) `push-bills-preview` (now gated with manage_integrations) and `push-bills`
+  both surface per-worker labor dollars but require only `manage_integrations`, not
+  `view_worker_wages` (unlike `push-payroll`). Decide whether the bill paths should also
+  require wage visibility. (`server/routes/qbo.js`.)
+
+- **Dashboard/KPI "this week / this month" boundaries computed in UTC.** (2026-08-19)
+  `weekRange(new Date())` and `CURRENT_DATE`/`date_trunc('month', CURRENT_DATE)` on the
+  UTC server make "hours this week", "active workers this week/month", the OT-this-week
+  counter, and the pay-period picker flip ~5h early for west-of-UTC companies (the window
+  between local-afternoon and local-midnight). Stored pay data is TZ-correct; only these
+  live read-time boundaries drift. (`admin.js` /kpis + summary, `timeEntries.js`,
+  `shifts.js`, `weekBounds.js`.) The persisted clock-in fixes landed 2026-08-19.
+
+- **Inventory standard-cost notes.** (2026-08-19) Receipts never update
+  `inventory_items.unit_cost` (standard-cost model — on-hand value can diverge from actual
+  purchase cost; no moving-average maintenance). Over-receipt is silently truncated to the
+  remaining qty (a real over-shipment is dropped with no error). Returns/reversals aren't
+  modeled, so material issued-then-returned leaves project cost permanently inflated.
+
+- **Deductive (credit) change orders can't be modeled.** (2026-08-19) `changeOrders.js`
+  rejects negative qty/unit_cost lines and clamps line totals to ≥0, and `contractValueCents`
+  only ever ADDS accepted CO totals while `applyAcceptedCoToBudget` only increments budget.
+  So a scope-reduction / credit CO (a normal construction event) has no representation —
+  worse, forcing it in as a positive line RAISES the contract and budget the wrong way.
+  Needs a signed-CO path (allow negative totals; contract/budget follow the sign).
+
+- **Closeout freeze guards only 2 of ~6 cost sources.** (2026-08-19) `projectFrozen` is
+  enforced on project_expenses and time entries, but NOT on change-order accept, subcontract
+  payments, inventory issues / PO receipts, or equipment-hours logging. The locked snapshot
+  (`final_financials`) is immutable and safe, but the *live* P&L a user compares against the
+  lock keeps moving after closeout if any of those unguarded costs are added on a closed job.
+  Consider extending `projectFrozen` to CO-accept + the other cost mutations.
+
+- **Hand-set `contract_value_cents` still has accepted COs added on top.** (2026-08-19)
+  `contractValueCents` takes the override as base then ALSO adds accepted CO totals, so an
+  admin who set the override to the current all-in contract (mentally including an accepted
+  CO) gets it double-counted. Decide whether the override is pre- or post-CO and document it.
+
+- **Labor burden double-applies if an estimator enters an already-burdened cost.** (2026-08-19)
+  Budget seeding multiplies labor by (1 + burden%) on convert and CO-accept, correct for a raw
+  wage but inflating by ~burden² if the entered `cost_cents` already includes burden. Undetectable
+  from data — a UI note ("enter raw wage cost") or a per-line "already burdened" flag would help.
+
+- **Equipment cost can be double-entered (manual expense + logged hours).** (2026-08-19)
+  Equipment spend = manual project_expenses tagged equipment PLUS equipmentUsageCents (hours ×
+  rate); nothing dedupes a manual equipment expense against logged hours for the same machine
+  (`project_expenses.equipment_id` exists but is unused). By-design today; worth a guard/warning.
+
+- **Invoicing minors (AR modeling choices).** (2026-08-19) From the invoicing audit, all
+  low-harm: overpayment is uncapped so `collected_cents` can exceed `billed_cents` with no
+  flag; voiding an invoice leaves its `invoice_payments` rows in place (money silently drops
+  out of every rollup with only an audit line); the public invoice view shows a total that
+  includes unreleased retainage with no "retainage withheld / due now" breakdown; a $0-total
+  invoice can never reach `paid`. Confirm each is the intended model. (`server/routes/invoices.js`.)
+
+- **WH-347 prices a daily-rate worker on an hourly-equivalent basis.** (2026-08-19,
+  FIXED the ~8× overpay same day) The certified-payroll `computeWorker` now costs a
+  daily-rate worker at daily ÷ regular_shift_hours (an hours-based document needs an
+  hourly rate). This equals the daily-rate pay stub (days × daily rate) only when the
+  worker's daily hours = the standard shift; a 10h day on an 8h standard would show
+  10 × (daily/8) on the WH-347 vs 1 day on the stub. Acceptable for the form, but if a
+  daily-rate worker ever appears on certified payroll with off-standard days, decide
+  whether the WH-347 should instead mirror the stub's days × daily total. (`admin.js`
+  computeWorker.) → memory: [[project_payroll_review_decisions]]
+
+- **QBO "push-payroll" journal: no overlap guard + books gross to both sides.** (2026-08-19)
+  `POST /api/qbo/push-payroll` (`server/routes/qbo.js`) journals total gross labor for a
+  work-date range. Two gaps: (1) idempotency is only `sha256(companyId|from|to)`, so two
+  *overlapping* ranges (Aug 1–15 then Aug 1–31) post two journal entries and double-book
+  the overlap in the GL — unlike payroll-run/finalize, which has an overlap probe. (2) It
+  debits AND credits the same GROSS on a work-date window, so it ignores deductions
+  (credit overstated vs the register's net) and uses a different window basis than the
+  pay-date-keyed register, so the journal won't tie to the finalized run. Decide what the
+  journal should represent (gross labor accrual vs net + withholding liabilities) and add
+  the same overlap/duplicate guard finalize has. Lower-severity siblings: the grouped-
+  deduction generate window (±45d) can miss the partner of a *monthly* `by:'pair'` group;
+  month-group keying uses the shifted pay-date month for weekly/biweekly (no `groupMonth`).
+  Found 2026-08-19 pay-engine pass. → memory: [[project_payroll_review_decisions]]
+
+- **Grouped-ruleset amount cap is applied PER CHECK, so a pair can deduct up to 2× the cap.**
+  (2026-08-19) `applyDeductions` caps each check's combined per-check+grouped total against
+  the ruleset cap independently; for a `by:'pair'` grouping the two checks are each capped,
+  so the group can withhold up to twice the cap. Stub and admin run agree (both use
+  `applyDeductions`), so it's self-consistent — but confirm per-check-cap is the intended
+  semantics for a *grouped* cap, vs one cap across the group. (`server/utils/paycheckRun.js`.)
+
+- **DST overnight shift is paid the wall-clock span, not real hours.** (2026-08-19) Every
+  pay path reads `start_time`/`end_time` (bare TIME) and computes wall-clock hours, so a
+  23:00→07:00 shift is always 8.00h even on a fall-back night (9 real hours → 1h underpay)
+  or spring-forward (7 real → 1h overpay). The instant-based `elapsedMinutes` would give the
+  true figure but `start_ts`/`end_ts` are write-only (no pay reader consumes them). Consistent
+  across surfaces and pending the Phase-3 timestamp-reader cutover, but a real DST-zone
+  over/under-pay. Also affects the night-differential window.
+
+- **Weekly-guarantee week count coarsely rounds non-7-day periods.** (2026-08-19)
+  `computeGuaranteeShortfall` uses `weeks = max(1, round(days/7))`, so a 30-day month → 4
+  weeks (a 40h/wk guarantee tops up to only 160h for a ~4.33-week month) and a 10-day range
+  → 1 week. Ties into the still-owed pay-rule-window work. → memory: [[project_pay_rule_windows]]
+
+- **Preview surfaces report a "Net Pay" that ignores ruleset cap / min-net.** (2026-08-19)
+  The worker invoice, overtime report, and payroll CSV price deductions through
+  `payStubTotals` (gross − per-check deductions, clamped ≥0) — no exempt, no cap, no
+  min-net floor, and grouped deductions deferred. So their "Net" is a fourth distinct
+  number from the payroll run's net. Partly by design (a date-range preview can't
+  resolve pay-period groups), but the cap/min-net omission on the *per-check* portion
+  is a real inconsistency with `applyDeductions` (which now caps the combined total),
+  and the CSV doesn't surface `deferred_deductions` so a reader can't tell groups were
+  omitted. Decide: label these as "preview / pre-deduction" nets, or make them run the
+  full per-check cap/min-net. (`server/utils/payStatement.js` previewDeductionSplit +
+  payStubTotals.) Found 2026-08-19 pay-engine pass. → memory: [[project_payroll_review_decisions]]
+
+- **A grouped deduction can't exceed one check's take-home room (min-net truncation).**
+  (2026-08-19) In `applyDeductions`/`computeRuleNet` the min-net floor uses the flagged
+  check's OWN gross, while a grouped deduction is figured on the group's combined gross
+  minus exempt. If the group's deduction is large relative to the single check it lands
+  on, `g − dedTotal < minNet` fires and silently trims the grouped deduction to
+  `g − minNet` — under-withholding the group's intended total, with no spill to the
+  other check(s) in the group. Consistent between the two functions (not a divergence),
+  so low urgency, but a real ceiling worth a design decision: should a group's deduction
+  be allowed to spill across its checks? (`server/utils/paycheckRun.js`.)
 
 - **Should the minimum-daily floor appear on the WH-347 at all?** Certified Payroll now
   includes worked-day min-daily floor hours in the regular total AND the day columns (they
@@ -223,6 +533,64 @@ that holds the exhaustive detail.
 ## ❓ Open questions / decisions for you
 *Blocked on your call before anyone builds.*
 
+- **Forgotten / multi-day clock-out is paid as <24h (mod-24 truncation) — MONEY-CRITICAL.**
+  (2026-08-20 Field Work deep-audit pass 2) The pay engine derives a shift's duration from
+  wall-clock time-of-day only: `hoursWorked(start_time,end_time)` does `if (ms<0) ms+=86400000`,
+  capping any shift under 24h. Clock in Mon 08:00, forget, clock out Wed 09:00 → stored
+  `work_date=Mon, start_time=08:00, end_time=09:00` → **paid 1 hour** for ~49h. The correct
+  instants (`start_ts`/`end_ts`) ARE stored, but NO pay surface reads them — the Phase-3 reader
+  cutover never landed (`payStatement.js` + `LABOR_ENTRY_COLUMNS` still select `start_time/end_time`;
+  `elapsedMinutes(start_ts,end_ts)` in `timeFormat.js` is written+DST-correct but unused). Same
+  truncation hits admin edits that swap end<start (silently paid as a 16h overnight) and
+  `recoverLostClockOut` (offline never-synced clock-in). The 16h stale-clock cron only *alerts* —
+  never caps/auto-closes. **Decision:** this is the reader cutover (money-critical, jurisdiction-
+  sensitive, touches every worker's pay) — do it as its own staged+tested change, not folded into
+  an audit pass. I did NOT change the pay reader unilaterally.
+  INTERIM SHIPPED 2026-08-20: `time_entries.long_shift_flagged` (migration 0196) is set at
+  clock-out + offline-recover when the real instant span exceeds the wall-clock hours by ≥1h (i.e.
+  a day boundary was truncated); the Approvals queue shows a red "⚠ Long shift: {real span}" badge
+  (from `start_ts`/`end_ts`) so an admin doesn't blind-approve a mis-valued entry (entries are
+  `pending` by default; only `approved` ones are paid). This SURFACES the anomaly but does NOT fix
+  the valuation — the reader cutover is still owed. Note the flag can't catch a swapped-time admin
+  edit (17:00→09:00 is a representable 16h overnight, ambiguous by design).
+
+- **Per-project visibility (`visible_to_user_ids`) is display-only, not enforced on write.**
+  (2026-08-20 audit) The gate exists only on list reads (`projects.js` GET, the clock-in prompt).
+  Every *action* endpoint checks company membership only — clock in (`clock.js`), clock switch,
+  field-report create (`projectBelongsToCompany`), all daily-checklist project routes. A worker
+  walled off from Project X (hidden from their picker) can still POST `/api/clock/in` (or /switch,
+  or a field report) with X's numeric `project_id` — trivially guessable — and log time/reports
+  against it. Same-company only (no cross-tenant). **Decision:** is `visible_to_user_ids` an access
+  boundary or just picker declutter? If a boundary, enforce it server-side on the write paths (I did
+  NOT, since enforcing could break legit flows where a worker must log to a not-listed project).
+  Sibling: `field_show_overhead_projects` is likewise client-only — `/api/projects` still ships
+  overhead/internal codes (Yard, Bench, PTO) and a worker can clock into them via the API.
+
+- **Business seat cap — ENFORCED 2026-08-20 (hard cap, your call).** Business is now capped at
+  15 included + purchased per-worker seats (`companies.paid_worker_seats`, migration 0190) +
+  bonus_seats; create/invite/restore all block past it, like Free/Starter. `paid_worker_seats` is
+  synced from Stripe by the billing webhook + change-plan. Two follow-ups worth knowing: (a) an
+  EXISTING Business subscription reads `paid_worker_seats = NULL` until its next webhook/change-
+  plan, and NULL = grace (unlimited) — so enforcement kicks in lazily; if you want it immediate,
+  backfill `paid_worker_seats` from Stripe for current Business subs. (b) The seat-cap TOCTOU
+  (below) now matters slightly more since the cap is real. Was: [billing-model decision].
+
+- **Company-wide `overtime_rule` is ignored when a worker's own rule is null.**
+  (2026-08-19) The pay engine resolves OT rule via `otRuleFromSettings(settings,
+  worker.overtime_rule)` = `workerRule || 'daily'` — it never falls back to the
+  COMPANY `overtime_rule` setting. So a company set to *weekly* whose worker rows have
+  a null `overtime_rule` would silently get *daily* OT. Likely a non-issue if every
+  worker row is always seeded with a rule, but worth confirming: should a null worker
+  rule inherit the company setting instead of hardcoding 'daily'? (`server/utils/
+  paidHours.js:52`.) Found during the 2026-08-19 pay-engine review.
+
+- **Partial leave + no-clock-in guarantee on the same day.** (2026-08-19) The new
+  fix (guarantee-fill skips any day already paid as leave) treats a *partial* leave
+  day (e.g. 4h sick, no clock-in) as fully covered — it grants no guarantee top-up.
+  Defensible (avoids double-pay) but a policy call: should a 4h partial-leave day with
+  an 8h no-clock-in guarantee pay 4h leave + 4h guarantee, or just the 4h leave?
+  Currently: just the leave. (`computeOT` guarantee gate, `payCalculations.js`.)
+
 - **Grouped+selected ruleset now applies NON-selected deductions per paycheck.**
   (2026-08-13) When building per-deduction timing (some deductions per paycheck, some
   monthly), the payroll run's `timing:'grouped' + scope:'selected'` was reinterpreted:
@@ -285,6 +653,16 @@ that holds the exhaustive detail.
   columns**, so there is currently nothing to assemble. (2026-07-16)
 
 ## ✨ Ideas — improvements
+
+- **Project Daily — two follow-ups from the 2026-08-13 build.** (1) *Clock-in
+  prompt gap:* the post-clock-in "start your day" prompt flags a project as startable
+  only from its *per-project recurring* template — a project seeded purely by a
+  **Project Daily assignment** (all-projects or a project set) won't appear yet (the
+  day still assembles the assignment when started manually). (2) *Admin/reporting view
+  of individual items:* on the shared day view an admin sees an individual item with
+  their *own* (usually empty) state; there's no per-person completion breakdown yet — a
+  Checklist-Reports-style per-person view is the natural home. Both in
+  `server/routes/dailyChecklist.js` / `ProjectDailySetup.jsx`.
 
 - **Haul log: print layout + a specific-takeoff picker.** A print-friendly haul
   ticket report (CSV already ships); optionally let a job point at a specific
@@ -356,6 +734,25 @@ that holds the exhaustive detail.
 
 ## 📌 Planned / ready-to-build
 *Scoped with a plan; just not started.*
+
+- **Fold Inspections into the Checklist Builder (phase 2)** — the 2026-08-13 build
+  turned the old *Safety Checklists* tool into a typed **Checklist Builder** +
+  **Checklist Reports** (Manage group, admin-only); templates now carry a `type`
+  (safety/quality/pretask/equipment/general) and answers key by stable item id.
+  `inspection_templates` + `inspections` are a near-identical second builder that
+  should collapse into this one: add an `inspection` type, migrate the two tables
+  into `safety_checklist_*` (item types superset: add `pass_fail`, `number`;
+  inspections also carry a pass/fail/pending roll-up + inspector/location to
+  preserve), remap `results` (keyed by item id already) into `answers`, then retire
+  the Inspections tab + `inspections.js` route + `InspectionChecklists.jsx`. This is
+  the real de-duplication win; deferred because it's a live data migration.
+- **Surface Safety-Checklist completion on the Daily Checklist** — crews already
+  complete safety checklists **at clock-in** (`ClockInOut.jsx` posts a submission),
+  and admins can record one from Checklist Reports. What's still missing is David's
+  intent that completion also flow through the **Daily Checklist** tab with results
+  showing there. Needs a way to attach a checklist template onto a project's daily
+  checklist and record completions both surfaces read. `DailyChecklist.jsx` +
+  `ChecklistManager.jsx` + `/safety-checklists` and `/daily-checklists` routes.
 
 - **Drop the dormant `project_invoices` table** — migration `0150` unified the
   QBO mirror into native `invoices` (data copied, `lien_waivers` FK repointed,

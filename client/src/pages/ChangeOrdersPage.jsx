@@ -192,7 +192,7 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
   const [head, setHead] = useState({
     description: '', overhead_pct: 0, margin_pct: 0, tax_pct: 0, notes: '',
   });
-  const [lines, setLines] = useState([{ category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0 }]);
+  const [lines, setLines] = useState([{ category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0, cost_cents: null }]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
@@ -209,7 +209,7 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
   }
   function addLine() {
     setDirty(true);
-    setLines(arr => [...arr, { category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0 }]);
+    setLines(arr => [...arr, { category: 'labor', description: '', qty: 1, unit: 'hr', unit_cost_cents: 0, cost_cents: null }]);
   }
   function removeLine(i) {
     setDirty(true);
@@ -254,6 +254,7 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
             qty: parseFloat(l.qty) || 0,
             unit: l.unit || null,
             unit_cost_cents: parseInt(l.unit_cost_cents, 10) || 0,
+            cost_cents: l.cost_cents == null || l.cost_cents === '' ? null : parseInt(l.cost_cents, 10),
           })),
       };
       const { data } = await api.post(`/projects/${projectId}/change-orders`, payload);
@@ -302,7 +303,8 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
                 <th style={styles.lineTh}>{t.coDescription}</th>
                 <th style={{ ...styles.lineTh, width: 80 }}>{t.coQty}</th>
                 <th style={{ ...styles.lineTh, width: 80 }}>{t.coUnit}</th>
-                <th style={{ ...styles.lineTh, width: 120, textAlign: 'right' }}>{t.coUnitCost}</th>
+                <th style={{ ...styles.lineTh, width: 110, textAlign: 'right' }}>{t.estLineCost}</th>
+                <th style={{ ...styles.lineTh, width: 120, textAlign: 'right' }}>{t.estLinePrice}</th>
                 <th style={{ ...styles.lineTh, width: 100, textAlign: 'right' }}>{t.coTotal}</th>
                 <th style={{ ...styles.lineTh, width: 32 }}></th>
               </tr>
@@ -325,6 +327,15 @@ function NewChangeOrderForm({ projects, onSave, onCancel }) {
                     </td>
                     <td style={styles.lineTd}>
                       <input value={l.unit || ''} onChange={e => updateLine(i, 'unit', e.target.value)} style={{ ...styles.input, padding: '6px 8px' }} />
+                    </td>
+                    <td style={styles.lineTd}>
+                      <input
+                        type="number" step="0.01" min="0"
+                        value={l.cost_cents == null || l.cost_cents === '' ? '' : (parseInt(l.cost_cents, 10) / 100)}
+                        onChange={e => { const v = e.target.value; updateLine(i, 'cost_cents', v === '' || !Number.isFinite(parseFloat(v)) ? null : Math.round(parseFloat(v) * 100)); }}
+                        placeholder="—"
+                        style={{ ...styles.input, padding: '6px 8px', fontSize: 14, textAlign: 'right' }}
+                      />
                     </td>
                     <td style={styles.lineTd}>
                       <MoneyInput valueCents={l.unit_cost_cents} onChange={cents => updateLine(i, 'unit_cost_cents', cents)} style={{ padding: '6px 8px 6px 22px', fontSize: 14 }} />

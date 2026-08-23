@@ -208,6 +208,7 @@ function RentalFieldInputs({ t, f, set }) {
       <label style={s.field}>
         <span style={s.label}>{t.eqRateUnit}</span>
         <select style={s.input} value={f.rental_rate_unit} onChange={e => set('rental_rate_unit', e.target.value)}>
+          <option value="hour">{t.eqUnitHour}</option>
           <option value="day">{t.eqUnitDay}</option>
           <option value="week">{t.eqUnitWeek}</option>
           <option value="month">{t.eqUnitMonth}</option>

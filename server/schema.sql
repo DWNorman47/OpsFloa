@@ -132,6 +132,7 @@ CREATE TABLE IF NOT EXISTS time_entries (
   clock_out_lng   DECIMAL(10,7),
   timezone        VARCHAR(50),
   client_id       VARCHAR(36),
+  long_shift_flagged BOOLEAN    NOT NULL DEFAULT false,  -- multi-day/forgotten clock-out whose wall-clock hours are truncated (see 0196)
   created_at      TIMESTAMP     NOT NULL DEFAULT NOW()
 );
 

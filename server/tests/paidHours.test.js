@@ -22,7 +22,8 @@ describe('leaveRateMultipliers', () => {
     expect(leaveRateMultipliers({ sick_pay_pct: 80, vacation_pay_pct: 50 })).toEqual({ sick: 0.8, vacation: 0.5 });
     expect(leaveRateMultipliers({})).toEqual({ sick: 1, vacation: 1 });
     expect(leaveRateMultipliers(undefined)).toEqual({ sick: 1, vacation: 1 });
-    expect(leaveRateMultipliers({ sick_pay_pct: 'x', vacation_pay_pct: -5 })).toEqual({ sick: 1, vacation: 1 });
+    expect(leaveRateMultipliers({ sick_pay_pct: 'x' }).sick).toBe(1);          // non-numeric → unset default 100%
+    expect(leaveRateMultipliers({ vacation_pay_pct: -5 }).vacation).toBe(0);    // negative clamps to 0 (was wrongly 100%)
     expect(leaveRateMultipliers({ sick_pay_pct: 0 })).toEqual({ sick: 0, vacation: 1 });
   });
 });
@@ -122,6 +123,16 @@ describe('laborCostCents', () => {
 
   test('a worker with no rate contributes nothing rather than NaN', () => {
     expect(laborCostCents([entry({ rate: null })], settings())).toBe(0);
+  });
+
+  test('labor burden loads job cost only when includeBurden is passed', () => {
+    const s = { ...settings(), labor_burden_pct: 30 };
+    // $1,250 base. Without the flag (pay/billing paths) → unchanged.
+    expect(laborCostCents([entry()], s)).toBe(125000);
+    // With the flag (job-cost paths) → 1250 × 1.30 = $1,625.
+    expect(laborCostCents([entry()], s, { includeBurden: true })).toBe(162500);
+    // Flag on but no burden set → unchanged.
+    expect(laborCostCents([entry()], settings(), { includeBurden: true })).toBe(125000);
   });
 
   test('empty input is zero, not a crash', () => {

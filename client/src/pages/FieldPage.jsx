@@ -11,7 +11,7 @@ import { reportClientError } from '../errorReporter';
 import RetryBanner from '../components/RetryBanner';
 import ErrorBoundary from '../components/ErrorBoundary';
 
-const FIELD_TABS = ['notes', 'checklist-daily', 'daily', 'haul', 'punchlist', 'safety', 'checklists', 'incident', 'gallery', 'subs', 'rfi', 'inspect'];
+const FIELD_TABS = ['notes', 'checklist-daily', 'daily', 'haul', 'punchlist', 'safety', 'project-daily', 'checklist-builder', 'checklist-reports', 'incident', 'gallery', 'subs', 'rfi', 'inspect'];
 const FIELD_HASH_ALIASES = {
   today: 'notes',
   'work-notes': 'notes',
@@ -30,9 +30,14 @@ const FIELD_HASH_ALIASES = {
   inspections: 'inspect',
   inspection: 'inspect',
   talks: 'safety',
-  checklist: 'checklists',
+  checklists: 'checklist-builder',
+  checklist: 'checklist-builder',
+  builder: 'checklist-builder',
+  'checklist-report': 'checklist-reports',
+  'daily-setup': 'project-daily',
+  projectdaily: 'project-daily',
 };
-const FIELD_GROUP_DEFAULTS = { daily: 'notes', issues: 'punchlist', safety: 'safety', resources: 'subs' };
+const FIELD_GROUP_DEFAULTS = { log: 'checklist-daily', issues: 'punchlist', manage: 'project-daily' };
 
 function resolveFieldTab(rawHash) {
   const hash = String(rawHash || '').replace('#', '').trim().toLowerCase();
@@ -46,11 +51,12 @@ const DailyReports        = lazy(() => import('../components/DailyReports'));
 const HaulTickets         = lazy(() => import('../components/HaulTickets'));
 const Punchlist           = lazy(() => import('../components/Punchlist'));
 const SafetyTalks         = lazy(() => import('../components/SafetyTalks'));
-const SafetyChecklists    = lazy(() => import('../components/SafetyChecklists'));
+const ProjectDailySetup   = lazy(() => import('../components/ProjectDailySetup'));
+const ChecklistBuilder    = lazy(() => import('../components/ChecklistManager').then(m => ({ default: m.ChecklistBuilder })));
+const ChecklistReports    = lazy(() => import('../components/ChecklistManager').then(m => ({ default: m.ChecklistReports })));
 const IncidentReports     = lazy(() => import('../components/IncidentReports'));
 const PhotoGallery        = lazy(() => import('../components/PhotoGallery'));
 const SubReports          = lazy(() => import('../components/SubReports'));
-const RFITracking         = lazy(() => import('../components/RFITracking'));
 const InspectionChecklists = lazy(() => import('../components/InspectionChecklists'));
 const DailyChecklist      = lazy(() => import('../components/DailyChecklist'));
 
@@ -178,14 +184,14 @@ export default function FieldPage() {
 
   const fieldGroups = [
     {
-      id: 'daily',
-      label: isAdmin ? t.fldGroupDaily : t.fldGroupToday,
+      id: 'log',
+      label: t.fldGroupLog,
       items: [
-        { id: 'notes', label: t.fieldTabNotes },
         { id: 'checklist-daily', label: t.fieldTabDailyChecklist },
+        { id: 'notes', label: t.fieldTabNotes },
         ...(isAdmin ? [{ id: 'daily', label: t.fieldTabDaily }] : []),
+        ...(isAdmin ? [{ id: 'subs', label: t.fieldTabSubs }] : []),
         { id: 'haul', label: t.fieldTabHaul },
-        ...(isAdmin && features.feature_media_gallery ? [{ id: 'gallery', label: t.fieldTabMedia }] : []),
       ],
     },
     {
@@ -194,23 +200,21 @@ export default function FieldPage() {
       items: [
         { id: 'punchlist', label: t.fieldTabPunch },
         { id: 'incident', label: t.fieldTabIncidents },
-        ...(isAdmin ? [{ id: 'rfi', label: t.fieldTabRFI }] : []),
-      ],
-    },
-    {
-      id: 'safety',
-      label: t.fieldTabSafety,
-      items: [
         { id: 'safety', label: t.fldTabTalks },
-        { id: 'checklists', label: t.fieldTabChecklists },
         ...(isAdmin ? [{ id: 'inspect', label: t.fieldTabInspect }] : []),
       ],
     },
+    // Manage — admin-only back-office bucket: checklist templates + submissions
+    // and the media library. Worker-completed safety checklist results surface via
+    // the Daily Checklist tab, not here.
     {
-      id: 'resources',
-      label: isAdmin ? t.fldGroupResources : t.fldGroupMore,
+      id: 'manage',
+      label: t.fldGroupManage,
       items: [
-        ...(isAdmin ? [{ id: 'subs', label: t.fieldTabSubs }] : []),
+        ...(isAdmin ? [{ id: 'project-daily', label: t.fieldTabProjectDaily }] : []),
+        ...(isAdmin ? [{ id: 'checklist-builder', label: t.fieldTabChecklistBuilder }] : []),
+        ...(isAdmin ? [{ id: 'checklist-reports', label: t.fieldTabChecklistReports }] : []),
+        ...(isAdmin && features.feature_media_gallery ? [{ id: 'gallery', label: t.fieldTabMedia }] : []),
       ],
     },
   ].filter(group => group.items.length > 0);
@@ -274,16 +278,18 @@ export default function FieldPage() {
               <Punchlist projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'safety' ? (
               <SafetyTalks projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
-            ) : activeFieldTab === 'checklists' ? (
-              <SafetyChecklists projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
+            ) : activeFieldTab === 'project-daily' ? (
+              <ProjectDailySetup />
+            ) : activeFieldTab === 'checklist-builder' ? (
+              <ChecklistBuilder projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
+            ) : activeFieldTab === 'checklist-reports' ? (
+              <ChecklistReports projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'incident' ? (
               <IncidentReports projects={fieldProjects} settings={features} activeProject={activeProject} />
             ) : activeFieldTab === 'gallery' ? (
               <PhotoGallery projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'subs' ? (
               <SubReports projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
-            ) : activeFieldTab === 'rfi' ? (
-              <RFITracking projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : activeFieldTab === 'inspect' ? (
               <InspectionChecklists projects={fieldProjects} settings={features} activeProject={activeProject} onProjectChange={projectChange} />
             ) : (

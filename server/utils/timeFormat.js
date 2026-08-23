@@ -215,6 +215,36 @@ function entryInstants(workDate, startTime, endTime, timezone) {
   return { start_ts, end_ts };
 }
 
+/**
+ * Wall-clock hours between two "HH:MM[:SS]" strings, wrapping a single midnight
+ * (end < start → +24h). Mirrors payCalculations.hoursWorked — this is what the pay
+ * engine currently derives a shift's duration from, and it CANNOT exceed 24h.
+ */
+function wallHours(startTime, endTime) {
+  let ms = new Date(`1970-01-01T${endTime}`) - new Date(`1970-01-01T${startTime}`);
+  if (ms < 0) ms += 86400000;
+  return ms / 3600000;
+}
+
+/**
+ * True when a shift's real instant span (start_ts→end_ts) exceeds the wall-clock
+ * duration the pay engine will compute (>= 1h difference). That gap only opens when
+ * the shift crosses a day boundary — a forgotten / multi-day clock-out — so the
+ * stored TIME columns silently truncate it (e.g. a 49h shift reads as 1h). Used to
+ * flag the entry for admin review until the pay reader is cut over to the instants.
+ * Needs both instants; returns false if either is missing or unparseable.
+ */
+function isTruncatedLongShift(startTs, endTs, startTime, endTime) {
+  if (startTs == null || endTs == null) return false;
+  const s = startTs instanceof Date ? startTs : new Date(startTs);
+  const e = endTs instanceof Date ? endTs : new Date(endTs);
+  if (isNaN(s) || isNaN(e)) return false;
+  if (!startTime || !endTime) return false;
+  const realH = (e.getTime() - s.getTime()) / 3600000;
+  if (!(realH > 0)) return false;
+  return realH - wallHours(startTime, endTime) >= 1;
+}
+
 module.exports = {
   wallClockInTZ,
   wallDateInTZ,
@@ -224,4 +254,5 @@ module.exports = {
   localFromInstant,
   elapsedMinutes,
   entryInstants,
+  isTruncatedLongShift,
 };

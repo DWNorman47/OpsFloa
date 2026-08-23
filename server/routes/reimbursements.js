@@ -275,7 +275,7 @@ router.patch('/admin/:id', requireAdmin, async (req, res) => {
        SET status = $1, admin_notes = $2, updated_at = NOW()
        WHERE id = $3 AND company_id = $4
        RETURNING id, amount, description, category, expense_date, receipt_url,
-                 status, admin_notes, created_at, updated_at, project_id, user_id`,
+                 status, admin_notes, created_at, updated_at, project_id, user_id, qbo_purchase_id`,
       [status, admin_notes, req.params.id, req.user.company_id]
     );
     const reimb = rows[0];
@@ -284,7 +284,9 @@ router.patch('/admin/:id', requireAdmin, async (req, res) => {
     res.json(reimb);
 
     // QBO expense auto-sync — fire-and-forget, only on approval
-    if (status === 'approved') {
+    if (status === 'approved' && !reimb.qbo_purchase_id) {
+      // Guard on qbo_purchase_id: a re-approval (double-click, or approved→pending→
+      // approved) must not create a SECOND QuickBooks Purchase for the same expense.
       setImmediate(async () => {
         try {
           const [autopush, accounts] = await Promise.all([
@@ -317,6 +319,8 @@ router.patch('/admin/:id', requireAdmin, async (req, res) => {
             amount: parseFloat(reimb.amount),
             description: reimb.description || reimb.category || 'Expense reimbursement',
             txnDate,
+            // Stable per-reimbursement key so Intuit dedups a retry into one Purchase.
+            requestId: `ops-reimb-${reimb.id}`,
           });
           if (purchase?.Id) {
             await pool.query('UPDATE reimbursements SET qbo_purchase_id = $1, qbo_synced_at = NOW() WHERE id = $2', [purchase.Id, reimb.id]);

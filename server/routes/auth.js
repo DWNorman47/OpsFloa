@@ -61,7 +61,13 @@ const sgMail = {
 
 const { validatePassword } = require('../passwordPolicy');
 
-function signToken(user) {
+// Token lifetime = the idle window: a session dies this long after the LAST slide
+// (see POST /auth/refresh). Default 1 day.
+// Absolute cap: even a continuously-active session must re-login after this many days
+// (measured from the original login via the `lgn` claim), regardless of refreshes.
+const SESSION_MAX_DAYS = parseInt(process.env.SESSION_MAX_DAYS, 10) || 7;
+
+function signToken(user, lgn) {
   return jwt.sign(
     {
       id: user.id,
@@ -78,6 +84,10 @@ function signToken(user) {
       // tv (token version) lets us invalidate every outstanding token for
       // this user by bumping users.token_version. See middleware/auth.js.
       tv: user.token_version ?? 0,
+      // lgn = original login time (epoch seconds). Preserved across /auth/refresh so the
+      // absolute cap is measured from the real login, not from each slide. Fresh login
+      // omits it → defaults to now.
+      lgn: lgn ?? Math.floor(Date.now() / 1000),
     },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || '1d' }
@@ -271,6 +281,30 @@ router.get('/me', requireAuth, async (req, res) => {
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });
   }
+});
+
+// Slide the session: re-issue a token with a fresh idle window so an actively-used app
+// never gets bounced to login mid-day. requireAuth already re-validated the token live
+// (unexpired + token_version + not deactivated), so a revoked/fired user can't refresh.
+// Two guards keep it honest:
+//   - impersonation / special-purpose tokens (no tv) can't slide — they must stay short.
+//   - the absolute cap: past SESSION_MAX_DAYS since the original login, refresh is denied
+//     so even a constantly-active worker re-authenticates (401 → the client goes to login).
+router.post('/refresh', requireAuth, (req, res) => {
+  const p = req.user;
+  if (p.tv == null) return res.status(400).json({ error: 'This session cannot be extended' });
+  const nowSec = Math.floor(Date.now() / 1000);
+  const lgn = p.lgn ?? p.iat ?? nowSec; // legacy tokens: fall back to issued-at
+  if (nowSec - lgn >= SESSION_MAX_DAYS * 86400) {
+    return res.status(401).json({ error: 'Session expired, please log in again', code: 'session_max' });
+  }
+  const token = signToken({
+    id: p.id, username: p.username, role: p.role, full_name: p.full_name,
+    invoice_name: p.invoice_name, language: p.language, company_id: p.company_id,
+    company_name: p.company_name, admin_permissions: p.admin_permissions,
+    worker_access_ids: p.worker_access_ids, role_id: p.role_id, token_version: p.tv,
+  }, lgn);
+  res.json({ token });
 });
 
 // Record acceptance of the CURRENT legal docs for the logged-in user (the

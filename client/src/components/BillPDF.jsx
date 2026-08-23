@@ -267,7 +267,7 @@ export default function BillPDF({ data, currency = 'USD', companyInfo = {}, over
             {summary.guarantee_shortfall_hours > 0 && summary.rate > 0 && (
               <View style={s.sumRow}>
                 <Text style={[s.sumLabel, { color: '#2563eb' }]}>
-                  {(t.pdfMinGuaranteePay || 'Minimum Guarantee ({hrs} @ {rate}/hr)').replace('{hrs}', fmtH(summary.guarantee_shortfall_hours)).replace('{rate}', fmtMoney(summary.rate))}
+                  {(t.pdfMinGuaranteePay || 'Minimum Guarantee ({hrs} @ {rate}/hr)').replace('{hrs}', fmtH(summary.guarantee_shortfall_hours)).replace('{rate}', fmtMoney(summary.guarantee_cost / summary.guarantee_shortfall_hours))}
                 </Text>
                 <Text style={[s.sumVal, { color: '#2563eb' }]}>{fmtMoney(summary.guarantee_cost || 0)}</Text>
               </View>

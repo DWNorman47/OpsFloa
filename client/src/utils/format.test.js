@@ -25,10 +25,16 @@ describe('parseDollars', () => {
     expect(parseDollars('15.5')).toBe(1550);
     expect(parseDollars('15.55')).toBe(1555);
   });
-  test('parses with currency symbol and commas', () => {
+  test('parses with currency symbol and thousands commas', () => {
     expect(parseDollars('$15.50')).toBe(1550);
     expect(parseDollars('$1,500.00')).toBe(150000);
     expect(parseDollars('  $15.50  ')).toBe(1550);
+    expect(parseDollars('1,234,567')).toBe(123456700);
+  });
+  test('rejects a comma used as a decimal separator (would silently 100x the value)', () => {
+    expect(parseDollars('15,50')).toBeNull();  // was parsed as 1550 → $1,550 instead of $15.50
+    expect(parseDollars('15,5')).toBeNull();
+    expect(parseDollars('1,50')).toBeNull();    // ambiguous group (2 digits) → reject
   });
   test('returns null on garbage', () => {
     expect(parseDollars('abc')).toBeNull();

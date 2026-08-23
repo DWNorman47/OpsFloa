@@ -17,6 +17,8 @@ import { EstimatesPanel } from './EstimatesPage';
 import { InvoicesPanel } from './InvoicesPage';
 import { ChangeOrdersPanel } from './ChangeOrdersPage';
 import { SubPOsPanel } from './SubsPage';
+import { SubmittalsPanel } from './SubmittalsPage';
+import RFITracking from '../components/RFITracking';
 import WorkOrdersPanel from '../components/WorkOrdersPanel';
 import { useHasAnyPerm } from '../hooks/usePerm';
 import { labelSg, labelPl } from '../companyLabels';
@@ -1529,6 +1531,15 @@ function ProjectVisibility({ project, onProjectUpdated, toggleStyle, countStyle,
     setSelected(new Set(project.visible_to_user_ids || []));
   }, [project.id, project.visible_to_user_ids]);
 
+  const [priority, setPriority] = useState(project.priority || 'normal');
+  useEffect(() => { setPriority(project.priority || 'normal'); }, [project.id, project.priority]);
+  const savePriority = async (v) => {
+    const prev = priority;
+    setPriority(v);
+    try { const r = await api.patch(`/admin/projects/${project.id}`, { priority: v }); onProjectUpdated?.(r.data); }
+    catch (err) { setPriority(prev); setError(err.response?.data?.error || 'Save failed'); }
+  };
+
   useEffect(() => {
     if (!open || workers !== null) return;
     setLoading(true);
@@ -1586,11 +1597,30 @@ function ProjectVisibility({ project, onProjectUpdated, toggleStyle, countStyle,
             </span>
           )}
           {!restricted && <span style={countStyle}>Everyone</span>}
+          {priority !== 'normal' && (
+            <span style={{ ...countStyle, background: priority === 'hidden' ? '#9ca3af' : priority === 'high' ? '#ef4444' : '#6b7280' }}>
+              {priority === 'hidden' ? t.pvPriorityHidden : priority === 'high' ? t.pvPriorityHigh : t.pvPriorityLow}
+            </span>
+          )}
           <span style={{ fontSize: 12, color: '#6b7280' }}>{open ? '▴' : '▾'}</span>
         </span>
       </button>
       {open && (
         <div style={{ marginTop: 8 }}>
+          <div style={{ marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid #eef2f7' }}>
+            <label style={{ fontSize: 12, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 4 }}>{t.pvPriorityLabel}</label>
+            <select
+              value={priority}
+              onChange={e => savePriority(e.target.value)}
+              style={{ padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 7, fontSize: 13, background: '#fff', minWidth: 180 }}
+            >
+              <option value="high">{t.pvPriorityHigh}</option>
+              <option value="normal">{t.pvPriorityNormal}</option>
+              <option value="low">{t.pvPriorityLow}</option>
+              <option value="hidden">{t.pvPriorityHidden}</option>
+            </select>
+            <p style={{ fontSize: 12, color: '#9ca3af', margin: '6px 0 0' }}>{t.pvPriorityHelp}</p>
+          </div>
           <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 12px' }}>
             Choose which {workerLabelPluralLower} see this project in their Time Clock dropdown. Leave empty to make it visible to
             everyone. Admins always see every project regardless of this setting.
@@ -2018,7 +2048,7 @@ function ProjectCreateForm({ clients, settings, onSaved, onCancel, onClientCreat
 // users who could see Sales before the consolidation.
 const SALES_TAB_PERMS = ['manage_projects', 'manage_settings'];
 const PROJECT_TAB_PERMS = ['view_projects', 'manage_projects', 'manage_project_visibility'];
-const PROJECT_TAB_IDS = ['projects', 'work_orders', 'estimates', 'invoices', 'change_orders', 'pos'];
+const PROJECT_TAB_IDS = ['projects', 'work_orders', 'rfis', 'submittals', 'estimates', 'invoices', 'change_orders', 'pos'];
 
 export default function ProjectsPage() {
   const t = useT();
@@ -2054,6 +2084,8 @@ export default function ProjectsPage() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [clients, setClients] = useState([]);
   const [viewMode, setViewMode] = useState(() => safeLocal.getItem('opsfloa_projects_view') || 'grid');
+  // Project selector for the cross-project RFI tracker tab (RFITracking is controlled).
+  const [rfiProject, setRfiProject] = useState('');
 
   const loadProjects = (archived) => {
     setLoading(true);
@@ -2098,38 +2130,72 @@ export default function ProjectsPage() {
   let hideWorkOrders = settings?.hide_work_orders_tab === true || settings?.hide_work_orders_tab === '1';
   if (hideProjects && hideWorkOrders) { hideProjects = false; hideWorkOrders = false; }
 
-  const tabs = [
-    ...(!canSeeProjectWork || hideProjects ? [] : [{ id: 'projects', label: 'Projects' }]),
-    ...(!canSeeProjectWork || hideWorkOrders ? [] : [{ id: 'work_orders', label: 'Work Orders' }]),
-    ...(canSeeSales ? [
-      { id: 'estimates', label: t.estList },
-      { id: 'invoices', label: t.invList },
-      { id: 'change_orders', label: t.coList },
-    ] : []),
-    ...(canSeePOs ? [{ id: 'pos', label: t.subPurchaseOrders }] : []),
-  ];
+  // Group the tabs (Field-style: group tabs on top, sub-tabs below). The grouping follows
+  // both function and the permission boundary — Projects/Documents = project-work perm,
+  // Financials = sales perm.
+  const groups = [
+    {
+      id: 'projects', label: t.workGroupProjects,
+      items: [
+        ...(!canSeeProjectWork || hideProjects ? [] : [{ id: 'projects', label: 'Projects' }]),
+        ...(!canSeeProjectWork || hideWorkOrders ? [] : [{ id: 'work_orders', label: 'Work Orders' }]),
+      ],
+    },
+    {
+      id: 'documents', label: t.workGroupDocuments,
+      items: canSeeProjectWork ? [
+        { id: 'rfis', label: t.fieldTabRFI },
+        { id: 'submittals', label: t.submTitle },
+      ] : [],
+    },
+    {
+      id: 'financials', label: t.workGroupFinancials,
+      items: [
+        ...(canSeeSales ? [
+          { id: 'estimates', label: t.estList },
+          { id: 'invoices', label: t.invList },
+          { id: 'change_orders', label: t.coList },
+        ] : []),
+        ...(canSeePOs ? [{ id: 'pos', label: t.subPurchaseOrders }] : []),
+      ],
+    },
+  ].filter(g => g.items.length > 0);
 
-  // Fall back to the first visible tab if the requested one is hidden or gated.
-  const tabAllowed = (id) => {
-    if (id === 'estimates' || id === 'invoices' || id === 'change_orders') return canSeeSales;
-    if (id === 'pos') return canSeePOs;
-    if (id === 'projects') return canSeeProjectWork && !hideProjects;
-    if (id === 'work_orders') return canSeeProjectWork && !hideWorkOrders;
-    return true;
-  };
-  const activeTab = tabAllowed(mainTab) ? mainTab : ((tabs[0] && tabs[0].id) || 'projects');
+  // Resolve the active tab (fall back to the first visible one) and its group.
+  const allItems = groups.flatMap(g => g.items);
+  const activeTab = allItems.some(i => i.id === mainTab) ? mainTab : (allItems[0]?.id || 'projects');
+  const activeGroup = groups.find(g => g.items.some(i => i.id === activeTab)) || groups[0];
 
   return (
     <div style={styles.page}>
       <AppHeader currentApp="projects" features={features} />
 
       <main id="main-content" style={styles.main}>
-        <TabBar
-          active={activeTab}
-          onChange={changeTab}
-          tabs={tabs}
-          breakpoint={520}
-        />
+        <div className="ops-workflow-tabs" role="tablist" aria-label="Work groups">
+          {groups.map(g => (
+            <button
+              key={g.id}
+              type="button"
+              role="tab"
+              aria-selected={activeGroup?.id === g.id}
+              aria-current={activeGroup?.id === g.id ? 'page' : undefined}
+              className={`ops-workflow-tab ${activeGroup?.id === g.id ? 'is-active' : ''}`.trim()}
+              onClick={() => changeTab(g.items[0].id)}
+            >
+              {g.label}
+            </button>
+          ))}
+        </div>
+        {activeGroup && activeGroup.items.length > 1 && (
+          <div className="ops-subtabs">
+            <TabBar
+              active={activeTab}
+              onChange={changeTab}
+              tabs={activeGroup.items}
+              breakpoint={520}
+            />
+          </div>
+        )}
 
         {activeTab === 'estimates' && (
           <div style={{ marginTop: 24 }}>
@@ -2152,6 +2218,18 @@ export default function ProjectsPage() {
         {activeTab === 'pos' && (
           <div style={{ marginTop: 24 }}>
             <SubPOsPanel />
+          </div>
+        )}
+
+        {activeTab === 'rfis' && (
+          <div style={{ marginTop: 24 }}>
+            <RFITracking projects={projects} settings={settings} activeProject={rfiProject} onProjectChange={setRfiProject} />
+          </div>
+        )}
+
+        {activeTab === 'submittals' && (
+          <div style={{ marginTop: 24 }}>
+            <SubmittalsPanel />
           </div>
         )}
 

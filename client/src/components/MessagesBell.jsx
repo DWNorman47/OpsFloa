@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { playMessageChime } from '../chime';
 import { silentError } from '../errorReporter';
 import { safeLocal } from '../utils/safeStorage';
+import { setChatUnread } from '../chatUnreadStore';
 
 /**
  * Speech-bubble bell that sits to the LEFT of the notifications bell. Its badge
@@ -65,6 +66,10 @@ export default function MessagesBell() {
             readKey: 'chatLastRead',
           }));
       }
+
+      // Publish the company-chat unread signal (not DMs) so the Dashboard's
+      // Messages-tab dot can read it instead of polling /chat a second time.
+      setChatUnread(unread.length > 0);
 
       // Direct-message unread (from /dm/contacts; server-authoritative). These
       // clear when the user opens that conversation (server stamps read_at), so

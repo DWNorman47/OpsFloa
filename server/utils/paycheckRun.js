@@ -163,11 +163,16 @@ function applyDeductions(periods, perCheckDeds, groupedDeds, ruleset) {
       const gr = computeDeductions(base, groupedDeds);
       groupedLines = gr.lines || [];
       groupedTotal = gr.total || 0;
-      const cap = ded.cap || {};
-      if (cap.type === 'amount' && cap.valueCents > 0) groupedTotal = Math.min(groupedTotal, cap.valueCents / 100);
-      else if (cap.type === 'percent' && cap.valuePct > 0) groupedTotal = Math.min(groupedTotal, round2(base * (cap.valuePct / 100)));
     }
     let dedTotal = round2((pc.total || 0) + groupedTotal);
+    // The ruleset cap applies to the COMBINED per-check + grouped total (per this
+    // function's docstring and computeRuleNet), not just the grouped portion — else
+    // per-check deductions escape the cap entirely. Percent cap is on the grouped
+    // base (combinedGross − exempt) when grouped applies, else this check's own gross.
+    const cap = ded.cap || {};
+    const capBase = (p.deductionsApply && (groupedDeds || []).length) ? base : g;
+    if (cap.type === 'amount' && cap.valueCents > 0) dedTotal = Math.min(dedTotal, cap.valueCents / 100);
+    else if (cap.type === 'percent' && cap.valuePct > 0) dedTotal = Math.min(dedTotal, round2(capBase * (cap.valuePct / 100)));
     // Min-net floor: never push THIS check's take-home below minNet (applies to the
     // combined per-check + grouped deductions).
     const minNet = Math.max(0, (ded.minNetCents || 0) / 100);

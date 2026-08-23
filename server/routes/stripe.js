@@ -58,6 +58,17 @@ function planFromItems(items) {
   return 'free';
 }
 
+// Purchased per-worker seats above the 15 the Business base includes = the quantity on
+// the Stripe per-worker seat item (0 when there's no such item). Only meaningful for
+// Business; null for any other plan so a stale value can't linger after a downgrade.
+// admin.js enforces the seat cap as BUSINESS_INCLUDED_WORKERS + this + bonus_seats.
+function paidWorkerSeatsFromItems(items, plan) {
+  if (plan !== 'business') return null;
+  const ids = [process.env.STRIPE_PRICE_BUSINESS_WORKER, process.env.STRIPE_PRICE_BUSINESS_WORKER_ANNUAL].filter(Boolean);
+  const item = (items || []).find(i => ids.includes(i.price?.id));
+  return item ? (item.quantity || 0) : 0;
+}
+
 // GET /stripe/plans — available pricing plans
 router.get('/plans', requireAdmin, async (req, res) => {
   // Takeoff add-on amounts are read live from Stripe so they never drift from
@@ -434,7 +445,11 @@ router.post('/change-plan', requireAdmin, requirePerm('manage_billing'), async (
     await stripe.subscriptions.update(subId, { items, proration_behavior: 'create_prorations' });
 
     // Reflect immediately; the customer.subscription.updated webhook re-confirms plan + mrr.
-    await pool.query('UPDATE companies SET plan = $1 WHERE id = $2', [target, req.user.company_id]);
+    // paid_worker_seats mirrors the per-worker item quantity we just set (Business = seats
+    // above the 15 included; Starter has no per-worker item → null) so the seat cap in
+    // admin.js is enforceable without waiting for the webhook.
+    const newPaidSeats = target === 'business' ? Math.max(0, workers - BUSINESS_INCLUDED_WORKERS) : null;
+    await pool.query('UPDATE companies SET plan = $1, paid_worker_seats = $2 WHERE id = $3', [target, newPaidSeats, req.user.company_id]);
     res.json({ ok: true, plan: target });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Failed to change the plan' }); }
 });
@@ -632,10 +647,11 @@ router.post('/webhook', async (req, res) => {
           const roofIds = [process.env.STRIPE_PRICE_ROOF, process.env.STRIPE_PRICE_ROOF_ANNUAL].filter(Boolean);
           const hasRoof = items.some(i => roofIds.includes(i.price.id));
           const mrrCents = calcMrrCents(items);
+          const paidSeats = paidWorkerSeatsFromItems(items, plan);
           await pool.query(
-            `UPDATE companies SET stripe_subscription_id = $1, subscription_status = $2, plan = $3, addon_qbo = $4, addon_takeoff = $5, addon_planroom = $6, addon_storm = $7, addon_roof = $8, mrr_cents = $9, last_stripe_event_at = $11
+            `UPDATE companies SET stripe_subscription_id = $1, subscription_status = $2, plan = $3, addon_qbo = $4, addon_takeoff = $5, addon_planroom = $6, addon_storm = $7, addon_roof = $8, mrr_cents = $9, paid_worker_seats = $12, last_stripe_event_at = $11
               WHERE id = $10 AND (last_stripe_event_at IS NULL OR last_stripe_event_at <= $11)`,
-            [obj.subscription, 'active', plan, hasProAddon, hasTakeoff, hasPlanroom, hasStorm, hasRoof, mrrCents, companyId, eventCreated]
+            [obj.subscription, 'active', plan, hasProAddon, hasTakeoff, hasPlanroom, hasStorm, hasRoof, mrrCents, companyId, eventCreated, paidSeats]
           );
         }
       }
@@ -655,6 +671,7 @@ router.post('/webhook', async (req, res) => {
         const roofIds = [process.env.STRIPE_PRICE_ROOF, process.env.STRIPE_PRICE_ROOF_ANNUAL].filter(Boolean);
         const hasRoof = items.some(i => roofIds.includes(i.price.id));
         const mrrCents = calcMrrCents(items);
+        const paidSeats = paidWorkerSeatsFromItems(items, plan);
         // Map Stripe's subscription status (`trialing`, `incomplete`,
         // `unpaid`, etc.) onto our internal set before writing — the
         // companies.subscription_status column is CHECK-constrained and
@@ -662,9 +679,9 @@ router.post('/webhook', async (req, res) => {
         // stripe_subscription_id (obj.id) so the sub id is never left unset if
         // the watermark ever skips the checkout.session.completed event.
         await pool.query(
-          `UPDATE companies SET subscription_status = $1, plan = $2, addon_qbo = $3, addon_takeoff = $4, addon_planroom = $5, addon_storm = $6, addon_roof = $7, mrr_cents = $8, stripe_subscription_id = $10, last_stripe_event_at = $11
+          `UPDATE companies SET subscription_status = $1, plan = $2, addon_qbo = $3, addon_takeoff = $4, addon_planroom = $5, addon_storm = $6, addon_roof = $7, mrr_cents = $8, stripe_subscription_id = $10, paid_worker_seats = $12, last_stripe_event_at = $11
             WHERE id = $9 AND (last_stripe_event_at IS NULL OR last_stripe_event_at <= $11)`,
-          [mapStripeStatus(obj.status), plan, hasProAddon, hasTakeoff, hasPlanroom, hasStorm, hasRoof, mrrCents, companyId, obj.id, eventCreated]
+          [mapStripeStatus(obj.status), plan, hasProAddon, hasTakeoff, hasPlanroom, hasStorm, hasRoof, mrrCents, companyId, obj.id, eventCreated, paidSeats]
         );
       }
     } else if (event.type === 'customer.subscription.deleted') {

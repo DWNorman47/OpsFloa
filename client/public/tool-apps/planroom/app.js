@@ -4330,15 +4330,23 @@ async function sendPricingToEstimate() {
   if (!id) return;
   if (!toolToken()) { setMsg('Sign in to OpsFloa first (open ☁ Company / join live), then try again.'); return; }
   const { lines, op } = roofBidLines();
-  const payload = lines.map(l => ({
-    category: estimateCategoryFor(l),
-    description: l.label,
-    qty: Math.round((l.qty || 0) * 100) / 100,
-    unit: (l.unit || '').toString().slice(0, 20) || null,
-    unit_cost_cents: Math.round((l.price || 0) * 100),
-  }));
+  const payload = lines.map(l => {
+    const priceCents = Math.round((l.price || 0) * 100);
+    return {
+      category: estimateCategoryFor(l),
+      description: l.label,
+      qty: Math.round((l.qty || 0) * 100) / 100,
+      unit: (l.unit || '').toString().slice(0, 20) || null,
+      unit_cost_cents: priceCents,
+      // In the takeoff the priced amount IS the cost (profit is the separate
+      // O&P line), so send cost = price → the converted project budget is a
+      // real cost baseline and the O&P line below carries the margin.
+      cost_cents: priceCents,
+    };
+  });
   if (Number(state.roofOP) > 0 && op > 0) {
-    payload.push({ category: 'overhead', description: `Overhead & profit (${fmt(state.roofOP)}%)`, qty: 1, unit: 'LS', unit_cost_cents: Math.round(op * 100) });
+    // Overhead & profit is pure margin — zero cost basis.
+    payload.push({ category: 'overhead', description: `Overhead & profit (${fmt(state.roofOP)}%)`, qty: 1, unit: 'LS', unit_cost_cents: Math.round(op * 100), cost_cents: 0 });
   }
   if (!payload.length) { setMsg('Nothing to send yet — trace a takeoff and price it first.'); return; }
   if (!window.confirm(`Send ${payload.length} line${payload.length === 1 ? '' : 's'} to estimate #${id}?\n\nThis REPLACES the estimate's current line items.`)) return;

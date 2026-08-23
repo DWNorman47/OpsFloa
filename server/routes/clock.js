@@ -6,8 +6,9 @@ const { haversineDistanceFt } = require('../utils/geoUtils');
 const { sendPushToCompanyAdmins } = require('../push');
 const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const { applySettingsRows, SETTINGS_DEFAULTS } = require('../settingsDefaults');
+const { otThreshold } = require('../utils/paidHours');
 const { sendEmail } = require('../email');
-const { wallClockInTZ, validLocalTime, entryInstants } = require('../utils/timeFormat');
+const { wallClockInTZ, validLocalTime, entryInstants, isTruncatedLongShift } = require('../utils/timeFormat');
 const { autoStartDayTx } = require('../utils/dailyChecklistCore');
 const {
   loadWeekStart, loadPriorHours, evaluateGate, pickOverflowTarget,
@@ -147,8 +148,8 @@ router.post('/in', requireAuth, requirePerm('clock_self'), clockLimiter, coerceB
       if (requiredChecklistId) {
         const sub = await pool.query(
           `SELECT id FROM safety_checklist_submissions
-           WHERE company_id=$1 AND template_id=$2 AND submitted_by=$3 AND check_date=CURRENT_DATE`,
-          [companyId, requiredChecklistId, req.user.id]
+           WHERE company_id=$1 AND template_id=$2 AND submitted_by=$3 AND check_date=COALESCE($4::date, CURRENT_DATE)`,
+          [companyId, requiredChecklistId, req.user.id, local_work_date || null]
         );
         if (sub.rowCount === 0) {
           logFailure(req, 'clock.in', 'checklist_required', { template_id: requiredChecklistId, project_id });
@@ -196,8 +197,8 @@ router.post('/in', requireAuth, requirePerm('clock_self'), clockLimiter, coerceB
     } else if (globalChecklistId) {
       const sub = await pool.query(
         `SELECT id FROM safety_checklist_submissions
-         WHERE company_id=$1 AND template_id=$2 AND submitted_by=$3 AND check_date=CURRENT_DATE`,
-        [companyId, globalChecklistId, req.user.id]
+         WHERE company_id=$1 AND template_id=$2 AND submitted_by=$3 AND check_date=COALESCE($4::date, CURRENT_DATE)`,
+        [companyId, globalChecklistId, req.user.id, local_work_date || null]
       );
       if (sub.rowCount === 0) {
         logFailure(req, 'clock.in', 'checklist_required', { template_id: globalChecklistId });
@@ -418,8 +419,8 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
     if (requiredChecklistId) {
       const sub = await pool.query(
         `SELECT id FROM safety_checklist_submissions
-         WHERE company_id=$1 AND template_id=$2 AND submitted_by=$3 AND check_date=CURRENT_DATE`,
-        [companyId, requiredChecklistId, req.user.id]
+         WHERE company_id=$1 AND template_id=$2 AND submitted_by=$3 AND check_date=COALESCE($4::date, CURRENT_DATE)`,
+        [companyId, requiredChecklistId, req.user.id, local_work_date || null]
       );
       if (sub.rowCount === 0) {
         logFailure(req, 'clock.switch', 'checklist_required', { template_id: requiredChecklistId, project_id });
@@ -493,7 +494,7 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
           companyId, req.user.id, oldClock.project_id, oldClock.work_date,
           start_time, end_time, clockInTime, clockOutTime, oldWageType, oldClock.notes || null,
           oldClock.clock_in_lat, oldClock.clock_in_lng, lat || null, lng || null,
-          parseInt(break_minutes) || 0, mileage != null ? parseFloat(mileage) : null,
+          Math.max(0, parseInt(break_minutes) || 0), mileage != null ? parseFloat(mileage) : null,
           oldClock.timezone || null,
           oldClock.clock_source, oldClock.clocked_in_by,
         ]
@@ -541,8 +542,8 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
         if (!s.feature_overtime || !s.feature_overtime_alerts) return;
 
         const workDate = oldClock.work_date;
-        const threshold = parseFloat(s.overtime_threshold) || 8;
         const rule = s.overtime_rule || 'daily';
+        const threshold = otThreshold(s, rule);
         const calcH = (start, end, brk = 0) => {
           const startDate = new Date(`1970-01-01T${start}`);
           const endDate = new Date(`1970-01-01T${end}`);
@@ -646,10 +647,11 @@ async function recoverLostClockOut(req, res) {
     const ins = await txClient.query(
       `INSERT INTO time_entries
          (company_id, user_id, project_id, work_date, start_time, end_time, start_ts, end_ts, wage_type, notes,
-          clock_out_lat, clock_out_lng, break_minutes, mileage, timezone, clock_source, clocked_in_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'worker',NULL) RETURNING *`,
+          clock_out_lat, clock_out_lng, break_minutes, mileage, timezone, clock_source, clocked_in_by, long_shift_flagged)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'worker',NULL,$16) RETURNING *`,
       [companyId, req.user.id, entryProjectId, wd, start_time, end_time, recoverTs, clockOutTime, wage_type, cleanNotes,
-       lat || null, lng || null, parseInt(break_minutes) || 0, mileage != null ? parseFloat(mileage) : null, timezone || null]
+       lat || null, lng || null, Math.max(0, parseInt(break_minutes) || 0), mileage != null ? parseFloat(mileage) : null, timezone || null,
+       isTruncatedLongShift(recoverTs, clockOutTime, start_time, end_time)]
     );
     await txClient.query('COMMIT');
     logger.warn({ user_id: req.user.id }, 'clock.out recovered a shift whose offline clock-in never synced');
@@ -744,16 +746,17 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
         `INSERT INTO time_entries
            (company_id, user_id, project_id, work_date, start_time, end_time, start_ts, end_ts, wage_type, notes,
             clock_in_lat, clock_in_lng, clock_out_lat, clock_out_lng, break_minutes, mileage, timezone,
-            clock_source, clocked_in_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+            clock_source, clocked_in_by, long_shift_flagged)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
          RETURNING *`,
         [
           companyId, req.user.id, entryProjectId, clock.work_date,
           start_time, end_time, clockInTime, clockOutTime, wage_type, clock.notes || null,
           clock.clock_in_lat, clock.clock_in_lng, lat || null, lng || null,
-          parseInt(break_minutes) || 0, mileage != null ? parseFloat(mileage) : null,
+          Math.max(0, parseInt(break_minutes) || 0), mileage != null ? parseFloat(mileage) : null,
           clock.timezone || null,
           clock.clock_source, clock.clocked_in_by,
+          isTruncatedLongShift(clockInTime, clockOutTime, start_time, end_time),
         ]
       );
       await txClient.query('DELETE FROM active_clock WHERE user_id = $1', [req.user.id]);
@@ -776,8 +779,8 @@ router.post('/out', requireAuth, requirePerm('clock_self'), clockLimiter, coerce
 
         if (s.feature_overtime && s.feature_overtime_alerts) {
           const workDate = clock.work_date;
-          const threshold = parseFloat(s.overtime_threshold) || 8;
           const rule = s.overtime_rule || 'daily';
+          const threshold = otThreshold(s, rule);
 
           // Get all entries for this worker on the relevant period (before this new entry)
           let prevHours = 0;
