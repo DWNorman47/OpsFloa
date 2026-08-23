@@ -7,6 +7,7 @@ const { escapeHtml } = require('../utils/htmlEscape');
 const { sendPushToUser, sendPushToCompanyAdmins } = require('../push');
 const { createInboxItem, createInboxItemBatch } = require('./inbox');
 const { logAudit } = require('../auditLog');
+const { ymd } = require('../utils/hoursRules');
 
 const VALID_TYPES = ['vacation', 'sick', 'personal', 'other'];
 
@@ -114,8 +115,11 @@ router.patch('/:id/approve', requireAdmin, async (req, res) => {
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Request not found or already reviewed' });
     const row = result.rows[0];
-    const startStr = row.start_date?.toString().substring(0, 10);
-    const endStr = row.end_date?.toString().substring(0, 10);
+    // pg returns DATE as a local-midnight Date; ymd() → 'YYYY-MM-DD'. A bare
+    // .toString().slice gave "Wed Aug 19" — garbled in the email/push/inbox AND a
+    // cast error when bound to $3::date below, so shift-conflict flagging never ran.
+    const startStr = ymd(row.start_date);
+    const endStr = ymd(row.end_date);
     logAudit(companyId, req.user.id, req.user.full_name, 'timeoff.approved', 'time_off_request', row.id, null,
       { worker_user_id: row.user_id, start_date: startStr, end_date: endStr });
 
@@ -172,8 +176,8 @@ router.patch('/:id/deny', requireAdmin, async (req, res) => {
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Request not found or already reviewed' });
     const row = result.rows[0];
-    const denyStartStr = row.start_date?.toString().substring(0, 10);
-    const denyEndStr = row.end_date?.toString().substring(0, 10);
+    const denyStartStr = ymd(row.start_date);
+    const denyEndStr = ymd(row.end_date);
     logAudit(companyId, req.user.id, req.user.full_name, 'timeoff.denied', 'time_off_request', row.id, null,
       { worker_user_id: row.user_id, start_date: denyStartStr, end_date: denyEndStr, review_note });
     setImmediate(async () => {

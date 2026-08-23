@@ -268,6 +268,32 @@ describe('POST /api/invoices/from-estimate/:id', () => {
   });
 });
 
+describe('POST /api/invoices/retainage-release/:projectId', () => {
+  test('404 when project not in caller company', async () => {
+    pool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });   // project lookup
+    const res = await request(makeApp()).post('/api/invoices/retainage-release/42');
+    expect(res.status).toBe(404);
+  });
+
+  test('400 when the project holds no retainage', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42 }] })   // project
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] });            // UPDATE — nothing held
+    const res = await request(makeApp()).post('/api/invoices/retainage-release/42');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/retainage/i);
+  });
+
+  test('marks held retainage released', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42 }] })                             // project
+      .mockResolvedValueOnce({ rowCount: 2, rows: [{ id: 5, newly_released: '1000' }, { id: 6, newly_released: '500' }] });  // UPDATE
+    const res = await request(makeApp()).post('/api/invoices/retainage-release/42');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ released_cents: 1500, invoices: 2 });
+  });
+});
+
 // ── Public view — token-keyed, no auth ────────────────────────────────────────
 describe('GET /api/public/invoices/view/:token', () => {
   test('404 when no invoice matches the token hash', async () => {

@@ -3,10 +3,40 @@ const pool = require('../db');
 const logger = require('../logger');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { sendPushToCompanyAdmins } = require('../push');
-const { uploadBase64, getPresignedUploadUrl, deleteByUrl } = require('../r2');
+const { uploadBase64, getPresignedUploadUrl, deleteByUrl, getObjectMetadataByUrl } = require('../r2');
 const { checkStorageLimit, incrementStorage, decrementStorage } = require('../storage');
 const { logAudit } = require('../auditLog');
 const { projectBelongsToCompany } = require('../utils/tenantRefs');
+const { FIELD_REPORT_MEDIA_TYPES, FIELD_REPORT_MEDIA_TYPE_DEFAULT } = require('../constants/fieldReportEnums');
+const mediaType = v => (FIELD_REPORT_MEDIA_TYPES.includes(v) ? v : FIELD_REPORT_MEDIA_TYPE_DEFAULT);
+
+// A pass-through (already-hosted) media URL is only accepted if it points at THIS
+// app's field-report media folders on R2. Without this, a client could store an
+// arbitrary R2 URL — e.g. another tenant's submittal/COI/takeoff PDF — as a "photo",
+// then delete it via the photo-delete route (deleteByUrl derives the key from the URL
+// with no ownership check). Restricting to photos/ + videos/ keeps a field-report
+// delete from ever reaching another subsystem's (or tenant's document) objects.
+function isOwnFieldReportMediaUrl(u) {
+  const base = process.env.R2_PUBLIC_URL;
+  if (!base || typeof u !== 'string') return false;
+  return u.startsWith(`${base}/photos/`) || u.startsWith(`${base}/videos/`);
+}
+
+// One report with its photos, worker + project names — the create response shape.
+async function loadFullReport(reportId) {
+  const full = await pool.query(
+    `SELECT r.*, u.full_name as worker_name, p.name as project_name,
+            COALESCE(json_agg(ph ORDER BY ph.created_at) FILTER (WHERE ph.id IS NOT NULL), '[]') as photos
+     FROM field_reports r
+     JOIN users u ON r.user_id = u.id
+     LEFT JOIN projects p ON r.project_id = p.id
+     LEFT JOIN field_report_photos ph ON ph.report_id = r.id
+     WHERE r.id = $1
+     GROUP BY r.id, u.full_name, p.name`,
+    [reportId]
+  );
+  return full.rows[0];
+}
 
 // GET /field-reports — worker gets own; admin gets full company feed
 router.get('/', requireAuth, async (req, res) => {
@@ -65,9 +95,18 @@ router.post('/', requireAuth, async (req, res) => {
   if (title && title.length > 500) return res.status(400).json({ error: 'title too long (max 500 characters)' });
   if (notes && notes.length > 2000) return res.status(400).json({ error: 'notes too long (max 2000 characters)' });
   const companyId = req.user.company_id;
+  // Idempotency: a stable per-submission id so an offline-queued POST replayed on reconnect
+  // returns the already-created report instead of inserting a duplicate (and re-uploading photos
+  // + double-counting storage). See migration 0192.
+  const clientRequestId = typeof req.body.client_request_id === 'string' && req.body.client_request_id.length <= 64
+    ? req.body.client_request_id : null;
   try {
     if (!(await projectBelongsToCompany(pool, project_id, companyId))) {
       return res.status(404).json({ error: 'Project not found' });
+    }
+    if (clientRequestId) {
+      const dup = await pool.query('SELECT id FROM field_reports WHERE company_id = $1 AND client_request_id = $2', [companyId, clientRequestId]);
+      if (dup.rowCount > 0) return res.status(200).json(await loadFullReport(dup.rows[0].id));
     }
     // Estimate total upload size from base64 payloads for limit check
     const estimatedBytes = photos.reduce((sum, p) => {
@@ -88,12 +127,22 @@ router.post('/', requireAuth, async (req, res) => {
       }
     }
 
-    const result = await pool.query(
-      `INSERT INTO field_reports (company_id, user_id, project_id, title, notes, lat, lng, report_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [companyId, req.user.id, project_id || null, title || null, notes || null, lat || null, lng || null, report_date || null]
-    );
-    const report = result.rows[0];
+    let report;
+    try {
+      const result = await pool.query(
+        `INSERT INTO field_reports (company_id, user_id, project_id, title, notes, lat, lng, report_date, client_request_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+        [companyId, req.user.id, project_id || null, title || null, notes || null, lat || null, lng || null, report_date || null, clientRequestId]
+      );
+      report = result.rows[0];
+    } catch (e) {
+      // Two replays raced past the dedup check — the unique index caught the second. Return the winner.
+      if (e.code === '23505' && clientRequestId) {
+        const dup = await pool.query('SELECT id FROM field_reports WHERE company_id = $1 AND client_request_id = $2', [companyId, clientRequestId]);
+        if (dup.rowCount > 0) return res.status(200).json(await loadFullReport(dup.rows[0].id));
+      }
+      throw e;
+    }
 
     if (photos.length > 0) {
       // Upload base64 data URLs to R2; pass through any already-hosted URLs
@@ -107,10 +156,16 @@ router.post('/', requireAuth, async (req, res) => {
                 url,
                 sizeBytes,
                 caption,
-                media_type: p.media_type || 'photo',
+                media_type: mediaType(p.media_type),
               }));
             }
-            return Promise.resolve({ url: p.url, sizeBytes: 0, caption, media_type: p.media_type || 'photo' });
+            if (!isOwnFieldReportMediaUrl(p.url)) throw new Error('invalid media url');
+            // Already uploaded to R2 (a presigned video). Count its REAL object size so
+            // storage is accurate and refundable on delete — the old code stored 0, so
+            // the video's bytes were never freed and the reservation-time count drifted.
+            return getObjectMetadataByUrl(p.url)
+              .then(meta => ({ url: p.url, sizeBytes: meta ? meta.contentLength : 0, caption, media_type: mediaType(p.media_type) }))
+              .catch(() => ({ url: p.url, sizeBytes: 0, caption, media_type: mediaType(p.media_type) }));
           })
         );
       } catch (uploadErr) {
@@ -142,18 +197,7 @@ router.post('/', requireAuth, async (req, res) => {
     });
 
     // Return with photos included
-    const full = await pool.query(
-      `SELECT r.*, u.full_name as worker_name, p.name as project_name,
-              COALESCE(json_agg(ph ORDER BY ph.created_at) FILTER (WHERE ph.id IS NOT NULL), '[]') as photos
-       FROM field_reports r
-       JOIN users u ON r.user_id = u.id
-       LEFT JOIN projects p ON r.project_id = p.id
-       LEFT JOIN field_report_photos ph ON ph.report_id = r.id
-       WHERE r.id = $1
-       GROUP BY r.id, u.full_name, p.name`,
-      [report.id]
-    );
-    res.status(201).json(full.rows[0]);
+    res.status(201).json(await loadFullReport(report.id));
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
@@ -254,7 +298,11 @@ router.delete('/photos/:photoId', requireAuth, async (req, res) => {
 
     await pool.query('DELETE FROM field_report_photos WHERE id = $1', [photo.id]);
 
-    deleteByUrl(photo.url).catch(() => {});
+    // Only purge the R2 object when nothing else references the same URL. Belt-and-
+    // suspenders with the store-time allowlist: if two rows ever point at one object
+    // (e.g. a resubmitted URL), deleting one row must not orphan the other's media.
+    const stillReferenced = await pool.query('SELECT 1 FROM field_report_photos WHERE url = $1 LIMIT 1', [photo.url]);
+    if (stillReferenced.rowCount === 0) deleteByUrl(photo.url).catch(() => {});
     const sizeBytes = parseInt(photo.size_bytes || 0);
     if (sizeBytes > 0) decrementStorage(companyId, sizeBytes).catch(() => {});
 
@@ -324,9 +372,11 @@ router.get('/upload-url', requireAuth, async (req, res) => {
           storage_limit: true,
         });
       }
-      // Increment optimistically — video is uploaded directly to R2 with no confirmation step
-      incrementStorage(companyId, sizeBytes).catch(() => {});
     }
+    // NB: do NOT increment here. This is a pre-flight check only — the client-supplied
+    // `size` is unverified and the upload may never complete. Storage is counted when the
+    // report is submitted, from the video's REAL R2 object size (HEAD-verified below), so
+    // an abandoned upload isn't billed and a `size=0` request can't dodge the count.
     const ext = contentType.split('/')[1]?.split(';')[0] || 'mp4';
     const { uploadUrl, publicUrl } = await getPresignedUploadUrl('videos', ext, contentType);
     res.json({ uploadUrl, publicUrl });

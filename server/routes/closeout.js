@@ -8,6 +8,8 @@ const router = require('express').Router();
 const pool   = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const { logAudit } = require('../auditLog');
+const { loadSettings } = require('../utils/paidHours');
+const { computeProjectPnl } = require('./projectReports');
 const {
   CLOSEOUT_STATUSES,
   CLOSEOUT_ITEM_STATUSES,
@@ -197,14 +199,18 @@ async function computeAutoStatus(companyId, projectId, item) {
       // column). Done only when invoices EXIST and none still hold retainage —
       // the old SUM(balance) over project_invoices returned 0 (→ 'done') for
       // every non-QBO project, which had zero rows: a false positive.
+      // Done once no invoice still WITHHOLDS retainage — i.e. it's all been
+      // released (outstanding = held − released = 0). "Release retainage" sets
+      // released = held across the project's invoices.
       const r = await pool.query(
-        `SELECT COUNT(*) AS n, COALESCE(SUM(retainage_held_cents), 0) AS held
-           FROM invoices WHERE project_id = $1 AND status <> 'void'`,
+        `SELECT COUNT(*) AS n,
+                COALESCE(SUM(retainage_held_cents - retainage_released_cents), 0) AS outstanding
+           FROM invoices WHERE project_id = $1 AND status NOT IN ('void', 'draft')`,
         [projectId]
       );
       const n = parseInt(r.rows[0].n, 10);
       if (n === 0) return 'in_progress';               // nothing invoiced → not released
-      return parseInt(r.rows[0].held, 10) === 0 ? 'done' : 'in_progress';
+      return parseInt(r.rows[0].outstanding, 10) === 0 ? 'done' : 'in_progress';
     } catch { return null; }
   }
   return null;
@@ -394,7 +400,10 @@ router.post('/projects/:id/closeout/transition', requireAdmin, async (req, res) 
         }
       }
     }
-    if (to === 'final_complete') {
+    if (to === 'final_complete' || to === 'closed') {
+      // `closed` freezes the P&L too, so it needs the same completeness gate as
+      // final_complete — else a straight open→closed freezes a number taken
+      // before the final invoice / retainage items are satisfied.
       // Same compute-on-read fix: a pure SQL count over stored `status` treats
       // every auto item as 'pending' (they're never written past that), so
       // final_complete was unreachable for EVERY company. Compute each required
@@ -408,7 +417,7 @@ router.post('/projects/:id/closeout/transition', requireAdmin, async (req, res) 
         const status = await effectiveItemStatus(companyId, req.params.id, item);
         if (!CLOSEOUT_ITEM_DONE_STATUSES.includes(status)) {
           return res.status(409).json({
-            error: 'Cannot transition to final_complete: required items still pending',
+            error: `Cannot transition to ${to}: required items still pending`,
           });
         }
       }
@@ -418,15 +427,32 @@ router.post('/projects/:id/closeout/transition', requireAdmin, async (req, res) 
     const finalDate = (to === 'final_complete' && !co.final_completion_date)
       ? new Date().toISOString().slice(0, 10) : co.final_completion_date;
     const closedAt = to === 'closed' ? 'NOW()' : 'closed_at';
+
+    // Freeze the final cost/profit on the FIRST time the job reaches
+    // final_complete or closed — first-freeze-wins, so a reopen→edit→reclose
+    // can't silently rewrite the locked number. Reopening clears the freeze so
+    // it can be re-taken fresh.
+    const clearSnapshot = to === 'reopened';
+    let snapshot = null;
+    if ((to === 'final_complete' || to === 'closed') && !co.final_financials) {
+      try {
+        const settings = await loadSettings(companyId);
+        snapshot = await computeProjectPnl(req.params.id, companyId, settings);
+      } catch (err) {
+        req.log.error({ err }, 'closeout snapshot compute failed');  // don't block the transition
+      }
+    }
     const updRes = await pool.query(
       `UPDATE project_closeouts SET
          status = $1,
          substantial_completion_date = $2,
          final_completion_date = $3,
          warranty_start_date = COALESCE(warranty_start_date, $2),
-         closed_at = ${closedAt}
+         closed_at = ${closedAt},
+         final_financials       = CASE WHEN $6 THEN NULL WHEN $5 IS NOT NULL AND final_financials IS NULL THEN $5::jsonb ELSE final_financials END,
+         financials_snapshot_at = CASE WHEN $6 THEN NULL WHEN $5 IS NOT NULL AND final_financials IS NULL THEN NOW() ELSE financials_snapshot_at END
        WHERE id = $4 RETURNING *`,
-      [to, subDate, finalDate, co.id]
+      [to, subDate, finalDate, co.id, snapshot ? JSON.stringify(snapshot) : null, clearSnapshot]
     );
     await logAudit(companyId, req.user.id, req.user.full_name,
       `closeout.${to}`, 'project_closeout', co.id, project.name,

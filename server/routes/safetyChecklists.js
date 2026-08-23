@@ -1,7 +1,19 @@
+const crypto = require('crypto');
 const router = require('express').Router();
 const pool = require('../db');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { projectBelongsToCompany } = require('../utils/tenantRefs');
+const { CHECKLIST_TEMPLATE_TYPES, DEFAULT_CHECKLIST_TEMPLATE_TYPE } = require('../constants/checklistEnums');
+
+// Ensure every template item carries a stable id, so submission answers key by id
+// and survive later template edits/reorders. Legacy index-keyed submissions still
+// read via a fallback on the client (checklistAnswer).
+function withItemIds(items) {
+  if (!Array.isArray(items)) return [];
+  return items.map(it => (it && typeof it === 'object' && !Array.isArray(it)
+    ? { ...it, id: it.id || crypto.randomUUID() }
+    : it));
+}
 
 // ── Templates ──────────────────────────────────────────────────────────────────
 
@@ -18,13 +30,15 @@ router.get('/templates', requireAuth, async (req, res) => {
 
 // POST /safety-checklists/templates
 router.post('/templates', requireAdmin, async (req, res) => {
-  const { name, description, items } = req.body;
+  const { name, description, items, type } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'name required' });
+  const tType = type || DEFAULT_CHECKLIST_TEMPLATE_TYPE;
+  if (!CHECKLIST_TEMPLATE_TYPES.includes(tType)) return res.status(400).json({ error: 'Invalid type' });
   try {
     const result = await pool.query(
-      `INSERT INTO safety_checklist_templates (company_id, name, description, items, created_by)
-       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [req.user.company_id, name.trim(), description?.trim() || null, JSON.stringify(items || []), req.user.id]
+      `INSERT INTO safety_checklist_templates (company_id, name, description, items, type, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [req.user.company_id, name.trim(), description?.trim() || null, JSON.stringify(withItemIds(items || [])), tType, req.user.id]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
@@ -32,7 +46,10 @@ router.post('/templates', requireAdmin, async (req, res) => {
 
 // PATCH /safety-checklists/templates/:id
 router.patch('/templates/:id', requireAdmin, async (req, res) => {
-  const { name, description, items } = req.body;
+  const { name, description, items, type } = req.body;
+  if (type !== undefined && !CHECKLIST_TEMPLATE_TYPES.includes(type)) {
+    return res.status(400).json({ error: 'Invalid type' });
+  }
   try {
     const existing = await pool.query(
       'SELECT * FROM safety_checklist_templates WHERE id=$1 AND company_id=$2',
@@ -42,10 +59,10 @@ router.patch('/templates/:id', requireAdmin, async (req, res) => {
     const t = existing.rows[0];
     const result = await pool.query(
       `UPDATE safety_checklist_templates SET
-         name=$1, description=$2, items=$3, updated_at=NOW()
-       WHERE id=$4 AND company_id=$5 RETURNING *`,
+         name=$1, description=$2, items=$3, type=$4, updated_at=NOW()
+       WHERE id=$5 AND company_id=$6 RETURNING *`,
       [name?.trim() ?? t.name, description !== undefined ? (description?.trim() || null) : t.description,
-       JSON.stringify(items ?? t.items), req.params.id, req.user.company_id]
+       JSON.stringify(withItemIds(items ?? t.items)), type ?? t.type, req.params.id, req.user.company_id]
     );
     res.json(result.rows[0]);
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
@@ -67,7 +84,7 @@ router.delete('/templates/:id', requireAdmin, async (req, res) => {
 
 // GET /safety-checklists
 router.get('/', requireAuth, async (req, res) => {
-  const { project_id, from, to, template_id } = req.query;
+  const { project_id, from, to, template_id, type } = req.query;
   const page  = Math.max(1, parseInt(req.query.page) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
   const offset = (page - 1) * limit;
@@ -75,15 +92,21 @@ router.get('/', requireAuth, async (req, res) => {
   const params = [req.user.company_id];
   if (project_id) { params.push(project_id); conditions.push(`s.project_id = $${params.length}`); }
   if (template_id) { params.push(template_id); conditions.push(`s.template_id = $${params.length}`); }
+  if (type) { params.push(type); conditions.push(`ct.type = $${params.length}`); }
   if (from) { params.push(from); conditions.push(`s.check_date >= $${params.length}`); }
   if (to) { params.push(to); conditions.push(`s.check_date <= $${params.length}`); }
   const where = conditions.join(' AND ');
+  // Join the template so Reports can filter/label by checklist type. The template
+  // may be deleted (ON DELETE SET NULL) — such rows have a null template_type and
+  // are excluded only when a type filter is active.
+  const joins = `LEFT JOIN safety_checklist_templates ct ON s.template_id = ct.id`;
   try {
     const [countResult, dataResult] = await Promise.all([
-      pool.query(`SELECT COUNT(*) FROM safety_checklist_submissions s WHERE ${where}`, params),
+      pool.query(`SELECT COUNT(*) FROM safety_checklist_submissions s ${joins} WHERE ${where}`, params),
       pool.query(
-        `SELECT s.*, p.name AS project_name
+        `SELECT s.*, p.name AS project_name, ct.type AS template_type
          FROM safety_checklist_submissions s
+         ${joins}
          LEFT JOIN projects p ON s.project_id = p.id
          WHERE ${where}
          ORDER BY s.check_date DESC, s.created_at DESC

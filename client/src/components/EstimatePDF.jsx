@@ -16,6 +16,10 @@ import { formatCurrency, langToLocale } from '../utils';
 import { getT } from '../i18n';
 
 const CATEGORIES = ['labor', 'materials', 'equipment', 'subs', 'overhead', 'contingency', 'other'];
+const LINE_TYPE_LABEL_KEYS = {
+  base: 'estLineTypeBase', allowance: 'estLineTypeAllowance',
+  alternate: 'estLineTypeAlternate', optional: 'estLineTypeOptional',
+};
 // Category VALUE → i18n key; resolved against the passed-in `t` so the
 // PDF prints in the current user's language. The values stay English.
 const CATEGORY_LABEL_KEYS = {
@@ -85,12 +89,15 @@ export default function EstimatePDF({ estimate, currency = 'USD', companyInfo = 
   const t = getT(language);
   const tr = (k, fallback) => t[k] || fallback;
   const lines = estimate.lines || [];
+  const isAlt = l => l.line_type === 'alternate' || l.line_type === 'optional';
   const linesByCat = {};
   for (const c of CATEGORIES) linesByCat[c] = [];
   for (const l of lines) {
+    if (isAlt(l)) continue;  // alternates listed separately, below the total
     if (linesByCat[l.category]) linesByCat[l.category].push(l);
     else (linesByCat.other = linesByCat.other || []).push(l);
   }
+  const altLines = lines.filter(isAlt);
 
   const b = computeBreakdown({
     subtotalCents: estimate.subtotal_cents,
@@ -152,7 +159,7 @@ export default function EstimatePDF({ estimate, currency = 'USD', companyInfo = 
               <Text style={s.catTitle}>{tr(CATEGORY_LABEL_KEYS[category], category)}</Text>
               {linesByCat[category].map((l, i) => (
                 <View key={l.id || i} style={s.lineRow}>
-                  <Text style={s.lineDesc}>{l.description}</Text>
+                  <Text style={s.lineDesc}>{l.description}{l.line_type === 'allowance' ? ` (${tr('estLineTypeAllowance', 'Allowance').toLowerCase()})` : ''}</Text>
                   <Text style={s.lineQty}>{l.qty} {l.unit || ''}</Text>
                   <Text style={s.lineAmt}>{fmtCents(l.total_cents, currency)}</Text>
                 </View>
@@ -195,6 +202,19 @@ export default function EstimatePDF({ estimate, currency = 'USD', companyInfo = 
               <Text style={s.grandValue}>{fmtCents(b.total, currency)}</Text>
             </View>
           </View>
+
+          {altLines.length > 0 ? (
+            <View style={{ marginTop: 14 }} wrap={false}>
+              <Text style={s.catTitle}>{tr('estAlternatesHeading', 'Alternates & Options (not included in total)')}</Text>
+              {altLines.map((l, i) => (
+                <View key={l.id || `alt${i}`} style={s.lineRow}>
+                  <Text style={s.lineDesc}>{l.description} ({tr(LINE_TYPE_LABEL_KEYS[l.line_type], l.line_type)})</Text>
+                  <Text style={s.lineQty}>{l.qty} {l.unit || ''}</Text>
+                  <Text style={s.lineAmt}>{fmtCents(l.total_cents, currency)}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
         </View>
 
         {/* Exclusions / terms */}

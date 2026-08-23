@@ -10,6 +10,8 @@ const { coerceBody } = require('../middleware/coerce');
 const { logFailure } = require('../failureLog');
 const { SETTINGS_DEFAULTS, applySettingsRows } = require('../settingsDefaults');
 const { entryInstants } = require('../utils/timeFormat');
+const { escapeHtml } = require('../utils/htmlEscape');
+const { projectFrozen } = require('../utils/projectCost');
 const { generatePeriods, groupPeriods, isValidIsoDate, dateRangeDays } = require('../utils/payPeriods');
 const rateLimit = require('express-rate-limit');
 const { userOrIpKey } = require('../middleware/rateLimitKey');
@@ -115,6 +117,7 @@ router.post('/', requireAuth, entryWriteLimiter,
       logFailure(req, 'time_entries.create', 'project_not_found', { project_id });
       return res.status(400).json({ error: 'Project not found' });
     }
+    if (await projectFrozen(project_id)) return res.status(409).json({ error: 'This job is closed — reopen its close-out to log time to it.', code: 'project_frozen' });
     const wage_type = projectResult.rows[0].wage_type;
 
     const bm = break_minutes ?? 0;
@@ -155,7 +158,8 @@ router.post('/', requireAuth, entryWriteLimiter,
           [companyId]
         );
         const subject = `Time entry submitted: ${req.user.full_name}`;
-        const body = `<p><b>${req.user.full_name}</b> submitted a time entry for <b>${work_date}</b> (${start_time}–${end_time}).</p><p>— OpsFloa</p>`;
+        const safeName = escapeHtml(String(req.user.full_name ?? '')); // user-controlled → escape in the HTML email
+        const body = `<p><b>${safeName}</b> submitted a time entry for <b>${escapeHtml(String(work_date))}</b> (${escapeHtml(String(start_time))}–${escapeHtml(String(end_time))}).</p><p>— OpsFloa</p>`;
         for (const admin of admins.rows) sendEmail(admin.email, subject, body);
       } catch (err) { logger.error({ err }, 'Entry notification error'); }
     });
@@ -181,6 +185,7 @@ router.patch('/:id', requireAuth, async (req, res) => {
     );
     if (existing.rowCount === 0) return res.status(404).json({ error: 'Entry not found' });
     const entry = existing.rows[0];
+    if (await projectFrozen(entry.project_id)) return res.status(409).json({ error: 'This job is closed — reopen its close-out to change its labor.', code: 'project_frozen' });
     const entryDate = new Date(entry.work_date);
     const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 7);
     if (entryDate < cutoff) return res.status(403).json({ error: 'Entries older than 7 days cannot be edited' });
@@ -309,9 +314,10 @@ router.get('/messages/unread-count', requireAuth, async (req, res) => {
 // Delete an entry (own entries only)
 router.delete('/:id', requireAuth, async (req, res) => {
   try {
-    const existing = await pool.query('SELECT work_date, locked FROM time_entries WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+    const existing = await pool.query('SELECT work_date, locked, project_id FROM time_entries WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
     if (existing.rowCount === 0) return res.status(404).json({ error: 'Entry not found' });
     if (existing.rows[0].locked) return res.status(403).json({ error: 'Approved entries cannot be deleted' });
+    if (await projectFrozen(existing.rows[0].project_id)) return res.status(409).json({ error: 'This job is closed — reopen its close-out to change its labor.', code: 'project_frozen' });
     const locked = await pool.query(
       'SELECT id FROM pay_periods WHERE company_id = $1 AND period_start <= $2 AND period_end >= $2',
       [req.user.company_id, existing.rows[0].work_date]
@@ -334,7 +340,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
 const { loadSettings } = require('../utils/paidHours');
 const { workerPeriodStatements, workerStatement } = require('../utils/payStatement');
 const { normalizePaycheckRules } = require('../constants/paycheckRuleEnums');
-const { resolveRuleset, deductionsForRole, applyGroupDeductions, groupOpts } = require('../utils/paycheckRun');
+const { resolveRuleset, deductionsForRole, splitDeductionsByTiming, applyDeductions, groupOpts } = require('../utils/paycheckRun');
 const { parseCompanyDeductions, normalizeWorkerDeductions } = require('../utils/deductions');
 const { weekRange } = require('../utils/weekBounds');
 
@@ -431,23 +437,22 @@ router.get('/pay-stubs', requireAuth, async (req, res) => {
       const grouped = groupPeriods(generatePeriods(ruleset.schedule, genFromIso, toIso, weekStart), groupOpts(ruleset.deductions));
       const companyDeds = parseCompanyDeductions(settings.deductions);
       const wdRows = await pool.query('SELECT id, name, kind, value, cap_amount, active FROM worker_deductions WHERE user_id = $1 AND company_id = $2 AND active = true', [userId, companyId]);
-      // Honor the ruleset's deduction scope (see computePayrollRun): 'selected' restricts
-      // the company deductions to the picked ids; worker rows always apply. Keeps the
-      // worker's stub identical to the admin run.
-      let coDeds = deductionsForRole(companyDeds, worker.role_id);
-      const dcfg = ruleset.deductions;
-      if (dcfg && dcfg.scope === 'selected') {
-        const sel = new Set(dcfg.selectedDeductionIds || []);
-        coDeds = coDeds.filter(d => sel.has(d.id));
-      }
-      const deds = [...coDeds, ...normalizeWorkerDeductions(wdRows.rows)];
+      // Split deductions into per-check vs grouped EXACTLY as computePayrollRun does
+      // (splitDeductionsByTiming → applyDeductions), so the worker's stub matches the
+      // admin run to the cent. The old path filtered company deds down to the selected
+      // ids and ran applyGroupDeductions, which dropped the non-selected per-check
+      // company deductions (e.g. Seguro Social) from the stub and priced the rest as
+      // if everything were grouped — the stub then showed a higher net than the run.
+      const roleDeds = deductionsForRole(companyDeds, worker.role_id);
+      const { perCheck: perCheckDeds, grouped: groupedDeds } =
+        splitDeductionsByTiming(roleDeds, normalizeWorkerDeductions(wdRows.rows), ruleset);
       const withStmt = [];
       for (const p of grouped) {
         const st = await workerStatement({ companyId, worker, settings, from: p.periodStart, to: p.periodEnd });
         withStmt.push({ ...p, gross: st.totals.grossWages, _st: st });
       }
       const n2 = x => parseFloat((x || 0).toFixed(2));
-      const stubs = applyGroupDeductions(withStmt, deds, ruleset).map((p, i) => {
+      const stubs = applyDeductions(withStmt, perCheckDeds, groupedDeds, ruleset).map((p, i) => {
         const st = withStmt[i]._st;
         return {
           id: `${ruleset.id}-${p.payDate}`,

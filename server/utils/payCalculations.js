@@ -18,7 +18,9 @@ function hoursWorked(start, end) {
 function entryDuration(e) {
   // Clamp at 0: a break longer than the shift (bad/hostile input) would otherwise
   // yield a negative duration that subtracts from paid hours — and thus from pay.
-  return Math.max(0, hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60);
+  // Also clamp the break itself at 0: a NEGATIVE break would otherwise ADD hours
+  // (subtracting a negative), an overpay vector the outer Math.max can't catch.
+  return Math.max(0, hoursWorked(e.start_time, e.end_time) - Math.max(0, e.break_minutes || 0) / 60);
 }
 
 /** Day of week (0=Sun … 6=Sat) for a YYYY-MM-DD key, timezone-independent. */
@@ -60,11 +62,38 @@ const isWeekdayKey = (dk) => { const w = weekdayOfDate(dk); return w >= 1 && w <
 /** Total scheduled hours per YYYY-MM-DD from a worker's shifts (sum of shift
  *  durations that day; shifts carry no break). */
 function shiftHoursByDate(shifts) {
-  const m = new Map();
+  // Value each day at the UNION of its shift intervals (overlaps merged), NOT the naive
+  // sum — a full sick/vacation day is priced at this, and there's no shift-uniqueness
+  // constraint, so two identical/overlapping 8h shifts (a double-clicked create, an
+  // overlapping recurrence) would otherwise value the leave day at 16h instead of 8h.
+  // Legit split shifts (07:00-11:00 + 12:00-16:00) don't overlap → still sum to 8h.
+  const hhmm = (t) => { // "HH:MM[:SS]" → minutes since midnight, or null
+    const mch = /^(\d{1,2}):(\d{2})/.exec(String(t ?? ''));
+    return mch ? (+mch[1]) * 60 + (+mch[2]) : null;
+  };
+  const byDate = new Map();
   for (const sh of shifts || []) {
     if (!sh || sh.shift_date == null) continue;
-    const dk = String(sh.shift_date).substring(0, 10);
-    m.set(dk, (m.get(dk) || 0) + hoursWorked(sh.start_time, sh.end_time));
+    // pg returns DATE as a local-midnight Date; ymd() normalizes both forms. A bare
+    // String(date).slice gives "Wed Aug 19", which never matches a real YMD key.
+    const dk = ymd(sh.shift_date);
+    let s = hhmm(sh.start_time), e = hhmm(sh.end_time);
+    if (s == null || e == null) continue;
+    if (e < s) e += 1440;      // overnight shift
+    if (e <= s) continue;      // zero/negative span
+    if (!byDate.has(dk)) byDate.set(dk, []);
+    byDate.get(dk).push([s, e]);
+  }
+  const m = new Map();
+  for (const [dk, ivals] of byDate) {
+    ivals.sort((a, b) => a[0] - b[0]);
+    let total = 0, curS = null, curE = null;
+    for (const [s, e] of ivals) {
+      if (curE == null || s > curE) { if (curE != null) total += curE - curS; curS = s; curE = e; }
+      else if (e > curE) curE = e; // overlap → extend the current merged interval
+    }
+    if (curE != null) total += curE - curS;
+    m.set(dk, total / 60);
   }
   return m;
 }
@@ -85,8 +114,12 @@ function shiftHoursByDate(shifts) {
  * @param regularShiftHours  company Regular Shift default (last-resort hours)
  */
 function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours, from, to, detail = null) {
-  const totals = { sick: 0, vacation: 0 };
+  // `leaveByDate` maps every YMD → paid-leave hours that day (sick + vacation),
+  // always and cheaply, so a no-clock-in daily guarantee only tops the day UP TO its
+  // floor counting the leave already paid — never double-paying it. See computeOT.
+  const totals = { sick: 0, vacation: 0, leaveByDate: new Map() };
   if (!from || !to) return totals;
+  const addLeaveDay = (dk, h) => { if (dk != null) totals.leaveByDate.set(dk, (totals.leaveByDate.get(dk) || 0) + h); };
   const f = String(from).substring(0, 10), t = String(to).substring(0, 10);
   const rules = Array.isArray(leaveRules) ? leaveRules : [];
   const def = parseFloat(regularShiftHours) || 0;
@@ -109,20 +142,22 @@ function computeLeaveHours(requests, shiftsByDate, leaveRules, regularShiftHours
       // fetch query returns any request overlapping [from,to], so a partial
       // straddling a pay-period boundary would otherwise be paid IN FULL in both
       // periods (this loader runs once per period for per-worker pay stubs).
-      const anchor = req.start_date != null ? String(req.start_date).substring(0, 10) : null;
+      const anchor = req.start_date != null ? ymd(req.start_date) : null;
       if (anchor != null && (anchor < f || anchor > t)) continue;
       const h = parseFloat(req.hours) || 0;
       totals[type] += h;
+      addLeaveDay(anchor, h);
       if (detail) detail.push({ type, date: anchor, hours: h, source: 'partial' });
       continue;
     }
     if (req.start_date == null || req.end_date == null) continue;
-    const s = String(req.start_date).substring(0, 10), e = String(req.end_date).substring(0, 10);
+    const s = ymd(req.start_date), e = ymd(req.end_date);
     for (const dk of eachDateKey(s < f ? f : s, e > t ? t : e)) {
       if (seen[type].has(dk)) continue;                    // dedup overlapping requests
       seen[type].add(dk);
       const v = dayValue(dk, type);
       totals[type] += v.hours;
+      addLeaveDay(dk, v.hours);
       if (detail) detail.push({ type, date: dk, hours: v.hours, source: v.source, ...(v.ruleId ? { ruleId: v.ruleId } : {}) });
     }
   }
@@ -442,6 +477,10 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
       });
     }
     const firstT = sd ? (parseFloat(sd.firstHoursThreshold) || 0) : 0;
+    // Paid leave counts toward a worked day's min_daily floor too (not just the empty-
+    // day guarantee) — a 4h worked + 4h approved-leave day under an 8h floor is already
+    // covered for 8h, so the floor must not top it up again on top of the leave pay.
+    const floorLeaveByDate = (range && range.leaveByDate instanceof Map) ? range.leaveByDate : null;
 
     Object.entries(buckets).forEach(([dk, h]) => {
       if (restDays && restDays.has(weekdayOfDate(dk))) {
@@ -467,7 +506,8 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
         // paid (at their premium), so they count toward the minimum — otherwise a day
         // whose hours are all inside a window would be topped up on top of the premium
         // hours (double pay). Measure the shortfall against total worked hours.
-        const workedTotal = h + (windowByBucket[dk] || 0);
+        const leaveH = floorLeaveByDate ? (floorLeaveByDate.get(dk) || 0) : 0;
+        const workedTotal = h + (windowByBucket[dk] || 0) + leaveH;
         if (minD > 0 && workedTotal < minD) {
           const add = minD - workedTotal;
           autoReg += add;                         // reporting-time floor: pay only the true shortfall as regular
@@ -497,6 +537,7 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
       const allWorked = extraWorked ? [...Object.keys(buckets), ...extraWorked] : Object.keys(buckets);
       const activeWeeks = new Set(allWorked.map(dk => weekBucketKey(dk, weekStart)));
       const workedAnyInPeriod = Object.keys(buckets).length > 0; // 'period' gate stays scoped to the pulled period
+      const leaveByDate = (range && range.leaveByDate instanceof Map) ? range.leaveByDate : null;
       for (const dk of eachDateKey(range.from, range.to)) {
         if (buckets[dk] != null) continue;                          // worked day — floored above
         // A rest day CAN carry a no-clock-in guarantee: the guarantee pays its
@@ -523,9 +564,14 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
           }
           if (gate) floor = Math.max(floor, parseFloat(r.hours) || 0);
         }
-        if (floor > 0) {
-          autoReg += floor;                // guaranteed regular hours (no OT)
-          floorDetail.push({ date: dk, hours: +floor.toFixed(2), kind: 'guarantee' });
+        // Paid leave on this day counts toward the guarantee floor: a 4h partial-leave
+        // day with an 8h guarantee tops up only 4h (leave 4 + guarantee 4), and a
+        // full 8h leave day tops up 0 — never double-paying the leave hours.
+        const leaveH = leaveByDate ? (leaveByDate.get(dk) || 0) : 0;
+        const topUp = Math.max(0, floor - leaveH);
+        if (topUp > 0) {
+          autoReg += topUp;                // guaranteed regular hours (no OT)
+          floorDetail.push({ date: dk, hours: +topUp.toFixed(2), kind: 'guarantee' });
         }
       }
     }

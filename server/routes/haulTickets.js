@@ -25,7 +25,10 @@ function readTicket(body) {
   const direction = (body.direction || 'export').toString();
   if (!HAUL_DIRECTIONS.includes(direction)) errors.push(`direction must be one of ${HAUL_DIRECTIONS.join(', ')}`);
   const qty = (body.qty === '' || body.qty == null) ? 0 : parseFloat(body.qty);
-  if (isNaN(qty) || qty < 0) errors.push('qty must be a non-negative number');
+  // Upper bound too: an unbounded qty (e.g. 99,999,999) flows straight into the reconcile
+  // estimate-vs-actual sums and skews variance. 1,000,000 CY/tons/loads on one ticket is
+  // already implausible for a single haul.
+  if (!Number.isFinite(qty) || qty < 0 || qty > 1000000) errors.push('qty must be between 0 and 1,000,000');
   const trimTo = (s, n) => (s ? s.toString().trim().slice(0, n) || null : null);
   return {
     errors,

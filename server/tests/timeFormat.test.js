@@ -6,6 +6,7 @@ const {
   instantFromLocal,
   localFromInstant,
   elapsedMinutes,
+  isTruncatedLongShift,
 } = require('../utils/timeFormat');
 
 describe('validLocalTime', () => {
@@ -156,5 +157,38 @@ describe('elapsedMinutes', () => {
   test('returns 0 on invalid inputs', () => {
     expect(elapsedMinutes('not-a-date', new Date())).toBe(0);
     expect(elapsedMinutes(new Date(), 'not-a-date')).toBe(0);
+  });
+});
+
+describe('isTruncatedLongShift', () => {
+  test('flags a forgotten multi-day clock-out (49h span reads as 1h)', () => {
+    const start = new Date('2026-04-27T08:00:00Z'); // Mon 08:00
+    const end   = new Date('2026-04-29T09:00:00Z'); // Wed 09:00 (~49h)
+    // wall-clock columns would store start_time 08:00 / end_time 09:00 → ~1h
+    expect(isTruncatedLongShift(start, end, '08:00', '09:00')).toBe(true);
+  });
+
+  test('does NOT flag a normal same-day shift', () => {
+    const start = new Date('2026-04-27T13:00:00Z'); // 08:00 local etc.
+    const end   = new Date('2026-04-27T22:00:00Z'); // 9h later
+    expect(isTruncatedLongShift(start, end, '08:00', '17:00')).toBe(false);
+  });
+
+  test('does NOT flag a representable overnight shift (20:00→14:00 = 18h)', () => {
+    const start = new Date('2026-04-27T20:00:00Z');
+    const end   = new Date('2026-04-28T14:00:00Z'); // 18h, wraps one midnight
+    expect(isTruncatedLongShift(start, end, '20:00', '14:00')).toBe(false);
+  });
+
+  test('flags a multi-day overnight (20:00→14:00 but two days later = 42h)', () => {
+    const start = new Date('2026-04-27T20:00:00Z');
+    const end   = new Date('2026-04-29T14:00:00Z'); // 42h
+    expect(isTruncatedLongShift(start, end, '20:00', '14:00')).toBe(true);
+  });
+
+  test('returns false when an instant is missing or unparseable', () => {
+    expect(isTruncatedLongShift(null, new Date(), '08:00', '09:00')).toBe(false);
+    expect(isTruncatedLongShift(new Date(), 'nope', '08:00', '09:00')).toBe(false);
+    expect(isTruncatedLongShift(new Date('2026-04-27T08:00:00Z'), new Date('2026-04-29T09:00:00Z'), '', '')).toBe(false);
   });
 });

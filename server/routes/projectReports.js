@@ -11,6 +11,7 @@ const {
 } = require('../middleware/financialAccess');
 const { csvCell } = require('../utils/csv');
 const { loadSettings, laborCostCents, LABOR_ENTRY_COLUMNS } = require('../utils/paidHours');
+const { equipmentUsageCents, manualExpensesByStatus, materialsCents, sumMap } = require('../utils/projectCost');
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -32,6 +33,7 @@ async function invoiceTotals(projectId, companyId) {
     const r = await pool.query(
       `SELECT
          COALESCE(SUM(i.total_cents), 0) AS billed_cents,
+         COALESCE(SUM(i.retainage_held_cents - i.retainage_released_cents), 0) AS retainage_outstanding_cents,
          COALESCE((
            SELECT SUM(p.amount_cents)
              FROM invoice_payments p
@@ -39,32 +41,56 @@ async function invoiceTotals(projectId, companyId) {
             WHERE i2.project_id = $1 AND i2.company_id = $2 AND i2.status <> 'void'
          ), 0) AS collected_cents
        FROM invoices i
-      WHERE i.project_id = $1 AND i.company_id = $2 AND i.status <> 'void'`,
+      WHERE i.project_id = $1 AND i.company_id = $2 AND i.status NOT IN ('void', 'draft')`,
       [projectId, companyId]
     );
     return {
       billed_cents:    parseInt(r.rows[0].billed_cents, 10) || 0,
       collected_cents: parseInt(r.rows[0].collected_cents, 10) || 0,
+      retainage_outstanding_cents: parseInt(r.rows[0].retainage_outstanding_cents, 10) || 0,
     };
   } catch {
-    return { billed_cents: 0, collected_cents: 0 };
+    return { billed_cents: 0, collected_cents: 0, retainage_outstanding_cents: 0 };
   }
 }
 
-// Latest accepted estimate's total for a project (the contract value
-// baseline). Change orders bump this once that module lands.
+// Contract value for a project: the accepted estimate total PLUS every accepted
+// change order's total. A CO is added scope AND price, so it raises the contract
+// (revenue) the same way applyAcceptedCoToBudget raises the cost budget —
+// otherwise projected/bid margin would drop by the CO amount with no offset.
 async function contractValueCents(projectId) {
+  // Base contract: an explicit per-project contract value wins (hand-set on a
+  // manual job); otherwise the latest accepted estimate's total.
+  let base = null;
   try {
-    const r = await pool.query(
-      `SELECT total_cents
-         FROM estimates
-        WHERE converted_project_id = $1 AND status IN ('accepted')
-        ORDER BY responded_at DESC NULLS LAST
-        LIMIT 1`,
-      [projectId]
-    );
-    if (r.rowCount > 0) return parseInt(r.rows[0].total_cents, 10);
-  } catch { /* table may not exist */ }
+    const p = await pool.query('SELECT contract_value_cents FROM projects WHERE id = $1', [projectId]);
+    if (p.rows[0] && p.rows[0].contract_value_cents != null) base = parseInt(p.rows[0].contract_value_cents, 10);
+  } catch { /* column may not exist pre-0188 */ }
+  if (base == null) {
+    try {
+      const r = await pool.query(
+        `SELECT total_cents
+           FROM estimates
+          WHERE converted_project_id = $1 AND status IN ('accepted')
+          ORDER BY responded_at DESC NULLS LAST
+          LIMIT 1`,
+        [projectId]
+      );
+      if (r.rowCount > 0) base = parseInt(r.rows[0].total_cents, 10);
+    } catch { /* table may not exist */ }
+  }
+  if (base != null) {
+    let contract = base;
+    try {
+      const co = await pool.query(
+        `SELECT COALESCE(SUM(total_cents), 0)::bigint AS sum
+           FROM change_orders WHERE project_id = $1 AND status = 'accepted'`,
+        [projectId]
+      );
+      contract += parseInt(co.rows[0].sum, 10) || 0;
+    } catch { /* change_orders table may not exist */ }
+    return contract;
+  }
   // Fallback: budget total (sum of category budgets). Still meaningful
   // if no estimate flow was used to create the project.
   try {
@@ -84,10 +110,13 @@ async function contractValueCents(projectId) {
 // P&L and WIP.
 async function spendTotals(projectId, settings) {
   let labor = 0;
-  let materials = 0;
+  let materials = 0;            // issued-to-project inventory cost (spent)
+  let materialsCommitted = 0;   // unreceived open-PO value for the project
   let subsSpent = 0;
   let subsCommitted = 0;
-  let manualExpenses = 0;
+  let manualExpenses = 0;       // actual expenses (spent)
+  let manualCommitted = 0;      // planned expenses (committed forecast)
+  let equipUsage = 0;           // logged hours × hourly operating rate
   // Labor — same pipeline as project spend, so the WIP report and the spend
   // snapshot can't disagree about one project's labor. This was a duplicate of
   // that query, carrying the same two bugs (no overtime, and overnight shifts
@@ -103,17 +132,21 @@ async function spendTotals(projectId, settings) {
           AND te.end_time IS NOT NULL`,
       [projectId]
     );
-    labor = laborCostCents(r.rows, settings);
+    labor = laborCostCents(r.rows, settings, { includeBurden: true });
   } catch { /* time_entries shape may differ */ }
-  // Manual expenses
+  // Manual expenses, split actual (spent) vs planned (committed forecast).
   try {
-    const r = await pool.query(
-      `SELECT COALESCE(SUM(amount_cents + tax_cents), 0)::bigint AS cents
-         FROM project_expenses WHERE project_id = $1`,
-      [projectId]
-    );
-    manualExpenses = parseInt(r.rows[0].cents, 10);
+    const { spent, committed } = await manualExpensesByStatus(projectId);
+    manualExpenses = sumMap(spent);
+    manualCommitted = sumMap(committed);
   } catch { /* table may not exist */ }
+  // Equipment usage (logged hours × hourly operating rate) — same source as the
+  // per-category spend snapshot, so P&L/WIP and the spend tab agree.
+  equipUsage = await equipmentUsageCents(projectId);
+  // Materials: spent (issued or received per company basis) + open-PO committed.
+  const mat = await materialsCents(projectId, settings.materials_cost_basis);
+  materials = mat.spent;
+  materialsCommitted = mat.committed;
   // Sub spent + committed
   try {
     const paidR = await pool.query(
@@ -139,9 +172,13 @@ async function spendTotals(projectId, settings) {
     subsCommitted = parseInt(cR.rows[0].cents, 10);
   } catch { /* tables may not exist */ }
   return {
-    spent_cents:     labor + manualExpenses + materials + subsSpent,
-    committed_cents: subsCommitted,
-    by_source: { labor, materials, subs_spent: subsSpent, subs_committed: subsCommitted, manual_expenses: manualExpenses },
+    spent_cents:     labor + manualExpenses + materials + subsSpent + equipUsage,
+    committed_cents: subsCommitted + manualCommitted + materialsCommitted,
+    by_source: {
+      labor, materials, materials_committed: materialsCommitted,
+      subs_spent: subsSpent, subs_committed: subsCommitted,
+      manual_expenses: manualExpenses, manual_committed: manualCommitted, equipment_usage: equipUsage,
+    },
   };
 }
 
@@ -153,6 +190,48 @@ function pctOrNull(num, den, decimals = 1) {
 
 // ── P&L: per-project ──────────────────────────────────────────────────────────
 
+// Assemble the full per-project P&L object. Shared by the live /pnl endpoint and
+// the close-out snapshot, so the "final" locked number is computed identically
+// to the live one.
+async function budgetTotalCents(projectId) {
+  try {
+    const r = await pool.query(
+      'SELECT COALESCE(SUM(budget_cents), 0)::bigint AS sum FROM project_budget_categories WHERE project_id = $1',
+      [projectId]
+    );
+    return parseInt(r.rows[0].sum, 10);
+  } catch { return 0; }
+}
+
+async function computeProjectPnl(projectId, companyId, settings) {
+  const [contractValue, spend, invoices, budgetTotal] = await Promise.all([
+    contractValueCents(projectId),
+    spendTotals(projectId, settings),
+    invoiceTotals(projectId, companyId),
+    budgetTotalCents(projectId),
+  ]);
+  // gross_profit = revenue billed − cost spent  (lagging actual).
+  // projected_profit = contract − estimate-at-completion cost. EAC is the cost
+  // you still expect to incur, not just what's landed: max(spent+committed,
+  // budget). So early on (spent≈0) projected ≈ contract − budget ≈ bid margin
+  // and converges to actual as costs post — instead of starting near 100%.
+  const committedCost = spend.spent_cents + spend.committed_cents;
+  const forecastCost = Math.max(committedCost, budgetTotal || 0);
+  const gross_profit_cents     = invoices.billed_cents - spend.spent_cents;
+  const projected_profit_cents = contractValue - forecastCost;
+  return {
+    contract_value_cents: contractValue,
+    revenue: invoices,
+    cost: spend,
+    budget_cost_cents: budgetTotal,
+    forecast_cost_cents: forecastCost,
+    gross_profit_cents,
+    gross_margin_pct:       pctOrNull(gross_profit_cents, invoices.billed_cents),
+    projected_profit_cents,
+    projected_margin_pct:   pctOrNull(projected_profit_cents, contractValue),
+  };
+}
+
 router.get('/projects/:id/pnl', requireAuth, requireProjectFinancialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   try {
@@ -160,29 +239,26 @@ router.get('/projects/:id/pnl', requireAuth, requireProjectFinancialAccess, asyn
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
     const settings = await loadSettings(companyId);
-    const [contractValue, spend, invoices] = await Promise.all([
-      contractValueCents(req.params.id),
-      spendTotals(req.params.id, settings),
-      invoiceTotals(req.params.id, companyId),
-    ]);
+    const pnl = await computeProjectPnl(req.params.id, companyId, settings);
 
-    // gross_profit = revenue billed − cost spent  (lagging actual)
-    // projected_profit = contract value − (spent + committed)  (leading indicator)
-    const gross_profit_cents     = invoices.billed_cents - spend.spent_cents;
-    const projected_profit_cents = contractValue - (spend.spent_cents + spend.committed_cents);
-    const gross_margin_pct       = pctOrNull(gross_profit_cents, invoices.billed_cents);
-    const projected_margin_pct   = pctOrNull(projected_profit_cents, contractValue);
+    // If the job's close-out has frozen a final snapshot, hand it back too so
+    // the UI can show the locked number alongside the (still-live) figures.
+    let locked = null;
+    try {
+      const lr = await pool.query(
+        'SELECT final_financials, financials_snapshot_at FROM project_closeouts WHERE project_id = $1',
+        [req.params.id]
+      );
+      if (lr.rows[0]?.final_financials) {
+        locked = { ...lr.rows[0].final_financials, snapshot_at: lr.rows[0].financials_snapshot_at };
+      }
+    } catch { /* closeout table/columns may not exist yet */ }
 
     res.json({
       project_id: parseInt(req.params.id, 10),
       project_name: project.name,
-      contract_value_cents: contractValue,
-      revenue: invoices,
-      cost: spend,
-      gross_profit_cents,
-      gross_margin_pct,
-      projected_profit_cents,
-      projected_margin_pct,
+      ...pnl,
+      locked,
     });
   } catch (err) {
     req.log.error({ err }, 'project pnl error');
@@ -204,13 +280,15 @@ router.get('/projects/pnl-summary', requireAuth, requireFinancialReportsAccess, 
     const settings = await loadSettings(companyId);
     const rows = [];
     for (const p of projRes.rows) {
-      const [contractValue, spend, invoices] = await Promise.all([
+      const [contractValue, spend, invoices, budgetTotal] = await Promise.all([
         contractValueCents(p.id),
         spendTotals(p.id, settings),
         invoiceTotals(p.id, companyId),
+        budgetTotalCents(p.id),
       ]);
       const gross_profit_cents     = invoices.billed_cents - spend.spent_cents;
-      const projected_profit_cents = contractValue - (spend.spent_cents + spend.committed_cents);
+      // EAC forecast: max(spent+committed, budget) — same as the per-project P&L.
+      const projected_profit_cents = contractValue - Math.max(spend.spent_cents + spend.committed_cents, budgetTotal || 0);
       rows.push({
         project_id:             p.id,
         name:                   p.name,
@@ -371,3 +449,4 @@ router.get('/wip-report/export', requireAuth, requireFinancialReportsAccess, asy
 });
 
 module.exports = router;
+module.exports.computeProjectPnl = computeProjectPnl;

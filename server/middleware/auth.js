@@ -22,20 +22,38 @@ async function requireAuth(req, res, next) {
   // password was changed since this token was issued, so we reject it.
   if (payload.tv != null) {
     try {
+      // One round trip does double duty: the live revocation check (token_version +
+      // active) AND the acting company's plan/add-on row, so a plan-gated route
+      // doesn't pay a second DB hop in requirePlan/requireXAddon (they read
+      // req.company). The revocation checks below stay live per request — nothing is
+      // cached — so a deactivated user or a changed password still loses access at once.
       const { rows } = await pool.query(
-        'SELECT token_version, active FROM users WHERE id = $1',
-        [payload.id]
+        `SELECT u.token_version, u.active,
+                c.id AS _company_id, c.plan, c.subscription_status, c.trial_ends_at,
+                c.addon_qbo, c.addon_certified_payroll, c.addon_advanced_payroll,
+                c.addon_takeoff, c.addon_planroom, c.addon_roof
+           FROM users u
+           LEFT JOIN companies c ON c.id = $2
+          WHERE u.id = $1`,
+        [payload.id, payload.company_id ?? null]
       );
       if (rows.length === 0) return res.status(401).json({ error: 'Invalid token' });
+      const u = rows[0];
       // Deactivated (fired / offboarded) users must lose access immediately,
       // not at token expiry. Their JWT is otherwise still valid for up to a
       // day, so without this check a removed employee keeps full access.
-      if (rows[0].active === false) {
+      if (u.active === false) {
         return res.status(401).json({ error: 'Account deactivated' });
       }
-      if (rows[0].token_version !== payload.tv) {
+      if (u.token_version !== payload.tv) {
         return res.status(401).json({ error: 'Session invalidated, please log in again' });
       }
+      req.company = u._company_id != null ? {
+        plan: u.plan, subscription_status: u.subscription_status, trial_ends_at: u.trial_ends_at,
+        addon_qbo: u.addon_qbo, addon_certified_payroll: u.addon_certified_payroll,
+        addon_advanced_payroll: u.addon_advanced_payroll, addon_takeoff: u.addon_takeoff,
+        addon_planroom: u.addon_planroom, addon_roof: u.addon_roof,
+      } : null;
     } catch (err) {
       // DB hiccup — fail closed for safety.
       return res.status(503).json({ error: 'Auth service temporarily unavailable' });
@@ -67,6 +85,14 @@ async function requireAuth(req, res, next) {
     } catch (err) {
       return res.status(503).json({ error: 'Auth service temporarily unavailable' });
     }
+  } else {
+    // Neither a full session (tv) nor an impersonation (imp) token — i.e. a single-
+    // purpose challenge token (mfa_pending / setup_pending). Those are verified
+    // explicitly by their own endpoints (/auth/mfa/confirm, /auth/complete-setup) and
+    // must NEVER authenticate a normal request. Falling through here let an mfa-pending
+    // token (issued from just a password, before the second factor) reach /auth/me and
+    // /auth/mfa/disable — bypassing MFA entirely.
+    return res.status(401).json({ error: 'Invalid token' });
   }
 
   req.user = payload;
@@ -97,17 +123,27 @@ function requireSuperAdmin(req, res, next) {
 // Plan hierarchy: free < starter < business
 const PLAN_LEVEL = { free: 0, starter: 1, business: 2 };
 
+// The company columns every plan/add-on gate needs. requireAuth already fetched these
+// alongside the token check for normal tokens (→ req.company); resolveCompany only issues
+// a lookup on the paths that skip that (impersonation, super-admin, pre-auth stubs). Using
+// `!== undefined` so a resolved-null (deleted company) isn't re-queried.
+const COMPANY_AUTH_COLS =
+  'plan, subscription_status, trial_ends_at, addon_qbo, addon_certified_payroll, addon_advanced_payroll, addon_takeoff, addon_planroom, addon_roof';
+async function resolveCompany(req) {
+  if (req.company !== undefined) return req.company;
+  if (!req.user || req.user.company_id == null) { req.company = null; return null; }
+  const r = await pool.query(`SELECT ${COMPANY_AUTH_COLS} FROM companies WHERE id = $1`, [req.user.company_id]);
+  req.company = r.rows[0] || null;
+  return req.company;
+}
+
 // Gate a route to a minimum plan.
 // Trial companies always pass — they get full access until the trial ends.
 // Canceled companies are always blocked.
 function requirePlan(minPlan) {
   return async (req, res, next) => {
     try {
-      const r = await pool.query(
-        'SELECT plan, subscription_status, addon_qbo, trial_ends_at FROM companies WHERE id = $1',
-        [req.user.company_id]
-      );
-      const company = r.rows[0];
+      const company = await resolveCompany(req);
       if (!company) return res.status(403).json({ error: 'Company not found' });
 
       // Real-time trial expiry check — don't wait for the cron job
@@ -122,7 +158,6 @@ function requirePlan(minPlan) {
 
       // Exempt and trial companies get full access to all features
       if (company.subscription_status === 'exempt' || company.subscription_status === 'trial') {
-        req.company = company;
         return next();
       }
 
@@ -133,7 +168,6 @@ function requirePlan(minPlan) {
         return res.status(403).json({ error: 'Plan upgrade required', code: 'plan_required', required_plan: minPlan });
       }
 
-      req.company = company;
       next();
     } catch (err) {
       console.error(err);
@@ -145,11 +179,7 @@ function requirePlan(minPlan) {
 // Gate a route to the Pro add-on.
 async function requireProAddon(req, res, next) {
   try {
-    const r = await pool.query(
-      'SELECT plan, subscription_status, addon_qbo, trial_ends_at FROM companies WHERE id = $1',
-      [req.user.company_id]
-    );
-    const company = r.rows[0];
+    const company = await resolveCompany(req);
     if (!company) return res.status(403).json({ error: 'Company not found' });
 
     // Real-time trial expiry check
@@ -164,7 +194,6 @@ async function requireProAddon(req, res, next) {
 
     // Exempt and trial users get full access
     if (company.subscription_status === 'exempt' || company.subscription_status === 'trial' || company.addon_qbo) {
-      req.company = company;
       return next();
     }
 
@@ -183,11 +212,7 @@ async function requireProAddon(req, res, next) {
 // alias for new call sites.
 async function requireCertifiedPayrollAddon(req, res, next) {
   try {
-    const r = await pool.query(
-      'SELECT plan, subscription_status, addon_certified_payroll, addon_advanced_payroll, trial_ends_at FROM companies WHERE id = $1',
-      [req.user.company_id]
-    );
-    const company = r.rows[0];
+    const company = await resolveCompany(req);
     if (!company) return res.status(403).json({ error: 'Company not found' });
 
     if (company.subscription_status === 'trial' && company.trial_ends_at && new Date(company.trial_ends_at) < new Date()) {
@@ -200,7 +225,6 @@ async function requireCertifiedPayrollAddon(req, res, next) {
     }
 
     if (company.subscription_status === 'exempt' || company.subscription_status === 'trial' || company.addon_advanced_payroll || company.addon_certified_payroll) {
-      req.company = company;
       return next();
     }
 
@@ -214,11 +238,7 @@ const requireAdvancedPayrollAddon = requireCertifiedPayrollAddon; // alias — s
 
 async function requireTakeoffAddon(req, res, next) {
   try {
-    const r = await pool.query(
-      'SELECT plan, subscription_status, addon_takeoff, trial_ends_at FROM companies WHERE id = $1',
-      [req.user.company_id]
-    );
-    const company = r.rows[0];
+    const company = await resolveCompany(req);
     if (!company) return res.status(403).json({ error: 'Company not found' });
 
     if (company.subscription_status === 'trial' && company.trial_ends_at && new Date(company.trial_ends_at) < new Date()) {
@@ -231,7 +251,6 @@ async function requireTakeoffAddon(req, res, next) {
     }
 
     if (company.subscription_status === 'exempt' || company.subscription_status === 'trial' || company.addon_takeoff) {
-      req.company = company;
       return next();
     }
 
@@ -248,11 +267,7 @@ async function requireTakeoffAddon(req, res, next) {
 // addon_planroom column + flag to this check when that SKU lands.
 async function requirePlanToolsAddon(req, res, next) {
   try {
-    const r = await pool.query(
-      'SELECT plan, subscription_status, addon_takeoff, addon_planroom, addon_roof, trial_ends_at FROM companies WHERE id = $1',
-      [req.user.company_id]
-    );
-    const company = r.rows[0];
+    const company = await resolveCompany(req);
     if (!company) return res.status(403).json({ error: 'Company not found' });
 
     if (company.subscription_status === 'trial' && company.trial_ends_at && new Date(company.trial_ends_at) < new Date()) {
@@ -263,7 +278,6 @@ async function requirePlanToolsAddon(req, res, next) {
       return res.status(403).json({ error: 'Subscription required', code: 'subscription_required' });
     }
     if (company.subscription_status === 'exempt' || company.subscription_status === 'trial' || company.addon_takeoff || company.addon_planroom || company.addon_roof) {
-      req.company = company;
       return next();
     }
     return res.status(403).json({ error: 'Plan-tools add-on required', code: 'takeoff_required' });

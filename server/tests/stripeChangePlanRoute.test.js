@@ -77,7 +77,8 @@ describe('POST /stripe/change-plan', () => {
     expect(args.items).toContainEqual({ id: 'si_qbo' });
     expect(args.items).toContainEqual({ price: 'price_biz_worker_m', quantity: 5 });
     // DB reflects the new plan
-    expect(pool.query).toHaveBeenLastCalledWith(expect.stringContaining('UPDATE companies SET plan'), ['business', 'co-1']);
+    expect(pool.query).toHaveBeenLastCalledWith(expect.stringContaining('UPDATE companies SET plan'), ['business', 5, 'co-1']); // paid_worker_seats = 20 − 15
+
   });
 
   test('upgrade with <= 15 workers adds NO per-worker item', async () => {

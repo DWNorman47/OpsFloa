@@ -4,15 +4,15 @@ const logger = require('../logger');
 const { requireAuth, requirePerm, hasPerm } = require('../middleware/auth');
 const { escapeHtml } = require('../utils/htmlEscape');
 const { formatCurrency, companyCurrency } = require('../currency');
-const { uploadBase64 } = require('../r2');
-const { checkStorageLimit, incrementStorage } = require('../storage');
+const { uploadBase64, deleteByUrl, getObjectMetadataByUrl } = require('../r2');
+const { checkStorageLimit, incrementStorage, decrementStorage } = require('../storage');
 const { sendPushToCompanyAdmins } = require('../push');
 const { createInboxItemBatch } = require('./inbox');
 const { getAdvancedSettings, ADVANCED_DEFAULTS } = require('./admin');
 const { applySettingsRows, ADMIN_SETTINGS_DEFAULTS } = require('../settingsDefaults');
 const { logAudit } = require('../auditLog');
 const { coerceBody } = require('../middleware/coerce');
-const { INVENTORY_COUNT_TYPES } = require('../constants/inventoryEnums');
+const { INVENTORY_COUNT_TYPES, INVENTORY_LOCATION_TYPES } = require('../constants/inventoryEnums');
 
 const TXN_COERCE = coerceBody({
   int: ['item_id', 'from_location_id', 'to_location_id', 'uom_id', 'to_uom_id',
@@ -160,6 +160,33 @@ async function applyStockDelta(client, companyId, itemId, locationId, delta, bin
   );
 }
 
+// Reconcile a stock row to an ABSOLUTE quantity — a physical cycle count is authoritative,
+// so on-hand becomes exactly what was counted. Locks the row, reads the CURRENT quantity,
+// then sets it, returning the real delta applied (for the ledger). This is what a cycle
+// count must use instead of applyStockDelta: applying a delta computed against the
+// count-creation snapshot double-counts any issue/receipt that landed while the count was
+// open (e.g. snapshot 100, 20 issued → 80, count 80 → the stale −20 delta wrongly drove
+// stock to 60). Setting to the counted value can't drift. Must run in a BEGIN/COMMIT block.
+async function setStockAbsolute(client, companyId, itemId, locationId, targetQty, uomId = null) {
+  const uom = uomId ? parseInt(uomId) : null;
+  const cur = await client.query(
+    `SELECT quantity FROM inventory_stock
+      WHERE item_id=$1 AND location_id=$2 AND company_id=$3 AND COALESCE(uom_id,0)=COALESCE($4::int,0)
+      FOR UPDATE`,
+    [itemId, locationId, companyId, uom]
+  );
+  const current = cur.rowCount ? parseFloat(cur.rows[0].quantity) : 0;
+  await client.query(
+    `INSERT INTO inventory_stock
+       (company_id, item_id, location_id, uom_id, quantity, updated_at)
+     VALUES ($1, $2, $3, $4, $5, NOW())
+     ON CONFLICT (item_id, location_id, (COALESCE(uom_id, 0)))
+     DO UPDATE SET quantity = EXCLUDED.quantity, updated_at = NOW()`,
+    [companyId, itemId, locationId, uom, targetQty]
+  );
+  return targetQty - current;
+}
+
 // When issuing/transferring out using a UOM that has no stock row at this location,
 // find the UOM that does have stock and convert the quantity automatically.
 // e.g. stock is in 'box' (factor=30), user issues 9 'each' (factor=1) →
@@ -236,6 +263,20 @@ async function maybeSendLowStockAlert(companyId, itemId) {
 
 // Process an array of photo values (existing https:// URLs or new base64 data: URIs).
 // Uploads any base64 images to R2, tracks storage, returns array of https:// URLs.
+// When a photo set is replaced, free storage + delete the R2 objects for the photos that
+// were dropped — inventory only ever incremented, so edits/replacements leaked storage
+// forever. Inventory stores bare URLs (no per-photo size), so HEAD each removed object for
+// its real byte size before decrementing. oldUrls/keptUrls are arrays of URL strings.
+async function reclaimRemovedPhotos(companyId, oldUrls, keptUrls) {
+  const kept = new Set((Array.isArray(keptUrls) ? keptUrls : []).filter(u => typeof u === 'string'));
+  const removed = (Array.isArray(oldUrls) ? oldUrls : []).filter(u => typeof u === 'string' && !kept.has(u));
+  for (const url of removed) {
+    const meta = await getObjectMetadataByUrl(url).catch(() => null);
+    if (meta && meta.contentLength > 0) decrementStorage(companyId, meta.contentLength).catch(() => {});
+    deleteByUrl(url).catch(() => {});
+  }
+}
+
 async function processPhotos(photos, companyId) {
   if (!photos || photos.length === 0) return [];
   const base64Photos = photos.filter(p => typeof p === 'string' && p.startsWith('data:'));
@@ -641,7 +682,7 @@ router.get('/locations', requireAuth, requireInventoryView, async (req, res) => 
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
-const VALID_LOCATION_TYPES = ['warehouse', 'job_site', 'truck', 'other'];
+const VALID_LOCATION_TYPES = INVENTORY_LOCATION_TYPES; // shared constant (DB CHECK in migration 0191)
 
 // POST /api/inventory/locations
 router.post('/locations', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
@@ -686,7 +727,9 @@ router.patch('/locations/:id', requireAuth, requirePerm('manage_inventory'), asy
     if (address !== undefined) { sets.push(`address=$${idx++}`); vals.push(address?.trim() || null); }
     if (active !== undefined) { sets.push(`active=$${idx++}`); vals.push(!!active); }
     if (photo_urls !== undefined) {
+      const prev = await pool.query('SELECT photo_urls FROM inventory_locations WHERE id=$1 AND company_id=$2', [req.params.id, companyId]);
       const processed = await processPhotos(photo_urls, companyId);
+      await reclaimRemovedPhotos(companyId, prev.rows[0]?.photo_urls, processed);
       sets.push(`photo_urls=$${idx++}`); vals.push(JSON.stringify(processed));
     }
     if (sets.length === 0) return res.status(400).json({ error: 'No fields to update' });
@@ -1471,13 +1514,19 @@ router.post('/cycle-counts/:id/complete', requireAuth, requirePerm('manage_inven
     try {
       await client.query('BEGIN');
 
-      // Post adjust transactions for lines with non-zero variance
+      // Reconcile stock to the counted physical for each line that found a discrepancy.
+      // Set-to-counted (not a snapshot-based delta) so a movement while the count was open
+      // can't double-count. Lines with no variance are left alone (a concurrent movement on
+      // them stays intact). The ledger records the REAL delta applied at completion time.
       const linesWithVariance = lines.rows.filter(l => l.variance != null && parseFloat(l.variance) !== 0);
       const isFullCount = cc.rows[0].count_type === 'full';
+      let adjustmentsPosted = 0;
       for (const line of linesWithVariance) {
-        const delta = parseFloat(line.variance); // in stock UOM units
+        const countedAbsolute = parseFloat(line.expected_qty) + parseFloat(line.variance); // physical count, stock UOM
         const locationId = isFullCount ? line.location_id : cc.rows[0].location_id;
         const stockUomId = line.stock_uom_id || null;
+        const applied = await setStockAbsolute(client, companyId, line.item_id, locationId, countedAbsolute, stockUomId);
+        if (applied === 0) continue; // stock already matches the count — nothing to post
         const typeLabel = cc.rows[0].count_type === 'reconcile' ? 'Reconcile count adjustment'
           : cc.rows[0].count_type === 'audit' ? 'Audit count adjustment'
           : cc.rows[0].count_type === 'full' ? 'Full count adjustment'
@@ -1486,9 +1535,9 @@ router.post('/cycle-counts/:id/complete', requireAuth, requirePerm('manage_inven
           `INSERT INTO inventory_transactions
            (company_id, type, item_id, quantity, to_location_id, performed_by, notes, uom_id)
            VALUES ($1,'adjust',$2,$3,$4,$5,$6,$7)`,
-          [companyId, line.item_id, Math.abs(delta), locationId, req.user.id, typeLabel, stockUomId]
+          [companyId, line.item_id, Math.abs(applied), locationId, req.user.id, typeLabel, stockUomId]
         );
-        await applyStockDelta(client, companyId, line.item_id, locationId, delta, {}, stockUomId);
+        adjustmentsPosted++;
       }
 
       // Atomically claim completion — prevent double-posting if auto-complete fired concurrently
@@ -1505,8 +1554,8 @@ router.post('/cycle-counts/:id/complete', requireAuth, requirePerm('manage_inven
 
       await client.query('COMMIT');
       logAudit(companyId, req.user.id, req.user.full_name, 'cycle_count.completed', 'cycle_count', req.params.id, null,
-        { adjustments_posted: linesWithVariance.length, count_type: cc.rows[0].count_type });
-      res.json({ success: true, adjustments_posted: linesWithVariance.length });
+        { adjustments_posted: adjustmentsPosted, count_type: cc.rows[0].count_type });
+      res.json({ success: true, adjustments_posted: adjustmentsPosted });
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
@@ -1558,17 +1607,21 @@ async function checkAutoComplete(companyId, countId, completedById) {
     const typeLabel = { reconcile: 'Reconcile count adjustment', audit: 'Audit count adjustment',
       full: 'Full count adjustment' }[cc.count_type] || 'Cycle count adjustment';
 
+    // Set-to-counted reconciliation (see the /complete route for why a snapshot-based
+    // delta double-counts a concurrent movement).
     const linesWithVariance = linesResult.rows.filter(l => l.variance != null && parseFloat(l.variance) !== 0);
     for (const line of linesWithVariance) {
-      const delta = parseFloat(line.variance);
+      const countedAbsolute = parseFloat(line.expected_qty) + parseFloat(line.variance);
       const locationId = isFullCount ? line.location_id : cc.location_id;
+      const stockUomId = line.stock_uom_id || null;
+      const applied = await setStockAbsolute(client, companyId, line.item_id, locationId, countedAbsolute, stockUomId);
+      if (applied === 0) continue;
       await client.query(
         `INSERT INTO inventory_transactions
          (company_id, type, item_id, quantity, to_location_id, performed_by, notes, uom_id)
          VALUES ($1,'adjust',$2,$3,$4,$5,$6,$7)`,
-        [companyId, line.item_id, Math.abs(delta), locationId, completedById, typeLabel, line.stock_uom_id || null]
+        [companyId, line.item_id, Math.abs(applied), locationId, completedById, typeLabel, stockUomId]
       );
-      await applyStockDelta(client, companyId, line.item_id, locationId, delta, {}, line.stock_uom_id || null);
     }
     await client.query('COMMIT');
     return true;
@@ -2181,7 +2234,7 @@ function buildSetupRoutes(prefix, table, parentKey, parentTable) {
     const { name, notes, active, photo_urls } = req.body;
     try {
       const existing = await pool.query(
-        `SELECT id FROM ${table} WHERE id=$1 AND company_id=$2`,
+        `SELECT id, photo_urls FROM ${table} WHERE id=$1 AND company_id=$2`,
         [req.params.id, companyId]
       );
       if (existing.rowCount === 0) return res.status(404).json({ error: 'Not found' });
@@ -2191,6 +2244,7 @@ function buildSetupRoutes(prefix, table, parentKey, parentTable) {
       if (active !== undefined) { sets.push(`active=$${idx++}`); vals.push(!!active); }
       if (photo_urls !== undefined) {
         const processed = await processPhotos(photo_urls, companyId);
+        await reclaimRemovedPhotos(companyId, existing.rows[0]?.photo_urls, processed);
         sets.push(`photo_urls=$${idx++}`); vals.push(JSON.stringify(processed));
       }
       if (sets.length === 0) return res.status(400).json({ error: 'No fields to update' });
@@ -2409,12 +2463,18 @@ router.get('/purchase-orders', requireAuth, requirePerm('manage_inventory'), asy
 // POST /api/inventory/purchase-orders
 router.post('/purchase-orders', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const { supplier_id, order_date, expected_date, to_location_id, notes, reference_no, lines = [] } = req.body;
+  const projectId = req.body.project_id != null && req.body.project_id !== '' ? parseInt(req.body.project_id, 10) : null;
   if (notes && notes.trim().length > 1000) return res.status(400).json({ error: 'notes too long (max 1000 characters)' });
   if (reference_no && reference_no.trim().length > 100) return res.status(400).json({ error: 'reference_no too long (max 100 characters)' });
+  if (projectId != null && !Number.isFinite(projectId)) return res.status(400).json({ error: 'invalid project_id' });
   const companyId = req.user.company_id;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    if (projectId != null) {
+      const proj = await client.query('SELECT id FROM projects WHERE id=$1 AND company_id=$2', [projectId, companyId]);
+      if (!proj.rowCount) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Project not found' }); }
+    }
     if (supplier_id) {
       const supplier = await client.query(
         'SELECT id FROM inventory_suppliers WHERE id=$1 AND company_id=$2',
@@ -2432,12 +2492,12 @@ router.post('/purchase-orders', requireAuth, requirePerm('manage_inventory'), as
     const poNumber = await nextPONumber(client, companyId);
     const poResult = await client.query(
       `INSERT INTO purchase_orders
-         (company_id, po_number, supplier_id, order_date, expected_date, to_location_id, notes, reference_no, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+         (company_id, po_number, supplier_id, order_date, expected_date, to_location_id, notes, reference_no, created_by, project_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
       [companyId, poNumber, supplier_id || null,
        order_date || new Date().toISOString().slice(0,10),
        expected_date || null, to_location_id || null,
-       notes?.trim() || null, reference_no?.trim() || null, req.user.id]
+       notes?.trim() || null, reference_no?.trim() || null, req.user.id, projectId]
     );
     const po = poResult.rows[0];
     for (const line of lines) {
@@ -2507,7 +2567,7 @@ router.get('/purchase-orders/:id', requireAuth, requirePerm('manage_inventory'),
 // PATCH /api/inventory/purchase-orders/:id
 router.patch('/purchase-orders/:id', requireAuth, requirePerm('manage_inventory'), async (req, res) => {
   const companyId = req.user.company_id;
-  const { supplier_id, order_date, expected_date, to_location_id, notes, reference_no, status } = req.body;
+  const { supplier_id, order_date, expected_date, to_location_id, notes, reference_no, status, project_id } = req.body;
   if (notes !== undefined && notes && notes.trim().length > 1000) return res.status(400).json({ error: 'notes too long (max 1000 characters)' });
   if (reference_no !== undefined && reference_no && reference_no.trim().length > 100) return res.status(400).json({ error: 'reference_no too long (max 100 characters)' });
   try {
@@ -2539,6 +2599,14 @@ router.patch('/purchase-orders/:id', requireAuth, requirePerm('manage_inventory'
     if (order_date   !== undefined) { sets.push(`order_date=$${idx++}`);     vals.push(order_date); }
     if (expected_date!== undefined) { sets.push(`expected_date=$${idx++}`);  vals.push(expected_date || null); }
     if (to_location_id!==undefined) { sets.push(`to_location_id=$${idx++}`); vals.push(to_location_id || null); }
+    if (project_id   !== undefined) {
+      const pid = project_id ? parseInt(project_id, 10) : null;
+      if (pid != null) {
+        const proj = await pool.query('SELECT id FROM projects WHERE id=$1 AND company_id=$2', [pid, companyId]);
+        if (!proj.rowCount) return res.status(400).json({ error: 'Project not found' });
+      }
+      sets.push(`project_id=$${idx++}`); vals.push(pid);
+    }
     if (notes        !== undefined) { sets.push(`notes=$${idx++}`);          vals.push(notes?.trim() || null); }
     if (reference_no !== undefined) { sets.push(`reference_no=$${idx++}`);   vals.push(reference_no?.trim() || null); }
     if (status       !== undefined) {
@@ -2994,3 +3062,4 @@ router.get('/valuation', requireAuth, requirePerm('manage_inventory'), async (re
 });
 
 module.exports = router;
+module.exports.setStockAbsolute = setStockAbsolute; // exported for unit tests

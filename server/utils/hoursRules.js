@@ -1000,11 +1000,24 @@ function roundEdge(rawMin, expectedMin, cfg, edge) {
  */
 function applyRounding(rawStart, rawEnd, expected, rounding) {
   const rs = toMin(rawStart);
-  const re = toMin(rawEnd);
+  let re = toMin(rawEnd);
   if (rs == null || re == null) return { start: rawStart, end: rawEnd };
 
   const es = expected ? expected.startMin : null;
-  const ee = expected ? expected.endMin : null;
+  let ee = expected ? expected.endMin : null;
+
+  // Overnight punch (end wall-clock before start = next day): carry the end as
+  // extended minutes so rounding + the non-inversion clamp below don't collapse
+  // the shift to 0h. 1440 is a multiple of every rounding interval, so the grid
+  // is preserved; toHHMMSS wraps the result back to a wall-clock time.
+  if (re < rs) {
+    re += 1440;
+    // Frame the expected end into the punch's next-day frame whenever it falls before
+    // the punch start — an overnight expected shift (ee < es) OR a same-day schedule the
+    // overnight punch runs past. Leaving ee same-day while re is extended made directional
+    // rounding measure a ~1440-min gap and could truncate the shift toward the schedule.
+    if (ee != null && ee < rs) ee += 1440;
+  }
 
   let ps = roundEdge(rs, es, rounding.clockIn, 'in');
   let pe = roundEdge(re, ee, rounding.clockOut, 'out');
@@ -1053,7 +1066,7 @@ function validatePolicyRaw(raw) {
  * header. `every` mode is the one exception: each repetition is another
  * `minutes`, because that's what "every N minutes, add M" means.
  */
-function ruleCredit(rule, punchMin, anchorBase = null) {
+function ruleCredit(rule, punchMin, anchorBase = null, dayStart = null) {
   // The trigger threshold. 'clock' anchor: a fixed wall-clock time (`at`/`from`).
   // 'schedule' anchor: an offset off the scheduled edge — `anchorBase` is that edge
   // (baseEnd for 'after', baseStart for 'before'), already resolved by applyRules.
@@ -1065,6 +1078,10 @@ function ruleCredit(rule, punchMin, anchorBase = null) {
     threshold = rule.edge === 'after' ? anchorBase + rule.offsetMin : anchorBase - rule.offsetMin;
   } else {
     threshold = rule.mode === 'every' ? rule.from : rule.at;
+    // Overnight after-edge: `punchMin` is the extended end (+1440), so a morning-after
+    // clock threshold (before the shift's start) must move into the same frame or the
+    // `punchMin - threshold` distance is off by a full day. dayStart null → no-op.
+    if (dayStart != null && threshold != null && threshold < dayStart) threshold += 1440;
   }
   // 'after' measures a late clock-out; 'before' measures an early clock-in.
   const past = rule.edge === 'after' ? punchMin - threshold : threshold - punchMin;
@@ -1085,12 +1102,12 @@ function ruleCredit(rule, punchMin, anchorBase = null) {
  * credit is still whatever ruleCredit returns (an 'every' ladder is cumulative on
  * its own); stacking only governs how SEPARATE rules combine.
  */
-function edgeCredit(rules, type, edge, punchMin, anchorBase = null) {
+function edgeCredit(rules, type, edge, punchMin, anchorBase = null, dayStart = null) {
   let maxReplace = 0;
   let sumStack = 0;
   for (const r of rules) {
     if (r.type !== type || r.edge !== edge) continue;
-    const c = ruleCredit(r, punchMin, anchorBase);
+    const c = ruleCredit(r, punchMin, anchorBase, dayStart);
     if (r.stack) sumStack += c;
     else if (c > maxReplace) maxReplace = c;
   }
@@ -1099,11 +1116,11 @@ function edgeCredit(rules, type, edge, punchMin, anchorBase = null) {
 
 // Explain-only: ids of the add/remove-time rules on one edge that actually fired
 // (credit > 0), so a trace can name and link them. Never touches the pay math.
-function adjustFiredRuleIds(rules, edge, punchMin, anchorBase) {
+function adjustFiredRuleIds(rules, edge, punchMin, anchorBase, dayStart = null) {
   const ids = [];
   for (const r of rules) {
     if ((r.type !== 'add_time' && r.type !== 'remove_time') || r.edge !== edge) continue;
-    if (ruleCredit(r, punchMin, anchorBase) > 0) ids.push(r.id);
+    if (ruleCredit(r, punchMin, anchorBase, dayStart) > 0) ids.push(r.id);
   }
   return ids;
 }
@@ -1125,11 +1142,17 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null, tr
   // The punch as it arrived. Rung thresholds are ALWAYS judged against this,
   // never against the clipped value — an End Time rule at 5:00 would otherwise
   // pull every punch back to 5:00 and no rung could ever fire.
+  // Overnight punch: carry the end as next-day extended minutes so the interval
+  // math and the `e < s ⇒ e = s` clamps below don't collapse the shift to 0h.
+  // toHHMMSS wraps the paid end back to a wall-clock time at the call site.
+  const overnight = startMin != null && endMin != null && endMin < startMin;
+  const endExt = overnight ? endMin + 1440 : endMin;
+
   const punchStart = startMin;
-  const punchEnd = endMin;
+  const punchEnd = endExt;
 
   let s = startMin;
-  let e = endMin;
+  let e = endExt;
 
   // ── 1. Clip ── bound the paid punch, and establish the baseline the ladder
   // measures from. clip_start ("Start Time") is "ignore anything before this";
@@ -1147,6 +1170,11 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null, tr
   // boundary regardless" and is NOT enforced yet; it's not selectable in the
   // UI, so this only skips a hand-written policy, and doing nothing is the safe
   // choice — we never invent paid time a worker didn't clock.
+  // Overnight: an End Time cap in the morning-after (before the shift's start) is a
+  // next-day time; move it into the extended frame so it doesn't clamp the paid end
+  // back below the start (which `e < s ⇒ e = s` would then collapse to 0h). The
+  // clock-in side stays same-day, so clip_start is never reframed.
+  const frameEnd = (t) => (overnight && t != null && t < startMin) ? t + 1440 : t;
   let baseStart = null;
   let baseEnd = null;
   for (const r of rules) {
@@ -1155,8 +1183,9 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null, tr
       baseStart = baseStart == null ? r.at : Math.max(baseStart, r.at);
       if (r.behavior !== 'auto') s = Math.max(s, r.at);
     } else if (r.type === 'clip_end') {
-      baseEnd = baseEnd == null ? r.at : Math.min(baseEnd, r.at);
-      if (r.behavior !== 'auto') e = Math.min(e, r.at);
+      const at = frameEnd(r.at);
+      baseEnd = baseEnd == null ? at : Math.min(baseEnd, at);
+      if (r.behavior !== 'auto') e = Math.min(e, at);
     }
   }
   const clipStartTo = s !== punchStart ? s : null; // trace: paid start pulled forward by a Start Time rule
@@ -1164,7 +1193,11 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null, tr
   // No End Time rule for this day → fall back to the scheduled day. Validation
   // requires the rule (see validatePolicy), so this only catches a policy
   // written straight into the DB.
-  if (baseEnd == null && expected) baseEnd = expected.endMin;
+  if (baseEnd == null && expected) {
+    // Match the punch's extended frame for an overnight expected shift.
+    baseEnd = (overnight && expected.endMin != null && expected.startMin != null && expected.endMin < expected.startMin)
+      ? expected.endMin + 1440 : expected.endMin;
+  }
   if (baseStart == null && expected) baseStart = expected.startMin;
   if (e < s) e = s;
 
@@ -1174,8 +1207,9 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null, tr
   const hasAfter = rules.some(r => (r.type === 'add_time' || r.type === 'remove_time') && r.edge === 'after');
   if (hasAfter) {
     const ePre = e;
-    const net = edgeCredit(rules, 'add_time', 'after', punchEnd, baseEnd)
-              - edgeCredit(rules, 'remove_time', 'after', punchEnd, baseEnd);
+    const afterDayStart = overnight ? startMin : null; // frame morning-after clock thresholds
+    const net = edgeCredit(rules, 'add_time', 'after', punchEnd, baseEnd, afterDayStart)
+              - edgeCredit(rules, 'remove_time', 'after', punchEnd, baseEnd, afterDayStart);
     const scheduleBased = rules.some(r => r.edge === 'after' && r.base === 'schedule'
       && (r.type === 'add_time' || r.type === 'remove_time'));
 
@@ -1242,7 +1276,7 @@ function applyRules(startMin, endMin, loggedBreakMin, rules, expected = null, tr
   if (trace) {
     if (clipStartTo != null) trace.push({ code: 'clip_start', toMin: clipStartTo, ruleIds: rules.filter(r => r.type === 'clip_start' && r.behavior !== 'auto' && r.at === clipStartTo).map(r => r.id) });
     if (clipEndTo != null) trace.push({ code: 'clip_end', toMin: clipEndTo, ruleIds: rules.filter(r => r.type === 'clip_end' && r.behavior !== 'auto' && r.at === clipEndTo).map(r => r.id) });
-    if (afterDelta !== 0) trace.push({ code: afterDelta > 0 ? 'add_time' : 'remove_time', edge: 'after', deltaMin: afterDelta, ruleIds: adjustFiredRuleIds(rules, 'after', punchEnd, baseEnd) });
+    if (afterDelta !== 0) trace.push({ code: afterDelta > 0 ? 'add_time' : 'remove_time', edge: 'after', deltaMin: afterDelta, ruleIds: adjustFiredRuleIds(rules, 'after', punchEnd, baseEnd, overnight ? startMin : null) });
     if (beforeDelta !== 0) trace.push({ code: beforeDelta > 0 ? 'add_time' : 'remove_time', edge: 'before', deltaMin: beforeDelta, ruleIds: adjustFiredRuleIds(rules, 'before', punchStart, baseStart) });
     if (expectedBreak > loggedBreak) trace.push({ code: 'auto_break', breakMin, addedMin: expectedBreak - loggedBreak, ruleIds: rules.filter(r => r.type === 'auto_break' && !(r.trigger.kind === 'after_hours' && workedHours < r.trigger.hours)).map(r => r.id) });
   }

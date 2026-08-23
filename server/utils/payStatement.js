@@ -4,8 +4,8 @@ const {
   nightPremiumCost, nightHoursForEntry, hoursWorked, computeGuaranteeShortfall,
   computeLeaveHours, shiftHoursByDate,
 } = require('./payCalculations');
-const { leaveRateMultipliers, computeWorkerLeave, computeCompanyLeave, otRuleFromSettings } = require('./paidHours');
-const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, sickRulesFromSettings } = require('./hoursRules');
+const { leaveRateMultipliers, computeWorkerLeave, computeCompanyLeave, otRuleFromSettings, otThreshold } = require('./paidHours');
+const { roundEntriesFromSettings, otConfigFromSettings, otConfigByRoleFactory, sickRulesFromSettings, ymd } = require('./hoursRules');
 const { parseCompanyDeductions, normalizeWorkerDeductions, payStubTotals } = require('./deductions');
 const { splitRateAware, hasSimpleOtConfig } = require('./rateAwareOvertime');
 const { resolveRuleset, deductionsForRole, splitDeductionsByTiming } = require('./paycheckRun');
@@ -76,7 +76,7 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     projectRateMap = {}; // prevailing entries fall back to prevRate, which is 0 below
   }
   const rule = otRuleFromSettings(settings, worker.overtime_rule);
-  const threshold = parseFloat(settings.overtime_threshold) || 8;
+  const threshold = otThreshold(settings, rule);
   const weekStart = settings.week_start;
   const otMult = parseFloat(settings.overtime_multiplier) || 1.5;
   // Gate rate/prevRate on `unpaid` directly — a `... || 45`/`... || 0` fallback would turn a
@@ -123,7 +123,13 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
     // Daily-rate workers, or premium OT configs (tiers, rest-day, 7th-day,
     // windows, night differential) that need per-band attribution. Prevailing
     // stays flat here until the per-band rate-aware work lands.
-    const ot = computeOT(paid, rule, threshold, weekStart, otConfig, { from, to, workedDays: weekWorkedDays });
+    const ot = computeOT(paid, rule, threshold, weekStart, otConfig, {
+      from, to, workedDays: weekWorkedDays,
+      // Paid-leave hours per day: a no-clock-in daily guarantee only tops the day up
+      // to its floor counting leave already paid (no double-pay; partial leave still
+      // gets the remainder).
+      leaveByDate: (leave && leave.leaveByDate instanceof Map) ? leave.leaveByDate : null,
+    });
     annotateEntryOvertime(paid, rule, threshold, weekStart, otConfig);
     regularHours = ot.regularHours; overtimeHours = ot.overtimeHours;
     floorDetail = ot.floorDetail || [];
@@ -132,7 +138,7 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
       if (e.wage_type !== 'prevailing') continue;
       // Clamp at 0 (matches entryDuration): a break longer than the shift must not
       // produce negative prevailing hours/cost.
-      const h = Math.max(0, hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60);
+      const h = Math.max(0, hoursWorked(e.start_time, e.end_time) - Math.max(0, e.break_minutes || 0) / 60);
       prevailingHours += h;
       prevailingCostRaw += h * (projectRateMap && projectRateMap[e.project_id] != null ? projectRateMap[e.project_id] : prevRate);
     }
@@ -182,13 +188,19 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
   const { shortfall: guaranteeShortfall, minHours: guaranteeMinHours, weeks: guaranteeWeeks } =
     computeGuaranteeShortfall(totalHours + sickHours + vacationHours, worker.guaranteed_weekly_hours, from, to);
 
+  // Per-hour pay lines (leave, weekly guarantee shortfall) price at an HOURLY rate.
+  // For a daily-rate worker `rate` is the DAILY amount, so use the derived hourly
+  // (daily ÷ standard day) — otherwise 8h of sick would pay 8 daily rates (~8× over).
+  const leaveDailyHours = parseFloat(settings.regular_shift_hours) || 8;
+  const hourlyRate = rateType === 'daily' ? (leaveDailyHours > 0 ? rate / leaveDailyHours : 0) : rate;
+
   // Round every line to cents so line items provably sum to the totals.
   const regularCost = cents(regularCostRaw);
   const overtimeCost = cents(overtimeCostRaw);
   const prevailingCost = cents(prevailingCostRaw);
-  const guaranteeCost = cents(guaranteeShortfall * rate);
-  const sickCost = cents(sickHours * rate * mult.sick);
-  const vacationCost = cents(vacationHours * rate * mult.vacation);
+  const guaranteeCost = cents(guaranteeShortfall * hourlyRate);
+  const sickCost = cents(sickHours * hourlyRate * mult.sick);
+  const vacationCost = cents(vacationHours * hourlyRate * mult.vacation);
   const nightPremium = cents(nightPremiumRaw);
   const grossWages = regularCost + overtimeCost + prevailingCost + nightPremium + guaranteeCost + sickCost + vacationCost;
 
@@ -281,7 +293,7 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
       regular: regularCost, overtime: overtimeCost, prevailing: prevailingCost,
       night: nightPremium,
       sick: sickCost, vacation: vacationCost, guarantee: guaranteeCost,
-      sickRate: cents(rate * mult.sick), vacationRate: cents(rate * mult.vacation),
+      sickRate: cents(hourlyRate * mult.sick), vacationRate: cents(hourlyRate * mult.vacation),
     },
     rates: { rate, rateType, prevailingWageRate: prevRate, overtimeMultiplier: otMult, sickPct: settings.sick_pay_pct, vacationPct: settings.vacation_pay_pct },
     deductions: stub.deductions,
@@ -452,7 +464,11 @@ async function workerPeriodStatements({ companyId, worker, settings, periods }) 
   const out = [];
   const list = periods || [];
   if (list.length === 0) return out;
-  const day = d => String(d).substring(0, 10);
+  // pg returns pay_periods.period_start/end as local-midnight Date objects; ymd()
+  // normalizes both Date and string to 'YYYY-MM-DD'. A bare String(date).slice gave
+  // "Wed Aug 19", which then threw as a ::date bound AND never matched a to_char'd
+  // work_date in the filter below — 500-ing the legacy (no-ruleset) pay-stub path.
+  const day = d => ymd(d);
   const minDate = list.reduce((m, p) => (day(p.period_start) < m ? day(p.period_start) : m), day(list[0].period_start));
   const maxDate = list.reduce((m, p) => (day(p.period_end) > m ? day(p.period_end) : m), day(list[0].period_end));
 

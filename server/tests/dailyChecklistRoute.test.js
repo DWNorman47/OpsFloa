@@ -95,7 +95,7 @@ describe('POST /projects/:id/start', () => {
         if (/FROM daily_checklist_recurring_items/.test(sql)) return { rows: [{ text: 'Check fire extinguisher' }, { text: 'Sweep site' }] };
         if (/status = 'completed' ORDER BY/.test(sql)) return { rows: [{ id: 50 }] };     // previous completed day
         if (/checked = false/.test(sql)) return { rows: [{ text: 'Sweep site' }, { text: 'Fix rail on level 2' }] }; // 'Sweep site' dups recurring
-        if (/INSERT INTO daily_checklist_items/.test(sql)) { inserted.push({ text: params[1], source: params[4] }); return { rows: [] }; }
+        if (/INSERT INTO daily_checklist_items/.test(sql)) { inserted.push({ text: params[1], source: params[4] }); return { rows: [{ id: inserted.length }] }; }
         if (/SELECT id, text, checked/.test(sql)) return { rows: inserted.map((it, i) => ({ id: i + 1, ...it, checked: false, order_index: i })) };
         return { rows: [] };
       }),
@@ -165,16 +165,33 @@ describe('POST /days/:id/complete', () => {
 });
 
 describe('PATCH /days/:id/items/:itemId', () => {
-  test('checking an item stamps checked_by + checked_at', async () => {
+  test('checking a shared item stamps checked_by + checked_at on the item row', async () => {
     pool.query
-      .mockResolvedValueOnce({ rows: [{ id: 42, company_id: 'co-1', status: 'active' }] }) // loadDay
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 3, checked: true }] });           // UPDATE
+      .mockResolvedValueOnce({ rows: [{ id: 42, company_id: 'co-1', status: 'active' }] })     // loadDay
+      .mockResolvedValueOnce({ rows: [{ id: 3, mode: 'shared', role_ids: null }] })            // item lookup
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 3 }] })                              // UPDATE
+      .mockResolvedValueOnce({ rows: [{ id: 3, checked: true, mode: 'shared' }] });           // loadItems reload
     const res = await request(makeApp()).patch('/api/daily-checklist/days/42/items/3').send({ checked: true });
     expect(res.status).toBe(200);
-    const [sql, vals] = pool.query.mock.calls[1];
+    const [sql, vals] = pool.query.mock.calls[2]; // the UPDATE (loadDay, lookup, then UPDATE)
     expect(sql).toMatch(/checked_by = \$/);
     expect(sql).toMatch(/checked_at = now\(\)/);
     expect(vals).toContain(5); // req.user.id stamped as checked_by
+  });
+
+  test('checking an individual item upserts private per-user state, not the item row', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ id: 42, company_id: 'co-1', status: 'active' }] })     // loadDay
+      .mockResolvedValueOnce({ rows: [{ id: 3, mode: 'individual', role_ids: null }] })        // item lookup
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })                                        // upsert user_state
+      .mockResolvedValueOnce({ rows: [{ id: 3, checked: true, mode: 'individual' }] });        // loadItems reload
+    const res = await request(makeApp()).patch('/api/daily-checklist/days/42/items/3').send({ checked: true });
+    expect(res.status).toBe(200);
+    const stateSql = pool.query.mock.calls[2][0];
+    expect(stateSql).toMatch(/INSERT INTO daily_checklist_item_user_state/);
+    expect(stateSql).toMatch(/ON CONFLICT/);
+    // The shared item row is never touched for an individual item.
+    expect(pool.query.mock.calls.map(c => c[0]).join('\n')).not.toMatch(/UPDATE daily_checklist_items SET checked/);
   });
 
   test('rejects edits to a non-active day', async () => {
@@ -229,7 +246,7 @@ describe('POST /projects/:id/start — queue resume + conflict', () => {
         if (/SELECT text, order_index FROM daily_checklist_items/.test(sql)) return { rows: [{ text: 'Prepared A', order_index: 0 }] }; // plan's item
         if (/FROM daily_checklist_recurring_items/.test(sql)) return { rows: [{ text: 'Prepared A' }, { text: 'Recurring B' }] };
         if (/status = 'completed' ORDER BY/.test(sql)) return { rows: [] };
-        if (/INSERT INTO daily_checklist_items/.test(sql)) { inserted.push({ text: params[1], source: params[4] }); return { rows: [] }; }
+        if (/INSERT INTO daily_checklist_items/.test(sql)) { inserted.push({ text: params[1], source: params[4] }); return { rows: [{ id: inserted.length }] }; }
         if (/SELECT id, text, checked/.test(sql)) return { rows: [] };
         return { rows: [] };
       }),
@@ -280,7 +297,7 @@ describe('day-plan management', () => {
         if (/status = 'active'/.test(sql) && /day_number/.test(sql)) return { rows: [] }; // no active day
         if (/MAX\(queue_order\)/.test(sql)) return { rows: [{ n: 1 }] };
         if (/INSERT INTO daily_checklists/.test(sql)) return { rows: [{ id: 77 }] };
-        if (/INSERT INTO daily_checklist_items/.test(sql)) { dayInserts.push(params[1]); return { rows: [] }; }
+        if (/INSERT INTO daily_checklist_items/.test(sql)) { dayInserts.push(params[1]); return { rows: [{ id: dayInserts.length }] }; }
         if (/SELECT id, text, checked/.test(sql)) return { rows: [] };
         return { rows: [] };
       }),
@@ -316,7 +333,7 @@ describe('day-plan management', () => {
         if (/^\s*(BEGIN|COMMIT|ROLLBACK)/.test(sql)) return {};
         if (/status = 'active'/.test(sql) && /day_number/.test(sql)) return { rows: [{ id: 77, work_date: '2026-08-05', day_number: 2 }] };
         if (/SELECT text, order_index FROM daily_checklist_items/.test(sql)) return { rows: [{ text: 'Existing', order_index: 0 }] };
-        if (/INSERT INTO daily_checklist_items/.test(sql)) { inserted.push(params[1]); return { rows: [] }; }
+        if (/INSERT INTO daily_checklist_items/.test(sql)) { inserted.push(params[1]); return { rows: [{ id: inserted.length }] }; }
         if (/SELECT id, text, checked/.test(sql)) return { rows: [] };
         return { rows: [] };
       }),

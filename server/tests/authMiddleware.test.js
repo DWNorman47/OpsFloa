@@ -74,14 +74,37 @@ describe('requireAuth', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  test('passes through for special-purpose token (no tv claim) without hitting the DB', async () => {
-    const token = sign({ id: 1, role: 'worker', purpose: 'setup' }); // no tv
+  test('401 for an mfa-pending challenge token (no tv, no imp) — must not authenticate a normal request', async () => {
+    // Issued from just a password, BEFORE the second factor. Accepting it here let it
+    // reach /auth/me and /auth/mfa/disable and bypass MFA. It is only valid at
+    // /auth/mfa/confirm, which verifies it explicitly.
+    const token = sign({ id: 1, mfa_pending: true });
+    const req = makeReq(token);
+    const res = makeRes();
+    const next = jest.fn();
+    await requireAuth(req, res, next);
+    expect(res.statusCode).toBe(401);
+    expect(next).not.toHaveBeenCalled();
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  test('401 for a setup-pending token (no tv, no imp)', async () => {
+    const token = sign({ id: 1, setup_pending: true });
+    const res = makeRes();
+    const next = jest.fn();
+    await requireAuth(makeReq(token), res, next);
+    expect(res.statusCode).toBe(401);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  test('impersonation token (imp, no tv) still passes when target is active', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [{ target_active: true, imp_active: true, imp_role: 'super_admin' }] });
+    const token = sign({ id: 1, role: 'worker', imp: true, imp_by: 9 });
     const req = makeReq(token);
     const res = makeRes();
     const next = jest.fn();
     await requireAuth(req, res, next);
     expect(next).toHaveBeenCalledTimes(1);
-    expect(pool.query).not.toHaveBeenCalled();
     expect(req.user.id).toBe(1);
   });
 
@@ -133,10 +156,11 @@ describe('requireAuth', () => {
 // ───────────────────────────────────────────────────────────────────────────
 
 describe('requireAdmin', () => {
-  beforeEach(() => pool.query.mockReset());
+  // requireAuth (chained first) now requires a real session token (tv) + live DB check.
+  beforeEach(() => { pool.query.mockReset(); pool.query.mockResolvedValue({ rows: [{ token_version: 1, active: true }] }); });
 
   test('403 when role is worker', async () => {
-    const token = sign({ id: 1, role: 'worker' });
+    const token = sign({ id: 1, role: 'worker', tv: 1 });
     const res = makeRes();
     const next = jest.fn();
     await requireAdmin(makeReq(token), res, next);
@@ -145,7 +169,7 @@ describe('requireAdmin', () => {
   });
 
   test('passes when role is admin', async () => {
-    const token = sign({ id: 1, role: 'admin' });
+    const token = sign({ id: 1, role: 'admin', tv: 1 });
     const res = makeRes();
     const next = jest.fn();
     await requireAdmin(makeReq(token), res, next);
@@ -153,7 +177,7 @@ describe('requireAdmin', () => {
   });
 
   test('passes when role is super_admin', async () => {
-    const token = sign({ id: 1, role: 'super_admin' });
+    const token = sign({ id: 1, role: 'super_admin', tv: 1 });
     const res = makeRes();
     const next = jest.fn();
     await requireAdmin(makeReq(token), res, next);
@@ -170,8 +194,10 @@ describe('requireAdmin', () => {
 });
 
 describe('requireSuperAdmin', () => {
+  beforeEach(() => { pool.query.mockReset(); pool.query.mockResolvedValue({ rows: [{ token_version: 1, active: true }] }); });
+
   test('403 for admin role', async () => {
-    const token = sign({ id: 1, role: 'admin' });
+    const token = sign({ id: 1, role: 'admin', tv: 1 });
     const res = makeRes();
     const next = jest.fn();
     await requireSuperAdmin(makeReq(token), res, next);
@@ -180,7 +206,7 @@ describe('requireSuperAdmin', () => {
   });
 
   test('passes for super_admin', async () => {
-    const token = sign({ id: 1, role: 'super_admin' });
+    const token = sign({ id: 1, role: 'super_admin', tv: 1 });
     const res = makeRes();
     const next = jest.fn();
     await requireSuperAdmin(makeReq(token), res, next);

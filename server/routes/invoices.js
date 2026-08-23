@@ -114,7 +114,11 @@ async function recomputeTotals(client, invoiceId) {
   const head = headRes.rows[0];
   const totals = computeInvoiceTotals({ lines, tax_pct: parseFloat(head.tax_pct), retainage_pct: parseFloat(head.retainage_pct) });
   await client.query(
-    'UPDATE invoices SET subtotal_cents = $1, tax_cents = $2, total_cents = $3, retainage_held_cents = $4, updated_at = NOW() WHERE id = $5',
+    // Clamp released ≤ held: if editing lines lowers the held retainage below what was
+    // already released, released must follow it down — otherwise (held − released) goes
+    // negative and understates project retainage outstanding.
+    `UPDATE invoices SET subtotal_cents = $1, tax_cents = $2, total_cents = $3, retainage_held_cents = $4,
+       retainage_released_cents = LEAST(retainage_released_cents, $4), updated_at = NOW() WHERE id = $5`,
     [totals.subtotal, totals.tax, totals.total, totals.retainage_held, invoiceId]
   );
   return totals;
@@ -244,6 +248,7 @@ router.post('/', requireAuth, requireCommercialAccess, async (req, res) => {
     if (fields[k] === null) return res.status(400).json({ error: `${k} out of range` });
   }
   const rawLines = Array.isArray(req.body.lines) ? req.body.lines : [];
+  if (rawLines.length > 500) return res.status(400).json({ error: 'Too many line items (max 500)' });
   const lines = [];
   for (let i = 0; i < rawLines.length; i++) {
     const n = normaliseLine(rawLines[i], i);
@@ -367,6 +372,41 @@ router.post('/from-project/:projectId', requireAuth, requireCommercialAccess, as
   }
 });
 
+// POST /invoices/retainage-release/:projectId — record that the client has
+// RELEASED the retainage withheld across the project's invoices (the withholding
+// is lifted). Retainage is already inside those invoices' totals — it just sat
+// unpaid — so releasing bills nothing new; it marks the held amount released so
+// the remaining invoice balances become collectible and the close-out item
+// completes. Idempotent: re-firing just re-sets released = held (no double-up).
+router.post('/retainage-release/:projectId', requireAuth, requireCommercialAccess, async (req, res) => {
+  const companyId = req.user.company_id;
+  try {
+    const projRes = await pool.query('SELECT id FROM projects WHERE id = $1 AND company_id = $2', [req.params.projectId, companyId]);
+    if (projRes.rowCount === 0) return res.status(404).json({ error: 'Project not found' });
+    // Capture the pre-update delta in a CTE — a bare RETURNING would evaluate
+    // (held − released) AFTER the SET and always report 0.
+    const upd = await pool.query(
+      `WITH pre AS (
+         SELECT id, (retainage_held_cents - retainage_released_cents) AS newly_released
+           FROM invoices
+          WHERE project_id = $1 AND company_id = $2 AND status NOT IN ('void', 'draft')
+            AND retainage_held_cents > retainage_released_cents
+       )
+       UPDATE invoices i SET retainage_released_cents = i.retainage_held_cents, updated_at = NOW()
+         FROM pre WHERE i.id = pre.id
+         RETURNING i.id, pre.newly_released`,
+      [req.params.projectId, companyId]
+    );
+    const released = upd.rows.reduce((s, r) => s + (parseInt(r.newly_released, 10) || 0), 0);
+    if (upd.rowCount === 0) return res.status(400).json({ error: 'No retainage held to release on this project' });
+    await logAudit(companyId, req.user.id, req.user.full_name, 'invoice.retainage_released', 'project', req.params.projectId, null, { released_cents: released, invoices: upd.rowCount });
+    res.json({ released_cents: released, invoices: upd.rowCount });
+  } catch (err) {
+    req.log.error({ err }, 'retainage release error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // GET /invoices/:id
 router.get('/:id', requireAuth, requireCommercialAccess, async (req, res) => {
   try {
@@ -424,6 +464,7 @@ router.patch('/:id', requireAuth, requireCommercialAccess, async (req, res) => {
 router.put('/:id/lines', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   if (!Array.isArray(req.body.lines)) return res.status(400).json({ error: 'lines must be an array' });
+  if (req.body.lines.length > 500) return res.status(400).json({ error: 'Too many line items (max 500)' });
   const lines = [];
   for (let i = 0; i < req.body.lines.length; i++) {
     const n = normaliseLine(req.body.lines[i], i);

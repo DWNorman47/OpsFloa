@@ -142,6 +142,9 @@ router.post('/', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'A report for this project and date already exists' });
     }
 
+    // Upsert. The unique index is NULLS NOT DISTINCT (migration 0194), so ON CONFLICT now fires
+    // for a "No project" (NULL project_id) report too — no duplicate on re-submit, atomic under
+    // concurrency (no read-then-insert race).
     const result = await client.query(
       `INSERT INTO daily_reports
          (company_id, project_id, report_date, superintendent, weather_condition, weather_temp,
@@ -246,6 +249,14 @@ router.patch('/:id', requireAuth, async (req, res) => {
     if (!isAdmin && existing.rows[0].created_by !== req.user.id) {
       await client.query('ROLLBACK');
       return res.status(403).json({ error: 'You can only edit your own reports' });
+    }
+
+    // Edit-lock once reviewed — matches fieldReports. A non-admin must not rewrite the
+    // work-performed / crew / weather of a report already signed off (it still shows the
+    // reviewer's name over content they never saw).
+    if (!isAdmin && existing.rows[0].status === 'reviewed') {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Reviewed reports cannot be edited' });
     }
 
     if (clientUpdatedAt && new Date(existing.rows[0].updated_at).getTime() !== new Date(clientUpdatedAt).getTime()) {

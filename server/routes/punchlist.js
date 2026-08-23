@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const pool = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { requirePerm } = require('../permissions');
 const { sendPushToUser } = require('../push');
 const { projectBelongsToCompany, userBelongsToCompany } = require('../utils/tenantRefs');
 const {
@@ -105,7 +106,9 @@ router.post('/', requireAuth, async (req, res) => {
 });
 
 // PATCH /punchlist/:id
-router.patch('/:id', requireAuth, async (req, res) => {
+// Editing an item (status → verified, reassign, priority) is a management action — gate it
+// on manage_punchlist so a rank-and-file worker can't silently close out or reassign defects.
+router.patch('/:id', requireAuth, requirePerm('manage_punchlist'), async (req, res) => {
   const companyId = req.user.company_id;
   const { project_id, priority, status, assigned_to, phase } = req.body;
   const title = req.body.title !== undefined ? (req.body.title?.trim() || null) : undefined;
@@ -241,7 +244,7 @@ router.delete('/:id/checklist/:checkId', requireAuth, async (req, res) => {
 });
 
 // DELETE /punchlist/:id
-router.delete('/:id', requireAuth, async (req, res) => {
+router.delete('/:id', requireAuth, requirePerm('manage_punchlist'), async (req, res) => {
   const companyId = req.user.company_id;
   const isAdmin = req.user.role === 'admin' || req.user.role === 'super_admin';
   const cond = isAdmin ? 'company_id=$2' : 'company_id=$2 AND created_by=$3';

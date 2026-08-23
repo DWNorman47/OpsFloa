@@ -13,6 +13,7 @@ import { useConfirm } from './ConfirmDialog';
 import { useToast } from '../contexts/ToastContext';
 import { useT } from '../hooks/useT';
 import { useCents } from '../hooks/useMoney';
+import { useHasAnyPerm } from '../hooks/usePerm';
 import { silentError } from '../errorReporter';
 
 const CATEGORIES = ['labor', 'materials', 'equipment', 'subs', 'overhead', 'contingency', 'other'];
@@ -32,6 +33,7 @@ export default function ProjectFinancialsTab({ projectId }) {
   // The big P&L numbers want whole-dollar rounding (no $0.00 noise on a $250k
   // contract), so showCents=false. Bound to the company currency by the hook.
   const formatCents = useCents({ showCents: false });
+  const canWrite = useHasAnyPerm(['manage_projects']);   // financial writes need manage_projects
   const toast = useToast();
   const t = useT();
   const { confirm, dialog: confirmDialog } = useConfirm();
@@ -46,6 +48,11 @@ export default function ProjectFinancialsTab({ projectId }) {
   const [expenseForm, setExpenseForm] = useState({
     category: 'other', description: '', amount_cents: 0, tax_pct: 0, vendor: '', paid_date: new Date().toISOString().slice(0, 10),
   });
+  const [editBudget, setEditBudget] = useState(false);
+  const [budgetDraft, setBudgetDraft] = useState({});
+  const [savingBudget, setSavingBudget] = useState(false);
+  const [editContract, setEditContract] = useState(false);
+  const [contractDraft, setContractDraft] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -91,6 +98,58 @@ export default function ProjectFinancialsTab({ projectId }) {
     } catch (err) { setError(err.response?.data?.error || 'Failed to add expense'); }
   }
 
+  function startEditBudget() {
+    const d = {};
+    CATEGORIES.forEach(cat => {
+      const b = budget?.categories?.find(c => c.category === cat);
+      const cents = b ? parseInt(b.budget_cents, 10) || 0 : 0;
+      d[cat] = cents ? (cents / 100).toFixed(2) : '';
+    });
+    setBudgetDraft(d);
+    setEditBudget(true);
+  }
+
+  async function saveBudget() {
+    setSavingBudget(true);
+    setError(null);
+    try {
+      const categories = CATEGORIES.map(cat => ({
+        category: cat,
+        budget_cents: budgetDraft[cat] === '' || budgetDraft[cat] == null ? 0 : Math.round(Number(budgetDraft[cat]) * 100),
+      }));
+      await api.put(`/projects/${projectId}/budget`, { categories });
+      toast('Budget saved', 'success');
+      setEditBudget(false);
+      await load();
+    } catch (err) { setError(err.response?.data?.error || 'Failed to save budget'); }
+    finally { setSavingBudget(false); }
+  }
+
+  async function saveContract() {
+    const cents = contractDraft === '' ? null : Math.round(Number(contractDraft) * 100);
+    if (cents !== null && (!Number.isFinite(cents) || cents < 0)) { setError('Enter a valid contract value'); return; }
+    try {
+      await api.patch(`/admin/projects/${projectId}`, { contract_value_cents: cents });
+      toast('Contract value saved', 'success');
+      setEditContract(false);
+      await load();
+    } catch (err) { setError(err.response?.data?.error || 'Failed to save contract value'); }
+  }
+
+  async function releaseRetainage() {
+    const held = parseInt(pnl?.revenue?.retainage_outstanding_cents, 10) || 0;
+    if (!await confirm({
+      title: 'Release retainage?',
+      body: `Mark ${formatCents(held)} of withheld retainage as released? It's already billed on prior invoices — releasing lifts the hold so the remaining balances are collectible.`,
+      confirmLabel: 'Release',
+    })) return;
+    try {
+      await api.post(`/invoices/retainage-release/${projectId}`);
+      toast('Retainage released', 'success');
+      await load();
+    } catch (err) { setError(err.response?.data?.error || 'Failed to release retainage'); }
+  }
+
   async function deleteExpense(id) {
     if (!await confirm({
       title: 'Delete this expense?',
@@ -114,7 +173,36 @@ export default function ProjectFinancialsTab({ projectId }) {
       {/* P&L summary */}
       {pnl && (
         <div style={styles.card}>
-          <h3 style={styles.h3}>P&L Summary</h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <h3 style={{ ...styles.h3, margin: 0 }}>P&L Summary</h3>
+            {canWrite && !pnl.locked && (
+              editContract ? (
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <span style={{ fontSize: 13, color: '#6b7280' }}>Contract $</span>
+                  <input type="number" min="0" step="0.01" value={contractDraft} onChange={e => setContractDraft(e.target.value)} style={{ ...styles.input, width: 120 }} autoFocus />
+                  <button onClick={saveContract} style={styles.btnPrimary}>Save</button>
+                  <button onClick={() => setEditContract(false)} style={styles.btn}>Cancel</button>
+                </div>
+              ) : (
+                <button onClick={() => { setContractDraft(pnl.contract_value_cents ? (parseInt(pnl.contract_value_cents, 10) / 100).toString() : ''); setEditContract(true); }} style={styles.btn}>Set contract value</button>
+              )
+            )}
+          </div>
+          {pnl.locked && (
+            <div style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 8, padding: '10px 14px', marginBottom: 12, display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'baseline', fontSize: 14 }}>
+              <span style={{ fontWeight: 700, color: '#065f46' }}>🔒 Final (locked)</span>
+              <span>Profit <strong>{formatCents(pnl.locked.gross_profit_cents)}</strong></span>
+              <span style={{ color: '#6b7280' }}>Cost {formatCents(pnl.locked.cost?.spent_cents)}</span>
+              {parseInt(pnl.locked.cost?.committed_cents, 10) > 0 && (
+                <span style={{ color: '#b45309' }}>+ {formatCents(pnl.locked.cost.committed_cents)} committed (not yet spent)</span>
+              )}
+              {pnl.locked.snapshot_at && (
+                <span style={{ marginLeft: 'auto', fontSize: 12, color: '#6b7280' }}>
+                  as of {new Date(pnl.locked.snapshot_at).toLocaleDateString()} · live figures below
+                </span>
+              )}
+            </div>
+          )}
           <div style={styles.statGrid}>
             <Stat label="Contract value" value={formatCents(pnl.contract_value_cents)} />
             <Stat label="Revenue billed" value={formatCents(pnl.revenue?.billed_cents)} />
@@ -141,12 +229,52 @@ export default function ProjectFinancialsTab({ projectId }) {
               value={pnl.projected_margin_pct == null ? '—' : `${pnl.projected_margin_pct.toFixed(1)}%`}
             />
           </div>
+          {parseInt(pnl.revenue?.retainage_outstanding_cents, 10) > 0 && (
+            <div style={{ marginTop: 12, padding: '10px 12px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', fontSize: 14 }}>
+              <span>Retainage held by client: <strong>{formatCents(pnl.revenue.retainage_outstanding_cents)}</strong></span>
+              {canWrite && !pnl.locked && (
+                <button onClick={releaseRetainage} style={{ ...styles.btn, marginLeft: 'auto' }}>Release retainage →</button>
+              )}
+            </div>
+          )}
+          {(() => {
+            // Bid margin = (contract − budgeted cost) / contract. Compared with
+            // projected margin, it answers "are we tracking to the margin we bid?"
+            const contractC = parseInt(pnl.contract_value_cents, 10) || 0;
+            const budgetCostC = parseInt(budget?.total_cents, 10) || 0;
+            if (!contractC || !budgetCostC) return null;
+            const bidMarginPct = ((contractC - budgetCostC) / contractC) * 100;
+            const proj = pnl.projected_margin_pct;
+            const delta = proj == null ? null : proj - bidMarginPct;
+            return (
+              <div style={{ marginTop: 12, padding: '10px 12px', background: '#f9fafb', borderRadius: 8, fontSize: 14, display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'baseline' }}>
+                <span><strong>Bid margin</strong> {bidMarginPct.toFixed(1)}%</span>
+                <span style={{ color: '#6b7280' }}>vs</span>
+                <span><strong>Projected</strong> {proj == null ? '—' : `${proj.toFixed(1)}%`}</span>
+                {delta != null && (
+                  <span style={{ marginLeft: 'auto', fontWeight: 700, color: delta < -0.05 ? '#dc2626' : delta > 0.05 ? '#059669' : '#6b7280' }}>
+                    {delta >= 0 ? '+' : ''}{delta.toFixed(1)} pts
+                  </span>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
 
       {/* Categorized budget + spend */}
       <div style={styles.card}>
-        <h3 style={styles.h3}>Budget vs. Spend by category</h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <h3 style={{ ...styles.h3, margin: 0 }}>Budget (cost) vs. Spend by category</h3>
+          {!canWrite ? null : editBudget ? (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => setEditBudget(false)} style={styles.btn}>Cancel</button>
+              <button onClick={saveBudget} disabled={savingBudget} style={styles.btnPrimary}>{savingBudget ? 'Saving…' : 'Save budget'}</button>
+            </div>
+          ) : (
+            <button onClick={startEditBudget} style={styles.btn}>Edit budget</button>
+          )}
+        </div>
         <div style={styles.tableScroll}>
         <table style={styles.table}>
           <thead>
@@ -155,6 +283,7 @@ export default function ProjectFinancialsTab({ projectId }) {
               <th style={{ ...styles.th, textAlign: 'right' }}>Budget</th>
               <th style={{ ...styles.th, textAlign: 'right' }}>Spent</th>
               <th style={{ ...styles.th, textAlign: 'right' }}>Committed</th>
+              <th style={{ ...styles.th, textAlign: 'right' }}>Variance</th>
               <th style={styles.th}>% Used</th>
             </tr>
           </thead>
@@ -166,9 +295,10 @@ export default function ProjectFinancialsTab({ projectId }) {
               const spentCents = parseInt(sRow.spent_cents, 10) || 0;
               const committedCents = parseInt(sRow.committed_cents, 10) || 0;
               const used = spentCents + committedCents;
+              const variance = budgetCents - used;   // + = under budget, − = over
               const pct = budgetCents > 0 ? Math.min(150, Math.round((used / budgetCents) * 100)) : null;
               const pctColor = pct == null ? '#6b7280' : pct >= 100 ? '#dc2626' : pct >= 85 ? '#d97706' : '#059669';
-              if (budgetCents === 0 && spentCents === 0 && committedCents === 0) return null;
+              if (!editBudget && budgetCents === 0 && spentCents === 0 && committedCents === 0) return null;
               return (
                 <tr key={cat} style={{ borderBottom: '1px solid #f3f4f6' }}>
                   <td style={styles.td}>
@@ -176,9 +306,22 @@ export default function ProjectFinancialsTab({ projectId }) {
                       {cat}
                     </span>
                   </td>
-                  <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(budgetCents)}</td>
+                  <td style={{ ...styles.td, textAlign: 'right' }}>
+                    {editBudget ? (
+                      <input
+                        type="number" min="0" step="0.01"
+                        value={budgetDraft[cat] ?? ''}
+                        onChange={e => setBudgetDraft(d => ({ ...d, [cat]: e.target.value }))}
+                        style={{ ...styles.input, maxWidth: 110, textAlign: 'right' }}
+                        placeholder="0.00"
+                      />
+                    ) : formatCents(budgetCents)}
+                  </td>
                   <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(spentCents)}</td>
                   <td style={{ ...styles.td, textAlign: 'right', color: '#6b7280' }}>{formatCents(committedCents)}</td>
+                  <td style={{ ...styles.td, textAlign: 'right', fontWeight: 600, color: budgetCents === 0 ? '#9ca3af' : variance < 0 ? '#dc2626' : '#059669' }}>
+                    {budgetCents === 0 ? '—' : formatCents(variance)}
+                  </td>
                   <td style={styles.td}>
                     {pct != null && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -200,6 +343,10 @@ export default function ProjectFinancialsTab({ projectId }) {
                 <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(budget.total_cents)}</td>
                 <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{formatCents(spend.totals.spent_cents)}</td>
                 <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: '#6b7280' }}>{formatCents(spend.totals.committed_cents)}</td>
+                {(() => {
+                  const tv = parseInt(budget.total_cents, 10) - (parseInt(spend.totals.spent_cents, 10) + parseInt(spend.totals.committed_cents, 10));
+                  return <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: tv < 0 ? '#dc2626' : '#059669' }}>{formatCents(tv)}</td>;
+                })()}
                 <td style={{ ...styles.td, fontWeight: 700 }}>
                   {spend.totals.pct_used != null && `${spend.totals.pct_used}%`}
                 </td>
@@ -208,15 +355,22 @@ export default function ProjectFinancialsTab({ projectId }) {
           )}
         </table>
         </div>
+        <p style={{ fontSize: 12, color: '#6b7280', margin: '10px 0 0' }}>
+          Budget is your estimated <strong>cost</strong>. Variance = budget − (spent + committed): <span style={{ color: '#059669' }}>green</span> is under, <span style={{ color: '#dc2626' }}>red</span> is over.
+        </p>
       </div>
 
       {/* Manual expenses */}
       <div style={styles.card}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
           <h3 style={styles.h3}>Project expenses ({expenses.length})</h3>
-          <button onClick={() => setShowExpenseForm(s => !s)} style={styles.btn}>
-            {showExpenseForm ? 'Cancel' : '+ Add expense'}
-          </button>
+          {pnl?.locked ? (
+            <span style={{ fontSize: 12, color: '#6b7280' }}>🔒 Closed — reopen to edit costs</span>
+          ) : canWrite ? (
+            <button onClick={() => setShowExpenseForm(s => !s)} style={styles.btn}>
+              {showExpenseForm ? 'Cancel' : '+ Add expense'}
+            </button>
+          ) : null}
         </div>
 
         {showExpenseForm && (
@@ -289,7 +443,7 @@ export default function ProjectFinancialsTab({ projectId }) {
                   <td style={{ ...styles.td, textAlign: 'right' }}>{formatCents(e.amount_cents)}</td>
                   <td style={{ ...styles.td, textAlign: 'right', color: '#6b7280' }}>{formatCents(e.tax_cents)}</td>
                   <td style={styles.td}>
-                    <button onClick={() => deleteExpense(e.id)} style={styles.iconBtn} title="Delete">×</button>
+                    {!pnl?.locked && canWrite && <button onClick={() => deleteExpense(e.id)} style={styles.iconBtn} title="Delete">×</button>}
                   </td>
                 </tr>
               ))}

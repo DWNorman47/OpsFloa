@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OpsFloa — Decrypt</title>
+<!--
+  Self-contained OFFLINE decryptor for an "OPSFLOA1:" payload. Fetches nothing, needs no
+  app/server/DB — pure WebCrypto. A recipient saves this file (or opens the emailed copy),
+  pastes the encrypted text + the encryption password, and reads the credentials. Same
+  crypto as the popup (PBKDF2-SHA256 → AES-256-GCM); the payload is self-describing.
+-->
+<style>
+  :root {
+    --backdrop:#eef0f4; --card:#ffffff; --ink:#1d2330; --muted:#6b7280;
+    --border:#e4e7ec; --field:#f7f8fa; --field-border:#d6dae1;
+    --accent:#4f46e5; --accent-ink:#fff; --good:#16a34a; --bad:#dc2626;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --backdrop:#0e1015; --card:#171a21; --ink:#e7e9ee; --muted:#98a0ac;
+      --border:#272c36; --field:#1f232c; --field-border:#333a45; --accent:#818cf8;
+      --accent-ink:#0e1015; --good:#4ade80; --bad:#f87171; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--backdrop); color:var(--ink);
+    font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:flex; justify-content:center; padding:32px 16px; -webkit-font-smoothing:antialiased; }
+  .card { width:100%; max-width:460px; background:var(--card); border:1px solid var(--border);
+    border-radius:14px; box-shadow:0 10px 30px rgba(20,25,40,.12); padding:22px; }
+  h1 { font-size:18px; margin:0 0 4px; display:flex; align-items:center; gap:9px; }
+  h1 svg { width:20px; height:20px; color:var(--accent); }
+  .sub { color:var(--muted); font-size:12.5px; margin:0 0 18px; }
+  label { display:block; font-size:11.5px; font-weight:600; color:var(--muted);
+    text-transform:uppercase; letter-spacing:.04em; margin:14px 0 6px; }
+  textarea, input { width:100%; background:var(--field); border:1px solid var(--field-border);
+    color:var(--ink); border-radius:9px; padding:10px; font-size:13.5px; font-family:inherit; }
+  textarea { min-height:96px; resize:vertical; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; }
+  input:focus, textarea:focus { outline:2px solid var(--accent); outline-offset:1px; border-color:transparent; }
+  button { width:100%; margin-top:18px; border:0; border-radius:10px; padding:12px; font-size:14px;
+    font-weight:700; background:var(--accent); color:var(--accent-ink); cursor:pointer; }
+  button:active { transform:translateY(1px); }
+  .out { margin-top:18px; display:none; }
+  .out.show { display:block; }
+  .kv { display:flex; justify-content:space-between; gap:12px; align-items:center;
+    padding:11px 12px; background:var(--field); border:1px solid var(--field-border);
+    border-radius:9px; margin-bottom:8px; }
+  .kv .k { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+  .kv .v { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13.5px; word-break:break-all; text-align:right; }
+  .kv button { width:auto; margin:0; padding:5px 10px; font-size:12px; background:transparent;
+    color:var(--accent); border:1px solid var(--field-border); border-radius:7px; }
+  .msg { margin-top:14px; font-size:13px; font-weight:600; display:none; }
+  .msg.show { display:block; }
+  .msg.err { color:var(--bad); }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg> Decrypt an OpsFloa payload</h1>
+    <p class="sub">Runs entirely in your browser — nothing is uploaded. Paste the encrypted text and the password it was sealed with.</p>
+
+    <label for="blob">Encrypted payload</label>
+    <textarea id="blob" placeholder="OPSFLOA1:…"></textarea>
+    <div id="hintline" style="display:none; margin-top:8px; font-size:12.5px; color:var(--muted); font-weight:600"></div>
+
+    <label for="pw">Encryption password</label>
+    <input type="password" id="pw" placeholder="The password it was sealed with" />
+
+    <button id="go">Decrypt</button>
+
+    <div class="msg err" id="err"></div>
+    <div class="out" id="out"></div>
+  </div>
+
+<script>
+(function () {
+  const $ = id => document.getElementById(id);
+  const enc = new TextEncoder(), dec = new TextDecoder();
+  const u8 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+
+  async function deriveKey(password, salt, iters) {
+    const base = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey(
+      { name: 'PBKDF2', salt, iterations: iters, hash: 'SHA-256' },
+      base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+  }
+
+  function unpack(blob) {
+    const raw = blob.trim().replace(/^OPSFLOA1:/, '');
+    return JSON.parse(dec.decode(u8(raw)));
+  }
+  async function decrypt(blob, password) {
+    const o = unpack(blob);
+    const key = await deriveKey(password, u8(o.salt), o.it);
+    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: u8(o.iv) }, key, u8(o.ct));
+    return JSON.parse(dec.decode(pt));
+  }
+
+  // The hint travels in the payload envelope (plaintext) — show it as a clue.
+  function showHint() {
+    const el = $('hintline'), b = $('blob').value.trim();
+    try { const o = unpack(b); if (b && o.hint) { el.textContent = '💡 Hint: ' + o.hint; el.style.display = 'block'; return; } } catch {}
+    el.style.display = 'none';
+  }
+  $('blob').addEventListener('input', showHint);
+
+  function row(k, v) {
+    return `<div class="kv"><div><div class="k">${k}</div><div class="v">${(v||'—').replace(/[<&]/g, c => ({'<':'&lt;','&':'&amp;'}[c]))}</div></div>`
+      + (v ? `<button data-c="${encodeURIComponent(v)}">Copy</button>` : '') + `</div>`;
+  }
+
+  $('go').addEventListener('click', async () => {
+    const err = $('err'), out = $('out');
+    err.classList.remove('show'); out.classList.remove('show');
+    const blob = $('blob').value, pw = $('pw').value;
+    if (!blob.trim() || !pw) { err.textContent = 'Paste the payload and the password.'; err.classList.add('show'); return; }
+    try {
+      const d = await decrypt(blob, pw);
+      out.innerHTML = row('Site', d.site) + row('Username', d.username) + row('Password', d.password) + (d.category ? row('Category', d.category) : '');
+      out.classList.add('show');
+      out.querySelectorAll('[data-c]').forEach(b => b.addEventListener('click', () => {
+        navigator.clipboard.writeText(decodeURIComponent(b.dataset.c)).then(() => { b.textContent = 'Copied'; setTimeout(() => b.textContent = 'Copy', 1200); }).catch(() => {});
+      }));
+    } catch {
+      err.textContent = 'Could not decrypt — wrong password or corrupted payload.'; err.classList.add('show');
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -246,10 +246,13 @@ async function transitionStatus(req, res, fromStatuses, toStatus, action, column
     if (!fromStatuses.includes(s.status)) {
       return res.status(409).json({ error: `Cannot transition from '${s.status}' to '${toStatus}'` });
     }
+    // Re-check the from-status IN the UPDATE (not just the JS read above) so two concurrent
+    // transitions can't both apply — the loser matches 0 rows.
     const r = await pool.query(
-      `UPDATE submittals SET status = $1 ${columnUpdates} WHERE id = $2 RETURNING *`,
-      [toStatus, req.params.id]
+      `UPDATE submittals SET status = $1 ${columnUpdates} WHERE id = $2 AND status = ANY($3) RETURNING *`,
+      [toStatus, req.params.id, fromStatuses]
     );
+    if (r.rowCount === 0) return res.status(409).json({ error: `Cannot transition to '${toStatus}' — status changed` });
     await recordAudit({ submittalId: req.params.id, action, actorUserId: req.user.id });
     await logAudit(companyId, req.user.id, req.user.full_name,
       `submittal.${action}`, 'submittal', req.params.id, s.submittal_number, null);
@@ -277,9 +280,10 @@ router.post('/submittals/:id/void', requireAdmin, async (req, res) => {
     if (!s) return res.status(404).json({ error: 'Submittal not found' });
     if (s.status === 'void') return res.status(409).json({ error: 'Already void' });
     const r = await pool.query(
-      `UPDATE submittals SET status = 'void' WHERE id = $1 RETURNING *`,
+      `UPDATE submittals SET status = 'void' WHERE id = $1 AND status <> 'void' RETURNING *`,
       [req.params.id]
     );
+    if (r.rowCount === 0) return res.status(409).json({ error: 'Already void' });
     await recordAudit({ submittalId: req.params.id, action: 'voided', actorUserId: req.user.id });
     res.json(r.rows[0]);
   } catch (err) {
@@ -316,9 +320,10 @@ router.post('/submittals/:id/stamp', requireAdmin, async (req, res) => {
            WHEN notes IS NULL OR notes = '' THEN 'Review notes: ' || $2
            ELSE notes || E'\n\nReview notes: ' || $2
          END
-       WHERE id = $3 RETURNING *`,
+       WHERE id = $3 AND status = 'sent_to_reviewer' RETURNING *`,
       [stamp, trimmedNotes || null, req.params.id]
     );
+    if (r.rowCount === 0) return res.status(409).json({ error: 'Submittal is no longer awaiting a stamp' });
     await recordAudit({
       submittalId: req.params.id,
       action: 'stamp_received',

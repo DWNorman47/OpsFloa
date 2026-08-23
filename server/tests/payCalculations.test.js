@@ -265,6 +265,15 @@ describe('computeOT — more edge cases', () => {
     expect(overtimeHours).toBe(0);
   });
 
+  test('negative break_minutes cannot inflate paid hours (clamped at 0)', () => {
+    // A negative break would subtract-a-negative and ADD hours — an overpay vector
+    // the outer clamp can't catch. entryDuration now clamps the break itself at 0.
+    const entries = [daily('2024-01-01', '08:00', '16:00', 'regular', -120)]; // 8h shift, "−2h break"
+    const { regularHours, overtimeHours } = computeOT(entries, 'daily', 8);
+    expect(regularHours).toBeCloseTo(8); // exactly 8, NOT 10
+    expect(overtimeHours).toBe(0);
+  });
+
   test('multiple entries on same day with mixed wage types: regular alone drives OT', () => {
     const entries = [
       daily('2024-01-01', '06:00', '16:00', 'regular'),       // 10h regular

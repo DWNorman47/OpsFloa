@@ -180,7 +180,7 @@ async function notifyAdminsOfNewRequest(companyId, companyName, requestId, reque
       await sendEmail(
         a.email,
         `New client request — ${requesterName}`,
-        `<p>A client submitted a new request to ${companyName} via OpsFloa.</p>
+        `<p>A client submitted a new request to ${escapeHtml(String(companyName ?? ''))} via OpsFloa.</p>
          <p><strong>From:</strong> ${escapeHtml(requesterName)}</p>
          <p><strong>Type:</strong> ${catLabel}</p>
          <p>Review it in your <a href="${process.env.APP_URL || 'https://app.opsfloa.com'}/administration#requests">Administration → Requests</a> tab.</p>`
@@ -336,15 +336,18 @@ router.patch('/:id', requireAdmin, async (req, res) => {
 // POST /api/admin/service-requests/:id/convert — create a Project from the request
 router.post('/:id/convert', requireAdmin, async (req, res) => {
   const { project_name, address, start_date } = req.body;
+  const client = await pool.connect();
   try {
-    // Pull the request to validate ownership + reuse address if not overridden
-    const reqRow = await pool.query(
-      'SELECT * FROM service_requests WHERE id = $1 AND company_id = $2',
+    await client.query('BEGIN');
+    // Lock the request row so two concurrent converts can't each create a project — the
+    // second blocks, then sees status='converted' and 400s.
+    const reqRow = await client.query(
+      'SELECT * FROM service_requests WHERE id = $1 AND company_id = $2 FOR UPDATE',
       [req.params.id, req.user.company_id]
     );
-    if (reqRow.rowCount === 0) return res.status(404).json({ error: 'Request not found' });
+    if (reqRow.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Request not found' }); }
     const r = reqRow.rows[0];
-    if (r.status === 'converted') return res.status(400).json({ error: 'Already converted' });
+    if (r.status === 'converted') { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Already converted' }); }
 
     const name = String(project_name || '').trim() || `Request from ${r.requester_name}`;
     const addr = String(address || '').trim() || r.requester_address || null;
@@ -355,14 +358,14 @@ router.post('/:id/convert', requireAdmin, async (req, res) => {
     // a freshly converted request — the work was just accepted, treat it as
     // active. Using 'active' here was a bug — admins couldn't save edits on
     // these projects because the status didn't match the dropdown options.
-    const proj = await pool.query(
+    const proj = await client.query(
       `INSERT INTO projects (company_id, name, address, start_date, status, description)
        VALUES ($1, $2, $3, $4, 'in_progress', $5)
        RETURNING id, name`,
       [req.user.company_id, name.slice(0, 200), addr, sd, `Converted from client request #${r.id}:\n\n${r.description}`]
     );
 
-    await pool.query(
+    await client.query(
       `UPDATE service_requests
           SET status = 'converted',
               converted_project_id = $1,
@@ -372,12 +375,16 @@ router.post('/:id/convert', requireAdmin, async (req, res) => {
         WHERE id = $3`,
       [proj.rows[0].id, req.user.id, r.id]
     );
+    await client.query('COMMIT');
 
     await logAudit(req.user.company_id, req.user.id, req.user.full_name, 'service_request.converted', 'service_request', r.id, proj.rows[0].name, { project_id: proj.rows[0].id });
     res.json({ project_id: proj.rows[0].id, project_name: proj.rows[0].name });
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
   }
 });
 
@@ -385,19 +392,21 @@ router.post('/:id/convert', requireAdmin, async (req, res) => {
 // (a service call) from the request, instead of a full Project.
 router.post('/:id/convert-work-order', requireAdmin, async (req, res) => {
   const { title, address } = req.body;
+  const client = await pool.connect();
   try {
-    const reqRow = await pool.query(
-      'SELECT * FROM service_requests WHERE id = $1 AND company_id = $2',
+    await client.query('BEGIN');
+    const reqRow = await client.query(
+      'SELECT * FROM service_requests WHERE id = $1 AND company_id = $2 FOR UPDATE',
       [req.params.id, req.user.company_id]
     );
-    if (reqRow.rowCount === 0) return res.status(404).json({ error: 'Request not found' });
+    if (reqRow.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Request not found' }); }
     const r = reqRow.rows[0];
-    if (r.status === 'converted') return res.status(400).json({ error: 'Already converted' });
+    if (r.status === 'converted') { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Already converted' }); }
 
     const woTitle = String(title || '').trim() || `Service call — ${r.requester_name}`;
     const addr = String(address || '').trim() || r.requester_address || null;
 
-    const wo = await pool.query(
+    const wo = await client.query(
       `INSERT INTO work_orders (company_id, client_id, title, address, status, description, created_by)
        VALUES ($1, $2, $3, $4, 'open', $5, $6)
        RETURNING id, title`,
@@ -405,7 +414,7 @@ router.post('/:id/convert-work-order', requireAdmin, async (req, res) => {
         `From client request #${r.id}:\n\n${r.description}`, req.user.id]
     );
 
-    await pool.query(
+    await client.query(
       `UPDATE service_requests
           SET status = 'converted',
               converted_work_order_id = $1,
@@ -415,12 +424,16 @@ router.post('/:id/convert-work-order', requireAdmin, async (req, res) => {
         WHERE id = $3`,
       [wo.rows[0].id, req.user.id, r.id]
     );
+    await client.query('COMMIT');
 
     await logAudit(req.user.company_id, req.user.id, req.user.full_name, 'service_request.converted_work_order', 'service_request', r.id, wo.rows[0].title, { work_order_id: wo.rows[0].id });
     res.json({ work_order_id: wo.rows[0].id, work_order_title: wo.rows[0].title });
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     logger.error({ err }, 'catch block error');
     res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
   }
 });
 

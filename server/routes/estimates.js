@@ -7,10 +7,38 @@ const { requireCommercialAccess } = require('../middleware/commercialAccess');
 const { logAudit } = require('../auditLog');
 const { uploadBase64, deleteByUrl, getBytesByUrl } = require('../r2');
 const { clientBelongsToCompany } = require('../utils/tenantRefs');
+const { loadSettings } = require('../utils/paidHours');
+const { sendEmail } = require('../email');
+const { escapeHtml } = require('../utils/htmlEscape');
+
+// App base for the client-facing acceptance link (/e/<token>). Trailing slash trimmed.
+const APP_URL = (process.env.APP_URL || 'https://opsfloa.com').replace(/\/+$/, '');
+
+// Best-effort client email of the acceptance link. Called AFTER the estimate is
+// committed 'sent', so a delivery failure never blocks the send (the admin still
+// has the copyable link). Returns sendEmail()'s result.
+async function emailEstimateToClient({ estimate, token, companyName, replyTo }) {
+  const co  = escapeHtml(companyName || 'OpsFloa');
+  const num = escapeHtml(estimate.estimate_number || '');
+  const who = escapeHtml(estimate.client_name_snapshot || 'there');
+  const proj = escapeHtml(estimate.project_name || '');
+  const url = `${APP_URL}/e/${token}`;
+  const subject = `Estimate ${estimate.estimate_number} from ${companyName || 'OpsFloa'}`;
+  const html = `
+    <div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px">
+      <h2 style="color:#1a56db;margin:0 0 8px">Estimate ${num}</h2>
+      <p style="color:#444;margin:0 0 16px">Hi ${who}, ${co} sent you an estimate${proj ? ` for ${proj}` : ''}. Review it and accept online below.</p>
+      <a href="${url}" style="display:inline-block;background:#1a56db;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;margin-top:8px">View &amp; accept estimate</a>
+      <p style="color:#9ca3af;font-size:12px;margin-top:24px;word-break:break-all">${url}</p>
+    </div>`;
+  return sendEmail(estimate.client_email, subject, html, undefined, { fromName: companyName, replyTo });
+}
 const {
   ESTIMATE_STATUSES,
   ESTIMATE_FROZEN_STATUSES,
   MONEY_CATEGORIES,
+  ESTIMATE_LINE_TYPES,
+  ESTIMATE_LINE_TYPES_IN_TOTAL,
   computeEstimateTotals,
   computeLineTotal,
 } = require('../constants/projectMoneyEnums');
@@ -72,6 +100,15 @@ function normaliseLine(line, sortOrder) {
   if (!isNonNegFiniteNumber(qty)) return null;
   if (!isNonNegFiniteNumber(unit_cost_cents)) return null;
   const total_cents = computeLineTotal({ qty, unit_cost_cents });
+  // cost_cents is the per-unit COST basis (what it costs you); unit_cost_cents is
+  // the PRICE (what the client pays). Optional — null means cost unknown, and the
+  // budget falls back to price for that line. Cost may exceed price (a
+  // deliberate loss-leader line shows negative margin) — not clamped.
+  let cost_cents = null;
+  if (line.cost_cents != null && line.cost_cents !== '') {
+    const c = typeof line.cost_cents === 'number' ? line.cost_cents : parseInt(line.cost_cents, 10);
+    if (isNonNegFiniteNumber(c)) cost_cents = c;
+  }
   return {
     category: line.category,
     sort_order: Number.isFinite(sortOrder) ? sortOrder : 0,
@@ -79,6 +116,8 @@ function normaliseLine(line, sortOrder) {
     qty,
     unit: line.unit ? line.unit.toString().slice(0, 20) : null,
     unit_cost_cents,
+    cost_cents,
+    line_type: ESTIMATE_LINE_TYPES.includes(line.line_type) ? line.line_type : 'base',
     total_cents,
     notes: line.notes ? line.notes.toString() : null,
   };
@@ -115,10 +154,10 @@ async function recomputeAndStoreTotals(client, estimateId) {
   );
   if (headRes.rowCount === 0) throw new Error('estimate not found');
   const linesRes = await client.query(
-    'SELECT total_cents FROM estimate_lines WHERE estimate_id = $1',
+    'SELECT total_cents, line_type FROM estimate_lines WHERE estimate_id = $1',
     [estimateId]
   );
-  const lines = linesRes.rows.map(r => ({ total_cents: parseInt(r.total_cents, 10) }));
+  const lines = linesRes.rows.map(r => ({ total_cents: parseInt(r.total_cents, 10), line_type: r.line_type }));
   const head = headRes.rows[0];
   const totals = computeEstimateTotals({
     lines,
@@ -208,6 +247,7 @@ router.post('/', requireAuth, requireCommercialAccess, async (req, res) => {
     if (fields[k] === null) return res.status(400).json({ error: `${k} out of range` });
   }
   const rawLines = Array.isArray(req.body.lines) ? req.body.lines : [];
+  if (rawLines.length > 500) return res.status(400).json({ error: 'Too many line items (max 500)' });
   const lines = [];
   for (let i = 0; i < rawLines.length; i++) {
     const n = normaliseLine(rawLines[i], i);
@@ -248,9 +288,9 @@ router.post('/', requireAuth, requireCommercialAccess, async (req, res) => {
     for (const ln of lines) {
       await client.query(
         `INSERT INTO estimate_lines
-          (estimate_id, category, sort_order, description, qty, unit, unit_cost_cents, total_cents, notes)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [estimateId, ln.category, ln.sort_order, ln.description, ln.qty, ln.unit, ln.unit_cost_cents, ln.total_cents, ln.notes]
+          (estimate_id, category, sort_order, description, qty, unit, unit_cost_cents, cost_cents, line_type, total_cents, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [estimateId, ln.category, ln.sort_order, ln.description, ln.qty, ln.unit, ln.unit_cost_cents, ln.cost_cents, ln.line_type, ln.total_cents, ln.notes]
       );
     }
     await recomputeAndStoreTotals(client, estimateId);
@@ -267,6 +307,73 @@ router.post('/', requireAuth, requireCommercialAccess, async (req, res) => {
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     req.log.error({ err }, 'estimate create error');
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /estimates/:id/duplicate — clone header + lines into a new DRAFT. This
+// is the "duplicate to revise" path a frozen estimate points at, and the
+// primitive for reusing a repeat-job estimate. Time-sensitive dates (valid_until,
+// bid_due_at) are cleared; the copy starts fresh.
+router.post('/:id/duplicate', requireAuth, requireCommercialAccess, async (req, res) => {
+  const companyId = req.user.company_id;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const srcRes = await client.query('SELECT * FROM estimates WHERE id = $1 AND company_id = $2', [req.params.id, companyId]);
+    if (srcRes.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Estimate not found' }); }
+    const s = srcRes.rows[0];
+    const linesRes = await client.query(
+      `SELECT category, sort_order, description, qty, unit, unit_cost_cents, cost_cents, line_type, total_cents, notes
+         FROM estimate_lines WHERE estimate_id = $1 ORDER BY sort_order, id`,
+      [req.params.id]
+    );
+    const headRes = await client.query(
+      `INSERT INTO estimates
+        (company_id, estimate_number, client_id, client_name_snapshot, client_email,
+         project_address, project_name, scope_summary,
+         overhead_pct, margin_pct, contingency_pct, tax_pct,
+         valid_until, notes, exclusions, terms, bid_due_at, created_by)
+       VALUES
+        ($1,
+         (SELECT 'EST-' || EXTRACT(YEAR FROM CURRENT_DATE)::int || '-' ||
+                 LPAD((COALESCE(MAX(
+                   CASE WHEN estimate_number ~ ('^EST-' || EXTRACT(YEAR FROM CURRENT_DATE)::int || '-[0-9]+$')
+                        THEN SUBSTRING(estimate_number FROM '[0-9]+$')::int ELSE 0 END
+                 ), 0) + 1)::text, 4, '0')
+          FROM estimates WHERE company_id = $1),
+         $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL, $12, $13, $14, NULL, $15)
+       RETURNING *`,
+      [companyId, s.client_id, s.client_name_snapshot, s.client_email,
+       s.project_address, `${s.project_name} (copy)`, s.scope_summary,
+       s.overhead_pct, s.margin_pct, s.contingency_pct, s.tax_pct,
+       s.notes, s.exclusions, s.terms, req.user.id]
+    );
+    const newId = headRes.rows[0].id;
+    for (const ln of linesRes.rows) {
+      await client.query(
+        `INSERT INTO estimate_lines
+          (estimate_id, category, sort_order, description, qty, unit, unit_cost_cents, cost_cents, line_type, total_cents, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [newId, ln.category, ln.sort_order, ln.description, ln.qty, ln.unit, ln.unit_cost_cents, ln.cost_cents, ln.line_type, ln.total_cents, ln.notes]
+      );
+    }
+    await recomputeAndStoreTotals(client, newId);
+    await client.query('COMMIT');
+    await recordAudit({
+      estimateId: newId, action: 'created', actorKind: 'admin',
+      actorUserId: req.user.id, actorIp: req.ip,
+      details: { duplicated_from: parseInt(req.params.id, 10), line_count: linesRes.rowCount },
+    });
+    await logAudit(companyId, req.user.id, req.user.full_name,
+      'estimate.duplicated', 'estimate', newId, headRes.rows[0].estimate_number, { from: req.params.id });
+    const full = await loadEstimateFull(companyId, newId);
+    res.status(201).json(full);
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    req.log.error({ err }, 'estimate duplicate error');
     res.status(500).json({ error: 'Server error' });
   } finally {
     client.release();
@@ -395,6 +502,7 @@ router.delete('/:id/plan-pdf', requireAuth, requireCommercialAccess, async (req,
 router.put('/:id/lines', requireAuth, requireCommercialAccess, async (req, res) => {
   const companyId = req.user.company_id;
   if (!Array.isArray(req.body.lines)) return res.status(400).json({ error: 'lines must be an array' });
+  if (req.body.lines.length > 500) return res.status(400).json({ error: 'Too many line items (max 500)' });
   const lines = [];
   for (let i = 0; i < req.body.lines.length; i++) {
     const n = normaliseLine(req.body.lines[i], i);
@@ -420,9 +528,9 @@ router.put('/:id/lines', requireAuth, requireCommercialAccess, async (req, res) 
     for (const ln of lines) {
       await client.query(
         `INSERT INTO estimate_lines
-          (estimate_id, category, sort_order, description, qty, unit, unit_cost_cents, total_cents, notes)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [req.params.id, ln.category, ln.sort_order, ln.description, ln.qty, ln.unit, ln.unit_cost_cents, ln.total_cents, ln.notes]
+          (estimate_id, category, sort_order, description, qty, unit, unit_cost_cents, cost_cents, line_type, total_cents, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [req.params.id, ln.category, ln.sort_order, ln.description, ln.qty, ln.unit, ln.unit_cost_cents, ln.cost_cents, ln.line_type, ln.total_cents, ln.notes]
       );
     }
     const totals = await recomputeAndStoreTotals(client, req.params.id);
@@ -482,8 +590,32 @@ router.post('/:id/send', requireAuth, requireCommercialAccess, async (req, res) 
     await logAudit(companyId, req.user.id, req.user.full_name,
       'estimate.sent', 'estimate', req.params.id, headRes.rows[0].estimate_number, null);
     const full = await loadEstimateFull(companyId, req.params.id);
+    // Best-effort: email the client the /e/<token> acceptance link. Already
+    // committed 'sent', so a delivery failure/skip just falls back to the
+    // copyable link — never a 500.
+    let email = { sent: false, reason: 'no_recipient' };
+    if (full.client_email) {
+      try {
+        const meta = await pool.query(
+          `SELECT co.name AS company_name, (SELECT email FROM users WHERE id = $2) AS sender_email
+             FROM companies co WHERE co.id = $1`,
+          [companyId, req.user.id]
+        );
+        const r = await emailEstimateToClient({
+          estimate: full, token: rawToken,
+          companyName: meta.rows[0]?.company_name,
+          replyTo: meta.rows[0]?.sender_email || null,
+        });
+        email = r?.ok
+          ? { sent: true, to: full.client_email }
+          : { sent: false, to: full.client_email, reason: r?.error ? 'error' : (r?.skipped || r?.suppressed || 'unknown') };
+      } catch (err) {
+        req.log.error({ err }, 'estimate send email error');
+        email = { sent: false, to: full.client_email, reason: 'error' };
+      }
+    }
     // Return the raw token only on this response — it disappears after.
-    res.json({ ...full, response_token: rawToken });
+    res.json({ ...full, response_token: rawToken, email });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     req.log.error({ err }, 'estimate send error');
@@ -566,6 +698,44 @@ router.post('/:id/withdraw', requireAuth, requireCommercialAccess, async (req, r
   }
 });
 
+// POST /estimates/:id/accept — admin records acceptance for a deal closed off
+// the app (phone / handshake / email), so it can be converted. Mirrors the
+// public accept but attributes it to the admin. Optional body: accepted_by
+// (who agreed) + note. From draft or sent.
+router.post('/:id/accept', requireAuth, requireCommercialAccess, async (req, res) => {
+  const companyId = req.user.company_id;
+  const acceptedBy = (req.body.accepted_by || '').toString().trim().slice(0, 255) || null;
+  const note = (req.body.note || '').toString().trim().slice(0, 1000) || null;
+  try {
+    const headRes = await pool.query(
+      'SELECT status, estimate_number FROM estimates WHERE id = $1 AND company_id = $2',
+      [req.params.id, companyId]
+    );
+    if (headRes.rowCount === 0) return res.status(404).json({ error: 'Estimate not found' });
+    if (!['draft', 'sent'].includes(headRes.rows[0].status)) {
+      return res.status(409).json({ error: `Cannot accept from status '${headRes.rows[0].status}'` });
+    }
+    await pool.query(
+      `UPDATE estimates SET status='accepted', responded_at=NOW(),
+         accepted_signer_name=COALESCE($2, accepted_signer_name)
+        WHERE id=$1`,
+      [req.params.id, acceptedBy]
+    );
+    await recordAudit({
+      estimateId: req.params.id, action: 'accepted', actorKind: 'admin',
+      actorUserId: req.user.id, actorIp: req.ip,
+      details: { source: 'admin', accepted_by: acceptedBy, note },
+    });
+    await logAudit(companyId, req.user.id, req.user.full_name,
+      'estimate.accepted', 'estimate', req.params.id, headRes.rows[0].estimate_number, null);
+    const full = await loadEstimateFull(companyId, req.params.id);
+    res.json(full);
+  } catch (err) {
+    req.log.error({ err }, 'estimate admin accept error');
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // POST /estimates/:id/convert — accepted → project. Creates a projects
 // row AND seeds project_budget_categories with one row per category
 // summed from the estimate lines. The shared MONEY_CATEGORIES vocabulary
@@ -602,34 +772,49 @@ router.post('/:id/convert', requireAuth, requireCommercialAccess, async (req, re
         return res.status(409).json({ error: 'Estimate has expired since acceptance — duplicate to revise' });
       }
     }
-    // Sum line totals by category — this is the seed for budget categories.
+    // Seed budget categories from COST (what the job costs you), not price.
+    // cost_cents where set, else the line price — so the budget is a real cost
+    // baseline and estimate-vs-actual variance is cost-vs-cost. The contract
+    // (sell) value stays on the estimate's total_cents, read by the P&L.
     const catSumsRes = await client.query(
-      `SELECT category, SUM(total_cents)::bigint AS sum_cents
+      `SELECT category, SUM(ROUND(qty * COALESCE(cost_cents, unit_cost_cents)))::bigint AS sum_cents
          FROM estimate_lines
         WHERE estimate_id = $1
+          AND line_type IN ('base', 'allowance')
         GROUP BY category`,
       [req.params.id]
     );
+    // Load the labor budget with the same employer burden that actual labor
+    // cost carries (settings.labor_burden_pct) — otherwise a perfectly-bid job
+    // reads over-budget on labor by exactly the burden %. Budget stays editable,
+    // so this is only the seed.
+    const convertSettings = await loadSettings(companyId);
+    const burdenPct = parseFloat(convertSettings.labor_burden_pct) || 0;
+    const budgetRows = catSumsRes.rows.map(r => {
+      let cents = parseInt(r.sum_cents, 10) || 0;
+      if (r.category === 'labor' && burdenPct > 0) cents = Math.round(cents * (1 + burdenPct / 100));
+      return { category: r.category, cents };
+    });
+    const budgetCostCents = budgetRows.reduce((s, r) => s + r.cents, 0);
     const projRes = await client.query(
       `INSERT INTO projects (company_id, name, address, budget_dollars, active, client_id, created_at)
        VALUES ($1, $2, $3, $4, true, $5, NOW()) RETURNING id`,
       [companyId, est.project_name, est.project_address,
-       // Keep budget_dollars populated for legacy reads during the
-       // transition. Total in dollars (round at the cent edge).
-       Math.round(parseInt(est.total_cents, 10) / 100),
+       // budget_dollars is the COST budget (matches the category rollup); the
+       // marked-up contract value lives on the estimate. Round at the cent edge.
+       Math.round(budgetCostCents / 100),
        est.client_id]
     );
     const projectId = projRes.rows[0].id;
     // Seed per-category budgets. Skip zero-cent rows so unused categories
     // don't litter the budget bar.
-    for (const row of catSumsRes.rows) {
-      const cents = parseInt(row.sum_cents, 10);
-      if (!cents) continue;
+    for (const row of budgetRows) {
+      if (!row.cents) continue;
       await client.query(
         `INSERT INTO project_budget_categories (project_id, category, budget_cents)
          VALUES ($1, $2, $3)
          ON CONFLICT (project_id, category) DO UPDATE SET budget_cents = EXCLUDED.budget_cents`,
-        [projectId, row.category, cents]
+        [projectId, row.category, row.cents]
       );
     }
     await client.query(
@@ -693,7 +878,7 @@ publicRouter.get('/view/:token', async (req, res) => {
     );
     if (r.rowCount === 0) return res.status(404).json({ error: 'Not found' });
     const linesRes = await pool.query(
-      'SELECT category, sort_order, description, qty, unit, total_cents FROM estimate_lines WHERE estimate_id = $1 ORDER BY sort_order, id',
+      'SELECT category, sort_order, description, qty, unit, total_cents, line_type FROM estimate_lines WHERE estimate_id = $1 ORDER BY sort_order, id',
       [r.rows[0].id]
     );
     res.json({ ...r.rows[0], lines: linesRes.rows });

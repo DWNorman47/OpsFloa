@@ -129,12 +129,11 @@ export default function PublicChangeOrderPage() {
           ))}
         </div>
 
+        {/* Show only the bottom-line total (tax included). The prior Subtotal + Overhead
+            rows didn't reconcile to total_cents — which also folds in margin + tax — leaving
+            a visible gap and leaking the overhead %. Mirrors PublicEstimatePage. */}
         <div style={styles.totalsBox}>
-          <Row label={t.pubSubtotal} value={co.subtotal_cents} currency={co.currency} />
-          {parseFloat(co.overhead_pct) > 0 && (
-            <Row label={`${t.pubOverhead} (${co.overhead_pct}%)`} value={Math.round(co.subtotal_cents * co.overhead_pct / 100)} currency={co.currency} />
-          )}
-          <Row label={t.pubTotal} value={co.total_cents} bold currency={co.currency} />
+          <Row label={parseFloat(co.tax_pct) > 0 ? `${t.pubTotal} (${t.pubInclTax})` : t.pubTotal} value={co.total_cents} bold currency={co.currency} />
         </div>
 
         {error && <div style={styles.errorBox}>{error}</div>}

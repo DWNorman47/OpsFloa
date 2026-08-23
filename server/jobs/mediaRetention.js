@@ -6,6 +6,24 @@ const { applySettingsRows, ADMIN_SETTINGS_DEFAULTS } = require('../settingsDefau
 const logger = require('../logger');
 const { runJob } = require('./runJob');
 
+// Purge R2 objects for already-DELETED rows, but only when no surviving row in the
+// same table still points at the URL — a shared/resubmitted URL must not be orphaned
+// out from under a row that's still live. Mirrors the interactive delete guard in
+// fieldReports.js. `table` is one of two fixed internal literals (never user input).
+// Returns the total size_bytes to refund.
+async function purgeUnreferenced(table, rows) {
+  let totalBytes = 0;
+  const purged = new Set();
+  for (const r of rows) {
+    totalBytes += parseInt(r.size_bytes || 0) || 0;
+    if (!r.url || purged.has(r.url)) continue;
+    purged.add(r.url);
+    const still = await pool.query(`SELECT 1 FROM ${table} WHERE url = $1 LIMIT 1`, [r.url]);
+    if (still.rowCount === 0) await deleteByUrl(r.url).catch(() => {});
+  }
+  return totalBytes;
+}
+
 async function deleteMediaForProject(companyId, projectId) {
   const photos = await pool.query(
     `SELECT p.id, p.url, p.size_bytes
@@ -16,14 +34,9 @@ async function deleteMediaForProject(companyId, projectId) {
   );
   if (photos.rowCount === 0) return 0;
 
-  let totalBytes = 0;
-  for (const p of photos.rows) {
-    await deleteByUrl(p.url).catch(() => {});
-    totalBytes += parseInt(p.size_bytes || 0);
-  }
-
   const ids = photos.rows.map(p => p.id);
   await pool.query(`DELETE FROM field_report_photos WHERE id = ANY($1)`, [ids]);
+  const totalBytes = await purgeUnreferenced('field_report_photos', photos.rows);
   if (totalBytes > 0) await decrementStorage(companyId, totalBytes).catch(() => {});
   return photos.rowCount;
 }
@@ -51,14 +64,10 @@ async function runMediaRetention() {
         [companyId, retentionDays]
       );
 
-      let totalBytes = 0;
-      for (const p of oldPhotos.rows) {
-        await deleteByUrl(p.url).catch(() => {});
-        totalBytes += parseInt(p.size_bytes || 0);
-      }
       if (oldPhotos.rowCount > 0) {
         const ids = oldPhotos.rows.map(p => p.id);
         await pool.query(`DELETE FROM field_report_photos WHERE id = ANY($1)`, [ids]);
+        const totalBytes = await purgeUnreferenced('field_report_photos', oldPhotos.rows);
         if (totalBytes > 0) await decrementStorage(companyId, totalBytes).catch(() => {});
         logger.info({ companyId, photos: oldPhotos.rowCount, bytes: totalBytes }, 'mediaRetention: deleted photos');
       }
@@ -73,14 +82,10 @@ async function runMediaRetention() {
         [companyId, retentionDays]
       );
 
-      let attBytes = 0;
-      for (const a of oldAttachments.rows) {
-        await deleteByUrl(a.url).catch(() => {});
-        attBytes += parseInt(a.size_bytes || 0);
-      }
       if (oldAttachments.rowCount > 0) {
         const ids = oldAttachments.rows.map(a => a.id);
         await pool.query(`DELETE FROM safety_talk_attachments WHERE id = ANY($1)`, [ids]);
+        const attBytes = await purgeUnreferenced('safety_talk_attachments', oldAttachments.rows);
         if (attBytes > 0) await decrementStorage(companyId, attBytes).catch(() => {});
         logger.info({ companyId, attachments: oldAttachments.rowCount, bytes: attBytes }, 'mediaRetention: deleted attachments');
       }

@@ -1,12 +1,11 @@
 // Submittals — architect/owner approval workflow for material/equipment
-// specs. Independent compliance module; mirrors the page patterns of
-// EstimatesPage / ChangeOrdersPage.
+// specs. An office document workflow; rendered as a tab of the Work/Projects
+// module via SubmittalsPanel (mirrors ChangeOrdersPanel).
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import api from '../api';
-import { PageShell } from '../components/PageShell';
 import { SkeletonList } from '../components/Skeleton';
 import EmptyState from '../components/EmptyState';
 import Pagination from '../components/Pagination';
@@ -484,10 +483,13 @@ function SubmittalDetail({ id, onBack }) {
   );
 }
 
-// ── Page shell ───────────────────────────────────────────────────────────────
+// ── Panel ────────────────────────────────────────────────────────────────────
+// Submittals is a tab of the Work/Projects module (see ProjectsPage) — an office
+// document workflow, alongside RFIs and Change Orders. This renders just the
+// list/detail/form content; the shell, header, and module TabBar come from the
+// Projects page.
 
-export default function SubmittalsPage() {
-  const { user } = useAuth();
+export function SubmittalsPanel() {
   const [view, setView] = useState({ kind: 'list' });
 
   function openNew(projects) { setView({ kind: 'form', projects }); }
@@ -495,11 +497,11 @@ export default function SubmittalsPage() {
   function backToList()      { setView({ kind: 'list' }); }
 
   return (
-    <PageShell currentApp="field" maxWidth={1200} headerProps={{ userRole: user?.role }}>
+    <>
       {view.kind === 'list'   && <SubmittalsList onOpen={openDetail} onNew={openNew} />}
       {view.kind === 'form'   && <NewSubmittalForm projects={view.projects || []} onSave={(saved) => setView({ kind: 'detail', id: saved.id })} onCancel={backToList} />}
       {view.kind === 'detail' && <SubmittalDetail id={view.id} onBack={backToList} />}
-    </PageShell>
+    </>
   );
 }
 

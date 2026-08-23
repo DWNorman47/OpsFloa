@@ -170,7 +170,7 @@ describe('closeout auto-status from native invoices', () => {
   test('retainage_release is NOT falsely done when there are zero invoices', async () => {
     const res = await getWithSingleItem(
       { id: 1, category: 'retainage_release', status: 'pending', auto_source: 'invoices' },
-      [{ n: '0', held: '0' }]  // no invoices → must not report done
+      [{ n: '0', outstanding: '0' }]  // no invoices → must not report done
     );
     expect(res.status).toBe(200);
     expect(res.body.items[0].status).toBe('in_progress');
@@ -179,7 +179,7 @@ describe('closeout auto-status from native invoices', () => {
   test('retainage_release is done when invoices exist and hold no retainage', async () => {
     const res = await getWithSingleItem(
       { id: 1, category: 'retainage_release', status: 'pending', auto_source: 'invoices' },
-      [{ n: '2', held: '0' }]  // invoices exist, nothing withheld
+      [{ n: '2', outstanding: '0' }]  // invoices exist, nothing outstanding
     );
     expect(res.status).toBe(200);
     expect(res.body.items[0].status).toBe('done');

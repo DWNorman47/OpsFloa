@@ -134,6 +134,106 @@ describe('GET /api/projects/:id/spend', () => {
     expect(res.body.totals.pct_used).toBe(58);
   });
 
+  test('adds equipment usage (hours × hourly operating rate) to the equipment category', async () => {
+    pool.query.mockImplementation((sql) => {
+      if (/FROM projects WHERE id/i.test(sql) && /AND company_id/i.test(sql)) {
+        return Promise.resolve({ rowCount: 1, rows: [{ id: 42, name: 'P' }] });
+      }
+      if (/FROM settings/i.test(sql)) return Promise.resolve({ rows: [] });
+      if (/FROM time_entries/i.test(sql)) return Promise.resolve({ rows: [] });
+      if (/information_schema\.tables/i.test(sql)) return Promise.resolve({ rowCount: 1, rows: [{ '?column?': 1 }] });
+      if (/information_schema\.columns/i.test(sql)) return Promise.resolve({ rowCount: 0, rows: [] });
+      if (/FROM equipment_hours/i.test(sql)) return Promise.resolve({ rows: [{ unit: 'hour', rate: '120', hours: '4', days: 1 }] });  // 4h × $120
+      if (/FROM project_expenses/i.test(sql) && /GROUP BY category/i.test(sql)) {
+        return Promise.resolve({ rows: [{ category: 'equipment', cents: '25000' }] });
+      }
+      if (/FROM subcontract/i.test(sql)) return Promise.resolve({ rows: [{ cents: '0' }] });
+      if (/FROM project_budget_categories/i.test(sql)) return Promise.resolve({ rows: [] });
+      return Promise.resolve({ rows: [], rowCount: 0 });
+    });
+
+    const res = await request(makeApp()).get('/api/projects/42/spend');
+    expect(res.status).toBe(200);
+    const byCat = Object.fromEntries(res.body.categories.map(c => [c.category, c]));
+    // 25000 manual equipment expense + 48000 usage (4h × $120/hr)
+    expect(byCat.equipment.spent_cents).toBe(73000);
+  });
+
+  test('planned expenses land in the committed bucket, not spent', async () => {
+    pool.query.mockImplementation((sql) => {
+      if (/FROM projects WHERE id/i.test(sql) && /AND company_id/i.test(sql)) {
+        return Promise.resolve({ rowCount: 1, rows: [{ id: 42, name: 'P' }] });
+      }
+      if (/FROM settings/i.test(sql)) return Promise.resolve({ rows: [] });
+      if (/FROM time_entries/i.test(sql)) return Promise.resolve({ rows: [] });
+      if (/information_schema/i.test(sql)) return Promise.resolve({ rowCount: 0, rows: [] });
+      if (/FROM project_expenses/i.test(sql) && /GROUP BY category/i.test(sql)) {
+        return Promise.resolve({ rows: [
+          { category: 'equipment', status: 'planned', cents: '30000' },  // forecast → committed
+          { category: 'equipment', status: 'actual',  cents: '5000' },   // incurred → spent
+        ] });
+      }
+      if (/FROM project_budget_categories/i.test(sql)) return Promise.resolve({ rows: [] });
+      return Promise.resolve({ rows: [], rowCount: 0 });
+    });
+
+    const res = await request(makeApp()).get('/api/projects/42/spend');
+    expect(res.status).toBe(200);
+    const eq = res.body.categories.find(c => c.category === 'equipment');
+    expect(eq.spent_cents).toBe(5000);
+    expect(eq.committed_cents).toBe(30000);
+    expect(res.body.totals.committed_cents).toBe(30000);
+  });
+
+  test('materials: issued inventory is spent, open POs are committed', async () => {
+    pool.query.mockImplementation((sql) => {
+      if (/FROM projects WHERE id/i.test(sql) && /AND company_id/i.test(sql)) {
+        return Promise.resolve({ rowCount: 1, rows: [{ id: 42, name: 'P' }] });
+      }
+      if (/FROM settings/i.test(sql)) return Promise.resolve({ rows: [] });
+      if (/FROM time_entries/i.test(sql)) return Promise.resolve({ rows: [] });
+      if (/information_schema/i.test(sql)) return Promise.resolve({ rowCount: 1, rows: [{ '?column?': 1 }] });
+      if (/FROM inventory_transactions/i.test(sql)) return Promise.resolve({ rows: [{ dollars: '1200.00' }] });  // issued
+      if (/FROM purchase_order_lines/i.test(sql)) return Promise.resolve({ rows: [{ dollars: '800.00' }] });     // open PO
+      if (/FROM project_expenses/i.test(sql) && /GROUP BY category/i.test(sql)) return Promise.resolve({ rows: [] });
+      if (/FROM subcontract/i.test(sql)) return Promise.resolve({ rows: [{ cents: '0' }] });
+      if (/FROM equipment_hours/i.test(sql)) return Promise.resolve({ rows: [] });
+      if (/FROM project_budget_categories/i.test(sql)) return Promise.resolve({ rows: [] });
+      return Promise.resolve({ rows: [], rowCount: 0 });
+    });
+    const res = await request(makeApp()).get('/api/projects/42/spend');
+    expect(res.status).toBe(200);
+    const mat = res.body.categories.find(c => c.category === 'materials');
+    expect(mat.spent_cents).toBe(120000);       // 1200 issued
+    expect(mat.committed_cents).toBe(80000);     // 800 open PO
+  });
+
+  test("materials_cost_basis='received' counts received PO value as spent, not issues", async () => {
+    pool.query.mockImplementation((sql) => {
+      if (/FROM projects WHERE id/i.test(sql) && /AND company_id/i.test(sql)) {
+        return Promise.resolve({ rowCount: 1, rows: [{ id: 42, name: 'P' }] });
+      }
+      // settings: received basis
+      if (/FROM settings/i.test(sql)) return Promise.resolve({ rows: [{ key: 'materials_cost_basis', value: 'received' }] });
+      if (/FROM time_entries/i.test(sql)) return Promise.resolve({ rows: [] });
+      if (/information_schema/i.test(sql)) return Promise.resolve({ rowCount: 1, rows: [{ '?column?': 1 }] });
+      // received query uses qty_received; committed uses (qty_ordered - qty_received)
+      if (/FROM purchase_order_lines/i.test(sql) && /qty_received \* pol\.unit_cost/i.test(sql)) return Promise.resolve({ rows: [{ dollars: '900.00' }] });
+      if (/FROM purchase_order_lines/i.test(sql)) return Promise.resolve({ rows: [{ dollars: '300.00' }] });  // committed (unreceived)
+      if (/FROM inventory_transactions/i.test(sql)) return Promise.resolve({ rows: [{ dollars: '9999.00' }] });  // must be ignored in received mode
+      if (/FROM project_expenses/i.test(sql) && /GROUP BY category/i.test(sql)) return Promise.resolve({ rows: [] });
+      if (/FROM subcontract/i.test(sql)) return Promise.resolve({ rows: [{ cents: '0' }] });
+      if (/FROM equipment_hours/i.test(sql)) return Promise.resolve({ rows: [] });
+      if (/FROM project_budget_categories/i.test(sql)) return Promise.resolve({ rows: [] });
+      return Promise.resolve({ rows: [], rowCount: 0 });
+    });
+    const res = await request(makeApp()).get('/api/projects/42/spend');
+    expect(res.status).toBe(200);
+    const mat = res.body.categories.find(c => c.category === 'materials');
+    expect(mat.spent_cents).toBe(90000);       // received, NOT the 9999 issued
+    expect(mat.committed_cents).toBe(30000);    // unreceived open PO
+  });
+
   test('returns null pct_used when no budget is set', async () => {
     pool.query.mockImplementation((sql) => {
       if (/FROM projects WHERE id/i.test(sql) && /AND company_id/i.test(sql)) {
@@ -201,9 +301,54 @@ describe('POST /api/projects/:projectId/expenses', () => {
     expect(res.status).toBe(404);
   });
 
+  test('409 when the project close-out is frozen (final/closed)', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, name: 'Test' }] })   // project
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ '?column?': 1 }] });         // frozen → match
+    const res = await request(makeApp())
+      .post('/api/projects/42/expenses')
+      .send({ category: 'equipment', amount_cents: 1000, description: 'late cost' });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('project_frozen');
+  });
+
+  test('rejects an invalid status', async () => {
+    const res = await request(makeApp())
+      .post('/api/projects/42/expenses')
+      .send({ category: 'equipment', amount_cents: 1000, description: 'd', status: 'maybe' });
+    expect(res.status).toBe(400);
+  });
+
+  test('stores a planned rental linked to an equipment asset', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, name: 'Test' }] })   // project
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                           // not frozen
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 7 }] })                   // equipment check
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 9, status: 'planned', equipment_id: 7 }] });  // insert
+    const res = await request(makeApp())
+      .post('/api/projects/42/expenses')
+      .send({ category: 'equipment', amount_cents: 80000, description: 'Excavator — 2 wk', status: 'planned', equipment_id: 7 });
+    expect(res.status).toBe(201);
+    const insertCall = pool.query.mock.calls.find(c => /INSERT INTO project_expenses/.test(c[0]));
+    expect(insertCall[1]).toEqual(expect.arrayContaining(['planned', 7]));
+  });
+
+  test('rejects a planned rental whose equipment is not in the company', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, name: 'Test' }] })   // project
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                           // not frozen
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] });                          // equipment check → miss
+    const res = await request(makeApp())
+      .post('/api/projects/42/expenses')
+      .send({ category: 'equipment', amount_cents: 80000, description: 'X', equipment_id: 99 });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/equipment/);
+  });
+
   test('computes tax_cents and stores the row', async () => {
     pool.query
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, name: 'Test' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42, name: 'Test' }] })   // project
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                           // not frozen
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 7, description: 'Crane rental', category: 'equipment', amount_cents: 10000, tax_cents: 800 }] });
 
     const res = await request(makeApp())
@@ -216,5 +361,39 @@ describe('POST /api/projects/:projectId/expenses', () => {
     expect(insertCall).toBeDefined();
     // tax_cents should be ROUND(10000 * 0.08) = 800
     expect(insertCall[1][6]).toBe(800);
+  });
+});
+
+describe('PATCH /api/projects/:projectId/expenses/:id', () => {
+  test('flips a planned forecast to actual and stamps a paid date', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                          // not frozen
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 9, status: 'actual' }] });  // update
+    const res = await request(makeApp())
+      .patch('/api/projects/42/expenses/9')
+      .send({ status: 'actual' });
+    expect(res.status).toBe(200);
+    const [sql] = pool.query.mock.calls.find(c => /UPDATE project_expenses/.test(c[0]));
+    expect(sql).toMatch(/status = \$1/);
+    expect(sql).toMatch(/paid_date = \$2/);  // auto-stamped on convert
+  });
+
+  test('recomputes tax_cents when the amount changes', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                                          // not frozen
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ amount_cents: '10000', tax_pct: '8' }] })  // current
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 9 }] });                                // update
+    const res = await request(makeApp())
+      .patch('/api/projects/42/expenses/9')
+      .send({ amount_cents: 20000 });
+    expect(res.status).toBe(200);
+    const updateCall = pool.query.mock.calls.find(c => /UPDATE project_expenses/.test(c[0]));
+    // tax_cents = round(20000 * 0.08) = 1600
+    expect(updateCall[1]).toContain(1600);
+  });
+
+  test('400 when no fields are provided', async () => {
+    const res = await request(makeApp()).patch('/api/projects/42/expenses/9').send({});
+    expect(res.status).toBe(400);
   });
 });

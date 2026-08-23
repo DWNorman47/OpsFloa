@@ -23,9 +23,11 @@ const pool = require('../db');
 const r2 = require('../r2');
 
 const superAdminToken = jwt.sign(
-  { id: 1, role: 'super_admin', company_id: null, username: 'root' },
+  { id: 1, role: 'super_admin', company_id: null, username: 'root', tv: 0 },
   process.env.JWT_SECRET
 );
+// requireAuth's tv-token check reads token_version + active; it is pool.query call 0.
+const authRow = { rows: [{ token_version: 0, active: true }] };
 
 function makeApp() {
   const app = express();
@@ -38,6 +40,7 @@ const COMPANY_ID = '9fccf20b-8150-4e35-8e62-01d3c341628a';
 
 beforeEach(() => {
   pool.query.mockReset();
+  pool.query.mockResolvedValueOnce(authRow); // requireAuth's tv check is always pool.query call 0
   pool.__mockClient.query.mockReset();
   pool.__mockClient.release.mockReset();
   r2.deleteByUrl.mockReset();

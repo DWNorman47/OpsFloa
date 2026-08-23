@@ -315,6 +315,21 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
     };
   }, [!!status?.clock_in_time, geolocationEnabled, pingWhileStationary]);
 
+  // Pre-warm a location fix while the worker is on the clock-in screen, so tapping
+  // Clock In reuses it (getLocation uses maximumAge 60s for non-geofenced projects)
+  // instead of blocking ~2.5s on a fresh acquisition. Geofenced projects still force a
+  // fresh high-accuracy fix at clock-in (maximumAge 0) — untouched, for geofence
+  // integrity. The result is intentionally ignored: this only populates the browser's
+  // position cache and never touches UI state (permission denial is handled at tap).
+  useEffect(() => {
+    if (!geolocationEnabled || status?.clock_in_time || !navigator.geolocation) return;
+    const warm = () => { getLocation({ timeout: 10000, maximumAge: 60000, enableHighAccuracy: false }); };
+    warm();
+    const onVisible = () => { if (document.visibilityState === 'visible') warm(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [geolocationEnabled, status?.clock_in_time]);
+
   // Auto-dismiss clock-out summary after 5s
   useEffect(() => {
     if (!clockOutSummary) return;
