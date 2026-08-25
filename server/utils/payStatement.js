@@ -219,7 +219,7 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
       // (raw_break_minutes set), the auto_break item already explains it; otherwise
       // this surfaces the break that's recorded on the entry so it's visible.
       if ((e.break_minutes || 0) > 0 && e.raw_break_minutes == null) ex.push({ code: 'break_logged', breakMin: e.break_minutes });
-      if ((e.overtime_hours || 0) > 0) ex.push({ code: 'overtime', otHours: e.overtime_hours, reason: e.overtime_reason || (rule === 'weekly' ? 'weekly' : 'daily'), threshold, rule });
+      if ((e.overtime_hours || 0) > 0) ex.push({ code: 'overtime', otHours: e.overtime_hours, reason: e.overtime_reason || (rule === 'weekly' ? 'weekly' : 'daily'), threshold, rule, ruleId: e.overtime_ruleId || undefined });
     }
     settingsUsed = {
       rate, rate_type: rateType, overtime_rule: rule, overtime_threshold: threshold,

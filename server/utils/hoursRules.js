@@ -789,11 +789,11 @@ function otConfigFromSettings(settings, roleId = null, userId = null) {
   const restRule = rules.find(r => r.type === 'rest_day');
   if (restRule) {
     const days = daysFromWhen(restRule.when);
-    if (days.length) restDay = { mult: restRule.mult, days };
+    if (days.length) restDay = { mult: restRule.mult, days, ruleId: restRule.id }; // ruleId → report deep-link
   }
   // seventh_day rule: overrides the fixed-slot 7th-day config (workweek-detected).
   const sevenRule = rules.find(r => r.type === 'seventh_day');
-  if (sevenRule) seventhDay = { enabled: true, firstHoursThreshold: sevenRule.firstHours, firstMult: sevenRule.firstMult, afterMult: sevenRule.afterMult };
+  if (sevenRule) seventhDay = { enabled: true, firstHoursThreshold: sevenRule.firstHours, firstMult: sevenRule.firstMult, afterMult: sevenRule.afterMult, ruleId: sevenRule.id };
   // night_diff rule: overrides the fixed-slot night differential.
   const nightRule = rules.find(r => r.type === 'night_diff');
   if (nightRule) nightDifferential = { fromHour: nightRule.fromHour, toHour: nightRule.toHour, pct: nightRule.pct };

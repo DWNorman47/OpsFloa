@@ -6158,3 +6158,21 @@ rough edges: docs/plans/individual-rule-overrides.md. Money-critical; opt-in-saf
 - Judgment calls: `userRules` lives in the same policy JSON (no new table) to keep the
   atomic CAS save + reuse the builder; the 40KB cap is the size backstop for now;
   Customize's re-check edge documented as a follow-up.
+
+## 2026-08-21 — Team Member Reports: every rule in Details deep-links to its rule
+
+The Details trace ("View setting →") already linked rounding/clip/add-time/auto-break
+rules to the exact rule, but two classes didn't reach the actual rule:
+- `reportTrace.findRuleById` searched only `rules` + `roleRules`, so **individual-override
+  (`userRules`) rules** didn't resolve their description or deep-link. Now it also searches
+  `userRules` (highlightRuleId was already passed to the per-employee builders, so the
+  scroll+flash lands once the rule resolves).
+- **Overtime** explain items carried no `ruleId`, so premium/tier OT went to the generic
+  Hours & Rules page. Threaded the driving rule id through the explain (explain-only, no
+  pay-math change): `otConfigFromSettings` keeps `ruleId` on rest_day/seventh_day; new
+  `coveringWindowRuleId` (window) + `tierRuleIdForBucket` (ot_tier) in
+  `annotateEntryOvertime` set `e.overtime_ruleId`; `payStatement` includes it. Base
+  daily/weekly threshold stays generic (it's the OT-threshold SETTING, not a builder rule);
+  per-entry OT override / aggregate total / logged break stay unlinked (not rules).
+- Tests: explain now asserts overtime_ruleId for rest_day/seventh_day/window/tier + null for
+  base threshold; updated the rest_day otConfig-shape test for the new field. Suite 1541 green.
