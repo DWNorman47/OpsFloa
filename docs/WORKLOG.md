@@ -6142,3 +6142,19 @@ design; no server/DB yet (Save to Database is a disabled Phase-2 button).
   page event → 🔑 falls back to in-page generate+fill. Saving the encryption password to the
   browser is offered but warned as "less safe" (browser-only, never synced). One-time share
   links deferred to Phase 3 (need the server). Server/client untouched; verify green.
+
+## 2026-08-21 — Individual (per-employee) rule overrides
+
+New "Individual Overrides" under Hours & Pay Rules, after Role Rules. Design +
+rough edges: docs/plans/individual-rule-overrides.md. Money-critical; opt-in-safe.
+- Engine: `userRules[]` in the hours_rules JSON + `effectiveRulesForWorker(policy,
+  roleId, userId)` layering individual > role > standard (add mode with nullify-by-id
+  + change-via-clone; replace mode). Threaded worker.id alongside role_id through the
+  single resolution chokepoint (otConfig/sickRules/roundEntries) + all downstream
+  callers (payStatement, certified payroll, worker-hours export, scheduled report, QBO).
+  15 new tests incl. the no-op-default guarantee. Full suite 1540 green.
+- UI: employee picker + replace toggle + inherited-rules list (off = nullify,
+  Customize = clone+tombstone) + HoursRuleBuilder for own rules. EN+ES.
+- Judgment calls: `userRules` lives in the same policy JSON (no new table) to keep the
+  atomic CAS save + reuse the builder; the 40KB cap is the size backstop for now;
+  Customize's re-check edge documented as a follow-up.
