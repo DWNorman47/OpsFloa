@@ -13,6 +13,9 @@ const { clearSuppression } = require('../services/emailSuppression');
 const pool = require('../db');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Friendly cap on per-employee Hours & Pay Rules overrides (the 40 KB policy byte cap
+// is the hard backstop). Keep in sync with the client (HoursRulesSettings.jsx).
+const MAX_INDIVIDUAL_OVERRIDES = 200;
 function isValidEmail(email) { return EMAIL_RE.test(String(email).trim()); }
 const { requireAdmin, requirePlan, requireCertifiedPayrollAddon, requirePerm } = require('../middleware/auth');
 const { normalizePaycheckRules } = require('../constants/paycheckRuleEnums');
@@ -287,11 +290,16 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
             // Per-role rule lists multiply the document size (one rule set per
             // role on top of the standard list), so the cap is generous but still
             // bounded to keep a runaway payload out of the settings row.
-            if (String(val).length > 40000) return res.status(400).json({ error: 'hours_rules is too large' });
+            if (String(val).length > 40000) return res.status(400).json({ error: 'Your Hours & Pay Rules are too large to save. Try removing some rules, role sections, or individual overrides.' });
             let parsed;
             try { parsed = JSON.parse(val); } catch { return res.status(400).json({ error: 'hours_rules must be valid JSON' }); }
             if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
               return res.status(400).json({ error: 'hours_rules must be a JSON object' });
+            // Friendly count guard so a runaway list of per-employee overrides gives a
+            // clear message before the raw byte cap above. Broad changes belong in Role
+            // Rules, not hundreds of individual overrides — so this bound is generous.
+            if (Array.isArray(parsed.userRules) && parsed.userRules.length > MAX_INDIVIDUAL_OVERRIDES)
+              return res.status(400).json({ error: `Too many individual overrides (max ${MAX_INDIVIDUAL_OVERRIDES}). For a change that affects many people, use Role Rules instead.` });
             // Beyond shape: refuse a rule list that can't mean anything. An
             // Add Time rule with no End Time to measure from would fall back to
             // adding onto the punch and quietly bill the wrong number, so it is

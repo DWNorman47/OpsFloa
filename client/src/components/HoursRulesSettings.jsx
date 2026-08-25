@@ -3,7 +3,7 @@ import api from '../api';
 import { useT } from '../hooks/useT';
 import { invalidateCache } from '../offlineDb';
 import { silentError } from '../errorReporter';
-import HoursRuleBuilder, { describeRule } from './HoursRuleBuilder';
+import HoursRuleBuilder, { describeRule, MAX_INDIVIDUAL_OVERRIDES } from './HoursRuleBuilder';
 
 /**
  * Admin UI for the configurable work-hour / pay rules (Milestone 1: company
@@ -283,7 +283,11 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated, highli
   const workerName = (id) => workers.find(w => w.id === Number(id))?.full_name || `#${id}`;
   const usedUserIds = new Set(form.userRules.flatMap(u => u.userIds || []));
   const addableWorkers = workers.filter(w => !usedUserIds.has(w.id)); // one set per employee
-  const addUserSection = () => set('userRules', [...form.userRules, { userIds: [], mode: 'add', disabledRuleIds: [], rules: [] }]);
+  const atOverrideLimit = form.userRules.length >= MAX_INDIVIDUAL_OVERRIDES;
+  const addUserSection = () => {
+    if (atOverrideLimit) return;
+    set('userRules', [...form.userRules, { userIds: [], mode: 'add', disabledRuleIds: [], rules: [] }]);
+  };
   const updateUserSection = (idx, patch) => set('userRules', form.userRules.map((u, i) => (i === idx ? { ...u, ...patch } : u)));
   const removeUserSection = (idx) => set('userRules', form.userRules.filter((_, i) => i !== idx));
   // The rules a worker inherits (standard + their role section), mirroring the server's
@@ -300,14 +304,26 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated, highli
     const cur = form.userRules[idx].disabledRuleIds || [];
     updateUserSection(idx, { disabledRuleIds: cur.includes(ruleId) ? cur.filter(x => x !== ruleId) : [...cur, ruleId] });
   };
-  // "Customize": clone the inherited rule into this person's list (new id, editable) and
-  // tombstone the original so the clone supersedes it.
+  // "Customize": clone the inherited rule into this person's list (editable) and tombstone
+  // the original so the clone supersedes it. The clone id is DERIVED from the original
+  // (`u:<id>`) so the link survives a save (the server keeps rule ids) — that's how the UI
+  // knows a rule was customized (vs. merely turned off) and can offer Undo instead of a
+  // plain checkbox that would resurrect the original alongside the clone.
+  const cloneIdFor = (ruleId) => `u:${ruleId}`;
+  const isCustomized = (u, ruleId) => (u.rules || []).some(x => x.id === cloneIdFor(ruleId));
   const customizeInherited = (idx, rule) => {
-    const clone = { ...rule, id: `r${Math.random().toString(36).slice(2, 9)}` };
     const u = form.userRules[idx];
+    if (isCustomized(u, rule.id)) return;
     updateUserSection(idx, {
       disabledRuleIds: [...new Set([...(u.disabledRuleIds || []), rule.id])],
-      rules: [...(u.rules || []), clone],
+      rules: [...(u.rules || []), { ...rule, id: cloneIdFor(rule.id) }],
+    });
+  };
+  const undoCustomize = (idx, ruleId) => {
+    const u = form.userRules[idx];
+    updateUserSection(idx, {
+      disabledRuleIds: (u.disabledRuleIds || []).filter(x => x !== ruleId),
+      rules: (u.rules || []).filter(x => x.id !== cloneIdFor(ruleId)),
     });
   };
 
@@ -468,10 +484,11 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated, highli
                 <h4 style={s.h4}>{t.hrIndivTitle}</h4>
                 <p style={s.hint}>{t.hrIndivHint}</p>
               </div>
-              <button type="button" style={s.addTier} onClick={addUserSection} disabled={addableWorkers.length === 0}>
+              <button type="button" style={s.addTier} onClick={addUserSection} disabled={addableWorkers.length === 0 || atOverrideLimit}>
                 {t.hrAddIndividual}
               </button>
             </div>
+            {atOverrideLimit && <p style={s.hint}>{t.hrIndivMaxReached}</p>}
 
             {form.userRules.map((ur, idx) => {
               const uid = ur.userIds[0];
@@ -513,7 +530,16 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated, highli
                     <div style={s.inheritBox}>
                       <div style={s.label}>{t.hrIndivInheritedTitle}</div>
                       {inherited.map(r => {
+                        const customized = isCustomized(ur, r.id);
                         const off = disabled.has(r.id);
+                        if (customized) {
+                          return (
+                            <div key={r.id} style={s.inheritRow}>
+                              <span style={s.inheritToggle}>{describeRule(r, t)} — <em style={s.customizedTag}>{t.hrIndivCustomizedTag}</em></span>
+                              <button type="button" style={s.customizeBtn} onClick={() => undoCustomize(idx, r.id)}>{t.hrIndivUndoCustomize}</button>
+                            </div>
+                          );
+                        }
                         return (
                           <div key={r.id} style={s.inheritRow}>
                             <label style={s.inheritToggle}>
@@ -599,6 +625,7 @@ const s = {
   inheritRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '5px 0' },
   inheritToggle: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#374151', cursor: 'pointer', flex: 1 },
   inheritOff: { textDecoration: 'line-through', color: '#9ca3af' },
+  customizedTag: { color: '#4338ca', fontStyle: 'normal', fontWeight: 600 },
   customizeBtn: { background: '#eef2ff', color: '#4338ca', border: '1px solid #c7d2fe', borderRadius: 6, padding: '3px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: '0 0 auto' },
   edge: { marginTop: 12, padding: 12, background: '#f8fafc', borderRadius: 8 },
   edgeTitle: { fontSize: 13, fontWeight: 700, color: '#334155', marginBottom: 8 },

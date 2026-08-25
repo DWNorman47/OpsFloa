@@ -65,9 +65,13 @@ matches (free orphan handling, like `roleRules` for deleted roles).
    rules listed with an on/off (nullify) checkbox + a **Customize** button (clone + tombstone
    → edit below), and a `<HoursRuleBuilder>` for the person's own rules. EN+ES keys added.
 
-## Known rough edges (follow-ups)
-- After **Customize**, the inherited row shows struck-through (tombstoned) with the editable
-  clone in the builder below; re-checking that row un-tombstones the original while leaving the
-  clone (both would apply). Acceptable for v1; could track customized-vs-nullified explicitly.
-- No explicit per-set rule-count guard yet — the 40 KB policy cap (`admin.js:290`) is the
-  backstop; add a friendlier count error if companies hit it.
+## Refinements (shipped 2026-08-21)
+- **Customize edge fixed.** The clone id is derived from the original (`u:<id>`), which
+  survives the save (the server keeps rule ids). The inherited row for a customized rule now
+  shows "customized below" + an **Undo** (which removes both the tombstone and the clone)
+  instead of a plain checkbox — so it can't resurrect the original alongside the clone.
+- **Friendly count guard.** `MAX_INDIVIDUAL_OVERRIDES = 200` (server `admin.js` + client,
+  kept in sync). The server rejects an oversized `userRules` with a clear message pointing to
+  Role Rules for broad changes; the client disables "Add an override" at the limit with the
+  same hint. The 40 KB policy byte cap remains the hard backstop, now with an actionable
+  message ("…try removing some rules, role sections, or individual overrides.").
