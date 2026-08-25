@@ -365,7 +365,7 @@ async function workerStatement({ companyId, worker, settings, from, to, explain 
   ]);
 
   const entries = roundEntriesFromSettings(entriesR.rows, settings, { workerRoleById: { [worker.id]: worker.role_id }, explain });
-  const otConfig = otConfigFromSettings(settings, worker.role_id);
+  const otConfig = otConfigFromSettings(settings, worker.role_id, worker.id);
   const { previewDeductions, deferredNames } = previewDeductionSplit(settings, worker, dedR.rows);
   const weekWorkedDays = new Set((weekWorkedR.rows || []).map(r => r.d));
 
@@ -442,7 +442,7 @@ async function companyStatements({ companyId, workers, settings, from, to }) {
       reimbursements: [],
       leave: leaveByUser.get(w.id) || { sick: 0, vacation: 0 },
       deductions: previewDeductions,
-      otConfig: otConfigByRole(w.role_id),
+      otConfig: otConfigByRole(w.role_id, w.id),
       projectRateMap,
       settings, from, to, explain: false,
       weekWorkedDays: weekWorkedByUser.get(w.id) || null,
@@ -509,9 +509,9 @@ async function workerPeriodStatements({ companyId, worker, settings, periods }) 
 
   const paidAll = roundEntriesFromSettings(entriesR.rows, settings, { workerRoleById: { [worker.id]: worker.role_id } });
   const weekWorkedDays = new Set((weekWorkedR.rows || []).map(r => r.d));
-  const otConfig = otConfigFromSettings(settings, worker.role_id);
+  const otConfig = otConfigFromSettings(settings, worker.role_id, worker.id);
   const { previewDeductions, deferredNames } = previewDeductionSplit(settings, worker, dedR.rows);
-  const leaveRules = sickRulesFromSettings(settings, worker.role_id);
+  const leaveRules = sickRulesFromSettings(settings, worker.role_id, worker.id);
   const shiftsByDate = shiftHoursByDate(leaveShifts.rows);
 
   for (const period of list) {

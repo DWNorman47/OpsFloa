@@ -352,6 +352,17 @@ that had the previous default.
   worker's `role_id` (see `paidHours.computePaid`'s `roleId`). Not
   DB-enum-constrained (nested JSON, same posture as `rules[]`).
 
+  **`userRules[]` — per-EMPLOYEE overrides** (`users.id`), layered ON TOP of the
+  resolved role/standard list. `[{userIds:[<int>…], mode:'add'|'replace',
+  disabledRuleIds:[<string ruleId>…], rules:[…same rule shape…]}]`. `add` (default)
+  appends `rules` after removing any inherited rule whose `id` is in
+  `disabledRuleIds` (NULLIFY / change-via-clone); `replace` ignores role+standard and
+  uses only `rules`. Precedence: **individual > role > standard**. A worker in no
+  section (or null userId) uses the role/standard list — absent/empty ⇒ today's
+  behavior exactly. Normalized by `parseUserRules`. Resolved per worker via
+  `effectiveRulesForWorker(policy, roleId, userId)` and carried to every pay site by
+  threading each worker's `id` alongside `role_id`. Not DB-enum-constrained.
+
 - `deductions` (JSON list, default `''`) — company-wide payroll deductions for
   the per-worker **pay stub** (gross wages → net). Shape `{ items: [{ id, name,
   kind, value, cap, roleIds }] }` (a bare array is also accepted). `roleIds` is an

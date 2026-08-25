@@ -612,6 +612,11 @@ function parsePolicy(raw) {
     // the standard `rules` or replaces them for that role. Absent → company-wide
     // behaviour, exactly as before.
     roleRules: parseRoleRules(obj.roleRules),
+    // Per-EMPLOYEE rule overrides (users.id), layered ON TOP of the resolved
+    // role/standard rules: `add` mode stacks (and can NULLIFY inherited rules by id
+    // via disabledRuleIds), `replace` mode ignores role+standard entirely. Absent →
+    // exactly the role/standard behaviour. Precedence: individual > role > standard.
+    userRules: parseUserRules(obj.userRules),
     // Tiered overtime + 7th-consecutive-day config (Milestone 2). Passed
     // through with light normalization; the pay calculator (resolveBands)
     // validates individual bands.
@@ -642,6 +647,29 @@ function parseRoleRules(raw) {
 }
 
 /**
+ * Normalize the userRules array — per-employee overrides keyed on users.id.
+ * Each entry: `userIds` (ints), `mode` ('add' | 'replace', default 'add'),
+ * `disabledRuleIds` (string ids of inherited rules to nullify, add-mode only),
+ * `rules` (this person's own rules). An entry with no valid id is dropped.
+ */
+function parseUserRules(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const e of raw) {
+    if (!e || typeof e !== 'object') continue;
+    const rawIds = Array.isArray(e.userIds) ? e.userIds : (e.userId != null ? [e.userId] : []);
+    const userIds = [...new Set(rawIds.map(Number).filter(Number.isInteger))];
+    if (userIds.length === 0) continue;
+    const mode = e.mode === 'replace' ? 'replace' : 'add';
+    const disabledRuleIds = Array.isArray(e.disabledRuleIds)
+      ? [...new Set(e.disabledRuleIds.filter(id => typeof id === 'string' && id))]
+      : [];
+    out.push({ userIds, mode, disabledRuleIds, rules: parseRules(e.rules) });
+  }
+  return out;
+}
+
+/**
  * The rule list that actually applies to a worker of `roleId`:
  *   - no matching role section (or roleId null/unknown) → the standard rules;
  *   - a section with addToStandard → standard rules PLUS the role's rules;
@@ -660,27 +688,56 @@ function effectiveRulesForRole(policy, roleId) {
   return rr.addToStandard ? std.concat(rr.rules) : rr.rules;
 }
 
+/**
+ * The rule list that applies to a specific worker: the role/standard rules
+ * (effectiveRulesForRole) with the worker's own per-employee overrides layered on top.
+ *   - no userId, or no matching userRules section → the role/standard list UNCHANGED
+ *     (so every existing caller and the default path are byte-for-byte identical);
+ *   - `replace` section → the section's rules ONLY (ignores role + standard);
+ *   - `add` section → inherited MINUS any rule whose id is in disabledRuleIds
+ *     (nullify), THEN the section's own rules appended (add / change-via-clone).
+ * Precedence: individual > role > standard. Multiple sections for one user apply in
+ * order (the UI keeps it to one; the engine just tolerates more).
+ */
+function effectiveRulesForWorker(policy, roleId, userId = null) {
+  const inherited = effectiveRulesForRole(policy, roleId);
+  if (userId == null || !Array.isArray(policy.userRules) || policy.userRules.length === 0) return inherited;
+  const uid = Number(userId);
+  const sections = policy.userRules.filter(u => u.userIds.includes(uid));
+  if (sections.length === 0) return inherited;
+  let out = inherited;
+  for (const sec of sections) {
+    if (sec.mode === 'replace') {
+      out = sec.rules;
+    } else {
+      const disabled = new Set(sec.disabledRuleIds || []);
+      out = out.filter(r => !disabled.has(r.id)).concat(sec.rules);
+    }
+  }
+  return out;
+}
+
 // The Time Off Value rules for a role (effective list filtered to sick_value —
 // the internal type id; each rule's `applies` picks sick/vacation/both). Used to
 // price approved time-off into its own paid category. Empty when the policy is
 // off or has no such rules → no leave pay, behaviour unchanged.
-function sickRulesFromSettings(settings, roleId = null) {
+function sickRulesFromSettings(settings, roleId = null, userId = null) {
   const p = parsePolicy(settings && settings.hours_rules);
   if (!p.enabled) return [];
-  return effectiveRulesForRole(p, roleId).filter(r => r.type === 'sick_value');
+  return effectiveRulesForWorker(p, roleId, userId).filter(r => r.type === 'sick_value');
 }
 
-// Memoized per-role Time Off Value rules — parse the policy once, cache per role.
+// Memoized Time Off Value rules — parse the policy once, cache per (role, user).
 // For loops over many workers (payroll/exports) so the policy isn't re-parsed each.
 function sickRulesByRoleFactory(settings) {
   const p = parsePolicy(settings && settings.hours_rules);
   const enabled = !!p.enabled;
   const cache = new Map();
-  return function sickRulesByRole(roleId = null) {
+  return function sickRulesByRole(roleId = null, userId = null) {
     if (!enabled) return [];
-    const key = roleId == null ? '__std__' : roleId;
+    const key = `${roleId == null ? '_' : roleId}|${userId == null ? '_' : userId}`;
     if (cache.has(key)) return cache.get(key);
-    const rules = effectiveRulesForRole(p, roleId).filter(r => r.type === 'sick_value');
+    const rules = effectiveRulesForWorker(p, roleId, userId).filter(r => r.type === 'sick_value');
     cache.set(key, rules);
     return rules;
   };
@@ -693,7 +750,7 @@ function sickRulesByRoleFactory(settings) {
  * `{ dailyBands, weeklyBands, seventhDay }` when the enabled policy defines
  * bands or a 7th-day rule.
  */
-function otConfigFromSettings(settings, roleId = null) {
+function otConfigFromSettings(settings, roleId = null, userId = null) {
   const p = parsePolicy(settings && settings.hours_rules);
   if (!p.enabled) return null;
   const o = p.overtime || {};
@@ -720,9 +777,9 @@ function otConfigFromSettings(settings, roleId = null) {
   let seventhDay = has7th ? o.seventhDay : null;
 
   // ── Custom-rule builder equivalents (override the fixed slots when present) ──
-  // Role-aware: a worker's role rules (ot_tier / premiums) feed their OT config.
-  // roleId null → the standard rules, identical to the company-wide behaviour.
-  const rules = effectiveRulesForRole(p, roleId);
+  // Role- and worker-aware: a worker's effective rules (role + individual overrides)
+  // feed their OT config. roleId+userId null → the standard rules, company-wide behaviour.
+  const rules = effectiveRulesForWorker(p, roleId, userId);
   // ot_tier rules — resolved per bucket in computeOT (a matching rule's bands
   // override the fixed-slot config for its days).
   const tierRules = rules.filter(r => r.type === 'ot_tier');
@@ -769,10 +826,10 @@ function otConfigFromSettings(settings, roleId = null) {
  */
 function otConfigByRoleFactory(settings) {
   const cache = new Map();
-  return function otConfigByRole(roleId = null) {
-    const key = roleId == null ? '__std__' : roleId;
+  return function otConfigByRole(roleId = null, userId = null) {
+    const key = `${roleId == null ? '_' : roleId}|${userId == null ? '_' : userId}`;
     if (cache.has(key)) return cache.get(key);
-    const cfg = otConfigFromSettings(settings, roleId);
+    const cfg = otConfigFromSettings(settings, roleId, userId);
     cache.set(key, cfg);
     return cfg;
   };
@@ -1311,10 +1368,11 @@ function roundEntriesForPay(entries, policy, ctx = {}) {
   const outOff = policy.rounding.clockOut.direction === 'off';
   const standardRules = policy.rules || [];
   const hasRoleRules = Array.isArray(policy.roleRules) && policy.roleRules.length > 0;
-  // Nothing configured on either mechanism → same array reference, as before.
-  // Role rules may add rules for some workers even when the standard list is
-  // empty, so keep processing whenever any role section exists.
-  if (inOff && outOff && standardRules.length === 0 && !hasRoleRules) return entries;
+  const hasUserRules = Array.isArray(policy.userRules) && policy.userRules.length > 0;
+  // Nothing configured on any mechanism → same array reference, as before.
+  // Role/user rules may add rules for some workers even when the standard list is
+  // empty, so keep processing whenever any role or user section exists.
+  if (inOff && outOff && standardRules.length === 0 && !hasRoleRules && !hasUserRules) return entries;
 
   const { shiftMap, workerStandardById, workerRoleById, explain } = ctx;
   // Whether to surface the original punch alongside the paid time. When a company
@@ -1330,10 +1388,11 @@ function roundEntriesForPay(entries, policy, ctx = {}) {
     const workerStandard = workerStandardById ? workerStandardById[e.user_id] : null;
     const expected = resolveExpected(policy, dateStr, { shift, workerStandard });
 
-    // The rule list that applies to THIS worker: role-aware when the caller
-    // supplied a role map, otherwise the standard list (unchanged behaviour).
-    const rules = (hasRoleRules && workerRoleById)
-      ? effectiveRulesForRole(policy, workerRoleById[e.user_id])
+    // The rule list that applies to THIS worker: role- and worker-aware (individual
+    // overrides layer on the role/standard list). When neither role nor user rules
+    // exist, the standard list — unchanged behaviour, same array reference.
+    const rules = (hasRoleRules || hasUserRules)
+      ? effectiveRulesForWorker(policy, workerRoleById ? workerRoleById[e.user_id] : null, e.user_id)
       : standardRules;
     const dayRules = rules.filter(r => ruleMatchesDate(r, dateStr));
 
@@ -1414,9 +1473,11 @@ module.exports = {
   otConfigFromSettings,
   otConfigByRoleFactory,
   effectiveRulesForRole,
+  effectiveRulesForWorker,
   sickRulesFromSettings,
   sickRulesByRoleFactory,
   parseRoleRules,
+  parseUserRules,
   migrateFixedSlots,
   hasFixedSlots,
   ROUNDING_DIRECTIONS,

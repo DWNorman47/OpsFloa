@@ -1964,7 +1964,7 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
     let regularHours = 0, overtimeHours = 0, regularCost = 0, overtimeCost = 0, prevailingHours = 0, prevailingCost = 0, nightHours = 0, nightCost = 0;
     const otConfigByRole = otConfigByRoleFactory(settings);
     Object.values(workerEntries).forEach(({ items, rate, rate_type, overtime_rule, role_id }) => {
-      const otConfig = otConfigByRole(role_id);
+      const otConfig = otConfigByRole(role_id, items[0]?.user_id ?? null);
       if (rate_type !== 'daily' && hasSimpleOtConfig(otConfig)) {
         const baseRateOf = e => (e.wage_type === 'prevailing' ? effectivePrevRate : rate);
         const s = splitRateAware(items, { rule: overtime_rule, threshold: otThreshold(settings, overtime_rule), weekStart: settings.week_start, otMult: parseFloat(settings.overtime_multiplier) || 1.5, baseRateOf, method: otMethod, wagePriority });
@@ -2072,7 +2072,7 @@ router.get('/projects/metrics', requireAdmin, async (req, res) => {
         byWorker.get(e.user_id).push(e);
       }
       for (const rows_ of byWorker.values()) {
-        const r = computePaid(rows_, metricsSettings, { rule: otRuleFromSettings(metricsSettings, rows_[0].ot_rule), roleId: rows_[0].role_id ?? null });
+        const r = computePaid(rows_, metricsSettings, { rule: otRuleFromSettings(metricsSettings, rows_[0].ot_rule), roleId: rows_[0].role_id ?? null, userId: rows_[0].user_id ?? null });
         regularHours += r.regularHours;
         overtimeHours += r.overtimeHours;
       }
@@ -4294,7 +4294,7 @@ router.get('/export/worker-hours', requireAdmin, requirePerm('view_reports'), re
       // No `range` passed: this is an hours-WORKED report, so it excludes the
       // min-daily "no clock-in" guarantee fill the pay surfaces include.
       const wRule = otRuleFromSettings(s, w.overtime_rule);
-      const { regularHours, overtimeHours } = computeOT(we, wRule, otThreshold(s, wRule), weekStart, otConfigByRole(w.role_id));
+      const { regularHours, overtimeHours } = computeOT(we, wRule, otThreshold(s, wRule), weekStart, otConfigByRole(w.role_id, w.id));
       const total = regularHours + overtimeHours;
       const days = new Set(we.map(e => dayKey(e.work_date))).size;
       tReg += regularHours; tOt += overtimeHours; tTot += total; tDays += days;
@@ -4561,7 +4561,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
     // OT-aware costs. Premium OT configs (tiers/rest-day/etc.) keep the flat
     // fallback (no prevailing OT) — matching the rest of the app.
     const computeWorker = (w) => {
-      const otConfig = otConfigByRole(w.role_id);
+      const otConfig = otConfigByRole(w.role_id, w.id);
       // WH-347 is an hours-based document; a daily-rate worker's `rate` is the DAILY
       // amount, so cost it at the hourly-equivalent (daily ÷ standard shift) — otherwise
       // every regular hour is priced at a whole day (an ~8× overstatement of gross). This
