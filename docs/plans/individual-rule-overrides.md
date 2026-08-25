@@ -59,5 +59,15 @@ matches (free orphan handling, like `roleRules` for deleted roles).
 - `docs/db-enums.md` hours_rules section: document `userRules`.
 
 ## Phasing
-1. Engine + threading + tests (backend; default unchanged). ← first
-2. UI + i18n.
+1. Engine + threading + tests (backend; default unchanged). ✅ SHIPPED 2026-08-21.
+2. UI + i18n. ✅ SHIPPED 2026-08-21 — "Individual Overrides" section in
+   `HoursRulesSettings.jsx`: an employee `<select>`, a replace-mode toggle, the inherited
+   rules listed with an on/off (nullify) checkbox + a **Customize** button (clone + tombstone
+   → edit below), and a `<HoursRuleBuilder>` for the person's own rules. EN+ES keys added.
+
+## Known rough edges (follow-ups)
+- After **Customize**, the inherited row shows struck-through (tombstoned) with the editable
+  clone in the builder below; re-checking that row un-tombstones the original while leaving the
+  clone (both would apply). Acceptable for v1; could track customized-vs-nullified explicitly.
+- No explicit per-set rule-count guard yet — the 40 KB policy cap (`admin.js:290`) is the
+  backstop; add a friendlier count error if companies hit it.

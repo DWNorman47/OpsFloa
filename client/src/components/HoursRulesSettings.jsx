@@ -3,7 +3,7 @@ import api from '../api';
 import { useT } from '../hooks/useT';
 import { invalidateCache } from '../offlineDb';
 import { silentError } from '../errorReporter';
-import HoursRuleBuilder from './HoursRuleBuilder';
+import HoursRuleBuilder, { describeRule } from './HoursRuleBuilder';
 
 /**
  * Admin UI for the configurable work-hour / pay rules (Milestone 1: company
@@ -74,6 +74,8 @@ function blankForm() {
     // Per-role overrides: [{ roleId, addToStandard, rules }]. Empty = every
     // worker uses the Standard Rules above (today's behaviour).
     roleRules: [],
+    // Per-employee overrides: [{ userIds, mode, disabledRuleIds, rules }].
+    userRules: [],
   };
 }
 
@@ -98,6 +100,17 @@ function policyToForm(raw) {
           rules: Array.isArray(r.rules) ? r.rules : [],
         }))
         .filter(r => r.roleIds.length > 0)
+    : [];
+  f.userRules = Array.isArray(p.userRules)
+    ? p.userRules
+        .map(u => ({
+          userIds: (Array.isArray(u.userIds) ? u.userIds : (u.userId != null ? [u.userId] : []))
+            .map(Number).filter(Number.isInteger),
+          mode: u.mode === 'replace' ? 'replace' : 'add',
+          disabledRuleIds: Array.isArray(u.disabledRuleIds) ? u.disabledRuleIds.filter(id => typeof id === 'string' && id) : [],
+          rules: Array.isArray(u.rules) ? u.rules : [],
+        }))
+        .filter(u => u.userIds.length > 0)
     : [];
   const sh = p.standardHours || {};
   const days = Object.keys(sh).filter(k => sh[k] && sh[k].start);
@@ -184,11 +197,20 @@ function formToPolicy(f) {
       rules: Array.isArray(r.rules) ? r.rules : [],
     }))
     .filter(r => r.roleIds.length > 0); // a section with no roles selected is dropped
+  const userRules = (Array.isArray(f.userRules) ? f.userRules : [])
+    .map(u => ({
+      userIds: [...new Set((Array.isArray(u.userIds) ? u.userIds : []).map(Number).filter(Number.isInteger))],
+      mode: u.mode === 'replace' ? 'replace' : 'add',
+      disabledRuleIds: [...new Set((Array.isArray(u.disabledRuleIds) ? u.disabledRuleIds : []).filter(id => typeof id === 'string' && id))],
+      rules: Array.isArray(u.rules) ? u.rules : [],
+    }))
+    .filter(u => u.userIds.length > 0); // a set with no employee chosen is dropped
   return {
     version: 1,
     enabled: !!f.enabled,
     rules: Array.isArray(f.rules) ? f.rules : [],
     roleRules,
+    userRules,
     standardHours,
     rounding: {
       clockIn:  { reference: f.inRef,  intervalMin: parseInt(f.inInterval, 10) || 15,  graceMin: parseInt(f.inGrace, 10) || 0,  direction: f.inDir },
@@ -228,10 +250,17 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated, highli
     api.get('/admin/roles').then(r => setRoles(r.data || [])).catch(silentError('hoursrules-roles'));
   }, []);
 
+  // Company workers for the Individual Overrides picker + name labels.
+  const [workers, setWorkers] = useState([]);
+  useEffect(() => {
+    api.get('/admin/workers', { params: { all_roles: true } })
+      .then(r => setWorkers((r.data || []).filter(w => w && w.id))).catch(silentError('hoursrules-workers'));
+  }, []);
+
   const set = (k, v) => { setForm(f => ({ ...f, [k]: v })); setSaved(false); };
   const toggleDay = (d) => { setForm(f => ({ ...f, workDays: { ...f.workDays, [d]: !f.workDays[d] } })); setSaved(false); };
   // A preset rewrites only Standard Rules/Hours; role sections are preserved.
-  const applyPreset = (key) => { if (PRESETS[key]) { setForm(f => ({ ...PRESETS[key](), roleRules: f.roleRules })); setSaved(false); } };
+  const applyPreset = (key) => { if (PRESETS[key]) { setForm(f => ({ ...PRESETS[key](), roleRules: f.roleRules, userRules: f.userRules })); setSaved(false); } };
 
   const roleName = (id) => roles.find(r => r.id === Number(id))?.name || `#${id}`;
   // Every role id already claimed by any section — a role belongs to at most one
@@ -249,6 +278,38 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated, highli
   const updateRoleSection = (idx, patch) =>
     set('roleRules', form.roleRules.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
   const removeRoleSection = (idx) => set('roleRules', form.roleRules.filter((_, i) => i !== idx));
+
+  // ── Individual Overrides (per-employee) ──
+  const workerName = (id) => workers.find(w => w.id === Number(id))?.full_name || `#${id}`;
+  const usedUserIds = new Set(form.userRules.flatMap(u => u.userIds || []));
+  const addableWorkers = workers.filter(w => !usedUserIds.has(w.id)); // one set per employee
+  const addUserSection = () => set('userRules', [...form.userRules, { userIds: [], mode: 'add', disabledRuleIds: [], rules: [] }]);
+  const updateUserSection = (idx, patch) => set('userRules', form.userRules.map((u, i) => (i === idx ? { ...u, ...patch } : u)));
+  const removeUserSection = (idx) => set('userRules', form.userRules.filter((_, i) => i !== idx));
+  // The rules a worker inherits (standard + their role section), mirroring the server's
+  // effectiveRulesForRole — used to list what an override can nullify or change.
+  const inheritedRulesFor = (userId) => {
+    const w = workers.find(x => x.id === Number(userId));
+    const std = form.rules || [];
+    if (!w || w.role_id == null) return std;
+    const rr = form.roleRules.find(x => (x.roleIds || []).includes(w.role_id));
+    if (!rr) return std;
+    return rr.addToStandard !== false ? std.concat(rr.rules) : rr.rules;
+  };
+  const toggleNullify = (idx, ruleId) => {
+    const cur = form.userRules[idx].disabledRuleIds || [];
+    updateUserSection(idx, { disabledRuleIds: cur.includes(ruleId) ? cur.filter(x => x !== ruleId) : [...cur, ruleId] });
+  };
+  // "Customize": clone the inherited rule into this person's list (new id, editable) and
+  // tombstone the original so the clone supersedes it.
+  const customizeInherited = (idx, rule) => {
+    const clone = { ...rule, id: `r${Math.random().toString(36).slice(2, 9)}` };
+    const u = form.userRules[idx];
+    updateUserSection(idx, {
+      disabledRuleIds: [...new Set([...(u.disabledRuleIds || []), rule.id])],
+      rules: [...(u.rules || []), clone],
+    });
+  };
 
   const save = async () => {
     setSaving(true); setError('');
@@ -272,7 +333,7 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated, highli
   const schedRule = form.inRef === 'schedule' || form.outRef === 'schedule';
   // Any Standard or role rule configured → the company has real rules to protect,
   // so the (overwriting) preset shortcuts are hidden.
-  const hasSavedRules = (form.rules?.length || 0) > 0 || (form.roleRules?.length || 0) > 0;
+  const hasSavedRules = (form.rules?.length || 0) > 0 || (form.roleRules?.length || 0) > 0 || (form.userRules?.length || 0) > 0;
 
   return (
     <div style={s.card}>
@@ -400,6 +461,84 @@ export default function HoursRulesSettings({ settings, onSettingsUpdated, highli
               );
             })}
           </section>
+
+          <section style={s.section}>
+            <div style={s.headRow}>
+              <div>
+                <h4 style={s.h4}>{t.hrIndivTitle}</h4>
+                <p style={s.hint}>{t.hrIndivHint}</p>
+              </div>
+              <button type="button" style={s.addTier} onClick={addUserSection} disabled={addableWorkers.length === 0}>
+                {t.hrAddIndividual}
+              </button>
+            </div>
+
+            {form.userRules.map((ur, idx) => {
+              const uid = ur.userIds[0];
+              const inherited = uid != null ? inheritedRulesFor(uid) : [];
+              const disabled = new Set(ur.disabledRuleIds || []);
+              const orphan = uid != null && !workers.some(w => w.id === uid);
+              return (
+                <div key={idx} style={s.roleCard}>
+                  <div style={s.roleHead}>
+                    <div style={{ ...s.field, flex: 1 }}>
+                      <label style={s.label}>{t.hrEmployeePickerLabel}</label>
+                      <select
+                        style={s.select}
+                        value={uid ?? ''}
+                        onChange={e => updateUserSection(idx, { userIds: e.target.value ? [Number(e.target.value)] : [] })}
+                      >
+                        <option value="">{t.hrEmployeePickerPlaceholder}</option>
+                        {orphan && <option value={uid}>{`#${uid}`}</option>}
+                        {workers.map(w => {
+                          const takenElsewhere = form.userRules.some((x, i) => i !== idx && (x.userIds || []).includes(w.id));
+                          return (
+                            <option key={w.id} value={w.id} disabled={takenElsewhere}>
+                              {w.full_name}{takenElsewhere ? ` (${t.hrEmployeeUsedElsewhere})` : ''}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+                    <button type="button" style={s.tierRemove} onClick={() => removeUserSection(idx)} aria-label={t.hrRemoveIndividual}>×</button>
+                  </div>
+
+                  <label style={s.checkRow}>
+                    <input type="checkbox" checked={ur.mode === 'replace'} onChange={e => updateUserSection(idx, { mode: e.target.checked ? 'replace' : 'add' })} />
+                    <span>{t.hrIndivReplace}</span>
+                  </label>
+                  <p style={s.hint}>{ur.mode === 'replace' ? t.hrIndivReplaceHint : t.hrIndivAddHint}</p>
+
+                  {ur.mode !== 'replace' && uid != null && inherited.length > 0 && (
+                    <div style={s.inheritBox}>
+                      <div style={s.label}>{t.hrIndivInheritedTitle}</div>
+                      {inherited.map(r => {
+                        const off = disabled.has(r.id);
+                        return (
+                          <div key={r.id} style={s.inheritRow}>
+                            <label style={s.inheritToggle}>
+                              <input type="checkbox" checked={!off} onChange={() => toggleNullify(idx, r.id)} />
+                              <span style={off ? s.inheritOff : undefined}>{describeRule(r, t)}</span>
+                            </label>
+                            {!off && <button type="button" style={s.customizeBtn} onClick={() => customizeInherited(idx, r)}>{t.hrIndivCustomize}</button>}
+                          </div>
+                        );
+                      })}
+                      <p style={s.hint}>{t.hrIndivInheritedHint}</p>
+                    </div>
+                  )}
+
+                  <HoursRuleBuilder
+                    rules={ur.rules}
+                    onChange={rs => updateUserSection(idx, { rules: rs })}
+                    title={uid != null ? workerName(uid) : t.hrEmployeePickerLabel}
+                    help={t.hrIndivBuilderHelp}
+                    highlightRuleId={highlightRuleId}
+                  />
+                </div>
+              );
+            })}
+          </section>
         </>
       )}
 
@@ -455,6 +594,12 @@ const s = {
   chip: { background: '#fff', color: '#374151', border: '1px solid #d1d5db', borderRadius: 999, padding: '4px 12px', fontSize: 12.5, cursor: 'pointer' },
   chipOn: { background: '#059669', color: '#fff', border: '1px solid #059669', borderRadius: 999, padding: '4px 12px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' },
   chipDisabled: { opacity: 0.4, cursor: 'not-allowed' },
+  select: { width: '100%', padding: '7px 9px', fontSize: 13, border: '1px solid #d1d5db', borderRadius: 8, background: '#fff', color: '#111827', marginTop: 2 },
+  inheritBox: { marginTop: 10, padding: 10, background: '#fff', border: '1px solid #eef0f2', borderRadius: 8 },
+  inheritRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '5px 0' },
+  inheritToggle: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#374151', cursor: 'pointer', flex: 1 },
+  inheritOff: { textDecoration: 'line-through', color: '#9ca3af' },
+  customizeBtn: { background: '#eef2ff', color: '#4338ca', border: '1px solid #c7d2fe', borderRadius: 6, padding: '3px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: '0 0 auto' },
   edge: { marginTop: 12, padding: 12, background: '#f8fafc', borderRadius: 8 },
   edgeTitle: { fontSize: 13, fontWeight: 700, color: '#334155', marginBottom: 8 },
   checkRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: '#374151', cursor: 'pointer' },
