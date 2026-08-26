@@ -5,7 +5,7 @@ import { fmtHours, formatCurrency } from '../utils';
 import { useT } from '../hooks/useT';
 import { useAuth } from '../contexts/AuthContext';
 import { handlePdfError } from '../pdfError';
-import { renderTraceItem, renderLeaveDetail, traceItemPhase } from '../utils/reportTrace';
+import { renderTraceItem, renderLeaveDetail, traceItemPhase, hoursRulesLink, SETTINGS_LINKS } from '../utils/reportTrace';
 import DeductionListEditor from './DeductionListEditor';
 import { downloadCsv } from '../utils/csv';
 
@@ -244,15 +244,17 @@ export default function WorkerMetrics({ worker, currency = 'USD', companyInfo = 
   const syntheticTrace = (e) => {
     if (e.kind === 'sick' || e.kind === 'vacation')
       return <LeaveDetail rows={(billData.leave_detail || []).filter(d => d.type === e.kind)} t={t} policyRaw={policyRaw} goto={goto} />;
-    let text, link = '/administration#workspace';
+    const ex0 = (e.explain && e.explain[0]) || {};
+    let text, link = SETTINGS_LINKS.hours_rules;
     if (e.kind === 'weekly_guarantee') {
-      const ex = (e.explain && e.explain[0]) || {};
       text = (t.trGuaranteeTopup || 'Guaranteed {min}h over {weeks} wk; worked {worked} — topped up {short} × {rate} = {cost}.')
-        .replace('{min}', fmtHours(ex.minHours)).replace('{weeks}', ex.weeks).replace('{worked}', fmtHours(s.total_hours))
+        .replace('{min}', fmtHours(ex0.minHours)).replace('{weeks}', ex0.weeks).replace('{worked}', fmtHours(s.total_hours))
         .replace('{short}', fmtHours(e.hours)).replace('{rate}', formatCurrency(s.rate, currency)).replace('{cost}', formatCurrency(e.cost, currency));
       link = '/team';
     } else {
+      // guarantee / min_daily → deep-link to the min_daily rule that produced the hours.
       text = e.kind === 'guarantee' ? t.floorGuaranteeTrace : t.floorMinDailyTrace;
+      link = hoursRulesLink(ex0.ruleId);
     }
     return <div style={styles.trace}><div style={styles.traceItem}><span>{text}</span><button style={styles.traceLink} onClick={() => goto(link)}>{t.trViewSetting} →</button></div></div>;
   };

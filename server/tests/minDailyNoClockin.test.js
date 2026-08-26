@@ -63,6 +63,18 @@ describe('activeWindow = week', () => {
     // Week 2: no clock-in that week → nothing.
     expect(r.regularHours).toBeCloseTo(40);
     expect(r.overtimeHours).toBeCloseTo(0);
+    // Each guaranteed day carries the min_daily rule's id → report deep-link.
+    const gtd = r.floorDetail.filter(f => f.kind === 'guarantee');
+    expect(gtd.length).toBe(4);
+    expect(gtd.every(f => f.ruleId === 'm')).toBe(true);
+  });
+
+  test('worked-day min_daily floor also carries the rule id', () => {
+    // 2h Monday, floor 8 → 6h min_daily top-up, tagged with the rule id.
+    const r = computeOT([e(W1.MON, '08:00', '10:00')], 'daily', 8, 1, minRule(), RANGE);
+    const md = r.floorDetail.filter(f => f.kind === 'min_daily');
+    expect(md.length).toBe(1);
+    expect(md[0].ruleId).toBe('m');
   });
 });
 

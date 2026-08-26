@@ -395,6 +395,16 @@ function minDailyForBucket(otConfig, rule, dk) {
   return parseFloat(otConfig.minDailyHours) || 0;
 }
 
+// The id of the min_daily rule that set a bucket's floor (the largest matching), for the
+// report's rule deep-link. null when the floor came from the fixed-slot global setting.
+function minDailyRuleIdForBucket(otConfig, rule, dk) {
+  if (rule !== 'daily' || !otConfig) return null;
+  const rules = Array.isArray(otConfig.minDailyRules) ? otConfig.minDailyRules : [];
+  const matched = rules.filter(r => ruleMatchesDate(r, dk));
+  if (!matched.length) return null; // fixed-slot global floor — a setting, not a builder rule
+  return matched.reduce((best, r) => ((parseFloat(r.hours) || 0) > (parseFloat(best.hours) || 0) ? r : best)).id;
+}
+
 /**
  * Split an array of time entries into regularHours and overtimeHours, plus a
  * per-tier `otBands` breakdown for cost.
@@ -545,7 +555,7 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
         if (minD > 0 && workedTotal < minD) {
           const add = minD - workedTotal;
           autoReg += add;                         // reporting-time floor: pay only the true shortfall as regular
-          floorDetail.push({ date: dk, hours: +add.toFixed(2), kind: 'min_daily' });
+          floorDetail.push({ date: dk, hours: +add.toFixed(2), kind: 'min_daily', ruleId: minDailyRuleIdForBucket(otConfig, rule, dk) });
         }
       }
     });
@@ -579,7 +589,7 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
         // rest day (a real bucket, handled above) is paid at the rest-day premium.
         // The two coexist — the guarantee is opt-in per day, so if an admin created
         // it for a rest day they want it to pay.
-        let floor = 0;
+        let floor = 0, floorRuleId = null;
         for (const r of noClockRules) {
           if (!ruleMatchesDate(r, dk)) continue;
           let gate;
@@ -596,7 +606,7 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
           } else {
             gate = activeWeeks.has(weekBucketKey(dk, weekStart)); // 'week'
           }
-          if (gate) floor = Math.max(floor, parseFloat(r.hours) || 0);
+          if (gate && (parseFloat(r.hours) || 0) > floor) { floor = parseFloat(r.hours) || 0; floorRuleId = r.id; }
         }
         // Paid leave on this day counts toward the guarantee floor: a 4h partial-leave
         // day with an 8h guarantee tops up only 4h (leave 4 + guarantee 4), and a
@@ -605,7 +615,7 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
         const topUp = Math.max(0, floor - leaveH);
         if (topUp > 0) {
           autoReg += topUp;                // guaranteed regular hours (no OT)
-          floorDetail.push({ date: dk, hours: +topUp.toFixed(2), kind: 'guarantee' });
+          floorDetail.push({ date: dk, hours: +topUp.toFixed(2), kind: 'guarantee', ruleId: floorRuleId });
         }
       }
     }
