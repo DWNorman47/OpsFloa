@@ -18,7 +18,7 @@ export const SETTINGS_LINKS = {
 
 // The Hours & Rules link, optionally pointing at one rule so the page scrolls to and
 // flashes that exact row. `rule` rides alongside `focus` (both before the #hash).
-const hoursRulesLink = (ruleId) =>
+export const hoursRulesLink = (ruleId) =>
   ruleId ? `/administration?focus=hours_rules&rule=${encodeURIComponent(ruleId)}#workspace` : SETTINGS_LINKS.hours_rules;
 const firstId = (ids) => (Array.isArray(ids) ? ids.find(Boolean) : null);
 

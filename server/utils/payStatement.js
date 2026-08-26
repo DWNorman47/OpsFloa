@@ -243,7 +243,7 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
   });
   const syntheticEntries = floorDetail.map(f => mkSynthetic({
     kind: f.kind, id: `floor-${f.kind}-${f.date}`, work_date: f.date, hours: f.hours,
-    explain: [{ code: f.kind === 'guarantee' ? 'guarantee_day' : 'min_daily_floor', hours: f.hours }],
+    explain: [{ code: f.kind === 'guarantee' ? 'guarantee_day' : 'min_daily_floor', hours: f.hours, ruleId: f.ruleId || undefined }],
   }));
   // Weekly-hours guarantee top-up and paid leave are also rule-generated hours, not
   // clocked time — same rule: they only get paid if they're an entry. `cost` is set on

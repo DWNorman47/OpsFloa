@@ -6176,3 +6176,17 @@ rules to the exact rule, but two classes didn't reach the actual rule:
   per-entry OT override / aggregate total / logged break stay unlinked (not rules).
 - Tests: explain now asserts overtime_ruleId for rest_day/seventh_day/window/tier + null for
   base threshold; updated the rest_day otConfig-shape test for the new field. Suite 1541 green.
+
+## 2026-08-26 — Guarantee/min_daily "View →" landed on Modules, not the rule
+
+The synthetic guarantee / min-daily-floor rows in Team Member Reports built their trace
+link as a bare `/administration#workspace` (no `?focus`), so clicking "View →" opened the
+Administration page's default group (Modules) instead of the rule. Fixed:
+- `floorDetail` now carries the driving `min_daily` rule id (worked-day floor via
+  `minDailyRuleIdForBucket`; no-clock-in guarantee via the winning rule tracked in the gate
+  loop); `payStatement` puts it on the synthetic entry's explain.
+- `WorkerMetrics` syntheticTrace deep-links guarantee/min_daily via the exported
+  `hoursRulesLink(ruleId)` (falls back to the Hours & Rules page when the floor came from
+  the fixed-slot global setting, not a builder rule) — never the Modules-landing default.
+- Tests: floorDetail carries the rule id for both guarantee days and the worked-day floor.
+  Suite 1542 green. Explain-only; pay math unchanged.
