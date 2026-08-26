@@ -6142,3 +6142,37 @@ design; no server/DB yet (Save to Database is a disabled Phase-2 button).
   page event → 🔑 falls back to in-page generate+fill. Saving the encryption password to the
   browser is offered but warned as "less safe" (browser-only, never synced). One-time share
   links deferred to Phase 3 (need the server). Server/client untouched; verify green.
+
+## 2026-08-21 — Individual (per-employee) rule overrides
+
+New "Individual Overrides" under Hours & Pay Rules, after Role Rules. Design +
+rough edges: docs/plans/individual-rule-overrides.md. Money-critical; opt-in-safe.
+- Engine: `userRules[]` in the hours_rules JSON + `effectiveRulesForWorker(policy,
+  roleId, userId)` layering individual > role > standard (add mode with nullify-by-id
+  + change-via-clone; replace mode). Threaded worker.id alongside role_id through the
+  single resolution chokepoint (otConfig/sickRules/roundEntries) + all downstream
+  callers (payStatement, certified payroll, worker-hours export, scheduled report, QBO).
+  15 new tests incl. the no-op-default guarantee. Full suite 1540 green.
+- UI: employee picker + replace toggle + inherited-rules list (off = nullify,
+  Customize = clone+tombstone) + HoursRuleBuilder for own rules. EN+ES.
+- Judgment calls: `userRules` lives in the same policy JSON (no new table) to keep the
+  atomic CAS save + reuse the builder; the 40KB cap is the size backstop for now;
+  Customize's re-check edge documented as a follow-up.
+
+## 2026-08-21 — Team Member Reports: every rule in Details deep-links to its rule
+
+The Details trace ("View setting →") already linked rounding/clip/add-time/auto-break
+rules to the exact rule, but two classes didn't reach the actual rule:
+- `reportTrace.findRuleById` searched only `rules` + `roleRules`, so **individual-override
+  (`userRules`) rules** didn't resolve their description or deep-link. Now it also searches
+  `userRules` (highlightRuleId was already passed to the per-employee builders, so the
+  scroll+flash lands once the rule resolves).
+- **Overtime** explain items carried no `ruleId`, so premium/tier OT went to the generic
+  Hours & Rules page. Threaded the driving rule id through the explain (explain-only, no
+  pay-math change): `otConfigFromSettings` keeps `ruleId` on rest_day/seventh_day; new
+  `coveringWindowRuleId` (window) + `tierRuleIdForBucket` (ot_tier) in
+  `annotateEntryOvertime` set `e.overtime_ruleId`; `payStatement` includes it. Base
+  daily/weekly threshold stays generic (it's the OT-threshold SETTING, not a builder rule);
+  per-entry OT override / aggregate total / logged break stay unlinked (not rules).
+- Tests: explain now asserts overtime_ruleId for rest_day/seventh_day/window/tier + null for
+  base threshold; updated the rest_day otConfig-shape test for the new field. Suite 1541 green.

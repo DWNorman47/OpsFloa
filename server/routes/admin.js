@@ -13,6 +13,9 @@ const { clearSuppression } = require('../services/emailSuppression');
 const pool = require('../db');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Friendly cap on per-employee Hours & Pay Rules overrides (the 40 KB policy byte cap
+// is the hard backstop). Keep in sync with the client (HoursRulesSettings.jsx).
+const MAX_INDIVIDUAL_OVERRIDES = 200;
 function isValidEmail(email) { return EMAIL_RE.test(String(email).trim()); }
 const { requireAdmin, requirePlan, requireCertifiedPayrollAddon, requirePerm } = require('../middleware/auth');
 const { normalizePaycheckRules } = require('../constants/paycheckRuleEnums');
@@ -287,11 +290,16 @@ router.patch('/settings', requireAdmin, requirePerm('manage_settings'), async (r
             // Per-role rule lists multiply the document size (one rule set per
             // role on top of the standard list), so the cap is generous but still
             // bounded to keep a runaway payload out of the settings row.
-            if (String(val).length > 40000) return res.status(400).json({ error: 'hours_rules is too large' });
+            if (String(val).length > 40000) return res.status(400).json({ error: 'Your Hours & Pay Rules are too large to save. Try removing some rules, role sections, or individual overrides.' });
             let parsed;
             try { parsed = JSON.parse(val); } catch { return res.status(400).json({ error: 'hours_rules must be valid JSON' }); }
             if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
               return res.status(400).json({ error: 'hours_rules must be a JSON object' });
+            // Friendly count guard so a runaway list of per-employee overrides gives a
+            // clear message before the raw byte cap above. Broad changes belong in Role
+            // Rules, not hundreds of individual overrides — so this bound is generous.
+            if (Array.isArray(parsed.userRules) && parsed.userRules.length > MAX_INDIVIDUAL_OVERRIDES)
+              return res.status(400).json({ error: `Too many individual overrides (max ${MAX_INDIVIDUAL_OVERRIDES}). For a change that affects many people, use Role Rules instead.` });
             // Beyond shape: refuse a rule list that can't mean anything. An
             // Add Time rule with no End Time to measure from would fall back to
             // adding onto the punch and quietly bill the wrong number, so it is
@@ -1964,7 +1972,7 @@ router.get('/projects/:id/entries', requireAdmin, async (req, res) => {
     let regularHours = 0, overtimeHours = 0, regularCost = 0, overtimeCost = 0, prevailingHours = 0, prevailingCost = 0, nightHours = 0, nightCost = 0;
     const otConfigByRole = otConfigByRoleFactory(settings);
     Object.values(workerEntries).forEach(({ items, rate, rate_type, overtime_rule, role_id }) => {
-      const otConfig = otConfigByRole(role_id);
+      const otConfig = otConfigByRole(role_id, items[0]?.user_id ?? null);
       if (rate_type !== 'daily' && hasSimpleOtConfig(otConfig)) {
         const baseRateOf = e => (e.wage_type === 'prevailing' ? effectivePrevRate : rate);
         const s = splitRateAware(items, { rule: overtime_rule, threshold: otThreshold(settings, overtime_rule), weekStart: settings.week_start, otMult: parseFloat(settings.overtime_multiplier) || 1.5, baseRateOf, method: otMethod, wagePriority });
@@ -2072,7 +2080,7 @@ router.get('/projects/metrics', requireAdmin, async (req, res) => {
         byWorker.get(e.user_id).push(e);
       }
       for (const rows_ of byWorker.values()) {
-        const r = computePaid(rows_, metricsSettings, { rule: otRuleFromSettings(metricsSettings, rows_[0].ot_rule), roleId: rows_[0].role_id ?? null });
+        const r = computePaid(rows_, metricsSettings, { rule: otRuleFromSettings(metricsSettings, rows_[0].ot_rule), roleId: rows_[0].role_id ?? null, userId: rows_[0].user_id ?? null });
         regularHours += r.regularHours;
         overtimeHours += r.overtimeHours;
       }
@@ -4294,7 +4302,7 @@ router.get('/export/worker-hours', requireAdmin, requirePerm('view_reports'), re
       // No `range` passed: this is an hours-WORKED report, so it excludes the
       // min-daily "no clock-in" guarantee fill the pay surfaces include.
       const wRule = otRuleFromSettings(s, w.overtime_rule);
-      const { regularHours, overtimeHours } = computeOT(we, wRule, otThreshold(s, wRule), weekStart, otConfigByRole(w.role_id));
+      const { regularHours, overtimeHours } = computeOT(we, wRule, otThreshold(s, wRule), weekStart, otConfigByRole(w.role_id, w.id));
       const total = regularHours + overtimeHours;
       const days = new Set(we.map(e => dayKey(e.work_date))).size;
       tReg += regularHours; tOt += overtimeHours; tTot += total; tDays += days;
@@ -4561,7 +4569,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
     // OT-aware costs. Premium OT configs (tiers/rest-day/etc.) keep the flat
     // fallback (no prevailing OT) — matching the rest of the app.
     const computeWorker = (w) => {
-      const otConfig = otConfigByRole(w.role_id);
+      const otConfig = otConfigByRole(w.role_id, w.id);
       // WH-347 is an hours-based document; a daily-rate worker's `rate` is the DAILY
       // amount, so cost it at the hourly-equivalent (daily ÷ standard shift) — otherwise
       // every regular hour is priced at a whole day (an ~8× overstatement of gross). This

@@ -79,7 +79,7 @@ async function loadSettings(companyId) {
  * selects both the effective rule list (via the rounding engine) and the OT config.
  * Null/absent → the standard rules, identical to the company-wide behaviour.
  */
-function computePaid(entries, settings, { rule = 'daily', ctx = {}, roleId = null, range = null } = {}) {
+function computePaid(entries, settings, { rule = 'daily', ctx = {}, roleId = null, userId = null, range = null } = {}) {
   // These entries are one worker's. When a role is supplied, tell the rounding
   // engine which role applies (workerRoleById) and select that role's OT config.
   let effCtx = ctx;
@@ -93,7 +93,7 @@ function computePaid(entries, settings, { rule = 'daily', ctx = {}, roleId = nul
     effCtx = { ...ctx, workerRoleById };
   }
   const paid = roundEntriesFromSettings(entries || [], settings, effCtx);
-  const otConfig = otConfigFromSettings(settings, roleId);
+  const otConfig = otConfigFromSettings(settings, roleId, userId);
   const { threshold, weekStart } = payNumbers(settings, rule);
   // `range` (the pay period being computed) enables the min_daily "no clock-in"
   // guarantee to fill empty days; absent → today's entry-only behaviour.
@@ -128,7 +128,7 @@ function laborCostCents(entries, settings, opts = {}) {
     const rate = parseFloat(rows[0].rate) || 0;
     if (!rate) continue;
     const rule = otRuleFromSettings(settings, rows[0].ot_rule);
-    const { paid, regularHours, otBands, otConfig } = computePaid(rows, settings, { rule, roleId: rows[0].role_id ?? null });
+    const { paid, regularHours, otBands, otConfig } = computePaid(rows, settings, { rule, roleId: rows[0].role_id ?? null, userId: rows[0].user_id ?? null });
     dollars += regularHours * rate;
     dollars += otBandsCost(otBands, rate, multiplier);
     if (otConfig && otConfig.nightDifferential) {
@@ -180,7 +180,7 @@ function leaveRateMultipliers(settings) {
  */
 async function computeWorkerLeave({ companyId, userId, roleId, settings, from, to, withDetail = false }) {
   if (!from || !to) return withDetail ? { sick: 0, vacation: 0, detail: [] } : { sick: 0, vacation: 0 };
-  const leaveRules = sickRulesFromSettings(settings, roleId);
+  const leaveRules = sickRulesFromSettings(settings, roleId, userId);
   const [reqs, shifts] = await Promise.all([
     pool.query(
       `SELECT type, hours, start_date, end_date FROM time_off_requests
@@ -229,7 +229,7 @@ async function computeCompanyLeave({ companyId, workers, settings, from, to }) {
   for (const w of workers || []) {
     byUser.set(w.id, computeLeaveHours(
       reqByUser.get(w.id) || [], shiftHoursByDate(shiftByUser.get(w.id) || []),
-      leaveByRole(w.role_id), settings.regular_shift_hours, from, to
+      leaveByRole(w.role_id, w.id), settings.regular_shift_hours, from, to
     ));
   }
   return byUser;

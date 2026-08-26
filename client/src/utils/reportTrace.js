@@ -28,14 +28,16 @@ function minToHHMM(min) {
 }
 const hhmm = (s) => (typeof s === 'string' ? s.slice(0, 5) : s);
 
-// Find a rule by id anywhere in the policy — standard list or any role section.
+// Find a rule by id anywhere in the policy — the standard list, any role section, or
+// any per-employee (userRules) section — so an individual override's rule resolves too.
 export function findRuleById(hoursRules, id) {
   if (!id || !hoursRules) return null;
   let p;
   try { p = typeof hoursRules === 'string' ? JSON.parse(hoursRules) : hoursRules; } catch { return null; }
   if (!p || typeof p !== 'object') return null;
   const inList = (arr) => (Array.isArray(arr) ? arr.find(r => r && r.id === id) : null);
-  return inList(p.rules) || (Array.isArray(p.roleRules) ? p.roleRules.map(rr => inList(rr && rr.rules)).find(Boolean) : null) || null;
+  const inSections = (sections) => (Array.isArray(sections) ? sections.map(s => inList(s && s.rules)).find(Boolean) : null);
+  return inList(p.rules) || inSections(p.roleRules) || inSections(p.userRules) || null;
 }
 
 // Which phase of the shift an explain item belongs to, so the report can group the

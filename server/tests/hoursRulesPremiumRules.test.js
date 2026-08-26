@@ -6,7 +6,7 @@
  * fixed-slot premium tests still pass).
  */
 
-const { computeOT, nightPremiumCost } = require('../utils/payCalculations');
+const { computeOT, nightPremiumCost, annotateEntryOvertime } = require('../utils/payCalculations');
 const { parsePolicy, otConfigFromSettings } = require('../utils/hoursRules');
 
 const MON = '2026-07-06'; // weekdayOf === 1
@@ -17,7 +17,7 @@ const otConfig = (rules) => otConfigFromSettings({ hours_rules: JSON.stringify({
 describe('rest_day rule', () => {
   test('Saturday whole day at 2× via a weekday-scoped rest_day rule', () => {
     const cfg = otConfig([{ id: 'r', type: 'rest_day', when: { kind: 'weekdays', days: [6] }, mult: 2 }]);
-    expect(cfg.restDay).toEqual({ mult: 2, days: [6] });
+    expect(cfg.restDay).toEqual({ mult: 2, days: [6], ruleId: 'r' });
     const sat = computeOT([e(SAT, '08:00', '14:00')], 'daily', 8, 1, cfg); // 6h Saturday → all OT @2×
     expect(sat.regularHours).toBeCloseTo(0);
     expect(sat.overtimeHours).toBeCloseTo(6);
@@ -25,6 +25,48 @@ describe('rest_day rule', () => {
     const mon = computeOT([e(MON, '08:00', '14:00')], 'daily', 8, 1, cfg); // weekday → normal (6h reg)
     expect(mon.regularHours).toBeCloseTo(6);
     expect(mon.overtimeHours).toBeCloseTo(0);
+  });
+});
+
+describe('explain: overtime carries the driving rule id (report deep-link)', () => {
+  const SUN = '2026-07-12'; // weekdayOf === 0
+  test('rest_day, seventh_day, and window OT each set entry.overtime_ruleId', () => {
+    // rest_day (Saturday): whole day OT → the rest_day rule id.
+    const rest = otConfig([{ id: 'rest1', type: 'rest_day', when: { kind: 'weekdays', days: [6] }, mult: 2 }]);
+    const satE = [e(SAT, '08:00', '14:00')];
+    annotateEntryOvertime(satE, 'daily', 8, 1, rest);
+    expect(satE[0].overtime_reason).toBe('rest_day');
+    expect(satE[0].overtime_ruleId).toBe('rest1');
+
+    // window_mult (Sunday all day 2×): window OT → the window rule id.
+    const win = otConfig([{ id: 'win1', type: 'window_mult', when: { kind: 'weekdays', days: [0] }, from: '05:00', to: '05:00', mult: 2 }]);
+    const sunE = [e(SUN, '08:00', '12:00')];
+    annotateEntryOvertime(sunE, 'daily', 8, 1, win);
+    expect(sunE[0].overtime_reason).toBe('window');
+    expect(sunE[0].overtime_ruleId).toBe('win1');
+
+    // seventh_day: the 7th consecutive day → the seventh_day rule id.
+    const sd = otConfig([{ id: 'sd1', type: 'seventh_day', when: { kind: 'every_day' }, firstHours: 0, firstMult: 2, afterMult: 2 }]);
+    const week = ['2026-07-06', '2026-07-07', '2026-07-08', '2026-07-09', '2026-07-10', '2026-07-11', '2026-07-12']
+      .map(d => e(d, '08:00', '16:00'));
+    annotateEntryOvertime(week, 'daily', 8, 1, sd);
+    const seventh = week[6];
+    expect(seventh.overtime_reason).toBe('seventh_day');
+    expect(seventh.overtime_ruleId).toBe('sd1');
+
+    // ot_tier: threshold OT driven by a custom tier → the tier rule id.
+    const tier = otConfig([{ id: 'tier1', type: 'ot_tier', when: { kind: 'every_day' }, basis: 'day', afterHours: 6, mult: 2 }]);
+    const tierE = [e(MON, '08:00', '17:00')]; // 9h, tier split at 6 → 3h OT
+    annotateEntryOvertime(tierE, 'daily', 8, 1, tier);
+    expect(tierE[0].overtime_reason).toBe('daily');
+    expect(tierE[0].overtime_ruleId).toBe('tier1');
+
+    // base daily threshold (no premium rule): overtime, but NO rule id (it's a setting).
+    const plain = otConfig([]);
+    const longDay = [e(MON, '06:00', '18:00')]; // 12h → 4h OT past 8
+    annotateEntryOvertime(longDay, 'daily', 8, 1, plain);
+    expect(longDay[0].overtime_reason).toBe('daily');
+    expect(longDay[0].overtime_ruleId).toBeNull();
   });
 });
 
