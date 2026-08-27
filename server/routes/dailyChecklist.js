@@ -734,6 +734,21 @@ router.delete('/days/:dayId/items/:itemId', requirePerm('daily_checklist_check_i
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
+// DELETE /days/:dayId — remove a whole day (e.g. a history day started by mistake). The
+// items + per-person state cascade away (FK ON DELETE CASCADE). Company-scoped; gated on
+// the day-lifecycle permission. A later start re-derives the ordinal number, so a deleted
+// day just leaves a gap in the sequence.
+router.delete('/days/:dayId', requirePerm('daily_checklist_complete_day'), async (req, res) => {
+  try {
+    const r = await pool.query(
+      'DELETE FROM daily_checklists WHERE id = $1 AND company_id = $2 RETURNING id',
+      [req.params.dayId, req.user.company_id]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Day not found' });
+    res.json({ deleted: true });
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
 // POST /days/:dayId/complete — close the active day. Unchecked items roll into the next
 // day when it's started (computed there). Can close with items still unchecked.
 router.post('/days/:dayId/complete', requirePerm('daily_checklist_complete_day'), async (req, res) => {

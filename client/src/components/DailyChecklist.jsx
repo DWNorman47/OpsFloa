@@ -324,6 +324,18 @@ export function ChecklistHistory({ projectId, t, toast }) {
   const [days, setDays] = useState(null);      // null = loading
   const [openId, setOpenId] = useState(null);
   const [detail, setDetail] = useState({});    // dayId → { items } | { loading:true }
+  const canDelete = usePerm('daily_checklist_complete_day');
+
+  const deleteDay = async (d) => {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(t.dcDeleteDayConfirm)) return;
+    try {
+      await api.delete(`/daily-checklist/days/${d.id}`);
+      setDays(prev => (prev || []).filter(x => x.id !== d.id));
+      if (openId === d.id) setOpenId(null);
+      toast(t.dcDayDeleted, 'success');
+    } catch { toast(t.dcDeleteDayFailed, 'error'); }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -358,11 +370,16 @@ export function ChecklistHistory({ projectId, t, toast }) {
         const det = detail[d.id];
         return (
           <div key={d.id} style={hStyles.day}>
-            <button type="button" style={hStyles.dayHead} onClick={() => toggle(d.id)} aria-expanded={open}>
-              <span style={hStyles.chev}>{open ? '▾' : '▸'}</span>
-              <span style={hStyles.dayDate}>{d.work_date ? String(d.work_date).slice(0, 10) : t.dcDayLabel.replace('{n}', d.day_number)}</span>
-              <span style={hStyles.dayMeta}>{t.dcDayLabel.replace('{n}', d.day_number)} · {t.dcItemsChecked.replace('{n}', d.checked_count).replace('{total}', d.item_count)}</span>
-            </button>
+            <div style={hStyles.headRow}>
+              <button type="button" style={hStyles.dayHead} onClick={() => toggle(d.id)} aria-expanded={open}>
+                <span style={hStyles.chev}>{open ? '▾' : '▸'}</span>
+                <span style={hStyles.dayDate}>{d.work_date ? String(d.work_date).slice(0, 10) : t.dcDayLabel.replace('{n}', d.day_number)}</span>
+                <span style={hStyles.dayMeta}>{t.dcDayLabel.replace('{n}', d.day_number)} · {t.dcItemsChecked.replace('{n}', d.checked_count).replace('{total}', d.item_count)}</span>
+              </button>
+              {canDelete && (
+                <button type="button" style={hStyles.delBtn} onClick={() => deleteDay(d)} title={t.dcDeleteDay} aria-label={t.dcDeleteDay}>🗑</button>
+              )}
+            </div>
             {open && (
               <div style={hStyles.items}>
                 {!det || det.loading ? (
@@ -398,7 +415,9 @@ const hStyles = {
   panel: { background: '#f9fafb', border: '1px solid #eef0f2', borderRadius: 10, padding: 8, marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 6 },
   muted: { color: '#6b7280', fontSize: 13, padding: '8px 6px' },
   day: { background: '#fff', border: '1px solid #eef0f2', borderRadius: 8, overflow: 'hidden' },
-  dayHead: { display: 'flex', alignItems: 'center', gap: 10, width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '10px 12px', textAlign: 'left' },
+  headRow: { display: 'flex', alignItems: 'center' },
+  dayHead: { display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, background: 'none', border: 'none', cursor: 'pointer', padding: '10px 12px', textAlign: 'left' },
+  delBtn: { flexShrink: 0, background: '#fef2f2', color: '#ef4444', border: '1px solid #fecaca', borderRadius: 6, cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: '6px 9px', margin: '0 8px' },
   chev: { color: '#9ca3af', fontSize: 12 },
   dayDate: { fontWeight: 700, fontSize: 14, color: '#111827', fontVariantNumeric: 'tabular-nums' },
   dayMeta: { marginLeft: 'auto', fontSize: 12, color: '#6b7280' },

@@ -6209,3 +6209,12 @@ Two separate bugs.
 
 Tests: first-fill-no-409 + real-conflict-still-409, and /active retiring a stale prior-date
 day. Full suite 1545 green (one unrelated flaky timeout on re-run passed).
+
+## 2026-08-26 — Daily checklist: delete a history day
+
+Added a way to remove a checklist day started by mistake. Server DELETE
+`/daily-checklist/days/:dayId` (company-scoped, gated on `daily_checklist_complete_day`);
+items + per-person state cascade away via existing FK ON DELETE CASCADE. Client: a 🗑
+button on each history day (same permission), with a confirm + toast, removes it from the
+list. EN+ES keys. A deleted day just leaves a gap in the ordinal sequence (next start
+re-derives MAX+1). Tests: delete + 404 on cross-company. Suite 1547 green.

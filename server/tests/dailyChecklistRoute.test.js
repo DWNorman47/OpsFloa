@@ -227,6 +227,24 @@ describe('PATCH /days/:id/items/:itemId', () => {
   });
 });
 
+describe('DELETE /days/:id', () => {
+  test('deletes a company-scoped day (items + per-user state cascade)', async () => {
+    pool.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42 }] });
+    const res = await request(makeApp()).delete('/api/daily-checklist/days/42');
+    expect(res.status).toBe(200);
+    expect(res.body.deleted).toBe(true);
+    const [sql, vals] = pool.query.mock.calls[0];
+    expect(sql).toMatch(/DELETE FROM daily_checklists WHERE id = \$1 AND company_id = \$2/);
+    expect(vals).toEqual(['42', 'co-1']);
+  });
+
+  test('404 when the day is not in the company', async () => {
+    pool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const res = await request(makeApp()).delete('/api/daily-checklist/days/999');
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('GET /projects/:id/active — stale day retirement', () => {
   test('a prior-date active day is auto-completed, then no live day is shown', async () => {
     const calls = [];
