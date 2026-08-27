@@ -437,7 +437,7 @@ export default function DailyChecklist({ projects = [], settings = null, loading
     if (!pid) { setDay(null); setItems([]); setQueued([]); return; }
     setLoading(true);
     try {
-      const r = await api.get(`/daily-checklist/projects/${pid}/active`);
+      const r = await api.get(`/daily-checklist/projects/${pid}/active`, { params: { today: localToday() } });
       setDay(r.data.day); setItems(r.data.items || []);
       // With no active day, peek at the queue so the Start card can show what's prepared
       // (starting resumes the top of the queue).

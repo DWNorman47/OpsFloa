@@ -379,11 +379,26 @@ router.get('/clock-in-prompt', async (req, res) => {
 
 // ── The day ───────────────────────────────────────────────────────────────────
 
+// A day started on an earlier date but never completed is STALE — it must not show as
+// "today's" checklist. Auto-complete any active day whose work_date is before `today`
+// (the client's local date), so /active and /start move on to today's day. The stale day
+// lands in history with whatever was checked, and its unchecked items roll over on the next
+// start like any completed day. No-op unless a valid `today` is supplied.
+async function closeStaleActiveDays(db, companyId, projectId, today) {
+  if (!isYmd(today)) return;
+  await db.query(
+    "UPDATE daily_checklists SET status = 'completed', completed_at = now(), updated_at = now() WHERE company_id = $1 AND project_id = $2 AND status = 'active' AND work_date < $3::date",
+    [companyId, projectId, today]
+  );
+}
+
 // GET /projects/:projectId/active — the live day + its items, or { day: null }.
+// `?today=YYYY-MM-DD` (the client's local date) retires a stale prior-date active day first.
 router.get('/projects/:projectId/active', async (req, res) => {
   try {
     if (!(await projectBelongsToCompany(pool, req.params.projectId, req.user.company_id)))
       return res.status(404).json({ error: 'Project not found' });
+    await closeStaleActiveDays(pool, req.user.company_id, req.params.projectId, req.query.today);
     const r = await pool.query(
       "SELECT * FROM daily_checklists WHERE company_id = $1 AND project_id = $2 AND status = 'active'",
       [req.user.company_id, req.params.projectId]
@@ -484,6 +499,12 @@ router.post('/projects/:projectId/start', requirePerm('daily_checklist_start_day
     }
     await client.query('BEGIN');
 
+    // Resolve "today" (client's local date, else the server date) and retire any stale
+    // active day from an earlier date first — so the idempotent check below only ever
+    // matches TODAY's day, never a day left open days ago.
+    const today = workDate || (await client.query('SELECT CURRENT_DATE::text AS d')).rows[0].d;
+    await closeStaleActiveDays(client, companyId, projectId, today);
+
     // Already started today? Return the live day (idempotent start).
     const existing = await client.query(
       "SELECT * FROM daily_checklists WHERE company_id = $1 AND project_id = $2 AND status = 'active'",
@@ -504,8 +525,7 @@ router.post('/projects/:projectId/start', requirePerm('daily_checklist_start_day
       [companyId, projectId]
     );
     const dayNumber = seq.rows[0].n;
-    let workDateResolved = workDate;
-    if (!workDateResolved) workDateResolved = (await client.query('SELECT CURRENT_DATE::text AS d')).rows[0].d;
+    const workDateResolved = today; // client's local date, else server CURRENT_DATE (resolved above)
 
     // Plans explicitly claiming this day: a calendar plan dated today, an ordinal plan for N.
     const pick = async (extra, val) => (await client.query(
@@ -657,8 +677,12 @@ router.patch('/days/:dayId/items/:itemId', requirePerm('daily_checklist_check_it
       // compare-and-swap and 409 on a concurrent change so the second writer reloads/merges
       // instead of clobbering. Omitting prev_value keeps the legacy overwrite (older clients).
       if (hasValue && typeof req.body?.prev_value === 'string') {
+        // COALESCE so an empty field (DB NULL) matches the client's '' — otherwise the FIRST
+        // person to fill a blank shared note gets a false "someone else changed it" 409, since
+        // `NULL IS NOT DISTINCT FROM ''` is false. Real concurrent edits (value already set to
+        // something else) still fail the compare and 409 correctly.
         const r = await pool.query(
-          'UPDATE daily_checklist_items SET value = $1 WHERE id = $2 AND daily_checklist_id = $3 AND value IS NOT DISTINCT FROM $4',
+          "UPDATE daily_checklist_items SET value = $1 WHERE id = $2 AND daily_checklist_id = $3 AND COALESCE(value, '') = $4",
           [req.body.value.slice(0, 2000), req.params.itemId, day.id, req.body.prev_value]
         );
         if (r.rowCount === 0) {

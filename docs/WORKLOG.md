@@ -6190,3 +6190,22 @@ Administration page's default group (Modules) instead of the rule. Fixed:
   the fixed-slot global setting, not a builder rule) — never the Modules-landing default.
 - Tests: floorDetail carries the rule id for both guarantee days and the worked-day floor.
   Suite 1542 green. Explain-only; pay math unchanged.
+
+## 2026-08-26 — Daily checklist: false "someone else" popups + stale active day
+
+Two separate bugs.
+1. **False concurrent-edit popup.** The shared-text compare-and-swap used
+   `value IS NOT DISTINCT FROM $prev`. The FIRST person to fill a blank field hit it with
+   DB `value = NULL` and client `prev_value = ''`, and `NULL IS NOT DISTINCT FROM ''` is
+   false → a bogus "Someone else updated this note" 409 with no actual conflict. Changed to
+   `COALESCE(value,'') = $prev` so an empty field matches ''; genuine concurrent changes
+   (value already set to something else) still 409 correctly.
+2. **Stale active day showed the wrong date.** A day started on the 20th and never completed
+   was returned by `/active` (and treated as "today" by the idempotent `/start`) forever, so
+   opening the checklist on the 26th showed the 20th. Added `closeStaleActiveDays` — it
+   auto-completes any active day whose `work_date` is before the client's local `today`
+   (sent as `?today=` on /active; resolved on /start), so the live view is always today's day
+   and the old day lands in history. Unchecked items roll over on the next start as usual.
+
+Tests: first-fill-no-409 + real-conflict-still-409, and /active retiring a stale prior-date
+day. Full suite 1545 green (one unrelated flaky timeout on re-run passed).
