@@ -133,7 +133,8 @@ CREATE TABLE IF NOT EXISTS time_entries (
   timezone        VARCHAR(50),
   client_id       VARCHAR(36),
   long_shift_flagged BOOLEAN    NOT NULL DEFAULT false,  -- multi-day/forgotten clock-out whose wall-clock hours are truncated (see 0196)
-  created_at      TIMESTAMP     NOT NULL DEFAULT NOW()
+  created_at      TIMESTAMP     NOT NULL DEFAULT NOW(),
+  CONSTRAINT time_entries_break_minutes_nonneg CHECK (break_minutes IS NULL OR break_minutes >= 0)  -- see 0195
 );
 
 -- ---------------------------------------------------------------------------
@@ -238,8 +239,11 @@ CREATE TABLE IF NOT EXISTS field_reports (
   lat         DECIMAL(10,7),
   lng         DECIMAL(10,7),
   status      VARCHAR(20)  NOT NULL DEFAULT 'submitted',
+  client_request_id TEXT,   -- offline-replay idempotency key (see migration 0192)
   reported_at TIMESTAMP    NOT NULL DEFAULT NOW()
 );
+CREATE UNIQUE INDEX IF NOT EXISTS uq_field_reports_client_request
+  ON field_reports (company_id, client_request_id) WHERE client_request_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS field_report_photos (
   id         SERIAL PRIMARY KEY,
@@ -266,9 +270,12 @@ CREATE TABLE IF NOT EXISTS daily_reports (
   status            VARCHAR(20)  NOT NULL DEFAULT 'draft',
   created_by        INTEGER      REFERENCES users(id),
   created_at        TIMESTAMP    NOT NULL DEFAULT NOW(),
-  updated_at        TIMESTAMP    NOT NULL DEFAULT NOW(),
-  UNIQUE (company_id, project_id, report_date)
+  updated_at        TIMESTAMP    NOT NULL DEFAULT NOW()
 );
+-- One report per (company, project-or-"none", date). COALESCE folds NULL project → 0 so the
+-- "No project" case is unique too (migrations 0194/0197); works on every PostgreSQL version.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_daily_reports_company_project_date
+  ON daily_reports (company_id, COALESCE(project_id, 0), report_date);
 
 CREATE TABLE IF NOT EXISTS daily_report_manpower (
   id           SERIAL PRIMARY KEY,

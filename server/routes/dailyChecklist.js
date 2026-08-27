@@ -389,8 +389,13 @@ router.get('/clock-in-prompt', async (req, res) => {
 // start like any completed day. No-op unless a valid `today` is supplied.
 async function closeStaleActiveDays(db, companyId, projectId, today) {
   if (!isYmd(today)) return;
+  // Retire a day only when BOTH the client's local `today` AND the server's own date agree
+  // it's in the past (`work_date < today AND work_date < CURRENT_DATE`). This way a client
+  // with a fast/skewed clock (a `today` in the future) can't complete a still-current day,
+  // and a teammate whose local date is a day ahead can't retire the day out from under the
+  // crew while the server still considers it today.
   await db.query(
-    "UPDATE daily_checklists SET status = 'completed', completed_at = now(), updated_at = now() WHERE company_id = $1 AND project_id = $2 AND status = 'active' AND work_date < $3::date",
+    "UPDATE daily_checklists SET status = 'completed', completed_at = now(), updated_at = now() WHERE company_id = $1 AND project_id = $2 AND status = 'active' AND work_date < $3::date AND work_date < CURRENT_DATE",
     [companyId, projectId, today]
   );
 }
