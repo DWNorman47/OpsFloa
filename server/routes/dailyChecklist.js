@@ -208,7 +208,10 @@ router.post('/assignments', requirePerm('daily_checklist_manage_recurring'), asy
       `INSERT INTO daily_checklist_assignments
          (company_id, template_id, project_id, role_ids, mode, schedule_type, ordinal_target, scheduled_date, carryover, order_index, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
-      [companyId, templateId, projectId, roleIds, cleanMode(req.body?.mode),
+      [companyId, templateId, projectId, roleIds,
+       // New checklists default to INDIVIDUAL (each person fills their own) unless the
+       // caller explicitly asks for shared; the admin can still flip it per assignment.
+       req.body?.mode !== undefined ? cleanMode(req.body.mode) : 'individual',
        sched.schedule_type, sched.ordinal_target, sched.scheduled_date, req.body?.carryover === true, ord.rows[0].n, req.user.id]
     );
     res.status(201).json({ id: r.rows[0].id });

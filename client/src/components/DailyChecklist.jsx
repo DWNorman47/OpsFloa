@@ -392,7 +392,7 @@ export function ChecklistHistory({ projectId, t, toast }) {
                     <div key={it.id} style={hStyles.item}>
                       <span style={{ ...hStyles.mark, color: done ? '#059669' : '#9ca3af' }}>{it.kind === 'text' ? '✎' : (it.checked ? '✓' : '○')}</span>
                       <div style={hStyles.itemBody}>
-                        <div style={hStyles.itemText}>{it.text}{it.kind === 'text' && it.value ? `: ${it.value}` : ''}</div>
+                        <div style={hStyles.itemText}>{it.text}{it.kind === 'text' && it.value ? <>: <strong style={hStyles.answer}>{it.value}</strong></> : ''}</div>
                         <div style={hStyles.itemWho}>
                           {done
                             ? `${it.checked_by_name || t.dcSomeone}${it.checked_at ? ' · ' + new Date(it.checked_at).toLocaleString() : ''}`
@@ -426,6 +426,7 @@ const hStyles = {
   mark: { fontSize: 15, fontWeight: 700, lineHeight: 1.3, flexShrink: 0 },
   itemBody: { minWidth: 0 },
   itemText: { fontSize: 13.5, color: '#111827', lineHeight: 1.35 },
+  answer: { fontWeight: 700, color: '#111827' },
   itemWho: { fontSize: 11.5, color: '#6b7280', marginTop: 1 },
 };
 
