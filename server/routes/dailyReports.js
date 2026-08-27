@@ -142,15 +142,16 @@ router.post('/', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'A report for this project and date already exists' });
     }
 
-    // Upsert. The unique index is NULLS NOT DISTINCT (migration 0194), so ON CONFLICT now fires
-    // for a "No project" (NULL project_id) report too — no duplicate on re-submit, atomic under
-    // concurrency (no read-then-insert race).
+    // Upsert. The unique index folds a NULL project to 0 via COALESCE (migrations 0194/0197),
+    // so ON CONFLICT fires for a "No project" (NULL project_id) report too — no duplicate on
+    // re-submit, atomic under concurrency (no read-then-insert race). The conflict target names
+    // the same COALESCE expression so PostgreSQL infers that index (works on any PG version).
     const result = await client.query(
       `INSERT INTO daily_reports
          (company_id, project_id, report_date, superintendent, weather_condition, weather_temp,
           work_performed, delays_issues, visitor_log, created_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       ON CONFLICT (company_id, project_id, report_date)
+       ON CONFLICT (company_id, COALESCE(project_id, 0), report_date)
        DO UPDATE SET superintendent=$4, weather_condition=$5, weather_temp=$6,
          work_performed=$7, delays_issues=$8, visitor_log=$9, updated_at=NOW()
        RETURNING id`,
