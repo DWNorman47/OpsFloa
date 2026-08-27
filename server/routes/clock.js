@@ -487,8 +487,8 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
         `INSERT INTO time_entries
            (company_id, user_id, project_id, work_date, start_time, end_time, start_ts, end_ts, wage_type, notes,
             clock_in_lat, clock_in_lng, clock_out_lat, clock_out_lng, break_minutes, mileage, timezone,
-            clock_source, clocked_in_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+            clock_source, clocked_in_by, long_shift_flagged)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
          RETURNING *`,
         [
           companyId, req.user.id, oldClock.project_id, oldClock.work_date,
@@ -497,6 +497,7 @@ router.post('/switch', requireAuth, requirePerm('clock_self'), clockLimiter, coe
           Math.max(0, parseInt(break_minutes) || 0), mileage != null ? parseFloat(mileage) : null,
           oldClock.timezone || null,
           oldClock.clock_source, oldClock.clocked_in_by,
+          isTruncatedLongShift(clockInTime, clockOutTime, start_time, end_time), // a forgotten clock-out resolved via switch
         ]
       );
 

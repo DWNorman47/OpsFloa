@@ -862,14 +862,10 @@ router.get('/projects/:projectId/queue', async (req, res) => {
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
-// GET /days/:dayId — a single day (any status) + its items, for viewing/editing a plan.
-router.get('/days/:dayId', async (req, res) => {
-  try {
-    const day = await loadDay(pool, req.params.dayId, req.user.company_id);
-    if (!day) return res.status(404).json({ error: 'Day not found' });
-    res.json({ day, items: await loadItems(pool, day.id) });
-  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
-});
+// (Removed a second, shadowed `GET /days/:dayId` registration — Express only runs the
+// first one, at the history-detail handler above, so this was dead code. If a plan-view
+// endpoint returning the full day row (name/notes/schedule_*) is needed later, give it a
+// distinct path rather than re-adding a duplicate route.)
 
 // POST /projects/:projectId/days — prepare a pending day plan (calendar or ordinal).
 router.post('/projects/:projectId/days', requirePerm('daily_checklist_schedule_days'), async (req, res) => {
