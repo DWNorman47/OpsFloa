@@ -6190,3 +6190,45 @@ Administration page's default group (Modules) instead of the rule. Fixed:
   the fixed-slot global setting, not a builder rule) — never the Modules-landing default.
 - Tests: floorDetail carries the rule id for both guarantee days and the worked-day floor.
   Suite 1542 green. Explain-only; pay math unchanged.
+
+## 2026-08-26 — Daily checklist: false "someone else" popups + stale active day
+
+Two separate bugs.
+1. **False concurrent-edit popup.** The shared-text compare-and-swap used
+   `value IS NOT DISTINCT FROM $prev`. The FIRST person to fill a blank field hit it with
+   DB `value = NULL` and client `prev_value = ''`, and `NULL IS NOT DISTINCT FROM ''` is
+   false → a bogus "Someone else updated this note" 409 with no actual conflict. Changed to
+   `COALESCE(value,'') = $prev` so an empty field matches ''; genuine concurrent changes
+   (value already set to something else) still 409 correctly.
+2. **Stale active day showed the wrong date.** A day started on the 20th and never completed
+   was returned by `/active` (and treated as "today" by the idempotent `/start`) forever, so
+   opening the checklist on the 26th showed the 20th. Added `closeStaleActiveDays` — it
+   auto-completes any active day whose `work_date` is before the client's local `today`
+   (sent as `?today=` on /active; resolved on /start), so the live view is always today's day
+   and the old day lands in history. Unchecked items roll over on the next start as usual.
+
+Tests: first-fill-no-409 + real-conflict-still-409, and /active retiring a stale prior-date
+day. Full suite 1545 green (one unrelated flaky timeout on re-run passed).
+
+## 2026-08-26 — Daily checklist: delete a history day
+
+Added a way to remove a checklist day started by mistake. Server DELETE
+`/daily-checklist/days/:dayId` (company-scoped, gated on `daily_checklist_complete_day`);
+items + per-person state cascade away via existing FK ON DELETE CASCADE. Client: a 🗑
+button on each history day (same permission), with a confirm + toast, removes it from the
+list. EN+ES keys. A deleted day just leaves a gap in the ordinal sequence (next start
+re-derives MAX+1). Tests: delete + 404 on cross-company. Suite 1547 green.
+
+## 2026-08-27 — Daily-checklist prompt on switching projects (per-project, per-day)
+
+The post-clock-in checklist nudge only fired on clock-in and was gated once-per-day
+globally, so switching projects (or clocking out + into a different project) never offered
+the NEW project's checklist. Now:
+- The prompt is scoped to the ENTERED project (client filters clock-in-prompt candidates by
+  project_id) and gated per project per day (`dc_clockin_prompt_<date>_<projectId>`), so the
+  first time you enter a given project today it offers that project's checklist — once each.
+- Extracted `offerChecklistForProject(pid)`; `handleClockedIn` still sets the header clock,
+  then offers. Switching calls a new `onProjectSwitched` prop (ClockInOut.handleSwitchProject)
+  that offers WITHOUT touching the header clock (the worker stays clocked in). Clock-out +
+  clock-in to another project already flows through handleClockedIn, now per-project.
+Client-only; verify green (1547 server, client build).

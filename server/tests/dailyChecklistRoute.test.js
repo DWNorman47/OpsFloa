@@ -121,6 +121,8 @@ describe('POST /projects/:id/start', () => {
       query: jest.fn(async (sql) => {
         if (/SELECT 1 FROM projects/.test(sql)) return { rowCount: 1, rows: [{}] };
         if (/^\s*(BEGIN|COMMIT|ROLLBACK)/.test(sql)) return {};
+        if (/CURRENT_DATE/.test(sql)) return { rows: [{ d: '2026-08-26' }] };
+        if (/UPDATE daily_checklists SET status = 'completed'/.test(sql)) return { rowCount: 0, rows: [] }; // closeStaleActiveDays: nothing stale
         if (/status = 'active'/.test(sql)) return { rows: [{ id: 42, status: 'active', day_number: 2 }] };
         if (/SELECT id, text, checked/.test(sql)) return { rows: [] };
         return { rows: [] };
@@ -194,10 +196,70 @@ describe('PATCH /days/:id/items/:itemId', () => {
     expect(pool.query.mock.calls.map(c => c[0]).join('\n')).not.toMatch(/UPDATE daily_checklist_items SET checked/);
   });
 
+  test('first fill of an EMPTY shared text field does not falsely 409 (NULL ↔ "")', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ id: 42, company_id: 'co-1', status: 'active' }] })   // loadDay
+      .mockResolvedValueOnce({ rows: [{ id: 3, mode: 'shared', role_ids: null }] })          // item lookup
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })                                       // CAS UPDATE succeeds
+      .mockResolvedValueOnce({ rows: [{ id: 3, value: 'hello', mode: 'shared' }] });          // loadItems reload
+    const res = await request(makeApp()).patch('/api/daily-checklist/days/42/items/3').send({ value: 'hello', prev_value: '' });
+    expect(res.status).toBe(200);
+    // The compare-and-swap coalesces NULL/'' so a blank field matches the client's ''.
+    expect(pool.query.mock.calls[2][0]).toMatch(/COALESCE\(value, ''\) = \$/);
+  });
+
+  test('a genuine concurrent change to a shared text field still 409s', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ id: 42, company_id: 'co-1', status: 'active' }] })   // loadDay
+      .mockResolvedValueOnce({ rows: [{ id: 3, mode: 'shared', role_ids: null }] })          // item lookup
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })                                       // CAS UPDATE fails (value changed)
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ value: 'theirs' }] });                   // current value
+    const res = await request(makeApp()).patch('/api/daily-checklist/days/42/items/3').send({ value: 'mine', prev_value: '' });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('value_conflict');
+    expect(res.body.value).toBe('theirs');
+  });
+
   test('rejects edits to a non-active day', async () => {
     pool.query.mockResolvedValueOnce({ rows: [{ id: 42, company_id: 'co-1', status: 'completed' }] });
     const res = await request(makeApp()).patch('/api/daily-checklist/days/42/items/3').send({ checked: true });
     expect(res.status).toBe(409);
+  });
+});
+
+describe('DELETE /days/:id', () => {
+  test('deletes a company-scoped day (items + per-user state cascade)', async () => {
+    pool.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42 }] });
+    const res = await request(makeApp()).delete('/api/daily-checklist/days/42');
+    expect(res.status).toBe(200);
+    expect(res.body.deleted).toBe(true);
+    const [sql, vals] = pool.query.mock.calls[0];
+    expect(sql).toMatch(/DELETE FROM daily_checklists WHERE id = \$1 AND company_id = \$2/);
+    expect(vals).toEqual(['42', 'co-1']);
+  });
+
+  test('404 when the day is not in the company', async () => {
+    pool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const res = await request(makeApp()).delete('/api/daily-checklist/days/999');
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('GET /projects/:id/active — stale day retirement', () => {
+  test('a prior-date active day is auto-completed, then no live day is shown', async () => {
+    const calls = [];
+    pool.query.mockImplementation(async (sql) => {
+      calls.push(sql);
+      if (/SELECT 1 FROM projects/.test(sql)) return { rowCount: 1, rows: [{}] };
+      if (/UPDATE daily_checklists SET status = 'completed'/.test(sql)) return { rowCount: 1, rows: [] }; // stale day closed
+      if (/status = 'active'/.test(sql)) return { rows: [] };                                            // none remain
+      return { rows: [] };
+    });
+    const res = await request(makeApp()).get('/api/daily-checklist/projects/7/active?today=2026-08-26');
+    expect(res.status).toBe(200);
+    expect(res.body.day).toBeNull();
+    const upd = calls.find(s => /UPDATE daily_checklists SET status = 'completed'/.test(s));
+    expect(upd).toMatch(/work_date < \$3::date/);
   });
 });
 
