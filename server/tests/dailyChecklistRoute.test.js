@@ -228,18 +228,45 @@ describe('PATCH /days/:id/items/:itemId', () => {
 });
 
 describe('DELETE /days/:id', () => {
-  test('deletes a company-scoped day (items + per-user state cascade)', async () => {
-    pool.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 42 }] });
+  test('deletes a completed HISTORY day — requires the complete-day permission; cascades', async () => {
+    permissions.hasPerm.mockResolvedValue(true);
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ id: 42, company_id: 'co-1', status: 'completed' }] }) // loadDay
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] });                                       // DELETE
     const res = await request(makeApp()).delete('/api/daily-checklist/days/42');
     expect(res.status).toBe(200);
     expect(res.body.deleted).toBe(true);
-    const [sql, vals] = pool.query.mock.calls[0];
-    expect(sql).toMatch(/DELETE FROM daily_checklists WHERE id = \$1 AND company_id = \$2/);
-    expect(vals).toEqual(['42', 'co-1']);
+    expect(permissions.hasPerm).toHaveBeenCalledWith(expect.anything(), 'daily_checklist_complete_day');
+    const del = pool.query.mock.calls.find(c => /DELETE FROM daily_checklists/.test(c[0]));
+    expect(del[1]).toEqual([42, 'co-1']);
+  });
+
+  test('deleting a pending PLAN uses the scheduling permission instead', async () => {
+    permissions.hasPerm.mockResolvedValue(true);
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ id: 7, company_id: 'co-1', status: 'pending' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] });
+    const res = await request(makeApp()).delete('/api/daily-checklist/days/7');
+    expect(res.status).toBe(200);
+    expect(permissions.hasPerm).toHaveBeenCalledWith(expect.anything(), 'daily_checklist_schedule_days');
+  });
+
+  test('refuses to delete the ACTIVE day (409, no delete issued)', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 42, company_id: 'co-1', status: 'active' }] });
+    const res = await request(makeApp()).delete('/api/daily-checklist/days/42');
+    expect(res.status).toBe(409);
+    expect(pool.query.mock.calls.some(c => /DELETE FROM daily_checklists/.test(c[0]))).toBe(false);
+  });
+
+  test('403 when the caller lacks the required permission', async () => {
+    permissions.hasPerm.mockResolvedValue(false);
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 42, company_id: 'co-1', status: 'completed' }] });
+    const res = await request(makeApp()).delete('/api/daily-checklist/days/42');
+    expect(res.status).toBe(403);
   });
 
   test('404 when the day is not in the company', async () => {
-    pool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    pool.query.mockResolvedValueOnce({ rows: [] });
     const res = await request(makeApp()).delete('/api/daily-checklist/days/999');
     expect(res.status).toBe(404);
   });

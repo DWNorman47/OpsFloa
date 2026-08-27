@@ -534,7 +534,9 @@ export default function DailyChecklist({ projects = [], settings = null, loading
     const prev_value = textBaseline.current[item.id] ?? (item.value || '');
     try {
       await api.patch(`/daily-checklist/days/${day.id}/items/${item.id}`, { value, prev_value });
-      textBaseline.current[item.id] = value; // new baseline for the next edit
+      // Baseline must match what the server STORED (it caps at 2000), else a >2000-char
+      // value would make the next edit's prev_value mismatch and false-409.
+      textBaseline.current[item.id] = value.slice(0, 2000);
     } catch (err) {
       if (err?.response?.status === 409) {
         const theirs = err.response.data?.value ?? '';

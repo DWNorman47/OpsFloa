@@ -6232,3 +6232,30 @@ the NEW project's checklist. Now:
   that offers WITHOUT touching the header clock (the worker stays clocked in). Clock-out +
   clock-in to another project already flows through handleClockedIn, now per-project.
 Client-only; verify green (1547 server, client build).
+
+## 2026-08-27 — Review pass on recent work (3 parallel reviewers); 2 real bugs fixed
+
+Reviewed the session's changes (individual overrides, OT/guarantee explain rule-ids, daily
+checklist). Findings verified against code before acting.
+- **HIGH (money) — WH-347 certified payroll dropped individual overrides.** `admin.js`
+  computeWorker passed `w.id` but the worker object's key is `worker_id`, so userId was
+  undefined → role/standard config used, disagreeing with the other four pay surfaces (which
+  correctly pass `w.id`). Even inconsistent on the same doc (rounding overrides applied via
+  e.user_id, OT/premium didn't). Fixed → `w.worker_id`.
+- **HIGH (regression I introduced) — duplicate `DELETE /days/:dayId`.** My new history-delete
+  handler shadowed the existing pending/paused-plan delete, silently swapping its permission
+  (`schedule_days`→`complete_day`) and dropping its status guard (could delete any status,
+  incl. the active day). Merged into ONE handler: status picks the permission (plan →
+  schedule_days, history → complete_day via `hasPerm`), and the active day is refused (cancel/
+  complete instead). Tests for all four paths.
+- **LOW — >2000-char shared text false-409.** Client kept an un-sliced baseline while the
+  server caps at 2000, so the next edit false-conflicted. Baseline now `.slice(0,2000)`.
+- **Clean:** OT/guarantee explain rule-ids are pay-neutral (the Math.max→compare refactor is
+  value-identical); daily-checklist stale-day close, COALESCE CAS, delete cascade, and the
+  per-project prompt gating are correct; all other override threading (payStatement, qbo,
+  scheduledReports, admin metrics, leave) passes the right ids.
+- **Noted, not fixed (low/inherent):** cross-TZ crew at midnight can retire a peer's still-
+  current day via the local-date `/active` write; a skewed client clock could do the same;
+  combined window+threshold OT attributes the trace to the tier only (pre-existing display).
+
+Full verify green (server 1550, client build + i18n).
