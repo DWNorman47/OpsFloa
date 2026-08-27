@@ -91,6 +91,7 @@ export default function Dashboard() {
   const [showSignatureModal, setShowSignatureModal] = useState(false);
   const [headerClock, setHeaderClock] = useState(null); // null=loading, false=not clocked in, {clock_in_time}=clocked in
   const [dcPrompt, setDcPrompt] = useState(null); // daily-checklist candidates to offer after a clock-in
+  const [dcPromptKeyStr, setDcPromptKeyStr] = useState(null); // per-project "already offered today" key for the shown prompt
   const [headerElapsed, setHeaderElapsed] = useState(0);
   const headerTimerRef = useRef(null);
   const [entriesVersion, setEntriesVersion] = useState(0);
@@ -208,21 +209,27 @@ export default function Dashboard() {
     setHeaderClock(false); // worker clocked out
   };
 
-  const dcPromptKey = () => `dc_clockin_prompt_${new Date().toLocaleDateString('en-CA')}`;
-  const handleClockedIn = async clockStatus => {
-    setHeaderClock(clockStatus); // worker clocked in
+  const dcPromptKey = pid => `dc_clockin_prompt_${new Date().toLocaleDateString('en-CA')}_${pid}`;
+  // Offer the ENTERED project's daily checklist the FIRST time you enter it today — per
+  // project, per day (clock-in OR switching into it). Best-effort; never blocks the clock.
+  const offerChecklistForProject = async (pid) => {
     if (settings?.daily_checklist_clockin_prompt === false) return; // company turned it off
-    // Offer to open a daily checklist for a project — once per day, best-effort.
+    if (pid == null) return; // no-project clock-in → nothing to scope a checklist to
+    const key = dcPromptKey(pid);
     try {
-      if (safeLocal.getItem(dcPromptKey())) return;
+      if (safeLocal.getItem(key)) return; // already offered THIS project today
       const r = await api.get('/daily-checklist/clock-in-prompt', { suppressToast: true });
-      const candidates = r.data?.candidates || [];
-      if (candidates.length) setDcPrompt(candidates);
-      else safeLocal.setItem(dcPromptKey(), '1'); // nothing to offer → don't re-ask today
+      const cand = (r.data?.candidates || []).filter(c => String(c.project_id) === String(pid));
+      if (cand.length) { setDcPromptKeyStr(key); setDcPrompt(cand); }
+      else safeLocal.setItem(key, '1'); // no checklist for this project → don't re-ask today
     } catch { /* prompt is optional; ignore failures */ }
   };
+  const handleClockedIn = clockStatus => {
+    setHeaderClock(clockStatus); // worker clocked in
+    offerChecklistForProject(clockStatus?.project_id);
+  };
   const dismissDcPrompt = () => {
-    try { safeLocal.setItem(dcPromptKey(), '1'); } catch { /* private mode */ }
+    try { if (dcPromptKeyStr) safeLocal.setItem(dcPromptKeyStr, '1'); } catch { /* private mode */ }
     setDcPrompt(null);
   };
   const handleEntryDeleted = id => {
@@ -563,7 +570,7 @@ ${safeSignature ? `
             // persisted clock-in form) must degrade to an inline card, never blank the
             // whole app — the "blank screen when they go to clock in" report.
             <ErrorBoundary key="clock" mode="inline" label="Clock In/Out">
-              <ClockInOut projects={projects} onEntryAdded={handleEntryAdded} onClockedIn={handleClockedIn} t={t} geolocationEnabled={settings?.feature_geolocation ?? false} pingWhileStationary={settings?.location_ping_while_stationary === true} projectsEnabled={settings?.feature_project_integration !== false} />
+              <ClockInOut projects={projects} onEntryAdded={handleEntryAdded} onClockedIn={handleClockedIn} onProjectSwitched={offerChecklistForProject} t={t} geolocationEnabled={settings?.feature_geolocation ?? false} pingWhileStationary={settings?.location_ping_while_stationary === true} projectsEnabled={settings?.feature_project_integration !== false} />
               <TimeEntryForm projects={projects} onEntryAdded={handleEntryAdded} t={t} prefill={shiftPrefill} projectsEnabled={settings?.feature_project_integration !== false} />
             </ErrorBoundary>
           )

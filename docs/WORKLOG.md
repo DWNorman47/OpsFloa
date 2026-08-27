@@ -6142,3 +6142,120 @@ design; no server/DB yet (Save to Database is a disabled Phase-2 button).
   page event → 🔑 falls back to in-page generate+fill. Saving the encryption password to the
   browser is offered but warned as "less safe" (browser-only, never synced). One-time share
   links deferred to Phase 3 (need the server). Server/client untouched; verify green.
+
+## 2026-08-21 — Individual (per-employee) rule overrides
+
+New "Individual Overrides" under Hours & Pay Rules, after Role Rules. Design +
+rough edges: docs/plans/individual-rule-overrides.md. Money-critical; opt-in-safe.
+- Engine: `userRules[]` in the hours_rules JSON + `effectiveRulesForWorker(policy,
+  roleId, userId)` layering individual > role > standard (add mode with nullify-by-id
+  + change-via-clone; replace mode). Threaded worker.id alongside role_id through the
+  single resolution chokepoint (otConfig/sickRules/roundEntries) + all downstream
+  callers (payStatement, certified payroll, worker-hours export, scheduled report, QBO).
+  15 new tests incl. the no-op-default guarantee. Full suite 1540 green.
+- UI: employee picker + replace toggle + inherited-rules list (off = nullify,
+  Customize = clone+tombstone) + HoursRuleBuilder for own rules. EN+ES.
+- Judgment calls: `userRules` lives in the same policy JSON (no new table) to keep the
+  atomic CAS save + reuse the builder; the 40KB cap is the size backstop for now;
+  Customize's re-check edge documented as a follow-up.
+
+## 2026-08-21 — Team Member Reports: every rule in Details deep-links to its rule
+
+The Details trace ("View setting →") already linked rounding/clip/add-time/auto-break
+rules to the exact rule, but two classes didn't reach the actual rule:
+- `reportTrace.findRuleById` searched only `rules` + `roleRules`, so **individual-override
+  (`userRules`) rules** didn't resolve their description or deep-link. Now it also searches
+  `userRules` (highlightRuleId was already passed to the per-employee builders, so the
+  scroll+flash lands once the rule resolves).
+- **Overtime** explain items carried no `ruleId`, so premium/tier OT went to the generic
+  Hours & Rules page. Threaded the driving rule id through the explain (explain-only, no
+  pay-math change): `otConfigFromSettings` keeps `ruleId` on rest_day/seventh_day; new
+  `coveringWindowRuleId` (window) + `tierRuleIdForBucket` (ot_tier) in
+  `annotateEntryOvertime` set `e.overtime_ruleId`; `payStatement` includes it. Base
+  daily/weekly threshold stays generic (it's the OT-threshold SETTING, not a builder rule);
+  per-entry OT override / aggregate total / logged break stay unlinked (not rules).
+- Tests: explain now asserts overtime_ruleId for rest_day/seventh_day/window/tier + null for
+  base threshold; updated the rest_day otConfig-shape test for the new field. Suite 1541 green.
+
+## 2026-08-26 — Guarantee/min_daily "View →" landed on Modules, not the rule
+
+The synthetic guarantee / min-daily-floor rows in Team Member Reports built their trace
+link as a bare `/administration#workspace` (no `?focus`), so clicking "View →" opened the
+Administration page's default group (Modules) instead of the rule. Fixed:
+- `floorDetail` now carries the driving `min_daily` rule id (worked-day floor via
+  `minDailyRuleIdForBucket`; no-clock-in guarantee via the winning rule tracked in the gate
+  loop); `payStatement` puts it on the synthetic entry's explain.
+- `WorkerMetrics` syntheticTrace deep-links guarantee/min_daily via the exported
+  `hoursRulesLink(ruleId)` (falls back to the Hours & Rules page when the floor came from
+  the fixed-slot global setting, not a builder rule) — never the Modules-landing default.
+- Tests: floorDetail carries the rule id for both guarantee days and the worked-day floor.
+  Suite 1542 green. Explain-only; pay math unchanged.
+
+## 2026-08-26 — Daily checklist: false "someone else" popups + stale active day
+
+Two separate bugs.
+1. **False concurrent-edit popup.** The shared-text compare-and-swap used
+   `value IS NOT DISTINCT FROM $prev`. The FIRST person to fill a blank field hit it with
+   DB `value = NULL` and client `prev_value = ''`, and `NULL IS NOT DISTINCT FROM ''` is
+   false → a bogus "Someone else updated this note" 409 with no actual conflict. Changed to
+   `COALESCE(value,'') = $prev` so an empty field matches ''; genuine concurrent changes
+   (value already set to something else) still 409 correctly.
+2. **Stale active day showed the wrong date.** A day started on the 20th and never completed
+   was returned by `/active` (and treated as "today" by the idempotent `/start`) forever, so
+   opening the checklist on the 26th showed the 20th. Added `closeStaleActiveDays` — it
+   auto-completes any active day whose `work_date` is before the client's local `today`
+   (sent as `?today=` on /active; resolved on /start), so the live view is always today's day
+   and the old day lands in history. Unchecked items roll over on the next start as usual.
+
+Tests: first-fill-no-409 + real-conflict-still-409, and /active retiring a stale prior-date
+day. Full suite 1545 green (one unrelated flaky timeout on re-run passed).
+
+## 2026-08-26 — Daily checklist: delete a history day
+
+Added a way to remove a checklist day started by mistake. Server DELETE
+`/daily-checklist/days/:dayId` (company-scoped, gated on `daily_checklist_complete_day`);
+items + per-person state cascade away via existing FK ON DELETE CASCADE. Client: a 🗑
+button on each history day (same permission), with a confirm + toast, removes it from the
+list. EN+ES keys. A deleted day just leaves a gap in the ordinal sequence (next start
+re-derives MAX+1). Tests: delete + 404 on cross-company. Suite 1547 green.
+
+## 2026-08-27 — Daily-checklist prompt on switching projects (per-project, per-day)
+
+The post-clock-in checklist nudge only fired on clock-in and was gated once-per-day
+globally, so switching projects (or clocking out + into a different project) never offered
+the NEW project's checklist. Now:
+- The prompt is scoped to the ENTERED project (client filters clock-in-prompt candidates by
+  project_id) and gated per project per day (`dc_clockin_prompt_<date>_<projectId>`), so the
+  first time you enter a given project today it offers that project's checklist — once each.
+- Extracted `offerChecklistForProject(pid)`; `handleClockedIn` still sets the header clock,
+  then offers. Switching calls a new `onProjectSwitched` prop (ClockInOut.handleSwitchProject)
+  that offers WITHOUT touching the header clock (the worker stays clocked in). Clock-out +
+  clock-in to another project already flows through handleClockedIn, now per-project.
+Client-only; verify green (1547 server, client build).
+
+## 2026-08-27 — Review pass on recent work (3 parallel reviewers); 2 real bugs fixed
+
+Reviewed the session's changes (individual overrides, OT/guarantee explain rule-ids, daily
+checklist). Findings verified against code before acting.
+- **HIGH (money) — WH-347 certified payroll dropped individual overrides.** `admin.js`
+  computeWorker passed `w.id` but the worker object's key is `worker_id`, so userId was
+  undefined → role/standard config used, disagreeing with the other four pay surfaces (which
+  correctly pass `w.id`). Even inconsistent on the same doc (rounding overrides applied via
+  e.user_id, OT/premium didn't). Fixed → `w.worker_id`.
+- **HIGH (regression I introduced) — duplicate `DELETE /days/:dayId`.** My new history-delete
+  handler shadowed the existing pending/paused-plan delete, silently swapping its permission
+  (`schedule_days`→`complete_day`) and dropping its status guard (could delete any status,
+  incl. the active day). Merged into ONE handler: status picks the permission (plan →
+  schedule_days, history → complete_day via `hasPerm`), and the active day is refused (cancel/
+  complete instead). Tests for all four paths.
+- **LOW — >2000-char shared text false-409.** Client kept an un-sliced baseline while the
+  server caps at 2000, so the next edit false-conflicted. Baseline now `.slice(0,2000)`.
+- **Clean:** OT/guarantee explain rule-ids are pay-neutral (the Math.max→compare refactor is
+  value-identical); daily-checklist stale-day close, COALESCE CAS, delete cascade, and the
+  per-project prompt gating are correct; all other override threading (payStatement, qbo,
+  scheduledReports, admin metrics, leave) passes the right ids.
+- **Noted, not fixed (low/inherent):** cross-TZ crew at midnight can retire a peer's still-
+  current day via the local-date `/active` write; a skewed client clock could do the same;
+  combined window+threshold OT attributes the trace to the tier only (pre-existing display).
+
+Full verify green (server 1550, client build + i18n).

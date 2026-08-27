@@ -123,7 +123,7 @@ function ProjectWheelPicker({
   );
 }
 
-export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geolocationEnabled = true, pingWhileStationary = false, projectsEnabled = true }) {
+export default function ClockInOut({ projects, onEntryAdded, onClockedIn, onProjectSwitched, t, geolocationEnabled = true, pingWhileStationary = false, projectsEnabled = true }) {
   // Detect day-mark workers up front — the actual switch to the DayMark
   // UI happens at the return statement (after all hook calls) so React's
   // hook-order rule isn't violated when the same component renders the
@@ -568,6 +568,8 @@ export default function ClockInOut({ projects, onEntryAdded, onClockedIn, t, geo
         setStatus(r.data);
       }
       rememberProjectChoice(projectHistoryKey, switchProject);
+      // Entering a new project → offer its daily checklist (first time per project per day).
+      onProjectSwitched?.(switchProject);
       setSwitchingProject(false);
       setSwitchProject('');
       setBreakAdded(false);

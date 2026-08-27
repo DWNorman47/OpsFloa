@@ -302,6 +302,27 @@ function windowHoursForEntry(e, windowRules) {
   return out;
 }
 
+// The id of the first window_mult rule that actually covers part of this entry
+// (matches the date anchor + overlaps the shift) — for the report's rule deep-link.
+// Best-effort when several windows overlap; explain-only, never touches pay math.
+function coveringWindowRuleId(e, windowRules) {
+  const s = hmToMin(e.start_time); let en = hmToMin(e.end_time);
+  if (s == null || en == null) return null;
+  if (en <= s) en += 1440;
+  const d0 = ymd(e.work_date);
+  for (const r of windowRules) {
+    const wf = Number(r.from); let wt = Number(r.to);
+    if (!Number.isFinite(wf) || !Number.isFinite(wt) || !(parseFloat(r.mult) > 0)) continue;
+    if (wt <= wf) wt += 1440;
+    for (const k of [-1, 0, 1]) {
+      const anchor = shiftDateStr(d0, k);
+      if (anchor == null || !ruleMatchesDate(r, anchor)) continue;
+      if (Math.min(en, k * 1440 + wt) > Math.max(s, k * 1440 + wf)) return r.id;
+    }
+  }
+  return null;
+}
+
 /**
  * Resolve the overtime *bands* for a bucket (day or week). A band is
  * `{ afterHours, mult }`: hours in the bucket above `afterHours` (and below the
@@ -348,6 +369,19 @@ function bandsForBucket(rule, threshold, otConfig, dk) {
   return resolveBands(rule, threshold, otConfig);
 }
 
+// The id of the first ot_tier rule that governs a bucket (matching basis + date),
+// so threshold OT driven by a custom tier deep-links to that rule in the report.
+// null when the bucket falls back to the fixed-slot / base threshold (a setting).
+function tierRuleIdForBucket(otConfig, rule, dk) {
+  const tiers = otConfig && Array.isArray(otConfig.tierRules) ? otConfig.tierRules : [];
+  if (!tiers.length) return null;
+  const basis = rule === 'weekly' ? 'week' : 'day';
+  const applic = tiers
+    .filter(r => r.basis === basis && (rule === 'weekly' || ruleMatchesDate(r, dk)) && Number.isFinite(parseFloat(r.afterHours)) && parseFloat(r.mult) > 0)
+    .sort((a, b) => parseFloat(a.afterHours) - parseFloat(b.afterHours));
+  return applic.length ? applic[0].id : null;
+}
+
 /**
  * Minimum-daily-hours floor for one day bucket: a matching `min_daily` rule wins
  * (largest, if several), else the fixed-slot global floor. Daily rule only. With
@@ -359,6 +393,16 @@ function minDailyForBucket(otConfig, rule, dk) {
   const matched = rules.filter(r => ruleMatchesDate(r, dk)).map(r => parseFloat(r.hours) || 0);
   if (matched.length) return Math.max(...matched);
   return parseFloat(otConfig.minDailyHours) || 0;
+}
+
+// The id of the min_daily rule that set a bucket's floor (the largest matching), for the
+// report's rule deep-link. null when the floor came from the fixed-slot global setting.
+function minDailyRuleIdForBucket(otConfig, rule, dk) {
+  if (rule !== 'daily' || !otConfig) return null;
+  const rules = Array.isArray(otConfig.minDailyRules) ? otConfig.minDailyRules : [];
+  const matched = rules.filter(r => ruleMatchesDate(r, dk));
+  if (!matched.length) return null; // fixed-slot global floor — a setting, not a builder rule
+  return matched.reduce((best, r) => ((parseFloat(r.hours) || 0) > (parseFloat(best.hours) || 0) ? r : best)).id;
 }
 
 /**
@@ -511,7 +555,7 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
         if (minD > 0 && workedTotal < minD) {
           const add = minD - workedTotal;
           autoReg += add;                         // reporting-time floor: pay only the true shortfall as regular
-          floorDetail.push({ date: dk, hours: +add.toFixed(2), kind: 'min_daily' });
+          floorDetail.push({ date: dk, hours: +add.toFixed(2), kind: 'min_daily', ruleId: minDailyRuleIdForBucket(otConfig, rule, dk) });
         }
       }
     });
@@ -545,7 +589,7 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
         // rest day (a real bucket, handled above) is paid at the rest-day premium.
         // The two coexist — the guarantee is opt-in per day, so if an admin created
         // it for a rest day they want it to pay.
-        let floor = 0;
+        let floor = 0, floorRuleId = null;
         for (const r of noClockRules) {
           if (!ruleMatchesDate(r, dk)) continue;
           let gate;
@@ -562,7 +606,7 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
           } else {
             gate = activeWeeks.has(weekBucketKey(dk, weekStart)); // 'week'
           }
-          if (gate) floor = Math.max(floor, parseFloat(r.hours) || 0);
+          if (gate && (parseFloat(r.hours) || 0) > floor) { floor = parseFloat(r.hours) || 0; floorRuleId = r.id; }
         }
         // Paid leave on this day counts toward the guarantee floor: a 4h partial-leave
         // day with an 8h guarantee tops up only 4h (leave 4 + guarantee 4), and a
@@ -571,7 +615,7 @@ function computeOT(entries, rule, threshold, weekStart = 1, otConfig = null, ran
         const topUp = Math.max(0, floor - leaveH);
         if (topUp > 0) {
           autoReg += topUp;                // guaranteed regular hours (no OT)
-          floorDetail.push({ date: dk, hours: +topUp.toFixed(2), kind: 'guarantee' });
+          floorDetail.push({ date: dk, hours: +topUp.toFixed(2), kind: 'guarantee', ruleId: floorRuleId });
         }
       }
     }
@@ -625,7 +669,7 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
   const wagePrio = e => ((e.orig_wage_type ?? e.wage_type) === 'prevailing' ? 0 : 1);
   // overtime_reason records WHY each entry's OT applies, so the pay statement can
   // explain it truthfully instead of blanket-labelling everything "over Nh daily".
-  for (const e of entries) { e.overtime_hours = 0; e.overtime_reason = null; } // default (prevailing / non-regular)
+  for (const e of entries) { e.overtime_hours = 0; e.overtime_reason = null; e.overtime_ruleId = null; } // default (prevailing / non-regular)
   const regular = entries.filter(e => e.wage_type === 'regular');
 
   // Per-entry admin override: OT = clamped override, carved out of the auto calc.
@@ -654,6 +698,7 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
     windowSumOf.set(e, ws);
     e.overtime_hours = ws;
     e.overtime_reason = ws > 0 ? 'window' : null;
+    e.overtime_ruleId = ws > 0 ? coveringWindowRuleId(e, windowRules) : null;
   }
   if (rule === 'none') return entries; // no daily/weekly OT; window OT (if any) already set
 
@@ -681,7 +726,8 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
     const isRest = restDays && restDays.has(weekdayOfDate(dk));
     if (isRest || (sd && seventhKeys.has(dk))) {
       const reason = isRest ? 'rest_day' : 'seventh_day';
-      for (const e of es) { e.overtime_hours = entryDuration(e); e.overtime_reason = e.overtime_hours > 0 ? reason : null; } // whole day is OT
+      const rid = isRest ? (restDay && restDay.ruleId) : (sd && sd.ruleId);
+      for (const e of es) { e.overtime_hours = entryDuration(e); e.overtime_reason = e.overtime_hours > 0 ? reason : null; e.overtime_ruleId = e.overtime_hours > 0 ? (rid || null) : null; } // whole day is OT
       continue;
     }
     // 'regular_first': consume prevailing-origin hours for straight-time before
@@ -696,6 +742,7 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
     // regular/OT split point for THIS bucket (tiers only re-price above it) — per
     // bucket so a date-scoped ot_tier rule moves the boundary on its days.
     let regLeft = bandsForBucket(rule, threshold, otConfig, dk)[0].afterHours;
+    const tierRuleId = tierRuleIdForBucket(otConfig, rule, dk); // custom tier drove the split, if any
     for (const e of es) {
       const resid = residOf(e);
       const r = Math.max(0, Math.min(resid, regLeft));
@@ -705,6 +752,9 @@ function annotateEntryOvertime(entries, rule, threshold, weekStart = 1, otConfig
       // keep the 'window' reason seeded above.
       e.overtime_reason = thresholdOt > 0 ? (rule === 'weekly' ? 'weekly' : 'daily')
         : (windowSumOf.get(e) > 0 ? 'window' : null);
+      // Threshold OT deep-links to the custom ot_tier rule that set the split (if any);
+      // a bare base threshold is a SETTING (no rule id). Window-only OT keeps its rule id.
+      e.overtime_ruleId = thresholdOt > 0 ? tierRuleId : (windowSumOf.get(e) > 0 ? e.overtime_ruleId : null);
       regLeft -= r;
     }
   }

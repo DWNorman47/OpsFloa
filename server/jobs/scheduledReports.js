@@ -134,7 +134,7 @@ async function sendWeeklyPayrollReport(companyId, companyName) {
   // hours_rules, so a company with a policy would have been emailed one set of
   // numbers and billed another.
   const workerRows = [...byUser.values()].map(u => {
-    const { paid, regularHours, overtimeHours } = computePaid(u.entries, settings, { rule: otRule, roleId: u.role_id ?? null });
+    const { paid, regularHours, overtimeHours } = computePaid(u.entries, settings, { rule: otRule, roleId: u.role_id ?? null, userId: u.entries[0]?.user_id ?? null });
     const totalH = paid.reduce((s, e) => s + hoursWorked(e.start_time, e.end_time) - (e.break_minutes || 0) / 60, 0);
     return { full_name: u.full_name, entry_count: u.entries.length, total_hours: totalH, overtime_hours: overtimeHours, regular_hours: regularHours };
   }).sort((a, b) => b.total_hours - a.total_hours);

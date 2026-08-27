@@ -829,7 +829,7 @@ function computeGroupOvertime(group, ot) {
     wage_type:     te.wageType,
     break_minutes: te.breakMinutes,
   }));
-  const otConfig = otConfigFromSettings(ot.settings, group.roleId ?? null);
+  const otConfig = otConfigFromSettings(ot.settings, group.roleId ?? null, group.userId ?? null);
   if (hasSimpleOtConfig(otConfig)) {
     // ALL worked hours (incl. prevailing) count toward the threshold — before,
     // prevailing hours never earned OT here. QBO bills labor flat at the worker's
@@ -843,7 +843,7 @@ function computeGroupOvertime(group, ot) {
   }
   // Premium OT configs (tiers / rest-day / 7th-day / window / night): keep the
   // per-band path — OT on regular only, tiers billed at their own multipliers.
-  const { overtimeHours, otBands } = computePaid(entries, ot.settings, { rule, roleId: group.roleId ?? null });
+  const { overtimeHours, otBands } = computePaid(entries, ot.settings, { rule, roleId: group.roleId ?? null, userId: group.userId ?? null });
   const premium = otBandsCost(otBands, group.hourlyRate, ot.multiplier)
                 - overtimeHours * group.hourlyRate;
   // Night differential is billed as its own premium line (before, QBO omitted it

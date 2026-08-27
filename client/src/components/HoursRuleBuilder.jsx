@@ -109,6 +109,10 @@ function describeWhen(when, t) {
   }
 }
 
+// Friendly cap on per-employee overrides (mirrors the server; the 40 KB policy byte
+// cap is the hard backstop). Keep in sync with server/routes/admin.js.
+export const MAX_INDIVIDUAL_OVERRIDES = 200;
+
 export function describeRule(r, t) {
   const when = describeWhen(r.when, t);
   const mins = r.minutes;

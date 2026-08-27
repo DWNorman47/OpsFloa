@@ -208,7 +208,10 @@ router.post('/assignments', requirePerm('daily_checklist_manage_recurring'), asy
       `INSERT INTO daily_checklist_assignments
          (company_id, template_id, project_id, role_ids, mode, schedule_type, ordinal_target, scheduled_date, carryover, order_index, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
-      [companyId, templateId, projectId, roleIds, cleanMode(req.body?.mode),
+      [companyId, templateId, projectId, roleIds,
+       // New checklists default to INDIVIDUAL (each person fills their own) unless the
+       // caller explicitly asks for shared; the admin can still flip it per assignment.
+       req.body?.mode !== undefined ? cleanMode(req.body.mode) : 'individual',
        sched.schedule_type, sched.ordinal_target, sched.scheduled_date, req.body?.carryover === true, ord.rows[0].n, req.user.id]
     );
     res.status(201).json({ id: r.rows[0].id });
@@ -379,11 +382,26 @@ router.get('/clock-in-prompt', async (req, res) => {
 
 // ── The day ───────────────────────────────────────────────────────────────────
 
+// A day started on an earlier date but never completed is STALE — it must not show as
+// "today's" checklist. Auto-complete any active day whose work_date is before `today`
+// (the client's local date), so /active and /start move on to today's day. The stale day
+// lands in history with whatever was checked, and its unchecked items roll over on the next
+// start like any completed day. No-op unless a valid `today` is supplied.
+async function closeStaleActiveDays(db, companyId, projectId, today) {
+  if (!isYmd(today)) return;
+  await db.query(
+    "UPDATE daily_checklists SET status = 'completed', completed_at = now(), updated_at = now() WHERE company_id = $1 AND project_id = $2 AND status = 'active' AND work_date < $3::date",
+    [companyId, projectId, today]
+  );
+}
+
 // GET /projects/:projectId/active — the live day + its items, or { day: null }.
+// `?today=YYYY-MM-DD` (the client's local date) retires a stale prior-date active day first.
 router.get('/projects/:projectId/active', async (req, res) => {
   try {
     if (!(await projectBelongsToCompany(pool, req.params.projectId, req.user.company_id)))
       return res.status(404).json({ error: 'Project not found' });
+    await closeStaleActiveDays(pool, req.user.company_id, req.params.projectId, req.query.today);
     const r = await pool.query(
       "SELECT * FROM daily_checklists WHERE company_id = $1 AND project_id = $2 AND status = 'active'",
       [req.user.company_id, req.params.projectId]
@@ -484,6 +502,12 @@ router.post('/projects/:projectId/start', requirePerm('daily_checklist_start_day
     }
     await client.query('BEGIN');
 
+    // Resolve "today" (client's local date, else the server date) and retire any stale
+    // active day from an earlier date first — so the idempotent check below only ever
+    // matches TODAY's day, never a day left open days ago.
+    const today = workDate || (await client.query('SELECT CURRENT_DATE::text AS d')).rows[0].d;
+    await closeStaleActiveDays(client, companyId, projectId, today);
+
     // Already started today? Return the live day (idempotent start).
     const existing = await client.query(
       "SELECT * FROM daily_checklists WHERE company_id = $1 AND project_id = $2 AND status = 'active'",
@@ -504,8 +528,7 @@ router.post('/projects/:projectId/start', requirePerm('daily_checklist_start_day
       [companyId, projectId]
     );
     const dayNumber = seq.rows[0].n;
-    let workDateResolved = workDate;
-    if (!workDateResolved) workDateResolved = (await client.query('SELECT CURRENT_DATE::text AS d')).rows[0].d;
+    const workDateResolved = today; // client's local date, else server CURRENT_DATE (resolved above)
 
     // Plans explicitly claiming this day: a calendar plan dated today, an ordinal plan for N.
     const pick = async (extra, val) => (await client.query(
@@ -657,8 +680,12 @@ router.patch('/days/:dayId/items/:itemId', requirePerm('daily_checklist_check_it
       // compare-and-swap and 409 on a concurrent change so the second writer reloads/merges
       // instead of clobbering. Omitting prev_value keeps the legacy overwrite (older clients).
       if (hasValue && typeof req.body?.prev_value === 'string') {
+        // COALESCE so an empty field (DB NULL) matches the client's '' — otherwise the FIRST
+        // person to fill a blank shared note gets a false "someone else changed it" 409, since
+        // `NULL IS NOT DISTINCT FROM ''` is false. Real concurrent edits (value already set to
+        // something else) still fail the compare and 409 correctly.
         const r = await pool.query(
-          'UPDATE daily_checklist_items SET value = $1 WHERE id = $2 AND daily_checklist_id = $3 AND value IS NOT DISTINCT FROM $4',
+          "UPDATE daily_checklist_items SET value = $1 WHERE id = $2 AND daily_checklist_id = $3 AND COALESCE(value, '') = $4",
           [req.body.value.slice(0, 2000), req.params.itemId, day.id, req.body.prev_value]
         );
         if (r.rowCount === 0) {
@@ -981,12 +1008,19 @@ router.post('/projects/:projectId/queue/reorder', requirePerm('daily_checklist_s
   } finally { client.release(); }
 });
 
-// DELETE /days/:dayId — remove a pending/paused plan (a worked day is kept as history).
-router.delete('/days/:dayId', requirePerm('daily_checklist_schedule_days'), async (req, res) => {
+// DELETE /days/:dayId — remove a day, one of two cases (a plan or a history day):
+//   • a pending/paused PLAN → the scheduling permission (queue management);
+//   • a completed/cancelled HISTORY day started by mistake → the day-lifecycle permission.
+// The ACTIVE day can't be deleted here — cancel or complete it instead. The permission is
+// chosen by status inside the handler (not requirePerm middleware) so both cases share the
+// one path the client uses. Items + per-person state cascade (FK ON DELETE CASCADE).
+router.delete('/days/:dayId', async (req, res) => {
   try {
     const day = await loadDay(pool, req.params.dayId, req.user.company_id);
     if (!day) return res.status(404).json({ error: 'Day not found' });
-    if (!isPlannable(day)) return res.status(409).json({ error: 'Only a pending or paused day can be deleted' });
+    if (day.status === 'active') return res.status(409).json({ error: 'Cancel or complete the active day instead of deleting it.' });
+    const needed = isPlannable(day) ? 'daily_checklist_schedule_days' : 'daily_checklist_complete_day';
+    if (!(await hasPerm(req, needed))) return res.status(403).json({ error: 'You do not have permission to delete this day.' });
     await pool.query('DELETE FROM daily_checklists WHERE id = $1 AND company_id = $2', [day.id, req.user.company_id]);
     res.json({ deleted: true });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }

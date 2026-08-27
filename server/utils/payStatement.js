@@ -219,7 +219,7 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
       // (raw_break_minutes set), the auto_break item already explains it; otherwise
       // this surfaces the break that's recorded on the entry so it's visible.
       if ((e.break_minutes || 0) > 0 && e.raw_break_minutes == null) ex.push({ code: 'break_logged', breakMin: e.break_minutes });
-      if ((e.overtime_hours || 0) > 0) ex.push({ code: 'overtime', otHours: e.overtime_hours, reason: e.overtime_reason || (rule === 'weekly' ? 'weekly' : 'daily'), threshold, rule });
+      if ((e.overtime_hours || 0) > 0) ex.push({ code: 'overtime', otHours: e.overtime_hours, reason: e.overtime_reason || (rule === 'weekly' ? 'weekly' : 'daily'), threshold, rule, ruleId: e.overtime_ruleId || undefined });
     }
     settingsUsed = {
       rate, rate_type: rateType, overtime_rule: rule, overtime_threshold: threshold,
@@ -243,7 +243,7 @@ function buildPayStatement({ worker, entries, reimbursements = [], leave = { sic
   });
   const syntheticEntries = floorDetail.map(f => mkSynthetic({
     kind: f.kind, id: `floor-${f.kind}-${f.date}`, work_date: f.date, hours: f.hours,
-    explain: [{ code: f.kind === 'guarantee' ? 'guarantee_day' : 'min_daily_floor', hours: f.hours }],
+    explain: [{ code: f.kind === 'guarantee' ? 'guarantee_day' : 'min_daily_floor', hours: f.hours, ruleId: f.ruleId || undefined }],
   }));
   // Weekly-hours guarantee top-up and paid leave are also rule-generated hours, not
   // clocked time — same rule: they only get paid if they're an entry. `cost` is set on
@@ -365,7 +365,7 @@ async function workerStatement({ companyId, worker, settings, from, to, explain 
   ]);
 
   const entries = roundEntriesFromSettings(entriesR.rows, settings, { workerRoleById: { [worker.id]: worker.role_id }, explain });
-  const otConfig = otConfigFromSettings(settings, worker.role_id);
+  const otConfig = otConfigFromSettings(settings, worker.role_id, worker.id);
   const { previewDeductions, deferredNames } = previewDeductionSplit(settings, worker, dedR.rows);
   const weekWorkedDays = new Set((weekWorkedR.rows || []).map(r => r.d));
 
@@ -442,7 +442,7 @@ async function companyStatements({ companyId, workers, settings, from, to }) {
       reimbursements: [],
       leave: leaveByUser.get(w.id) || { sick: 0, vacation: 0 },
       deductions: previewDeductions,
-      otConfig: otConfigByRole(w.role_id),
+      otConfig: otConfigByRole(w.role_id, w.id),
       projectRateMap,
       settings, from, to, explain: false,
       weekWorkedDays: weekWorkedByUser.get(w.id) || null,
@@ -509,9 +509,9 @@ async function workerPeriodStatements({ companyId, worker, settings, periods }) 
 
   const paidAll = roundEntriesFromSettings(entriesR.rows, settings, { workerRoleById: { [worker.id]: worker.role_id } });
   const weekWorkedDays = new Set((weekWorkedR.rows || []).map(r => r.d));
-  const otConfig = otConfigFromSettings(settings, worker.role_id);
+  const otConfig = otConfigFromSettings(settings, worker.role_id, worker.id);
   const { previewDeductions, deferredNames } = previewDeductionSplit(settings, worker, dedR.rows);
-  const leaveRules = sickRulesFromSettings(settings, worker.role_id);
+  const leaveRules = sickRulesFromSettings(settings, worker.role_id, worker.id);
   const shiftsByDate = shiftHoursByDate(leaveShifts.rows);
 
   for (const period of list) {

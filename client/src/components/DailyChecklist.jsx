@@ -324,6 +324,18 @@ export function ChecklistHistory({ projectId, t, toast }) {
   const [days, setDays] = useState(null);      // null = loading
   const [openId, setOpenId] = useState(null);
   const [detail, setDetail] = useState({});    // dayId → { items } | { loading:true }
+  const canDelete = usePerm('daily_checklist_complete_day');
+
+  const deleteDay = async (d) => {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(t.dcDeleteDayConfirm)) return;
+    try {
+      await api.delete(`/daily-checklist/days/${d.id}`);
+      setDays(prev => (prev || []).filter(x => x.id !== d.id));
+      if (openId === d.id) setOpenId(null);
+      toast(t.dcDayDeleted, 'success');
+    } catch { toast(t.dcDeleteDayFailed, 'error'); }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -358,11 +370,16 @@ export function ChecklistHistory({ projectId, t, toast }) {
         const det = detail[d.id];
         return (
           <div key={d.id} style={hStyles.day}>
-            <button type="button" style={hStyles.dayHead} onClick={() => toggle(d.id)} aria-expanded={open}>
-              <span style={hStyles.chev}>{open ? '▾' : '▸'}</span>
-              <span style={hStyles.dayDate}>{d.work_date ? String(d.work_date).slice(0, 10) : t.dcDayLabel.replace('{n}', d.day_number)}</span>
-              <span style={hStyles.dayMeta}>{t.dcDayLabel.replace('{n}', d.day_number)} · {t.dcItemsChecked.replace('{n}', d.checked_count).replace('{total}', d.item_count)}</span>
-            </button>
+            <div style={hStyles.headRow}>
+              <button type="button" style={hStyles.dayHead} onClick={() => toggle(d.id)} aria-expanded={open}>
+                <span style={hStyles.chev}>{open ? '▾' : '▸'}</span>
+                <span style={hStyles.dayDate}>{d.work_date ? String(d.work_date).slice(0, 10) : t.dcDayLabel.replace('{n}', d.day_number)}</span>
+                <span style={hStyles.dayMeta}>{t.dcDayLabel.replace('{n}', d.day_number)} · {t.dcItemsChecked.replace('{n}', d.checked_count).replace('{total}', d.item_count)}</span>
+              </button>
+              {canDelete && (
+                <button type="button" style={hStyles.delBtn} onClick={() => deleteDay(d)} title={t.dcDeleteDay} aria-label={t.dcDeleteDay}>🗑</button>
+              )}
+            </div>
             {open && (
               <div style={hStyles.items}>
                 {!det || det.loading ? (
@@ -375,7 +392,7 @@ export function ChecklistHistory({ projectId, t, toast }) {
                     <div key={it.id} style={hStyles.item}>
                       <span style={{ ...hStyles.mark, color: done ? '#059669' : '#9ca3af' }}>{it.kind === 'text' ? '✎' : (it.checked ? '✓' : '○')}</span>
                       <div style={hStyles.itemBody}>
-                        <div style={hStyles.itemText}>{it.text}{it.kind === 'text' && it.value ? `: ${it.value}` : ''}</div>
+                        <div style={hStyles.itemText}>{it.text}{it.kind === 'text' && it.value ? <>: <strong style={hStyles.answer}>{it.value}</strong></> : ''}</div>
                         <div style={hStyles.itemWho}>
                           {done
                             ? `${it.checked_by_name || t.dcSomeone}${it.checked_at ? ' · ' + new Date(it.checked_at).toLocaleString() : ''}`
@@ -398,7 +415,9 @@ const hStyles = {
   panel: { background: '#f9fafb', border: '1px solid #eef0f2', borderRadius: 10, padding: 8, marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 6 },
   muted: { color: '#6b7280', fontSize: 13, padding: '8px 6px' },
   day: { background: '#fff', border: '1px solid #eef0f2', borderRadius: 8, overflow: 'hidden' },
-  dayHead: { display: 'flex', alignItems: 'center', gap: 10, width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '10px 12px', textAlign: 'left' },
+  headRow: { display: 'flex', alignItems: 'center' },
+  dayHead: { display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, background: 'none', border: 'none', cursor: 'pointer', padding: '10px 12px', textAlign: 'left' },
+  delBtn: { flexShrink: 0, background: '#fef2f2', color: '#ef4444', border: '1px solid #fecaca', borderRadius: 6, cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: '6px 9px', margin: '0 8px' },
   chev: { color: '#9ca3af', fontSize: 12 },
   dayDate: { fontWeight: 700, fontSize: 14, color: '#111827', fontVariantNumeric: 'tabular-nums' },
   dayMeta: { marginLeft: 'auto', fontSize: 12, color: '#6b7280' },
@@ -407,6 +426,7 @@ const hStyles = {
   mark: { fontSize: 15, fontWeight: 700, lineHeight: 1.3, flexShrink: 0 },
   itemBody: { minWidth: 0 },
   itemText: { fontSize: 13.5, color: '#111827', lineHeight: 1.35 },
+  answer: { fontWeight: 700, color: '#111827' },
   itemWho: { fontSize: 11.5, color: '#6b7280', marginTop: 1 },
 };
 
@@ -437,7 +457,7 @@ export default function DailyChecklist({ projects = [], settings = null, loading
     if (!pid) { setDay(null); setItems([]); setQueued([]); return; }
     setLoading(true);
     try {
-      const r = await api.get(`/daily-checklist/projects/${pid}/active`);
+      const r = await api.get(`/daily-checklist/projects/${pid}/active`, { params: { today: localToday() } });
       setDay(r.data.day); setItems(r.data.items || []);
       // With no active day, peek at the queue so the Start card can show what's prepared
       // (starting resumes the top of the queue).
@@ -514,7 +534,9 @@ export default function DailyChecklist({ projects = [], settings = null, loading
     const prev_value = textBaseline.current[item.id] ?? (item.value || '');
     try {
       await api.patch(`/daily-checklist/days/${day.id}/items/${item.id}`, { value, prev_value });
-      textBaseline.current[item.id] = value; // new baseline for the next edit
+      // Baseline must match what the server STORED (it caps at 2000), else a >2000-char
+      // value would make the next edit's prev_value mismatch and false-409.
+      textBaseline.current[item.id] = value.slice(0, 2000);
     } catch (err) {
       if (err?.response?.status === 409) {
         const theirs = err.response.data?.value ?? '';
