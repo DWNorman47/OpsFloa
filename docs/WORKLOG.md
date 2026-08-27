@@ -6218,3 +6218,17 @@ items + per-person state cascade away via existing FK ON DELETE CASCADE. Client:
 button on each history day (same permission), with a confirm + toast, removes it from the
 list. EN+ES keys. A deleted day just leaves a gap in the ordinal sequence (next start
 re-derives MAX+1). Tests: delete + 404 on cross-company. Suite 1547 green.
+
+## 2026-08-27 — Daily-checklist prompt on switching projects (per-project, per-day)
+
+The post-clock-in checklist nudge only fired on clock-in and was gated once-per-day
+globally, so switching projects (or clocking out + into a different project) never offered
+the NEW project's checklist. Now:
+- The prompt is scoped to the ENTERED project (client filters clock-in-prompt candidates by
+  project_id) and gated per project per day (`dc_clockin_prompt_<date>_<projectId>`), so the
+  first time you enter a given project today it offers that project's checklist — once each.
+- Extracted `offerChecklistForProject(pid)`; `handleClockedIn` still sets the header clock,
+  then offers. Switching calls a new `onProjectSwitched` prop (ClockInOut.handleSwitchProject)
+  that offers WITHOUT touching the header clock (the worker stays clocked in). Clock-out +
+  clock-in to another project already flows through handleClockedIn, now per-project.
+Client-only; verify green (1547 server, client build).
