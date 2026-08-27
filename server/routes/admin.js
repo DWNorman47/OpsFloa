@@ -4569,7 +4569,7 @@ router.get('/certified-payroll', requireAdmin, requirePerm('view_certified_payro
     // OT-aware costs. Premium OT configs (tiers/rest-day/etc.) keep the flat
     // fallback (no prevailing OT) — matching the rest of the app.
     const computeWorker = (w) => {
-      const otConfig = otConfigByRole(w.role_id, w.id);
+      const otConfig = otConfigByRole(w.role_id, w.worker_id);
       // WH-347 is an hours-based document; a daily-rate worker's `rate` is the DAILY
       // amount, so cost it at the hourly-equivalent (daily ÷ standard shift) — otherwise
       // every regular hour is priced at a whole day (an ~8× overstatement of gross). This

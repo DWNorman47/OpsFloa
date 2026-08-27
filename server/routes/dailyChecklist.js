@@ -737,21 +737,6 @@ router.delete('/days/:dayId/items/:itemId', requirePerm('daily_checklist_check_i
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
-// DELETE /days/:dayId — remove a whole day (e.g. a history day started by mistake). The
-// items + per-person state cascade away (FK ON DELETE CASCADE). Company-scoped; gated on
-// the day-lifecycle permission. A later start re-derives the ordinal number, so a deleted
-// day just leaves a gap in the sequence.
-router.delete('/days/:dayId', requirePerm('daily_checklist_complete_day'), async (req, res) => {
-  try {
-    const r = await pool.query(
-      'DELETE FROM daily_checklists WHERE id = $1 AND company_id = $2 RETURNING id',
-      [req.params.dayId, req.user.company_id]
-    );
-    if (r.rowCount === 0) return res.status(404).json({ error: 'Day not found' });
-    res.json({ deleted: true });
-  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
-});
-
 // POST /days/:dayId/complete — close the active day. Unchecked items roll into the next
 // day when it's started (computed there). Can close with items still unchecked.
 router.post('/days/:dayId/complete', requirePerm('daily_checklist_complete_day'), async (req, res) => {
@@ -1023,12 +1008,19 @@ router.post('/projects/:projectId/queue/reorder', requirePerm('daily_checklist_s
   } finally { client.release(); }
 });
 
-// DELETE /days/:dayId — remove a pending/paused plan (a worked day is kept as history).
-router.delete('/days/:dayId', requirePerm('daily_checklist_schedule_days'), async (req, res) => {
+// DELETE /days/:dayId — remove a day, one of two cases (a plan or a history day):
+//   • a pending/paused PLAN → the scheduling permission (queue management);
+//   • a completed/cancelled HISTORY day started by mistake → the day-lifecycle permission.
+// The ACTIVE day can't be deleted here — cancel or complete it instead. The permission is
+// chosen by status inside the handler (not requirePerm middleware) so both cases share the
+// one path the client uses. Items + per-person state cascade (FK ON DELETE CASCADE).
+router.delete('/days/:dayId', async (req, res) => {
   try {
     const day = await loadDay(pool, req.params.dayId, req.user.company_id);
     if (!day) return res.status(404).json({ error: 'Day not found' });
-    if (!isPlannable(day)) return res.status(409).json({ error: 'Only a pending or paused day can be deleted' });
+    if (day.status === 'active') return res.status(409).json({ error: 'Cancel or complete the active day instead of deleting it.' });
+    const needed = isPlannable(day) ? 'daily_checklist_schedule_days' : 'daily_checklist_complete_day';
+    if (!(await hasPerm(req, needed))) return res.status(403).json({ error: 'You do not have permission to delete this day.' });
     await pool.query('DELETE FROM daily_checklists WHERE id = $1 AND company_id = $2', [day.id, req.user.company_id]);
     res.json({ deleted: true });
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
