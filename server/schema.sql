@@ -250,6 +250,11 @@ CREATE TABLE IF NOT EXISTS field_report_photos (
   report_id  INTEGER NOT NULL REFERENCES field_reports(id) ON DELETE CASCADE,
   url        TEXT    NOT NULL,
   caption    VARCHAR(500),
+  -- fixed-value column: keep in lockstep with server/constants/fieldReportEnums.js
+  -- (FIELD_REPORT_MEDIA_TYPES) and migration 0193's CHECK. See CLAUDE.md fixed-value rule.
+  media_type VARCHAR(10) NOT NULL DEFAULT 'photo'
+    CONSTRAINT field_report_photos_media_type_check CHECK (media_type IS NULL OR media_type IN ('photo','video')),
+  size_bytes BIGINT,
   created_at TIMESTAMP DEFAULT NOW()
 );
 
