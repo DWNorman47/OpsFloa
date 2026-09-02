@@ -6259,3 +6259,19 @@ checklist). Findings verified against code before acting.
   combined window+threshold OT attributes the trace to the tier only (pre-existing display).
 
 Full verify green (server 1550, client build + i18n).
+
+## Field Work photo/video downloads (2026-09-02)
+Field Work > Notes had no way to save images — plain `<img>` on direct R2 URLs, so only
+browser right-click worked. Added:
+- Per-photo/video **Download** button in both lightboxes (FieldDayLog notes + admin Media
+  gallery). Downloads go through a new proxy endpoint `GET /field-reports/photos/:id/download`
+  (streams via new `r2.getObjectStreamByUrl`, `Content-Disposition: attachment`), fetched as a
+  blob so the JWT rides along — no dependence on R2 CORS. Scoped exactly like viewing (worker =
+  own reports only, admin = whole company) + same R2 allow-list as upload/zip. Falls back to
+  opening the media in a new tab if the proxy fetch fails.
+- Admin **Download all (ZIP)** in the Media gallery when a project is selected — wires up the
+  already-built-but-unused `/admin/projects/:id/media-zip` endpoint (blob fetch → downloadBlob).
+Judgment calls: streamed rather than buffered the single-file proxy so a large video doesn't sit
+in server memory; reused the existing `downloadMediaZip` i18n string for the ZIP button. ZIP is
+per-project by nature of the endpoint, so it only shows with a specific project filtered.
+Full verify green (server 1555, client build + i18n).

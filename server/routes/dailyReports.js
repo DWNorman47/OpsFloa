@@ -142,22 +142,33 @@ router.post('/', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'A report for this project and date already exists' });
     }
 
-    // Upsert. The unique index is NULLS NOT DISTINCT (migration 0194), so ON CONFLICT now fires
-    // for a "No project" (NULL project_id) report too — no duplicate on re-submit, atomic under
-    // concurrency (no read-then-insert race).
+    // Upsert. The unique index folds a NULL project to 0 via COALESCE (migrations 0194/0197),
+    // so ON CONFLICT fires for a "No project" (NULL project_id) report too — no duplicate on
+    // re-submit, atomic under concurrency (no read-then-insert race). The conflict target names
+    // the same COALESCE expression so PostgreSQL infers that index (works on any PG version).
+    // Ownership is enforced ATOMICALLY in the upsert too, not just the SELECT above: two
+    // people submitting the same project+date at once both pass the SELECT (neither row is
+    // visible yet), so the DO UPDATE is gated on `created_by = me OR I'm an admin`. When it
+    // isn't mine, 0 rows change (no insert on conflict, no update) → treat as the 403 the
+    // SELECT would have given, instead of silently overwriting a coworker's report.
     const result = await client.query(
       `INSERT INTO daily_reports
          (company_id, project_id, report_date, superintendent, weather_condition, weather_temp,
           work_performed, delays_issues, visitor_log, created_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       ON CONFLICT (company_id, project_id, report_date)
+       ON CONFLICT (company_id, COALESCE(project_id, 0), report_date)
        DO UPDATE SET superintendent=$4, weather_condition=$5, weather_temp=$6,
          work_performed=$7, delays_issues=$8, visitor_log=$9, updated_at=NOW()
+         WHERE daily_reports.created_by = $10 OR $11 = true
        RETURNING id`,
       [companyId, project_id || null, report_date, superintendent?.trim() || null,
        weather_condition?.trim() || null, tempVal, work_performed?.trim() || null,
-       delays_issues?.trim() || null, visitor_log?.trim() || null, req.user.id]
+       delays_issues?.trim() || null, visitor_log?.trim() || null, req.user.id, isAdmin]
     );
+    if (result.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'A report for this project and date already exists' });
+    }
     const reportId = result.rows[0].id;
 
     // Validate sub-table row fields (trim + numeric checks)

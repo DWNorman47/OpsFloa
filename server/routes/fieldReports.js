@@ -3,7 +3,7 @@ const pool = require('../db');
 const logger = require('../logger');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { sendPushToCompanyAdmins } = require('../push');
-const { uploadBase64, getPresignedUploadUrl, deleteByUrl, getObjectMetadataByUrl } = require('../r2');
+const { uploadBase64, getPresignedUploadUrl, deleteByUrl, getObjectMetadataByUrl, getObjectStreamByUrl } = require('../r2');
 const { checkStorageLimit, incrementStorage, decrementStorage } = require('../storage');
 const { logAudit } = require('../auditLog');
 const { projectBelongsToCompany } = require('../utils/tenantRefs');
@@ -310,6 +310,44 @@ router.delete('/photos/:photoId', requireAuth, async (req, res) => {
       { report_id: photo.report_id, project_id: photo.project_id, media_type: photo.media_type });
 
     res.json({ deleted: true });
+  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
+});
+
+// GET /field-reports/photos/:photoId/download - stream one image/video back as an
+// attachment. Proxied through the API (getObjectStreamByUrl) so the browser needs no
+// R2 CORS, and the JWT scopes access exactly like viewing: a non-admin can only pull
+// their own reports' media. The client fetches this as a blob (auth header) and saves it.
+router.get('/photos/:photoId/download', requireAuth, async (req, res) => {
+  const companyId = req.user.company_id;
+  const isAdmin = req.user.role === 'admin' || req.user.role === 'super_admin';
+  try {
+    const conditions = ['ph.id = $1', 'r.company_id = $2'];
+    const params = [req.params.photoId, companyId];
+    if (!isAdmin) { params.push(req.user.id); conditions.push(`r.user_id = $${params.length}`); }
+    const existing = await pool.query(
+      `SELECT ph.url, ph.media_type FROM field_report_photos ph
+       JOIN field_reports r ON ph.report_id = r.id
+       WHERE ${conditions.join(' AND ')}`,
+      params
+    );
+    if (existing.rowCount === 0) return res.status(404).json({ error: 'Image not found' });
+    const { url } = existing.rows[0];
+    // Same allow-list as upload/zip: never let a stray row aim this fetch off our bucket.
+    if (!isOwnFieldReportMediaUrl(url)) return res.status(400).json({ error: 'Invalid media url' });
+
+    const obj = await getObjectStreamByUrl(url);
+    if (!obj || !obj.body) return res.status(404).json({ error: 'Image not found' });
+
+    const ext = (url.split('?')[0].split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin';
+    res.setHeader('Content-Type', obj.contentType || 'application/octet-stream');
+    if (obj.contentLength) res.setHeader('Content-Length', String(obj.contentLength));
+    res.setHeader('Content-Disposition', `attachment; filename="field-photo-${req.params.photoId}.${ext}"`);
+    obj.body.on('error', err => {
+      req.log.error({ err }, 'photo download stream error');
+      if (!res.headersSent) res.status(500).json({ error: 'Server error' });
+      else res.destroy(err);
+    });
+    obj.body.pipe(res);
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 

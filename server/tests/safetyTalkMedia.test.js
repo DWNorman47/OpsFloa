@@ -86,6 +86,7 @@ test('DELETE talk purges every attachment R2 object and refunds bytes', async ()
       return { rows: [{ url: OWN, size_bytes: 2_000_000 }, { url: OWN.replace('abc', 'def'), size_bytes: 1_000_000 }] };
     }
     if (/DELETE FROM safety_talks/.test(sql)) return { rowCount: 1, rows: [{ id: 9 }] };
+    if (/SELECT 1 FROM safety_talk_attachments WHERE url/.test(sql)) return { rowCount: 0, rows: [] }; // not referenced elsewhere
     return { rows: [] };
   });
 

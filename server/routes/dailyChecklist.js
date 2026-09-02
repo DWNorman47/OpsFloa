@@ -389,8 +389,13 @@ router.get('/clock-in-prompt', async (req, res) => {
 // start like any completed day. No-op unless a valid `today` is supplied.
 async function closeStaleActiveDays(db, companyId, projectId, today) {
   if (!isYmd(today)) return;
+  // Retire a day only when BOTH the client's local `today` AND the server's own date agree
+  // it's in the past (`work_date < today AND work_date < CURRENT_DATE`). This way a client
+  // with a fast/skewed clock (a `today` in the future) can't complete a still-current day,
+  // and a teammate whose local date is a day ahead can't retire the day out from under the
+  // crew while the server still considers it today.
   await db.query(
-    "UPDATE daily_checklists SET status = 'completed', completed_at = now(), updated_at = now() WHERE company_id = $1 AND project_id = $2 AND status = 'active' AND work_date < $3::date",
+    "UPDATE daily_checklists SET status = 'completed', completed_at = now(), updated_at = now() WHERE company_id = $1 AND project_id = $2 AND status = 'active' AND work_date < $3::date AND work_date < CURRENT_DATE",
     [companyId, projectId, today]
   );
 }
@@ -862,14 +867,10 @@ router.get('/projects/:projectId/queue', async (req, res) => {
   } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
 });
 
-// GET /days/:dayId — a single day (any status) + its items, for viewing/editing a plan.
-router.get('/days/:dayId', async (req, res) => {
-  try {
-    const day = await loadDay(pool, req.params.dayId, req.user.company_id);
-    if (!day) return res.status(404).json({ error: 'Day not found' });
-    res.json({ day, items: await loadItems(pool, day.id) });
-  } catch (err) { req.log.error({ err }, 'route error'); res.status(500).json({ error: 'Server error' }); }
-});
+// (Removed a second, shadowed `GET /days/:dayId` registration — Express only runs the
+// first one, at the history-detail handler above, so this was dead code. If a plan-view
+// endpoint returning the full day row (name/notes/schedule_*) is needed later, give it a
+// distinct path rather than re-adding a duplicate route.)
 
 // POST /projects/:projectId/days — prepare a pending day plan (calendar or ordinal).
 router.post('/projects/:projectId/days', requirePerm('daily_checklist_schedule_days'), async (req, res) => {

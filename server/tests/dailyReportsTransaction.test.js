@@ -72,6 +72,31 @@ test('POST refuses to overwrite a coworker\'s existing report for the same proje
   expect(client.release).toHaveBeenCalledTimes(1);
 });
 
+test('POST 403s ATOMICALLY when a concurrent report by someone else wins the upsert', async () => {
+  // The dupe SELECT sees nothing (the other writer is not yet visible), so the ownership
+  // check must ALSO hold in the upsert: the DO UPDATE is gated on created_by = me / admin,
+  // so a coworker's row makes it affect 0 rows → 403, never a silent clobber.
+  const client = {
+    query: jest.fn()
+      .mockResolvedValueOnce({})                                 // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ ok: 1 }] }) // projectBelongsToCompany
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })          // dupe SELECT: nothing visible yet (race)
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })          // upsert DO UPDATE excluded by ownership WHERE
+      .mockResolvedValueOnce({}),                                // ROLLBACK
+    release: jest.fn(),
+  };
+  pool.connect.mockResolvedValueOnce(client);
+
+  const res = await request(makeApp())
+    .post('/api/daily-reports')
+    .send({ project_id: 200, report_date: '2026-07-30' });
+
+  expect(res.status).toBe(403);
+  const upsert = client.query.mock.calls.map(c => c[0]).find(s => /INSERT INTO daily_reports/.test(s));
+  expect(upsert).toMatch(/WHERE daily_reports\.created_by = \$10 OR \$11 = true/);
+  expect(client.query.mock.calls.map(c => c[0])).toContain('ROLLBACK');
+});
+
 test('PATCH without sub-table arrays leaves manpower/equipment/materials untouched', async () => {
   // A status-only PATCH must not DELETE the report's sub-tables (the old code deleted
   // unconditionally, wiping them whenever the arrays were omitted).

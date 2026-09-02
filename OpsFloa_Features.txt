@@ -187,6 +187,13 @@ OVERTIME CALCULATION
   overtime (e.g., over 40 hours in a week). Threshold and multiplier are
   configurable per company.
 
+ROLE AND INDIVIDUAL PAY RULES
+  Beyond the company-wide overtime rule, admins can set hours-and-pay rules per
+  role (e.g., a different overtime threshold for drivers) and override them for a
+  single employee — adjusting or removing an inherited rule, or adding one that
+  applies to that person only. Individual overrides win over role rules, which
+  win over the company default.
+
 PREVAILING WAGE TRACKING
   Projects can be flagged as "prevailing wage." Hours on those projects are
   tracked separately from regular hours, with a configurable prevailing wage
@@ -423,6 +430,14 @@ INSPECTION CHECKLISTS
   Structured site inspection forms that capture checklist responses by category.
   Useful for quality control walkthroughs, subcontractor inspections, and
   owner punch walks.
+
+DAILY CHECKLISTS
+  Recurring per-project daily checklists the crew fills out on site — each day
+  starts a fresh copy, and the answers are kept as a dated history. Items can be
+  shared (one answer the whole crew fills in together) or individual (each worker
+  has their own copy), set per checklist. Clocking in to — or switching to — a
+  project surfaces that project's checklist for the day, and admins can review or
+  delete any past day's checklist.
 
 INCIDENT REPORTS
   Workers and admins can document job site incidents — injuries, near-misses,
