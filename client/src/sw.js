@@ -18,6 +18,38 @@ registerRoute(new NavigationRoute(async ({ url }) => {
   }
 }, { denylist: [/^\/api\//, /^\/version\.json/, /^\/tool-apps\/videoconvert\//] }));
 
+// ── Video converter: cache ON DEMAND, never in the shared precache ───────────────
+// These routes fire only when a browser actually requests a converter file, so the
+// tool-app's assets (including the ~32MB engine) enter the cache ONLY for users who
+// open the converter — a user who never uses it downloads and stores none of it.
+// Engine files have stable names and are immutable → cache-first (fetch once, reuse
+// forever, works offline). The small shell (html + app.js) is network-first so UI
+// updates still deploy, falling back to the cached copy when offline.
+registerRoute(
+  ({ url }) => /^\/tool-apps\/videoconvert\/(ffmpeg|core)\//.test(url.pathname),
+  async ({ request }) => {
+    const cache = await caches.open('videoconvert-engine');
+    const hit = await cache.match(request);
+    if (hit) return hit;
+    const resp = await fetch(request);
+    if (resp.ok) await cache.put(request, resp.clone());
+    return resp;
+  }
+);
+registerRoute(
+  ({ url }) => url.pathname.startsWith('/tool-apps/videoconvert/'),
+  async ({ request }) => {
+    const cache = await caches.open('videoconvert-shell');
+    try {
+      const resp = await fetch(request, { cache: 'no-cache' });
+      if (resp.ok) await cache.put(request, resp.clone());
+      return resp;
+    } catch {
+      return (await cache.match(request)) || Response.error();
+    }
+  }
+);
+
 // Activate a new deploy's worker immediately instead of waiting for a manual update — a
 // waiting worker serving the OLD precache across a deploy is what left new tabs / reloads on
 // a stale shell. The network-first shell above + the app's chunk-error auto-reload make a

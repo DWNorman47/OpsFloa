@@ -6301,3 +6301,12 @@ Judgment calls / caveats:
   notice; it's meant to be exercised on the deployed, isolated URL.
 - HEVC decode depends on the core's codec set; errors surface in the page's Details log.
 Full verify green (server 1555, client eslint + vitest 289 + build; i18n parity).
+
+## Video converter: on-demand caching (2026-09-02, follow-up)
+Reworked so non-users bear zero cost: the converter tool-app is now excluded from the
+shared Workbox precache entirely (globIgnores `**/tool-apps/videoconvert/**`) and cached
+at RUNTIME instead — two sw.js registerRoute handlers (cache-first for the immutable
+engine files incl. the 32MB wasm; network-first-with-cache-fallback for the small shell).
+Files enter the cache ONLY when someone actually opens the converter; a user who never
+uses it downloads/stores none of it. Precache dropped 159→148 entries. Still offline
+after first use; UI updates still deploy (shell is network-first).
