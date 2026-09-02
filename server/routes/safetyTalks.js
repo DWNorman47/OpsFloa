@@ -313,9 +313,15 @@ router.delete('/:id', requireAuth, async (req, res) => {
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Not found' });
     let freed = 0;
+    const purged = new Set();
     for (const a of atts.rows) {
-      if (isOwnSafetyAttachmentUrl(a.url)) deleteByUrl(a.url).catch(() => {});
-      freed += parseInt(a.size_bytes || 0) || 0;
+      freed += parseInt(a.size_bytes || 0) || 0; // per-row refund (storage is counted per row)
+      if (!isOwnSafetyAttachmentUrl(a.url) || purged.has(a.url)) continue;
+      purged.add(a.url);
+      // Purge R2 only when no OTHER talk still points at this URL (the deleted talk's own
+      // rows are already gone via cascade) — mirrors the single-attachment + retention paths.
+      const stillRef = await pool.query('SELECT 1 FROM safety_talk_attachments WHERE url=$1 LIMIT 1', [a.url]);
+      if (stillRef.rowCount === 0) deleteByUrl(a.url).catch(() => {});
     }
     if (freed > 0) decrementStorage(companyId, freed).catch(() => {});
     logAudit(companyId, req.user.id, req.user.full_name, 'safety_talk.deleted', 'safety_talk', req.params.id, null, null);

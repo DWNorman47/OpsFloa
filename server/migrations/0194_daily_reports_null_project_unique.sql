@@ -16,6 +16,13 @@ DELETE FROM daily_reports d
 
 -- 2) Replace the NULLS-DISTINCT unique with one that treats a NULL project_id as a single
 --    value, so the upsert's ON CONFLICT fires for "No project" reports too.
+--    Uses a COALESCE expression index (folding NULL project → 0, an id that never occurs
+--    since project ids are positive serials) rather than `NULLS NOT DISTINCT`, which is
+--    PostgreSQL 15+ only and would hard-fail the boot migration on an older server. The
+--    expression index works on every supported PostgreSQL version; the POST upsert's
+--    ON CONFLICT names the same expression. (Migration 0197 converges any server that
+--    already applied the earlier NULLS-NOT-DISTINCT form to this one.)
 ALTER TABLE daily_reports DROP CONSTRAINT IF EXISTS daily_reports_company_id_project_id_report_date_key;
+DROP INDEX IF EXISTS uq_daily_reports_company_project_date;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_daily_reports_company_project_date
-  ON daily_reports (company_id, project_id, report_date) NULLS NOT DISTINCT;
+  ON daily_reports (company_id, COALESCE(project_id, 0), report_date);

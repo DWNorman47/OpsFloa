@@ -6,6 +6,13 @@
 --
 -- NOT VALID: enforce every new/updated row without scanning legacy rows on boot
 -- (there should be none negative, but this keeps the migration non-blocking).
-ALTER TABLE time_entries
-  ADD CONSTRAINT time_entries_break_minutes_nonneg
-  CHECK (break_minutes IS NULL OR break_minutes >= 0) NOT VALID;
+-- Guarded so it's re-runnable and coexists with schema.sql declaring the same constraint
+-- (Postgres has no ADD CONSTRAINT IF NOT EXISTS).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'time_entries_break_minutes_nonneg') THEN
+    ALTER TABLE time_entries
+      ADD CONSTRAINT time_entries_break_minutes_nonneg
+      CHECK (break_minutes IS NULL OR break_minutes >= 0) NOT VALID;
+  END IF;
+END $$;

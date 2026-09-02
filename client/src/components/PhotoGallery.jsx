@@ -6,6 +6,7 @@ import { langToLocale } from '../utils';
 import Pagination from './Pagination';
 import { SkeletonList } from './Skeleton';
 import FieldFilters from './FieldFilters';
+import { downloadBlob } from '../utils/csv';
 import { useConfirm } from './ConfirmDialog';
 
 import { silentError } from '../errorReporter';
@@ -41,10 +42,26 @@ function MediaTile({ item, onClick }) {
 
 function Lightbox({ items, index, onClose, onDelete, deleting = false, locale = 'en-US' }) {
   const [idx, setIdx] = useState(index);
+  const [downloading, setDownloading] = useState(false);
   const t = useT();
   const item = items[idx];
   const video = isVideo(item);
   const canDelete = Boolean(item?.id && onDelete);
+  const canDownload = Boolean(item?.id && item?.url);
+
+  const downloadItem = async () => {
+    if (!canDownload || downloading) return;
+    setDownloading(true);
+    try {
+      const res = await api.get(`/field-reports/photos/${item.id}/download`, { responseType: 'blob' });
+      const ext = (item.url.split('?')[0].split('.').pop() || (video ? 'mp4' : 'jpg')).toLowerCase();
+      downloadBlob(res.data, `field-photo-${item.id}.${ext}`);
+    } catch {
+      window.open(item.url, '_blank', 'noopener');
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   useEffect(() => {
     const onKey = e => {
@@ -100,6 +117,16 @@ function Lightbox({ items, index, onClose, onDelete, deleting = false, locale = 
           )}
         </div>
       </div>
+      {canDownload && (
+        <button
+          type="button"
+          style={{ ...styles.downloadBtn, ...(downloading ? { opacity: 0.6, cursor: 'wait' } : {}) }}
+          onClick={e => { e.stopPropagation(); downloadItem(); }}
+          disabled={downloading}
+        >
+          {downloading ? (t.downloading || 'Downloading…') : (t.downloadImage || 'Download')}
+        </button>
+      )}
       <div style={styles.navRow} onClick={e => e.stopPropagation()}>
         <button style={{ ...styles.navBtn, ...(idx === 0 ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} aria-label={t.prevPhoto} onClick={() => setIdx(i => Math.max(0, i - 1))} disabled={idx === 0}>{'<'}</button>
         <span style={styles.navCount}>{idx + 1} / {items.length}</span>
@@ -121,6 +148,7 @@ export default function PhotoGallery({ projects, activeProject = '', onProjectCh
   const [filters, setFilters] = useState({ project_id: activeProject != null ? String(activeProject) : '' });
   const [lightbox, setLightbox] = useState(null);
   const [deletingMedia, setDeletingMedia] = useState(false);
+  const [zipping, setZipping] = useState(false);
   const { confirm, dialog } = useConfirm();
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
@@ -152,6 +180,25 @@ export default function PhotoGallery({ projects, activeProject = '', onProjectCh
   const days = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
   const photoCount = media.filter(m => !isVideo(m)).length;
   const videoCount = media.filter(m => isVideo(m)).length;
+
+  // Bulk download of a project's media, via the existing (admin-only, per-project)
+  // /admin/projects/:id/media-zip endpoint. Fetched as a blob so the JWT rides along;
+  // only offered when a specific project is selected, since the ZIP is per-project.
+  const downloadZip = async () => {
+    if (!filters.project_id || zipping) return;
+    setZipping(true);
+    try {
+      const res = await api.get(`/admin/projects/${filters.project_id}/media-zip`, { responseType: 'blob' });
+      const proj = projects.find(p => String(p.id) === String(filters.project_id));
+      const name = (proj?.name || 'project').replace(/[^a-z0-9]/gi, '_');
+      downloadBlob(res.data, `${name}_media.zip`);
+    } catch (err) {
+      const status = err.response?.status;
+      alert(status === 404 ? (t.noMediaDownload || 'No media found to download.') : (t.downloadFailed || "Couldn't download. Try again."));
+    } finally {
+      setZipping(false);
+    }
+  };
 
   const deleteMedia = async (item) => {
     if (!item?.id || deletingMedia) return;
@@ -201,6 +248,11 @@ export default function PhotoGallery({ projects, activeProject = '', onProjectCh
         {hasFilters && (
           <button type="button" style={styles.clearFiltersBtn} onClick={clearFilters}>
             Clear filters
+          </button>
+        )}
+        {isAdmin && filters.project_id && media.length > 0 && (
+          <button type="button" style={{ ...styles.zipBtn, ...(zipping ? { opacity: 0.6, cursor: 'wait' } : {}) }} onClick={downloadZip} disabled={zipping}>
+            {zipping ? (t.zippingMedia || 'Preparing ZIP…') : (t.downloadMediaZip || 'Download all (ZIP)')}
           </button>
         )}
       </FieldFilters>
@@ -259,6 +311,7 @@ const styles = {
   dateLabel: { fontSize: 11, fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' },
   filterInput: { width: '100%', padding: '7px 10px', border: '1px solid #e5e7eb', borderRadius: 7, fontSize: 13, background: '#fff', color: '#374151' },
   clearFiltersBtn: { minHeight: 34, padding: '7px 12px', border: '1px solid #d1d5db', borderRadius: 7, background: '#fff', color: '#374151', fontSize: 13, fontWeight: 800, cursor: 'pointer' },
+  zipBtn: { minHeight: 34, padding: '7px 14px', border: 'none', borderRadius: 7, background: '#059669', color: '#fff', fontSize: 13, fontWeight: 800, cursor: 'pointer' },
   hint: { color: '#6b7280', fontSize: 14 },
   empty: { textAlign: 'center', padding: '60px 20px' },
   emptyTitle: { margin: '0 0 6px', fontSize: 18, fontWeight: 800, color: '#111827' },
@@ -284,6 +337,7 @@ const styles = {
   caption: { color: '#fff', fontSize: 14, marginBottom: 4 },
   metaLine: { color: 'rgba(255,255,255,0.6)', fontSize: 12, display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap', alignItems: 'center' },
   mapLink: { color: '#60a5fa', textDecoration: 'none', fontWeight: 600 },
+  downloadBtn: { marginTop: 14, background: 'rgba(255,255,255,0.16)', color: '#fff', border: '1px solid rgba(255,255,255,0.28)', borderRadius: 999, padding: '9px 20px', fontSize: 14, fontWeight: 800, cursor: 'pointer', lineHeight: 1 },
   navRow: { display: 'flex', alignItems: 'center', gap: 20, marginTop: 16 },
   navBtn: { background: 'rgba(255,255,255,0.15)', border: 'none', color: '#fff', fontSize: 24, width: 44, height: 44, borderRadius: '50%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' },
   navCount: { color: '#fff', fontSize: 13 },

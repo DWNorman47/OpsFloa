@@ -589,7 +589,7 @@ router.post('/copy-last-week', requireAuth, async (req, res) => {
         `INSERT INTO time_entries (user_id, company_id, work_date, start_time, end_time, start_ts, end_ts, break_minutes, project_id, notes, wage_type, status, timezone)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'submitted',$12) RETURNING *`,
         [req.user.id, companyId, thisDateStr, e.start_time, e.end_time, start_ts, end_ts,
-         e.break_minutes || 0, e.project_id || null, e.notes || null, e.wage_type || 'regular', e.timezone || null]
+         Math.max(0, e.break_minutes || 0), e.project_id || null, e.notes || null, e.wage_type || 'regular', e.timezone || null]
       );
       created.push(result.rows[0]);
       existingDates.add(thisDateStr);

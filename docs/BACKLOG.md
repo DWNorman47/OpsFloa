@@ -554,7 +554,11 @@ that holds the exhaustive detail.
   the valuation — the reader cutover is still owed. Note the flag can't catch a swapped-time admin
   edit (17:00→09:00 is a representable 16h overnight, ambiguous by design).
 
-- **Per-project visibility (`visible_to_user_ids`) is display-only, not enforced on write.**
+- **Per-project visibility (`visible_to_user_ids`) is display-only — RESOLVED 2026-08-28: intended.**
+  David's call: it's *mainly picker declutter*, not an access boundary. The display-only behavior
+  stays as-is; do NOT add server-side write enforcement (it would break legit flows where a worker
+  must log to a not-listed project). Sibling `field_show_overhead_projects` is likewise just declutter.
+  Original finding kept below for context.
   (2026-08-20 audit) The gate exists only on list reads (`projects.js` GET, the clock-in prompt).
   Every *action* endpoint checks company membership only — clock in (`clock.js`), clock switch,
   field-report create (`projectBelongsToCompany`), all daily-checklist project routes. A worker

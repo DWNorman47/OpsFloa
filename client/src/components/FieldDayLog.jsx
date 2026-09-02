@@ -7,6 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { langToLocale } from '../utils';
 import { SkeletonList } from './Skeleton';
 import { safeLocal } from '../utils/safeStorage';
+import { downloadBlob } from '../utils/csv';
 import { useConfirm } from './ConfirmDialog';
 
 // A stable per-submission id so an offline-queued POST replayed on reconnect (same body)
@@ -75,9 +76,27 @@ function getLocation() {
 export function Lightbox({ photos, startIndex, onClose, onDelete, deleting = false }) {
   const t = useT();
   const [idx, setIdx] = useState(startIndex);
+  const [downloading, setDownloading] = useState(false);
   const item = photos[idx];
   const isVid = item.media_type === 'video' || /\.(mp4|mov|webm|avi|m4v)$/i.test(item.url || '');
   const canDelete = Boolean(item.id && !item.pending && onDelete);
+  // Only saved media can be pulled from R2; a still-queued offline capture has no id yet.
+  const canDownload = Boolean(item.id && !item.pending && item.url);
+
+  const downloadItem = async () => {
+    if (!canDownload || downloading) return;
+    setDownloading(true);
+    try {
+      const res = await api.get(`/field-reports/photos/${item.id}/download`, { responseType: 'blob' });
+      const ext = (item.url.split('?')[0].split('.').pop() || (isVid ? 'mp4' : 'jpg')).toLowerCase();
+      downloadBlob(res.data, `field-photo-${item.id}.${ext}`);
+    } catch {
+      // Proxy failed (offline, etc.) — open the media so the viewer can save it manually.
+      window.open(item.url, '_blank', 'noopener');
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   useEffect(() => {
     const onKey = e => {
@@ -113,6 +132,16 @@ export function Lightbox({ photos, startIndex, onClose, onDelete, deleting = fal
         <img src={item.url} style={s.lbImg} alt="" onClick={e => e.stopPropagation()} />
       )}
       {item.caption && <div style={s.lbCaption}>{item.caption}</div>}
+      {canDownload && (
+        <button
+          type="button"
+          style={{ ...s.lbDownloadBtn, ...(downloading ? { opacity: 0.6, cursor: 'wait' } : {}) }}
+          onClick={e => { e.stopPropagation(); downloadItem(); }}
+          disabled={downloading}
+        >
+          {downloading ? (t.downloading || 'Downloading…') : (t.downloadImage || 'Download')}
+        </button>
+      )}
       <div style={s.lbNav} onClick={e => e.stopPropagation()}>
         <button style={{ ...s.lbBtn, ...(idx === 0 ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} aria-label={t.prevPhoto} onClick={() => setIdx(i => i - 1)} disabled={idx === 0}>{'<'}</button>
         <span style={s.lbCount}>{idx + 1} / {photos.length}</span>
@@ -617,6 +646,7 @@ const s = {
   lbImg: { maxWidth: '100%', maxHeight: '80vh', objectFit: 'contain', borderRadius: 8 },
   lbCaption: { color: '#fff', fontSize: 14, marginTop: 12, opacity: 0.85 },
   lbNav: { display: 'flex', alignItems: 'center', gap: 20, marginTop: 16 },
+  lbDownloadBtn: { marginTop: 14, background: 'rgba(255,255,255,0.16)', color: '#fff', border: '1px solid rgba(255,255,255,0.28)', borderRadius: 999, padding: '9px 20px', fontSize: 14, fontWeight: 800, cursor: 'pointer', lineHeight: 1 },
   lbBtn: { background: 'rgba(255,255,255,0.15)', border: 'none', color: '#fff', fontSize: 24, width: 44, height: 44, borderRadius: '50%', cursor: 'pointer' },
   lbCount: { color: '#fff', fontSize: 13 },
   // Offset below the status bar / notch (safe-area insets) so the buttons clear the OS UI.
