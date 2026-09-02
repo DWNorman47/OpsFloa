@@ -6275,3 +6275,29 @@ Judgment calls: streamed rather than buffered the single-file proxy so a large v
 in server memory; reused the existing `downloadMediaZip` i18n string for the ZIP button. ZIP is
 per-project by nature of the endpoint, so it only shows with a specific project filtered.
 Full verify green (server 1555, client build + i18n).
+
+## Offline video converter tool-app (2026-09-02)
+Field videos upload to R2 untouched, so iPhone/QuickTime .mov (HEVC) can be un-playable
+elsewhere. Added an on-device converter — no server transcode, no external app.
+- New static tool-app `client/public/tool-apps/videoconvert/` running **multithreaded**
+  ffmpeg.wasm (self-hosted @ffmpeg/core-mt, ESM). Runs entirely in the browser: MP4/H.264,
+  fast MP4 remux, WebM/VP9, or MP3 audio. Drag/drop or file-pick, plus an IndexedDB
+  blob-handoff so the lightbox "Convert" button preloads the current video.
+- **Cross-origin isolation without touching the rest of the site:** the converter is its
+  own top-level page opened in a new tab; COOP:same-origin + COEP:require-corp are scoped
+  to `/tool-apps/videoconvert/(.*)` in vercel.json ONLY, so the main app (Stripe, embeds,
+  cross-origin images) is unaffected. SharedArrayBuffer works because it's a separate
+  isolated document, not an iframe (an iframe can't isolate under a non-isolated parent).
+- "Convert" button next to Download in both lightboxes (video items), bilingual.
+- SW: added the converter path to the NavigationRoute denylist so offline nav isn't
+  hijacked to the SPA shell; excluded the 32MB wasm from the Workbox precache (it's cached
+  immutably via HTTP headers instead, so it never bloats every user's precache but a rare
+  conversion still works offline after first run).
+Judgment calls / caveats:
+- Vendored the ~32MB MT core into the repo (public/). It's the cost of self-hosted +
+  offline + multithreaded; flagged for reconsideration (Git LFS or single-thread ~ if the
+  repo weight bites).
+- Dev (vite) has no COOP/COEP, so MT is unavailable locally — the page shows a clear
+  notice; it's meant to be exercised on the deployed, isolated URL.
+- HEVC decode depends on the core's codec set; errors surface in the page's Details log.
+Full verify green (server 1555, client eslint + vitest 289 + build; i18n parity).

@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Video Converter · OpsFloa</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>" />
+  <style>
+    :root {
+      --bg: #f6f7f9; --card: #ffffff; --ink: #111827; --muted: #6b7280;
+      --line: #e5e7eb; --accent: #059669; --accent-ink: #ffffff;
+      --danger: #dc2626; --warn-bg: #fffbeb; --warn-line: #fcd34d; --warn-ink: #92400e;
+      --shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b0f14; --card: #131a22; --ink: #e5e7eb; --muted: #9ca3af;
+        --line: #263140; --accent: #10b981; --accent-ink: #04150f;
+        --warn-bg: #2a2410; --warn-line: #7c5e12; --warn-ink: #fcd34d;
+        --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.4);
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 24px 18px 64px; }
+    header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+    h1 { font-size: 22px; font-weight: 800; margin: 0; letter-spacing: -.01em; }
+    .sub { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; box-shadow: var(--shadow); margin-bottom: 16px; }
+    .drop {
+      border: 2px dashed var(--line); border-radius: 12px; padding: 30px 18px; text-align: center;
+      cursor: pointer; transition: border-color .15s, background .15s;
+    }
+    .drop:hover, .drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+    .drop .big { font-size: 15px; font-weight: 700; }
+    .drop .small { color: var(--muted); font-size: 13px; margin-top: 4px; }
+    input[type=file] { display: none; }
+    .filerow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .fname { font-weight: 700; word-break: break-all; }
+    .fmeta { color: var(--muted); font-size: 13px; }
+    label.field { display: block; margin: 14px 0 0; }
+    label.field > span { display: block; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 5px; }
+    select {
+      width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px;
+      background: var(--card); color: var(--ink); font-size: 15px;
+    }
+    .btnrow { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+    button {
+      appearance: none; border: 1px solid transparent; border-radius: 10px; padding: 11px 20px;
+      font-size: 15px; font-weight: 800; cursor: pointer; font-family: inherit;
+    }
+    .primary { background: var(--accent); color: var(--accent-ink); }
+    .primary:disabled { opacity: .5; cursor: not-allowed; }
+    .ghost { background: transparent; color: var(--ink); border-color: var(--line); }
+    .progress { height: 10px; background: var(--line); border-radius: 999px; overflow: hidden; margin-top: 16px; }
+    .bar { height: 100%; width: 0; background: var(--accent); transition: width .2s ease; }
+    .status { margin-top: 10px; font-size: 14px; color: var(--muted); min-height: 20px; }
+    .warn { background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-ink); border-radius: 10px; padding: 12px 14px; font-size: 13.5px; }
+    details.log { margin-top: 14px; }
+    details.log summary { cursor: pointer; color: var(--muted); font-size: 13px; font-weight: 700; }
+    pre.logbox {
+      margin: 8px 0 0; max-height: 200px; overflow: auto; background: color-mix(in srgb, var(--ink) 5%, transparent);
+      border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 12px; line-height: 1.45;
+      white-space: pre-wrap; word-break: break-word; color: var(--muted);
+    }
+    .hidden { display: none !important; }
+    .foot { color: var(--muted); font-size: 12px; text-align: center; margin-top: 22px; line-height: 1.6; }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header><h1 id="t-title">Video Converter</h1></header>
+    <p class="sub" id="t-sub">Convert a video (including iPhone / QuickTime .mov) to MP4 and more — entirely on this device.</p>
+
+    <div id="isolation-warn" class="warn hidden"></div>
+
+    <div class="card">
+      <div id="picker">
+        <div class="drop" id="drop" tabindex="0" role="button">
+          <div class="big" id="t-drop-big">Choose a video or drop it here</div>
+          <div class="small" id="t-drop-small">Nothing is uploaded — it stays on your computer.</div>
+        </div>
+        <input type="file" id="file" accept="video/*,.mov,.mp4,.m4v,.avi,.webm,.mkv" />
+      </div>
+
+      <div id="chosen" class="hidden">
+        <div class="filerow">
+          <span class="fname" id="fname"></span>
+          <span class="fmeta" id="fmeta"></span>
+          <button type="button" class="ghost" id="change" style="margin-left:auto;padding:6px 12px;font-size:13px;">Change</button>
+        </div>
+
+        <label class="field">
+          <span id="t-format">Convert to</span>
+          <select id="format"></select>
+        </label>
+
+        <div class="btnrow">
+          <button type="button" class="primary" id="convert">Convert</button>
+        </div>
+
+        <div class="progress hidden" id="progwrap"><div class="bar" id="bar"></div></div>
+        <div class="status" id="status"></div>
+
+        <details class="log">
+          <summary id="t-log">Details</summary>
+          <pre class="logbox" id="logbox"></pre>
+        </details>
+      </div>
+    </div>
+
+    <p class="foot" id="t-foot"></p>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

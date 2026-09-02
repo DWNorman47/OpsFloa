@@ -16,7 +16,7 @@ registerRoute(new NavigationRoute(async ({ url }) => {
   } catch (err) {
     return (await matchPrecache('/index.html')) || Response.error();
   }
-}, { denylist: [/^\/api\//, /^\/version\.json/] }));
+}, { denylist: [/^\/api\//, /^\/version\.json/, /^\/tool-apps\/videoconvert\//] }));
 
 // Activate a new deploy's worker immediately instead of waiting for a manual update — a
 // waiting worker serving the OLD precache across a deploy is what left new tabs / reloads on

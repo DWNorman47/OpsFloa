@@ -60,6 +60,11 @@ export default defineConfig({
           '**/*.map',
           'version.json', // polled live; must never be precached/served stale
           '**/version.json',
+          // The video-converter engine (~32MB) must never sit in every user's precache —
+          // most users never convert. It's cached immutably by HTTP headers (vercel.json)
+          // so a rare conversion still works offline after the first run. The small
+          // converter html/js DO stay precached, so the page itself opens offline.
+          '**/ffmpeg-core.wasm',
           'bootwatch.js', // the blank-screen recovery watchdog: never precache it, so the
           '**/bootwatch.js', // newest recovery logic is always fetched fresh (must-revalidate)
           '**/react-pdf.browser-*.js',
