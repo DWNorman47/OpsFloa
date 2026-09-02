@@ -16,33 +16,39 @@ registerRoute(new NavigationRoute(async ({ url }) => {
   } catch (err) {
     return (await matchPrecache('/index.html')) || Response.error();
   }
-}, { denylist: [/^\/api\//, /^\/version\.json/, /^\/tool-apps\/videoconvert\//] }));
+}, { denylist: [/^\/api\//, /^\/version\.json/, /^\/tool-apps\//] }));
 
-// ── Video converter: cache ON DEMAND, never in the shared precache ───────────────
-// These routes fire only when a browser actually requests a converter file, so the
-// tool-app's assets (including the ~32MB engine) enter the cache ONLY for users who
-// open the converter — a user who never uses it downloads and stores none of it.
-// Engine files have stable names and are immutable → cache-first (fetch once, reuse
-// forever, works offline). The small shell (html + app.js) is network-first so UI
-// updates still deploy, falling back to the cached copy when offline.
+// ── Tools tool-apps (Plan Room, PDF Tools, Video Converter): cache ON DEMAND ─────
+// The tool-apps tree is excluded from the shared precache (vite.config globIgnores),
+// so nothing here downloads on SW install. These runtime routes fire only when a
+// browser actually requests a tool-app file — so its assets (the PDF.js worker,
+// pdf-lib, the ~32MB converter engine, etc.) enter the cache ONLY for a user who opens
+// that tool. A user who never opens them downloads and stores none of it.
+//
+// Heavy vendored libs have stable names and effectively never change → cache-first
+// (fetch once, reuse forever, offline-capable, no revalidation round-trips). Everything
+// else (the tool's html / app.js / css) is network-first so updates still deploy,
+// falling back to the cached copy when offline. Registration order matters: the
+// lib route is checked before the general one.
+const TOOL_APP_LIBS = /\/tool-apps\/.*(pdf\.worker|pdf-lib|pdf\.min|polygon-clipping|ffmpeg-core)/;
 registerRoute(
-  ({ url }) => /^\/tool-apps\/videoconvert\/(ffmpeg|core)\//.test(url.pathname),
+  ({ url }) => TOOL_APP_LIBS.test(url.pathname) || (url.pathname.startsWith('/tool-apps/') && url.pathname.endsWith('.wasm')),
   async ({ request }) => {
-    const cache = await caches.open('videoconvert-engine');
+    const cache = await caches.open('tool-apps-libs');
     const hit = await cache.match(request);
     if (hit) return hit;
     const resp = await fetch(request);
-    if (resp.ok) await cache.put(request, resp.clone());
+    if (resp && resp.ok) await cache.put(request, resp.clone());
     return resp;
   }
 );
 registerRoute(
-  ({ url }) => url.pathname.startsWith('/tool-apps/videoconvert/'),
+  ({ url }) => url.pathname.startsWith('/tool-apps/'),
   async ({ request }) => {
-    const cache = await caches.open('videoconvert-shell');
+    const cache = await caches.open('tool-apps-shell');
     try {
       const resp = await fetch(request, { cache: 'no-cache' });
-      if (resp.ok) await cache.put(request, resp.clone());
+      if (resp && resp.ok) await cache.put(request, resp.clone());
       return resp;
     } catch {
       return (await cache.match(request)) || Response.error();
@@ -269,7 +275,15 @@ async function doReplayQueue() {
 // a new deploy's worker takes over promptly (the navigations it serves are network-first,
 // so it can't pin a stale shell).
 self.addEventListener('activate', event => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil((async () => {
+    // Existing users get their stale precache trimmed automatically: Workbox's precache
+    // cleanup drops entries no longer in the manifest (the ~4MB of Plan Room / PDF Tools /
+    // converter files we just removed from precache) on this activation. Additionally drop
+    // the short-lived runtime caches from the first converter iteration, now superseded by
+    // the shared tool-apps-libs / tool-apps-shell caches.
+    await Promise.all(['videoconvert-engine', 'videoconvert-shell'].map(n => caches.delete(n).catch(() => {})));
+    await self.clients.claim();
+  })());
 });
 
 // ── Push notifications ─────────────────────────────────────────────────────────

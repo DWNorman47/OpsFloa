@@ -6310,3 +6310,22 @@ engine files incl. the 32MB wasm; network-first-with-cache-fallback for the smal
 Files enter the cache ONLY when someone actually opens the converter; a user who never
 uses it downloads/stores none of it. Precache dropped 159→148 entries. Still offline
 after first use; UI updates still deploy (shell is network-first).
+
+## Trim the shared precache: Tools tool-apps on demand + PDF dedup (2026-09-02)
+The SW precache (downloaded by EVERY user on install, regardless of role/add-ons) was
+~2.0 MB gzip / ~6.6 MB stored — ~70% of it the Plan Room + PDF Tools add-on libs (PDF.js
+worker, pdf-lib, pdf.min), which were also DUPLICATED (byte-identical copies under both
+tool-apps/pdftools/ and tool-apps/shared/).
+- Deduped: pdftools now loads pdf.min/pdf-lib/pdf.worker from ../shared/ (as planroom
+  already does); deleted the 3 local dupes (~1.9 MB). Verified md5-identical first.
+- Generalized the converter's on-demand caching to ALL tool-apps: globIgnores now excludes
+  **/tool-apps/** from precache; sw.js caches tool-app files at runtime (cache-first for the
+  stable vendored libs incl. the 32MB wasm, network-first for each tool's html/app/css).
+  Added the whole /tool-apps/ tree to the NavigationRoute denylist so no tool-app nav is
+  ever served the SPA shell.
+- Existing users self-heal: Workbox precache cleanup drops the now-unlisted ~4MB of tool-app
+  entries on the next SW activation; also explicitly delete the prior iteration's
+  videoconvert-engine/shell runtime caches in activate().
+Result: install download ~2.0 MB -> ~0.62 MB gzip; stored ~6.6 MB -> ~2.0 MB; precache
+148 -> 129 entries, zero tool-app files. Tools still work + still cache offline on first use.
+Full verify green (server 1555, client eslint + vitest 289 + build; i18n parity).

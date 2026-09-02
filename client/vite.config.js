@@ -60,12 +60,13 @@ export default defineConfig({
           '**/*.map',
           'version.json', // polled live; must never be precached/served stale
           '**/version.json',
-          // The whole video-converter tool-app is kept OUT of the shared precache — most
-          // users never convert, so nothing of it should download on every SW install.
-          // Instead sw.js caches its files at RUNTIME (on first fetch), so they only ever
-          // enter the cache for someone who actually opens the converter. It still works
-          // offline after the first run.
-          '**/tool-apps/videoconvert/**',
+          // The Tools tool-apps (Plan Room, PDF Tools, Video Converter, their shared libs)
+          // are add-on/optional tools most users never open — yet they were the bulk of the
+          // shared precache (~4MB, incl. the PDF.js worker + pdf-lib). Keep the whole
+          // tool-apps tree OUT of the precache; sw.js caches these files at RUNTIME (on first
+          // fetch), so they only ever download for a user who actually opens that tool, and
+          // still work offline after the first use.
+          '**/tool-apps/**',
           'bootwatch.js', // the blank-screen recovery watchdog: never precache it, so the
           '**/bootwatch.js', // newest recovery logic is always fetched fresh (must-revalidate)
           '**/react-pdf.browser-*.js',
