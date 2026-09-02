@@ -92,6 +92,18 @@ async function getBytesByUrl(publicUrl) {
   return Buffer.concat(chunks);
 }
 
+// Stream an object's bytes back from R2 by its public URL (server-side proxy, so a
+// browser on another origin needs no R2 CORS, and the API's JWT scopes access).
+// Returns { body, contentType, contentLength } — caller pipes body to the response —
+// or null if the URL isn't one of ours. Streams rather than buffering so a large
+// video download doesn't sit in server memory.
+async function getObjectStreamByUrl(publicUrl) {
+  const key = keyFromPublicUrl(publicUrl);
+  if (!key) return null;
+  const out = await client.send(new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: key }));
+  return { body: out.Body, contentType: out.ContentType || '', contentLength: Number(out.ContentLength || 0) };
+}
+
 // List objects under a prefix (paginated). Returns [{ key, lastModified, size }].
 async function listByPrefix(prefix) {
   const out = [];
@@ -114,5 +126,5 @@ async function deleteByKey(key) {
 
 module.exports = {
   uploadBase64, getPresignedUploadUrl, getObjectMetadataByUrl, deleteByUrl, getBytesByUrl,
-  keyFromPublicUrl, listByPrefix, deleteByKey,
+  getObjectStreamByUrl, keyFromPublicUrl, listByPrefix, deleteByKey,
 };
