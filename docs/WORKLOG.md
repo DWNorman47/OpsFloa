@@ -6344,3 +6344,21 @@ well over an hour, and ffmpeg's progress event doesn't fire for every input. Har
 - Cancel button: terminates the ffmpeg worker mid-encode and resets (next run reloads a fresh
   engine). Added -threads 0 to the H.264 encode.
 Full verify green (server 1555, client eslint + vitest 289 + build; i18n parity).
+
+## Video converter: make it actually finish — auto-remux, robust re-encode (2026-09-02)
+Re-encoding an already-H.264 45MB .mov to H.264 stalled indefinitely (multithreaded
+ffmpeg.wasm parallel encode thrashes/hangs; the core pre-spawns a 32-worker pool, so it's
+not the empty-pool deadlock — it's the encode itself). Root fix: stop re-encoding when it's
+unnecessary.
+- "MP4 (recommended)" now ffprobes the input and REWRAPS (‑c copy, instant) when the video
+  is already H.264 (the common iPhone/QuickTime case) — only re-encodes when the source is
+  known non-H.264 (e.g. HEVC). Unknown/probe-failure → rewrap (instant, non-destructive), not
+  a slow encode.
+- Re-encode path hardened: explicit `-map 0:v:0 -map 0:a:0?` (drops iPhone mebx timed-metadata
+  data streams), `-preset ultrafast`, and audio `-c copy` when already AAC. Added a distinct
+  "force re-encode" option for when a rewrap won't play.
+- Status now distinguishes Checking → Rewrapping (fast) vs Working (re-encode) with the
+  don't-panic note only on the real encode.
+Caveat: can't browser-test encode speed/threading from here; the rewrap path is deterministic
+and fixes the reported file, and the re-encode is now the lightest possible command.
+Full verify green (server 1555, client eslint + vitest 289 + build; i18n parity).
