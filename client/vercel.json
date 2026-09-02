@@ -26,7 +26,6 @@
       ]
     },
     {
-      "comment": "Cross-origin isolation ONLY for the standalone video-converter page, so multithreaded ffmpeg.wasm (SharedArrayBuffer) works. Scoped to this path so COOP/COEP never touch the main app (Stripe, embeds, cross-origin images).",
       "source": "/tool-apps/videoconvert/(.*)",
       "headers": [
         { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
@@ -34,7 +33,6 @@
       ]
     },
     {
-      "comment": "The ffmpeg engine files have stable names and are large (~32MB wasm). Cache them immutably so a rare conversion loads instantly on repeat and works offline, overriding the global max-age=0.",
       "source": "/tool-apps/videoconvert/(ffmpeg|core)/(.*)",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
