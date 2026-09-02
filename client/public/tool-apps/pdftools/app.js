@@ -1,5 +1,5 @@
 'use strict';
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
+pdfjsLib.GlobalWorkerOptions.workerSrc = '../shared/pdf.worker.min.js';
 const { PDFDocument, degrees } = PDFLib;
 
 const $ = id => document.getElementById(id);

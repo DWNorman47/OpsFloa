@@ -6275,3 +6275,57 @@ Judgment calls: streamed rather than buffered the single-file proxy so a large v
 in server memory; reused the existing `downloadMediaZip` i18n string for the ZIP button. ZIP is
 per-project by nature of the endpoint, so it only shows with a specific project filtered.
 Full verify green (server 1555, client build + i18n).
+
+## Offline video converter tool-app (2026-09-02)
+Field videos upload to R2 untouched, so iPhone/QuickTime .mov (HEVC) can be un-playable
+elsewhere. Added an on-device converter — no server transcode, no external app.
+- New static tool-app `client/public/tool-apps/videoconvert/` running **multithreaded**
+  ffmpeg.wasm (self-hosted @ffmpeg/core-mt, ESM). Runs entirely in the browser: MP4/H.264,
+  fast MP4 remux, WebM/VP9, or MP3 audio. Drag/drop or file-pick, plus an IndexedDB
+  blob-handoff so the lightbox "Convert" button preloads the current video.
+- **Cross-origin isolation without touching the rest of the site:** the converter is its
+  own top-level page opened in a new tab; COOP:same-origin + COEP:require-corp are scoped
+  to `/tool-apps/videoconvert/(.*)` in vercel.json ONLY, so the main app (Stripe, embeds,
+  cross-origin images) is unaffected. SharedArrayBuffer works because it's a separate
+  isolated document, not an iframe (an iframe can't isolate under a non-isolated parent).
+- "Convert" button next to Download in both lightboxes (video items), bilingual.
+- SW: added the converter path to the NavigationRoute denylist so offline nav isn't
+  hijacked to the SPA shell; excluded the 32MB wasm from the Workbox precache (it's cached
+  immutably via HTTP headers instead, so it never bloats every user's precache but a rare
+  conversion still works offline after first run).
+Judgment calls / caveats:
+- Vendored the ~32MB MT core into the repo (public/). It's the cost of self-hosted +
+  offline + multithreaded; flagged for reconsideration (Git LFS or single-thread ~ if the
+  repo weight bites).
+- Dev (vite) has no COOP/COEP, so MT is unavailable locally — the page shows a clear
+  notice; it's meant to be exercised on the deployed, isolated URL.
+- HEVC decode depends on the core's codec set; errors surface in the page's Details log.
+Full verify green (server 1555, client eslint + vitest 289 + build; i18n parity).
+
+## Video converter: on-demand caching (2026-09-02, follow-up)
+Reworked so non-users bear zero cost: the converter tool-app is now excluded from the
+shared Workbox precache entirely (globIgnores `**/tool-apps/videoconvert/**`) and cached
+at RUNTIME instead — two sw.js registerRoute handlers (cache-first for the immutable
+engine files incl. the 32MB wasm; network-first-with-cache-fallback for the small shell).
+Files enter the cache ONLY when someone actually opens the converter; a user who never
+uses it downloads/stores none of it. Precache dropped 159→148 entries. Still offline
+after first use; UI updates still deploy (shell is network-first).
+
+## Trim the shared precache: Tools tool-apps on demand + PDF dedup (2026-09-02)
+The SW precache (downloaded by EVERY user on install, regardless of role/add-ons) was
+~2.0 MB gzip / ~6.6 MB stored — ~70% of it the Plan Room + PDF Tools add-on libs (PDF.js
+worker, pdf-lib, pdf.min), which were also DUPLICATED (byte-identical copies under both
+tool-apps/pdftools/ and tool-apps/shared/).
+- Deduped: pdftools now loads pdf.min/pdf-lib/pdf.worker from ../shared/ (as planroom
+  already does); deleted the 3 local dupes (~1.9 MB). Verified md5-identical first.
+- Generalized the converter's on-demand caching to ALL tool-apps: globIgnores now excludes
+  **/tool-apps/** from precache; sw.js caches tool-app files at runtime (cache-first for the
+  stable vendored libs incl. the 32MB wasm, network-first for each tool's html/app/css).
+  Added the whole /tool-apps/ tree to the NavigationRoute denylist so no tool-app nav is
+  ever served the SPA shell.
+- Existing users self-heal: Workbox precache cleanup drops the now-unlisted ~4MB of tool-app
+  entries on the next SW activation; also explicitly delete the prior iteration's
+  videoconvert-engine/shell runtime caches in activate().
+Result: install download ~2.0 MB -> ~0.62 MB gzip; stored ~6.6 MB -> ~2.0 MB; precache
+148 -> 129 entries, zero tool-app files. Tools still work + still cache offline on first use.
+Full verify green (server 1555, client eslint + vitest 289 + build; i18n parity).

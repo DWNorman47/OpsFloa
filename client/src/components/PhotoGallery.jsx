@@ -7,6 +7,7 @@ import Pagination from './Pagination';
 import { SkeletonList } from './Skeleton';
 import FieldFilters from './FieldFilters';
 import { downloadBlob } from '../utils/csv';
+import { openVideoConverter } from '../utils/videoConvert';
 import { useConfirm } from './ConfirmDialog';
 
 import { silentError } from '../errorReporter';
@@ -40,9 +41,10 @@ function MediaTile({ item, onClick }) {
   );
 }
 
-function Lightbox({ items, index, onClose, onDelete, deleting = false, locale = 'en-US' }) {
+function Lightbox({ items, index, onClose, onDelete, deleting = false, locale = 'en-US', lang }) {
   const [idx, setIdx] = useState(index);
   const [downloading, setDownloading] = useState(false);
+  const [converting, setConverting] = useState(false);
   const t = useT();
   const item = items[idx];
   const video = isVideo(item);
@@ -60,6 +62,20 @@ function Lightbox({ items, index, onClose, onDelete, deleting = false, locale = 
       window.open(item.url, '_blank', 'noopener');
     } finally {
       setDownloading(false);
+    }
+  };
+
+  const convertItem = async () => {
+    if (!canDownload || converting) return;
+    setConverting(true);
+    try {
+      const res = await api.get(`/field-reports/photos/${item.id}/download`, { responseType: 'blob' });
+      const ext = (item.url.split('?')[0].split('.').pop() || 'mov').toLowerCase();
+      openVideoConverter({ blob: res.data, filename: `field-video-${item.id}.${ext}`, lang });
+    } catch {
+      window.open(item.url, '_blank', 'noopener');
+    } finally {
+      setConverting(false);
     }
   };
 
@@ -118,14 +134,26 @@ function Lightbox({ items, index, onClose, onDelete, deleting = false, locale = 
         </div>
       </div>
       {canDownload && (
-        <button
-          type="button"
-          style={{ ...styles.downloadBtn, ...(downloading ? { opacity: 0.6, cursor: 'wait' } : {}) }}
-          onClick={e => { e.stopPropagation(); downloadItem(); }}
-          disabled={downloading}
-        >
-          {downloading ? (t.downloading || 'Downloading…') : (t.downloadImage || 'Download')}
-        </button>
+        <div style={styles.actionRow} onClick={e => e.stopPropagation()}>
+          <button
+            type="button"
+            style={{ ...styles.downloadBtn, marginTop: 0, ...(downloading ? { opacity: 0.6, cursor: 'wait' } : {}) }}
+            onClick={downloadItem}
+            disabled={downloading}
+          >
+            {downloading ? (t.downloading || 'Downloading…') : (t.downloadImage || 'Download')}
+          </button>
+          {video && (
+            <button
+              type="button"
+              style={{ ...styles.downloadBtn, marginTop: 0, ...(converting ? { opacity: 0.6, cursor: 'wait' } : {}) }}
+              onClick={convertItem}
+              disabled={converting}
+            >
+              {converting ? (t.opening || 'Opening…') : (t.convertVideo || 'Convert')}
+            </button>
+          )}
+        </div>
       )}
       <div style={styles.navRow} onClick={e => e.stopPropagation()}>
         <button style={{ ...styles.navBtn, ...(idx === 0 ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} aria-label={t.prevPhoto} onClick={() => setIdx(i => Math.max(0, i - 1))} disabled={idx === 0}>{'<'}</button>
@@ -265,6 +293,7 @@ export default function PhotoGallery({ projects, activeProject = '', onProjectCh
           onDelete={deleteMedia}
           deleting={deletingMedia}
           locale={locale}
+          lang={user?.language}
         />
       )}
 
@@ -337,6 +366,7 @@ const styles = {
   caption: { color: '#fff', fontSize: 14, marginBottom: 4 },
   metaLine: { color: 'rgba(255,255,255,0.6)', fontSize: 12, display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap', alignItems: 'center' },
   mapLink: { color: '#60a5fa', textDecoration: 'none', fontWeight: 600 },
+  actionRow: { display: 'flex', gap: 10, marginTop: 14, flexWrap: 'wrap', justifyContent: 'center' },
   downloadBtn: { marginTop: 14, background: 'rgba(255,255,255,0.16)', color: '#fff', border: '1px solid rgba(255,255,255,0.28)', borderRadius: 999, padding: '9px 20px', fontSize: 14, fontWeight: 800, cursor: 'pointer', lineHeight: 1 },
   navRow: { display: 'flex', alignItems: 'center', gap: 20, marginTop: 16 },
   navBtn: { background: 'rgba(255,255,255,0.15)', border: 'none', color: '#fff', fontSize: 24, width: 44, height: 44, borderRadius: '50%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' },
