@@ -6329,3 +6329,18 @@ tool-apps/pdftools/ and tool-apps/shared/).
 Result: install download ~2.0 MB -> ~0.62 MB gzip; stored ~6.6 MB -> ~2.0 MB; precache
 148 -> 129 entries, zero tool-app files. Tools still work + still cache offline on first use.
 Full verify green (server 1555, client eslint + vitest 289 + build; i18n parity).
+
+## Video converter UX: don't-panic messaging + Cancel + live progress (2026-09-02)
+A user re-encoded a 45MB H.264 .mov to MP4/H.264 and it sat "Converting…" for an hour with
+a dead progress bar and no way out. In-browser re-encoding of a large clip genuinely can take
+well over an hour, and ffmpeg's progress event doesn't fire for every input. Hardened the tool:
+- Clear guidance: a standing tip to try "MP4 · fast (no re-encode)" first (iPhone/QuickTime
+  .mov is usually already H.264 → instant remux); a stronger ⚠ warning when a re-encode format
+  is picked for a >25MB file, stating it can take well over an hour and is NOT frozen.
+- During a re-encode: a persistent reassurance note ("Working — not stuck… leave the tab open
+  or Cancel and use fast"), a live elapsed-time counter on the button, and a progress bar that
+  now also derives % from ffmpeg's own Duration/time= log lines (works when the progress event
+  is silent).
+- Cancel button: terminates the ffmpeg worker mid-encode and resets (next run reloads a fresh
+  engine). Added -threads 0 to the H.264 encode.
+Full verify green (server 1555, client eslint + vitest 289 + build; i18n parity).

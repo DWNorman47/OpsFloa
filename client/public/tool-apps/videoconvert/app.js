@@ -31,6 +31,13 @@ const STR = {
     fmt_remux: 'MP4 · fast (no re-encode, only if already H.264)',
     fmt_webm: 'WebM · VP9',
     fmt_mp3: 'Audio only · MP3',
+    hint_remux: 'Tip: iPhone / QuickTime videos are usually already H.264 — try "MP4 · fast (no re-encode)" first. It finishes in seconds. Only use a re-encode option if that file won’t play (HEVC) or you need it smaller.',
+    hint_slow: '⚠ Heads-up: re-encoding re-compresses every frame in your browser. For a large, long, or 4K video this can take well over an hour — that’s normal, it is NOT frozen. "MP4 · fast" is instant if the video is already H.264, so try that first.',
+    slow_running: 'Working — not stuck. A large video can take well over an hour to re-encode. You don’t need to watch it: leave this tab open (you can switch to other tabs) and come back. Or hit Cancel and use "MP4 · fast".',
+    cancel: 'Cancel',
+    cancelling: 'Cancelling…',
+    canceled: 'Canceled.',
+    converting_t: (s) => `Converting… (${fmtElapsed(s)} elapsed)`,
   },
   es: {
     title: 'Convertidor de video',
@@ -56,6 +63,13 @@ const STR = {
     fmt_remux: 'MP4 · rápido (sin recodificar, solo si ya es H.264)',
     fmt_webm: 'WebM · VP9',
     fmt_mp3: 'Solo audio · MP3',
+    hint_remux: 'Consejo: los videos de iPhone / QuickTime normalmente ya son H.264 — prueba primero "MP4 · rápido (sin recodificar)". Termina en segundos. Usa una opción de recodificación solo si ese archivo no se reproduce (HEVC) o lo necesitas más pequeño.',
+    hint_slow: '⚠ Aviso: recodificar recomprime cada fotograma en tu navegador. Para un video grande, largo o 4K esto puede tardar más de una hora — es normal, NO está congelado. "MP4 · rápido" es instantáneo si el video ya es H.264, así que pruébalo primero.',
+    slow_running: 'Trabajando — no está atascado. Un video grande puede tardar más de una hora en recodificarse. No necesitas mirarlo: deja esta pestaña abierta (puedes cambiar de pestaña) y vuelve. O pulsa Cancelar y usa "MP4 · rápido".',
+    cancel: 'Cancelar',
+    cancelling: 'Cancelando…',
+    canceled: 'Cancelado.',
+    converting_t: (s) => `Convirtiendo… (${fmtElapsed(s)} transcurrido)`,
   },
 };
 const T = STR[lang];
@@ -65,8 +79,8 @@ const $ = id => document.getElementById(id);
 const els = {
   drop: $('drop'), file: $('file'), picker: $('picker'), chosen: $('chosen'),
   fname: $('fname'), fmeta: $('fmeta'), change: $('change'), format: $('format'),
-  convert: $('convert'), progwrap: $('progwrap'), bar: $('bar'), status: $('status'),
-  logbox: $('logbox'), warn: $('isolation-warn'),
+  convert: $('convert'), cancel: $('cancel'), progwrap: $('progwrap'), bar: $('bar'), status: $('status'),
+  logbox: $('logbox'), warn: $('isolation-warn'), fmtHint: $('fmt-hint'), convNote: $('conv-note'),
 };
 // static text
 $('t-title').textContent = T.title;
@@ -79,11 +93,23 @@ $('t-log').textContent = T.log;
 $('t-foot').textContent = T.foot;
 els.convert.textContent = T.convert;
 els.change.textContent = T.change;
+els.cancel.textContent = T.cancel;
+
+// Steer users to the instant path. Re-encoding is CPU-heavy in the browser; a plain
+// remux is seconds. Show the general tip, and a stronger warning when a re-encode
+// format is chosen for a large file.
+const REENCODE = new Set(['mp4', 'webm', 'mp3']);
+function updateHint() {
+  const big = currentFile && currentFile.size > 25 * 1024 * 1024;
+  els.fmtHint.textContent = (REENCODE.has(els.format.value) && big) ? T.hint_slow : T.hint_remux;
+}
+els.fmtHint.textContent = T.hint_remux;
+els.format.addEventListener('change', updateHint);
 
 // format menu
 const FORMATS = [
   { v: 'mp4', label: T.fmt_mp4, ext: 'mp4', mime: 'video/mp4',
-    args: (i, o) => ['-i', i, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', o] },
+    args: (i, o) => ['-i', i, '-threads', '0', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', o] },
   { v: 'remux', label: T.fmt_remux, ext: 'mp4', mime: 'video/mp4',
     args: (i, o) => ['-i', i, '-c', 'copy', '-movflags', '+faststart', o] },
   { v: 'webm', label: T.fmt_webm, ext: 'webm', mime: 'video/webm',
@@ -104,6 +130,13 @@ function humanSize(n) {
   let i = 0, v = n;
   while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
   return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${u[i]}`;
+}
+function fmtElapsed(totalSec) {
+  const s = Math.max(0, Math.floor(totalSec));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  if (h) return `${h}h ${String(m).padStart(2, '0')}m`;
+  if (m) return `${m}m ${String(sec).padStart(2, '0')}s`;
+  return `${sec}s`;
 }
 function log(line) {
   els.logbox.textContent += (els.logbox.textContent ? '\n' : '') + line;
@@ -140,6 +173,7 @@ function showChosen(name, size) {
   setStatus('');
   els.progwrap.classList.add('hidden');
   els.bar.style.width = '0';
+  updateHint();
 }
 async function setFileFromBlob(blob, name) {
   const data = new Uint8Array(await blob.arrayBuffer());
@@ -206,13 +240,29 @@ async function takeHandoff(key) {
 // ── ffmpeg engine (lazy) ─────────────────────────────────────────────────────────
 let ffmpeg = null;
 let loadingPromise = null;
+let totalDurationSec = 0;
+let cancelled = false;
+let elapsedTimer = null;
 function loadEngine() {
   if (loadingPromise) return loadingPromise;
   loadingPromise = (async () => {
     const inst = new FFmpeg();
-    inst.on('log', ({ message }) => log(message));
+    inst.on('log', ({ message }) => {
+      log(message);
+      // The progress event doesn't fire for every input, so also derive % from ffmpeg's
+      // own log lines: total "Duration:" and per-frame "time=". Keeps the bar alive.
+      const d = /Duration: (\d+):(\d+):(\d+(?:\.\d+)?)/.exec(message);
+      if (d) totalDurationSec = (+d[1]) * 3600 + (+d[2]) * 60 + parseFloat(d[3]);
+      const tm = /time=\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(message);
+      if (tm && totalDurationSec > 0) {
+        const cur = (+tm[1]) * 3600 + (+tm[2]) * 60 + parseFloat(tm[3]);
+        const pct = Math.max(0, Math.min(99, Math.round((cur / totalDurationSec) * 100)));
+        els.bar.style.width = pct + '%';
+      }
+    });
     inst.on('progress', ({ progress }) => {
-      const pct = Math.max(0, Math.min(100, Math.round((progress || 0) * 100)));
+      if (!(progress > 0)) return;
+      const pct = Math.max(0, Math.min(99, Math.round(progress * 100)));
       els.bar.style.width = pct + '%';
     });
     setStatus(T.loadingEngine);
@@ -229,29 +279,64 @@ function loadEngine() {
 
 // ── convert ──────────────────────────────────────────────────────────────────────
 let lastOutput = null; // { blob, filename }
+
+function startElapsed() {
+  const t0 = Date.now();
+  els.convert.textContent = T.converting_t(0);
+  elapsedTimer = setInterval(() => {
+    els.convert.textContent = T.converting_t((Date.now() - t0) / 1000);
+  }, 1000);
+}
+function stopElapsed() {
+  if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
+  els.convert.textContent = T.convert;
+}
+
+// Cancel: terminate the worker (frees it mid-encode) and reset so the next run
+// reloads a fresh engine. The pending exec() rejects → the handler's catch runs.
+els.cancel.addEventListener('click', () => {
+  if (!ffmpeg) return;
+  cancelled = true;
+  els.cancel.disabled = true;
+  els.cancel.textContent = T.cancelling;
+  try { ffmpeg.terminate(); } catch { /* already gone */ }
+  ffmpeg = null;
+  loadingPromise = null;
+});
+
 els.convert.addEventListener('click', async () => {
   if (!currentFile) return;
   const fmt = FORMATS.find(f => f.v === els.format.value) || FORMATS[0];
   const inName = 'input' + (currentFile.name.includes('.') ? currentFile.name.slice(currentFile.name.lastIndexOf('.')) : '');
   const outName = 'output.' + fmt.ext;
+  const reencode = REENCODE.has(fmt.v);
 
+  cancelled = false;
+  totalDurationSec = 0;
   els.convert.disabled = true;
   els.change.disabled = true;
-  els.convert.textContent = T.converting;
   els.progwrap.classList.remove('hidden');
   els.bar.style.width = '0';
   els.logbox.textContent = '';
+  // Re-encoding can run a very long time — say so plainly so no one thinks it froze.
+  if (reencode) { els.convNote.textContent = T.slow_running; els.convNote.classList.remove('hidden'); }
+  els.cancel.disabled = false;
+  els.cancel.textContent = T.cancel;
+  els.cancel.classList.remove('hidden');
 
   try {
     if (!ffmpeg) {
       try { await loadEngine(); }
       catch (e) { log(String(e)); setStatus(T.engineFailed); return; }
     }
+    if (cancelled) { setStatus(T.canceled); return; }
     setStatus(T.reading);
     await ffmpeg.writeFile(inName, currentFile.data);
 
     setStatus(T.converting);
+    startElapsed();
     const code = await ffmpeg.exec(fmt.args(inName, outName));
+    stopElapsed();
     if (code !== 0) { setStatus(T.failed); return; }
 
     const out = await ffmpeg.readFile(outName);
@@ -277,10 +362,13 @@ els.convert.addEventListener('click', async () => {
     try { await ffmpeg.deleteFile(inName); await ffmpeg.deleteFile(outName); } catch { /* best effort */ }
   } catch (e) {
     log(String(e && e.message ? e.message : e));
-    setStatus(T.failed);
+    setStatus(cancelled ? T.canceled : T.failed);
   } finally {
+    stopElapsed();
     els.convert.disabled = false;
     els.change.disabled = false;
-    els.convert.textContent = T.convert;
+    els.cancel.classList.add('hidden');
+    els.convNote.classList.add('hidden');
+    els.progwrap.classList.add('hidden');
   }
 });
