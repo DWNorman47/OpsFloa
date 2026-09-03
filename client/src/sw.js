@@ -37,9 +37,15 @@ registerRoute(
     const cache = await caches.open('tool-apps-libs');
     const hit = await cache.match(request);
     if (hit) return hit;
-    const resp = await fetch(request);
-    if (resp && resp.ok) await cache.put(request, resp.clone());
-    return resp;
+    try {
+      const resp = await fetch(request);
+      // Caching is best-effort — a put failure (quota, opaque/redirected response) must
+      // never break serving the fetched asset.
+      if (resp && resp.ok) cache.put(request, resp.clone()).catch(() => {});
+      return resp;
+    } catch {
+      return Response.error(); // offline + not cached — unavoidable
+    }
   }
 );
 registerRoute(
@@ -48,7 +54,7 @@ registerRoute(
     const cache = await caches.open('tool-apps-shell');
     try {
       const resp = await fetch(request, { cache: 'no-cache' });
-      if (resp && resp.ok) await cache.put(request, resp.clone());
+      if (resp && resp.ok) cache.put(request, resp.clone()).catch(() => {}); // best-effort
       return resp;
     } catch {
       return (await cache.match(request)) || Response.error();

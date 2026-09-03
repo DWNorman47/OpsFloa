@@ -6382,3 +6382,47 @@ Verify: set the env var on stage; its Neon branch should flip Active→Idle and 
 Not touched (separate, prod-affecting): prod's own 20s poller keeps main awake — gating it so
 prod can suspend overnight is a follow-up to discuss.
 Full verify green (server 1555, client build + i18n).
+
+## Transcription poller: bounded polling window (2026-09-03)
+The 20s transcription sweep queried the DB unconditionally 24/7, keeping Neon awake (prod
+half of the compute bill). Gated it so it only runs inside a bounded window:
+- `activeUntil` deadline; a submit/retry (via scheduleEarlyPoll → notePendingTranscription)
+  sets it to now + 45min. Cron checks `Date.now() > activeUntil` FIRST and returns with zero
+  DB queries when the window is closed → DB idles → Neon suspends.
+- Anti-"forever" safety (the user's concern): the deadline is only ever set to a bounded
+  now+45min (nothing extends it to infinity); a recording stuck in 'processing' is
+  force-failed after 30min (< the window) so a bad row can neither hold the window open nor
+  linger as a zombie. Worst case: polls ≤45min after the last real submit, then silent.
+- Boot opens one catch-up window (resolve leftovers from a restart), self-closes on the
+  first sweep if nothing pending.
+- Sweep self-closes the window as soon as no 'processing' rows remain.
+New test (transcriptionPollerGate) covers: stale row force-failed (not polled), fresh row
+polled, idle = single query + no external calls. Full verify green (server 1558, client build).
+
+## Prod Neon idling: health-check, booking, live-session sweep (2026-09-03)
+Trimmed the continuous prod DB-touchers so main can idle when unused:
+- `/api/health`: DB `SELECT 1` now runs ONLY on `/api/health?deep=1`. The default probe (any
+  path Render pings) never touches the DB → a recurring health check can't keep Neon awake.
+  Deep DB check is on-demand. (Replaced the earlier DISABLE_BACKGROUND_JOBS special-case.)
+- Booking reminders (15-min DB poll for Online Booking, not in use): OFF by default in
+  `cron.js`; re-enable with `ENABLE_BOOKING_REMINDERS=true` if booking gets used.
+- `liveSessionSweep` (was every 15 min unconditionally): now gated to an armed window —
+  creating a live session arms it (`noteLiveSessionActive`, wired in routes/liveSessions.js via
+  lazy require to dodge the circular import); the sweep disarms only when ZERO active sessions
+  remain, so overlapping sessions keep it armed until the last ends. Idle → zero queries.
+  Self-terminating (abandoned sessions get ended → set empties → disarms). Tests:
+  liveSessionSweepGate.test.js.
+Full verify green (server 1560, client build + i18n).
+
+## Pre-prod audit + trial-expiry bug fix (2026-09-03)
+- BUG FIX: two hourly jobs both flipped 'trial'→'trial_expired' — the silent `expireOldTrials`
+  (cron.js) raced the notifying `expireTrials` (jobs/), and if the silent one won, the
+  "trial ended" email never sent (0 rows for the notifier). Removed `expireOldTrials`;
+  jobs/expireTrials.js owns expiry (flip + email) alone.
+- Pre-prod hardening from auditing today's changes:
+  - sw.js tool-app runtime routes: `cache.put` is now best-effort (`.catch`, not awaited) and
+    the cache-first lib route wraps fetch — a put failure (quota/opaque/redirected) or offline
+    fetch can no longer reject the handler and break tool-app loading for every user.
+  - transcriptionPoller: raised STALE_FAIL 30→60min and POLL_WINDOW 45→90min so a legitimately
+    long transcription isn't force-failed prematurely (only a genuinely stuck job hits it).
+Full verify green (server 1560, client build + i18n).
