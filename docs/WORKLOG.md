@@ -6398,3 +6398,18 @@ half of the compute bill). Gated it so it only runs inside a bounded window:
 - Sweep self-closes the window as soon as no 'processing' rows remain.
 New test (transcriptionPollerGate) covers: stale row force-failed (not polled), fresh row
 polled, idle = single query + no external calls. Full verify green (server 1558, client build).
+
+## Prod Neon idling: health-check, booking, live-session sweep (2026-09-03)
+Trimmed the continuous prod DB-touchers so main can idle when unused:
+- `/api/health`: DB `SELECT 1` now runs ONLY on `/api/health?deep=1`. The default probe (any
+  path Render pings) never touches the DB → a recurring health check can't keep Neon awake.
+  Deep DB check is on-demand. (Replaced the earlier DISABLE_BACKGROUND_JOBS special-case.)
+- Booking reminders (15-min DB poll for Online Booking, not in use): OFF by default in
+  `cron.js`; re-enable with `ENABLE_BOOKING_REMINDERS=true` if booking gets used.
+- `liveSessionSweep` (was every 15 min unconditionally): now gated to an armed window —
+  creating a live session arms it (`noteLiveSessionActive`, wired in routes/liveSessions.js via
+  lazy require to dodge the circular import); the sweep disarms only when ZERO active sessions
+  remain, so overlapping sessions keep it armed until the last ends. Idle → zero queries.
+  Self-terminating (abandoned sessions get ended → set empties → disarms). Tests:
+  liveSessionSweepGate.test.js.
+Full verify green (server 1560, client build + i18n).

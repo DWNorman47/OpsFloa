@@ -442,20 +442,26 @@ function startCron() {
     return;
   }
 
+  // Booking reminders are a 15-minute DB poll for the Online Booking feature. It isn't
+  // in use, so it's OFF by default — a 15-min sweep over an empty table would just keep
+  // Neon's compute awake for nothing. Re-enable by setting ENABLE_BOOKING_REMINDERS=true
+  // if online booking starts being used (the 15-min cadence keeps 1-hour reminders punctual).
+  const bookingRemindersOn = process.env.ENABLE_BOOKING_REMINDERS === 'true';
+
   // Run immediately on startup (catches any missed window from restart)
   sendShiftReminders();
   sendSignoffReminders();
   expireOldTrials();
   maintainActiveClocks();
-  sendBookingReminders();
+  if (bookingRemindersOn) sendBookingReminders();
   // Then run every hour (every 15 min for bookings — finer-grained since
   // a 1h reminder needs catching within a 15-min slot).
   setInterval(sendShiftReminders, 60 * 60 * 1000);
   setInterval(sendSignoffReminders, 60 * 60 * 1000);
   setInterval(expireOldTrials, 60 * 60 * 1000);
   setInterval(maintainActiveClocks, 60 * 60 * 1000);
-  setInterval(sendBookingReminders, 15 * 60 * 1000);
-  console.log('[cron] Shift / sign-off / trial-expiry / stale-clock / booking-reminder crons started');
+  if (bookingRemindersOn) setInterval(sendBookingReminders, 15 * 60 * 1000);
+  console.log(`[cron] Shift / sign-off / trial-expiry / stale-clock crons started${bookingRemindersOn ? ' + booking reminders' : ' (booking reminders OFF)'}`);
 }
 
 module.exports = { startCron };

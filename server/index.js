@@ -170,13 +170,12 @@ app.get('/api/health', async (req, res) => {
   const checks = {};
   let healthy = true;
 
-  // On a keep-idle server (staging/dev, DISABLE_BACKGROUND_JOBS=true) the whole point
-  // is to let Neon suspend when unused — so a recurring health probe must NOT run a DB
-  // query, or it would keep the branch awake around the clock. Skip the DB check there;
-  // use /api/health/live (never touches the DB) as the recurring liveness probe.
-  if (process.env.DISABLE_BACKGROUND_JOBS === 'true') {
-    checks.db = { ok: true, skipped: 'idle-server' };
-  } else {
+  // The DB check runs ONLY on an explicit deep probe (/api/health?deep=1). A recurring
+  // uptime/health probe must never query the DB, or it keeps Neon awake around the clock
+  // (the whole reason the prod/staging DBs weren't scaling to zero). For liveness use
+  // /api/health/live (never touches the DB) or plain /api/health; for a real DB check,
+  // hit /api/health?deep=1 on demand.
+  if (req.query.deep === '1' || req.query.deep === 'true') {
     try {
       const start = Date.now();
       await Promise.race([
@@ -188,6 +187,8 @@ app.get('/api/health', async (req, res) => {
       checks.db = { ok: false, error: err.message };
       healthy = false;
     }
+  } else {
+    checks.db = { skipped: 'pass ?deep=1 to check the database' };
   }
 
   const mem = process.memoryUsage();
