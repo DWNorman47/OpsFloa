@@ -6329,3 +6329,56 @@ tool-apps/pdftools/ and tool-apps/shared/).
 Result: install download ~2.0 MB -> ~0.62 MB gzip; stored ~6.6 MB -> ~2.0 MB; precache
 148 -> 129 entries, zero tool-app files. Tools still work + still cache offline on first use.
 Full verify green (server 1555, client eslint + vitest 289 + build; i18n parity).
+
+## Video converter UX: don't-panic messaging + Cancel + live progress (2026-09-02)
+A user re-encoded a 45MB H.264 .mov to MP4/H.264 and it sat "Converting…" for an hour with
+a dead progress bar and no way out. In-browser re-encoding of a large clip genuinely can take
+well over an hour, and ffmpeg's progress event doesn't fire for every input. Hardened the tool:
+- Clear guidance: a standing tip to try "MP4 · fast (no re-encode)" first (iPhone/QuickTime
+  .mov is usually already H.264 → instant remux); a stronger ⚠ warning when a re-encode format
+  is picked for a >25MB file, stating it can take well over an hour and is NOT frozen.
+- During a re-encode: a persistent reassurance note ("Working — not stuck… leave the tab open
+  or Cancel and use fast"), a live elapsed-time counter on the button, and a progress bar that
+  now also derives % from ffmpeg's own Duration/time= log lines (works when the progress event
+  is silent).
+- Cancel button: terminates the ffmpeg worker mid-encode and resets (next run reloads a fresh
+  engine). Added -threads 0 to the H.264 encode.
+Full verify green (server 1555, client eslint + vitest 289 + build; i18n parity).
+
+## Video converter: make it actually finish — auto-remux, robust re-encode (2026-09-02)
+Re-encoding an already-H.264 45MB .mov to H.264 stalled indefinitely (multithreaded
+ffmpeg.wasm parallel encode thrashes/hangs; the core pre-spawns a 32-worker pool, so it's
+not the empty-pool deadlock — it's the encode itself). Root fix: stop re-encoding when it's
+unnecessary.
+- "MP4 (recommended)" now ffprobes the input and REWRAPS (‑c copy, instant) when the video
+  is already H.264 (the common iPhone/QuickTime case) — only re-encodes when the source is
+  known non-H.264 (e.g. HEVC). Unknown/probe-failure → rewrap (instant, non-destructive), not
+  a slow encode.
+- Re-encode path hardened: explicit `-map 0:v:0 -map 0:a:0?` (drops iPhone mebx timed-metadata
+  data streams), `-preset ultrafast`, and audio `-c copy` when already AAC. Added a distinct
+  "force re-encode" option for when a rewrap won't play.
+- Status now distinguishes Checking → Rewrapping (fast) vs Working (re-encode) with the
+  don't-panic note only on the real encode.
+Caveat: can't browser-test encode speed/threading from here; the rewrap path is deterministic
+and fixes the reported file, and the re-encode is now the lightest possible command.
+Full verify green (server 1555, client eslint + vitest 289 + build; i18n parity).
+
+## Neon compute: let staging idle its DB (2026-09-03)
+Root cause of the ~$80 Neon "Compute" (found by reading the actual invoices + branch usage,
+not guessing): flat pricing (~$0.106/CU-hr), and CU-hours ~doubled in August because the
+STAGE branch went always-active. Mechanism: stage's Render service was upgraded to paid ($7)
+to stay warm (fast loads); an always-on server runs all background jobs 24/7, and those jobs
+poll the DB (transcription sweep every 20s, others every 15m), so the stage Neon branch never
+scales to zero (~12 CU-hrs/day ≈ ~$38/mo for an unused staging DB). main is similarly kept
+awake by prod's jobs (its July baseline). The nightly→weekly prod→stage sync fix from before
+was intact but minor (DB is only ~50MB, so dump/restore is cheap).
+Fix (keeps the fast always-on stage server, removes the wasted DB polling):
+- `index.js`: gate ALL background-job startup behind `DISABLE_BACKGROUND_JOBS`. Default ON so
+  production is unchanged; set `DISABLE_BACKGROUND_JOBS=true` on the stage (and dev) Render
+  service → no scheduled DB queries → stage Neon branch suspends when idle.
+- `/api/health`: on a keep-idle server (same flag) skip the `SELECT 1` so a recurring health
+  probe can't keep the branch awake; `/api/health/live` (already DB-free) is the liveness probe.
+Verify: set the env var on stage; its Neon branch should flip Active→Idle and CU-hrs flatten.
+Not touched (separate, prod-affecting): prod's own 20s poller keeps main awake — gating it so
+prod can suspend overnight is a follow-up to discuss.
+Full verify green (server 1555, client build + i18n).

@@ -58,6 +58,8 @@
     .ghost { background: transparent; color: var(--ink); border-color: var(--line); }
     .progress { height: 10px; background: var(--line); border-radius: 999px; overflow: hidden; margin-top: 16px; }
     .bar { height: 100%; width: 0; background: var(--accent); transition: width .2s ease; }
+    .fmthint { margin: 8px 2px 0; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+    .convnote { margin: 8px 0 0; padding: 10px 12px; font-size: 13px; line-height: 1.5; border-radius: 10px; background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-ink); }
     .status { margin-top: 10px; font-size: 14px; color: var(--muted); min-height: 20px; }
     .warn { background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-ink); border-radius: 10px; padding: 12px 14px; font-size: 13.5px; }
     details.log { margin-top: 14px; }
@@ -99,13 +101,16 @@
           <span id="t-format">Convert to</span>
           <select id="format"></select>
         </label>
+        <p class="fmthint" id="fmt-hint"></p>
 
         <div class="btnrow">
           <button type="button" class="primary" id="convert">Convert</button>
+          <button type="button" class="ghost hidden" id="cancel">Cancel</button>
         </div>
 
         <div class="progress hidden" id="progwrap"><div class="bar" id="bar"></div></div>
         <div class="status" id="status"></div>
+        <p class="convnote hidden" id="conv-note"></p>
 
         <details class="log">
           <summary id="t-log">Details</summary>
