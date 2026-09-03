@@ -6413,3 +6413,16 @@ Trimmed the continuous prod DB-touchers so main can idle when unused:
   Self-terminating (abandoned sessions get ended → set empties → disarms). Tests:
   liveSessionSweepGate.test.js.
 Full verify green (server 1560, client build + i18n).
+
+## Pre-prod audit + trial-expiry bug fix (2026-09-03)
+- BUG FIX: two hourly jobs both flipped 'trial'→'trial_expired' — the silent `expireOldTrials`
+  (cron.js) raced the notifying `expireTrials` (jobs/), and if the silent one won, the
+  "trial ended" email never sent (0 rows for the notifier). Removed `expireOldTrials`;
+  jobs/expireTrials.js owns expiry (flip + email) alone.
+- Pre-prod hardening from auditing today's changes:
+  - sw.js tool-app runtime routes: `cache.put` is now best-effort (`.catch`, not awaited) and
+    the cache-first lib route wraps fetch — a put failure (quota/opaque/redirected) or offline
+    fetch can no longer reject the handler and break tool-app loading for every user.
+  - transcriptionPoller: raised STALE_FAIL 30→60min and POLL_WINDOW 45→90min so a legitimately
+    long transcription isn't force-failed prematurely (only a genuinely stuck job hits it).
+Full verify green (server 1560, client build + i18n).

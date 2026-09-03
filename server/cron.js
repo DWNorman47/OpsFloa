@@ -156,28 +156,10 @@ async function sendSignoffReminders() {
   }
 }
 
-// Flip expired-trial companies from 'trial' to 'trial_expired' in the DB.
-// The /me endpoint already resolves this at read time via
-// effectiveSubscriptionStatus, so worker clients see the change immediately.
-// This job just keeps the canonical DB state tidy so admin filters and
-// SuperAdmin dashboards don't keep listing expired trials as active.
-async function expireOldTrials() {
-  try {
-    const result = await pool.query(
-      `UPDATE companies
-          SET subscription_status = 'trial_expired'
-        WHERE subscription_status = 'trial'
-          AND trial_ends_at IS NOT NULL
-          AND trial_ends_at < NOW()
-        RETURNING id, name`
-    );
-    if (result.rowCount > 0) {
-      console.log(`[cron] expireOldTrials: flipped ${result.rowCount} companies to trial_expired`);
-    }
-  } catch (err) {
-    console.error('[cron] expireOldTrials error:', err);
-  }
-}
+// NOTE: trial expiry lives in jobs/expireTrials.js (it flips 'trial' → 'trial_expired'
+// AND emails/notifies the admins). A second silent flip used to run here too, but the two
+// raced: whichever ran first flipped the row, and if this one won, jobs/expireTrials saw
+// 0 rows and never sent the "trial ended" email. Removed — expireTrials owns it now.
 
 // Find any active_clock rows older than STALE_CLOCK_HOURS that haven't
 // been alerted on yet, and notify the company's admins. Doesn't auto-finalize
@@ -451,14 +433,12 @@ function startCron() {
   // Run immediately on startup (catches any missed window from restart)
   sendShiftReminders();
   sendSignoffReminders();
-  expireOldTrials();
   maintainActiveClocks();
   if (bookingRemindersOn) sendBookingReminders();
   // Then run every hour (every 15 min for bookings — finer-grained since
   // a 1h reminder needs catching within a 15-min slot).
   setInterval(sendShiftReminders, 60 * 60 * 1000);
   setInterval(sendSignoffReminders, 60 * 60 * 1000);
-  setInterval(expireOldTrials, 60 * 60 * 1000);
   setInterval(maintainActiveClocks, 60 * 60 * 1000);
   if (bookingRemindersOn) setInterval(sendBookingReminders, 15 * 60 * 1000);
   console.log(`[cron] Shift / sign-off / trial-expiry / stale-clock crons started${bookingRemindersOn ? ' + booking reminders' : ' (booking reminders OFF)'}`);

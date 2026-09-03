@@ -152,8 +152,11 @@ async function pollRecordingById(recordingId) {
 // in 'processing' is force-failed after STALE_FAIL_MS (< the window) so a bad row can
 // neither hold the window open nor linger as a zombie. Worst case: the sweep runs at
 // most POLL_WINDOW_MS after the last real submission, then goes silent.
-const POLL_WINDOW_MS = 45 * 60 * 1000; // stop polling this long after the last submission
-const STALE_FAIL_MS = 30 * 60 * 1000;  // a 'processing' row older than this is force-failed
+const POLL_WINDOW_MS = 90 * 60 * 1000; // stop polling this long after the last submission
+const STALE_FAIL_MS = 60 * 60 * 1000;  // a 'processing' row older than this is force-failed
+// STALE_FAIL_MS is generous on purpose: AssemblyAI finishes well under an hour for any
+// realistic clip, so only a genuinely stuck job (provider lost it) hits it. Keep the
+// window > the stale cutoff so a stuck row is reaped while the window is still open.
 
 let activeUntil = 0;
 

@@ -24,7 +24,7 @@ beforeEach(() => {
 });
 
 test('force-fails a stuck (stale) recording instead of polling it forever', async () => {
-  const OLD = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // 60 min old > 30 min cutoff
+  const OLD = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(); // 3h old, well past the stale cutoff
   pool.query.mockImplementation(async (sql) => {
     if (/SELECT id, created_at FROM recordings/.test(sql)) return { rows: [{ id: 7, created_at: OLD }] };
     if (/UPDATE\s+recordings\s+SET status = 'failed'/.test(sql)) return { rowCount: 1 };
