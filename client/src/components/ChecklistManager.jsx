@@ -10,6 +10,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import api from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { langToLocale } from '../utils';
+import { downloadBlob } from '../utils/csv';
 import { useT } from '../hooks/useT';
 import Pagination from './Pagination';
 import { SkeletonList } from './Skeleton';
@@ -341,7 +342,7 @@ function FillForm({ templates, projects, onSubmitted, onCancel, defaultProjectId
 
 // ── Submission Card ───────────────────────────────────────────────────────────
 
-function SubmissionCard({ sub, isAdmin, onDeleted }) {
+function SubmissionCard({ sub, isAdmin, onDeleted, companyName }) {
   const t = useT();
   const { user } = useAuth();
   const locale = langToLocale(user?.language);
@@ -349,7 +350,51 @@ function SubmissionCard({ sub, isAdmin, onDeleted }) {
   const [deleting, setDeleting] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const [pdfGenerating, setPdfGenerating] = useState(false);
   const items = sub.template_items ?? [];
+
+  const downloadPdf = async () => {
+    setPdfGenerating(true);
+    try {
+      const [{ pdf }, { ChecklistDocument }] = await Promise.all([
+        import('@react-pdf/renderer'),
+        import('./ChecklistPDF'),
+      ]);
+      const pdfItems = items.map((item, i) => {
+        const ans = checklistAnswer(sub.answers, item, i);
+        if (item.type === 'check') {
+          return { mark: ans === true ? 'Yes' : 'No', done: ans === true, label: item.label };
+        }
+        return { mark: '•', done: !!ans, label: item.label, answer: ans ? String(ans) : '' };
+      });
+      const meta = [
+        { label: t.pdfDateLabel, value: formatChecklistDate(sub.check_date, locale) },
+        sub.project_name ? { label: t.pdfProjectLabel, value: sub.project_name } : null,
+        sub.submitted_by_name ? { label: t.submittedBy, value: sub.submitted_by_name } : null,
+        sub.template_type ? { label: t.pdfTypeLabel, value: sub.template_type } : null,
+      ].filter(Boolean);
+      const blob = await pdf(
+        <ChecklistDocument
+          companyName={companyName}
+          title={sub.template_name}
+          subtitle={t.pdfChecklistReport}
+          meta={meta}
+          items={pdfItems}
+          notes={sub.notes}
+          notesLabel={t.pdfNotesLabel}
+          noItemsLabel={t.pdfNoItemsLabel}
+          t={t}
+          language={user?.language}
+        />
+      ).toBlob();
+      const safeName = String(sub.template_name || 'checklist').replace(/[^a-z0-9]/gi, '_');
+      downloadBlob(blob, `checklist-${safeName}-${String(sub.check_date || '').slice(0, 10)}.pdf`);
+    } catch {
+      setDeleteError(t.failedToDelete);
+    } finally {
+      setPdfGenerating(false);
+    }
+  };
 
   const checkItems = items.filter(i => i.type === 'check');
   const checkedCount = checkItems.filter(ci => checklistAnswer(sub.answers, ci, items.indexOf(ci)) === true).length;
@@ -408,19 +453,25 @@ function SubmissionCard({ sub, isAdmin, onDeleted }) {
             </div>
           )}
           {sub.notes && <p style={styles.subNotes}>{sub.notes}</p>}
-          {isAdmin && (
-            <div style={styles.cardActions}>
-              {confirmingDelete ? (
-                <>
-                  <button style={{ ...styles.confirmDeleteBtn, ...(deleting ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={handleDelete} disabled={deleting}>{deleting ? t.saving : t.confirm}</button>
-                  <button style={styles.cancelDeleteBtn} onClick={() => setConfirmingDelete(false)}>{t.cancel}</button>
-                </>
-              ) : (
-                <button style={styles.deleteBtn} onClick={() => setConfirmingDelete(true)}>{t.delete}</button>
-              )}
-              {deleteError && <span style={styles.inlineError}>{deleteError}</span>}
-            </div>
-          )}
+          <div style={styles.cardActions}>
+            <button
+              type="button"
+              style={{ background: '#eef2ff', color: '#4338ca', border: '1px solid #e0e7ff', borderRadius: 6, padding: '6px 12px', fontSize: 13, fontWeight: 700, cursor: pdfGenerating ? 'not-allowed' : 'pointer', opacity: pdfGenerating ? 0.55 : 1 }}
+              onClick={downloadPdf}
+              disabled={pdfGenerating}
+            >
+              {pdfGenerating ? t.preparing : t.exportPDF}
+            </button>
+            {isAdmin && (confirmingDelete ? (
+              <>
+                <button style={{ ...styles.confirmDeleteBtn, ...(deleting ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={handleDelete} disabled={deleting}>{deleting ? t.saving : t.confirm}</button>
+                <button style={styles.cancelDeleteBtn} onClick={() => setConfirmingDelete(false)}>{t.cancel}</button>
+              </>
+            ) : (
+              <button style={styles.deleteBtn} onClick={() => setConfirmingDelete(true)}>{t.delete}</button>
+            ))}
+            {deleteError && <span style={styles.inlineError}>{deleteError}</span>}
+          </div>
         </div>
       )}
     </div>
@@ -530,6 +581,7 @@ export function ChecklistReports({ projects = [], activeProject = '', onProjectC
   const t = useT();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+  const [companyName, setCompanyName] = useState('');
   const [templates, setTemplates] = useState([]);
   const [submissions, setSubmissions] = useState([]);
   const [page, setPage] = useState(1);
@@ -566,6 +618,7 @@ export function ChecklistReports({ projects = [], activeProject = '', onProjectC
     } finally { setLoading(false); }
   };
 
+  useEffect(() => { api.get('/company-info').then(r => setCompanyName(r.data?.name || '')).catch(() => {}); }, []);
   useEffect(() => { load(1); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!loading) load(1); }, [filterProject, filterType, from, to]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -628,6 +681,7 @@ export function ChecklistReports({ projects = [], activeProject = '', onProjectC
                 key={s.id}
                 sub={s}
                 isAdmin={isAdmin}
+                companyName={companyName}
                 onDeleted={id => setSubmissions(prev => prev.filter(x => x.id !== id))}
               />
             ))}

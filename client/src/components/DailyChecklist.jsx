@@ -3,6 +3,7 @@ import api from '../api';
 import { useT } from '../hooks/useT';
 import { useToast } from '../contexts/ToastContext';
 import { usePerm } from '../hooks/usePerm';
+import { downloadBlob } from '../utils/csv';
 import { SkeletonList } from './Skeleton';
 
 /**
@@ -320,11 +321,64 @@ const swap = (arr, i, j) => { const a = arr.slice(); [a[i], a[j]] = [a[j], a[i]]
 // ── History ────────────────────────────────────────────────────────────────
 // Read-only review of a project's COMPLETED days. Each row expands (lazy) to the
 // full item breakdown, with who checked each item and when.
-export function ChecklistHistory({ projectId, t, toast }) {
+export function ChecklistHistory({ projectId, projectName, t, toast }) {
   const [days, setDays] = useState(null);      // null = loading
   const [openId, setOpenId] = useState(null);
   const [detail, setDetail] = useState({});    // dayId → { items } | { loading:true }
+  const [companyName, setCompanyName] = useState('');
+  const [pdfDayId, setPdfDayId] = useState(null); // day currently generating a PDF
   const canDelete = usePerm('daily_checklist_complete_day');
+
+  useEffect(() => { api.get('/company-info').then(r => setCompanyName(r.data?.name || '')).catch(() => {}); }, []);
+
+  const downloadDayPdf = async (d) => {
+    setPdfDayId(d.id);
+    try {
+      // Items load lazily on expand; fetch them if this day hasn't been opened yet.
+      let its = detail[d.id]?.items;
+      if (!its) {
+        const r = await api.get(`/daily-checklist/days/${d.id}`);
+        its = r.data.items || [];
+        setDetail(dd => ({ ...dd, [d.id]: { items: its } }));
+      }
+      const [{ pdf }, { ChecklistDocument }] = await Promise.all([
+        import('@react-pdf/renderer'),
+        import('./ChecklistPDF'),
+      ]);
+      const pdfItems = its.map(it => {
+        const done = it.kind === 'text' ? !!(it.value && it.value.trim()) : it.checked;
+        const who = done
+          ? `${it.checked_by_name || t.dcSomeone}${it.checked_at ? ' · ' + new Date(it.checked_at).toLocaleString() : ''}`
+          : t.dcUnchecked;
+        if (it.kind === 'text') return { mark: '•', done, label: it.text, answer: it.value ? String(it.value) : '', who };
+        return { mark: it.checked ? 'Yes' : '—', done: !!it.checked, label: it.text, who };
+      });
+      const workDate = d.work_date ? String(d.work_date).slice(0, 10) : '';
+      const meta = [
+        workDate ? { label: t.pdfDateLabel, value: workDate } : null,
+        projectName ? { label: t.pdfProjectLabel, value: projectName } : null,
+        { label: t.pdfDayLabel, value: String(d.day_number) },
+        { label: t.pdfItemsCheckedLabel, value: t.dcItemsChecked.replace('{n}', d.checked_count).replace('{total}', d.item_count) },
+      ].filter(Boolean);
+      const blob = await pdf(
+        <ChecklistDocument
+          companyName={companyName}
+          title={projectName || t.pdfDailyChecklist}
+          subtitle={t.pdfDailyChecklist}
+          meta={meta}
+          items={pdfItems}
+          notesLabel={t.pdfNotesLabel}
+          noItemsLabel={t.dcHistoryNoItems}
+          t={t}
+        />
+      ).toBlob();
+      downloadBlob(blob, `daily-checklist-${workDate || d.day_number}.pdf`);
+    } catch {
+      toast(t.dcLoadFailed, 'error');
+    } finally {
+      setPdfDayId(null);
+    }
+  };
 
   const deleteDay = async (d) => {
     // eslint-disable-next-line no-alert
@@ -376,6 +430,9 @@ export function ChecklistHistory({ projectId, t, toast }) {
                 <span style={hStyles.dayDate}>{d.work_date ? String(d.work_date).slice(0, 10) : t.dcDayLabel.replace('{n}', d.day_number)}</span>
                 <span style={hStyles.dayMeta}>{t.dcDayLabel.replace('{n}', d.day_number)} · {t.dcItemsChecked.replace('{n}', d.checked_count).replace('{total}', d.item_count)}</span>
               </button>
+              <button type="button" style={{ ...hStyles.pdfBtn, ...(pdfDayId === d.id ? { opacity: 0.55, cursor: 'wait' } : {}) }} onClick={() => downloadDayPdf(d)} disabled={pdfDayId === d.id} title={t.exportPDF} aria-label={t.exportPDF}>
+                {pdfDayId === d.id ? '…' : 'PDF'}
+              </button>
               {canDelete && (
                 <button type="button" style={hStyles.delBtn} onClick={() => deleteDay(d)} title={t.dcDeleteDay} aria-label={t.dcDeleteDay}>🗑</button>
               )}
@@ -418,6 +475,7 @@ const hStyles = {
   headRow: { display: 'flex', alignItems: 'center' },
   dayHead: { display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, background: 'none', border: 'none', cursor: 'pointer', padding: '10px 12px', textAlign: 'left' },
   delBtn: { flexShrink: 0, background: '#fef2f2', color: '#ef4444', border: '1px solid #fecaca', borderRadius: 6, cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: '6px 9px', margin: '0 8px' },
+  pdfBtn: { flexShrink: 0, background: '#eef2ff', color: '#4338ca', border: '1px solid #e0e7ff', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 700, lineHeight: 1, padding: '6px 9px' },
   chev: { color: '#9ca3af', fontSize: 12 },
   dayDate: { fontWeight: 700, fontSize: 14, color: '#111827', fontVariantNumeric: 'tabular-nums' },
   dayMeta: { marginLeft: 'auto', fontSize: 12, color: '#6b7280' },

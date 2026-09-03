@@ -6426,3 +6426,19 @@ Full verify green (server 1560, client build + i18n).
   - transcriptionPoller: raised STALE_FAIL 30→60min and POLL_WINDOW 45→90min so a legitimately
     long transcription isn't force-failed prematurely (only a genuinely stuck job hits it).
 Full verify green (server 1560, client build + i18n).
+
+## Checklist PDF export (2026-09-03)
+Added "Export PDF" to both checklist surfaces (both admin-only):
+- New shared `client/src/components/ChecklistPDF.jsx` (`ChecklistDocument`) — one generic
+  react-pdf doc (company header + meta block + item list + notes + footer). Callers normalize
+  their rows into `items: [{mark, done, label, answer?, who?}]` + `meta: [{label,value}]`.
+- Checklist Reports (ChecklistManager `SubmissionCard`): per-submission "Export PDF" button;
+  data is already in-memory. ChecklistReports fetches company name once, passes down.
+- Daily Checklist history (DailyChecklist `ChecklistHistory`): per-day "PDF" button in the
+  headRow; fetches that day's items if not already expanded, then generates. ProjectDailySetup
+  passes the project name.
+- Follows the app convention: lazy `import('@react-pdf/renderer')` + `import('./ChecklistPDF')`
+  on click → `pdf().toBlob()` → `downloadBlob` (so react-pdf stays out of the main bundle).
+- i18n EN+ES for the PDF labels. Marks are Latin-safe ("Yes"/"No"/"—"/"•") — the built-in
+  Helvetica has no ✓/✗ glyphs, so those would have printed blank.
+Full verify green (server 1560, client build + i18n parity).
