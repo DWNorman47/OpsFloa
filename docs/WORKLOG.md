@@ -6362,3 +6362,23 @@ unnecessary.
 Caveat: can't browser-test encode speed/threading from here; the rewrap path is deterministic
 and fixes the reported file, and the re-encode is now the lightest possible command.
 Full verify green (server 1555, client eslint + vitest 289 + build; i18n parity).
+
+## Neon compute: let staging idle its DB (2026-09-03)
+Root cause of the ~$80 Neon "Compute" (found by reading the actual invoices + branch usage,
+not guessing): flat pricing (~$0.106/CU-hr), and CU-hours ~doubled in August because the
+STAGE branch went always-active. Mechanism: stage's Render service was upgraded to paid ($7)
+to stay warm (fast loads); an always-on server runs all background jobs 24/7, and those jobs
+poll the DB (transcription sweep every 20s, others every 15m), so the stage Neon branch never
+scales to zero (~12 CU-hrs/day ≈ ~$38/mo for an unused staging DB). main is similarly kept
+awake by prod's jobs (its July baseline). The nightly→weekly prod→stage sync fix from before
+was intact but minor (DB is only ~50MB, so dump/restore is cheap).
+Fix (keeps the fast always-on stage server, removes the wasted DB polling):
+- `index.js`: gate ALL background-job startup behind `DISABLE_BACKGROUND_JOBS`. Default ON so
+  production is unchanged; set `DISABLE_BACKGROUND_JOBS=true` on the stage (and dev) Render
+  service → no scheduled DB queries → stage Neon branch suspends when idle.
+- `/api/health`: on a keep-idle server (same flag) skip the `SELECT 1` so a recurring health
+  probe can't keep the branch awake; `/api/health/live` (already DB-free) is the liveness probe.
+Verify: set the env var on stage; its Neon branch should flip Active→Idle and CU-hrs flatten.
+Not touched (separate, prod-affecting): prod's own 20s poller keeps main awake — gating it so
+prod can suspend overnight is a follow-up to discuss.
+Full verify green (server 1555, client build + i18n).
