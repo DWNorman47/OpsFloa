@@ -6382,3 +6382,19 @@ Verify: set the env var on stage; its Neon branch should flip Active→Idle and 
 Not touched (separate, prod-affecting): prod's own 20s poller keeps main awake — gating it so
 prod can suspend overnight is a follow-up to discuss.
 Full verify green (server 1555, client build + i18n).
+
+## Transcription poller: bounded polling window (2026-09-03)
+The 20s transcription sweep queried the DB unconditionally 24/7, keeping Neon awake (prod
+half of the compute bill). Gated it so it only runs inside a bounded window:
+- `activeUntil` deadline; a submit/retry (via scheduleEarlyPoll → notePendingTranscription)
+  sets it to now + 45min. Cron checks `Date.now() > activeUntil` FIRST and returns with zero
+  DB queries when the window is closed → DB idles → Neon suspends.
+- Anti-"forever" safety (the user's concern): the deadline is only ever set to a bounded
+  now+45min (nothing extends it to infinity); a recording stuck in 'processing' is
+  force-failed after 30min (< the window) so a bad row can neither hold the window open nor
+  linger as a zombie. Worst case: polls ≤45min after the last real submit, then silent.
+- Boot opens one catch-up window (resolve leftovers from a restart), self-closes on the
+  first sweep if nothing pending.
+- Sweep self-closes the window as soon as no 'processing' rows remain.
+New test (transcriptionPollerGate) covers: stale row force-failed (not polled), fresh row
+polled, idle = single query + no external calls. Full verify green (server 1558, client build).

@@ -21,7 +21,7 @@ const { checkStorageLimit, decrementStorage } = require('../storage');
 const { logAudit } = require('../auditLog');
 const assemblyai = require('../services/assemblyai');
 const { RECORDING_STATUSES } = require('../constants/recordingEnums');
-const { pollRecordingById } = require('../jobs/transcriptionPoller');
+const { pollRecordingById, notePendingTranscription } = require('../jobs/transcriptionPoller');
 const { hasPerm } = require('../permissions');
 
 // 2 GB cap per file — far above any realistic meeting recording, below the
@@ -106,6 +106,9 @@ async function loadRecording(id, companyId) {
 /** Schedule a one-off early poll so short clips complete without waiting
  *  for the cron sweep. Fire-and-forget; the sweep is the safety net. */
 function scheduleEarlyPoll(recordingId) {
+  // Open the sweep's polling window so the cron actually runs for this job (when idle
+  // the sweep does nothing to let the DB / Neon compute suspend).
+  notePendingTranscription();
   setTimeout(() => {
     pollRecordingById(recordingId).catch(() => { /* sweep will retry */ });
   }, 8000).unref?.();

@@ -3,10 +3,12 @@
  * finished transcript (diarized utterances) when it completes.
  *
  * Why polling instead of webhooks: the backend runs on Render behind a
- * single public URL, but local dev has none, and at this feature's volume
- * (a handful of recordings per week per company) a 20-second sweep over a
- * partial index is effectively free. The routes also schedule a one-off
- * early poll after submit so short clips feel snappy.
+ * single public URL, but local dev has none, so polling is the portable
+ * choice. To avoid keeping the DB (and Neon compute) awake around the clock,
+ * the 20-second sweep only runs inside a bounded window opened by a submission
+ * (see notePendingTranscription / activeUntil below) — when idle it makes zero
+ * queries. The routes also schedule a one-off early poll after submit so short
+ * clips feel snappy.
  *
  * Every transition is guarded by `AND status = 'processing'` so a stale
  * poll result can never clobber a row a retry has already moved on.
@@ -137,12 +139,46 @@ async function pollRecordingById(recordingId) {
   // queued / processing — leave it for the next sweep.
 }
 
+// ── Bounded polling window ──────────────────────────────────────────────────────
+// The 20-second sweep is the reason an always-on server keeps its Neon branch awake
+// 24/7 (a DB query every 20s never lets it suspend). So the sweep now runs ONLY inside
+// a bounded window that a submission opens: `activeUntil` is a deadline set to
+// now + POLL_WINDOW_MS whenever a recording is submitted/retried (or once at boot to
+// catch anything left over). When the window closes the sweep does nothing — zero DB
+// queries — so the DB can idle and Neon scales to zero.
+//
+// Safety: the deadline is only ever set to a bounded `now + POLL_WINDOW_MS`; nothing
+// extends it indefinitely, so the poller can never run forever. And a recording stuck
+// in 'processing' is force-failed after STALE_FAIL_MS (< the window) so a bad row can
+// neither hold the window open nor linger as a zombie. Worst case: the sweep runs at
+// most POLL_WINDOW_MS after the last real submission, then goes silent.
+const POLL_WINDOW_MS = 45 * 60 * 1000; // stop polling this long after the last submission
+const STALE_FAIL_MS = 30 * 60 * 1000;  // a 'processing' row older than this is force-failed
+
+let activeUntil = 0;
+
+/** Open (or extend) the polling window. Called by the routes on submit/retry. */
+function notePendingTranscription() {
+  activeUntil = Date.now() + POLL_WINDOW_MS;
+}
+
 async function pollProcessingRecordings() {
-  if (!assemblyai.isConfigured()) return;
+  if (!assemblyai.isConfigured()) { activeUntil = 0; return; }
   const { rows } = await pool.query(
-    `SELECT id FROM recordings WHERE status = 'processing' AND provider_job_id IS NOT NULL ORDER BY id LIMIT 25`
+    `SELECT id, created_at FROM recordings
+     WHERE status = 'processing' AND provider_job_id IS NOT NULL
+     ORDER BY id LIMIT 25`
   );
+  if (rows.length === 0) { activeUntil = 0; return; } // nothing pending → go quiet immediately
+
+  const staleCutoff = Date.now() - STALE_FAIL_MS;
   for (const row of rows) {
+    // A job that never resolves must not be polled indefinitely — fail it and move on.
+    if (new Date(row.created_at).getTime() < staleCutoff) {
+      await storeFailed(row.id, 'Transcription timed out').catch(err =>
+        logger.warn({ err, recordingId: row.id }, 'transcriptionPoller: stale-fail failed'));
+      continue;
+    }
     try {
       await pollRecordingById(row.id);
     } catch (err) {
@@ -150,13 +186,23 @@ async function pollProcessingRecordings() {
       logger.warn({ err, recordingId: row.id }, 'transcriptionPoller: poll failed');
     }
   }
+
+  // If nothing is left processing, close the window so the DB can go idle.
+  const { rows: remaining } = await pool.query(
+    `SELECT 1 FROM recordings WHERE status = 'processing' AND provider_job_id IS NOT NULL LIMIT 1`
+  );
+  if (remaining.length === 0) activeUntil = 0;
 }
 
 // Overlap guard — a slow AssemblyAI response must not stack sweeps.
 let sweepRunning = false;
 
 function startTranscriptionPollerJob() {
+  // One catch-up window at boot: resolve anything left 'processing' from before a
+  // restart, then self-close on the first sweep if there's nothing pending.
+  activeUntil = Date.now() + POLL_WINDOW_MS;
   cron.schedule('*/20 * * * * *', async () => {
+    if (Date.now() > activeUntil) return; // window closed → no DB query, Neon can suspend
     if (sweepRunning) return;
     sweepRunning = true;
     try {
@@ -167,4 +213,4 @@ function startTranscriptionPollerJob() {
   });
 }
 
-module.exports = { startTranscriptionPollerJob, pollRecordingById };
+module.exports = { startTranscriptionPollerJob, pollRecordingById, notePendingTranscription, pollProcessingRecordings };
