@@ -32,7 +32,7 @@ const STR = {
     fmt_webm: 'WebM · VP9',
     fmt_mp3: 'Audio only · MP3',
     hint_remux: 'Tip: "MP4 (recommended)" is instant when your video is already H.264 (most iPhone / QuickTime videos) — it just rewraps the container. It only re-encodes when it has to (e.g. HEVC), which is much slower.',
-    hint_slow: '⚠ Heads-up: re-encoding re-compresses every frame in your browser and can take a long time on a big video — that’s normal, it is NOT frozen. Use it only when the recommended option produces a file that won’t play.',
+    hint_slow: '⚠ Heads-up: re-encoding re-compresses every frame in your browser and can take a while on a big video — that’s normal, it is NOT frozen. Use it only when the recommended option produces a file that won’t play.',
     slow_running: 'Working — not stuck. Re-encoding a large video can take a while. You don’t need to watch it: leave this tab open (you can switch tabs) and come back — or hit Cancel.',
     probing: 'Checking the video…',
     remuxing: 'Already H.264 — rewrapping to MP4 (fast)…',
