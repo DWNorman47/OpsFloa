@@ -1,12 +1,13 @@
 name: Sync Staging DB from Production
 
-# Runs weekly on Friday night — 06:00 UTC Saturday = Fri 11 PM (America/Phoenix,
-# UTC-7). Nightly isn't needed: on-demand refreshes come from the SuperAdmin
-# "Copy production → staging" button (which dispatches this same workflow) or the
-# "Run workflow" button on the Actions tab.
+# Runs nightly — 06:00 UTC = 11 PM the prior day (America/Phoenix, UTC-7). Cheap: the DB
+# is ~50MB, so the dump/restore is a 1-2 minute blip that briefly wakes the stage Neon
+# branch and lets it go back to idle (stage's background jobs are disabled, so nothing
+# else keeps it awake). On-demand refreshes also come from the SuperAdmin "Copy
+# production → staging" button (which dispatches this workflow) or the Actions tab.
 on:
   schedule:
-    - cron: '0 6 * * 6'
+    - cron: '0 6 * * *'
   workflow_dispatch:
 
 jobs:
