@@ -6451,3 +6451,17 @@ error persists, warn-and-skip (exit 0); genuine high/critical vulnerabilities st
 build. Network-error signatures matched: 503 / Service Unavailable / audit endpoint returned
 an error / ECONNRESET / ETIMEDOUT / EAI_AGAIN / ENOTFOUND / ENETUNREACH / socket hang up /
 Too Many Requests.
+
+## Split time punch: chained, mostly-derived segment times (2026-09-04)
+The Approval Queue "Split entry" editor (ApprovalQueue.jsx) now treats the segments as a
+contiguous chain over the original punch:
+- Every segment's START is disabled (derived): segment 1 = the punch start; each later start
+  = the previous segment's end.
+- The LAST segment's END is disabled (= the fixed punch-out).
+- Only the intermediate ends are editable; changing one flows into the next segment's start
+  (rechainSegments re-derives starts + pins the two fixed bounds after any change).
+- "Add segment" carves a new final segment out of the current last one (split at its
+  midpoint): the new last's end is the fixed punch-out (disabled) and the previously-last
+  segment's end becomes editable. Remove also re-chains.
+Stored the fixed punch bounds in splitBounds. Contiguity is now guaranteed by construction.
+Full verify green (server 1560, client build + i18n).

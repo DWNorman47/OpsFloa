@@ -62,6 +62,20 @@ function midTime(start, end) {
   return fromMins(Math.round((toMins(start) + toMins(end)) / 2));
 }
 
+// Split segments are a contiguous chain over the original punch: the first start is the
+// punch's start and the last end is the punch's end (both fixed), and every segment's
+// start is just the previous segment's end. Only the intermediate ends are editable, so
+// re-derive the starts (and pin the two fixed bounds) after any change.
+function rechainSegments(segs, bounds) {
+  if (!segs.length) return segs;
+  const lastIdx = segs.length - 1;
+  return segs.map((s, i) => ({
+    ...s,
+    start_time: i === 0 ? bounds.start : segs[i - 1].end_time,
+    end_time: i === lastIdx ? bounds.end : s.end_time,
+  }));
+}
+
 function formatHours(start, end) {
   const s = new Date(`1970-01-01T${start}`);
   const e = new Date(`1970-01-01T${end}`);
@@ -285,6 +299,7 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
   const [unrejecting, setUnrejecting] = useState(null);
   const [unrejectError, setUnrejectError] = useState('');
   const [splitSegments, setSplitSegments] = useState([]);
+  const [splitBounds, setSplitBounds] = useState({ start: '', end: '' }); // fixed punch start/end
   const [splitSaving, setSplitSaving] = useState(false);
   const [splitError, setSplitError] = useState('');
   const [confirmingApproveAll, setConfirmingApproveAll] = useState(false);
@@ -438,11 +453,15 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
     setSplittingId(e.id);
     setEditingId(null);
     setSplitError('');
-    // Pre-fill two segments covering the full time range
-    const mid = midTime(e.start_time.substring(0, 5), e.end_time.substring(0, 5));
+    // Pre-fill two segments covering the full time range. Start/end of the punch are fixed;
+    // only the middle boundary (segment 1's end) is editable.
+    const pStart = e.start_time.substring(0, 5);
+    const pEnd = e.end_time.substring(0, 5);
+    const mid = midTime(pStart, pEnd);
+    setSplitBounds({ start: pStart, end: pEnd });
     setSplitSegments([
-      { _key: 0, start_time: e.start_time.substring(0, 5), end_time: mid, project_id: e.project_id ? String(e.project_id) : '' },
-      { _key: 1, start_time: mid, end_time: e.end_time.substring(0, 5), project_id: '' },
+      { _key: 0, start_time: pStart, end_time: mid, project_id: e.project_id ? String(e.project_id) : '' },
+      { _key: 1, start_time: mid, end_time: pEnd, project_id: '' },
     ]);
   };
 
@@ -908,19 +927,24 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                     <div className="approval-form" style={styles.splitForm}>
                       <div style={styles.splitTitle}>{t.aqSplitEntry}</div>
                       {splitError && <div style={styles.splitError}>{splitError}</div>}
-                      {splitSegments.map((seg, i) => (
+                      {splitSegments.map((seg, i) => {
+                        const isLast = i === splitSegments.length - 1;
+                        // Starts are always derived (the previous end); the last end is the fixed
+                        // punch-out. Only intermediate ends are editable.
+                        const disabledStyle = { ...styles.editTimeInput, background: '#f3f4f6', color: '#9ca3af', cursor: 'not-allowed' };
+                        return (
                         <div key={seg._key} style={styles.splitSegment}>
                           <div style={styles.splitSegLabel}>{t.aqSegment} {i + 1}</div>
                           <div style={styles.splitSegRow}>
                             <div>
                               <div style={styles.editTimesLabel}>{t.start}</div>
-                              <input type="time" style={styles.editTimeInput} value={seg.start_time}
-                                onChange={ev => setSplitSegments(prev => prev.map((s, j) => j === i ? { ...s, start_time: ev.target.value } : s))} />
+                              <input type="time" style={disabledStyle} value={seg.start_time} disabled readOnly />
                             </div>
                             <div>
                               <div style={styles.editTimesLabel}>{t.end}</div>
-                              <input type="time" style={styles.editTimeInput} value={seg.end_time}
-                                onChange={ev => setSplitSegments(prev => prev.map((s, j) => j === i ? { ...s, end_time: ev.target.value } : s))} />
+                              <input type="time" style={isLast ? disabledStyle : styles.editTimeInput} value={seg.end_time}
+                                disabled={isLast} min={seg.start_time} max={splitBounds.end}
+                                onChange={ev => setSplitSegments(prev => rechainSegments(prev.map((s, j) => j === i ? { ...s, end_time: ev.target.value } : s), splitBounds))} />
                             </div>
                             <div style={{ flex: 1, minWidth: 120 }}>
                               <div style={styles.editTimesLabel}>Project</div>
@@ -933,14 +957,26 @@ export default function ApprovalQueue({ onCountChange, settings = null }) {
                               </select>
                             </div>
                             {splitSegments.length > 2 && (
-                              <button style={styles.splitRemoveBtn} aria-label={t.removeSegment} onClick={() => setSplitSegments(prev => prev.filter((_, j) => j !== i))}>✕</button>
+                              <button style={styles.splitRemoveBtn} aria-label={t.removeSegment} onClick={() => setSplitSegments(prev => rechainSegments(prev.filter((_, j) => j !== i), splitBounds))}>✕</button>
                             )}
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                       <button style={styles.splitAddBtn} onClick={() => {
-                        const last = splitSegments[splitSegments.length - 1];
-                        setSplitSegments(prev => [...prev, { _key: Date.now(), start_time: last.end_time, end_time: last.end_time, project_id: '' }]);
+                        // Carve a new final segment out of the current last one: split it at its
+                        // midpoint. The new segment's end becomes the fixed punch-out (disabled),
+                        // and the previously-last segment's end becomes editable.
+                        setSplitSegments(prev => {
+                          const li = prev.length - 1;
+                          const last = prev[li];
+                          const mid = midTime(last.start_time, last.end_time);
+                          return rechainSegments([
+                            ...prev.slice(0, li),
+                            { ...last, end_time: mid },
+                            { _key: Date.now(), start_time: mid, end_time: splitBounds.end, project_id: '' },
+                          ], splitBounds);
+                        });
                       }}>{t.aqAddSegment}</button>
                       <div style={styles.editTimesActions}>
                         <button style={{ ...styles.saveTimesBtn, ...(splitSaving ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }} onClick={() => saveSplit(e.id)} disabled={splitSaving}>{splitSaving ? t.saving : t.aqSplitSave}</button>
