@@ -3,6 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
+    "capture:stage": "node scripts/capture-staging.mjs",
     "studio": "remotion studio src/index.jsx",
     "render": "node scripts/render-all.mjs"
   },
@@ -12,5 +13,8 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "remotion": "^4.0.344"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.62.1"
   }
 }

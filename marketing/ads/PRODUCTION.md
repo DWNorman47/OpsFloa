@@ -1,6 +1,6 @@
 # OpsFloa Product-Led Ad Campaign
 
-Three 30-second ads are built as editable Remotion compositions. The campaign uses only two short live-action replacements in total; every other scene is product animation, typography, or branding.
+Three 30-second ads are built as editable Remotion compositions. The campaign uses only two short live-action replacements in total; every other scene uses authenticated OpsFloa product captures, typography, or branding.
 
 ## Campaign structure
 
@@ -57,9 +57,12 @@ Margin does not disappear all at once. It leaks through disconnected labor, mate
 ```powershell
 cd C:\Users\davno\Projects\OpsFloa\marketing\ads
 npm install
+npm run capture:stage
 npm run studio
 npm run render
 ```
+
+`npm run capture:stage` signs in to the public Demo Operations account on `stage.opsfloa.com` and refreshes the source images in `public/captures/`. Those images are tracked so the campaign renders consistently without requiring a live connection. The Plan Room capture uses a locally generated sample grading sheet and does not share or publish it to staging.
 
 Rendered MP4 files are written to `marketing/ads/renders/` and intentionally excluded from Git. Replace each `FootageSlot` component in `src/videos.jsx` with the final clip once footage is available.
 

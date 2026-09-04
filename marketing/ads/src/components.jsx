@@ -8,13 +8,14 @@ import {
   FileCheck2,
   HardHat,
   MapPin,
+  MousePointer2,
   PackageCheck,
   ReceiptText,
   ShieldCheck,
   TrendingUp,
   Users,
 } from 'lucide-react';
-import { interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
+import { Img, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
 
 export const colors = {
   ink: '#0b1220',
@@ -85,6 +86,46 @@ export function FootageSlot({ frame, number, title, direction, duration }) {
         <p>{direction}</p>
       </div>
       <div className="footage-meta">16:9 master • center-safe for vertical crop • no dialogue</div>
+    </div>
+  );
+}
+
+export function AppCapture({ frame, duration, src, focus = [50, 50], zoom = 1.055, cursor }) {
+  const scale = interpolate(frame, [0, duration], [1, zoom], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
+  const cursorProgress = cursor
+    ? interpolate(frame, [cursor.start || 8, cursor.end || duration - 18], [0, 1], {
+        extrapolateLeft: 'clamp',
+        extrapolateRight: 'clamp',
+      })
+    : 0;
+  const cursorX = cursor ? interpolate(cursorProgress, [0, 1], [cursor.from[0], cursor.to[0]]) : 0;
+  const cursorY = cursor ? interpolate(cursorProgress, [0, 1], [cursor.from[1], cursor.to[1]]) : 0;
+  const clickFrame = cursor?.clickAt ?? duration - 24;
+  const clickPulse = cursor
+    ? interpolate(Math.abs(frame - clickFrame), [0, 12], [1, 0], {
+        extrapolateLeft: 'clamp',
+        extrapolateRight: 'clamp',
+      })
+    : 0;
+
+  return (
+    <div className="app-capture">
+      <Img
+        src={staticFile(src)}
+        style={{
+          transform: `scale(${scale})`,
+          transformOrigin: `${focus[0]}% ${focus[1]}%`,
+        }}
+      />
+      {cursor && (
+        <div className="capture-cursor" style={{ left: cursorX, top: cursorY }}>
+          <i style={{ opacity: clickPulse, transform: `scale(${1 + clickPulse * 1.2})` }} />
+          <MousePointer2 size={34} fill="#ffffff" stroke="#0b1220" strokeWidth={2.2} />
+        </div>
+      )}
     </div>
   );
 }

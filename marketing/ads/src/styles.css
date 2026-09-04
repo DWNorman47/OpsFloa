@@ -57,6 +57,12 @@ body { margin: 0; }
 button, .primary-button { border: 0; border-radius: 5px; font: 700 17px Inter; padding: 16px 22px; }
 .submit-row button, .primary-button { background: #1a56db; color: white; }
 .screen-scene { background: #dce5ef; }
+.capture-scene { background: #eef2f7; overflow: hidden; }
+.app-capture { position: absolute; inset: 0; overflow: hidden; background: #eef2f7; }
+.app-capture > img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.capture-cursor { position: absolute; width: 38px; height: 38px; z-index: 12; filter: drop-shadow(0 3px 4px rgba(15,23,42,.28)); transform: translate(-7px,-5px); }
+.capture-cursor > i { position: absolute; width: 42px; height: 42px; left: -10px; top: -10px; border: 4px solid #84cc16; border-radius: 50%; }
+.capture-cursor > svg { position: relative; z-index: 2; }
 .screen-wrap { width: 1720px; height: 915px; transform: translateY(-10px); }
 .browser-shell { width: 100%; height: 100%; background: white; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden; box-shadow: 0 35px 90px rgba(15,23,42,.18); }
 .browser-top { height: 68px; background: #111827; color: white; display: flex; align-items: center; padding: 0 22px; position: relative; }
