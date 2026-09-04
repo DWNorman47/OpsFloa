@@ -6442,3 +6442,12 @@ Added "Export PDF" to both checklist surfaces (both admin-only):
 - i18n EN+ES for the PDF labels. Marks are Latin-safe ("Yes"/"No"/"—"/"•") — the built-in
   Helvetica has no ✓/✗ glyphs, so those would have printed blank.
 Full verify green (server 1560, client build + i18n parity).
+
+## CI: npm audit resilient to registry outages (2026-09-04)
+PR #304 CI went red only on the `npm audit` step — npmjs.org returned 503 Service Unavailable
+(tests + ESLint passed). A transient registry outage shouldn't block a PR. Both audit steps
+(server --audit-level=high, client --audit-level=critical) now retry 3× and, if the registry
+error persists, warn-and-skip (exit 0); genuine high/critical vulnerabilities still fail the
+build. Network-error signatures matched: 503 / Service Unavailable / audit endpoint returned
+an error / ECONNRESET / ETIMEDOUT / EAI_AGAIN / ENOTFOUND / ENETUNREACH / socket hang up /
+Too Many Requests.

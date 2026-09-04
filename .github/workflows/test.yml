@@ -24,9 +24,24 @@ jobs:
       - run: npm test
       # Fail the build on high/critical prod vulns. Moderate and below don't
       # block — fix at your cadence. --omit=dev ignores vulns in dev-only
-      # packages (jest, nodemon, etc.) that can't affect production.
+      # packages (jest, nodemon, etc.) that can't affect production. A registry
+      # outage (503/timeout) is retried and, if persistent, warned-and-skipped
+      # so npmjs.org being down can't block a PR — only real vulns fail.
       - name: npm audit
-        run: npm audit --omit=dev --audit-level=high
+        shell: bash
+        run: |
+          set +e
+          LEVEL=high
+          for i in 1 2 3; do
+            OUT=$(npm audit --omit=dev --audit-level=$LEVEL 2>&1); CODE=$?
+            if [ $CODE -eq 0 ]; then echo "$OUT"; exit 0; fi
+            if echo "$OUT" | grep -qiE '503|Service Unavailable|audit endpoint returned an error|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ENETUNREACH|socket hang up|Too Many Requests'; then
+              echo "npm audit registry error (attempt $i/3):"; echo "$OUT" | tail -3
+              if [ $i -lt 3 ]; then sleep 15; continue; fi
+              echo "::warning::npm audit registry unavailable after 3 attempts — skipping (transient)."; exit 0
+            fi
+            echo "$OUT"; echo "::error::npm audit found ${LEVEL}+ vulnerabilities."; exit 1
+          done
 
   migrations-lint:
     name: Migrations lint
@@ -97,6 +112,20 @@ jobs:
       # Client has two known build-time advisories (esbuild, serialize-javascript
       # via vite-plugin-pwa) that require breaking Vite upgrades to clear.
       # Neither is reachable at runtime, so we only fail on *critical* here
-      # until those are upgraded deliberately.
+      # until those are upgraded deliberately. A registry outage (503/timeout) is
+      # retried and warned-and-skipped if persistent — only real vulns fail.
       - name: npm audit
-        run: npm audit --omit=dev --audit-level=critical
+        shell: bash
+        run: |
+          set +e
+          LEVEL=critical
+          for i in 1 2 3; do
+            OUT=$(npm audit --omit=dev --audit-level=$LEVEL 2>&1); CODE=$?
+            if [ $CODE -eq 0 ]; then echo "$OUT"; exit 0; fi
+            if echo "$OUT" | grep -qiE '503|Service Unavailable|audit endpoint returned an error|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ENETUNREACH|socket hang up|Too Many Requests'; then
+              echo "npm audit registry error (attempt $i/3):"; echo "$OUT" | tail -3
+              if [ $i -lt 3 ]; then sleep 15; continue; fi
+              echo "::warning::npm audit registry unavailable after 3 attempts — skipping (transient)."; exit 0
+            fi
+            echo "$OUT"; echo "::error::npm audit found ${LEVEL}+ vulnerabilities."; exit 1
+          done
