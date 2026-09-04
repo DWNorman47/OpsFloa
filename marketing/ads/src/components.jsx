@@ -15,7 +15,7 @@ import {
   TrendingUp,
   Users,
 } from 'lucide-react';
-import { Img, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
+import { Easing, Img, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
 
 export const colors = {
   ink: '#0b1220',
@@ -95,15 +95,18 @@ export function AppCapture({ frame, duration, src, focus = [50, 50], zoom = 1.05
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',
   });
+  const clickFrame = cursor?.clickAt ?? duration - 24;
+  const moveEnd = cursor?.end ?? clickFrame - 6;
+  const moveStart = cursor?.start ?? Math.max(8, moveEnd - 18);
   const cursorProgress = cursor
-    ? interpolate(frame, [cursor.start || 8, cursor.end || duration - 18], [0, 1], {
+    ? interpolate(frame, [moveStart, moveEnd], [0, 1], {
         extrapolateLeft: 'clamp',
         extrapolateRight: 'clamp',
+        easing: Easing.inOut(Easing.cubic),
       })
     : 0;
   const cursorX = cursor ? interpolate(cursorProgress, [0, 1], [cursor.from[0], cursor.to[0]]) : 0;
   const cursorY = cursor ? interpolate(cursorProgress, [0, 1], [cursor.from[1], cursor.to[1]]) : 0;
-  const clickFrame = cursor?.clickAt ?? duration - 24;
   const clickPulse = cursor
     ? interpolate(Math.abs(frame - clickFrame), [0, 12], [1, 0], {
         extrapolateLeft: 'clamp',
