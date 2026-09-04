@@ -6465,3 +6465,12 @@ contiguous chain over the original punch:
   segment's end becomes editable. Remove also re-chains.
 Stored the fixed punch bounds in splitBounds. Contiguity is now guaranteed by construction.
 Full verify green (server 1560, client build + i18n).
+
+## Approvals: per-entry Location history button (2026-09-04)
+Each pending entry in the Approval Queue now has a 📍 button (in the always-visible actions
+row, next to ✓/✕) that opens the existing LocationHistoryModal seeded to that entry's worker
+and work_date — showing the breadcrumb path + clock-in/out points for that shift. Reuses the
+`/admin/worker-locations` endpoint and the existing modal; new `locHistoryIconBtn` style,
+reused `t.aqLocationHistory`. (Recent/approved entries already had an equivalent "View on map";
+this brings the same to the pending queue on every row.)
+Full verify green (server 1560, client build + i18n).
