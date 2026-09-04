@@ -183,7 +183,7 @@ export default function ProjectDailySetup() {
         )
       ) : viewMode === 'history' ? (
         scopeProject ? (
-          <ChecklistHistory projectId={scopeProject} t={t} toast={toast} />
+          <ChecklistHistory projectId={scopeProject} projectName={projects.find(p => String(p.id) === String(scopeProject))?.name || ''} t={t} toast={toast} />
         ) : (
           <div style={styles.empty}><p style={styles.emptyText}>{t.pdSchedulePickProject}</p></div>
         )
